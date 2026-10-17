@@ -160,7 +160,7 @@
           "is_base64": false,
           "body": {
             "encoding": "utf8",
-            "value": "{\"error\":{\"code\":\"app.unauthorized\",\"message\":\"unauthorized\",\"request_id\":\"req_test_123\"}}"
+            "value": "{\"error\":{\"code\":\"app.unauthorized\",\"message\":\"unauthorized\",\"request_id\":\"req_test_123\",\"status_code\":401}}"
           }
         },
         "resolver_calls": 1,
@@ -196,7 +196,7 @@
           "is_base64": false,
           "body": {
             "encoding": "utf8",
-            "value": "{\"error\":{\"code\":\"app.unauthorized\",\"message\":\"unauthorized\",\"request_id\":\"req_test_123\"}}"
+            "value": "{\"error\":{\"code\":\"app.unauthorized\",\"message\":\"unauthorized\",\"request_id\":\"req_test_123\",\"status_code\":401}}"
           }
         },
         "resolver_calls": 1,
@@ -227,7 +227,7 @@
           "is_base64": false,
           "body": {
             "encoding": "utf8",
-            "value": "{\"error\":{\"code\":\"app.forbidden\",\"message\":\"forbidden\",\"request_id\":\"req_test_123\"}}"
+            "value": "{\"error\":{\"code\":\"app.forbidden\",\"message\":\"forbidden\",\"request_id\":\"req_test_123\",\"status_code\":403}}"
           }
         },
         "resolver_calls": 1,
@@ -255,7 +255,7 @@
           "is_base64": false,
           "body": {
             "encoding": "utf8",
-            "value": "{\"error\":{\"code\":\"app.unauthorized\",\"message\":\"unauthorized\",\"request_id\":\"req_test_123\"}}"
+            "value": "{\"error\":{\"code\":\"app.unauthorized\",\"message\":\"unauthorized\",\"request_id\":\"req_test_123\",\"status_code\":401}}"
           }
         },
         "resolver_calls": 1,

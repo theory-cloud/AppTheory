@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-lambda-go/lambdacontext"
+
 	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
 )
 
@@ -13,6 +15,7 @@ func newAppTheoryFixtureAppP1(
 	limits FixtureLimits,
 	cors FixtureCORSConfig,
 	httpErrorFormat string,
+	requestIDSource string,
 ) *apptheory.App {
 	opts := []apptheory.Option{
 		apptheory.WithTier(apptheory.TierP1),
@@ -41,6 +44,9 @@ func newAppTheoryFixtureAppP1(
 	if strings.TrimSpace(httpErrorFormat) != "" {
 		opts = append(opts, apptheory.WithHTTPErrorFormat(apptheory.HTTPErrorFormat(httpErrorFormat)))
 	}
+	if strings.TrimSpace(requestIDSource) != "" {
+		opts = append(opts, apptheory.WithRequestIDSource(apptheory.RequestIDSource(requestIDSource)))
+	}
 
 	return apptheory.New(opts...)
 }
@@ -51,4 +57,12 @@ func fixtureContext(now time.Time, remainingMS int) (context.Context, context.Ca
 		return ctx, nil
 	}
 	return context.WithDeadline(ctx, now.Add(time.Duration(remainingMS)*time.Millisecond))
+}
+
+func fixtureLambdaContext(requestID string) context.Context {
+	ctx := context.Background()
+	if trimmed := strings.TrimSpace(requestID); trimmed != "" {
+		ctx = lambdacontext.NewContext(ctx, &lambdacontext.LambdaContext{AwsRequestID: trimmed})
+	}
+	return ctx
 }

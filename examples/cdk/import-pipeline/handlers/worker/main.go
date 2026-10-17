@@ -10,7 +10,7 @@ import (
 	"github.com/aws/aws-lambda-go/lambda"
 
 	"github.com/theory-cloud/apptheory/v6/pkg/jobs"
-	"github.com/theory-cloud/tabletheory/v5"
+	"github.com/theory-cloud/tabletheory/v6"
 )
 
 type recordMessage struct {

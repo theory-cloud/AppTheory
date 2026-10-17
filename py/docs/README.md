@@ -82,11 +82,11 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/py.txt`.
 
 <details>
-<summary>765 exported top-level symbols</summary>
+<summary>774 exported top-level symbols</summary>
 
 ```text
 AGENT_MCP_PATTERN, App, AppError, AppSyncContext, AppSyncResolverEvent, AppSyncResolverInfo, AppSyncResolverRequest, AppTheoryError,
-assert_bearer_token_reaches_transport_handler, assert_credential_free_transport_denied, assert_insufficient_scope_transport_denied, AtomicRateLimiter, authenticated,
+assert_bearer_token_reaches_transport_handler, assert_bearer_token_reaches_transport_handler_secure_app, assert_credential_free_transport_denied, assert_credential_free_transport_denied_secure_app, assert_insufficient_scope_transport_denied, assert_insufficient_scope_transport_denied_secure_app, AtomicRateLimiter, authenticated,
 authenticated_any_of, AutheoryProvider, AutheoryProviderOptions, authorization_authorize_path_for_resource_path, authorization_register_path_for_resource_path,
 authorization_server_metadata_handler, authorization_server_path_for_resource_path, AUTHORIZATION_SERVER_PREFIX, authorization_server_suffix_path_for_resource_path,
 authorization_token_path_for_resource_path, AuthorizationCodeRecord, AuthorizationCodeStore, AuthorizationRequest, AuthorizationServerMetadata, AuthPosture,
@@ -121,14 +121,14 @@ format_duration, format_rfc3339_nano, format_window_id, generate_openapi, genera
 get_minute_window, GetVectorsInput, HandlerFactory, hash_key, header, HOOK_FAILURE, HOOK_PREPARE_IMAGE, HOOK_READINESS, HOOK_READY, HOOK_RESUME, HOOK_RUN, HOOK_START, HOOK_STOP,
 HOOK_SUSPEND, HOOK_TEARDOWN, HOOK_TERMINATE, HOOK_VALIDATE, hooks_from_emf_metric_sink, hooks_from_logger, hooks_from_profile_logger, html, html_stream,
 HTTP_ERROR_FORMAT_FLAT_LEGACY, HTTP_ERROR_FORMAT_NESTED, IDGenerator, IdGenerator, insufficient_scope_www_authenticate, internal_only, is_microvm_terminal_state,
-is_supported_profile_output_field, ISSUER_MODE_FAMILY, ISSUER_MODE_ROUTE, job_lock_sort_key, job_meta_sort_key, job_partition_key, job_record_sort_key,
+is_supported_profile_output_field, is_well_formed_client_request_id, ISSUER_MODE_FAMILY, ISSUER_MODE_ROUTE, job_lock_sort_key, job_meta_sort_key, job_partition_key, job_record_sort_key,
 job_request_sort_key, JobLedgerError, jobs_table_name, JobsConfig, json, JWKSValidatorOptions, kinesis_cloudwatch_logs_subscription_record, KinesisJsonRecord,
 KinesisJsonRecordSummary, KinesisPutRecordsFailure, KinesisPutRecordsFailureReport, KinesisPutRecordsFailureReportSummary, KinesisPutRecordsResultRecord, Limit,
 LimitDecision, Limits, logging_profile_catalog, LOGGING_PROFILE_CLOUDWATCH_JSON, LOGGING_PROFILE_LEGACY, LOGGING_PROFILE_LOCAL_DEV, LOGGING_PROFILE_PAYTHEORY_ALERT_V1,
 LOGGING_PROFILE_SCHEMA_VERSION, logging_profile_validation_errors, LoggingProfileAlertingHints, LoggingProfileConfig, LoggingProfileEncoding, LoggingProfileEnrichment,
 LoggingProfileError, LoggingProfileErrorCapture, LoggingProfileEvent, LoggingProfileJobContext, LoggingProfileRequestContext, LoggingProfileSanitization,
 LoggingProfileSanitizer, LoggingProfileValidationError, ManualClock, ManualIdGenerator, map_microvm_provider_state, mask_first_last, mask_first_last4,
-matches_if_none_match, max_length, MAX_PRESIGN_PUT_EXPIRES_IN, max_value, MaxPutDeleteBatchSize, MaxQueryTopK, MCP_CODE_HEADER_MISMATCH, MCP_CODE_INTERNAL_ERROR,
+matches_if_none_match, max_length, MAX_CLIENT_REQUEST_ID_LENGTH, MAX_PRESIGN_PUT_EXPIRES_IN, max_value, MaxPutDeleteBatchSize, MaxQueryTopK, MCP_CODE_HEADER_MISMATCH, MCP_CODE_INTERNAL_ERROR,
 MCP_CODE_INVALID_PARAMS, MCP_CODE_INVALID_REQUEST, MCP_CODE_METHOD_NOT_FOUND, MCP_CODE_MISSING_REQUIRED_CLIENT_CAPABILITY, MCP_CODE_PARSE_ERROR, MCP_CODE_SERVER_ERROR,
 MCP_CODE_UNSUPPORTED_PROTOCOL_VERSION, MCP_HEADER_LAST_EVENT_ID, MCP_HEADER_METHOD, MCP_HEADER_NAME, MCP_HEADER_PROTOCOL_VERSION, MCP_HEADER_SESSION_ID,
 MCP_PROTOCOL_SHAPE_2025_11_25, MCP_PROTOCOL_SHAPE_2026_07_28, MCP_PROTOCOL_SHAPE_UNKNOWN, MCP_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION_2026_07_28,
@@ -175,7 +175,7 @@ ProfileLoggerOptions, protected_resource_metadata_handler, protected_resource_pa
 protected_resource_www_authenticate, ProtectedResourceMetadata, Provider, ProviderError, ProviderMetadata, public, PutVectorsInput, query, QueryHit, QueryVectorsInput,
 rapid_connect_xml_patterns, rate_limit_table_name, RateLimitBucketKey, RateLimitEntry, RateLimiter, RateLimiterError, RateLimitKey, RateLimitResult, RateLimitStore,
 RateLimitStrategy, RateLimitWindow, RealClock, RealIdGenerator, reconstruct_microvm_session_record, ReconstructingMicroVMSessionRegistry, RefreshRequest,
-register_controller_routes, register_mcp_facade, register_microvm_controller_routes, report_kinesis_put_records_failures, Request, require_bearer_token_middleware,
+register_controller_routes, register_mcp_facade, register_mcp_facade_secure, register_microvm_controller_routes, report_kinesis_put_records_failures, Request, REQUEST_ID_SOURCE_DEFAULT, REQUEST_ID_SOURCE_SERVER, require_bearer_token_middleware,
 require_eventbridge_workload_envelope, RequireBearerTokenOptions, required, required_forbidden_microvm_operation_fields, resource_indicator_matches,
 resource_metadata_url_from_mcp_endpoint, resource_name, resource_path_from_protected_resource_path, Response, rfc9728_resource_metadata_url, RootDiscoveryConfig,
 RouteInventory, RouteRefreshBrokerRecord, RouteRefreshBrokerSeeder, RouteRefreshBrokerStore, run_store_conformance, S3_ENCRYPTION_BUCKET_DEFAULT, S3_ENCRYPTION_KMS,
@@ -198,7 +198,7 @@ validate_required_metadata, validate_value, validate_vector, validation_error, V
 VALIDATION_RULE_MIN_LENGTH, VALIDATION_RULE_PATTERN, VALIDATION_RULE_REQUIRED, ValidationFieldError, ValidationRule, vary, VectorRecord, VectorStore,
 VECTORSTORE_ERROR_DIMENSION_MISMATCH, VECTORSTORE_ERROR_EMBEDDING_FAILED, VECTORSTORE_ERROR_INVALID_CONFIG, VECTORSTORE_ERROR_INVALID_INPUT,
 VECTORSTORE_ERROR_INVALID_VECTOR, VECTORSTORE_ERROR_NOT_FOUND, VECTORSTORE_ERROR_UNSUPPORTED_OPERATION, VectorStoreCall, VectorStoreError, WebSocketCall, WebSocketContext,
-WindowConfig, WindowLimit, wrap_error, wrap_job_ledger_error
+well_formed_client_request_id, WindowConfig, WindowLimit, wrap_error, wrap_job_ledger_error
 ```
 </details>
 <!-- apptheory-api-docs:py:end -->

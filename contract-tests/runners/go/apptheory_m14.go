@@ -23,7 +23,7 @@ func runFixtureM14(f Fixture) error {
 	now := time.Unix(0, 0).UTC()
 	var app *apptheory.App
 	setupErr := captureSetupError(func() error {
-		app = newAppTheoryFixtureAppP1(now, f.Setup.Limits, f.Setup.CORS, f.Setup.HTTPErrorFormat)
+		app = newAppTheoryFixtureAppP1(now, f.Setup.Limits, f.Setup.CORS, f.Setup.HTTPErrorFormat, f.Setup.RequestIDSource)
 
 		for _, name := range f.Setup.Middlewares {
 			mw := builtInM12Middleware(name)

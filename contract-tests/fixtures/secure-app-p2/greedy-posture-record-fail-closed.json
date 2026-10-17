@@ -1,0 +1,153 @@
+{
+  "id": "p2.secure_greedy_posture_record_fail_closed",
+  "tier": "p2",
+  "name": "secure greedy ANY / and ANY /{proxy+}: a matched route with a missing or invalid posture record fails closed",
+  "setup": {
+    "secure_app": {
+      "tier": "p2",
+      "inject_posture_records": true,
+      "routes": [
+        {
+          "surface": "http",
+          "method": "GET",
+          "path": "/",
+          "handler": "secure_echo",
+          "posture": "missing"
+        },
+        {
+          "surface": "http",
+          "method": "GET",
+          "path": "/invalid-record",
+          "handler": "secure_echo",
+          "posture": "invalid"
+        }
+      ]
+    }
+  },
+  "input": {
+    "secure_steps": [
+      {
+        "name": "missing-record",
+        "operation": "http",
+        "request": {
+          "method": "GET",
+          "path": "/",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        },
+        "aws_event": {
+          "source": "apigw_v2",
+          "event": {
+            "version": "2.0",
+            "routeKey": "ANY /",
+            "rawPath": "/",
+            "rawQueryString": "",
+            "cookies": [],
+            "headers": {},
+            "queryStringParameters": null,
+            "requestContext": {
+              "http": {
+                "method": "GET",
+                "path": "/"
+              }
+            },
+            "body": "",
+            "isBase64Encoded": false
+          }
+        }
+      },
+      {
+        "name": "invalid-record",
+        "operation": "http",
+        "request": {
+          "method": "GET",
+          "path": "/invalid-record",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        },
+        "aws_event": {
+          "source": "apigw_v2",
+          "event": {
+            "version": "2.0",
+            "routeKey": "ANY /{proxy+}",
+            "rawPath": "/invalid-record",
+            "rawQueryString": "",
+            "cookies": [],
+            "headers": {},
+            "queryStringParameters": null,
+            "requestContext": {
+              "http": {
+                "method": "GET",
+                "path": "/invalid-record"
+              }
+            },
+            "body": "",
+            "isBase64Encoded": false
+          }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "secure_steps": [
+      {
+        "name": "missing-record",
+        "status": 500,
+        "error_code": "app.internal",
+        "response": {
+          "status": 500,
+          "headers": {
+            "content-type": [
+              "application/json; charset=utf-8"
+            ],
+            "x-request-id": [
+              "req_test_123"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body": {
+            "encoding": "utf8",
+            "value": "{\"error\":{\"code\":\"app.internal\",\"message\":\"internal error\",\"request_id\":\"req_test_123\",\"status_code\":500}}"
+          }
+        },
+        "resolver_calls": 0,
+        "middleware_calls": 0,
+        "handler_calls": 0
+      },
+      {
+        "name": "invalid-record",
+        "status": 500,
+        "error_code": "app.internal",
+        "response": {
+          "status": 500,
+          "headers": {
+            "content-type": [
+              "application/json; charset=utf-8"
+            ],
+            "x-request-id": [
+              "req_test_123"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body": {
+            "encoding": "utf8",
+            "value": "{\"error\":{\"code\":\"app.internal\",\"message\":\"internal error\",\"request_id\":\"req_test_123\",\"status_code\":500}}"
+          }
+        },
+        "resolver_calls": 0,
+        "middleware_calls": 0,
+        "handler_calls": 0
+      }
+    ]
+  }
+}

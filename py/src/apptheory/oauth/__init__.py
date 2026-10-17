@@ -71,6 +71,13 @@ class AuthorizationServerMetadata:
     scopes_supported: list[str] = dataclasses.field(default_factory=list)
     subject_types_supported: list[str] = dataclasses.field(default_factory=list)
     id_token_signing_alg_values_supported: list[str] = dataclasses.field(default_factory=list)
+    # RFC 9207 `iss` authorization-response advertisement (RFC 8414
+    # `authorization_response_iss_parameter_supported`). Optional and false by
+    # default, so an unset member keeps the document byte-identical and means
+    # false; only a surface that provably sends `iss` sets it. `to_json` emits
+    # the member only while the value is the boolean ``True``: ``False``, the
+    # default, and any non-boolean value all leave it out.
+    authorization_response_iss_parameter_supported: bool = False
 
     def to_json(self) -> dict[str, Any]:
         out: dict[str, Any] = {"issuer": self.issuer}
@@ -97,6 +104,12 @@ class AuthorizationServerMetadata:
             value = getattr(self, key)
             if value:
                 out[key] = list(value)
+        # The member is emitted only for the boolean ``True``; a truthy
+        # non-boolean (the string ``"true"``, the integer ``1``) must never
+        # reach the document, so this is an identity check, not a truthiness
+        # check.
+        if self.authorization_response_iss_parameter_supported is True:
+            out["authorization_response_iss_parameter_supported"] = True
         return out
 
 
@@ -707,7 +720,7 @@ def _unauthorized_response(
         "www-authenticate": [protected_resource_www_authenticate(metadata_url) if metadata_url else "Bearer"],
     }
     body = jsonlib.dumps(
-        {"error": {"code": "app.unauthorized", "message": "unauthorized"}},
+        {"error": {"code": "app.unauthorized", "message": "unauthorized", "status_code": 401}},
         separators=(",", ":"),
     ).encode("utf-8")
     return Response(
@@ -724,9 +737,9 @@ def _forbidden_response() -> Response:
         status=403,
         headers={"content-type": ["application/json; charset=utf-8"]},
         cookies=[],
-        body=jsonlib.dumps({"error": {"code": "app.forbidden", "message": "forbidden"}}, separators=(",", ":")).encode(
-            "utf-8"
-        ),
+        body=jsonlib.dumps(
+            {"error": {"code": "app.forbidden", "message": "forbidden", "status_code": 403}}, separators=(",", ":")
+        ).encode("utf-8"),
         is_base64=False,
     )
 
@@ -749,7 +762,7 @@ def _insufficient_scope_response(
         ],
     }
     body = jsonlib.dumps(
-        {"error": {"code": "app.insufficient_scope", "message": "insufficient scope"}},
+        {"error": {"code": "app.insufficient_scope", "message": "insufficient scope", "status_code": 403}},
         separators=(",", ":"),
     ).encode("utf-8")
     return Response(

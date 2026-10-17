@@ -32,7 +32,8 @@
       "body_json": {
         "error": {
           "code": "app.too_large",
-          "message": "response too large"
+          "message": "response too large",
+          "status_code": 413
         }
       },
       "is_base64": false

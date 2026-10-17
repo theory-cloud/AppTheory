@@ -4,6 +4,7 @@ import { Context, EventContext } from "./context.js";
 import type { EventMiddleware, Handler, Middleware, WebSocketClientFactory } from "./context.js";
 import { type HTTPErrorFormat } from "./http-error-format.js";
 import { type IdGenerator } from "./ids.js";
+import { type RequestIdSource } from "./request-id-source.js";
 import { generateSecureOpenAPI, type SecureOpenAPISpec } from "./secure-openapi.js";
 import { type SecurePrincipal } from "./secure-principal.js";
 import type { Headers, Request, Response } from "./types.js";
@@ -136,6 +137,7 @@ export interface SecureOptions {
     ids?: IdGenerator;
     tier?: Tier;
     httpErrorFormat?: HTTPErrorFormat;
+    requestIdSource?: RequestIdSource;
     limits?: Limits;
     cors?: CORSConfig;
     principalResolver?: SecurePrincipalResolver;
@@ -151,6 +153,7 @@ interface AppOptions {
     ids?: IdGenerator;
     tier?: Tier;
     httpErrorFormat?: HTTPErrorFormat;
+    requestIdSource?: RequestIdSource;
     limits?: Limits;
     cors?: CORSConfig;
     authHook?: AuthHook;
@@ -176,6 +179,7 @@ export declare class App {
     private readonly _ids;
     private readonly _tier;
     private readonly _httpErrorFormat;
+    private readonly _requestIdSource;
     private readonly _limits;
     private readonly _cors;
     private readonly _authHook;
@@ -333,6 +337,7 @@ export declare function createApp(options?: {
     ids?: IdGenerator;
     tier?: Tier;
     httpErrorFormat?: HTTPErrorFormat;
+    requestIdSource?: RequestIdSource;
     limits?: Limits;
     cors?: CORSConfig;
     authHook?: AuthHook;

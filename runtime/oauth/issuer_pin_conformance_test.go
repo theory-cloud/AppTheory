@@ -74,6 +74,14 @@ const metadataRegistrationGroup = "metadata_registration"
 // cannot appear without a loader.
 const authorizeProviderFailureGroup = "authorize_provider_failure"
 
+// secureAppMountGroup is the SecureApp seam's authority table: the posture every
+// facade route must declare on a closed-by-default app, the requests that must
+// still be refused or served under the application's own principal authority,
+// and the equality of the two registrars' route inventories. It is executed by
+// runtime/mcpfacade's SecureApp seam tests, not here; the ledger below still
+// lists it so a new group cannot appear without a loader.
+const secureAppMountGroup = "secure_app_mount"
+
 // fixtureGroups is every group the shared table is allowed to carry.
 var fixtureGroups = map[string]struct{}{
 	issuerPinGroup:                {},
@@ -85,6 +93,7 @@ var fixtureGroups = map[string]struct{}{
 	refreshGroup:                  {},
 	metadataRegistrationGroup:     {},
 	authorizeProviderFailureGroup: {},
+	secureAppMountGroup:           {},
 }
 
 // issuerPinCaseCount is the number of issuer_pin rows the shared fixture must

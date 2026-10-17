@@ -1833,11 +1833,17 @@ const HTTPErrorFormatFlatLegacy HTTPErrorFormat = "flat_legacy"
 
 const HTTPErrorFormatNested HTTPErrorFormat = "nested"
 
+const MaxClientRequestIDLength = 128
+
 const PrincipalExternal PrincipalKind = "external"
 
 const PrincipalInternal PrincipalKind = "internal"
 
 const RateLimitDecisionKey = "rate_limit_decision"
+
+const RequestIDSourceDefault RequestIDSource = "default"
+
+const RequestIDSourceServer RequestIDSource = "server"
 
 const SecureRouteAppSync SecureRouteSurface = "appsync"
 
@@ -1871,6 +1877,7 @@ type App struct {
 	ids              IDGenerator
 	tier             Tier
 	httpErrorFormat  HTTPErrorFormat
+	requestIDSource  RequestIDSource
 	limits           Limits
 	cors             CORSConfig
 	auth             AuthHook
@@ -2036,6 +2043,8 @@ type Context struct {
 	ws              *WebSocketContext
 	appsync         *AppSyncContext
 	securePrincipal *SecurePrincipal
+
+	clientRequestID string
 
 	values map[string]any
 }
@@ -2311,6 +2320,8 @@ type Request struct {
 	TraceID string
 }
 
+type RequestIDSource string
+
 type Response struct {
 	Status int
 
@@ -2352,6 +2363,7 @@ type SecureOptions struct {
 	IDGenerator            IDGenerator
 	Tier                   Tier
 	HTTPErrorFormat        HTTPErrorFormat
+	RequestIDSource        RequestIDSource
 	Limits                 Limits
 	CORS                   CORSConfig
 	PrincipalResolver      SecurePrincipalResolver
@@ -2493,6 +2505,8 @@ func InternalOnly() AuthPosture
 
 func IsLambda() bool
 
+func IsWellFormedClientRequestID(string) bool
+
 func JSON(int, any) (*Response, error)
 
 func JSONHandler[Req, Resp any](func(*Context, Req) (Resp, error)) Handler
@@ -2594,6 +2608,8 @@ func WithLimits(Limits) Option
 func WithObservability(ObservabilityHooks) Option
 
 func WithPolicyHook(PolicyHook) Option
+
+func WithRequestIDSource(RequestIDSource) Option
 
 func WithTenantClaim(string) Option
 
@@ -2700,6 +2716,8 @@ func (*AppTheoryError) WithTraceID(string) *AppTheoryError
 func (*Context) AsAppSync() *AppSyncContext
 
 func (*Context) AsWebSocket() *WebSocketContext
+
+func (*Context) ClientRequestID() string
 
 func (*Context) Context() context.Context
 
@@ -3865,6 +3883,8 @@ type URLMode string
 func DefaultCapabilities() Capabilities
 
 func RegisterMCPFacade(*apptheory.App, FacadeConfig) (*RouteInventory, error)
+
+func RegisterMCPFacadeSecure(*apptheory.SecureApp, FacadeConfig) (*RouteInventory, error)
 
 func (*metadataRequestError) Error() string
 
@@ -5110,6 +5130,8 @@ type AuthorizationServerMetadata struct {
 	ScopesSupported                   []string `json:"scopes_supported,omitempty"`
 	SubjectTypesSupported             []string `json:"subject_types_supported,omitempty"`
 	IDTokenSigningAlgValuesSupported  []string `json:"id_token_signing_alg_values_supported,omitempty"`
+
+	AuthorizationResponseIssParameterSupported bool `json:"authorization_response_iss_parameter_supported,omitempty"`
 }
 
 type AuthorizationServerMetadataOption func(*AuthorizationServerMetadata, *url.URL) error
@@ -6158,9 +6180,15 @@ type Handler struct {
 
 func AssertBearerTokenReachesHandler(testing.TB, *testkit.Env, *apptheory.App, string, string, string, *Handler)
 
+func AssertBearerTokenReachesHandlerSecureApp(testing.TB, *testkit.Env, *apptheory.SecureApp, string, string, string, *Handler)
+
 func AssertCredentialFreeDenied(testing.TB, *testkit.Env, *apptheory.App, string, string, string, *Handler)
 
+func AssertCredentialFreeDeniedSecureApp(testing.TB, *testkit.Env, *apptheory.SecureApp, string, string, string, *Handler)
+
 func AssertInsufficientScopeRemediation(testing.TB, *testkit.Env, *apptheory.App, string, string, string, string, *Handler)
+
+func AssertInsufficientScopeRemediationSecureApp(testing.TB, *testkit.Env, *apptheory.SecureApp, string, string, string, string, *Handler)
 
 func NewHandler() *Handler
 

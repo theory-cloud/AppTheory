@@ -5,6 +5,13 @@ import (
 )
 
 type AppTheoryHttpApiStageOptions struct {
+	// API Gateway v2 access-log format.
+	//
+	// Defaults to the AppTheory JSON format.
+	// Valid only when `accessLogging` is enabled.
+	// Default: the AppTheory JSON access-log format.
+	//
+	AccessLogFormat *string `field:"optional" json:"accessLogFormat" yaml:"accessLogFormat"`
 	// Enable CloudWatch access logging or provide a log group.
 	// Default: false.
 	//

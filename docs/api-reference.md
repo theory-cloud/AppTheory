@@ -92,7 +92,9 @@ OpenAPI functions cannot read secure posture and are unsupported for `SecureApp`
 
 HTTP error compatibility:
 
-- Default HTTP error bodies remain nested under `error`.
+- Default HTTP error bodies remain nested under `error`, and every nested body carries
+  `error.status_code` — the HTTP status of the response actually sent — on framework-emitted rejections,
+  `AppTheoryError`, legacy `AppError`, bearer denials, the WebSocket error envelope, and the nested fallback body.
 - In the default nested envelope, any error whose code string is `EMPTY_BODY` or `INVALID_JSON` is remapped to
   canonical `app.bad_request` fields; the opt-in flat legacy format preserves those Lift-era codes/messages.
 - Lift-compatible flat HTTP error bodies are opt-in:
@@ -100,6 +102,34 @@ HTTP error compatibility:
   - TypeScript: `createApp({ httpErrorFormat: HTTP_ERROR_FORMAT_FLAT_LEGACY })`
   - Python: `create_app(http_error_format=HTTP_ERROR_FORMAT_FLAT_LEGACY)`
 - This setting applies to HTTP serialization only. AppSync and WebSocket error payloads keep their existing shapes.
+
+Request ID source:
+
+- By default the HTTP runtime honors a client-supplied `x-request-id` header, falls back to the invocation request
+  ID where the surface supplies one, and otherwise generates an ID. The resolved value reaches the handler context,
+  the nested `error.request_id` envelope field, the `x-request-id` response header, and the P2 observability records.
+- A client value is used only when it is well-formed: after trimming leading and trailing whitespace it is 1 to 128
+  characters long and every character is visible ASCII (`0x21`–`0x7E`). The limit and character set are framework
+  constants, not configuration. A malformed value (over 128 characters, or containing a space, control character, or
+  non-ASCII character) is ignored as if the header were absent.
+- Applications whose contract requires a server-issued (caller-cannot-choose) request ID opt in:
+  - Go: `apptheory.WithRequestIDSource(apptheory.RequestIDSourceServer)` or
+    `apptheory.NewSecure(apptheory.SecureOptions{RequestIDSource: apptheory.RequestIDSourceServer})`
+  - TypeScript: `createApp({ requestIdSource: REQUEST_ID_SOURCE_SERVER })` or
+    `new SecureApp({ requestIdSource: REQUEST_ID_SOURCE_SERVER })`
+  - Python: `create_app(request_id_source=REQUEST_ID_SOURCE_SERVER)` or
+    `SecureApp(request_id_source=REQUEST_ID_SOURCE_SERVER)`
+- In server-issued mode the client `x-request-id` header is never used as the request identity; resolution uses the
+  fallback request ID, else a generated ID. The option is additive: the default resolution order is unchanged.
+- The well-formed client value is readable from the request context in both modes and is empty when the header is
+  absent or malformed: Go `ctx.ClientRequestID()`, TypeScript `ctx.clientRequestId`, Python `ctx.client_request_id`.
+  It is client-supplied and untrusted — identity and correlation only, never authorization. No log field carries it,
+  and the raw request headers are not rewritten.
+- The shape predicate is exported per runtime: Go `apptheory.IsWellFormedClientRequestID` and
+  `apptheory.MaxClientRequestIDLength`, TypeScript `isWellFormedClientRequestId` and
+  `MAX_CLIENT_REQUEST_ID_LENGTH`, Python `is_well_formed_client_request_id` and `MAX_CLIENT_REQUEST_ID_LENGTH`.
+- The setting covers the HTTP and AppSync resolution sites (AppSync forwards `event.request.headers`) in all three
+  runtimes. WebSocket and the non-HTTP event sources never read a client request ID and are unchanged.
 
 ## HTTP source provenance
 
@@ -589,7 +619,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>1162 exported top-level symbols</summary>
+<summary>1172 exported top-level symbols</summary>
 
 ```text
 AccountAssertion, AccountAssertionAssumeFailed, AccountAssertionMismatch, AccountAssertionNotConfigured, AccountAssertionState, AccountAssertionUnavailable,
@@ -597,7 +627,7 @@ AccountAssertionVerified, AcquireLeaseInput, AcquireSemaphoreSlotInput, AgentMCP
 AppError, AppSyncContext, AppSyncEvent, AppSyncEventOptions, AppSyncResolverEvent, AppSyncResolverInfo, AppSyncResolverRequest, AppTheoryError, AppTheoryErrorFromAppError,
 ArtifactEntry, ArtifactVerificationArchiveInvalid, ArtifactVerificationDigestMismatch, ArtifactVerificationInvalidRequest, ArtifactVerificationState,
 ArtifactVerificationUnavailable, ArtifactVerificationVerified, ArtifactVerificationVersionMismatch, ArtifactVerificationVersionRequired, AsAppTheoryError, AsProviderError,
-AssertAccount, AssertBearerTokenReachesHandler, AssertCredentialFreeDenied, AssertError, AssertHasTools, AssertInsufficientScopeRemediation, AssertToolResult, AssumeFirst,
+AssertAccount, AssertBearerTokenReachesHandler, AssertBearerTokenReachesHandlerSecureApp, AssertCredentialFreeDenied, AssertCredentialFreeDeniedSecureApp, AssertError, AssertHasTools, AssertInsufficientScopeRemediation, AssertInsufficientScopeRemediationSecureApp, AssertToolResult, AssumeFirst,
 AssumeFirstResult, AssumeRoleAPI, AssumeRoleRequest, AtomicRateLimiter, AuthContext, Authenticated, AuthenticatedAnyOf, AutheoryProvider, AutheoryProviderOptions,
 AuthHook, AuthoritativeOriginURL, AuthorizationAuthorizePathForResourcePath, AuthorizationCodeRecord, AuthorizationCodeStore, AuthorizationCodeStoreOptions,
 AuthorizationRegisterPathForResourcePath, AuthorizationRequest, AuthorizationServerMetadata, AuthorizationServerMetadataHandler, AuthorizationServerMetadataOption,
@@ -652,7 +682,7 @@ HookPrepareImage, HookReadiness, HookReady, HookResume, HookRun, HooksFromEMFMet
 HookStart, HookStop, HookSuspend, HookTeardown, HookTerminate, HookValidate, HTML, HTMLStream, HTTPErrorFormat, HTTPErrorFormatFlatLegacy, HTTPErrorFormatNested,
 HTTPEventOptions, Icon, IdempotencyCreateOutcome, IdempotencyOutcomeAlreadyCompleted, IdempotencyOutcomeAlreadyInProgress, IdempotencyOutcomeCreated, IdempotencyStatus,
 IdempotencyStatusCompleted, IdempotencyStatusInProgress, IdentifierKey, IDGenerator, IdGenerator, InitializeRequest, InitialSessionListenerBudgetOptions, InputRequest,
-InputRequiredResult, InspectSemaphoreInput, InsufficientScopeWWWAuthenticate, InternalOnly, IsLambda, IssuerMode, IssuerModeFamily, IssuerModeRoute, IsTerminalState,
+InputRequiredResult, InspectSemaphoreInput, InsufficientScopeWWWAuthenticate, InternalOnly, IsLambda, IssuerMode, IssuerModeFamily, IssuerModeRoute, IsTerminalState, IsWellFormedClientRequestID,
 JobLedger, JobLock, JobLockSortKey, JobMeta, JobMetaSortKey, JobPartitionKey, JobRecord, JobRecordSortKey, JobRequest, JobRequestSortKey, JobStatus, JobStatusCanceled,
 JobStatusFailed, JobStatusPending, JobStatusRunning, JobStatusSucceeded, JSON, JWKSValidatorOptions, KindControllerSession, KindLifecycle,
 KinesisCloudWatchLogsSubscriptionRecord, KinesisCloudWatchLogsSubscriptionRecordOptions, KinesisEvent, KinesisEventOptions, KinesisHandler, KinesisJSONRecord,
@@ -665,7 +695,7 @@ LoggingProfileAlertingHints, LoggingProfileCatalog, LoggingProfileCloudWatchJSON
 LoggingProfileError, LoggingProfileErrorCapture, LoggingProfileEvent, LoggingProfileJobContext, LoggingProfileLegacy, LoggingProfileLocalDev,
 LoggingProfilePayTheoryAlertV1, LoggingProfileRequestContext, LoggingProfileSanitization, LoggingProfileSchemaVersion, LoggingProfileValidationError,
 LoggingProfileValidationErrors, LogRecord, ManualClock, ManualIDGenerator, MapProviderState, MarshalResponse, MaskCardNumber, MaskCompletelyFunc, MaskFirstLast,
-MaskFirstLast4, MaskTokenLastFour, MatchesIfNoneMatch, MaxPresignPutExpiresIn, MaxPutDeleteBatchSize, MaxQueryTopK, MaxVersionedArtifactBytes, MaxVersionedArtifactEntries,
+MaskFirstLast4, MaskTokenLastFour, MatchesIfNoneMatch, MaxClientRequestIDLength, MaxPresignPutExpiresIn, MaxPutDeleteBatchSize, MaxQueryTopK, MaxVersionedArtifactBytes, MaxVersionedArtifactEntries,
 MCPPath, MCPServerConfig, MemoryAuthorizationCodeStore, MemoryClientStore, MemoryEventBus, MemoryRateLimitStore, MemoryRefreshTokenStore, MemoryRouteRefreshBrokerStore,
 MemorySessionRegistry, MemorySessionStore, MemorySessionStoreOption, MemoryStreamStore, MemoryStreamStoreOption, MemoryTaskStore, MemoryTransactionStore, MetricRecord,
 Middleware, MultiWindowStrategy, MustJSON, MustSSEResponse, NamespaceMCPPattern, New, NewAppTheoryError, NewAutheoryProvider, NewAuthorizationServerMetadata,
@@ -697,8 +727,8 @@ QueryInput, RandomIDGenerator, RandomIdGenerator, RapidConnectXMLPatterns, RateL
 RateLimiter, RateLimitKey, RateLimitLimited, RateLimitMiddleware, RateLimitResult, RateLimitStore, RateLimitStoreOptions, RateLimitStrategy, RateLimitWindow, RawJSON,
 ReadResourceRequest, ReadSSEMessage, RealClock, ReconstructingSessionRegistry, ReconstructSessionRecord, RecordStatus, RecordStatusFailed, RecordStatusPending,
 RecordStatusProcessing, RecordStatusSkipped, RecordStatusSucceeded, RefreshLeaseInput, RefreshRequest, RefreshSemaphoreSlotInput, RefreshStage, RefreshTokenRecord, RefreshTokenStore,
-RegisterControllerRoutes, RegisterMCPFacade, RegisterMCPServer, RegisterMicroVMControllerRoutes, RegistryClient, RegistryClientOption, RelatedTaskMetadata,
-ReleaseLeaseInput, ReleaseSemaphoreSlotInput, ReportKinesisPutRecordsFailures, Request, RequireAnyScope, RequireAuth, RequireBearerTokenMiddleware,
+RegisterControllerRoutes, RegisterMCPFacade, RegisterMCPFacadeSecure, RegisterMCPServer, RegisterMicroVMControllerRoutes, RegistryClient, RegistryClientOption, RelatedTaskMetadata,
+ReleaseLeaseInput, ReleaseSemaphoreSlotInput, ReportKinesisPutRecordsFailures, Request, RequestIDSource, RequestIDSourceDefault, RequestIDSourceServer, RequireAnyScope, RequireAuth, RequireBearerTokenMiddleware,
 RequireBearerTokenOptions, RequiredForbiddenOperationFields, RequiredOperations, RequireEventBridgeWorkloadEnvelope, RequireScope, ResourceContent, ResourceDef,
 ResourceHandler, ResourceMetadataURLFromMcpEndpoint, ResourceName, ResourcePathFromProtectedResourcePath, ResourceRegistry, ResourceSubscription, ResourceSubscriptionHook,
 ResourceTemplateDef, Response, ResultType, ResultTypeComplete, ResultTypeInputRequired, RFC9728ResourceMetadataURL, RootDiscoveryConfig, Route, RouteInventory,
@@ -736,7 +766,7 @@ WithClock, WithCompletionHooks, WithControllerClock, WithControllerDeploymentDef
 WithControllerLogging, WithControllerProviderID, WithControllerSessionTTL, WithCORS, WithDeviceAuthorizationEndpoint, WithDynamoStreamSpillEncryption, WithEMFClock,
 WithEMFNamespace, WithEMFService, WithEMFWriter, WithEnvironmentErrorNotifications, WithErrorNotifier, WithExtensionCapabilities, WithHTTPErrorFormat, WithIdentifier,
 WithIDGenerator, WithInitialSessionListenerBudget, WithLegacyHTTPErrorShape, WithLifecycleContract, WithLifecycleHandler, WithLimits, WithLogger, WithLoggingLevelHook,
-WithObservability, WithOriginValidator, WithPolicyHook, WithProfileClock, WithProfileEnvironment, WithProfileSanitizer, WithProfileWriter, WithRegistryClientTTL,
+WithObservability, WithOriginValidator, WithPolicyHook, WithProfileClock, WithProfileEnvironment, WithProfileSanitizer, WithProfileWriter, WithRegistryClientTTL, WithRequestIDSource,
 WithResourceSubscriptionHooks, WithRevocationEndpoint, WithSanitizer, WithServerIDGenerator, WithServerInfoMetadata, WithSessionReconstructionClock,
 WithSessionReconstructionStaleAfter, WithSessionStore, WithStreamIDGenerator, WithStreamStore, WithTaskRuntime, WithTenantClaim, WithTier, WithToolContextHook,
 WithWebSocketClientFactory, WithWebSocketSupport, WithZapLogger, WrapError, XMLSanitizationPattern

@@ -116,7 +116,9 @@ function assertStreamingError(response, message) {
   assert.equal(response.statusCode, 500);
   assert.match(response.headers["content-type"] ?? "", /^application\/json/);
   const body = JSON.parse(response.body);
-  assert.deepEqual(body, { error: { code: "app.internal", message } });
+  assert.deepEqual(body, {
+    error: { code: "app.internal", message, status_code: 500 },
+  });
 }
 
 // assertStreamingTooLarge asserts the size-semantics denial shape: a streaming
@@ -127,7 +129,7 @@ function assertStreamingTooLarge(response) {
   assert.match(response.headers["content-type"] ?? "", /^application\/json/);
   const body = JSON.parse(response.body);
   assert.deepEqual(body, {
-    error: { code: "app.too_large", message: "response too large" },
+    error: { code: "app.too_large", message: "response too large", status_code: 413 },
   });
 }
 
@@ -364,4 +366,5 @@ test("serveWebSocket fails closed on a dual-body response", async () => {
   assert.equal(error.code, "app.internal");
   assert.equal(error.message, "internal error");
   assert.equal(error.request_id, "req_ws_dual_1");
+  assert.equal(error.status_code, 500);
 });

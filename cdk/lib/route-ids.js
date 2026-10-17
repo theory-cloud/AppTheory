@@ -1,0 +1,27 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.semanticRouteToken = semanticRouteToken;
+exports.semanticRouteConstructId = semanticRouteConstructId;
+/**
+ * Semantic route-construct-id derivation shared by `AppTheoryHttpApi` and the
+ * semantic `routeIdMode` of `AppTheoryMcpServer`.
+ *
+ * The id is a pure function of the route method and pattern, so inserting,
+ * removing, or reordering a route never renames an unrelated route. That
+ * stability is what lets a task land as an in-place stack update instead of the
+ * create-before-delete collision a positional counter produces.
+ *
+ * Internal to the package: it is not part of the exported jsii surface.
+ */
+function semanticRouteToken(value) {
+    const parts = String(value).split(/[^A-Za-z0-9]+/).filter((part) => part !== "");
+    if (parts.length === 0) {
+        return "Root";
+    }
+    return parts.map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join("");
+}
+/** Construct id for a route, derived from its method and pattern. */
+function semanticRouteConstructId(method, pattern) {
+    return `Route${semanticRouteToken(method)}${semanticRouteToken(pattern)}`;
+}
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoicm91dGUtaWRzLmpzIiwic291cmNlUm9vdCI6IiIsInNvdXJjZXMiOlsicm91dGUtaWRzLnRzIl0sIm5hbWVzIjpbXSwibWFwcGluZ3MiOiI7O0FBV0EsZ0RBTUM7QUFHRCw0REFFQztBQXRCRDs7Ozs7Ozs7OztHQVVHO0FBQ0gsU0FBZ0Isa0JBQWtCLENBQUMsS0FBYTtJQUM5QyxNQUFNLEtBQUssR0FBRyxNQUFNLENBQUMsS0FBSyxDQUFDLENBQUMsS0FBSyxDQUFDLGVBQWUsQ0FBQyxDQUFDLE1BQU0sQ0FBQyxDQUFDLElBQUksRUFBRSxFQUFFLENBQUMsSUFBSSxLQUFLLEVBQUUsQ0FBQyxDQUFDO0lBQ2pGLElBQUksS0FBSyxDQUFDLE1BQU0sS0FBSyxDQUFDLEVBQUUsQ0FBQztRQUN2QixPQUFPLE1BQU0sQ0FBQztJQUNoQixDQUFDO0lBQ0QsT0FBTyxLQUFLLENBQUMsR0FBRyxDQUFDLENBQUMsSUFBSSxFQUFFLEVBQUUsQ0FBQyxJQUFJLENBQUMsTUFBTSxDQUFDLENBQUMsQ0FBQyxDQUFDLFdBQVcsRUFBRSxHQUFHLElBQUksQ0FBQyxLQUFLLENBQUMsQ0FBQyxDQUFDLENBQUMsQ0FBQyxJQUFJLENBQUMsRUFBRSxDQUFDLENBQUM7QUFDcEYsQ0FBQztBQUVELHFFQUFxRTtBQUNyRSxTQUFnQix3QkFBd0IsQ0FBQyxNQUFjLEVBQUUsT0FBZTtJQUN0RSxPQUFPLFFBQVEsa0JBQWtCLENBQUMsTUFBTSxDQUFDLEdBQUcsa0JBQWtCLENBQUMsT0FBTyxDQUFDLEVBQUUsQ0FBQztBQUM1RSxDQUFDIiwic291cmNlc0NvbnRlbnQiOlsiLyoqXG4gKiBTZW1hbnRpYyByb3V0ZS1jb25zdHJ1Y3QtaWQgZGVyaXZhdGlvbiBzaGFyZWQgYnkgYEFwcFRoZW9yeUh0dHBBcGlgIGFuZCB0aGVcbiAqIHNlbWFudGljIGByb3V0ZUlkTW9kZWAgb2YgYEFwcFRoZW9yeU1jcFNlcnZlcmAuXG4gKlxuICogVGhlIGlkIGlzIGEgcHVyZSBmdW5jdGlvbiBvZiB0aGUgcm91dGUgbWV0aG9kIGFuZCBwYXR0ZXJuLCBzbyBpbnNlcnRpbmcsXG4gKiByZW1vdmluZywgb3IgcmVvcmRlcmluZyBhIHJvdXRlIG5ldmVyIHJlbmFtZXMgYW4gdW5yZWxhdGVkIHJvdXRlLiBUaGF0XG4gKiBzdGFiaWxpdHkgaXMgd2hhdCBsZXRzIGEgdGFzayBsYW5kIGFzIGFuIGluLXBsYWNlIHN0YWNrIHVwZGF0ZSBpbnN0ZWFkIG9mIHRoZVxuICogY3JlYXRlLWJlZm9yZS1kZWxldGUgY29sbGlzaW9uIGEgcG9zaXRpb25hbCBjb3VudGVyIHByb2R1Y2VzLlxuICpcbiAqIEludGVybmFsIHRvIHRoZSBwYWNrYWdlOiBpdCBpcyBub3QgcGFydCBvZiB0aGUgZXhwb3J0ZWQganNpaSBzdXJmYWNlLlxuICovXG5leHBvcnQgZnVuY3Rpb24gc2VtYW50aWNSb3V0ZVRva2VuKHZhbHVlOiBzdHJpbmcpOiBzdHJpbmcge1xuICBjb25zdCBwYXJ0cyA9IFN0cmluZyh2YWx1ZSkuc3BsaXQoL1teQS1aYS16MC05XSsvKS5maWx0ZXIoKHBhcnQpID0+IHBhcnQgIT09IFwiXCIpO1xuICBpZiAocGFydHMubGVuZ3RoID09PSAwKSB7XG4gICAgcmV0dXJuIFwiUm9vdFwiO1xuICB9XG4gIHJldHVybiBwYXJ0cy5tYXAoKHBhcnQpID0+IHBhcnQuY2hhckF0KDApLnRvVXBwZXJDYXNlKCkgKyBwYXJ0LnNsaWNlKDEpKS5qb2luKFwiXCIpO1xufVxuXG4vKiogQ29uc3RydWN0IGlkIGZvciBhIHJvdXRlLCBkZXJpdmVkIGZyb20gaXRzIG1ldGhvZCBhbmQgcGF0dGVybi4gKi9cbmV4cG9ydCBmdW5jdGlvbiBzZW1hbnRpY1JvdXRlQ29uc3RydWN0SWQobWV0aG9kOiBzdHJpbmcsIHBhdHRlcm46IHN0cmluZyk6IHN0cmluZyB7XG4gIHJldHVybiBgUm91dGUke3NlbWFudGljUm91dGVUb2tlbihtZXRob2QpfSR7c2VtYW50aWNSb3V0ZVRva2VuKHBhdHRlcm4pfWA7XG59XG4iXX0=

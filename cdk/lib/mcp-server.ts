@@ -10,7 +10,12 @@ import * as route53 from "aws-cdk-lib/aws-route53";
 import { Construct } from "constructs";
 
 import { AppTheoryMcpRouteAlgebra } from "./mcp-route-algebra";
+import { buildCorsPreflight } from "./cors";
+import type { AppTheoryHttpApiCorsOptions } from "./http-api";
+import { semanticRouteConstructId } from "./route-ids";
 
+const CONSOLIDATED_ROOT_ROUTE_ID = "RouteAnyRoot";
+const CONSOLIDATED_PROXY_ROUTE_ID = "RouteAnyProxy";
 const DEFAULT_THROTTLING_RATE_LIMIT = 100;
 const DEFAULT_THROTTLING_BURST_LIMIT = 200;
 const DEFAULT_SESSION_TTL_MINUTES = 60;
@@ -19,6 +24,44 @@ const MCP_TRANSPORT_POSTURE_METADATA_KEY = "apptheory:mcp-transport-posture";
 const MCP_TRANSPORT_POSTURE_CONTRACT_ID = "m17.mcp-transport-posture/v1";
 const MCP_DENIAL_METRIC_NAME = "apptheory.mcp.auth_denied";
 const MCP_DENIAL_DIMENSIONS = ["outcome", "route_family"];
+
+/** Route-emission model for AppTheoryMcpServer. */
+export enum AppTheoryMcpRouteModel {
+  /**
+   * One API Gateway HTTP API v2 route per derived route key. This is the
+   * construct's historical inventory and stays byte-identical for deployed
+   * stacks, so a `routeModel: explicit` upgrade deploys in place. The default.
+   */
+  EXPLICIT = "explicit",
+  /**
+   * Two greedy routes, `ANY /` and `ANY /{proxy+}`, backed by one shared
+   * integration. The AppTheory runtime router performs method and path
+   * dispatch, path-parameter capture, and denial. Consolidation never changes
+   * gateway admission, so it is valid only when every gateway route is `NONE`:
+   * the `runtime-bearer` and `none-public` transport postures. `iam` and `jwt`
+   * are refused at synthesis time.
+   */
+  CONSOLIDATED = "consolidated",
+}
+
+/** Construct-id derivation for the explicit route model. */
+export enum AppTheoryMcpRouteIdMode {
+  /**
+   * Positional ids (`Route0`, `Route1`, ...) assigned in emission order. This
+   * is the construct's historical inventory and stays byte-identical for
+   * deployed stacks. The default.
+   */
+  LEGACY = "legacy",
+  /**
+   * Ids derived from the route method and pattern, so inserting, removing, or
+   * reordering a route family never renames an unrelated route. Intended for
+   * newly created explicit APIs: switching an existing deployed explicit API
+   * from `legacy` to `semantic` in place renames every route, which is itself a
+   * create-before-delete collision. Adopt it on an existing stack only through
+   * the new-API swap described in `UPGRADING.md`.
+   */
+  SEMANTIC = "semantic",
+}
 
 /** Transport-route authorization posture for AppTheoryMcpServer. */
 export enum AppTheoryMcpTransportPosture {
@@ -239,6 +282,61 @@ export interface AppTheoryMcpServerProps {
   readonly scopePermissionToRoute?: boolean;
 
   /**
+   * Route-emission model.
+   *
+   * `explicit` (the default) wires the full derived route inventory as one HTTP
+   * API v2 route per route key and is byte-stable for deployed stacks.
+   * `consolidated` wires exactly two greedy routes, `ANY /` and `ANY /{proxy+}`,
+   * and is valid only for the `runtime-bearer` and `none-public` transport
+   * postures; `iam` and `jwt` are refused at synthesis.
+   *
+   * Consolidated mode is allowed on a construct-owned API, or on an attached
+   * API that has no routes at attach time. "No routes" is enforced over the
+   * whole stack, not just the API's own children: a route wired onto the
+   * attached API from any sibling construct scope is refused, because it holds
+   * a route key the greedy routes would collide with.
+   *
+   * A consumer may still add explicit, more specific routes to the consolidated
+   * API afterwards, in either the attached or the construct-owned mode. That
+   * exception is enforced at synthesis time and is allowed only when the added
+   * route carries a non-NONE authorizer and does not redeclare the greedy
+   * `ANY /` or `ANY /{proxy+}` key. Within it, a full method+path match beats the
+   * greedy routes by API Gateway precedence, and a wrong-method hit on such a
+   * path falls to the runtime's fail-closed 404/405.
+   * @default AppTheoryMcpRouteModel.EXPLICIT
+   */
+  readonly routeModel?: AppTheoryMcpRouteModel;
+
+  /**
+   * Construct-id derivation for the explicit route model.
+   *
+   * `legacy` (the default) assigns positional ids in emission order and is
+   * byte-stable for deployed stacks. `semantic` derives each id from its route
+   * method and pattern, so inserting, removing, or reordering a route family
+   * never renames an unrelated route; it is intended for newly created explicit
+   * APIs.
+   *
+   * Switching an existing deployed explicit API from `legacy` to `semantic` in
+   * place renames every route in one update, which is exactly the
+   * create-before-delete route-key collision the migration check refuses. Adopt
+   * `semantic` on an existing stack only through the new-API swap documented in
+   * `UPGRADING.md`.
+   *
+   * This prop applies to `routeModel: explicit` only. The `consolidated` model
+   * already emits the two fixed semantic ids `RouteAnyRoot` and `RouteAnyProxy`.
+   * @default AppTheoryMcpRouteIdMode.LEGACY
+   */
+  readonly routeIdMode?: AppTheoryMcpRouteIdMode;
+
+  /**
+   * CORS preflight for a construct-owned API. Set to `true` for AppTheory
+   * defaults or supply an `AppTheoryHttpApiCorsOptions` object. Invalid in
+   * attach mode, where the owning API configures CORS.
+   * @default undefined
+   */
+  readonly cors?: boolean | AppTheoryHttpApiCorsOptions;
+
+  /**
    * Existing HTTP API to attach to. Attach mode is the primary front-door
    * topology and never creates an `AWS::ApiGatewayV2::Api` resource.
    * @default a construct-owned HttpApi
@@ -409,6 +507,8 @@ export interface AppTheoryMcpServerProps {
  */
 export class AppTheoryMcpServer extends Construct {
   private routeSequence = 0;
+  private routeIdMode = AppTheoryMcpRouteIdMode.LEGACY;
+  private readonly routeIds = new Set<string>();
 
   public readonly api: apigwv2.IHttpApi;
   public readonly ownedApi?: apigwv2.HttpApi;
@@ -472,6 +572,13 @@ export class AppTheoryMcpServer extends Construct {
     validateFacadeAttachment(props.facade);
     validatePostureGuards(props, routeFamily, posture);
     validateDefenseInDepth(props, posture);
+    const routeModel = resolveRouteModel(props);
+    validateRouteModelPosture(routeModel, posture);
+    const routeIdMode = resolveRouteIdMode(props);
+    this.routeIdMode = routeIdMode;
+    if (routeModel === AppTheoryMcpRouteModel.CONSOLIDATED && props.api !== undefined) {
+      assertConsolidatedAttachAllowed(this, props.api);
+    }
     const authorizationRoutesAttached = posture !== AppTheoryMcpTransportPosture.NONE_PUBLIC;
     const upstreamCallbackPath = resolveUpstreamCallbackPath(props);
 
@@ -500,6 +607,7 @@ export class AppTheoryMcpServer extends Construct {
       ownedStageName = stageOptions.stageName;
       const api = new apigwv2.HttpApi(this, "Api", {
         apiName: ownedOptions.apiName,
+        corsPreflight: buildCorsPreflight(props.cors),
         createDefaultStage: false,
       });
       (this as { ownedApi?: apigwv2.HttpApi }).ownedApi = api;
@@ -540,43 +648,59 @@ export class AppTheoryMcpServer extends Construct {
       },
     );
     const transportAuthorizer = resolveTransportAuthorizer(props, posture);
-    const runtimeOwnedAuth = new apigwv2.HttpNoneAuthorizer();
     let firstTransportRoute: apigwv2.HttpRoute | undefined;
-    for (const route of this.routeInventory.routes) {
-      for (const method of route.mcpMethods) {
-        const created = this.addRuntimeRoute(
-          route.mcpPattern,
-          toHttpMethod(method),
-          integration,
-          transportAuthorizer,
-        );
-        firstTransportRoute = firstTransportRoute ?? created;
+    if (routeModel === AppTheoryMcpRouteModel.CONSOLIDATED) {
+      firstTransportRoute = this.addConsolidatedRoute(
+        CONSOLIDATED_ROOT_ROUTE_ID,
+        "/",
+        integration,
+        transportAuthorizer,
+      );
+      const proxyRoute = this.addConsolidatedRoute(
+        CONSOLIDATED_PROXY_ROUTE_ID,
+        "/{proxy+}",
+        integration,
+        transportAuthorizer,
+      );
+      registerConsolidatedAttachValidation(this, this.api, [firstTransportRoute, proxyRoute]);
+    } else {
+      const runtimeOwnedAuth = new apigwv2.HttpNoneAuthorizer();
+      for (const route of this.routeInventory.routes) {
+        for (const method of route.mcpMethods) {
+          const created = this.addRuntimeRoute(
+            route.mcpPattern,
+            toHttpMethod(method),
+            integration,
+            transportAuthorizer,
+          );
+          firstTransportRoute = firstTransportRoute ?? created;
+        }
+        if (authorizationRoutesAttached) {
+          this.addRuntimeRoute(route.protectedResourcePattern, apigwv2.HttpMethod.GET, integration, runtimeOwnedAuth);
+          this.addRuntimeRoute(route.discoveryCanonicalPattern, apigwv2.HttpMethod.GET, integration, runtimeOwnedAuth);
+          this.addRuntimeRoute(route.discoverySuffixPattern, apigwv2.HttpMethod.GET, integration, runtimeOwnedAuth);
+          this.addRuntimeRoute(route.authorizePattern, apigwv2.HttpMethod.GET, integration, runtimeOwnedAuth);
+          this.addRuntimeRoute(route.tokenPattern, apigwv2.HttpMethod.POST, integration, runtimeOwnedAuth);
+          this.addRuntimeRoute(route.registerPattern, apigwv2.HttpMethod.POST, integration, runtimeOwnedAuth);
+        }
       }
+      // The upstream callback is stage-global, not per kind: wire it exactly once.
       if (authorizationRoutesAttached) {
-        this.addRuntimeRoute(route.protectedResourcePattern, apigwv2.HttpMethod.GET, integration, runtimeOwnedAuth);
-        this.addRuntimeRoute(route.discoveryCanonicalPattern, apigwv2.HttpMethod.GET, integration, runtimeOwnedAuth);
-        this.addRuntimeRoute(route.discoverySuffixPattern, apigwv2.HttpMethod.GET, integration, runtimeOwnedAuth);
-        this.addRuntimeRoute(route.authorizePattern, apigwv2.HttpMethod.GET, integration, runtimeOwnedAuth);
-        this.addRuntimeRoute(route.tokenPattern, apigwv2.HttpMethod.POST, integration, runtimeOwnedAuth);
-        this.addRuntimeRoute(route.registerPattern, apigwv2.HttpMethod.POST, integration, runtimeOwnedAuth);
+        this.addRuntimeRoute(
+          this.routeInventory.callbackPattern,
+          apigwv2.HttpMethod.GET,
+          integration,
+          runtimeOwnedAuth,
+        );
       }
-    }
-    // The upstream callback is stage-global, not per kind: wire it exactly once.
-    if (authorizationRoutesAttached) {
-      this.addRuntimeRoute(
-        this.routeInventory.callbackPattern,
-        apigwv2.HttpMethod.GET,
-        integration,
-        runtimeOwnedAuth,
-      );
-    }
-    if (this.routeInventory.rootAuthorizationServerAttached) {
-      this.addRuntimeRoute(
-        this.routeInventory.rootAuthorizationServerPattern,
-        apigwv2.HttpMethod.GET,
-        integration,
-        runtimeOwnedAuth,
-      );
+      if (this.routeInventory.rootAuthorizationServerAttached) {
+        this.addRuntimeRoute(
+          this.routeInventory.rootAuthorizationServerPattern,
+          apigwv2.HttpMethod.GET,
+          integration,
+          runtimeOwnedAuth,
+        );
+      }
     }
 
     const postureMarkerTarget = (this.ownedApi?.node.defaultChild
@@ -635,9 +759,37 @@ export class AppTheoryMcpServer extends Construct {
     integration: apigwv2Integrations.HttpLambdaIntegration,
     authorizer: apigwv2.IHttpRouteAuthorizer,
   ): apigwv2.HttpRoute {
-    return new apigwv2.HttpRoute(this, `Route${this.routeSequence++}`, {
+    return new apigwv2.HttpRoute(this, this.nextRouteConstructId(method, path), {
       httpApi: this.api,
       routeKey: apigwv2.HttpRouteKey.with(path, method),
+      integration,
+      authorizer,
+    });
+  }
+
+  private nextRouteConstructId(method: apigwv2.HttpMethod, path: string): string {
+    if (this.routeIdMode !== AppTheoryMcpRouteIdMode.SEMANTIC) {
+      return `Route${this.routeSequence++}`;
+    }
+    const id = semanticRouteConstructId(method, path);
+    if (this.routeIds.has(id)) {
+      throw new Error(
+        `AppTheoryMcpServer: routeIdMode semantic derives the duplicate route construct id ${id} for route key ${method} ${path}`,
+      );
+    }
+    this.routeIds.add(id);
+    return id;
+  }
+
+  private addConsolidatedRoute(
+    id: string,
+    path: string,
+    integration: apigwv2Integrations.HttpLambdaIntegration,
+    authorizer: apigwv2.IHttpRouteAuthorizer,
+  ): apigwv2.HttpRoute {
+    return new apigwv2.HttpRoute(this, id, {
+      httpApi: this.api,
+      routeKey: apigwv2.HttpRouteKey.with(path, apigwv2.HttpMethod.ANY),
       integration,
       authorizer,
     });
@@ -879,6 +1031,7 @@ function validateOwningMode(props: AppTheoryMcpServerProps): void {
   const invalid: string[] = [];
   if (props.ownedApi !== undefined) invalid.push("ownedApi");
   if (props.apiName !== undefined) invalid.push("apiName");
+  if (props.cors !== undefined) invalid.push("cors");
   if (props.domain !== undefined) invalid.push("domain");
   if (props.stage !== undefined) invalid.push("stage");
   if (invalid.length !== 0) {
@@ -1078,6 +1231,165 @@ function validateTransportPosture(posture: AppTheoryMcpTransportPosture): void {
         "AppTheoryMcpServer: transportPosture must be AppTheoryMcpTransportPosture.IAM, .JWT, .RUNTIME_BEARER, or .NONE_PUBLIC",
       );
   }
+}
+
+function resolveRouteModel(props: AppTheoryMcpServerProps): AppTheoryMcpRouteModel {
+  const configured = props.routeModel;
+  if (configured === undefined) {
+    return AppTheoryMcpRouteModel.EXPLICIT;
+  }
+  if (
+    configured === AppTheoryMcpRouteModel.EXPLICIT
+    || configured === AppTheoryMcpRouteModel.CONSOLIDATED
+  ) {
+    return configured;
+  }
+  throw new Error(
+    "AppTheoryMcpServer: routeModel must be AppTheoryMcpRouteModel.EXPLICIT or .CONSOLIDATED",
+  );
+}
+
+function validateRouteModelPosture(
+  routeModel: AppTheoryMcpRouteModel,
+  posture: AppTheoryMcpTransportPosture,
+): void {
+  if (
+    routeModel === AppTheoryMcpRouteModel.CONSOLIDATED
+    && posture !== AppTheoryMcpTransportPosture.RUNTIME_BEARER
+    && posture !== AppTheoryMcpTransportPosture.NONE_PUBLIC
+  ) {
+    throw new Error(
+      `AppTheoryMcpServer: routeModel consolidated is only valid for transportPosture RUNTIME_BEARER or NONE_PUBLIC; transportPosture ${postureLabel(posture)} keeps the explicit route model because consolidation must never change gateway admission`,
+    );
+  }
+}
+
+function resolveRouteIdMode(props: AppTheoryMcpServerProps): AppTheoryMcpRouteIdMode {
+  const configured = props.routeIdMode;
+  if (configured === undefined) {
+    return AppTheoryMcpRouteIdMode.LEGACY;
+  }
+  if (
+    configured === AppTheoryMcpRouteIdMode.LEGACY
+    || configured === AppTheoryMcpRouteIdMode.SEMANTIC
+  ) {
+    return configured;
+  }
+  throw new Error(
+    "AppTheoryMcpServer: routeIdMode must be AppTheoryMcpRouteIdMode.LEGACY or .SEMANTIC",
+  );
+}
+
+/**
+ * The two greedy route keys a consolidated model owns. A consumer route that
+ * redeclares one of them would make the API reject the update.
+ */
+const CONSOLIDATED_GREEDY_ROUTE_KEYS = new Set(["ANY /", "ANY /{proxy+}"]);
+
+/**
+ * Resolve an `ApiId` (or any template value) to a comparable string, so a
+ * `Ref` token and its logical id compare equal across two templates of the same
+ * stack.
+ */
+function comparableApiId(scope: Construct, value: unknown): string {
+  return JSON.stringify(Stack.of(scope).resolve(value));
+}
+
+/**
+ * Every API Gateway v2 route bound to `api`, regardless of which construct
+ * scope created it.
+ *
+ * `api.node.children` only sees routes the API itself (or a child scope)
+ * created, which misses the common pattern of a stack-level construct wiring a
+ * route onto an attached API. Walking the stack and resolving each `CfnRoute`'s
+ * `ApiId` sees both.
+ */
+function routesBoundToApi(scope: Construct, api: apigwv2.IHttpApi): apigwv2.CfnRoute[] {
+  const stack = Stack.of(scope);
+  const apiKey = comparableApiId(scope, api.apiId);
+  const found: apigwv2.CfnRoute[] = [];
+  const visit = (node: Construct): void => {
+    if (node instanceof apigwv2.HttpRoute) {
+      if (comparableApiId(scope, node.httpApi.apiId) === apiKey) {
+        found.push(node.node.defaultChild as apigwv2.CfnRoute);
+      }
+      // The route's own CfnRoute child is the same route; do not double count.
+      return;
+    }
+    if (node instanceof apigwv2.CfnRoute && comparableApiId(scope, node.apiId) === apiKey) {
+      found.push(node);
+    }
+    for (const child of node.node.children) {
+      visit(child);
+    }
+  };
+  visit(stack);
+  return found.filter((route) => route !== undefined);
+}
+
+/**
+ * Refuse a consolidated attach onto an API that already carries routes.
+ *
+ * The check deliberately walks the whole stack: a route bound to the attached
+ * API from a sibling construct scope is just as much a route key the
+ * consolidated greedy routes would collide with as one created under the API
+ * itself.
+ */
+function assertConsolidatedAttachAllowed(scope: Construct, api: apigwv2.IHttpApi): void {
+  const existingRoutes = routesBoundToApi(scope, api);
+  if (existingRoutes.length > 0) {
+    throw new Error(
+      "AppTheoryMcpServer: routeModel consolidated may attach only to an API that has no routes at attach time; "
+      + `the API already carries ${existingRoutes.length} route(s): ${existingRoutes.map((route) => route.node.path).join(", ")}; `
+      + "attach to a new or empty API, or use routeModel explicit",
+    );
+  }
+}
+
+/**
+ * Register the synth-time rule for routes added to a consolidated API after
+ * the construct created its greedy routes.
+ *
+ * The rule applies in both consolidated modes: an API the construct attached
+ * to, and one the construct owns. The documented exception is what makes
+ * consolidated routes usable in a real front door: a consumer may add
+ * explicit, more specific routes afterwards. It is allowed only when the
+ * route carries a non-NONE authorizer (so the greedy routes never silently
+ * widen a stricter posture) and does not redeclare a greedy route key (which
+ * API Gateway would reject as a duplicate).
+ */
+function registerConsolidatedAttachValidation(
+  scope: Construct,
+  api: apigwv2.IHttpApi,
+  ownedRoutes: apigwv2.HttpRoute[],
+): void {
+  const owned = new Set(
+    ownedRoutes.map((route) => route.node.defaultChild as apigwv2.CfnRoute),
+  );
+  Stack.of(scope).node.addValidation({
+    validate: () => {
+      const errors: string[] = [];
+      for (const route of routesBoundToApi(scope, api)) {
+        if (owned.has(route)) {
+          continue;
+        }
+        const routeKey = route.routeKey;
+        if (CONSOLIDATED_GREEDY_ROUTE_KEYS.has(routeKey)) {
+          errors.push(
+            `AppTheoryMcpServer: routeModel consolidated already owns the greedy API Gateway route key ${JSON.stringify(routeKey)} on this API; a route added after construction must not redeclare it (${route.node.path})`,
+          );
+          continue;
+        }
+        const authorizationType = String(route.authorizationType ?? "NONE").toUpperCase();
+        if (authorizationType === "NONE") {
+          errors.push(
+            `AppTheoryMcpServer: a route added to a consolidated API after construction must carry a non-NONE authorizer, because the greedy routes admit every method and path at the gateway (${routeKey} from ${route.node.path})`,
+          );
+        }
+      }
+      return errors;
+    },
+  });
 }
 
 function validateFacadeAttachment(facade?: AppTheoryMcpFacadeAttachment): void {

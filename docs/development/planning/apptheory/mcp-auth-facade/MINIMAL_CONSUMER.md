@@ -1,7 +1,7 @@
 # Worked minimal non-TMS consumer (M0, item 6b)
 
-Status: reference walkthrough (M0), kept as-built through M3c-2.
-Last updated: 2026-10-14
+Status: reference walkthrough (M0), kept as-built through the closed-by-default SecureApp seam (G12).
+Last updated: 2026-10-15
 Owner: AppTheory
 
 SAN-110-3: success criterion 2 ("a runtime-validated OAuth bearer MCP app behind an upstream provider on one
@@ -40,22 +40,53 @@ The TypeScript and Python registrars (`registerMcpFacade` / `register_mcp_facade
 idiomatic casing. The framework **derives** every route: transport, protected-resource, canonical + suffix
 discovery, authorize, token, `/register`, and the single callback.
 
+### Runtime registration when the app is a SecureApp (Go)
+
+An application that already runs its own route families on a closed-by-default `SecureApp` — the golden consumer runs
+its MCP, download, GitHub, email, internal, and OAuth families on one `SecureApp`, whose principal resolver backs its
+admission engine — mounts the same facade with the companion registrar instead of switching to a plain `App`:
+
+```go
+secure := apptheory.NewSecure(apptheory.SecureOptions{
+    PrincipalResolver: acmePrincipalResolver, // the app's own admission engine, still governing its own routes
+    PolicyHook:        acmePolicyHook,
+})
+
+// The app's non-MCP families keep their own postures.
+secure.Get("/internal/audit", auditHandler, apptheory.Authenticated())
+
+_, err := mcpfacade.RegisterMCPFacadeSecure(secure, mcpfacade.FacadeConfig{
+    // the same FacadeConfig as above, unchanged
+})
+```
+
+`registerMcpFacadeSecure` and `register_mcp_facade_secure` are the TypeScript and Python equivalents. The facade
+declares the posture each of its routes has always had — the transport route keeps the RFC 9728 bearer validator as
+its authority under `runtime-bearer`, and the OAuth metadata, authorize, token, `/register`, and callback routes stay
+public by design — so nothing about the journey above changes. See
+[Closed-by-default SecureApp mounts](../../../../features/mcp-facade-helper.md#closed-by-default-secureapp-mounts) for the full
+route-authority table.
+
 ### CDK (TypeScript)
 
 ```ts
 new AppTheoryMcpServer(this, "AcmeMcp", {
   handler: mcpFn,
-  facade: { upstreamProvider: acmeID, issuerMode: "route" }, // attaches the OAuth facade: selects the runtime-bearer default
+  facade: { providerId: "acme" },                 // presence attaches the OAuth facade: selects the runtime-bearer default
   routeFamily: { patterns: ["/{client_namespace}/mcp"], rootAuthorizationServerDiscovery: false },
-  runtimeAuth: { requiredScopes: ["mcp:tools"] },   // the runtime-posture declaration the pairing requires
-  throttling: { rateLimit: 100, burstLimit: 200 },  // mandatory under runtime-bearer (DD-1)
-  originReachability: "locked",                     // mandatory decision (DD-2)
-  denialSignal: { metric: "apptheory.mcp.auth_denied" }, // mandatory declaration (DD-3)
+  runtimePosture: { requireBearerToken: true },    // the runtime-posture declaration the pairing requires
+  owningApiDefense: {                              // mandatory under runtime-bearer (DD-1)
+    accessLogging: true,
+    throttling: { rateLimit: 100, burstLimit: 200 },
+  },
+  originReachability: "locked",                    // mandatory decision (DD-2)
+  denialSignal: { metricName: "apptheory.mcp.auth_denied" }, // mandatory declaration (DD-3)
 });
 ```
 
 `transportPosture` is deliberately **not** set: the `facade` attach is the predicate that selects the
-`runtime-bearer` default (`DEFAULT_SEMANTICS.md`).
+`runtime-bearer` default (`DEFAULT_SEMANTICS.md`). The prop names above are the shipped construct's; the
+`facade` attachment is presence-only and its `providerId` must be a synthesis-time literal string.
 
 The construct derives and mounts the transport routes, the OAuth surface, and the derived `/register` and
 callback routes; it does **not** require the app to spell a single route string.
@@ -69,7 +100,7 @@ callback routes; it does **not** require the app to spell a single route string.
 - No facade mechanics: no transaction/code store, no upstream redirect construction, no callback exchange, no
   brokered refresh.
 - No posture selection for the common case: attaching `facade` selects the `runtime-bearer` default, so the app
-  writes no `transportPosture` enum (`runtimeAuth` is the runtime-posture declaration the pairing reads).
+  writes no `transportPosture` enum (`runtimePosture` is the runtime-posture declaration the pairing reads).
 - Only policy: the scope vocabulary (`routeScopes`), the provider adapter, and the durable store bindings.
 
 ## The journey (what a client does, and what the framework answers)
@@ -108,6 +139,10 @@ documentation only. The fictional provider `Acme ID` issues from `https://id.exa
   1–11), with expected statuses, headers, and bodies, **executed** by the Go, TypeScript, and Python suites.
 - `contract-tests/fixtures/routing/mcp-auth-facade/facade-threat-controls.v1.json` — T1-T11, each pinned to the
   executed row that proves it.
+- `contract-tests/fixtures/routing/mcp-auth-facade/facade-conformance.v1.json` — the per-feature conformance groups,
+  including `secure_app_mount`, which pins the authority table above for a `SecureApp` mount: the posture every facade
+  route declares for each transport posture, the requests that must still be served or refused under the app's own
+  principal authority, and the equality of the two registrars' route inventories, **executed** by all three suites.
 - `contract-tests/fixtures/routing/mcp-auth-facade/facade-route-model.v1.json` — the derived paths and the `route`
   issuer/resource derivation the app never wrote (moved into the corpus in M1).
 - `contract-tests/fixtures/routing/mcp-auth-facade/facade-transport-posture.v1.json` — the posture expectations pinned

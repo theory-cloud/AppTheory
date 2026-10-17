@@ -5,8 +5,8 @@ import (
 	"os"
 	"time"
 
-	tablecore "github.com/theory-cloud/tabletheory/v5/pkg/core"
-	tableerrors "github.com/theory-cloud/tabletheory/v5/pkg/errors"
+	tablecore "github.com/theory-cloud/tabletheory/v6/pkg/core"
+	tableerrors "github.com/theory-cloud/tabletheory/v6/pkg/errors"
 )
 
 // sessionRecord is the DynamoDB representation of an MCP session.

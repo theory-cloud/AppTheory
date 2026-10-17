@@ -36,7 +36,8 @@
         "error": {
           "code": "app.unauthorized",
           "message": "unauthorized",
-          "request_id": "req_test_123"
+          "request_id": "req_test_123",
+          "status_code": 401
         }
       },
       "is_base64": false

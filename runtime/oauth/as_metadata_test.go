@@ -52,6 +52,41 @@ func TestAuthorizationServerMetadataJSONEndpointFields(t *testing.T) {
 	}`, string(b))
 }
 
+// TestNewAuthorizationServerMetadataOmitsIssParameterSupported pins the generic
+// builder's RFC 9207 disposition: the conventional document never advertises
+// authorization_response_iss_parameter_supported, so an absent member keeps the
+// meaning false (RFC 8414 section 2) and every existing document byte-identical.
+// The member appears only while it is explicitly true.
+func TestNewAuthorizationServerMetadataOmitsIssParameterSupported(t *testing.T) {
+	t.Parallel()
+	md, err := NewAuthorizationServerMetadata("https://auth.example.com")
+	require.NoError(t, err)
+	require.False(t, md.AuthorizationResponseIssParameterSupported)
+
+	b, err := json.Marshal(md)
+	require.NoError(t, err)
+	require.NotContains(t, string(b), "authorization_response_iss_parameter_supported")
+
+	// Explicitly true is the only state that emits the member.
+	md.AuthorizationResponseIssParameterSupported = true
+	b, err = json.Marshal(md)
+	require.NoError(t, err)
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(b, &decoded))
+	require.Equal(t, true, decoded["authorization_response_iss_parameter_supported"])
+	// The field is a typed bool, so the emitted value is always the JSON boolean
+	// `true` while present: unlike the TypeScript and Python ports, which accept
+	// an untyped document and so need an identity check against `true`, no
+	// non-boolean state can reach the encoder here.
+	require.Contains(t, string(b), `"authorization_response_iss_parameter_supported":true`)
+
+	// A document without the member decodes to the zero value, so absent and
+	// false are the same document.
+	var without AuthorizationServerMetadata
+	require.NoError(t, json.Unmarshal([]byte(`{"issuer":"https://auth.example.com"}`), &without))
+	require.False(t, without.AuthorizationResponseIssParameterSupported)
+}
+
 func TestAuthorizationServerMetadataEndpointOptions(t *testing.T) {
 	// Opt-in derivation joins the conventional /revoke and /device paths onto
 	// the issuer base URL, including base-path handling.

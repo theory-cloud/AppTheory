@@ -33,6 +33,7 @@ func runFixtureP2(f Fixture) error {
 	app := apptheory.New(
 		apptheory.WithTier(apptheory.TierP2),
 		apptheory.WithHTTPErrorFormat(apptheory.HTTPErrorFormat(f.Setup.HTTPErrorFormat)),
+		apptheory.WithRequestIDSource(apptheory.RequestIDSource(f.Setup.RequestIDSource)),
 		apptheory.WithClock(clock),
 		apptheory.WithIDGenerator(fixedIDGenerator{id: "req_test_123"}),
 		apptheory.WithLimits(apptheory.Limits{
@@ -104,7 +105,7 @@ func runFixtureP2(f Fixture) error {
 		if source != secureSurfaceAppSync {
 			return fmt.Errorf("unknown aws_event source %q", f.Input.AWSEvent.Source)
 		}
-		out, err := app.HandleLambda(context.Background(), f.Input.AWSEvent.Event)
+		out, err := app.HandleLambda(fixtureLambdaContext(f.Input.Context.AWSRequestID), f.Input.AWSEvent.Event)
 		return compareFixtureM1Result(f, out, err)
 	}
 

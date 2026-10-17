@@ -20,6 +20,240 @@ range from the v5 line also carries other breaking runtime, CDK, TypeScript, and
 the v6 release notes for the commit-level detail, and treat the import-path move below as the mechanical part of the
 upgrade.
 
+### TableTheory v6 dependency (Go module path) with TypeScript and Python assets
+
+AppTheory now requires TableTheory v6 in all three runtimes: `github.com/theory-cloud/tabletheory/v6 v6.0.0` in Go,
+`theory-cloud-tabletheory-ts-6.0.0.tgz` in TypeScript and `tabletheory_py-6.0.0-py3-none-any.whl` in Python. Both non-Go
+assets keep your existing integrity discipline — immutable GitHub Release pins at SHA-512
+`sJafPYwl9o6ZvMkSxGVpwq7F/pbexq168Vxo8vlIjR2t+D7n+1+gdzWEoOFTplMg8N+r8KIt9flAjADIyNwsDA==` for the TypeScript tarball
+and SHA-256 `89e73ad4fd49cdb39b46cd4b564c39210140160282ef4121bf8ec434b7767897` for the Python wheel. TableTheory v6
+changes no TypeScript or Python API, so those two runtimes change version only.
+
+**Go consumers must move their own TableTheory to v6 in the same change.** The Go module path moves from
+`github.com/theory-cloud/tabletheory/v5` to `/v6`, and the `/v5` and `/v6` `core.DB` are distinct interface types:
+neither implements the other. AppTheory's DynamoDB seam is typed with TableTheory's `core.DB`, so a `/v6` handle cannot
+be passed into an AppTheory constructor that still requires `/v5`, and no consumer-side edit fixes it — the module
+requirement and every import must move together:
+
+```bash
+go get github.com/theory-cloud/tabletheory/v6@v6.0.0
+go mod tidy
+```
+
+Passing a `/v6` handle into a parameter whose type prints a `/v5` path fails to compile:
+
+```
+./main.go:10:44: cannot use db (variable of interface type "github.com/theory-cloud/tabletheory/v6/pkg/core".DB) as "github.com/theory-cloud/tabletheory/v5/pkg/core".DB value in argument to apptheoryservices.NewDynamoDBEventBus: "github.com/theory-cloud/tabletheory/v6/pkg/core".DB does not implement "github.com/theory-cloud/tabletheory/v5/pkg/core".DB (wrong type for method Model)
+        have Model(any) "github.com/theory-cloud/tabletheory/v6/pkg/core".Query
+        want Model(any) "github.com/theory-cloud/tabletheory/v5/pkg/core".Query
+```
+
+**No AppTheory API symbol changes.** The seven DynamoDB-backed constructors —
+`services.NewDynamoDBEventBus`, `limited.NewDynamoRateLimiter`, `mcpruntime.NewDynamoSessionStore`,
+`mcpruntime.NewDynamoStreamStore`, `mcpruntime.NewDynamoTaskStore`, `jobs.NewDynamoJobLedger` and
+`microvm.NewTableTheorySessionRegistry` — keep their names and shapes; only the TableTheory major behind their
+`core.DB` parameter moves. As a benefit of TableTheory v6, a `tabletheory.LambdaInit`
+handle now satisfies `core.ExtendedDB` (v6 changed `LambdaDB.WithLambdaTimeout` to return `core.DB`), so a Lambda
+consumer can assert the handle to that interface instead of the concrete `*LambdaDB`.
+
+TableTheory's own [v6 migration guide](https://github.com/theory-cloud/TableTheory/blob/v6.0.0/docs/migration/v6.md)
+carries the `WithLambdaTimeout` return-type change, the consumer checklist, and the
+[transitive-dependency](https://github.com/theory-cloud/TableTheory/blob/v6.0.0/docs/migration/v6.md#transitive-dependencies)
+wave order that makes AppTheory the dependency a consumer must wait for.
+
+### Routed MCP facade metadata advertises RFC 9207 `iss` support
+
+The MCP auth facade's routed authorization-server document now carries
+`authorization_response_iss_parameter_supported: true` (RFC 8414 / RFC 9207)
+whenever the facade owns the front channel. In that posture the front channel
+already sent the route issuer as `iss` on the client callback, on success and on
+error redirects alike; the document now says so, so an RFC 9207-aware MCP client
+can require `iss` on the callback instead of ignoring it.
+
+- **Go**: the routed discovery response of `mcpfacade.RegisterMCPFacade` and `mcpfacade.RegisterMCPFacadeSecure`.
+- **TypeScript**: the routed discovery response of `registerMcpFacade` and `registerMcpFacadeSecure`.
+- **Python**: the routed discovery response of `register_mcp_facade` and `register_mcp_facade_secure`.
+
+The member follows front-channel ownership rather than a separate option, so its
+disposition is:
+
+- **advertised** while the facade owns the front channel (the front-channel field
+  set is declared, so the framework serves the authorize/callback/token bodies);
+- **absent** when the application owns the front channel through an
+  `AuthorizeHandler`/`TokenHandler` pair (`Provider` unset), where the facade
+  mounts the routes but cannot prove `iss` is sent;
+- **absent** on the root discovery document, whose fixed endpoints belong to the
+  upstream authorization server, and on the generic builder
+  (`oauth.NewAuthorizationServerMetadata`, `newAuthorizationServerMetadata`,
+  `new_authorization_server_metadata`).
+
+An absent member means false. Each runtime's `AuthorizationServerMetadata` type
+gains one optional member, emitted only while it is the boolean `true`, so a
+document that never sets it stays byte-identical.
+
+**Additive; no breaking change.** No other document changes.
+
+### Scalable MCP route model and the new-API migration recipe
+
+`AppTheoryMcpServer` gains `routeModel` (`AppTheoryMcpRouteModel`), and `AppTheoryHttpApi` gains explicit
+posture-carrying `routes`, route-keyed `routeSettings` throttling, and a configurable `stage.accessLogFormat`. The
+default is unchanged in both constructs.
+
+- **`explicit` (the default)** — one HTTP API v2 route per derived route key: the construct's historical inventory,
+  including its positional route construct ids. A stack that does not set `routeModel` synthesizes byte-identically and
+  deploys in place with no change.
+- **`consolidated`** — exactly two routes, `ANY /` and `ANY /{proxy+}`, backed by one shared integration. The gateway
+  no longer enumerates the derived inventory; the AppTheory runtime router performs method and path dispatch,
+  path-parameter capture, and denial.
+- **Posture restriction** — consolidation never changes gateway admission, so every gateway route must be `NONE`:
+  `consolidated` is valid only for `transportPosture` `runtime-bearer` and `none-public`. `iam` and `jwt` are refused at
+  synthesis (`AppTheoryMcpServer: routeModel consolidated is only valid for transportPosture RUNTIME_BEARER or
+  NONE_PUBLIC ...`). Consolidated mode may also attach only to an API that has no routes at attach time.
+- **Unchanged runtime contract** — `routeInventory`, `mcpPaths`, `protectedResourceMetadataPaths`, and `endpoints`
+  carry the same derived values in both models, and the runtime still registers every entry in `routeInventory`.
+- **Whole-stack attach guard** — "no routes at attach time" is checked across the whole stack, not just the API's
+  construct children, so a route wired onto the attached API from a sibling construct scope (for example stack-level
+  `OAuthFacadeRoute0`, `OAuthFacadeRoute1`, ... constructs) now fails the attach. Routes added *after* the construct
+  creates its greedy routes — whether the API is attached or construct-owned — remain allowed only when they carry a
+  non-`NONE` authorizer and do not redeclare `ANY /` or `ANY /{proxy+}`; both rules are enforced at synthesis.
+- **`routeSettings` is validated** — `AppTheoryHttpApi` now rejects a `routeSettings` key that matches no route the
+  construct emits, naming the emitted keys, instead of letting API Gateway silently ignore the entry. Keys are the
+  greedy `ANY /` and `ANY /{proxy+}` plus one `<METHOD> <path>` per `routes` entry.
+- **Consumer `OPTIONS` vs `cors`** — when `cors` is set, `buildCorsPreflight` includes `OPTIONS` in its default
+  `allowMethods`, and the API-level CORS configuration answers matching preflight requests before any route
+  integration runs, so a declared `OPTIONS` route on the same path is shadowed. Setting `cors.allowMethods` without
+  `OPTIONS` removes gateway preflight handling entirely, leaving a declared `OPTIONS` route as the only responder for a
+  preflight request — declare the methods you need in `cors.allowMethods` instead of relying on a declared route.
+
+```ts
+new AppTheoryMcpServer(this, "ConsolidatedMcp", {
+  handler,
+  transportPosture: AppTheoryMcpTransportPosture.RUNTIME_BEARER,
+  runtimePosture: { requireBearerToken: true },
+  originReachability: AppTheoryMcpOriginReachability.LOCKED,
+  denialSignal: {},
+  ownedApi: { stage: { throttlingEnabled: true } },
+  routeModel: AppTheoryMcpRouteModel.CONSOLIDATED,
+});
+```
+
+**Migration recipe for a deployed `explicit` server: new-API swap.** A route key is held by exactly one route resource
+per API, and CloudFormation tracks those resources by logical id. Renaming a deployed route's construct id while
+keeping its key is a create-before-delete collision: CloudFormation creates the new logical id while the old one still
+holds the key, and the update fails. A brand-new API has no such history — route keys are unique per API, so its routes
+cannot collide with any route in the old API — which makes the new-API swap collision-free by construction:
+
+1. create the new consolidated API (the construct emits the semantic route ids `RouteAnyRoot` and `RouteAnyProxy`);
+2. move the origin to it, for example by repointing the CloudFront behaviour (or the custom-domain API mapping);
+3. delete the old positional API wholesale.
+
+Two operational edges are worth planning for. A client that calls the old `execute-api` hostname directly, rather than
+through the front door, loses that hostname when the old API is deleted; and the old API's deletion is unordered
+against front-door edge propagation, so edges can briefly return `502`. Deleting the old API one deploy later, after
+propagation, avoids that window.
+
+**Additive; no breaking change.** `explicit` stays the default and byte-identical, so an existing stack deploys in place
+with no action; consolidation is opt-in and, in this release, limited to the `runtime-bearer` and `none-public`
+postures. See the
+[MCP server facade guide](docs/features/mcp-server-construct.md#route-model-explicit-and-consolidated).
+
+#### Explicit route identity: `routeIdMode`
+
+`AppTheoryMcpServer` also gains `routeIdMode` (`AppTheoryMcpRouteIdMode`) for the explicit model. The default is
+`legacy`, which keeps the positional `Route0`, `Route1`, ... construct ids byte-identical, so an existing stack deploys
+in place with no action. `semantic` derives each id from the route method and pattern (for example
+`RoutePOSTClientNamespaceMcp`), so inserting, removing, or reordering a route family never renames an unrelated route.
+
+`semantic` is intended for **newly created** explicit APIs. Switching an existing deployed explicit API from `legacy`
+to `semantic` in place renames every route in one update, which is itself the create-before-delete collision described
+above, so adopt it on an existing stack only through the same new-API swap: create the new explicit API with
+`routeIdMode: AppTheoryMcpRouteIdMode.SEMANTIC`, move the origin, then delete the old positional API. The
+`consolidated` model ignores `routeIdMode` and always emits the fixed ids `RouteAnyRoot` and `RouteAnyProxy`.
+
+A `legacy` to `semantic` move can be checked before deploying: synthesize the before-template and the after-template of
+the same stack and run the reusable transition helper shipped in `cdk/lib/route-transition` — it fails closed on any
+route key held by two logical ids in the same API across the transition.
+
+**Additive; no breaking change.** `routeIdMode` defaults to `legacy`, so omitting it is byte-identical to the previous
+release.
+
+### Server-issued HTTP request IDs
+
+The HTTP runtime now lets an application choose where the request ID comes from. The default is unchanged: a well-formed
+client `x-request-id` header is honored, and the runtime falls back to the invocation request ID where the surface
+supplies one, then to a generated ID.
+
+An application whose contract requires a request ID that a caller cannot choose or forge opts into the server-issued
+source:
+
+- **Go**: `apptheory.New(apptheory.WithRequestIDSource(apptheory.RequestIDSourceServer))`, or
+  `apptheory.NewSecure(apptheory.SecureOptions{RequestIDSource: apptheory.RequestIDSourceServer})`
+- **TypeScript**: `createApp({ requestIdSource: REQUEST_ID_SOURCE_SERVER })`, or
+  `new SecureApp({ requestIdSource: REQUEST_ID_SOURCE_SERVER })`
+- **Python**: `create_app(request_id_source=REQUEST_ID_SOURCE_SERVER)`, or
+  `SecureApp(request_id_source=REQUEST_ID_SOURCE_SERVER)`
+
+**Additive; no breaking change.** Existing applications keep the historical resolution order, so nothing changes
+unless you opt in. In server-issued mode a client `x-request-id` is never used as the request identity; the handler
+context, the nested `error.request_id` field, the `x-request-id` response header, and the P2 observability records all
+carry the server-issued value. A caller that sends a forged ID simply does not influence the request identity.
+
+An application that wants the caller's own value reads it from the request context. The accessor returns the value only
+when it is well-formed, in both modes, and an empty value otherwise:
+
+- **Go**: `ctx.ClientRequestID()`
+- **TypeScript**: `ctx.clientRequestId`
+- **Python**: `ctx.client_request_id`
+
+The value is client-supplied and untrusted — identity and correlation only, never authorization. The framework adds no
+log field for it, and the raw `x-request-id` request header is still delivered exactly as received.
+
+**One default-mode behavior change worth knowing.** A client `x-request-id` that is not well-formed — over 128
+characters, or containing any character outside visible ASCII (`0x21`–`0x7E`), such as a space, tab, carriage return,
+line feed, other control character, or a non-ASCII character — is no longer used as the request ID and is no longer
+echoed in the response header, the nested `error.request_id` field, or the logs. Such a request now falls back to the
+invocation request ID, else a generated ID. Well-formed ids behave exactly as before. The limit and character set are
+framework constants (`apptheory.MaxClientRequestIDLength` / `MAX_CLIENT_REQUEST_ID_LENGTH`) and are not configurable.
+All three runtimes trim the same ASCII whitespace set — a space, tab, line feed, vertical tab, form feed, or carriage
+return (` \t\n\v\f\r`) — so the shape rule is identical everywhere. TypeScript and Python now trim the edge whitespace
+of an otherwise well-formed value; they previously used the header value untrimmed. Go previously trimmed Unicode
+whitespace, so a client id padded with a non-ASCII whitespace character such as `U+00A0` (no-break space) is now
+malformed and ignored instead of being used as the request ID. The shape predicate is exported if you want to apply the
+same rule yourself: Go `apptheory.IsWellFormedClientRequestID`, TypeScript `isWellFormedClientRequestId`, Python
+`is_well_formed_client_request_id`.
+
+Two boundaries are worth knowing before you adopt the server-issued source:
+
+- The setting covers every surface that resolves a request ID from the request: the HTTP path and the AppSync path
+  (AppSync forwards `event.request.headers`), in every runtime. WebSocket and the non-HTTP event sources never read a
+  client request ID and are unaffected.
+- `SecureApp` accepts the same option through its closed options surface and applies no different default.
+
+### Nested HTTP error envelope always carries `error.status_code`
+
+The default nested HTTP error envelope now always includes `error.status_code`: the HTTP status of the response that was
+actually sent. It is emitted by every producer — framework-emitted rejections (routing `404`, `405`, `413`, `408`, `429`,
+`503`, panic-recovery `500`, streaming and adapter delivery failures), the legacy `AppError` path, a handler-returned
+`AppTheoryError` that leaves `status_code` unset (the resolved status is reported), the RFC 6750/9728 bearer denials, the
+WebSocket error envelope, and the nested fallback body.
+
+**Additive; no breaking change.** The key was already declared by the runtime contract as a portable optional field
+("present when available"), and nothing about the routing, status, or message of a rejection changes. Two consequences
+are worth checking:
+
+- A consumer that asserts an **exact** nested error body — string comparison or deep equality against a frozen body —
+  now sees one extra key and must add `status_code`. A consumer that reads `error.code` / `error.message` (or ignores
+  unknown keys) needs no change.
+- The opt-in **flat-legacy** HTTP error format is untouched: its bodies carry no `status_code` and stay byte-identical.
+
+An envelope that cannot be serialized — an `AppTheoryError` whose `Details` hold a value the runtime's JSON encoder
+refuses, such as a cycle in any runtime or a bigint in TypeScript, which already violates the error contract's
+precondition that details be JSON-serializable — is now reported as the internal-error fallback sent with status `500`
+rather than as a body whose `status_code` disagreed with the status on the wire, which changes the response only for
+those already-invalid inputs and leaves the flat-legacy fallback body byte-identical. In TypeScript an `undefined`,
+function, or symbol property is not such a value: it keeps its standard JSON encoding (omitted from an object, `null` in
+an array) and the envelope is sent normally.
+
 ### Go module import paths
 
 AppTheory v6 moves the Go runtime and the generated CDK Go bindings onto the next semantic import version. Replace the
@@ -130,6 +364,46 @@ reference), pinned by a new shared `put_payload` conformance scenario.
 
 See `docs/features/mcp-auth-facade-spi.md` for the front-channel configuration table and
 `docs/features/mcp-facade-helper.md` for what the three registrars mount.
+
+### MCP auth facade on a closed-by-default `SecureApp`
+
+The facade registrars took the legacy `App` surface only, so an application whose route families already run on a
+closed-by-default `SecureApp` could not mount the facade at all: `SecureApp` wraps an unexported core with no
+accessor, and passing it to `RegisterMCPFacade` did not compile in Go. Switching such an application to a plain `App`
+to mount the facade is not an acceptable workaround, because it silently drops that application's
+`SecurePrincipalResolver`, tier, and `PolicyHook` for every route that shares the app.
+
+Each runtime now ships an additive companion registrar — `RegisterMCPFacadeSecure` (Go),
+`registerMcpFacadeSecure` (TypeScript), `register_mcp_facade_secure` (Python) — which installs the identical route
+inventory and behavior on a `SecureApp`, declaring the auth posture each facade route has always had. **No action is
+required for existing consumers**: the plain registrars, every `SecureApp` method, and every default are unchanged,
+and no `SecureApp` accessor was added.
+
+The declared postures are the authority table on a `SecureApp`: the MCP transport route takes the application's own
+principal gate under the `iam` and `jwt` postures (the counterpart of the plain path's `RequireAuth`), stays public
+with the facade's RFC 9728 bearer validator as its authority under `runtime-bearer`, and is deliberately public under
+`none-public`; every OAuth surface route — protected-resource metadata, authorization-server discovery, `/authorize`,
+`/token`, `/register`, and the stage-global callback — is public by design, exactly as it is on the plain path. A
+consumer can assert the table rather than trust it, through `SecureApp.Routes()` / `secureApp.routes()` /
+`secure_app.routes()` and the shared `secure_app_mount` conformance rows. A rejected configuration still adds no route
+at all, and the mount itself is all-or-nothing: the registrars prove the whole plan before the surface receives its
+first facade route, so an invalid entry, a duplicate inside the plan, and a pattern or posture the surface refuses
+all add nothing. On a `SecureApp` a collision with a route the application already declares is pre-checked through
+`Routes()` and adds nothing either, so a returned error means zero facade routes were added. The plain `App` surface
+publishes no route table, so a collision with a route the application already registered there is the one case the
+plain registrar cannot pre-check: it is reported by the app's own duplicate check while the plan is mounted, and the
+entries the plan had already mounted before it stand. The runtime conformance kit ships the matching closed-by-default variants
+(`AssertCredentialFreeDeniedSecureApp`, `assertCredentialFreeTransportDeniedSecureApp`,
+`assert_credential_free_transport_denied_secure_app`, and their bearer and insufficient-scope companions), so a
+consumer's own suite drives either surface.
+
+The CDK `facade` attachment needs no change and no `secureApp`-shaped prop: the construct consumes declared props and
+never detects the runtime type, so the pairing rule is unchanged — `runtime-bearer` requires
+`runtimePosture.requireBearerToken: true` at construct time and the runtime mount declares the RFC 9728 bearer
+validator, on either surface.
+
+See `docs/features/mcp-facade-helper.md#closed-by-default-secureapp-mounts` for the worked example and the full
+route-authority table.
 
 ### REST v1 edge `WWW-Authenticate` restoration
 
@@ -533,9 +807,10 @@ and each helper installs the guard only when the framework chooses the transport
 Denials now carry the route-derived challenge. A missing, malformed, invalid, or expired token returns `401` with
 `WWW-Authenticate: Bearer resource_metadata="<matched route's protected-resource metadata URL>"`. A scope failure
 returns `403` with `WWW-Authenticate: Bearer error="insufficient_scope", scope="<remediation scopes>",
-resource_metadata="<…>"` and body `{"error":{"code":"app.insufficient_scope"}}`; an audience failure and every other
-forbidden denial still return the plain `403` with no error code or scope set. RFC 8707 `resource` is canonicalized and
-must exactly equal the route resource (the resulting `aud` must equal the route URL).
+resource_metadata="<…>"` and body
+`{"error":{"code":"app.insufficient_scope","message":"insufficient scope","status_code":403}}`; an audience failure and
+every other forbidden denial still return the plain `403` with no error code or scope set. RFC 8707 `resource` is
+canonicalized and must exactly equal the route resource (the resulting `aud` must equal the route URL).
 
 ### MCP auth facade provider and store SPIs
 

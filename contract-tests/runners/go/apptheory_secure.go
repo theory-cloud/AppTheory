@@ -60,6 +60,7 @@ func runFixtureSecure(f Fixture) error {
 		Tier:              apptheory.Tier(strings.TrimSpace(f.Setup.SecureApp.Tier)),
 		Clock:             fixedClock{now: time.Unix(0, 0).UTC()},
 		IDGenerator:       fixedIDGenerator{id: "req_test_123"},
+		RequestIDSource:   apptheory.RequestIDSource(f.Setup.RequestIDSource),
 		WebSocketSupport:  f.Setup.SecureApp.WebSocketSupport,
 		PrincipalResolver: resolver,
 		PolicyHook:        policy,
@@ -380,17 +381,10 @@ func runSecureFixtureStep(app *apptheory.SecureApp, setup FixtureSecureSetup, st
 }
 
 func runSecureHTTPStep(app *apptheory.SecureApp, step FixtureSecureStep, expected FixtureSecureExpectedStep) error {
-	if step.Request == nil {
-		return fmt.Errorf("missing request")
-	}
-	body, err := decodeFixtureBody(step.Request.Body)
+	resp, err := serveSecureHTTPStep(app, step)
 	if err != nil {
 		return err
 	}
-	resp := app.Serve(context.Background(), apptheory.Request{
-		Method: step.Request.Method, Path: step.Request.Path, Query: step.Request.Query,
-		Headers: step.Request.Headers, Body: body, IsBase64: step.Request.IsBase64,
-	})
 	if expected.Response != nil {
 		expectedHeaders := canonicalizeHeaders(expected.Response.Headers)
 		actualHeaders := canonicalizeHeaders(resp.Headers)
@@ -402,6 +396,27 @@ func runSecureHTTPStep(app *apptheory.SecureApp, step FixtureSecureStep, expecte
 		}
 	}
 	return compareSecureStatus(expected, resp.Status, secureErrorCodeFromBody(resp.Body))
+}
+
+func serveSecureHTTPStep(app *apptheory.SecureApp, step FixtureSecureStep) (apptheory.Response, error) {
+	if step.AWSEvent != nil && strings.EqualFold(strings.TrimSpace(step.AWSEvent.Source), "apigw_v2") {
+		var event events.APIGatewayV2HTTPRequest
+		if err := json.Unmarshal(step.AWSEvent.Event, &event); err != nil {
+			return apptheory.Response{}, fmt.Errorf("parse apigw_v2 event: %w", err)
+		}
+		return responseFromAPIGatewayV2(app.ServeAPIGatewayV2(context.Background(), event))
+	}
+	if step.Request == nil {
+		return apptheory.Response{}, fmt.Errorf("missing request")
+	}
+	body, err := decodeFixtureBody(step.Request.Body)
+	if err != nil {
+		return apptheory.Response{}, err
+	}
+	return app.Serve(context.Background(), apptheory.Request{
+		Method: step.Request.Method, Path: step.Request.Path, Query: step.Request.Query,
+		Headers: step.Request.Headers, Body: body, IsBase64: step.Request.IsBase64,
+	}), nil
 }
 
 func runSecureAppSyncStep(app *apptheory.SecureApp, step FixtureSecureStep, expected FixtureSecureExpectedStep) error {

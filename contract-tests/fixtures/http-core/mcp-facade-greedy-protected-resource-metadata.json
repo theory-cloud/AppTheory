@@ -1,0 +1,67 @@
+{
+  "id": "p0.mcp_facade.greedy_protected_resource_metadata",
+  "tier": "p0",
+  "name": "MCP facade under ANY /{proxy+}: the mounted RFC 9728 protected-resource metadata route serves its exact document",
+  "setup": {
+    "mcp_facade": {
+      "issuer": "https://issuer.example.com/",
+      "jwks_uri": "https://issuer.example.com/jwks.json?set=active",
+      "public_base_url": "https://front.example.com/",
+      "resource_metadata_url": "https://front.example.com/.well-known/oauth-protected-resource/acme/mcp",
+      "scopes": ["namespace:use"],
+      "bearer": {
+        "accepted_tokens": [
+          { "token": "valid-token", "subject": "acme", "scopes": ["namespace:use"] },
+          { "token": "missing-scope-token", "subject": "acme", "scopes": ["other:scope"] }
+        ],
+        "required_scopes": ["namespace:use"]
+      }
+    }
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/.well-known/oauth-protected-resource/acme/mcp",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    },
+    "aws_event": {
+      "source": "apigw_v2",
+      "event": {
+        "version": "2.0",
+        "routeKey": "ANY /{proxy+}",
+        "rawPath": "/.well-known/oauth-protected-resource/acme/mcp",
+        "rawQueryString": "",
+        "cookies": [],
+        "headers": {},
+        "queryStringParameters": null,
+        "requestContext": {
+          "http": {
+            "method": "GET",
+            "path": "/.well-known/oauth-protected-resource/acme/mcp"
+          }
+        },
+        "body": "",
+        "isBase64Encoded": false
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": ["application/json; charset=utf-8"],
+        "cache-control": ["no-store"],
+        "vary": ["Host, X-Forwarded-Host, X-AppTheory-Original-Host, X-FaceTheory-Original-Host, Forwarded, CloudFront-Forwarded-Proto, X-Forwarded-Proto"]
+      },
+      "cookies": [],
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"resource\":\"https://front.example.com/acme/mcp\",\"authorization_servers\":[\"https://issuer.example.com\"],\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"scopes_supported\":[\"namespace:use\"]}"
+      },
+      "is_base64": false
+    }
+  }
+}

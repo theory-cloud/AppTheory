@@ -14,6 +14,7 @@ import { normalizeRequest } from "./internal/request.js";
 import { errorResponse, errorResponseWithFormat, errorResponseWithRequestId, errorResponseWithRequestIdTraceIdAndFormat, normalizeResponse, responseForError, responseForErrorWithFormat, responseForErrorWithRequestId, responseForErrorWithRequestIdTraceIdAndFormat, } from "./internal/response.js";
 import { Router } from "./internal/router.js";
 import { extractTraceIdFromHeaders } from "./internal/trace-context.js";
+import { REQUEST_ID_SOURCE_SERVER, normalizeRequestIdSource, wellFormedClientRequestId, } from "./request-id-source.js";
 import { vary } from "./response.js";
 import { generateSecureOpenAPI, generateSecureOpenAPIJSON, } from "./secure-openapi.js";
 import { cloneSecurePrincipal, normalizeSecurePrincipal, } from "./secure-principal.js";
@@ -165,6 +166,7 @@ export class App {
     _ids;
     _tier;
     _httpErrorFormat;
+    _requestIdSource;
     _limits;
     _cors;
     _authHook;
@@ -197,6 +199,7 @@ export class App {
                 ? options.tier
                 : "p2";
         this._httpErrorFormat = normalizeHTTPErrorFormat(options.httpErrorFormat);
+        this._requestIdSource = normalizeRequestIdSource(options.requestIdSource);
         this._limits = {
             maxRequestBytes: Number(options.limits?.maxRequestBytes ?? 0),
             maxResponseBytes: Number(options.limits?.maxResponseBytes ?? 0),
@@ -626,7 +629,15 @@ export class App {
         let method = normalizeMethod(request.method);
         let path = normalizePath(request.path);
         let route = UNMATCHED_ROUTE_TEMPLATE;
-        let requestId = firstHeaderValue(preHeaders, "x-request-id");
+        // The client x-request-id is honored as the request ID only when it is
+        // well-formed and the app is in the default source mode. A malformed value
+        // is ignored as if the header were absent, so it can never reach the
+        // response header, the error envelope, the handler context, or the logs.
+        const clientRequestId = wellFormedClientRequestId(firstHeaderValue(preHeaders, "x-request-id"));
+        let requestId = "";
+        if (this._requestIdSource !== REQUEST_ID_SOURCE_SERVER) {
+            requestId = clientRequestId;
+        }
         if (!requestId) {
             requestId = String(contextOptions?.fallbackRequestId ?? "").trim();
             if (!requestId) {
@@ -710,6 +721,7 @@ export class App {
             traceId,
             tenantId,
             authIdentity: "",
+            clientRequestId,
             remainingMs,
             middlewareTrace,
             tenantBindingRequired: this._tenantBindingRequired(),
@@ -1314,6 +1326,7 @@ const SECURE_OPTION_KEYS = new Set([
     "ids",
     "tier",
     "httpErrorFormat",
+    "requestIdSource",
     "limits",
     "cors",
     "principalResolver",
@@ -1353,6 +1366,9 @@ export class SecureApp {
             ...(options.ids !== undefined ? { ids: options.ids } : {}),
             ...(options.httpErrorFormat !== undefined
                 ? { httpErrorFormat: options.httpErrorFormat }
+                : {}),
+            ...(options.requestIdSource !== undefined
+                ? { requestIdSource: options.requestIdSource }
                 : {}),
             ...(options.limits !== undefined ? { limits: options.limits } : {}),
             ...(options.cors !== undefined ? { cors: options.cors } : {}),
@@ -1548,6 +1564,7 @@ function cloneContextWithTimeoutCarrier(ctx, carrier) {
         traceId: ctx.traceId,
         tenantId: ctx.tenantId,
         authIdentity: ctx.authIdentity,
+        clientRequestId: ctx.clientRequestId,
         tenantBound: ctx.tenantBound,
         tenantBindingRequired: ctx.tenantBindingRequired,
         remainingMs: ctx.remainingMs,

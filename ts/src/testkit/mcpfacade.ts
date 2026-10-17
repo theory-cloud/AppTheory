@@ -1,14 +1,23 @@
 import { Buffer } from "node:buffer";
 
-import type { App } from "../app.js";
+import type { App, SecureApp } from "../app.js";
 import type { Handler } from "../context.js";
 import {
   insufficientScopeWWWAuthenticate,
   protectedResourceWWWAuthenticate,
 } from "../oauth/index.js";
-import type { Headers, Request } from "../types.js";
+import type { Headers, Request, Response } from "../types.js";
 
 const ERROR_PREFIX = "mcpfacade:";
+
+/**
+ * The one entry point the transport assertions drive. Both the legacy `App` and
+ * the closed-by-default `SecureApp` expose the same `serve`, so one
+ * implementation covers either topology and the two surfaces cannot drift.
+ */
+interface TransportSurface {
+  serve(request: Request, ctx?: unknown): Promise<Response>;
+}
 
 /**
  * A counting MCP transport handler plus the number of requests that reached it.
@@ -53,7 +62,44 @@ export async function assertCredentialFreeTransportDenied(
   resourceMetadataURL: string,
   handler: CountingTransportHandler,
 ): Promise<void> {
-  const response = await app.serve(transportRequest(method, path));
+  return assertCredentialFreeTransportDeniedOn(
+    app,
+    method,
+    path,
+    resourceMetadataURL,
+    handler,
+  );
+}
+
+/**
+ * {@link assertCredentialFreeTransportDenied} on a closed-by-default
+ * {@link SecureApp}, so a consumer that runs its route families on a SecureApp
+ * proves the same RFC 9728 denial without dropping to a plain app.
+ */
+export async function assertCredentialFreeTransportDeniedSecureApp(
+  secureApp: SecureApp,
+  method: string,
+  path: string,
+  resourceMetadataURL: string,
+  handler: CountingTransportHandler,
+): Promise<void> {
+  return assertCredentialFreeTransportDeniedOn(
+    secureApp,
+    method,
+    path,
+    resourceMetadataURL,
+    handler,
+  );
+}
+
+async function assertCredentialFreeTransportDeniedOn(
+  surface: TransportSurface,
+  method: string,
+  path: string,
+  resourceMetadataURL: string,
+  handler: CountingTransportHandler,
+): Promise<void> {
+  const response = await surface.serve(transportRequest(method, path));
   assertFacade(
     response.status === 401,
     `credential-free ${method} ${path}: status = ${response.status}, want 401`,
@@ -87,7 +133,52 @@ export async function assertInsufficientScopeTransportDenied(
   scopes: string[],
   handler: CountingTransportHandler,
 ): Promise<void> {
-  const response = await app.serve(
+  return assertInsufficientScopeTransportDeniedOn(
+    app,
+    method,
+    path,
+    token,
+    resourceMetadataURL,
+    scopes,
+    handler,
+  );
+}
+
+/**
+ * {@link assertInsufficientScopeTransportDenied} on a closed-by-default
+ * {@link SecureApp}.
+ */
+export async function assertInsufficientScopeTransportDeniedSecureApp(
+  secureApp: SecureApp,
+  method: string,
+  path: string,
+  token: string,
+  resourceMetadataURL: string,
+  scopes: string[],
+  handler: CountingTransportHandler,
+): Promise<void> {
+  return assertInsufficientScopeTransportDeniedOn(
+    secureApp,
+    method,
+    path,
+    token,
+    resourceMetadataURL,
+    scopes,
+    handler,
+  );
+}
+
+async function assertInsufficientScopeTransportDeniedOn(
+  surface: TransportSurface,
+  method: string,
+  path: string,
+  token: string,
+  resourceMetadataURL: string,
+  scopes: string[],
+  handler: CountingTransportHandler,
+): Promise<void> {
+  const before = handler.invocations();
+  const response = await surface.serve(
     transportRequest(method, path, { authorization: [`Bearer ${token}`] }),
   );
   assertFacade(
@@ -110,8 +201,8 @@ export async function assertInsufficientScopeTransportDenied(
   );
   const invocations = handler.invocations();
   assertFacade(
-    invocations === 0,
-    `insufficient-scope ${method} ${path}: MCP handler invoked ${invocations} times, want 0`,
+    invocations === before,
+    `insufficient-scope ${method} ${path}: MCP handler invoked ${invocations - before} additional times, want 0`,
   );
 }
 
@@ -127,8 +218,45 @@ export async function assertBearerTokenReachesTransportHandler(
   token: string,
   handler: CountingTransportHandler,
 ): Promise<void> {
+  return assertBearerTokenReachesTransportHandlerOn(
+    app,
+    method,
+    path,
+    token,
+    handler,
+  );
+}
+
+/**
+ * {@link assertBearerTokenReachesTransportHandler} on a closed-by-default
+ * {@link SecureApp}, the positive control for
+ * {@link assertCredentialFreeTransportDeniedSecureApp}.
+ */
+export async function assertBearerTokenReachesTransportHandlerSecureApp(
+  secureApp: SecureApp,
+  method: string,
+  path: string,
+  token: string,
+  handler: CountingTransportHandler,
+): Promise<void> {
+  return assertBearerTokenReachesTransportHandlerOn(
+    secureApp,
+    method,
+    path,
+    token,
+    handler,
+  );
+}
+
+async function assertBearerTokenReachesTransportHandlerOn(
+  surface: TransportSurface,
+  method: string,
+  path: string,
+  token: string,
+  handler: CountingTransportHandler,
+): Promise<void> {
   const before = handler.invocations();
-  const response = await app.serve(
+  const response = await surface.serve(
     transportRequest(method, path, { authorization: [`Bearer ${token}`] }),
   );
   assertFacade(

@@ -251,6 +251,43 @@ class McpFacadeContractSurfaceTests(unittest.TestCase):
 
 
 class McpFacadeMetadataDocumentTests(unittest.TestCase):
+    def test_app_owned_authorize_routed_metadata_omits_rfc9207_iss_parameter_support(self) -> None:
+        app = create_app(tier="p0")
+        config = _valid_config(URL_MODE_PUBLIC_BASE_URL)
+        config.root_authorization_server = _valid_root_discovery_config()
+        # The application-owned authorize/token pair: provider stays unset, so
+        # the facade has no front channel and cannot prove `iss` is sent on the
+        # client callback.
+        config.authorize_handler = _kind_handler_factory("authorize")
+        config.token_handler = _kind_handler_factory("token")
+        inventory = register_mcp_facade(app, config)
+        self.assertTrue(inventory.root_authorization_server_attached)
+
+        for route in inventory.routes:
+            with self.subTest(kind=route.kind):
+                self.assertTrue(route.authorization_routes_attached)
+                # The app-owned authorize route really is mounted and served by
+                # the application, so the omission below is the app-owned
+                # surface's disposition and not a missing route.
+                authorize = _serve(app, "GET", route.authorize_pattern)
+                self.assertEqual(200, authorize.status)
+                self.assertEqual(f"authorize:{route.kind}", authorize.body.decode())
+
+                for path in (route.discovery_canonical_pattern, route.discovery_suffix_pattern):
+                    with self.subTest(path=path):
+                        response = _serve(app, "GET", path)
+                        self.assertEqual(200, response.status)
+                        self.assertNotIn(
+                            "authorization_response_iss_parameter_supported",
+                            response.body.decode(),
+                        )
+
+        # Root discovery describes the upstream authorization server, so it does
+        # not claim `iss` support either.
+        root = _serve(app, "GET", inventory.root_authorization_server_pattern)
+        self.assertEqual(200, root.status)
+        self.assertNotIn("authorization_response_iss_parameter_supported", root.body.decode())
+
     def test_shared_fixture_pins_routed_document_bytes_per_kind_and_mode(self) -> None:
         documents = json.loads(_EXPECTATIONS_PATH.read_text(encoding="utf-8"))["documents"]
         self.assertEqual(10, len(documents))

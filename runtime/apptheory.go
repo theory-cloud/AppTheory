@@ -12,6 +12,7 @@ type App struct {
 	ids              IDGenerator
 	tier             Tier
 	httpErrorFormat  HTTPErrorFormat
+	requestIDSource  RequestIDSource
 	limits           Limits
 	cors             CORSConfig
 	auth             AuthHook
@@ -64,6 +65,7 @@ func New(opts ...Option) *App {
 		ids:             RandomIDGenerator{},
 		tier:            TierP2,
 		httpErrorFormat: HTTPErrorFormatNested,
+		requestIDSource: RequestIDSourceDefault,
 		limits:          Limits{},
 		cors:            CORSConfig{},
 		auth:            nil,
@@ -118,6 +120,17 @@ func WithHTTPErrorFormat(format HTTPErrorFormat) Option {
 
 func WithLegacyHTTPErrorShape() Option {
 	return WithHTTPErrorFormat(HTTPErrorFormatFlatLegacy)
+}
+
+// WithRequestIDSource selects where an HTTP request's ID comes from.
+//
+// The default honors a client-supplied x-request-id header. RequestIDSourceServer
+// ignores that header and issues the ID from the fallback request ID, else a
+// generated ID.
+func WithRequestIDSource(source RequestIDSource) Option {
+	return func(app *App) {
+		app.requestIDSource = normalizeRequestIDSource(source)
+	}
 }
 
 func WithLimits(limits Limits) Option {

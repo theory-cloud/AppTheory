@@ -128,6 +128,53 @@ class OAuthRuntimeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             new_authorization_server_metadata("not-a-url")
 
+    def test_authorization_server_metadata_emits_iss_parameter_support_only_while_true(self) -> None:
+        # The generic builder never advertises the RFC 9207 member, so an absent
+        # member means false and every pre-existing document stays byte-identical.
+        default = new_authorization_server_metadata("https://auth.example.com")
+        self.assertFalse(default.authorization_response_iss_parameter_supported)
+        self.assertNotIn("authorization_response_iss_parameter_supported", default.to_json())
+
+        document = authorization_server_metadata_handler(default)(_ctx())
+        self.assertNotIn("authorization_response_iss_parameter_supported", document.body.decode())
+
+        # True is the only state that emits the member.
+        advertised = AuthorizationServerMetadata(
+            issuer="https://auth.example.com",
+            authorization_response_iss_parameter_supported=True,
+        )
+        self.assertEqual(
+            advertised.to_json(),
+            {
+                "issuer": "https://auth.example.com",
+                "authorization_response_iss_parameter_supported": True,
+            },
+        )
+        self.assertEqual(
+            json.loads(authorization_server_metadata_handler(advertised)(_ctx()).body)["authorization_response_iss_parameter_supported"],
+            True,
+        )
+
+        # A truthy non-boolean must never leak into the document: the member is
+        # emitted only for the boolean ``True``, so this is an identity rule and
+        # not a truthiness rule. Note the string "false" is truthy, and
+        # ``1 == True`` but ``1 is not True``.
+        for value in ("true", "false", 1):
+            with self.subTest(value=value):
+                non_boolean = AuthorizationServerMetadata(
+                    issuer="https://auth.example.com",
+                    authorization_response_iss_parameter_supported=value,
+                )
+                self.assertEqual(
+                    non_boolean.to_json(),
+                    {"issuer": "https://auth.example.com"},
+                    f"non-boolean {value!r} must be omitted",
+                )
+                self.assertNotIn(
+                    "authorization_response_iss_parameter_supported",
+                    authorization_server_metadata_handler(non_boolean)(_ctx()).body.decode(),
+                )
+
     def test_authorization_server_metadata_endpoint_options(self) -> None:
         default = new_authorization_server_metadata("https://auth.example.com/base/path")
         self.assertNotIn("revocation_endpoint", default.to_json())
@@ -287,7 +334,7 @@ class OAuthRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(
             json.loads(response.body.decode("utf-8")),
-            {"error": {"code": "app.insufficient_scope", "message": "insufficient scope"}},
+            {"error": {"code": "app.insufficient_scope", "message": "insufficient scope", "status_code": 403}},
         )
 
     def test_route_derived_audience_failure_is_plain_forbidden(self) -> None:
@@ -324,7 +371,7 @@ class OAuthRuntimeTests(unittest.TestCase):
         self.assertNotIn("www-authenticate", response.headers)
         self.assertEqual(
             json.loads(response.body.decode("utf-8")),
-            {"error": {"code": "app.forbidden", "message": "forbidden"}},
+            {"error": {"code": "app.forbidden", "message": "forbidden", "status_code": 403}},
         )
 
     def test_insufficient_scope_challenge_and_resource_indicator_helpers(self) -> None:

@@ -1,0 +1,51 @@
+{
+  "id": "p1.request_id.shape_wellformed",
+  "tier": "p1",
+  "name": "A well-formed client x-request-id is the request ID and is exposed on the context",
+  "setup": {
+    "request_id_source": "default",
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/context",
+        "handler": "echo_request_ids"
+      }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/context",
+      "query": {},
+      "headers": {
+        "x-request-id": [
+          "req_client_wellformed"
+        ]
+      },
+      "body": {
+        "encoding": "utf8",
+        "value": ""
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": [
+          "application/json; charset=utf-8"
+        ],
+        "x-request-id": [
+          "req_client_wellformed"
+        ]
+      },
+      "cookies": [],
+      "body_json": {
+        "request_id": "req_client_wellformed",
+        "client_request_id": "req_client_wellformed"
+      },
+      "is_base64": false
+    }
+  }
+}

@@ -9,9 +9,9 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	tablecore "github.com/theory-cloud/tabletheory/v5/pkg/core"
-	tableerrors "github.com/theory-cloud/tabletheory/v5/pkg/errors"
-	tablemocks "github.com/theory-cloud/tabletheory/v5/pkg/mocks"
+	tablecore "github.com/theory-cloud/tabletheory/v6/pkg/core"
+	tableerrors "github.com/theory-cloud/tabletheory/v6/pkg/errors"
+	tablemocks "github.com/theory-cloud/tabletheory/v6/pkg/mocks"
 )
 
 type duplicateDetectingTransactionBuilder struct {

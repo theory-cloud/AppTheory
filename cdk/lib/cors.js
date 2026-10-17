@@ -1,0 +1,27 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.buildCorsPreflight = buildCorsPreflight;
+const aws_cdk_lib_1 = require("aws-cdk-lib");
+/**
+ * Build the API Gateway v2 CORS preflight configuration shared by
+ * `AppTheoryHttpApi` and the construct-owned `AppTheoryMcpServer` API.
+ *
+ * Internal to the package: it is not part of the exported jsii surface.
+ */
+function buildCorsPreflight(input) {
+    if (!input) {
+        return undefined;
+    }
+    const options = input === true ? {} : input;
+    return {
+        allowOrigins: options.allowOrigins ?? ["*"],
+        allowMethods: (options.allowMethods ?? ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
+            .map((method) => String(method).trim().toUpperCase())
+            .filter((method) => method),
+        allowHeaders: options.allowHeaders ?? ["content-type", "authorization", "x-request-id", "x-tenant-id"],
+        exposeHeaders: options.exposeHeaders ?? ["x-request-id"],
+        allowCredentials: options.allowCredentials ?? false,
+        maxAge: options.maxAge ?? aws_cdk_lib_1.Duration.minutes(10),
+    };
+}
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiY29ycy5qcyIsInNvdXJjZVJvb3QiOiIiLCJzb3VyY2VzIjpbImNvcnMudHMiXSwibmFtZXMiOltdLCJtYXBwaW5ncyI6Ijs7QUFXQSxnREFpQkM7QUE1QkQsNkNBQXVDO0FBS3ZDOzs7OztHQUtHO0FBQ0gsU0FBZ0Isa0JBQWtCLENBQ2hDLEtBQTZDO0lBRTdDLElBQUksQ0FBQyxLQUFLLEVBQUUsQ0FBQztRQUNYLE9BQU8sU0FBUyxDQUFDO0lBQ25CLENBQUM7SUFDRCxNQUFNLE9BQU8sR0FBRyxLQUFLLEtBQUssSUFBSSxDQUFDLENBQUMsQ0FBQyxFQUFFLENBQUMsQ0FBQyxDQUFDLEtBQUssQ0FBQztJQUM1QyxPQUFPO1FBQ0wsWUFBWSxFQUFFLE9BQU8sQ0FBQyxZQUFZLElBQUksQ0FBQyxHQUFHLENBQUM7UUFDM0MsWUFBWSxFQUFFLENBQUMsT0FBTyxDQUFDLFlBQVksSUFBSSxDQUFDLEtBQUssRUFBRSxNQUFNLEVBQUUsS0FBSyxFQUFFLFFBQVEsRUFBRSxPQUFPLEVBQUUsTUFBTSxFQUFFLFNBQVMsQ0FBQyxDQUFDO2FBQ2pHLEdBQUcsQ0FBQyxDQUFDLE1BQU0sRUFBRSxFQUFFLENBQUMsTUFBTSxDQUFDLE1BQU0sQ0FBQyxDQUFDLElBQUksRUFBRSxDQUFDLFdBQVcsRUFBRSxDQUFDO2FBQ3BELE1BQU0sQ0FBQyxDQUFDLE1BQU0sRUFBRSxFQUFFLENBQUMsTUFBTSxDQUE2QjtRQUN6RCxZQUFZLEVBQUUsT0FBTyxDQUFDLFlBQVksSUFBSSxDQUFDLGNBQWMsRUFBRSxlQUFlLEVBQUUsY0FBYyxFQUFFLGFBQWEsQ0FBQztRQUN0RyxhQUFhLEVBQUUsT0FBTyxDQUFDLGFBQWEsSUFBSSxDQUFDLGNBQWMsQ0FBQztRQUN4RCxnQkFBZ0IsRUFBRSxPQUFPLENBQUMsZ0JBQWdCLElBQUksS0FBSztRQUNuRCxNQUFNLEVBQUUsT0FBTyxDQUFDLE1BQU0sSUFBSSxzQkFBUSxDQUFDLE9BQU8sQ0FBQyxFQUFFLENBQUM7S0FDL0MsQ0FBQztBQUNKLENBQUMiLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyBEdXJhdGlvbiB9IGZyb20gXCJhd3MtY2RrLWxpYlwiO1xuaW1wb3J0IHR5cGUgKiBhcyBhcGlnd3YyIGZyb20gXCJhd3MtY2RrLWxpYi9hd3MtYXBpZ2F0ZXdheXYyXCI7XG5cbmltcG9ydCB0eXBlIHsgQXBwVGhlb3J5SHR0cEFwaUNvcnNPcHRpb25zIH0gZnJvbSBcIi4vaHR0cC1hcGlcIjtcblxuLyoqXG4gKiBCdWlsZCB0aGUgQVBJIEdhdGV3YXkgdjIgQ09SUyBwcmVmbGlnaHQgY29uZmlndXJhdGlvbiBzaGFyZWQgYnlcbiAqIGBBcHBUaGVvcnlIdHRwQXBpYCBhbmQgdGhlIGNvbnN0cnVjdC1vd25lZCBgQXBwVGhlb3J5TWNwU2VydmVyYCBBUEkuXG4gKlxuICogSW50ZXJuYWwgdG8gdGhlIHBhY2thZ2U6IGl0IGlzIG5vdCBwYXJ0IG9mIHRoZSBleHBvcnRlZCBqc2lpIHN1cmZhY2UuXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiBidWlsZENvcnNQcmVmbGlnaHQoXG4gIGlucHV0PzogYm9vbGVhbiB8IEFwcFRoZW9yeUh0dHBBcGlDb3JzT3B0aW9ucyxcbik6IGFwaWd3djIuQ29yc1ByZWZsaWdodE9wdGlvbnMgfCB1bmRlZmluZWQge1xuICBpZiAoIWlucHV0KSB7XG4gICAgcmV0dXJuIHVuZGVmaW5lZDtcbiAgfVxuICBjb25zdCBvcHRpb25zID0gaW5wdXQgPT09IHRydWUgPyB7fSA6IGlucHV0O1xuICByZXR1cm4ge1xuICAgIGFsbG93T3JpZ2luczogb3B0aW9ucy5hbGxvd09yaWdpbnMgPz8gW1wiKlwiXSxcbiAgICBhbGxvd01ldGhvZHM6IChvcHRpb25zLmFsbG93TWV0aG9kcyA/PyBbXCJHRVRcIiwgXCJQT1NUXCIsIFwiUFVUXCIsIFwiREVMRVRFXCIsIFwiUEFUQ0hcIiwgXCJIRUFEXCIsIFwiT1BUSU9OU1wiXSlcbiAgICAgIC5tYXAoKG1ldGhvZCkgPT4gU3RyaW5nKG1ldGhvZCkudHJpbSgpLnRvVXBwZXJDYXNlKCkpXG4gICAgICAuZmlsdGVyKChtZXRob2QpID0+IG1ldGhvZCkgYXMgYXBpZ3d2Mi5Db3JzSHR0cE1ldGhvZFtdLFxuICAgIGFsbG93SGVhZGVyczogb3B0aW9ucy5hbGxvd0hlYWRlcnMgPz8gW1wiY29udGVudC10eXBlXCIsIFwiYXV0aG9yaXphdGlvblwiLCBcIngtcmVxdWVzdC1pZFwiLCBcIngtdGVuYW50LWlkXCJdLFxuICAgIGV4cG9zZUhlYWRlcnM6IG9wdGlvbnMuZXhwb3NlSGVhZGVycyA/PyBbXCJ4LXJlcXVlc3QtaWRcIl0sXG4gICAgYWxsb3dDcmVkZW50aWFsczogb3B0aW9ucy5hbGxvd0NyZWRlbnRpYWxzID8/IGZhbHNlLFxuICAgIG1heEFnZTogb3B0aW9ucy5tYXhBZ2UgPz8gRHVyYXRpb24ubWludXRlcygxMCksXG4gIH07XG59XG4iXX0=

@@ -1,0 +1,67 @@
+{
+  "id": "p0.mcp_facade.greedy_suffix_discovery",
+  "tier": "p0",
+  "name": "MCP facade under ANY /{proxy+}: the mounted SUFFIX RFC 8414 discovery route serves the same exact document",
+  "setup": {
+    "mcp_facade": {
+      "issuer": "https://issuer.example.com/",
+      "jwks_uri": "https://issuer.example.com/jwks.json?set=active",
+      "public_base_url": "https://front.example.com/",
+      "resource_metadata_url": "https://front.example.com/.well-known/oauth-protected-resource/acme/mcp",
+      "scopes": ["namespace:use"],
+      "bearer": {
+        "accepted_tokens": [
+          { "token": "valid-token", "subject": "acme", "scopes": ["namespace:use"] },
+          { "token": "missing-scope-token", "subject": "acme", "scopes": ["other:scope"] }
+        ],
+        "required_scopes": ["namespace:use"]
+      }
+    }
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/acme/mcp/.well-known/oauth-authorization-server",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    },
+    "aws_event": {
+      "source": "apigw_v2",
+      "event": {
+        "version": "2.0",
+        "routeKey": "ANY /{proxy+}",
+        "rawPath": "/acme/mcp/.well-known/oauth-authorization-server",
+        "rawQueryString": "",
+        "cookies": [],
+        "headers": {},
+        "queryStringParameters": null,
+        "requestContext": {
+          "http": {
+            "method": "GET",
+            "path": "/acme/mcp/.well-known/oauth-authorization-server"
+          }
+        },
+        "body": "",
+        "isBase64Encoded": false
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": ["application/json; charset=utf-8"],
+        "cache-control": ["no-store"],
+        "vary": ["Host, X-Forwarded-Host, X-AppTheory-Original-Host, X-FaceTheory-Original-Host, Forwarded, CloudFront-Forwarded-Proto, X-Forwarded-Proto"]
+      },
+      "cookies": [],
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"issuer\":\"https://issuer.example.com\",\"authorization_endpoint\":\"https://front.example.com/.well-known/oauth-authorization-server/acme/mcp/authorize\",\"token_endpoint\":\"https://front.example.com/.well-known/oauth-authorization-server/acme/mcp/token\",\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"response_types_supported\":[\"code\"],\"grant_types_supported\":[\"authorization_code\",\"refresh_token\"],\"token_endpoint_auth_methods_supported\":[\"none\"],\"code_challenge_methods_supported\":[\"S256\"],\"scopes_supported\":[\"namespace:use\"]}"
+      },
+      "is_base64": false
+    }
+  }
+}

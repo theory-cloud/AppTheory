@@ -1,0 +1,94 @@
+{
+  "id": "p2.secure_greedy_undeclared_path_not_found",
+  "tier": "p2",
+  "name": "secure greedy ANY /{proxy+}: an undeclared path returns the canonical 404 envelope",
+  "setup": {
+    "secure_app": {
+      "tier": "p2",
+      "routes": [
+        {
+          "surface": "http",
+          "method": "GET",
+          "path": "/known",
+          "handler": "secure_echo",
+          "posture": "public"
+        }
+      ]
+    }
+  },
+  "input": {
+    "secure_steps": [
+      {
+        "name": "undeclared-path",
+        "operation": "http",
+        "request": {
+          "method": "GET",
+          "path": "/unknown",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        },
+        "aws_event": {
+          "source": "apigw_v2",
+          "event": {
+            "version": "2.0",
+            "routeKey": "ANY /{proxy+}",
+            "rawPath": "/unknown",
+            "rawQueryString": "",
+            "cookies": [],
+            "headers": {},
+            "queryStringParameters": null,
+            "requestContext": {
+              "http": {
+                "method": "GET",
+                "path": "/unknown"
+              }
+            },
+            "body": "",
+            "isBase64Encoded": false
+          }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "secure_steps": [
+      {
+        "name": "undeclared-path",
+        "status": 404,
+        "error_code": "app.not_found",
+        "response": {
+          "status": 404,
+          "headers": {
+            "content-type": [
+              "application/json; charset=utf-8"
+            ],
+            "x-request-id": [
+              "req_test_123"
+            ]
+          },
+          "cookies": [],
+          "body": {
+            "encoding": "utf8",
+            "value": "{\"error\":{\"code\":\"app.not_found\",\"message\":\"not found\",\"request_id\":\"req_test_123\",\"status_code\":404}}"
+          },
+          "is_base64": false,
+          "body_json": {
+            "error": {
+              "code": "app.not_found",
+              "message": "not found",
+              "request_id": "req_test_123",
+              "status_code": 404
+            }
+          }
+        },
+        "resolver_calls": 0,
+        "middleware_calls": 0,
+        "handler_calls": 0
+      }
+    ]
+  }
+}

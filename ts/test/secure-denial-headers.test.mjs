@@ -39,6 +39,7 @@ test("secure denial without headers renders today's envelope without a challenge
       code: "app.unauthorized",
       message: "unauthorized",
       request_id: "req_denial",
+      status_code: 401,
     },
   });
 });
@@ -71,6 +72,7 @@ test("secure denial can carry a WWW-Authenticate challenge header", async () => 
       code: "app.unauthorized",
       message: "unauthorized",
       request_id: "req_denial",
+      status_code: 401,
     },
   });
 });
@@ -103,6 +105,7 @@ test("secure forbidden denial can carry a bounded arbitrary header set", async (
       code: "app.forbidden",
       message: "forbidden",
       request_id: "req_denial",
+      status_code: 403,
     },
   });
 });

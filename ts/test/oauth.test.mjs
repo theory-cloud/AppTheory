@@ -5,6 +5,7 @@ import {
   ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE,
   ERR_BEARER_TOKEN_INVALID_AUDIENCE,
   OAuthBearerError,
+  authorizationServerMetadataHandler,
   bearerTokenClaimsFromContext,
   insufficientScopeWWWAuthenticate,
   newAuthorizationServerMetadata,
@@ -107,7 +108,13 @@ test("OAuth bearer middleware distinguishes unauthorized, forbidden, and insuffi
   );
   assert.deepEqual(
     JSON.parse(Buffer.from(insufficient.body).toString("utf8")),
-    { error: { code: "app.insufficient_scope", message: "insufficient scope" } },
+    {
+      error: {
+        code: "app.insufficient_scope",
+        message: "insufficient scope",
+        status_code: 403,
+      },
+    },
   );
   const forbidden = await mw(
     ctx({ authorization: ["Bearer audience-miss"] }),
@@ -117,7 +124,7 @@ test("OAuth bearer middleware distinguishes unauthorized, forbidden, and insuffi
   assert.equal(forbidden.headers["www-authenticate"], undefined);
   assert.deepEqual(
     JSON.parse(Buffer.from(forbidden.body).toString("utf8")),
-    { error: { code: "app.forbidden", message: "forbidden" } },
+    { error: { code: "app.forbidden", message: "forbidden", status_code: 403 } },
   );
   await assert.rejects(
     validator(ctx(), "scope-miss"),
@@ -218,7 +225,11 @@ test("OAuth scope failure carries the route-derived RFC 6750 challenge", async (
     'Bearer error="insufficient_scope", scope="mcp:read mcp:write", resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/acme/mcp"',
   );
   assert.deepEqual(JSON.parse(Buffer.from(resp.body).toString("utf8")), {
-    error: { code: "app.insufficient_scope", message: "insufficient scope" },
+    error: {
+      code: "app.insufficient_scope",
+      message: "insufficient scope",
+      status_code: 403,
+    },
   });
 });
 
@@ -251,7 +262,7 @@ test("OAuth audience failure is a plain 403 with no challenge", async () => {
   assert.equal(resp.status, 403);
   assert.equal(resp.headers["www-authenticate"], undefined);
   assert.deepEqual(JSON.parse(Buffer.from(resp.body).toString("utf8")), {
-    error: { code: "app.forbidden", message: "forbidden" },
+    error: { code: "app.forbidden", message: "forbidden", status_code: 403 },
   });
 });
 
@@ -345,6 +356,52 @@ test("OAuth authorization server metadata supports opt-in revocation/device endp
       }),
     /invalid url/,
   );
+});
+
+test("OAuth authorization server metadata emits RFC 9207 iss parameter support only while true", async () => {
+  const plain = newAuthorizationServerMetadata("https://auth.example.com");
+  assert.equal(
+    JSON.stringify(plain).includes("authorization_response_iss_parameter_supported"),
+    false,
+  );
+
+  const bodyOf = async (metadata) =>
+    Buffer.from((await authorizationServerMetadataHandler(metadata)()).body).toString(
+      "utf8",
+    );
+
+  // An explicit false is omitted, matching Go's omitempty and Python's
+  // identity rule, so all three runtimes emit the same document.
+  assert.equal(
+    await bodyOf({
+      issuer: "https://auth.example.com",
+      authorization_response_iss_parameter_supported: false,
+    }),
+    `{"issuer":"https://auth.example.com"}`,
+  );
+
+  // True is the only state that emits the member.
+  assert.equal(
+    await bodyOf({
+      issuer: "https://auth.example.com",
+      authorization_response_iss_parameter_supported: true,
+    }),
+    `{"issuer":"https://auth.example.com","authorization_response_iss_parameter_supported":true}`,
+  );
+
+  // A truthy non-boolean must never leak into the document: the member is
+  // emitted only for the boolean `true`, so this is an identity rule and not a
+  // truthiness rule. Note the string "false" is truthy.
+  for (const value of ["true", "false", 1]) {
+    assert.equal(
+      await bodyOf({
+        issuer: "https://auth.example.com",
+        authorization_response_iss_parameter_supported: value,
+      }),
+      `{"issuer":"https://auth.example.com"}`,
+      `non-boolean ${JSON.stringify(value)} must be omitted`,
+    );
+  }
 });
 
 test("OAuth DCR policy and PKCE verifier are pinned", () => {

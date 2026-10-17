@@ -1,0 +1,47 @@
+{
+  "id": "p0.adapter.apigw_v2.greedy_undeclared_path_not_found",
+  "tier": "p0",
+  "name": "APIGW v2: an undeclared path under ANY /{proxy+} returns the AppTheory 404 envelope",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/known", "handler": "static_pong" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/unknown",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    },
+    "aws_event": {
+      "source": "apigw_v2",
+      "event": {
+        "version": "2.0",
+        "routeKey": "ANY /{proxy+}",
+        "rawPath": "/unknown",
+        "rawQueryString": "",
+        "cookies": [],
+        "headers": {},
+        "queryStringParameters": null,
+        "requestContext": { "http": { "method": "GET", "path": "/unknown" } },
+        "body": "",
+        "isBase64Encoded": false
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 404,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body": { "encoding": "utf8", "value": "{\"error\":{\"code\":\"app.not_found\",\"message\":\"not found\",\"status_code\":404}}" },
+      "body_json": {
+        "error": { "code": "app.not_found", "message": "not found", "status_code": 404 }
+      },
+      "is_base64": false
+    }
+  }
+}

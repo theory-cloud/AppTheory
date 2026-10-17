@@ -60,7 +60,21 @@ func (h *Handler) Handle(*apptheory.Context) (*apptheory.Response, error) {
 // application handler.
 func AssertCredentialFreeDenied(tb testing.TB, env *testkit.Env, app *apptheory.App, method, path, resourceMetadataURL string, handler *Handler) {
 	tb.Helper()
-	response := invokeTransport(tb, env, app, method, path, nil)
+	assertCredentialFreeDenied(tb, plainTransportInvoker(tb, env, app), method, path, resourceMetadataURL, handler)
+}
+
+// AssertCredentialFreeDeniedSecureApp is AssertCredentialFreeDenied for the
+// closed-by-default surface. A SecureApp that mounts its transport routes
+// through the MCP auth facade's SecureApp registrar owes the same RFC 9728
+// denial, and this helper proves it from the same fixture world.
+func AssertCredentialFreeDeniedSecureApp(tb testing.TB, env *testkit.Env, app *apptheory.SecureApp, method, path, resourceMetadataURL string, handler *Handler) {
+	tb.Helper()
+	assertCredentialFreeDenied(tb, secureTransportInvoker(tb, env, app), method, path, resourceMetadataURL, handler)
+}
+
+func assertCredentialFreeDenied(tb testing.TB, invoke v2TransportInvoker, method, path, resourceMetadataURL string, handler *Handler) {
+	tb.Helper()
+	response := invoke(method, path, nil)
 	if response.StatusCode != http.StatusUnauthorized {
 		tb.Fatalf("credential-free %s %s: status = %d, want 401", method, path, response.StatusCode)
 	}
@@ -78,8 +92,20 @@ func AssertCredentialFreeDenied(tb testing.TB, env *testkit.Env, app *apptheory.
 // exactly once, proving the denial is not "always deny".
 func AssertBearerTokenReachesHandler(tb testing.TB, env *testkit.Env, app *apptheory.App, method, path, token string, handler *Handler) {
 	tb.Helper()
+	assertBearerTokenReachesHandler(tb, plainTransportInvoker(tb, env, app), method, path, token, handler)
+}
+
+// AssertBearerTokenReachesHandlerSecureApp is the positive control for
+// AssertCredentialFreeDeniedSecureApp.
+func AssertBearerTokenReachesHandlerSecureApp(tb testing.TB, env *testkit.Env, app *apptheory.SecureApp, method, path, token string, handler *Handler) {
+	tb.Helper()
+	assertBearerTokenReachesHandler(tb, secureTransportInvoker(tb, env, app), method, path, token, handler)
+}
+
+func assertBearerTokenReachesHandler(tb testing.TB, invoke v2TransportInvoker, method, path, token string, handler *Handler) {
+	tb.Helper()
 	before := handler.Invocations()
-	response := invokeTransport(tb, env, app, method, path, map[string]string{"authorization": "Bearer " + token})
+	response := invoke(method, path, map[string]string{"authorization": "Bearer " + token})
 	if response.StatusCode != http.StatusNoContent {
 		tb.Fatalf("bearer %s %s: status = %d, want 204", method, path, response.StatusCode)
 	}
@@ -98,8 +124,20 @@ func AssertBearerTokenReachesHandler(tb testing.TB, env *testkit.Env, app *appth
 // `Bearer error="insufficient_scope", scope="namespace:use", resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/acme/mcp"`.
 func AssertInsufficientScopeRemediation(tb testing.TB, env *testkit.Env, app *apptheory.App, method, path, token, expectedChallenge string, handler *Handler) {
 	tb.Helper()
+	assertInsufficientScopeRemediation(tb, plainTransportInvoker(tb, env, app), method, path, token, expectedChallenge, handler)
+}
+
+// AssertInsufficientScopeRemediationSecureApp is
+// AssertInsufficientScopeRemediation for the closed-by-default surface.
+func AssertInsufficientScopeRemediationSecureApp(tb testing.TB, env *testkit.Env, app *apptheory.SecureApp, method, path, token, expectedChallenge string, handler *Handler) {
+	tb.Helper()
+	assertInsufficientScopeRemediation(tb, secureTransportInvoker(tb, env, app), method, path, token, expectedChallenge, handler)
+}
+
+func assertInsufficientScopeRemediation(tb testing.TB, invoke v2TransportInvoker, method, path, token, expectedChallenge string, handler *Handler) {
+	tb.Helper()
 	before := handler.Invocations()
-	response := invokeTransport(tb, env, app, method, path, map[string]string{"authorization": "Bearer " + token})
+	response := invoke(method, path, map[string]string{"authorization": "Bearer " + token})
 	if response.StatusCode != http.StatusForbidden {
 		tb.Fatalf("insufficient-scope %s %s: status = %d, want 403", method, path, response.StatusCode)
 	}
@@ -111,15 +149,39 @@ func AssertInsufficientScopeRemediation(tb testing.TB, env *testkit.Env, app *ap
 	}
 }
 
-func invokeTransport(tb testing.TB, env *testkit.Env, app *apptheory.App, method, path string, headers map[string]string) events.APIGatewayV2HTTPResponse {
+// v2TransportInvoker issues one API Gateway v2 request against whichever app
+// surface a helper was given. Both surfaces expose the same adapter method, so
+// the assertions are written once and hold on either topology.
+type v2TransportInvoker func(method, path string, headers map[string]string) events.APIGatewayV2HTTPResponse
+
+func plainTransportInvoker(tb testing.TB, env *testkit.Env, app *apptheory.App) v2TransportInvoker {
+	tb.Helper()
+	requireTransportTarget(tb, env, app == nil)
+	return func(method, path string, headers map[string]string) events.APIGatewayV2HTTPResponse {
+		return env.InvokeAPIGatewayV2(context.Background(), app, transportEvent(method, path, headers))
+	}
+}
+
+func secureTransportInvoker(tb testing.TB, env *testkit.Env, app *apptheory.SecureApp) v2TransportInvoker {
+	tb.Helper()
+	requireTransportTarget(tb, env, app == nil)
+	return func(method, path string, headers map[string]string) events.APIGatewayV2HTTPResponse {
+		return app.ServeAPIGatewayV2(context.Background(), transportEvent(method, path, headers))
+	}
+}
+
+func requireTransportTarget(tb testing.TB, env *testkit.Env, appMissing bool) {
 	tb.Helper()
 	if env == nil {
 		tb.Fatal("mcpfacade: env is required")
 	}
-	if app == nil {
+	if appMissing {
 		tb.Fatal("mcpfacade: app is required")
 	}
-	return env.InvokeAPIGatewayV2(context.Background(), app, events.APIGatewayV2HTTPRequest{
+}
+
+func transportEvent(method, path string, headers map[string]string) events.APIGatewayV2HTTPRequest {
+	return events.APIGatewayV2HTTPRequest{
 		RawPath: path,
 		Headers: headers,
 		RequestContext: events.APIGatewayV2HTTPRequestContext{
@@ -129,5 +191,5 @@ func invokeTransport(tb testing.TB, env *testkit.Env, app *apptheory.App, method
 				Path:   path,
 			},
 		},
-	})
+	}
 }

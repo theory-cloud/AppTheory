@@ -14521,7 +14521,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/http-api.ts",
-          "line": 213
+          "line": 301
         },
         "parameters": [
           {
@@ -14547,7 +14547,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/http-api.ts",
-        "line": 207
+        "line": 295
       },
       "name": "AppTheoryHttpApi",
       "properties": [
@@ -14555,7 +14555,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 208
+            "line": 296
           },
           "name": "api",
           "type": {
@@ -14566,7 +14566,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 209
+            "line": 297
           },
           "name": "stage",
           "type": {
@@ -14577,7 +14577,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 210
+            "line": 298
           },
           "name": "accessLogGroup",
           "optional": true,
@@ -14589,7 +14589,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 211
+            "line": 299
           },
           "name": "domain",
           "optional": true,
@@ -14607,7 +14607,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/http-api.ts",
-        "line": 13
+        "line": 16
       },
       "name": "AppTheoryHttpApiCorsOptions",
       "properties": [
@@ -14620,7 +14620,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 42
+            "line": 45
           },
           "name": "allowCredentials",
           "optional": true,
@@ -14637,7 +14637,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 30
+            "line": 33
           },
           "name": "allowHeaders",
           "optional": true,
@@ -14659,7 +14659,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 24
+            "line": 27
           },
           "name": "allowMethods",
           "optional": true,
@@ -14681,7 +14681,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 18
+            "line": 21
           },
           "name": "allowOrigins",
           "optional": true,
@@ -14703,7 +14703,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 36
+            "line": 39
           },
           "name": "exposeHeaders",
           "optional": true,
@@ -14725,7 +14725,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 48
+            "line": 51
           },
           "name": "maxAge",
           "optional": true,
@@ -14743,7 +14743,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/http-api.ts",
-        "line": 51
+        "line": 54
       },
       "name": "AppTheoryHttpApiDomainOptions",
       "properties": [
@@ -14755,7 +14755,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 55
+            "line": 58
           },
           "name": "domainName",
           "type": {
@@ -14771,7 +14771,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 79
+            "line": 82
           },
           "name": "apiMappingKey",
           "optional": true,
@@ -14788,7 +14788,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 61
+            "line": 64
           },
           "name": "certificate",
           "optional": true,
@@ -14805,7 +14805,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 67
+            "line": 70
           },
           "name": "certificateArn",
           "optional": true,
@@ -14822,7 +14822,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 91
+            "line": 94
           },
           "name": "createCname",
           "optional": true,
@@ -14839,7 +14839,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 73
+            "line": 76
           },
           "name": "hostedZone",
           "optional": true,
@@ -14856,7 +14856,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 103
+            "line": 106
           },
           "name": "mutualTlsAuthentication",
           "optional": true,
@@ -14873,7 +14873,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 97
+            "line": 100
           },
           "name": "recordTtl",
           "optional": true,
@@ -14890,7 +14890,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 109
+            "line": 112
           },
           "name": "securityPolicy",
           "optional": true,
@@ -14908,7 +14908,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 85
+            "line": 88
           },
           "name": "stage",
           "optional": true,
@@ -14926,7 +14926,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/http-api.ts",
-        "line": 151
+        "line": 199
       },
       "name": "AppTheoryHttpApiProps",
       "properties": [
@@ -14935,7 +14935,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 152
+            "line": 200
           },
           "name": "handler",
           "type": {
@@ -14947,7 +14947,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 153
+            "line": 201
           },
           "name": "apiName",
           "optional": true,
@@ -14965,7 +14965,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 173
+            "line": 221
           },
           "name": "cors",
           "optional": true,
@@ -14992,12 +14992,58 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 186
+            "line": 274
           },
           "name": "domain",
           "optional": true,
           "type": {
             "fqn": "@theory-cloud/apptheory-cdk.AppTheoryHttpApiDomainOptions"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "remarks": "Use this where a stricter per-path gateway posture (for example\n`AppTheoryHttpApiRouteAuthorizer.IAM`) must win over the greedy routes: a\nfull method+path match outranks the greedy route by API Gateway precedence,\nand a wrong-method request on such a path is denied by the runtime with the\nfail-closed 404/405 envelope.\n\nRoute construct ids are derived from the method and path, so inserting,\nremoving, or reordering an entry never renames an unrelated route.\n\nA declared `OPTIONS` route coexists with, and can be shadowed by, the\nAPI-level CORS configuration `cors` installs. `buildCorsPreflight` includes\n`OPTIONS` in its default `allowMethods`, and while `OPTIONS` is in that\nlist API Gateway answers matching preflight requests itself before the\nroute integration runs, so a declared `OPTIONS` route on the same path is\nnever reached. Setting `cors.allowMethods` without `OPTIONS` removes gateway\npreflight handling entirely; a declared `OPTIONS` route is then the only\nthing that answers a preflight request, and it is subject to that route's\nown authorizer. Declare the methods you need in `cors.allowMethods` rather\nthan depending on a declared `OPTIONS` route.",
+            "summary": "Explicit, semantically identified routes added alongside the construct's greedy `ANY /` and `ANY /{proxy+}` routes."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 248
+          },
+          "name": "routes",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "@theory-cloud/apptheory-cdk.AppTheoryHttpApiRouteOptions"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "remarks": "Every key is validated at synthesis time against the route keys this\nconstruct emits — the greedy `ANY /` and `ANY /{proxy+}` routes plus one\n`<METHOD> <path>` key per `routes` entry. A key that matches no emitted\nroute fails synthesis with a named error listing the emitted keys, rather\nthan being silently ignored by API Gateway.",
+            "summary": "Route-level throttling keyed by API Gateway route key (for example `\"ANY /{proxy+}\"`). Applied to the stage's route settings."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 261
+          },
+          "name": "routeSettings",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "@theory-cloud/apptheory-cdk.AppTheoryHttpApiRouteThrottling"
+              },
+              "kind": "map"
+            }
           }
         },
         {
@@ -15010,7 +15056,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 167
+            "line": 215
           },
           "name": "scopePermissionToRoute",
           "optional": true,
@@ -15027,7 +15073,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 192
+            "line": 280
           },
           "name": "stage",
           "optional": true,
@@ -15047,7 +15093,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 204
+            "line": 292
           },
           "name": "waf",
           "optional": true,
@@ -15067,6 +15113,157 @@
       ],
       "symbolId": "lib/http-api:AppTheoryHttpApiProps"
     },
+    "@theory-cloud/apptheory-cdk.AppTheoryHttpApiRouteAuthorizer": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "docs": {
+        "summary": "Gateway authorization posture for an explicit AppTheoryHttpApi route."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryHttpApiRouteAuthorizer",
+      "kind": "enum",
+      "locationInModule": {
+        "filename": "lib/http-api.ts",
+        "line": 162
+      },
+      "members": [
+        {
+          "docs": {
+            "summary": "AWS IAM (SigV4) on the route."
+          },
+          "name": "IAM"
+        },
+        {
+          "docs": {
+            "remarks": "the runtime owns admission.",
+            "summary": "No gateway authorizer;"
+          },
+          "name": "NONE"
+        }
+      ],
+      "name": "AppTheoryHttpApiRouteAuthorizer",
+      "symbolId": "lib/http-api:AppTheoryHttpApiRouteAuthorizer"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryHttpApiRouteOptions": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "remarks": "API Gateway precedence gives a full method+path match priority over the\ngreedy routes, so a more specific route with a stricter authorizer (for\nexample `AWS_IAM`) wins for its own path. A wrong-method request on such a\npath falls through to the runtime's fail-closed 404/405 when the runtime does\nnot declare it.",
+        "summary": "One explicit, semantically identified route added alongside the construct's greedy `ANY /` and `ANY /{proxy+}` routes."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryHttpApiRouteOptions",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/http-api.ts",
+        "line": 179
+      },
+      "name": "AppTheoryHttpApiRouteOptions",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "HTTP methods wired for the route, for example `[\"GET\"]` or `[\"ANY\"]`."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 183
+          },
+          "name": "methods",
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Segments are literals, `{parameter}`, or `{proxy+}` segments.",
+            "summary": "Absolute route path."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 181
+          },
+          "name": "path",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "AppTheoryHttpApiRouteAuthorizer.NONE",
+            "summary": "Gateway authorization posture for the route."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 188
+          },
+          "name": "authorizer",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryHttpApiRouteAuthorizer"
+          }
+        }
+      ],
+      "symbolId": "lib/http-api:AppTheoryHttpApiRouteOptions"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryHttpApiRouteThrottling": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Route-level throttling applied to one API Gateway route key."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryHttpApiRouteThrottling",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/http-api.ts",
+        "line": 192
+      },
+      "name": "AppTheoryHttpApiRouteThrottling",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "the stage default",
+            "summary": "Burst limit for the route key."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 196
+          },
+          "name": "burstLimit",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "the stage default",
+            "summary": "Requests per second for the route key."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 194
+          },
+          "name": "rateLimit",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        }
+      ],
+      "symbolId": "lib/http-api:AppTheoryHttpApiRouteThrottling"
+    },
     "@theory-cloud/apptheory-cdk.AppTheoryHttpApiStageOptions": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "datatype": true,
@@ -15074,10 +15271,28 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/http-api.ts",
-        "line": 112
+        "line": 115
       },
       "name": "AppTheoryHttpApiStageOptions",
       "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "the AppTheory JSON access-log format",
+            "remarks": "Defaults to the AppTheory JSON format.\nValid only when `accessLogging` is enabled.",
+            "summary": "API Gateway v2 access-log format."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 139
+          },
+          "name": "accessLogFormat",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
         {
           "abstract": true,
           "docs": {
@@ -15087,7 +15302,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 123
+            "line": 126
           },
           "name": "accessLogging",
           "optional": true,
@@ -15113,7 +15328,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 129
+            "line": 132
           },
           "name": "accessLogRetention",
           "optional": true,
@@ -15130,7 +15345,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 117
+            "line": 120
           },
           "name": "stageName",
           "optional": true,
@@ -15147,7 +15362,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 141
+            "line": 151
           },
           "name": "throttlingBurstLimit",
           "optional": true,
@@ -15164,7 +15379,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 135
+            "line": 145
           },
           "name": "throttlingRateLimit",
           "optional": true,
@@ -15189,7 +15404,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/http-api.ts",
-        "line": 149
+        "line": 159
       },
       "name": "AppTheoryHttpApiWafOptions",
       "symbolId": "lib/http-api:AppTheoryHttpApiWafOptions"
@@ -17667,7 +17882,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 56
+        "line": 99
       },
       "name": "AppTheoryMcpDenialSignalOptions",
       "properties": [
@@ -17681,7 +17896,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 60
+            "line": 103
           },
           "name": "dimensions",
           "optional": true,
@@ -17704,7 +17919,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 58
+            "line": 101
           },
           "name": "metricName",
           "optional": true,
@@ -17866,7 +18081,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 36
+        "line": 79
       },
       "name": "AppTheoryMcpFacadeAttachment",
       "properties": [
@@ -17879,7 +18094,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 38
+            "line": 81
           },
           "name": "providerId",
           "type": {
@@ -18037,7 +18252,7 @@
       "kind": "enum",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 48
+        "line": 91
       },
       "members": [
         {
@@ -18066,7 +18281,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 72
+        "line": 115
       },
       "name": "AppTheoryMcpOwningApiDefenseOptions",
       "properties": [
@@ -18079,7 +18294,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 74
+            "line": 117
           },
           "name": "accessLogging",
           "type": {
@@ -18094,7 +18309,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 76
+            "line": 119
           },
           "name": "throttling",
           "type": {
@@ -18114,7 +18329,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 64
+        "line": 107
       },
       "name": "AppTheoryMcpOwningApiThrottlingOptions",
       "properties": [
@@ -18126,7 +18341,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 68
+            "line": 111
           },
           "name": "burstLimit",
           "type": {
@@ -18141,7 +18356,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 66
+            "line": 109
           },
           "name": "rateLimit",
           "type": {
@@ -19199,7 +19414,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 156
+        "line": 199
       },
       "name": "AppTheoryMcpRouteFamily",
       "properties": [
@@ -19212,7 +19427,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 164
+            "line": 207
           },
           "name": "patterns",
           "type": {
@@ -19234,7 +19449,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 171
+            "line": 214
           },
           "name": "rootAuthorizationServerDiscovery",
           "optional": true,
@@ -19244,6 +19459,65 @@
         }
       ],
       "symbolId": "lib/mcp-server:AppTheoryMcpRouteFamily"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMcpRouteIdMode": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "docs": {
+        "summary": "Construct-id derivation for the explicit route model."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpRouteIdMode",
+      "kind": "enum",
+      "locationInModule": {
+        "filename": "lib/mcp-server.ts",
+        "line": 48
+      },
+      "members": [
+        {
+          "docs": {
+            "summary": "Positional ids (`Route0`, `Route1`, ...) assigned in emission order. This is the construct's historical inventory and stays byte-identical for deployed stacks. The default."
+          },
+          "name": "LEGACY"
+        },
+        {
+          "docs": {
+            "remarks": "Intended for\nnewly created explicit APIs: switching an existing deployed explicit API\nfrom `legacy` to `semantic` in place renames every route, which is itself a\ncreate-before-delete collision. Adopt it on an existing stack only through\nthe new-API swap described in `UPGRADING.md`.",
+            "summary": "Ids derived from the route method and pattern, so inserting, removing, or reordering a route family never renames an unrelated route."
+          },
+          "name": "SEMANTIC"
+        }
+      ],
+      "name": "AppTheoryMcpRouteIdMode",
+      "symbolId": "lib/mcp-server:AppTheoryMcpRouteIdMode"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMcpRouteModel": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "docs": {
+        "summary": "Route-emission model for AppTheoryMcpServer."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpRouteModel",
+      "kind": "enum",
+      "locationInModule": {
+        "filename": "lib/mcp-server.ts",
+        "line": 29
+      },
+      "members": [
+        {
+          "docs": {
+            "remarks": "This is the\nconstruct's historical inventory and stays byte-identical for deployed\nstacks, so a `routeModel: explicit` upgrade deploys in place. The default.",
+            "summary": "One API Gateway HTTP API v2 route per derived route key."
+          },
+          "name": "EXPLICIT"
+        },
+        {
+          "docs": {
+            "remarks": "The AppTheory runtime router performs method and path\ndispatch, path-parameter capture, and denial. Consolidation never changes\ngateway admission, so it is valid only when every gateway route is `NONE`:\nthe `runtime-bearer` and `none-public` transport postures. `iam` and `jwt`\nare refused at synthesis time.",
+            "summary": "Two greedy routes, `ANY /` and `ANY /{proxy+}`, backed by one shared integration."
+          },
+          "name": "CONSOLIDATED"
+        }
+      ],
+      "name": "AppTheoryMcpRouteModel",
+      "symbolId": "lib/mcp-server:AppTheoryMcpRouteModel"
     },
     "@theory-cloud/apptheory-cdk.AppTheoryMcpRuntimePostureOptions": {
       "assembly": "@theory-cloud/apptheory-cdk",
@@ -19255,7 +19529,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 42
+        "line": 85
       },
       "name": "AppTheoryMcpRuntimePostureOptions",
       "properties": [
@@ -19267,7 +19541,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 44
+            "line": 87
           },
           "name": "requireBearerToken",
           "type": {
@@ -19288,7 +19562,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/mcp-server.ts",
-          "line": 460
+          "line": 560
         },
         "parameters": [
           {
@@ -19314,7 +19588,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 410
+        "line": 508
       },
       "name": "AppTheoryMcpServer",
       "properties": [
@@ -19322,7 +19596,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 413
+            "line": 513
           },
           "name": "api",
           "type": {
@@ -19339,7 +19613,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 447
+            "line": 547
           },
           "name": "endpoint",
           "type": {
@@ -19354,7 +19628,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 433
+            "line": 533
           },
           "name": "endpoints",
           "type": {
@@ -19374,7 +19648,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 450
+            "line": 550
           },
           "name": "mcpPath",
           "type": {
@@ -19385,7 +19659,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 434
+            "line": 534
           },
           "name": "mcpPaths",
           "type": {
@@ -19405,7 +19679,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 453
+            "line": 553
           },
           "name": "protectedResourceMetadataPath",
           "type": {
@@ -19416,7 +19690,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 435
+            "line": 535
           },
           "name": "protectedResourceMetadataPaths",
           "type": {
@@ -19432,7 +19706,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 436
+            "line": 536
           },
           "name": "routeInventory",
           "type": {
@@ -19447,7 +19721,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 423
+            "line": 523
           },
           "name": "transportPosture",
           "type": {
@@ -19458,7 +19732,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 458
+            "line": 558
           },
           "name": "accessLogGroup",
           "optional": true,
@@ -19470,7 +19744,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 456
+            "line": 556
           },
           "name": "apiMapping",
           "optional": true,
@@ -19482,7 +19756,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 457
+            "line": 557
           },
           "name": "cnameRecord",
           "optional": true,
@@ -19494,7 +19768,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 455
+            "line": 555
           },
           "name": "domainName",
           "optional": true,
@@ -19506,7 +19780,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 414
+            "line": 514
           },
           "name": "ownedApi",
           "optional": true,
@@ -19518,7 +19792,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 415
+            "line": 515
           },
           "name": "sessionTable",
           "optional": true,
@@ -19539,7 +19813,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 92
+        "line": 135
       },
       "name": "AppTheoryMcpServerDomainOptions",
       "properties": [
@@ -19551,7 +19825,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 94
+            "line": 137
           },
           "name": "domainName",
           "type": {
@@ -19567,7 +19841,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 97
+            "line": 140
           },
           "name": "certificate",
           "optional": true,
@@ -19584,7 +19858,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 100
+            "line": 143
           },
           "name": "certificateArn",
           "optional": true,
@@ -19601,7 +19875,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 106
+            "line": 149
           },
           "name": "hostedZone",
           "optional": true,
@@ -19622,7 +19896,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 200
+        "line": 243
       },
       "name": "AppTheoryMcpServerFacadeRoute",
       "properties": [
@@ -19631,7 +19905,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 209
+            "line": 252
           },
           "name": "authorizationRoutesAttached",
           "type": {
@@ -19643,7 +19917,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 206
+            "line": 249
           },
           "name": "authorizePattern",
           "type": {
@@ -19655,7 +19929,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 204
+            "line": 247
           },
           "name": "discoveryCanonicalPattern",
           "type": {
@@ -19667,7 +19941,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 205
+            "line": 248
           },
           "name": "discoverySuffixPattern",
           "type": {
@@ -19679,7 +19953,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 202
+            "line": 245
           },
           "name": "mcpMethods",
           "type": {
@@ -19696,7 +19970,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 201
+            "line": 244
           },
           "name": "mcpPattern",
           "type": {
@@ -19708,7 +19982,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 203
+            "line": 246
           },
           "name": "protectedResourcePattern",
           "type": {
@@ -19720,7 +19994,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 208
+            "line": 251
           },
           "name": "registerPattern",
           "type": {
@@ -19732,7 +20006,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 207
+            "line": 250
           },
           "name": "tokenPattern",
           "type": {
@@ -19752,7 +20026,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 141
+        "line": 184
       },
       "name": "AppTheoryMcpServerOwnedApiOptions",
       "properties": [
@@ -19764,7 +20038,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 143
+            "line": 186
           },
           "name": "apiName",
           "optional": true,
@@ -19780,7 +20054,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 146
+            "line": 189
           },
           "name": "domain",
           "optional": true,
@@ -19798,7 +20072,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 152
+            "line": 195
           },
           "name": "stage",
           "optional": true,
@@ -19819,7 +20093,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 222
+        "line": 265
       },
       "name": "AppTheoryMcpServerProps",
       "properties": [
@@ -19831,7 +20105,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 224
+            "line": 267
           },
           "name": "handler",
           "type": {
@@ -19848,7 +20122,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 246
+            "line": 344
           },
           "name": "api",
           "optional": true,
@@ -19865,7 +20139,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 377
+            "line": 475
           },
           "name": "apiName",
           "optional": true,
@@ -19883,7 +20157,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 255
+            "line": 353
           },
           "name": "attachedApiStageName",
           "optional": true,
@@ -19901,7 +20175,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 367
+            "line": 465
           },
           "name": "authorizationServerIssuer",
           "optional": true,
@@ -19913,12 +20187,39 @@
           "abstract": true,
           "docs": {
             "default": "undefined",
+            "remarks": "Set to `true` for AppTheory\ndefaults or supply an `AppTheoryHttpApiCorsOptions` object. Invalid in\nattach mode, where the owning API configures CORS.",
+            "summary": "CORS preflight for a construct-owned API."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 337
+          },
+          "name": "cors",
+          "optional": true,
+          "type": {
+            "union": {
+              "types": [
+                {
+                  "primitive": "boolean"
+                },
+                {
+                  "fqn": "@theory-cloud/apptheory-cdk.AppTheoryHttpApiCorsOptions"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
             "summary": "Denial-telemetry declaration required under RUNTIME_BEARER only."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 307
+            "line": 405
           },
           "name": "denialSignal",
           "optional": true,
@@ -19935,7 +20236,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 393
+            "line": 491
           },
           "name": "domain",
           "optional": true,
@@ -19952,7 +20253,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 382
+            "line": 480
           },
           "name": "enableSessionTable",
           "optional": true,
@@ -19970,7 +20271,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 285
+            "line": 383
           },
           "name": "facade",
           "optional": true,
@@ -19988,7 +20289,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 374
+            "line": 472
           },
           "name": "jwksUri",
           "optional": true,
@@ -20006,7 +20307,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 360
+            "line": 458
           },
           "name": "mcpPath",
           "optional": true,
@@ -20024,7 +20325,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 301
+            "line": 399
           },
           "name": "originReachability",
           "optional": true,
@@ -20042,7 +20343,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 353
+            "line": 451
           },
           "name": "ownedApi",
           "optional": true,
@@ -20059,7 +20360,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 314
+            "line": 412
           },
           "name": "owningApiDefense",
           "optional": true,
@@ -20077,12 +20378,48 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 265
+            "line": 363
           },
           "name": "routeFamily",
           "optional": true,
           "type": {
             "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpRouteFamily"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "AppTheoryMcpRouteIdMode.LEGACY",
+            "remarks": "`legacy` (the default) assigns positional ids in emission order and is\nbyte-stable for deployed stacks. `semantic` derives each id from its route\nmethod and pattern, so inserting, removing, or reordering a route family\nnever renames an unrelated route; it is intended for newly created explicit\nAPIs.\n\nSwitching an existing deployed explicit API from `legacy` to `semantic` in\nplace renames every route in one update, which is exactly the\ncreate-before-delete route-key collision the migration check refuses. Adopt\n`semantic` on an existing stack only through the new-API swap documented in\n`UPGRADING.md`.\n\nThis prop applies to `routeModel: explicit` only. The `consolidated` model\nalready emits the two fixed semantic ids `RouteAnyRoot` and `RouteAnyProxy`.",
+            "summary": "Construct-id derivation for the explicit route model."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 329
+          },
+          "name": "routeIdMode",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpRouteIdMode"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "AppTheoryMcpRouteModel.EXPLICIT",
+            "remarks": "`explicit` (the default) wires the full derived route inventory as one HTTP\nAPI v2 route per route key and is byte-stable for deployed stacks.\n`consolidated` wires exactly two greedy routes, `ANY /` and `ANY /{proxy+}`,\nand is valid only for the `runtime-bearer` and `none-public` transport\npostures; `iam` and `jwt` are refused at synthesis.\n\nConsolidated mode is allowed on a construct-owned API, or on an attached\nAPI that has no routes at attach time. \"No routes\" is enforced over the\nwhole stack, not just the API's own children: a route wired onto the\nattached API from any sibling construct scope is refused, because it holds\na route key the greedy routes would collide with.\n\nA consumer may still add explicit, more specific routes to the consolidated\nAPI afterwards, in either the attached or the construct-owned mode. That\nexception is enforced at synthesis time and is allowed only when the added\nroute carries a non-NONE authorizer and does not redeclare the greedy\n`ANY /` or `ANY /{proxy+}` key. Within it, a full method+path match beats the\ngreedy routes by API Gateway precedence, and a wrong-method hit on such a\npath falls to the runtime's fail-closed 404/405.",
+            "summary": "Route-emission model."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 308
+          },
+          "name": "routeModel",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpRouteModel"
           }
         },
         {
@@ -20095,7 +20432,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 294
+            "line": 392
           },
           "name": "runtimePosture",
           "optional": true,
@@ -20113,7 +20450,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 239
+            "line": 282
           },
           "name": "scopePermissionToRoute",
           "optional": true,
@@ -20131,7 +20468,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 347
+            "line": 445
           },
           "name": "sessionState",
           "optional": true,
@@ -20148,7 +20485,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 385
+            "line": 483
           },
           "name": "sessionTableName",
           "optional": true,
@@ -20165,7 +20502,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 388
+            "line": 486
           },
           "name": "sessionTtlMinutes",
           "optional": true,
@@ -20182,7 +20519,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 398
+            "line": 496
           },
           "name": "stage",
           "optional": true,
@@ -20200,7 +20537,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 326
+            "line": 424
           },
           "name": "transportAuthorizer",
           "optional": true,
@@ -20218,7 +20555,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 276
+            "line": 374
           },
           "name": "transportPosture",
           "optional": true,
@@ -20236,7 +20573,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 341
+            "line": 439
           },
           "name": "upstreamCallbackPath",
           "optional": true,
@@ -20257,7 +20594,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 213
+        "line": 256
       },
       "name": "AppTheoryMcpServerRouteInventory",
       "properties": [
@@ -20266,7 +20603,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 218
+            "line": 261
           },
           "name": "callbackPattern",
           "type": {
@@ -20278,7 +20615,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 214
+            "line": 257
           },
           "name": "contractVersion",
           "type": {
@@ -20290,7 +20627,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 217
+            "line": 260
           },
           "name": "rootAuthorizationServerAttached",
           "type": {
@@ -20302,7 +20639,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 216
+            "line": 259
           },
           "name": "rootAuthorizationServerPattern",
           "type": {
@@ -20314,7 +20651,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 215
+            "line": 258
           },
           "name": "routes",
           "type": {
@@ -20339,7 +20676,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 110
+        "line": 153
       },
       "name": "AppTheoryMcpServerStageOptions",
       "properties": [
@@ -20351,7 +20688,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 115
+            "line": 158
           },
           "name": "accessLogging",
           "optional": true,
@@ -20369,7 +20706,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 122
+            "line": 165
           },
           "name": "accessLogRetention",
           "optional": true,
@@ -20385,7 +20722,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 112
+            "line": 155
           },
           "name": "stageName",
           "optional": true,
@@ -20402,7 +20739,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 137
+            "line": 180
           },
           "name": "throttlingBurstLimit",
           "optional": true,
@@ -20418,7 +20755,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 125
+            "line": 168
           },
           "name": "throttlingEnabled",
           "optional": true,
@@ -20435,7 +20772,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 131
+            "line": 174
           },
           "name": "throttlingRateLimit",
           "optional": true,
@@ -20456,7 +20793,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 175
+        "line": 218
       },
       "name": "AppTheoryMcpSessionStateOptions",
       "properties": [
@@ -20468,7 +20805,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 177
+            "line": 220
           },
           "name": "enabled",
           "optional": true,
@@ -20486,7 +20823,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 196
+            "line": 239
           },
           "name": "removalPolicy",
           "optional": true,
@@ -20504,7 +20841,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 183
+            "line": 226
           },
           "name": "tableName",
           "optional": true,
@@ -20522,7 +20859,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 190
+            "line": 233
           },
           "name": "ttlMinutes",
           "optional": true,
@@ -20610,7 +20947,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 80
+        "line": 123
       },
       "name": "AppTheoryMcpTransportAuthorizerOptions",
       "properties": [
@@ -20624,7 +20961,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 84
+            "line": 127
           },
           "name": "audience",
           "optional": true,
@@ -20646,7 +20983,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 88
+            "line": 131
           },
           "name": "authorizerName",
           "optional": true,
@@ -20663,7 +21000,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 86
+            "line": 129
           },
           "name": "identitySource",
           "optional": true,
@@ -20686,7 +21023,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 82
+            "line": 125
           },
           "name": "issuer",
           "optional": true,
@@ -20706,7 +21043,7 @@
       "kind": "enum",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 24
+        "line": 67
       },
       "members": [
         {
@@ -31285,6 +31622,6 @@
       "symbolId": "lib/path-routed-frontend:SpaOriginConfig"
     }
   },
-  "version": "6.1.0",
-  "fingerprint": "y74rSHAl8yClzWEjWcZEcdWUP8d1qT/9u5jdHHwuvxQ="
+  "version": "6.2.0-rc",
+  "fingerprint": "u5UfbWbWvEG/kR6sg1wHpsfd4/dcv7fFjZHuqJ/v6g8="
 }
