@@ -1,0 +1,139 @@
+{
+  "id": "objectstore.s3.get_not_not_found",
+  "tier": "objectstore",
+  "name": "Real S3 Get keeps denials, bucket failures and outages as errors, not absence",
+  "setup": {
+    "objectstore": {
+      "backend": "s3_stub"
+    }
+  },
+  "input": {
+    "objectstore": {
+      "steps": [
+        {
+          "name": "access-denied",
+          "operation": "get",
+          "ref": "s3://apptheory-contract/objects/hidden.txt",
+          "max_bytes": 64,
+          "s3_response": {
+            "status_code": 403,
+            "error_code": "AccessDenied",
+            "message": "Access Denied"
+          }
+        },
+        {
+          "name": "kms-denied",
+          "operation": "get",
+          "ref": "s3://apptheory-contract/objects/kms.txt",
+          "max_bytes": 64,
+          "s3_response": {
+            "status_code": 403,
+            "error_code": "KMSAccessDeniedException",
+            "message": "KMS access denied"
+          }
+        },
+        {
+          "name": "no-such-bucket",
+          "operation": "get",
+          "ref": "s3://apptheory-contract-wrong/objects/alpha.txt",
+          "max_bytes": 64,
+          "s3_response": {
+            "status_code": 404,
+            "error_code": "NoSuchBucket",
+            "message": "The specified bucket does not exist."
+          }
+        },
+        {
+          "name": "server-error",
+          "operation": "get",
+          "ref": "s3://apptheory-contract/objects/alpha.txt",
+          "max_bytes": 64,
+          "s3_response": {
+            "status_code": 500,
+            "error_code": "InternalError",
+            "message": "We encountered an internal error."
+          }
+        },
+        {
+          "name": "delete-missing",
+          "operation": "delete",
+          "ref": "s3://apptheory-contract/objects/missing.txt",
+          "s3_response": {
+            "status_code": 204
+          }
+        },
+        {
+          "name": "delete-access-denied",
+          "operation": "delete",
+          "ref": "s3://apptheory-contract/objects/hidden.txt",
+          "s3_response": {
+            "status_code": 403,
+            "error_code": "AccessDenied",
+            "message": "Access Denied"
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "output_json": {
+      "steps": [
+        {
+          "name": "access-denied",
+          "operation": "get",
+          "ok": false,
+          "error": {
+            "code": "objectstore.sdk_error",
+            "sdk_code": "AccessDenied",
+            "status_code": 403
+          }
+        },
+        {
+          "name": "kms-denied",
+          "operation": "get",
+          "ok": false,
+          "error": {
+            "code": "objectstore.sdk_error",
+            "sdk_code": "KMSAccessDeniedException",
+            "status_code": 403
+          }
+        },
+        {
+          "name": "no-such-bucket",
+          "operation": "get",
+          "ok": false,
+          "error": {
+            "code": "objectstore.sdk_error",
+            "sdk_code": "NoSuchBucket",
+            "status_code": 404
+          }
+        },
+        {
+          "name": "server-error",
+          "operation": "get",
+          "ok": false,
+          "error": {
+            "code": "objectstore.sdk_error",
+            "sdk_code": "InternalError",
+            "status_code": 500
+          }
+        },
+        {
+          "name": "delete-missing",
+          "operation": "delete",
+          "ok": true
+        },
+        {
+          "name": "delete-access-denied",
+          "operation": "delete",
+          "ok": false,
+          "error": {
+            "code": "objectstore.sdk_error",
+            "sdk_code": "AccessDenied",
+            "status_code": 403
+          }
+        }
+      ]
+    }
+  }
+}
