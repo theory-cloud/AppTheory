@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	tableerrors "github.com/theory-cloud/tabletheory/v5/pkg/errors"
-	tablemocks "github.com/theory-cloud/tabletheory/v5/pkg/mocks"
+	tableerrors "github.com/theory-cloud/tabletheory/v6/pkg/errors"
+	tablemocks "github.com/theory-cloud/tabletheory/v6/pkg/mocks"
 )
 
 func TestDynamoSessionStore_Get_Success(t *testing.T) {
