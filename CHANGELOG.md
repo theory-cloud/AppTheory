@@ -1,5 +1,89 @@
 # Changelog
 
+## [6.2.0](https://github.com/theory-cloud/AppTheory/compare/v6.1.0...v6.2.0) (2026-10-17)
+
+
+### Features
+
+* **cdk:** add an opt-in semantic construct-id mode for the explicit route model ([5fc5fbe](https://github.com/theory-cloud/AppTheory/commit/5fc5fbe6be5e04f3cdaecc100ad1f9e744e47dae))
+* **cdk:** scalable MCP route model and HTTP API v2 route surfaces ([b927bd0](https://github.com/theory-cloud/AppTheory/commit/b927bd04adc2a4449e49d0ab3f9dad96c22bfc77))
+* **cdk:** scalable, semantically identified API Gateway routes (M1) ([369aba8](https://github.com/theory-cloud/AppTheory/commit/369aba8e7db3a17cc340d4bb51f29be7ebaa79b6))
+* **deps:** adopt TableTheory v6 across Go, TypeScript and Python ([7bcc4df](https://github.com/theory-cloud/AppTheory/commit/7bcc4dfa89ca5da615dde0b31b8e4f98fd821ab6))
+* **go:** adopt TableTheory v6 ([f76577f](https://github.com/theory-cloud/AppTheory/commit/f76577f1062722a66b9b4ac9d5a2b3246a3919d1))
+* **http:** add a server-issued request-ID source option across runtimes ([153c4ac](https://github.com/theory-cloud/AppTheory/commit/153c4ac6eb09226e5447dd4bbc9cdf76f8d12026))
+* **http:** expose the well-formed client request ID on the request context ([d8fbe80](https://github.com/theory-cloud/AppTheory/commit/d8fbe803cdb13ca2112815de55e12f05ea4fc187))
+* **mcpfacade:** advertise RFC 9207 iss support on routed authorization-server metadata ([81d277d](https://github.com/theory-cloud/AppTheory/commit/81d277d3c1f7a17d868b2349536de321803bad53))
+* **mcpfacade:** advertise RFC 9207 iss support on the facade's routed authorization-server metadata ([c5f8ce3](https://github.com/theory-cloud/AppTheory/commit/c5f8ce36f0625fa18a8034863366708a11878e0f))
+* **mcpfacade:** mount the facade on a closed-by-default SecureApp ([47484b0](https://github.com/theory-cloud/AppTheory/commit/47484b0f3acff5fdda147cd1262a8c708afc8e0a))
+* **mcpfacade:** mount the facade on a SecureApp in TypeScript and Python ([884fa6f](https://github.com/theory-cloud/AppTheory/commit/884fa6f61f5e964e64b84964c4d092cbc2c856aa))
+* **mcpfacade:** mount the MCP auth facade on a closed-by-default SecureApp ([418a7bb](https://github.com/theory-cloud/AppTheory/commit/418a7bbc600298dcf07acf2885799088dc844ed8))
+* **oauth:** add opt-in RFC 9207 iss-parameter member to authorization-server metadata ([ba6de6e](https://github.com/theory-cloud/AppTheory/commit/ba6de6e3549d86cd6f63b69025835f775d9520a5))
+* **py:** adopt tabletheory-py 6.0.0 release asset ([7e4c910](https://github.com/theory-cloud/AppTheory/commit/7e4c9107146158e45ef5116a4ab582ac64775254))
+* **testkit:** add the SecureApp variants of the Go conformance kit ([5db8400](https://github.com/theory-cloud/AppTheory/commit/5db8400ea63891c397bf9563e24e6fe4df1775f2))
+* **ts:** adopt TableTheory 6.0.0 release asset ([b3c2d71](https://github.com/theory-cloud/AppTheory/commit/b3c2d712f7074f0050dfcb47ae3d6afd104de88b))
+
+
+### Bug Fixes
+
+* **cdk:** enforce the consolidated post-creation rule on owned APIs too ([17cf017](https://github.com/theory-cloud/AppTheory/commit/17cf017f598b0b5f8d4f332dfc25e756371b228c))
+* **cdk:** see every route bound to the attached API regardless of construct scope ([872d312](https://github.com/theory-cloud/AppTheory/commit/872d312bcfd07079a21884928824bade03cfd67d))
+* **cdk:** validate routeSettings keys against the routes the construct emits ([0d4ddc5](https://github.com/theory-cloud/AppTheory/commit/0d4ddc5a11b2ca47a6f84b032f9e8058de6fd665))
+* **http:** carry error.status_code on every nested HTTP error envelope ([92f7627](https://github.com/theory-cloud/AppTheory/commit/92f7627ae10fce4d8da02a08341ba815747912e8))
+* **http:** give the error envelope serializer standard JSON.stringify semantics ([3cc47f0](https://github.com/theory-cloud/AppTheory/commit/3cc47f08f2104739fe5d66677baf9b3f99b4acb7))
+* **http:** ignore a malformed client request ID in the default source mode ([96c93b5](https://github.com/theory-cloud/AppTheory/commit/96c93b57cfe0119bf5c6e565623f88d2ff656672))
+* **http:** render the Python internal-error fallback instead of raising ([b2407e7](https://github.com/theory-cloud/AppTheory/commit/b2407e7d51c0fcd124bb506ac8ed30a62130d6b4))
+* **http:** resolve a value's toJSON hook before sorting the nested error envelope ([a78f0d8](https://github.com/theory-cloud/AppTheory/commit/a78f0d8107704eb1f9c99c9cf63338883393f415))
+* **http:** send the internal-error fallback with status 500 when an error envelope cannot be serialized ([4bf4798](https://github.com/theory-cloud/AppTheory/commit/4bf4798cec55b148f9c0720775c90c96ee424e24))
+* **http:** unwrap a boxed bigint in the error-envelope sort ([670262f](https://github.com/theory-cloud/AppTheory/commit/670262f59c4721b30bf60b738cbd549c3f817217))
+* **mcpfacade:** advertise RFC 9207 iss only with the front channel ([56cb600](https://github.com/theory-cloud/AppTheory/commit/56cb60093abb67892b4006c5981e088cc4464733))
+* **mcpfacade:** format the front-channel splice and refresh synth snapshots ([7527f20](https://github.com/theory-cloud/AppTheory/commit/7527f20ba1d968f3805fe8d26e6ffe7340044c88))
+* **mcpfacade:** preflight every shared-router surface for a collision ([9e89530](https://github.com/theory-cloud/AppTheory/commit/9e8953025b0aa4db6fbb222ded8c3d7019b97a39))
+* **mcpfacade:** reject the whole plan before mounting any facade route ([670d080](https://github.com/theory-cloud/AppTheory/commit/670d0808c45fa63572adf3ec26c0f1c08a2a2dfd))
+* **oauth:** emit the RFC 9207 iss member only for the boolean true ([87f78a0](https://github.com/theory-cloud/AppTheory/commit/87f78a0f8b0530b31e1449e249328d7158967b8a))
+* **py:** emit compact HTTP error envelopes byte-identical to Go and TS ([30c4873](https://github.com/theory-cloud/AppTheory/commit/30c487386e8eec7b28c2fe89042579549fb43d4d))
+
+## [6.2.0-rc](https://github.com/theory-cloud/AppTheory/compare/v6.1.0...v6.2.0-rc) (2026-10-17)
+
+
+### Features
+
+* **cdk:** add an opt-in semantic construct-id mode for the explicit route model ([5fc5fbe](https://github.com/theory-cloud/AppTheory/commit/5fc5fbe6be5e04f3cdaecc100ad1f9e744e47dae))
+* **cdk:** scalable MCP route model and HTTP API v2 route surfaces ([b927bd0](https://github.com/theory-cloud/AppTheory/commit/b927bd04adc2a4449e49d0ab3f9dad96c22bfc77))
+* **cdk:** scalable, semantically identified API Gateway routes (M1) ([369aba8](https://github.com/theory-cloud/AppTheory/commit/369aba8e7db3a17cc340d4bb51f29be7ebaa79b6))
+* **deps:** adopt TableTheory v6 across Go, TypeScript and Python ([7bcc4df](https://github.com/theory-cloud/AppTheory/commit/7bcc4dfa89ca5da615dde0b31b8e4f98fd821ab6))
+* **go:** adopt TableTheory v6 ([f76577f](https://github.com/theory-cloud/AppTheory/commit/f76577f1062722a66b9b4ac9d5a2b3246a3919d1))
+* **http:** add a server-issued request-ID source option across runtimes ([153c4ac](https://github.com/theory-cloud/AppTheory/commit/153c4ac6eb09226e5447dd4bbc9cdf76f8d12026))
+* **http:** expose the well-formed client request ID on the request context ([d8fbe80](https://github.com/theory-cloud/AppTheory/commit/d8fbe803cdb13ca2112815de55e12f05ea4fc187))
+* **mcpfacade:** advertise RFC 9207 iss support on routed authorization-server metadata ([81d277d](https://github.com/theory-cloud/AppTheory/commit/81d277d3c1f7a17d868b2349536de321803bad53))
+* **mcpfacade:** advertise RFC 9207 iss support on the facade's routed authorization-server metadata ([c5f8ce3](https://github.com/theory-cloud/AppTheory/commit/c5f8ce36f0625fa18a8034863366708a11878e0f))
+* **mcpfacade:** mount the facade on a closed-by-default SecureApp ([47484b0](https://github.com/theory-cloud/AppTheory/commit/47484b0f3acff5fdda147cd1262a8c708afc8e0a))
+* **mcpfacade:** mount the facade on a SecureApp in TypeScript and Python ([884fa6f](https://github.com/theory-cloud/AppTheory/commit/884fa6f61f5e964e64b84964c4d092cbc2c856aa))
+* **mcpfacade:** mount the MCP auth facade on a closed-by-default SecureApp ([418a7bb](https://github.com/theory-cloud/AppTheory/commit/418a7bbc600298dcf07acf2885799088dc844ed8))
+* **oauth:** add opt-in RFC 9207 iss-parameter member to authorization-server metadata ([ba6de6e](https://github.com/theory-cloud/AppTheory/commit/ba6de6e3549d86cd6f63b69025835f775d9520a5))
+* **py:** adopt tabletheory-py 6.0.0 release asset ([7e4c910](https://github.com/theory-cloud/AppTheory/commit/7e4c9107146158e45ef5116a4ab582ac64775254))
+* **testkit:** add the SecureApp variants of the Go conformance kit ([5db8400](https://github.com/theory-cloud/AppTheory/commit/5db8400ea63891c397bf9563e24e6fe4df1775f2))
+* **ts:** adopt TableTheory 6.0.0 release asset ([b3c2d71](https://github.com/theory-cloud/AppTheory/commit/b3c2d712f7074f0050dfcb47ae3d6afd104de88b))
+
+
+### Bug Fixes
+
+* **cdk:** enforce the consolidated post-creation rule on owned APIs too ([17cf017](https://github.com/theory-cloud/AppTheory/commit/17cf017f598b0b5f8d4f332dfc25e756371b228c))
+* **cdk:** see every route bound to the attached API regardless of construct scope ([872d312](https://github.com/theory-cloud/AppTheory/commit/872d312bcfd07079a21884928824bade03cfd67d))
+* **cdk:** validate routeSettings keys against the routes the construct emits ([0d4ddc5](https://github.com/theory-cloud/AppTheory/commit/0d4ddc5a11b2ca47a6f84b032f9e8058de6fd665))
+* **http:** carry error.status_code on every nested HTTP error envelope ([92f7627](https://github.com/theory-cloud/AppTheory/commit/92f7627ae10fce4d8da02a08341ba815747912e8))
+* **http:** give the error envelope serializer standard JSON.stringify semantics ([3cc47f0](https://github.com/theory-cloud/AppTheory/commit/3cc47f08f2104739fe5d66677baf9b3f99b4acb7))
+* **http:** ignore a malformed client request ID in the default source mode ([96c93b5](https://github.com/theory-cloud/AppTheory/commit/96c93b57cfe0119bf5c6e565623f88d2ff656672))
+* **http:** render the Python internal-error fallback instead of raising ([b2407e7](https://github.com/theory-cloud/AppTheory/commit/b2407e7d51c0fcd124bb506ac8ed30a62130d6b4))
+* **http:** resolve a value's toJSON hook before sorting the nested error envelope ([a78f0d8](https://github.com/theory-cloud/AppTheory/commit/a78f0d8107704eb1f9c99c9cf63338883393f415))
+* **http:** send the internal-error fallback with status 500 when an error envelope cannot be serialized ([4bf4798](https://github.com/theory-cloud/AppTheory/commit/4bf4798cec55b148f9c0720775c90c96ee424e24))
+* **http:** unwrap a boxed bigint in the error-envelope sort ([670262f](https://github.com/theory-cloud/AppTheory/commit/670262f59c4721b30bf60b738cbd549c3f817217))
+* **mcpfacade:** advertise RFC 9207 iss only with the front channel ([56cb600](https://github.com/theory-cloud/AppTheory/commit/56cb60093abb67892b4006c5981e088cc4464733))
+* **mcpfacade:** format the front-channel splice and refresh synth snapshots ([7527f20](https://github.com/theory-cloud/AppTheory/commit/7527f20ba1d968f3805fe8d26e6ffe7340044c88))
+* **mcpfacade:** preflight every shared-router surface for a collision ([9e89530](https://github.com/theory-cloud/AppTheory/commit/9e8953025b0aa4db6fbb222ded8c3d7019b97a39))
+* **mcpfacade:** reject the whole plan before mounting any facade route ([670d080](https://github.com/theory-cloud/AppTheory/commit/670d0808c45fa63572adf3ec26c0f1c08a2a2dfd))
+* **oauth:** emit the RFC 9207 iss member only for the boolean true ([87f78a0](https://github.com/theory-cloud/AppTheory/commit/87f78a0f8b0530b31e1449e249328d7158967b8a))
+* **py:** emit compact HTTP error envelopes byte-identical to Go and TS ([30c4873](https://github.com/theory-cloud/AppTheory/commit/30c487386e8eec7b28c2fe89042579549fb43d4d))
+
 ## [6.1.0](https://github.com/theory-cloud/AppTheory/compare/v6.0.0...v6.1.0) (2026-10-15)
 
 
