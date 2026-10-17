@@ -24,6 +24,9 @@ import (
 const (
 	fixtureBackendFake   = "fake"
 	fixtureBackendS3Stub = "s3_stub"
+
+	objectStoreOperationGet    = "get"
+	objectStoreOperationDelete = "delete"
 )
 
 type FixtureObjectStoreSetup struct {
@@ -139,14 +142,14 @@ func runObjectStoreStep(fake *storetest.FakeStore, step FixtureObjectStoreStep) 
 			Metadata:    cloneObjectStoreStringMap(step.Metadata),
 		})
 		return objectStoreStepResult(result, storedRef, nil, err)
-	case "get":
+	case objectStoreOperationGet:
 		ref, err := objectStoreStepRef(step)
 		if err != nil {
 			return objectStoreStepResult(result, store.ObjectRef{}, nil, err)
 		}
 		got, err := fake.Get(context.Background(), store.GetInput{Ref: ref, MaxBytes: step.MaxBytes})
 		return objectStoreStepResult(result, store.ObjectRef{}, got, err)
-	case "delete":
+	case objectStoreOperationDelete:
 		ref, err := objectStoreStepRef(step)
 		if err != nil {
 			return objectStoreStepResult(result, store.ObjectRef{}, nil, err)
@@ -441,7 +444,10 @@ func runFixtureObjectStoreS3Stub(f Fixture) error {
 	server := httptest.NewServer(stub)
 	defer server.Close()
 
-	restoreEnv := withObjectStoreS3StubEnv(server.URL)
+	restoreEnv, err := withObjectStoreS3StubEnv(server.URL)
+	if err != nil {
+		return fmt.Errorf("objectstore s3_stub: configure environment: %w", err)
+	}
 	defer restoreEnv()
 
 	s3Store, err := store.NewS3Store(context.Background(), store.S3StoreConfig{})
@@ -465,7 +471,7 @@ func runObjectStoreS3StubStep(s3Store store.Store, stub *objectStoreS3Stub, step
 	if step.S3Response == nil {
 		return objectStoreS3ErrorResult(result, errors.New("objectstore s3_stub: step missing s3_response"))
 	}
-	if operation != "get" && operation != "delete" {
+	if operation != objectStoreOperationGet && operation != objectStoreOperationDelete {
 		return objectStoreS3ErrorResult(result, fmt.Errorf("objectstore s3_stub: unsupported operation: %s", operation))
 	}
 	ref, err := objectStoreStepRef(step)
@@ -475,7 +481,7 @@ func runObjectStoreS3StubStep(s3Store store.Store, stub *objectStoreS3Stub, step
 
 	stub.set(step.S3Response)
 	var output *store.GetOutput
-	if operation == "get" {
+	if operation == objectStoreOperationGet {
 		output, err = s3Store.Get(context.Background(), store.GetInput{Ref: ref, MaxBytes: step.MaxBytes})
 	} else {
 		err = s3Store.Delete(context.Background(), store.DeleteInput{Ref: ref})
@@ -528,7 +534,9 @@ func writeObjectStoreS3StubResponse(w http.ResponseWriter, response *FixtureObje
 		w.Header().Set("ETag", `"etag"`)
 		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 		w.WriteHeader(response.StatusCode)
-		_, _ = w.Write(body)
+		if _, err := w.Write(body); err != nil {
+			return
+		}
 		return
 	}
 
@@ -544,7 +552,9 @@ func writeObjectStoreS3StubResponse(w http.ResponseWriter, response *FixtureObje
 	w.Header().Set("Content-Type", "application/xml")
 	w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
 	w.WriteHeader(response.StatusCode)
-	_, _ = w.Write([]byte(payload))
+	if _, err := w.Write([]byte(payload)); err != nil {
+		return
+	}
 }
 
 var objectStoreS3XMLEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
@@ -552,7 +562,7 @@ var objectStoreS3XMLEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">"
 // withObjectStoreS3StubEnv points the real AWS SDK at the loopback stub and pins static
 // credentials, so no shared profile, ambient credential chain or AWS endpoint can leak
 // into the fixture. Every changed variable is restored afterwards.
-func withObjectStoreS3StubEnv(endpoint string) func() {
+func withObjectStoreS3StubEnv(endpoint string) (func(), error) {
 	keys := []string{
 		"AWS_ACCESS_KEY_ID",
 		"AWS_SECRET_ACCESS_KEY",
@@ -579,9 +589,23 @@ func withObjectStoreS3StubEnv(endpoint string) func() {
 		}
 	}
 
+	restore := func() {
+		for key, value := range previous {
+			if value == nil {
+				if err := os.Unsetenv(key); err != nil {
+					panic(err)
+				}
+				continue
+			}
+			if err := os.Setenv(key, *value); err != nil {
+				panic(err)
+			}
+		}
+	}
+
 	overrides := map[string]string{
-		"AWS_ACCESS_KEY_ID":           "AKIAIOSFODNN7EXAMPLE",
-		"AWS_SECRET_ACCESS_KEY":       "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+		"AWS_ACCESS_KEY_ID":           "apptheory-contract-access-key",
+		"AWS_SECRET_ACCESS_KEY":       "apptheory-contract-secret-key",
 		"AWS_EC2_METADATA_DISABLED":   "true",
 		"AWS_ENDPOINT_URL":            endpoint,
 		"AWS_ENDPOINT_URL_S3":         endpoint,
@@ -592,22 +616,23 @@ func withObjectStoreS3StubEnv(endpoint string) func() {
 		"AWS_SHARED_CREDENTIALS_FILE": os.DevNull,
 	}
 	for key, value := range overrides {
-		_ = os.Setenv(key, value)
-	}
-	_ = os.Unsetenv("AWS_SESSION_TOKEN")
-	_ = os.Unsetenv("AWS_IGNORE_CONFIGURED_ENDPOINT_URLS")
-	_ = os.Unsetenv("AWS_PROFILE")
-	_ = os.Unsetenv("AWS_DEFAULT_PROFILE")
-
-	return func() {
-		for key, value := range previous {
-			if value == nil {
-				_ = os.Unsetenv(key)
-				continue
-			}
-			_ = os.Setenv(key, *value)
+		if err := os.Setenv(key, value); err != nil {
+			restore()
+			return nil, err
 		}
 	}
+	for _, key := range []string{
+		"AWS_SESSION_TOKEN",
+		"AWS_IGNORE_CONFIGURED_ENDPOINT_URLS",
+		"AWS_PROFILE",
+		"AWS_DEFAULT_PROFILE",
+	} {
+		if err := os.Unsetenv(key); err != nil {
+			restore()
+			return nil, err
+		}
+	}
+	return restore, nil
 }
 
 func objectStoreS3SuccessResult(result map[string]any, output *store.GetOutput) map[string]any {
