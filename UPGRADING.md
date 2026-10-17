@@ -48,10 +48,11 @@ Passing a `/v6` handle into a parameter whose type prints a `/v5` path fails to 
         want Model(any) "github.com/theory-cloud/tabletheory/v5/pkg/core".Query
 ```
 
-**No AppTheory API symbol changes.** The five DynamoDB-backed constructors —
+**No AppTheory API symbol changes.** The seven DynamoDB-backed constructors —
 `services.NewDynamoDBEventBus`, `limited.NewDynamoRateLimiter`, `mcpruntime.NewDynamoSessionStore`,
-`mcpruntime.NewDynamoStreamStore` and `mcpruntime.NewDynamoTaskStore` — keep their names and shapes; only the
-TableTheory major behind their `core.DB` parameter moves. As a benefit of TableTheory v6, a `tabletheory.LambdaInit`
+`mcpruntime.NewDynamoStreamStore`, `mcpruntime.NewDynamoTaskStore`, `jobs.NewDynamoJobLedger` and
+`microvm.NewTableTheorySessionRegistry` — keep their names and shapes; only the TableTheory major behind their
+`core.DB` parameter moves. As a benefit of TableTheory v6, a `tabletheory.LambdaInit`
 handle now satisfies `core.ExtendedDB` (v6 changed `LambdaDB.WithLambdaTimeout` to return `core.DB`), so a Lambda
 consumer can assert the handle to that interface instead of the concrete `*LambdaDB`.
 
