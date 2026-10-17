@@ -1,0 +1,111 @@
+{
+  "id": "objectstore.s3.get_not_found",
+  "tier": "objectstore",
+  "name": "Real S3 Get reports a missing object or version as objectstore.not_found",
+  "setup": {
+    "objectstore": {
+      "backend": "s3_stub"
+    }
+  },
+  "input": {
+    "objectstore": {
+      "steps": [
+        {
+          "name": "missing-key",
+          "operation": "get",
+          "ref": "s3://apptheory-contract/objects/missing.txt",
+          "max_bytes": 64,
+          "s3_response": {
+            "status_code": 404,
+            "error_code": "NoSuchKey",
+            "message": "The specified key does not exist."
+          }
+        },
+        {
+          "name": "missing-version",
+          "operation": "get",
+          "ref": {
+            "bucket": "apptheory-contract",
+            "key": "objects/alpha.txt",
+            "version_id": "v-missing"
+          },
+          "max_bytes": 64,
+          "s3_response": {
+            "status_code": 404,
+            "error_code": "NoSuchVersion",
+            "message": "The specified version does not exist."
+          }
+        },
+        {
+          "name": "unmodeled-404",
+          "operation": "get",
+          "ref": "s3://apptheory-contract/objects/unmodeled.txt",
+          "max_bytes": 64,
+          "s3_response": {
+            "status_code": 404,
+            "error_code": "Unknown",
+            "message": "not found"
+          }
+        },
+        {
+          "name": "present-object",
+          "operation": "get",
+          "ref": "s3://apptheory-contract/objects/alpha.txt",
+          "max_bytes": 64,
+          "s3_response": {
+            "status_code": 200,
+            "body": {
+              "encoding": "utf8",
+              "value": "hello objectstore"
+            },
+            "content_type": "text/plain; charset=utf-8"
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "output_json": {
+      "steps": [
+        {
+          "name": "missing-key",
+          "operation": "get",
+          "ok": false,
+          "error": {
+            "code": "objectstore.not_found"
+          }
+        },
+        {
+          "name": "missing-version",
+          "operation": "get",
+          "ok": false,
+          "error": {
+            "code": "objectstore.not_found"
+          }
+        },
+        {
+          "name": "unmodeled-404",
+          "operation": "get",
+          "ok": false,
+          "error": {
+            "code": "objectstore.not_found"
+          }
+        },
+        {
+          "name": "present-object",
+          "operation": "get",
+          "ok": true,
+          "ref": {
+            "bucket": "apptheory-contract",
+            "key": "objects/alpha.txt"
+          },
+          "payload": {
+            "encoding": "utf8",
+            "value": "hello objectstore"
+          },
+          "content_type": "text/plain; charset=utf-8"
+        }
+      ]
+    }
+  }
+}

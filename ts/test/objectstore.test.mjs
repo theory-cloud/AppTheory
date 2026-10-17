@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { S3Client } from "@aws-sdk/client-s3";
+import { NoSuchKey, S3Client, S3ServiceException } from "@aws-sdk/client-s3";
 
 import { verifyPresignPutUrl } from "../dist/internal/objectstore-presign.js";
 import {
@@ -311,6 +311,81 @@ async function withStaticAwsCredentials(run) {
     }
   }
 }
+
+function s3ServiceError(name, statusCode, message = "s3 stub error") {
+  return new S3ServiceException({
+    name,
+    message,
+    $fault: "client",
+    $metadata: { httpStatusCode: statusCode },
+  });
+}
+
+async function withStubbedS3Send(thrown, run) {
+  const original = S3Client.prototype.send;
+  S3Client.prototype.send = async () => {
+    throw thrown;
+  };
+  try {
+    return await run();
+  } finally {
+    S3Client.prototype.send = original;
+  }
+}
+
+test("s3 get maps only a missing object to objectstore.not_found", async () => {
+  const noSuchKey = new NoSuchKey({
+    message: "The specified key does not exist.",
+    $metadata: { httpStatusCode: 404 },
+  });
+  const cases = [
+    ["modeled NoSuchKey", noSuchKey, true],
+    ["unmodeled NoSuchVersion 404", s3ServiceError("NoSuchVersion", 404), true],
+    ["generic 404", s3ServiceError("Unknown", 404), true],
+    ["access denied 403", s3ServiceError("AccessDenied", 403), false],
+    ["no such bucket 404", s3ServiceError("NoSuchBucket", 404), false],
+    ["server error 500", s3ServiceError("InternalError", 500), false],
+    ["transport error", new Error("socket hang up"), false],
+  ];
+
+  for (const [name, thrown, wantNotFound] of cases) {
+    await withStubbedS3Send(thrown, async () => {
+      const store = await createS3ObjectStore({ region: "us-east-1" });
+      let caught;
+      try {
+        await store.get({
+          ref: { bucket: "bucket-a", key: "missing" },
+          maxBytes: 16,
+        });
+      } catch (error) {
+        caught = error;
+      }
+      assert.ok(caught, name);
+      assert.equal(
+        caught.code === OBJECTSTORE_ERROR_NOT_FOUND,
+        wantNotFound,
+        name,
+      );
+      if (wantNotFound) {
+        assert.equal(caught.message, "objectstore: object not found", name);
+        assert.equal(caught.cause, thrown, name);
+      } else {
+        assert.equal(caught, thrown, name);
+      }
+    });
+  }
+});
+
+test("s3 delete keeps raw S3 errors and does not invent not-found", async () => {
+  const thrown = s3ServiceError("AccessDenied", 403);
+  await withStubbedS3Send(thrown, async () => {
+    const store = await createS3ObjectStore({ region: "us-east-1" });
+    await assert.rejects(
+      () => store.delete({ ref: { bucket: "bucket-a", key: "missing" } }),
+      (error) => error === thrown,
+    );
+  });
+});
 
 test("s3 upload grant signs content length, type and checksum without hoisting them", async () => {
   await withStaticAwsCredentials(async () => {

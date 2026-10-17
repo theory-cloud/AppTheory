@@ -390,6 +390,10 @@ escape hatches.
 - Object refs: strict `s3://bucket/key` parsing into bucket/key/version fields with no default bucket/key and no query
   or fragment support.
 - Store contract: `Put`, bounded `Get` with required `MaxBytes`, and `Delete` only.
+- Missing objects: `Get` returns `ErrObjectNotFound` / `objectstore.not_found` for S3 `NoSuchKey`, `NoSuchVersion`, and
+  an HTTP 404, while preserving the SDK error. A missing key only produces that 404 when the caller holds
+  `s3:ListBucket`; without it S3 answers 403 `AccessDenied`, which stays an error. 403s, KMS denials, `NoSuchBucket`,
+  5xx, timeouts, and transport failures are never not-found. `Delete` remains idempotent.
 - Bounded upload grant: `UploadGranter` / `ObjectStoreUploadGranter` is the one authorized presigning exception and is
   deliberately a separate capability interface rather than a fourth store method. `PresignPut` /
   `presignPut` / `presign_put` mints a single-object PUT link that signs `content-length`, `content-type`, and

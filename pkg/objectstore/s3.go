@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -160,7 +162,7 @@ func (s *s3Store) Get(ctx context.Context, input GetInput) (*GetOutput, error) {
 
 	out, err := s.client.GetObject(ctx, params)
 	if err != nil {
-		return nil, err
+		return nil, mapS3GetError(err)
 	}
 	if out == nil || out.Body == nil {
 		return nil, ErrInvalidStoreConfig
@@ -202,6 +204,54 @@ func (s *s3Store) Delete(ctx context.Context, input DeleteInput) error {
 	}
 	_, err := s.client.DeleteObject(ctx, params)
 	return err
+}
+
+// s3APIError and s3HTTPStatusCoder are the two smithy error shapes GetObject needs to
+// classify. They are declared structurally so this package keeps one SDK dependency
+// (aws-sdk-go-v2) instead of importing smithy-go directly.
+type s3APIError interface {
+	ErrorCode() string
+}
+
+type s3HTTPStatusCoder interface {
+	HTTPStatusCode() int
+}
+
+// mapS3GetError translates a GetObject failure into the store's stable not-found error
+// only when S3 answered "this object or version does not exist".
+//
+// A 403 (including the 403 S3 returns for a missing key when the caller lacks
+// s3:ListBucket), a NoSuchBucket 404, a KMS denial, a 5xx, a timeout and a transport
+// failure keep their original error: an unavailable store must never be mistaken for
+// absent content.
+//
+// The two %w verbs keep both the sentinel and the original SDK error in the chain, so
+// errors.Is(err, ErrObjectNotFound) and errors.As(err, &types.NoSuchKey{}) both hold.
+func mapS3GetError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if isS3ObjectNotFound(err) {
+		return fmt.Errorf("%w: %w", ErrObjectNotFound, err)
+	}
+	return err
+}
+
+func isS3ObjectNotFound(err error) bool {
+	var apiErr s3APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.ErrorCode() {
+		case "NoSuchKey", "NoSuchVersion":
+			return true
+		case "NoSuchBucket":
+			return false
+		}
+	}
+	var statusErr s3HTTPStatusCoder
+	if errors.As(err, &statusErr) {
+		return statusErr.HTTPStatusCode() == http.StatusNotFound
+	}
+	return false
 }
 
 // PresignPut mints one bounded upload grant for an exact object reference.

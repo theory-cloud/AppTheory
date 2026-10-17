@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -169,6 +171,8 @@ type recordingS3Client struct {
 	putVersionID string
 	getVersionID string
 	getBody      []byte
+	getErr       error
+	deleteErr    error
 	contentType  string
 	metadata     map[string]string
 	bodyClosed   bool
@@ -183,6 +187,9 @@ func (c *recordingS3Client) PutObject(_ context.Context, params *s3.PutObjectInp
 func (c *recordingS3Client) GetObject(_ context.Context, params *s3.GetObjectInput, _ ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
 	c.operations = append(c.operations, "GetObject")
 	c.getInput = params
+	if c.getErr != nil {
+		return nil, c.getErr
+	}
 	output := &s3.GetObjectOutput{
 		Body:        &trackingReadCloser{Reader: bytes.NewReader(c.getBody), closed: &c.bodyClosed},
 		ContentType: aws.String(c.contentType),
@@ -197,6 +204,9 @@ func (c *recordingS3Client) GetObject(_ context.Context, params *s3.GetObjectInp
 func (c *recordingS3Client) DeleteObject(_ context.Context, params *s3.DeleteObjectInput, _ ...func(*s3.Options)) (*s3.DeleteObjectOutput, error) {
 	c.operations = append(c.operations, "DeleteObject")
 	c.deleteInput = params
+	if c.deleteErr != nil {
+		return nil, c.deleteErr
+	}
 	return &s3.DeleteObjectOutput{}, nil
 }
 
@@ -305,5 +315,116 @@ func TestNewS3StoreEncryptionValidationPrecedesAWSConfig(t *testing.T) {
 	_, err := NewS3Store(ctx, S3StoreConfig{Encryption: S3EncryptionConfig{Mode: S3EncryptionKMS}})
 	if !errors.Is(err, ErrInvalidEncryptionConfig) {
 		t.Fatalf("NewS3Store() error = %v, want ErrInvalidEncryptionConfig", err)
+	}
+}
+
+// stubS3APIError carries the two smithy error shapes the store classifies without
+// importing smithy-go. NoSuchVersion is not modeled by aws-sdk-go-v2, so this is the
+// exact shape a version-specific read produces.
+type stubS3APIError struct {
+	code   string
+	status int
+}
+
+func (e *stubS3APIError) Error() string { return e.code }
+
+func (e *stubS3APIError) ErrorCode() string { return e.code }
+
+func (e *stubS3APIError) HTTPStatusCode() int { return e.status }
+
+func TestS3StoreGetMapsMissingObjectToNotFound(t *testing.T) {
+	noSuchKey := &types.NoSuchKey{Message: aws.String("The specified key does not exist.")}
+	tests := []struct {
+		name         string
+		err          error
+		wantNotFound bool
+	}{
+		{name: "modeled NoSuchKey", err: noSuchKey, wantNotFound: true},
+		{
+			name:         "unmodeled NoSuchVersion 404",
+			err:          &stubS3APIError{code: "NoSuchVersion", status: http.StatusNotFound},
+			wantNotFound: true,
+		},
+		{name: "generic 404", err: &stubS3APIError{status: http.StatusNotFound}, wantNotFound: true},
+		{
+			name:         "access denied 403",
+			err:          &stubS3APIError{code: "AccessDenied", status: http.StatusForbidden},
+			wantNotFound: false,
+		},
+		{
+			name:         "KMS denial 403",
+			err:          &stubS3APIError{code: "KMSAccessDeniedException", status: http.StatusForbidden},
+			wantNotFound: false,
+		},
+		{
+			name:         "no such bucket 404",
+			err:          &stubS3APIError{code: "NoSuchBucket", status: http.StatusNotFound},
+			wantNotFound: false,
+		},
+		{
+			name:         "server error 500",
+			err:          &stubS3APIError{code: "InternalError", status: http.StatusInternalServerError},
+			wantNotFound: false,
+		},
+		{
+			name:         "transport error",
+			err:          errors.New("dial tcp 127.0.0.1:443: connect: connection refused"),
+			wantNotFound: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &recordingS3Client{getErr: tt.err}
+			store, err := newS3StoreWithClient(client, S3StoreConfig{})
+			if err != nil {
+				t.Fatalf("newS3StoreWithClient() error = %v", err)
+			}
+
+			_, err = store.Get(context.Background(), GetInput{
+				Ref:      ObjectRef{Bucket: "bucket-a", Key: "key"},
+				MaxBytes: 1,
+			})
+			if err == nil {
+				t.Fatalf("Get() error = nil, want failure")
+			}
+			if got := errors.Is(err, ErrObjectNotFound); got != tt.wantNotFound {
+				t.Fatalf("errors.Is(err, ErrObjectNotFound) = %v, want %v (err = %v)", got, tt.wantNotFound, err)
+			}
+			if !errors.Is(err, tt.err) {
+				t.Fatalf("Get() error = %v, want original SDK error preserved", err)
+			}
+			if len(client.operations) != 1 || client.operations[0] != "GetObject" {
+				t.Fatalf("operations = %#v, want one GetObject", client.operations)
+			}
+			if tt.wantNotFound {
+				if !strings.Contains(err.Error(), ErrObjectNotFound.Error()) {
+					t.Fatalf("Get() message = %q, want %q in the chain", err.Error(), ErrObjectNotFound.Error())
+				}
+				var noSuchKeyErr *types.NoSuchKey
+				if tt.err == noSuchKey && !errors.As(err, &noSuchKeyErr) {
+					t.Fatalf("errors.As(err, *types.NoSuchKey) = false, want true")
+				}
+			} else if err != tt.err {
+				t.Fatalf("Get() error = %v, want the unchanged SDK error %v", err, tt.err)
+			}
+		})
+	}
+}
+
+func TestS3StoreDeleteKeepsS3ErrorSemantics(t *testing.T) {
+	sentinel := errors.New("s3: delete failed")
+	client := &recordingS3Client{deleteErr: sentinel}
+	store, err := newS3StoreWithClient(client, S3StoreConfig{})
+	if err != nil {
+		t.Fatalf("newS3StoreWithClient() error = %v", err)
+	}
+
+	err = store.Delete(context.Background(), DeleteInput{Ref: ObjectRef{Bucket: "bucket-a", Key: "missing"}})
+	if err != sentinel {
+		t.Fatalf("Delete() error = %v, want the unchanged S3 error", err)
+	}
+	if errors.Is(err, ErrObjectNotFound) {
+		t.Fatalf("Delete() error = %v, must not be ErrObjectNotFound", err)
 	}
 }
