@@ -61,8 +61,14 @@ operator-facing API guidance. Keep these human-authored groups current when the 
   metadata, the derived authorize/token/register shapes (only when the matching handler factories are supplied), the
   opt-in root discovery route, and the stage-global callback — failing closed before any route is added. It registers
   the transport routes under one explicit `McpTransportPosture` (`iam` | `jwt` | `runtime-bearer` | `none-public`) and
-  fails closed when the posture and the runtime bearer assertion disagree. The testkit helpers `countingTransportHandler`,
-  `assertCredentialFreeTransportDenied`, and `assertBearerTokenReachesTransportHandler` pin that a credential-free
+  fails closed when the posture and the runtime bearer assertion disagree. `registerMcpFacadeSecure(secureApp, config)`
+  is the closed-by-default counterpart: it mounts the identical surface and returns the identical inventory, declaring
+  each route's explicit `AuthPosture` instead of a route option — the transport routes are `Authenticated()` under
+  `iam`/`jwt` and `Public()` under `runtime-bearer`/`none-public`, and every OAuth-surface route is `Public()`. The
+  application's own `SecurePrincipalResolver`, tier, and `PolicyHook` keep governing every non-facade route, and an
+  undeclared route stays undeliverable. The testkit helpers `countingTransportHandler`,
+  `assertCredentialFreeTransportDenied`, and `assertBearerTokenReachesTransportHandler` — and their
+  `...SecureApp` companions, which drive the same assertions through a `SecureApp` — pin that a credential-free
   transport request is denied before it reaches
   the handler, and that a valid bearer token does reach it.
 - Storage and data helpers: `ObjectStore`, `ObjectRef`, `createS3ObjectStore`, `ObjectStoreUploadGranter`, `DynamoJobLedger`, and rate-limit
@@ -87,13 +93,14 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/ts.txt`.
 
 <details>
-<summary>850 exported top-level symbols</summary>
+<summary>861 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, AGENT_MCP_PATTERN, ALBTargetGroupRequest, ALBTargetGroupResponse, APIGatewayProxyRequest, APIGatewayProxyResponse,
 APIGatewayV2HTTPRequest, APIGatewayV2HTTPResponse, APIGatewayWebSocketProxyRequest, App, AppError, AppSyncContext, AppSyncResolverEvent, AppSyncResolverInfo,
 AppSyncResolverRequest, AppTheoryError, AppTheoryErrorDetails, appTheoryErrorFromAppError, AppTheoryErrorOptions, assertBearerTokenReachesTransportHandler,
-assertCredentialFreeTransportDenied, assertInsufficientScopeTransportDenied, AtomicRateLimiter, Authenticated, AuthenticatedAnyOf, AutheoryProvider,
+assertBearerTokenReachesTransportHandlerSecureApp, assertCredentialFreeTransportDenied, assertCredentialFreeTransportDeniedSecureApp,
+assertInsufficientScopeTransportDenied, assertInsufficientScopeTransportDeniedSecureApp, AtomicRateLimiter, Authenticated, AuthenticatedAnyOf, AutheoryProvider,
 AutheoryProviderOptions, AuthHook, AUTHORIZATION_SERVER_PREFIX, authorizationAuthorizePathForResourcePath, AuthorizationCodeConsumeResult, AuthorizationCodeRecord,
 AuthorizationCodeStatus, AuthorizationCodeStore, authorizationRegisterPathForResourcePath, AuthorizationRequest, AuthorizationServerMetadata,
 authorizationServerMetadataHandler, AuthorizationServerMetadataOptions, authorizationServerPathForResourcePath, authorizationServerSuffixPathForResourcePath,
@@ -127,7 +134,7 @@ FakeOAuthProvider, FakeOAuthProviderOptions, FakeObjectStore, FakeRefreshStage, 
 formatRfc3339Nano, formatWindowId, generateOpenAPI, generateOpenAPIJSON, getDayWindow, getFixedWindow, getHourWindow, getLogger, getMinuteWindow, GetVectorsInput, Handler,
 HandlerFactory, hashKey, Headers, hooksFromEMFMetricSink, hooksFromLogger, hooksFromProfileLogger, html, htmlStream, HTTP_ERROR_FORMAT_FLAT_LEGACY, HTTP_ERROR_FORMAT_NESTED,
 HTTPErrorFormat, IdempotencyCreateOutcome, IdempotencyStatus, IDGenerator, IdGenerator, InspectSemaphoreInput, insufficientScopeWWWAuthenticate, InternalOnly,
-isAppTheoryError, isMicroVMTerminalState, ISSUER_MODE_FAMILY, ISSUER_MODE_ROUTE, IssuerMode, isSupportedProfileOutputField, JobLedgerError, JobLedgerErrorType, JobLock,
+isAppTheoryError, isMicroVMTerminalState, ISSUER_MODE_FAMILY, ISSUER_MODE_ROUTE, IssuerMode, isSupportedProfileOutputField, isWellFormedClientRequestId, JobLedgerError, JobLedgerErrorType, JobLock,
 jobLockSortKey, JobMeta, jobMetaSortKey, jobPartitionKey, JobRecord, jobRecordSortKey, JobRequest, jobRequestSortKey, JobsConfig, jobsTableName, JobStatus, json,
 JWKSValidatorOptions, kinesisCloudWatchLogsSubscriptionRecord, KinesisCloudWatchLogsSubscriptionRecordOptions, KinesisEvent, KinesisEventRecord, KinesisEventRecordInput,
 KinesisEventResponse, KinesisHandler, KinesisJsonRecord, KinesisJsonRecordOptions, KinesisJsonRecordSummary, KinesisPutRecordsFailure, KinesisPutRecordsFailureReport,
@@ -136,7 +143,7 @@ Limit, LimitDecision, Limits, LogFields, LOGGING_PROFILE_CLOUDWATCH_JSON, LOGGIN
 LOGGING_PROFILE_SCHEMA_VERSION, LoggingProfileAlertingHints, loggingProfileCatalog, LoggingProfileConfig, LoggingProfileEncoding, LoggingProfileEnrichment,
 LoggingProfileError, LoggingProfileErrorCapture, LoggingProfileEvent, LoggingProfileJobContext, LoggingProfileRequestContext, LoggingProfileSanitization,
 LoggingProfileSanitizer, LoggingProfileValidationError, loggingProfileValidationErrors, LogRecord, ManualClock, ManualIdGenerator, mapMicroVMProviderState, maskFirstLast,
-maskFirstLast4, matchesIfNoneMatch, max, MAX_PRESIGN_PUT_EXPIRES_IN, maxLength, MaxPutDeleteBatchSize, MaxQueryTopK, MCP_CODE_HEADER_MISMATCH, MCP_CODE_INTERNAL_ERROR,
+maskFirstLast4, matchesIfNoneMatch, max, MAX_CLIENT_REQUEST_ID_LENGTH, MAX_PRESIGN_PUT_EXPIRES_IN, maxLength, MaxPutDeleteBatchSize, MaxQueryTopK, MCP_CODE_HEADER_MISMATCH, MCP_CODE_INTERNAL_ERROR,
 MCP_CODE_INVALID_PARAMS, MCP_CODE_INVALID_REQUEST, MCP_CODE_METHOD_NOT_FOUND, MCP_CODE_MISSING_REQUIRED_CLIENT_CAPABILITY, MCP_CODE_PARSE_ERROR, MCP_CODE_SERVER_ERROR,
 MCP_CODE_UNSUPPORTED_PROTOCOL_VERSION, MCP_HEADER_LAST_EVENT_ID, MCP_HEADER_METHOD, MCP_HEADER_NAME, MCP_HEADER_PROTOCOL_VERSION, MCP_HEADER_SESSION_ID,
 MCP_PROTOCOL_SHAPE_2025_11_25, MCP_PROTOCOL_SHAPE_2026_07_28, MCP_PROTOCOL_SHAPE_UNKNOWN, MCP_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION_2026_07_28,
@@ -175,7 +182,7 @@ microVMSessionRegistrySortKey, microVMSessionRegistryTableName, MicroVMSessionSp
 microVMSessionTokenMetadataFromProviderToken, MicroVMState, MicroVMTableTheoryClient, MicroVMTenantBindingRule, MicroVMTokenIssuanceContract, Middleware, min, minLength,
 MultiWindowStrategy, NAMESPACE_MCP_PATTERN, newAutheoryProvider, newAuthorizationServerMetadata, newError, newFakeOAuthProvider, newJobLedgerError, newJwksValidator,
 newMemoryBearerTokenValidator, newPKCECodeVerifier, newProtectedResourceMetadata, normalizeCallbackPath, normalizeDynamoDBStreamRecord,
-normalizeEventBridgeScheduledWorkload, normalizeEventBridgeWorkloadEnvelope, normalizeHTTPErrorFormat, normalizeRequestOrigin, normalizeStage, normalizeTopK,
+normalizeEventBridgeScheduledWorkload, normalizeEventBridgeWorkloadEnvelope, normalizeHTTPErrorFormat, normalizeRequestIdSource, normalizeRequestOrigin, normalizeStage, normalizeTopK,
 oauthAuthorizationServerPath, oauthAuthorizationServerSuffixPath, oauthAuthorizePath, OAuthBearerError, OAuthDiscoveryTemplate, OAuthFacadeTemplate, oauthRegisterPath,
 oauthTokenPath, ObjectRef, ObjectStore, OBJECTSTORE_ERROR_INVALID_ENCRYPTION_CONFIG, OBJECTSTORE_ERROR_INVALID_GET_LIMIT, OBJECTSTORE_ERROR_INVALID_PRESIGN_PUT,
 OBJECTSTORE_ERROR_INVALID_REF, OBJECTSTORE_ERROR_INVALID_STORE_CONFIG, OBJECTSTORE_ERROR_NOT_FOUND, OBJECTSTORE_ERROR_OBJECT_TOO_LARGE,
@@ -189,7 +196,7 @@ protectedResourcePathForResourcePath, protectedResourcePathFromMcpPath, protecte
 Public, PutVectorsInput, Query, QueryHit, QueryVectorsInput, RandomIdGenerator, rapidConnectXMLPatterns, RateLimitBucketKey, RateLimitEntry, RateLimiter, RateLimiterError,
 RateLimitKey, RateLimitResult, RateLimitStore, RateLimitStrategy, rateLimitTableName, RateLimitWindow, RealClock, ReconstructingMicroVMSessionRegistry,
 ReconstructingMicroVMSessionRegistryOptions, reconstructMicroVMSessionRecord, RecordStatus, RefreshLeaseInput, RefreshRequest, RefreshSemaphoreSlotInput,
-registerControllerRoutes, registerMcpFacade, registerMicroVMControllerRoutes, ReleaseLeaseInput, ReleaseSemaphoreSlotInput, reportKinesisPutRecordsFailures, Request,
+registerControllerRoutes, registerMcpFacade, registerMcpFacadeSecure, registerMicroVMControllerRoutes, ReleaseLeaseInput, ReleaseSemaphoreSlotInput, reportKinesisPutRecordsFailures, Request, REQUEST_ID_SOURCE_DEFAULT, REQUEST_ID_SOURCE_SERVER, RequestIdSource,
 requireBearerTokenMiddleware, RequireBearerTokenOptions, required, requiredForbiddenMicroVMOperationFields, requireEventBridgeWorkloadEnvelope, ResolvedCapabilities,
 resourceIndicatorMatches, resourceMetadataURLFromMcpEndpoint, resourceName, resourcePathFromProtectedResourcePath, Response, rfc9728ResourceMetadataURL,
 RootDiscoveryConfig, RouteInventory, RouteOptions, RouteRefreshBrokerRecord, RouteRefreshBrokerSeeder, RouteRefreshBrokerStatus, RouteRefreshBrokerStore, runStoreConformance, S3Encryption,
@@ -209,7 +216,7 @@ validateMicroVMRealLifecycleContract, validateMicroVMSessionRecord, validateMicr
 validateMicroVMSessionStatus, validateMicroVMSessionTokenMetadata, validateObjectRef, validateOrThrow, validatePKCECodeVerifier, validatePresignPutInput,
 validateRequiredMetadata, validateValue, validateVector, VALIDATION_RULE_ENUM, VALIDATION_RULE_MAX, VALIDATION_RULE_MAX_LENGTH, VALIDATION_RULE_MIN,
 VALIDATION_RULE_MIN_LENGTH, VALIDATION_RULE_PATTERN, VALIDATION_RULE_REQUIRED, validationError, ValidationFieldError, ValidationRuleName, ValidationRuleSpec,
-ValidationSchema, vary, VectorRecord, VectorStore, VECTORSTORE_ERROR_DIMENSION_MISMATCH, VECTORSTORE_ERROR_EMBEDDING_FAILED, VECTORSTORE_ERROR_INVALID_CONFIG,
+ValidationSchema, vary, VectorRecord, VectorStore, wellFormedClientRequestId, VECTORSTORE_ERROR_DIMENSION_MISMATCH, VECTORSTORE_ERROR_EMBEDDING_FAILED, VECTORSTORE_ERROR_INVALID_CONFIG,
 VECTORSTORE_ERROR_INVALID_INPUT, VECTORSTORE_ERROR_INVALID_VECTOR, VECTORSTORE_ERROR_NOT_FOUND, VECTORSTORE_ERROR_UNSUPPORTED_OPERATION, VectorStoreCall, VectorStoreError,
 WebSocketCall, WebSocketClientFactory, WebSocketContext, WebSocketManagementClient, WebSocketManagementClientLike, WindowConfig, WindowLimit, wrapError, wrapJobLedgerError,
 XMLSanitizationPattern

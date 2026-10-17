@@ -309,6 +309,50 @@ test("metadata documents byte-match the shared golden for every kind and URL mod
   }
 });
 
+test("app-owned authorize routed metadata omits RFC 9207 iss parameter support", async () => {
+  const app = createApp({ tier: "p0" });
+  const config = validConfig();
+  config.rootAuthorizationServer = validRootDiscoveryConfig();
+  // The application-owned authorize/token pair: provider stays unset, so the
+  // facade has no front channel and cannot prove `iss` is sent on the client
+  // callback.
+  config.authorizeHandler = kindHandlerFactory("authorize");
+  config.tokenHandler = kindHandlerFactory("token");
+  const inventory = registerMcpFacade(app, config);
+
+  for (const route of inventory.routes) {
+    assert.equal(route.authorizationRoutesAttached, true, route.kind);
+    // The app-owned authorize route really is mounted and served by the
+    // application, so the omission below is the app-owned surface's
+    // disposition and not a missing route.
+    const authorize = await serve(app, "GET", route.authorizePattern);
+    assert.equal(authorize.status, 200, route.authorizePattern);
+    assert.equal(bodyString(authorize), `authorize:${route.kind}`);
+
+    for (const routePath of [
+      route.discoveryCanonicalPattern,
+      route.discoverySuffixPattern,
+    ]) {
+      const response = await serve(app, "GET", routePath);
+      assert.equal(response.status, 200, routePath);
+      assert.equal(
+        bodyString(response).includes("authorization_response_iss_parameter_supported"),
+        false,
+        routePath,
+      );
+    }
+  }
+
+  // Root discovery describes the upstream authorization server, so it does not
+  // claim `iss` support either.
+  const root = await serve(app, "GET", inventory.rootAuthorizationServerPattern);
+  assert.equal(root.status, 200);
+  assert.equal(
+    bodyString(root).includes("authorization_response_iss_parameter_supported"),
+    false,
+  );
+});
+
 test("discovery rebuilds path-parameter identity for every kind", async () => {
   const app = createApp({ tier: "p0" });
   registerMcpFacade(app, validConfig());

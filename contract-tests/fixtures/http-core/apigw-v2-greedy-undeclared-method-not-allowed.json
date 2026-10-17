@@ -1,0 +1,51 @@
+{
+  "id": "p0.adapter.apigw_v2.greedy_undeclared_method_not_allowed",
+  "tier": "p0",
+  "name": "APIGW v2: an undeclared method under ANY /{proxy+} returns 405 with Allow",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/known", "handler": "static_pong" },
+      { "method": "POST", "path": "/known", "handler": "static_pong" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "DELETE",
+      "path": "/known",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    },
+    "aws_event": {
+      "source": "apigw_v2",
+      "event": {
+        "version": "2.0",
+        "routeKey": "ANY /{proxy+}",
+        "rawPath": "/known",
+        "rawQueryString": "",
+        "cookies": [],
+        "headers": {},
+        "queryStringParameters": null,
+        "requestContext": { "http": { "method": "DELETE", "path": "/known" } },
+        "body": "",
+        "isBase64Encoded": false
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 405,
+      "headers": {
+        "allow": ["GET, POST"],
+        "content-type": ["application/json; charset=utf-8"]
+      },
+      "cookies": [],
+      "body": { "encoding": "utf8", "value": "{\"error\":{\"code\":\"app.method_not_allowed\",\"message\":\"method not allowed\",\"status_code\":405}}" },
+      "body_json": {
+        "error": { "code": "app.method_not_allowed", "message": "method not allowed", "status_code": 405 }
+      },
+      "is_base64": false
+    }
+  }
+}

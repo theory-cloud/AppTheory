@@ -75,7 +75,7 @@
           "cookies": [],
           "body": {
             "encoding": "utf8",
-            "value": "{\"error\":{\"code\":\"app.internal\",\"message\":\"internal error\",\"request_id\":\"req_test_123\"}}"
+            "value": "{\"error\":{\"code\":\"app.internal\",\"message\":\"internal error\",\"request_id\":\"req_test_123\",\"status_code\":500}}"
           },
           "is_base64": false
         },
@@ -100,7 +100,7 @@
           "cookies": [],
           "body": {
             "encoding": "utf8",
-            "value": "{\"error\":{\"code\":\"app.internal\",\"message\":\"internal error\",\"request_id\":\"req_test_123\"}}"
+            "value": "{\"error\":{\"code\":\"app.internal\",\"message\":\"internal error\",\"request_id\":\"req_test_123\",\"status_code\":500}}"
           },
           "is_base64": false
         },

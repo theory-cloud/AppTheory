@@ -27,7 +27,8 @@
         "content-type": ["application/json; charset=utf-8"]
       },
       "cookies": [],
-      "body_json": { "error": { "code": "app.method_not_allowed", "message": "method not allowed" } },
+      "body": { "encoding": "utf8", "value": "{\"error\":{\"code\":\"app.method_not_allowed\",\"message\":\"method not allowed\",\"status_code\":405}}" },
+      "body_json": { "error": { "code": "app.method_not_allowed", "message": "method not allowed", "status_code": 405} },
       "is_base64": false
     }
   }

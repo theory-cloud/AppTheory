@@ -1,0 +1,41 @@
+{
+  "id": "p1.request_id.source_server_issued_not_found",
+  "tier": "p1",
+  "name": "Server-issued request-ID source carries the server value into a framework 404 envelope",
+  "setup": {
+    "request_id_source": "server",
+    "routes": [
+      { "method": "GET", "path": "/known", "handler": "echo_context" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/missing",
+      "query": {},
+      "headers": { "x-request-id": ["req_client_forged"] },
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 404,
+      "headers": {
+        "content-type": ["application/json; charset=utf-8"],
+        "x-request-id": ["req_test_123"]
+      },
+      "cookies": [],
+      "body": { "encoding": "utf8", "value": "{\"error\":{\"code\":\"app.not_found\",\"message\":\"not found\",\"request_id\":\"req_test_123\",\"status_code\":404}}" },
+      "body_json": {
+        "error": {
+          "code": "app.not_found",
+          "message": "not found",
+          "request_id": "req_test_123",
+          "status_code": 404
+        }
+      },
+      "is_base64": false
+    }
+  }
+}

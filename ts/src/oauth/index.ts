@@ -40,6 +40,15 @@ export interface AuthorizationServerMetadata {
   scopes_supported?: string[];
   subject_types_supported?: string[];
   id_token_signing_alg_values_supported?: string[];
+  /**
+   * RFC 9207 `iss` authorization-response advertisement (RFC 8414
+   * `authorization_response_iss_parameter_supported`). Optional and absent by
+   * default, so an unset member keeps the document byte-identical and means
+   * false; only a surface that provably sends `iss` sets it. The handler emits
+   * the member only while the value is the boolean `true`: an explicit `false`,
+   * an absent member, and any non-boolean value all leave it out.
+   */
+  authorization_response_iss_parameter_supported?: boolean;
 }
 
 export interface AuthorizationServerMetadataOptions {
@@ -243,7 +252,27 @@ export function protectedResourceMetadataHandler(
 export function authorizationServerMetadataHandler(
   metadata: AuthorizationServerMetadata,
 ): Handler {
-  return () => metadataJSON(200, metadata);
+  return () => metadataJSON(200, normalizeIssParameterSupport(metadata));
+}
+
+/**
+ * Applies the RFC 8414 "absent means false" rule to the RFC 9207 member: the
+ * member is emitted only while it is the boolean `true`, so Go (a typed bool
+ * with `omitempty`), TypeScript, and Python emit the same document for the same
+ * input. An explicit `false`, an absent member, and any non-boolean value (a
+ * string such as `"true"`, a number) all drop the member, so a value that is
+ * not the boolean `true` never reaches the document.
+ */
+function normalizeIssParameterSupport(
+  metadata: AuthorizationServerMetadata,
+): AuthorizationServerMetadata {
+  const value = metadata.authorization_response_iss_parameter_supported;
+  if (value === undefined || value === true) {
+    return metadata;
+  }
+  const copy: AuthorizationServerMetadata = { ...metadata };
+  delete copy.authorization_response_iss_parameter_supported;
+  return copy;
 }
 
 export function protectedResourceWWWAuthenticate(
@@ -817,7 +846,11 @@ async function unauthorizedResponse(
     cookies: [],
     body: Buffer.from(
       JSON.stringify({
-        error: { code: "app.unauthorized", message: "unauthorized" },
+        error: {
+          code: "app.unauthorized",
+          message: "unauthorized",
+          status_code: 401,
+        },
       }),
       "utf8",
     ),
@@ -849,6 +882,7 @@ async function insufficientScopeResponse(
         error: {
           code: "app.insufficient_scope",
           message: "insufficient scope",
+          status_code: 403,
         },
       }),
       "utf8",
@@ -864,7 +898,11 @@ function forbiddenResponse(): Response {
     cookies: [],
     body: Buffer.from(
       JSON.stringify({
-        error: { code: "app.forbidden", message: "forbidden" },
+        error: {
+          code: "app.forbidden",
+          message: "forbidden",
+          status_code: 403,
+        },
       }),
       "utf8",
     ),

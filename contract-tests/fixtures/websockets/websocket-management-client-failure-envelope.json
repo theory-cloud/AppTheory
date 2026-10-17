@@ -45,7 +45,8 @@
       "body_json": {
         "error": {
           "code": "app.internal",
-          "message": "internal error"
+          "message": "internal error",
+          "status_code": 500
         }
       },
       "is_base64": false

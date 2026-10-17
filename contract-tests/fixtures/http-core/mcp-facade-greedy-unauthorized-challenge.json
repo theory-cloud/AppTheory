@@ -1,0 +1,63 @@
+{
+  "id": "p0.mcp_facade.greedy_unauthorized_challenge",
+  "tier": "p0",
+  "name": "MCP facade under ANY /{proxy+}: a credential-free transport request fails closed with the RFC 9728 401 challenge",
+  "setup": {
+    "mcp_facade": {
+      "issuer": "https://issuer.example.com/",
+      "jwks_uri": "https://issuer.example.com/jwks.json?set=active",
+      "public_base_url": "https://front.example.com/",
+      "resource_metadata_url": "https://front.example.com/.well-known/oauth-protected-resource/acme/mcp",
+      "scopes": ["namespace:use"],
+      "bearer": {
+        "accepted_tokens": [
+          { "token": "valid-token", "subject": "acme", "scopes": ["namespace:use"] },
+          { "token": "missing-scope-token", "subject": "acme", "scopes": ["other:scope"] }
+        ],
+        "required_scopes": ["namespace:use"]
+      }
+    }
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/acme/mcp",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    },
+    "aws_event": {
+      "source": "apigw_v2",
+      "event": {
+        "version": "2.0",
+        "routeKey": "ANY /{proxy+}",
+        "rawPath": "/acme/mcp",
+        "rawQueryString": "",
+        "cookies": [],
+        "headers": {},
+        "queryStringParameters": null,
+        "requestContext": {
+          "http": { "method": "POST", "path": "/acme/mcp" }
+        },
+        "body": "",
+        "isBase64Encoded": false
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": ["application/json; charset=utf-8"],
+        "www-authenticate": ["Bearer resource_metadata=\"https://front.example.com/.well-known/oauth-protected-resource/acme/mcp\""]
+      },
+      "cookies": [],
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"error\":{\"code\":\"app.unauthorized\",\"message\":\"unauthorized\",\"status_code\":401}}"
+      },
+      "is_base64": false
+    }
+  }
+}

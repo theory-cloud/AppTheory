@@ -1,0 +1,58 @@
+{
+  "id": "p1.secure_request_id_source_server_issued",
+  "tier": "p1",
+  "name": "SecureApp reaches the server-issued request-ID source through its closed options path",
+  "setup": {
+    "request_id_source": "server",
+    "secure_app": {
+      "tier": "p1",
+      "routes": [
+        { "surface": "http", "method": "GET", "path": "/auth", "handler": "secure_echo", "posture": "authenticated" }
+      ]
+    }
+  },
+  "input": {
+    "secure_steps": [
+      {
+        "name": "server-issued-denial",
+        "operation": "http",
+        "resolver_error": {
+          "code": "app.unauthorized",
+          "message": "unauthorized"
+        },
+        "request": {
+          "method": "GET",
+          "path": "/auth",
+          "headers": { "x-request-id": ["req_client_forged"] },
+          "body": { "encoding": "utf8", "value": "" },
+          "is_base64": false
+        }
+      }
+    ]
+  },
+  "expect": {
+    "secure_steps": [
+      {
+        "name": "server-issued-denial",
+        "status": 401,
+        "error_code": "app.unauthorized",
+        "resolver_calls": 1,
+        "middleware_calls": 0,
+        "handler_calls": 0,
+        "response": {
+          "status": 401,
+          "headers": {
+            "content-type": ["application/json; charset=utf-8"],
+            "x-request-id": ["req_test_123"]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body": {
+            "encoding": "utf8",
+            "value": "{\"error\":{\"code\":\"app.unauthorized\",\"message\":\"unauthorized\",\"request_id\":\"req_test_123\",\"status_code\":401}}"
+          }
+        }
+      }
+    ]
+  }
+}

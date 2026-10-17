@@ -202,7 +202,8 @@
           "body_json": {
             "error": {
               "code": "app.unauthorized",
-              "message": "unauthorized"
+              "message": "unauthorized",
+              "status_code": 401
             }
           }
         },
@@ -221,7 +222,8 @@
           "body_json": {
             "error": {
               "code": "app.unauthorized",
-              "message": "unauthorized"
+              "message": "unauthorized",
+              "status_code": 401
             }
           }
         },
@@ -237,7 +239,8 @@
           "body_json": {
             "error": {
               "code": "app.forbidden",
-              "message": "forbidden"
+              "message": "forbidden",
+              "status_code": 403
             }
           }
         },
@@ -256,7 +259,8 @@
           "body_json": {
             "error": {
               "code": "app.insufficient_scope",
-              "message": "insufficient scope"
+              "message": "insufficient scope",
+              "status_code": 403
             }
           }
         },

@@ -43,6 +43,7 @@ export * from "./ids.js";
 export * from "./context.js";
 export * from "./response.js";
 export * from "./http-error-format.js";
+export * from "./request-id-source.js";
 export * from "./validate.js";
 export * from "./openapi.js";
 export * from "./objectstore.js";

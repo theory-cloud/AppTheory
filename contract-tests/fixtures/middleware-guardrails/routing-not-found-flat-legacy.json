@@ -24,6 +24,7 @@
         "x-request-id": ["req_123"]
       },
       "cookies": [],
+      "body": { "encoding": "utf8", "value": "{\"code\":\"app.not_found\",\"message\":\"not found\"}" },
       "body_json": {
         "code": "app.not_found",
         "message": "not found"

@@ -1,8 +1,8 @@
 import { Buffer } from "node:buffer";
 import { randomBytes } from "node:crypto";
 
-import type { App } from "./app.js";
-import { createApp } from "./app.js";
+import type { App, AuthPosture, SecureRoute } from "./app.js";
+import { Authenticated, createApp, Public, SecureApp } from "./app.js";
 import type { Context, Handler } from "./context.js";
 import {
   CONTRACT_VERSION,
@@ -325,6 +325,10 @@ interface RouteRegistration {
   pattern: string;
   handler: Handler;
   authRequired: boolean;
+  // The declared SecureApp authorization posture for this route, used only by
+  // registerMcpFacadeSecure. The plain-App path ignores it and keeps expressing
+  // its route security through `authRequired`.
+  posture: AuthPosture;
 }
 
 /**
@@ -343,6 +347,14 @@ class MetadataRequestError extends Error {
  * contract version and returns its route inventory. The helper owns
  * composition only: authorize and token routes are absent unless the
  * application supplies both handler factories.
+ *
+ * The whole plan is proven installable before the app receives its first facade
+ * route, so a configuration the facade rejects, an invalid entry, or a
+ * duplicate inside the plan adds no route at all. A collision with a route the
+ * application already registered on this plain App is detected by the app's own
+ * duplicate check while the plan is mounted: the plain App surface publishes no
+ * route table, so the facade cannot pre-check that collision the way
+ * {@link registerMcpFacadeSecure} can on a SecureApp.
  */
 export function registerMcpFacade(
   app: App,
@@ -355,6 +367,41 @@ export function registerMcpFacade(
   const inventory = buildInventory(normalized);
   const registrations = buildRegistrations(normalized, inventory);
   registerRoutes(app, registrations);
+  return cloneInventory(inventory);
+}
+
+/**
+ * Installs the complete MCP OAuth facade on a closed-by-default
+ * {@link SecureApp} and returns its route inventory.
+ *
+ * It is the SecureApp counterpart to {@link registerMcpFacade} and produces the
+ * same route inventory and the same request-time behavior. The difference is
+ * how each route's authority is declared: on the plain App surface the facade
+ * expresses transport security with the `authRequired` route option, while here
+ * every route must declare an explicit auth posture, so the facade declares the
+ * posture each of its routes has always had.
+ *
+ * The SecureApp stays closed by default: this helper adds only the facade's own
+ * routes, each with a declared posture, and it adds none of them when the plan
+ * is rejected. The whole plan is proven installable before the app receives its
+ * first facade route — every entry, and every collision with a route the app
+ * already declares — so a thrown error means zero facade routes were added. A
+ * route the application never declares remains undeliverable, and the
+ * application's own SecurePrincipalResolver, tier, and PolicyHook keep
+ * governing every non-facade route on the same app.
+ */
+export function registerMcpFacadeSecure(
+  secureApp: SecureApp,
+  config: FacadeConfig,
+): RouteInventory {
+  if (secureApp === null || secureApp === undefined) {
+    throw new Error(`${ERROR_PREFIX} secure app is required`);
+  }
+  const normalized = normalizeConfig(config);
+  const inventory = buildInventory(normalized);
+  const registrations = buildRegistrations(normalized, inventory);
+  preflightSecureRegistrations(secureApp, registrations);
+  registerSecureRoutes(secureApp, registrations);
   return cloneInventory(inventory);
 }
 
@@ -789,6 +836,13 @@ function buildRegistrations(
   const registrations: RouteRegistration[] = [];
   const authRequired =
     config.transportPosture === "iam" || config.transportPosture === "jwt";
+  const transportPosture = transportPostureDeclaration(config);
+  // Every other facade route is public by contract: clients must reach the
+  // RFC 9728 metadata before they hold a token, /authorize and /token are the
+  // unauthenticated client-facing protocol surface (PKCE and the single-use
+  // code are the authority there), RFC 7591 registration admits public clients
+  // only, and the upstream callback pins state and iss.
+  const surfacePosture = Public();
   for (const route of inventory.routes) {
     const innerHandler = checkedMCPHandler(route.kind, config.mcpHandler);
     let mcpHandler = innerHandler;
@@ -804,18 +858,21 @@ function buildRegistrations(
         pattern: route.mcpPattern,
         handler: mcpHandler,
         authRequired,
+        posture: transportPosture,
       },
       {
         method: "GET",
         pattern: route.mcpPattern,
         handler: mcpHandler,
         authRequired,
+        posture: transportPosture,
       },
       {
         method: "DELETE",
         pattern: route.mcpPattern,
         handler: mcpHandler,
         authRequired,
+        posture: transportPosture,
       },
     );
 
@@ -829,6 +886,7 @@ function buildRegistrations(
       pattern: route.protectedResourcePattern,
       handler: protectedResourceHandler(config, route.kind),
       authRequired: false,
+      posture: surfacePosture,
     });
 
     const discoveryHandler = authorizationServerHandler(config, route.kind);
@@ -838,12 +896,14 @@ function buildRegistrations(
         pattern: route.discoveryCanonicalPattern,
         handler: discoveryHandler,
         authRequired: false,
+        posture: surfacePosture,
       },
       {
         method: "GET",
         pattern: route.discoverySuffixPattern,
         handler: discoveryHandler,
         authRequired: false,
+        posture: surfacePosture,
       },
     );
 
@@ -858,6 +918,7 @@ function buildRegistrations(
             config.authorizeHandlers[route.kind],
           ),
           authRequired: false,
+          posture: surfacePosture,
         },
         {
           method: "POST",
@@ -868,6 +929,7 @@ function buildRegistrations(
             config.tokenHandlers[route.kind],
           ),
           authRequired: false,
+          posture: surfacePosture,
         },
       );
     }
@@ -882,6 +944,7 @@ function buildRegistrations(
             authorizeHandlerFor(config, route.kind),
           ),
           authRequired: false,
+          posture: surfacePosture,
         },
         {
           method: "POST",
@@ -892,6 +955,7 @@ function buildRegistrations(
             tokenHandlerFor(config, route.kind),
           ),
           authRequired: false,
+          posture: surfacePosture,
         },
         // The RFC 7591 registration route is part of the front channel, so it
         // follows the same posture-derived mount: it is never reached under the
@@ -904,6 +968,7 @@ function buildRegistrations(
             registerHandlerFor(config, route.kind),
           ),
           authRequired: false,
+          posture: surfacePosture,
         },
       );
     }
@@ -916,6 +981,7 @@ function buildRegistrations(
           config.registerHandlers[route.kind],
         ),
         authRequired: false,
+        posture: surfacePosture,
       });
     }
   }
@@ -935,6 +1001,7 @@ function buildRegistrations(
         authorizationServerMetadataHandler(config.rootAuthorizationServer),
       ),
       authRequired: false,
+      posture: surfacePosture,
     });
   }
   if (inventory.callbackPattern !== "" && config.callbackHandler !== null) {
@@ -943,6 +1010,7 @@ function buildRegistrations(
       pattern: inventory.callbackPattern,
       handler: config.callbackHandler,
       authRequired: false,
+      posture: surfacePosture,
     });
   }
   if (inventory.callbackPattern !== "" && config.frontChannel !== null) {
@@ -951,6 +1019,7 @@ function buildRegistrations(
       pattern: inventory.callbackPattern,
       handler: callbackHandlerFor(config),
       authRequired: false,
+      posture: surfacePosture,
     });
   }
   validateRouteRegistrations(registrations);
@@ -958,8 +1027,108 @@ function buildRegistrations(
 }
 
 function validateRouteRegistrations(registrations: RouteRegistration[]): void {
-  const seen = new Set<string>();
   const probe = createApp({ tier: "p0" });
+  validateRegistrationEntries(registrations, (registration) => {
+    probe.handle(
+      registration.method,
+      registration.pattern,
+      registration.handler,
+      {
+        authRequired: registration.authRequired,
+      },
+    );
+  });
+}
+
+/**
+ * Proves the whole plan before the caller's {@link SecureApp} receives any
+ * route, so a plan the registrar rejects is all-or-nothing: a thrown error
+ * means no facade route was added.
+ *
+ * It is the SecureApp counterpart to {@link validateRouteRegistrations} and runs
+ * the same two checks, both before the first mount:
+ *
+ * 1. the plan is installed on a throwaway tier-P0 SecureApp, so an invalid
+ *    entry, a duplicate inside the plan, or a pattern or posture the secure
+ *    surface refuses fails with the caller's app untouched; and
+ * 2. every planned route is compared with the routes the caller's SecureApp
+ *    already declares on any surface that shares the router, so a collision
+ *    with an application route is reported before the first mount too.
+ *
+ * The SecureApp surface publishes its declared routes ({@link SecureApp.routes}),
+ * so both failure classes can be pre-checked. The plain App surface publishes no
+ * route table, so {@link registerMcpFacade} can pre-check the plan only.
+ */
+function preflightSecureRegistrations(
+  secureApp: SecureApp,
+  registrations: RouteRegistration[],
+): void {
+  const probe = new SecureApp({ tier: "p0" });
+  validateRegistrationEntries(registrations, (registration) => {
+    handleSecureRoute(
+      probe,
+      registration.method,
+      registration.pattern,
+      registration.handler,
+      registration.posture,
+    );
+  });
+
+  const declared = new Set<string>();
+  for (const route of secureApp.routes()) {
+    const key = sharedRouterRouteKey(route);
+    if (key !== null) {
+      declared.add(key);
+    }
+  }
+  for (const planned of probe.routes()) {
+    const key = sharedRouterRouteKey(planned);
+    if (key === null) {
+      continue;
+    }
+    if (declared.has(key)) {
+      throw new Error(
+        `${ERROR_PREFIX} route ${key} is already registered on the secure app`,
+      );
+    }
+  }
+}
+
+/**
+ * Returns the exact key the shared router's duplicate check compares for one
+ * declared route, or null when that route is not on the shared router.
+ *
+ * That check is surface-agnostic: it compares the canonical method and path of
+ * every route the router owns, whichever surface declared it, and
+ * {@link SecureApp.appSyncField} mounts on that same router (GET /<field> for
+ * Query and Subscription, POST /<field> for Mutation). {@link SecureApp.routes}
+ * reports the same canonical method and path for both surfaces, so the HTTP and
+ * AppSync surfaces key identically here and an AppSync field that occupies a
+ * planned route's key is caught before the first mount.
+ *
+ * The WebSocket surface is the one exception. Its route keys live in their own
+ * table with their own duplicate check, keyed by route key; it declares neither
+ * a method nor a path, and it never reaches the router, so it cannot occupy a
+ * router key. Returning null for it is what stops this comparison from
+ * inventing a collision out of that empty method and path.
+ */
+function sharedRouterRouteKey(route: SecureRoute): string | null {
+  if (route.surface === "websocket") {
+    return null;
+  }
+  return `${route.method} ${route.path}`;
+}
+
+/**
+ * Applies the surface-independent inventory checks: every entry must name a
+ * method, pattern, and handler, must not duplicate another entry, and must be
+ * acceptable to install.
+ */
+function validateRegistrationEntries(
+  registrations: RouteRegistration[],
+  install: (registration: RouteRegistration) => void,
+): void {
+  const seen = new Set<string>();
   for (const registration of registrations) {
     const method = registration.method.trim().toUpperCase();
     const key = `${method} ${registration.pattern}`;
@@ -978,9 +1147,7 @@ function validateRouteRegistrations(registrations: RouteRegistration[]): void {
     }
     seen.add(key);
     try {
-      probe.handle(method, registration.pattern, registration.handler, {
-        authRequired: registration.authRequired,
-      });
+      install(registration);
     } catch (err) {
       throw new Error(
         `${ERROR_PREFIX} invalid or duplicate route inventory entry ${key}: ${errorMessage(err)}`,
@@ -1006,6 +1173,70 @@ function registerRoutes(app: App, registrations: RouteRegistration[]): void {
       );
     }
   }
+}
+
+function registerSecureRoutes(
+  secureApp: SecureApp,
+  registrations: RouteRegistration[],
+): void {
+  for (const registration of registrations) {
+    try {
+      handleSecureRoute(
+        secureApp,
+        registration.method,
+        registration.pattern,
+        registration.handler,
+        registration.posture,
+      );
+    } catch (err) {
+      throw new Error(
+        `${ERROR_PREFIX} register ${registration.method} ${registration.pattern}: ${errorMessage(err)}`,
+        { cause: err },
+      );
+    }
+  }
+}
+
+/**
+ * Declares one posture-bearing route on a SecureApp. It is the single place the
+ * facade mounts on a secure surface, shared by the throwaway probe in
+ * preflightSecureRegistrations and by registerSecureRoutes on the caller's
+ * app, so the preflight and the real mount cannot diverge.
+ *
+ * SecureApp.handle throws on a duplicate or invalid route exactly as App.handle
+ * does, so a route the caller's app already owns fails the whole registration
+ * rather than being silently shadowed or re-declared.
+ */
+function handleSecureRoute(
+  secureApp: SecureApp,
+  method: string,
+  pattern: string,
+  handler: Handler,
+  posture: AuthPosture,
+): void {
+  secureApp.handle(method, pattern, handler, posture);
+}
+
+/**
+ * Returns the declared SecureApp auth posture for the three MCP transport
+ * routes. It is the SecureApp counterpart of the `authRequired` route option
+ * the plain path derives from the same postures.
+ *
+ * `iam` and `jwt` are gateway-fronted postures whose plain-App expression is
+ * `authRequired`, which requires a resolved principal. The SecureApp
+ * counterpart of that requirement is `Authenticated()`, so the application's own
+ * SecurePrincipalResolver remains the authority for the transport route.
+ *
+ * `runtime-bearer` sets no route option on the plain surface because the RFC
+ * 9728 bearer middleware enforces the request and fails closed, so the declared
+ * posture here is Public and the facade's bearer validator is the authority.
+ * `none-public` is deliberately public by contract.
+ */
+function transportPostureDeclaration(config: NormalizedConfig): AuthPosture {
+  if (config.transportPosture === "iam" || config.transportPosture === "jwt") {
+    return Authenticated();
+  }
+  return Public();
 }
 
 function indexFacadeTemplates(
@@ -1392,6 +1623,17 @@ function authorizationServerHandler(
         ...config.capabilities.codeChallengeMethods,
       ],
       scopes_supported: [...config.scopes[kind]],
+      // The member follows front-channel ownership: it is advertised only while
+      // the framework-owned front channel serves the authorization responses,
+      // because only then does the facade send RFC 9207 `iss` on the client
+      // callback, on success and on error redirects alike. An application-owned
+      // AuthorizeHandler/TokenHandler pair (no front channel) leaves it absent,
+      // as do the root discovery document, whose fixed endpoints belong to the
+      // upstream authorization server, and the generic builder, which serves no
+      // front channel.
+      ...(config.frontChannel === null
+        ? {}
+        : { authorization_response_iss_parameter_supported: true }),
     };
     return withMetadataHeaders(authorizationServerMetadataHandler(metadata))(
       ctx,

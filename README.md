@@ -78,7 +78,7 @@ python -m pip install "./apptheory-${PYTHON_VERSION}-py3-none-any.whl"
 
 | | |
 |---|---|
-| **Contract test fixtures** | 288 total — 275 shared runtime fixtures plus thirteen nested conformance tables | <!-- apptheory-fixture-count: 288 -->
+| **Contract test fixtures** | 319 total — 306 shared runtime fixtures plus thirteen nested conformance tables | <!-- apptheory-fixture-count: 319 -->
 | **Runtimes** | Go · TypeScript · Python (peers, not ports) |
 | **Tiers** | P0 (core) · P1 (+request-id, auth, CORS, guardrails) · P2 (+duration-aware observability hooks, inbound trace recording, EMF metric sink path, rate limiting) — default P2 |
 | **Event sources** | Lambda Function URL · API Gateway v2 · ALB · AppSync · SQS · EventBridge · DynamoDB Streams · Kinesis · WebSockets |
@@ -91,7 +91,7 @@ python -m pip install "./apptheory-${PYTHON_VERSION}-py3-none-any.whl"
 Use AppTheory when you want AWS-Lambda-backed services that are:
 
 - **Serverless-first** — one unified `HandleLambda` entrypoint dispatches Lambda Function URL, API Gateway v2, ALB, AppSync, SQS, EventBridge, DynamoDB Streams, Kinesis, and WebSockets. The same handler shape covers every event source.
-- **Cross-language consistent** — one routing model, one middleware order, one error envelope — across three runtimes — with drift prevention on the full shared corpus. Go, TypeScript, and Python execute 275 shared runtime fixtures, including MCP, OAuth, and objectstore; the thirteen remaining nested tables pin the MCP route algebra, the facade inventory, the auth-facade surface, and the multi-window rate limiter's transaction-cancellation classification — the M2 acceptance, the M3a provider/store conformance, and the multi-window limiter cancellation tables load in all three runtimes, while the route-algebra and facade-inventory tables are Go/CDK-TS. <!-- apptheory-fixture-count: 288 -->
+- **Cross-language consistent** — one routing model, one middleware order, one error envelope — across three runtimes — with drift prevention on the full shared corpus. Go, TypeScript, and Python execute 306 shared runtime fixtures, including MCP, OAuth, and objectstore; the thirteen remaining nested tables pin the MCP route algebra, the facade inventory, the auth-facade surface, and the multi-window rate limiter's transaction-cancellation classification — the M2 acceptance, the M3a provider/store conformance, and the multi-window limiter cancellation tables load in all three runtimes, while the route-algebra and facade-inventory tables are Go/CDK-TS. <!-- apptheory-fixture-count: 319 -->
 - **Generative-coding friendly** — explicit tiers, canonical patterns, and strict verification so AI-generated code stays correct and maintainable.
 
 ✅ Treat routing, middleware, and event normalization as a contract
@@ -146,7 +146,7 @@ The full documentation site lives at **[apptheory.theorycloud.ai](https://appthe
 
 **Contract reference and feature pages:**
 
-- [Contract Fixtures](https://apptheory.theorycloud.ai/reference/contract-fixtures/) — 288 contract vectors: 275 across Go/TypeScript/Python plus thirteen nested conformance tables <!-- apptheory-fixture-count: 288 -->
+- [Contract Fixtures](https://apptheory.theorycloud.ai/reference/contract-fixtures/) — 319 contract vectors: 306 across Go/TypeScript/Python plus thirteen nested conformance tables <!-- apptheory-fixture-count: 319 -->
 - [Event Shape Dispatch](https://apptheory.theorycloud.ai/reference/event-shapes/) — which Lambda event shapes route to which handler
 - [HTTP Runtime](https://apptheory.theorycloud.ai/features/http-runtime/) — P0/P1/P2 tier surface
 - [Jobs Ledger](https://apptheory.theorycloud.ai/features/jobs-ledger/)
@@ -175,7 +175,7 @@ The full documentation site lives at **[apptheory.theorycloud.ai](https://appthe
 | `py/` | Python runtime (3.12+) |
 | `cdk/` | CDK constructs (jsii) — `AppTheoryHttpApi`, `AppTheoryMcpServer`, `AppTheoryQueue`, ... |
 | `cdk-go/` | Generated Go bindings for the jsii CDK package |
-| `contract-tests/` | 288 contract vectors: 275 runner fixtures for Go/TS/Python plus thirteen nested conformance tables | <!-- apptheory-fixture-count: 288 -->
+| `contract-tests/` | 319 contract vectors: 306 runner fixtures for Go/TS/Python plus thirteen nested conformance tables | <!-- apptheory-fixture-count: 319 -->
 | `api-snapshots/` | Public API surface lockfiles for each runtime — the release gate |
 | `examples/` | CDK + handler examples: `multilang`, `import-pipeline`, `ssr-site`, MCP, ... |
 | `.github/workflows/` | CI: rubric, release-please (stable + prerelease), Pages publish, subtree publish |
@@ -272,7 +272,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for full contributor docs, including the 
 ## Security & production notes
 
 - CSRF protection and secure cookie flags are application concerns; set `Secure`/`HttpOnly`/`SameSite` explicitly in `Set-Cookie`.
-- Request IDs can be supplied via `x-request-id`; validate/override if your threat model requires it.
+- Request IDs can be supplied via `x-request-id`. The runtime uses the value only when it is well-formed (1–128 visible-ASCII characters after trimming edge whitespace) and never treats it as authorization; read the validated client value with `ctx.ClientRequestID()` / `ctx.clientRequestId` / `ctx.client_request_id`.
 - Retries/backoff for event sources are handled by AWS trigger settings (retry policies, DLQs/redrive), not by the runtime.
 - Distribution is **GitHub Releases only** — there is no npm publish, no PyPI publish, and no raw-SDK escape hatch.
 

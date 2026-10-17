@@ -2733,6 +2733,7 @@ def _compare_mcp_step(
             return False, "body_json mismatch"
         if expected.get("body_json") != actual_json:
             return False, "body_json mismatch"
+    if "body_json" in expected and expected.get("body") is None:
         return True, ""
     expected_body = (
         decode_fixture_body(expected.get("body"))
@@ -3092,6 +3093,7 @@ def _compare_oauth_step(
             return False, "body_json mismatch"
         if expected.get("body_json") != actual_json:
             return False, "body_json mismatch"
+    if "body_json" in expected and expected.get("body") is None:
         return True, ""
     expected_body = (
         decode_fixture_body(expected.get("body"))
@@ -3677,13 +3679,22 @@ def _secure_openapi_error_matches(expected: dict[str, Any], message: str) -> boo
 def _secure_response_matches(expected: dict[str, Any], actual: Any) -> bool:
     if actual is None:
         return False
-    expected_body = decode_fixture_body(expected.get("body")) if expected.get("body") else b""
+    if "body_json" in expected:
+        try:
+            actual_json = json.loads(bytes(actual.body).decode("utf-8"))
+        except Exception:  # noqa: BLE001
+            return False
+        if expected["body_json"] != actual_json:
+            return False
+    if expected.get("body") is not None or "body_json" not in expected:
+        expected_body = decode_fixture_body(expected.get("body")) if expected.get("body") else b""
+        if expected_body != bytes(actual.body):
+            return False
     return (
         int(expected.get("status", 0)) == int(actual.status)
         and canonicalize_headers(expected.get("headers") or {}) == canonicalize_headers(actual.headers or {})
         and list(expected.get("cookies") or []) == list(actual.cookies or [])
         and bool(expected.get("is_base64")) == bool(actual.is_base64)
-        and expected_body == bytes(actual.body)
     )
 
 
@@ -3809,6 +3820,8 @@ def run_fixture_secure(
         "id_generator": _MCPFixedIdGenerator("req_test_123"),
         "websocket_support": bool(setup.get("websocket_support")),
     }
+    if (fixture.get("setup") or {}).get("request_id_source"):
+        app_options["request_id_source"] = (fixture.get("setup") or {}).get("request_id_source")
     if setup.get("principal_resolver") is not False:
         app_options["principal_resolver"] = resolver
     if setup.get("policy_hook"):
@@ -3899,17 +3912,20 @@ def run_fixture_secure(
         operation = step.get("operation")
         result: dict[str, Any] = {"status": 0, "error_code": ""}
         if operation == "http":
-            request = step.get("request") or {}
-            response = app.serve(
-                runtime.Request(
-                    method=request.get("method", ""),
-                    path=request.get("path", ""),
-                    query=request.get("query") or {},
-                    headers=request.get("headers") or {},
-                    body=decode_fixture_body(request.get("body")),
-                    is_base64=bool(request.get("is_base64")),
+            if str((step.get("aws_event") or {}).get("source") or "").strip().lower() == "apigw_v2":
+                response = canonical_response_from_apigw_v2(app.serve_apigw_v2(event))
+            else:
+                request = step.get("request") or {}
+                response = app.serve(
+                    runtime.Request(
+                        method=request.get("method", ""),
+                        path=request.get("path", ""),
+                        query=request.get("query") or {},
+                        headers=request.get("headers") or {},
+                        body=decode_fixture_body(request.get("body")),
+                        is_base64=bool(request.get("is_base64")),
+                    )
                 )
-            )
             result.update(status=response.status, error_code=_secure_error_code(response.body), response=response)
         elif operation == "appsync":
             output = app.serve_appsync(event)
@@ -4077,6 +4093,11 @@ def run_fixture(
             return False, "body_json mismatch", actual, expected, app
         if expected["body_json"] != actual_json:
             return False, "body_json mismatch", actual, expected, app
+
+        if expected.get("body") is not None:
+            expected_bytes = decode_fixture_body(expected.get("body"))
+            if expected_bytes != actual.body:
+                return False, "body mismatch", actual, expected, app
 
         if (fixture.get("expect", {}).get("logs") or []) != app.logs:
             return False, "logs mismatch", actual, expected, app
@@ -4672,6 +4693,19 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
                     "tenant_id": getattr(ctx, "tenant_id", ""),
                     "auth_identity": getattr(ctx, "auth_identity", ""),
                     "remaining_ms": int(getattr(ctx, "remaining_ms", 0) or 0),
+                },
+            )
+
+        return handler
+
+    if name == "echo_request_ids":
+
+        def handler(ctx):
+            return runtime.json(
+                200,
+                {
+                    "request_id": getattr(ctx, "request_id", ""),
+                    "client_request_id": getattr(ctx, "client_request_id", ""),
                 },
             )
 
@@ -6156,6 +6190,7 @@ def run_fixture_m12(
     app = runtime.create_app(
         tier="p1",
         http_error_format=str(setup.get("http_error_format") or ""),
+        request_id_source=str(setup.get("request_id_source") or ""),
         id_generator=ids,
         limits=runtime.Limits(
             max_request_bytes=int(limits.get("max_request_bytes") or 0),
@@ -6224,6 +6259,7 @@ def run_fixture_m14(
     app = runtime.create_app(
         tier="p1",
         http_error_format=str(setup.get("http_error_format") or ""),
+        request_id_source=str(setup.get("request_id_source") or ""),
         id_generator=ids,
         limits=runtime.Limits(
             max_request_bytes=int(limits.get("max_request_bytes") or 0),
@@ -6311,6 +6347,97 @@ def run_fixture_m14(
     return run_fixture_compare(fixture, actual, expected, _DummyEffectsApp())
 
 
+# The fixture-facing contract vector for the MCP OAuth facade's own default
+# values. They are the pinned values of
+# contract-tests/fixtures/routing/mcp-route-algebra/expectations.json, so a
+# fixture that omits a field still drives the bytes the runtime contract pins.
+_FIXTURE_MCP_FACADE_DEFAULTS = {
+    "issuer": "https://issuer.example.com/",
+    "jwks_uri": "https://issuer.example.com/jwks.json?set=active",
+    "public_base_url": "https://front.example.com/",
+    "resource_metadata_url": (
+        "https://front.example.com/.well-known/oauth-protected-resource/acme/mcp"
+    ),
+    "scopes": ["namespace:use"],
+}
+
+
+def _fixture_mcp_facade_value(value: Any, fallback: str) -> str:
+    text = str(value or "").strip()
+    return fallback if not text else text
+
+
+def _fixture_mcp_facade_token(runtime: Any, entry: Any) -> Any:
+    if isinstance(entry, str):
+        return runtime.BearerTokenRecord(token=entry)
+    record = entry or {}
+    return runtime.BearerTokenRecord(
+        token=str(record.get("token") or ""),
+        subject=str(record.get("subject") or ""),
+        audience=str(record.get("audience") or ""),
+        scopes=[str(scope) for scope in (record.get("scopes") or [])],
+    )
+
+
+def register_fixture_mcp_facade(runtime: Any, app: Any, setup: dict[str, Any]) -> None:
+    """Mounts the real MCP OAuth facade on a p0 fixture application.
+
+    The facade is mounted, not reimplemented: every response a fixture observes
+    is the runtime's own route behavior.
+    """
+
+    scopes = [str(scope) for scope in (setup.get("scopes") or [])]
+    if not scopes:
+        scopes = list(_FIXTURE_MCP_FACADE_DEFAULTS["scopes"])
+    scope_map = {
+        str(template["kind"]): list(scopes)
+        for template in runtime.supported_endpoint_templates()
+    }
+
+    config = runtime.FacadeConfig(
+        issuer_url=_fixture_mcp_facade_value(
+            setup.get("issuer"), _FIXTURE_MCP_FACADE_DEFAULTS["issuer"]
+        ),
+        jwks_uri=_fixture_mcp_facade_value(
+            setup.get("jwks_uri"), _FIXTURE_MCP_FACADE_DEFAULTS["jwks_uri"]
+        ),
+        url_mode="public_base_url",
+        public_base_url=_fixture_mcp_facade_value(
+            setup.get("public_base_url"), _FIXTURE_MCP_FACADE_DEFAULTS["public_base_url"]
+        ),
+        scopes=scope_map,
+        mcp_handler=lambda _ctx: runtime.Response(
+            status=204, headers={}, cookies=[], body=b"", is_base64=False
+        ),
+        transport_posture="iam",
+    )
+
+    bearer = setup.get("bearer") or None
+    if bearer:
+        required_scopes = [str(scope) for scope in (bearer.get("required_scopes") or [])]
+        records = [
+            _fixture_mcp_facade_token(runtime, entry)
+            for entry in (bearer.get("accepted_tokens") or [])
+        ]
+        config.transport_posture = "runtime-bearer"
+        config.require_bearer_token = runtime.RequireBearerTokenOptions(
+            resource_metadata_url=_fixture_mcp_facade_value(
+                setup.get("resource_metadata_url"),
+                _FIXTURE_MCP_FACADE_DEFAULTS["resource_metadata_url"],
+            ),
+            claims_validator=runtime.new_memory_bearer_token_validator(
+                records,
+                runtime.BearerTokenValidationOptions(
+                    required_audience=str(bearer.get("required_audience") or ""),
+                    required_scopes=required_scopes,
+                ),
+            ),
+            required_scopes_func=lambda _ctx: list(required_scopes),
+        )
+
+    runtime.register_mcp_facade(app, config)
+
+
 def run_fixture_p0(
     fixture: dict[str, Any],
 ) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
@@ -6322,6 +6449,9 @@ def run_fixture_p0(
 
     actual_error: Exception | None = None
     try:
+        mcp_facade = setup.get("mcp_facade")
+        if mcp_facade:
+            register_fixture_mcp_facade(runtime, app, mcp_facade)
         for route in setup.get("routes", []) or []:
             app.handle(
                 route.get("method", ""),
@@ -6464,6 +6594,7 @@ def run_fixture_p1(
     app = runtime.create_app(
         tier="p1",
         http_error_format=str(setup.get("http_error_format") or ""),
+        request_id_source=str(setup.get("request_id_source") or ""),
         id_generator=ids,
         limits=runtime.Limits(
             max_request_bytes=int(limits.get("max_request_bytes") or 0),
@@ -6593,6 +6724,7 @@ def run_fixture_p2(
     app = runtime.create_app(
         tier="p2",
         http_error_format=str(setup.get("http_error_format") or ""),
+        request_id_source=str(setup.get("request_id_source") or ""),
         id_generator=ids,
         clock=clock,
         limits=runtime.Limits(
@@ -6698,6 +6830,7 @@ def run_fixture_p2_output(
             )
     app = runtime.create_app(
         tier="p2",
+        request_id_source=str(setup.get("request_id_source") or ""),
         id_generator=ids,
         limits=runtime.Limits(
             max_request_bytes=int(limits.get("max_request_bytes") or 0),
@@ -6918,6 +7051,11 @@ def run_fixture_compare(
             return False, "body_json mismatch", actual, expected, app
         if expected["body_json"] != actual_json:
             return False, "body_json mismatch", actual, expected, app
+
+        if expected.get("body") is not None:
+            expected_bytes = decode_fixture_body(expected.get("body"))
+            if expected_bytes != actual.body:
+                return False, "body mismatch", actual, expected, app
 
         if (fixture.get("expect", {}).get("logs") or []) != app.logs:
             return False, "logs mismatch", actual, expected, app

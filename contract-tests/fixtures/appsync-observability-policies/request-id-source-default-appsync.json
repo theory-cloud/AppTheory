@@ -1,0 +1,39 @@
+{
+  "id": "p2.request_id.source_default_appsync",
+  "tier": "p2",
+  "name": "Default request-ID source keeps honoring client AppSync request headers over the Lambda fallback id",
+  "setup": {
+    "request_id_source": "default",
+    "routes": [
+      { "method": "POST", "path": "/createThing", "handler": "echo_context" }
+    ]
+  },
+  "input": {
+    "aws_event": {
+      "source": "appsync",
+      "event": {
+        "arguments": {},
+        "request": {
+          "headers": {
+            "x-request-id": "req_client_supplied"
+          }
+        },
+        "info": {
+          "fieldName": "createThing",
+          "parentTypeName": "Mutation"
+        }
+      }
+    },
+    "context": {
+      "aws_request_id": "aws-req-fallback"
+    }
+  },
+  "expect": {
+    "output_json": {
+      "request_id": "req_client_supplied",
+      "tenant_id": "",
+      "auth_identity": "",
+      "remaining_ms": 0
+    }
+  }
+}

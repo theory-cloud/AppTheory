@@ -267,8 +267,8 @@ import (
   "os"
 
   "github.com/theory-cloud/apptheory/v6/runtime/mcp"
-  "github.com/theory-cloud/tabletheory/v5"
-  "github.com/theory-cloud/tabletheory/v5/pkg/session"
+  "github.com/theory-cloud/tabletheory/v6"
+  "github.com/theory-cloud/tabletheory/v6/pkg/session"
 )
 
 func buildMcpServerWithDynamoSessions() (*mcp.Server, error) {
@@ -310,7 +310,7 @@ Important adapter note:
   AppTheory’s streaming response (`SSEStreamResponse`) is supported by the API Gateway **REST API v1** adapter (`ServeAPIGatewayProxy` via `HandleLambda`).
 - The HTTP API v2 adapter cannot stream: it drains a streaming body only when the stream terminates within a bounded
   budget (4 MiB / 5 seconds) and otherwise fails closed with HTTP 500
-  (`{"error":{"code":"app.internal","message":"streaming response body cannot be delivered by the HTTP API v2 adapter"}}`).
+  (`{"error":{"code":"app.internal","message":"streaming response body cannot be delivered by the HTTP API v2 adapter","status_code":500}}`).
   A long-running streaming tool served through HTTP API v2 therefore receives an explicit error instead of a silent
   empty `200`.
 

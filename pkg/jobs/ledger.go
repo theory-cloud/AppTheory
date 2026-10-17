@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	tablecore "github.com/theory-cloud/tabletheory/v5/pkg/core"
-	tableerrors "github.com/theory-cloud/tabletheory/v5/pkg/errors"
+	tablecore "github.com/theory-cloud/tabletheory/v6/pkg/core"
+	tableerrors "github.com/theory-cloud/tabletheory/v6/pkg/errors"
 )
 
 type DynamoJobLedger struct {

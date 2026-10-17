@@ -93,7 +93,7 @@ def _assert_streaming_error(testcase: unittest.TestCase, out: dict, message: str
     testcase.assertIn("application/json", out["headers"]["content-type"])
     testcase.assertEqual(
         json.loads(out["body"]),
-        {"error": {"code": "app.internal", "message": message}},
+        {"error": {"code": "app.internal", "message": message, "status_code": 500}},
     )
 
 
@@ -108,7 +108,7 @@ def _assert_streaming_too_large(testcase: unittest.TestCase, out: dict) -> None:
     testcase.assertIn("application/json", out["headers"]["content-type"])
     testcase.assertEqual(
         json.loads(out["body"]),
-        {"error": {"code": "app.too_large", "message": "response too large"}},
+        {"error": {"code": "app.too_large", "message": "response too large", "status_code": 413}},
     )
 
 

@@ -41,6 +41,12 @@ from apptheory.errors import (
 from apptheory.event_workloads import normalize_dynamodb_stream_record, normalize_eventbridge_workload_envelope
 from apptheory.ids import IdGenerator, RealIdGenerator
 from apptheory.request import Request, normalize_request, normalize_request_with_max_bytes
+from apptheory.request_id_source import (
+    REQUEST_ID_SOURCE_DEFAULT,
+    REQUEST_ID_SOURCE_SERVER,
+    normalize_request_id_source,
+    well_formed_client_request_id,
+)
 from apptheory.response import Response, normalize_response
 from apptheory.router import Router
 from apptheory.secure_openapi import (
@@ -286,6 +292,7 @@ class App:
     _id_generator: IdGenerator
     _tier: str
     _http_error_format: str
+    _request_id_source: str
     _limits: Limits
     _cors: CORSConfig
     _auth_hook: AuthHook | None
@@ -314,6 +321,7 @@ class App:
         id_generator: IdGenerator | None = None,
         tier: str = "p2",
         http_error_format: str = HTTP_ERROR_FORMAT_NESTED,
+        request_id_source: str = REQUEST_ID_SOURCE_DEFAULT,
         limits: Limits | None = None,
         cors: CORSConfig | None = None,
         auth_hook: AuthHook | None = None,
@@ -331,6 +339,7 @@ class App:
             tier_value = "p2"
         self._tier = tier_value
         self._http_error_format = normalize_http_error_format(http_error_format)
+        self._request_id_source = normalize_request_id_source(request_id_source)
         self._limits = limits or Limits()
         self._cors = _normalize_cors_config(cors)
         self._auth_hook = auth_hook
@@ -728,12 +737,14 @@ class App:
                     fallback_request_id,
                 )
             if allowed:
-                return self._http_error_response(
-                    "app.method_not_allowed",
-                    "method not allowed",
-                    headers={"allow": [self._router.format_allow_header(allowed)]},
+                return self._canonicalize_secure_error_response(
+                    self._http_error_response(
+                        "app.method_not_allowed",
+                        "method not allowed",
+                        headers={"allow": [self._router.format_allow_header(allowed)]},
+                    )
                 )
-            return self._http_error_response("app.not_found", "not found")
+            return self._canonicalize_secure_error_response(self._http_error_response("app.not_found", "not found"))
 
         request_ctx = Context(
             request=normalized,
@@ -975,11 +986,16 @@ class App:
         path = str(request.path or "").strip() or "/"
         route = _UNMATCHED_ROUTE_TEMPLATE
 
-        request_id = (
-            _first_header_value(pre_headers, "x-request-id")
-            or str(fallback_request_id or "").strip()
-            or self._id_generator.new_id()
-        )
+        # The client x-request-id is honored as the request ID only when it is
+        # well-formed and the app is in the default source mode. A malformed
+        # value is ignored as if the header were absent, so it can never reach
+        # the response header, the error envelope, the handler context, or the
+        # logs.
+        client_request_id = well_formed_client_request_id(_first_header_value(pre_headers, "x-request-id"))
+        request_id = ""
+        if self._request_id_source != REQUEST_ID_SOURCE_SERVER:
+            request_id = client_request_id
+        request_id = request_id or str(fallback_request_id or "").strip() or self._id_generator.new_id()
         origin = _first_header_value(pre_headers, "origin")
         tenant_id = _extract_tenant_id(pre_headers, pre_query)
         remaining_ms = _remaining_ms(ctx)
@@ -1070,21 +1086,25 @@ class App:
                 )
             if allowed:
                 return finish(
-                    self._http_error_response_with_request_id_trace_id(
-                        "app.method_not_allowed",
-                        "method not allowed",
-                        headers={"allow": [self._router.format_allow_header(allowed)]},
-                        request_id=request_id,
-                        trace_id=trace_id,
+                    self._canonicalize_secure_error_response(
+                        self._http_error_response_with_request_id_trace_id(
+                            "app.method_not_allowed",
+                            "method not allowed",
+                            headers={"allow": [self._router.format_allow_header(allowed)]},
+                            request_id=request_id,
+                            trace_id=trace_id,
+                        )
                     ),
                     "app.method_not_allowed",
                 )
             return finish(
-                self._http_error_response_with_request_id_trace_id(
-                    "app.not_found",
-                    "not found",
-                    request_id=request_id,
-                    trace_id=trace_id,
+                self._canonicalize_secure_error_response(
+                    self._http_error_response_with_request_id_trace_id(
+                        "app.not_found",
+                        "not found",
+                        request_id=request_id,
+                        trace_id=trace_id,
+                    )
                 ),
                 "app.not_found",
             )
@@ -1101,6 +1121,7 @@ class App:
             trace_id=trace_id,
             tenant_id=tenant_id,
             auth_identity="",
+            client_request_id=client_request_id,
             remaining_ms=remaining_ms,
             middleware_trace=trace,
             tenant_binding_required=self._tenant_binding_required(),
@@ -1817,6 +1838,7 @@ class SecureApp:
         id_generator: IdGenerator | None = None,
         tier: str = "p2",
         http_error_format: str = HTTP_ERROR_FORMAT_NESTED,
+        request_id_source: str = REQUEST_ID_SOURCE_DEFAULT,
         limits: Limits | None = None,
         cors: CORSConfig | None = None,
         principal_resolver: SecurePrincipalResolver | None = None,
@@ -1838,6 +1860,7 @@ class SecureApp:
             id_generator=id_generator,
             tier=tier_value,
             http_error_format=http_error_format,
+            request_id_source=request_id_source,
             limits=limits,
             cors=cors,
             observability=observability,
@@ -1984,6 +2007,7 @@ def create_app(
     id_generator: IdGenerator | None = None,
     tier: str = "p2",
     http_error_format: str = HTTP_ERROR_FORMAT_NESTED,
+    request_id_source: str = REQUEST_ID_SOURCE_DEFAULT,
     limits: Limits | None = None,
     cors: CORSConfig | None = None,
     auth_hook: AuthHook | None = None,
@@ -1999,6 +2023,7 @@ def create_app(
         id_generator=id_generator,
         tier=tier,
         http_error_format=http_error_format,
+        request_id_source=request_id_source,
         limits=limits,
         cors=cors,
         auth_hook=auth_hook,

@@ -31,15 +31,18 @@ const dcrDefaultRepeat = 1
 // its "a" run: `,"pad":"` plus `"}`.
 const dcrFrameOverhead = len(`,"pad":"`) + len(`"}`)
 
-// dcrConformanceDocument and dcrConformanceCase are the dcr rows. A row carries
-// the JSON registration request, how many times to present it, and what the last
-// response must look like. pad_to_bytes builds a body of exactly that many bytes
-// out of the row's request plus one ignored `pad` member; expect_header names a
-// response header the row requires.
+// dcrConformanceDocument is the shared table's raw rows: the dcr rows are
+// decoded one by one, because a `request` member that is not an object belongs
+// to another group of the same table.
 type dcrConformanceDocument struct {
-	Cases []dcrConformanceCase `json:"cases"`
+	Cases []json.RawMessage `json:"cases"`
 }
 
+// dcrConformanceCase is a dcr row. A row carries the JSON registration request,
+// how many times to present it, and what the last response must look like.
+// pad_to_bytes builds a body of exactly that many bytes out of the row's request
+// plus one ignored `pad` member; expect_header names a response header the row
+// requires.
 type dcrConformanceCase struct {
 	ID               string         `json:"id"`
 	Group            string         `json:"group"`
@@ -86,9 +89,9 @@ func TestFrontChannelRegisterEnforcesTheSharedDCRTable(t *testing.T) {
 	loadFacadeConformanceFixture(t, &document)
 
 	rows := make([]dcrConformanceCase, 0, len(document.Cases))
-	for _, row := range document.Cases {
-		require.NotEmptyf(t, row.Group, "case %q must carry a group", row.ID)
-		if row.Group == dcrGroup {
+	for _, raw := range document.Cases {
+		var row dcrConformanceCase
+		if decodeFacadeConformanceCase(t, raw, dcrGroup, &row) {
 			rows = append(rows, row)
 		}
 	}

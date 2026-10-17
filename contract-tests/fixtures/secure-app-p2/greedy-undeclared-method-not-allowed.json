@@ -1,0 +1,104 @@
+{
+  "id": "p2.secure_greedy_undeclared_method_not_allowed",
+  "tier": "p2",
+  "name": "secure greedy ANY /{proxy+}: an undeclared method returns 405 with the sorted allow header",
+  "setup": {
+    "secure_app": {
+      "tier": "p2",
+      "routes": [
+        {
+          "surface": "http",
+          "method": "GET",
+          "path": "/known",
+          "handler": "secure_echo",
+          "posture": "public"
+        },
+        {
+          "surface": "http",
+          "method": "POST",
+          "path": "/known",
+          "handler": "secure_echo",
+          "posture": "public"
+        }
+      ]
+    }
+  },
+  "input": {
+    "secure_steps": [
+      {
+        "name": "undeclared-method",
+        "operation": "http",
+        "request": {
+          "method": "DELETE",
+          "path": "/known",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        },
+        "aws_event": {
+          "source": "apigw_v2",
+          "event": {
+            "version": "2.0",
+            "routeKey": "ANY /{proxy+}",
+            "rawPath": "/known",
+            "rawQueryString": "",
+            "cookies": [],
+            "headers": {},
+            "queryStringParameters": null,
+            "requestContext": {
+              "http": {
+                "method": "DELETE",
+                "path": "/known"
+              }
+            },
+            "body": "",
+            "isBase64Encoded": false
+          }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "secure_steps": [
+      {
+        "name": "undeclared-method",
+        "status": 405,
+        "error_code": "app.method_not_allowed",
+        "response": {
+          "status": 405,
+          "headers": {
+            "allow": [
+              "GET, POST"
+            ],
+            "content-type": [
+              "application/json; charset=utf-8"
+            ],
+            "x-request-id": [
+              "req_test_123"
+            ]
+          },
+          "cookies": [],
+          "body": {
+            "encoding": "utf8",
+            "value": "{\"error\":{\"code\":\"app.method_not_allowed\",\"message\":\"method not allowed\",\"request_id\":\"req_test_123\",\"status_code\":405}}"
+          },
+          "is_base64": false,
+          "body_json": {
+            "error": {
+              "code": "app.method_not_allowed",
+              "message": "method not allowed",
+              "request_id": "req_test_123",
+              "status_code": 405
+            }
+          }
+        },
+        "resolver_calls": 0,
+        "middleware_calls": 0,
+        "handler_calls": 0
+      }
+    ]
+  }
+}

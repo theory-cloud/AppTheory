@@ -1,0 +1,62 @@
+{
+  "id": "p1.request_id.shape_wellformed_handler_error",
+  "tier": "p1",
+  "name": "A well-formed client x-request-id reaches the error envelope request_id",
+  "setup": {
+    "request_id_source": "default",
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/portable-error",
+        "handler": "portable_error"
+      }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/portable-error",
+      "query": {},
+      "headers": {
+        "x-request-id": [
+          "req_client_wellformed"
+        ]
+      },
+      "body": {
+        "encoding": "utf8",
+        "value": ""
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 409,
+      "headers": {
+        "content-type": [
+          "application/json; charset=utf-8"
+        ],
+        "x-request-id": [
+          "req_client_wellformed"
+        ]
+      },
+      "cookies": [],
+      "body_json": {
+        "error": {
+          "code": "app.conflict",
+          "message": "conflict",
+          "status_code": 409,
+          "details": {
+            "field": "email",
+            "retryable": false
+          },
+          "request_id": "req_client_wellformed",
+          "trace_id": "trace_456",
+          "timestamp": "2024-01-02T03:04:05Z",
+          "stack_trace": "stack:line"
+        }
+      },
+      "is_base64": false
+    }
+  }
+}

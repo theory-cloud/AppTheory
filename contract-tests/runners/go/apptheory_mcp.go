@@ -552,7 +552,9 @@ func compareMCPExpectedStep(expected FixtureMCPExpectedStep, actual fixtureMCPAc
 		if !jsonEqual(expectedJSON, actualJSON) {
 			return fmt.Errorf("body_json mismatch: expected %s, got %s", string(marshalIndentOrPlaceholder(expectedJSON)), string(marshalIndentOrPlaceholder(actualJSON)))
 		}
-		return nil
+		if expected.Body == nil {
+			return nil
+		}
 	}
 	var expectedBody []byte
 	if expected.Body != nil {

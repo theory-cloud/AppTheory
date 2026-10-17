@@ -1,0 +1,44 @@
+{
+  "id": "p0.adapter.apigw_v2.greedy_binary_response",
+  "tier": "p0",
+  "name": "APIGW v2: a binary response body under ANY /{proxy+} is base64 encoded",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/binary", "handler": "binary_body" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/binary",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    },
+    "aws_event": {
+      "source": "apigw_v2",
+      "event": {
+        "version": "2.0",
+        "routeKey": "ANY /{proxy+}",
+        "rawPath": "/binary",
+        "rawQueryString": "",
+        "cookies": [],
+        "headers": {},
+        "queryStringParameters": null,
+        "requestContext": { "http": { "method": "GET", "path": "/binary" } },
+        "body": "",
+        "isBase64Encoded": false
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": { "content-type": ["application/octet-stream"] },
+      "cookies": [],
+      "body": { "encoding": "base64", "value": "AAEC" },
+      "is_base64": true
+    }
+  }
+}

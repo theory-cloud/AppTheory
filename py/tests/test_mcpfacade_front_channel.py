@@ -2863,3 +2863,21 @@ class ThreatControlsTableTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class FrontChannelMetadataIssAdvertisementTests(unittest.TestCase):
+    """Pins the RFC 9207 claim to the front channel's own behavior: the routed
+    document advertises ``authorization_response_iss_parameter_supported`` and
+    its issuer is byte-equal to the ``iss`` the client callback carries.
+    """
+
+    def test_routed_metadata_advertises_the_iss_it_sends(self) -> None:
+        harness = _FrontChannelHarness(self)
+
+        metadata = harness.serve("GET", harness.endpoint.oauth_authorization_server_path())
+        self.assertEqual(200, metadata.status)
+        document = json.loads(metadata.body.decode())
+        self.assertIs(True, document["authorization_response_iss_parameter_supported"])
+        self.assertTrue(document["issuer"])
+
+        callback, _ = harness.authorize_and_callback()
+        self.assertEqual(document["issuer"], _location_query(callback).get("iss"))

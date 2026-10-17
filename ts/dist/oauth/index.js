@@ -75,7 +75,24 @@ export function protectedResourceMetadataHandler(metadata) {
     return () => metadataJSON(200, metadata);
 }
 export function authorizationServerMetadataHandler(metadata) {
-    return () => metadataJSON(200, metadata);
+    return () => metadataJSON(200, normalizeIssParameterSupport(metadata));
+}
+/**
+ * Applies the RFC 8414 "absent means false" rule to the RFC 9207 member: the
+ * member is emitted only while it is the boolean `true`, so Go (a typed bool
+ * with `omitempty`), TypeScript, and Python emit the same document for the same
+ * input. An explicit `false`, an absent member, and any non-boolean value (a
+ * string such as `"true"`, a number) all drop the member, so a value that is
+ * not the boolean `true` never reaches the document.
+ */
+function normalizeIssParameterSupport(metadata) {
+    const value = metadata.authorization_response_iss_parameter_supported;
+    if (value === undefined || value === true) {
+        return metadata;
+    }
+    const copy = { ...metadata };
+    delete copy.authorization_response_iss_parameter_supported;
+    return copy;
 }
 export function protectedResourceWWWAuthenticate(resourceMetadataURL) {
     const value = String(resourceMetadataURL ?? "").trim();
@@ -544,7 +561,11 @@ async function unauthorizedResponse(ctx, options, resourceMetadataURLTemplate) {
         headers,
         cookies: [],
         body: Buffer.from(JSON.stringify({
-            error: { code: "app.unauthorized", message: "unauthorized" },
+            error: {
+                code: "app.unauthorized",
+                message: "unauthorized",
+                status_code: 401,
+            },
         }), "utf8"),
         isBase64: false,
     };
@@ -564,6 +585,7 @@ async function insufficientScopeResponse(ctx, options, resourceMetadataURLTempla
             error: {
                 code: "app.insufficient_scope",
                 message: "insufficient scope",
+                status_code: 403,
             },
         }), "utf8"),
         isBase64: false,
@@ -575,7 +597,11 @@ function forbiddenResponse() {
         headers: { "content-type": ["application/json; charset=utf-8"] },
         cookies: [],
         body: Buffer.from(JSON.stringify({
-            error: { code: "app.forbidden", message: "forbidden" },
+            error: {
+                code: "app.forbidden",
+                message: "forbidden",
+                status_code: 403,
+            },
         }), "utf8"),
         isBase64: false,
     };

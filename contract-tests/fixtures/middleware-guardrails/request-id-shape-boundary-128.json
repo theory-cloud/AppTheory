@@ -1,0 +1,51 @@
+{
+  "id": "p1.request_id.shape_boundary_128",
+  "tier": "p1",
+  "name": "A client x-request-id of exactly the 128-character limit is accepted",
+  "setup": {
+    "request_id_source": "default",
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/context",
+        "handler": "echo_request_ids"
+      }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/context",
+      "query": {},
+      "headers": {
+        "x-request-id": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ]
+      },
+      "body": {
+        "encoding": "utf8",
+        "value": ""
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": [
+          "application/json; charset=utf-8"
+        ],
+        "x-request-id": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ]
+      },
+      "cookies": [],
+      "body_json": {
+        "request_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "client_request_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "is_base64": false
+    }
+  }
+}

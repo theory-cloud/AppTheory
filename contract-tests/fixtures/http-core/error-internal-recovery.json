@@ -22,7 +22,7 @@
       "status": 500,
       "headers": { "content-type": ["application/json; charset=utf-8"] },
       "cookies": [],
-      "body_json": { "error": { "code": "app.internal", "message": "internal error" } },
+      "body_json": { "error": { "code": "app.internal", "message": "internal error", "status_code": 500} },
       "is_base64": false
     }
   }

@@ -71,6 +71,14 @@ class Context:
     trace_id: str
     tenant_id: str
     auth_identity: str
+    # The well-formed, client-supplied ``x-request-id`` header value, or an empty
+    # string when the header is absent or malformed.
+    #
+    # The value is client-supplied and untrusted. Use it for identity and
+    # correlation only -- never for authorization. It is available in both
+    # request-ID source modes; in the server-issued mode it is exposed here and
+    # nowhere else.
+    client_request_id: str
     remaining_ms: int
     middleware_trace: list[str]
     websocket: WebSocketContext | None
@@ -97,6 +105,7 @@ class Context:
         trace_id: str = "",
         tenant_id: str = "",
         auth_identity: str = "",
+        client_request_id: str = "",
         remaining_ms: int = 0,
         middleware_trace: list[str] | None = None,
         websocket: WebSocketContext | None = None,
@@ -113,6 +122,7 @@ class Context:
         self.trace_id = str(trace_id or getattr(request, "trace_id", "") or "")
         self.tenant_id = str(tenant_id)
         self.auth_identity = str(auth_identity)
+        self.client_request_id = str(client_request_id or "")
         self.remaining_ms = int(remaining_ms or 0)
         self.middleware_trace = middleware_trace if middleware_trace is not None else []
         self.websocket = websocket
