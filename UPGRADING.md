@@ -15,6 +15,15 @@ or deprecation posture must add or update a section here before the release is p
 
 ## v6.x line
 
+### Unreleased
+
+- **Object store: S3 `Get` now returns the typed not-found error for an absent object.** Go returns
+  `objectstore.ErrObjectNotFound`; TypeScript and Python return `objectstore.not_found` for S3 `NoSuchKey`,
+  `NoSuchVersion`, and an HTTP 404. The original SDK error stays in the chain (`errors.As`, `cause`, `__cause__`), so
+  callers that string-matched SDK error messages should switch to `errors.Is` or the stable error code. A missing key
+  is only distinguishable from a denial when the caller holds `s3:ListBucket`; without it S3 answers 403
+  `AccessDenied`, which remains an error. `Delete` is unchanged and stays idempotent.
+
 AppTheory v6 moves the Go runtime and the generated CDK Go bindings onto the next semantic import version. The release
 range from the v5 line also carries other breaking runtime, CDK, TypeScript, and Python changes; read `CHANGELOG.md` and
 the v6 release notes for the commit-level detail, and treat the import-path move below as the mechanical part of the
