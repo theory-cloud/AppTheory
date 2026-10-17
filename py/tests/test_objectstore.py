@@ -6,15 +6,18 @@ import os
 import sys
 import types
 import unittest
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 from unittest import mock
 from urllib.parse import parse_qs, quote, urlparse
 
-import apptheory
 import boto3
 import botocore.config
+from botocore.exceptions import ClientError
+
+import apptheory
 from apptheory.objectstore import _S3ObjectStore, _verify_presign_put_url
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -40,8 +43,16 @@ class _Body:
 
 
 class _FakeS3Client:
-    def __init__(self, body: bytes = b"payload") -> None:
+    def __init__(
+        self,
+        body: bytes = b"payload",
+        *,
+        get_error: Exception | None = None,
+        delete_error: Exception | None = None,
+    ) -> None:
         self.body = body
+        self.get_error = get_error
+        self.delete_error = delete_error
         self.last_body: _Body | None = None
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
@@ -51,6 +62,8 @@ class _FakeS3Client:
 
     def get_object(self, **kwargs: Any) -> dict[str, Any]:
         self.calls.append(("get", dict(kwargs)))
+        if self.get_error is not None:
+            raise self.get_error
         self.last_body = _Body(self.body)
         return {
             "Body": self.last_body,
@@ -61,6 +74,8 @@ class _FakeS3Client:
 
     def delete_object(self, **kwargs: Any) -> dict[str, str]:
         self.calls.append(("delete", dict(kwargs)))
+        if self.delete_error is not None:
+            raise self.delete_error
         return {}
 
 
@@ -96,6 +111,16 @@ def _real_s3_client(signature_version: str | None = None) -> Any:
     if signature_version is not None:
         kwargs["config"] = botocore.config.Config(signature_version=signature_version)
     return boto3.client("s3", **kwargs)
+
+
+def _client_error(code: str, status: int, operation: str = "GetObject") -> ClientError:
+    return ClientError(
+        {
+            "Error": {"Code": code, "Message": "s3 stub error"},
+            "ResponseMetadata": {"HTTPStatusCode": status, "RequestId": "req-stub"},
+        },
+        operation,
+    )
 
 
 def _presign_put_input(**overrides: Any) -> apptheory.ObjectStorePresignPutInput:
@@ -354,6 +379,64 @@ class ObjectStoreTests(unittest.TestCase):
             with self.assertRaises(apptheory.ObjectStoreError) as too_large:
                 store.get(apptheory.ObjectStoreGetInput(ref=stored, max_bytes=3))
             self.assert_object_store_error(apptheory.OBJECTSTORE_ERROR_OBJECT_TOO_LARGE, too_large.exception)
+
+    def test_s3_get_maps_only_a_missing_object_to_not_found(self) -> None:
+        cases: list[tuple[str, Exception, bool]] = [
+            ("modeled NoSuchKey", _client_error("NoSuchKey", 404), True),
+            ("unmodeled NoSuchVersion 404", _client_error("NoSuchVersion", 404), True),
+            ("generic 404", _client_error("Unknown", 404), True),
+            ("access denied 403", _client_error("AccessDenied", 403), False),
+            ("no such bucket 404", _client_error("NoSuchBucket", 404), False),
+            ("server error 500", _client_error("InternalError", 500), False),
+            ("transport error", OSError("connection refused"), False),
+        ]
+
+        for name, error, want_not_found in cases:
+            with self.subTest(name=name):
+                client = _FakeS3Client(get_error=error)
+                with _fake_boto3(client, self):
+                    store = apptheory.create_s3_object_store(apptheory.S3ObjectStoreConfig(region_name="us-east-1"))
+                    caught: Exception | None = None
+                    try:
+                        store.get(
+                            apptheory.ObjectStoreGetInput(
+                                ref=apptheory.ObjectRef(bucket="bucket-a", key="missing"),
+                                max_bytes=16,
+                            )
+                        )
+                    except Exception as caught_error:  # noqa: BLE001
+                        caught = caught_error
+
+                self.assertIsNotNone(caught)
+                if want_not_found:
+                    self.assertIsInstance(caught, apptheory.ObjectStoreError)
+                    self.assert_object_store_error(apptheory.OBJECTSTORE_ERROR_NOT_FOUND, caught)
+                    self.assertEqual(str(caught), "objectstore: object not found")
+                    self.assertIs(caught.__cause__, error)
+                else:
+                    self.assertIs(caught, error)
+                    self.assertFalse(
+                        isinstance(caught, apptheory.ObjectStoreError)
+                        and caught.code == apptheory.OBJECTSTORE_ERROR_NOT_FOUND
+                    )
+
+    def test_s3_delete_keeps_raw_s3_errors(self) -> None:
+        error = _client_error("AccessDenied", 403, operation="DeleteObject")
+        client = _FakeS3Client(delete_error=error)
+        with _fake_boto3(client, self):
+            store = apptheory.create_s3_object_store(apptheory.S3ObjectStoreConfig(region_name="us-east-1"))
+            caught: Exception | None = None
+            try:
+                store.delete(
+                    apptheory.ObjectStoreDeleteInput(ref=apptheory.ObjectRef(bucket="bucket-a", key="missing"))
+                )
+            except Exception as caught_error:  # noqa: BLE001
+                caught = caught_error
+
+        self.assertIs(caught, error)
+        self.assertFalse(
+            isinstance(caught, apptheory.ObjectStoreError) and caught.code == apptheory.OBJECTSTORE_ERROR_NOT_FOUND
+        )
 
     def test_s3_encryption_config_fails_closed(self) -> None:
         client = _FakeS3Client()

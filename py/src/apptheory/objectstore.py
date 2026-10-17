@@ -448,7 +448,15 @@ class _S3ObjectStore:
         kwargs: dict[str, Any] = {"Bucket": input_.ref.bucket, "Key": input_.ref.key}
         if input_.ref.version_id:
             kwargs["VersionId"] = input_.ref.version_id
-        output = cast(dict[str, Any], self._client.get_object(**kwargs) or {})
+        try:
+            output = cast(dict[str, Any], self._client.get_object(**kwargs) or {})
+        except Exception as error:
+            if _is_s3_object_not_found(error):
+                raise ObjectStoreError(
+                    OBJECTSTORE_ERROR_NOT_FOUND,
+                    "objectstore: object not found",
+                ) from error
+            raise
         if "Body" not in output:
             raise ObjectStoreError(OBJECTSTORE_ERROR_INVALID_STORE_CONFIG, "objectstore: invalid store config")
         payload = _read_s3_body_bounded(output["Body"], input_.max_bytes)
@@ -691,6 +699,31 @@ def _apply_s3_encryption(kwargs: dict[str, Any], config: S3EncryptionConfig) -> 
     if config.mode == S3_ENCRYPTION_KMS:
         kwargs["ServerSideEncryption"] = "aws:kms"
         kwargs["SSEKMSKeyId"] = config.kms_key_id
+
+
+def _is_s3_object_not_found(error: Exception) -> bool:
+    """Report whether S3 answered that the object or version does not exist.
+
+    botocore surfaces a failed GetObject as ``ClientError`` with the parsed error ``Code``
+    and the HTTP status under ``ResponseMetadata``. A 403 (including the 403 S3 returns
+    for a missing key when the caller lacks ``s3:ListBucket``), a ``NoSuchBucket`` 404, a
+    KMS denial, a 5xx, a timeout and a transport failure are deliberately not not-found:
+    an unavailable store must never be mistaken for absent content.
+    """
+    response = getattr(error, "response", None)
+    if not isinstance(response, dict):
+        return False
+    code = ""
+    error_info = response.get("Error")
+    if isinstance(error_info, dict):
+        code = str(error_info.get("Code") or "")
+    if code in ("NoSuchKey", "NoSuchVersion"):
+        return True
+    if code == "NoSuchBucket":
+        return False
+    metadata = response.get("ResponseMetadata")
+    status = metadata.get("HTTPStatusCode") if isinstance(metadata, dict) else None
+    return status == 404
 
 
 def _read_s3_body_bounded(body: Any, max_bytes: int) -> bytes:
