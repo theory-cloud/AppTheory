@@ -2479,6 +2479,40 @@ export class McpServer {
     }
   }
 
+  private taskStoreError(id: unknown, err: unknown): McpRPCResponse {
+    if (
+      err instanceof McpTaskNotFoundError ||
+      err instanceof McpTaskTerminalError ||
+      err instanceof McpTaskInvalidCursorError
+    ) {
+      return newErrorResponse(id, MCP_CODE_INVALID_PARAMS, err.message);
+    }
+    const message = errorMessage(err);
+    if (taskControlErrorMessage(message)) {
+      return newErrorResponse(id, MCP_CODE_SERVER_ERROR, message);
+    }
+    return newErrorResponse(
+      id,
+      MCP_CODE_SERVER_ERROR,
+      this.handlerErrorMessage(err, "task store"),
+    );
+  }
+
+  private taskWireError(
+    record: McpTaskRecord,
+    rpcErr: McpRPCError,
+  ): McpRPCError {
+    if (this.verboseHandlerErrors || !taskErrorNeedsRedaction(rpcErr)) {
+      return rpcErr;
+    }
+    getLogger().error("mcp task error", {
+      taskId: record.task.taskId,
+      tool: record.toolName ?? "",
+      error: rpcErr.message,
+    });
+    return { code: rpcErr.code, message: "internal error" };
+  }
+
   private async handleTasksGet(
     request: ParsedRPCRequest,
     sessionId: string,
@@ -2495,7 +2529,7 @@ export class McpServer {
       const record = await this.requireTaskStore().get(lookup.value);
       return newResultResponse(request.id, cloneTask(record.task));
     } catch (err) {
-      return taskStoreError(request.id, err);
+      return this.taskStoreError(request.id, err);
     }
   }
 
@@ -2517,7 +2551,7 @@ export class McpServer {
         return {
           jsonrpc: JSONRPC_VERSION,
           id: request.id,
-          error: record.error,
+          error: this.taskWireError(record, record.error),
         };
       }
       if (record.task.status === "canceled" && record.result === undefined) {
@@ -2539,7 +2573,7 @@ export class McpServer {
         taskResultWithRelatedMetadata(record.result, record.task.taskId),
       );
     } catch (err) {
-      return taskStoreError(request.id, err);
+      return this.taskStoreError(request.id, err);
     }
   }
 
@@ -2556,7 +2590,7 @@ export class McpServer {
       });
       return newResultResponse(request.id, result);
     } catch (err) {
-      return taskStoreError(request.id, err);
+      return this.taskStoreError(request.id, err);
     }
   }
 
@@ -2576,7 +2610,7 @@ export class McpServer {
       const record = await this.requireTaskStore().cancel(lookup.value);
       return newResultResponse(request.id, cloneTask(record.task));
     } catch (err) {
-      return taskStoreError(request.id, err);
+      return this.taskStoreError(request.id, err);
     }
   }
 
@@ -4379,15 +4413,28 @@ function taskLookupFromRequest(
   return { value: { sessionId, taskId } };
 }
 
-function taskStoreError(id: unknown, err: unknown): McpRPCResponse {
-  if (
-    err instanceof McpTaskNotFoundError ||
-    err instanceof McpTaskTerminalError ||
-    err instanceof McpTaskInvalidCursorError
-  ) {
-    return newErrorResponse(id, MCP_CODE_INVALID_PARAMS, err.message);
+function taskControlErrorMessage(message: string): boolean {
+  const trimmed = message.trim();
+  switch (trimmed) {
+    case "":
+    case "internal error":
+    case TASK_CANCELED_MESSAGE:
+    case TASK_CAPACITY_EXCEEDED_MESSAGE:
+    case "task capacity exceeded":
+    case "task result wait timeout":
+    case "context canceled":
+    case "context deadline exceeded":
+      return true;
+    default:
+      return trimmed.endsWith(" timed out");
   }
-  return newErrorResponse(id, MCP_CODE_SERVER_ERROR, errorMessage(err));
+}
+
+function taskErrorNeedsRedaction(error: McpRPCError): boolean {
+  if (error.code !== MCP_CODE_SERVER_ERROR) {
+    return false;
+  }
+  return !taskControlErrorMessage(String(error.message ?? ""));
 }
 
 function taskStatusTerminal(status: McpTaskStatus): boolean {

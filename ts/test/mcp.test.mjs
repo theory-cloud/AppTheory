@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   MCP_CODE_INVALID_PARAMS,
   MCP_CODE_METHOD_NOT_FOUND,
+  MCP_CODE_SERVER_ERROR,
   MCP_HEADER_LAST_EVENT_ID,
   MCP_HEADER_METHOD,
   MCP_HEADER_NAME,
@@ -1138,4 +1139,134 @@ test("mcp handler errors are sanitized unless verboseHandlerErrors is enabled", 
       /resource not found/,
     );
   }
+});
+
+test("mcp task store errors are redacted unless verboseHandlerErrors is enabled", async () => {
+  const secret = "task store secret detail";
+  for (const [verbose, expected] of [[false, "internal error"], [true, secret]]) {
+    const store = new MemoryMcpTaskStore();
+    store.get = async () => {
+      throw new Error(secret);
+    };
+    const server = createMcpServer("Task Store Error MCP", "1", {
+      idGenerator: sequenceIdGenerator([`sess-task-store-${verbose}`]),
+      taskRuntime: { store, defaultTtlMs: 60000 },
+      ...(verbose ? { verboseHandlerErrors: true } : {}),
+    });
+    server.registry().registerTool(
+      { name: "task_tool", inputSchema: {}, execution: { taskSupport: "optional" } },
+      () => ({ content: [textBlock("ok")] }),
+    );
+    const init = await initialize(server);
+    const headers = {
+      [MCP_HEADER_SESSION_ID]: [init.sessionId],
+      [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION],
+    };
+    const resp = await json(
+      await post(server, rpc("store-error", "tasks/get", { taskId: "task-1" }), headers),
+    );
+    assert.equal(resp.error.code, MCP_CODE_SERVER_ERROR);
+    assert.equal(resp.error.message, expected);
+  }
+});
+
+test("mcp task store errors preserve control messages", async () => {
+  const store = new MemoryMcpTaskStore();
+  store.get = async () => {
+    throw new Error("task capacity exceeded");
+  };
+  const server = createMcpServer("Task Store Control MCP", "1", {
+    idGenerator: sequenceIdGenerator(["sess-task-store-control"]),
+    taskRuntime: { store, defaultTtlMs: 60000 },
+  });
+  server.registry().registerTool(
+    { name: "task_tool", inputSchema: {}, execution: { taskSupport: "optional" } },
+    () => ({ content: [textBlock("ok")] }),
+  );
+  const init = await initialize(server);
+  const headers = {
+    [MCP_HEADER_SESSION_ID]: [init.sessionId],
+    [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION],
+  };
+  const resp = await json(
+    await post(server, rpc("store-control", "tasks/get", { taskId: "task-1" }), headers),
+  );
+  assert.equal(resp.error.code, MCP_CODE_SERVER_ERROR);
+  assert.equal(resp.error.message, "task capacity exceeded");
+});
+
+test("mcp tasks/result redacts stored task errors unless verboseHandlerErrors is enabled", async () => {
+  const secret = "db DSN postgres://user:secret@host/app: boom";
+  for (const [verbose, expected] of [[false, "internal error"], [true, secret]]) {
+    const now = new Date("2026-07-03T00:00:02Z");
+    const store = new MemoryMcpTaskStore({ now: () => now });
+    const server = createMcpServer("Task Result Error MCP", "1", {
+      idGenerator: sequenceIdGenerator([`sess-task-result-${verbose}`]),
+      taskRuntime: { store, defaultTtlMs: 600000 },
+      ...(verbose ? { verboseHandlerErrors: true } : {}),
+    });
+    server.registry().registerTool(
+      { name: "task_tool", inputSchema: {}, execution: { taskSupport: "optional" } },
+      () => ({ content: [textBlock("ok")] }),
+    );
+    const init = await initialize(server);
+    const headers = {
+      [MCP_HEADER_SESSION_ID]: [init.sessionId],
+      [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION],
+    };
+    await store.create({
+      sessionId: init.sessionId,
+      method: "tools/call",
+      toolName: "leaky",
+      task: {
+        taskId: "task-stored",
+        status: "failed",
+        createdAt: "2026-07-03T00:00:00Z",
+        lastUpdatedAt: "2026-07-03T00:00:00Z",
+        ttl: 600000,
+      },
+      error: { code: MCP_CODE_SERVER_ERROR, message: secret },
+    });
+    const resp = await json(
+      await post(server, rpc("stored-error", "tasks/result", { taskId: "task-stored" }), headers),
+    );
+    assert.equal(resp.error.code, MCP_CODE_SERVER_ERROR);
+    assert.equal(resp.error.message, expected);
+  }
+});
+
+test("mcp tasks/result preserves stored control errors", async () => {
+  const now = new Date("2026-07-03T00:00:02Z");
+  const store = new MemoryMcpTaskStore({ now: () => now });
+  const server = createMcpServer("Task Result Control MCP", "1", {
+    idGenerator: sequenceIdGenerator(["sess-task-result-control"]),
+    taskRuntime: { store, defaultTtlMs: 600000 },
+  });
+  server.registry().registerTool(
+    { name: "task_tool", inputSchema: {}, execution: { taskSupport: "optional" } },
+    () => ({ content: [textBlock("ok")] }),
+  );
+  const init = await initialize(server);
+  const headers = {
+    [MCP_HEADER_SESSION_ID]: [init.sessionId],
+    [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION],
+  };
+  await store.create({
+    sessionId: init.sessionId,
+    method: "tools/call",
+    toolName: "cancelled",
+    task: {
+      taskId: "task-canceled",
+      status: "canceled",
+      createdAt: "2026-07-03T00:00:00Z",
+      lastUpdatedAt: "2026-07-03T00:00:00Z",
+      ttl: 600000,
+    },
+    error: { code: MCP_CODE_SERVER_ERROR, message: "task canceled" },
+  });
+  const resp = await json(
+    await post(server, rpc("stored-cancel", "tasks/result", { taskId: "task-canceled" }), headers),
+  );
+  assert.equal(resp.error.code, MCP_CODE_SERVER_ERROR);
+  assert.equal(resp.error.message, "task canceled");
 });

@@ -497,6 +497,8 @@ export declare class McpServer {
     private handleToolsCallStream;
     private handleTaskToolsCall;
     private finishTask;
+    private taskStoreError;
+    private taskWireError;
     private handleTasksGet;
     private handleTasksResult;
     private handleTasksList;
