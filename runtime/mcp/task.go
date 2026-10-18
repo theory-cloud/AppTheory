@@ -358,7 +358,7 @@ func (s *Server) runTaskTool(ctx context.Context, record TaskRecord, args json.R
 			return s.finishTask(ctx, record, nil, &RPCError{Code: CodeServerError, Message: formatToolTimeoutMessage(record.ToolName)})
 		}
 		if errors.Is(err, context.Canceled) {
-			return s.finishTask(ctx, record, nil, &RPCError{Code: CodeServerError, Message: err.Error()})
+			return s.finishTask(ctx, record, nil, &RPCError{Code: CodeServerError, Message: context.Canceled.Error()})
 		}
 		return s.finishTask(ctx, record, nil, &RPCError{
 			Code:    CodeServerError,
@@ -657,11 +657,14 @@ func (s *Server) taskStoreError(ctx context.Context, reqID any, err error) *Resp
 		return NewErrorResponse(reqID, CodeInvalidParams, err.Error())
 	case errors.Is(err, errTaskInvalidCursor):
 		return NewErrorResponse(reqID, CodeInvalidParams, err.Error())
-	case errors.Is(err, errTaskResultWaitTimeout),
-		errors.Is(err, errTaskStoreCapacity),
-		errors.Is(err, context.Canceled),
-		errors.Is(err, context.DeadlineExceeded):
-		return NewErrorResponse(reqID, CodeServerError, err.Error())
+	case errors.Is(err, errTaskResultWaitTimeout):
+		return NewErrorResponse(reqID, CodeServerError, errTaskResultWaitTimeout.Error())
+	case errors.Is(err, errTaskStoreCapacity):
+		return NewErrorResponse(reqID, CodeServerError, errTaskStoreCapacity.Error())
+	case errors.Is(err, context.Canceled):
+		return NewErrorResponse(reqID, CodeServerError, context.Canceled.Error())
+	case errors.Is(err, context.DeadlineExceeded):
+		return NewErrorResponse(reqID, CodeServerError, context.DeadlineExceeded.Error())
 	default:
 		return NewErrorResponse(reqID, CodeServerError, s.handlerErrorMessage(ctx, err, "component", "task store"))
 	}

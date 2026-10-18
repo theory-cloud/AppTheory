@@ -1078,7 +1078,9 @@ func (s *Server) toolCallError(ctx context.Context, reqID any, toolName string, 
 		return NewErrorResponse(reqID, CodeServerError, formatToolTimeoutMessage(toolName))
 	}
 	if errors.Is(err, context.Canceled) {
-		return NewErrorResponse(reqID, CodeServerError, err.Error())
+		// Keep the deliberate control-error carve-out, but never echo the
+		// handler's wrapper text (for example a connection string) with it.
+		return NewErrorResponse(reqID, CodeServerError, context.Canceled.Error())
 	}
 
 	s.logger.ErrorContext(ctx, "tool error",

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -137,6 +138,15 @@ func TestHandlerErrorSanitization_PreservesStableMessages(t *testing.T) {
 	if resp := s.toolCallError(ctx, 2, "canceled", context.Canceled); resp.Error == nil ||
 		resp.Error.Code != CodeServerError || resp.Error.Message != context.Canceled.Error() {
 		t.Fatalf("context canceled message changed: %+v", resp.Error)
+	}
+	wrappedCanceled := fmt.Errorf("db DSN postgres://user:secret@host/app: %w", context.Canceled)
+	if resp := s.toolCallError(ctx, 3, "wrapped-canceled", wrappedCanceled); resp.Error == nil ||
+		resp.Error.Code != CodeServerError || resp.Error.Message != context.Canceled.Error() {
+		t.Fatalf("wrapped context canceled leaked the handler prefix: %+v", resp.Error)
+	}
+	if resp := s.taskStoreError(ctx, 4, wrappedCanceled); resp.Error == nil ||
+		resp.Error.Code != CodeServerError || resp.Error.Message != context.Canceled.Error() {
+		t.Fatalf("task store wrapped context canceled leaked the handler prefix: %+v", resp.Error)
 	}
 
 	sessionID := initializeSession(t, s)
