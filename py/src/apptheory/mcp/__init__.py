@@ -1075,8 +1075,16 @@ class DynamoMcpStreamStore:
 
     def _session_items(self, session_id: str) -> list[Any]:
         try:
-            page = self._table.query(str(session_id or "").strip(), limit=1000)
-            return list(getattr(page, "items", []) or [])
+            items: list[Any] = []
+            cursor = ""
+            while True:
+                page = self._table.query(str(session_id or "").strip(), limit=1000, cursor=cursor)
+                items.extend(getattr(page, "items", []) or [])
+                next_cursor = str(getattr(page, "next_cursor", None) or getattr(page, "cursor", "") or "")
+                if not next_cursor:
+                    break
+                cursor = next_cursor
+            return items
         except Exception as exc:
             if _is_not_found_error(exc):
                 return []

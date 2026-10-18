@@ -722,3 +722,29 @@ test("dynamo-backed MCP stores use TableTheory clients without raw SDK escape ha
   await streams.deleteSession("sess-stream");
   await assert.rejects(() => streams.streamForEvent("sess-stream", "1"), McpEventNotFoundError);
 });
+
+test("dynamo-backed MCP stream store follows cursors for replay and deletion", async () => {
+  const db = fakeDb();
+  const streamModel = defaultMcpStreamModel("unit-streams-pages");
+  const streams = new DynamoMcpStreamStore(db, {
+    model: streamModel,
+    idGenerator: sequenceIdGenerator(["stream-pages"]),
+  });
+
+  const streamId = await streams.create("sess-pages");
+  let lastEventId = "";
+  for (let index = 0; index < 1100; index += 1) {
+    lastEventId = await streams.append("sess-pages", streamId, Buffer.from(`event-${index}`));
+  }
+
+  assert.equal(await streams.streamForEvent("sess-pages", lastEventId), streamId);
+  const replayed = await streams.subscribe("sess-pages", streamId);
+  assert.equal(replayed.length, 1100);
+  assert.equal(Buffer.from(replayed.at(-1).data).toString(), "event-1099");
+
+  await streams.deleteSession("sess-pages");
+  assert.equal(
+    [...db.items.keys()].filter((key) => key.startsWith(`${streamModel.name}:sess-pages:`)).length,
+    0,
+  );
+});
