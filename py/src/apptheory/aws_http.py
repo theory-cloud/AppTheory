@@ -49,10 +49,6 @@ _LOGGER = logging.getLogger(__name__)
 _drain_workers_lock = threading.Lock()
 _drain_workers: weakref.WeakSet[threading.Thread] = weakref.WeakSet()
 
-# A release hook scheduled on an already-running loop must be kept referenced
-# until it completes, or the loop may garbage-collect it before it runs.
-_pending_release_tasks: set[asyncio.Task[Any]] = set()
-
 # Framework wrappers that forward close() down a chain without exposing the
 # producer's cooperative release hooks. A body the adapter gives up on may be
 # wrapped by both (the byte limiter wraps the canonical stream), so the release
@@ -195,27 +191,22 @@ def _settle_awaitable(result: Any) -> None:
     """Run an awaitable release hook without blocking or leaking a coroutine.
 
     ``aclose`` returns a coroutine. Without a running event loop it is driven to
-    completion here; with one already running on this thread (which cannot make
-    progress while this synchronous adapter is executing) it is scheduled for
-    the loop to run once control returns.
+    completion here. With one already running on this thread (which cannot make
+    progress while this synchronous adapter is executing) there is no way to
+    await it without launching an unjoined task, so the coroutine is closed
+    instead; the synchronous close/cancel hooks have already run.
     """
     if not inspect.isawaitable(result):
         return
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
     except RuntimeError:
         try:
             asyncio.run(_await_release(result))
         except Exception:  # noqa: BLE001
             _discard_awaitable(result)
         return
-    try:
-        task = asyncio.ensure_future(result, loop=loop)
-    except Exception:  # noqa: BLE001
-        _discard_awaitable(result)
-        return
-    _pending_release_tasks.add(task)
-    task.add_done_callback(_pending_release_tasks.discard)
+    _discard_awaitable(result)
 
 
 def _discard_awaitable(result: Any) -> None:
