@@ -1165,6 +1165,10 @@ class App:
                 resp, error_code = auth_outcome
                 return finish(resp, error_code)
 
+        # Authentication rebinds the tenant to the verified claim. Log the tenant
+        # the request was actually authorized under, not the caller-supplied value.
+        tenant_id = request_ctx.tenant_id
+
         trace.append("handler")
 
         handler = self._apply_middlewares(match.handler)
