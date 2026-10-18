@@ -623,7 +623,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>1172 exported top-level symbols</summary>
+<summary>1177 exported top-level symbols</summary>
 
 ```text
 AccountAssertion, AccountAssertionAssumeFailed, AccountAssertionMismatch, AccountAssertionNotConfigured, AccountAssertionState, AccountAssertionUnavailable,
@@ -673,7 +673,7 @@ ErrorCodeControllerCommandFailed, ErrorCodeControllerIncomplete, ErrorCodeDimens
 ErrorCodeInvalidContract, ErrorCodeInvalidControllerRequest, ErrorCodeInvalidInput, ErrorCodeInvalidLifecycleEvent, ErrorCodeInvalidVector, ErrorCodeLifecycleBypass,
 ErrorCodeLifecycleHookFailed, ErrorCodeLifecycleIncomplete, ErrorCodeNotFound, ErrorCodeOperationContractIncomplete, ErrorCodeProviderOperationFailed,
 ErrorCodeProviderOperationUnsupported, ErrorCodeProviderRequestInvalid, ErrorCodeProviderStateMappingIncomplete, ErrorCodeRawSDKEscapeHatch,
-ErrorCodeRealLifecycleIncomplete, ErrorCodeRouteContractIncomplete, ErrorCodeSessionRegistryIncomplete, ErrorCodeTenantBindingViolation, ErrorCodeTokenSafetyViolation,
+ErrorCodeRealLifecycleIncomplete, ErrorCodeRouteContractIncomplete, ErrorCodeSessionOwnerMismatch, ErrorCodeSessionRegistryIncomplete, ErrorCodeTenantBindingViolation, ErrorCodeTokenSafetyViolation,
 ErrorCodeUnauthenticatedController, ErrorCodeUnsupportedOperation, ErrorEnvelope, ErrorEnvelopeFromError, ErrorNotifier, ErrorType, ErrorTypeConflict, ErrorTypeInternal,
 ErrorTypeInvalidInput, ErrorTypeNotFound, ErrorTypeRateLimit, ErrRecordKeyRequired, ErrRefreshTokenExpired, ErrRefreshTokenNotFound, ErrSessionNotFound,
 ErrStreamEventTooLarge, ErrStreamNotFound, ErrTaskNotFound, ErrTaskTerminal, ErrTransactionExpired, ErrTransactionNotFound, ErrUnsupportedOperation, EscapeHatches, ETag,
@@ -772,8 +772,8 @@ WithEMFNamespace, WithEMFService, WithEMFWriter, WithEnvironmentErrorNotificatio
 WithIDGenerator, WithInitialSessionListenerBudget, WithLegacyHTTPErrorShape, WithLifecycleContract, WithLifecycleHandler, WithLimits, WithLogger, WithLoggingLevelHook,
 WithObservability, WithOriginValidator, WithPolicyHook, WithProfileClock, WithProfileEnvironment, WithProfileSanitizer, WithProfileWriter, WithRegistryClientTTL, WithRequestIDSource,
 WithResourceSubscriptionHooks, WithRevocationEndpoint, WithSanitizer, WithServerIDGenerator, WithServerInfoMetadata, WithSessionReconstructionClock,
-WithSessionReconstructionStaleAfter, WithSessionStore, WithStreamIDGenerator, WithStreamStore, WithTaskRuntime, WithTenantClaim, WithTier, WithToolContextHook,
-WithWebSocketClientFactory, WithWebSocketSupport, WithZapLogger, WrapError, XMLSanitizationPattern
+WithSessionReconstructionStaleAfter, WithSessionStore, WithStreamEventByteLimit, WithStreamEventsPerSessionLimit, WithStreamIDGenerator, WithStreamSessionByteLimit, WithStreamStore, WithTaskRuntime, WithTenantClaim, WithTier, WithToolContextHook,
+WithVerboseHandlerErrors, WithWebSocketClientFactory, WithWebSocketSupport, WithZapLogger, WrapError, XMLSanitizationPattern
 ```
 </details>
 <!-- apptheory-api-docs:go:end -->

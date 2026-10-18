@@ -93,7 +93,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/ts.txt`.
 
 <details>
-<summary>861 exported top-level symbols</summary>
+<summary>863 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, AGENT_MCP_PATTERN, ALBTargetGroupRequest, ALBTargetGroupResponse, APIGatewayProxyRequest, APIGatewayProxyResponse,
@@ -154,7 +154,7 @@ McpResourceContext, McpResourceDef, McpResourceHandler, McpResourceRegistry, Mcp
 McpServerIdentity, McpServerOptions, McpSession, McpSessionNotFoundError, McpSessionStore, McpSSEEvent, McpStreamEvent, McpStreamingToolHandler, McpStreamNotFoundError,
 McpStreamStore, McpTask, McpTaskInvalidCursorError, McpTaskListRequest, McpTaskListResult, McpTaskLookup, McpTaskMetadata, McpTaskNotFoundError, McpTaskRecord,
 McpTaskRuntimeOptions, McpTaskStatus, McpTaskStore, McpTaskSupport, McpTaskTerminalError, McpTestHarness, McpTestHarnessOptions, McpTestInvokeOptions, McpTestResult,
-McpTestSSEFrame, McpToolContext, McpToolDef, McpToolExecution, McpToolHandler, McpToolRegistry, McpToolResult, McpTransportPosture, MemoryAuthorizationCodeStore,
+McpTestSSEFrame, McpToolAuthContext, McpToolContext, McpToolDef, McpToolExecution, McpToolHandler, McpToolRegistry, McpToolResult, McpTransportPosture, MemoryAuthorizationCodeStore,
 MemoryAuthorizationCodeStoreOptions, MemoryClientStore, MemoryClientStoreOptions, MemoryMcpSessionStore, MemoryMcpStreamStore, MemoryMcpTaskStore,
 MemoryMicroVMSessionRegistry, MemoryRateLimitStore, MemoryRateLimitStoreOptions, MemoryRouteRefreshBrokerStore, MemoryRouteRefreshBrokerStoreOptions,
 MemoryTransactionStore, MemoryTransactionStoreOptions, metadataJSON, MetricRecord, MICROVM_AWS_LAMBDA_PROVIDER_ID, MICROVM_CONTRACT_NAME, MICROVM_CONTRACT_VERSION,
@@ -164,7 +164,7 @@ MICROVM_ERROR_CONTROLLER_COMMAND_FAILED, MICROVM_ERROR_CONTROLLER_INCOMPLETE, MI
 MICROVM_ERROR_INVALID_CONTROLLER_REQUEST, MICROVM_ERROR_INVALID_LIFECYCLE_EVENT, MICROVM_ERROR_LIFECYCLE_BYPASS, MICROVM_ERROR_LIFECYCLE_HOOK_FAILED,
 MICROVM_ERROR_LIFECYCLE_INCOMPLETE, MICROVM_ERROR_OPERATION_CONTRACT_INCOMPLETE, MICROVM_ERROR_PROVIDER_OPERATION_FAILED, MICROVM_ERROR_PROVIDER_OPERATION_UNSUPPORTED,
 MICROVM_ERROR_PROVIDER_REQUEST_INVALID, MICROVM_ERROR_PROVIDER_STATE_MAPPING_INCOMPLETE, MICROVM_ERROR_RAW_SDK_ESCAPE_HATCH, MICROVM_ERROR_REAL_LIFECYCLE_INCOMPLETE,
-MICROVM_ERROR_ROUTE_CONTRACT_INCOMPLETE, MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE, MICROVM_ERROR_TENANT_BINDING_VIOLATION, MICROVM_ERROR_TOKEN_SAFETY_VIOLATION,
+MICROVM_ERROR_ROUTE_CONTRACT_INCOMPLETE, MICROVM_ERROR_SESSION_OWNER_MISMATCH, MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE, MICROVM_ERROR_TENANT_BINDING_VIOLATION, MICROVM_ERROR_TOKEN_SAFETY_VIOLATION,
 MICROVM_ERROR_UNAUTHENTICATED_CONTROLLER, MICROVM_SESSION_REGISTRY_MODEL_NAME, MICROVM_SESSION_REGISTRY_TABLE_ENV, MICROVM_SESSION_REGISTRY_TABLE_NAME, MicroVMAuthContext,
 MicroVMClient, MicroVMClientCall, MicroVMClock, MicroVMCommand, MicroVMCommandName, MicroVMContractKind, MicroVMController, MicroVMControllerAuthContract,
 MicroVMControllerCommandContract, MicroVMControllerContract, MicroVMControllerDeploymentDefaults, MicroVMControllerEnvelopeContract, MicroVMControllerInvokeRequest,
