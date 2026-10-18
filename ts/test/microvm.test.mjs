@@ -2078,6 +2078,62 @@ test("microvm controller route adapter enforces auth and tenant binding", async 
   assert.equal(denied.status, 401);
 });
 
+test("microvm controller route adapter returns 403 for a session owner mismatch", async () => {
+  const provider = createFakeMicroVMProvider(new Date(0));
+  const registry = createMemoryMicroVMSessionRegistry();
+  const controller = createRealMicroVMController(provider, registry, {
+    ids: { newID: () => "owner-session" },
+    clock: { now: () => new Date(1000) },
+    logging: { disabled: true },
+  });
+  const owner = createApp({
+    tier: "p1",
+    authHook: () => "identity:owner",
+  });
+  registerMicroVMControllerRoutes(owner, controller);
+
+  const run = await owner.serve({
+    method: "POST",
+    path: "/microvms",
+    headers: {
+      "content-type": ["application/json"],
+      "x-tenant-id": ["tenant-1"],
+      "x-request-id": ["req-owner-run"],
+    },
+    body: Buffer.from(
+      JSON.stringify({
+        namespace: "namespace-1",
+        image_ref: "image-ref",
+        image_version: "1",
+        network_connector_ref: "network-ref",
+        session_spec: { metadata: { safe: "ok" } },
+      }),
+      "utf8",
+    ),
+  });
+  assert.equal(run.status, 200);
+
+  const other = createApp({
+    tier: "p1",
+    authHook: () => "identity:other",
+  });
+  registerMicroVMControllerRoutes(other, controller);
+  const denied = await other.serve({
+    method: "GET",
+    path: "/microvms/owner-session",
+    query: { namespace: ["namespace-1"] },
+    headers: {
+      "x-tenant-id": ["tenant-1"],
+      "x-request-id": ["req-owner-get"],
+    },
+  });
+  assert.equal(denied.status, 403);
+  assert.equal(
+    jsonBody(denied).error.code,
+    MICROVM_ERROR_SESSION_OWNER_MISMATCH,
+  );
+});
+
 test("microvm controller route adapter binds tenant to the verified claim", async () => {
   const provider = createFakeMicroVMProvider(new Date(0));
   const registry = createMemoryMicroVMSessionRegistry();
