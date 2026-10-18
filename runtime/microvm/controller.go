@@ -16,6 +16,8 @@ const (
 	ErrorCodeInvalidControllerRequest = "m15.microvm.invalid_controller_request"
 	// ErrorCodeControllerCommandFailed reports a sanitized client command failure.
 	ErrorCodeControllerCommandFailed = "m15.microvm.controller_command_failed"
+	// ErrorCodeSessionOwnerMismatch reports a session load by a subject other than its owner.
+	ErrorCodeSessionOwnerMismatch = "m15.microvm.session_owner_mismatch"
 )
 
 const (
@@ -377,8 +379,14 @@ func (c *Controller) Invoke(ctx context.Context, request ControllerInvokeRequest
 	if err != nil {
 		return ProviderInvokeOutput{}, err
 	}
+	if ownerErr := checkSessionOwner(record, request.AuthContext, request.RequestID); ownerErr != nil {
+		return ProviderInvokeOutput{}, ownerErr
+	}
 	if validationErr := ValidateSessionRecord(record); validationErr != nil {
 		return ProviderInvokeOutput{}, validationErr
+	}
+	if sessionRecordExpired(record, c.clock.Now()) {
+		return ProviderInvokeOutput{}, safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session record has expired", request.RequestID)
 	}
 	if strings.TrimSpace(record.Endpoint) == "" {
 		return ProviderInvokeOutput{}, safeError(ErrorCodeInvalidControllerRequest, "apptheory: microvm invoke requires a session endpoint", request.RequestID)
@@ -652,6 +660,26 @@ func equalStringSlices(a []string, b []string) bool {
 	return true
 }
 
+// checkSessionOwner rejects a session record read by a caller other than the
+// subject that owns it. The check applies only when both the stored owner and
+// the requesting subject are non-empty.
+func checkSessionOwner(record SessionRecord, auth AuthContext, requestID string) error {
+	if record.ownedBy(auth.Subject) {
+		return nil
+	}
+	return safeError(ErrorCodeSessionOwnerMismatch, "apptheory: microvm session owner mismatch", requestID)
+}
+
+// sessionRecordExpired reports whether a validated session record's lifetime has
+// elapsed. A record whose ExpiresAt is zero is not treated as expired here;
+// ValidateSessionRecord already rejects a zero ExpiresAt for registry records.
+func sessionRecordExpired(record SessionRecord, now time.Time) bool {
+	if now.IsZero() || record.ExpiresAt.IsZero() {
+		return false
+	}
+	return !record.ExpiresAt.After(now)
+}
+
 func (c *Controller) handleRealSession(
 	ctx context.Context,
 	request ControllerRequest,
@@ -663,8 +691,16 @@ func (c *Controller) handleRealSession(
 		safe := asSafeError(err, request.RequestID)
 		return controllerErrorResponse(request, safe), safe
 	}
+	if ownerErr := checkSessionOwner(record, request.AuthContext, request.RequestID); ownerErr != nil {
+		safe := asSafeError(ownerErr, request.RequestID)
+		return controllerErrorResponse(request, safe), safe
+	}
 	if validationErr := ValidateSessionRecord(record); validationErr != nil {
 		safe := asSafeError(validationErr, request.RequestID)
+		return controllerErrorResponse(request, safe), safe
+	}
+	if sessionRecordExpired(record, c.clock.Now()) {
+		safe := safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session record has expired", request.RequestID)
 		return controllerErrorResponse(request, safe), safe
 	}
 	session, err := run(ctx, ProviderSessionInput{
@@ -713,6 +749,9 @@ func (c *Controller) handleRealList(ctx context.Context, request ControllerReque
 		if validationErr := ValidateSessionRecord(record); validationErr != nil {
 			safe := asSafeError(validationErr, request.RequestID)
 			return controllerErrorResponse(request, safe), safe
+		}
+		if sessionRecordExpired(record, c.clock.Now()) {
+			continue
 		}
 		binding := providerBindingFromRecord(record)
 		bindings = append(bindings, binding)
@@ -771,8 +810,16 @@ func (c *Controller) handleRealToken(
 		safe := asSafeError(err, request.RequestID)
 		return controllerErrorResponse(request, safe), safe
 	}
+	if ownerErr := checkSessionOwner(record, request.AuthContext, request.RequestID); ownerErr != nil {
+		safe := asSafeError(ownerErr, request.RequestID)
+		return controllerErrorResponse(request, safe), safe
+	}
 	if validationErr := ValidateSessionRecord(record); validationErr != nil {
 		safe := asSafeError(validationErr, request.RequestID)
+		return controllerErrorResponse(request, safe), safe
+	}
+	if sessionRecordExpired(record, c.clock.Now()) {
+		safe := safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session record has expired", request.RequestID)
 		return controllerErrorResponse(request, safe), safe
 	}
 	token, err := run(ctx, ProviderTokenInput{
@@ -800,7 +847,9 @@ func (c *Controller) handleRealToken(
 	record.TokenMetadata = append(cloneSessionTokenMetadata(record.TokenMetadata), metadata)
 	record.LastAction = commandFromOperation(operation)
 	record.LastCommandID = request.RequestID
-	record.AuthSubject = request.AuthContext.Subject
+	if strings.TrimSpace(record.AuthSubject) == "" {
+		record.AuthSubject = request.AuthContext.Subject
+	}
 	record.UpdatedAt = c.clock.Now().UTC()
 	record.LastObservedAt = record.UpdatedAt
 	record.Generation++
@@ -1117,7 +1166,7 @@ func (c *Controller) sessionRecordFromProviderSession(request ControllerRequest,
 	if record.CreatedAt.IsZero() {
 		record.CreatedAt = now
 	}
-	if record.ExpiresAt.IsZero() || !record.ExpiresAt.After(now) {
+	if record.ExpiresAt.IsZero() {
 		record.ExpiresAt = now.Add(ttl)
 	}
 	record.TenantID = session.TenantID
@@ -1142,7 +1191,11 @@ func (c *Controller) sessionRecordFromProviderSession(request ControllerRequest,
 	record.ProviderTerminatedAt = session.TerminatedAt.UTC()
 	record.LastAction = request.Command
 	record.LastCommandID = request.RequestID
-	record.AuthSubject = request.AuthContext.Subject
+	// An existing record's owner is authoritative: a refresh/update never
+	// overwrites a stored AuthSubject with the caller's subject.
+	if strings.TrimSpace(record.AuthSubject) == "" {
+		record.AuthSubject = request.AuthContext.Subject
+	}
 	record.Metadata = cloneStringMap(request.SessionSpec.Metadata)
 	if existing != nil {
 		record.Metadata = cloneStringMap(existing.Metadata)

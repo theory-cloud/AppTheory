@@ -9718,7 +9718,7 @@
   },
   "description": "AppTheory CDK constructs (TS-first jsii)",
   "homepage": "https://github.com/theory-cloud/AppTheory.git",
-  "jsiiVersion": "6.0.17 (build e6a458c)",
+  "jsiiVersion": "6.0.18 (build e678771)",
   "license": "Apache-2.0",
   "metadata": {
     "jsii": {
@@ -25944,7 +25944,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/remote-mcp-server.ts",
-          "line": 269
+          "line": 294
         },
         "parameters": [
           {
@@ -25970,7 +25970,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/remote-mcp-server.ts",
-        "line": 213
+        "line": 238
       },
       "name": "AppTheoryRemoteMcpServer",
       "properties": [
@@ -25981,7 +25981,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 222
+            "line": 247
           },
           "name": "endpoint",
           "type": {
@@ -25996,7 +25996,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 247
+            "line": 272
           },
           "name": "protectedResourceMetadataUrl",
           "type": {
@@ -26010,7 +26010,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 217
+            "line": 242
           },
           "name": "router",
           "type": {
@@ -26024,7 +26024,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 252
+            "line": 277
           },
           "name": "sessionTable",
           "optional": true,
@@ -26039,7 +26039,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 267
+            "line": 292
           },
           "name": "streamSpillBucket",
           "optional": true,
@@ -26054,7 +26054,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 257
+            "line": 282
           },
           "name": "streamTable",
           "optional": true,
@@ -26069,7 +26069,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 262
+            "line": 287
           },
           "name": "taskTable",
           "optional": true,
@@ -26091,7 +26091,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/remote-mcp-server.ts",
-        "line": 28
+        "line": 29
       },
       "name": "AppTheoryRemoteMcpServerProps",
       "properties": [
@@ -26103,7 +26103,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 32
+            "line": 33
           },
           "name": "handler",
           "type": {
@@ -26120,7 +26120,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 104
+            "line": 105
           },
           "name": "actorPath",
           "optional": true,
@@ -26138,7 +26138,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 77
+            "line": 78
           },
           "name": "allowTestInvoke",
           "optional": true,
@@ -26155,12 +26155,48 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 38
+            "line": 39
           },
           "name": "apiName",
           "optional": true,
           "type": {
             "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (derived from `authorizer`, or `NONE` when no authorizer is set)",
+            "remarks": "Usually omitted: when `authorizer` is set, API Gateway derives the type\nfrom the authorizer itself. Set this explicitly to override that inference.",
+            "summary": "Optional API Gateway authorization type for the MCP routes."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/remote-mcp-server.ts",
+            "line": 226
+          },
+          "name": "authorizationType",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigateway.AuthorizationType"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (no authorizer)",
+            "remarks": "This adds edge-level authorization in front of the Lambda handler. It does\nnot replace the app-level OAuth middleware, which still owns the RFC 9728\ndiscovery challenge and bearer-token validation.\n\nWhen omitted, the routes keep API Gateway's open default\n(`AuthorizationType.NONE`).",
+            "summary": "Optional API Gateway authorizer applied to the MCP routes."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/remote-mcp-server.ts",
+            "line": 216
+          },
+          "name": "authorizer",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigateway.IAuthorizer"
           }
         },
         {
@@ -26173,7 +26209,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 60
+            "line": 61
           },
           "name": "cors",
           "optional": true,
@@ -26199,7 +26235,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 44
+            "line": 45
           },
           "name": "description",
           "optional": true,
@@ -26216,7 +26252,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 66
+            "line": 67
           },
           "name": "domain",
           "optional": true,
@@ -26233,7 +26269,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 121
+            "line": 122
           },
           "name": "enableSessionTable",
           "optional": true,
@@ -26251,7 +26287,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 143
+            "line": 144
           },
           "name": "enableStreamTable",
           "optional": true,
@@ -26269,7 +26305,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 166
+            "line": 167
           },
           "name": "enableTaskTable",
           "optional": true,
@@ -26287,7 +26323,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 115
+            "line": 116
           },
           "name": "enableWellKnownMcpDiscovery",
           "optional": true,
@@ -26305,7 +26341,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 88
+            "line": 89
           },
           "name": "scopePermissionToMethod",
           "optional": true,
@@ -26322,7 +26358,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 127
+            "line": 128
           },
           "name": "sessionTableName",
           "optional": true,
@@ -26339,7 +26375,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 133
+            "line": 134
           },
           "name": "sessionTtlMinutes",
           "optional": true,
@@ -26356,7 +26392,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 50
+            "line": 51
           },
           "name": "stage",
           "optional": true,
@@ -26374,7 +26410,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 201
+            "line": 202
           },
           "name": "streamMaxEventBytes",
           "optional": true,
@@ -26392,7 +26428,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 191
+            "line": 192
           },
           "name": "streamSpillInlineMaxBytes",
           "optional": true,
@@ -26409,7 +26445,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 149
+            "line": 150
           },
           "name": "streamTableName",
           "optional": true,
@@ -26426,7 +26462,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 155
+            "line": 156
           },
           "name": "streamTtlMinutes",
           "optional": true,
@@ -26443,7 +26479,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 172
+            "line": 173
           },
           "name": "taskTableName",
           "optional": true,
@@ -26460,7 +26496,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 178
+            "line": 179
           },
           "name": "taskTtlMinutes",
           "optional": true,
@@ -26843,7 +26879,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/rest-api-router.ts",
-          "line": 359
+          "line": 381
         },
         "parameters": [
           {
@@ -26870,7 +26906,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/rest-api-router.ts",
-        "line": 308
+        "line": 328
       },
       "methods": [
         {
@@ -26879,7 +26915,7 @@
           },
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 423
+            "line": 447
           },
           "name": "addLambdaIntegration",
           "parameters": [
@@ -26937,7 +26973,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 312
+            "line": 332
           },
           "name": "api",
           "type": {
@@ -26951,7 +26987,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 317
+            "line": 337
           },
           "name": "stage",
           "type": {
@@ -26965,7 +27001,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 347
+            "line": 367
           },
           "name": "aaaaRecord",
           "optional": true,
@@ -26980,7 +27016,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 352
+            "line": 372
           },
           "name": "accessLogGroup",
           "optional": true,
@@ -26995,7 +27031,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 342
+            "line": 362
           },
           "name": "aRecord",
           "optional": true,
@@ -27010,7 +27046,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 327
+            "line": 347
           },
           "name": "basePathMapping",
           "optional": true,
@@ -27025,7 +27061,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 322
+            "line": 342
           },
           "name": "domainName",
           "optional": true,
@@ -27040,7 +27076,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 337
+            "line": 357
           },
           "name": "wafAssociation",
           "optional": true,
@@ -27055,7 +27091,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 332
+            "line": 352
           },
           "name": "webAcl",
           "optional": true,
@@ -27490,6 +27526,42 @@
           "optional": true,
           "type": {
             "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (derived from `authorizer`, or `NONE` when no authorizer is set)",
+            "remarks": "Usually omitted: when `authorizer` is set, API Gateway derives the type from the\nauthorizer itself. Set this explicitly to override that inference.",
+            "summary": "Optional API Gateway authorization type for the Lambda integration methods."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 305
+          },
+          "name": "authorizationType",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigateway.AuthorizationType"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (no authorizer)",
+            "remarks": "When omitted, methods keep API Gateway's open default (`AuthorizationType.NONE`).\nCORS preflight `OPTIONS` methods stay unauthenticated regardless of this setting.",
+            "summary": "Optional API Gateway authorizer applied to every Lambda integration method."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 295
+          },
+          "name": "authorizer",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigateway.IAuthorizer"
           }
         },
         {
@@ -31622,6 +31694,6 @@
       "symbolId": "lib/path-routed-frontend:SpaOriginConfig"
     }
   },
-  "version": "6.2.0-rc",
-  "fingerprint": "u5UfbWbWvEG/kR6sg1wHpsfd4/dcv7fFjZHuqJ/v6g8="
+  "version": "6.2.0",
+  "fingerprint": "xFjToqu+f8Bbi8trptENe/ONd4Ax1sHkbaMOoGrzbuQ="
 }

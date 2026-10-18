@@ -27,6 +27,12 @@ func frontChannelFieldOutsideProvider(config FacadeConfig) (string, bool) {
 	if config.ProviderHints != nil {
 		return "ProviderHints", true
 	}
+	if routeRefreshPolicyDeclared(config.RouteRefreshPolicy) {
+		return "RouteRefreshPolicy", true
+	}
+	if config.RouteRefreshEvents != nil {
+		return "RouteRefreshEvents", true
+	}
 	return "", false
 }
 

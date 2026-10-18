@@ -6,10 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"reflect"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -17,7 +21,13 @@ import (
 	storetest "github.com/theory-cloud/apptheory/v6/testkit/objectstore"
 )
 
-const fixtureBackendFake = "fake"
+const (
+	fixtureBackendFake   = "fake"
+	fixtureBackendS3Stub = "s3_stub"
+
+	objectStoreOperationGet    = "get"
+	objectStoreOperationDelete = "delete"
+)
 
 type FixtureObjectStoreSetup struct {
 	Backend string `json:"backend,omitempty"`
@@ -47,6 +57,20 @@ type FixtureObjectStoreStep struct {
 	// same stable code the TypeScript and Python runtimes report.
 	ContentLength json.Number `json:"content_length,omitempty"`
 	ExpiresIn     json.Number `json:"expires_in,omitempty"`
+
+	S3Response *FixtureObjectStoreS3Response `json:"s3_response,omitempty"`
+}
+
+// FixtureObjectStoreS3Response is the canned answer the s3_stub backend serves for one
+// step. A 2xx answer carries the object body; every other answer carries the S3 error
+// code and HTTP status the SDK must decode.
+type FixtureObjectStoreS3Response struct {
+	StatusCode  int          `json:"status_code"`
+	ErrorCode   string       `json:"error_code,omitempty"`
+	Message     string       `json:"message,omitempty"`
+	Body        *FixtureBody `json:"body,omitempty"`
+	ContentType string       `json:"content_type,omitempty"`
+	VersionID   string       `json:"version_id,omitempty"`
 }
 
 // objectStoreStepInteger converts an optional fixture integer field, refusing anything that is not
@@ -67,7 +91,11 @@ func runFixtureObjectStore(f Fixture) error {
 	if backend == "" {
 		backend = fixtureBackendFake
 	}
-	if backend != fixtureBackendFake {
+	switch backend {
+	case fixtureBackendFake:
+	case fixtureBackendS3Stub:
+		return runFixtureObjectStoreS3Stub(f)
+	default:
 		return fmt.Errorf("objectstore fixture backend %q is unsupported", backend)
 	}
 	if len(f.Input.ObjectStore.Steps) == 0 {
@@ -114,14 +142,14 @@ func runObjectStoreStep(fake *storetest.FakeStore, step FixtureObjectStoreStep) 
 			Metadata:    cloneObjectStoreStringMap(step.Metadata),
 		})
 		return objectStoreStepResult(result, storedRef, nil, err)
-	case "get":
+	case objectStoreOperationGet:
 		ref, err := objectStoreStepRef(step)
 		if err != nil {
 			return objectStoreStepResult(result, store.ObjectRef{}, nil, err)
 		}
 		got, err := fake.Get(context.Background(), store.GetInput{Ref: ref, MaxBytes: step.MaxBytes})
 		return objectStoreStepResult(result, store.ObjectRef{}, got, err)
-	case "delete":
+	case objectStoreOperationDelete:
 		ref, err := objectStoreStepRef(step)
 		if err != nil {
 			return objectStoreStepResult(result, store.ObjectRef{}, nil, err)
@@ -398,6 +426,248 @@ func cloneObjectStoreStringMap(in map[string]string) map[string]string {
 	sort.Strings(keys)
 	for _, k := range keys {
 		out[k] = in[k]
+	}
+	return out
+}
+
+// runFixtureObjectStoreS3Stub exercises the real S3 store through the public
+// constructor against a loopback endpoint. The cloud-client seam stays private: the
+// SDK talks to httptest, decodes the canned S3 XML, and the store's own error mapping
+// decides whether the answer means absence.
+func runFixtureObjectStoreS3Stub(f Fixture) error {
+	steps := f.Input.ObjectStore.Steps
+	if len(steps) == 0 {
+		return errors.New("objectstore fixture missing input.objectstore.steps")
+	}
+
+	stub := &objectStoreS3Stub{}
+	server := httptest.NewServer(stub)
+	defer server.Close()
+
+	restoreEnv, err := withObjectStoreS3StubEnv(server.URL)
+	if err != nil {
+		return fmt.Errorf("objectstore s3_stub: configure environment: %w", err)
+	}
+	defer restoreEnv()
+
+	s3Store, err := store.NewS3Store(context.Background(), store.S3StoreConfig{})
+	if err != nil {
+		return fmt.Errorf("objectstore s3_stub: construct store: %w", err)
+	}
+
+	results := make([]map[string]any, 0, len(steps))
+	for _, step := range steps {
+		results = append(results, runObjectStoreS3StubStep(s3Store, stub, step))
+	}
+	return compareFixtureOutputJSON(f, map[string]any{"steps": results})
+}
+
+func runObjectStoreS3StubStep(s3Store store.Store, stub *objectStoreS3Stub, step FixtureObjectStoreStep) map[string]any {
+	operation := strings.TrimSpace(strings.ToLower(step.Operation))
+	result := map[string]any{
+		"name":      step.Name,
+		"operation": operation,
+	}
+	if step.S3Response == nil {
+		return objectStoreS3ErrorResult(result, errors.New("objectstore s3_stub: step missing s3_response"))
+	}
+	if operation != objectStoreOperationGet && operation != objectStoreOperationDelete {
+		return objectStoreS3ErrorResult(result, fmt.Errorf("objectstore s3_stub: unsupported operation: %s", operation))
+	}
+	ref, err := objectStoreStepRef(step)
+	if err != nil {
+		return objectStoreS3ErrorResult(result, err)
+	}
+
+	stub.set(step.S3Response)
+	var output *store.GetOutput
+	if operation == objectStoreOperationGet {
+		output, err = s3Store.Get(context.Background(), store.GetInput{Ref: ref, MaxBytes: step.MaxBytes})
+	} else {
+		err = s3Store.Delete(context.Background(), store.DeleteInput{Ref: ref})
+	}
+	if err != nil {
+		return objectStoreS3ErrorResult(result, err)
+	}
+	return objectStoreS3SuccessResult(result, output)
+}
+
+type objectStoreS3Stub struct {
+	mu       sync.Mutex
+	response *FixtureObjectStoreS3Response
+}
+
+func (s *objectStoreS3Stub) set(response *FixtureObjectStoreS3Response) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.response = response
+}
+
+func (s *objectStoreS3Stub) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
+	s.mu.Lock()
+	response := s.response
+	s.mu.Unlock()
+	writeObjectStoreS3StubResponse(w, response)
+}
+
+func writeObjectStoreS3StubResponse(w http.ResponseWriter, response *FixtureObjectStoreS3Response) {
+	if response == nil {
+		http.Error(w, "objectstore s3_stub: no response", http.StatusInternalServerError)
+		return
+	}
+	if response.StatusCode >= 200 && response.StatusCode < 300 && response.ErrorCode == "" {
+		var body []byte
+		if response.Body != nil {
+			decoded, err := decodeFixtureBody(*response.Body)
+			if err != nil {
+				http.Error(w, "objectstore s3_stub: decode body", http.StatusInternalServerError)
+				return
+			}
+			body = decoded
+		}
+		if response.ContentType != "" {
+			w.Header().Set("Content-Type", response.ContentType)
+		}
+		if response.VersionID != "" {
+			w.Header().Set("x-amz-version-id", response.VersionID)
+		}
+		w.Header().Set("ETag", `"etag"`)
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		w.WriteHeader(response.StatusCode)
+		if _, err := w.Write(body); err != nil {
+			return
+		}
+		return
+	}
+
+	message := response.Message
+	if message == "" {
+		message = "stub error"
+	}
+	payload := fmt.Sprintf(
+		"<Error><Code>%s</Code><Message>%s</Message><RequestId>req-stub</RequestId></Error>",
+		objectStoreS3XMLEscaper.Replace(response.ErrorCode),
+		objectStoreS3XMLEscaper.Replace(message),
+	)
+	w.Header().Set("Content-Type", "application/xml")
+	w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+	w.WriteHeader(response.StatusCode)
+	if _, err := w.Write([]byte(payload)); err != nil {
+		return
+	}
+}
+
+var objectStoreS3XMLEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
+
+// withObjectStoreS3StubEnv points the real AWS SDK at the loopback stub and pins static
+// credentials, so no shared profile, ambient credential chain or AWS endpoint can leak
+// into the fixture. Every changed variable is restored afterwards.
+func withObjectStoreS3StubEnv(endpoint string) (func(), error) {
+	keys := []string{
+		"AWS_ACCESS_KEY_ID",
+		"AWS_SECRET_ACCESS_KEY",
+		"AWS_SESSION_TOKEN",
+		"AWS_EC2_METADATA_DISABLED",
+		"AWS_ENDPOINT_URL",
+		"AWS_ENDPOINT_URL_S3",
+		"AWS_IGNORE_CONFIGURED_ENDPOINT_URLS",
+		"AWS_REGION",
+		"AWS_DEFAULT_REGION",
+		"AWS_MAX_ATTEMPTS",
+		"AWS_CONFIG_FILE",
+		"AWS_SHARED_CREDENTIALS_FILE",
+		"AWS_PROFILE",
+		"AWS_DEFAULT_PROFILE",
+	}
+	previous := make(map[string]*string, len(keys))
+	for _, key := range keys {
+		if value, ok := os.LookupEnv(key); ok {
+			copied := value
+			previous[key] = &copied
+		} else {
+			previous[key] = nil
+		}
+	}
+
+	restore := func() {
+		for key, value := range previous {
+			if value == nil {
+				if err := os.Unsetenv(key); err != nil {
+					panic(err)
+				}
+				continue
+			}
+			if err := os.Setenv(key, *value); err != nil {
+				panic(err)
+			}
+		}
+	}
+
+	overrides := map[string]string{
+		"AWS_ACCESS_KEY_ID":           "apptheory-contract-access-key",
+		"AWS_SECRET_ACCESS_KEY":       "apptheory-contract-secret-key",
+		"AWS_EC2_METADATA_DISABLED":   "true",
+		"AWS_ENDPOINT_URL":            endpoint,
+		"AWS_ENDPOINT_URL_S3":         endpoint,
+		"AWS_REGION":                  "us-east-1",
+		"AWS_DEFAULT_REGION":          "us-east-1",
+		"AWS_MAX_ATTEMPTS":            "1",
+		"AWS_CONFIG_FILE":             os.DevNull,
+		"AWS_SHARED_CREDENTIALS_FILE": os.DevNull,
+	}
+	for key, value := range overrides {
+		if err := os.Setenv(key, value); err != nil {
+			restore()
+			return nil, err
+		}
+	}
+	for _, key := range []string{
+		"AWS_SESSION_TOKEN",
+		"AWS_IGNORE_CONFIGURED_ENDPOINT_URLS",
+		"AWS_PROFILE",
+		"AWS_DEFAULT_PROFILE",
+	} {
+		if err := os.Unsetenv(key); err != nil {
+			restore()
+			return nil, err
+		}
+	}
+	return restore, nil
+}
+
+func objectStoreS3SuccessResult(result map[string]any, output *store.GetOutput) map[string]any {
+	result["ok"] = true
+	if output != nil {
+		result["ref"] = objectStoreRefJSON(output.Ref)
+		result["payload"] = objectStoreBodyJSON(output.Payload)
+		if output.ContentType != "" {
+			result["content_type"] = output.ContentType
+		}
+		if len(output.Metadata) > 0 {
+			result["metadata"] = cloneObjectStoreStringMap(output.Metadata)
+		}
+	}
+	return result
+}
+
+func objectStoreS3ErrorResult(result map[string]any, err error) map[string]any {
+	result["ok"] = false
+	result["error"] = objectStoreS3ErrorJSON(err)
+	return result
+}
+
+func objectStoreS3ErrorJSON(err error) map[string]any {
+	if errors.Is(err, store.ErrObjectNotFound) {
+		return map[string]any{"code": "objectstore.not_found"}
+	}
+	out := map[string]any{"code": "objectstore.sdk_error"}
+	var apiErr interface{ ErrorCode() string }
+	if errors.As(err, &apiErr) && apiErr.ErrorCode() != "" {
+		out["sdk_code"] = apiErr.ErrorCode()
+	}
+	var statusErr interface{ HTTPStatusCode() int }
+	if errors.As(err, &statusErr) && statusErr.HTTPStatusCode() != 0 {
+		out["status_code"] = statusErr.HTTPStatusCode()
 	}
 	return out
 }

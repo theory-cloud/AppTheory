@@ -13,6 +13,7 @@ sys.path.insert(0, str(REPO_ROOT / "py" / "src"))
 
 from apptheory.app import (  # noqa: E402
     App,
+    AuthPrincipal,
     CORSConfig,
     EventBridgeSelector,
     Limits,
@@ -1133,3 +1134,38 @@ class TestApp(unittest.TestCase):
         }
         out = app.handle_lambda(event)
         self.assertEqual(out, {"batchItemFailures": [{"itemIdentifier": "seq-2"}]})
+
+    def test_serve_logs_verified_tenant_after_authentication(self) -> None:
+        logs: list = []
+        app = create_app(
+            tier="p2",
+            tenant_claim="tenant",
+            auth_principal_hook=lambda _ctx: AuthPrincipal(identity="subject-1", claims={"tenant": "verified-tenant"}),
+            observability=ObservabilityHooks(log=lambda record: logs.append(record)),
+        )
+        app.handle(
+            "GET",
+            "/protected",
+            lambda ctx: Response(
+                status=200,
+                headers={},
+                cookies=[],
+                body=ctx.tenant_id.encode(),
+                is_base64=False,
+            ),
+            auth_required=True,
+        )
+
+        resp = app.serve(
+            Request(
+                method="GET",
+                path="/protected",
+                headers={"x-tenant-id": ["caller-tenant"]},
+                body="",
+            )
+        )
+
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(resp.body, b"verified-tenant")
+        self.assertEqual(len(logs), 1)
+        self.assertEqual(logs[0].tenant_id, "verified-tenant")

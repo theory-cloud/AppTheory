@@ -94,6 +94,7 @@ type Server struct {
 	extensionCapabilities     map[string]map[string]any
 	cacheableResults          CacheableResultConfig
 	includeServerInfoMetadata bool
+	verboseHandlerErrors      bool
 
 	resourceSubscribeHook   ResourceSubscriptionHook
 	resourceUnsubscribeHook ResourceSubscriptionHook
@@ -165,6 +166,17 @@ func WithLogger(logger *slog.Logger) ServerOption {
 func WithOriginValidator(v OriginValidator) ServerOption {
 	return func(s *Server) {
 		s.originValidator = v
+	}
+}
+
+// WithVerboseHandlerErrors includes the original error text from tool, resource,
+// prompt, and task handlers in JSON-RPC error responses.
+//
+// By default handler failures are logged and reported to clients as
+// "internal error" so downstream error text is not disclosed on the wire.
+func WithVerboseHandlerErrors(verbose bool) ServerOption {
+	return func(s *Server) {
+		s.verboseHandlerErrors = verbose
 	}
 }
 
@@ -318,7 +330,7 @@ func (s *Server) Handler() apptheory.Handler {
 }
 
 func (s *Server) handlePOST(c *apptheory.Context) (*apptheory.Response, error) {
-	ctx := c.Context()
+	ctx := withCallerIdentity(c.Context(), callerIdentity(c))
 
 	if resp := s.validateOrigin(c.Request.Headers); resp != nil {
 		return resp, nil
@@ -330,6 +342,7 @@ func (s *Server) handlePOST(c *apptheory.Context) (*apptheory.Response, error) {
 		if hooked := s.toolContextHook(c, ctx); hooked != nil {
 			ctx = hooked
 		}
+		ctx = withCallerIdentity(ctx, callerIdentity(c))
 	}
 
 	body := c.Request.Body
@@ -476,7 +489,7 @@ func (s *Server) handlePOSTResponse(
 }
 
 func (s *Server) handleGET(c *apptheory.Context) (*apptheory.Response, error) {
-	ctx := c.Context()
+	ctx := withCallerIdentity(c.Context(), callerIdentity(c))
 
 	if resp := s.validateOrigin(c.Request.Headers); resp != nil {
 		return resp, nil
@@ -634,7 +647,7 @@ func (s *Server) initialSessionListenerContext(ctx context.Context, remainingMS 
 }
 
 func (s *Server) handleDELETE(c *apptheory.Context) (*apptheory.Response, error) {
-	ctx := c.Context()
+	ctx := withCallerIdentity(c.Context(), callerIdentity(c))
 
 	if resp := s.validateOrigin(c.Request.Headers); resp != nil {
 		return resp, nil
@@ -651,7 +664,9 @@ func (s *Server) handleDELETE(c *apptheory.Context) (*apptheory.Response, error)
 	sess, err := s.sessionStore.Get(ctx, sessionID)
 	switch {
 	case err == nil:
-		// ok
+		if sessionPrincipalMismatch(ctx, sess) {
+			return notFound("session not found"), nil
+		}
 	case errors.Is(err, ErrSessionNotFound):
 		return notFound("session not found"), nil
 	default:
@@ -1041,6 +1056,8 @@ func prepareInputRequiredResult(
 	return true, nil
 }
 
+const genericHandlerErrorMessage = "internal error"
+
 // toolCallError maps a tool call error to the appropriate JSON-RPC error response.
 // It detects context deadline exceeded (timeout) and wraps handler errors with
 // code -32000 (Server error).
@@ -1060,12 +1077,34 @@ func (s *Server) toolCallError(ctx context.Context, reqID any, toolName string, 
 		)
 		return NewErrorResponse(reqID, CodeServerError, formatToolTimeoutMessage(toolName))
 	}
+	if errors.Is(err, context.Canceled) {
+		// Keep the deliberate control-error carve-out, but never echo the
+		// handler's wrapper text (for example a connection string) with it.
+		return NewErrorResponse(reqID, CodeServerError, context.Canceled.Error())
+	}
 
 	s.logger.ErrorContext(ctx, "tool error",
 		"tool", toolName,
 		"error", err,
 	)
+	if !s.verboseHandlerErrors {
+		return NewErrorResponse(reqID, CodeServerError, genericHandlerErrorMessage)
+	}
 	return NewErrorResponse(reqID, CodeServerError, err.Error())
+}
+
+func (s *Server) handlerErrorMessage(ctx context.Context, err error, attrs ...any) string {
+	if err == nil {
+		return genericHandlerErrorMessage
+	}
+	logArgs := make([]any, 0, len(attrs)+2)
+	logArgs = append(logArgs, attrs...)
+	logArgs = append(logArgs, "error", err)
+	s.logger.ErrorContext(ctx, "mcp handler error", logArgs...)
+	if s.verboseHandlerErrors {
+		return err.Error()
+	}
+	return genericHandlerErrorMessage
 }
 
 // handleBatch processes a JSON-RPC batch request (array of requests).
@@ -1505,6 +1544,9 @@ func (s *Server) getSession(ctx context.Context, sessionID string) (*Session, er
 	if err != nil {
 		return nil, err
 	}
+	if sessionPrincipalMismatch(ctx, sess) {
+		return nil, ErrSessionNotFound
+	}
 	if sessionExpiredAt(now, sess) {
 		if deleteErr := s.sessionStore.Delete(ctx, sessionID); deleteErr != nil && !errors.Is(deleteErr, ErrSessionNotFound) {
 			s.logger.WarnContext(ctx, "failed to delete expired session", "sessionId", sessionID, "error", deleteErr)
@@ -1583,6 +1625,7 @@ func (s *Server) createSession(ctx context.Context, selectedPV string) (*Session
 		ID:        newID,
 		CreatedAt: now,
 		ExpiresAt: now.Add(ttl),
+		Principal: callerIdentityFromContext(ctx),
 		Data: map[string]string{
 			"protocolVersion": selectedPV,
 		},

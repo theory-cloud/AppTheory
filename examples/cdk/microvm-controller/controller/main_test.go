@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,21 @@ import (
 	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
 	"github.com/theory-cloud/apptheory/v6/runtime/microvm"
 )
+
+const testDemoToken = "local-test-token-only"
+
+func TestMain(m *testing.M) {
+	_ = os.Setenv(demoBearerTokenEnv, testDemoToken)
+	os.Exit(m.Run())
+}
+
+func TestBuildAppFailsFastWithoutDemoBearerToken(t *testing.T) {
+	t.Setenv(demoBearerTokenEnv, "")
+
+	if _, err := buildApp(withIDGenerator(newSequentialIDs("missing-token"))); err == nil {
+		t.Fatalf("expected missing %s to fail fast", demoBearerTokenEnv)
+	}
+}
 
 func TestHandleLambdaRunsCanonicalControllerRoutes(t *testing.T) {
 	app, err := buildApp(
@@ -211,7 +227,7 @@ func invokeWithTenant(
 		"x-namespace-id": namespace,
 	}
 	if authorized {
-		headers["authorization"] = localBearerHeader
+		headers["authorization"] = "Bearer " + testDemoToken
 	}
 	event := events.APIGatewayV2HTTPRequest{
 		RouteKey:              method + " " + path,

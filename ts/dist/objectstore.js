@@ -256,7 +256,13 @@ class S3ObjectStore {
         };
         if (input.ref.versionId)
             commandInput.VersionId = input.ref.versionId;
-        const output = await this.client.send(new GetObjectCommand(commandInput));
+        let output;
+        try {
+            output = await this.client.send(new GetObjectCommand(commandInput));
+        }
+        catch (error) {
+            throw mapS3GetError(error);
+        }
         if (!output.Body) {
             throw new ObjectStoreError(OBJECTSTORE_ERROR_INVALID_STORE_CONFIG, "objectstore: invalid store config");
         }
@@ -317,6 +323,38 @@ class S3ObjectStore {
             expiresAt: new Date(Date.now() + input.expiresIn * 1000),
         };
     }
+}
+/**
+ * Maps a GetObject failure to the stable not-found error only when S3 answered
+ * that the object or version does not exist.
+ *
+ * A 403 (including the 403 S3 returns for a missing key when the caller lacks
+ * s3:ListBucket), a NoSuchBucket 404, a KMS denial, a 5xx, a timeout and a
+ * transport failure are returned unchanged: an unavailable store must never be
+ * mistaken for absent content. The original SDK error is preserved as `cause`.
+ */
+function mapS3GetError(error) {
+    if (!isS3ObjectNotFound(error))
+        return error;
+    const mapped = new ObjectStoreError(OBJECTSTORE_ERROR_NOT_FOUND, "objectstore: object not found");
+    Object.defineProperty(mapped, "cause", {
+        value: error,
+        writable: true,
+        configurable: true,
+        enumerable: false,
+    });
+    return mapped;
+}
+function isS3ObjectNotFound(error) {
+    if (typeof error !== "object" || error === null)
+        return false;
+    const candidate = error;
+    const code = String(candidate.name ?? candidate.Code ?? "");
+    if (code === "NoSuchKey" || code === "NoSuchVersion")
+        return true;
+    if (code === "NoSuchBucket")
+        return false;
+    return Number(candidate.$metadata?.httpStatusCode) === 404;
 }
 function validatePutInput(input) {
     validateObjectRef(input.ref);

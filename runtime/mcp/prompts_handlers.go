@@ -31,7 +31,7 @@ func (s *Server) handlePromptsGet(ctx context.Context, req *Request) *Response {
 		if isNotFound(err, "prompt not found:") {
 			return NewErrorResponse(req.ID, CodeInvalidParams, err.Error())
 		}
-		return NewErrorResponse(req.ID, CodeServerError, err.Error())
+		return NewErrorResponse(req.ID, CodeServerError, s.handlerErrorMessage(ctx, err, "prompt", params.Name))
 	}
 
 	return NewResultResponse(req.ID, out)

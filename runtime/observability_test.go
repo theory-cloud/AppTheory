@@ -1,6 +1,9 @@
 package apptheory
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestRecordObservability_EmitsAllHooks(t *testing.T) {
 	var gotLog *LogRecord
@@ -44,5 +47,37 @@ func TestRecordObservability_EmitsAllHooks(t *testing.T) {
 	}
 	if gotSpan.Attributes["http.status_code"] != "503" || gotSpan.Attributes["error.code"] != errorCodeOverloaded {
 		t.Fatalf("unexpected span attributes: %v", gotSpan.Attributes)
+	}
+}
+
+func TestServeLogsVerifiedTenantAfterAuthentication(t *testing.T) {
+	var gotLog LogRecord
+	app := New(
+		WithTier(TierP2),
+		WithTenantClaim("tenant"),
+		WithAuthPrincipalHook(func(*Context) (*AuthPrincipal, error) {
+			return &AuthPrincipal{
+				Identity: "subject-1",
+				Claims:   map[string]any{"tenant": "verified-tenant"},
+			}, nil
+		}),
+		WithObservability(ObservabilityHooks{
+			Log: func(r LogRecord) { gotLog = r },
+		}),
+	)
+	app.Get("/protected", func(ctx *Context) (*Response, error) {
+		return MustJSON(200, map[string]string{"tenant": ctx.TenantID}), nil
+	}, RequireAuth())
+
+	resp := app.Serve(context.Background(), Request{
+		Method:  "GET",
+		Path:    "/protected",
+		Headers: map[string][]string{"x-tenant-id": {"caller-tenant"}},
+	})
+	if resp.Status != 200 {
+		t.Fatalf("expected 200, got %d", resp.Status)
+	}
+	if gotLog.TenantID != "verified-tenant" {
+		t.Fatalf("expected the verified tenant in the log record, got %q", gotLog.TenantID)
 	}
 }

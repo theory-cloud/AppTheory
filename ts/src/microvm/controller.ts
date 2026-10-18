@@ -13,6 +13,7 @@ import {
   MICROVM_ENV_IMAGE_REF,
   MICROVM_ENV_INGRESS_NETWORK_CONNECTOR_REFS,
   MICROVM_ENV_NETWORK_CONNECTOR_REFS,
+  MICROVM_ERROR_SESSION_OWNER_MISMATCH,
   MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
   MICROVM_ERROR_UNAUTHENTICATED_CONTROLLER,
   MicroVMCommand,
@@ -416,6 +417,7 @@ export class MicroVMRealController implements MicroVMControllerRouteTarget {
       session_id: normalized.session_id,
     });
     validateMicroVMSessionRecord(record);
+    requireMicroVMSessionOwner(record, envelope);
     if (!String(record.endpoint ?? "").trim()) {
       throw safeError(
         MICROVM_ERROR_INVALID_CONTROLLER_REQUEST,
@@ -596,6 +598,7 @@ export class MicroVMRealController implements MicroVMControllerRouteTarget {
         session_id: request.session_id,
       });
       validateMicroVMSessionRecord(record);
+      requireMicroVMSessionOwner(record, request);
       const session = await run({
         request_id: request.request_id,
         tenant_id: request.tenant_id,
@@ -712,6 +715,7 @@ export class MicroVMRealController implements MicroVMControllerRouteTarget {
         session_id: request.session_id,
       });
       validateMicroVMSessionRecord(record);
+      requireMicroVMSessionOwner(record, request);
       const token = await run({
         request_id: request.request_id,
         tenant_id: request.tenant_id,
@@ -733,7 +737,9 @@ export class MicroVMRealController implements MicroVMControllerRouteTarget {
         ],
         last_action: microVMCommandFromOperation(operation),
         last_command_id: request.request_id,
-        auth_subject: request.auth_context.subject,
+        auth_subject:
+          String(record.auth_subject ?? "").trim() ||
+          request.auth_context.subject,
         updated_at: now,
         last_observed_at: now,
         generation: record.generation + 1,
@@ -817,7 +823,9 @@ export class MicroVMRealController implements MicroVMControllerRouteTarget {
         current && current.generation > 0 ? current.generation + 1 : 1,
       last_action: request.command,
       last_command_id: request.request_id,
-      auth_subject: request.auth_context.subject,
+      auth_subject:
+        String(current?.auth_subject ?? "").trim() ||
+        request.auth_context.subject,
     };
     if (validDate(session.started_at as Date)) {
       record.provider_started_at = cloneMicroVMDate(session.started_at as Date);
@@ -1388,6 +1396,21 @@ export function controllerQueryInput(
     session_id: request.session_id,
     auth_subject: request.auth_context.subject,
   };
+}
+
+function requireMicroVMSessionOwner(
+  record: MicroVMSessionRecord,
+  request: NormalizedMicroVMControllerRequest,
+): void {
+  const storedSubject = String(record.auth_subject ?? "").trim();
+  const callerSubject = String(request.auth_context?.subject ?? "").trim();
+  if (storedSubject && callerSubject && storedSubject !== callerSubject) {
+    throw safeError(
+      MICROVM_ERROR_SESSION_OWNER_MISMATCH,
+      "apptheory: microvm session owner mismatch",
+      request.request_id,
+    );
+  }
 }
 
 export function responseFromMicroVMSession(

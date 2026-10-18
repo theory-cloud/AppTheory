@@ -70,9 +70,11 @@ from apptheory.oauth.store import (
     STATUS_ACTIVE,
     STATUS_EXPIRED,
     STATUS_ISSUED,
+    STATUS_REFRESHING,
     STATUS_REVOKED,
     AuthorizationCodeRecord,
     AuthorizationCodeStore,
+    BrokerExpiredError,
     BrokerLockedError,
     BrokerRevokedError,
     BrokerVersionConflictError,
@@ -150,10 +152,11 @@ _FACADE_ERROR_DESCRIPTIONS: dict[str, str] = {
 }
 
 # The brokered refresh framework defaults (DESIGN section 8.4 mechanic 4,
-# THREAT_MODEL T6, operator ruling R3). Every value is a framework constant:
-# deliberately not a ``FacadeConfig`` field and not an environment variable, so
-# no adopter can widen the door and Go, TypeScript, and Python can only agree on
-# one number set. Each value is pinned by a test.
+# THREAT_MODEL T6, operator ruling R3). Every value below is a framework
+# constant: deliberately not an environment variable, so no adopter can widen
+# the door and Go, TypeScript, and Python can only agree on one number set. The
+# handle lifetime, grace window, and reuse rate ceiling are the configured
+# :class:`RouteRefreshPolicy`, not constants.
 #
 # _FRONT_CHANNEL_MAX_REFRESH_HANDLE_BYTES bounds the presented route handle in
 # bytes, checked before any other work. The framework mints a handle as 32 random
@@ -161,12 +164,51 @@ _FACADE_ERROR_DESCRIPTIONS: dict[str, str] = {
 # while still bounding an unauthenticated caller's payload.
 _FRONT_CHANNEL_MAX_REFRESH_HANDLE_BYTES = 512
 
-# _REFRESH_GRACE_WINDOW_SECONDS is how long the successor token response is
-# replayed to a client that presents the rotated (previous) handle. It is the
-# lost-response window of ruling R2: a client whose 200 never arrived replays the
-# same request and receives byte-identical successor tokens instead of provoking
-# a second upstream call. It is measured on the injected framework clock.
-_REFRESH_GRACE_WINDOW_SECONDS = 30
+# ROUTE_REFRESH_MIN_HANDLE_TTL_SECONDS is the shortest accepted handle lifetime.
+# A shorter local policy defeats the lazy-refresh client the mechanism exists
+# for, and is far below every upstream access-token lifetime the facade is known
+# to front.
+ROUTE_REFRESH_MIN_HANDLE_TTL_SECONDS = 60
+
+# ROUTE_REFRESH_MAX_HANDLE_TTL_SECONDS is the longest accepted handle lifetime:
+# thirty days, equal to the verified upstream refresh-family inactivity default.
+# A ceiling above it would violate the design's min-of rule (route handle
+# lifetime <= upstream refresh-token lifetime).
+ROUTE_REFRESH_MAX_HANDLE_TTL_SECONDS = 30 * 24 * 60 * 60
+
+# DEFAULT_REFRESH_GRACE_WINDOW_SECONDS is the lost-response replay window a
+# policy that does not state one selects. It is the pinned maximum, widened from
+# the original thirty seconds, so a lazy client that retries a dropped rotation
+# response inside two minutes recovers without a second upstream call.
+DEFAULT_REFRESH_GRACE_WINDOW_SECONDS = 120
+
+# MAX_REFRESH_GRACE_WINDOW_SECONDS is the hard bound on the lossless replay
+# carve-out.
+MAX_REFRESH_GRACE_WINDOW_SECONDS = 120
+
+# MIN_REFRESH_REUSE_RATE_CEILING is the smallest accepted per-family hourly
+# budget of beyond-grace access-token-only serves. The documented referent for
+# the floor is the benign dual-session cadence: two sessions rotating about four
+# times an hour produce roughly eight presentations, so a ceiling at or below
+# eight would throttle the race it protects.
+MIN_REFRESH_REUSE_RATE_CEILING = 9
+
+# MAX_REFRESH_REUSE_RATE_CEILING caps the configured budget so no deployment can
+# turn the throttle into an unbounded access-token harvest path.
+MAX_REFRESH_REUSE_RATE_CEILING = 120
+
+# REFRESH_REUSE_RATE_WINDOW_SECONDS is the fixed window of the per-family reuse
+# budget.
+REFRESH_REUSE_RATE_WINDOW_SECONDS = 3600
+
+# REFRESH_REUSE_RATE_OPERATION is the rate-limit operation the reuse budget is
+# counted under.
+REFRESH_REUSE_RATE_OPERATION = "route_refresh_reuse_depth1"
+
+# REFRESH_CHAIN_ROOT_GENERATION is the generation of a handle the facade mints
+# as the root of a new refresh family. Every successor records the presented
+# generation plus one, so depth relative to the head is arithmetic.
+REFRESH_CHAIN_ROOT_GENERATION = 1
 
 # _REFRESH_COALESCE_WAIT_CAP_SECONDS bounds how long a caller that lost the
 # refresh lock race waits for the winner's rotation before being told to retry.
@@ -301,6 +343,131 @@ def default_capabilities() -> FacadeCapabilities:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class RouteRefreshPolicy:
+    """The encoded static policy of the brokered route refresh handle.
+
+    It is a :class:`FacadeConfig` field, never an environment variable, and it
+    is required whenever the framework-owned front channel is configured: a
+    missing or zero value is a registration error, not a silent fallback.
+
+    ``handle_ttl_seconds`` is the local lifetime of a route refresh handle. It
+    must lie in ``[ROUTE_REFRESH_MIN_HANDLE_TTL_SECONDS,
+    ROUTE_REFRESH_MAX_HANDLE_TTL_SECONDS]``. The store applies it; a broker
+    store that reports its own lifetime through
+    ``route_refresh_broker_handle_ttl_seconds()`` must agree with it, so a
+    deployment cannot declare a long ceiling while its store keeps a short one.
+
+    ``grace_window_seconds`` is the lost-response replay window measured from
+    the winning rotation. ``None`` or 0 selects
+    ``DEFAULT_REFRESH_GRACE_WINDOW_SECONDS``. Inside the window the rotated
+    (previous) handle replays the full stored successor body, including its
+    handle material, because that is the lost-response recovery path. The window
+    is bounded by ``MAX_REFRESH_GRACE_WINDOW_SECONDS``, and it is exclusive at
+    its end: a presentation at exactly ``grace_expires_at`` is beyond grace.
+
+    ``reuse_rate_ceiling`` bounds, per refresh family per hour, how many
+    out-of-grace depth-1 presentations are answered with the access token only.
+    It must lie in ``[MIN_REFRESH_REUSE_RATE_CEILING,
+    MAX_REFRESH_REUSE_RATE_CEILING]``; the floor is above the benign dual-session
+    cadence of roughly eight rotations per hour per family, so the ceiling
+    throttles harvest without tripping on the race it exists to protect.
+    """
+
+    handle_ttl_seconds: int
+    reuse_rate_ceiling: int
+    grace_window_seconds: int | None = None
+
+
+# RouteRefreshEventClass is the closed class vocabulary of the route refresh
+# broker telemetry the framework emits: broker issuance, local validation
+# rejections, refresh lock acquisition, coalesced service from a stored grace
+# response, successful refresh, reuse classification, upstream rejection
+# attribution, and broker state failures.
+ROUTE_REFRESH_EVENT_ISSUED = "issued"
+ROUTE_REFRESH_EVENT_VALIDATION_REJECTED = "validation_rejected"
+ROUTE_REFRESH_EVENT_LOCK_ACQUIRED = "lock_acquired"
+ROUTE_REFRESH_EVENT_GRACE_SERVED = "grace_served"
+ROUTE_REFRESH_EVENT_REFRESHED = "refreshed"
+ROUTE_REFRESH_EVENT_REUSE = "reuse"
+ROUTE_REFRESH_EVENT_UPSTREAM_REAUTH_REQUIRED = "upstream_reauth_required"
+ROUTE_REFRESH_EVENT_STATE_FAILURE = "state_failure"
+
+# Reuse outcomes. They are deliberately distinct from the client-facing
+# response, which is the same uniform invalid_grant for every terminal outcome.
+ROUTE_REFRESH_OUTCOME_ACCESS_TOKEN_ONLY = "access_token_only"  # noqa: S105 - a telemetry outcome, not a credential
+ROUTE_REFRESH_OUTCOME_REVOKED_FAMILY = "revoked_family"
+ROUTE_REFRESH_OUTCOME_REVOKED_WALK = "revoked_walk"
+ROUTE_REFRESH_OUTCOME_RATE_LIMITED = "rate_limited"
+ROUTE_REFRESH_OUTCOME_BINDING_REJECTED = "binding_rejected"
+
+# Failure reasons, carried by a validation-rejected or state-failure event.
+ROUTE_REFRESH_REASON_HANDLE_MALFORMED = "handle_malformed"
+ROUTE_REFRESH_REASON_CLIENT_REJECTED = "client_rejected"
+ROUTE_REFRESH_REASON_RECORD_ABSENT = "record_absent"
+ROUTE_REFRESH_REASON_RECORD_EXPIRED = "record_expired"
+ROUTE_REFRESH_REASON_RECORD_REVOKED = "record_revoked"
+ROUTE_REFRESH_REASON_CLIENT_MISMATCH = "client_mismatch"
+ROUTE_REFRESH_REASON_RESOURCE_MISMATCH = "resource_mismatch"
+ROUTE_REFRESH_REASON_BINDING_REJECTED = "binding_rejected"
+ROUTE_REFRESH_REASON_LOCK_CONTENTION = "lock_contention"
+ROUTE_REFRESH_REASON_STORE_FAILURE = "store_failure"
+ROUTE_REFRESH_REASON_REWRITE_FAILURE = "rewrite_failure"
+ROUTE_REFRESH_REASON_FAMILY_REVOKE_UNAVAILABLE = "family_revoke_unavailable"
+ROUTE_REFRESH_REASON_FAMILY_REVOKE_FAILED = "family_revoke_failed"
+ROUTE_REFRESH_REASON_ALREADY_SERVED = "already_served"
+ROUTE_REFRESH_REASON_UPSTREAM_REJECTED = "upstream_rejected"
+ROUTE_REFRESH_REASON_SUCCESSOR_BODY = "successor_body"
+ROUTE_REFRESH_REASON_ACCESS_TOKEN_ONLY = "access_token_only"  # noqa: S105 - a telemetry reason, not a credential
+
+# Expiry signals. The store distinguishes an aged-out handle from one that never
+# existed; the client-facing body does not.
+ROUTE_REFRESH_EXPIRY_SIGNAL_ABSENT = "absent"
+ROUTE_REFRESH_EXPIRY_SIGNAL_EXPIRED = "expired"
+
+
+@dataclass(slots=True)
+class RouteRefreshEvent:
+    """One schema-redacted route refresh broker telemetry event.
+
+    Every identifier is a hash or a route-derived value; the event never carries
+    an authorization code, an access token, an upstream refresh token, a route
+    refresh handle, an ID token, a cookie, or provider session material.
+
+    ``event_class`` is the class vocabulary above. The field is named
+    ``event_class`` rather than ``class`` because ``class`` is a Python keyword.
+    ``at`` is the framework clock instant the event describes.
+    """
+
+    event_class: str = ""
+    reason: str = ""
+    outcome: str = ""
+    error_code: str = ""
+    at: datetime | None = None
+    issuer: str = ""
+    stage: str = ""
+    canonical_resource: str = ""
+    client_namespace: str = ""
+    endpoint_kind: str = ""
+    partner_id: str = ""
+    agent_id: str = ""
+    client_id_hash: str = ""
+    subject_id_hash: str = ""
+    handle_hash: str = ""
+    family_hash: str = ""
+    successor_handle_hash: str = ""
+    upstream_refresh_token_hash: str = ""
+    previous_upstream_refresh_token_hash: str = ""
+    scope_fingerprint: str = ""
+    status_from: str = ""
+    status_to: str = ""
+    chain_generation: int = 0
+    chain_depth: int = 0
+    expiry_signal: str = ""
+    upstream_class: str = ""
+    revoked_records: int = 0
+
+
 @dataclass(slots=True)
 class RootDiscoveryConfig:
     """Configures the optional, unscoped authorization-server discovery document.
@@ -383,6 +550,17 @@ class FacadeConfig:
     # provider-call failure in the gateway class, so it maps to the 502
     # ``upstream_error`` error page and never redirects (DESIGN section 8.2).
     provider_hints: Callable[[Context], dict[str, str]] | None = None
+    # ``route_refresh_policy`` is the encoded static policy of the brokered route
+    # refresh handle (DESIGN section 8.4). It is required whenever ``provider``
+    # is set: a missing or zero value is a registration error, not a silent
+    # fallback. A broker store that reports its own local handle lifetime must
+    # agree with ``handle_ttl_seconds``.
+    route_refresh_policy: RouteRefreshPolicy | None = None
+    # ``route_refresh_events`` optionally receives one schema-redacted
+    # :class:`RouteRefreshEvent` per route refresh state transition. The hook
+    # runs synchronously on the request path and is contained: an exception it
+    # raises never fails a refresh.
+    route_refresh_events: Callable[[RouteRefreshEvent], None] | None = None
 
 
 @dataclass(slots=True)
@@ -433,7 +611,8 @@ class _FrontChannelConfig:
     """The validated front-channel field set of :class:`FacadeConfig`
     (DESIGN section 8): the provider adapter and stores the front channel drives,
     the facade's own upstream client, the expected upstream issuer, the
-    injectable lifecycle scopes, and the opaque provider-hint seam.
+    injectable lifecycle scopes, the opaque provider-hint seam, the validated
+    route refresh policy, and the optional telemetry hook.
     """
 
     provider: Provider
@@ -442,6 +621,8 @@ class _FrontChannelConfig:
     upstream_issuer: str
     lifecycle_scopes: list[str]
     provider_hints: Callable[[Context], dict[str, str]] | None
+    policy: RouteRefreshPolicy
+    events: Callable[[RouteRefreshEvent], None] | None
 
 
 @dataclass(slots=True)
@@ -675,6 +856,80 @@ def _validate_posture_surface_config(
         raise ValueError(f"{_ERROR_PREFIX} TransportPosture none-public cannot enable RootAuthorizationServer")
 
 
+# The route refresh policy's registration errors mirror the Go package's
+# ``mcpfacade:`` wording, so a cross-runtime operator sees one message.
+_POLICY_ERROR_PREFIX = "mcpfacade:"
+
+
+def _route_refresh_policy_declared(policy: RouteRefreshPolicy | None) -> bool:
+    """Reports whether any policy field is set, so a policy supplied without
+    ``provider`` fails as part of the anchored field set instead of being
+    ignored. A zero-valued policy is indistinguishable from an absent one,
+    exactly as Go's zero-value struct is."""
+    if policy is None:
+        return False
+    return bool(policy.handle_ttl_seconds or policy.grace_window_seconds or policy.reuse_rate_ceiling)
+
+
+def _policy_setting_is_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _normalize_route_refresh_policy(policy: RouteRefreshPolicy | None) -> RouteRefreshPolicy:
+    """Validates the policy and resolves its optional fields. Every failure is a
+    registration error: the facade never substitutes a policy for the
+    operator's."""
+    if policy is None:
+        raise ValueError(f"{_POLICY_ERROR_PREFIX} route refresh policy handle TTL is required and must be positive")
+    ttl = policy.handle_ttl_seconds
+    if not _policy_setting_is_int(ttl) or ttl <= 0:
+        raise ValueError(f"{_POLICY_ERROR_PREFIX} route refresh policy handle TTL is required and must be positive")
+    if ttl < ROUTE_REFRESH_MIN_HANDLE_TTL_SECONDS or ttl > ROUTE_REFRESH_MAX_HANDLE_TTL_SECONDS:
+        raise ValueError(
+            f"{_POLICY_ERROR_PREFIX} route refresh policy handle TTL must be within "
+            f"[{ROUTE_REFRESH_MIN_HANDLE_TTL_SECONDS}s, {ROUTE_REFRESH_MAX_HANDLE_TTL_SECONDS}s]"
+        )
+    grace = policy.grace_window_seconds
+    if grace is None or grace == 0:
+        grace = DEFAULT_REFRESH_GRACE_WINDOW_SECONDS
+    elif not _policy_setting_is_int(grace) or grace < 0 or grace > MAX_REFRESH_GRACE_WINDOW_SECONDS:
+        raise ValueError(
+            f"{_POLICY_ERROR_PREFIX} route refresh policy grace window must be within "
+            f"(0, {MAX_REFRESH_GRACE_WINDOW_SECONDS}s]"
+        )
+    ceiling = policy.reuse_rate_ceiling
+    if not _policy_setting_is_int(ceiling) or ceiling <= 0:
+        raise ValueError(
+            f"{_POLICY_ERROR_PREFIX} route refresh policy reuse rate ceiling is required and must be positive"
+        )
+    if ceiling < MIN_REFRESH_REUSE_RATE_CEILING or ceiling > MAX_REFRESH_REUSE_RATE_CEILING:
+        raise ValueError(
+            f"{_POLICY_ERROR_PREFIX} route refresh policy reuse rate ceiling must be within "
+            f"[{MIN_REFRESH_REUSE_RATE_CEILING}, {MAX_REFRESH_REUSE_RATE_CEILING}] per family per hour"
+        )
+    return RouteRefreshPolicy(
+        handle_ttl_seconds=ttl,
+        reuse_rate_ceiling=ceiling,
+        grace_window_seconds=grace,
+    )
+
+
+def _validate_route_refresh_policy_store(policy: RouteRefreshPolicy, stores: _FrontChannelStores) -> None:
+    """Refuses a store that reports a local handle lifetime different from the
+    configured ceiling. A store that does not report one is accepted: its
+    lifetime is the application's own wiring, and the configuration still fails
+    closed on absence."""
+    reporter = getattr(stores.route_refresh_broker, "route_refresh_broker_handle_ttl_seconds", None)
+    if not callable(reporter):
+        return
+    reported = float(cast("Any", reporter)())
+    if reported != float(policy.handle_ttl_seconds):
+        raise ValueError(
+            f"{_POLICY_ERROR_PREFIX} route refresh policy handle TTL {policy.handle_ttl_seconds}s "
+            f"does not match the broker store's local lifetime {reported:g}s"
+        )
+
+
 def _normalize_front_channel(config: FacadeConfig) -> _FrontChannelConfig | None:
     """Validate the framework-owned front-channel field set of ``FacadeConfig``
     (DESIGN section 8) and return it.
@@ -706,6 +961,8 @@ def _normalize_front_channel(config: FacadeConfig) -> _FrontChannelConfig | None
         except ValueError as err:
             raise ValueError(f"{_ERROR_PREFIX} {err}") from err
     stores = _require_front_channel_stores(config.stores)
+    policy = _normalize_route_refresh_policy(config.route_refresh_policy)
+    _validate_route_refresh_policy_store(policy, stores)
     if config.authorize_handler is not None or config.token_handler is not None:
         raise ValueError(
             f"{_ERROR_PREFIX} Provider owns the authorize and token routes; "
@@ -728,6 +985,8 @@ def _normalize_front_channel(config: FacadeConfig) -> _FrontChannelConfig | None
         upstream_issuer=upstream_issuer,
         lifecycle_scopes=list(config.lifecycle_scopes or []),
         provider_hints=config.provider_hints,
+        policy=policy,
+        events=config.route_refresh_events,
     )
 
 
@@ -745,6 +1004,10 @@ def _front_channel_field_outside_provider(config: FacadeConfig) -> str | None:
         return "LifecycleScopes"
     if config.provider_hints is not None:
         return "ProviderHints"
+    if _route_refresh_policy_declared(config.route_refresh_policy):
+        return "RouteRefreshPolicy"
+    if config.route_refresh_events is not None:
+        return "RouteRefreshEvents"
     return None
 
 
@@ -1846,8 +2109,15 @@ def _handle_callback_inner(config: _NormalizedConfig, ctx: Context) -> Response:
         upstream_refresh_token_hash=hash_key(token_set.refresh_token),
         upstream_client_id=front.upstream_client_id,
         status=STATUS_ISSUED,
+        chain_generation=REFRESH_CHAIN_ROOT_GENERATION,
+        family_hash=hash_key(handle),
     )
     seeder_put(broker)
+    event = _event_from_record(broker)
+    event.event_class = ROUTE_REFRESH_EVENT_ISSUED
+    event.status_to = STATUS_ISSUED
+    event.at = ctx.now()
+    _emit_route_refresh(front, event)
 
     facade_code = _new_opaque_token()
     code_record = AuthorizationCodeRecord(
@@ -2003,7 +2273,7 @@ def _redeem_authorization_code(
 def _revoke_replayed_broker(front: _FrontChannelConfig, record: AuthorizationCodeRecord | None) -> None:
     if record is None or not record.route_refresh_handle_hash:
         return
-    with contextlib.suppress(KeyError):
+    with contextlib.suppress(KeyError, BrokerExpiredError):
         front.stores.route_refresh_broker.revoke(record.route_refresh_handle_hash)
 
 
@@ -2043,6 +2313,99 @@ def _decode_token_response(value: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _event_from_record(record: RouteRefreshBrokerRecord | None) -> RouteRefreshEvent:
+    """Copies the identity fields every route refresh event carries from a
+    broker record."""
+    if record is None:
+        return RouteRefreshEvent()
+    return RouteRefreshEvent(
+        issuer=record.issuer,
+        stage=record.stage,
+        canonical_resource=record.canonical_resource,
+        client_namespace=record.client_namespace,
+        endpoint_kind=record.endpoint_kind,
+        partner_id=record.partner_id,
+        agent_id=record.agent_id,
+        client_id_hash=record.client_id_hash,
+        subject_id_hash=record.subject_id_hash,
+        handle_hash=record.handle_hash,
+        family_hash=record.family_hash,
+        scope_fingerprint=record.scope_fingerprint,
+        chain_generation=record.chain_generation,
+        status_from=record.status,
+    )
+
+
+def _emit_route_refresh(front: _FrontChannelConfig, event: RouteRefreshEvent) -> None:
+    """Delivers one event to the configured hook. An absent hook is a no-op and
+    a hook that raises is contained, so telemetry can never fail a refresh."""
+    hook = front.events
+    if hook is None:
+        return
+    with contextlib.suppress(Exception):
+        hook(event)
+
+
+def _emit_validation_rejected(
+    front: _FrontChannelConfig,
+    ctx: Context,
+    reason: str,
+    error_code: str,
+) -> None:
+    """Reports a local validation rejection the request had no record identity
+    to attribute yet."""
+    _emit_route_refresh(
+        front,
+        RouteRefreshEvent(
+            event_class=ROUTE_REFRESH_EVENT_VALIDATION_REJECTED,
+            reason=reason,
+            error_code=error_code,
+            at=ctx.now(),
+        ),
+    )
+
+
+def _emit_record_state_rejection(
+    front: _FrontChannelConfig,
+    ctx: Context,
+    record: RouteRefreshBrokerRecord | None,
+    reason: str,
+    expiry_signal: str,
+) -> None:
+    """Reports a record-state rejection, including the store's internal
+    absent-versus-expired signal. The client-facing body stays the uniform
+    ``invalid_grant``."""
+    event = _event_from_record(record)
+    event.event_class = ROUTE_REFRESH_EVENT_VALIDATION_REJECTED
+    event.reason = reason
+    event.error_code = "invalid_grant"
+    event.expiry_signal = expiry_signal
+    event.at = ctx.now()
+    _emit_route_refresh(front, event)
+
+
+def _emit_state_failure(
+    front: _FrontChannelConfig,
+    ctx: Context,
+    record: RouteRefreshBrokerRecord | None,
+    reason: str,
+    upstream_class: str = "",
+    *,
+    chain_depth: int = 0,
+    error_code: str = "",
+) -> None:
+    """Reports a store, lock, rewrite, or upstream failure that rendered the
+    retryable class."""
+    event = _event_from_record(record)
+    event.event_class = ROUTE_REFRESH_EVENT_STATE_FAILURE
+    event.reason = reason
+    event.upstream_class = upstream_class
+    event.chain_depth = chain_depth
+    event.error_code = error_code
+    event.at = ctx.now()
+    _emit_route_refresh(front, event)
+
+
 def _handle_refresh_token_grant(
     config: _NormalizedConfig,
     kind: str,
@@ -2060,11 +2423,12 @@ def _handle_refresh_token_grant(
     nor the upstream call happens until the request is known valid. Concurrency
     is ruling R2: exactly one upstream refresh call per rotation however many
     callers present the same handle, a bounded wait for a caller that loses the
-    lock race, and a thirty-second grace window in which the rotated (previous)
-    handle replays the successor tokens byte-for-byte. Ruling R4 binds the
-    request's scope and resource, and a handle is additionally bound to the route
-    it was minted for (DESIGN section 7: the broker record binds resource, so a
-    handle is a route handle).
+    lock race, and a configured grace window in which the rotated (previous)
+    handle replays the successor tokens byte-for-byte. Beyond grace the chain
+    generation classifies the presentation, and no beyond-grace serve ever
+    carries handle material. Ruling R4 binds the request's scope and resource,
+    and a handle is additionally bound to the route it was minted for (DESIGN
+    section 7: the broker record binds resource, so a handle is a route handle).
     """
     front = config.front_channel
     if front is None:
@@ -2073,6 +2437,7 @@ def _handle_refresh_token_grant(
     # the presented bytes, so an oversized value costs the facade one comparison.
     handle = _first_form_value(form, "refresh_token")
     if handle.strip() == "" or _utf8_byte_length(handle) > _FRONT_CHANNEL_MAX_REFRESH_HANDLE_BYTES:
+        _emit_validation_rejected(front, ctx, ROUTE_REFRESH_REASON_HANDLE_MALFORMED, "invalid_request")
         return _facade_error_page(400, "invalid_request")
     # R1.2: identify the registered client through the existing token-client
     # check, which already performs the R1.1 client_id requirement (a missing or
@@ -2080,6 +2445,7 @@ def _handle_refresh_token_grant(
     # and the public-auth-method check. Its failure is returned verbatim.
     client_id, failure = _token_client(config, kind, ctx, form)
     if failure is not None:
+        _emit_validation_rejected(front, ctx, ROUTE_REFRESH_REASON_CLIENT_REJECTED, "invalid_client")
         return failure
     # R1.5 (ruling R4): the bound resource a handle may be redeemed for is the
     # advertising route resource of the request being served — the same
@@ -2102,6 +2468,13 @@ def _handle_refresh_token_grant(
             return response
         if record is None:  # pragma: no cover - _resolve_refresh_record always pairs one with the other
             return _facade_temporarily_unavailable_page()
+        # A record whose grace deadline has passed was already rotated away.
+        # _resolve_refresh_record only returns such a record; a live grace window
+        # is served there. Beyond grace the classification decides between a
+        # benign access-token-only serve and a theft-class family revocation, and
+        # no path hands out handle material.
+        if record.grace_expires_at is not None:
+            return _serve_rotated_refresh_handle(config, ctx, form, record)
         lock_owner = _new_opaque_token()
         try:
             locked = front.stores.route_refresh_broker.acquire_lock(record.handle_hash, lock_owner, record.version)
@@ -2112,6 +2485,11 @@ def _handle_refresh_token_grant(
             if wait:
                 time.sleep(_REFRESH_COALESCE_POLL_INTERVAL_SECONDS)
             continue
+        event = _event_from_record(record)
+        event.event_class = ROUTE_REFRESH_EVENT_LOCK_ACQUIRED
+        event.status_to = STATUS_REFRESHING
+        event.at = ctx.now()
+        _emit_route_refresh(front, event)
         return _rotate_refresh_grant(config, ctx, record, locked)
 
 
@@ -2122,10 +2500,10 @@ def _refresh_lock_failure(err: Exception, elapsed: float) -> tuple[Response | No
     version are both retried until the coalesce cap, because the record may
     already carry the winner's completed rotation by the next read; both wait the
     poll interval before re-reading, so the retry is a bounded, yielding wait
-    rather than a spin. A revoked or missing record is the same ``invalid_grant``
-    every unusable handle gets; and any other store failure is the retryable
-    class, because a store that cannot answer the lock must not become an
-    unlimited refresh path.
+    rather than a spin. A revoked, expired, or missing record is the same
+    ``invalid_grant`` every unusable handle gets; and any other store failure is
+    the retryable class, because a store that cannot answer the lock must not
+    become an unlimited refresh path.
     """
     capped = elapsed >= _REFRESH_COALESCE_WAIT_CAP_SECONDS
     if isinstance(err, BrokerLockedError):
@@ -2136,7 +2514,7 @@ def _refresh_lock_failure(err: Exception, elapsed: float) -> tuple[Response | No
         if capped:
             return _facade_temporarily_unavailable_page(), False
         return None, True
-    if isinstance(err, (BrokerRevokedError, KeyError)):
+    if isinstance(err, (BrokerRevokedError, BrokerExpiredError, KeyError)):
         return _facade_error_page(400, "invalid_grant"), False
     return _facade_temporarily_unavailable_page(), False
 
@@ -2151,47 +2529,68 @@ def _resolve_refresh_record(
 ) -> tuple[RouteRefreshBrokerRecord | None, Response | None]:
     """Applies validation steps 3 to 6 of ruling R1 to the presented handle and
     returns the record whose lock may be acquired. A non-``None`` response ends
-    the request here, without a lock and without an upstream call.
+    the request here, without a lock and without an upstream call. A returned
+    record with a grace deadline has been rotated away and its grace window has
+    closed: the caller classifies that presentation.
     """
-    # R1.3: read the record the handle is keyed by. A missing record (which also
-    # covers one whose local lifetime policy elapsed), a revoked record, a record
-    # bound to another client, and a record bound to another route ALL render the
-    # SAME invalid_grant body, so the response is never an oracle for which of
-    # the four failed -- in particular, a handle redeemed at the wrong route is
+    # R1.3: read the record the handle is keyed by. A missing record, a record
+    # whose local lifetime policy elapsed, a revoked record, a record bound to
+    # another client, and a record bound to another route ALL render the SAME
+    # invalid_grant body, so the response is never an oracle for which of the
+    # five failed -- in particular, a handle redeemed at the wrong route is
     # indistinguishable from a handle that does not exist, which is what keeps
-    # the route binding from becoming a handle-existence oracle. A store that
-    # cannot answer is the retryable class.
+    # the route binding from becoming a handle-existence oracle. The store's
+    # expired and absent signals remain distinguishable only in telemetry. A
+    # store that cannot answer is the retryable class.
     try:
         record = front.stores.route_refresh_broker.get(hash_key(handle))
+    except BrokerExpiredError:
+        _emit_record_state_rejection(
+            front, ctx, None, ROUTE_REFRESH_REASON_RECORD_EXPIRED, ROUTE_REFRESH_EXPIRY_SIGNAL_EXPIRED
+        )
+        return None, _facade_error_page(400, "invalid_grant")
     except Exception:  # noqa: BLE001 - a store that cannot answer is the retryable class
+        _emit_state_failure(front, ctx, None, ROUTE_REFRESH_REASON_STORE_FAILURE)
         return None, _facade_temporarily_unavailable_page()
     if record is None:
+        _emit_record_state_rejection(
+            front, ctx, None, ROUTE_REFRESH_REASON_RECORD_ABSENT, ROUTE_REFRESH_EXPIRY_SIGNAL_ABSENT
+        )
         return None, _facade_error_page(400, "invalid_grant")
-    if (
-        record.status == STATUS_REVOKED
-        or record.client_id_hash != hash_key(client_id)
-        or record.canonical_resource != route_resource
-    ):
+    if record.client_id_hash != hash_key(client_id):
+        _emit_record_state_rejection(front, ctx, record, ROUTE_REFRESH_REASON_CLIENT_MISMATCH, "")
+        return None, _facade_error_page(400, "invalid_grant")
+    if record.canonical_resource != route_resource:
+        _emit_record_state_rejection(front, ctx, record, ROUTE_REFRESH_REASON_RESOURCE_MISMATCH, "")
+        return None, _facade_error_page(400, "invalid_grant")
+    if record.status == STATUS_REVOKED:
+        _emit_record_state_rejection(front, ctx, record, ROUTE_REFRESH_REASON_RECORD_REVOKED, "")
         return None, _facade_error_page(400, "invalid_grant")
     # R1.4 reuse: a non-zero grace deadline that has passed means the handle was
     # already rotated and the window in which the successor response can be
-    # replayed has closed, so presenting it is reuse. The whole grant is revoked
-    # before the client is told the grant is invalid.
+    # replayed has closed. The presentation is returned to the caller for depth
+    # classification; it is never served handle material from here.
     now = ctx.now()
     if record.grace_expires_at is not None and now >= record.grace_expires_at:
-        return None, _revoke_reused_refresh_grant(front, record)
+        return record, None
     # R1.5 (ruling R4): scope and resource are validated on EVERY refresh
     # request, including one that will be answered from the grace window, so a
     # request that asks for something other than what the record grants is
     # refused rather than silently served.
-    failure = _refresh_request_binding_failure(form, record)
+    failure, failure_code = _refresh_request_binding_failure(form, record)
     if failure is not None:
+        _emit_validation_rejected(front, ctx, ROUTE_REFRESH_REASON_BINDING_REJECTED, failure_code)
         return None, failure
     # R1.6 grace: the rotation completed inside the window, so the successor
     # response is replayed byte-for-byte. This is the idempotent lost-response
     # path and also how a concurrent waiter is served.
     replay = _refresh_grace_response(record, now)
     if replay is not None:
+        event = _event_from_record(record)
+        event.event_class = ROUTE_REFRESH_EVENT_GRACE_SERVED
+        event.reason = ROUTE_REFRESH_REASON_SUCCESSOR_BODY
+        event.at = now
+        _emit_route_refresh(front, event)
         return None, replay
     return record, None
 
@@ -2199,22 +2598,23 @@ def _resolve_refresh_record(
 def _refresh_request_binding_failure(
     form: dict[str, list[str]],
     record: RouteRefreshBrokerRecord,
-) -> Response | None:
+) -> tuple[Response | None, str]:
     """Applies ruling R4 to one refresh request: a present ``resource`` member
     must canonicalize to the bound resource and a present ``scope`` member must
     fingerprint to exactly the granted scope set. Presence — not emptiness — is
     what triggers a check, so an absent member takes the recorded value
     (allowed), while a present but empty scope is the empty set and is therefore
     refused like any other non-exact set. A requesting-wider-or-subset mode is
-    deliberately not built.
+    deliberately not built. The second return value is the client-facing error
+    code for telemetry, empty when the binding holds.
     """
     resource_present, resource = _present_form_value(form, "resource")
     if resource_present and canonical_resource_url(resource) != record.canonical_resource:
-        return _facade_error_page(400, "invalid_target")
+        return _facade_error_page(400, "invalid_target"), "invalid_target"
     scope_present, scope = _present_form_value(form, "scope")
     if scope_present and _facade_scope_fingerprint(scope.split()) != record.scope_fingerprint:
-        return _facade_error_page(400, "invalid_scope")
-    return None
+        return _facade_error_page(400, "invalid_scope"), "invalid_scope"
+    return None, ""
 
 
 def _present_form_value(form: dict[str, list[str]], name: str) -> tuple[bool, str]:
@@ -2267,7 +2667,7 @@ def _rotate_refresh_grant(
             )
         )
     except Exception as err:  # noqa: BLE001 - mapped and unwound by _failed_refresh_grant
-        return _failed_refresh_grant(config, presented, locked, err)
+        return _failed_refresh_grant(config, ctx, presented, locked, err)
     handle = _new_opaque_token()
     successor = _successor_broker_record(presented, handle, upstream)
     # The successor response body is the token response the client receives and
@@ -2285,11 +2685,19 @@ def _rotate_refresh_grant(
     completed = replace(
         locked,
         encrypted_grace_refresh_response=body.decode("utf-8"),
-        grace_expires_at=ctx.now() + timedelta(seconds=_REFRESH_GRACE_WINDOW_SECONDS),
+        grace_expires_at=ctx.now() + timedelta(seconds=front.policy.grace_window_seconds or 0),
         status=STATUS_ACTIVE,
         refresh_lock_owner="",
         refresh_lock_expires_at=None,
     )
+    # A pre-policy record becomes the root of its family at its first mutation
+    # under the policy: the presented record claims family=self and generation 1,
+    # and its successor records generation 2. This is the documented default for
+    # records that predate the family hash and the generation counter.
+    if completed.chain_generation < REFRESH_CHAIN_ROOT_GENERATION:
+        completed.chain_generation = REFRESH_CHAIN_ROOT_GENERATION
+    if completed.family_hash == "":
+        completed.family_hash = completed.handle_hash
     try:
         front.stores.route_refresh_broker.compare_and_swap(completed, locked.version)
     except Exception:  # noqa: BLE001 - a rotation that did not land is the retryable class
@@ -2298,12 +2706,25 @@ def _rotate_refresh_grant(
         # returned for state that was not persisted. The lock is left to expire,
         # because the compare-and-swap that would release it failed too.
         _discard_refresh_record(front, successor.handle_hash)
+        _emit_state_failure(front, ctx, presented, ROUTE_REFRESH_REASON_REWRITE_FAILURE)
         return _facade_temporarily_unavailable_page()
+    event = _event_from_record(presented)
+    event.event_class = ROUTE_REFRESH_EVENT_REFRESHED
+    event.status_from = STATUS_REFRESHING
+    event.status_to = STATUS_ACTIVE
+    event.successor_handle_hash = successor.handle_hash
+    event.family_hash = successor.family_hash
+    event.chain_generation = successor.chain_generation
+    event.previous_upstream_refresh_token_hash = presented.upstream_refresh_token_hash
+    event.upstream_refresh_token_hash = successor.upstream_refresh_token_hash
+    event.at = ctx.now()
+    _emit_route_refresh(front, event)
     return _refresh_token_page(body)
 
 
 def _failed_refresh_grant(
     config: _NormalizedConfig,
+    ctx: Context,
     presented: RouteRefreshBrokerRecord,
     locked: RouteRefreshBrokerRecord,
     upstream_error: Exception,
@@ -2325,52 +2746,370 @@ def _failed_refresh_grant(
         if not _revoke_broker_record(front, presented.handle_hash):
             # The grant is dead upstream but could not be revoked here, so the
             # client is not told the handle is invalid while it is still live.
+            _emit_state_failure(front, ctx, presented, ROUTE_REFRESH_REASON_STORE_FAILURE, error_class)
             return _facade_temporarily_unavailable_page()
+        event = _event_from_record(presented)
+        event.event_class = ROUTE_REFRESH_EVENT_UPSTREAM_REAUTH_REQUIRED
+        event.reason = ROUTE_REFRESH_REASON_UPSTREAM_REJECTED
+        event.upstream_class = error_class
+        event.error_code = "invalid_grant"
+        event.status_to = STATUS_REVOKED
+        event.at = ctx.now()
+        _emit_route_refresh(front, event)
         return _facade_error_page(400, "invalid_grant")
     if error_class == ERROR_UPSTREAM:
         _release_refresh_lock(front, presented, locked)
+        _emit_state_failure(
+            front,
+            ctx,
+            presented,
+            ROUTE_REFRESH_REASON_UPSTREAM_REJECTED,
+            error_class,
+            error_code="upstream_error",
+        )
         return _facade_upstream_error_page()
     # ERROR_TEMPORARILY_UNAVAILABLE, and any provider failure the adapter did not
     # classify: transient by default, so the lock is released and the caller is
     # told to retry.
     _release_refresh_lock(front, presented, locked)
+    _emit_state_failure(
+        front,
+        ctx,
+        presented,
+        ROUTE_REFRESH_REASON_UPSTREAM_REJECTED,
+        error_class,
+        error_code="temporarily_unavailable",
+    )
     return _facade_temporarily_unavailable_page()
 
 
-def _revoke_reused_refresh_grant(front: _FrontChannelConfig, record: RouteRefreshBrokerRecord) -> Response:
-    """Revokes the whole grant a reused handle belongs to (ruling R1.4) and
-    renders the response. The presented record is revoked first, then every
-    successor the chain names. A store failure during the walk is the retryable
-    class rather than ``invalid_grant``: the client must not be allowed to act on
-    state the facade could not revoke.
+def _serve_rotated_refresh_handle(
+    config: _NormalizedConfig,
+    ctx: Context,
+    form: dict[str, list[str]],
+    record: RouteRefreshBrokerRecord,
+) -> Response:
+    """Classifies a presentation of a rotated-away handle whose grace window has
+    closed (ruling R1.4 under the policy).
+
+    Depth 1 (the immediate predecessor of a live head) is the benign shared
+    credential-store race. It is answered with the ACCESS TOKEN ONLY: no
+    beyond-grace serve ever carries handle material, so no serve can upgrade a
+    presenter from a rotated-away predecessor to the head. Each handle serves
+    this way at most once; a second serve is theft class. A per-family hourly
+    budget throttles access-token harvest. Depth 2 or more is theft class: the
+    family is revoked and the client gets the uniform ``invalid_grant``.
+
+    A reuse event is emitted for EVERY out-of-grace presentation, whatever the
+    outcome, so the class is always attributable.
     """
-    if not _revoke_refresh_chain(front, record):
+    front = config.front_channel
+    if front is None:
+        raise ValueError(f"{_ERROR_PREFIX} front channel is not configured")
+    depth, _successor, failure = _classify_rotated_refresh_handle(front, ctx, record)
+    if failure is not None:
+        _emit_state_failure(front, ctx, record, ROUTE_REFRESH_REASON_STORE_FAILURE)
         return _facade_temporarily_unavailable_page()
+    if depth >= 2:
+        return _revoke_rotated_refresh_family(config, ctx, record, depth, ROUTE_REFRESH_REASON_STORE_FAILURE)
+    # The request binding is validated before the benign serve: a request that
+    # asks for a different resource or scope must never receive a token, even the
+    # access token only.
+    binding_failure, failure_code = _refresh_request_binding_failure(form, record)
+    if binding_failure is not None:
+        event = _event_from_record(record)
+        event.event_class = ROUTE_REFRESH_EVENT_REUSE
+        event.reason = ROUTE_REFRESH_REASON_BINDING_REJECTED
+        event.outcome = ROUTE_REFRESH_OUTCOME_BINDING_REJECTED
+        event.error_code = failure_code
+        event.chain_depth = 1
+        event.at = ctx.now()
+        _emit_route_refresh(front, event)
+        return binding_failure
+    return _serve_depth_one_refresh_handle(config, ctx, record)
+
+
+def _classify_rotated_refresh_handle(
+    front: _FrontChannelConfig,
+    ctx: Context,
+    record: RouteRefreshBrokerRecord,
+) -> tuple[int, RouteRefreshBrokerRecord | None, Exception | None]:
+    """Returns the depth of a beyond-grace presentation.
+
+    Depth is classified structurally from the presented record and, when the
+    record carries a family hash and a generation, checked arithmetically against
+    its successor. A record that predates the policy (generation 0, empty
+    family) is classified structurally only. Walk exhaustion — a missing,
+    expired, unparseable, revoked, or already-rotated successor, or a
+    generation/family mismatch — is depth 2, the fail-closed default.
+    """
+    successor_hash = _successor_handle_hash(record.encrypted_grace_refresh_response)
+    if successor_hash is None:
+        return 2, None, None
+    try:
+        successor = front.stores.route_refresh_broker.get(successor_hash)
+    except BrokerExpiredError:
+        return 2, None, None
+    except Exception as err:  # noqa: BLE001 - a store that cannot answer is the retryable class
+        return 0, None, err
+    if successor is None:
+        return 2, None, None
+    if successor.status == STATUS_REVOKED or successor.grace_expires_at is not None:
+        return 2, successor, None
+    if (
+        record.family_hash != ""
+        and record.chain_generation > 0
+        and (successor.family_hash != record.family_hash or successor.chain_generation != record.chain_generation + 1)
+    ):
+        return 2, successor, None
+    return 1, successor, None
+
+
+def _serve_depth_one_refresh_handle(
+    config: _NormalizedConfig,
+    ctx: Context,
+    record: RouteRefreshBrokerRecord,
+) -> Response:
+    """Answers one beyond-grace depth-1 presentation with the stored successor's
+    access token and no handle material.
+
+    The serve is single-use per handle and budgeted per family per hour. The
+    once-per-handle marker is written under the refresh lock before the response
+    is rendered, so two concurrent presentations of the same handle cannot both
+    be served.
+    """
+    front = config.front_channel
+    if front is None:
+        raise ValueError(f"{_ERROR_PREFIX} front channel is not configured")
+    start = time.monotonic()
+    while True:
+        if record.depth_one_served_at is not None:
+            return _revoke_rotated_refresh_family(config, ctx, record, 1, ROUTE_REFRESH_REASON_ALREADY_SERVED)
+        lock_owner = _new_opaque_token()
+        try:
+            locked = front.stores.route_refresh_broker.acquire_lock(record.handle_hash, lock_owner, record.version)
+        except Exception as err:  # noqa: BLE001 - classified by _refresh_lock_failure
+            response, wait = _refresh_lock_failure(err, time.monotonic() - start)
+            if response is not None:
+                return response
+            if wait:
+                time.sleep(_REFRESH_COALESCE_POLL_INTERVAL_SECONDS)
+            try:
+                refreshed = front.stores.route_refresh_broker.get(record.handle_hash)
+            except BrokerExpiredError:
+                return _facade_error_page(400, "invalid_grant")
+            except Exception:  # noqa: BLE001 - a store that cannot answer is the retryable class
+                _emit_state_failure(front, ctx, record, ROUTE_REFRESH_REASON_STORE_FAILURE)
+                return _facade_temporarily_unavailable_page()
+            if refreshed is None:
+                return _facade_error_page(400, "invalid_grant")
+            record = refreshed
+            continue
+        event = _event_from_record(record)
+        event.event_class = ROUTE_REFRESH_EVENT_LOCK_ACQUIRED
+        event.status_to = STATUS_REFRESHING
+        event.chain_depth = 1
+        event.at = ctx.now()
+        _emit_route_refresh(front, event)
+
+        if locked.depth_one_served_at is not None:
+            _release_refresh_lock(front, record, locked)
+            return _revoke_rotated_refresh_family(config, ctx, record, 1, ROUTE_REFRESH_REASON_ALREADY_SERVED)
+        # The per-family hourly budget is checked under the lock. A denied check
+        # does not consume the handle's single serve: the marker is written only
+        # when the response is actually rendered.
+        try:
+            result = front.stores.rate_limit.check_and_increment(
+                RateLimitBucketKey(
+                    identifier=_refresh_reuse_rate_identifier(record),
+                    resource=record.canonical_resource,
+                    operation=REFRESH_REUSE_RATE_OPERATION,
+                    limit=front.policy.reuse_rate_ceiling,
+                    window_seconds=REFRESH_REUSE_RATE_WINDOW_SECONDS,
+                )
+            )
+        except Exception:  # noqa: BLE001 - a store that cannot answer is the retryable class
+            _release_refresh_lock(front, record, locked)
+            _emit_state_failure(front, ctx, record, ROUTE_REFRESH_REASON_STORE_FAILURE)
+            return _facade_temporarily_unavailable_page()
+        if not result.allowed:
+            _release_refresh_lock(front, record, locked)
+            event = _event_from_record(record)
+            event.event_class = ROUTE_REFRESH_EVENT_REUSE
+            event.reason = ROUTE_REFRESH_REASON_ACCESS_TOKEN_ONLY
+            event.outcome = ROUTE_REFRESH_OUTCOME_RATE_LIMITED
+            event.chain_depth = 1
+            event.at = ctx.now()
+            _emit_route_refresh(front, event)
+            return _facade_error_page(400, "invalid_grant")
+        body = _refresh_access_token_only_body(record.encrypted_grace_refresh_response)
+        if body is None:
+            _release_refresh_lock(front, record, locked)
+            return _revoke_rotated_refresh_family(config, ctx, record, 1, ROUTE_REFRESH_REASON_STORE_FAILURE)
+        completed = replace(
+            locked,
+            depth_one_served_at=ctx.now(),
+            status=record.status,
+            refresh_lock_owner="",
+            refresh_lock_expires_at=None,
+        )
+        try:
+            front.stores.route_refresh_broker.compare_and_swap(completed, locked.version)
+        except Exception:  # noqa: BLE001 - a marker that did not land must not serve
+            # The marker did not land, so the serve must not either: a second
+            # presentation could otherwise be served again. The lock is left to
+            # expire, which delays the next attempt but never reports a success.
+            _emit_state_failure(front, ctx, record, ROUTE_REFRESH_REASON_REWRITE_FAILURE)
+            return _facade_temporarily_unavailable_page()
+        event = _event_from_record(record)
+        event.event_class = ROUTE_REFRESH_EVENT_REUSE
+        event.reason = ROUTE_REFRESH_REASON_ACCESS_TOKEN_ONLY
+        event.outcome = ROUTE_REFRESH_OUTCOME_ACCESS_TOKEN_ONLY
+        event.chain_depth = 1
+        event.status_to = record.status
+        event.at = ctx.now()
+        _emit_route_refresh(front, event)
+        return _refresh_token_page(body)
+
+
+def _revoke_rotated_refresh_family(
+    config: _NormalizedConfig,
+    ctx: Context,
+    record: RouteRefreshBrokerRecord,
+    depth: int,
+    reason: str,
+) -> Response:
+    """Revokes the whole family a reused handle belongs to and renders the
+    uniform ``invalid_grant``.
+
+    A family-hashed record is revoked through the store's family capability, so a
+    long-lived chain is not limited by the eight-link walk; a family-less record
+    (pre-policy) uses the bounded successor walk. A store failure is the
+    retryable class rather than ``invalid_grant``: the client must not be allowed
+    to act on state the facade could not revoke.
+    """
+    front = config.front_channel
+    if front is None:
+        raise ValueError(f"{_ERROR_PREFIX} front channel is not configured")
+    revoked = 0
+    outcome = ROUTE_REFRESH_OUTCOME_REVOKED_WALK
+    if record.family_hash != "":
+        revoke_family = getattr(front.stores.route_refresh_broker, "revoke_family", None)
+        if not callable(revoke_family):
+            _emit_state_failure(
+                front,
+                ctx,
+                record,
+                ROUTE_REFRESH_REASON_FAMILY_REVOKE_UNAVAILABLE,
+                chain_depth=depth,
+            )
+        else:
+            try:
+                records = revoke_family(record.family_hash)
+            except Exception:  # noqa: BLE001 - a failed family revoke is the retryable class
+                _emit_state_failure(
+                    front,
+                    ctx,
+                    record,
+                    ROUTE_REFRESH_REASON_FAMILY_REVOKE_FAILED,
+                    chain_depth=depth,
+                )
+                return _facade_temporarily_unavailable_page()
+            revoked = len(cast("list[RouteRefreshBrokerRecord]", records))
+            outcome = ROUTE_REFRESH_OUTCOME_REVOKED_FAMILY
+    if outcome == ROUTE_REFRESH_OUTCOME_REVOKED_WALK:
+        walked, ok = _revoke_refresh_chain_count(front, record)
+        if not ok:
+            _emit_state_failure(front, ctx, record, ROUTE_REFRESH_REASON_STORE_FAILURE)
+            return _facade_temporarily_unavailable_page()
+        revoked = walked
+    event = _event_from_record(record)
+    event.event_class = ROUTE_REFRESH_EVENT_REUSE
+    event.reason = reason
+    event.outcome = outcome
+    event.chain_depth = depth
+    event.revoked_records = revoked
+    event.error_code = "invalid_grant"
+    event.status_to = STATUS_REVOKED
+    event.at = ctx.now()
+    _emit_route_refresh(front, event)
     return _facade_error_page(400, "invalid_grant")
 
 
-def _revoke_refresh_chain(front: _FrontChannelConfig, record: RouteRefreshBrokerRecord) -> bool:
-    """Revokes one record and the successors it names. The chain is what a
-    rotation leaves behind: each rotated record stores its successor's token
-    response, so parsing that response yields the successor handle to revoke
-    next. A record that is already gone is not an error (revocation is
-    idempotent) and a stored value that does not parse simply ends the walk, so
-    the presented record is revoked either way. The walk is bounded by
-    ``_REFRESH_REVOKE_CHAIN_LIMIT`` so a crafted or cyclic value can never loop.
+def _refresh_reuse_rate_identifier(record: RouteRefreshBrokerRecord) -> str:
+    """The per-family bucket identity of the reuse budget. A family-less record
+    is budgeted against its own handle, because it has no family to share a
+    budget with."""
+    if record.family_hash != "":
+        return record.family_hash
+    return record.handle_hash
+
+
+def _refresh_access_token_only_body(stored: str) -> bytes | None:
+    """Renders the access-token-only response a beyond-grace depth-1 serve
+    returns: the stored successor body's access token, token type, lifetime, and
+    scope, with the refresh handle removed. No handle material is ever part of
+    it."""
+    if stored == "":
+        return None
+    try:
+        payload = jsonlib.loads(stored)
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    access_token = payload.get("access_token")
+    if not isinstance(access_token, str) or access_token.strip() == "":
+        return None
+    token_type = payload.get("token_type")
+    if token_type is not None and not isinstance(token_type, str):
+        return None
+    expires_in = payload.get("expires_in")
+    if expires_in is not None and (not isinstance(expires_in, int) or isinstance(expires_in, bool)):
+        return None
+    scope = payload.get("scope")
+    if scope is not None and not isinstance(scope, str):
+        return None
+    body = _facade_token_payload(
+        access_token=access_token,
+        token_type=token_type or "",
+        expires_in=expires_in,
+        scope=scope,
+        refresh_handle="",
+    )
+    return jsonlib.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+
+def _revoke_refresh_chain_count(
+    front: _FrontChannelConfig,
+    record: RouteRefreshBrokerRecord,
+) -> tuple[int, bool]:
+    """Revokes one record and the successors it names, and returns how many
+    records the walk handled.
+
+    The chain is what a rotation leaves behind: each rotated record stores its
+    successor's token response, so parsing that response yields the successor
+    handle to revoke next. A record that is already gone is not an error
+    (revocation is idempotent) and a stored value that does not parse simply ends
+    the walk, so the presented record is revoked either way. The walk is bounded
+    by ``_REFRESH_REVOKE_CHAIN_LIMIT`` so a crafted or cyclic value can never
+    loop; it is the fallback for a family-less record.
     """
     current = record
-    for _walked in range(_REFRESH_REVOKE_CHAIN_LIMIT):
+    for walked in range(_REFRESH_REVOKE_CHAIN_LIMIT):
         try:
             revoked = front.stores.route_refresh_broker.revoke(current.handle_hash)
+        except BrokerExpiredError:
+            return walked, True
         except Exception:  # noqa: BLE001 - a store that cannot revoke is the retryable class
-            return False
+            return walked, False
         if revoked is None:
-            return True
+            return walked, True
         successor_hash = _successor_handle_hash(revoked.encrypted_grace_refresh_response)
         if successor_hash is None:
-            return True
+            return walked + 1, True
         current = RouteRefreshBrokerRecord(handle_hash=successor_hash)
-    return True
+    return _REFRESH_REVOKE_CHAIN_LIMIT, True
 
 
 def _successor_handle_hash(stored: str) -> str | None:
@@ -2399,6 +3138,8 @@ def _revoke_broker_record(front: _FrontChannelConfig, handle_hash: str) -> bool:
     """
     try:
         front.stores.route_refresh_broker.revoke(handle_hash)
+    except (KeyError, BrokerExpiredError):
+        return True
     except Exception:  # noqa: BLE001 - a store that cannot revoke is reported
         return False
     return True
@@ -2450,6 +3191,12 @@ def _successor_broker_record(
     material = str(upstream.refresh_token or "")
     if material.strip() == "":
         material = presented.encrypted_upstream_refresh_token
+    generation = presented.chain_generation
+    if generation < REFRESH_CHAIN_ROOT_GENERATION:
+        generation = REFRESH_CHAIN_ROOT_GENERATION
+    family = presented.family_hash
+    if family == "":
+        family = presented.handle_hash
     return RouteRefreshBrokerRecord(
         handle_hash=hash_key(handle),
         issuer=presented.issuer,
@@ -2467,6 +3214,8 @@ def _successor_broker_record(
         upstream_refresh_token_hash=hash_key(material),
         upstream_client_id=presented.upstream_client_id,
         status=STATUS_ISSUED,
+        chain_generation=generation + 1,
+        family_hash=family,
     )
 
 

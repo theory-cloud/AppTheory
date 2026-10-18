@@ -361,8 +361,8 @@ func NewMemoryRouteRefreshBrokerStore(opts RouteRefreshBrokerStoreOptions) *Memo
 }
 
 // entryLocked returns the live entry for handleHash, or ErrBrokerNotFound when
-// the handle is unknown or its local lifetime policy has elapsed. The caller
-// holds the store mutex.
+// the handle is unknown and ErrBrokerExpired when its local lifetime policy has
+// elapsed. The caller holds the store mutex.
 func (s *MemoryRouteRefreshBrokerStore) entryLocked(handleHash string) (*brokerEntry, error) {
 	entry, ok := s.records[handleHash]
 	if !ok {
@@ -370,7 +370,7 @@ func (s *MemoryRouteRefreshBrokerStore) entryLocked(handleHash string) (*brokerE
 	}
 	if isExpired(s.now(), entry.storedAt.Add(s.ttl)) {
 		delete(s.records, handleHash)
-		return nil, ErrBrokerNotFound
+		return nil, ErrBrokerExpired
 	}
 	return entry, nil
 }
@@ -500,6 +500,73 @@ func (s *MemoryRouteRefreshBrokerStore) Revoke(_ context.Context, handleHash str
 		record.Version++
 	}
 	return recordCopy(record), nil
+}
+
+// RouteRefreshBrokerHandleTTL reports the local handle lifetime policy the
+// store applies, so the facade can refuse a configuration that declares a
+// different ceiling. It implements RouteRefreshBrokerHandleTTLReporter.
+func (s *MemoryRouteRefreshBrokerStore) RouteRefreshBrokerHandleTTL() time.Duration {
+	return s.ttl
+}
+
+// ListFamily returns every live record of one refresh family. Aged-out records
+// are purged as they are observed and are not listed; a blank family hash is
+// answered with an empty list, because no record can belong to no family.
+func (s *MemoryRouteRefreshBrokerStore) ListFamily(
+	_ context.Context,
+	familyHash string,
+) ([]*RouteRefreshBrokerRecord, error) {
+	if strings.TrimSpace(familyHash) == "" {
+		return nil, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+	family := make([]*RouteRefreshBrokerRecord, 0)
+	for handleHash, entry := range s.records {
+		if isExpired(now, entry.storedAt.Add(s.ttl)) {
+			delete(s.records, handleHash)
+			continue
+		}
+		if entry.record.FamilyHash == familyHash {
+			family = append(family, recordCopy(entry.record))
+		}
+	}
+	return family, nil
+}
+
+// RevokeFamily revokes every live record of one refresh family and returns the
+// records it handled. Revocation is idempotent, so already-revoked members are
+// returned unchanged rather than reported as errors.
+func (s *MemoryRouteRefreshBrokerStore) RevokeFamily(
+	_ context.Context,
+	familyHash string,
+) ([]*RouteRefreshBrokerRecord, error) {
+	if strings.TrimSpace(familyHash) == "" {
+		return nil, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+	family := make([]*RouteRefreshBrokerRecord, 0)
+	for handleHash, entry := range s.records {
+		if isExpired(now, entry.storedAt.Add(s.ttl)) {
+			delete(s.records, handleHash)
+			continue
+		}
+		record := entry.record
+		if record.FamilyHash != familyHash {
+			continue
+		}
+		if record.Status != BrokerStatusRevoked {
+			record.Status = BrokerStatusRevoked
+			record.RefreshLockOwner = ""
+			record.RefreshLockExpiresAt = time.Time{}
+			record.Version++
+		}
+		family = append(family, recordCopy(record))
+	}
+	return family, nil
 }
 
 // RateLimitStoreOptions configures NewMemoryRateLimitStore.

@@ -136,6 +136,20 @@ def create_microvm_controller(client: Any, **kwargs: Any) -> MicroVMController:
     return MicroVMController(client, **kwargs)
 
 
+def _require_session_owner(
+    record: MicroVMSessionRecord,
+    request: MicroVMControllerRequest | MicroVMControllerInvokeRequest,
+) -> None:
+    stored_subject = str(record.auth_subject or "").strip()
+    caller_subject = str(request.auth_context.subject or "").strip()
+    if stored_subject and caller_subject and stored_subject != caller_subject:
+        raise _safe_error(
+            MICROVM_ERROR_SESSION_OWNER_MISMATCH,
+            "apptheory: microvm session owner mismatch",
+            request.request_id,
+        )
+
+
 class MicroVMRealController:
     def __init__(
         self,
@@ -335,6 +349,7 @@ class MicroVMRealController:
         try:
             record = self._registry.get((request.tenant_id, request.namespace, request.session_id))
             validate_microvm_session_record(record)
+            _require_session_owner(record, request)
             session = run(
                 MicroVMProviderSessionInput(
                     request_id=request.request_id,
@@ -420,6 +435,7 @@ class MicroVMRealController:
         try:
             record = self._registry.get((request.tenant_id, request.namespace, request.session_id))
             validate_microvm_session_record(record)
+            _require_session_owner(record, request)
             token = run(
                 MicroVMProviderTokenInput(
                     request_id=request.request_id,
@@ -438,7 +454,7 @@ class MicroVMRealController:
             next_record.token_metadata = [*_clone_session_token_metadata_list(record.token_metadata), metadata]
             next_record.last_action = _command_from_operation(operation)
             next_record.last_command_id = request.request_id
-            next_record.auth_subject = request.auth_context.subject
+            next_record.auth_subject = str(record.auth_subject or "").strip() or request.auth_context.subject
             next_record.updated_at = now
             next_record.last_observed_at = now
             next_record.generation += 1
@@ -463,6 +479,7 @@ class MicroVMRealController:
         try:
             record = self._registry.get((normalized.tenant_id, normalized.namespace, normalized.session_id))
             validate_microvm_session_record(record)
+            _require_session_owner(record, normalized)
             if not str(record.endpoint or "").strip():
                 raise _safe_error(
                     MICROVM_ERROR_INVALID_CONTROLLER_REQUEST,
@@ -543,7 +560,9 @@ class MicroVMRealController:
             generation=(current.generation + 1 if current is not None and current.generation > 0 else 1),
             last_action=request.command,
             last_command_id=request.request_id,
-            auth_subject=request.auth_context.subject,
+            auth_subject=(str(current.auth_subject or "").strip() or request.auth_context.subject)
+            if current is not None
+            else request.auth_context.subject,
             token_metadata=_clone_session_token_metadata_list(current.token_metadata if current is not None else []),
             metadata=_clone_string_map(current.metadata if current is not None else request.session_spec.metadata),
         )
@@ -1238,6 +1257,8 @@ def _controller_http_status(error: MicroVMSafeError | None) -> int:
     if error.code == MICROVM_ERROR_UNAUTHENTICATED_CONTROLLER:
         return 401
     if error.code == MICROVM_ERROR_TENANT_BINDING_VIOLATION:
+        return 403
+    if error.code == MICROVM_ERROR_SESSION_OWNER_MISMATCH:
         return 403
     if error.code == MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE:
         return 404

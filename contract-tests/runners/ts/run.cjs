@@ -3,6 +3,7 @@
 /* eslint-disable no-console */
 
 const fs = require("node:fs");
+const http = require("node:http");
 const path = require("node:path");
 const process = require("node:process");
 const { pathToFileURL } = require("node:url");
@@ -2986,6 +2987,9 @@ async function runFixtureOAuth(fixture) {
 async function runFixtureObjectStore(fixture) {
   const runtime = await loadAppTheoryRuntime();
   const backend = String(fixture.setup?.objectstore?.backend ?? "fake").trim();
+  if (backend === "s3_stub") {
+    return runFixtureObjectStoreS3Stub(runtime, fixture);
+  }
   if (backend !== "fake") {
     return { ok: false, reason: `objectstore fixture backend ${JSON.stringify(backend)} is unsupported` };
   }
@@ -3003,6 +3007,167 @@ async function runFixtureObjectStore(fixture) {
     steps: actualSteps,
     calls: objectStoreCallsJSON(fake.calls()),
   });
+}
+
+async function runFixtureObjectStoreS3Stub(runtime, fixture) {
+  const steps = fixture.input?.objectstore?.steps ?? [];
+  if (steps.length === 0) {
+    return { ok: false, reason: "objectstore fixture missing input.objectstore.steps" };
+  }
+  const stub = { response: null };
+  const server = http.createServer((_req, res) => {
+    writeObjectStoreS3StubResponse(res, stub.response);
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const endpoint = `http://127.0.0.1:${server.address().port}`;
+  const restoreEnv = withObjectStoreS3StubEnv(endpoint);
+  try {
+    const store = await runtime.createS3ObjectStore({ region: "us-east-1" });
+    const actualSteps = [];
+    for (const step of steps) {
+      // eslint-disable-next-line no-await-in-loop
+      actualSteps.push(await runObjectStoreS3StubStep(runtime, store, stub, step));
+    }
+    return compareFixtureOutputJson(fixture, { steps: actualSteps });
+  } finally {
+    restoreEnv();
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+async function runObjectStoreS3StubStep(runtime, store, stub, step) {
+  const operation = String(step.operation ?? "").trim().toLowerCase();
+  const result = { name: String(step.name ?? ""), operation };
+  const response = step.s3_response;
+  if (!response) {
+    return objectStoreS3ErrorResult(result, new Error("objectstore s3_stub: step missing s3_response"));
+  }
+  if (!["get", "delete"].includes(operation)) {
+    return objectStoreS3ErrorResult(
+      result,
+      new Error(`objectstore s3_stub: unsupported operation: ${operation}`),
+    );
+  }
+  try {
+    const ref = objectStoreStepRef(runtime, step);
+    stub.response = response;
+    if (operation === "get") {
+      const output = await store.get({ ref, maxBytes: Number(step.max_bytes ?? 0) });
+      return objectStoreS3SuccessResult(result, output);
+    }
+    await store.delete({ ref });
+    return objectStoreS3SuccessResult(result, null);
+  } catch (error) {
+    return objectStoreS3ErrorResult(result, error);
+  }
+}
+
+function writeObjectStoreS3StubResponse(res, response) {
+  if (!response) {
+    res.writeHead(500);
+    res.end();
+    return;
+  }
+  const status = Number(response.status_code ?? 0);
+  if (status >= 200 && status < 300 && !response.error_code) {
+    if (status === 204) {
+      res.writeHead(status);
+      res.end();
+      return;
+    }
+    const body = response.body ? decodeFixtureBody(response.body) : Buffer.alloc(0);
+    const headers = { etag: '"etag"', "content-length": String(body.length) };
+    if (response.content_type) headers["content-type"] = String(response.content_type);
+    if (response.version_id) headers["x-amz-version-id"] = String(response.version_id);
+    res.writeHead(status, headers);
+    res.end(body);
+    return;
+  }
+  const code = objectStoreS3XMLEscape(String(response.error_code ?? ""));
+  const message = objectStoreS3XMLEscape(String(response.message ?? "stub error"));
+  const body = Buffer.from(
+    `<Error><Code>${code}</Code><Message>${message}</Message><RequestId>req-stub</RequestId></Error>`,
+  );
+  res.writeHead(status, {
+    "content-type": "application/xml",
+    "content-length": String(body.length),
+  });
+  res.end(body);
+}
+
+function objectStoreS3XMLEscape(value) {
+  return value.replace(/&/gu, "&amp;").replace(/</gu, "&lt;").replace(/>/gu, "&gt;");
+}
+
+// Point the real AWS SDK at the loopback stub and pin static credentials, so no shared
+// profile or ambient credential chain can leak into the fixture. Every changed variable
+// is restored afterwards.
+function withObjectStoreS3StubEnv(endpoint) {
+  const overrides = {
+    AWS_ACCESS_KEY_ID: "AKIAIOSFODNN7EXAMPLE",
+    AWS_SECRET_ACCESS_KEY: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    AWS_EC2_METADATA_DISABLED: "true",
+    AWS_ENDPOINT_URL: endpoint,
+    AWS_ENDPOINT_URL_S3: endpoint,
+    AWS_REGION: "us-east-1",
+    AWS_DEFAULT_REGION: "us-east-1",
+    AWS_MAX_ATTEMPTS: "1",
+    AWS_CONFIG_FILE: "/dev/null",
+    AWS_SHARED_CREDENTIALS_FILE: "/dev/null",
+  };
+  const removed = [
+    "AWS_SESSION_TOKEN",
+    "AWS_IGNORE_CONFIGURED_ENDPOINT_URLS",
+    "AWS_PROFILE",
+    "AWS_DEFAULT_PROFILE",
+  ];
+  const previous = new Map();
+  for (const [key, value] of Object.entries(overrides)) {
+    previous.set(key, process.env[key]);
+    process.env[key] = value;
+  }
+  for (const key of removed) {
+    previous.set(key, process.env[key]);
+    delete process.env[key];
+  }
+  return () => {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  };
+}
+
+function objectStoreS3SuccessResult(base, output) {
+  const result = { ...base, ok: true };
+  if (output) {
+    result.ref = objectStoreRefJSON(output.ref);
+    result.payload = objectStoreBodyJSON(output.payload);
+    if (output.contentType) result.content_type = output.contentType;
+    if (output.metadata && Object.keys(output.metadata).length > 0) {
+      result.metadata = cloneObjectStoreMetadata(output.metadata);
+    }
+  }
+  return result;
+}
+
+function objectStoreS3ErrorResult(base, error) {
+  return { ...base, ok: false, error: objectStoreS3ErrorJSON(error) };
+}
+
+function objectStoreS3ErrorJSON(error) {
+  if (error?.code === "objectstore.not_found") {
+    return { code: "objectstore.not_found" };
+  }
+  const out = { code: "objectstore.sdk_error" };
+  const sdkCode = String(error?.name ?? error?.Code ?? "");
+  if (sdkCode) out.sdk_code = sdkCode;
+  const status = Number(error?.$metadata?.httpStatusCode ?? 0);
+  if (status) out.status_code = status;
+  return out;
 }
 
 async function runObjectStoreStep(runtime, fake, step) {

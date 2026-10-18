@@ -222,6 +222,35 @@ You typically:
    see below).
 3) Validate Bearer tokens against Autheory (JWT verify via JWKS or introspection).
 
+### API Gateway-level protection (preferred at the edge)
+
+`AppTheoryRemoteMcpServer` and `AppTheoryRestApiRouter` accept optional `authorizer` and `authorizationType` props.
+Attaching an API Gateway authorizer enforces authentication before a request reaches the Lambda handler, so it is the
+preferred edge-level control for REST API v1 deployments:
+
+```ts
+import * as apigw from "aws-cdk-lib/aws-apigateway";
+import * as apptheory from "@theory-cloud/apptheory-cdk";
+
+const authorizer = new apigw.TokenAuthorizer(this, "McpAuthorizer", {
+  handler: authorizerFn,
+});
+
+new apptheory.AppTheoryRemoteMcpServer(this, "Mcp", {
+  handler,
+  authorizer,
+  // authorizationType is usually inferred from the authorizer.
+  // Set it only when you need to override that inference.
+});
+```
+
+Both props are additive. Omitting them preserves the existing open default (`AuthorizationType.NONE`), so current
+stacks synthesize the same template. CORS preflight `OPTIONS` methods remain unauthenticated regardless of the
+authorizer setting.
+
+API Gateway authorization does not replace the app-level OAuth guidance above. Keep `RequireBearerTokenMiddleware` so
+the handler still emits the `401` + `WWW-Authenticate` RFC 9728 discovery challenge and validates audience and scopes.
+
 Important fail-closed rules:
 - `RequireBearerTokenMiddleware(...)` now requires a `Validator`. If you omit it, the middleware rejects every request
   with `401` instead of accepting any syntactically valid Bearer token.

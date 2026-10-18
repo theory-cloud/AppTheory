@@ -600,12 +600,19 @@
       "expect_absent": ["upstream-refresh-token", "id_token"]
     },
     {
-      "id": "refresh.reuse_after_grace_revokes",
+      "id": "refresh.beyond_grace_depth_one_serves_access_token_only",
       "group": "refresh",
-      "scenario": "reuse_after_grace_revokes",
+      "scenario": "beyond_grace_depth_one_serves_access_token_only",
+      "expect_status": 200,
+      "expect_absent": ["refresh_token", "upstream-refresh-token", "id_token"]
+    },
+    {
+      "id": "refresh.beyond_grace_second_serve_revokes_family",
+      "group": "refresh",
+      "scenario": "beyond_grace_second_serve_revokes_family",
       "expect_status": 400,
       "expect_error": "invalid_grant",
-      "expect_absent": ["upstream-refresh-token", "id_token"]
+      "expect_absent": ["access_token", "refresh_token", "upstream-refresh-token", "id_token"]
     },
     {
       "id": "refresh.unknown_handle",
