@@ -24,6 +24,38 @@ or deprecation posture must add or update a section here before the release is p
   is only distinguishable from a denial when the caller holds `s3:ListBucket`; without it S3 answers 403
   `AccessDenied`, which remains an error. `Delete` is unchanged and stays idempotent.
 
+- **MCP auth facade: the route refresh policy is required, and the broker store contract now distinguishes expiry
+  from absence.** This is a **startup-breaking change for any consumer of the framework-owned front channel**
+  (`mcpfacade.RegisterMCPFacade` / `RegisterMCPFacadeSecure`, `registerMcpFacade`, `register_mcp_facade` with
+  `Provider` / `provider` set). Registration now fails closed unless the encoded
+  `RouteRefreshPolicy` / `routeRefreshPolicy` / `route_refresh_policy` is supplied: a missing or zero handle TTL is
+  an error rather than a silent fallback, and the reuse-rate ceiling is likewise required. Adopt in the same change:
+
+  - Set the policy. `HandleTTL` (60 s–30 d; the TheoryMCP stages use 30 days) is the route refresh handle's local
+    lifetime and must be the lifetime the broker store applies. `GraceWindow` is optional (default 120 s, maximum
+    120 s). `ReuseRateCeiling` (9–120 per family per hour) is the beyond-grace access-token-only budget.
+  - If the broker store exposes a handle-lifetime reporter (`RouteRefreshBrokerHandleTTLReporter` /
+    `routeRefreshBrokerHandleTTLSeconds()` / `route_refresh_broker_handle_ttl_seconds()`), its value must equal
+    `HandleTTL` or registration fails. The in-memory reference stores implement it; a durable store may omit it, in
+    which case the application owns the agreement.
+  - Durable broker stores should distinguish an aged-out handle from an unknown one: return
+    `oauthstore.ErrBrokerExpired` / throw `BrokerExpiredError` (Python raises `BrokerExpiredError`). The
+    client-facing body is unchanged (`invalid_grant`); the distinction drives expiry-versus-absence telemetry.
+  - Durable broker stores should implement the optional family capability (`RouteRefreshBrokerFamilyStore`:
+    `ListFamily`/`RevokeFamily`) and persist the new record fields `ChainGeneration`, `FamilyHash`, and
+    `DepthOneServedAt`. Without the capability, a family-hashed record still revokes, but only through the bounded
+    eight-link successor walk and with a state-failure telemetry event.
+  - A durable store that cannot store the new fields keeps working for rotation, but pre-policy records are then
+    classified structurally and family revocation degrades to the walk. Persisting them is required for the
+    long-lived-chain guarantee.
+  - Optionally wire `RouteRefreshEvents` / `routeRefreshEvents` / `route_refresh_events` to the application's
+    telemetry pipeline. Events are hash-only and never carry raw token or handle material.
+
+  The grace window widened from 30 s to 120 s by default: a rotated (previous) handle replayed inside the window
+  still receives the full stored successor body; beyond it, the first immediate-predecessor presentation receives
+  the access token only (never handle material), and a second serve or a deeper replay revokes the family. The
+  shared conformance table now has 48 rows, including the broker expiry signal and the family capability rows.
+
 AppTheory v6 moves the Go runtime and the generated CDK Go bindings onto the next semantic import version. The release
 range from the v5 line also carries other breaking runtime, CDK, TypeScript, and Python changes; read `CHANGELOG.md` and
 the v6 release notes for the commit-level detail, and treat the import-path move below as the mechanical part of the
