@@ -327,6 +327,7 @@ export declare const MICROVM_ERROR_CONTROLLER_INCOMPLETE = "m15.microvm.controll
 export declare const MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE = "m15.microvm.session_registry_incomplete";
 export declare const MICROVM_ERROR_INVALID_CONTROLLER_REQUEST = "m15.microvm.invalid_controller_request";
 export declare const MICROVM_ERROR_CONTROLLER_COMMAND_FAILED = "m15.microvm.controller_command_failed";
+export declare const MICROVM_ERROR_SESSION_OWNER_MISMATCH = "m15.microvm.session_owner_mismatch";
 export declare const MICROVM_CONTROLLER_AUTH_DEFAULT_DENY = "deny";
 export declare const MICROVM_SESSION_REGISTRY_MODEL_NAME = "MicroVMSessionRegistryRecord";
 export declare const MICROVM_SESSION_REGISTRY_TABLE_NAME = "apptheory-microvm-sessions";

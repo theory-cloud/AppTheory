@@ -308,66 +308,79 @@ func TestProperty6_ProtocolErrorCodeCorrectness(t *testing.T) {
 // Validates: Requirements 8.1
 //
 // For any tool whose handler returns a Go error, invoking that tool via
-// tools/call SHALL produce a JSON-RPC error response with code -32000 and
-// a message containing the original error text.
+// tools/call SHALL produce a JSON-RPC error response with code -32000. The
+// original error text is redacted by default and preserved when
+// WithVerboseHandlerErrors(true) is set.
 func TestProperty7_ToolHandlerErrorWrapping(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		errMsg := genAlphanumericString(1, 64).Draw(t, "errorMessage")
 		reqID := genRequestID().Draw(t, "id")
 
-		s := NewServer("test-server", "1.0.0")
-		if err := s.registry.RegisterTool(
-			ToolDef{
-				Name:        "failing_tool",
-				Description: "Always fails",
-				InputSchema: json.RawMessage(`{"type":"object"}`),
-			},
-			func(_ context.Context, _ json.RawMessage) (*ToolResult, error) {
-				return nil, fmt.Errorf("%s", errMsg)
-			},
-		); err != nil {
-			t.Fatalf("failed to register tool: %v", err)
-		}
+		for _, verbose := range []bool{false, true} {
+			opts := []ServerOption{}
+			if verbose {
+				opts = append(opts, WithVerboseHandlerErrors(true))
+			}
+			s := NewServer("test-server", "1.0.0", opts...)
+			if err := s.registry.RegisterTool(
+				ToolDef{
+					Name:        "failing_tool",
+					Description: "Always fails",
+					InputSchema: json.RawMessage(`{"type":"object"}`),
+				},
+				func(_ context.Context, _ json.RawMessage) (*ToolResult, error) {
+					return nil, fmt.Errorf("%s", errMsg)
+				},
+			); err != nil {
+				t.Fatalf("failed to register tool: %v", err)
+			}
 
-		params, err := json.Marshal(toolsCallParams{
-			Name:      "failing_tool",
-			Arguments: json.RawMessage(`{}`),
-		})
-		if err != nil {
-			t.Fatalf("failed to marshal params: %v", err)
-		}
-		body, err := json.Marshal(Request{
-			JSONRPC: "2.0",
-			ID:      reqID,
-			Method:  methodToolsCall,
-			Params:  params,
-		})
-		if err != nil {
-			t.Fatalf("failed to marshal request: %v", err)
-		}
+			params, err := json.Marshal(toolsCallParams{
+				Name:      "failing_tool",
+				Arguments: json.RawMessage(`{}`),
+			})
+			if err != nil {
+				t.Fatalf("failed to marshal params: %v", err)
+			}
+			body, err := json.Marshal(Request{
+				JSONRPC: "2.0",
+				ID:      reqID,
+				Method:  methodToolsCall,
+				Params:  params,
+			})
+			if err != nil {
+				t.Fatalf("failed to marshal request: %v", err)
+			}
 
-		sessionID := initializeSession(t, s)
-		headers := sessionHeaders(sessionID)
-		headers["accept"] = []string{"application/json, text/event-stream"}
+			sessionID := initializeSession(t, s)
+			headers := sessionHeaders(sessionID)
+			headers["accept"] = []string{"application/json, text/event-stream"}
 
-		resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", body, headers)
-		if err != nil {
-			t.Fatalf("handler error: %v", err)
-		}
+			resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", body, headers)
+			if err != nil {
+				t.Fatalf("handler error: %v", err)
+			}
 
-		rpcResp, err := parseJSONRPCResponse(resp)
-		if err != nil {
-			t.Fatalf("failed to parse response: %v", err)
-		}
+			rpcResp, err := parseJSONRPCResponse(resp)
+			if err != nil {
+				t.Fatalf("failed to parse response: %v", err)
+			}
 
-		if rpcResp.Error == nil {
-			t.Fatal("expected error response for failing tool")
-		}
-		if rpcResp.Error.Code != CodeServerError {
-			t.Fatalf("expected error code %d, got %d", CodeServerError, rpcResp.Error.Code)
-		}
-		if rpcResp.Error.Message != errMsg {
-			t.Fatalf("error message mismatch: got %q, want %q", rpcResp.Error.Message, errMsg)
+			if rpcResp.Error == nil {
+				t.Fatal("expected error response for failing tool")
+			}
+			if rpcResp.Error.Code != CodeServerError {
+				t.Fatalf("expected error code %d, got %d", CodeServerError, rpcResp.Error.Code)
+			}
+			if verbose {
+				if rpcResp.Error.Message != errMsg {
+					t.Fatalf("error message mismatch: got %q, want %q", rpcResp.Error.Message, errMsg)
+				}
+				continue
+			}
+			if rpcResp.Error.Message != genericHandlerErrorMessage {
+				t.Fatalf("expected redacted error message %q, got %q", genericHandlerErrorMessage, rpcResp.Error.Message)
+			}
 		}
 	})
 }

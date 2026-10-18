@@ -357,7 +357,13 @@ func (s *Server) runTaskTool(ctx context.Context, record TaskRecord, args json.R
 		if errors.Is(err, context.DeadlineExceeded) {
 			return s.finishTask(ctx, record, nil, &RPCError{Code: CodeServerError, Message: formatToolTimeoutMessage(record.ToolName)})
 		}
-		return s.finishTask(ctx, record, nil, &RPCError{Code: CodeServerError, Message: err.Error()})
+		if errors.Is(err, context.Canceled) {
+			return s.finishTask(ctx, record, nil, &RPCError{Code: CodeServerError, Message: context.Canceled.Error()})
+		}
+		return s.finishTask(ctx, record, nil, &RPCError{
+			Code:    CodeServerError,
+			Message: s.handlerErrorMessage(ctx, err, "taskId", record.Task.TaskID, "tool", record.ToolName),
+		})
 	}
 
 	resultBytes, err := json.Marshal(result)
@@ -426,7 +432,7 @@ func (s *Server) handleTasksGet(ctx context.Context, req *Request, sessionID str
 
 	record, err := s.taskRuntime.store.Get(ctx, lookup)
 	if err != nil {
-		return taskStoreError(req.ID, err)
+		return s.taskStoreError(ctx, req.ID, err)
 	}
 	return NewResultResponse(req.ID, record.Task)
 }
@@ -440,10 +446,10 @@ func (s *Server) handleTasksResult(ctx context.Context, req *Request, sessionID 
 
 	record, err := s.waitForTaskTerminal(ctx, lookup)
 	if err != nil {
-		return taskStoreError(req.ID, err)
+		return s.taskStoreError(ctx, req.ID, err)
 	}
 	if record.Error != nil {
-		return &Response{JSONRPC: jsonrpcVersion, ID: req.ID, Error: record.Error}
+		return &Response{JSONRPC: jsonrpcVersion, ID: req.ID, Error: s.taskWireError(ctx, record, record.Error)}
 	}
 	if record.Task.Status == TaskStatusCanceled && len(bytes.TrimSpace(record.Result)) == 0 {
 		return NewErrorResponse(req.ID, CodeServerError, taskCanceledMessage)
@@ -454,7 +460,7 @@ func (s *Server) handleTasksResult(ctx context.Context, req *Request, sessionID 
 
 	result, err := taskResultWithRelatedMetadata(record.Result, record.Task.TaskID)
 	if err != nil {
-		return NewErrorResponse(req.ID, CodeServerError, err.Error())
+		return NewErrorResponse(req.ID, CodeServerError, s.handlerErrorMessage(ctx, err, "taskId", record.Task.TaskID, "tool", record.ToolName))
 	}
 	return NewResultResponse(req.ID, result)
 }
@@ -542,7 +548,7 @@ func (s *Server) handleTasksList(ctx context.Context, req *Request, sessionID st
 		Limit:     s.taskRuntime.listLimit,
 	})
 	if err != nil {
-		return taskStoreError(req.ID, err)
+		return s.taskStoreError(ctx, req.ID, err)
 	}
 	if result == nil {
 		result = &TaskListResult{Tasks: []Task{}}
@@ -562,7 +568,7 @@ func (s *Server) handleTasksCancel(ctx context.Context, req *Request, sessionID 
 
 	record, err := s.taskRuntime.store.Cancel(ctx, lookup)
 	if err != nil {
-		return taskStoreError(req.ID, err)
+		return s.taskStoreError(ctx, req.ID, err)
 	}
 	if s.taskExecutions != nil {
 		s.taskExecutions.cancel(sessionID, lookup.TaskID)
@@ -643,7 +649,7 @@ func taskExecutionKey(sessionID, taskID string) string {
 	return sessionID + "\x00" + taskID
 }
 
-func taskStoreError(reqID any, err error) *Response {
+func (s *Server) taskStoreError(ctx context.Context, reqID any, err error) *Response {
 	switch {
 	case errors.Is(err, ErrTaskNotFound):
 		return NewErrorResponse(reqID, CodeInvalidParams, err.Error())
@@ -651,9 +657,47 @@ func taskStoreError(reqID any, err error) *Response {
 		return NewErrorResponse(reqID, CodeInvalidParams, err.Error())
 	case errors.Is(err, errTaskInvalidCursor):
 		return NewErrorResponse(reqID, CodeInvalidParams, err.Error())
+	case errors.Is(err, errTaskResultWaitTimeout):
+		return NewErrorResponse(reqID, CodeServerError, errTaskResultWaitTimeout.Error())
+	case errors.Is(err, errTaskStoreCapacity):
+		return NewErrorResponse(reqID, CodeServerError, errTaskStoreCapacity.Error())
+	case errors.Is(err, context.Canceled):
+		return NewErrorResponse(reqID, CodeServerError, context.Canceled.Error())
+	case errors.Is(err, context.DeadlineExceeded):
+		return NewErrorResponse(reqID, CodeServerError, context.DeadlineExceeded.Error())
 	default:
-		return NewErrorResponse(reqID, CodeServerError, err.Error())
+		return NewErrorResponse(reqID, CodeServerError, s.handlerErrorMessage(ctx, err, "component", "task store"))
 	}
+}
+
+func (s *Server) taskWireError(ctx context.Context, record *TaskRecord, rpcErr *RPCError) *RPCError {
+	if rpcErr == nil || s.verboseHandlerErrors || !taskErrorNeedsRedaction(rpcErr) {
+		return rpcErr
+	}
+	taskID := ""
+	toolName := ""
+	if record != nil {
+		taskID = record.Task.TaskID
+		toolName = record.ToolName
+	}
+	s.logger.ErrorContext(ctx, "task error", "taskId", taskID, "tool", toolName, "error", rpcErr.Message)
+	redacted := *rpcErr
+	redacted.Message = genericHandlerErrorMessage
+	redacted.Data = nil
+	return &redacted
+}
+
+func taskErrorNeedsRedaction(rpcErr *RPCError) bool {
+	if rpcErr == nil || rpcErr.Code != CodeServerError {
+		return false
+	}
+	message := strings.TrimSpace(rpcErr.Message)
+	switch message {
+	case "", genericHandlerErrorMessage, taskCanceledMessage, taskCapacityExceededMessage, errTaskStoreCapacity.Error(),
+		context.Canceled.Error(), context.DeadlineExceeded.Error():
+		return false
+	}
+	return !strings.HasSuffix(message, " timed out")
 }
 
 func taskStatusTerminal(status TaskStatus) bool {

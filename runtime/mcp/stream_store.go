@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"sync"
 
@@ -54,6 +55,12 @@ var (
 	ErrStreamEventTooLarge = errors.New("stream event too large")
 )
 
+const (
+	defaultMemoryStreamMaxEventBytes       = 10 << 20
+	defaultMemoryStreamMaxEventsPerSession = 10000
+	defaultMemoryStreamMaxSessionBytes     = 64 << 20
+)
+
 type MemoryStreamStoreOption func(*MemoryStreamStore)
 
 func WithStreamIDGenerator(gen apptheory.IDGenerator) MemoryStreamStoreOption {
@@ -62,17 +69,46 @@ func WithStreamIDGenerator(gen apptheory.IDGenerator) MemoryStreamStoreOption {
 	}
 }
 
+func WithStreamEventByteLimit(maxBytes int) MemoryStreamStoreOption {
+	return func(m *MemoryStreamStore) {
+		if maxBytes > 0 {
+			m.maxEventBytes = maxBytes
+		}
+	}
+}
+
+func WithStreamEventsPerSessionLimit(maxEvents int) MemoryStreamStoreOption {
+	return func(m *MemoryStreamStore) {
+		if maxEvents > 0 {
+			m.maxEventsPerSession = maxEvents
+		}
+	}
+}
+
+func WithStreamSessionByteLimit(maxBytes int) MemoryStreamStoreOption {
+	return func(m *MemoryStreamStore) {
+		if maxBytes > 0 {
+			m.maxBytesPerSession = maxBytes
+		}
+	}
+}
+
 // MemoryStreamStore is an in-memory StreamStore for testing and local development.
 //
 // It assigns monotonically increasing numeric event IDs per session (as strings).
 type MemoryStreamStore struct {
-	mu       sync.Mutex
-	idGen    apptheory.IDGenerator
-	sessions map[string]*memoryStreamSession
+	mu                  sync.Mutex
+	idGen               apptheory.IDGenerator
+	sessions            map[string]*memoryStreamSession
+	maxEventBytes       int
+	maxEventsPerSession int
+	maxBytesPerSession  int
 }
 
 type memoryStreamSession struct {
 	nextSeq     int64
+	eventCount  int
+	totalBytes  int
 	seqToStream map[int64]string
 	streams     map[string]*memoryStream
 }
@@ -90,8 +126,11 @@ type memoryStreamEvent struct {
 
 func NewMemoryStreamStore(opts ...MemoryStreamStoreOption) *MemoryStreamStore {
 	m := &MemoryStreamStore{
-		idGen:    apptheory.RandomIDGenerator{},
-		sessions: make(map[string]*memoryStreamSession),
+		idGen:               apptheory.RandomIDGenerator{},
+		sessions:            make(map[string]*memoryStreamSession),
+		maxEventBytes:       defaultMemoryStreamMaxEventBytes,
+		maxEventsPerSession: defaultMemoryStreamMaxEventsPerSession,
+		maxBytesPerSession:  defaultMemoryStreamMaxSessionBytes,
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -137,6 +176,12 @@ func (m *MemoryStreamStore) Append(_ context.Context, sessionID, streamID string
 	if streamID == "" {
 		return "", errors.New("missing stream id")
 	}
+	if m.maxEventBytes > 0 && len(data) > m.maxEventBytes {
+		return "", ErrStreamEventTooLarge
+	}
+	if m.maxBytesPerSession > 0 && len(data) > m.maxBytesPerSession {
+		return "", ErrStreamEventTooLarge
+	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -150,6 +195,17 @@ func (m *MemoryStreamStore) Append(_ context.Context, sessionID, streamID string
 		return "", ErrStreamNotFound
 	}
 
+	for m.maxBytesPerSession > 0 && sess.totalBytes+len(data) > m.maxBytesPerSession {
+		if !evictOldestMemoryStreamEventLocked(sess) {
+			return "", ErrStreamEventTooLarge
+		}
+	}
+	for m.maxEventsPerSession > 0 && sess.eventCount >= m.maxEventsPerSession {
+		if !evictOldestMemoryStreamEventLocked(sess) {
+			return "", ErrStreamEventTooLarge
+		}
+	}
+
 	sess.nextSeq++
 	seq := sess.nextSeq
 
@@ -161,9 +217,34 @@ func (m *MemoryStreamStore) Append(_ context.Context, sessionID, streamID string
 		data: stored,
 	})
 	sess.seqToStream[seq] = streamID
+	sess.eventCount++
+	sess.totalBytes += len(stored)
 	stream.cond.Broadcast()
 
 	return strconv.FormatInt(seq, 10), nil
+}
+
+func evictOldestMemoryStreamEventLocked(sess *memoryStreamSession) bool {
+	var oldest *memoryStream
+	for _, stream := range sess.streams {
+		if len(stream.events) == 0 {
+			continue
+		}
+		if oldest == nil || stream.events[0].seq < oldest.events[0].seq {
+			oldest = stream
+		}
+	}
+	if oldest == nil {
+		return false
+	}
+
+	event := oldest.events[0]
+	oldest.events[0] = memoryStreamEvent{}
+	oldest.events = oldest.events[1:]
+	delete(sess.seqToStream, event.seq)
+	sess.eventCount--
+	sess.totalBytes -= len(event.data)
+	return true
 }
 
 func (m *MemoryStreamStore) Close(_ context.Context, sessionID, streamID string) error {
@@ -226,11 +307,11 @@ func (m *MemoryStreamStore) Subscribe(ctx context.Context, sessionID, streamID, 
 		}
 	}
 
-	nextIndex := startIndexAfterSeq(stream.events, afterSeq)
+	nextSeq := afterSeq
 	m.mu.Unlock()
 
 	out := make(chan StreamEvent)
-	go m.pumpSubscription(ctx, stream, nextIndex, out)
+	go m.pumpSubscription(ctx, stream, nextSeq, out)
 
 	return out, nil
 }
@@ -249,15 +330,7 @@ func afterSeqFromEventID(afterEventID string) (int64, error) {
 	return 0, nil
 }
 
-func startIndexAfterSeq(events []memoryStreamEvent, afterSeq int64) int {
-	nextIndex := 0
-	for nextIndex < len(events) && events[nextIndex].seq <= afterSeq {
-		nextIndex++
-	}
-	return nextIndex
-}
-
-func (m *MemoryStreamStore) pumpSubscription(ctx context.Context, stream *memoryStream, startIndex int, out chan<- StreamEvent) {
+func (m *MemoryStreamStore) pumpSubscription(ctx context.Context, stream *memoryStream, afterSeq int64, out chan<- StreamEvent) {
 	defer close(out)
 
 	done := ctx.Done()
@@ -268,9 +341,9 @@ func (m *MemoryStreamStore) pumpSubscription(ctx context.Context, stream *memory
 	defer waitBroadcast()
 	defer close(stopBroadcast)
 
-	nextIndex := startIndex
+	nextSeq := afterSeq
 	for {
-		ev, ok := m.waitNextSubscriptionEvent(ctx, stream, &nextIndex)
+		ev, ok := m.waitNextSubscriptionEvent(ctx, stream, &nextSeq)
 		if !ok {
 			return
 		}
@@ -307,12 +380,14 @@ func (m *MemoryStreamStore) broadcastOnDone(done <-chan struct{}, stop <-chan st
 	return watcher.Wait
 }
 
-func (m *MemoryStreamStore) waitNextSubscriptionEvent(ctx context.Context, stream *memoryStream, nextIndex *int) (StreamEvent, bool) {
+func (m *MemoryStreamStore) waitNextSubscriptionEvent(ctx context.Context, stream *memoryStream, nextSeq *int64) (StreamEvent, bool) {
 	for {
 		m.mu.Lock()
 
-		for *nextIndex >= len(stream.events) && !stream.closed && ctx.Err() == nil {
+		idx := streamEventIndexAfterSeq(stream.events, *nextSeq)
+		for idx >= len(stream.events) && !stream.closed && ctx.Err() == nil {
 			stream.cond.Wait()
+			idx = streamEventIndexAfterSeq(stream.events, *nextSeq)
 		}
 
 		if ctx.Err() != nil {
@@ -320,7 +395,7 @@ func (m *MemoryStreamStore) waitNextSubscriptionEvent(ctx context.Context, strea
 			return StreamEvent{}, false
 		}
 
-		if *nextIndex >= len(stream.events) {
+		if idx >= len(stream.events) {
 			// No buffered events left.
 			if stream.closed {
 				m.mu.Unlock()
@@ -330,8 +405,8 @@ func (m *MemoryStreamStore) waitNextSubscriptionEvent(ctx context.Context, strea
 			continue
 		}
 
-		ev := stream.events[*nextIndex]
-		(*nextIndex)++
+		ev := stream.events[idx]
+		*nextSeq = ev.seq
 
 		data := make([]byte, len(ev.data))
 		copy(data, ev.data)
@@ -341,6 +416,12 @@ func (m *MemoryStreamStore) waitNextSubscriptionEvent(ctx context.Context, strea
 
 		return StreamEvent{ID: id, Data: data}, true
 	}
+}
+
+func streamEventIndexAfterSeq(events []memoryStreamEvent, seq int64) int {
+	return sort.Search(len(events), func(i int) bool {
+		return events[i].seq > seq
+	})
 }
 
 func (m *MemoryStreamStore) StreamForEvent(_ context.Context, sessionID, eventID string) (string, error) {

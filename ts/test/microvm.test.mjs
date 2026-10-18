@@ -19,6 +19,7 @@ import {
   MICROVM_ERROR_LIFECYCLE_HOOK_FAILED,
   MICROVM_ERROR_LIFECYCLE_INCOMPLETE,
   MICROVM_ERROR_RAW_SDK_ESCAPE_HATCH,
+  MICROVM_ERROR_SESSION_OWNER_MISMATCH,
   MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
   MICROVM_ERROR_UNAUTHENTICATED_CONTROLLER,
   MicroVMCommand,
@@ -1566,6 +1567,121 @@ test("microvm real controller uses canonical commands and stores only token meta
   assert.equal(terminated.state, MicroVMRealState.Terminated);
 });
 
+test("microvm real controller enforces session ownership on keyed loads", async () => {
+  const provider = createFakeMicroVMProvider(new Date(0));
+  const registry = createMemoryMicroVMSessionRegistry();
+  const controller = createRealMicroVMController(provider, registry, {
+    controller_id: "controller-1",
+    ids: { newID: () => "owned-session" },
+    clock: { now: () => new Date(1000) },
+    logging: { disabled: true },
+  });
+
+  const run = await controller.handle(controllerRequest({ session_id: "" }));
+  assert.equal(run.error, undefined);
+  assert.equal(run.session_id, "owned-session");
+
+  const otherAuth = {
+    subject: "subject-2",
+    tenant_id: "tenant-1",
+    namespace: "namespace-1",
+  };
+  const other = (overrides = {}) =>
+    controllerRequest({
+      session_id: "owned-session",
+      auth_context: otherAuth,
+      ...overrides,
+    });
+
+  const sameOwnerGet = await controller.handle(
+    controllerRequest({
+      command: MicroVMCommand.Get,
+      request_id: "req-owner-get",
+      session_id: "owned-session",
+    }),
+  );
+  assert.equal(sameOwnerGet.error, undefined);
+
+  for (const [command, requestID] of [
+    [MicroVMCommand.Get, "req-other-get"],
+    [MicroVMCommand.Suspend, "req-other-suspend"],
+    [MicroVMCommand.Resume, "req-other-resume"],
+    [MicroVMCommand.Terminate, "req-other-terminate"],
+    [MicroVMCommand.AuthToken, "req-other-auth-token"],
+    [MicroVMCommand.ShellAuthToken, "req-other-shell-token"],
+  ]) {
+    const denied = await controller.handle(
+      other({
+        command,
+        request_id: requestID,
+        allowed_port_scope: [{ port: 443 }],
+      }),
+    );
+    assert.equal(
+      denied.error?.code,
+      MICROVM_ERROR_SESSION_OWNER_MISMATCH,
+      `${command} must be denied for a different subject`,
+    );
+  }
+
+  await assert.rejects(
+    () =>
+      controller.invoke({
+        request_id: "req-other-invoke",
+        tenant_id: "tenant-1",
+        namespace: "namespace-1",
+        auth_context: otherAuth,
+        session_id: "owned-session",
+        method: "GET",
+        path: "ping",
+      }),
+    (err) => err?.code === MICROVM_ERROR_SESSION_OWNER_MISMATCH,
+  );
+
+  // List semantics are unchanged: the registry lister is still tenant-bound,
+  // and ownership is not applied to the listed records.
+  const listedByOther = await controller.handle(
+    other({ command: MicroVMCommand.List, request_id: "req-other-list" }),
+  );
+  assert.equal(listedByOther.error, undefined);
+  assert.equal(listedByOther.sessions.length, 1);
+  assert.equal(listedByOther.sessions[0].session_id, "owned-session");
+
+  const stored = await registry.get({
+    tenant_id: "tenant-1",
+    namespace: "namespace-1",
+    session_id: "owned-session",
+  });
+  assert.equal(stored.auth_subject, "subject-1");
+  assert.equal(stored.state, MicroVMRealState.Running);
+
+  // A same-subject token refresh preserves the stored owner.
+  const token = await controller.handle(
+    controllerRequest({
+      command: MicroVMCommand.AuthToken,
+      request_id: "req-owner-token",
+      session_id: "owned-session",
+      allowed_port_scope: [{ port: 443 }],
+    }),
+  );
+  assert.equal(token.error, undefined);
+  const refreshed = await registry.get({
+    tenant_id: "tenant-1",
+    namespace: "namespace-1",
+    session_id: "owned-session",
+  });
+  assert.equal(refreshed.auth_subject, "subject-1");
+
+  const terminated = await controller.handle(
+    controllerRequest({
+      command: MicroVMCommand.Terminate,
+      request_id: "req-owner-terminate",
+      session_id: "owned-session",
+    }),
+  );
+  assert.equal(terminated.state, MicroVMRealState.Terminated);
+});
+
 test("microvm real controller carries execution role from environment", async () => {
   const roleArn = "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole";
   const previous = process.env[MICROVM_ENV_EXECUTION_ROLE_ARN];
@@ -1960,6 +2076,62 @@ test("microvm controller route adapter enforces auth and tenant binding", async 
     },
   });
   assert.equal(denied.status, 401);
+});
+
+test("microvm controller route adapter returns 403 for a session owner mismatch", async () => {
+  const provider = createFakeMicroVMProvider(new Date(0));
+  const registry = createMemoryMicroVMSessionRegistry();
+  const controller = createRealMicroVMController(provider, registry, {
+    ids: { newID: () => "owner-session" },
+    clock: { now: () => new Date(1000) },
+    logging: { disabled: true },
+  });
+  const owner = createApp({
+    tier: "p1",
+    authHook: () => "identity:owner",
+  });
+  registerMicroVMControllerRoutes(owner, controller);
+
+  const run = await owner.serve({
+    method: "POST",
+    path: "/microvms",
+    headers: {
+      "content-type": ["application/json"],
+      "x-tenant-id": ["tenant-1"],
+      "x-request-id": ["req-owner-run"],
+    },
+    body: Buffer.from(
+      JSON.stringify({
+        namespace: "namespace-1",
+        image_ref: "image-ref",
+        image_version: "1",
+        network_connector_ref: "network-ref",
+        session_spec: { metadata: { safe: "ok" } },
+      }),
+      "utf8",
+    ),
+  });
+  assert.equal(run.status, 200);
+
+  const other = createApp({
+    tier: "p1",
+    authHook: () => "identity:other",
+  });
+  registerMicroVMControllerRoutes(other, controller);
+  const denied = await other.serve({
+    method: "GET",
+    path: "/microvms/owner-session",
+    query: { namespace: ["namespace-1"] },
+    headers: {
+      "x-tenant-id": ["tenant-1"],
+      "x-request-id": ["req-owner-get"],
+    },
+  });
+  assert.equal(denied.status, 403);
+  assert.equal(
+    jsonBody(denied).error.code,
+    MICROVM_ERROR_SESSION_OWNER_MISMATCH,
+  );
 });
 
 test("microvm controller route adapter binds tenant to the verified claim", async () => {
@@ -2412,4 +2584,54 @@ test("microvm AWS provider bounds invoke responses while reading", async () => {
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("pre-auth policy hook sees only the requested tenant", async () => {
+  const policyViews = [];
+  const handlerViews = [];
+  const app = createApp({
+    tier: "p2",
+    authHook: () => "subject-1",
+    policyHook: (ctx) => {
+      policyViews.push({
+        tenantId: ctx.tenantId,
+        requestedTenantId: ctx.requestedTenantId,
+      });
+      return undefined;
+    },
+  });
+  app.handle(
+    "GET",
+    "/secure",
+    (ctx) => {
+      handlerViews.push({
+        tenantId: ctx.tenantId,
+        requestedTenantId: ctx.requestedTenantId,
+      });
+      return {
+        status: 200,
+        headers: {},
+        cookies: [],
+        body: Buffer.from("ok", "utf8"),
+        isBase64: false,
+      };
+    },
+    { authRequired: true },
+  );
+
+  const response = await app.serve({
+    method: "GET",
+    path: "/secure",
+    headers: { "x-tenant-id": ["caller-tenant"] },
+    body: Buffer.alloc(0),
+  });
+  assert.equal(response.status, 200);
+
+  assert.equal(policyViews.length, 1);
+  assert.equal(policyViews[0].tenantId, "");
+  assert.equal(policyViews[0].requestedTenantId, "caller-tenant");
+
+  assert.equal(handlerViews.length, 1);
+  assert.equal(handlerViews[0].tenantId, "caller-tenant");
+  assert.equal(handlerViews[0].requestedTenantId, "caller-tenant");
 });

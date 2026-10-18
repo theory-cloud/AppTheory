@@ -21,9 +21,17 @@ import (
 )
 
 const (
-	localBearerHeader = "Bearer local-demo-only"
-	localProviderID   = "apptheory.local.microvm.fake"
+	demoBearerTokenEnv = "MICROVM_DEMO_BEARER_TOKEN"
+	localProviderID    = "apptheory.local.microvm.fake"
 )
+
+func demoBearerAuthorization() (string, error) {
+	token := strings.TrimSpace(os.Getenv(demoBearerTokenEnv))
+	if token == "" {
+		return "", fmt.Errorf("%s must be set to a non-empty demo bearer token", demoBearerTokenEnv)
+	}
+	return "Bearer " + token, nil
+}
 
 type appOptions struct {
 	clock    clock
@@ -98,6 +106,11 @@ func buildApp(options ...appOption) (*apptheory.App, error) {
 		return buildAWSApp(context.Background())
 	}
 
+	expectedAuthorization, err := demoBearerAuthorization()
+	if err != nil {
+		return nil, err
+	}
+
 	now := time.Date(2026, 6, 25, 8, 0, 0, 0, time.UTC)
 	opts := appOptions{
 		clock:    clock{now: now},
@@ -143,7 +156,7 @@ func buildApp(options ...appOption) (*apptheory.App, error) {
 	app := apptheory.New(
 		apptheory.WithTier(apptheory.TierP1),
 		apptheory.WithClock(opts.clock),
-		apptheory.WithAuthHook(localAuthHook),
+		apptheory.WithAuthHook(localAuthHook(expectedAuthorization)),
 	)
 	if _, err := microvm.RegisterControllerRoutes(app, controller); err != nil {
 		return nil, err
@@ -152,6 +165,10 @@ func buildApp(options ...appOption) (*apptheory.App, error) {
 }
 
 func buildAWSApp(ctx context.Context) (*apptheory.App, error) {
+	expectedAuthorization, err := demoBearerAuthorization()
+	if err != nil {
+		return nil, err
+	}
 	db, err := tabletheory.NewLambdaOptimized()
 	if err != nil {
 		return nil, fmt.Errorf("tabletheory init: %w", err)
@@ -174,7 +191,7 @@ func buildAWSApp(ctx context.Context) (*apptheory.App, error) {
 	}
 	app := apptheory.New(
 		apptheory.WithTier(apptheory.TierP1),
-		apptheory.WithAuthHook(localAuthHook),
+		apptheory.WithAuthHook(localAuthHook(expectedAuthorization)),
 	)
 	if _, err := microvm.RegisterControllerRoutes(app, controller); err != nil {
 		return nil, err
@@ -182,17 +199,19 @@ func buildAWSApp(ctx context.Context) (*apptheory.App, error) {
 	return app, nil
 }
 
-func localAuthHook(ctx *apptheory.Context) (string, error) {
-	if ctx == nil {
-		return "", nil
+func localAuthHook(expectedAuthorization string) apptheory.AuthHook {
+	return func(ctx *apptheory.Context) (string, error) {
+		if ctx == nil {
+			return "", nil
+		}
+		if expectedAuthorization == "" || strings.TrimSpace(ctx.Header("authorization")) != expectedAuthorization {
+			return "", nil
+		}
+		if strings.TrimSpace(ctx.TenantID) == "" || strings.TrimSpace(ctx.Header("x-namespace-id")) == "" {
+			return "", nil
+		}
+		return "local-demo-subject", nil
 	}
-	if strings.TrimSpace(ctx.Header("authorization")) != localBearerHeader {
-		return "", nil
-	}
-	if strings.TrimSpace(ctx.TenantID) == "" || strings.TrimSpace(ctx.Header("x-namespace-id")) == "" {
-		return "", nil
-	}
-	return "local-demo-subject", nil
 }
 
 type localProvider struct {

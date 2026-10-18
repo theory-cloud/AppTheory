@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import http
+import inspect
+import logging
 import threading
 import urllib.parse
+import weakref
 from typing import Any
 
 from apptheory.errors import AppError, error_response
@@ -28,15 +32,45 @@ _APIGATEWAY_V2_STREAMING_BODY_MAX_BYTES = 4 * 1024 * 1024
 # an empty 200.
 _APIGATEWAY_V2_STREAMING_BODY_TIMEOUT = 5.0
 
+# _STREAMING_BODY_MAX_CHUNKS bounds how many chunk reads a buffered adapter
+# performs, independently of the byte budget. A stream that yields empty chunks
+# forever adds no bytes, so the byte budget alone never fires and the drain
+# worker would spin until the time budget elapsed. Empty chunks count toward
+# this iteration cap, so a zero-length-chunk loop fails fast and deterministically
+# with the budget error. A body that trips the cap is a delivery failure (500),
+# not a size violation (413): it may have carried no bytes at all.
+_STREAMING_BODY_MAX_CHUNKS = 100_000
+
+_LOGGER = logging.getLogger(__name__)
+
+# Drain workers are tracked (weakly) from start until they settle so operators
+# can observe a worker the adapter abandoned at the unwind grace. Only the
+# Thread is retained here, never the stream or its chunks.
+_drain_workers_lock = threading.Lock()
+_drain_workers: weakref.WeakSet[threading.Thread] = weakref.WeakSet()
+
+# Framework wrappers that forward close() down a chain without exposing the
+# producer's cooperative release hooks. A body the adapter gives up on may be
+# wrapped by both (the byte limiter wraps the canonical stream), so the release
+# walk follows these forwarding chains to reach the producer. They are matched by
+# identity rather than imported so this module keeps no dependency on them.
+_STREAM_RELEASE_FORWARDERS = frozenset(
+    {
+        ("apptheory.app", "_LimitedResponseStream"),
+        ("apptheory.response", "_CanonicalBodyStream"),
+    }
+)
+
 # There is no unbounded unwind wait here: a body the adapter gives up on is always
-# interrupted (close) and then waited for only up to _STREAMING_BODY_UNWIND_GRACE.
-# A producer that observes the close settles well within that window; a producer
-# blocked inside a call it does not leave is not detached and not claimed
-# terminated: the adapter stops waiting at the bound and the Lambda function
-# timeout remains its outer bound.
+# released (close, then any cooperative cancel/aclose hook) and then waited for
+# only up to _STREAMING_BODY_UNWIND_GRACE. A producer that observes the release
+# settles well within that window; a producer blocked inside a call it does not
+# leave cannot be preempted by Python, is not detached and not claimed
+# terminated: the adapter stops waiting at the bound, logs that the worker was
+# abandoned, and the Lambda function timeout remains its outer bound.
 
 # _STREAMING_BODY_UNWIND_GRACE bounds how long the buffered adapters wait for an
-# abandoned drain worker to settle after they unblock (close) the stream. An
+# abandoned drain worker to settle after they release (close/cancel) the stream. An
 # unbounded join here lets a single stalled stream hold the invocation until the
 # function timeout, which is the availability regression this bound prevents.
 _STREAMING_BODY_UNWIND_GRACE = 0.1
@@ -103,10 +137,17 @@ def _is_streaming_body_size_error(exc: Exception) -> bool:
     return isinstance(exc, AppError) and getattr(exc, "code", None) == "app.too_large"
 
 
-def _read_all_bounded(body_stream: Any, max_bytes: int) -> bytes:
+def _read_all_bounded(
+    body_stream: Any,
+    max_bytes: int,
+    max_chunks: int = _STREAMING_BODY_MAX_CHUNKS,
+) -> bytes:
     chunks: list[bytes] = []
     total = 0
-    for chunk in body_stream:
+    for index, chunk in enumerate(body_stream, start=1):
+        # Counted before the chunk is examined so empty chunks consume the cap.
+        if index > max_chunks:
+            raise _StreamingBodyBudgetError("streaming body exceeded the drain chunk budget")
         data = bytes(chunk or b"")
         total += len(data)
         if total > max_bytes:
@@ -115,15 +156,61 @@ def _read_all_bounded(body_stream: Any, max_bytes: int) -> bytes:
     return b"".join(chunks)
 
 
-def _unblock_streaming_body(body_stream: Any) -> None:
-    """Close a streaming body the adapter is abandoning so its reader can exit.
+def _stream_release_targets(body_stream: Any) -> list[Any]:
+    """Return the stream and the producers it forwards to.
 
-    Closing a generator raises ``GeneratorExit`` at its suspend point, which runs
-    its ``finally`` blocks and unwinds the drain worker. A source that is blocked
-    inside a call it does not leave (a live listener waiting on a queue) cannot be
-    interrupted by construction.
+    Response normalization and the byte limiter wrap a handler stream in
+    forwarding wrappers that expose ``close`` only. The cooperative release
+    hooks (``cancel``/``aclose``) must reach the wrapped producer, so follow that
+    chain instead of stopping at the outermost wrapper.
     """
-    close = getattr(body_stream, "close", None)
+    targets: list[Any] = []
+    seen: set[int] = set()
+    current = body_stream
+    # A body may be normalized more than once, so several forwarding layers can
+    # stack; the visited set stops a malformed self-referential chain and the
+    # bound is a defensive ceiling, not an expected depth.
+    while current is not None and id(current) not in seen and len(targets) < 16:
+        targets.append(current)
+        seen.add(id(current))
+        wrapper_type = type(current)
+        if (
+            getattr(wrapper_type, "__module__", ""),
+            getattr(wrapper_type, "__name__", ""),
+        ) not in _STREAM_RELEASE_FORWARDERS:
+            break
+        current = getattr(current, "_inner", None)
+    return targets
+
+
+async def _await_release(result: Any) -> None:
+    await result
+
+
+def _settle_awaitable(result: Any) -> None:
+    """Run an awaitable release hook without blocking or leaking a coroutine.
+
+    ``aclose`` returns a coroutine. Without a running event loop it is driven to
+    completion here. With one already running on this thread (which cannot make
+    progress while this synchronous adapter is executing) there is no way to
+    await it without launching an unjoined task, so the coroutine is closed
+    instead; the synchronous close/cancel hooks have already run.
+    """
+    if not inspect.isawaitable(result):
+        return
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        try:
+            asyncio.run(_await_release(result))
+        except Exception:  # noqa: BLE001
+            _discard_awaitable(result)
+        return
+    _discard_awaitable(result)
+
+
+def _discard_awaitable(result: Any) -> None:
+    close = getattr(result, "close", None)
     if not callable(close):
         return
     try:
@@ -132,18 +219,76 @@ def _unblock_streaming_body(body_stream: Any) -> None:
         return
 
 
+def _call_stream_release(target: Any, name: str) -> None:
+    release = getattr(target, name, None)
+    if not callable(release):
+        return
+    try:
+        result = release()
+    except Exception:  # noqa: BLE001
+        return
+    try:
+        _settle_awaitable(result)
+    except Exception:  # noqa: BLE001
+        return
+
+
+def _unblock_streaming_body(body_stream: Any) -> None:
+    """Release a streaming body the adapter is abandoning so its reader can exit.
+
+    Closing a generator raises ``GeneratorExit`` at its suspend point, which runs
+    its ``finally`` blocks and unwinds the drain worker. A cooperative producer
+    may also expose ``cancel`` (or an async ``aclose``) to release a reader
+    blocked inside a call; those hooks are attempted in addition to ``close``,
+    each guarded so one failing hook cannot prevent the others. A source that is
+    blocked inside a call it does not leave (a live listener waiting on a queue)
+    still cannot be interrupted by construction.
+    """
+    targets = _stream_release_targets(body_stream)
+    if targets:
+        _call_stream_release(targets[0], "close")
+    for target in targets:
+        _call_stream_release(target, "cancel")
+        _call_stream_release(target, "aclose")
+
+
+def _track_drain_worker(worker: threading.Thread) -> None:
+    with _drain_workers_lock:
+        _drain_workers.add(worker)
+
+
+def _forget_drain_worker(worker: threading.Thread) -> None:
+    with _drain_workers_lock:
+        _drain_workers.discard(worker)
+
+
+def _live_streaming_body_drain_workers() -> int:
+    """Return how many drain workers started by this module are still alive.
+
+    An abandoned worker stays tracked (it is only weakly referenced, so it is
+    dropped once the thread object is collected) so the residual is observable
+    instead of being silently claimed terminated.
+    """
+    with _drain_workers_lock:
+        workers = list(_drain_workers)
+    return sum(1 for worker in workers if worker.is_alive())
+
+
 def _drain_streaming_body(body_stream: Any, max_bytes: int, timeout: float) -> bytes:
     """Drain a streaming body under a bounded byte and time budget.
 
     The drain runs in a worker thread so a never-terminating stream (a live
     listener) cannot hold the invocation past its budget: ``join(timeout)``
-    enforces that budget. When the budget expires the adapter closes the stream so
-    the worker can exit, and then waits for it for a bounded unwind grace window:
-    a worker the adapter started must not still be reading when the adapter
-    returns, because the Lambda execution environment is frozen once the handler
-    returns and detached work resumes at an unpredictable time (or never). A
-    source that cannot be interrupted by construction is not detached and not
-    claimed terminated -- the adapter stops waiting at the grace window and the
+    enforces that budget. Reads are also capped by the chunk count, so a stream
+    of empty chunks cannot spin without ever adding bytes. When the budget
+    expires the adapter releases the stream (close plus any cooperative
+    cancel/aclose hook) so the worker can exit, and then waits for it for a
+    bounded unwind grace window: a worker the adapter started must not still be
+    reading when the adapter returns, because the Lambda execution environment is
+    frozen once the handler returns and detached work resumes at an unpredictable
+    time (or never). A source that cannot be interrupted by construction is not
+    detached and not claimed terminated -- the adapter stops waiting at the grace
+    window, logs the abandoned worker (which stays tracked while alive), and the
     Lambda function timeout remains its outer bound.
 
     A stream that closed empty only because the budget fired fails closed
@@ -153,7 +298,7 @@ def _drain_streaming_body(body_stream: Any, max_bytes: int, timeout: float) -> b
 
     def _run() -> None:
         try:
-            box["body"] = _read_all_bounded(body_stream, max_bytes)
+            box["body"] = _read_all_bounded(body_stream, max_bytes, _STREAMING_BODY_MAX_CHUNKS)
         except Exception as exc:  # noqa: BLE001
             box["error"] = exc
 
@@ -163,11 +308,21 @@ def _drain_streaming_body(body_stream: Any, max_bytes: int, timeout: float) -> b
         daemon=True,
     )
     worker.start()
+    _track_drain_worker(worker)
     worker.join(timeout=timeout)
     if worker.is_alive():
         _unblock_streaming_body(body_stream)
         worker.join(timeout=_STREAMING_BODY_UNWIND_GRACE)
+        if worker.is_alive():
+            _LOGGER.warning(
+                "apptheory: streaming body drain worker still alive %.3fs after close/cancel; "
+                "abandoning it to the function timeout",
+                _STREAMING_BODY_UNWIND_GRACE,
+            )
+        else:
+            _forget_drain_worker(worker)
         raise _StreamingBodyBudgetError("streaming body did not terminate within the adapter budget")
+    _forget_drain_worker(worker)
     error = box.get("error")
     if error is not None:
         raise error

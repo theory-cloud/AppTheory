@@ -89,6 +89,14 @@ export class Context {
     requestId;
     traceId;
     tenantId;
+    /**
+     * The caller-supplied tenant extracted before authentication, if any.
+     *
+     * This value is untrusted and must never be used for authorization. It is
+     * provided so pre-auth hooks (for example the P2 PolicyHook) can inspect the
+     * requested tenant without being handed the authoritative `tenantId`.
+     */
+    requestedTenantId;
     authIdentity;
     remainingMs;
     middlewareTrace;
@@ -128,6 +136,7 @@ export class Context {
         this.requestId = options.requestId ?? "";
         this.traceId = options.traceId ?? this.request.traceId ?? "";
         this.tenantId = options.tenantId ?? "";
+        this.requestedTenantId = options.requestedTenantId ?? "";
         this.authIdentity = options.authIdentity ?? "";
         this.clientRequestId = options.clientRequestId ?? "";
         this.tenantBound = options.tenantBound === true;
@@ -166,6 +175,20 @@ export class Context {
         if (!k)
             return undefined;
         return this._values.get(k);
+    }
+    /**
+     * Returns a shallow policy-hook view of this context.
+     *
+     * The view shares request-scoped state but clears the authoritative
+     * `tenantId`, so a pre-auth PolicyHook cannot mistake a caller-supplied
+     * tenant for the verified one. The untrusted caller value remains available
+     * as `requestedTenantId`.
+     */
+    policyHookView() {
+        const view = Object.create(Context.prototype);
+        Object.assign(view, this);
+        view.tenantId = "";
+        return view;
     }
     /** Returns normalized source-provenance metadata for the request. */
     sourceProvenance() {

@@ -649,6 +649,10 @@ type Options struct {
 	OnRateLimit  func(*http.Request, *limited.LimitDecision)
 
 	SkipRequest func(*http.Request) bool
+
+	TrustedProxyCIDRs []string
+
+	AllowCredentialIdentity bool
 }
 
 func Middleware(Options) func(http.HandlerFunc) http.HandlerFunc
@@ -2028,13 +2032,15 @@ type Context struct {
 	clock   Clock
 	ids     IDGenerator
 
-	RequestID       string
-	TraceID         string
-	TenantID        string
-	AuthIdentity    string
-	AuthPrincipal   *AuthPrincipal
-	RemainingMS     int
-	MiddlewareTrace []string
+	RequestID string
+	TraceID   string
+	TenantID  string
+
+	RequestedTenantID string
+	AuthIdentity      string
+	AuthPrincipal     *AuthPrincipal
+	RemainingMS       int
+	MiddlewareTrace   []string
 
 	TenantBound bool
 
@@ -3246,16 +3252,20 @@ type MemorySessionStore struct {
 type MemorySessionStoreOption func(*MemorySessionStore)
 
 type MemoryStreamStore struct {
-	mu       sync.Mutex
-	idGen    apptheory.IDGenerator
-	sessions map[string]*memoryStreamSession
+	mu                  sync.Mutex
+	idGen               apptheory.IDGenerator
+	sessions            map[string]*memoryStreamSession
+	maxEventBytes       int
+	maxEventsPerSession int
+	maxBytesPerSession  int
 }
 
 type MemoryStreamStoreOption func(*MemoryStreamStore)
 
 type MemoryTaskStore struct {
-	mu       sync.RWMutex
-	sessions map[string]map[string]*TaskRecord
+	mu                 sync.RWMutex
+	sessions           map[string]map[string]*TaskRecord
+	maxTasksPerSession int
 }
 
 type OriginValidator func(string) bool
@@ -3381,6 +3391,7 @@ type Server struct {
 	extensionCapabilities     map[string]map[string]any
 	cacheableResults          CacheableResultConfig
 	includeServerInfoMetadata bool
+	verboseHandlerErrors      bool
 
 	resourceSubscribeHook   ResourceSubscriptionHook
 	resourceUnsubscribeHook ResourceSubscriptionHook
@@ -3405,6 +3416,7 @@ type Session struct {
 	ID        string            `json:"id"`
 	CreatedAt time.Time         `json:"createdAt"`
 	ExpiresAt time.Time         `json:"expiresAt"`
+	Principal string            `json:"principal,omitempty"`
 	Data      map[string]string `json:"data,omitempty"`
 }
 
@@ -3646,13 +3658,21 @@ func WithServerInfoMetadata(bool) ServerOption
 
 func WithSessionStore(SessionStore) ServerOption
 
+func WithStreamEventByteLimit(int) MemoryStreamStoreOption
+
+func WithStreamEventsPerSessionLimit(int) MemoryStreamStoreOption
+
 func WithStreamIDGenerator(apptheory.IDGenerator) MemoryStreamStoreOption
+
+func WithStreamSessionByteLimit(int) MemoryStreamStoreOption
 
 func WithStreamStore(StreamStore) ServerOption
 
 func WithTaskRuntime(TaskRuntimeOptions) ServerOption
 
 func WithToolContextHook(ToolContextHook) ServerOption
+
+func WithVerboseHandlerErrors(bool) ServerOption
 
 func WrapStreamingTool[Args any](
 	ToolLifecycleOptions[Args],
@@ -4107,6 +4127,8 @@ const ErrorCodeRawSDKEscapeHatch = "m15.microvm.raw_sdk_escape_hatch"
 const ErrorCodeRealLifecycleIncomplete = "m16.microvm.lifecycle_incomplete"
 
 const ErrorCodeRouteContractIncomplete = "m16.microvm.route_contract_incomplete"
+
+const ErrorCodeSessionOwnerMismatch = "m15.microvm.session_owner_mismatch"
 
 const ErrorCodeSessionRegistryIncomplete = "m15.microvm.session_registry_incomplete"
 

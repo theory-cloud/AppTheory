@@ -449,6 +449,9 @@ export const MICROVM_ERROR_INVALID_CONTROLLER_REQUEST =
 export const MICROVM_ERROR_CONTROLLER_COMMAND_FAILED =
   "m15.microvm.controller_command_failed";
 
+export const MICROVM_ERROR_SESSION_OWNER_MISMATCH =
+  "m15.microvm.session_owner_mismatch";
+
 export const MICROVM_CONTROLLER_AUTH_DEFAULT_DENY = "deny";
 
 export const MICROVM_SESSION_REGISTRY_MODEL_NAME =

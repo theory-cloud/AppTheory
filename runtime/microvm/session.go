@@ -244,6 +244,15 @@ func (r SessionRecord) Key() SessionKey {
 	return SessionKey{TenantID: strings.TrimSpace(r.TenantID), Namespace: strings.TrimSpace(r.Namespace), SessionID: strings.TrimSpace(r.SessionID)}
 }
 
+// ownedBy reports whether subject matches the record's stored owner. An absent
+// stored owner or subject establishes no mismatch; a stored owner may only be
+// changed by creating the record, never by a refresh or update.
+func (r SessionRecord) ownedBy(subject string) bool {
+	owner := strings.TrimSpace(r.AuthSubject)
+	subject = strings.TrimSpace(subject)
+	return owner == "" || subject == "" || owner == subject
+}
+
 // Key returns the tenant/namespace/session key for a status record.
 func (s SessionStatus) Key() SessionKey {
 	return SessionKey{TenantID: strings.TrimSpace(s.TenantID), Namespace: strings.TrimSpace(s.Namespace), SessionID: strings.TrimSpace(s.SessionID)}

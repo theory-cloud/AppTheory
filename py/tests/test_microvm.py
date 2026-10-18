@@ -1501,6 +1501,116 @@ class MicroVMLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(app.STATE_TERMINATED, terminated.state)
 
+    def test_real_controller_enforces_session_ownership_on_keyed_loads(self) -> None:
+        provider = app.create_fake_microvm_provider(now=1.0)
+        registry = app.create_memory_microvm_session_registry()
+        controller = app.create_real_microvm_controller(
+            provider,
+            registry,
+            controller_id="controller-1",
+            id_generator=lambda: "owned-session",
+            clock=lambda: 10.0,
+            logging={"disabled": True},
+        )
+
+        run = controller.handle(self._controller_request(session_id=""))
+        self.assertIsNone(run.error)
+        self.assertEqual("owned-session", run.session_id)
+
+        other_auth = {
+            "subject": "subject-2",
+            "tenant_id": "tenant-1",
+            "namespace": "namespace-1",
+        }
+
+        same_owner_get = controller.handle(
+            self._controller_request(
+                command=app.COMMAND_GET,
+                request_id="req-owner-get",
+                session_id="owned-session",
+            )
+        )
+        self.assertIsNone(same_owner_get.error)
+
+        denied_commands = [
+            (app.COMMAND_GET, "req-other-get"),
+            (app.COMMAND_SUSPEND, "req-other-suspend"),
+            (app.COMMAND_RESUME, "req-other-resume"),
+            (app.COMMAND_TERMINATE, "req-other-terminate"),
+            (app.COMMAND_AUTH_TOKEN, "req-other-auth-token"),
+            (app.COMMAND_SHELL_AUTH_TOKEN, "req-other-shell-token"),
+        ]
+        for command, request_id in denied_commands:
+            denied = controller.handle(
+                self._controller_request(
+                    command=command,
+                    request_id=request_id,
+                    session_id="owned-session",
+                    auth_context=other_auth,
+                    allowed_port_scope=[{"port": 443}],
+                )
+            )
+            self.assertIsNotNone(denied.error, command)
+            self.assertEqual(
+                app.MICROVM_ERROR_SESSION_OWNER_MISMATCH,
+                denied.error.code if denied.error else "",
+                command,
+            )
+
+        with self.assertRaises(app.MicroVMSafeError) as invoke_ctx:
+            controller.invoke(
+                {
+                    "request_id": "req-other-invoke",
+                    "tenant_id": "tenant-1",
+                    "namespace": "namespace-1",
+                    "auth_context": other_auth,
+                    "session_id": "owned-session",
+                    "method": "GET",
+                    "path": "ping",
+                }
+            )
+        self.assertEqual(app.MICROVM_ERROR_SESSION_OWNER_MISMATCH, invoke_ctx.exception.code)
+
+        # List semantics are unchanged: the registry lister is still tenant-bound,
+        # and ownership is not applied to the listed records.
+        listed_by_other = controller.handle(
+            self._controller_request(
+                command=app.COMMAND_LIST,
+                request_id="req-other-list",
+                session_id="",
+                auth_context=other_auth,
+            )
+        )
+        self.assertIsNone(listed_by_other.error)
+        self.assertEqual(1, len(listed_by_other.sessions))
+        self.assertEqual("owned-session", listed_by_other.sessions[0].session_id)
+
+        stored = registry.get(("tenant-1", "namespace-1", "owned-session"))
+        self.assertEqual("subject-1", stored.auth_subject)
+        self.assertEqual(app.STATE_RUNNING, stored.state)
+
+        # A same-subject token refresh preserves the stored owner.
+        token = controller.handle(
+            self._controller_request(
+                command=app.COMMAND_AUTH_TOKEN,
+                request_id="req-owner-token",
+                session_id="owned-session",
+                allowed_port_scope=[{"port": 443}],
+            )
+        )
+        self.assertIsNone(token.error)
+        refreshed = registry.get(("tenant-1", "namespace-1", "owned-session"))
+        self.assertEqual("subject-1", refreshed.auth_subject)
+
+        terminated = controller.handle(
+            self._controller_request(
+                command=app.COMMAND_TERMINATE,
+                request_id="req-owner-terminate",
+                session_id="owned-session",
+            )
+        )
+        self.assertEqual(app.STATE_TERMINATED, terminated.state)
+
     def test_real_controller_carries_execution_role_from_environment(self) -> None:
         role_arn = "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole"
         base_provider = app.create_fake_microvm_provider(now=1.0)
@@ -1870,6 +1980,57 @@ class MicroVMLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(401, denied.status)
 
+    def test_real_controller_route_adapter_returns_403_for_session_owner_mismatch(self) -> None:
+        provider = app.create_fake_microvm_provider(now=1.0)
+        registry = app.create_memory_microvm_session_registry()
+        controller = app.create_real_microvm_controller(
+            provider,
+            registry,
+            id_generator=lambda: "owner-session",
+            clock=lambda: 10.0,
+            logging={"disabled": True},
+        )
+        owner = app.create_app(tier="p1", auth_hook=lambda ctx: "identity:owner")
+        app.register_microvm_controller_routes(owner, controller)
+
+        run = owner.serve(
+            app.Request(
+                method="POST",
+                path="/microvms",
+                headers={
+                    "content-type": ["application/json"],
+                    "x-tenant-id": ["tenant-1"],
+                    "x-request-id": ["req-owner-run"],
+                },
+                body=json.dumps(
+                    {
+                        "namespace": "namespace-1",
+                        "image_ref": "image-ref",
+                        "image_version": "1",
+                        "network_connector_ref": "network-ref",
+                        "session_spec": {"metadata": {"safe": "ok"}},
+                    }
+                ).encode("utf-8"),
+            )
+        )
+        self.assertEqual(200, run.status)
+
+        other = app.create_app(tier="p1", auth_hook=lambda ctx: "identity:other")
+        app.register_microvm_controller_routes(other, controller)
+        denied = other.serve(
+            app.Request(
+                method="GET",
+                path="/microvms/owner-session",
+                query={"namespace": ["namespace-1"]},
+                headers={"x-tenant-id": ["tenant-1"], "x-request-id": ["req-owner-get"]},
+            )
+        )
+        self.assertEqual(403, denied.status)
+        self.assertEqual(
+            app.MICROVM_ERROR_SESSION_OWNER_MISMATCH,
+            json.loads(denied.body.decode())["error"]["code"],
+        )
+
     def test_real_controller_route_adapter_binds_tenant_to_verified_claim(self) -> None:
         provider = app.create_fake_microvm_provider(now=1.0)
         registry = app.create_memory_microvm_session_registry()
@@ -2219,6 +2380,41 @@ class MicroVMProviderInvokeTests(unittest.TestCase):
             provider.invoke(self._invoke_input("https://evil.example.com"))
         self.assertEqual(app.MICROVM_ERROR_PROVIDER_REQUEST_INVALID, ctx.exception.code)
         self.assertEqual(0, handler.calls)
+
+
+class PreAuthPolicyContextTests(unittest.TestCase):
+    def test_policy_hook_sees_only_the_requested_tenant(self) -> None:
+        policy_views: list[tuple[str, str]] = []
+        handler_views: list[tuple[str, str]] = []
+
+        def policy_hook(ctx: app.Context) -> None:
+            policy_views.append((ctx.tenant_id, ctx.requested_tenant_id))
+            return None
+
+        def handler(ctx: app.Context) -> app.Response:
+            handler_views.append((ctx.tenant_id, ctx.requested_tenant_id))
+            return app.Response(status=200, headers={}, cookies=[], body=b"ok", is_base64=False)
+
+        runtime = app.create_app(
+            tier="p2",
+            auth_hook=lambda _ctx: "subject-1",
+            policy_hook=policy_hook,
+        )
+        runtime.handle("GET", "/secure", handler, auth_required=True)
+
+        response = runtime.serve(
+            app.Request(
+                method="GET",
+                path="/secure",
+                headers={"x-tenant-id": ["caller-tenant"]},
+                body=b"",
+            )
+        )
+        self.assertEqual(200, response.status)
+
+        self.assertEqual(1, len(policy_views))
+        self.assertEqual(("", "caller-tenant"), policy_views[0])
+        self.assertEqual([("caller-tenant", "caller-tenant")], handler_views)
 
 
 if __name__ == "__main__":

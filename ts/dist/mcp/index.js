@@ -1,6 +1,8 @@
 import { Buffer } from "node:buffer";
 import { defineModel, } from "@theory-cloud/tabletheory-ts";
 import { RandomIdGenerator } from "../ids.js";
+import { getLogger } from "../logger.js";
+import { bearerTokenClaimsFromContext } from "../oauth/index.js";
 export const MCP_PROTOCOL_VERSION = "2025-11-25";
 export const MCP_PROTOCOL_VERSION_2026_07_28 = "2026-07-28";
 export const MCP_PROTOCOL_VERSION_PRIOR = "2025-06-18";
@@ -30,6 +32,14 @@ const SERVER_INFO_METADATA_KEY = "io.modelcontextprotocol/serverInfo";
 const TASK_CANCELED_MESSAGE = "task canceled";
 const DEFAULT_TASK_TABLE_NAME = "mcp-tasks";
 const DEFAULT_STREAM_TABLE_NAME = "mcp-streams";
+const DEFAULT_STREAM_TTL_MINUTES = 60;
+const DEFAULT_STREAM_MAX_EVENT_BYTES = 10 * 1024 * 1024;
+const STREAM_EVENT_TOO_LARGE_MESSAGE = "stream event too large";
+const DEFAULT_MEMORY_STREAM_MAX_EVENT_BYTES = 10 * 1024 * 1024;
+const DEFAULT_MEMORY_STREAM_MAX_EVENTS_PER_SESSION = 10000;
+const DEFAULT_MEMORY_STREAM_MAX_TOTAL_BYTES_PER_SESSION = 64 * 1024 * 1024;
+const DEFAULT_MEMORY_TASK_MAX_PER_SESSION = 1000;
+const TASK_CAPACITY_EXCEEDED_MESSAGE = "Task capacity exceeded";
 export const MCP_CODE_PARSE_ERROR = -32700;
 export const MCP_CODE_INVALID_REQUEST = -32600;
 export const MCP_CODE_METHOD_NOT_FOUND = -32601;
@@ -343,8 +353,14 @@ export class MemoryMcpSessionStore {
 export class MemoryMcpStreamStore {
     sessions = new Map();
     idGenerator;
+    maxEventBytes;
+    maxEventsPerSession;
+    maxTotalBytesPerSession;
     constructor(options = {}) {
         this.idGenerator = options.idGenerator ?? new RandomIdGenerator();
+        this.maxEventBytes = positiveInteger(options.maxEventBytes, DEFAULT_MEMORY_STREAM_MAX_EVENT_BYTES);
+        this.maxEventsPerSession = positiveInteger(options.maxEventsPerSession, DEFAULT_MEMORY_STREAM_MAX_EVENTS_PER_SESSION);
+        this.maxTotalBytesPerSession = positiveInteger(options.maxTotalBytesPerSession, DEFAULT_MEMORY_STREAM_MAX_TOTAL_BYTES_PER_SESSION);
     }
     async create(sessionId) {
         const sid = normalizeRequired(sessionId, "missing session id");
@@ -357,12 +373,23 @@ export class MemoryMcpStreamStore {
         return streamId;
     }
     async append(sessionId, streamId, data) {
+        const payload = cloneBytes(data);
+        if (payload.length > this.maxEventBytes) {
+            throw new Error(STREAM_EVENT_TOO_LARGE_MESSAGE);
+        }
         const session = this.lookupSession(sessionId);
         const stream = this.lookupStream(session, streamId);
         session.nextSeq += 1;
         const eventId = String(session.nextSeq);
-        stream.events.push({ id: eventId, data: cloneBytes(data) });
+        stream.events.push({ id: eventId, data: payload });
         session.eventToStream.set(eventId, String(streamId ?? "").trim());
+        session.eventOrder.push(eventId);
+        session.eventCount += 1;
+        session.totalBytes += payload.length;
+        while (session.eventCount > this.maxEventsPerSession ||
+            session.totalBytes > this.maxTotalBytesPerSession) {
+            this.evictOldest(session);
+        }
         return eventId;
     }
     async close(sessionId, streamId) {
@@ -399,10 +426,42 @@ export class MemoryMcpStreamStore {
     ensureSession(sessionId) {
         let session = this.sessions.get(sessionId);
         if (!session) {
-            session = { nextSeq: 0, eventToStream: new Map(), streams: new Map() };
+            session = {
+                nextSeq: 0,
+                eventToStream: new Map(),
+                eventOrder: [],
+                eventCount: 0,
+                totalBytes: 0,
+                streams: new Map(),
+            };
             this.sessions.set(sessionId, session);
         }
         return session;
+    }
+    evictOldest(session) {
+        while (session.eventOrder.length > 0) {
+            const eventId = session.eventOrder.shift();
+            if (eventId === undefined) {
+                return;
+            }
+            const streamId = session.eventToStream.get(eventId);
+            if (!streamId) {
+                continue;
+            }
+            session.eventToStream.delete(eventId);
+            const stream = session.streams.get(streamId);
+            if (!stream) {
+                continue;
+            }
+            const index = stream.events.findIndex((event) => event.id === eventId);
+            if (index < 0) {
+                continue;
+            }
+            const [removed] = stream.events.splice(index, 1);
+            session.eventCount -= 1;
+            session.totalBytes -= removed?.data.length ?? 0;
+            return;
+        }
     }
     lookupSession(sessionId) {
         const sid = normalizeRequired(sessionId, "missing session id");
@@ -424,8 +483,10 @@ export class MemoryMcpStreamStore {
 export class MemoryMcpTaskStore {
     sessions = new Map();
     now;
+    maxTasksPerSession;
     constructor(options = {}) {
         this.now = options.now ?? (() => new Date());
+        this.maxTasksPerSession = positiveInteger(options.maxTasksPerSession, DEFAULT_MEMORY_TASK_MAX_PER_SESSION);
     }
     async create(task) {
         const record = cloneTaskRecord(task);
@@ -438,6 +499,16 @@ export class MemoryMcpTaskStore {
         }
         if (session.has(record.task.taskId)) {
             throw new Error("task already exists");
+        }
+        if (session.size >= this.maxTasksPerSession) {
+            this.reapExpired(session);
+            while (session.size >= this.maxTasksPerSession &&
+                this.evictOldestTerminal(session)) {
+                // Keep evicting terminal tasks until the incoming task fits.
+            }
+            if (session.size >= this.maxTasksPerSession) {
+                throw new Error(TASK_CAPACITY_EXCEEDED_MESSAGE);
+            }
         }
         session.set(record.task.taskId, record);
         return cloneTaskRecord(record);
@@ -508,6 +579,34 @@ export class MemoryMcpTaskStore {
     }
     async deleteSession(sessionId) {
         this.sessions.delete(String(sessionId ?? "").trim());
+    }
+    reapExpired(session) {
+        const now = this.now();
+        for (const [taskId, record] of session) {
+            if (this.expired(record, now)) {
+                session.delete(taskId);
+            }
+        }
+    }
+    expired(record, now) {
+        const createdAt = Date.parse(String(record.task.createdAt ?? ""));
+        if (!Number.isFinite(createdAt)) {
+            return false;
+        }
+        const ttl = Number(record.task.ttl ?? 0);
+        const duration = Number.isFinite(ttl) && ttl > 0 ? ttl : DEFAULT_TASK_MAX_TTL_MS;
+        return now.getTime() >= createdAt + duration;
+    }
+    evictOldestTerminal(session) {
+        const terminal = [...session.values()]
+            .filter((record) => taskStatusTerminal(record.task.status))
+            .sort(compareTaskRecords);
+        const oldest = terminal[0];
+        if (!oldest) {
+            return false;
+        }
+        session.delete(oldest.task.taskId);
+        return true;
     }
     record(lookup) {
         const sessionId = String(lookup.sessionId ?? "").trim();
@@ -646,10 +745,19 @@ export class DynamoMcpStreamStore {
     db;
     model;
     idGenerator;
+    now;
+    streamTtlMs;
+    maxEventBytes;
     constructor(db, options = {}) {
         this.db = db;
         this.model = options.model ?? defaultMcpStreamModel();
         this.idGenerator = options.idGenerator ?? new RandomIdGenerator();
+        this.now = options.now ?? (() => new Date());
+        this.streamTtlMs =
+            positiveInteger(options.streamTtlMinutes, envPositiveInteger("MCP_STREAM_TTL_MINUTES", DEFAULT_STREAM_TTL_MINUTES)) *
+                60 *
+                1000;
+        this.maxEventBytes = positiveInteger(options.maxEventBytes, envPositiveInteger("MCP_STREAM_MAX_EVENT_BYTES", DEFAULT_STREAM_MAX_EVENT_BYTES));
         this.db.register(this.model);
     }
     async create(sessionId) {
@@ -664,15 +772,22 @@ export class DynamoMcpStreamStore {
             sequence: 0,
             eventId: "",
             data: "",
+            expiresAt: this.expiresAtUnix(this.now()),
         });
         return streamId;
     }
     async append(sessionId, streamId, data) {
         const sid = normalizeRequired(sessionId, "missing session id");
+        const payload = cloneBytes(data);
+        if (payload.length > this.maxEventBytes) {
+            throw new Error(STREAM_EVENT_TOO_LARGE_MESSAGE);
+        }
         const stream = await this.streamRecord(sid, streamId);
         const sequence = Number(stream["sequence"] ?? 0) + 1;
         const eventId = String(sequence);
+        const expiresAt = this.expiresAtUnix(this.now());
         stream["sequence"] = sequence;
+        stream["expiresAt"] = expiresAt;
         await this.db.save(this.model.name, stream);
         await this.db.create(this.model.name, {
             sessionId: sid,
@@ -682,18 +797,21 @@ export class DynamoMcpStreamStore {
             closed: false,
             sequence,
             eventId,
-            data: Buffer.from(cloneBytes(data)).toString("base64"),
+            data: Buffer.from(payload).toString("base64"),
+            expiresAt,
         });
         return eventId;
     }
     async close(sessionId, streamId) {
         const stream = await this.streamRecord(sessionId, streamId);
         stream["closed"] = true;
+        stream["expiresAt"] = this.expiresAtUnix(this.now());
         await this.db.save(this.model.name, stream);
     }
     async subscribe(sessionId, streamId, afterEventId = "") {
         const sid = normalizeRequired(sessionId, "missing session id");
         const stream = String(streamId ?? "").trim();
+        await this.streamRecord(sid, stream);
         const after = Number(String(afterEventId ?? "").trim() || 0);
         const events = await this.eventRecords(sid);
         if (after > 0 &&
@@ -733,12 +851,19 @@ export class DynamoMcpStreamStore {
     }
     async streamRecord(sessionId, streamId) {
         try {
-            return await this.db.get(this.model.name, {
+            const record = await this.db.get(this.model.name, {
                 sessionId: String(sessionId ?? "").trim(),
                 itemId: `STREAM#${String(streamId ?? "").trim()}`,
             });
+            if (streamItemExpired(record, this.now())) {
+                throw new McpStreamNotFoundError();
+            }
+            return record;
         }
         catch (err) {
+            if (err instanceof McpStreamNotFoundError) {
+                throw err;
+            }
             if (isNotFoundError(err)) {
                 throw new McpStreamNotFoundError();
             }
@@ -746,7 +871,11 @@ export class DynamoMcpStreamStore {
         }
     }
     async eventRecords(sessionId) {
-        return (await this.sessionItems(sessionId)).filter((item) => String(item["kind"] ?? "") === "event");
+        const now = this.now();
+        return (await this.sessionItems(sessionId)).filter((item) => String(item["kind"] ?? "") === "event" && !streamItemExpired(item, now));
+    }
+    expiresAtUnix(now) {
+        return Math.floor((now.getTime() + this.streamTtlMs) / 1000);
     }
     async sessionItems(sessionId) {
         try {
@@ -787,6 +916,7 @@ export class McpServer {
     extensionCapabilities;
     cacheableResults;
     includeServerInfoMetadata;
+    verboseHandlerErrors;
     toolRegistry = new McpToolRegistry();
     resourceRegistry = new McpResourceRegistry();
     promptRegistry = new McpPromptRegistry();
@@ -805,6 +935,7 @@ export class McpServer {
         this.cacheableResults = normalizeCacheableResultConfig(options.cacheableResults);
         this.includeServerInfoMetadata =
             options.includeServerInfoMetadata !== false;
+        this.verboseHandlerErrors = options.verboseHandlerErrors === true;
     }
     registry() {
         return this.toolRegistry;
@@ -816,27 +947,27 @@ export class McpServer {
         return this.promptRegistry;
     }
     handler() {
-        return async (ctx) => this.handle(ctx.request.method, ctx.request.headers, ctx.request.body);
+        return async (ctx) => this.handle(ctx.request.method, ctx.request.headers, ctx.request.body, ctx);
     }
     async serve(request) {
         return this.handle(request.method, request.headers ?? {}, toBytes(request.body));
     }
-    async handle(method, headers, body) {
+    async handle(method, headers, body, ctx) {
         const normalizedMethod = String(method ?? "")
             .trim()
             .toUpperCase();
         if (normalizedMethod === "POST") {
-            return this.handlePost(headers, body);
+            return this.handlePost(headers, body, ctx);
         }
         if (normalizedMethod === "GET") {
-            return this.handleGet(headers);
+            return this.handleGet(headers, ctx);
         }
         if (normalizedMethod === "DELETE") {
-            return this.handleDelete(headers, body);
+            return this.handleDelete(headers, body, ctx);
         }
         return methodNotAllowedResponse("DELETE, GET, POST");
     }
-    async handlePost(headers, body) {
+    async handlePost(headers, body, ctx) {
         const originResponse = this.validateOrigin(headers);
         if (originResponse) {
             return originResponse;
@@ -854,15 +985,15 @@ export class McpServer {
         }
         const shape = detectMcpProtocolVersion(headers, body);
         if (Object.prototype.hasOwnProperty.call(raw, "method")) {
-            return this.handlePostRequest(headers, body, shape);
+            return this.handlePostRequest(headers, body, shape, ctx);
         }
         if (Object.prototype.hasOwnProperty.call(raw, "result") ||
             Object.prototype.hasOwnProperty.call(raw, "error")) {
-            return this.handlePostResponse(headers, body, shape);
+            return this.handlePostResponse(headers, body, shape, ctx);
         }
         return badRequest("invalid JSON-RPC message");
     }
-    async handlePostRequest(headers, body, shape) {
+    async handlePostRequest(headers, body, shape, ctx) {
         let request;
         try {
             request = parseRequest(body);
@@ -876,18 +1007,18 @@ export class McpServer {
         }
         shape = protocolValidation.shape;
         if (shape === MCP_PROTOCOL_SHAPE_2026_07_28) {
-            return this.handleStatelessPostRequest(request);
+            return this.handleStatelessPostRequest(request, ctx);
         }
         if (request.method === "server/discover") {
             if (!request.idPresent) {
                 return emptyResponse(202);
             }
-            return this.marshalSingleResponse(await this.dispatch(request, MCP_PROTOCOL_VERSION, ""));
+            return this.marshalSingleResponse(await this.dispatch(request, MCP_PROTOCOL_VERSION, "", ctx));
         }
         if (request.method === "initialize") {
-            return this.handleInitializeHTTP(request);
+            return this.handleInitializeHTTP(request, ctx);
         }
-        const sessionResult = await this.requireSession(headers);
+        const sessionResult = await this.requireSession(headers, ctx);
         if (sessionResult.response) {
             return sessionResult.response;
         }
@@ -904,20 +1035,20 @@ export class McpServer {
             await this.handleNotification(session, request);
             return emptyResponse(202);
         }
-        return this.handleRequestHTTP(sessionId, session, request, headers);
+        return this.handleRequestHTTP(sessionId, session, request, headers, ctx);
     }
-    async handleStatelessPostRequest(request) {
+    async handleStatelessPostRequest(request, ctx) {
         if (!request.idPresent) {
             return emptyResponse(202);
         }
-        const response = await this.dispatch(request, MCP_PROTOCOL_VERSION_2026_07_28, "");
+        const response = await this.dispatch(request, MCP_PROTOCOL_VERSION_2026_07_28, "", ctx);
         const missing = missingRequiredClientCapabilities(request, response);
         if (Object.keys(missing).length > 0) {
             return protocolErrorResponse(request.id, MCP_CODE_MISSING_REQUIRED_CLIENT_CAPABILITY, "Missing required client capability", { requiredCapabilities: missing });
         }
         return this.marshalSingleResponse(response, "", false, MCP_PROTOCOL_VERSION_2026_07_28);
     }
-    async handlePostResponse(headers, body, shape) {
+    async handlePostResponse(headers, body, shape, ctx) {
         let rpcResponse;
         try {
             rpcResponse = parseResponse(body);
@@ -929,7 +1060,7 @@ export class McpServer {
         if (validationResponse) {
             return validationResponse;
         }
-        const sessionResult = await this.requireSession(headers);
+        const sessionResult = await this.requireSession(headers, ctx);
         if (sessionResult.response) {
             return sessionResult.response;
         }
@@ -941,7 +1072,7 @@ export class McpServer {
         }
         return emptyResponse(202);
     }
-    async handleGet(headers) {
+    async handleGet(headers, ctx) {
         const originResponse = this.validateOrigin(headers);
         if (originResponse) {
             return originResponse;
@@ -954,7 +1085,7 @@ export class McpServer {
         if (headerResponse) {
             return headerResponse;
         }
-        const sessionResult = await this.requireSession(headers);
+        const sessionResult = await this.requireSession(headers, ctx);
         if (sessionResult.response) {
             return sessionResult.response;
         }
@@ -986,7 +1117,7 @@ export class McpServer {
             return internalServerError();
         }
     }
-    async handleDelete(headers, body) {
+    async handleDelete(headers, body, ctx) {
         const originResponse = this.validateOrigin(headers);
         if (originResponse) {
             return originResponse;
@@ -1000,7 +1131,7 @@ export class McpServer {
         }
         let session;
         try {
-            session = await this.getSession(sessionId);
+            session = await this.getSession(sessionId, ctx);
         }
         catch (err) {
             if (err instanceof McpSessionNotFoundError) {
@@ -1019,9 +1150,9 @@ export class McpServer {
         }
         return emptyResponse(202);
     }
-    async handleInitializeHTTP(request) {
+    async handleInitializeHTTP(request, ctx) {
         const negotiated = negotiateProtocolVersion(request.params);
-        const session = await this.createSession(negotiated);
+        const session = await this.createSession(negotiated, principalFromContext(ctx));
         const response = this.handleInitialize(request, negotiated);
         return this.marshalSingleResponse(response, session.id, true);
     }
@@ -1033,17 +1164,17 @@ export class McpServer {
         data["initialized"] = "true";
         await this.sessionStore.put({ ...session, data });
     }
-    async handleRequestHTTP(sessionId, session, request, headers) {
+    async handleRequestHTTP(sessionId, session, request, headers, ctx) {
         const protocol = sessionProtocolVersion(session);
         if (request.method === "tools/call" &&
             acceptsEventStream(headers) &&
             this.shouldStreamToolsCall(request)) {
-            return this.handleToolsCallStream(sessionId, request);
+            return this.handleToolsCallStream(sessionId, request, ctx);
         }
-        const response = await this.dispatch(request, protocol, sessionId);
+        const response = await this.dispatch(request, protocol, sessionId, ctx);
         return this.marshalSingleResponse(response);
     }
-    async dispatch(request, protocolVersion, sessionId) {
+    async dispatch(request, protocolVersion, sessionId, ctx) {
         if (!methodAllowedForProtocol(protocolVersion, request.method)) {
             return newErrorResponse(request.id, MCP_CODE_METHOD_NOT_FOUND, `Method not found: ${request.method}`);
         }
@@ -1074,7 +1205,7 @@ export class McpServer {
                 });
                 break;
             case "tools/call":
-                response = await this.handleToolsCall(request, sessionId, protocolVersion);
+                response = await this.handleToolsCall(request, sessionId, protocolVersion, ctx);
                 break;
             case "resources/list":
                 response = newResultResponse(request.id, {
@@ -1193,7 +1324,7 @@ export class McpServer {
         }
         return capabilities;
     }
-    async handleToolsCall(request, sessionId, protocolVersion) {
+    async handleToolsCall(request, sessionId, protocolVersion, ctx) {
         const params = paramsRecord(request.params);
         const name = String(params["name"] ?? "").trim();
         if (!name) {
@@ -1206,7 +1337,7 @@ export class McpServer {
             if (protocolVersion !== MCP_PROTOCOL_VERSION || !this.tasksEnabled()) {
                 return newErrorResponse(request.id, MCP_CODE_METHOD_NOT_FOUND, "Method not found: tasks not enabled");
             }
-            return this.handleTaskToolsCall(request, sessionId, name, params);
+            return this.handleTaskToolsCall(request, sessionId, name, params, ctx);
         }
         if (taskSupport === "required") {
             return newErrorResponse(request.id, MCP_CODE_METHOD_NOT_FOUND, "Method not found: tool requires task execution");
@@ -1223,11 +1354,15 @@ export class McpServer {
             if (typeof params["requestState"] === "string") {
                 toolContext.requestState = params["requestState"];
             }
+            const auth = authFromContext(ctx);
+            if (auth) {
+                toolContext.auth = auth;
+            }
             const result = await this.toolRegistry.call(name, params["arguments"], toolContext);
             return newResultResponse(request.id, result);
         }
         catch (err) {
-            return toolCallError(request.id, name, err);
+            return this.toolCallError(request.id, name, err);
         }
     }
     async handleResourcesRead(request) {
@@ -1238,7 +1373,10 @@ export class McpServer {
             return newResultResponse(request.id, { contents });
         }
         catch (err) {
-            return newErrorResponse(request.id, MCP_CODE_INVALID_PARAMS, errorMessage(err));
+            const message = errorMessage(err);
+            return newErrorResponse(request.id, MCP_CODE_INVALID_PARAMS, message.startsWith("resource not found:")
+                ? message
+                : this.handlerErrorMessage(err, "resources/read"));
         }
     }
     async handlePromptsGet(request) {
@@ -1249,7 +1387,10 @@ export class McpServer {
             return newResultResponse(request.id, result);
         }
         catch (err) {
-            return newErrorResponse(request.id, MCP_CODE_INVALID_PARAMS, errorMessage(err));
+            const message = errorMessage(err);
+            return newErrorResponse(request.id, MCP_CODE_INVALID_PARAMS, message.startsWith("prompt not found:")
+                ? message
+                : this.handlerErrorMessage(err, "prompts/get"));
         }
     }
     shouldStreamToolsCall(request) {
@@ -1266,7 +1407,7 @@ export class McpServer {
         }
         return this.toolRegistry.supportsStreaming(name);
     }
-    async handleToolsCallStream(sessionId, request) {
+    async handleToolsCallStream(sessionId, request, ctx) {
         let streamId = "";
         try {
             streamId = await this.streamStore.create(sessionId);
@@ -1293,7 +1434,16 @@ export class McpServer {
                 };
                 await this.streamStore.append(sessionId, streamId, Buffer.from(JSON.stringify(notification), "utf8"));
             };
-            const result = await this.toolRegistry.callStreaming(name, params["arguments"], emit, { sessionId, requestId: request.id, method: request.method });
+            const streamingContext = {
+                sessionId,
+                requestId: request.id,
+                method: request.method,
+            };
+            const auth = authFromContext(ctx);
+            if (auth) {
+                streamingContext.auth = auth;
+            }
+            const result = await this.toolRegistry.callStreaming(name, params["arguments"], emit, streamingContext);
             await this.streamStore.append(sessionId, streamId, Buffer.from(JSON.stringify(newResultResponse(request.id, result)), "utf8"));
             await this.streamStore.close(sessionId, streamId);
             const events = await this.streamStore.subscribe(sessionId, streamId);
@@ -1305,10 +1455,10 @@ export class McpServer {
                     .close(sessionId, streamId)
                     .catch(() => undefined);
             }
-            return this.marshalSingleResponse(toolCallError(request.id, "", err));
+            return this.marshalSingleResponse(this.toolCallError(request.id, "", err));
         }
     }
-    async handleTaskToolsCall(request, sessionId, name, params) {
+    async handleTaskToolsCall(request, sessionId, name, params, ctx) {
         const store = this.taskRuntime.store;
         if (!store) {
             return newErrorResponse(request.id, MCP_CODE_METHOD_NOT_FOUND, "Method not found: tasks not enabled");
@@ -1342,7 +1492,7 @@ export class McpServer {
         // detached promise could stay `working` forever, lose its result, or
         // half-apply its writes: the Lambda execution environment is frozen once the
         // handler returns, so the work resumes at an unpredictable time (or never).
-        const finished = await this.finishTask(store, created, params["arguments"]);
+        const finished = await this.finishTask(store, created, params["arguments"], ctx);
         const meta = {
             [RELATED_TASK_METADATA_KEY]: { taskId: finished.task.taskId },
         };
@@ -1355,15 +1505,20 @@ export class McpServer {
             task: cloneTask(finished.task),
         });
     }
-    async finishTask(store, record, args) {
+    async finishTask(store, record, args, ctx) {
         const next = cloneTaskRecord(record);
         next.task.lastUpdatedAt = isoNoMillis(new Date());
+        const toolContext = {
+            sessionId: record.sessionId,
+            requestId: record.task.taskId,
+            method: record.method,
+        };
+        const auth = authFromContext(ctx);
+        if (auth) {
+            toolContext.auth = auth;
+        }
         try {
-            const result = await this.toolRegistry.call(String(record.toolName ?? ""), args, {
-                sessionId: record.sessionId,
-                requestId: record.task.taskId,
-                method: record.method,
-            });
+            const result = await this.toolRegistry.call(String(record.toolName ?? ""), args, toolContext);
             next.result = result;
             next.task.status = result.isError ? "failed" : "completed";
             if (result.isError) {
@@ -1371,9 +1526,10 @@ export class McpServer {
             }
         }
         catch (err) {
-            next.error = { code: MCP_CODE_SERVER_ERROR, message: errorMessage(err) };
+            const message = this.handlerErrorMessage(err, "tasks/call");
+            next.error = { code: MCP_CODE_SERVER_ERROR, message };
             next.task.status = "failed";
-            next.task.statusMessage = errorMessage(err);
+            next.task.statusMessage = message;
         }
         try {
             return await store.update(next);
@@ -1391,6 +1547,29 @@ export class McpServer {
             return current ?? next;
         }
     }
+    taskStoreError(id, err) {
+        if (err instanceof McpTaskNotFoundError ||
+            err instanceof McpTaskTerminalError ||
+            err instanceof McpTaskInvalidCursorError) {
+            return newErrorResponse(id, MCP_CODE_INVALID_PARAMS, err.message);
+        }
+        const message = errorMessage(err);
+        if (taskControlErrorMessage(message)) {
+            return newErrorResponse(id, MCP_CODE_SERVER_ERROR, message);
+        }
+        return newErrorResponse(id, MCP_CODE_SERVER_ERROR, this.handlerErrorMessage(err, "task store"));
+    }
+    taskWireError(record, rpcErr) {
+        if (this.verboseHandlerErrors || !taskErrorNeedsRedaction(rpcErr)) {
+            return rpcErr;
+        }
+        getLogger().error("mcp task error", {
+            taskId: record.task.taskId,
+            tool: record.toolName ?? "",
+            error: rpcErr.message,
+        });
+        return { code: rpcErr.code, message: "internal error" };
+    }
     async handleTasksGet(request, sessionId) {
         const lookup = taskLookupFromRequest(request, sessionId);
         if (lookup.error) {
@@ -1401,7 +1580,7 @@ export class McpServer {
             return newResultResponse(request.id, cloneTask(record.task));
         }
         catch (err) {
-            return taskStoreError(request.id, err);
+            return this.taskStoreError(request.id, err);
         }
     }
     async handleTasksResult(request, sessionId) {
@@ -1415,7 +1594,7 @@ export class McpServer {
                 return {
                     jsonrpc: JSONRPC_VERSION,
                     id: request.id,
-                    error: record.error,
+                    error: this.taskWireError(record, record.error),
                 };
             }
             if (record.task.status === "canceled" && record.result === undefined) {
@@ -1427,7 +1606,7 @@ export class McpServer {
             return newResultResponse(request.id, taskResultWithRelatedMetadata(record.result, record.task.taskId));
         }
         catch (err) {
-            return taskStoreError(request.id, err);
+            return this.taskStoreError(request.id, err);
         }
     }
     async handleTasksList(request, sessionId) {
@@ -1441,7 +1620,7 @@ export class McpServer {
             return newResultResponse(request.id, result);
         }
         catch (err) {
-            return taskStoreError(request.id, err);
+            return this.taskStoreError(request.id, err);
         }
     }
     async handleTasksCancel(request, sessionId) {
@@ -1454,7 +1633,7 @@ export class McpServer {
             return newResultResponse(request.id, cloneTask(record.task));
         }
         catch (err) {
-            return taskStoreError(request.id, err);
+            return this.taskStoreError(request.id, err);
         }
     }
     requireTaskStore() {
@@ -1484,10 +1663,14 @@ export class McpServer {
                 return true;
         }
     }
-    async getSession(sessionId) {
+    async getSession(sessionId, ctx) {
         const session = await this.sessionStore.get(sessionId);
         if (sessionExpiredAt(new Date(), session)) {
             await this.sessionStore.delete(sessionId);
+            throw new McpSessionNotFoundError();
+        }
+        const storedPrincipal = String(session.principal ?? "").trim();
+        if (storedPrincipal && storedPrincipal !== principalFromContext(ctx)) {
             throw new McpSessionNotFoundError();
         }
         const refreshed = cloneSession(session);
@@ -1498,7 +1681,7 @@ export class McpServer {
         await this.sessionStore.put(refreshed);
         return refreshed;
     }
-    async requireSession(headers) {
+    async requireSession(headers, ctx) {
         const sessionId = firstHeader(headers, MCP_HEADER_SESSION_ID);
         if (!sessionId) {
             return {
@@ -1510,7 +1693,7 @@ export class McpServer {
         try {
             return {
                 sessionId,
-                session: await this.getSession(sessionId),
+                session: await this.getSession(sessionId, ctx),
                 response: null,
             };
         }
@@ -1539,7 +1722,7 @@ export class McpServer {
         }
         return null;
     }
-    async createSession(protocolVersion) {
+    async createSession(protocolVersion, principal) {
         const now = new Date();
         const session = {
             id: normalizeRequired(this.idGenerator.newId(), "session id generator returned empty id"),
@@ -1547,8 +1730,34 @@ export class McpServer {
             expiresAt: isoNoMillis(new Date(now.valueOf() + this.sessionTtlMs)),
             data: { protocolVersion },
         };
+        if (principal) {
+            session.principal = principal;
+        }
         await this.sessionStore.put(session);
         return session;
+    }
+    handlerErrorMessage(err, surface) {
+        const message = errorMessage(err);
+        if (this.verboseHandlerErrors) {
+            return message;
+        }
+        getLogger().error("mcp handler error", { surface, error: message });
+        return "internal error";
+    }
+    toolCallError(id, toolName, err) {
+        const message = errorMessage(err);
+        if (message.startsWith("tool not found:")) {
+            return newErrorResponse(id, MCP_CODE_INVALID_PARAMS, message);
+        }
+        if (!this.verboseHandlerErrors) {
+            getLogger().error("mcp tool handler error", {
+                tool: toolName,
+                error: message,
+            });
+            return newErrorResponse(id, MCP_CODE_SERVER_ERROR, "internal error");
+        }
+        const resolved = toolName ? message : message || "internal error";
+        return newErrorResponse(id, MCP_CODE_SERVER_ERROR, resolved);
     }
     marshalSingleResponse(response, sessionId = "", includeSession = false, protocolVersion = "") {
         const headers = { "content-type": ["application/json"] };
@@ -1633,6 +1842,7 @@ export function defaultMcpStreamModel(tableName) {
             { attribute: "sequence", type: "N", optional: true },
             { attribute: "eventId", type: "S", optional: true },
             { attribute: "data", type: "S", optional: true },
+            { attribute: "expiresAt", type: "N", optional: true, roles: ["ttl"] },
         ],
     });
 }
@@ -2652,6 +2862,9 @@ function cloneSession(session) {
         createdAt: String(session.createdAt ?? ""),
         expiresAt: String(session.expiresAt ?? ""),
     };
+    if (session.principal) {
+        out.principal = String(session.principal);
+    }
     if (session.data) {
         out.data = { ...session.data };
     }
@@ -2664,6 +2877,24 @@ function sessionExpiredAt(now, session) {
     }
     return expires <= now.valueOf();
 }
+function streamItemExpired(item, now) {
+    const expiresAt = Number(item["expiresAt"] ?? 0);
+    if (!Number.isFinite(expiresAt) || expiresAt <= 0) {
+        return false;
+    }
+    return now.getTime() >= expiresAt * 1000;
+}
+function envPositiveInteger(name, fallback) {
+    const raw = String(process.env[name] ?? "").trim();
+    if (!raw) {
+        return fallback;
+    }
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value <= 0) {
+        return fallback;
+    }
+    return Math.floor(value);
+}
 function isoNoMillis(date) {
     return date.toISOString().replace(/\.000Z$/, "Z");
 }
@@ -2673,20 +2904,52 @@ function errorMessage(err) {
     }
     return String(err);
 }
+function principalFromContext(ctx) {
+    if (!ctx) {
+        return "";
+    }
+    const authIdentity = String(ctx.authIdentity ?? "").trim();
+    if (authIdentity) {
+        return authIdentity;
+    }
+    const principalIdentity = String(ctx.securePrincipal()?.identity ?? "").trim();
+    if (principalIdentity) {
+        return principalIdentity;
+    }
+    const subject = String(bearerTokenClaimsFromContext(ctx)?.subject ?? "").trim();
+    if (subject) {
+        return subject;
+    }
+    if (ctx.tenantBound === true) {
+        return String(ctx.tenantId ?? "").trim();
+    }
+    return "";
+}
+function authFromContext(ctx) {
+    if (!ctx) {
+        return undefined;
+    }
+    const principal = ctx.securePrincipal();
+    const claims = bearerTokenClaimsFromContext(ctx);
+    const authIdentity = String(ctx.authIdentity ?? "").trim() ||
+        String(principal?.identity ?? "").trim() ||
+        String(claims?.subject ?? "").trim();
+    const tenantId = String(ctx.tenantId ?? "").trim();
+    const tenantBound = ctx.tenantBound === true;
+    const scopes = [
+        ...(principal?.scopes ?? claims?.scopes ?? []).map((scope) => String(scope ?? "").trim()),
+    ].filter((scope) => scope.length > 0);
+    if (!authIdentity && !tenantId && scopes.length === 0) {
+        return undefined;
+    }
+    return { authIdentity, tenantId, tenantBound, scopes };
+}
 function normalizeRequired(value, message) {
     const normalized = String(value ?? "").trim();
     if (!normalized) {
         throw new Error(message);
     }
     return normalized;
-}
-function toolCallError(id, toolName, err) {
-    const message = errorMessage(err);
-    if (message.startsWith("tool not found:")) {
-        return newErrorResponse(id, MCP_CODE_INVALID_PARAMS, message);
-    }
-    const resolved = toolName ? message : message || "internal error";
-    return newErrorResponse(id, MCP_CODE_SERVER_ERROR, resolved);
 }
 function normalizeProgressToken(value) {
     if (typeof value === "string") {
@@ -2742,13 +3005,27 @@ function taskLookupFromRequest(request, sessionId) {
     }
     return { value: { sessionId, taskId } };
 }
-function taskStoreError(id, err) {
-    if (err instanceof McpTaskNotFoundError ||
-        err instanceof McpTaskTerminalError ||
-        err instanceof McpTaskInvalidCursorError) {
-        return newErrorResponse(id, MCP_CODE_INVALID_PARAMS, err.message);
+function taskControlErrorMessage(message) {
+    const trimmed = message.trim();
+    switch (trimmed) {
+        case "":
+        case "internal error":
+        case TASK_CANCELED_MESSAGE:
+        case TASK_CAPACITY_EXCEEDED_MESSAGE:
+        case "task capacity exceeded":
+        case "task result wait timeout":
+        case "context canceled":
+        case "context deadline exceeded":
+            return true;
+        default:
+            return trimmed.endsWith(" timed out");
     }
-    return newErrorResponse(id, MCP_CODE_SERVER_ERROR, errorMessage(err));
+}
+function taskErrorNeedsRedaction(error) {
+    if (error.code !== MCP_CODE_SERVER_ERROR) {
+        return false;
+    }
+    return !taskControlErrorMessage(String(error.message ?? ""));
 }
 function taskStatusTerminal(status) {
     return status === "completed" || status === "failed" || status === "canceled";
