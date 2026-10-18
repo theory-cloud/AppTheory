@@ -1980,6 +1980,57 @@ class MicroVMLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(401, denied.status)
 
+    def test_real_controller_route_adapter_returns_403_for_session_owner_mismatch(self) -> None:
+        provider = app.create_fake_microvm_provider(now=1.0)
+        registry = app.create_memory_microvm_session_registry()
+        controller = app.create_real_microvm_controller(
+            provider,
+            registry,
+            id_generator=lambda: "owner-session",
+            clock=lambda: 10.0,
+            logging={"disabled": True},
+        )
+        owner = app.create_app(tier="p1", auth_hook=lambda ctx: "identity:owner")
+        app.register_microvm_controller_routes(owner, controller)
+
+        run = owner.serve(
+            app.Request(
+                method="POST",
+                path="/microvms",
+                headers={
+                    "content-type": ["application/json"],
+                    "x-tenant-id": ["tenant-1"],
+                    "x-request-id": ["req-owner-run"],
+                },
+                body=json.dumps(
+                    {
+                        "namespace": "namespace-1",
+                        "image_ref": "image-ref",
+                        "image_version": "1",
+                        "network_connector_ref": "network-ref",
+                        "session_spec": {"metadata": {"safe": "ok"}},
+                    }
+                ).encode("utf-8"),
+            )
+        )
+        self.assertEqual(200, run.status)
+
+        other = app.create_app(tier="p1", auth_hook=lambda ctx: "identity:other")
+        app.register_microvm_controller_routes(other, controller)
+        denied = other.serve(
+            app.Request(
+                method="GET",
+                path="/microvms/owner-session",
+                query={"namespace": ["namespace-1"]},
+                headers={"x-tenant-id": ["tenant-1"], "x-request-id": ["req-owner-get"]},
+            )
+        )
+        self.assertEqual(403, denied.status)
+        self.assertEqual(
+            app.MICROVM_ERROR_SESSION_OWNER_MISMATCH,
+            json.loads(denied.body.decode())["error"]["code"],
+        )
+
     def test_real_controller_route_adapter_binds_tenant_to_verified_claim(self) -> None:
         provider = app.create_fake_microvm_provider(now=1.0)
         registry = app.create_memory_microvm_session_registry()

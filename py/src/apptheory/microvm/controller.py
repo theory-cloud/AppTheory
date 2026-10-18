@@ -1258,6 +1258,8 @@ def _controller_http_status(error: MicroVMSafeError | None) -> int:
         return 401
     if error.code == MICROVM_ERROR_TENANT_BINDING_VIOLATION:
         return 403
+    if error.code == MICROVM_ERROR_SESSION_OWNER_MISMATCH:
+        return 403
     if error.code == MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE:
         return 404
     if error.code == MICROVM_ERROR_CONTROLLER_INCOMPLETE:
