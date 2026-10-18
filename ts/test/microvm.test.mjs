@@ -2357,3 +2357,59 @@ test("microvm AWS provider invoke denies redirects and non-AWS endpoints", async
     globalThis.fetch = originalFetch;
   }
 });
+test("microvm AWS provider bounds invoke responses while reading", async () => {
+  const provider = createAWSLambdaMicroVMProvider({
+    clock: { now: () => new Date(0) },
+  });
+  provider.client = {
+    async send(command) {
+      if (command.constructor.name === "CreateMicrovmAuthTokenCommand") {
+        return { authToken: { "X-aws-proxy-auth": "provider-token-value" } };
+      }
+      throw new Error(`unexpected command ${command.constructor.name}`);
+    },
+  };
+
+  const originalFetch = globalThis.fetch;
+  try {
+    let cancelled = false;
+    const oversized = new Uint8Array(6 * 1024 * 1024 + 1);
+    globalThis.fetch = async () =>
+      new Response(
+        new ReadableStream({
+          pull(controller) {
+            controller.enqueue(oversized);
+          },
+          cancel() {
+            cancelled = true;
+          },
+        }),
+        { status: 200 },
+      );
+
+    await assert.rejects(
+      () =>
+        provider.invoke({
+          request_id: "req-invoke",
+          tenant_id: "tenant-1",
+          namespace: "namespace-1",
+          auth_context: providerAuth(),
+          binding: providerBinding(),
+          endpoint: "https://provider-1.microvm.us-east-1.amazonaws.com",
+          method: "GET",
+          path: "/hello",
+          headers: {},
+          port: 9090,
+          ttl_seconds: 120,
+        }),
+      (err) => err?.code === MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
+    );
+    assert.equal(
+      cancelled,
+      true,
+      "the response stream must be cancelled at the size bound",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

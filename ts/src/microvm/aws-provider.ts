@@ -286,14 +286,11 @@ export class AWSLambdaMicroVMProvider implements MicroVMProvider {
           normalized.request_id,
         );
       }
-      const body = new Uint8Array(await response.arrayBuffer());
-      if (body.byteLength > maxProviderInvokeBodyBytes) {
-        throw safeError(
-          MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
-          "apptheory: microvm invoke response is too large",
-          normalized.request_id,
-        );
-      }
+      const body = await readBoundedProviderInvokeBody(
+        response,
+        maxProviderInvokeBodyBytes,
+        normalized.request_id,
+      );
       const responseHeaders: Record<string, string[]> = {};
       response.headers.forEach((value, name) => {
         responseHeaders[name] = [...(responseHeaders[name] ?? []), value];
@@ -547,6 +544,43 @@ export function ensureMicroVMProviderTokenResult(
       requestID,
     );
   }
+}
+
+async function readBoundedProviderInvokeBody(
+  response: Response,
+  limit: number,
+  requestID: string,
+): Promise<Uint8Array> {
+  if (!response.body) return new Uint8Array(0);
+  const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > limit) {
+        await reader.cancel().catch(() => undefined);
+        throw safeError(
+          MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
+          "apptheory: microvm invoke response is too large",
+          requestID,
+        );
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
 }
 
 function microVMAuthHeaderValue(output: unknown): string {
