@@ -380,6 +380,9 @@ func (c *Controller) Invoke(ctx context.Context, request ControllerInvokeRequest
 	if validationErr := ValidateSessionRecord(record); validationErr != nil {
 		return ProviderInvokeOutput{}, validationErr
 	}
+	if sessionRecordExpired(record, c.clock.Now()) {
+		return ProviderInvokeOutput{}, safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session record has expired", request.RequestID)
+	}
 	if strings.TrimSpace(record.Endpoint) == "" {
 		return ProviderInvokeOutput{}, safeError(ErrorCodeInvalidControllerRequest, "apptheory: microvm invoke requires a session endpoint", request.RequestID)
 	}
@@ -652,6 +655,16 @@ func equalStringSlices(a []string, b []string) bool {
 	return true
 }
 
+// sessionRecordExpired reports whether a validated session record's lifetime has
+// elapsed. A record whose ExpiresAt is zero is not treated as expired here;
+// ValidateSessionRecord already rejects a zero ExpiresAt for registry records.
+func sessionRecordExpired(record SessionRecord, now time.Time) bool {
+	if now.IsZero() || record.ExpiresAt.IsZero() {
+		return false
+	}
+	return !record.ExpiresAt.After(now)
+}
+
 func (c *Controller) handleRealSession(
 	ctx context.Context,
 	request ControllerRequest,
@@ -665,6 +678,10 @@ func (c *Controller) handleRealSession(
 	}
 	if validationErr := ValidateSessionRecord(record); validationErr != nil {
 		safe := asSafeError(validationErr, request.RequestID)
+		return controllerErrorResponse(request, safe), safe
+	}
+	if sessionRecordExpired(record, c.clock.Now()) {
+		safe := safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session record has expired", request.RequestID)
 		return controllerErrorResponse(request, safe), safe
 	}
 	session, err := run(ctx, ProviderSessionInput{
@@ -713,6 +730,9 @@ func (c *Controller) handleRealList(ctx context.Context, request ControllerReque
 		if validationErr := ValidateSessionRecord(record); validationErr != nil {
 			safe := asSafeError(validationErr, request.RequestID)
 			return controllerErrorResponse(request, safe), safe
+		}
+		if sessionRecordExpired(record, c.clock.Now()) {
+			continue
 		}
 		binding := providerBindingFromRecord(record)
 		bindings = append(bindings, binding)
@@ -773,6 +793,10 @@ func (c *Controller) handleRealToken(
 	}
 	if validationErr := ValidateSessionRecord(record); validationErr != nil {
 		safe := asSafeError(validationErr, request.RequestID)
+		return controllerErrorResponse(request, safe), safe
+	}
+	if sessionRecordExpired(record, c.clock.Now()) {
+		safe := safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session record has expired", request.RequestID)
 		return controllerErrorResponse(request, safe), safe
 	}
 	token, err := run(ctx, ProviderTokenInput{
@@ -1117,7 +1141,7 @@ func (c *Controller) sessionRecordFromProviderSession(request ControllerRequest,
 	if record.CreatedAt.IsZero() {
 		record.CreatedAt = now
 	}
-	if record.ExpiresAt.IsZero() || !record.ExpiresAt.After(now) {
+	if record.ExpiresAt.IsZero() {
 		record.ExpiresAt = now.Add(ttl)
 	}
 	record.TenantID = session.TenantID

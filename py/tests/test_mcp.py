@@ -1149,6 +1149,25 @@ class McpRuntimeTests(unittest.TestCase):
             },
         )
 
+    def test_dynamo_stream_store_follows_cursors_for_replay_and_deletion(self) -> None:
+        table = _FakeTheoryTable()
+        store = DynamoMcpStreamStore(
+            table=table,
+            id_generator=sequence_mcp_id_generator(["stream-pages"]),
+        )
+        stream_id = store.create("sess-pages")
+        last_event_id = ""
+        for index in range(1100):
+            last_event_id = store.append("sess-pages", stream_id, f"event-{index}")
+
+        self.assertEqual(store.stream_for_event("sess-pages", last_event_id), stream_id)
+        replayed = store.subscribe("sess-pages", stream_id)
+        self.assertEqual(len(replayed), 1100)
+        self.assertEqual(replayed[-1].data, b"event-1099")
+
+        store.delete_session("sess-pages")
+        self.assertEqual([key for key in table.items if key[0] == "sess-pages"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

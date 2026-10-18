@@ -1306,12 +1306,22 @@ export class DynamoMcpStreamStore implements McpStreamStore {
     sessionId: string,
   ): Promise<Record<string, unknown>[]> {
     try {
-      const page = await this.db
-        .query(this.model.name)
-        .partitionKey(sessionId)
-        .limit(1000)
-        .page();
-      return page.items;
+      const items: Record<string, unknown>[] = [];
+      let cursor = "";
+      for (;;) {
+        const page = await this.db
+          .query(this.model.name)
+          .partitionKey(sessionId)
+          .limit(1000)
+          .cursor(cursor)
+          .page();
+        items.push(...page.items);
+        if (!page.cursor) {
+          break;
+        }
+        cursor = String(page.cursor);
+      }
+      return items;
     } catch (err) {
       if (isNotFoundError(err)) {
         return [];

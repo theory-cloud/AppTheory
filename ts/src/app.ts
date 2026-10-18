@@ -1205,7 +1205,7 @@ export class App {
     const middlewareTrace = ["request_id", "recovery", "logging"];
     if (origin) middlewareTrace.push("cors");
 
-    const tenantId = extractTenantId(preHeaders, preQuery);
+    let tenantId = extractTenantId(preHeaders, preQuery);
     const remainingMs = extractRemainingMs(ctx);
     const tier = this._tier;
 
@@ -1423,6 +1423,10 @@ export class App {
         );
       }
     }
+
+    // Authentication rebinds the tenant to the verified claim. Log the tenant the
+    // request was actually authorized under, not the caller-supplied header value.
+    tenantId = requestCtx.tenantId;
 
     middlewareTrace.push("handler");
 

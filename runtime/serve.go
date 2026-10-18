@@ -388,9 +388,13 @@ func (a *App) servePortableMatch(tier Tier, normalized Request, match *routeMatc
 	}
 
 	if resp, errorCode, ok := a.authorizePortableRoute(match.Route, requestCtx, state.requestID, opts.errorResponder); ok {
+		state.tenantID = requestCtx.TenantID
 		state.errorCode = errorCode
 		return resp
 	}
+	// Authentication rebinds TenantID to the verified claim. Record the tenant the
+	// request was actually authorized under, not the caller-supplied header value.
+	state.tenantID = requestCtx.TenantID
 
 	requestCtx.MiddlewareTrace = append(requestCtx.MiddlewareTrace, "handler")
 

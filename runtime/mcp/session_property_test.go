@@ -88,3 +88,30 @@ func TestProperty8_SessionIDGeneration(t *testing.T) {
 		}
 	})
 }
+
+func TestMemorySessionStorePutReapsExpiredSessions(t *testing.T) {
+	base := time.Unix(1000, 0).UTC()
+	store := NewMemorySessionStore(WithClock(fixedClock(base)))
+	ctx := context.Background()
+
+	if err := store.Put(ctx, &Session{ID: "expired", ExpiresAt: base.Add(-time.Second)}); err != nil {
+		t.Fatalf("Put expired failed: %v", err)
+	}
+	if err := store.Put(ctx, &Session{ID: "fresh", ExpiresAt: base.Add(time.Minute)}); err != nil {
+		t.Fatalf("Put fresh failed: %v", err)
+	}
+
+	store.mu.RLock()
+	_, expiredStillStored := store.store["expired"]
+	total := len(store.store)
+	store.mu.RUnlock()
+	if expiredStillStored {
+		t.Fatal("Put must reap expired sessions")
+	}
+	if total != 1 {
+		t.Fatalf("stored sessions = %d, want 1", total)
+	}
+	if _, err := store.Get(ctx, "fresh"); err != nil {
+		t.Fatalf("fresh session must remain readable: %v", err)
+	}
+}
