@@ -14,6 +14,7 @@ type Session struct {
 	ID        string            `json:"id"`
 	CreatedAt time.Time         `json:"createdAt"`
 	ExpiresAt time.Time         `json:"expiresAt"`
+	Principal string            `json:"principal,omitempty"`
 	Data      map[string]string `json:"data,omitempty"`
 }
 

@@ -605,7 +605,8 @@ test("mcp task runtime handles lifecycle and error paths", async () => {
   // The task body runs inside the tools/call invocation, so the reply already
   // carries the terminal state.
   assert.equal(failed.result.task.status, "failed");
-  assert.equal((await json(await post(server, rpc("failed-result", "tasks/result", { taskId: "task-2" }), headers))).error.message, "boom");
+  // Generic handler errors are sanitized by default.
+  assert.equal((await json(await post(server, rpc("failed-result", "tasks/result", { taskId: "task-2" }), headers))).error.message, "internal error");
 
   const noTasks = createMcpServer("No Tasks", "1", { idGenerator: sequenceIdGenerator(["sess-no-tasks"]) });
   noTasks.registry().registerTool({ name: "plain", inputSchema: {} }, () => ({ content: [textBlock("plain")] }));
@@ -747,4 +748,394 @@ test("dynamo-backed MCP stream store follows cursors for replay and deletion", a
     [...db.items.keys()].filter((key) => key.startsWith(`${streamModel.name}:sess-pages:`)).length,
     0,
   );
+});
+
+function authContext(options = {}) {
+  const method = String(options.method ?? "POST").toUpperCase();
+  let defaults = {};
+  if (method === "POST") {
+    defaults = POST_HEADERS;
+  } else if (method === "GET") {
+    defaults = { accept: ["text/event-stream"] };
+  }
+  const headers = { ...defaults, ...(options.headers ?? {}) };
+  let body = Buffer.alloc(0);
+  if (options.body !== undefined) {
+    body = Buffer.from(typeof options.body === "string" ? options.body : JSON.stringify(options.body), "utf8");
+  }
+  return {
+    request: { method, path: "/mcp", headers, query: {}, body, isBase64: false },
+    authIdentity: String(options.identity ?? ""),
+    tenantId: String(options.tenantId ?? ""),
+    tenantBound: options.tenantBound === true,
+    securePrincipal: () => options.principal ?? null,
+    get: () => options.claims ?? null,
+  };
+}
+
+function initializeBody(id = "init") {
+  return {
+    jsonrpc: "2.0",
+    id,
+    method: "initialize",
+    params: { protocolVersion: MCP_PROTOCOL_VERSION },
+  };
+}
+
+test("mcp sessions are bound to the authenticated principal", async () => {
+  const server = createMcpServer("Auth MCP", "1", {
+    idGenerator: sequenceIdGenerator(["sess-auth"]),
+  });
+  server.registry().registerTool({ name: "ping", inputSchema: {} }, () => ({
+    content: [textBlock("pong")],
+  }));
+  const handler = server.handler();
+
+  const init = await handler(
+    authContext({ identity: "alice", body: initializeBody() }),
+  );
+  assert.equal(init.status, 200);
+  const sessionId = sessionHeader(init);
+  assert.equal(sessionId, "sess-auth");
+  const headers = {
+    [MCP_HEADER_SESSION_ID]: [sessionId],
+    [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION],
+  };
+
+  const same = await json(
+    await handler(authContext({ identity: "alice", body: rpc("same", "ping"), headers })),
+  );
+  assert.deepEqual(same.result, {});
+  assert.equal(
+    (await json(await handler(authContext({
+      identity: "alice",
+      body: rpc("call", "tools/call", { name: "ping" }),
+      headers,
+    })))).result.content[0].text,
+    "pong",
+  );
+
+  const other = await handler(
+    authContext({ identity: "bob", body: rpc("other", "ping"), headers }),
+  );
+  assert.equal(other.status, 404);
+  assert.equal((await json(other)).error, "session not found");
+
+  assert.equal(
+    (await handler(authContext({ identity: "bob", method: "GET", headers }))).status,
+    404,
+  );
+  assert.equal(
+    (await handler(authContext({ identity: "alice", method: "GET", headers }))).status,
+    200,
+  );
+  assert.equal(
+    (await handler(authContext({ identity: "bob", method: "DELETE", headers }))).status,
+    404,
+  );
+  assert.equal(
+    (await handler(authContext({ identity: "alice", method: "DELETE", headers }))).status,
+    202,
+  );
+  assert.equal(
+    (await handler(authContext({ identity: "alice", body: rpc("gone", "ping"), headers }))).status,
+    404,
+  );
+});
+
+test("mcp sessions use secure principal and tenant-bound identity fallbacks", async () => {
+  const server = createMcpServer("Auth Fallback MCP", "1", {
+    idGenerator: sequenceIdGenerator(["sess-svc", "sess-tenant"]),
+  });
+  const handler = server.handler();
+
+  const svcInit = await handler(
+    authContext({
+      principal: { identity: "svc-1", scopes: ["read"], claims: {}, kind: "service" },
+      body: initializeBody("init-svc"),
+    }),
+  );
+  const svcHeaders = {
+    [MCP_HEADER_SESSION_ID]: [sessionHeader(svcInit)],
+    [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION],
+  };
+  assert.equal(
+    (await handler(authContext({ identity: "svc-1", body: rpc("svc", "ping"), headers: svcHeaders }))).status,
+    200,
+  );
+  assert.equal(
+    (await handler(authContext({ identity: "svc-2", body: rpc("svc-other", "ping"), headers: svcHeaders }))).status,
+    404,
+  );
+
+  const tenantInit = await handler(
+    authContext({
+      tenantId: "tenant-1",
+      tenantBound: true,
+      body: initializeBody("init-tenant"),
+    }),
+  );
+  const tenantHeaders = {
+    [MCP_HEADER_SESSION_ID]: [sessionHeader(tenantInit)],
+    [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION],
+  };
+  assert.equal(
+    (await handler(authContext({ identity: "tenant-1", body: rpc("tenant", "ping"), headers: tenantHeaders }))).status,
+    200,
+  );
+  assert.equal(
+    (await handler(authContext({ identity: "tenant-2", body: rpc("tenant-other", "ping"), headers: tenantHeaders }))).status,
+    404,
+  );
+});
+
+test("mcp tool contexts carry authenticated caller identity", async () => {
+  const server = createMcpServer("Auth Tool MCP", "1", {
+    idGenerator: sequenceIdGenerator(["sess-ctx", "task-1", "sess-anon"]),
+    taskRuntime: { store: new MemoryMcpTaskStore() },
+  });
+  server.registry().registerTool({ name: "whoami", inputSchema: {} }, (args, context) => ({
+    content: [textBlock(JSON.stringify(context.auth ?? null))],
+  }));
+  server.registry().registerStreamingTool(
+    { name: "stream-who", inputSchema: {} },
+    (args, emit, context) => ({
+      content: [textBlock(JSON.stringify(context.auth ?? null))],
+    }),
+  );
+  server.registry().registerTool(
+    { name: "task-who", inputSchema: {}, execution: { taskSupport: "optional" } },
+    (args, context) => ({
+      content: [textBlock(JSON.stringify(context.auth ?? null))],
+    }),
+  );
+  const handler = server.handler();
+  const principal = { identity: "alice", scopes: ["read", "write"], claims: {}, kind: "user" };
+  const auth = {
+    identity: "alice",
+    tenantId: "tenant-1",
+    tenantBound: true,
+    principal,
+  };
+  const init = await handler(authContext({ ...auth, body: initializeBody() }));
+  const headers = {
+    [MCP_HEADER_SESSION_ID]: [sessionHeader(init)],
+    [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION],
+  };
+  const expected = {
+    authIdentity: "alice",
+    tenantId: "tenant-1",
+    tenantBound: true,
+    scopes: ["read", "write"],
+  };
+
+  const normal = await json(
+    await handler(authContext({
+      ...auth,
+      body: rpc("normal", "tools/call", { name: "whoami" }),
+      headers,
+    })),
+  );
+  assert.deepEqual(JSON.parse(normal.result.content[0].text), expected);
+
+  const streamed = await handler(authContext({
+    ...auth,
+    body: rpc("stream", "tools/call", { name: "stream-who" }),
+    headers,
+  }));
+  const frames = parseMcpTestSSEFrames(Buffer.from(streamed.body));
+  const streamResult = JSON.parse(frames.at(-1).data);
+  assert.deepEqual(JSON.parse(streamResult.result.content[0].text), expected);
+
+  const task = await json(
+    await handler(authContext({
+      ...auth,
+      body: rpc("task", "tools/call", { name: "task-who", task: {} }),
+      headers,
+    })),
+  );
+  assert.equal(task.result.task.taskId, "task-1");
+  const taskResult = await json(
+    await handler(authContext({
+      ...auth,
+      body: rpc("task-result", "tasks/result", { taskId: "task-1" }),
+      headers,
+    })),
+  );
+  assert.deepEqual(JSON.parse(taskResult.result.content[0].text), expected);
+
+  const anonInit = await server.serve({
+    method: "POST",
+    headers: POST_HEADERS,
+    body: JSON.stringify(initializeBody("init-anon")),
+  });
+  const anonHeaders = {
+    [MCP_HEADER_SESSION_ID]: [sessionHeader(anonInit)],
+    [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION],
+  };
+  const anon = await json(await server.serve({
+    method: "POST",
+    headers: { ...POST_HEADERS, ...anonHeaders },
+    body: JSON.stringify(rpc("anon", "tools/call", { name: "whoami" })),
+  }));
+  assert.equal(anon.result.content[0].text, "null");
+});
+
+test("mcp memory stream store bounds events and rejects oversize payloads", async () => {
+  const streams = new MemoryMcpStreamStore({
+    idGenerator: sequenceIdGenerator(["stream-bounded"]),
+    maxEventBytes: 4,
+    maxEventsPerSession: 2,
+    maxTotalBytesPerSession: 6,
+  });
+  await assert.rejects(
+    () => streams.append("sess-bounded", "missing", Buffer.from("12345")),
+    /stream event too large/,
+  );
+  const streamId = await streams.create("sess-bounded");
+  await streams.append("sess-bounded", streamId, Buffer.from("aa"));
+  await streams.append("sess-bounded", streamId, Buffer.from("bb"));
+  const third = await streams.append("sess-bounded", streamId, Buffer.from("cc"));
+  assert.deepEqual(
+    (await streams.subscribe("sess-bounded", streamId)).map((event) => Buffer.from(event.data).toString()),
+    ["bb", "cc"],
+  );
+  await assert.rejects(() => streams.streamForEvent("sess-bounded", "1"), McpEventNotFoundError);
+
+  const bytes = new MemoryMcpStreamStore({
+    idGenerator: sequenceIdGenerator(["stream-bytes"]),
+    maxTotalBytesPerSession: 5,
+  });
+  const bytesStream = await bytes.create("sess-bytes");
+  await bytes.append("sess-bytes", bytesStream, Buffer.from("aa"));
+  await bytes.append("sess-bytes", bytesStream, Buffer.from("bb"));
+  await bytes.append("sess-bytes", bytesStream, Buffer.from("ccc"));
+  assert.deepEqual(
+    (await bytes.subscribe("sess-bytes", bytesStream)).map((event) => Buffer.from(event.data).toString()),
+    ["bb", "ccc"],
+  );
+  assert.equal(third, "3");
+});
+
+test("mcp memory task store caps tasks per session", async () => {
+  const tasks = new MemoryMcpTaskStore({
+    now: () => new Date("2026-07-03T00:00:02Z"),
+    maxTasksPerSession: 2,
+  });
+  const first = await tasks.create(taskRecord());
+  await tasks.create(
+    taskRecord({ task: { ...taskRecord().task, taskId: "task-2", createdAt: "2026-07-03T00:00:01Z" } }),
+  );
+  await assert.rejects(
+    () => tasks.create(taskRecord({ task: { ...taskRecord().task, taskId: "task-3" } })),
+    /Task capacity exceeded/,
+  );
+  await tasks.update({
+    ...first,
+    task: { ...first.task, status: "completed", lastUpdatedAt: "2026-07-03T00:00:02Z" },
+  });
+  await tasks.create(taskRecord({ task: { ...taskRecord().task, taskId: "task-3" } }));
+  assert.equal((await tasks.get({ sessionId: "sess-1", taskId: "task-3" })).task.taskId, "task-3");
+  await assert.rejects(() => tasks.get({ sessionId: "sess-1", taskId: "task-1" }), McpTaskNotFoundError);
+
+  const reaping = new MemoryMcpTaskStore({
+    now: () => new Date("2026-07-03T00:01:00Z"),
+    maxTasksPerSession: 1,
+  });
+  await reaping.create(
+    taskRecord({ task: { ...taskRecord().task, taskId: "expired", ttl: 1000 } }),
+  );
+  await reaping.create(
+    taskRecord({ task: { ...taskRecord().task, taskId: "fresh", ttl: 600000 } }),
+  );
+  assert.equal((await reaping.get({ sessionId: "sess-1", taskId: "fresh" })).task.taskId, "fresh");
+  await assert.rejects(() => reaping.get({ sessionId: "sess-1", taskId: "expired" }), McpTaskNotFoundError);
+});
+
+test("dynamo stream store writes ttl and hides expired records", async () => {
+  const db = fakeDb();
+  const streamModel = defaultMcpStreamModel("unit-streams-ttl");
+  const now = new Date("2026-07-03T00:00:00Z");
+  const streams = new DynamoMcpStreamStore(db, {
+    model: streamModel,
+    idGenerator: sequenceIdGenerator(["stream-ttl"]),
+    now: () => now,
+    streamTtlMinutes: 10,
+    maxEventBytes: 4,
+  });
+  const streamId = await streams.create("sess-ttl");
+  const expectedExpiry = Math.floor((now.getTime() + 10 * 60 * 1000) / 1000);
+  assert.equal(
+    db.items.get(`${streamModel.name}:sess-ttl:STREAM#${streamId}`).expiresAt,
+    expectedExpiry,
+  );
+  await streams.append("sess-ttl", streamId, Buffer.from("one"));
+  const event = db.items.get(`${streamModel.name}:sess-ttl:EVENT#1`);
+  assert.equal(event.expiresAt, expectedExpiry);
+  assert.equal(db.items.get(`${streamModel.name}:sess-ttl:STREAM#${streamId}`).expiresAt, expectedExpiry);
+  await assert.rejects(
+    () => streams.append("sess-ttl", streamId, Buffer.from("12345")),
+    /stream event too large/,
+  );
+
+  const later = new DynamoMcpStreamStore(db, {
+    model: streamModel,
+    now: () => new Date("2026-07-03T00:11:00Z"),
+  });
+  await assert.rejects(
+    () => later.subscribe("sess-ttl", streamId),
+    McpStreamNotFoundError,
+  );
+  await assert.rejects(
+    () => later.streamForEvent("sess-ttl", "1"),
+    McpEventNotFoundError,
+  );
+  await assert.rejects(
+    () => later.append("sess-ttl", streamId, Buffer.from("two")),
+    McpStreamNotFoundError,
+  );
+});
+
+test("mcp handler errors are sanitized unless verboseHandlerErrors is enabled", async () => {
+  const build = (options = {}) => {
+    const server = createMcpServer("Error MCP", "1", {
+      idGenerator: sequenceIdGenerator(["sess-error"]),
+      ...options,
+    });
+    server.registry().registerTool({ name: "fails", inputSchema: {} }, () => {
+      throw new Error("boom");
+    });
+    server.resources().registerResource({ uri: "file:///boom", name: "boom" }, () => {
+      throw new Error("boom");
+    });
+    server.prompts().registerPrompt({ name: "boom" }, () => {
+      throw new Error("boom");
+    });
+    return server;
+  };
+
+  for (const [verbose, expected] of [[false, "internal error"], [true, "boom"]]) {
+    const server = build(verbose ? { verboseHandlerErrors: true } : {});
+    const init = await initialize(server);
+    const headers = {
+      [MCP_HEADER_SESSION_ID]: [init.sessionId],
+      [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION],
+    };
+    assert.equal(
+      (await json(await post(server, rpc("tool", "tools/call", { name: "fails" }), headers))).error.message,
+      expected,
+    );
+    assert.equal(
+      (await json(await post(server, rpc("resource", "resources/read", { uri: "file:///boom" }), headers))).error.message,
+      expected,
+    );
+    assert.equal(
+      (await json(await post(server, rpc("prompt", "prompts/get", { name: "boom" }), headers))).error.message,
+      expected,
+    );
+    assert.match(
+      JSON.stringify(await json(await post(server, rpc("missing", "resources/read", { uri: "file:///missing" }), headers))),
+      /resource not found/,
+    );
+  }
 });

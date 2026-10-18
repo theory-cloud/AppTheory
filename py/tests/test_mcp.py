@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import unittest
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
+from unittest.mock import patch
 
 from apptheory import (
     MCP_CODE_HEADER_MISMATCH,
@@ -23,6 +25,8 @@ from apptheory import (
     MCP_PROTOCOL_VERSION_LEGACY,
     MCP_RESULT_TYPE_COMPLETE,
     MCP_RESULT_TYPE_INPUT_REQUIRED,
+    BearerTokenClaims,
+    Context,
     DynamoMcpStreamStore,
     DynamoMcpTaskStore,
     McpContentBlock,
@@ -54,12 +58,15 @@ from apptheory import (
     MemoryMcpSessionStore,
     MemoryMcpStreamStore,
     MemoryMcpTaskStore,
+    Request,
+    SecurePrincipal,
     create_mcp_server,
     create_mcp_test_harness,
     detect_mcp_protocol_version,
     detect_mcp_protocol_version_for_message,
     sequence_mcp_id_generator,
 )
+from apptheory.mcp import McpCallerAuth, McpStreamEventTooLargeError, McpTaskCapacityError
 
 
 def _response_json(response: Any) -> Any:
@@ -1167,6 +1174,456 @@ class McpRuntimeTests(unittest.TestCase):
 
         store.delete_session("sess-pages")
         self.assertEqual([key for key in table.items if key[0] == "sess-pages"], [])
+
+    def test_sessions_bind_to_authenticated_principal(self) -> None:
+        server = create_mcp_server("PyMCP", "test", {"id_generator": sequence_mcp_id_generator(["sess-principal"])})
+        handler = server.handler()
+
+        def serve(principal: str, method: str, headers: dict[str, Any], body: bytes = b"") -> Any:
+            ctx = Context(
+                request=Request(method=method, path="/mcp", headers=headers, body=body, is_base64=False),
+                auth_identity=principal,
+            )
+            return handler(ctx)
+
+        initialize_body = json.dumps({"jsonrpc": "2.0", "id": "init", "method": "initialize"}).encode()
+        initialized = serve("alice", "POST", _post_headers(), initialize_body)
+        self.assertEqual(initialized.status, 200)
+        session_id = initialized.headers[MCP_HEADER_SESSION_ID][0]
+
+        ping_body = json.dumps({"jsonrpc": "2.0", "id": "ping", "method": "ping"}).encode()
+        alice_ping = serve("alice", "POST", _post_headers(session_id=session_id), ping_body)
+        self.assertEqual(alice_ping.status, 200)
+        self.assertEqual(_response_json(alice_ping)["result"], {})
+
+        for principal in ("bob", ""):
+            denied_post = serve(principal, "POST", _post_headers(session_id=session_id), ping_body)
+            self.assertEqual(denied_post.status, 404)
+            self.assertEqual(_response_json(denied_post), {"error": "session not found"})
+
+            get_headers = {
+                MCP_HEADER_SESSION_ID: [session_id],
+                MCP_HEADER_PROTOCOL_VERSION: [MCP_PROTOCOL_VERSION],
+                "accept": ["text/event-stream"],
+            }
+            denied_get = serve(principal, "GET", get_headers)
+            self.assertEqual(denied_get.status, 404)
+            self.assertEqual(_response_json(denied_get), {"error": "session not found"})
+
+            delete_headers = {
+                MCP_HEADER_SESSION_ID: [session_id],
+                MCP_HEADER_PROTOCOL_VERSION: [MCP_PROTOCOL_VERSION],
+            }
+            denied_delete = serve(principal, "DELETE", delete_headers)
+            self.assertEqual(denied_delete.status, 404)
+            self.assertEqual(_response_json(denied_delete), {"error": "session not found"})
+
+        still_alive = serve("alice", "POST", _post_headers(session_id=session_id), ping_body)
+        self.assertEqual(still_alive.status, 200)
+        deleted = serve(
+            "alice",
+            "DELETE",
+            {MCP_HEADER_SESSION_ID: [session_id], MCP_HEADER_PROTOCOL_VERSION: [MCP_PROTOCOL_VERSION]},
+        )
+        self.assertEqual(deleted.status, 202)
+
+    def test_session_principal_derivation_fallbacks(self) -> None:
+        server = create_mcp_server(
+            "PyMCP",
+            "test",
+            {"id_generator": sequence_mcp_id_generator(["sess-secure", "sess-claims", "sess-tenant", "sess-unbound"])},
+        )
+        handler = server.handler()
+        initialize_body = json.dumps({"jsonrpc": "2.0", "id": "init", "method": "initialize"}).encode()
+        ping_body = json.dumps({"jsonrpc": "2.0", "id": "ping", "method": "ping"}).encode()
+
+        def make_context(
+            *,
+            auth_identity: str = "",
+            tenant_id: str = "",
+            tenant_bound: bool = False,
+            secure_identity: str = "",
+            claims_subject: str = "",
+        ) -> Context:
+            ctx = Context(
+                request=Request(method="POST", path="/mcp", headers=_post_headers(), body=b"", is_base64=False),
+                auth_identity=auth_identity,
+                tenant_id=tenant_id,
+                tenant_bound=tenant_bound,
+            )
+            if secure_identity:
+                ctx._secure_principal = SecurePrincipal(identity=secure_identity)
+            if claims_subject:
+                ctx.set("oauth.bearer_claims", BearerTokenClaims(subject=claims_subject))
+            return ctx
+
+        def serve(ctx: Context, method: str, headers: dict[str, Any], body: bytes = b"") -> Any:
+            ctx.request = Request(method=method, path="/mcp", headers=headers, body=body, is_base64=False)
+            return handler(ctx)
+
+        def initialize(ctx: Context) -> str:
+            response = serve(ctx, "POST", _post_headers(), initialize_body)
+            self.assertEqual(response.status, 200)
+            return response.headers[MCP_HEADER_SESSION_ID][0]
+
+        secure_session = initialize(make_context(secure_identity="svc-secure"))
+        secure_ping = serve(
+            make_context(auth_identity="svc-secure"), "POST", _post_headers(session_id=secure_session), ping_body
+        )
+        self.assertEqual(secure_ping.status, 200)
+        denied_secure = serve(
+            make_context(auth_identity="other"), "POST", _post_headers(session_id=secure_session), ping_body
+        )
+        self.assertEqual(denied_secure.status, 404)
+
+        claims_session = initialize(make_context(claims_subject="subject-claims"))
+        claims_ping = serve(
+            make_context(auth_identity="subject-claims"), "POST", _post_headers(session_id=claims_session), ping_body
+        )
+        self.assertEqual(claims_ping.status, 200)
+        denied_claims = serve(
+            make_context(auth_identity="other"), "POST", _post_headers(session_id=claims_session), ping_body
+        )
+        self.assertEqual(denied_claims.status, 404)
+
+        tenant_session = initialize(make_context(tenant_id="tenant-a", tenant_bound=True))
+        tenant_ping = serve(
+            make_context(auth_identity="tenant-a"), "POST", _post_headers(session_id=tenant_session), ping_body
+        )
+        self.assertEqual(tenant_ping.status, 200)
+        denied_tenant = serve(
+            make_context(auth_identity="other"), "POST", _post_headers(session_id=tenant_session), ping_body
+        )
+        self.assertEqual(denied_tenant.status, 404)
+
+        unbound_session = initialize(make_context(tenant_id="tenant-b", tenant_bound=False))
+        unbound_ping = serve(
+            make_context(auth_identity="anyone"), "POST", _post_headers(session_id=unbound_session), ping_body
+        )
+        self.assertEqual(unbound_ping.status, 200)
+
+    def test_memory_stores_bound_stream_and_task_state(self) -> None:
+        stream_store = MemoryMcpStreamStore(
+            id_generator=sequence_mcp_id_generator(["stream-count"]),
+            max_event_bytes=4,
+            max_events_per_session=2,
+            max_session_bytes=1024,
+        )
+        stream_id = stream_store.create("sess")
+        with self.assertRaises(McpStreamEventTooLargeError):
+            stream_store.append("sess", stream_id, b"12345")
+        first = stream_store.append("sess", stream_id, b"aa")
+        second = stream_store.append("sess", stream_id, b"bb")
+        third = stream_store.append("sess", stream_id, b"cc")
+        self.assertEqual([event.id for event in stream_store.subscribe("sess", stream_id)], [second, third])
+        with self.assertRaises(McpEventNotFoundError):
+            stream_store.stream_for_event("sess", first)
+
+        default_store = MemoryMcpStreamStore(id_generator=sequence_mcp_id_generator(["stream-default"]))
+        default_stream = default_store.create("sess")
+        with self.assertRaises(McpStreamEventTooLargeError):
+            default_store.append("sess", default_stream, b"x" * (10 * 1024 * 1024 + 1))
+
+        byte_store = MemoryMcpStreamStore(
+            id_generator=sequence_mcp_id_generator(["stream-bytes"]),
+            max_events_per_session=100,
+            max_session_bytes=4,
+        )
+        byte_stream = byte_store.create("sess")
+        byte_store.append("sess", byte_stream, b"aa")
+        byte_store.append("sess", byte_stream, b"bb")
+        byte_store.append("sess", byte_stream, b"cc")
+        self.assertEqual(
+            [event.data for event in byte_store.subscribe("sess", byte_stream)],
+            [b"bb", b"cc"],
+        )
+
+        clock = _FixedClock(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC))
+        task_store = MemoryMcpTaskStore(clock=clock, max_tasks_per_session=2)
+
+        def task_record(
+            task_id: str,
+            *,
+            status: str = "working",
+            created_at: str = "2026-01-01T00:00:00Z",
+            ttl: int = 0,
+        ) -> McpTaskRecord:
+            return McpTaskRecord(
+                session_id="sess",
+                method="tools/call",
+                tool_name="tool",
+                task=McpTask(task_id=task_id, status=status, created_at=created_at, ttl=ttl),
+            )
+
+        task_store.create(task_record("one"))
+        task_store.create(task_record("two"))
+        with self.assertRaises(McpTaskCapacityError):
+            task_store.create(task_record("three"))
+        completed = task_store.get({"sessionId": "sess", "taskId": "one"})
+        completed.task.status = "completed"
+        task_store.update(completed)
+        task_store.create(task_record("three"))
+        self.assertEqual(
+            {task.task_id for task in task_store.list({"sessionId": "sess"}).tasks},
+            {"two", "three"},
+        )
+
+        expired_store = MemoryMcpTaskStore(
+            clock=_FixedClock(datetime(2026, 1, 1, 0, 0, 5, tzinfo=UTC)),
+            max_tasks_per_session=1,
+        )
+        expired_store.create(task_record("expired", created_at="2026-01-01T00:00:00Z", ttl=1000))
+        expired_store.create(task_record("fresh"))
+        self.assertEqual(
+            [task.task_id for task in expired_store.list({"sessionId": "sess"}).tasks],
+            ["fresh"],
+        )
+
+    def test_dynamo_stream_store_ttl_and_payload_bounds(self) -> None:
+        now = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+        table = _FakeTheoryTable()
+        with patch.dict(os.environ, {"MCP_STREAM_TTL_MINUTES": "5"}):
+            store = DynamoMcpStreamStore(
+                table=table,
+                id_generator=sequence_mcp_id_generator(["stream-ttl"]),
+                clock=_FixedClock(now),
+            )
+            stream_id = store.create("sess-ttl")
+            first = store.append("sess-ttl", stream_id, "hello")
+        expires_at = int(now.timestamp()) + 300
+        self.assertEqual(table.items[("sess-ttl", f"STREAM#{stream_id}")].expires_at, expires_at)
+        self.assertEqual(table.items[("sess-ttl", f"EVENT#{first}")].expires_at, expires_at)
+
+        later = DynamoMcpStreamStore(
+            table=table,
+            id_generator=sequence_mcp_id_generator(["unused"]),
+            clock=_FixedClock(now + timedelta(minutes=6)),
+        )
+        with self.assertRaises(McpStreamNotFoundError):
+            later.subscribe("sess-ttl", stream_id)
+        with self.assertRaises(McpEventNotFoundError):
+            later.stream_for_event("sess-ttl", first)
+        with self.assertRaises(McpStreamNotFoundError):
+            later.append("sess-ttl", stream_id, "more")
+
+        table.items[("sess-ttl", f"STREAM#{stream_id}")].expires_at = int(now.timestamp()) + 3600
+        table.items[("sess-ttl", f"EVENT#{first}")].expires_at = int(now.timestamp()) - 1
+        self.assertEqual(store.subscribe("sess-ttl", stream_id), [])
+        with self.assertRaises(McpEventNotFoundError):
+            store.stream_for_event("sess-ttl", first)
+
+        oversized_table = _FakeTheoryTable()
+        with patch.dict(os.environ, {"MCP_STREAM_MAX_EVENT_BYTES": "4"}):
+            oversized = DynamoMcpStreamStore(
+                table=oversized_table,
+                id_generator=sequence_mcp_id_generator(["stream-oversized"]),
+                clock=_FixedClock(now),
+            )
+            oversized_stream = oversized.create("sess-oversized")
+            with self.assertRaises(McpStreamEventTooLargeError):
+                oversized.append("sess-oversized", oversized_stream, b"12345")
+        self.assertNotIn(("sess-oversized", "EVENT#1"), oversized_table.items)
+        stream_item = oversized_table.items[("sess-oversized", f"STREAM#{oversized_stream}")]
+        self.assertEqual(stream_item.sequence, 0)
+
+    def test_tool_contexts_carry_authenticated_caller_identity(self) -> None:
+        seen: dict[str, McpCallerAuth | None] = {}
+        server = create_mcp_server(
+            "PyMCP",
+            "test",
+            {
+                "id_generator": sequence_mcp_id_generator(["sess-auth", "task-auth"]),
+                "task_runtime": {"store": MemoryMcpTaskStore(), "defaultTtlMs": 1000, "maxTtlMs": 1000},
+            },
+        )
+
+        def identity_tool(_args: Any, context: McpToolContext) -> dict[str, Any]:
+            seen["normal"] = context.auth
+            identity = context.auth.auth_identity if context.auth else ""
+            return {"content": [{"type": "text", "text": identity}]}
+
+        def streaming_tool(_args: Any, _emit: Any, context: McpToolContext) -> dict[str, Any]:
+            seen["stream"] = context.auth
+            return {"content": []}
+
+        def task_tool(_args: Any, context: McpToolContext) -> dict[str, Any]:
+            seen["task"] = context.auth
+            return {"content": []}
+
+        server.registry().register_tool({"name": "identity", "inputSchema": {}}, identity_tool)
+        server.registry().register_streaming_tool({"name": "identity_stream", "inputSchema": {}}, streaming_tool)
+        server.registry().register_tool(
+            {"name": "identity_task", "inputSchema": {}, "execution": {"taskSupport": "optional"}},
+            task_tool,
+        )
+        handler = server.handler()
+
+        def serve(method: str, headers: dict[str, Any], body_json: dict[str, Any]) -> Any:
+            ctx = Context(
+                request=Request(
+                    method=method,
+                    path="/mcp",
+                    headers=headers,
+                    body=json.dumps(body_json).encode(),
+                    is_base64=False,
+                ),
+                auth_identity="alice",
+                tenant_id="tenant-a",
+                tenant_bound=True,
+            )
+            ctx._secure_principal = SecurePrincipal(identity="alice", scopes=["mcp:read", "mcp:write"])
+            return handler(ctx)
+
+        initialized = serve("POST", _post_headers(), {"jsonrpc": "2.0", "id": "init", "method": "initialize"})
+        session_id = initialized.headers[MCP_HEADER_SESSION_ID][0]
+
+        normal = serve(
+            "POST",
+            _post_headers(session_id=session_id),
+            {
+                "jsonrpc": "2.0",
+                "id": "normal",
+                "method": "tools/call",
+                "params": {"name": "identity", "arguments": {}},
+            },
+        )
+        self.assertEqual(_response_json(normal)["result"]["content"][0]["text"], "alice")
+
+        streamed = serve(
+            "POST",
+            _post_headers(session_id=session_id),
+            {
+                "jsonrpc": "2.0",
+                "id": "stream",
+                "method": "tools/call",
+                "params": {"name": "identity_stream", "arguments": {}},
+            },
+        )
+        self.assertEqual(streamed.status, 200)
+
+        task = serve(
+            "POST",
+            _post_headers(session_id=session_id),
+            {
+                "jsonrpc": "2.0",
+                "id": "task",
+                "method": "tools/call",
+                "params": {"name": "identity_task", "arguments": {}, "task": {}},
+            },
+        )
+        self.assertEqual(_response_json(task)["result"]["task"]["status"], "completed")
+
+        expected = McpCallerAuth(
+            auth_identity="alice",
+            tenant_id="tenant-a",
+            tenant_bound=True,
+            scopes=["mcp:read", "mcp:write"],
+        )
+        self.assertEqual(seen["normal"], expected)
+        self.assertEqual(seen["stream"], expected)
+        self.assertEqual(seen["task"], expected)
+
+        anon_server = create_mcp_server("PyMCP", "test", {"id_generator": sequence_mcp_id_generator(["sess-anon"])})
+        anon_seen: list[McpCallerAuth | None] = []
+
+        def anon_tool(_args: Any, context: McpToolContext) -> dict[str, Any]:
+            anon_seen.append(context.auth)
+            return {"content": []}
+
+        anon_server.registry().register_tool({"name": "identity", "inputSchema": {}}, anon_tool)
+        anon_harness = create_mcp_test_harness(anon_server)
+        anon_session = anon_harness.initialize(id="init").response.headers[MCP_HEADER_SESSION_ID][0]
+        anon_harness.call(anon_session, "tools/call", {"name": "identity"}, "anon")
+        self.assertIsNone(anon_seen[0])
+
+    def test_generic_handler_errors_are_sanitized_by_default(self) -> None:
+        logged: list[tuple[str, tuple[dict[str, Any], ...]]] = []
+
+        class RecordingLogger:
+            def error(self, message: str, *fields: dict[str, Any]) -> None:
+                logged.append((message, fields))
+
+        server = create_mcp_server(
+            "PyMCP",
+            "test",
+            {
+                "id_generator": sequence_mcp_id_generator(["sess-errors", "task-errors"]),
+                "task_runtime": {"store": MemoryMcpTaskStore(), "defaultTtlMs": 1000, "maxTtlMs": 1000},
+                "logger": RecordingLogger(),
+            },
+        )
+        server.registry().register_tool(
+            {"name": "boom", "inputSchema": {}},
+            lambda _args, _ctx: (_ for _ in ()).throw(RuntimeError("secret detail")),
+        )
+        server.registry().register_tool(
+            {"name": "task_boom", "inputSchema": {}, "execution": {"taskSupport": "optional"}},
+            lambda _args, _ctx: (_ for _ in ()).throw(RuntimeError("task secret")),
+        )
+        server.resources().register_resource(
+            {"uri": "theory://resource/boom", "name": "boom"},
+            lambda _ctx: (_ for _ in ()).throw(RuntimeError("resource secret")),
+        )
+        server.prompts().register_prompt(
+            {"name": "boom"},
+            lambda _args: (_ for _ in ()).throw(RuntimeError("prompt secret")),
+        )
+        harness = create_mcp_test_harness(server)
+        session_id = harness.initialize(id="init").response.headers[MCP_HEADER_SESSION_ID][0]
+
+        tool_error = harness.call(session_id, "tools/call", {"name": "boom"}, "tool-boom")
+        self.assertEqual(
+            tool_error.body_json["error"],
+            {"code": MCP_CODE_SERVER_ERROR, "message": "internal error"},
+        )
+
+        missing_tool = harness.call(session_id, "tools/call", {"name": "missing"}, "tool-missing")
+        self.assertEqual(
+            missing_tool.body_json["error"],
+            {"code": MCP_CODE_INVALID_PARAMS, "message": "tool not found: missing"},
+        )
+
+        resource_error = harness.call(session_id, "resources/read", {"uri": "theory://resource/boom"}, "resource-boom")
+        self.assertEqual(resource_error.body_json["error"]["message"], "internal error")
+        missing_resource = harness.call(
+            session_id, "resources/read", {"uri": "theory://resource/missing"}, "resource-missing"
+        )
+        self.assertEqual(
+            missing_resource.body_json["error"]["message"],
+            "resource not found: theory://resource/missing",
+        )
+
+        prompt_error = harness.call(session_id, "prompts/get", {"name": "boom"}, "prompt-boom")
+        self.assertEqual(prompt_error.body_json["error"]["message"], "internal error")
+        missing_prompt = harness.call(session_id, "prompts/get", {"name": "missing"}, "prompt-missing")
+        self.assertEqual(missing_prompt.body_json["error"]["message"], "prompt not found: missing")
+
+        task = harness.call(session_id, "tools/call", {"name": "task_boom", "task": {}}, "task-boom")
+        task_id = task.body_json["result"]["task"]["taskId"]
+        task_result = harness.call(session_id, "tasks/result", {"taskId": task_id}, "task-result")
+        self.assertEqual(task_result.body_json["error"]["message"], "internal error")
+        task_status = harness.call(session_id, "tasks/get", {"taskId": task_id}, "task-get")
+        self.assertEqual(task_status.body_json["result"]["statusMessage"], "internal error")
+
+        logged_errors = [fields[0]["error"] for _, fields in logged if fields]
+        self.assertIn("secret detail", logged_errors)
+        self.assertIn("task secret", logged_errors)
+        self.assertIn("resource secret", logged_errors)
+        self.assertIn("prompt secret", logged_errors)
+
+        verbose = create_mcp_server(
+            "PyMCP",
+            "test",
+            {"id_generator": sequence_mcp_id_generator(["sess-verbose"]), "verbose_handler_errors": True},
+        )
+        verbose.registry().register_tool(
+            {"name": "boom", "inputSchema": {}},
+            lambda _args, _ctx: (_ for _ in ()).throw(RuntimeError("secret detail")),
+        )
+        verbose_harness = create_mcp_test_harness(verbose)
+        verbose_session = verbose_harness.initialize(id="init").response.headers[MCP_HEADER_SESSION_ID][0]
+        verbose_error = verbose_harness.call(verbose_session, "tools/call", {"name": "boom"}, "boom")
+        self.assertEqual(verbose_error.body_json["error"]["message"], "secret detail")
 
 
 if __name__ == "__main__":

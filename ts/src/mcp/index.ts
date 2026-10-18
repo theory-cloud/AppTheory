@@ -6,8 +6,10 @@ import {
   type TheorydbClient,
 } from "@theory-cloud/tabletheory-ts";
 
-import type { Handler } from "../context.js";
+import type { Context, Handler } from "../context.js";
 import { RandomIdGenerator, type IdGenerator } from "../ids.js";
+import { getLogger } from "../logger.js";
+import { bearerTokenClaimsFromContext } from "../oauth/index.js";
 import type { Headers, Response } from "../types.js";
 
 export const MCP_PROTOCOL_VERSION = "2025-11-25";
@@ -51,6 +53,14 @@ const SERVER_INFO_METADATA_KEY = "io.modelcontextprotocol/serverInfo";
 const TASK_CANCELED_MESSAGE = "task canceled";
 const DEFAULT_TASK_TABLE_NAME = "mcp-tasks";
 const DEFAULT_STREAM_TABLE_NAME = "mcp-streams";
+const DEFAULT_STREAM_TTL_MINUTES = 60;
+const DEFAULT_STREAM_MAX_EVENT_BYTES = 10 * 1024 * 1024;
+const STREAM_EVENT_TOO_LARGE_MESSAGE = "stream event too large";
+const DEFAULT_MEMORY_STREAM_MAX_EVENT_BYTES = 10 * 1024 * 1024;
+const DEFAULT_MEMORY_STREAM_MAX_EVENTS_PER_SESSION = 10000;
+const DEFAULT_MEMORY_STREAM_MAX_TOTAL_BYTES_PER_SESSION = 64 * 1024 * 1024;
+const DEFAULT_MEMORY_TASK_MAX_PER_SESSION = 1000;
+const TASK_CAPACITY_EXCEEDED_MESSAGE = "Task capacity exceeded";
 
 export const MCP_CODE_PARSE_ERROR = -32700;
 export const MCP_CODE_INVALID_REQUEST = -32600;
@@ -228,12 +238,20 @@ export type McpStreamingToolHandler = (
   context: McpToolContext,
 ) => McpToolResult | Promise<McpToolResult>;
 
+export interface McpToolAuthContext {
+  authIdentity: string;
+  tenantId: string;
+  tenantBound: boolean;
+  scopes: string[];
+}
+
 export interface McpToolContext {
   sessionId: string;
   requestId: unknown;
   method: string;
   inputResponses?: Record<string, unknown>;
   requestState?: string;
+  auth?: McpToolAuthContext;
 }
 
 export interface McpResourceDef {
@@ -300,6 +318,7 @@ export interface McpSession {
   id: string;
   createdAt: string;
   expiresAt: string;
+  principal?: string;
   data?: Record<string, string>;
 }
 
@@ -433,6 +452,12 @@ export interface McpServerOptions {
    * Defaults to true.
    */
   includeServerInfoMetadata?: boolean;
+  /**
+   * Return verbatim handler error messages on the JSON-RPC wire. Defaults to
+   * false, which replaces generic tool/resource/prompt/task handler errors
+   * with a client-safe message and logs the original.
+   */
+  verboseHandlerErrors?: boolean;
 }
 
 type RegisteredTool = {
@@ -799,9 +824,31 @@ export class MemoryMcpSessionStore implements McpSessionStore {
 export class MemoryMcpStreamStore implements McpStreamStore {
   private readonly sessions = new Map<string, MemoryStreamSession>();
   private readonly idGenerator: IdGenerator;
+  private readonly maxEventBytes: number;
+  private readonly maxEventsPerSession: number;
+  private readonly maxTotalBytesPerSession: number;
 
-  constructor(options: { idGenerator?: IdGenerator } = {}) {
+  constructor(
+    options: {
+      idGenerator?: IdGenerator;
+      maxEventBytes?: number;
+      maxEventsPerSession?: number;
+      maxTotalBytesPerSession?: number;
+    } = {},
+  ) {
     this.idGenerator = options.idGenerator ?? new RandomIdGenerator();
+    this.maxEventBytes = positiveInteger(
+      options.maxEventBytes,
+      DEFAULT_MEMORY_STREAM_MAX_EVENT_BYTES,
+    );
+    this.maxEventsPerSession = positiveInteger(
+      options.maxEventsPerSession,
+      DEFAULT_MEMORY_STREAM_MAX_EVENTS_PER_SESSION,
+    );
+    this.maxTotalBytesPerSession = positiveInteger(
+      options.maxTotalBytesPerSession,
+      DEFAULT_MEMORY_STREAM_MAX_TOTAL_BYTES_PER_SESSION,
+    );
   }
 
   async create(sessionId: string): Promise<string> {
@@ -820,12 +867,25 @@ export class MemoryMcpStreamStore implements McpStreamStore {
     streamId: string,
     data?: Uint8Array,
   ): Promise<string> {
+    const payload = cloneBytes(data);
+    if (payload.length > this.maxEventBytes) {
+      throw new Error(STREAM_EVENT_TOO_LARGE_MESSAGE);
+    }
     const session = this.lookupSession(sessionId);
     const stream = this.lookupStream(session, streamId);
     session.nextSeq += 1;
     const eventId = String(session.nextSeq);
-    stream.events.push({ id: eventId, data: cloneBytes(data) });
+    stream.events.push({ id: eventId, data: payload });
     session.eventToStream.set(eventId, String(streamId ?? "").trim());
+    session.eventOrder.push(eventId);
+    session.eventCount += 1;
+    session.totalBytes += payload.length;
+    while (
+      session.eventCount > this.maxEventsPerSession ||
+      session.totalBytes > this.maxTotalBytesPerSession
+    ) {
+      this.evictOldest(session);
+    }
     return eventId;
   }
 
@@ -871,10 +931,43 @@ export class MemoryMcpStreamStore implements McpStreamStore {
   private ensureSession(sessionId: string): MemoryStreamSession {
     let session = this.sessions.get(sessionId);
     if (!session) {
-      session = { nextSeq: 0, eventToStream: new Map(), streams: new Map() };
+      session = {
+        nextSeq: 0,
+        eventToStream: new Map(),
+        eventOrder: [],
+        eventCount: 0,
+        totalBytes: 0,
+        streams: new Map(),
+      };
       this.sessions.set(sessionId, session);
     }
     return session;
+  }
+
+  private evictOldest(session: MemoryStreamSession): void {
+    while (session.eventOrder.length > 0) {
+      const eventId = session.eventOrder.shift();
+      if (eventId === undefined) {
+        return;
+      }
+      const streamId = session.eventToStream.get(eventId);
+      if (!streamId) {
+        continue;
+      }
+      session.eventToStream.delete(eventId);
+      const stream = session.streams.get(streamId);
+      if (!stream) {
+        continue;
+      }
+      const index = stream.events.findIndex((event) => event.id === eventId);
+      if (index < 0) {
+        continue;
+      }
+      const [removed] = stream.events.splice(index, 1);
+      session.eventCount -= 1;
+      session.totalBytes -= removed?.data.length ?? 0;
+      return;
+    }
   }
 
   private lookupSession(sessionId: string): MemoryStreamSession {
@@ -902,6 +995,9 @@ export class MemoryMcpStreamStore implements McpStreamStore {
 type MemoryStreamSession = {
   nextSeq: number;
   eventToStream: Map<string, string>;
+  eventOrder: string[];
+  eventCount: number;
+  totalBytes: number;
   streams: Map<string, MemoryStream>;
 };
 
@@ -913,9 +1009,14 @@ type MemoryStream = {
 export class MemoryMcpTaskStore implements McpTaskStore {
   private readonly sessions = new Map<string, Map<string, McpTaskRecord>>();
   private readonly now: () => Date;
+  private readonly maxTasksPerSession: number;
 
-  constructor(options: { now?: () => Date } = {}) {
+  constructor(options: { now?: () => Date; maxTasksPerSession?: number } = {}) {
     this.now = options.now ?? (() => new Date());
+    this.maxTasksPerSession = positiveInteger(
+      options.maxTasksPerSession,
+      DEFAULT_MEMORY_TASK_MAX_PER_SESSION,
+    );
   }
 
   async create(task: McpTaskRecord): Promise<McpTaskRecord> {
@@ -935,6 +1036,18 @@ export class MemoryMcpTaskStore implements McpTaskStore {
     }
     if (session.has(record.task.taskId)) {
       throw new Error("task already exists");
+    }
+    if (session.size >= this.maxTasksPerSession) {
+      this.reapExpired(session);
+      while (
+        session.size >= this.maxTasksPerSession &&
+        this.evictOldestTerminal(session)
+      ) {
+        // Keep evicting terminal tasks until the incoming task fits.
+      }
+      if (session.size >= this.maxTasksPerSession) {
+        throw new Error(TASK_CAPACITY_EXCEEDED_MESSAGE);
+      }
     }
     session.set(record.task.taskId, record);
     return cloneTaskRecord(record);
@@ -1010,6 +1123,38 @@ export class MemoryMcpTaskStore implements McpTaskStore {
 
   async deleteSession(sessionId: string): Promise<void> {
     this.sessions.delete(String(sessionId ?? "").trim());
+  }
+
+  private reapExpired(session: Map<string, McpTaskRecord>): void {
+    const now = this.now();
+    for (const [taskId, record] of session) {
+      if (this.expired(record, now)) {
+        session.delete(taskId);
+      }
+    }
+  }
+
+  private expired(record: McpTaskRecord, now: Date): boolean {
+    const createdAt = Date.parse(String(record.task.createdAt ?? ""));
+    if (!Number.isFinite(createdAt)) {
+      return false;
+    }
+    const ttl = Number(record.task.ttl ?? 0);
+    const duration =
+      Number.isFinite(ttl) && ttl > 0 ? ttl : DEFAULT_TASK_MAX_TTL_MS;
+    return now.getTime() >= createdAt + duration;
+  }
+
+  private evictOldestTerminal(session: Map<string, McpTaskRecord>): boolean {
+    const terminal = [...session.values()]
+      .filter((record) => taskStatusTerminal(record.task.status))
+      .sort(compareTaskRecords);
+    const oldest = terminal[0];
+    if (!oldest) {
+      return false;
+    }
+    session.delete(oldest.task.taskId);
+    return true;
   }
 
   private record(lookup: McpTaskLookup): McpTaskRecord | null {
@@ -1159,14 +1304,41 @@ export class DynamoMcpStreamStore implements McpStreamStore {
   private readonly db: TheorydbClient;
   private readonly model: Model;
   private readonly idGenerator: IdGenerator;
+  private readonly now: () => Date;
+  private readonly streamTtlMs: number;
+  private readonly maxEventBytes: number;
 
   constructor(
     db: TheorydbClient,
-    options: { model?: Model; idGenerator?: IdGenerator } = {},
+    options: {
+      model?: Model;
+      idGenerator?: IdGenerator;
+      now?: () => Date;
+      streamTtlMinutes?: number;
+      maxEventBytes?: number;
+    } = {},
   ) {
     this.db = db;
     this.model = options.model ?? defaultMcpStreamModel();
     this.idGenerator = options.idGenerator ?? new RandomIdGenerator();
+    this.now = options.now ?? (() => new Date());
+    this.streamTtlMs =
+      positiveInteger(
+        options.streamTtlMinutes,
+        envPositiveInteger(
+          "MCP_STREAM_TTL_MINUTES",
+          DEFAULT_STREAM_TTL_MINUTES,
+        ),
+      ) *
+      60 *
+      1000;
+    this.maxEventBytes = positiveInteger(
+      options.maxEventBytes,
+      envPositiveInteger(
+        "MCP_STREAM_MAX_EVENT_BYTES",
+        DEFAULT_STREAM_MAX_EVENT_BYTES,
+      ),
+    );
     this.db.register(this.model);
   }
 
@@ -1185,6 +1357,7 @@ export class DynamoMcpStreamStore implements McpStreamStore {
       sequence: 0,
       eventId: "",
       data: "",
+      expiresAt: this.expiresAtUnix(this.now()),
     });
     return streamId;
   }
@@ -1195,10 +1368,16 @@ export class DynamoMcpStreamStore implements McpStreamStore {
     data?: Uint8Array,
   ): Promise<string> {
     const sid = normalizeRequired(sessionId, "missing session id");
+    const payload = cloneBytes(data);
+    if (payload.length > this.maxEventBytes) {
+      throw new Error(STREAM_EVENT_TOO_LARGE_MESSAGE);
+    }
     const stream = await this.streamRecord(sid, streamId);
     const sequence = Number(stream["sequence"] ?? 0) + 1;
     const eventId = String(sequence);
+    const expiresAt = this.expiresAtUnix(this.now());
     stream["sequence"] = sequence;
+    stream["expiresAt"] = expiresAt;
     await this.db.save(this.model.name, stream);
     await this.db.create(this.model.name, {
       sessionId: sid,
@@ -1208,7 +1387,8 @@ export class DynamoMcpStreamStore implements McpStreamStore {
       closed: false,
       sequence,
       eventId,
-      data: Buffer.from(cloneBytes(data)).toString("base64"),
+      data: Buffer.from(payload).toString("base64"),
+      expiresAt,
     });
     return eventId;
   }
@@ -1216,6 +1396,7 @@ export class DynamoMcpStreamStore implements McpStreamStore {
   async close(sessionId: string, streamId: string): Promise<void> {
     const stream = await this.streamRecord(sessionId, streamId);
     stream["closed"] = true;
+    stream["expiresAt"] = this.expiresAtUnix(this.now());
     await this.db.save(this.model.name, stream);
   }
 
@@ -1226,6 +1407,7 @@ export class DynamoMcpStreamStore implements McpStreamStore {
   ): Promise<McpStreamEvent[]> {
     const sid = normalizeRequired(sessionId, "missing session id");
     const stream = String(streamId ?? "").trim();
+    await this.streamRecord(sid, stream);
     const after = Number(String(afterEventId ?? "").trim() || 0);
     const events = await this.eventRecords(sid);
     if (
@@ -1282,11 +1464,18 @@ export class DynamoMcpStreamStore implements McpStreamStore {
     streamId: string,
   ): Promise<Record<string, unknown>> {
     try {
-      return await this.db.get(this.model.name, {
+      const record = await this.db.get(this.model.name, {
         sessionId: String(sessionId ?? "").trim(),
         itemId: `STREAM#${String(streamId ?? "").trim()}`,
       });
+      if (streamItemExpired(record, this.now())) {
+        throw new McpStreamNotFoundError();
+      }
+      return record;
     } catch (err) {
+      if (err instanceof McpStreamNotFoundError) {
+        throw err;
+      }
       if (isNotFoundError(err)) {
         throw new McpStreamNotFoundError();
       }
@@ -1297,9 +1486,15 @@ export class DynamoMcpStreamStore implements McpStreamStore {
   private async eventRecords(
     sessionId: string,
   ): Promise<Record<string, unknown>[]> {
+    const now = this.now();
     return (await this.sessionItems(sessionId)).filter(
-      (item) => String(item["kind"] ?? "") === "event",
+      (item) =>
+        String(item["kind"] ?? "") === "event" && !streamItemExpired(item, now),
     );
+  }
+
+  private expiresAtUnix(now: Date): number {
+    return Math.floor((now.getTime() + this.streamTtlMs) / 1000);
   }
 
   private async sessionItems(
@@ -1346,6 +1541,7 @@ export class McpServer {
   >;
   private readonly cacheableResults: NormalizedCacheableResultConfig;
   private readonly includeServerInfoMetadata: boolean;
+  private readonly verboseHandlerErrors: boolean;
   private readonly toolRegistry = new McpToolRegistry();
   private readonly resourceRegistry = new McpResourceRegistry();
   private readonly promptRegistry = new McpPromptRegistry();
@@ -1370,6 +1566,7 @@ export class McpServer {
     );
     this.includeServerInfoMetadata =
       options.includeServerInfoMetadata !== false;
+    this.verboseHandlerErrors = options.verboseHandlerErrors === true;
   }
 
   registry(): McpToolRegistry {
@@ -1386,7 +1583,12 @@ export class McpServer {
 
   handler(): Handler {
     return async (ctx) =>
-      this.handle(ctx.request.method, ctx.request.headers, ctx.request.body);
+      this.handle(
+        ctx.request.method,
+        ctx.request.headers,
+        ctx.request.body,
+        ctx,
+      );
   }
 
   async serve(request: {
@@ -1405,18 +1607,19 @@ export class McpServer {
     method: string,
     headers: Headers,
     body: Uint8Array,
+    ctx?: Context,
   ): Promise<Response> {
     const normalizedMethod = String(method ?? "")
       .trim()
       .toUpperCase();
     if (normalizedMethod === "POST") {
-      return this.handlePost(headers, body);
+      return this.handlePost(headers, body, ctx);
     }
     if (normalizedMethod === "GET") {
-      return this.handleGet(headers);
+      return this.handleGet(headers, ctx);
     }
     if (normalizedMethod === "DELETE") {
-      return this.handleDelete(headers, body);
+      return this.handleDelete(headers, body, ctx);
     }
     return methodNotAllowedResponse("DELETE, GET, POST");
   }
@@ -1424,6 +1627,7 @@ export class McpServer {
   private async handlePost(
     headers: Headers,
     body: Uint8Array,
+    ctx?: Context,
   ): Promise<Response> {
     const originResponse = this.validateOrigin(headers);
     if (originResponse) {
@@ -1449,13 +1653,13 @@ export class McpServer {
 
     const shape = detectMcpProtocolVersion(headers, body);
     if (Object.prototype.hasOwnProperty.call(raw, "method")) {
-      return this.handlePostRequest(headers, body, shape);
+      return this.handlePostRequest(headers, body, shape, ctx);
     }
     if (
       Object.prototype.hasOwnProperty.call(raw, "result") ||
       Object.prototype.hasOwnProperty.call(raw, "error")
     ) {
-      return this.handlePostResponse(headers, body, shape);
+      return this.handlePostResponse(headers, body, shape, ctx);
     }
     return badRequest("invalid JSON-RPC message");
   }
@@ -1464,6 +1668,7 @@ export class McpServer {
     headers: Headers,
     body: Uint8Array,
     shape: McpProtocolShape,
+    ctx?: Context,
   ): Promise<Response> {
     let request: ParsedRPCRequest;
     try {
@@ -1489,7 +1694,7 @@ export class McpServer {
     shape = protocolValidation.shape;
 
     if (shape === MCP_PROTOCOL_SHAPE_2026_07_28) {
-      return this.handleStatelessPostRequest(request);
+      return this.handleStatelessPostRequest(request, ctx);
     }
 
     if (request.method === "server/discover") {
@@ -1497,15 +1702,15 @@ export class McpServer {
         return emptyResponse(202);
       }
       return this.marshalSingleResponse(
-        await this.dispatch(request, MCP_PROTOCOL_VERSION, ""),
+        await this.dispatch(request, MCP_PROTOCOL_VERSION, "", ctx),
       );
     }
 
     if (request.method === "initialize") {
-      return this.handleInitializeHTTP(request);
+      return this.handleInitializeHTTP(request, ctx);
     }
 
-    const sessionResult = await this.requireSession(headers);
+    const sessionResult = await this.requireSession(headers, ctx);
     if (sessionResult.response) {
       return sessionResult.response;
     }
@@ -1523,11 +1728,12 @@ export class McpServer {
       await this.handleNotification(session, request);
       return emptyResponse(202);
     }
-    return this.handleRequestHTTP(sessionId, session, request, headers);
+    return this.handleRequestHTTP(sessionId, session, request, headers, ctx);
   }
 
   private async handleStatelessPostRequest(
     request: ParsedRPCRequest,
+    ctx?: Context,
   ): Promise<Response> {
     if (!request.idPresent) {
       return emptyResponse(202);
@@ -1536,6 +1742,7 @@ export class McpServer {
       request,
       MCP_PROTOCOL_VERSION_2026_07_28,
       "",
+      ctx,
     );
     const missing = missingRequiredClientCapabilities(request, response);
     if (Object.keys(missing).length > 0) {
@@ -1558,6 +1765,7 @@ export class McpServer {
     headers: Headers,
     body: Uint8Array,
     shape: McpProtocolShape,
+    ctx?: Context,
   ): Promise<Response> {
     let rpcResponse: Record<string, unknown>;
     try {
@@ -1573,7 +1781,7 @@ export class McpServer {
     if (validationResponse) {
       return validationResponse;
     }
-    const sessionResult = await this.requireSession(headers);
+    const sessionResult = await this.requireSession(headers, ctx);
     if (sessionResult.response) {
       return sessionResult.response;
     }
@@ -1589,7 +1797,7 @@ export class McpServer {
     return emptyResponse(202);
   }
 
-  private async handleGet(headers: Headers): Promise<Response> {
+  private async handleGet(headers: Headers, ctx?: Context): Promise<Response> {
     const originResponse = this.validateOrigin(headers);
     if (originResponse) {
       return originResponse;
@@ -1604,7 +1812,7 @@ export class McpServer {
     if (headerResponse) {
       return headerResponse;
     }
-    const sessionResult = await this.requireSession(headers);
+    const sessionResult = await this.requireSession(headers, ctx);
     if (sessionResult.response) {
       return sessionResult.response;
     }
@@ -1652,6 +1860,7 @@ export class McpServer {
   private async handleDelete(
     headers: Headers,
     body: Uint8Array,
+    ctx?: Context,
   ): Promise<Response> {
     const originResponse = this.validateOrigin(headers);
     if (originResponse) {
@@ -1668,7 +1877,7 @@ export class McpServer {
     }
     let session: McpSession;
     try {
-      session = await this.getSession(sessionId);
+      session = await this.getSession(sessionId, ctx);
     } catch (err) {
       if (err instanceof McpSessionNotFoundError) {
         return notFound("session not found");
@@ -1689,9 +1898,13 @@ export class McpServer {
 
   private async handleInitializeHTTP(
     request: ParsedRPCRequest,
+    ctx?: Context,
   ): Promise<Response> {
     const negotiated = negotiateProtocolVersion(request.params);
-    const session = await this.createSession(negotiated);
+    const session = await this.createSession(
+      negotiated,
+      principalFromContext(ctx),
+    );
     const response = this.handleInitialize(request, negotiated);
     return this.marshalSingleResponse(response, session.id, true);
   }
@@ -1713,6 +1926,7 @@ export class McpServer {
     session: McpSession,
     request: ParsedRPCRequest,
     headers: Headers,
+    ctx?: Context,
   ): Promise<Response> {
     const protocol = sessionProtocolVersion(session);
     if (
@@ -1720,9 +1934,9 @@ export class McpServer {
       acceptsEventStream(headers) &&
       this.shouldStreamToolsCall(request)
     ) {
-      return this.handleToolsCallStream(sessionId, request);
+      return this.handleToolsCallStream(sessionId, request, ctx);
     }
-    const response = await this.dispatch(request, protocol, sessionId);
+    const response = await this.dispatch(request, protocol, sessionId, ctx);
     return this.marshalSingleResponse(response);
   }
 
@@ -1730,6 +1944,7 @@ export class McpServer {
     request: ParsedRPCRequest,
     protocolVersion: string,
     sessionId: string,
+    ctx?: Context,
   ): Promise<McpRPCResponse> {
     if (!methodAllowedForProtocol(protocolVersion, request.method)) {
       return newErrorResponse(
@@ -1787,6 +2002,7 @@ export class McpServer {
           request,
           sessionId,
           protocolVersion,
+          ctx,
         );
         break;
       case "resources/list":
@@ -1955,6 +2171,7 @@ export class McpServer {
     request: ParsedRPCRequest,
     sessionId: string,
     protocolVersion: string,
+    ctx?: Context,
   ): Promise<McpRPCResponse> {
     const params = paramsRecord(request.params);
     const name = String(params["name"] ?? "").trim();
@@ -1976,7 +2193,7 @@ export class McpServer {
           "Method not found: tasks not enabled",
         );
       }
-      return this.handleTaskToolsCall(request, sessionId, name, params);
+      return this.handleTaskToolsCall(request, sessionId, name, params, ctx);
     }
     if (taskSupport === "required") {
       return newErrorResponse(
@@ -1997,6 +2214,10 @@ export class McpServer {
       if (typeof params["requestState"] === "string") {
         toolContext.requestState = params["requestState"];
       }
+      const auth = authFromContext(ctx);
+      if (auth) {
+        toolContext.auth = auth;
+      }
       const result = await this.toolRegistry.call(
         name,
         params["arguments"],
@@ -2004,7 +2225,7 @@ export class McpServer {
       );
       return newResultResponse(request.id, result);
     } catch (err) {
-      return toolCallError(request.id, name, err);
+      return this.toolCallError(request.id, name, err);
     }
   }
 
@@ -2017,10 +2238,13 @@ export class McpServer {
       const contents = await this.resourceRegistry.read(uri);
       return newResultResponse(request.id, { contents });
     } catch (err) {
+      const message = errorMessage(err);
       return newErrorResponse(
         request.id,
         MCP_CODE_INVALID_PARAMS,
-        errorMessage(err),
+        message.startsWith("resource not found:")
+          ? message
+          : this.handlerErrorMessage(err, "resources/read"),
       );
     }
   }
@@ -2034,10 +2258,13 @@ export class McpServer {
       const result = await this.promptRegistry.get(name, params["arguments"]);
       return newResultResponse(request.id, result);
     } catch (err) {
+      const message = errorMessage(err);
       return newErrorResponse(
         request.id,
         MCP_CODE_INVALID_PARAMS,
-        errorMessage(err),
+        message.startsWith("prompt not found:")
+          ? message
+          : this.handlerErrorMessage(err, "prompts/get"),
       );
     }
   }
@@ -2060,6 +2287,7 @@ export class McpServer {
   private async handleToolsCallStream(
     sessionId: string,
     request: ParsedRPCRequest,
+    ctx?: Context,
   ): Promise<Response> {
     let streamId = "";
     try {
@@ -2093,11 +2321,20 @@ export class McpServer {
           Buffer.from(JSON.stringify(notification), "utf8"),
         );
       };
+      const streamingContext: McpToolContext = {
+        sessionId,
+        requestId: request.id,
+        method: request.method,
+      };
+      const auth = authFromContext(ctx);
+      if (auth) {
+        streamingContext.auth = auth;
+      }
       const result = await this.toolRegistry.callStreaming(
         name,
         params["arguments"],
         emit,
-        { sessionId, requestId: request.id, method: request.method },
+        streamingContext,
       );
       await this.streamStore.append(
         sessionId,
@@ -2116,7 +2353,9 @@ export class McpServer {
           .close(sessionId, streamId)
           .catch(() => undefined);
       }
-      return this.marshalSingleResponse(toolCallError(request.id, "", err));
+      return this.marshalSingleResponse(
+        this.toolCallError(request.id, "", err),
+      );
     }
   }
 
@@ -2125,6 +2364,7 @@ export class McpServer {
     sessionId: string,
     name: string,
     params: Record<string, unknown>,
+    ctx?: Context,
   ): Promise<McpRPCResponse> {
     const store = this.taskRuntime.store;
     if (!store) {
@@ -2170,7 +2410,12 @@ export class McpServer {
     // detached promise could stay `working` forever, lose its result, or
     // half-apply its writes: the Lambda execution environment is frozen once the
     // handler returns, so the work resumes at an unpredictable time (or never).
-    const finished = await this.finishTask(store, created, params["arguments"]);
+    const finished = await this.finishTask(
+      store,
+      created,
+      params["arguments"],
+      ctx,
+    );
     const meta: Record<string, unknown> = {
       [RELATED_TASK_METADATA_KEY]: { taskId: finished.task.taskId },
     };
@@ -2188,18 +2433,24 @@ export class McpServer {
     store: McpTaskStore,
     record: McpTaskRecord,
     args: unknown,
+    ctx?: Context,
   ): Promise<McpTaskRecord> {
     const next = cloneTaskRecord(record);
     next.task.lastUpdatedAt = isoNoMillis(new Date());
+    const toolContext: McpToolContext = {
+      sessionId: record.sessionId,
+      requestId: record.task.taskId,
+      method: record.method,
+    };
+    const auth = authFromContext(ctx);
+    if (auth) {
+      toolContext.auth = auth;
+    }
     try {
       const result = await this.toolRegistry.call(
         String(record.toolName ?? ""),
         args,
-        {
-          sessionId: record.sessionId,
-          requestId: record.task.taskId,
-          method: record.method,
-        },
+        toolContext,
       );
       next.result = result;
       next.task.status = result.isError ? "failed" : "completed";
@@ -2207,9 +2458,10 @@ export class McpServer {
         next.task.statusMessage = "tool returned isError result";
       }
     } catch (err) {
-      next.error = { code: MCP_CODE_SERVER_ERROR, message: errorMessage(err) };
+      const message = this.handlerErrorMessage(err, "tasks/call");
+      next.error = { code: MCP_CODE_SERVER_ERROR, message };
       next.task.status = "failed";
-      next.task.statusMessage = errorMessage(err);
+      next.task.statusMessage = message;
     }
     try {
       return await store.update(next);
@@ -2358,10 +2610,17 @@ export class McpServer {
     }
   }
 
-  private async getSession(sessionId: string): Promise<McpSession> {
+  private async getSession(
+    sessionId: string,
+    ctx?: Context,
+  ): Promise<McpSession> {
     const session = await this.sessionStore.get(sessionId);
     if (sessionExpiredAt(new Date(), session)) {
       await this.sessionStore.delete(sessionId);
+      throw new McpSessionNotFoundError();
+    }
+    const storedPrincipal = String(session.principal ?? "").trim();
+    if (storedPrincipal && storedPrincipal !== principalFromContext(ctx)) {
       throw new McpSessionNotFoundError();
     }
     const refreshed = cloneSession(session);
@@ -2373,7 +2632,10 @@ export class McpServer {
     return refreshed;
   }
 
-  private async requireSession(headers: Headers): Promise<{
+  private async requireSession(
+    headers: Headers,
+    ctx?: Context,
+  ): Promise<{
     sessionId: string;
     session: McpSession | null;
     response: Response | null;
@@ -2389,7 +2651,7 @@ export class McpServer {
     try {
       return {
         sessionId,
-        session: await this.getSession(sessionId),
+        session: await this.getSession(sessionId, ctx),
         response: null,
       };
     } catch (err) {
@@ -2422,7 +2684,10 @@ export class McpServer {
     return null;
   }
 
-  private async createSession(protocolVersion: string): Promise<McpSession> {
+  private async createSession(
+    protocolVersion: string,
+    principal: string,
+  ): Promise<McpSession> {
     const now = new Date();
     const session: McpSession = {
       id: normalizeRequired(
@@ -2433,8 +2698,40 @@ export class McpServer {
       expiresAt: isoNoMillis(new Date(now.valueOf() + this.sessionTtlMs)),
       data: { protocolVersion },
     };
+    if (principal) {
+      session.principal = principal;
+    }
     await this.sessionStore.put(session);
     return session;
+  }
+
+  private handlerErrorMessage(err: unknown, surface: string): string {
+    const message = errorMessage(err);
+    if (this.verboseHandlerErrors) {
+      return message;
+    }
+    getLogger().error("mcp handler error", { surface, error: message });
+    return "internal error";
+  }
+
+  private toolCallError(
+    id: unknown,
+    toolName: string,
+    err: unknown,
+  ): McpRPCResponse {
+    const message = errorMessage(err);
+    if (message.startsWith("tool not found:")) {
+      return newErrorResponse(id, MCP_CODE_INVALID_PARAMS, message);
+    }
+    if (!this.verboseHandlerErrors) {
+      getLogger().error("mcp tool handler error", {
+        tool: toolName,
+        error: message,
+      });
+      return newErrorResponse(id, MCP_CODE_SERVER_ERROR, "internal error");
+    }
+    const resolved = toolName ? message : message || "internal error";
+    return newErrorResponse(id, MCP_CODE_SERVER_ERROR, resolved);
   }
 
   private marshalSingleResponse(
@@ -2537,6 +2834,7 @@ export function defaultMcpStreamModel(tableName?: string): Model {
       { attribute: "sequence", type: "N", optional: true },
       { attribute: "eventId", type: "S", optional: true },
       { attribute: "data", type: "S", optional: true },
+      { attribute: "expiresAt", type: "N", optional: true, roles: ["ttl"] },
     ],
   });
 }
@@ -3906,6 +4204,9 @@ function cloneSession(session: McpSession): McpSession {
     createdAt: String(session.createdAt ?? ""),
     expiresAt: String(session.expiresAt ?? ""),
   };
+  if (session.principal) {
+    out.principal = String(session.principal);
+  }
   if (session.data) {
     out.data = { ...session.data };
   }
@@ -3920,6 +4221,26 @@ function sessionExpiredAt(now: Date, session: McpSession): boolean {
   return expires <= now.valueOf();
 }
 
+function streamItemExpired(item: Record<string, unknown>, now: Date): boolean {
+  const expiresAt = Number(item["expiresAt"] ?? 0);
+  if (!Number.isFinite(expiresAt) || expiresAt <= 0) {
+    return false;
+  }
+  return now.getTime() >= expiresAt * 1000;
+}
+
+function envPositiveInteger(name: string, fallback: number): number {
+  const raw = String(process.env[name] ?? "").trim();
+  if (!raw) {
+    return fallback;
+  }
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    return fallback;
+  }
+  return Math.floor(value);
+}
+
 function isoNoMillis(date: Date): string {
   return date.toISOString().replace(/\.000Z$/, "Z");
 }
@@ -3931,25 +4252,63 @@ function errorMessage(err: unknown): string {
   return String(err);
 }
 
+function principalFromContext(ctx: Context | undefined): string {
+  if (!ctx) {
+    return "";
+  }
+  const authIdentity = String(ctx.authIdentity ?? "").trim();
+  if (authIdentity) {
+    return authIdentity;
+  }
+  const principalIdentity = String(
+    ctx.securePrincipal()?.identity ?? "",
+  ).trim();
+  if (principalIdentity) {
+    return principalIdentity;
+  }
+  const subject = String(
+    bearerTokenClaimsFromContext(ctx)?.subject ?? "",
+  ).trim();
+  if (subject) {
+    return subject;
+  }
+  if (ctx.tenantBound === true) {
+    return String(ctx.tenantId ?? "").trim();
+  }
+  return "";
+}
+
+function authFromContext(
+  ctx: Context | undefined,
+): McpToolAuthContext | undefined {
+  if (!ctx) {
+    return undefined;
+  }
+  const principal = ctx.securePrincipal();
+  const claims = bearerTokenClaimsFromContext(ctx);
+  const authIdentity =
+    String(ctx.authIdentity ?? "").trim() ||
+    String(principal?.identity ?? "").trim() ||
+    String(claims?.subject ?? "").trim();
+  const tenantId = String(ctx.tenantId ?? "").trim();
+  const tenantBound = ctx.tenantBound === true;
+  const scopes = [
+    ...(principal?.scopes ?? claims?.scopes ?? []).map((scope) =>
+      String(scope ?? "").trim(),
+    ),
+  ].filter((scope) => scope.length > 0);
+  if (!authIdentity && !tenantId && scopes.length === 0) {
+    return undefined;
+  }
+  return { authIdentity, tenantId, tenantBound, scopes };
+}
+
 function normalizeRequired(value: unknown, message: string): string {
   const normalized = String(value ?? "").trim();
   if (!normalized) {
     throw new Error(message);
   }
   return normalized;
-}
-
-function toolCallError(
-  id: unknown,
-  toolName: string,
-  err: unknown,
-): McpRPCResponse {
-  const message = errorMessage(err);
-  if (message.startsWith("tool not found:")) {
-    return newErrorResponse(id, MCP_CODE_INVALID_PARAMS, message);
-  }
-  const resolved = toolName ? message : message || "internal error";
-  return newErrorResponse(id, MCP_CODE_SERVER_ERROR, resolved);
 }
 
 function normalizeProgressToken(value: unknown): string | number | undefined {

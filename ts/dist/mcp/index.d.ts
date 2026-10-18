@@ -122,12 +122,19 @@ export interface McpSSEEvent {
     data?: unknown;
 }
 export type McpStreamingToolHandler = (args: unknown, emit: (event: McpSSEEvent) => void | Promise<void>, context: McpToolContext) => McpToolResult | Promise<McpToolResult>;
+export interface McpToolAuthContext {
+    authIdentity: string;
+    tenantId: string;
+    tenantBound: boolean;
+    scopes: string[];
+}
 export interface McpToolContext {
     sessionId: string;
     requestId: unknown;
     method: string;
     inputResponses?: Record<string, unknown>;
     requestState?: string;
+    auth?: McpToolAuthContext;
 }
 export interface McpResourceDef {
     uri: string;
@@ -179,6 +186,7 @@ export interface McpSession {
     id: string;
     createdAt: string;
     expiresAt: string;
+    principal?: string;
     data?: Record<string, string>;
 }
 export interface McpSessionStore {
@@ -287,6 +295,12 @@ export interface McpServerOptions {
      * Defaults to true.
      */
     includeServerInfoMetadata?: boolean;
+    /**
+     * Return verbatim handler error messages on the JSON-RPC wire. Defaults to
+     * false, which replaces generic tool/resource/prompt/task handler errors
+     * with a client-safe message and logs the original.
+     */
+    verboseHandlerErrors?: boolean;
 }
 export declare class McpSessionNotFoundError extends Error {
     constructor(message?: string);
@@ -355,8 +369,14 @@ export declare class MemoryMcpSessionStore implements McpSessionStore {
 export declare class MemoryMcpStreamStore implements McpStreamStore {
     private readonly sessions;
     private readonly idGenerator;
+    private readonly maxEventBytes;
+    private readonly maxEventsPerSession;
+    private readonly maxTotalBytesPerSession;
     constructor(options?: {
         idGenerator?: IdGenerator;
+        maxEventBytes?: number;
+        maxEventsPerSession?: number;
+        maxTotalBytesPerSession?: number;
     });
     create(sessionId: string): Promise<string>;
     append(sessionId: string, streamId: string, data?: Uint8Array): Promise<string>;
@@ -365,14 +385,17 @@ export declare class MemoryMcpStreamStore implements McpStreamStore {
     streamForEvent(sessionId: string, eventId: string): Promise<string>;
     deleteSession(sessionId: string): Promise<void>;
     private ensureSession;
+    private evictOldest;
     private lookupSession;
     private lookupStream;
 }
 export declare class MemoryMcpTaskStore implements McpTaskStore {
     private readonly sessions;
     private readonly now;
+    private readonly maxTasksPerSession;
     constructor(options?: {
         now?: () => Date;
+        maxTasksPerSession?: number;
     });
     create(task: McpTaskRecord): Promise<McpTaskRecord>;
     get(lookup: McpTaskLookup): Promise<McpTaskRecord>;
@@ -380,6 +403,9 @@ export declare class MemoryMcpTaskStore implements McpTaskStore {
     list(request: McpTaskListRequest): Promise<McpTaskListResult>;
     cancel(lookup: McpTaskLookup): Promise<McpTaskRecord>;
     deleteSession(sessionId: string): Promise<void>;
+    private reapExpired;
+    private expired;
+    private evictOldestTerminal;
     private record;
 }
 export declare class DynamoMcpTaskStore implements McpTaskStore {
@@ -401,9 +427,15 @@ export declare class DynamoMcpStreamStore implements McpStreamStore {
     private readonly db;
     private readonly model;
     private readonly idGenerator;
+    private readonly now;
+    private readonly streamTtlMs;
+    private readonly maxEventBytes;
     constructor(db: TheorydbClient, options?: {
         model?: Model;
         idGenerator?: IdGenerator;
+        now?: () => Date;
+        streamTtlMinutes?: number;
+        maxEventBytes?: number;
     });
     create(sessionId: string): Promise<string>;
     append(sessionId: string, streamId: string, data?: Uint8Array): Promise<string>;
@@ -413,6 +445,7 @@ export declare class DynamoMcpStreamStore implements McpStreamStore {
     deleteSession(sessionId: string): Promise<void>;
     private streamRecord;
     private eventRecords;
+    private expiresAtUnix;
     private sessionItems;
 }
 export declare class McpServer {
@@ -427,6 +460,7 @@ export declare class McpServer {
     private readonly extensionCapabilities;
     private readonly cacheableResults;
     private readonly includeServerInfoMetadata;
+    private readonly verboseHandlerErrors;
     private readonly toolRegistry;
     private readonly resourceRegistry;
     private readonly promptRegistry;
@@ -474,6 +508,8 @@ export declare class McpServer {
     private requireSession;
     private requireProtocolVersion;
     private createSession;
+    private handlerErrorMessage;
+    private toolCallError;
     private marshalSingleResponse;
     private streamToSSE;
     private validateOrigin;

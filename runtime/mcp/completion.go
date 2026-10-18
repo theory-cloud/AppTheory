@@ -86,7 +86,14 @@ func (s *Server) handleCompletionComplete(ctx context.Context, req *Request, ses
 		Context:   params.Context,
 	})
 	if err != nil {
-		return NewErrorResponse(req.ID, CodeServerError, err.Error())
+		attrs := []any{"completion", params.Ref.Type}
+		switch params.Ref.Type {
+		case completionRefPrompt:
+			attrs = append(attrs, "prompt", params.Ref.Name)
+		case completionRefResource:
+			attrs = append(attrs, "resource", params.Ref.URI)
+		}
+		return NewErrorResponse(req.ID, CodeServerError, s.handlerErrorMessage(ctx, err, attrs...))
 	}
 	if errResp := validateCompletionResult(req.ID, result); errResp != nil {
 		return errResp

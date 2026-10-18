@@ -42,7 +42,7 @@ func (s *Server) handleResourcesRead(ctx context.Context, req *Request) *Respons
 		if isNotFound(err, "resource not found:") {
 			return NewErrorResponse(req.ID, CodeInvalidParams, err.Error())
 		}
-		return NewErrorResponse(req.ID, CodeServerError, err.Error())
+		return NewErrorResponse(req.ID, CodeServerError, s.handlerErrorMessage(ctx, err, "resource", params.URI))
 	}
 
 	return NewResultResponse(req.ID, map[string]any{
@@ -84,7 +84,7 @@ func (s *Server) handleResourceSubscription(
 	}
 
 	if err := hook(ctx, ResourceSubscription{SessionID: sessionID, URI: params.URI}); err != nil {
-		return NewErrorResponse(req.ID, CodeServerError, err.Error())
+		return NewErrorResponse(req.ID, CodeServerError, s.handlerErrorMessage(ctx, err, "resource", params.URI))
 	}
 
 	return NewResultResponse(req.ID, map[string]any{})
