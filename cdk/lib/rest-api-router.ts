@@ -283,6 +283,26 @@ export interface AppTheoryRestApiRouterProps {
      * @default true
      */
     readonly scopePermissionToMethod?: boolean;
+
+    /**
+     * Optional API Gateway authorizer applied to every Lambda integration method.
+     *
+     * When omitted, methods keep API Gateway's open default (`AuthorizationType.NONE`).
+     * CORS preflight `OPTIONS` methods stay unauthenticated regardless of this setting.
+     *
+     * @default undefined (no authorizer)
+     */
+    readonly authorizer?: apigw.IAuthorizer;
+
+    /**
+     * Optional API Gateway authorization type for the Lambda integration methods.
+     *
+     * Usually omitted: when `authorizer` is set, API Gateway derives the type from the
+     * authorizer itself. Set this explicitly to override that inference.
+     *
+     * @default undefined (derived from `authorizer`, or `NONE` when no authorizer is set)
+     */
+    readonly authorizationType?: apigw.AuthorizationType;
 }
 
 /**
@@ -355,6 +375,8 @@ export class AppTheoryRestApiRouter extends Construct {
     private readonly corsEnabled: boolean;
     private readonly allowTestInvoke: boolean;
     private readonly scopePermissionToMethod: boolean;
+    private readonly authorizer?: apigw.IAuthorizer;
+    private readonly authorizationType?: apigw.AuthorizationType;
 
     constructor(scope: Construct, id: string, props: AppTheoryRestApiRouterProps = {}) {
         super(scope, id);
@@ -371,6 +393,8 @@ export class AppTheoryRestApiRouter extends Construct {
         }
         this.allowTestInvoke = props.allowTestInvoke ?? true;
         this.scopePermissionToMethod = props.scopePermissionToMethod ?? true;
+        this.authorizer = props.authorizer;
+        this.authorizationType = props.authorizationType;
 
         const stageOpts = props.stage ?? {};
         const stageName = stageOpts.stageName ?? "prod";
@@ -436,8 +460,18 @@ export class AppTheoryRestApiRouter extends Construct {
             const integration = this.createLambdaIntegration(handler, options);
 
             // Add the method
+            const authorizationOptions =
+                this.authorizer === undefined && this.authorizationType === undefined
+                    ? {}
+                    : {
+                          ...(this.authorizer === undefined ? {} : { authorizer: this.authorizer }),
+                          ...(this.authorizationType === undefined
+                              ? {}
+                              : { authorizationType: this.authorizationType }),
+                      };
             const createdMethod = resource.addMethod(method, integration, {
                 methodResponses: this.corsEnabled ? this.buildMethodResponses() : undefined,
+                ...authorizationOptions,
             });
 
             // For streaming routes, apply L1 overrides to ensure full compatibility

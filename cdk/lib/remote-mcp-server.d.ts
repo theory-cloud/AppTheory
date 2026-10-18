@@ -1,3 +1,4 @@
+import type * as apigateway from "aws-cdk-lib/aws-apigateway";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import type * as lambda from "aws-cdk-lib/aws-lambda";
 import * as s3 from "aws-cdk-lib/aws-s3";
@@ -164,6 +165,28 @@ export interface AppTheoryRemoteMcpServerProps {
      * @default 10485760
      */
     readonly streamMaxEventBytes?: number;
+    /**
+     * Optional API Gateway authorizer applied to the MCP routes.
+     *
+     * This adds edge-level authorization in front of the Lambda handler. It does
+     * not replace the app-level OAuth middleware, which still owns the RFC 9728
+     * discovery challenge and bearer-token validation.
+     *
+     * When omitted, the routes keep API Gateway's open default
+     * (`AuthorizationType.NONE`).
+     *
+     * @default undefined (no authorizer)
+     */
+    readonly authorizer?: apigateway.IAuthorizer;
+    /**
+     * Optional API Gateway authorization type for the MCP routes.
+     *
+     * Usually omitted: when `authorizer` is set, API Gateway derives the type
+     * from the authorizer itself. Set this explicitly to override that inference.
+     *
+     * @default undefined (derived from `authorizer`, or `NONE` when no authorizer is set)
+     */
+    readonly authorizationType?: apigateway.AuthorizationType;
 }
 /**
  * A Claude-first Remote MCP server construct that provisions:

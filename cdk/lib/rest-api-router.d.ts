@@ -242,6 +242,24 @@ export interface AppTheoryRestApiRouterProps {
      * @default true
      */
     readonly scopePermissionToMethod?: boolean;
+    /**
+     * Optional API Gateway authorizer applied to every Lambda integration method.
+     *
+     * When omitted, methods keep API Gateway's open default (`AuthorizationType.NONE`).
+     * CORS preflight `OPTIONS` methods stay unauthenticated regardless of this setting.
+     *
+     * @default undefined (no authorizer)
+     */
+    readonly authorizer?: apigw.IAuthorizer;
+    /**
+     * Optional API Gateway authorization type for the Lambda integration methods.
+     *
+     * Usually omitted: when `authorizer` is set, API Gateway derives the type from the
+     * authorizer itself. Set this explicitly to override that inference.
+     *
+     * @default undefined (derived from `authorizer`, or `NONE` when no authorizer is set)
+     */
+    readonly authorizationType?: apigw.AuthorizationType;
 }
 /**
  * A REST API v1 router that supports multi-Lambda routing with full streaming parity.
@@ -304,6 +322,8 @@ export declare class AppTheoryRestApiRouter extends Construct {
     private readonly corsEnabled;
     private readonly allowTestInvoke;
     private readonly scopePermissionToMethod;
+    private readonly authorizer?;
+    private readonly authorizationType?;
     constructor(scope: Construct, id: string, props?: AppTheoryRestApiRouterProps);
     /**
      * Add a Lambda integration for the specified path and HTTP methods.

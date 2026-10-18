@@ -1,6 +1,7 @@
 package apptheorycdk
 
 import (
+	"github.com/aws/aws-cdk-go/awscdk/v2/awsapigateway"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslambda"
 )
 
@@ -37,6 +38,24 @@ type AppTheoryRemoteMcpServerProps struct {
 	// Default: undefined.
 	//
 	ApiName *string `field:"optional" json:"apiName" yaml:"apiName"`
+	// Optional API Gateway authorization type for the MCP routes.
+	//
+	// Usually omitted: when `authorizer` is set, API Gateway derives the type
+	// from the authorizer itself. Set this explicitly to override that inference.
+	// Default: undefined (derived from `authorizer`, or `NONE` when no authorizer is set).
+	//
+	AuthorizationType awsapigateway.AuthorizationType `field:"optional" json:"authorizationType" yaml:"authorizationType"`
+	// Optional API Gateway authorizer applied to the MCP routes.
+	//
+	// This adds edge-level authorization in front of the Lambda handler. It does
+	// not replace the app-level OAuth middleware, which still owns the RFC 9728
+	// discovery challenge and bearer-token validation.
+	//
+	// When omitted, the routes keep API Gateway's open default
+	// (`AuthorizationType.NONE`).
+	// Default: undefined (no authorizer).
+	//
+	Authorizer awsapigateway.IAuthorizer `field:"optional" json:"authorizer" yaml:"authorizer"`
 	// CORS configuration for the REST API.
 	//
 	// Note: For browser clients, your Lambda handler still needs to emit
