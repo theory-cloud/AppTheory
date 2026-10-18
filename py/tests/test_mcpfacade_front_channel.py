@@ -135,7 +135,7 @@ REFRESH_GROUP = "refresh"
 # The number of refresh rows the shared table must carry; a change to the table
 # must also be a deliberate edit in the Go, TypeScript, and Python loaders, so no
 # runtime can silently execute a smaller table.
-REFRESH_CASE_COUNT = 15
+REFRESH_CASE_COUNT = 16
 
 # A second registered public client, used to prove that a handle minted for one
 # client is refused for another with the same invalid_grant an unknown handle
@@ -220,6 +220,15 @@ class _RecordingBrokerStore:
     def revoke(self, handle_hash: str):
         return self._inner.revoke(handle_hash)
 
+    def route_refresh_broker_handle_ttl_seconds(self) -> float:
+        return self._inner.route_refresh_broker_handle_ttl_seconds()
+
+    def list_family(self, family_hash: str):
+        return self._inner.list_family(family_hash)
+
+    def revoke_family(self, family_hash: str):
+        return self._inner.revoke_family(family_hash)
+
 
 def _mint_claims(issued_at: float) -> dict:
     return {
@@ -297,6 +306,8 @@ class _FrontChannelHarness:
         require_bearer_token_for: Any = None,
         mcp_handler: Any = None,
         invocations: dict | None = None,
+        route_refresh_events: Any = None,
+        route_refresh_policy: Any = None,
     ) -> None:
         self._test = test
         self.clock = _ManualClock(datetime(2026, 1, 1, tzinfo=UTC))
@@ -379,6 +390,12 @@ class _FrontChannelHarness:
             upstream_client_id=FRONT_TEST_CLIENT_ID,
             upstream_issuer=FRONT_TEST_UPSTREAM_ISS,
             provider_hints=provider_hints,
+            route_refresh_policy=route_refresh_policy
+            or facade_module.RouteRefreshPolicy(
+                handle_ttl_seconds=900,
+                reuse_rate_ceiling=facade_module.MIN_REFRESH_REUSE_RATE_CEILING,
+            ),
+            route_refresh_events=route_refresh_events,
         )
         if require_bearer_token_for is not None:
             bearer_options = require_bearer_token_for(self.fake)
@@ -1466,7 +1483,15 @@ class RefreshGrantDefaultsTests(unittest.TestCase):
     """
 
     def test_refresh_grant_defaults_are_pinned(self) -> None:
-        self.assertEqual(30, facade_module._REFRESH_GRACE_WINDOW_SECONDS)
+        self.assertEqual(60, facade_module.ROUTE_REFRESH_MIN_HANDLE_TTL_SECONDS)
+        self.assertEqual(2592000, facade_module.ROUTE_REFRESH_MAX_HANDLE_TTL_SECONDS)
+        self.assertEqual(120, facade_module.DEFAULT_REFRESH_GRACE_WINDOW_SECONDS)
+        self.assertEqual(120, facade_module.MAX_REFRESH_GRACE_WINDOW_SECONDS)
+        self.assertEqual(9, facade_module.MIN_REFRESH_REUSE_RATE_CEILING)
+        self.assertEqual(120, facade_module.MAX_REFRESH_REUSE_RATE_CEILING)
+        self.assertEqual(3600, facade_module.REFRESH_REUSE_RATE_WINDOW_SECONDS)
+        self.assertEqual("route_refresh_reuse_depth1", facade_module.REFRESH_REUSE_RATE_OPERATION)
+        self.assertEqual(1, facade_module.REFRESH_CHAIN_ROOT_GENERATION)
         self.assertEqual(3.0, facade_module._REFRESH_COALESCE_WAIT_CAP_SECONDS)
         self.assertEqual(0.05, facade_module._REFRESH_COALESCE_POLL_INTERVAL_SECONDS)
         self.assertEqual(512, facade_module._FRONT_CHANNEL_MAX_REFRESH_HANDLE_BYTES)
@@ -1474,8 +1499,8 @@ class RefreshGrantDefaultsTests(unittest.TestCase):
         self.assertEqual(1, facade_module._REFRESH_RETRY_AFTER_SECONDS)
         self.assertEqual(15, UTC_NOW_LOCK_TTL_SECONDS)
         self.assertLess(facade_module._REFRESH_COALESCE_WAIT_CAP_SECONDS, float(UTC_NOW_LOCK_TTL_SECONDS))
-        self.assertGreater(
-            facade_module._REFRESH_GRACE_WINDOW_SECONDS,
+        self.assertGreaterEqual(
+            facade_module.DEFAULT_REFRESH_GRACE_WINDOW_SECONDS,
             facade_module._REFRESH_COALESCE_WAIT_CAP_SECONDS,
         )
 
@@ -1517,9 +1542,16 @@ class RefreshGrantTests(unittest.TestCase):
         presented = _broker_record(harness, first)
         self.assertEqual("active", presented.status)
         self.assertEqual(response.body.decode("utf-8"), presented.encrypted_grace_refresh_response)
-        self.assertEqual(harness.clock.now() + timedelta(seconds=30), presented.grace_expires_at)
+        self.assertEqual(
+            harness.clock.now() + timedelta(seconds=facade_module.DEFAULT_REFRESH_GRACE_WINDOW_SECONDS),
+            presented.grace_expires_at,
+        )
         self.assertEqual("", presented.refresh_lock_owner)
         self.assertIsNone(presented.refresh_lock_expires_at)
+        self.assertEqual(facade_module.REFRESH_CHAIN_ROOT_GENERATION, presented.chain_generation)
+        self.assertEqual(hash_key(first), presented.family_hash)
+        self.assertEqual(facade_module.REFRESH_CHAIN_ROOT_GENERATION + 1, successor.chain_generation)
+        self.assertEqual(hash_key(first), successor.family_hash)
 
     def test_refresh_makes_exactly_one_upstream_call_per_rotation(self) -> None:
         # The single-flight upstream contract: the code exchange makes one token
@@ -1575,11 +1607,12 @@ class RefreshGrantTests(unittest.TestCase):
         self.assertEqual(first.body, just_inside.body)
         self.assertEqual(1, harness.fake.refresh_calls)
 
-    def test_refresh_after_the_grace_window_revokes_the_successor(self) -> None:
-        # Reuse: presenting the rotated handle once the window has passed is
-        # refused with invalid_grant, the presented record is revoked, and the walk
-        # revokes the successor the rotation minted, so the successor handle is
-        # refused too.
+    def test_refresh_after_the_grace_window_serves_access_token_only_once(self) -> None:
+        # Reuse beyond grace: the FIRST presentation of the rotated handle is the
+        # benign immediate-predecessor race, answered with the access token only
+        # and no handle material. A second presentation is theft class, refused
+        # with invalid_grant, and the whole family is revoked, so the successor
+        # handle is refused too.
         harness = _FrontChannelHarness(self)
         handle = _minted_refresh_handle(harness)
 
@@ -1588,11 +1621,20 @@ class RefreshGrantTests(unittest.TestCase):
         successor = _token_response_handle(rotated)
         self.assertEqual(1, harness.fake.refresh_calls)
 
-        harness.clock.advance(30 + 1)
+        harness.clock.advance(facade_module.DEFAULT_REFRESH_GRACE_WINDOW_SECONDS + 1)
+        served = harness.token(_refresh_form(handle))
+        self.assertEqual(200, served.status, served.body)
+        body = served.body.decode("utf-8")
+        self.assertIn('"access_token":"' + FRONT_TEST_REFRESH_ACCESS_TOKEN + '"', body)
+        self.assertNotIn("refresh_token", body)
+        self.assertNotIn(FRONT_TEST_ROTATED_UPSTREAM_REFRESH_TOKEN, body)
+        self.assertEqual(1, harness.fake.refresh_calls)
+        self.assertIsNotNone(_broker_record(harness, handle).depth_one_served_at)
+        self.assertEqual("issued", _broker_record(harness, successor).status)
+
         reused = harness.token(_refresh_form(handle))
         self.assertEqual(400, reused.status)
         self.assertIn('"error":"invalid_grant"', reused.body.decode("utf-8"))
-
         self.assertEqual("revoked", _broker_record(harness, handle).status)
         self.assertEqual("revoked", _broker_record(harness, successor).status)
 
@@ -1600,6 +1642,18 @@ class RefreshGrantTests(unittest.TestCase):
         self.assertEqual(400, after.status)
         self.assertIn('"error":"invalid_grant"', after.body.decode("utf-8"))
         self.assertEqual(1, harness.fake.refresh_calls)
+
+    def test_refresh_grace_boundary_is_exclusive(self) -> None:
+        # A replay at exactly the grace deadline is beyond grace: the boundary is
+        # exclusive, so the response is the access-token-only serve.
+        harness = _FrontChannelHarness(self)
+        handle = _minted_refresh_handle(harness)
+        self.assertEqual(200, harness.token(_refresh_form(handle)).status)
+
+        harness.clock.advance(facade_module.DEFAULT_REFRESH_GRACE_WINDOW_SECONDS)
+        response = harness.token(_refresh_form(handle))
+        self.assertEqual(200, response.status)
+        self.assertNotIn("refresh_token", response.body.decode("utf-8"))
 
     def test_refresh_refusals_are_one_invalid_grant_body(self) -> None:
         # The no-oracle rule: an unknown handle, a revoked handle, a handle
@@ -1819,19 +1873,19 @@ class RefreshGrantTests(unittest.TestCase):
         winner = Response(status=200, headers={}, cookies=[], body=bodies[0], is_base64=False)
         self.assertNotEqual(handle, _token_response_handle(winner))
 
-    def test_refresh_concurrent_reuse_after_grace_revokes_once(self) -> None:
-        # Reuse detection is safe under concurrency: once the grace window has
-        # passed, every concurrent presenter of the rotated handle is refused with
-        # invalid_grant, no upstream call is made, and the whole grant — the
-        # presented record and the successor it names — ends revoked. Revocation is
-        # idempotent, so more than one caller may perform it; the contract is that
-        # no caller is served and no caller can act on unrevoked state.
+    def test_refresh_concurrent_reuse_after_grace_serves_at_most_once(self) -> None:
+        # The once-per-handle bound under concurrency: once the grace window has
+        # passed, exactly one concurrent presenter of the rotated handle is
+        # answered with the access token only, and every other presenter is
+        # refused with the same invalid_grant and revokes the family. No upstream
+        # call is made by any of them, so the serve never becomes an upstream
+        # harvest path.
         harness = _FrontChannelHarness(self)
         handle = _minted_refresh_handle(harness)
         rotated = harness.token(_refresh_form(handle))
         self.assertEqual(200, rotated.status)
         successor = _token_response_handle(rotated)
-        harness.clock.advance(30 + 1)
+        harness.clock.advance(facade_module.DEFAULT_REFRESH_GRACE_WINDOW_SECONDS + 1)
 
         form = urlencode(_refresh_form(handle), doseq=True).encode()
         callers = 16
@@ -1851,10 +1905,18 @@ class RefreshGrantTests(unittest.TestCase):
         for thread in threads:
             thread.join()
 
+        served = 0
         for index in range(callers):
+            if statuses[index] == 200:
+                served += 1
+                self.assertNotIn("refresh_token", bodies[index].decode("utf-8"), f"caller {index}")
+                self.assertNotIn(
+                    FRONT_TEST_ROTATED_UPSTREAM_REFRESH_TOKEN, bodies[index].decode("utf-8"), f"caller {index}"
+                )
+                continue
             self.assertEqual(400, statuses[index], f"caller {index} body {bodies[index]!r}")
             self.assertIn('"error":"invalid_grant"', bodies[index].decode("utf-8"), f"caller {index}")
-            self.assertEqual(bodies[0], bodies[index], f"caller {index} must receive the same refusal")
+        self.assertEqual(1, served, "exactly one caller may be served the access token")
         self.assertEqual(1, harness.fake.refresh_calls)
         self.assertEqual("revoked", _broker_record(harness, handle).status)
         self.assertEqual("revoked", _broker_record(harness, successor).status)
@@ -2087,6 +2149,458 @@ class RefreshGrantTests(unittest.TestCase):
         self.assertNotEqual(handle, upstream_form.get("refresh_token"))
 
 
+class _EventRecorder:
+    """Captures the route refresh telemetry the facade emits."""
+
+    def __init__(self) -> None:
+        self.events: list[facade_module.RouteRefreshEvent] = []
+
+    def __call__(self, event: facade_module.RouteRefreshEvent) -> None:
+        self.events.append(event)
+
+    def find(self, event_class: str, outcome: str = "") -> facade_module.RouteRefreshEvent | None:
+        for event in self.events:
+            if event.event_class == event_class and (outcome == "" or event.outcome == outcome):
+                return event
+        return None
+
+    def require(self, event_class: str, outcome: str = "") -> facade_module.RouteRefreshEvent:
+        event = self.find(event_class, outcome)
+        if event is None:
+            raise AssertionError(f"no {event_class!r} event with outcome {outcome!r} in {self.events!r}")
+        return event
+
+
+def _policy_test_config(
+    harness: _FrontChannelHarness,
+    policy: Any,
+    *,
+    provider: Any = ...,
+) -> FacadeConfig:
+    """Builds the harness's front-channel config with a different policy, so a
+    registration test can exercise the policy's fail-closed validation."""
+    resolved_provider = harness.provider if provider is ... else provider
+    return FacadeConfig(
+        issuer_url=FRONT_TEST_BASE_URL + "/acme/mcp",
+        jwks_uri=FRONT_TEST_UPSTREAM_ISS + "/.well-known/jwks.json",
+        issuer_mode="route",
+        url_mode=URL_MODE_PUBLIC_BASE_URL,
+        public_base_url=FRONT_TEST_BASE_URL,
+        transport_posture="iam",
+        scopes={
+            "namespace": ["mcp:tools"],
+            "partner_namespace": ["mcp:tools"],
+            "agent": ["mcp:tools"],
+            "partner_agent": ["mcp:tools"],
+        },
+        mcp_handler=lambda _ctx: Response(status=204, headers={}, cookies=[], body=b"", is_base64=False),
+        provider=resolved_provider,
+        stores=harness.stores,
+        upstream_client_id=FRONT_TEST_CLIENT_ID,
+        upstream_issuer=FRONT_TEST_UPSTREAM_ISS,
+        route_refresh_policy=policy,
+    )
+
+
+class RouteRefreshPolicyValidationTests(unittest.TestCase):
+    """The policy is required whenever the front channel is configured and every
+    out-of-range value is a registration error, never a silent fallback."""
+
+    def test_policy_is_required(self) -> None:
+        harness = _FrontChannelHarness(self)
+        for policy in (
+            None,
+            facade_module.RouteRefreshPolicy(0, facade_module.MIN_REFRESH_REUSE_RATE_CEILING),
+            facade_module.RouteRefreshPolicy(-60, facade_module.MIN_REFRESH_REUSE_RATE_CEILING),
+            facade_module.RouteRefreshPolicy(900.0, facade_module.MIN_REFRESH_REUSE_RATE_CEILING),  # type: ignore[arg-type]
+        ):
+            with self.subTest(policy=policy):
+                with self.assertRaises(ValueError) as raised:
+                    register_mcp_facade(
+                        create_app(),
+                        _policy_test_config(harness, policy),
+                    )
+                self.assertIn("route refresh policy handle TTL is required and must be positive", str(raised.exception))
+
+    def test_policy_ranges_fail_closed(self) -> None:
+        harness = _FrontChannelHarness(self)
+        cases: tuple[tuple[Any, str], ...] = (
+            (
+                facade_module.RouteRefreshPolicy(
+                    facade_module.ROUTE_REFRESH_MIN_HANDLE_TTL_SECONDS - 1,
+                    facade_module.MIN_REFRESH_REUSE_RATE_CEILING,
+                ),
+                "must be within [",
+            ),
+            (
+                facade_module.RouteRefreshPolicy(
+                    facade_module.ROUTE_REFRESH_MAX_HANDLE_TTL_SECONDS + 1,
+                    facade_module.MIN_REFRESH_REUSE_RATE_CEILING,
+                ),
+                "must be within [",
+            ),
+            (
+                facade_module.RouteRefreshPolicy(900, facade_module.MIN_REFRESH_REUSE_RATE_CEILING, -1),
+                "grace window",
+            ),
+            (
+                facade_module.RouteRefreshPolicy(
+                    900,
+                    facade_module.MIN_REFRESH_REUSE_RATE_CEILING,
+                    facade_module.MAX_REFRESH_GRACE_WINDOW_SECONDS + 1,
+                ),
+                "grace window",
+            ),
+            (facade_module.RouteRefreshPolicy(900, 0), "reuse rate ceiling is required"),
+            (
+                facade_module.RouteRefreshPolicy(900, facade_module.MIN_REFRESH_REUSE_RATE_CEILING - 1),
+                "must be within [",
+            ),
+            (
+                facade_module.RouteRefreshPolicy(900, facade_module.MAX_REFRESH_REUSE_RATE_CEILING + 1),
+                "must be within [",
+            ),
+        )
+        for policy, want in cases:
+            with self.subTest(policy=policy):
+                with self.assertRaises(ValueError) as raised:
+                    register_mcp_facade(create_app(), _policy_test_config(harness, policy))
+                self.assertIn(want, str(raised.exception))
+
+    def test_policy_defaults_and_accepts_the_grace_window(self) -> None:
+        harness = _FrontChannelHarness(self)
+        default = facade_module._normalize_front_channel(
+            _policy_test_config(harness, facade_module.RouteRefreshPolicy(900, 9))
+        )
+        self.assertIsNotNone(default)
+        self.assertEqual(facade_module.DEFAULT_REFRESH_GRACE_WINDOW_SECONDS, default.policy.grace_window_seconds)
+        explicit = facade_module._normalize_front_channel(
+            _policy_test_config(harness, facade_module.RouteRefreshPolicy(900, 9, 45))
+        )
+        self.assertIsNotNone(explicit)
+        self.assertEqual(45, explicit.policy.grace_window_seconds)
+
+    def test_policy_must_match_a_store_that_reports_its_ttl(self) -> None:
+        harness = _FrontChannelHarness(self)
+        with self.assertRaises(ValueError) as raised:
+            register_mcp_facade(
+                create_app(),
+                _policy_test_config(harness, facade_module.RouteRefreshPolicy(3600, 9)),
+            )
+        self.assertIn("does not match the broker store's local lifetime", str(raised.exception))
+
+    def test_policy_and_hook_without_provider_are_refused(self) -> None:
+        policy_config = FacadeConfig(
+            issuer_url=FRONT_TEST_BASE_URL + "/acme/mcp",
+            jwks_uri=FRONT_TEST_UPSTREAM_ISS + "/.well-known/jwks.json",
+            url_mode=URL_MODE_PUBLIC_BASE_URL,
+            public_base_url=FRONT_TEST_BASE_URL,
+            mcp_handler=lambda _ctx: Response(status=204, headers={}, cookies=[], body=b"", is_base64=False),
+            scopes={
+                "namespace": ["mcp:tools"],
+                "partner_namespace": ["mcp:tools"],
+                "agent": ["mcp:tools"],
+                "partner_agent": ["mcp:tools"],
+            },
+            route_refresh_policy=facade_module.RouteRefreshPolicy(900, 9),
+        )
+        with self.assertRaises(ValueError) as raised:
+            register_mcp_facade(create_app(), policy_config)
+        self.assertIn("RouteRefreshPolicy", str(raised.exception))
+        self.assertIn("without Provider", str(raised.exception))
+
+        hook_config = FacadeConfig(
+            issuer_url=FRONT_TEST_BASE_URL + "/acme/mcp",
+            jwks_uri=FRONT_TEST_UPSTREAM_ISS + "/.well-known/jwks.json",
+            url_mode=URL_MODE_PUBLIC_BASE_URL,
+            public_base_url=FRONT_TEST_BASE_URL,
+            mcp_handler=lambda _ctx: Response(status=204, headers={}, cookies=[], body=b"", is_base64=False),
+            scopes={
+                "namespace": ["mcp:tools"],
+                "partner_namespace": ["mcp:tools"],
+                "agent": ["mcp:tools"],
+                "partner_agent": ["mcp:tools"],
+            },
+            route_refresh_events=lambda _event: None,
+        )
+        with self.assertRaises(ValueError) as raised:
+            register_mcp_facade(create_app(), hook_config)
+        self.assertIn("RouteRefreshEvents", str(raised.exception))
+        self.assertIn("without Provider", str(raised.exception))
+
+
+class RouteRefreshTelemetryTests(unittest.TestCase):
+    """Pins the route refresh telemetry taxonomy and its schema redaction."""
+
+    def test_telemetry_covers_the_taxonomy_without_raw_material(self) -> None:
+        recorder = _EventRecorder()
+        harness = _FrontChannelHarness(self, route_refresh_events=recorder)
+        handle = _minted_refresh_handle(harness)
+        rotated = harness.token(_refresh_form(handle))
+        self.assertEqual(200, rotated.status)
+        successor = _token_response_handle(rotated)
+
+        harness.clock.advance(facade_module.DEFAULT_REFRESH_GRACE_WINDOW_SECONDS - 1)
+        self.assertEqual(200, harness.token(_refresh_form(handle)).status)
+        harness.clock.advance(2)
+        # A binding refusal on a rotated-away handle is classified before any
+        # serve and never consumes the handle's single serve.
+        binding = harness.token(_refresh_form_value(handle, "scope", "mcp:other"))
+        self.assertEqual(400, binding.status)
+        benign = harness.token(_refresh_form(handle))
+        self.assertEqual(200, benign.status)
+        self.assertNotIn("refresh_token", benign.body.decode("utf-8"))
+        reused = harness.token(_refresh_form(handle))
+        self.assertEqual(400, reused.status)
+
+        absent = harness.token(_refresh_form(_unknown_handle()))
+        self.assertEqual(400, absent.status)
+
+        issued = recorder.require(facade_module.ROUTE_REFRESH_EVENT_ISSUED)
+        self.assertNotEqual("", issued.handle_hash)
+        self.assertEqual(issued.handle_hash, issued.family_hash)
+        self.assertEqual(facade_module.REFRESH_CHAIN_ROOT_GENERATION, issued.chain_generation)
+
+        recorder.require(facade_module.ROUTE_REFRESH_EVENT_LOCK_ACQUIRED)
+        refreshed = recorder.require(facade_module.ROUTE_REFRESH_EVENT_REFRESHED)
+        self.assertEqual(facade_module.REFRESH_CHAIN_ROOT_GENERATION + 1, refreshed.chain_generation)
+        self.assertNotEqual("", refreshed.successor_handle_hash)
+
+        recorder.require(facade_module.ROUTE_REFRESH_EVENT_GRACE_SERVED)
+        reuse = recorder.require(
+            facade_module.ROUTE_REFRESH_EVENT_REUSE, facade_module.ROUTE_REFRESH_OUTCOME_ACCESS_TOKEN_ONLY
+        )
+        self.assertEqual(1, reuse.chain_depth)
+        self.assertEqual("active", reuse.status_to)
+        family_revoke = recorder.require(
+            facade_module.ROUTE_REFRESH_EVENT_REUSE, facade_module.ROUTE_REFRESH_OUTCOME_REVOKED_FAMILY
+        )
+        self.assertGreaterEqual(family_revoke.revoked_records, 1)
+        self.assertEqual("invalid_grant", family_revoke.error_code)
+        self.assertEqual("revoked", family_revoke.status_to)
+        binding_event = recorder.require(
+            facade_module.ROUTE_REFRESH_EVENT_REUSE, facade_module.ROUTE_REFRESH_OUTCOME_BINDING_REJECTED
+        )
+        self.assertEqual("invalid_scope", binding_event.error_code)
+        self.assertEqual(1, binding_event.chain_depth)
+
+        absent_event = recorder.require(facade_module.ROUTE_REFRESH_EVENT_VALIDATION_REJECTED)
+        self.assertEqual(facade_module.ROUTE_REFRESH_REASON_RECORD_ABSENT, absent_event.reason)
+        self.assertEqual(facade_module.ROUTE_REFRESH_EXPIRY_SIGNAL_ABSENT, absent_event.expiry_signal)
+
+        # No event may carry raw credential or handle material, only hashes.
+        encoded = repr(recorder.events)
+        for secret in (
+            FRONT_TEST_REFRESH_TOKEN,
+            FRONT_TEST_ROTATED_UPSTREAM_REFRESH_TOKEN,
+            FRONT_TEST_REFRESH_ACCESS_TOKEN,
+            FRONT_TEST_REFRESH_ID_TOKEN,
+            FRONT_TEST_ROTATED_UPSTREAM_SCOPE,
+            handle,
+            successor,
+            FRONT_TEST_VERIFIER,
+            FRONT_TEST_UPSTREAM_CODE,
+        ):
+            self.assertNotIn(secret, encoded, "telemetry must carry hashes, never raw material")
+
+    def test_telemetry_expiry_is_distinguishable_from_absence(self) -> None:
+        recorder = _EventRecorder()
+        harness = _FrontChannelHarness(self, route_refresh_events=recorder)
+        handle = _minted_refresh_handle(harness)
+
+        harness.clock.advance(900 + 1)
+        expired = harness.token(_refresh_form(handle))
+        self.assertEqual(400, expired.status)
+        absent = harness.token(_refresh_form(_unknown_handle()))
+        self.assertEqual(400, absent.status)
+        self.assertEqual(expired.body, absent.body, "the client body must not distinguish expiry from absence")
+
+        expired_signal = [
+            event for event in recorder.events if event.reason == facade_module.ROUTE_REFRESH_REASON_RECORD_EXPIRED
+        ]
+        absent_signal = [
+            event for event in recorder.events if event.reason == facade_module.ROUTE_REFRESH_REASON_RECORD_ABSENT
+        ]
+        self.assertEqual(1, len(expired_signal))
+        self.assertEqual(facade_module.ROUTE_REFRESH_EXPIRY_SIGNAL_EXPIRED, expired_signal[0].expiry_signal)
+        self.assertEqual(1, len(absent_signal))
+        self.assertEqual(facade_module.ROUTE_REFRESH_EXPIRY_SIGNAL_ABSENT, absent_signal[0].expiry_signal)
+
+    def test_telemetry_attributes_an_upstream_rejection(self) -> None:
+        recorder = _EventRecorder()
+        harness = _FrontChannelHarness(self, _terminal_failure_provider_options, route_refresh_events=recorder)
+        handle = _minted_refresh_handle(harness)
+        response = harness.token(_refresh_form(handle))
+        self.assertEqual(400, response.status)
+
+        event = recorder.require(facade_module.ROUTE_REFRESH_EVENT_UPSTREAM_REAUTH_REQUIRED)
+        self.assertEqual("invalid_grant", event.upstream_class)
+        self.assertEqual(facade_module.ROUTE_REFRESH_REASON_UPSTREAM_REJECTED, event.reason)
+        self.assertEqual("revoked", event.status_to)
+
+    def test_a_raising_hook_never_fails_a_refresh(self) -> None:
+        def raising_hook(_event: facade_module.RouteRefreshEvent) -> None:
+            raise RuntimeError("telemetry sink is down")
+
+        harness = _FrontChannelHarness(self, route_refresh_events=raising_hook)
+        handle = _minted_refresh_handle(harness)
+        response = harness.token(_refresh_form(handle))
+        self.assertEqual(200, response.status)
+        self.assertIn('"access_token":"' + FRONT_TEST_REFRESH_ACCESS_TOKEN + '"', response.body.decode("utf-8"))
+
+
+class RouteRefreshDepthOneTests(unittest.TestCase):
+    """Pins the beyond-grace depth-1 serve: once per handle, budgeted per
+    family, and revoked by family (not by the bounded walk) on theft."""
+
+    def test_handle_is_single_use_beyond_grace(self) -> None:
+        harness = _FrontChannelHarness(self)
+        handle = _minted_refresh_handle(harness)
+        rotated = harness.token(_refresh_form(handle))
+        successor = _token_response_handle(rotated)
+        harness.clock.advance(facade_module.DEFAULT_REFRESH_GRACE_WINDOW_SECONDS + 1)
+
+        first = harness.token(_refresh_form(handle))
+        self.assertEqual(200, first.status)
+        self.assertNotIn("refresh_token", first.body.decode("utf-8"))
+        self.assertIsNotNone(_broker_record(harness, handle).depth_one_served_at)
+
+        second = harness.token(_refresh_form(handle))
+        self.assertEqual(400, second.status)
+        self.assertEqual("revoked", _broker_record(harness, handle).status)
+        self.assertEqual("revoked", _broker_record(harness, successor).status)
+
+    def test_depth_two_revokes_immediately(self) -> None:
+        recorder = _EventRecorder()
+        harness = _FrontChannelHarness(self, route_refresh_events=recorder)
+        root = _minted_refresh_handle(harness)
+        mid = _token_response_handle(harness.token(_refresh_form(root)))
+        head = _token_response_handle(harness.token(_refresh_form(mid)))
+        harness.clock.advance(facade_module.DEFAULT_REFRESH_GRACE_WINDOW_SECONDS + 1)
+
+        response = harness.token(_refresh_form(root))
+        self.assertEqual(400, response.status)
+        self.assertIn('"error":"invalid_grant"', response.body.decode("utf-8"))
+        self.assertNotIn("access_token", response.body.decode("utf-8"))
+        for handle in (root, mid, head):
+            self.assertEqual("revoked", _broker_record(harness, handle).status)
+
+        event = recorder.require(
+            facade_module.ROUTE_REFRESH_EVENT_REUSE, facade_module.ROUTE_REFRESH_OUTCOME_REVOKED_FAMILY
+        )
+        self.assertEqual(2, event.chain_depth)
+        self.assertGreaterEqual(event.revoked_records, 3)
+
+    def test_per_family_budget_allows_nine_then_refuses_without_revoking(self) -> None:
+        harness = _FrontChannelHarness(self)
+        head = _minted_refresh_handle(harness)
+
+        for served in range(facade_module.MIN_REFRESH_REUSE_RATE_CEILING):
+            rotated = harness.token(_refresh_form(head))
+            self.assertEqual(200, rotated.status, f"rotation {served}")
+            predecessor = head
+            head = _token_response_handle(rotated)
+            harness.clock.advance(facade_module.DEFAULT_REFRESH_GRACE_WINDOW_SECONDS + 1)
+            response = harness.token(_refresh_form(predecessor))
+            self.assertEqual(200, response.status, f"serve {served}")
+            self.assertNotIn("refresh_token", response.body.decode("utf-8"))
+
+        rotated = harness.token(_refresh_form(head))
+        self.assertEqual(200, rotated.status)
+        predecessor = head
+        head = _token_response_handle(rotated)
+        harness.clock.advance(facade_module.DEFAULT_REFRESH_GRACE_WINDOW_SECONDS + 1)
+        limited = harness.token(_refresh_form(predecessor))
+        self.assertEqual(400, limited.status)
+        self.assertIn('"error":"invalid_grant"', limited.body.decode("utf-8"))
+        self.assertNotIn("access_token", limited.body.decode("utf-8"))
+        # A rate-limited serve must not consume the handle's single serve or
+        # revoke the family.
+        record = _broker_record(harness, predecessor)
+        self.assertIsNone(record.depth_one_served_at)
+        self.assertEqual("active", record.status)
+        self.assertNotEqual("revoked", _broker_record(harness, head).status)
+
+    def test_legacy_record_is_classified_structurally_and_walk_revoked(self) -> None:
+        recorder = _EventRecorder()
+        harness = _FrontChannelHarness(self, route_refresh_events=recorder)
+        legacy_handle = "legacy-route-handle-" + "a" * 24
+        successor_handle = "legacy-successor-handle-" + "b" * 24
+        body = json.dumps(
+            {
+                "access_token": "legacy-access-token",
+                "token_type": "Bearer",
+                "expires_in": 900,
+                "refresh_token": successor_handle,
+            },
+            separators=(",", ":"),
+        )
+        harness.stores.route_refresh_broker.put(
+            facade_module.RouteRefreshBrokerRecord(
+                handle_hash=hash_key(legacy_handle),
+                issuer=FRONT_TEST_UPSTREAM_ISS,
+                canonical_resource=REFRESH_TEST_BOUND_RESOURCE,
+                client_id_hash=hash_key(FRONT_TEST_CLIENT_ID),
+                subject_id_hash=hash_key("user-1"),
+                scope_fingerprint=facade_module._facade_scope_fingerprint(["mcp:tools"]),
+                encrypted_upstream_refresh_token=FRONT_TEST_REFRESH_TOKEN,
+                upstream_refresh_token_hash=hash_key(FRONT_TEST_REFRESH_TOKEN),
+                upstream_client_id=FRONT_TEST_CLIENT_ID,
+                encrypted_grace_refresh_response=body,
+                grace_expires_at=harness.clock.now(),
+                status="active",
+            )
+        )
+        harness.stores.route_refresh_broker.put(
+            facade_module.RouteRefreshBrokerRecord(
+                handle_hash=hash_key(successor_handle),
+                issuer=FRONT_TEST_UPSTREAM_ISS,
+                canonical_resource=REFRESH_TEST_BOUND_RESOURCE,
+                client_id_hash=hash_key(FRONT_TEST_CLIENT_ID),
+                subject_id_hash=hash_key("user-1"),
+                scope_fingerprint=facade_module._facade_scope_fingerprint(["mcp:tools"]),
+                encrypted_upstream_refresh_token=FRONT_TEST_ROTATED_UPSTREAM_REFRESH_TOKEN,
+                upstream_refresh_token_hash=hash_key(FRONT_TEST_ROTATED_UPSTREAM_REFRESH_TOKEN),
+                upstream_client_id=FRONT_TEST_CLIENT_ID,
+                status="active",
+            )
+        )
+
+        served = harness.token(_refresh_form(legacy_handle))
+        self.assertEqual(200, served.status, served.body)
+        self.assertIn('"access_token":"legacy-access-token"', served.body.decode("utf-8"))
+        self.assertNotIn("refresh_token", served.body.decode("utf-8"))
+        reuse = recorder.require(
+            facade_module.ROUTE_REFRESH_EVENT_REUSE, facade_module.ROUTE_REFRESH_OUTCOME_ACCESS_TOKEN_ONLY
+        )
+        self.assertEqual(1, reuse.chain_depth)
+        self.assertEqual(0, reuse.chain_generation)
+
+        second = harness.token(_refresh_form(legacy_handle))
+        self.assertEqual(400, second.status)
+        walked = recorder.require(
+            facade_module.ROUTE_REFRESH_EVENT_REUSE, facade_module.ROUTE_REFRESH_OUTCOME_REVOKED_WALK
+        )
+        self.assertEqual(2, walked.revoked_records)
+        self.assertEqual("revoked", _broker_record(harness, legacy_handle).status)
+        self.assertEqual("revoked", _broker_record(harness, successor_handle).status)
+
+    def test_family_revoke_beats_the_walk_limit(self) -> None:
+        harness = _FrontChannelHarness(self)
+        handles = [_minted_refresh_handle(harness)]
+        for _rotation in range(facade_module._REFRESH_REVOKE_CHAIN_LIMIT + 2):
+            response = harness.token(_refresh_form(handles[-1]))
+            self.assertEqual(200, response.status)
+            handles.append(_token_response_handle(response))
+
+        harness.clock.advance(facade_module.DEFAULT_REFRESH_GRACE_WINDOW_SECONDS + 1)
+        reused = harness.token(_refresh_form(handles[0]))
+        self.assertEqual(400, reused.status)
+        self.assertIn('"error":"invalid_grant"', reused.body.decode("utf-8"))
+        for handle in handles:
+            self.assertEqual("revoked", _broker_record(harness, handle).status, handle)
+
+
 def _terminal_failure_provider_options(options: dict[str, Any]) -> None:
     """Stages the fake upstream a terminal refresh rejection."""
     options["refresh_token_status"] = 400
@@ -2108,7 +2622,7 @@ def _refresh_provider_options(scenario: str) -> Any:
     return None
 
 
-def _refresh_scenario_response(
+def _refresh_scenario_response(  # noqa: C901 - one branch per shared-table scenario
     test: unittest.TestCase,
     harness: _FrontChannelHarness,
     scenario: str,
@@ -2126,9 +2640,14 @@ def _refresh_scenario_response(
         replayed = harness.token(_refresh_form(handle))
         test.assertEqual(first.body, replayed.body, "the grace replay must be byte-identical")
         return replayed
-    if scenario == "reuse_after_grace_revokes":
+    if scenario == "beyond_grace_depth_one_serves_access_token_only":
         test.assertEqual(200, harness.token(_refresh_form(handle)).status)
-        harness.clock.advance(facade_module._REFRESH_GRACE_WINDOW_SECONDS + 1)
+        harness.clock.advance(facade_module.DEFAULT_REFRESH_GRACE_WINDOW_SECONDS + 1)
+        return harness.token(_refresh_form(handle))
+    if scenario == "beyond_grace_second_serve_revokes_family":
+        test.assertEqual(200, harness.token(_refresh_form(handle)).status)
+        harness.clock.advance(facade_module.DEFAULT_REFRESH_GRACE_WINDOW_SECONDS + 1)
+        test.assertEqual(200, harness.token(_refresh_form(handle)).status)
         return harness.token(_refresh_form(handle))
     if scenario == "unknown_handle":
         return harness.token(_refresh_form(_unknown_handle()))
@@ -2216,6 +2735,10 @@ class FrontChannelNonePublicPostureTests(unittest.TestCase):
             stores=harness.stores,
             upstream_client_id=FRONT_TEST_CLIENT_ID,
             upstream_issuer=FRONT_TEST_UPSTREAM_ISS,
+            route_refresh_policy=facade_module.RouteRefreshPolicy(
+                handle_ttl_seconds=900,
+                reuse_rate_ceiling=facade_module.MIN_REFRESH_REUSE_RATE_CEILING,
+            ),
         )
         with self.assertRaises(ValueError) as raised:
             register_mcp_facade(create_app(tier="p0"), config)

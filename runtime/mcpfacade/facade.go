@@ -219,6 +219,25 @@ type FacadeConfig struct {
 	// a provider-call failure in the gateway class, so it maps to the 502
 	// upstream_error error page and never redirects (DESIGN §8.2).
 	ProviderHints func(ctx *apptheory.Context) (map[string]string, error)
+
+	// RouteRefreshPolicy is the encoded static policy of the brokered route
+	// refresh handle. It is REQUIRED whenever Provider is set: a missing or zero
+	// handle TTL, grace window, or reuse rate ceiling is a registration error,
+	// never a silent fallback. Setting it without Provider is a registration
+	// error like every other front-channel field.
+	//
+	// HandleTTL is applied by the broker store; a store that reports its local
+	// lifetime through oauthstore.RouteRefreshBrokerHandleTTLReporter must agree
+	// with it. GraceWindow and ReuseRateCeiling drive the facade's own serve
+	// classification.
+	RouteRefreshPolicy RouteRefreshPolicy
+
+	// RouteRefreshEvents optionally receives schema-redacted route refresh
+	// broker telemetry. Events carry route identifiers, status transitions, and
+	// hashes only: never an authorization code, access token, upstream refresh
+	// token, route refresh handle, ID token, cookie, or provider session id. The
+	// hook runs synchronously on the request path and a panic is recovered.
+	RouteRefreshEvents RouteRefreshEventHook
 }
 
 // Route describes one endpoint-kind route family installed by the helper.

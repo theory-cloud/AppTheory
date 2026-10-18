@@ -169,9 +169,10 @@ func TestMemoryBrokerStoreEdges(t *testing.T) {
 		t.Fatalf("swapped record = %+v", swapped)
 	}
 
-	// The local lifetime policy treats an aged-out handle as absent.
+	// The local lifetime policy treats an aged-out handle as expired, which is
+	// distinguishable from an unknown handle at the SPI.
 	clock.Advance(11 * time.Minute)
-	if _, err := brokers.Get(ctx, "handle"); !errors.Is(err, ErrBrokerNotFound) {
+	if _, err := brokers.Get(ctx, "handle"); !errors.Is(err, ErrBrokerExpired) {
 		t.Fatalf("aged-out Get = %v", err)
 	}
 }

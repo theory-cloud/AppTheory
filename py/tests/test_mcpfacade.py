@@ -9,12 +9,14 @@ from apptheory import (
     CONTRACT_VERSION,
     ISSUER_MODE_FAMILY,
     ISSUER_MODE_ROUTE,
+    MIN_REFRESH_REUSE_RATE_CEILING,
     URL_MODE_PUBLIC_BASE_URL,
     URL_MODE_REQUEST_HOST,
     BearerTokenRecord,
     FacadeCapabilities,
     FacadeConfig,
     RootDiscoveryConfig,
+    RouteRefreshPolicy,
     Stores,
     create_app,
     default_capabilities,
@@ -52,6 +54,7 @@ from apptheory.oauth.provider import (
     TokenSet,
 )
 from apptheory.oauth.store import (
+    UTC_NOW_TTL_ROUTE_REFRESH_BROKER_SECONDS,
     MemoryAuthorizationCodeStore,
     MemoryClientStore,
     MemoryRateLimitStore,
@@ -1331,6 +1334,10 @@ def _front_channel_config() -> FacadeConfig:
     config.stores = _reference_stores()
     config.upstream_client_id = "mcp_facade_client"
     config.upstream_issuer = "https://id.example.com"
+    config.route_refresh_policy = RouteRefreshPolicy(
+        handle_ttl_seconds=UTC_NOW_TTL_ROUTE_REFRESH_BROKER_SECONDS,
+        reuse_rate_ceiling=MIN_REFRESH_REUSE_RATE_CEILING,
+    )
     return config
 
 

@@ -14,7 +14,7 @@ import (
 const storeConformanceFixture = "../../../contract-tests/fixtures/routing/mcp-auth-facade/facade-store-conformance.v1.json"
 
 // fixtureCaseCount is the case count the shared fixture must carry.
-const fixtureCaseCount = 44
+const fixtureCaseCount = 48
 
 func newStores(clock *store.ManualClock) store.Stores {
 	return store.Stores{
@@ -286,13 +286,13 @@ func TestRouteRefreshBrokerTTLBoundary(t *testing.T) {
 	}
 
 	clock.Set(storedAt.Add(time.Second))
-	if _, err := brokers.Get(ctx, "handle-boundary"); !errors.Is(err, store.ErrBrokerNotFound) {
-		t.Fatalf("get at the TTL = %v, want ErrBrokerNotFound", err)
+	if _, err := brokers.Get(ctx, "handle-boundary"); !errors.Is(err, store.ErrBrokerExpired) {
+		t.Fatalf("get at the TTL = %v, want ErrBrokerExpired", err)
 	}
 
 	clock.Set(storedAt.Add(time.Second + time.Nanosecond))
-	if _, err := brokers.Get(ctx, "handle-past"); !errors.Is(err, store.ErrBrokerNotFound) {
-		t.Fatalf("get one nanosecond past the TTL = %v, want ErrBrokerNotFound", err)
+	if _, err := brokers.Get(ctx, "handle-past"); !errors.Is(err, store.ErrBrokerExpired) {
+		t.Fatalf("get one nanosecond past the TTL = %v, want ErrBrokerExpired", err)
 	}
 }
 

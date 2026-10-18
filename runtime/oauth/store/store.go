@@ -74,14 +74,19 @@ type ClientStore interface {
 // one route handle, keyed by hash(route refresh handle).
 //
 // Get returns a revoked record as it stands (Status == "revoked"): a revoked
-// handle is terminal and idempotent, not a not-found. AcquireLock is exclusive
-// and expires: a live lock reports ErrBrokerLocked before the version check, a
-// lock whose RefreshLockExpiresAt has elapsed may be re-acquired, and a revoked
-// record reports ErrBrokerRevoked. CompareAndSwap is versioned and reports
-// ErrBrokerVersionConflict on a stale version and ErrBrokerRevoked on a revoked
-// record. Revoke is idempotent and terminal. The expected version must be the
-// version the caller read, so a negative value is never a skip-version-check
-// wildcard: it reports ErrBrokerVersionConflict like any other mismatch.
+// handle is terminal and idempotent, not a not-found. A record whose local
+// lifetime policy elapsed reports ErrBrokerExpired, which is distinct from
+// ErrBrokerNotFound at the SPI so the facade can attribute the failure; the
+// client-facing body stays the uniform invalid_grant either way. AcquireLock is
+// exclusive and expires: a live lock reports ErrBrokerLocked before the version
+// check, a lock whose RefreshLockExpiresAt has elapsed may be re-acquired, and a
+// revoked record reports ErrBrokerRevoked. CompareAndSwap is versioned and
+// reports ErrBrokerVersionConflict on a stale version and ErrBrokerRevoked on a
+// revoked record. Revoke is idempotent and terminal. The expected version must
+// be the version the caller read, so a negative value is never a
+// skip-version-check wildcard: it reports ErrBrokerVersionConflict like any
+// other mismatch. Every broker operation reports ErrBrokerExpired for a handle
+// whose local lifetime policy elapsed.
 type RouteRefreshBrokerStore interface {
 	Get(ctx context.Context, handleHash string) (*RouteRefreshBrokerRecord, error)
 	AcquireLock(
@@ -111,6 +116,31 @@ type RateLimitStore interface {
 // implements this with whatever create path it already has.
 type RouteRefreshBrokerSeeder interface {
 	Put(ctx context.Context, record *RouteRefreshBrokerRecord) error
+}
+
+// RouteRefreshBrokerFamilyStore is the optional family capability of a broker
+// store. A refresh family is the chain of handles one authorization grant
+// produced; FamilyHash names it on every record. ListFamily answers which
+// handles belong to a family and what state each is in, so an incident
+// responder can enumerate a family without walking successor links. RevokeFamily
+// revokes every record of a family in one operation and returns the records it
+// revoked, so a confirmed theft is not limited by the eight-link successor walk
+// a long-lived chain would exhaust.
+//
+// A store that does not implement this capability remains fully usable: the
+// facade falls back to the bounded successor walk for revocation and reports a
+// state event, so the degradation is visible rather than silent.
+type RouteRefreshBrokerFamilyStore interface {
+	ListFamily(ctx context.Context, familyHash string) ([]*RouteRefreshBrokerRecord, error)
+	RevokeFamily(ctx context.Context, familyHash string) ([]*RouteRefreshBrokerRecord, error)
+}
+
+// RouteRefreshBrokerHandleTTLReporter is the optional capability a broker store
+// reports its local handle lifetime policy through. The facade compares it with
+// the configured policy at registration, so a deployment cannot declare a
+// long-lived ceiling while its store silently keeps a shorter one.
+type RouteRefreshBrokerHandleTTLReporter interface {
+	RouteRefreshBrokerHandleTTL() time.Duration
 }
 
 // HashKey returns the store key for a protected value: the unpadded base64url
@@ -199,6 +229,20 @@ type ClientRecord struct {
 // RouteRefreshBrokerRecord is the durable state bound to one route refresh
 // handle. Fields follow the facade-store-spi.v1.json route-refresh-broker field
 // set: a handle is never rebound to a new issuer or client registration.
+//
+// ChainGeneration and FamilyHash identify the refresh family the handle belongs
+// to. A handle minted under the current policy is the root of its own family:
+// ChainGeneration is 1 and FamilyHash is the hash of its own handle. Every
+// successor records the presented handle's generation plus one and inherits its
+// FamilyHash, so the depth of a rotated-away handle relative to the head is
+// arithmetic rather than guesswork. A record that predates the policy carries
+// ChainGeneration 0 and an empty FamilyHash; it is classified structurally
+// (successor walk) and becomes the root of a new family on its first mutation
+// under the policy.
+//
+// DepthOneServedAt records that this rotated-away handle has already been
+// answered once beyond its grace window with the access token only. The second
+// such presentation is theft class, so the flag is written before the serve.
 type RouteRefreshBrokerRecord struct {
 	HandleHash                    string
 	Issuer                        string
@@ -220,6 +264,9 @@ type RouteRefreshBrokerRecord struct {
 	Status                        string
 	RefreshLockOwner              string
 	RefreshLockExpiresAt          time.Time
+	ChainGeneration               int
+	FamilyHash                    string
+	DepthOneServedAt              time.Time
 	Version                       int
 }
 
@@ -267,6 +314,11 @@ var (
 
 	// ErrBrokerNotFound reports an unknown route refresh handle.
 	ErrBrokerNotFound = errors.New("store: route refresh broker record not found")
+	// ErrBrokerExpired reports a route refresh handle whose local lifetime policy
+	// elapsed. It is deliberately distinguishable from ErrBrokerNotFound at the
+	// SPI so the facade can attribute the failure (expiry versus absence) while
+	// the client-facing body stays the uniform invalid_grant.
+	ErrBrokerExpired = errors.New("store: route refresh broker record expired")
 	// ErrBrokerLocked reports a broker record that already holds an unexpired
 	// refresh lock.
 	ErrBrokerLocked = errors.New("store: route refresh broker record is locked")

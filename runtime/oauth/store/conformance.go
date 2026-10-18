@@ -133,6 +133,9 @@ var conformanceScenarios = map[string]func(*conformanceHarness, ConformanceCase)
 	"broker_ttl_boundary":                (*conformanceHarness).brokerTTLBoundary,
 	"broker_expired_refuses_lock":        (*conformanceHarness).brokerExpiredRefusesLock,
 	"broker_expired_refuses_swap":        (*conformanceHarness).brokerExpiredRefusesSwap,
+	"broker_expired_vs_unknown":          (*conformanceHarness).brokerExpiredVsUnknown,
+	"list_family":                        (*conformanceHarness).brokerListFamily,
+	"revoke_family":                      (*conformanceHarness).brokerRevokeFamily,
 	"acquire_lock_bumps_version":         (*conformanceHarness).brokerAcquireLockBumpsVersion,
 	"revoke_bumps_version":               (*conformanceHarness).brokerRevokeBumpsVersion,
 	"acquire_lock_sets_refreshing":       (*conformanceHarness).brokerAcquireLockSetsRefreshing,
@@ -202,6 +205,16 @@ func (h *conformanceHarness) count(testCase ConformanceCase, name string) int {
 	value, ok := conformanceNumber(testCase.Params[name])
 	if !ok || value < 1 {
 		return 1
+	}
+	return int(value)
+}
+
+// size returns a row's cardinality parameter, where zero is meaningful (an empty
+// family) rather than defaulted to one.
+func (h *conformanceHarness) size(testCase ConformanceCase, name string) int {
+	value, ok := conformanceNumber(testCase.Params[name])
+	if !ok || value < 0 {
+		return 0
 	}
 	return int(value)
 }
@@ -829,6 +842,144 @@ func (h *conformanceHarness) brokerExpiredRefusesSwap(testCase ConformanceCase) 
 	return map[string]any{"swap": outcomeFor(swapErr)}, nil
 }
 
+// brokerExpiredVsUnknown demonstrates the signal the facade attributes through:
+// an unknown key and an aged-out key report different outcomes at the SPI, even
+// though the client-facing body is the same.
+func (h *conformanceHarness) brokerExpiredVsUnknown(testCase ConformanceCase) (map[string]any, error) {
+	key := h.key(testCase, "handle")
+	if err := h.putBroker(key); err != nil {
+		return nil, err
+	}
+	advance, _ := conformanceNumber(testCase.Params[conformanceParamAdvance])
+	h.advance(int(advance))
+	_, unknownErr := h.stores.RouteRefreshBroker.Get(h.ctx(), h.key(testCase, "unknown"))
+	_, expiredErr := h.stores.RouteRefreshBroker.Get(h.ctx(), key)
+	return map[string]any{
+		"unknown": outcomeFor(unknownErr),
+		"expired": outcomeFor(expiredErr),
+	}, nil
+}
+
+// brokerFamilyStore returns the optional family capability, or ErrBrokerNotSeedable
+// when the store does not implement it.
+func (h *conformanceHarness) brokerFamilyStore() (RouteRefreshBrokerFamilyStore, error) {
+	family, ok := h.stores.RouteRefreshBroker.(RouteRefreshBrokerFamilyStore)
+	if !ok {
+		return nil, fmt.Errorf("%w: %T", ErrBrokerNotSeedable, h.stores.RouteRefreshBroker)
+	}
+	return family, nil
+}
+
+// putBrokerFamily seeds one handle with a family hash through the store's own
+// create path.
+func (h *conformanceHarness) putBrokerFamily(key, familyHash string) error {
+	seeder, ok := h.stores.RouteRefreshBroker.(RouteRefreshBrokerSeeder)
+	if !ok {
+		return fmt.Errorf("%w: %T", ErrBrokerNotSeedable, h.stores.RouteRefreshBroker)
+	}
+	return seeder.Put(h.ctx(), &RouteRefreshBrokerRecord{
+		HandleHash:        key,
+		Issuer:            "https://auth.example.test",
+		Stage:             "lab",
+		CanonicalResource: "https://mcp.example.test/mcp",
+		Status:            BrokerStatusActive,
+		ChainGeneration:   1,
+		FamilyHash:        familyHash,
+	})
+}
+
+// brokerListFamily seeds two families and reports what the family listing
+// returns for one of them, so a store that cannot enumerate a family is visible.
+func (h *conformanceHarness) brokerListFamily(testCase ConformanceCase) (map[string]any, error) {
+	family, err := h.brokerFamilyStore()
+	if err != nil {
+		return nil, err
+	}
+	familyHash := h.key(testCase, "family")
+	otherHash := h.key(testCase, "other-family")
+	familySize := h.size(testCase, "family_size")
+	otherSize := h.size(testCase, "other_family_size")
+	for index := 0; index < familySize; index++ {
+		if seedErr := h.putBrokerFamily(h.key(testCase, fmt.Sprintf("member-%d", index)), familyHash); seedErr != nil {
+			return nil, seedErr
+		}
+	}
+	for index := 0; index < otherSize; index++ {
+		if seedErr := h.putBrokerFamily(h.key(testCase, fmt.Sprintf("other-%d", index)), otherHash); seedErr != nil {
+			return nil, seedErr
+		}
+	}
+	records, err := family.ListFamily(h.ctx(), familyHash)
+	if err != nil {
+		return nil, err
+	}
+	otherRecords, err := family.ListFamily(h.ctx(), otherHash)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"family_size":       len(records),
+		"other_family_size": len(otherRecords),
+	}, nil
+}
+
+// brokerRevokeFamily seeds two families, revokes one through the family
+// capability, and reports what was revoked and what the other family's state is,
+// so a family revoke that misses members or leaks across families is visible.
+func (h *conformanceHarness) brokerRevokeFamily(testCase ConformanceCase) (map[string]any, error) {
+	family, err := h.brokerFamilyStore()
+	if err != nil {
+		return nil, err
+	}
+	familyHash := h.key(testCase, "family")
+	otherHash := h.key(testCase, "other-family")
+	familySize := h.size(testCase, "family_size")
+	otherSize := h.size(testCase, "other_family_size")
+	familyKeys := make([]string, 0, familySize)
+	otherKeys := make([]string, 0, otherSize)
+	for index := 0; index < familySize; index++ {
+		key := h.key(testCase, fmt.Sprintf("member-%d", index))
+		if seedErr := h.putBrokerFamily(key, familyHash); seedErr != nil {
+			return nil, seedErr
+		}
+		familyKeys = append(familyKeys, key)
+	}
+	for index := 0; index < otherSize; index++ {
+		key := h.key(testCase, fmt.Sprintf("other-%d", index))
+		if seedErr := h.putBrokerFamily(key, otherHash); seedErr != nil {
+			return nil, seedErr
+		}
+		otherKeys = append(otherKeys, key)
+	}
+	revoked, err := family.RevokeFamily(h.ctx(), familyHash)
+	if err != nil {
+		return nil, err
+	}
+	familyStatuses := make([]string, 0, len(familyKeys))
+	for _, key := range familyKeys {
+		record, err := h.stores.RouteRefreshBroker.Get(h.ctx(), key)
+		if err != nil {
+			return nil, err
+		}
+		familyStatuses = append(familyStatuses, record.Status)
+	}
+	slices.Sort(familyStatuses)
+	otherStatuses := make([]string, 0, len(otherKeys))
+	for _, key := range otherKeys {
+		record, err := h.stores.RouteRefreshBroker.Get(h.ctx(), key)
+		if err != nil {
+			return nil, err
+		}
+		otherStatuses = append(otherStatuses, record.Status)
+	}
+	slices.Sort(otherStatuses)
+	return map[string]any{
+		"revoked_family_size": len(revoked),
+		"family_statuses":     familyStatuses,
+		"other_statuses":      otherStatuses,
+	}, nil
+}
+
 // brokerRevokeThenSwap swaps a revoked record: revocation is terminal, so the
 // swap reports revoked rather than resurrecting the handle.
 func (h *conformanceHarness) brokerRevokeThenSwap(testCase ConformanceCase) (map[string]any, error) {
@@ -1020,7 +1171,8 @@ func outcomeFor(err error) string {
 		errors.Is(err, ErrClientNotFound),
 		errors.Is(err, ErrBrokerNotFound):
 		return conformanceOutcomeNotFound
-	case errors.Is(err, ErrTransactionExpired), errors.Is(err, ErrAuthorizationCodeExpired):
+	case errors.Is(err, ErrTransactionExpired), errors.Is(err, ErrAuthorizationCodeExpired),
+		errors.Is(err, ErrBrokerExpired):
 		return conformanceOutcomeExpired
 	case errors.Is(err, ErrAuthorizationCodeReplayed):
 		return conformanceOutcomeReplayed

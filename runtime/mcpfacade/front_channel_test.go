@@ -118,6 +118,10 @@ type frontChannelHarnessOptions struct {
 	// provider-hint seam, so a test can drive a failing providerHints.
 	providerHints func(*apptheory.Context) (map[string]string, error)
 
+	// routeRefreshEvents, when set, receives the route refresh broker telemetry
+	// the facade emits, so a test can assert the event taxonomy.
+	routeRefreshEvents RouteRefreshEventHook
+
 	// failAuthorizationURL makes the upstream provider's AuthorizationURL builder
 	// fail, so a test can drive the authorize leg's provider-call failure class.
 	failAuthorizationURL bool
@@ -176,6 +180,8 @@ type recordingBrokerStore struct {
 	oauthstore.RouteRefreshBrokerStore
 	oauthstore.RouteRefreshBrokerSeeder
 
+	family oauthstore.RouteRefreshBrokerFamilyStore
+
 	mu      sync.Mutex
 	handles []string
 
@@ -212,6 +218,22 @@ func (s *recordingBrokerStore) handleHashes() []string {
 	return append([]string(nil), s.handles...)
 }
 
+// ListFamily delegates the optional family capability to the reference store.
+func (s *recordingBrokerStore) ListFamily(
+	ctx context.Context,
+	familyHash string,
+) ([]*oauthstore.RouteRefreshBrokerRecord, error) {
+	return s.family.ListFamily(ctx, familyHash)
+}
+
+// RevokeFamily delegates the optional family capability to the reference store.
+func (s *recordingBrokerStore) RevokeFamily(
+	ctx context.Context,
+	familyHash string,
+) ([]*oauthstore.RouteRefreshBrokerRecord, error) {
+	return s.family.RevokeFamily(ctx, familyHash)
+}
+
 func newFrontChannelHarness(t *testing.T) *frontChannelHarness {
 	t.Helper()
 	return newFrontChannelHarnessWith(t, frontChannelHarnessOptions{})
@@ -226,9 +248,12 @@ func newFrontChannelHarnessWith(t *testing.T, options frontChannelHarnessOptions
 	var reference oauthstore.RouteRefreshBrokerStore = oauthstore.NewMemoryRouteRefreshBrokerStore(oauthstore.RouteRefreshBrokerStoreOptions{Now: clock.Now})
 	seeder, ok := reference.(oauthstore.RouteRefreshBrokerSeeder)
 	require.True(t, ok, "the reference broker store must implement the seeder")
+	family, ok := reference.(oauthstore.RouteRefreshBrokerFamilyStore)
+	require.True(t, ok, "the reference broker store must implement the family capability")
 	broker := &recordingBrokerStore{
 		RouteRefreshBrokerStore:  reference,
 		RouteRefreshBrokerSeeder: seeder,
+		family:                   family,
 	}
 	stores := oauthstore.Stores{
 		Transaction:        oauthstore.NewMemoryTransactionStore(oauthstore.TransactionStoreOptions{Now: clock.Now}),
@@ -327,6 +352,11 @@ func newFrontChannelHarnessWith(t *testing.T, options frontChannelHarnessOptions
 		UpstreamClientID: frontTestClientID,
 		UpstreamIssuer:   frontTestUpstreamIss,
 		ProviderHints:    options.providerHints,
+		RouteRefreshPolicy: RouteRefreshPolicy{
+			HandleTTL:        oauthstore.DefaultRouteRefreshBrokerTTL,
+			ReuseRateCeiling: MinRefreshReuseRateCeiling,
+		},
+		RouteRefreshEvents: options.routeRefreshEvents,
 
 		RootAuthorizationServer: options.rootAuthorizationServer,
 	}

@@ -34,6 +34,18 @@ export class BrokerNotFoundError extends Error {
         this.name = "BrokerNotFoundError";
     }
 }
+/**
+ * The broker record exists but its local lifetime policy elapsed. It is
+ * deliberately distinguishable from {@link BrokerNotFoundError} at the SPI so
+ * the facade can attribute the failure (expiry versus absence) in telemetry,
+ * while the client-facing body stays the uniform `invalid_grant`.
+ */
+export class BrokerExpiredError extends Error {
+    constructor(message = "route refresh broker record expired") {
+        super(message);
+        this.name = "BrokerExpiredError";
+    }
+}
 /** In-memory reference TransactionStore. */
 export class MemoryTransactionStore {
     records = new Map();
@@ -186,9 +198,11 @@ export class MemoryClientStore {
 const DEFAULT_ROUTE_REFRESH_LOCK_TTL_SECONDS = 15;
 /**
  * In-memory reference RouteRefreshBrokerStore. Each handle carries its own
- * lifetime: a handle older than the store's TTL is treated as absent by every
- * operation, so an expired handle can be neither read, locked, swapped nor
- * revoked, and a swap on an absent handle is `not_found` rather than a create.
+ * lifetime: a handle older than the store's TTL reports `expired` from every
+ * operation, so it can be neither read, locked, swapped nor revoked, and a swap
+ * on an absent handle is `not_found` rather than a create. An aged-out handle
+ * is distinguishable from one that never existed at the SPI, even though the
+ * facade renders the same client-facing body for both.
  */
 export class MemoryRouteRefreshBrokerStore {
     records = new Map();
@@ -217,13 +231,18 @@ export class MemoryRouteRefreshBrokerStore {
         this.storedAt.set(stored.handleHash, this.now().getTime());
         return Promise.resolve();
     }
+    /**
+     * Reads one handle. An unknown key is `null`; a handle whose local lifetime
+     * elapsed is {@link BrokerExpiredError}, so the facade can attribute the
+     * rejection without making the client-facing body an oracle.
+     */
     get(handleHash) {
         const record = this.records.get(handleHash);
         if (!record)
             return Promise.resolve(null);
         if (this.expired(handleHash)) {
             this.discard(handleHash);
-            return Promise.resolve(null);
+            return Promise.reject(new BrokerExpiredError());
         }
         return Promise.resolve(structuredClone(record));
     }
@@ -242,7 +261,7 @@ export class MemoryRouteRefreshBrokerStore {
             return Promise.reject(new BrokerNotFoundError());
         if (this.expired(handleHash)) {
             this.discard(handleHash);
-            return Promise.reject(new BrokerNotFoundError());
+            return Promise.reject(new BrokerExpiredError());
         }
         if (record.status === "revoked") {
             return Promise.reject(new BrokerRevokedError());
@@ -262,9 +281,9 @@ export class MemoryRouteRefreshBrokerStore {
         return Promise.resolve(structuredClone(record));
     }
     /**
-     * Versioned compare-and-swap. A swap never creates: a handle that does not
-     * exist — never seeded, or aged out past its TTL — is `not_found`, and
-     * creation is the seeder's separate `put`. The presented version must equal
+     * Versioned compare-and-swap. A swap never creates: an unknown handle is
+     * `not_found`, an aged-out handle is `expired`, and creation is the seeder's
+     * separate `put`. The presented version must equal
      * the stored record's version, and a revoked record refuses every swap. A
      * replacement that states no status adopts the stored one, so a rotation
      * cannot silently clear the handle's status. A rotation keeps the handle's
@@ -278,7 +297,7 @@ export class MemoryRouteRefreshBrokerStore {
         }
         if (this.expired(record.handleHash)) {
             this.discard(record.handleHash);
-            return Promise.reject(new BrokerNotFoundError());
+            return Promise.reject(new BrokerExpiredError());
         }
         if (current.status === "revoked") {
             return Promise.reject(new BrokerRevokedError());
@@ -299,7 +318,8 @@ export class MemoryRouteRefreshBrokerStore {
     /**
      * Revokes the handle. Revocation is idempotent and terminal: the transition
      * into `revoked` advances the record's content version, and a repeat revoke
-     * leaves it alone.
+     * leaves it alone. An aged-out handle is `expired`, not a resurrectable
+     * record.
      */
     revoke(handleHash) {
         const record = this.records.get(handleHash);
@@ -307,7 +327,7 @@ export class MemoryRouteRefreshBrokerStore {
             return Promise.reject(new BrokerNotFoundError());
         if (this.expired(handleHash)) {
             this.discard(handleHash);
-            return Promise.reject(new BrokerNotFoundError());
+            return Promise.reject(new BrokerExpiredError());
         }
         if (record.status !== "revoked") {
             record.status = "revoked";
@@ -316,6 +336,60 @@ export class MemoryRouteRefreshBrokerStore {
         delete record.refreshLockOwner;
         delete record.refreshLockExpiresAt;
         return Promise.resolve(structuredClone(record));
+    }
+    /**
+     * Reports the local handle lifetime policy the store applies, in seconds, so
+     * the facade can refuse a configuration that declares a different ceiling.
+     */
+    routeRefreshBrokerHandleTTLSeconds() {
+        return this.ttlMs / 1000;
+    }
+    /**
+     * Lists every live record of one refresh family. Aged-out records are purged
+     * as they are observed and are not listed; a blank family hash is answered
+     * with an empty list, because no record can belong to no family.
+     */
+    listFamily(familyHash) {
+        if (String(familyHash ?? "").trim() === "")
+            return Promise.resolve([]);
+        const family = [];
+        for (const [handleHash, record] of this.records) {
+            if (this.expired(handleHash)) {
+                this.discard(handleHash);
+                continue;
+            }
+            if (record.familyHash === familyHash) {
+                family.push(structuredClone(record));
+            }
+        }
+        return Promise.resolve(family);
+    }
+    /**
+     * Revokes every live record of one refresh family and returns the records it
+     * handled. Revocation is idempotent, so already-revoked members are returned
+     * unchanged rather than reported as errors, and a blank family hash revokes
+     * nothing.
+     */
+    revokeFamily(familyHash) {
+        if (String(familyHash ?? "").trim() === "")
+            return Promise.resolve([]);
+        const family = [];
+        for (const [handleHash, record] of this.records) {
+            if (this.expired(handleHash)) {
+                this.discard(handleHash);
+                continue;
+            }
+            if (record.familyHash !== familyHash)
+                continue;
+            if (record.status !== "revoked") {
+                record.status = "revoked";
+                record.version += 1;
+            }
+            delete record.refreshLockOwner;
+            delete record.refreshLockExpiresAt;
+            family.push(structuredClone(record));
+        }
+        return Promise.resolve(family);
     }
     /** Whether the handle's own lifetime, apart from any refresh lock, elapsed. */
     expired(handleHash) {
@@ -738,8 +812,7 @@ async function runStoreCase(stores, testCase, clock) {
         case "broker_ttl_boundary": {
             await seedBrokerRecord(stores, brokerRecord(key));
             clock.advance(numberParam(params, "advance_seconds", 0) * 1000);
-            const record = await stores.routeRefreshBroker.get(key);
-            return { get: record === null ? "not_found" : "ok" };
+            return { get: await brokerReadOutcome(stores, key) };
         }
         case "broker_expired_refuses_lock": {
             await seedBrokerRecord(stores, brokerRecord(key));
@@ -755,6 +828,72 @@ async function runStoreCase(stores, testCase, clock) {
             const record = (await stores.routeRefreshBroker.get(key)) ?? brokerRecord(key);
             clock.advance(numberParam(params, "advance_seconds", 0) * 1000);
             return { swap: await brokerSwapOutcome(stores, record, record.version) };
+        }
+        case "broker_expired_vs_unknown": {
+            // An unknown key and an aged-out key report different outcomes at the
+            // SPI, even though the client-facing body is the same.
+            await seedBrokerRecord(stores, brokerRecord(key));
+            clock.advance(numberParam(params, "advance_seconds", 0) * 1000);
+            return {
+                unknown: await brokerReadOutcome(stores, `${key}-unknown`),
+                expired: await brokerReadOutcome(stores, key),
+            };
+        }
+        case "list_family": {
+            const family = brokerFamilyStore(stores);
+            const familyHash = `${key}-family`;
+            const otherHash = `${key}-other-family`;
+            const familySize = numberParam(params, "family_size", 0);
+            const otherSize = numberParam(params, "other_family_size", 0);
+            for (let index = 0; index < familySize; index += 1) {
+                await seedBrokerFamilyRecord(stores, `${key}-member-${index}`, familyHash);
+            }
+            for (let index = 0; index < otherSize; index += 1) {
+                await seedBrokerFamilyRecord(stores, `${key}-other-${index}`, otherHash);
+            }
+            const records = await family.listFamily(familyHash);
+            const otherRecords = await family.listFamily(otherHash);
+            return {
+                family_size: records.length,
+                other_family_size: otherRecords.length,
+            };
+        }
+        case "revoke_family": {
+            const family = brokerFamilyStore(stores);
+            const familyHash = `${key}-family`;
+            const otherHash = `${key}-other-family`;
+            const familySize = numberParam(params, "family_size", 0);
+            const otherSize = numberParam(params, "other_family_size", 0);
+            const familyKeys = [];
+            const otherKeys = [];
+            for (let index = 0; index < familySize; index += 1) {
+                const handleHash = `${key}-member-${index}`;
+                await seedBrokerFamilyRecord(stores, handleHash, familyHash);
+                familyKeys.push(handleHash);
+            }
+            for (let index = 0; index < otherSize; index += 1) {
+                const handleHash = `${key}-other-${index}`;
+                await seedBrokerFamilyRecord(stores, handleHash, otherHash);
+                otherKeys.push(handleHash);
+            }
+            const revoked = await family.revokeFamily(familyHash);
+            const familyStatuses = [];
+            for (const handleHash of familyKeys) {
+                const record = await stores.routeRefreshBroker.get(handleHash);
+                familyStatuses.push(record?.status ?? "not_found");
+            }
+            const otherStatuses = [];
+            for (const handleHash of otherKeys) {
+                const record = await stores.routeRefreshBroker.get(handleHash);
+                otherStatuses.push(record?.status ?? "not_found");
+            }
+            familyStatuses.sort();
+            otherStatuses.sort();
+            return {
+                revoked_family_size: revoked.length,
+                family_statuses: familyStatuses,
+                other_statuses: otherStatuses,
+            };
         }
         case "revoke_then_swap": {
             await seedBrokerRecord(stores, brokerRecord(key));
@@ -806,6 +945,44 @@ async function seedBrokerRecord(stores, record) {
     }
     await seeder.put(record);
 }
+/**
+ * Reads one broker handle in the fixture's outcome vocabulary: `ok`, `expired`,
+ * or `not_found`.
+ */
+async function brokerReadOutcome(stores, handleHash) {
+    try {
+        const record = await stores.routeRefreshBroker.get(handleHash);
+        return record === null ? "not_found" : "ok";
+    }
+    catch (err) {
+        if (err instanceof BrokerExpiredError)
+            return "expired";
+        if (err instanceof BrokerNotFoundError)
+            return "not_found";
+        throw err;
+    }
+}
+/** The optional family capability a family row exercises. */
+function brokerFamilyStore(stores) {
+    const family = stores.routeRefreshBroker;
+    if (typeof family.listFamily !== "function" ||
+        typeof family.revokeFamily !== "function") {
+        throw new Error("store conformance: route refresh broker store does not implement the family capability");
+    }
+    return family;
+}
+/**
+ * Places one family member through the store's own create path. A family
+ * member is a policy-era record: generation 1 with the family hash the row
+ * supplied.
+ */
+async function seedBrokerFamilyRecord(stores, handleHash, familyHash) {
+    await seedBrokerRecord(stores, brokerRecord(handleHash, {
+        status: "active",
+        chainGeneration: 1,
+        familyHash,
+    }));
+}
 async function clientUpdateOutcome(stores, record, expectedVersion) {
     try {
         const updated = await stores.client.update(record, expectedVersion);
@@ -854,6 +1031,8 @@ function brokerErrorOutcome(err) {
         return "version_conflict";
     if (err instanceof BrokerNotFoundError)
         return "not_found";
+    if (err instanceof BrokerExpiredError)
+        return "expired";
     throw err;
 }
 async function rateLimitOutcome(stores, key) {
@@ -961,6 +1140,12 @@ function brokerRecord(key, overrides = {}) {
         upstreamClientId: "conformance-client",
         status: (overrides.status ?? "issued"),
         version: overrides.version ?? 1,
+        ...(overrides.chainGeneration === undefined
+            ? {}
+            : { chainGeneration: overrides.chainGeneration }),
+        ...(overrides.familyHash === undefined
+            ? {}
+            : { familyHash: overrides.familyHash }),
     };
 }
 function numberParam(params, name, fallback) {
