@@ -197,6 +197,10 @@ def _secure_config(
         config.stores = harness.stores
         config.upstream_client_id = FRONT_TEST_CLIENT_ID
         config.upstream_issuer = FRONT_TEST_UPSTREAM_ISS
+        config.route_refresh_policy = facade_module.RouteRefreshPolicy(
+            handle_ttl_seconds=900,
+            reuse_rate_ceiling=facade_module.MIN_REFRESH_REUSE_RATE_CEILING,
+        )
     if transport_posture == "runtime-bearer":
         # The posture rows only inspect the inventory, so they never present a
         # token; the request rows present a genuinely signed one and mount the

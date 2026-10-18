@@ -8,10 +8,12 @@ from typing import Any
 
 from apptheory.clock import ManualClock
 from apptheory.oauth.store import (
+    STATUS_ACTIVE,
     STATUS_REFRESHING,
     STATUS_REVOKED,
     UTC_NOW_LOCK_TTL_SECONDS,
     AuthorizationCodeRecord,
+    BrokerExpiredError,
     BrokerLockedError,
     BrokerRevokedError,
     BrokerVersionConflictError,
@@ -106,7 +108,7 @@ class StoreConformanceTests(unittest.TestCase):
 
     def test_fixture_table_is_complete(self) -> None:
         cases = self.fixture["cases"]
-        self.assertEqual(len(cases), 44)
+        self.assertEqual(len(cases), 48)
         self.assertEqual(
             {case["store"] for case in cases},
             {"transaction", "authorization_code", "client", "route_refresh_broker", "rate_limit"},
@@ -117,8 +119,8 @@ class StoreConformanceTests(unittest.TestCase):
         cases = self.fixture["cases"]
         ran = run_store_conformance(STORE_CLASSES, cases, self.clock)
         print(f"store conformance: {ran} cases run")
-        self.assertEqual(ran, 44)
-        self.assertEqual(len(cases), 44)
+        self.assertEqual(ran, 48)
+        self.assertEqual(len(cases), 48)
 
     def test_fixture_lock_ttl_is_the_mandated_default(self) -> None:
         # A conforming durable store is judged against the table's
@@ -136,13 +138,14 @@ class StoreConformanceTests(unittest.TestCase):
     def test_every_scenario_is_exercised(self) -> None:
         # Bidirectional: dropping or duplicating a shared row must fail here
         # rather than silently shrinking coverage. Distinct (store, scenario)
-        # pairs are four fewer than the 44 rows: the broker TTL boundary is
+        # pairs are five fewer than the 48 rows: the broker TTL boundary is
         # probed by two rows that share one scenario, the code payload rows
         # share the consume_record_payload scenario, the four put_payload rows
-        # pair that scenario with three stores, and the two client put_get_update
-        # rows (one with a put_version, one without) share one scenario.
+        # pair that scenario with three stores, the two client put_get_update
+        # rows (one with a put_version, one without) share one scenario, and the
+        # two revoke_family rows share one scenario.
         pairs = {(case["store"], case["scenario"]) for case in self.fixture["cases"]}
-        self.assertEqual(len(pairs), 40)
+        self.assertEqual(len(pairs), 43)
 
 
 class TransactionStoreTests(unittest.TestCase):
@@ -271,16 +274,79 @@ class RouteRefreshBrokerStoreTests(unittest.TestCase):
             self.store.acquire_lock("h", "owner-1", second.version)
         self.assertIsNone(self.store.revoke("missing"))
 
-    def test_record_is_absent_at_the_ttl_boundary(self) -> None:
+    def test_record_reports_expired_at_the_ttl_boundary(self) -> None:
         store = MemoryRouteRefreshBrokerStore(now=self.clock.now, ttl=1)
         store.put(RouteRefreshBrokerRecord(handle_hash="h"))
         stored_at = self.clock.now()
         self.clock.set(stored_at + dt.timedelta(seconds=1) - dt.timedelta(microseconds=1))
         self.assertIsNotNone(store.get("h"))
         self.clock.set(stored_at + dt.timedelta(seconds=1))
+        with self.assertRaises(BrokerExpiredError):
+            store.get("h")
+        # The aged-out record is purged when it is observed, so a later read is
+        # an unknown handle rather than expired again.
         self.assertIsNone(store.get("h"))
-        self.clock.set(stored_at + dt.timedelta(seconds=1) + dt.timedelta(microseconds=1))
-        self.assertIsNone(store.get("h"))
+
+    def test_expired_is_distinguishable_from_unknown(self) -> None:
+        # The SPI distinguishes an aged-out handle from one that never existed;
+        # the facade renders the same client body for both. Each operation gets
+        # its own seeded handle, because observing an aged-out record purges it.
+        store = MemoryRouteRefreshBrokerStore(now=self.clock.now, ttl=900)
+        for handle in ("g", "l", "s", "r"):
+            store.put(RouteRefreshBrokerRecord(handle_hash=handle))
+        self.assertIsNone(store.get("unknown"))
+        self.clock.advance(dt.timedelta(seconds=900))
+        with self.assertRaises(BrokerExpiredError):
+            store.get("g")
+        with self.assertRaises(BrokerExpiredError):
+            store.acquire_lock("l", "owner", 1)
+        with self.assertRaises(BrokerExpiredError):
+            store.compare_and_swap(RouteRefreshBrokerRecord(handle_hash="s"), 1)
+        with self.assertRaises(BrokerExpiredError):
+            store.revoke("r")
+        with self.assertRaises(KeyError):
+            store.acquire_lock("unknown", "owner", 1)
+
+    def test_family_capability_lists_and_revokes_every_member(self) -> None:
+        store = MemoryRouteRefreshBrokerStore(now=self.clock.now, ttl=900)
+        for index in range(2):
+            store.put(
+                RouteRefreshBrokerRecord(
+                    handle_hash=f"member-{index}",
+                    status=STATUS_ACTIVE,
+                    chain_generation=1,
+                    family_hash="family-a",
+                )
+            )
+        store.put(
+            RouteRefreshBrokerRecord(
+                handle_hash="other-0",
+                status=STATUS_ACTIVE,
+                chain_generation=1,
+                family_hash="family-b",
+            )
+        )
+        self.assertEqual(2, len(store.list_family("family-a")))
+        self.assertEqual(1, len(store.list_family("family-b")))
+        self.assertEqual([], store.list_family(""))
+
+        revoked = store.revoke_family("family-a")
+        self.assertEqual(2, len(revoked))
+        self.assertTrue(all(record.status == STATUS_REVOKED for record in revoked))
+        self.assertEqual(2, len(store.list_family("family-a")))
+        self.assertTrue(all(record.status == STATUS_REVOKED for record in store.list_family("family-a")))
+        self.assertEqual([STATUS_ACTIVE], [record.status for record in store.list_family("family-b")])
+
+        # Revocation is idempotent: a second call reports the same members and
+        # changes neither their status nor their version.
+        versions = [record.version for record in store.list_family("family-a")]
+        again = store.revoke_family("family-a")
+        self.assertEqual(len(revoked), len(again))
+        self.assertEqual(versions, [record.version for record in again])
+
+    def test_family_capability_reports_the_handle_ttl(self) -> None:
+        store = MemoryRouteRefreshBrokerStore(now=self.clock.now, ttl=900)
+        self.assertEqual(900.0, store.route_refresh_broker_handle_ttl_seconds())
 
     def test_swap_keeps_the_original_store_instant(self) -> None:
         store = MemoryRouteRefreshBrokerStore(now=self.clock.now, ttl=900)
@@ -288,7 +354,8 @@ class RouteRefreshBrokerStoreTests(unittest.TestCase):
         record = store.get("h")
         store.compare_and_swap(record, record.version)
         self.clock.advance(dt.timedelta(seconds=900))
-        self.assertIsNone(store.get("h"))
+        with self.assertRaises(BrokerExpiredError):
+            store.get("h")
 
     def test_reference_broker_lock_ttl_pins_the_upstream_fetch_deadline(self) -> None:
         # The reference broker store's default lock TTL is the number the

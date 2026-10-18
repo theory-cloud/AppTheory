@@ -195,6 +195,20 @@ class RecordingBrokerStore {
     return this.inner.revoke(handleHash);
   }
 
+  // The optional capabilities are forwarded so a suite sees the reference
+  // store's real family behavior and lifetime report through the decorator.
+  listFamily(familyHash) {
+    return this.inner.listFamily(familyHash);
+  }
+
+  revokeFamily(familyHash) {
+    return this.inner.revokeFamily(familyHash);
+  }
+
+  routeRefreshBrokerHandleTTLSeconds() {
+    return this.inner.routeRefreshBrokerHandleTTLSeconds();
+  }
+
   handleHashes() {
     return [...this.handles];
   }
@@ -236,6 +250,19 @@ export function frontChannelHarnessOptions(overrides = {}) {
     // Optional extra facade config fields, so a suite can describe a world the
     // base options do not reach (for example a root discovery document).
     configExtra: overrides.configExtra ?? null,
+    // The route refresh policy. The default handle lifetime matches the
+    // reference broker store's 900-second default, so registration's
+    // TTL-reporter agreement check holds, and the default ceiling is the
+    // framework floor.
+    routeRefreshPolicy: overrides.routeRefreshPolicy ?? {
+      handleTTLSeconds: 900,
+      reuseRateCeiling: 9,
+    },
+    // Receives every route refresh event the facade emits.
+    routeRefreshEvents: overrides.routeRefreshEvents ?? null,
+    // The reference broker store's handle lifetime, which must match the
+    // policy's handle TTL.
+    brokerTtlSeconds: overrides.brokerTtlSeconds ?? 900,
   };
 }
 
@@ -251,7 +278,10 @@ export async function startFrontChannelWorld(t, overrides = {}) {
   const now = () => clock.now();
   const handles = [];
   const broker = new RecordingBrokerStore(
-    new MemoryRouteRefreshBrokerStore({ now }),
+    new MemoryRouteRefreshBrokerStore({
+      now,
+      ttlSeconds: options.brokerTtlSeconds,
+    }),
     handles,
   );
   const stores = {
@@ -337,7 +367,11 @@ export async function startFrontChannelWorld(t, overrides = {}) {
     stores,
     upstreamClientID: CLIENT_ID,
     upstreamIssuer: UPSTREAM_ISS,
+    routeRefreshPolicy: options.routeRefreshPolicy,
   };
+  if (options.routeRefreshEvents !== null) {
+    config.routeRefreshEvents = options.routeRefreshEvents;
+  }
   let bearerValidator = null;
   if (options.requireBearerTokenFor !== null) {
     const bearerOptions = await options.requireBearerTokenFor(fake, bridge);

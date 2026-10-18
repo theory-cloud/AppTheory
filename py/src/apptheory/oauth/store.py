@@ -24,7 +24,7 @@ import hashlib
 import threading
 from dataclasses import dataclass, field, fields, replace
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 UTC_NOW_TTL_TRANSACTION_SECONDS = 600
 UTC_NOW_TTL_AUTHORIZATION_CODE_SECONDS = 60
@@ -66,6 +66,15 @@ class BrokerLockedError(StoreError):
 
 class BrokerRevokedError(StoreError):
     """The broker record is revoked; it cannot be refreshed or locked."""
+
+
+class BrokerExpiredError(StoreError):
+    """The broker record existed but its local lifetime policy elapsed.
+
+    It is deliberately distinguishable from an unknown handle at the SPI so the
+    facade can attribute the failure (expiry versus absence) while the
+    client-facing body stays the uniform ``invalid_grant``.
+    """
 
 
 @dataclass(slots=True)
@@ -132,7 +141,23 @@ class ClientRecord:
 
 @dataclass(slots=True)
 class RouteRefreshBrokerRecord:
-    """The brokered refresh record; holds the encrypted upstream refresh token."""
+    """The brokered refresh record; holds the encrypted upstream refresh token.
+
+    ``chain_generation`` and ``family_hash`` identify the refresh family the
+    handle belongs to. A handle the framework mints under the current policy is
+    the root of its own family: ``chain_generation`` is 1 and ``family_hash`` is
+    ``hash_key`` of its own handle. Every successor records the presented
+    generation plus one and inherits its ``family_hash``, so the depth of a
+    rotated-away handle relative to the head is arithmetic rather than
+    guesswork. A record that predates the policy carries generation 0 and an
+    empty family hash; it is classified structurally (successor walk) and
+    becomes the root of a new family on its first mutation under the policy.
+
+    ``depth_one_served_at`` records that this rotated-away handle has already
+    been answered once beyond its grace window with the access token only. The
+    second such presentation is theft class, so the flag is written before the
+    serve.
+    """
 
     handle_hash: str = ""
     issuer: str = ""
@@ -154,6 +179,9 @@ class RouteRefreshBrokerRecord:
     status: str = STATUS_ACTIVE
     refresh_lock_owner: str = ""
     refresh_lock_expires_at: datetime | None = None
+    chain_generation: int = 0
+    family_hash: str = ""
+    depth_one_served_at: datetime | None = None
     version: int = 0
 
 
@@ -238,6 +266,39 @@ class RouteRefreshBrokerSeeder(Protocol):
     """
 
     def put(self, record: RouteRefreshBrokerRecord) -> None: ...
+
+
+class RouteRefreshBrokerFamilyStore(Protocol):
+    """The optional family capability of a broker store.
+
+    A refresh family is the chain of handles one authorization grant produced;
+    ``family_hash`` names it on every record. ``list_family`` answers which
+    handles belong to a family and what state each is in, so an incident
+    responder can enumerate a family without walking successor links.
+    ``revoke_family`` revokes every record of a family in one operation and
+    returns the records it revoked, so a confirmed theft is not limited by the
+    eight-link successor walk a long-lived chain would exhaust.
+
+    A store that does not implement this capability remains fully usable: the
+    facade falls back to the bounded successor walk for revocation and reports a
+    state event, so the degradation is visible rather than silent.
+    """
+
+    def list_family(self, family_hash: str) -> list[RouteRefreshBrokerRecord]: ...
+
+    def revoke_family(self, family_hash: str) -> list[RouteRefreshBrokerRecord]: ...
+
+
+class RouteRefreshBrokerHandleTTLReporter(Protocol):
+    """The optional capability a broker store reports its local handle lifetime
+    policy through.
+
+    The facade compares it with the configured policy at registration, so a
+    deployment cannot declare a long-lived ceiling while its store silently keeps
+    a shorter one.
+    """
+
+    def route_refresh_broker_handle_ttl_seconds(self) -> float: ...
 
 
 class RateLimitStore(Protocol):
@@ -420,10 +481,13 @@ class MemoryRouteRefreshBrokerStore:
 
     A handle is TTL-bounded: each record is kept alongside the instant it was
     first stored, and every operation treats a handle whose ``now`` has reached
-    ``stored_at + ttl`` as absent -- it purges the record and reports the
-    not-found outcome (``get``/``revoke`` return ``None``, ``acquire_lock`` and
-    ``compare_and_swap`` raise ``KeyError``). A compare-and-swap rotation keeps
-    the original ``stored_at``, so rotating cannot extend a handle's life.
+    ``stored_at + ttl`` as aged out. An aged-out handle reports
+    :class:`BrokerExpiredError`, which is distinguishable from an unknown handle
+    at the SPI (``get``/``revoke`` return ``None`` for an unknown key while an
+    aged-out one raises, and ``acquire_lock``/``compare_and_swap`` raise
+    ``KeyError`` for an unknown key); the client-facing body the facade renders
+    is the same. A compare-and-swap rotation keeps the original ``stored_at``, so
+    rotating cannot extend a handle's life.
     """
 
     def __init__(
@@ -449,14 +513,16 @@ class MemoryRouteRefreshBrokerStore:
             self._records[stored.handle_hash] = (stored, self._now())
 
     def _live(self, handle_hash: str, now: datetime) -> RouteRefreshBrokerRecord | None:
-        """Returns the live record for a handle, purging it when its TTL elapsed."""
+        """Returns the live record for a handle, or ``None`` when the handle is
+        unknown. A handle that existed but whose TTL elapsed is purged and
+        reported as :class:`BrokerExpiredError`."""
         entry = self._records.get(handle_hash)
         if entry is None:
             return None
         stored, stored_at = entry
         if now >= stored_at + timedelta(seconds=self._ttl):
             del self._records[handle_hash]
-            return None
+            raise BrokerExpiredError(f"broker record {handle_hash!r} expired")
         return stored
 
     def get(self, handle_hash: str) -> RouteRefreshBrokerRecord | None:
@@ -514,6 +580,52 @@ class MemoryRouteRefreshBrokerStore:
                 stored.refresh_lock_owner = ""
                 stored.refresh_lock_expires_at = None
             return _copy_record(stored)
+
+    def route_refresh_broker_handle_ttl_seconds(self) -> float:
+        """The local handle lifetime policy this store applies, so the facade can
+        refuse a configuration that declares a different ceiling. It implements
+        ``RouteRefreshBrokerHandleTTLReporter``."""
+        return float(self._ttl)
+
+    def list_family(self, family_hash: str) -> list[RouteRefreshBrokerRecord]:
+        """Returns every live record of one refresh family. Aged-out records are
+        purged as they are observed and are not listed; a blank family hash is
+        answered with an empty list, because no record can belong to no family."""
+        if (family_hash or "").strip() == "":
+            return []
+        with self._lock:
+            now = self._now()
+            family: list[RouteRefreshBrokerRecord] = []
+            for handle_hash, (stored, stored_at) in list(self._records.items()):
+                if now >= stored_at + timedelta(seconds=self._ttl):
+                    del self._records[handle_hash]
+                    continue
+                if stored.family_hash == family_hash:
+                    family.append(_copy_record(stored))
+            return family
+
+    def revoke_family(self, family_hash: str) -> list[RouteRefreshBrokerRecord]:
+        """Revokes every live record of one refresh family and returns the
+        records it handled. Revocation is idempotent, so already-revoked members
+        are returned unchanged rather than reported as errors."""
+        if (family_hash or "").strip() == "":
+            return []
+        with self._lock:
+            now = self._now()
+            family: list[RouteRefreshBrokerRecord] = []
+            for handle_hash, (stored, stored_at) in list(self._records.items()):
+                if now >= stored_at + timedelta(seconds=self._ttl):
+                    del self._records[handle_hash]
+                    continue
+                if stored.family_hash != family_hash:
+                    continue
+                if stored.status != STATUS_REVOKED:
+                    stored.status = STATUS_REVOKED
+                    stored.refresh_lock_owner = ""
+                    stored.refresh_lock_expires_at = None
+                    stored.version += 1
+                family.append(_copy_record(stored))
+            return family
 
 
 class MemoryRateLimitStore:
@@ -964,16 +1076,26 @@ def _scenario_client_get_unknown(
     _assert_expected(expect, {"get": "not_found" if store.get("unknown") is None else "ok"})
 
 
+def _broker_get_outcome(store: Any, handle_hash: str) -> str:
+    try:
+        record = store.get(handle_hash)
+    except BrokerExpiredError:
+        return "expired"
+    return "ok" if record is not None else "not_found"
+
+
 def _scenario_broker_get_unknown(
     stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
 ) -> None:
     store = _broker_store(stores, clock, None, UTC_NOW_LOCK_TTL_SECONDS)
-    _assert_expected(expect, {"get": "not_found" if store.get("unknown") is None else "ok"})
+    _assert_expected(expect, {"get": _broker_get_outcome(store, "unknown")})
 
 
 def _broker_swap_outcome(store: Any, record: RouteRefreshBrokerRecord, expected_version: int | None = None) -> str:
     try:
         store.compare_and_swap(record, record.version if expected_version is None else expected_version)
+    except BrokerExpiredError:
+        return "expired"
     except BrokerRevokedError:
         return "revoked"
     except BrokerVersionConflictError:
@@ -986,6 +1108,8 @@ def _broker_swap_outcome(store: Any, record: RouteRefreshBrokerRecord, expected_
 def _acquire_lock_outcome(store: Any, handle_hash: str, owner: str, expected_version: int) -> str:
     try:
         store.acquire_lock(handle_hash, owner, expected_version)
+    except BrokerExpiredError:
+        return "expired"
     except BrokerLockedError:
         return "locked"
     except BrokerRevokedError:
@@ -1102,7 +1226,7 @@ def _scenario_broker_ttl_boundary(
     store = _broker_store(stores, clock, None, UTC_NOW_LOCK_TTL_SECONDS)
     store.put(RouteRefreshBrokerRecord(handle_hash="handle-hash"))
     clock.advance(timedelta(seconds=int(params["advance_seconds"])))
-    _assert_expected(expect, {"get": "not_found" if store.get("handle-hash") is None else "ok"})
+    _assert_expected(expect, {"get": _broker_get_outcome(store, "handle-hash")})
 
 
 def _scenario_broker_expired_refuses_lock(
@@ -1125,6 +1249,98 @@ def _scenario_broker_expired_refuses_swap(
         raise AssertionError("broker record must exist after put")
     clock.advance(timedelta(seconds=int(params["advance_seconds"])))
     _assert_expected(expect, {"swap": _broker_swap_outcome(store, record)})
+
+
+def _scenario_broker_expired_vs_unknown(
+    stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
+) -> None:
+    """An unknown key and an aged-out key report different outcomes at the SPI,
+    even though the client-facing body is the same."""
+    store = _broker_store(stores, clock, None, UTC_NOW_LOCK_TTL_SECONDS)
+    store.put(RouteRefreshBrokerRecord(handle_hash="handle-hash"))
+    clock.advance(timedelta(seconds=int(params["advance_seconds"])))
+    actual = {
+        "unknown": _broker_get_outcome(store, "unknown-handle"),
+        "expired": _broker_get_outcome(store, "handle-hash"),
+    }
+    _assert_expected(expect, actual)
+
+
+def _seed_broker_family(store: Any, key: str, family_hash: str) -> None:
+    store.put(
+        RouteRefreshBrokerRecord(
+            handle_hash=key,
+            issuer="https://auth.example.test",
+            stage="lab",
+            canonical_resource="https://mcp.example.test/mcp",
+            status=STATUS_ACTIVE,
+            chain_generation=1,
+            family_hash=family_hash,
+        )
+    )
+
+
+def _scenario_broker_list_family(
+    stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
+) -> None:
+    """Seeds two families and reports what the family listing returns for one of
+    them, so a store that cannot enumerate a family is visible."""
+    store = _broker_store(stores, clock, None, UTC_NOW_LOCK_TTL_SECONDS)
+    list_family = getattr(store, "list_family", None)
+    if not callable(list_family):
+        raise AssertionError("the broker store must implement the family capability")
+    family_hash = "family-hash"
+    other_hash = "other-family-hash"
+    for index in range(int(params.get("family_size", 0))):
+        _seed_broker_family(store, f"member-{index}", family_hash)
+    for index in range(int(params.get("other_family_size", 0))):
+        _seed_broker_family(store, f"other-{index}", other_hash)
+    family_list = cast("Any", list_family)
+    actual = {
+        "family_size": len(cast("list[RouteRefreshBrokerRecord]", family_list(family_hash))),
+        "other_family_size": len(cast("list[RouteRefreshBrokerRecord]", family_list(other_hash))),
+    }
+    _assert_expected(expect, actual)
+
+
+def _scenario_broker_revoke_family(
+    stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
+) -> None:
+    """Seeds two families, revokes one through the family capability, and reports
+    what was revoked and what the other family's state is, so a family revoke
+    that misses members or leaks across families is visible."""
+    store = _broker_store(stores, clock, None, UTC_NOW_LOCK_TTL_SECONDS)
+    revoke_family = getattr(store, "revoke_family", None)
+    if not callable(revoke_family):
+        raise AssertionError("the broker store must implement the family capability")
+    family_hash = "family-hash"
+    other_hash = "other-family-hash"
+    family_size = int(params.get("family_size", 0))
+    other_size = int(params.get("other_family_size", 0))
+    family_keys = [f"member-{index}" for index in range(family_size)]
+    other_keys = [f"other-{index}" for index in range(other_size)]
+    for key in family_keys:
+        _seed_broker_family(store, key, family_hash)
+    for key in other_keys:
+        _seed_broker_family(store, key, other_hash)
+    revoked = revoke_family(family_hash)
+    family_statuses = sorted(_broker_status(store, key) for key in family_keys)
+    other_statuses = sorted(_broker_status(store, key) for key in other_keys)
+    _assert_expected(
+        expect,
+        {
+            "revoked_family_size": len(cast("list[RouteRefreshBrokerRecord]", revoked)),
+            "family_statuses": family_statuses,
+            "other_statuses": other_statuses,
+        },
+    )
+
+
+def _broker_status(store: Any, key: str) -> str:
+    record = store.get(key)
+    if record is None:
+        raise AssertionError(f"broker record {key!r} must exist")
+    return record.status
 
 
 def _scenario_broker_revoke_then_swap(
@@ -1279,6 +1495,9 @@ _STORE_SCENARIOS: dict[tuple[str, str], Any] = {
     ("route_refresh_broker", "broker_ttl_boundary"): _scenario_broker_ttl_boundary,
     ("route_refresh_broker", "broker_expired_refuses_lock"): _scenario_broker_expired_refuses_lock,
     ("route_refresh_broker", "broker_expired_refuses_swap"): _scenario_broker_expired_refuses_swap,
+    ("route_refresh_broker", "broker_expired_vs_unknown"): _scenario_broker_expired_vs_unknown,
+    ("route_refresh_broker", "list_family"): _scenario_broker_list_family,
+    ("route_refresh_broker", "revoke_family"): _scenario_broker_revoke_family,
     ("route_refresh_broker", "revoke_then_swap"): _scenario_broker_revoke_then_swap,
     ("route_refresh_broker", "acquire_lock_bumps_version"): _scenario_broker_acquire_lock_bumps_version,
     ("route_refresh_broker", "revoke_bumps_version"): _scenario_broker_revoke_bumps_version,
@@ -1293,6 +1512,7 @@ _STORE_SCENARIOS: dict[tuple[str, str], Any] = {
 __all__ = [
     "AuthorizationCodeRecord",
     "AuthorizationCodeStore",
+    "BrokerExpiredError",
     "BrokerLockedError",
     "BrokerRevokedError",
     "BrokerVersionConflictError",
@@ -1308,6 +1528,8 @@ __all__ = [
     "RateLimitBucketKey",
     "RateLimitResult",
     "RateLimitStore",
+    "RouteRefreshBrokerFamilyStore",
+    "RouteRefreshBrokerHandleTTLReporter",
     "RouteRefreshBrokerRecord",
     "RouteRefreshBrokerSeeder",
     "RouteRefreshBrokerStore",

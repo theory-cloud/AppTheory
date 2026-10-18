@@ -1237,6 +1237,7 @@ function frontChannelConfig() {
     stores: referenceStores(),
     upstreamClientID: "mcp_facade_client",
     upstreamIssuer: "https://id.example.com",
+    routeRefreshPolicy: { handleTTLSeconds: 900, reuseRateCeiling: 9 },
   };
 }
 
@@ -1330,6 +1331,17 @@ test("front channel field set fails closed without provider", () => {
       "provider hints",
       (c) => (c.providerHints = () => ({ account_id: "acme" })),
       "ProviderHints",
+    ],
+    [
+      "route refresh policy",
+      (c) =>
+        (c.routeRefreshPolicy = { handleTTLSeconds: 900, reuseRateCeiling: 9 }),
+      "RouteRefreshPolicy",
+    ],
+    [
+      "route refresh events",
+      (c) => (c.routeRefreshEvents = () => {}),
+      "RouteRefreshEvents",
     ],
   ];
   for (const [name, mutate, want] of cases) {

@@ -73,6 +73,8 @@ type frontChannelConfig struct {
 	upstreamIssuer   string
 	lifecycleScopes  []string
 	providerHints    func(*apptheory.Context) (map[string]string, error)
+	policy           RouteRefreshPolicy
+	events           RouteRefreshEventHook
 }
 
 // normalizeFrontChannel validates the front-channel field set and returns it.
@@ -103,6 +105,13 @@ func normalizeFrontChannel(config FacadeConfig) (*frontChannelConfig, error) {
 	if err := validateFrontChannelStores(config.Stores); err != nil {
 		return nil, err
 	}
+	policy, err := config.RouteRefreshPolicy.normalized()
+	if err != nil {
+		return nil, err
+	}
+	if err := validateRouteRefreshPolicyStore(policy, config.Stores); err != nil {
+		return nil, err
+	}
 	if config.AuthorizeHandler != nil || config.TokenHandler != nil {
 		return nil, fmt.Errorf("mcpfacade: Provider owns the authorize and token routes; AuthorizeHandler and TokenHandler must not be configured with a front channel")
 	}
@@ -119,6 +128,8 @@ func normalizeFrontChannel(config FacadeConfig) (*frontChannelConfig, error) {
 		upstreamIssuer:   upstreamIssuer,
 		lifecycleScopes:  append([]string(nil), config.LifecycleScopes...),
 		providerHints:    config.ProviderHints,
+		policy:           policy,
+		events:           config.RouteRefreshEvents,
 	}, nil
 }
 
@@ -496,10 +507,17 @@ func (front *frontChannelConfig) openBrokerRecord(
 		UpstreamRefreshTokenHash:      oauthstore.HashKey(tokenSet.RefreshToken),
 		UpstreamClientID:              front.upstreamClientID,
 		Status:                        oauthstore.BrokerStatusIssued,
+		ChainGeneration:               refreshChainRootGeneration,
+		FamilyHash:                    oauthstore.HashKey(handle),
 	}
 	if err = seeder.Put(ctx.Context(), broker); err != nil {
 		return "", nil, err
 	}
+	event := eventFromRecord(broker)
+	event.Class = RouteRefreshEventIssued
+	event.StatusTo = oauthstore.BrokerStatusIssued
+	event.At = ctx.Now()
+	front.emitRouteRefresh(ctx.Context(), event)
 	return handle, broker, nil
 }
 

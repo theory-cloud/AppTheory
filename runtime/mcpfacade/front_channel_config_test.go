@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -46,6 +47,10 @@ func completeFrontChannelConfig() FacadeConfig {
 	config.Stores = referenceStores()
 	config.UpstreamClientID = "mcp_facade_client"
 	config.UpstreamIssuer = "https://id.example.com"
+	config.RouteRefreshPolicy = RouteRefreshPolicy{
+		HandleTTL:        oauthstore.DefaultRouteRefreshBrokerTTL,
+		ReuseRateCeiling: MinRefreshReuseRateCeiling,
+	}
 	return config
 }
 
@@ -137,6 +142,62 @@ func TestFrontChannelFieldSetFailsClosedWithoutProvider(t *testing.T) {
 			require.Contains(t, err.Error(), "without Provider")
 		})
 	}
+}
+
+func TestFrontChannelRepositoryPolicyIsFailClosed(t *testing.T) {
+	cases := []struct {
+		name   string
+		policy RouteRefreshPolicy
+		want   string
+	}{
+		{name: "absent", policy: RouteRefreshPolicy{}, want: "handle TTL is required"},
+		{name: "zero ttl", policy: RouteRefreshPolicy{HandleTTL: 0, ReuseRateCeiling: MinRefreshReuseRateCeiling}, want: "handle TTL is required"},
+		{name: "negative ttl", policy: RouteRefreshPolicy{HandleTTL: -time.Minute, ReuseRateCeiling: MinRefreshReuseRateCeiling}, want: "handle TTL is required"},
+		{name: "ttl below floor", policy: RouteRefreshPolicy{HandleTTL: MinRouteRefreshHandleTTL - time.Second, ReuseRateCeiling: MinRefreshReuseRateCeiling}, want: "within ["},
+		{name: "ttl above ceiling", policy: RouteRefreshPolicy{HandleTTL: MaxRouteRefreshHandleTTL + time.Second, ReuseRateCeiling: MinRefreshReuseRateCeiling}, want: "within ["},
+		{name: "grace negative", policy: RouteRefreshPolicy{HandleTTL: time.Hour, GraceWindow: -time.Second, ReuseRateCeiling: MinRefreshReuseRateCeiling}, want: "grace window"},
+		{name: "grace above maximum", policy: RouteRefreshPolicy{HandleTTL: time.Hour, GraceWindow: MaxRefreshGraceWindow + time.Second, ReuseRateCeiling: MinRefreshReuseRateCeiling}, want: "grace window"},
+		{name: "ceiling absent", policy: RouteRefreshPolicy{HandleTTL: time.Hour}, want: "reuse rate ceiling is required"},
+		{name: "ceiling below floor", policy: RouteRefreshPolicy{HandleTTL: time.Hour, ReuseRateCeiling: MinRefreshReuseRateCeiling - 1}, want: "within ["},
+		{name: "ceiling above maximum", policy: RouteRefreshPolicy{HandleTTL: time.Hour, ReuseRateCeiling: MaxRefreshReuseRateCeiling + 1}, want: "within ["},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			config := completeFrontChannelConfig()
+			config.RouteRefreshPolicy = testCase.policy
+			_, err := RegisterMCPFacade(apptheory.New(), config)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), testCase.want)
+		})
+	}
+}
+
+func TestFrontChannelPolicyDefaultsTheGraceWindow(t *testing.T) {
+	config := completeFrontChannelConfig()
+	config.RouteRefreshPolicy.GraceWindow = 0
+	normalized, err := normalizeFrontChannel(config)
+	require.NoError(t, err)
+	require.Equal(t, DefaultRefreshGraceWindow, normalized.policy.GraceWindow)
+
+	config.RouteRefreshPolicy.GraceWindow = 45 * time.Second
+	normalized, err = normalizeFrontChannel(config)
+	require.NoError(t, err)
+	require.Equal(t, 45*time.Second, normalized.policy.GraceWindow)
+}
+
+func TestFrontChannelPolicyMustMatchAStoreThatReportsItsTTL(t *testing.T) {
+	config := completeFrontChannelConfig()
+	config.RouteRefreshPolicy.HandleTTL = 24 * time.Hour
+	_, err := RegisterMCPFacade(apptheory.New(), config)
+	require.ErrorContains(t, err, "does not match the broker store's local lifetime")
+}
+
+func TestFrontChannelPolicyWithoutProviderIsRefused(t *testing.T) {
+	config := validConfig(URLModePublicBaseURL)
+	config.RouteRefreshPolicy = RouteRefreshPolicy{HandleTTL: time.Hour, ReuseRateCeiling: MinRefreshReuseRateCeiling}
+	_, err := RegisterMCPFacade(apptheory.New(), config)
+	require.ErrorContains(t, err, "RouteRefreshPolicy")
+	require.ErrorContains(t, err, "without Provider")
 }
 
 func TestFrontChannelRejectsApplicationOwnedHandlerFactories(t *testing.T) {

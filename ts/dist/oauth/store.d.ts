@@ -109,6 +109,27 @@ export interface RouteRefreshBrokerRecord {
     refreshLockOwner?: string;
     refreshLockExpiresAt?: Date;
     version: number;
+    /**
+     * The refresh family generation of the handle. A handle the framework mints
+     * under the current policy is generation 1 and the root of its own family;
+     * every successor records the presented generation plus one and inherits the
+     * family hash, so the depth of a rotated-away handle relative to the head is
+     * arithmetic. A record that predates the policy carries 0 (or omits the
+     * field) and is classified structurally.
+     */
+    chainGeneration?: number;
+    /**
+     * The family the handle belongs to: the hash of the root handle's own
+     * handle. Absent or empty marks a pre-policy record, which becomes the root
+     * of a new family on its first mutation under the policy.
+     */
+    familyHash?: string;
+    /**
+     * Marks a rotated-away handle that has already been answered once beyond its
+     * grace window with the access token only. A second such presentation is
+     * theft class, so the marker is written before the serve.
+     */
+    depthOneServedAt?: Date;
 }
 export type RouteRefreshBrokerStatus = "issued" | "active" | "refreshing" | "revoked" | "expired" | "reauth_required";
 /** Consume-once transaction state: hash(upstream state) → record. */
@@ -158,6 +179,31 @@ export interface RouteRefreshBrokerSeeder {
     put(record: RouteRefreshBrokerRecord): Promise<void>;
 }
 /**
+ * The optional family capability of a broker store. A refresh family is the
+ * chain of handles one authorization grant produced; `familyHash` names it on
+ * every record. `listFamily` answers which handles belong to a family and what
+ * state each is in, and `revokeFamily` revokes every record of a family in one
+ * operation, so a confirmed theft is not limited by the eight-link successor
+ * walk a long-lived chain would exhaust.
+ *
+ * A store that does not implement this capability remains fully usable: the
+ * facade falls back to the bounded successor walk and reports a state event, so
+ * the degradation is visible rather than silent.
+ */
+export interface RouteRefreshBrokerFamilyStore {
+    listFamily(familyHash: string): Promise<RouteRefreshBrokerRecord[]>;
+    revokeFamily(familyHash: string): Promise<RouteRefreshBrokerRecord[]>;
+}
+/**
+ * The optional capability a broker store reports its local handle lifetime
+ * policy through. The facade compares it with the configured policy at
+ * registration, so a deployment cannot declare a long-lived ceiling while its
+ * store silently keeps a shorter one.
+ */
+export interface RouteRefreshBrokerHandleTTLReporter {
+    routeRefreshBrokerHandleTTLSeconds(): number;
+}
+/**
  * The rate-limit bucket a caller checks. `limit` and `windowSeconds` are the
  * caller's window budget for the (identifier, resource, operation) tuple, so
  * one store serves buckets with different budgets.
@@ -198,6 +244,15 @@ export declare class BrokerLockedError extends Error {
 }
 /** No broker record exists for the presented handle. */
 export declare class BrokerNotFoundError extends Error {
+    constructor(message?: string);
+}
+/**
+ * The broker record exists but its local lifetime policy elapsed. It is
+ * deliberately distinguishable from {@link BrokerNotFoundError} at the SPI so
+ * the facade can attribute the failure (expiry versus absence) in telemetry,
+ * while the client-facing body stays the uniform `invalid_grant`.
+ */
+export declare class BrokerExpiredError extends Error {
     constructor(message?: string);
 }
 export interface MemoryTransactionStoreOptions {
@@ -272,11 +327,13 @@ export interface MemoryRouteRefreshBrokerStoreOptions {
 }
 /**
  * In-memory reference RouteRefreshBrokerStore. Each handle carries its own
- * lifetime: a handle older than the store's TTL is treated as absent by every
- * operation, so an expired handle can be neither read, locked, swapped nor
- * revoked, and a swap on an absent handle is `not_found` rather than a create.
+ * lifetime: a handle older than the store's TTL reports `expired` from every
+ * operation, so it can be neither read, locked, swapped nor revoked, and a swap
+ * on an absent handle is `not_found` rather than a create. An aged-out handle
+ * is distinguishable from one that never existed at the SPI, even though the
+ * facade renders the same client-facing body for both.
  */
-export declare class MemoryRouteRefreshBrokerStore implements RouteRefreshBrokerStore, RouteRefreshBrokerSeeder {
+export declare class MemoryRouteRefreshBrokerStore implements RouteRefreshBrokerStore, RouteRefreshBrokerSeeder, RouteRefreshBrokerFamilyStore, RouteRefreshBrokerHandleTTLReporter {
     private readonly records;
     private readonly storedAt;
     private readonly now;
@@ -290,6 +347,11 @@ export declare class MemoryRouteRefreshBrokerStore implements RouteRefreshBroker
      * preserved verbatim, and a version below 1 is normalized to 1.
      */
     put(record: RouteRefreshBrokerRecord): Promise<void>;
+    /**
+     * Reads one handle. An unknown key is `null`; a handle whose local lifetime
+     * elapsed is {@link BrokerExpiredError}, so the facade can attribute the
+     * rejection without making the client-facing body an oracle.
+     */
     get(handleHash: string): Promise<RouteRefreshBrokerRecord | null>;
     /**
      * Takes the exclusive refresh lock. The revoked check runs first, then lock
@@ -302,9 +364,9 @@ export declare class MemoryRouteRefreshBrokerStore implements RouteRefreshBroker
      */
     acquireLock(handleHash: string, lockOwner: string, expectedVersion: number): Promise<RouteRefreshBrokerRecord>;
     /**
-     * Versioned compare-and-swap. A swap never creates: a handle that does not
-     * exist — never seeded, or aged out past its TTL — is `not_found`, and
-     * creation is the seeder's separate `put`. The presented version must equal
+     * Versioned compare-and-swap. A swap never creates: an unknown handle is
+     * `not_found`, an aged-out handle is `expired`, and creation is the seeder's
+     * separate `put`. The presented version must equal
      * the stored record's version, and a revoked record refuses every swap. A
      * replacement that states no status adopts the stored one, so a rotation
      * cannot silently clear the handle's status. A rotation keeps the handle's
@@ -315,9 +377,28 @@ export declare class MemoryRouteRefreshBrokerStore implements RouteRefreshBroker
     /**
      * Revokes the handle. Revocation is idempotent and terminal: the transition
      * into `revoked` advances the record's content version, and a repeat revoke
-     * leaves it alone.
+     * leaves it alone. An aged-out handle is `expired`, not a resurrectable
+     * record.
      */
     revoke(handleHash: string): Promise<RouteRefreshBrokerRecord>;
+    /**
+     * Reports the local handle lifetime policy the store applies, in seconds, so
+     * the facade can refuse a configuration that declares a different ceiling.
+     */
+    routeRefreshBrokerHandleTTLSeconds(): number;
+    /**
+     * Lists every live record of one refresh family. Aged-out records are purged
+     * as they are observed and are not listed; a blank family hash is answered
+     * with an empty list, because no record can belong to no family.
+     */
+    listFamily(familyHash: string): Promise<RouteRefreshBrokerRecord[]>;
+    /**
+     * Revokes every live record of one refresh family and returns the records it
+     * handled. Revocation is idempotent, so already-revoked members are returned
+     * unchanged rather than reported as errors, and a blank family hash revokes
+     * nothing.
+     */
+    revokeFamily(familyHash: string): Promise<RouteRefreshBrokerRecord[]>;
     /** Whether the handle's own lifetime, apart from any refresh lock, elapsed. */
     private expired;
     /**
