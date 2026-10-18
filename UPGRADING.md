@@ -63,11 +63,11 @@ upgrade.
 
 ### TableTheory v6 dependency (Go module path) with TypeScript and Python assets
 
-AppTheory now requires TableTheory v6 in all three runtimes: `github.com/theory-cloud/tabletheory/v6 v6.0.0` in Go,
-`theory-cloud-tabletheory-ts-6.0.0.tgz` in TypeScript and `tabletheory_py-6.0.0-py3-none-any.whl` in Python. Both non-Go
+AppTheory now requires TableTheory v6 in all three runtimes: `github.com/theory-cloud/tabletheory/v6 v6.1.0` in Go,
+`theory-cloud-tabletheory-ts-6.1.0.tgz` in TypeScript and `tabletheory_py-6.1.0-py3-none-any.whl` in Python. Both non-Go
 assets keep your existing integrity discipline — immutable GitHub Release pins at SHA-512
-`sJafPYwl9o6ZvMkSxGVpwq7F/pbexq168Vxo8vlIjR2t+D7n+1+gdzWEoOFTplMg8N+r8KIt9flAjADIyNwsDA==` for the TypeScript tarball
-and SHA-256 `89e73ad4fd49cdb39b46cd4b564c39210140160282ef4121bf8ec434b7767897` for the Python wheel. TableTheory v6
+`tNfecWLYU6EYidHxr3KZ3Dn4ZnEdCDDJRztQz/qfcg0yGtVNKU75W82iGoWxUa8N/FgKQ4oGFFTXJR+vi+CISg==` for the TypeScript tarball
+and SHA-256 `3800a299d4d3d80311d83de12c69645af42fb6b4dd466b52c1a0d57ec6c86328` for the Python wheel. TableTheory v6
 changes no TypeScript or Python API, so those two runtimes change version only.
 
 **Go consumers must move their own TableTheory to v6 in the same change.** The Go module path moves from
@@ -77,7 +77,7 @@ be passed into an AppTheory constructor that still requires `/v5`, and no consum
 requirement and every import must move together:
 
 ```bash
-go get github.com/theory-cloud/tabletheory/v6@v6.0.0
+go get github.com/theory-cloud/tabletheory/v6@v6.1.0
 go mod tidy
 ```
 
