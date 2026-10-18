@@ -797,7 +797,7 @@ class App:
             return None
 
         try:
-            decision = _resolve(self._policy_hook(request_ctx))
+            decision = _resolve(self._policy_hook(request_ctx.policy_hook_view()))
         except Exception as exc:  # noqa: BLE001
             error_code = exc.code if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
             if error_responder is not None:
@@ -1120,6 +1120,7 @@ class App:
             request_id=request_id,
             trace_id=trace_id,
             tenant_id=tenant_id,
+            requested_tenant_id=tenant_id,
             auth_identity="",
             client_request_id=client_request_id,
             remaining_ms=remaining_ms,

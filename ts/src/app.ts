@@ -1347,6 +1347,7 @@ export class App {
       requestId,
       traceId,
       tenantId,
+      requestedTenantId: tenantId,
       authIdentity: "",
       clientRequestId,
       remainingMs,
@@ -1359,7 +1360,7 @@ export class App {
     if (tier === "p2" && typeof this._policyHook === "function") {
       let decision: PolicyDecision | null | undefined;
       try {
-        decision = await this._policyHook(requestCtx);
+        decision = await this._policyHook(requestCtx.policyHookView());
       } catch (err) {
         const code = errorCodeFrom(err);
         return finish(
@@ -2538,6 +2539,7 @@ function cloneContextWithTimeoutCarrier(
     requestId: ctx.requestId,
     traceId: ctx.traceId,
     tenantId: ctx.tenantId,
+    requestedTenantId: ctx.requestedTenantId,
     authIdentity: ctx.authIdentity,
     clientRequestId: ctx.clientRequestId,
     tenantBound: ctx.tenantBound,

@@ -309,7 +309,7 @@ func controllerHTTPStatus(err *SafeError) int {
 	switch err.Code {
 	case ErrorCodeUnauthenticatedController:
 		return 401
-	case ErrorCodeTenantBindingViolation:
+	case ErrorCodeTenantBindingViolation, ErrorCodeSessionOwnerMismatch:
 		return 403
 	case ErrorCodeSessionRegistryIncomplete:
 		return 404

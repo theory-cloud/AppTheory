@@ -15,13 +15,19 @@ type Context struct {
 	clock   Clock
 	ids     IDGenerator
 
-	RequestID       string
-	TraceID         string
-	TenantID        string
-	AuthIdentity    string
-	AuthPrincipal   *AuthPrincipal
-	RemainingMS     int
-	MiddlewareTrace []string
+	RequestID string
+	TraceID   string
+	TenantID  string
+	// RequestedTenantID is the caller-supplied tenant value extracted from the
+	// pre-auth x-tenant-id header or tenant query value. It is untrusted and
+	// must never be used for authorization. The P2 policy hook sees this value
+	// with TenantID cleared; handlers keep seeing TenantID, which authentication
+	// may rebind to the verified claim.
+	RequestedTenantID string
+	AuthIdentity      string
+	AuthPrincipal     *AuthPrincipal
+	RemainingMS       int
+	MiddlewareTrace   []string
 
 	// TenantBound reports that TenantID was derived from the verified
 	// principal's configured tenant claim rather than a caller-supplied

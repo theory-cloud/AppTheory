@@ -344,6 +344,7 @@ func (a *App) servePortableCore(ctx context.Context, req Request, tier Tier, sta
 		RequestID:             state.requestID,
 		TraceID:               state.traceID,
 		TenantID:              state.tenantID,
+		RequestedTenantID:     state.tenantID,
 		RemainingMS:           remainingMS,
 		MiddlewareTrace:       trace,
 		TenantBindingRequired: a.tenantBindingRequired(),
@@ -537,7 +538,15 @@ func (a *App) applyPolicy(
 		return Response{}, "", false
 	}
 
-	decision, err := a.policy(requestCtx)
+	// The policy hook runs before authentication, so TenantID still carries the
+	// caller-supplied header/query value. Pass a shallow copy whose TenantID is
+	// cleared so a policy decision can never treat an unverified tenant as
+	// authoritative; the untrusted value remains visible as RequestedTenantID.
+	policyCtx := *requestCtx
+	policyCtx.TenantID = ""
+	policyCtx.RequestedTenantID = requestCtx.RequestedTenantID
+
+	decision, err := a.policy(&policyCtx)
 	if err != nil {
 		if errorResponder != nil {
 			return errorResponder(err, requestCtx.Request, requestID), errorCodeForError(err), true
