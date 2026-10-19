@@ -8,6 +8,19 @@ import { fileURLToPath } from "node:url";
 
 import {
   DEFAULT_CALLBACK_PATH,
+  ROUTE_REFRESH_EVENT_GRACE_SERVED,
+  ROUTE_REFRESH_EVENT_ISSUED,
+  ROUTE_REFRESH_EVENT_LOCK_ACQUIRED,
+  ROUTE_REFRESH_EVENT_REFRESHED,
+  ROUTE_REFRESH_EVENT_REUSE,
+  ROUTE_REFRESH_EVENT_VALIDATION_REJECTED,
+  ROUTE_REFRESH_OUTCOME_ACCESS_TOKEN_ONLY,
+  ROUTE_REFRESH_OUTCOME_RATE_LIMITED,
+  ROUTE_REFRESH_OUTCOME_REVOKED_WALK,
+  ROUTE_REFRESH_REASON_ACCESS_TOKEN_ONLY,
+  ROUTE_REFRESH_REASON_ALREADY_SERVED,
+  ROUTE_REFRESH_REASON_RECORD_ABSENT,
+  ROUTE_REFRESH_REASON_RECORD_EXPIRED,
   createApp,
   hashKey,
   mcpPath,
@@ -45,6 +58,7 @@ import {
   newFrontChannelHarness,
   noContent,
   responseScan,
+  startFrontChannelWorld,
 } from "./mcpfacade-harness.mjs";
 
 // ---------------------------------------------------------------------------
@@ -1187,19 +1201,21 @@ test("the brokered refresh defaults are pinned", async (t) => {
   assert.equal(JSON.parse(bodyString(overBound)).error, "invalid_request");
 
   // The grace window: a replayed rotation is inside the window one millisecond
-  // before thirty seconds and is reuse at exactly thirty seconds.
+  // before two minutes, and at exactly two minutes it is beyond grace, so the
+  // first such presentation serves the access token only.
   const grace = await newFrontChannelHarness(t);
   const handle = await mintedRefreshHandle(grace);
   const first = await grace.token(refreshForm(handle));
   assert.equal(first.status, 200);
-  grace.clock.advance(30_000 - 1);
+  grace.clock.advance(120_000 - 1);
   const replayed = await grace.token(refreshForm(handle));
-  assert.equal(replayed.status, 200, "29.999s must still replay the successor");
+  assert.equal(replayed.status, 200, "119.999s must still replay the successor");
   assert.equal(bodyString(replayed), bodyString(first));
   grace.clock.advance(1);
   const reused = await grace.token(refreshForm(handle));
-  assert.equal(reused.status, 400, "exactly 30s must be reuse");
-  assert.equal(JSON.parse(bodyString(reused)).error, "invalid_grant");
+  assert.equal(reused.status, 200, "exactly 120s is beyond grace");
+  assert.ok(!bodyString(reused).includes("refresh_token"));
+  assert.equal(JSON.parse(bodyString(reused)).access_token, REFRESH_ACCESS_TOKEN);
 
   // The reference broker store's default lock TTL: fifteen seconds, which is
   // above the three-second coalesce wait cap a waiter is bounded by.
@@ -1260,8 +1276,12 @@ test("refresh rotates the handle and hides upstream material", async (t) => {
   assert.equal(presented.encryptedGraceRefreshResponse, body);
   assert.equal(
     presented.graceExpiresAt.getTime(),
-    harness.clock.now().getTime() + 30_000,
+    harness.clock.now().getTime() + 120_000,
   );
+  assert.equal(presented.chainGeneration, 1);
+  assert.equal(presented.familyHash, hashKey(first));
+  assert.equal(successor.chainGeneration, 2);
+  assert.equal(successor.familyHash, hashKey(first));
   assert.ok(!presented.refreshLockOwner);
   assert.equal(presented.refreshLockExpiresAt, undefined);
 });
@@ -1328,7 +1348,7 @@ test("refresh replays the same successor within the grace window", async (t) => 
   );
   assert.equal(harness.fake.refreshCallCount(), 1);
 
-  harness.clock.advance(30_000 - 1_000);
+  harness.clock.advance(120_000 - 1_000);
   const justInside = await harness.token(refreshForm(handle));
   assert.equal(justInside.status, 200);
   assert.equal(bodyString(justInside), bodyString(first));
@@ -1336,11 +1356,13 @@ test("refresh replays the same successor within the grace window", async (t) => 
 });
 
 /**
- * Pins reuse: presenting the rotated handle once the window has passed is refused
- * with invalid_grant, the presented record is revoked, and the walk revokes the
- * successor the rotation minted, so the successor handle is refused too.
+ * Pins the beyond-grace depth-1 semantics: the first presentation of a rotated
+ * handle after its grace window is the benign immediate-predecessor replay and
+ * is answered with the access token only — no handle material, no upstream call,
+ * no revocation. The second presentation of the same handle is theft class, so
+ * the whole family is revoked and the client gets the uniform invalid_grant.
  */
-test("refresh after the grace window revokes the successor", async (t) => {
+test("refresh after the grace window serves the access token only then revokes the family", async (t) => {
   const harness = await newFrontChannelHarness(t);
   const handle = await mintedRefreshHandle(harness);
 
@@ -1349,10 +1371,24 @@ test("refresh after the grace window revokes the successor", async (t) => {
   const successor = responseHandle(rotated);
   assert.equal(harness.fake.refreshCallCount(), 1);
 
-  harness.clock.advance(30_000 + 1_000);
-  const reused = await harness.token(refreshForm(handle));
-  assert.equal(reused.status, 400);
-  assert.match(bodyString(reused), /"error":"invalid_grant"/);
+  harness.clock.advance(120_000 + 1_000);
+  const served = await harness.token(refreshForm(handle));
+  assert.equal(served.status, 200, bodyString(served));
+  const servedBody = bodyString(served);
+  assert.ok(servedBody.includes(`"access_token":"${REFRESH_ACCESS_TOKEN}"`));
+  assert.ok(!servedBody.includes("refresh_token"));
+  assert.ok(!servedBody.includes(UPSTREAM_REFRESH_TOKEN));
+  assert.ok(!servedBody.includes(ROTATED_UPSTREAM_REFRESH_TOKEN));
+  assert.ok(!servedBody.includes(REFRESH_ID_TOKEN));
+  assert.equal(harness.fake.refreshCallCount(), 1);
+  const marked = await brokerRecord(harness, handle);
+  assert.notEqual(marked.depthOneServedAt, undefined);
+  assert.equal(marked.status, "active");
+
+  const second = await harness.token(refreshForm(handle));
+  assert.equal(second.status, 400);
+  assert.match(bodyString(second), /"error":"invalid_grant"/);
+  assert.ok(!bodyString(second).includes("access_token"));
 
   assert.equal((await brokerRecord(harness, handle)).status, "revoked");
   assert.equal((await brokerRecord(harness, successor)).status, "revoked");
@@ -1361,6 +1397,58 @@ test("refresh after the grace window revokes the successor", async (t) => {
   assert.equal(after.status, 400);
   assert.match(bodyString(after), /"error":"invalid_grant"/);
   assert.equal(harness.fake.refreshCallCount(), 1);
+});
+
+/**
+ * Pins depth two: a rotated-away handle whose successor has itself rotated
+ * again is not an immediate-predecessor replay, so the family is revoked with
+ * no serve of any kind.
+ */
+test("refresh deep reuse revokes the family without a serve", async (t) => {
+  const harness = await newFrontChannelHarness(t);
+  const root = await mintedRefreshHandle(harness);
+  const first = await harness.token(refreshForm(root));
+  assert.equal(first.status, 200, bodyString(first));
+  const second = await harness.token(refreshForm(responseHandle(first)));
+  assert.equal(second.status, 200, bodyString(second));
+  const head = responseHandle(second);
+
+  harness.clock.advance(120_000 + 1_000);
+  const stale = await harness.token(refreshForm(root));
+  assert.equal(stale.status, 400);
+  assert.match(bodyString(stale), /"error":"invalid_grant"/);
+  assert.ok(!bodyString(stale).includes("access_token"));
+  assert.equal(harness.fake.refreshCallCount(), 2);
+
+  for (const handle of [root, responseHandle(first), head]) {
+    assert.equal((await brokerRecord(harness, handle)).status, "revoked");
+  }
+});
+
+/**
+ * Pins that beyond grace the request binding is enforced before the benign
+ * serve: a request that asks for another scope or resource never receives even
+ * the access token only, and does not consume the handle's single serve.
+ */
+test("refresh beyond grace validates the request binding before a serve", async (t) => {
+  const harness = await newFrontChannelHarness(t);
+  const handle = await mintedRefreshHandle(harness);
+  assert.equal((await harness.token(refreshForm(handle))).status, 200);
+  harness.clock.advance(120_000 + 1_000);
+
+  const wrongScope = await harness.token(refreshForm(handle, { scope: "" }));
+  assert.equal(wrongScope.status, 400);
+  assert.match(bodyString(wrongScope), /"error":"invalid_scope"/);
+  const wrongResource = await harness.token(
+    refreshForm(handle, { resource: `${BASE_URL}/other/mcp` }),
+  );
+  assert.equal(wrongResource.status, 400);
+  assert.match(bodyString(wrongResource), /"error":"invalid_target"/);
+  assert.equal((await brokerRecord(harness, handle)).depthOneServedAt, undefined);
+
+  const served = await harness.token(refreshForm(handle));
+  assert.equal(served.status, 200, bodyString(served));
+  assert.ok(!bodyString(served).includes("refresh_token"));
 });
 
 /**
@@ -1598,32 +1686,40 @@ test("refresh concurrent callers receive one successor", async (t) => {
 });
 
 /**
- * Pins that reuse detection is safe under concurrency: once the grace window has
- * passed, every concurrent presenter of the rotated handle is refused with
- * invalid_grant, no upstream call is made, and the whole grant — the presented
- * record and the successor it names — ends revoked. Revocation is idempotent, so
- * more than one caller may perform it; the contract is that no caller is served
- * and no caller can act on unrevoked state.
+ * Pins the once-per-handle bound under concurrency: once the grace window has
+ * passed, exactly one concurrent presenter of the rotated handle is answered
+ * with the access token only, every other presenter is refused with the same
+ * invalid_grant and revokes the family, and no caller reaches the upstream.
  */
-test("refresh concurrent reuse after grace revokes once", async (t) => {
+test("refresh concurrent reuse after grace serves at most once", async (t) => {
   const harness = await newFrontChannelHarness(t);
   const handle = await mintedRefreshHandle(harness);
   const rotated = await harness.token(refreshForm(handle));
   assert.equal(rotated.status, 200, bodyString(rotated));
   const successor = responseHandle(rotated);
-  harness.clock.advance(30_000 + 1_000);
+  harness.clock.advance(120_000 + 1_000);
 
   const callers = 16;
   const responses = await Promise.all(
     Array.from({ length: callers }, () => harness.token(refreshForm(handle))),
   );
 
-  const bodies = responses.map((response) => bodyString(response));
+  let served = 0;
   for (const [index, response] of responses.entries()) {
-    assert.equal(response.status, 400, `caller ${index} body ${bodies[index]}`);
-    assert.match(bodies[index], /"error":"invalid_grant"/, `caller ${index}`);
-    assert.equal(bodies[index], bodies[0], `caller ${index} must receive the same refusal`);
+    const body = bodyString(response);
+    if (response.status === 200) {
+      served += 1;
+      assert.ok(!body.includes("refresh_token"), `caller ${index} must not receive a handle`);
+      assert.ok(
+        !body.includes(ROTATED_UPSTREAM_REFRESH_TOKEN),
+        `caller ${index} must not receive upstream material`,
+      );
+      continue;
+    }
+    assert.equal(response.status, 400, `caller ${index} body ${body}`);
+    assert.match(body, /"error":"invalid_grant"/, `caller ${index}`);
   }
+  assert.equal(served, 1, "exactly one caller may be served the access token");
   assert.equal(harness.fake.refreshCallCount(), 1);
   assert.equal((await brokerRecord(harness, handle)).status, "revoked");
   assert.equal((await brokerRecord(harness, successor)).status, "revoked");
@@ -1678,6 +1774,425 @@ test("refresh reuse revokes the grant up to the bounded walk limit", async (t) =
     const record = await brokerRecord(harness, handle);
     const expected = index < 8 ? "revoked" : "issued";
     assert.equal(record.status, expected, `chain link ${index}`);
+  }
+});
+
+/**
+ * Pins the route refresh policy as fail-closed configuration: a missing or zero
+ * handle TTL, an out-of-range TTL or ceiling, and a grace window outside its
+ * bound are registration errors rather than silent fallbacks, and a policy that
+ * disagrees with the broker store's reported local lifetime is refused.
+ */
+test("route refresh policy fails closed at registration", async (t) => {
+  const world = await startFrontChannelWorld(t);
+  const cases = [
+    {
+      name: "absent",
+      policy: undefined,
+      want: /route refresh policy handle TTL is required and must be positive/,
+    },
+    {
+      name: "zero ttl",
+      policy: { handleTTLSeconds: 0, reuseRateCeiling: 9 },
+      want: /route refresh policy handle TTL is required and must be positive/,
+    },
+    {
+      name: "negative ttl",
+      policy: { handleTTLSeconds: -60, reuseRateCeiling: 9 },
+      want: /route refresh policy handle TTL is required and must be positive/,
+    },
+    {
+      name: "ttl below floor",
+      policy: { handleTTLSeconds: 59, reuseRateCeiling: 9 },
+      want: /route refresh policy handle TTL must be within/,
+    },
+    {
+      name: "ttl not an integer",
+      policy: { handleTTLSeconds: 900.5, reuseRateCeiling: 9 },
+      want: /route refresh policy handle TTL must be within/,
+    },
+    {
+      name: "ttl above ceiling",
+      policy: { handleTTLSeconds: 2_592_001, reuseRateCeiling: 9 },
+      want: /route refresh policy handle TTL must be within/,
+    },
+    {
+      name: "grace negative",
+      policy: { handleTTLSeconds: 900, graceWindowSeconds: -1, reuseRateCeiling: 9 },
+      want: /route refresh policy grace window must be within/,
+    },
+    {
+      name: "grace above maximum",
+      policy: {
+        handleTTLSeconds: 900,
+        graceWindowSeconds: 121,
+        reuseRateCeiling: 9,
+      },
+      want: /route refresh policy grace window must be within/,
+    },
+    {
+      name: "ceiling absent",
+      policy: { handleTTLSeconds: 900 },
+      want: /route refresh policy reuse rate ceiling is required and must be positive/,
+    },
+    {
+      name: "ceiling below floor",
+      policy: { handleTTLSeconds: 900, reuseRateCeiling: 8 },
+      want: /route refresh policy reuse rate ceiling must be within/,
+    },
+    {
+      name: "ceiling above maximum",
+      policy: { handleTTLSeconds: 900, reuseRateCeiling: 121 },
+      want: /route refresh policy reuse rate ceiling must be within/,
+    },
+  ];
+  for (const testCase of cases) {
+    world.config.routeRefreshPolicy = testCase.policy;
+    assert.throws(
+      () =>
+        registerMcpFacade(createApp({ tier: "p0", clock: world.clock }), {
+          ...world.config,
+        }),
+      testCase.want,
+      testCase.name,
+    );
+  }
+
+  // A policy that disagrees with the store's own lifetime is refused: the
+  // deployment must not declare a ceiling the store does not keep.
+  world.config.routeRefreshPolicy = {
+    handleTTLSeconds: 3600,
+    reuseRateCeiling: 9,
+  };
+  assert.throws(
+    () =>
+      registerMcpFacade(createApp({ tier: "p0", clock: world.clock }), {
+        ...world.config,
+      }),
+    /does not match the broker store's local lifetime/,
+  );
+
+  // The default grace window is 120 seconds, and an explicit smaller one is
+  // honored; both are accepted with the matching store lifetime.
+  world.config.routeRefreshPolicy = {
+    handleTTLSeconds: 900,
+    graceWindowSeconds: 45,
+    reuseRateCeiling: 9,
+  };
+  registerMcpFacade(createApp({ tier: "p0", clock: world.clock }), {
+    ...world.config,
+  });
+});
+
+/**
+ * Pins that the store's expiry signal is attributable in telemetry while the
+ * client body stays the uniform invalid_grant: an aged-out handle and an
+ * unknown handle are the same response, with different `expirySignal` values.
+ */
+test("route refresh telemetry tells expiry from absence", async (t) => {
+  const events = [];
+  const harness = await newFrontChannelHarness(t, {
+    routeRefreshEvents: (event) => events.push(event),
+  });
+  const handle = await mintedRefreshHandle(harness);
+  harness.clock.advance(900_000 + 1_000);
+
+  const expired = await harness.token(refreshForm(handle));
+  const absent = await harness.token(refreshForm(unknownHandle()));
+  assert.equal(expired.status, 400);
+  assert.equal(absent.status, 400);
+  assert.equal(
+    bodyString(expired),
+    bodyString(absent),
+    "the client body must not distinguish expiry from absence",
+  );
+
+  const expiredEvent = events.find(
+    (event) =>
+      event.class === ROUTE_REFRESH_EVENT_VALIDATION_REJECTED &&
+      event.reason === ROUTE_REFRESH_REASON_RECORD_EXPIRED,
+  );
+  const absentEvent = events.find(
+    (event) =>
+      event.class === ROUTE_REFRESH_EVENT_VALIDATION_REJECTED &&
+      event.reason === ROUTE_REFRESH_REASON_RECORD_ABSENT,
+  );
+  assert.ok(expiredEvent !== undefined, "expected a record_expired event");
+  assert.ok(absentEvent !== undefined, "expected a record_absent event");
+  assert.equal(expiredEvent.expirySignal, "expired");
+  assert.equal(absentEvent.expirySignal, "absent");
+});
+
+/**
+ * Pins the telemetry taxonomy and its redaction: the real request path emits
+ * issuance, lock, refresh, grace, reuse, and validation events, and no event
+ * carries raw credential or handle material.
+ */
+test("route refresh telemetry covers the taxonomy without raw material", async (t) => {
+  const events = [];
+  const harness = await newFrontChannelHarness(t, {
+    routeRefreshEvents: (event) => events.push(event),
+  });
+  const handle = await mintedRefreshHandle(harness);
+  const rotated = await harness.token(refreshForm(handle));
+  assert.equal(rotated.status, 200, bodyString(rotated));
+  const successor = responseHandle(rotated);
+
+  harness.clock.advance(119_000);
+  assert.equal((await harness.token(refreshForm(handle))).status, 200);
+  harness.clock.advance(2_000);
+  const served = await harness.token(refreshForm(handle));
+  assert.equal(served.status, 200, bodyString(served));
+  assert.ok(!bodyString(served).includes("refresh_token"));
+
+  const missing = await unknownHandle();
+  assert.equal((await harness.token(refreshForm(missing))).status, 400);
+
+  const issued = events.find((event) => event.class === ROUTE_REFRESH_EVENT_ISSUED);
+  assert.ok(issued !== undefined, "expected an issued event");
+  assert.equal(issued.handleHash, hashKey(handle));
+  assert.equal(issued.familyHash, hashKey(handle));
+  assert.equal(issued.chainGeneration, 1);
+
+  const lock = events.find(
+    (event) => event.class === ROUTE_REFRESH_EVENT_LOCK_ACQUIRED,
+  );
+  assert.ok(lock !== undefined, "expected a lock_acquired event");
+  assert.equal(lock.statusTo, "refreshing");
+
+  const refreshed = events.find(
+    (event) => event.class === ROUTE_REFRESH_EVENT_REFRESHED,
+  );
+  assert.ok(refreshed !== undefined, "expected a refreshed event");
+  assert.equal(refreshed.statusFrom, "refreshing");
+  assert.equal(refreshed.statusTo, "active");
+  assert.equal(refreshed.successorHandleHash, hashKey(successor));
+  assert.equal(refreshed.chainGeneration, 2);
+  assert.notEqual(refreshed.previousUpstreamRefreshTokenHash, "");
+  assert.notEqual(refreshed.upstreamRefreshTokenHash, "");
+
+  assert.ok(
+    events.find((event) => event.class === ROUTE_REFRESH_EVENT_GRACE_SERVED) !==
+      undefined,
+    "expected a grace_served event",
+  );
+  const reuse = events.find(
+    (event) =>
+      event.class === ROUTE_REFRESH_EVENT_REUSE &&
+      event.outcome === ROUTE_REFRESH_OUTCOME_ACCESS_TOKEN_ONLY,
+  );
+  assert.ok(reuse !== undefined, "expected an access_token_only reuse event");
+  assert.equal(reuse.reason, ROUTE_REFRESH_REASON_ACCESS_TOKEN_ONLY);
+  assert.equal(reuse.chainDepth, 1);
+  assert.equal(reuse.statusTo, "active");
+
+  const encoded = JSON.stringify(events);
+  for (const secret of [
+    handle,
+    successor,
+    UPSTREAM_REFRESH_TOKEN,
+    ROTATED_UPSTREAM_REFRESH_TOKEN,
+    REFRESH_ACCESS_TOKEN,
+    REFRESH_ID_TOKEN,
+    VERIFIER,
+    UPSTREAM_CODE,
+    CLIENT_STATE,
+  ]) {
+    assert.ok(
+      !encoded.includes(secret),
+      `telemetry must carry hashes, never raw material ${JSON.stringify(secret)}`,
+    );
+  }
+  assert.ok(!encoded.includes("id_token"));
+});
+
+/**
+ * Pins the single-use bound of a beyond-grace serve: the marker is written
+ * before the response, and a later presentation of the same handle is theft
+ * class even though the per-family budget is barely touched.
+ */
+test("route refresh beyond-grace serve is single-use per handle", async (t) => {
+  const events = [];
+  const harness = await newFrontChannelHarness(t, {
+    routeRefreshEvents: (event) => events.push(event),
+  });
+  const handle = await mintedRefreshHandle(harness);
+  const rotated = await harness.token(refreshForm(handle));
+  assert.equal(rotated.status, 200, bodyString(rotated));
+  const successor = responseHandle(rotated);
+
+  harness.clock.advance(120_000 + 1_000);
+  const first = await harness.token(refreshForm(handle));
+  assert.equal(first.status, 200, bodyString(first));
+  assert.notEqual((await brokerRecord(harness, handle)).depthOneServedAt, undefined);
+
+  const second = await harness.token(refreshForm(handle));
+  assert.equal(second.status, 400);
+  assert.match(bodyString(second), /"error":"invalid_grant"/);
+  const theft = events.find(
+    (event) =>
+      event.class === ROUTE_REFRESH_EVENT_REUSE &&
+      event.reason === ROUTE_REFRESH_REASON_ALREADY_SERVED,
+  );
+  assert.ok(theft !== undefined, "expected an already_served reuse event");
+  assert.equal(theft.chainDepth, 1);
+  assert.equal((await brokerRecord(harness, handle)).status, "revoked");
+  assert.equal((await brokerRecord(harness, successor)).status, "revoked");
+});
+
+/**
+ * Pins the per-family hourly budget: benign depth-1 serves are allowed up to
+ * the configured ceiling, and the next one is refused without revoking the
+ * family. Every cycle rotates the head, closes the predecessor's grace window,
+ * and presents the predecessor, so each serve is a distinct handle.
+ */
+test("route refresh depth-one serves are budgeted per family", async (t) => {
+  const events = [];
+  const harness = await newFrontChannelHarness(t, {
+    routeRefreshEvents: (event) => events.push(event),
+  });
+  let head = await mintedRefreshHandle(harness);
+  const ceiling = 9;
+
+  for (let served = 0; served < ceiling; served += 1) {
+    const rotated = await harness.token(refreshForm(head));
+    assert.equal(rotated.status, 200, `rotation ${served}: ${bodyString(rotated)}`);
+    const predecessor = head;
+    head = responseHandle(rotated);
+    harness.clock.advance(120_000 + 1_000);
+    const response = await harness.token(refreshForm(predecessor));
+    assert.equal(response.status, 200, `serve ${served}: ${bodyString(response)}`);
+    assert.ok(!bodyString(response).includes("refresh_token"));
+  }
+
+  const rotated = await harness.token(refreshForm(head));
+  assert.equal(rotated.status, 200, bodyString(rotated));
+  const predecessor = head;
+  head = responseHandle(rotated);
+  harness.clock.advance(120_000 + 1_000);
+  const limited = await harness.token(refreshForm(predecessor));
+  assert.equal(limited.status, 400);
+  assert.match(bodyString(limited), /"error":"invalid_grant"/);
+  assert.ok(!bodyString(limited).includes("access_token"));
+
+  const limitedEvent = events.find(
+    (event) =>
+      event.class === ROUTE_REFRESH_EVENT_REUSE &&
+      event.outcome === ROUTE_REFRESH_OUTCOME_RATE_LIMITED,
+  );
+  assert.ok(limitedEvent !== undefined, "expected a rate_limited reuse event");
+  assert.equal(limitedEvent.chainDepth, 1);
+  assert.notEqual(
+    (await brokerRecord(harness, head)).status,
+    "revoked",
+    "a rate-limited serve must not revoke the family",
+  );
+  assert.notEqual((await brokerRecord(harness, predecessor)).status, "revoked");
+});
+
+/**
+ * Pins the pre-policy default: a family-less, generation-0 rotated-away record
+ * is classified structurally (successor walk, not arithmetic), serves the
+ * access token only once, and its second presentation revokes through the
+ * bounded walk because it has no family to revoke.
+ */
+test("route refresh classifies and walk-revokes a legacy record", async (t) => {
+  const events = [];
+  const harness = await newFrontChannelHarness(t, {
+    routeRefreshEvents: (event) => events.push(event),
+  });
+  const legacyHandle = unknownHandle();
+  const successorHandle = unknownHandle();
+  const seed = (handleHash, overrides) => ({
+    handleHash,
+    issuer: UPSTREAM_ISS,
+    stage: "",
+    canonicalResource: REFRESH_BOUND_RESOURCE,
+    clientNamespace: "acme",
+    endpointKind: "namespace",
+    partnerId: "",
+    agentId: "",
+    clientIdHash: hashKey(CLIENT_ID),
+    subjectIdHash: hashKey("user-1"),
+    scopes: [ROTATED_UPSTREAM_SCOPE],
+    scopeFingerprint: hashKey(ROTATED_UPSTREAM_SCOPE),
+    encryptedUpstreamRefreshToken: UPSTREAM_REFRESH_TOKEN,
+    upstreamRefreshTokenHash: hashKey(UPSTREAM_REFRESH_TOKEN),
+    upstreamClientId: CLIENT_ID,
+    status: "active",
+    version: 0,
+    ...overrides,
+  });
+  await harness.stores.routeRefreshBroker.put(
+    seed(hashKey(legacyHandle), {
+      encryptedGraceRefreshResponse: JSON.stringify({
+        access_token: "legacy-access-token",
+        token_type: "Bearer",
+        expires_in: 900,
+        refresh_token: successorHandle,
+      }),
+      graceExpiresAt: new Date(0),
+    }),
+  );
+  await harness.stores.routeRefreshBroker.put(seed(hashKey(successorHandle)));
+  harness.clock.advance(120_000 + 1_000);
+
+  const served = await harness.token(refreshForm(legacyHandle));
+  assert.equal(served.status, 200, bodyString(served));
+  assert.ok(bodyString(served).includes(`"access_token":"legacy-access-token"`));
+  assert.ok(!bodyString(served).includes("refresh_token"));
+  const reuse = events.find(
+    (event) =>
+      event.class === ROUTE_REFRESH_EVENT_REUSE &&
+      event.outcome === ROUTE_REFRESH_OUTCOME_ACCESS_TOKEN_ONLY,
+  );
+  assert.ok(reuse !== undefined, "expected an access_token_only reuse event");
+  assert.equal(reuse.chainDepth, 1);
+  assert.equal(reuse.chainGeneration, 0);
+
+  const second = await harness.token(refreshForm(legacyHandle));
+  assert.equal(second.status, 400);
+  assert.match(bodyString(second), /"error":"invalid_grant"/);
+  const revoked = events.find(
+    (event) =>
+      event.class === ROUTE_REFRESH_EVENT_REUSE &&
+      event.outcome === ROUTE_REFRESH_OUTCOME_REVOKED_WALK,
+  );
+  assert.ok(revoked !== undefined, "expected a revoked_walk reuse event");
+  assert.equal(revoked.revokedRecords, 2);
+
+  assert.equal((await brokerRecord(harness, legacyHandle)).status, "revoked");
+  assert.equal((await brokerRecord(harness, successorHandle)).status, "revoked");
+});
+
+/**
+ * Pins that revoke-by-family beats the eight-link walk limit: a chain longer
+ * than the walk is revoked completely, so a confirmed theft leaves no live
+ * member behind.
+ */
+test("route refresh family revoke beats the walk limit", async (t) => {
+  const harness = await newFrontChannelHarness(t);
+  let head = await mintedRefreshHandle(harness);
+  const handles = [head];
+  for (let rotation = 0; rotation < 10; rotation += 1) {
+    const response = await harness.token(refreshForm(head));
+    assert.equal(response.status, 200, `rotation ${rotation}: ${bodyString(response)}`);
+    head = responseHandle(response);
+    handles.push(head);
+  }
+  assert.equal(handles.length, 11);
+
+  harness.clock.advance(120_000 + 1_000);
+  const reused = await harness.token(refreshForm(handles[0]));
+  assert.equal(reused.status, 400);
+  assert.match(bodyString(reused), /"error":"invalid_grant"/);
+
+  for (const handle of handles) {
+    assert.equal(
+      (await brokerRecord(harness, handle)).status,
+      "revoked",
+      `handle ${handle} must be revoked`,
+    );
   }
 });
 
@@ -1971,7 +2486,7 @@ const REFRESH_GROUP = "refresh";
  * must also be a deliberate edit in the Go, TypeScript, and Python loaders, so no
  * runtime can silently execute a smaller table.
  */
-const REFRESH_CASE_COUNT = 15;
+const REFRESH_CASE_COUNT = 16;
 
 /**
  * Stages the fake upstream a refresh row's scenario needs. Only the two
@@ -2017,10 +2532,16 @@ async function refreshScenarioResponse(harness, scenario) {
       );
       return replayed;
     }
-    case "reuse_after_grace_revokes":
+    case "beyond_grace_depth_one_serves_access_token_only":
       assert.equal((await harness.token(refreshForm(handle))).status, 200);
-      harness.clock.advance(30_000 + 1_000);
+      harness.clock.advance(120_000 + 1_000);
       return await harness.token(refreshForm(handle));
+    case "beyond_grace_second_serve_revokes_family": {
+      assert.equal((await harness.token(refreshForm(handle))).status, 200);
+      harness.clock.advance(120_000 + 1_000);
+      assert.equal((await harness.token(refreshForm(handle))).status, 200);
+      return await harness.token(refreshForm(handle));
+    }
     case "unknown_handle":
       return await harness.token(refreshForm(unknownHandle()));
     case "other_client_handle":

@@ -64,6 +64,15 @@ SERVER_INFO_METADATA_KEY = "io.modelcontextprotocol/serverInfo"
 TASK_CANCELED_MESSAGE = "task canceled"
 DEFAULT_TASK_TABLE_NAME = "mcp-tasks"
 DEFAULT_STREAM_TABLE_NAME = "mcp-streams"
+MAX_MEMORY_STREAM_EVENT_BYTES = 10 * 1024 * 1024
+MAX_MEMORY_STREAM_EVENTS_PER_SESSION = 10000
+MAX_MEMORY_STREAM_SESSION_BYTES = 64 * 1024 * 1024
+MAX_MEMORY_TASKS_PER_SESSION = 1000
+DEFAULT_STREAM_TTL_MINUTES = 60
+DEFAULT_STREAM_MAX_EVENT_BYTES = 10 * 1024 * 1024
+GENERIC_HANDLER_ERROR_MESSAGE = "internal error"
+ENV_STREAM_TTL_MINUTES = "MCP_STREAM_TTL_MINUTES"
+ENV_STREAM_MAX_EVENT_BYTES = "MCP_STREAM_MAX_EVENT_BYTES"
 
 McpTaskSupport = Literal["forbidden", "optional", "required"]
 McpTaskStatus = Literal["working", "input_required", "completed", "failed", "canceled"]
@@ -228,12 +237,23 @@ class McpSSEEvent:
 
 
 @dataclass(slots=True)
+class McpCallerAuth:
+    """Authenticated caller identity exposed to MCP tool handlers."""
+
+    auth_identity: str = ""
+    tenant_id: str = ""
+    tenant_bound: bool = False
+    scopes: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class McpToolContext:
     session_id: str
     request_id: Any
     method: str
     input_responses: dict[str, Any] | None = None
     request_state: str = ""
+    auth: McpCallerAuth | None = None
 
 
 @dataclass(slots=True)
@@ -294,6 +314,7 @@ class McpSession:
     created_at: str = ""
     expires_at: str = ""
     data: dict[str, str] | None = None
+    principal: str = ""
 
 
 @dataclass(slots=True)
@@ -445,6 +466,8 @@ class McpServerOptions:
     extension_capabilities: McpExtensionCapabilities = field(default_factory=dict)
     cacheable_results: McpCacheableResultConfig | dict[str, Any] | None = None
     include_server_info_metadata: bool = True
+    verbose_handler_errors: bool = False
+    logger: Any | None = None
 
 
 @dataclass(slots=True)
@@ -511,6 +534,16 @@ class McpTaskTerminalError(Exception):
 
 class McpTaskInvalidCursorError(Exception):
     def __init__(self, message: str = "invalid task list cursor") -> None:
+        super().__init__(message)
+
+
+class McpStreamEventTooLargeError(ValueError):
+    def __init__(self, message: str = "stream event exceeds maximum size") -> None:
+        super().__init__(message)
+
+
+class McpTaskCapacityError(ValueError):
+    def __init__(self, message: str = "task capacity exceeded") -> None:
         super().__init__(message)
 
 
@@ -733,12 +766,24 @@ class _MemoryStreamSession:
     next_seq: int = 0
     event_to_stream: dict[str, str] = field(default_factory=dict)
     streams: dict[str, _MemoryStream] = field(default_factory=dict)
+    event_count: int = 0
+    total_bytes: int = 0
 
 
 class MemoryMcpStreamStore:
-    def __init__(self, *, id_generator: IdGenerator | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        id_generator: IdGenerator | None = None,
+        max_event_bytes: int = MAX_MEMORY_STREAM_EVENT_BYTES,
+        max_events_per_session: int = MAX_MEMORY_STREAM_EVENTS_PER_SESSION,
+        max_session_bytes: int = MAX_MEMORY_STREAM_SESSION_BYTES,
+    ) -> None:
         self._sessions: dict[str, _MemoryStreamSession] = {}
         self._id_generator = id_generator or RealIdGenerator()
+        self._max_event_bytes = _positive_integer(max_event_bytes, MAX_MEMORY_STREAM_EVENT_BYTES)
+        self._max_events_per_session = _positive_integer(max_events_per_session, MAX_MEMORY_STREAM_EVENTS_PER_SESSION)
+        self._max_session_bytes = _positive_integer(max_session_bytes, MAX_MEMORY_STREAM_SESSION_BYTES)
 
     def create(self, session_id: str) -> str:
         sid = _normalize_required(session_id, "missing session id")
@@ -748,12 +793,18 @@ class MemoryMcpStreamStore:
         return stream_id
 
     def append(self, session_id: str, stream_id: str, data: bytes | bytearray | str | None = None) -> str:
+        payload = _to_bytes(data)
+        if len(payload) > self._max_event_bytes:
+            raise McpStreamEventTooLargeError()
         session = self._lookup_session(session_id)
         stream = self._lookup_stream(session, stream_id)
         session.next_seq += 1
         event_id = str(session.next_seq)
-        stream.events.append(McpStreamEvent(id=event_id, data=_to_bytes(data)))
+        stream.events.append(McpStreamEvent(id=event_id, data=payload))
         session.event_to_stream[event_id] = str(stream_id or "").strip()
+        session.event_count += 1
+        session.total_bytes += len(payload)
+        self._trim_session(session)
         return event_id
 
     def close(self, session_id: str, stream_id: str) -> None:
@@ -801,20 +852,53 @@ class MemoryMcpStreamStore:
             raise McpStreamNotFoundError()
         return stream
 
+    def _trim_session(self, session: _MemoryStreamSession) -> None:
+        while session.event_count > self._max_events_per_session or session.total_bytes > self._max_session_bytes:
+            if not self._evict_oldest_event(session):
+                return
+
+    def _evict_oldest_event(self, session: _MemoryStreamSession) -> bool:
+        oldest_stream: _MemoryStream | None = None
+        oldest_event: McpStreamEvent | None = None
+        for stream in session.streams.values():
+            if not stream.events:
+                continue
+            candidate = stream.events[0]
+            if oldest_event is None or int(candidate.id or "0") < int(oldest_event.id or "0"):
+                oldest_stream = stream
+                oldest_event = candidate
+        if oldest_stream is None or oldest_event is None:
+            return False
+        oldest_stream.events.pop(0)
+        session.event_count -= 1
+        session.total_bytes -= len(oldest_event.data)
+        session.event_to_stream.pop(str(oldest_event.id or ""), None)
+        return True
+
 
 class MemoryMcpTaskStore:
-    def __init__(self, *, clock: Clock | None = None) -> None:
+    def __init__(
+        self, *, clock: Clock | None = None, max_tasks_per_session: int = MAX_MEMORY_TASKS_PER_SESSION
+    ) -> None:
         self._sessions: dict[str, dict[str, McpTaskRecord]] = {}
         self._clock = clock or RealClock()
+        self._max_tasks_per_session = _positive_integer(max_tasks_per_session, MAX_MEMORY_TASKS_PER_SESSION)
 
     def create(self, task: McpTaskRecord | dict[str, Any]) -> McpTaskRecord:
         record = _clone_task_record(task)
         record.session_id = _normalize_required(record.session_id, "missing session id")
         record.task.task_id = _normalize_required(record.task.task_id, "missing task id")
-        session = self._sessions.setdefault(record.session_id, {})
+        session = self._sessions.get(record.session_id, {})
         if record.task.task_id in session:
             raise ValueError("task already exists")
+        self._reap_expired(session)
+        while len(session) >= self._max_tasks_per_session:
+            before = len(session)
+            self._evict_oldest_terminal(session)
+            if len(session) == before:
+                raise McpTaskCapacityError()
         session[record.task.task_id] = record
+        self._sessions[record.session_id] = session
         return _clone_task_record(record)
 
     def get(self, lookup: McpTaskLookup | dict[str, Any]) -> McpTaskRecord:
@@ -873,6 +957,20 @@ class MemoryMcpTaskStore:
         if not session_id or not task_id:
             return None
         return self._sessions.get(session_id, {}).get(task_id)
+
+    def _reap_expired(self, session: dict[str, McpTaskRecord]) -> None:
+        now = self._clock.now()
+        for task_id, record in list(session.items()):
+            if _task_record_expired_at(now, record):
+                session.pop(task_id, None)
+
+    def _evict_oldest_terminal(self, session: dict[str, McpTaskRecord]) -> None:
+        terminal = sorted(
+            (record for record in session.values() if _task_status_terminal(record.task.status)),
+            key=lambda record: (record.task.created_at, record.task.task_id),
+        )
+        if terminal:
+            session.pop(terminal[0].task.task_id, None)
 
 
 class DynamoMcpTaskStore:
@@ -982,24 +1080,37 @@ class DynamoMcpStreamStore:
         table: Any | None = None,
         table_name: str | None = None,
         id_generator: IdGenerator | None = None,
+        clock: Clock | None = None,
     ) -> None:
         self._table = table or _new_theorydb_table(default_mcp_stream_model(table_name), table_name)
         self._id_generator = id_generator or RealIdGenerator()
+        self._clock = clock or RealClock()
 
     def create(self, session_id: str) -> str:
         sid = _normalize_required(session_id, "missing session id")
         stream_id = _normalize_required(self._id_generator.new_id(), "stream id generator returned empty id")
         self._table.put(
-            _McpStreamItem(session_id=sid, item_id=f"STREAM#{stream_id}", stream_id=stream_id, kind="stream")
+            _McpStreamItem(
+                session_id=sid,
+                item_id=f"STREAM#{stream_id}",
+                stream_id=stream_id,
+                kind="stream",
+                expires_at=self._expires_at(),
+            )
         )
         return stream_id
 
     def append(self, session_id: str, stream_id: str, data: bytes | bytearray | str | None = None) -> str:
         sid = _normalize_required(session_id, "missing session id")
+        payload = _to_bytes(data)
+        if len(payload) > _stream_max_event_bytes():
+            raise McpStreamEventTooLargeError()
         stream = self._stream_record(sid, stream_id)
         sequence = int(_field(stream, "sequence") or 0) + 1
         event_id = str(sequence)
+        expires_at = self._expires_at()
         _set_item_attr(stream, "sequence", sequence)
+        _set_item_attr(stream, "expires_at", expires_at)
         self._table.save(stream)
         self._table.put(
             _McpStreamItem(
@@ -1009,7 +1120,8 @@ class DynamoMcpStreamStore:
                 kind="event",
                 sequence=sequence,
                 event_id=event_id,
-                data=_base64_encode(_to_bytes(data)),
+                data=_base64_encode(payload),
+                expires_at=expires_at,
             )
         )
         return event_id
@@ -1017,11 +1129,13 @@ class DynamoMcpStreamStore:
     def close(self, session_id: str, stream_id: str) -> None:
         stream = self._stream_record(session_id, stream_id)
         _set_item_attr(stream, "closed", True)
+        _set_item_attr(stream, "expires_at", self._expires_at())
         self._table.save(stream)
 
     def subscribe(self, session_id: str, stream_id: str, after_event_id: str = "") -> list[McpStreamEvent]:
         sid = _normalize_required(session_id, "missing session id")
         stream = str(stream_id or "").strip()
+        self._stream_record(sid, stream)
         after = int(str(after_event_id or "").strip() or "0")
         events = self._event_records(sid)
         if after > 0 and not any(
@@ -1062,21 +1176,40 @@ class DynamoMcpStreamStore:
                 if not _is_not_found_error(exc):
                     raise
 
+    def _expires_at(self) -> int:
+        return _epoch_seconds(self._clock.now()) + _stream_ttl_seconds()
+
     def _stream_record(self, session_id: str, stream_id: str) -> Any:
         try:
-            return self._table.get(str(session_id or "").strip(), f"STREAM#{str(stream_id or '').strip()}")
+            item = self._table.get(str(session_id or "").strip(), f"STREAM#{str(stream_id or '').strip()}")
         except Exception as exc:
             if _is_not_found_error(exc):
                 raise McpStreamNotFoundError() from exc
             raise
+        if _stream_record_expired_at(self._clock.now(), item):
+            raise McpStreamNotFoundError()
+        return item
 
     def _event_records(self, session_id: str) -> list[Any]:
-        return [item for item in self._session_items(session_id) if str(_field(item, "kind") or "") == "event"]
+        now = self._clock.now()
+        return [
+            item
+            for item in self._session_items(session_id)
+            if str(_field(item, "kind") or "") == "event" and not _stream_record_expired_at(now, item)
+        ]
 
     def _session_items(self, session_id: str) -> list[Any]:
         try:
-            page = self._table.query(str(session_id or "").strip(), limit=1000)
-            return list(getattr(page, "items", []) or [])
+            items: list[Any] = []
+            cursor = ""
+            while True:
+                page = self._table.query(str(session_id or "").strip(), limit=1000, cursor=cursor)
+                items.extend(getattr(page, "items", []) or [])
+                next_cursor = str(getattr(page, "next_cursor", None) or getattr(page, "cursor", "") or "")
+                if not next_cursor:
+                    break
+                cursor = next_cursor
+            return items
         except Exception as exc:
             if _is_not_found_error(exc):
                 return []
@@ -1100,6 +1233,8 @@ class McpServer:
         self.extension_capabilities = _normalize_extension_capabilities(opts.extension_capabilities)
         self.cacheable_results = _normalize_cacheable_result_config(opts.cacheable_results)
         self.include_server_info_metadata = bool(opts.include_server_info_metadata)
+        self.verbose_handler_errors = bool(opts.verbose_handler_errors)
+        self.logger = opts.logger
         self.tool_registry = McpToolRegistry()
         self.resource_registry = McpResourceRegistry()
         self.prompt_registry = McpPromptRegistry()
@@ -1115,7 +1250,14 @@ class McpServer:
 
     def handler(self) -> Callable[[Context], Response]:
         def _handler(ctx: Context) -> Response:
-            return self.handle(ctx.request.method, ctx.request.headers, ctx.request.body)
+            auth = _caller_auth_from_context(ctx)
+            return self.handle(
+                ctx.request.method,
+                ctx.request.headers,
+                ctx.request.body,
+                principal=_principal_from_auth(auth),
+                auth=auth,
+            )
 
         return _handler
 
@@ -1126,17 +1268,32 @@ class McpServer:
             _to_bytes(request.get("body")),
         )
 
-    def handle(self, method: str, headers: dict[str, Any], body: bytes | bytearray | str | None) -> Response:
+    def handle(
+        self,
+        method: str,
+        headers: dict[str, Any],
+        body: bytes | bytearray | str | None,
+        *,
+        principal: str = "",
+        auth: McpCallerAuth | None = None,
+    ) -> Response:
         normalized_method = str(method or "").strip().upper()
         if normalized_method == "POST":
-            return self._handle_post(headers, _to_bytes(body))
+            return self._handle_post(headers, _to_bytes(body), principal=principal, auth=auth)
         if normalized_method == "GET":
-            return self._handle_get(headers)
+            return self._handle_get(headers, principal=principal)
         if normalized_method == "DELETE":
-            return self._handle_delete(headers, _to_bytes(body))
+            return self._handle_delete(headers, _to_bytes(body), principal=principal)
         return _method_not_allowed_response("DELETE, GET, POST")
 
-    def _handle_post(self, headers: dict[str, Any], body: bytes) -> Response:
+    def _handle_post(
+        self,
+        headers: dict[str, Any],
+        body: bytes,
+        *,
+        principal: str = "",
+        auth: McpCallerAuth | None = None,
+    ) -> Response:
         origin_response = self._validate_origin(headers)
         if origin_response is not None:
             return origin_response
@@ -1151,9 +1308,9 @@ class McpServer:
             )
         shape = detect_mcp_protocol_version(headers, body)
         if "method" in raw:
-            return self._handle_post_request(headers, body, shape)
+            return self._handle_post_request(headers, body, shape, principal=principal, auth=auth)
         if "result" in raw or "error" in raw:
-            return self._handle_post_response(headers, body, shape)
+            return self._handle_post_response(headers, body, shape, principal=principal)
         return _bad_request("invalid JSON-RPC message")
 
     def _handle_post_request(
@@ -1161,6 +1318,9 @@ class McpServer:
         headers: dict[str, Any],
         body: bytes,
         shape: McpProtocolShape,
+        *,
+        principal: str = "",
+        auth: McpCallerAuth | None = None,
     ) -> Response:
         try:
             request = _parse_request(body)
@@ -1172,14 +1332,14 @@ class McpServer:
         if protocol_response is not None:
             return protocol_response
         if shape == MCP_PROTOCOL_SHAPE_2026_07_28:
-            return self._handle_stateless_post_request(request)
+            return self._handle_stateless_post_request(request, auth=auth)
         if request.method == "server/discover":
             if not request.id_present:
                 return _empty_response(202)
-            return self._marshal_single_response(self._dispatch(request, MCP_PROTOCOL_VERSION, ""))
+            return self._marshal_single_response(self._dispatch(request, MCP_PROTOCOL_VERSION, "", auth=auth))
         if request.method == "initialize":
-            return self._handle_initialize_http(request)
-        session_id, session, response = self._require_session(headers)
+            return self._handle_initialize_http(request, principal=principal)
+        session_id, session, response = self._require_session(headers, principal=principal)
         if response is not None:
             return response
         if session is None or not session_id:
@@ -1190,12 +1350,14 @@ class McpServer:
         if not request.id_present:
             self._handle_notification(session, request)
             return _empty_response(202)
-        return self._handle_request_http(session_id, session, request, headers)
+        return self._handle_request_http(session_id, session, request, headers, auth=auth)
 
-    def _handle_stateless_post_request(self, request: _ParsedRPCRequest) -> Response:
+    def _handle_stateless_post_request(
+        self, request: _ParsedRPCRequest, *, auth: McpCallerAuth | None = None
+    ) -> Response:
         if not request.id_present:
             return _empty_response(202)
-        response = self._dispatch(request, MCP_PROTOCOL_VERSION_2026_07_28, "")
+        response = self._dispatch(request, MCP_PROTOCOL_VERSION_2026_07_28, "", auth=auth)
         missing = _missing_required_client_capabilities(request, response)
         if missing:
             return _protocol_error_response(
@@ -1211,6 +1373,8 @@ class McpServer:
         headers: dict[str, Any],
         body: bytes,
         shape: McpProtocolShape,
+        *,
+        principal: str = "",
     ) -> Response:
         try:
             rpc_response = _parse_response(body)
@@ -1219,7 +1383,7 @@ class McpServer:
         validation_response = _validate_post_response_protocol(headers, rpc_response, shape)
         if validation_response is not None:
             return validation_response
-        _, session, response = self._require_session(headers)
+        _, session, response = self._require_session(headers, principal=principal)
         if response is not None:
             return response
         if session is not None:
@@ -1228,7 +1392,7 @@ class McpServer:
                 return protocol_response
         return _empty_response(202)
 
-    def _handle_get(self, headers: dict[str, Any]) -> Response:
+    def _handle_get(self, headers: dict[str, Any], *, principal: str = "") -> Response:
         origin_response = self._validate_origin(headers)
         if origin_response is not None:
             return origin_response
@@ -1237,7 +1401,7 @@ class McpServer:
         header_response = _validate_get_headers(headers)
         if header_response is not None:
             return header_response
-        session_id, session, response = self._require_session(headers)
+        session_id, session, response = self._require_session(headers, principal=principal)
         if response is not None:
             return response
         if session is None or not session_id:
@@ -1259,7 +1423,7 @@ class McpServer:
         except Exception:  # noqa: BLE001
             return _internal_server_error()
 
-    def _handle_delete(self, headers: dict[str, Any], body: bytes) -> Response:
+    def _handle_delete(self, headers: dict[str, Any], body: bytes, *, principal: str = "") -> Response:
         origin_response = self._validate_origin(headers)
         if origin_response is not None:
             return origin_response
@@ -1269,7 +1433,7 @@ class McpServer:
         if not session_id:
             return _bad_request("missing Mcp-Session-Id")
         try:
-            session = self._get_session(session_id)
+            session = self._get_session(session_id, principal=principal)
         except McpSessionNotFoundError:
             return _not_found("session not found")
         except Exception:  # noqa: BLE001
@@ -1283,9 +1447,9 @@ class McpServer:
             self.task_runtime.store.delete_session(session_id)
         return _empty_response(202)
 
-    def _handle_initialize_http(self, request: _ParsedRPCRequest) -> Response:
+    def _handle_initialize_http(self, request: _ParsedRPCRequest, *, principal: str = "") -> Response:
         negotiated = _negotiate_protocol_version(request.params)
-        session = self._create_session(negotiated)
+        session = self._create_session(negotiated, principal=principal)
         return self._marshal_single_response(self._handle_initialize(request, negotiated), session.id, True)
 
     def _handle_notification(self, session: McpSession, request: _ParsedRPCRequest) -> None:
@@ -1294,7 +1458,13 @@ class McpServer:
         data = dict(session.data or {})
         data["initialized"] = "true"
         self.session_store.put(
-            McpSession(id=session.id, created_at=session.created_at, expires_at=session.expires_at, data=data)
+            McpSession(
+                id=session.id,
+                created_at=session.created_at,
+                expires_at=session.expires_at,
+                data=data,
+                principal=session.principal,
+            )
         )
 
     def _handle_request_http(
@@ -1303,6 +1473,8 @@ class McpServer:
         session: McpSession,
         request: _ParsedRPCRequest,
         headers: dict[str, Any],
+        *,
+        auth: McpCallerAuth | None = None,
     ) -> Response:
         protocol = _session_protocol_version(session)
         if (
@@ -1310,10 +1482,17 @@ class McpServer:
             and _accepts_event_stream(headers)
             and self._should_stream_tools_call(request)
         ):
-            return self._handle_tools_call_stream(session_id, request)
-        return self._marshal_single_response(self._dispatch(request, protocol, session_id))
+            return self._handle_tools_call_stream(session_id, request, auth=auth)
+        return self._marshal_single_response(self._dispatch(request, protocol, session_id, auth=auth))
 
-    def _dispatch(self, request: _ParsedRPCRequest, protocol_version: str, session_id: str) -> dict[str, Any]:
+    def _dispatch(
+        self,
+        request: _ParsedRPCRequest,
+        protocol_version: str,
+        session_id: str,
+        *,
+        auth: McpCallerAuth | None = None,
+    ) -> dict[str, Any]:
         if not _method_allowed_for_protocol(protocol_version, request.method):
             return _new_error_response(request.id, MCP_CODE_METHOD_NOT_FOUND, f"Method not found: {request.method}")
         if protocol_version == MCP_PROTOCOL_VERSION_2026_07_28 and _stateless_request_requires_session(request):
@@ -1335,7 +1514,7 @@ class McpServer:
         elif request.method == "tools/list":
             response = _new_result_response(request.id, {"tools": self.tool_registry.list()})
         elif request.method == "tools/call":
-            response = self._handle_tools_call(request, session_id, protocol_version)
+            response = self._handle_tools_call(request, session_id, protocol_version, auth=auth)
         elif request.method == "resources/list":
             response = _new_result_response(request.id, {"resources": self.resource_registry.list()})
         elif request.method == "resources/read":
@@ -1434,7 +1613,14 @@ class McpServer:
             capabilities["extensions"] = _json_clone(self.extension_capabilities)
         return capabilities
 
-    def _handle_tools_call(self, request: _ParsedRPCRequest, session_id: str, protocol_version: str) -> dict[str, Any]:
+    def _handle_tools_call(
+        self,
+        request: _ParsedRPCRequest,
+        session_id: str,
+        protocol_version: str,
+        *,
+        auth: McpCallerAuth | None = None,
+    ) -> dict[str, Any]:
         params = _params_record(request.params)
         name = str(params.get("name") or "").strip()
         if not name:
@@ -1445,7 +1631,7 @@ class McpServer:
             # surface only; earlier versions reuse the disabled-task error.
             if protocol_version != MCP_PROTOCOL_VERSION or not self._tasks_enabled():
                 return _new_error_response(request.id, MCP_CODE_METHOD_NOT_FOUND, "Method not found: tasks not enabled")
-            return self._handle_task_tools_call(request, session_id, name, params)
+            return self._handle_task_tools_call(request, session_id, name, params, auth=auth)
         if task_support == "required":
             return _new_error_response(
                 request.id, MCP_CODE_METHOD_NOT_FOUND, "Method not found: tool requires task execution"
@@ -1462,11 +1648,12 @@ class McpServer:
                         dict(params["inputResponses"]) if isinstance(params.get("inputResponses"), Mapping) else None
                     ),
                     request_state=(str(params["requestState"]) if isinstance(params.get("requestState"), str) else ""),
+                    auth=auth,
                 ),
             )
             return _new_result_response(request.id, result)
         except Exception as exc:  # noqa: BLE001
-            return _tool_call_error(request.id, name, exc)
+            return self._tool_call_error(request.id, name, exc)
 
     def _handle_resources_read(self, request: _ParsedRPCRequest) -> dict[str, Any]:
         params = _params_record(request.params)
@@ -1474,7 +1661,7 @@ class McpServer:
         try:
             return _new_result_response(request.id, {"contents": self.resource_registry.read(uri)})
         except Exception as exc:  # noqa: BLE001
-            return _new_error_response(request.id, MCP_CODE_INVALID_PARAMS, _error_message(exc))
+            return self._surface_error(request.id, exc, code=MCP_CODE_INVALID_PARAMS, surface="resource")
 
     def _handle_prompts_get(self, request: _ParsedRPCRequest) -> dict[str, Any]:
         params = _params_record(request.params)
@@ -1482,7 +1669,7 @@ class McpServer:
         try:
             return _new_result_response(request.id, self.prompt_registry.get(name, params.get("arguments")))
         except Exception as exc:  # noqa: BLE001
-            return _new_error_response(request.id, MCP_CODE_INVALID_PARAMS, _error_message(exc))
+            return self._surface_error(request.id, exc, code=MCP_CODE_INVALID_PARAMS, surface="prompt")
 
     def _should_stream_tools_call(self, request: _ParsedRPCRequest) -> bool:
         if not self._method_capability_enabled("tools/call"):
@@ -1495,7 +1682,9 @@ class McpServer:
             return False
         return self.tool_registry.supports_streaming(name)
 
-    def _handle_tools_call_stream(self, session_id: str, request: _ParsedRPCRequest) -> Response:
+    def _handle_tools_call_stream(
+        self, session_id: str, request: _ParsedRPCRequest, *, auth: McpCallerAuth | None = None
+    ) -> Response:
         stream_id = ""
         try:
             stream_id = self.stream_store.create(session_id)
@@ -1527,7 +1716,7 @@ class McpServer:
                 name,
                 params.get("arguments"),
                 emit,
-                McpToolContext(session_id=session_id, request_id=request.id, method=request.method),
+                McpToolContext(session_id=session_id, request_id=request.id, method=request.method, auth=auth),
             )
             self.stream_store.append(session_id, stream_id, _json_bytes(_new_result_response(request.id, result)))
             self.stream_store.close(session_id, stream_id)
@@ -1536,7 +1725,7 @@ class McpServer:
             if stream_id:
                 with contextlib.suppress(Exception):
                     self.stream_store.close(session_id, stream_id)
-            return self._marshal_single_response(_tool_call_error(request.id, "", exc))
+            return self._marshal_single_response(self._tool_call_error(request.id, "", exc))
 
     def _handle_task_tools_call(
         self,
@@ -1544,6 +1733,8 @@ class McpServer:
         session_id: str,
         name: str,
         params: dict[str, Any],
+        *,
+        auth: McpCallerAuth | None = None,
     ) -> dict[str, Any]:
         store = self.task_runtime.store
         if store is None:
@@ -1578,29 +1769,42 @@ class McpServer:
         # or half-apply its writes: the Lambda execution environment is frozen
         # once the handler returns, so the work resumes at an unpredictable time
         # (or never).
-        finished = self._finish_task(store, created, params.get("arguments"))
+        finished = self._finish_task(store, created, params.get("arguments"), auth=auth)
         meta: dict[str, Any] = {RELATED_TASK_METADATA_KEY: {"taskId": finished.task.task_id}}
         if self.task_runtime.model_immediate_response:
             meta[MODEL_IMMEDIATE_RESPONSE_METADATA_KEY] = self.task_runtime.model_immediate_response
         return _new_result_response(request.id, {"_meta": meta, "task": _task_to_json(finished.task)})
 
-    def _finish_task(self, store: McpTaskStore, record: McpTaskRecord, args: Any) -> McpTaskRecord:
+    def _finish_task(
+        self,
+        store: McpTaskStore,
+        record: McpTaskRecord,
+        args: Any,
+        *,
+        auth: McpCallerAuth | None = None,
+    ) -> McpTaskRecord:
         next_record = _clone_task_record(record)
         next_record.task.last_updated_at = _iso_no_millis(self.clock.now())
         try:
             result = self.tool_registry.call(
                 str(record.tool_name or ""),
                 args,
-                McpToolContext(session_id=record.session_id, request_id=record.task.task_id, method=record.method),
+                McpToolContext(
+                    session_id=record.session_id,
+                    request_id=record.task.task_id,
+                    method=record.method,
+                    auth=auth,
+                ),
             )
             next_record.result = result
             next_record.task.status = "failed" if bool(result.get("isError")) else "completed"
             if bool(result.get("isError")):
                 next_record.task.status_message = "tool returned isError result"
         except Exception as exc:  # noqa: BLE001
-            next_record.error = McpRPCError(code=MCP_CODE_SERVER_ERROR, message=_error_message(exc))
+            message = self._handler_error_message(exc, surface="task")
+            next_record.error = McpRPCError(code=MCP_CODE_SERVER_ERROR, message=message)
             next_record.task.status = "failed"
-            next_record.task.status_message = _error_message(exc)
+            next_record.task.status_message = message
         try:
             return store.update(next_record)
         except McpTaskTerminalError:
@@ -1617,7 +1821,7 @@ class McpServer:
         try:
             return _new_result_response(request.id, _task_to_json(self._require_task_store().get(lookup).task))
         except Exception as exc:  # noqa: BLE001
-            return _task_store_error(request.id, exc)
+            return self._task_store_error(request.id, exc)
 
     def _handle_tasks_result(self, request: _ParsedRPCRequest, session_id: str) -> dict[str, Any]:
         lookup, error = _task_lookup_from_request(request, session_id)
@@ -1635,7 +1839,7 @@ class McpServer:
                 request.id, _task_result_with_related_metadata(record.result, record.task.task_id)
             )
         except Exception as exc:  # noqa: BLE001
-            return _task_store_error(request.id, exc)
+            return self._task_store_error(request.id, exc)
 
     def _handle_tasks_list(self, request: _ParsedRPCRequest, session_id: str) -> dict[str, Any]:
         try:
@@ -1652,7 +1856,7 @@ class McpServer:
                 ),
             )
         except Exception as exc:  # noqa: BLE001
-            return _task_store_error(request.id, exc)
+            return self._task_store_error(request.id, exc)
 
     def _handle_tasks_cancel(self, request: _ParsedRPCRequest, session_id: str) -> dict[str, Any]:
         lookup, error = _task_lookup_from_request(request, session_id)
@@ -1661,7 +1865,7 @@ class McpServer:
         try:
             return _new_result_response(request.id, _task_to_json(self._require_task_store().cancel(lookup).task))
         except Exception as exc:  # noqa: BLE001
-            return _task_store_error(request.id, exc)
+            return self._task_store_error(request.id, exc)
 
     def _require_task_store(self) -> McpTaskStore:
         if self.task_runtime.store is None:
@@ -1682,8 +1886,10 @@ class McpServer:
             return self.prompt_registry.len() > 0
         return True
 
-    def _get_session(self, session_id: str) -> McpSession:
+    def _get_session(self, session_id: str, *, principal: str = "") -> McpSession:
         session = _clone_session(self.session_store.get(session_id))
+        if session.principal and session.principal != str(principal or "").strip():
+            raise McpSessionNotFoundError()
         if _session_expired_at(self.clock.now(), session):
             self.session_store.delete(session_id)
             raise McpSessionNotFoundError()
@@ -1694,12 +1900,14 @@ class McpServer:
         self.session_store.put(refreshed)
         return refreshed
 
-    def _require_session(self, headers: dict[str, Any]) -> tuple[str, McpSession | None, Response | None]:
+    def _require_session(
+        self, headers: dict[str, Any], *, principal: str = ""
+    ) -> tuple[str, McpSession | None, Response | None]:
         session_id = _first_header(headers, MCP_HEADER_SESSION_ID)
         if not session_id:
             return "", None, _bad_request("missing Mcp-Session-Id")
         try:
-            return session_id, self._get_session(session_id), None
+            return session_id, self._get_session(session_id, principal=principal), None
         except McpSessionNotFoundError:
             return "", None, _not_found("session not found")
         except Exception:  # noqa: BLE001
@@ -1716,16 +1924,55 @@ class McpServer:
             return _bad_request("MCP-Protocol-Version mismatch")
         return None
 
-    def _create_session(self, protocol_version: str) -> McpSession:
+    def _create_session(self, protocol_version: str, *, principal: str = "") -> McpSession:
         now = self.clock.now()
         session = McpSession(
             id=_normalize_required(self.id_generator.new_id(), "session id generator returned empty id"),
             created_at=_iso_no_millis(now),
             expires_at=_iso_no_millis(now + dt.timedelta(milliseconds=self.session_ttl_ms)),
             data={"protocolVersion": protocol_version},
+            principal=str(principal or "").strip(),
         )
         self.session_store.put(session)
         return session
+
+    def _handler_error_message(self, exc: Any, *, surface: str) -> str:
+        original = _error_message(exc)
+        if _is_control_error(exc):
+            return original
+        logger = self.logger
+        if logger is not None:
+            with contextlib.suppress(Exception):
+                logger.error("mcp handler error", {"surface": surface, "error": original})
+        return original if self.verbose_handler_errors else GENERIC_HANDLER_ERROR_MESSAGE
+
+    def _tool_call_error(self, id: Any, tool_name: str, exc: Any) -> dict[str, Any]:
+        original = _error_message(exc)
+        if original.startswith("tool not found:"):
+            return _new_error_response(id, MCP_CODE_INVALID_PARAMS, original)
+        return _new_error_response(
+            id,
+            MCP_CODE_SERVER_ERROR,
+            self._handler_error_message(exc, surface="tool") or GENERIC_HANDLER_ERROR_MESSAGE,
+        )
+
+    def _surface_error(self, id: Any, exc: Any, *, code: int, surface: str) -> dict[str, Any]:
+        if _is_control_error(exc):
+            return _new_error_response(id, code, _error_message(exc))
+        return _new_error_response(
+            id,
+            code,
+            self._handler_error_message(exc, surface=surface) or GENERIC_HANDLER_ERROR_MESSAGE,
+        )
+
+    def _task_store_error(self, id: Any, exc: Any) -> dict[str, Any]:
+        if isinstance(exc, McpTaskNotFoundError | McpTaskTerminalError | McpTaskInvalidCursorError):
+            return _new_error_response(id, MCP_CODE_INVALID_PARAMS, _error_message(exc))
+        return _new_error_response(
+            id,
+            MCP_CODE_SERVER_ERROR,
+            self._handler_error_message(exc, surface="task") or GENERIC_HANDLER_ERROR_MESSAGE,
+        )
 
     def _marshal_single_response(
         self,
@@ -2795,6 +3042,7 @@ def _clone_session(session: McpSession | dict[str, Any]) -> McpSession:
         created_at=str(_field(session, "created_at") or _field(session, "createdAt") or ""),
         expires_at=str(_field(session, "expires_at") or _field(session, "expiresAt") or ""),
         data=dict(_field(session, "data") or {}) if isinstance(_field(session, "data"), dict) else None,
+        principal=str(_field(session, "principal") or "").strip(),
     )
 
 
@@ -2818,18 +3066,168 @@ def _error_message(exc: Any) -> str:
     return str(exc)
 
 
+_CONTROL_ERROR_PREFIXES = (
+    "tool not found:",
+    "resource not found:",
+    "prompt not found:",
+    "method not found:",
+    "invalid params",
+    "invalid uri",
+    "session not found",
+    "stream not found",
+    "stream event exceeds",
+    "event not found",
+    "task canceled",
+    "task not found",
+    "task already terminal",
+    "invalid task list cursor",
+    "task result not available",
+    "task capacity",
+    "unsupported mcp resulttype",
+    "input_required result requires",
+    "inputrequests and requeststate require",
+)
+
+_CONTROL_ERROR_TYPES = (
+    McpSessionNotFoundError,
+    McpStreamNotFoundError,
+    McpEventNotFoundError,
+    McpTaskNotFoundError,
+    McpTaskTerminalError,
+    McpTaskInvalidCursorError,
+    McpStreamEventTooLargeError,
+    McpTaskCapacityError,
+)
+
+
+def _is_control_error(exc: Any) -> bool:
+    if isinstance(exc, _CONTROL_ERROR_TYPES):
+        return True
+    message = _error_message(exc).strip().lower()
+    return any(message.startswith(prefix) for prefix in _CONTROL_ERROR_PREFIXES)
+
+
+def _normalize_scope_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        raw_values: list[Any] = [value]
+    elif isinstance(value, list | tuple | set):
+        raw_values = list(value)
+    else:
+        return []
+    scopes: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_values:
+        scope = str(raw or "").strip()
+        if scope and scope not in seen:
+            seen.add(scope)
+            scopes.append(scope)
+    return scopes
+
+
+def _bearer_claims_from_context(ctx: Any) -> Any | None:
+    getter = getattr(ctx, "get", None)
+    if not callable(getter):
+        return None
+    try:
+        from apptheory.oauth import bearer_token_claims_from_context
+
+        return bearer_token_claims_from_context(ctx)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _caller_auth_from_context(ctx: Any) -> McpCallerAuth | None:
+    if ctx is None:
+        return None
+    identity = str(getattr(ctx, "auth_identity", "") or "").strip()
+    scopes: list[str] = []
+    principal = getattr(ctx, "secure_principal", None)
+    try:
+        principal = principal() if callable(principal) else principal
+    except Exception:  # noqa: BLE001
+        principal = None
+    if principal is not None:
+        if not identity:
+            identity = str(getattr(principal, "identity", "") or "").strip()
+        scopes = _normalize_scope_list(getattr(principal, "scopes", None))
+    claims = _bearer_claims_from_context(ctx)
+    if claims is not None:
+        if not identity:
+            identity = str(getattr(claims, "subject", "") or "").strip()
+        if not scopes:
+            scopes = _normalize_scope_list(getattr(claims, "scopes", None))
+    tenant_id = str(getattr(ctx, "tenant_id", "") or "")
+    tenant_bound = bool(getattr(ctx, "tenant_bound", False))
+    if not identity and not tenant_id and not tenant_bound and not scopes:
+        return None
+    return McpCallerAuth(
+        auth_identity=identity,
+        tenant_id=tenant_id,
+        tenant_bound=tenant_bound,
+        scopes=scopes,
+    )
+
+
+def _principal_from_auth(auth: McpCallerAuth | None) -> str:
+    if auth is None:
+        return ""
+    identity = str(auth.auth_identity or "").strip()
+    if identity:
+        return identity
+    if auth.tenant_bound:
+        return str(auth.tenant_id or "").strip()
+    return ""
+
+
+def _stream_ttl_seconds() -> int:
+    raw = str(os.environ.get(ENV_STREAM_TTL_MINUTES) or "").strip()
+    try:
+        minutes = int(raw)
+    except ValueError:
+        minutes = 0
+    if minutes <= 0:
+        minutes = DEFAULT_STREAM_TTL_MINUTES
+    return minutes * 60
+
+
+def _stream_max_event_bytes() -> int:
+    raw = str(os.environ.get(ENV_STREAM_MAX_EVENT_BYTES) or "").strip()
+    try:
+        max_bytes = int(raw)
+    except ValueError:
+        max_bytes = 0
+    return max_bytes if max_bytes > 0 else DEFAULT_STREAM_MAX_EVENT_BYTES
+
+
+def _epoch_seconds(value: dt.datetime) -> int:
+    utc = value.astimezone(dt.UTC) if value.tzinfo else value.replace(tzinfo=dt.UTC)
+    return int(utc.timestamp())
+
+
+def _stream_record_expired_at(now: dt.datetime, item: Any) -> bool:
+    try:
+        expires_at = int(_field(item, "expires_at") or _field(item, "expiresAt") or 0)
+    except Exception:  # noqa: BLE001
+        expires_at = 0
+    if expires_at <= 0:
+        return False
+    return _epoch_seconds(now) >= expires_at
+
+
+def _task_record_expired_at(now: dt.datetime, record: McpTaskRecord) -> bool:
+    ttl_ms = int(record.task.ttl or 0)
+    if ttl_ms <= 0:
+        return False
+    created = _parse_task_created_at(record.task.created_at)
+    now_utc = now.astimezone(dt.UTC) if now.tzinfo else now.replace(tzinfo=dt.UTC)
+    return now_utc >= created + dt.timedelta(milliseconds=ttl_ms)
+
+
 def _normalize_required(value: Any, message: str) -> str:
     normalized = str(value or "").strip()
     if not normalized:
         raise ValueError(message)
     return normalized
-
-
-def _tool_call_error(id: Any, tool_name: str, exc: Any) -> dict[str, Any]:
-    message = _error_message(exc)
-    if message.startswith("tool not found:"):
-        return _new_error_response(id, MCP_CODE_INVALID_PARAMS, message)
-    return _new_error_response(id, MCP_CODE_SERVER_ERROR, message if tool_name else message or "internal error")
 
 
 def _normalize_progress_token(value: Any) -> str | int | float | None:
@@ -2915,12 +3313,6 @@ def _task_lookup_from_request(request: _ParsedRPCRequest, session_id: str) -> tu
     if not task_id:
         return McpTaskLookup(session_id=session_id, task_id=""), "Invalid params: missing taskId"
     return McpTaskLookup(session_id=session_id, task_id=task_id), ""
-
-
-def _task_store_error(id: Any, exc: Any) -> dict[str, Any]:
-    if isinstance(exc, McpTaskNotFoundError | McpTaskTerminalError | McpTaskInvalidCursorError):
-        return _new_error_response(id, MCP_CODE_INVALID_PARAMS, _error_message(exc))
-    return _new_error_response(id, MCP_CODE_SERVER_ERROR, _error_message(exc))
 
 
 def _task_status_terminal(status: str) -> bool:
@@ -3181,6 +3573,7 @@ class _McpStreamItem:
     sequence: int = _n("sequence", omitempty=True)
     event_id: str = _s("eventId", omitempty=True)
     data: str = _s("data", omitempty=True)
+    expires_at: int = _n("expiresAt", roles=["ttl"])
 
 
 def _task_record_to_item(record: McpTaskRecord) -> _McpTaskItem:
@@ -3224,8 +3617,15 @@ def _item_to_task_record(item: Any) -> McpTaskRecord:
 
 
 __all__ = [
+    "DEFAULT_STREAM_MAX_EVENT_BYTES",
     "DEFAULT_STREAM_TABLE_NAME",
+    "DEFAULT_STREAM_TTL_MINUTES",
     "DEFAULT_TASK_TABLE_NAME",
+    "GENERIC_HANDLER_ERROR_MESSAGE",
+    "MAX_MEMORY_STREAM_EVENTS_PER_SESSION",
+    "MAX_MEMORY_STREAM_EVENT_BYTES",
+    "MAX_MEMORY_STREAM_SESSION_BYTES",
+    "MAX_MEMORY_TASKS_PER_SESSION",
     "MCP_CODE_HEADER_MISMATCH",
     "MCP_CODE_INTERNAL_ERROR",
     "MCP_CODE_INVALID_PARAMS",
@@ -3254,6 +3654,7 @@ __all__ = [
     "McpCacheHint",
     "McpCacheScope",
     "McpCacheableResultConfig",
+    "McpCallerAuth",
     "McpContentBlock",
     "McpDiscoverResult",
     "McpEventNotFoundError",
@@ -3288,10 +3689,12 @@ __all__ = [
     "McpSessionNotFoundError",
     "McpSessionStore",
     "McpStreamEvent",
+    "McpStreamEventTooLargeError",
     "McpStreamNotFoundError",
     "McpStreamStore",
     "McpStreamingToolHandler",
     "McpTask",
+    "McpTaskCapacityError",
     "McpTaskInvalidCursorError",
     "McpTaskListRequest",
     "McpTaskListResult",

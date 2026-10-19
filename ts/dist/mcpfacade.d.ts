@@ -57,6 +57,28 @@ export interface RootDiscoveryConfig {
     jwksURI: string;
     scopes: string[];
 }
+/**
+ * The encoded static policy of the brokered route refresh handle (DESIGN §8.4).
+ * It is a `FacadeConfig` field, never an environment variable, and it is
+ * required whenever the framework-owned front channel is configured: a missing
+ * or zero value is a registration error, not a silent fallback.
+ *
+ * - `handleTTLSeconds` is the local lifetime of a route refresh handle, in
+ *   seconds, and must lie in `[60, 2592000]`. The store applies it; a broker
+ *   store that reports its own lifetime through
+ *   `routeRefreshBrokerHandleTTLSeconds()` must agree with it.
+ * - `graceWindowSeconds` is the lost-response replay window measured from the
+ *   winning rotation. Absent or zero selects `DEFAULT_REFRESH_GRACE_WINDOW_SECONDS`;
+ *   inside the window the rotated handle replays the full stored successor body.
+ * - `reuseRateCeiling` bounds, per refresh family per hour, how many out-of-grace
+ *   depth-1 presentations are answered with the access token only. It must lie
+ *   in `[9, 120]`.
+ */
+export interface RouteRefreshPolicy {
+    handleTTLSeconds: number;
+    graceWindowSeconds?: number;
+    reuseRateCeiling: number;
+}
 /** Configures the complete route-algebra MCP OAuth facade. */
 export interface FacadeConfig {
     /** Absolute HTTPS issuer advertised by both metadata families in family mode. */
@@ -153,6 +175,20 @@ export interface FacadeConfig {
      * 502 upstream_error error page and never redirects (DESIGN §8.2).
      */
     providerHints?: (ctx: Context) => Record<string, string> | Promise<Record<string, string>>;
+    /**
+     * The static policy of the brokered route refresh handle. Required whenever
+     * `provider` is set: a missing or zero policy is a registration error, not a
+     * silent fallback.
+     */
+    routeRefreshPolicy?: RouteRefreshPolicy;
+    /**
+     * Optionally receives one schema-redacted route refresh broker event per
+     * refresh state transition. The hook runs synchronously on the request path;
+     * a throwing hook is contained, so telemetry can never fail a refresh. An
+     * event carries hashes and route-derived identifiers only — never a token, a
+     * handle, an authorization code, an ID token, or cookie material.
+     */
+    routeRefreshEvents?: RouteRefreshEventHook;
 }
 /** One endpoint-kind route family installed by the helper. */
 export interface FacadeRoute {
@@ -224,4 +260,119 @@ export declare function registerMcpFacadeSecure(secureApp: SecureApp, config: Fa
  * HTTP only for loopback hosts, and removes scheme-default ports.
  */
 export declare function normalizeRequestOrigin(raw: string): string | null;
+/** The handle lifetime floor of the route refresh policy, in seconds. */
+export declare const MIN_ROUTE_REFRESH_HANDLE_TTL_SECONDS = 60;
+/** The handle lifetime ceiling of the route refresh policy, in seconds: 30 days. */
+export declare const MAX_ROUTE_REFRESH_HANDLE_TTL_SECONDS = 2592000;
+/**
+ * The lost-response replay window a policy that does not state one selects. It
+ * is the pinned maximum, so a lazy client that retries a dropped rotation
+ * response inside two minutes recovers without a second upstream call.
+ */
+export declare const DEFAULT_REFRESH_GRACE_WINDOW_SECONDS = 120;
+/** The hard bound on the lossless replay carve-out. */
+export declare const MAX_REFRESH_GRACE_WINDOW_SECONDS = 120;
+/** The smallest accepted per-family hourly budget of beyond-grace serves. */
+export declare const MIN_REFRESH_REUSE_RATE_CEILING = 9;
+/** The configured budget cap, so the throttle never becomes an unbounded path. */
+export declare const MAX_REFRESH_REUSE_RATE_CEILING = 120;
+/** The fixed window of the per-family reuse budget, in seconds. */
+export declare const REFRESH_REUSE_RATE_WINDOW_SECONDS = 3600;
+/** The rate-limit operation the reuse budget is counted under. */
+export declare const REFRESH_REUSE_RATE_OPERATION = "route_refresh_reuse_depth1";
+/**
+ * The generation of a handle the facade mints as the root of a new refresh
+ * family. Every successor records the presented generation plus one, so depth
+ * relative to the head is arithmetic.
+ */
+export declare const REFRESH_CHAIN_ROOT_GENERATION = 1;
+/**
+ * The closed class vocabulary of the route refresh broker telemetry the facade
+ * emits: broker issuance, local validation rejections, refresh lock
+ * acquisition, coalesced service from a stored grace response, successful
+ * refresh, reuse classification, upstream rejection attribution, and broker
+ * state failures.
+ */
+export declare const ROUTE_REFRESH_EVENT_ISSUED: "issued";
+export declare const ROUTE_REFRESH_EVENT_VALIDATION_REJECTED: "validation_rejected";
+export declare const ROUTE_REFRESH_EVENT_LOCK_ACQUIRED: "lock_acquired";
+export declare const ROUTE_REFRESH_EVENT_GRACE_SERVED: "grace_served";
+export declare const ROUTE_REFRESH_EVENT_REFRESHED: "refreshed";
+export declare const ROUTE_REFRESH_EVENT_REUSE: "reuse";
+export declare const ROUTE_REFRESH_EVENT_UPSTREAM_REAUTH_REQUIRED: "upstream_reauth_required";
+export declare const ROUTE_REFRESH_EVENT_STATE_FAILURE: "state_failure";
+/** The reuse outcomes of a {@link ROUTE_REFRESH_EVENT_REUSE} event. */
+export declare const ROUTE_REFRESH_OUTCOME_ACCESS_TOKEN_ONLY: "access_token_only";
+export declare const ROUTE_REFRESH_OUTCOME_REVOKED_FAMILY: "revoked_family";
+export declare const ROUTE_REFRESH_OUTCOME_REVOKED_WALK: "revoked_walk";
+export declare const ROUTE_REFRESH_OUTCOME_RATE_LIMITED: "rate_limited";
+export declare const ROUTE_REFRESH_OUTCOME_BINDING_REJECTED: "binding_rejected";
+/** The failure or trigger reasons of a validation or state event. */
+export declare const ROUTE_REFRESH_REASON_HANDLE_MALFORMED: "handle_malformed";
+export declare const ROUTE_REFRESH_REASON_CLIENT_REJECTED: "client_rejected";
+export declare const ROUTE_REFRESH_REASON_RECORD_ABSENT: "record_absent";
+export declare const ROUTE_REFRESH_REASON_RECORD_EXPIRED: "record_expired";
+export declare const ROUTE_REFRESH_REASON_RECORD_REVOKED: "record_revoked";
+export declare const ROUTE_REFRESH_REASON_CLIENT_MISMATCH: "client_mismatch";
+export declare const ROUTE_REFRESH_REASON_RESOURCE_MISMATCH: "resource_mismatch";
+export declare const ROUTE_REFRESH_REASON_BINDING_REJECTED: "binding_rejected";
+export declare const ROUTE_REFRESH_REASON_LOCK_CONTENTION: "lock_contention";
+export declare const ROUTE_REFRESH_REASON_STORE_FAILURE: "store_failure";
+export declare const ROUTE_REFRESH_REASON_REWRITE_FAILURE: "rewrite_failure";
+export declare const ROUTE_REFRESH_REASON_FAMILY_REVOKE_UNAVAILABLE: "family_revoke_unavailable";
+export declare const ROUTE_REFRESH_REASON_FAMILY_REVOKE_FAILED: "family_revoke_failed";
+export declare const ROUTE_REFRESH_REASON_ALREADY_SERVED: "already_served";
+export declare const ROUTE_REFRESH_REASON_UPSTREAM_REJECTED: "upstream_rejected";
+export declare const ROUTE_REFRESH_REASON_SUCCESSOR_BODY: "successor_body";
+export declare const ROUTE_REFRESH_REASON_ACCESS_TOKEN_ONLY: "access_token_only";
+/** The store's absent-versus-expired signal; the client body stays uniform. */
+export declare const ROUTE_REFRESH_EXPIRY_SIGNAL_ABSENT: "absent";
+export declare const ROUTE_REFRESH_EXPIRY_SIGNAL_EXPIRED: "expired";
+export type RouteRefreshEventClass = typeof ROUTE_REFRESH_EVENT_ISSUED | typeof ROUTE_REFRESH_EVENT_VALIDATION_REJECTED | typeof ROUTE_REFRESH_EVENT_LOCK_ACQUIRED | typeof ROUTE_REFRESH_EVENT_GRACE_SERVED | typeof ROUTE_REFRESH_EVENT_REFRESHED | typeof ROUTE_REFRESH_EVENT_REUSE | typeof ROUTE_REFRESH_EVENT_UPSTREAM_REAUTH_REQUIRED | typeof ROUTE_REFRESH_EVENT_STATE_FAILURE;
+/**
+ * One schema-redacted route refresh broker telemetry event. Every identifier is
+ * a hash or a route-derived value; the event never carries an authorization
+ * code, an access token, an upstream refresh token, a route refresh handle, an
+ * ID token, a cookie, or provider session material.
+ */
+export interface RouteRefreshEvent {
+    class: RouteRefreshEventClass;
+    reason?: string;
+    outcome?: string;
+    errorCode?: string;
+    at: Date;
+    issuer?: string;
+    stage?: string;
+    canonicalResource?: string;
+    clientNamespace?: string;
+    endpointKind?: string;
+    partnerId?: string;
+    agentId?: string;
+    clientIdHash?: string;
+    subjectIdHash?: string;
+    handleHash?: string;
+    familyHash?: string;
+    successorHandleHash?: string;
+    upstreamRefreshTokenHash?: string;
+    previousUpstreamRefreshTokenHash?: string;
+    scopeFingerprint?: string;
+    statusFrom?: string;
+    statusTo?: string;
+    /** The presented record's family generation, 0 for a pre-policy record. */
+    chainGeneration?: number;
+    /** The classified distance from the presented handle to the head, capped at 2. */
+    chainDepth?: number;
+    /** `absent` or `expired` for a record-state rejection. */
+    expirySignal?: string;
+    /** The provider error class for upstream attribution. */
+    upstreamClass?: string;
+    /** How many records a family or walk revocation handled. */
+    revokedRecords?: number;
+}
+/**
+ * Receives one route refresh broker event. It runs synchronously on the request
+ * path, after the state transition it describes has been decided; a throwing
+ * hook is contained so telemetry can never fail a refresh.
+ */
+export type RouteRefreshEventHook = (event: RouteRefreshEvent) => void;
 //# sourceMappingURL=mcpfacade.d.ts.map

@@ -648,7 +648,7 @@ export class App {
         const middlewareTrace = ["request_id", "recovery", "logging"];
         if (origin)
             middlewareTrace.push("cors");
-        const tenantId = extractTenantId(preHeaders, preQuery);
+        let tenantId = extractTenantId(preHeaders, preQuery);
         const remainingMs = extractRemainingMs(ctx);
         const tier = this._tier;
         const finish = (resp, errCode) => {
@@ -720,6 +720,7 @@ export class App {
             requestId,
             traceId,
             tenantId,
+            requestedTenantId: tenantId,
             authIdentity: "",
             clientRequestId,
             remainingMs,
@@ -731,7 +732,7 @@ export class App {
         if (tier === "p2" && typeof this._policyHook === "function") {
             let decision;
             try {
-                decision = await this._policyHook(requestCtx);
+                decision = await this._policyHook(requestCtx.policyHookView());
             }
             catch (err) {
                 const code = errorCodeFrom(err);
@@ -770,6 +771,9 @@ export class App {
                 return finish(respondToServeError(err, normalized, requestId, traceId), code);
             }
         }
+        // Authentication rebinds the tenant to the verified claim. Log the tenant the
+        // request was actually authorized under, not the caller-supplied header value.
+        tenantId = requestCtx.tenantId;
         middlewareTrace.push("handler");
         let out;
         try {
@@ -1563,6 +1567,7 @@ function cloneContextWithTimeoutCarrier(ctx, carrier) {
         requestId: ctx.requestId,
         traceId: ctx.traceId,
         tenantId: ctx.tenantId,
+        requestedTenantId: ctx.requestedTenantId,
         authIdentity: ctx.authIdentity,
         clientRequestId: ctx.clientRequestId,
         tenantBound: ctx.tenantBound,

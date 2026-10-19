@@ -45,6 +45,7 @@ func (s nonTerminalCodeStore) Consume(
 type nonBumpingBrokerStore struct {
 	store.RouteRefreshBrokerStore
 	store.RouteRefreshBrokerSeeder
+	store.RouteRefreshBrokerFamilyStore
 }
 
 // Get hides the version bump a lock or revoke advanced on a record that is now
@@ -114,8 +115,9 @@ func nonBumpingBrokerStores(clock *store.ManualClock) store.Stores {
 		panic(fmt.Sprintf("reference broker type = %T, want *store.MemoryRouteRefreshBrokerStore", stores.RouteRefreshBroker))
 	}
 	stores.RouteRefreshBroker = nonBumpingBrokerStore{
-		RouteRefreshBrokerStore:  real,
-		RouteRefreshBrokerSeeder: real,
+		RouteRefreshBrokerStore:       real,
+		RouteRefreshBrokerSeeder:      real,
+		RouteRefreshBrokerFamilyStore: real,
 	}
 	return stores
 }

@@ -2,7 +2,7 @@ import { json as jsonResponse } from "../response.js";
 import { normalizeMicroVMCommand } from "./controller-contract.js";
 import { controllerErrorResponse, normalizeMicroVMControllerRequest, } from "./controller.js";
 import { safeError } from "./errors.js";
-import { MICROVM_ERROR_CONTROLLER_COMMAND_FAILED, MICROVM_ERROR_CONTROLLER_INCOMPLETE, MICROVM_ERROR_INVALID_CONTROLLER_REQUEST, MICROVM_ERROR_PROVIDER_OPERATION_FAILED, MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE, MICROVM_ERROR_TENANT_BINDING_VIOLATION, MICROVM_ERROR_UNAUTHENTICATED_CONTROLLER, MicroVMCommand, MicroVMSafeError, } from "./model.js";
+import { MICROVM_ERROR_CONTROLLER_COMMAND_FAILED, MICROVM_ERROR_CONTROLLER_INCOMPLETE, MICROVM_ERROR_INVALID_CONTROLLER_REQUEST, MICROVM_ERROR_PROVIDER_OPERATION_FAILED, MICROVM_ERROR_SESSION_OWNER_MISMATCH, MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE, MICROVM_ERROR_TENANT_BINDING_VIOLATION, MICROVM_ERROR_UNAUTHENTICATED_CONTROLLER, MicroVMCommand, MicroVMSafeError, } from "./model.js";
 import { normalizeMicroVMProviderInvokePath, normalizeStringArray, sanitizeMicroVMProviderInvokeHeaders, } from "./provider.js";
 export function registerMicroVMControllerRoutes(app, controller) {
     if (!app) {
@@ -272,6 +272,7 @@ export function microVMControllerHTTPStatus(err) {
         case MICROVM_ERROR_UNAUTHENTICATED_CONTROLLER:
             return 401;
         case MICROVM_ERROR_TENANT_BINDING_VIOLATION:
+        case MICROVM_ERROR_SESSION_OWNER_MISMATCH:
             return 403;
         case MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE:
             return 404;

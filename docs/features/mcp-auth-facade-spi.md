@@ -19,8 +19,8 @@ per-endpoint-kind `POST …/token` `authorization_code` grant. Nothing outside t
 registers none, exactly as before.
 
 Mounted: the per-endpoint-kind `POST …/register` RFC 7591 dynamic-client-registration route, and the
-`refresh_token` grant at `/token` — the brokered refresh (single-flight, rotating, with the framework's 30-second
-grace replay) answers a handle the code exchange minted. The CDK `facade` attachment is **presence-only by design**:
+`refresh_token` grant at `/token` — the brokered refresh (single-flight, rotating, with a configurable grace replay)
+answers a handle the code exchange minted. The CDK `facade` attachment is **presence-only by design**:
 its presence selects the `runtime-bearer` posture and enables the route derivation and the defense-in-depth floor
 checks, while the provider and the five store SPIs are runtime `FacadeConfig` wiring, not a CDK item
 (`FRAMEWORK_VS_POLICY.md`). See "What the front channel does" below.
@@ -137,7 +137,7 @@ atomic operations, not conventions**: replay handling and single-flight refresh 
 | `TransactionStore` | hash(upstream state) | `Put`, `Consume` (single-use) | ≤ 10 min |
 | `AuthorizationCodeStore` | hash(facade code) | `Put`, `Consume` (single-use, **retained** after consume so a replay is distinguishable from an unknown code) | ≤ 600 s (60 s recommended) |
 | `ClientStore` | hash(client id) | `Put`, `Get`, `Update` (compare-and-swap on version) | none (age-out policy) |
-| `RouteRefreshBrokerStore` | hash(route handle) | `Get`, `AcquireLock` (exclusive, expiring), `CompareAndSwap` (versioned), `Revoke` (idempotent, terminal) | ≤ min(upstream refresh lifetime, session lifetime, local policy) |
+| `RouteRefreshBrokerStore` | hash(route handle) | `Get`, `AcquireLock` (exclusive, expiring), `CompareAndSwap` (versioned), `Revoke` (idempotent, terminal); optional family capability (`ListFamily`, `RevokeFamily`) and handle-lifetime reporter | `RouteRefreshPolicy.HandleTTL` (≤ min(upstream refresh lifetime, session lifetime, local policy)) |
 | `RateLimitStore` | (identifier, resource, operation) | `CheckAndIncrement` (atomic) | window |
 
 Every store takes an injected clock, so TTL expiry and lock expiry are deterministic in tests. The in-memory
@@ -154,14 +154,79 @@ persist nor encrypt and must not be used as a durable store.
 
 **The grace body is retained for the record's lifetime, not for the grace window.** The broker record's
 `EncryptedGraceRefreshResponse` field holds the successor token response a rotation produced — the successor
-handle plus the upstream access token that was already returned to that client — and it is the only link the
-reuse walk can follow to revoke that successor, because the record carries no separate successor-handle field.
-A store must therefore **not** clear the field when the 30-second grace window closes: doing so would truncate
-a post-expiry whole-grant revoke to the single presented record and leave the successor live. The field expires
-with the record, under the record's own TTL (the broker TTL in the table above), never at the grace deadline,
-and a durable store **must** encrypt it at rest for that whole lifetime like every other `Encrypted*` field.
-Nothing extra is exposed by keeping it: it adds no material that is not already covered by the encryption
-obligation (the successor handle and an access token the client already received).
+handle plus the upstream access token that was already returned to that client — and it is the only carrier of the
+successor handle, because the record has no separate successor-handle field. It serves three purposes: the grace
+replay, the structural depth classification (does the named successor still exist as a live head?), and the bounded
+successor walk that revokes a family-less (pre-policy) record. A store must therefore **not** clear the field when
+the grace window closes: doing so would truncate a post-expiry revoke to the single presented record and leave the
+successor live. The field expires with the record, under the record's own TTL (the broker handle lifetime in the
+policy), never at the grace deadline, and a durable store **must** encrypt it at rest for that whole lifetime like
+every other `Encrypted*` field. Nothing extra is exposed by keeping it: it adds no material that is not already
+covered by the encryption obligation (the successor handle and an access token the client already received).
+
+## Route refresh policy, family, and telemetry
+
+The brokered refresh handle has three encoded policy values (see `FacadeConfig.RouteRefreshPolicy`):
+
+- **`HandleTTL`** — the local lifetime of a route refresh handle, required and bounded to `[60 s, 30 d]`. It is the
+  store's lifetime policy; a broker store that reports its own lifetime through the optional
+  `RouteRefreshBrokerHandleTTLReporter` must agree with it, so a deployment cannot declare a long ceiling while its
+  store silently keeps a short one. A missing or zero value is a registration error, never a fallback.
+- **`GraceWindow`** — the lost-response replay window measured from the winning rotation. Absent or zero selects
+  120 s; the maximum is 120 s. Inside the window the rotated (previous) handle replays the full stored successor
+  body, including handle material, because that is the lost-response recovery path. The boundary is exclusive: a
+  presentation at exactly the deadline is beyond grace.
+- **`ReuseRateCeiling`** — the per-family hourly budget of beyond-grace access-token-only serves, required and
+  bounded to `[9, 120]`. The floor sits above the benign dual-session cadence (two sessions rotating roughly four
+  times an hour ≈ eight presentations per family per hour), so the ceiling throttles harvest without throttling the
+  race it protects. It is a harvest throttle, not head-acquisition prevention.
+
+### Beyond-grace classification
+
+A rotated-away handle presented after its grace window is classified by **chain depth**:
+
+- **Depth 1** (the presented record's successor is a live, unrevoked head with no grace deadline set, and — for a
+  family-marked record — the successor's family matches and its generation is exactly the presented generation plus
+  one) is the benign shared-credential-store race. It is answered with the **access token only**: no beyond-grace
+  serve ever carries handle material, so no serve can upgrade a presenter from a rotated-away predecessor to the
+  head. Each handle serves this way **at most once**; the once-per-handle marker is written under the refresh lock
+  before the response is rendered. A denied per-family budget is answered with the uniform `invalid_grant` and does
+  **not** consume the handle's single serve and does **not** revoke anything.
+- **Depth 2 or more** — including a missing, expired, unparseable, revoked, or already-rotated successor, or a
+  generation/family mismatch — is theft class: the refresh family is revoked and the client receives the same
+  `invalid_grant` an unknown handle gets. Walk exhaustion defaults to depth 2 (fail closed).
+
+A reuse telemetry event fires on **every** out-of-grace presentation, whatever its outcome. The once-per-handle
+bound and the rate ceiling apply beyond grace only; within-grace grace-service responses are not budget-counted.
+
+### Family identity and revocation
+
+Every record carries a chain-root/family hash and a chain-generation counter. A handle the facade mints is the root
+of its own family (generation 1, family hash = hash of its own handle); every successor records the presented
+generation plus one and inherits the family hash. A confirmed theft revokes the whole family through the optional
+`RouteRefreshBrokerFamilyStore` capability (`RevokeFamily`, with `ListFamily` for incident enumeration), so a
+long-lived chain is not limited by the eight-link successor walk. A store without that capability, and any record
+that predates the family hash, falls back to the bounded walk and reports a state event, so the degradation is
+visible rather than silent.
+
+**Pre-policy records.** A record that predates the counter carries generation 0 and an empty family hash. It is
+classified **structurally** (its successor is read and inspected) rather than by arithmetic, and on its first
+mutation under the policy it becomes the root of a new family: the mutation assigns family = self and normalizes
+its generation to 1, and its successor records generation 2. The default is deliberately explicit because a
+pre-policy record's true chain position is unknowable.
+
+### Telemetry and the expiry signal
+
+`RouteRefreshEvents` is an optional synchronous hook with the SPEC.md:346-352 taxonomy: `issued`,
+`validation_rejected`, `lock_acquired`, `grace_served`, `refreshed`, `reuse` (with an outcome of
+`access_token_only`, `revoked_family`, `revoked_walk`, `rate_limited`, or `binding_rejected`),
+`upstream_reauth_required`, and `state_failure`. Events carry route identifiers, status transitions, and hashes
+only — never an authorization code, access token, upstream refresh token, route refresh handle, ID token, cookie, or
+provider session id. The hook runs synchronously and its panic/exception is contained.
+
+The broker store reports **expiry** distinctly from **absence** (`ErrBrokerExpired` / `BrokerExpiredError` versus
+not-found). The client-facing body stays the uniform `invalid_grant`; the distinction exists only for telemetry
+attribution.
 
 ## Front-channel configuration
 
@@ -181,6 +246,8 @@ front-channel field may be set (the `/register` and callback routes then mount o
 | `UpstreamIssuer` / `upstreamIssuer` / `upstream_issuer` | The expected upstream issuer: the RFC 9207 `iss` the callback pins before consuming the transaction or exchanging the code, and the issuer `Discovery` must verify before any published endpoint is trusted | empty | absolute HTTPS URL, no query, no fragment, normalized like `IssuerURL` | Registration error (`… upstream issuer must be an absolute HTTPS URL without query or fragment`) | DESIGN §8.2; DESIGN §5.2, §6 |
 | `LifecycleScopes` / `lifecycleScopes` / `lifecycle_scopes` | Scope values added to every upstream authorize request but never required from the MCP client (for example `offline_access`) | absent — adds none | each value trimmed, non-empty, and well-formed Unicode; duplicates collapse | Registration error (`lifecycle scope values cannot be empty` / `… must be well-formed Unicode`) | FRAMEWORK_VS_POLICY row 7 |
 | `ProviderHints` / `providerHints` / `provider_hints` | The opaque per-request hint seam for one authorize request (for example `account_id`); a hint carries **no authority** | absent — contributes no hints | none at registration (the function is opaque); a hint whose trimmed, lower-cased name collides with a required or reserved authorize parameter (`response_type`, `client_id`, `redirect_uri`, `code_challenge`, `code_challenge_method`, `state`, `resource`, `scope`) is refused by the adapter as `invalid_request` before the upstream is contacted, and a hint whose name carries leading or trailing whitespace is refused the same way rather than forwarded under its untrimmed or trimmed spelling, so a returned error is a provider-call failure in the gateway class (502 `upstream_error`), never a redirect | Registration error when set without `Provider` | DESIGN §6 |
+| `RouteRefreshPolicy` / `routeRefreshPolicy` / `route_refresh_policy` | The static policy of the brokered route refresh handle: `HandleTTL` (required), `GraceWindow` (optional, default 120 s), and `ReuseRateCeiling` (required) | none | **required whenever `Provider` is set.** `HandleTTL` ∈ [60 s, 30 d]; `GraceWindow` ∈ (0, 120 s]; `ReuseRateCeiling` ∈ [9, 120] per family per hour. A broker store that reports its own lifetime through the optional reporter must equal `HandleTTL` | Registration error on absent/zero/invalid values (`… route refresh policy handle TTL is required and must be positive`, `… must be within [1m0s, 720h0m0s]`); registration error when set without `Provider` | DESIGN §7 TTL min-of; docs/115 |
+| `RouteRefreshEvents` / `routeRefreshEvents` / `route_refresh_events` | Optional schema-redacted route refresh broker telemetry hook | absent — emits nothing | hook is opaque; called synchronously and its panic/exception is contained | Registration error when set without `Provider` | SPEC.md:346-352 |
 
 Every rejection uses the runtime's existing configuration-error prefix and the same message body (`mcpfacade: …`
 in Go, `AppTheoryMcpFacade: …` in TypeScript and Python).
@@ -190,10 +257,12 @@ The reasoning behind the shape, because each of these was a reviewer question:
 - **`Provider` is the anchor.** The front-channel field set is all-or-none: a `Provider` without the rest is
   incomplete (fail closed), and the rest without a `Provider` is dead configuration (fail closed). There is no
   "partially owned" front channel that half-registers.
-- **The five stores carry no TTL here.** Each store owns its own TTL — ≤10 min for a transaction, ≤600 s for an
-  authorization code, age-out (not TTL) for a client, `min(upstream refresh lifetime, session lifetime, local
-  policy)` for the broker, and a window for the rate limiter — so the facade configures none (DESIGN §7 TTL
-  column). The injected clock that makes those TTLs deterministic is the store's own concern.
+- **The stores carry no TTL here except the broker handle lifetime.** Each store owns its own TTL — ≤10 min for a
+  transaction, ≤600 s for an authorization code, age-out (not TTL) for a client, and a window for the rate limiter —
+  so the facade configures none of those (DESIGN §7 TTL column). The broker handle lifetime is the exception: the
+  route refresh policy declares it and the broker store applies it, because the value is the min-of policy the
+  facade must validate at startup rather than leave to a store default. The injected clock that makes every TTL
+  deterministic is the store's own concern.
 - **`UpstreamClientID` is both identities on purpose.** It is the client the facade presents upstream *and* the
   expected `azp`/`client_id` of an upstream access token the facade validates (DESIGN §5.2, §6), so there is no
   separate audience/`azp` field: a token minted for another client is refused against the same value.
@@ -262,13 +331,17 @@ belong to the framework rather than the application.
   missing or over-512-byte handle is `400 invalid_request`. Refresh is **single-flighted** under the broker store's
   lock, so concurrent callers of one handle cause exactly **one** upstream refresh call: a caller that loses that race
   waits up to 3 seconds, then receives the winner's successor tokens or `503 temporarily_unavailable` with
-  `Retry-After`. For **30 seconds** after a rotation the **previous** handle replays the same successor tokens
-  byte-for-byte (an idempotent lost-response path); after that window the previous handle is **reuse**, which revokes
-  the whole grant and answers the same `invalid_grant`. A terminal upstream rejection is `400 invalid_grant` (the
-  record is revoked), an upstream gateway failure is `502 upstream_error`, and a transient upstream, store, lock, or
-  contention failure is `503 temporarily_unavailable` with `Retry-After`. The grace window, the 3-second coalesce wait
-  cap, the 512-byte handle bound, and the broker store's 15-second lock TTL are framework constants — no
-  `FacadeConfig` field and no environment variable. The endpoint still answers `400 unsupported_grant_type` for every
+  `Retry-After`. For the configured grace window (default **120 seconds**, bounded at 120 s) the **previous** handle
+  replays the same successor tokens byte-for-byte (an idempotent lost-response path, including its handle material).
+  Beyond that window the previous handle is classified by chain depth: the immediate predecessor of a live head is
+  answered **with the access token only — never handle material — at most once per handle**, behind a per-family
+  hourly budget; a second serve of the same handle, or a replay two or more generations behind the head, is theft
+  class and revokes the whole refresh family with the same `invalid_grant`. A terminal upstream rejection is
+  `400 invalid_grant` (the record is revoked), an upstream gateway failure is `502 upstream_error`, and a transient
+  upstream, store, lock, or contention failure is `503 temporarily_unavailable` with `Retry-After`. The grace window,
+  the 3-second coalesce wait cap, the 512-byte handle bound, and the broker store's 15-second lock TTL are framework
+  constants; the handle lifetime, grace window, and reuse budget are the encoded `RouteRefreshPolicy` — no
+  environment variable. The endpoint still answers `400 unsupported_grant_type` for every
   other grant and `400 invalid_request` for an absent grant type. The refresh `503`'s `Retry-After` is a **fixed
   framework constant** (1 second) and is never computed from the injected framework clock, so a test that advances
   that clock can observe a `Retry-After` that disagrees with the harness's own real elapsed time — a harness artifact
@@ -305,7 +378,7 @@ framework never writes upstream material to a log, a redirect, a response, or an
 JSON encoded by each runtime's own encoder: Go's `encoding/json` HTML-escapes `&`, `<`, and `>` as `\u0026`,
 `\u003c`, and `\u003e`, while the TypeScript (`JSON.stringify`) and Python (`json.dumps(..., ensure_ascii=False)`)
 runtimes emit those characters raw. Every form decodes to the same values, and the grace replay is byte-identical
-**within** one runtime (which is what the 30-second replay requires); no cross-runtime byte equality is promised, so
+**within** one runtime (which is what the configured grace replay requires); no cross-runtime byte equality is promised, so
 a cross-language golden comparison must normalize or compare decoded values, never raw bodies.
 
 ## Conformance suites and the fake provider
@@ -316,13 +389,15 @@ Three shared conformance tables drive all three runtimes from one source (`contr
   validation rows, run against the Autheory adapter and a tiny second adapter (provider-neutrality) over a **real
   local HTTP fake upstream with real RSA keys**.
 - `facade-store-conformance.v1.json` — the atomicity rows (single-use consume, replay vs unknown, rotation/CAS, lock
-  with expiry, idempotent revoke, rate-limit window) including concurrent-consume/rotate/revoke rows, run against the
-  in-memory reference stores.
+  with expiry, idempotent revoke, rate-limit window) including concurrent-consume/rotate/revoke rows, the broker
+  expiry-versus-absence signal, and the optional family capability rows (`list_family`, `revoke_family`, and an
+  unknown-family empty result), run against the in-memory reference stores.
 - `facade-conformance.v1.json` — the front-channel behavior rows executed through the real mounted handlers: the RFC
   9207 `iss` pin, the loopback redirect match, the bounded strict `/token` form parse, the method-mismatch rule, the
   RFC 7591 DCR (`dcr`) rows, the DCR route binding (`bound_route`) rows, and the brokered refresh (`refresh`) rows
-  (rotation, the grace replay, reuse-after-grace revocation, the byte-identical refusal set, the scope/resource rule,
-  the handle bound, replayed-code revocation, and the upstream terminal/transient failures).
+  (rotation, the grace replay, the beyond-grace depth-1 access-token-only serve, the second-serve/theft revocation,
+  the byte-identical refusal set, the scope/resource rule, the handle bound, replayed-code revocation, and the
+  upstream terminal/transient failures).
 
 Any store — the in-memory ones now, an application's durable store later — must pass the store conformance suite. A
 fake provider (real RSA keys, real local HTTP, configurable success/error/slow/oversized-filler/oversized-valid-json/

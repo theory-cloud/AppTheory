@@ -96,6 +96,7 @@ export const MICROVM_ERROR_CONTROLLER_INCOMPLETE = "m15.microvm.controller_incom
 export const MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE = "m15.microvm.session_registry_incomplete";
 export const MICROVM_ERROR_INVALID_CONTROLLER_REQUEST = "m15.microvm.invalid_controller_request";
 export const MICROVM_ERROR_CONTROLLER_COMMAND_FAILED = "m15.microvm.controller_command_failed";
+export const MICROVM_ERROR_SESSION_OWNER_MISMATCH = "m15.microvm.session_owner_mismatch";
 export const MICROVM_CONTROLLER_AUTH_DEFAULT_DENY = "deny";
 export const MICROVM_SESSION_REGISTRY_MODEL_NAME = "MicroVMSessionRegistryRecord";
 export const MICROVM_SESSION_REGISTRY_TABLE_NAME = "apptheory-microvm-sessions";

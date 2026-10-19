@@ -115,19 +115,23 @@ func TestMiddleware_SkipRequest_SkipsLimiter(t *testing.T) {
 	require.Equal(t, 0, stub.recordCalls)
 }
 
-func TestDefaultExtractIdentifier_UsesAPIKeyBearerContextAndClientIP(t *testing.T) {
+func TestDefaultExtractIdentifier_SecureDefaults(t *testing.T) {
+	// Context identity wins over credentials and the transport address.
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com/test", nil)
-	req.Header.Set("X-API-Key", "k1")
-	require.Equal(t, "k1", defaultExtractIdentifier(req))
-
-	req = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com/test", nil)
-	req.Header.Set("Authorization", "Bearer token1")
-	require.Equal(t, "token1", defaultExtractIdentifier(req))
-
-	req = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com/test", nil)
+	req.RemoteAddr = "5.6.7.8:1234"
+	req.Header.Set("X-API-Key", "raw-api-key")
+	req.Header.Set("Authorization", "Bearer raw-token")
 	req = WithIdentifier(req, "id1")
 	require.Equal(t, "id1", defaultExtractIdentifier(req))
 
+	// Credential-derived identities are disabled unless explicitly enabled.
+	req = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com/test", nil)
+	req.RemoteAddr = "5.6.7.8:1234"
+	req.Header.Set("X-API-Key", "raw-api-key")
+	req.Header.Set("Authorization", "Bearer raw-token")
+	require.Equal(t, "5.6.7.8", defaultExtractIdentifier(req))
+
+	// The transport address is the fallback identity.
 	req = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com/test", nil)
 	req.RemoteAddr = "5.6.7.8:1234"
 	require.Equal(t, "5.6.7.8", defaultExtractIdentifier(req))
@@ -144,13 +148,16 @@ func TestDefaultExtractResource_AndGetClientIP_Branches(t *testing.T) {
 	req.URL.Path = ""
 	require.Equal(t, "/", defaultExtractResource(req))
 
+	// Forwarded headers are spoofable and ignored without trusted proxies.
 	req = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com/test", nil)
+	req.RemoteAddr = "9.9.9.9:1234"
 	req.Header.Set("X-Forwarded-For", " 1.1.1.1, 2.2.2.2 ")
-	require.Equal(t, "1.1.1.1", getClientIP(req))
+	require.Equal(t, "9.9.9.9", getClientIP(req))
 
 	req = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com/test", nil)
+	req.RemoteAddr = "9.9.9.9:1234"
 	req.Header.Set("X-Real-IP", "3.3.3.3")
-	require.Equal(t, "3.3.3.3", getClientIP(req))
+	require.Equal(t, "9.9.9.9", getClientIP(req))
 
 	req = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com/test", nil)
 	req.RemoteAddr = "4.4.4.4"

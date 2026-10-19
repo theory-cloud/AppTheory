@@ -77,6 +77,28 @@ The runtime dependency posture is deliberately asymmetric but explicit:
 This asymmetry is a distribution policy choice only. It does not add a second object-store contract and it does not
 permit raw S3 client injection or exposure.
 
+## Missing objects
+
+A bounded Get of an absent object returns the stable typed not-found error rather than a raw SDK failure:
+
+- Go: `errors.Is(err, objectstore.ErrObjectNotFound)`
+- TypeScript: `err instanceof ObjectStoreError && err.code === OBJECTSTORE_ERROR_NOT_FOUND`
+- Python: `isinstance(err, ObjectStoreError) and err.code == OBJECTSTORE_ERROR_NOT_FOUND`
+
+The S3 stores return that not-found for `NoSuchKey`, `NoSuchVersion`, and an HTTP 404. The original AWS SDK error stays
+reachable, so `errors.As` (Go), the standard `cause` property (TypeScript), and `__cause__` (Python) still expose the
+SDK failure.
+
+Reading a missing key requires `s3:ListBucket` on the bucket. Without it S3 answers `403 AccessDenied` for a key that
+does not exist; that answer is deliberately indistinguishable from a real permission failure, so it stays an error and
+is never reported as `objectstore.not_found`. Grant `s3:ListBucket` (scoped to the bucket) to callers that must
+distinguish absence from denial.
+
+Every other failure keeps its existing behaviour: 403 `AccessDenied` and KMS denials, `NoSuchBucket` (a wrong bucket is
+an unavailable store, not lost content), 5xx responses, timeouts, and transport failures are never not-found.
+
+`Delete` is unchanged: S3 deletion is idempotent, so deleting an absent key succeeds and no not-found is invented.
+
 ## Bounded reads
 
 Every Get call must provide a positive byte cap:

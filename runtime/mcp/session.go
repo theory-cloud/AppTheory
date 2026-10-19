@@ -14,6 +14,7 @@ type Session struct {
 	ID        string            `json:"id"`
 	CreatedAt time.Time         `json:"createdAt"`
 	ExpiresAt time.Time         `json:"expiresAt"`
+	Principal string            `json:"principal,omitempty"`
 	Data      map[string]string `json:"data,omitempty"`
 }
 
@@ -110,6 +111,12 @@ func (m *MemorySessionStore) Put(_ context.Context, session *Session) error {
 	}
 
 	m.mu.Lock()
+	now := m.clock.Now()
+	for id, existing := range m.store {
+		if sessionExpiredAt(now, existing) {
+			delete(m.store, id)
+		}
+	}
 	m.store[stored.ID] = &stored
 	m.mu.Unlock()
 	return nil

@@ -6,6 +6,7 @@ const test = require("node:test");
 const cdk = require("aws-cdk-lib");
 const assertions = require("aws-cdk-lib/assertions");
 const acm = require("aws-cdk-lib/aws-certificatemanager");
+const apigw = require("aws-cdk-lib/aws-apigateway");
 const codebuild = require("aws-cdk-lib/aws-codebuild");
 const cloudfront = require("aws-cdk-lib/aws-cloudfront");
 const dynamodb = require("aws-cdk-lib/aws-dynamodb");
@@ -7503,6 +7504,87 @@ test("AppTheoryRemoteMcpServer (basic) synthesizes expected template", () => {
   } else {
     expectSnapshot("remote-mcp-server-basic", template);
   }
+});
+
+test("AppTheoryRemoteMcpServer applies a configured API Gateway authorizer", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+  const authorizerFn = new lambda.Function(stack, "AuthorizerFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ isAuthorized: true });"),
+  });
+  const authorizer = new apigw.TokenAuthorizer(stack, "McpAuthorizer", {
+    handler: authorizerFn,
+    resultsCacheTtl: cdk.Duration.minutes(5),
+  });
+
+  new apptheory.AppTheoryRemoteMcpServer(stack, "RemoteMcp", {
+    handler: fn,
+    apiName: "apptheory-remote-mcp-test",
+    authorizer,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const methodResources = Object.values(template.Resources ?? {}).filter(
+    (resource) => resource.Type === "AWS::ApiGateway::Method",
+  );
+  const transportMethods = methodResources.filter((resource) =>
+    ["POST", "GET", "DELETE"].includes(resource.Properties?.HttpMethod),
+  );
+  const authorizerEntries = Object.entries(template.Resources ?? {}).filter(
+    ([, resource]) => resource.Type === "AWS::ApiGateway::Authorizer",
+  );
+
+  assert.equal(authorizerEntries.length, 1, "Should synthesize the configured API Gateway authorizer");
+  const [authorizerId, authorizerResource] = authorizerEntries[0];
+  assert.equal(authorizerResource.Properties?.Type, "TOKEN", "TokenAuthorizer should synthesize a TOKEN authorizer");
+
+  assert.ok(transportMethods.length >= 3, "Should synthesize the /mcp transport methods");
+  for (const method of transportMethods) {
+    assert.equal(
+      method.Properties?.AuthorizationType,
+      "CUSTOM",
+      `Method ${method.Properties?.HttpMethod} should use the authorizer's CUSTOM authorization type`,
+    );
+    assert.deepEqual(
+      method.Properties?.AuthorizerId,
+      { Ref: authorizerId },
+      `Method ${method.Properties?.HttpMethod} should bind the configured authorizer`,
+    );
+  }
+});
+
+test("AppTheoryRestApiRouter accepts an explicit authorization type without an authorizer", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const router = new apptheory.AppTheoryRestApiRouter(stack, "Router", {
+    apiName: "apptheory-router-authorization-test",
+    authorizationType: apigw.AuthorizationType.IAM,
+  });
+  router.addLambdaIntegration("/secure", ["GET"], fn);
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const methods = Object.values(template.Resources ?? {}).filter(
+    (resource) => resource.Type === "AWS::ApiGateway::Method" && resource.Properties?.HttpMethod === "GET",
+  );
+
+  assert.equal(methods.length, 1, "Should synthesize the configured GET method");
+  assert.equal(methods[0].Properties?.AuthorizationType, "AWS_IAM");
+  assert.equal(methods[0].Properties?.AuthorizerId, undefined);
 });
 
 test("AppTheoryRemoteMcpServer can suppress test-invoke-stage permissions", () => {

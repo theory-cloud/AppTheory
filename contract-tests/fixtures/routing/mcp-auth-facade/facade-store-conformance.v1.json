@@ -269,21 +269,53 @@
       "store": "route_refresh_broker",
       "scenario": "broker_ttl_boundary",
       "params": { "put": 1, "advance_seconds": 900 },
-      "expect": { "get": "not_found" }
+      "expect": { "get": "expired" }
     },
     {
       "id": "store.route_refresh_broker.expired_record_refuses_lock",
       "store": "route_refresh_broker",
       "scenario": "broker_expired_refuses_lock",
       "params": { "put": 1, "advance_seconds": 900 },
-      "expect": { "acquire_lock": "not_found" }
+      "expect": { "acquire_lock": "expired" }
     },
     {
       "id": "store.route_refresh_broker.expired_record_refuses_swap",
       "store": "route_refresh_broker",
       "scenario": "broker_expired_refuses_swap",
       "params": { "put": 1, "advance_seconds": 900 },
-      "expect": { "swap": "not_found" }
+      "expect": { "swap": "expired" }
+    },
+    {
+      "id": "store.route_refresh_broker.expired_is_distinguishable_from_unknown",
+      "store": "route_refresh_broker",
+      "scenario": "broker_expired_vs_unknown",
+      "params": { "advance_seconds": 900 },
+      "expect": { "unknown": "not_found", "expired": "expired" }
+    },
+    {
+      "id": "store.route_refresh_broker.list_family_reports_members",
+      "store": "route_refresh_broker",
+      "scenario": "list_family",
+      "params": { "family_size": 2, "other_family_size": 1 },
+      "expect": { "family_size": 2, "other_family_size": 1 }
+    },
+    {
+      "id": "store.route_refresh_broker.revoke_family_revokes_every_member",
+      "store": "route_refresh_broker",
+      "scenario": "revoke_family",
+      "params": { "family_size": 3, "other_family_size": 2 },
+      "expect": {
+        "revoked_family_size": 3,
+        "family_statuses": ["revoked", "revoked", "revoked"],
+        "other_statuses": ["active", "active"]
+      }
+    },
+    {
+      "id": "store.route_refresh_broker.revoke_family_unknown_is_empty",
+      "store": "route_refresh_broker",
+      "scenario": "revoke_family",
+      "params": { "family_size": 0, "other_family_size": 0 },
+      "expect": { "revoked_family_size": 0 }
     },
     {
       "id": "store.route_refresh_broker.revoked_record_refuses_swap",

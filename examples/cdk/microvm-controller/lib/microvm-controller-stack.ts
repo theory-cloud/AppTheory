@@ -29,6 +29,7 @@ export class MicrovmControllerStack extends cdk.Stack {
     super(scope, id, props);
 
     const language = normalizeLanguage(this.node.tryGetContext("microvmLanguage"));
+    const demoBearerToken = requireDemoBearerToken(this.node.tryGetContext("microvmDemoBearerToken"));
     const repoRoot = path.resolve(__dirname, "../../../..");
     const workloadAsset = new assets.Asset(this, "MicrovmWorkloadAsset", {
       path: path.join(repoRoot, "examples/cdk/microvm-controller/workloads", language),
@@ -102,7 +103,7 @@ export class MicrovmControllerStack extends cdk.Stack {
       runtime: lambda.Runtime.NODEJS_24_X,
       handler: "index.handler",
       description: "Demo-only Lambda authorizer for the MicroVM controller example",
-      code: lambda.Code.fromInline(demoOnlyAuthorizerSource()),
+      code: lambda.Code.fromInline(demoOnlyAuthorizerSource(demoBearerToken)),
     });
 
     const controller = new AppTheoryMicrovmController(this, "MicrovmController", {
@@ -116,6 +117,7 @@ export class MicrovmControllerStack extends cdk.Stack {
         environment: {
           APPTHEORY_DEMO_PURPOSE: "live-microvm-controller-runtime",
           APPTHEORY_MICROVM_EXAMPLE_PROVIDER: "aws",
+          MICROVM_DEMO_BEARER_TOKEN: demoBearerToken,
         },
       },
       authorizer: demoOnlyAuthorizer,
@@ -170,13 +172,14 @@ export class MicrovmControllerStack extends cdk.Stack {
   }
 }
 
-function demoOnlyAuthorizerSource(): string {
-  return `exports.handler = async (event) => {
+function demoOnlyAuthorizerSource(bearerToken: string): string {
+  return `const expectedAuthorization = ${JSON.stringify("Bearer " + bearerToken)};
+exports.handler = async (event) => {
   const headers = event.headers || {};
   const authorization = headers.authorization || headers.Authorization || "";
   const tenant = headers["x-tenant-id"] || headers["X-Tenant-Id"] || "";
   const namespace = headers["x-namespace-id"] || headers["X-Namespace-Id"] || "";
-  const isAuthorized = authorization === "Bearer local-demo-only" && tenant.trim() !== "" && namespace.trim() !== "";
+  const isAuthorized = authorization === expectedAuthorization && tenant.trim() !== "" && namespace.trim() !== "";
   return {
     isAuthorized,
     context: isAuthorized ? { demoOnly: "true" } : {},
@@ -243,6 +246,17 @@ function assertTableTheorySessionRegistry(table: dynamodb.Table): void {
   if (!hasPartitionKey || !hasSortKey || !hasTtl) {
     throw new Error("MicroVM session registry must keep the TableTheory pk/sk/ttl shape");
   }
+}
+
+function requireDemoBearerToken(value: unknown): string {
+  const token = String(value ?? "").trim();
+  if (token === "") {
+    throw new Error(
+      "microvm-controller example requires a non-empty demo bearer token; " +
+        'supply one with -c microvmDemoBearerToken=<value> (for example -c microvmDemoBearerToken="$(openssl rand -hex 24)")',
+    );
+  }
+  return token;
 }
 
 function normalizeLanguage(value: unknown): MicrovmExampleLanguage {

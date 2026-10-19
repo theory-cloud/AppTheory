@@ -55,6 +55,14 @@ export declare class Context {
     requestId: string;
     traceId: string;
     tenantId: string;
+    /**
+     * The caller-supplied tenant extracted before authentication, if any.
+     *
+     * This value is untrusted and must never be used for authorization. It is
+     * provided so pre-auth hooks (for example the P2 PolicyHook) can inspect the
+     * requested tenant without being handed the authoritative `tenantId`.
+     */
+    requestedTenantId: string;
     authIdentity: string;
     remainingMs: number;
     middlewareTrace: string[];
@@ -94,6 +102,7 @@ export declare class Context {
         requestId?: string;
         traceId?: string;
         tenantId?: string;
+        requestedTenantId?: string;
         authIdentity?: string;
         clientRequestId?: string;
         tenantBound?: boolean;
@@ -113,6 +122,15 @@ export declare class Context {
     set(key: string, value: unknown): void;
     /** Returns request-scoped middleware state by key. */
     get(key: string): unknown;
+    /**
+     * Returns a shallow policy-hook view of this context.
+     *
+     * The view shares request-scoped state but clears the authoritative
+     * `tenantId`, so a pre-auth PolicyHook cannot mistake a caller-supplied
+     * tenant for the verified one. The untrusted caller value remains available
+     * as `requestedTenantId`.
+     */
+    policyHookView(): Context;
     /** Returns normalized source-provenance metadata for the request. */
     sourceProvenance(): SourceProvenance;
     /** Returns the canonical source IP when the provider supplied one. */

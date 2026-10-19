@@ -10,17 +10,25 @@ import (
 	"time"
 )
 
+const defaultMemoryTaskStoreLimit = 1000
+
+var errTaskStoreCapacity = errors.New("task capacity exceeded")
+
 // MemoryTaskStore is an in-memory TaskStore for testing and local development.
 type MemoryTaskStore struct {
-	mu       sync.RWMutex
-	sessions map[string]map[string]*TaskRecord
+	mu                 sync.RWMutex
+	sessions           map[string]map[string]*TaskRecord
+	maxTasksPerSession int
 }
 
 var _ TaskStore = (*MemoryTaskStore)(nil)
 
 // NewMemoryTaskStore creates an empty in-memory task store.
 func NewMemoryTaskStore() *MemoryTaskStore {
-	return &MemoryTaskStore{sessions: map[string]map[string]*TaskRecord{}}
+	return &MemoryTaskStore{
+		sessions:           map[string]map[string]*TaskRecord{},
+		maxTasksPerSession: defaultMemoryTaskStoreLimit,
+	}
 }
 
 func (m *MemoryTaskStore) Create(_ context.Context, task TaskRecord) (*TaskRecord, error) {
@@ -40,13 +48,64 @@ func (m *MemoryTaskStore) Create(_ context.Context, task TaskRecord) (*TaskRecor
 	if sess == nil {
 		sess = map[string]*TaskRecord{}
 		m.sessions[task.SessionID] = sess
+	} else {
+		reapExpiredTaskRecordsLocked(time.Now().UTC(), sess)
 	}
 	if _, exists := sess[task.Task.TaskID]; exists {
 		return nil, errors.New("task already exists")
 	}
+	if err := m.ensureTaskCapacityLocked(sess); err != nil {
+		return nil, err
+	}
 	stored := cloneTaskRecord(&task)
 	sess[stored.Task.TaskID] = stored
 	return cloneTaskRecord(stored), nil
+}
+
+func (m *MemoryTaskStore) ensureTaskCapacityLocked(sess map[string]*TaskRecord) error {
+	if m.maxTasksPerSession <= 0 {
+		return nil
+	}
+	for len(sess) >= m.maxTasksPerSession {
+		if !evictOldestTerminalTaskLocked(sess) {
+			return errTaskStoreCapacity
+		}
+	}
+	return nil
+}
+
+func reapExpiredTaskRecordsLocked(now time.Time, sess map[string]*TaskRecord) {
+	for id, record := range sess {
+		if taskRecordExpired(now, record) {
+			delete(sess, id)
+		}
+	}
+}
+
+func taskRecordExpired(now time.Time, record *TaskRecord) bool {
+	if record == nil || record.Task.TTL == nil || *record.Task.TTL <= 0 || record.Task.CreatedAt.IsZero() {
+		return false
+	}
+	return !now.Before(record.Task.CreatedAt.Add(time.Duration(*record.Task.TTL) * time.Millisecond))
+}
+
+func evictOldestTerminalTaskLocked(sess map[string]*TaskRecord) bool {
+	var oldest *TaskRecord
+	for _, record := range sess {
+		if !taskStatusTerminal(record.Task.Status) {
+			continue
+		}
+		if oldest == nil ||
+			record.Task.CreatedAt.Before(oldest.Task.CreatedAt) ||
+			(record.Task.CreatedAt.Equal(oldest.Task.CreatedAt) && record.Task.TaskID < oldest.Task.TaskID) {
+			oldest = record
+		}
+	}
+	if oldest == nil {
+		return false
+	}
+	delete(sess, oldest.Task.TaskID)
+	return true
 }
 
 func (m *MemoryTaskStore) Get(_ context.Context, lookup TaskLookup) (*TaskRecord, error) {

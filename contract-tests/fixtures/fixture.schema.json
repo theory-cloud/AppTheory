@@ -222,7 +222,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "backend": { "type": "string", "enum": ["fake"] }
+        "backend": { "type": "string", "enum": ["fake", "s3_stub"] }
       }
     },
     "objectstoreRef": {
@@ -275,7 +275,21 @@
         "expires_in": { "type": "number", "description": "number, not integer, so the fail-closed corpus can pin that a fractional or sub-second expiry is refused" },
         "bucket": { "type": "string" },
         "key": { "type": "string" },
-        "prefix": { "type": "string" }
+        "prefix": { "type": "string" },
+        "s3_response": { "$ref": "#/$defs/objectstoreS3Response" }
+      }
+    },
+    "objectstoreS3Response": {
+      "type": "object",
+      "required": ["status_code"],
+      "additionalProperties": false,
+      "properties": {
+        "status_code": { "type": "integer" },
+        "error_code": { "type": "string" },
+        "message": { "type": "string" },
+        "body": { "$ref": "#/$defs/objectstoreBody" },
+        "content_type": { "type": "string" },
+        "version_id": { "type": "string" }
       }
     },
     "vectorstoreSetup": {

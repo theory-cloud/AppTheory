@@ -14,6 +14,7 @@ type sessionRecord struct {
 	SessionID string            `theorydb:"pk,attr:sessionId" json:"sessionId"`
 	CreatedAt time.Time         `theorydb:"attr:createdAt" json:"createdAt"`
 	ExpiresAt int64             `theorydb:"ttl,attr:expiresAt" json:"expiresAt"`
+	Principal string            `theorydb:"attr:principal,omitempty" json:"principal,omitempty"`
 	Data      map[string]string `theorydb:"attr:data,omitempty" json:"data,omitempty"`
 }
 
@@ -81,6 +82,7 @@ func sessionToRecord(s *Session) *sessionRecord {
 		SessionID: s.ID,
 		CreatedAt: s.CreatedAt,
 		ExpiresAt: s.ExpiresAt.Unix(),
+		Principal: s.Principal,
 		Data:      s.Data,
 	}
 }
@@ -90,6 +92,7 @@ func recordToSession(r *sessionRecord) *Session {
 		ID:        r.SessionID,
 		CreatedAt: r.CreatedAt,
 		ExpiresAt: time.Unix(r.ExpiresAt, 0).UTC(),
+		Principal: r.Principal,
 		Data:      r.Data,
 	}
 }

@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { ManualClock } from "../dist/clock.js";
 import {
+  BrokerExpiredError,
   BrokerLockedError,
   BrokerNotFoundError,
   MemoryAuthorizationCodeStore,
@@ -137,6 +138,7 @@ const BROKEN_BUNDLES = [
       "store.route_refresh_broker.record_expired_at_ttl_boundary",
       "store.route_refresh_broker.expired_record_refuses_lock",
       "store.route_refresh_broker.expired_record_refuses_swap",
+      "store.route_refresh_broker.expired_is_distinguishable_from_unknown",
     ],
   },
   {
@@ -163,15 +165,15 @@ async function failingCaseIds(build, cases) {
   return failed;
 }
 
-test("store conformance fixture carries 44 cases", () => {
-  assert.equal(CASES.length, 44);
-  assert.equal(new Set(CASES.map((c) => c.id)).size, 44);
+test("store conformance fixture carries 48 cases", () => {
+  assert.equal(CASES.length, 48);
+  assert.equal(new Set(CASES.map((c) => c.id)).size, 48);
 });
 
 test("the in-memory reference stores satisfy the store conformance table", async () => {
   const clock = new ManualClock(EPOCH);
   const result = await runStoreConformance(newStores(clock), CASES, clock);
-  assert.equal(result.ran, 44);
+  assert.equal(result.ran, 48);
   console.log(
     `store conformance: ${result.ran}/${CASES.length} cases passed (in-memory reference stores)`,
   );
@@ -322,6 +324,122 @@ test("the broker store seeds through put and never creates on swap", async () =>
   // empty status to "active".
   assert.equal(seeded.status, "");
   assert.deepEqual(seeded.scopes, ["scope-a"]);
+});
+
+test("the broker store distinguishes an aged-out handle from an unknown one", async () => {
+  const clock = new ManualClock(EPOCH);
+  const broker = new MemoryRouteRefreshBrokerStore({
+    now: () => clock.now(),
+    ttlSeconds: ROUTE_REFRESH_TTL_SECONDS,
+  });
+  const record = (handleHash) => ({
+    handleHash,
+    issuer: "https://auth.example.test",
+    stage: "lab",
+    canonicalResource: "https://mcp.example.test/mcp",
+    clientNamespace: "conformance",
+    endpointKind: "mcp",
+    partnerId: "",
+    agentId: "",
+    clientIdHash: "client-hash",
+    subjectIdHash: "subject-hash",
+    scopes: ["scope-a"],
+    scopeFingerprint: "fingerprint",
+    encryptedUpstreamRefreshToken: "encrypted-refresh",
+    upstreamRefreshTokenHash: "refresh-hash",
+    upstreamClientId: "conformance-client",
+    status: "active",
+    version: 1,
+  });
+  for (const handleHash of [
+    "expiring-get",
+    "expiring-revoke",
+    "expiring-lock",
+    "expiring-swap",
+  ]) {
+    await broker.put(record(handleHash));
+  }
+  clock.advance(ROUTE_REFRESH_TTL_SECONDS * 1000);
+
+  assert.equal(await broker.get("unknown-handle"), null);
+  await assert.rejects(broker.get("expiring-get"), BrokerExpiredError);
+  await assert.rejects(broker.revoke("expiring-revoke"), BrokerExpiredError);
+  await assert.rejects(
+    broker.acquireLock("expiring-lock", "owner", 1),
+    BrokerExpiredError,
+  );
+  await assert.rejects(
+    broker.compareAndSwap(record("expiring-swap"), 1),
+    BrokerExpiredError,
+  );
+  // Each operation purges the aged-out handle, so a later read is unknown.
+  assert.equal(await broker.get("expiring-get"), null);
+});
+
+test("the broker store lists and revokes a refresh family", async () => {
+  const clock = new ManualClock(EPOCH);
+  const broker = new MemoryRouteRefreshBrokerStore({
+    now: () => clock.now(),
+    ttlSeconds: ROUTE_REFRESH_TTL_SECONDS,
+  });
+  const record = (handleHash, familyHash) => ({
+    handleHash,
+    issuer: "https://auth.example.test",
+    stage: "lab",
+    canonicalResource: "https://mcp.example.test/mcp",
+    clientNamespace: "conformance",
+    endpointKind: "mcp",
+    partnerId: "",
+    agentId: "",
+    clientIdHash: "client-hash",
+    subjectIdHash: "subject-hash",
+    scopes: ["scope-a"],
+    scopeFingerprint: "fingerprint",
+    encryptedUpstreamRefreshToken: "encrypted-refresh",
+    upstreamRefreshTokenHash: "refresh-hash",
+    upstreamClientId: "conformance-client",
+    status: "active",
+    version: 1,
+    chainGeneration: 1,
+    familyHash,
+  });
+  await broker.put(record("member-a", "family-a"));
+  await broker.put(record("member-b", "family-a"));
+  await broker.put(record("member-c", "family-b"));
+
+  const listed = await broker.listFamily("family-a");
+  assert.deepEqual(
+    listed.map((member) => member.handleHash).sort(),
+    ["member-a", "member-b"],
+  );
+  assert.equal((await broker.listFamily("")).length, 0);
+
+  const revoked = await broker.revokeFamily("family-a");
+  assert.equal(revoked.length, 2);
+  assert.ok(revoked.every((member) => member.status === "revoked"));
+  assert.equal((await broker.listFamily("family-a")).length, 2);
+  const untouched = await broker.listFamily("family-b");
+  assert.deepEqual(
+    untouched.map((member) => member.status),
+    ["active"],
+  );
+  // Revocation is idempotent: the second call returns the same members.
+  assert.equal((await broker.revokeFamily("family-a")).length, 2);
+  assert.equal((await broker.revokeFamily("unknown-family")).length, 0);
+});
+
+test("the broker store reports the handle TTL it applies", () => {
+  const broker = new MemoryRouteRefreshBrokerStore({
+    ttlSeconds: ROUTE_REFRESH_TTL_SECONDS,
+  });
+  assert.equal(
+    broker.routeRefreshBrokerHandleTTLSeconds(),
+    ROUTE_REFRESH_TTL_SECONDS,
+  );
+  assert.equal(
+    new MemoryRouteRefreshBrokerStore().routeRefreshBrokerHandleTTLSeconds(),
+    900,
+  );
 });
 
 test("reference stores never hand out or retain their stored slices", async () => {

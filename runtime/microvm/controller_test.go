@@ -1570,3 +1570,59 @@ func validRealControllerRequest(command Command, requestID string, sessionID str
 	}
 	return req
 }
+
+func TestRealControllerRejectsExpiredSessionRecords(t *testing.T) {
+	now := time.Unix(1300, 0).UTC()
+	registry := NewMemorySessionRegistry()
+	provider := &recordingControllerProvider{realControllerProvider: newRealControllerProvider(now)}
+	controller, err := NewRealController(
+		provider,
+		registry,
+		withDisabledControllerLogging(),
+		WithControllerClock(fixedControllerClock{now: now}),
+		WithControllerIDGenerator(fixedControllerIDs{id: "session-expired"}),
+	)
+	require.NoError(t, err)
+
+	run, err := controller.Handle(context.Background(), validRealControllerRequest(CommandRun, "req-expired-run", ""))
+	require.NoError(t, err)
+
+	key := SessionKey{TenantID: "tenant-1", Namespace: "namespace-1", SessionID: run.SessionID}
+	record, err := registry.Get(context.Background(), key)
+	require.NoError(t, err)
+	require.Equal(t, now.Add(defaultSessionRegistryTTL), record.ExpiresAt)
+
+	later := now.Add(defaultSessionRegistryTTL + time.Second)
+	expired, err := NewRealController(
+		provider,
+		registry,
+		withDisabledControllerLogging(),
+		WithControllerClock(fixedControllerClock{now: later}),
+	)
+	require.NoError(t, err)
+	provider.calls = 0
+
+	_, err = expired.Invoke(context.Background(), ControllerInvokeRequest{
+		RequestID:   "req-expired-invoke",
+		TenantID:    "tenant-1",
+		Namespace:   "namespace-1",
+		AuthContext: AuthContext{Subject: "subject-1", TenantID: "tenant-1", Namespace: "namespace-1"},
+		SessionID:   run.SessionID,
+		Method:      "GET",
+		Path:        "/",
+	})
+	var safeErr SafeError
+	require.ErrorAs(t, err, &safeErr)
+	require.Equal(t, ErrorCodeSessionRegistryIncomplete, safeErr.Code)
+	require.Equal(t, 0, provider.calls, "an expired record must not reach the provider")
+
+	_, err = expired.Handle(context.Background(), validRealControllerRequest(CommandGet, "req-expired-get", run.SessionID))
+	require.ErrorAs(t, err, &safeErr)
+	require.Equal(t, ErrorCodeSessionRegistryIncomplete, safeErr.Code)
+	require.Equal(t, 0, provider.calls, "an expired record must not reach the provider")
+
+	// A later read must not have revived the record's lifetime.
+	after, err := registry.Get(context.Background(), key)
+	require.NoError(t, err)
+	require.Equal(t, record.ExpiresAt, after.ExpiresAt)
+}

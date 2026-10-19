@@ -3112,6 +3112,8 @@ def run_fixture_objectstore(
     backend = str(
         ((fixture.get("setup") or {}).get("objectstore") or {}).get("backend") or "fake"
     ).strip()
+    if backend == "s3_stub":
+        return _run_fixture_objectstore_s3(fixture, runtime)
     if backend != "fake":
         return (
             False,
@@ -3147,6 +3149,180 @@ def run_fixture_objectstore(
             _DummyEffectsApp(),
         )
     return True, "", actual_output, expected_output, _DummyEffectsApp()
+
+
+class _S3StubResponseError(Exception):
+    def __init__(self, response: dict[str, Any]) -> None:
+        super().__init__(str(response))
+        self.response = response
+
+
+class _S3StubClient:
+    """A botocore-shaped S3 client for the s3_stub backend.
+
+    Only get_object and delete_object are reachable, and failures carry the same
+    ``response`` mapping a botocore ClientError exposes, so the real S3 store's
+    classification runs unchanged without boto3 in the contract runner.
+    """
+
+    def __init__(self) -> None:
+        self.response: dict[str, Any] | None = None
+
+    def get_object(self, **_kwargs: Any) -> dict[str, Any]:
+        response = self.response or {}
+        error = _objectstore_s3_stub_error(response)
+        if error is not None:
+            raise _S3StubResponseError(error)
+        output: dict[str, Any] = {
+            "Body": decode_fixture_body(response.get("body"))
+            if response.get("body") is not None
+            else b""
+        }
+        if response.get("content_type"):
+            output["ContentType"] = str(response["content_type"])
+        if response.get("version_id"):
+            output["VersionId"] = str(response["version_id"])
+        return output
+
+    def delete_object(self, **_kwargs: Any) -> dict[str, Any]:
+        error = _objectstore_s3_stub_error(self.response or {})
+        if error is not None:
+            raise _S3StubResponseError(error)
+        return {}
+
+
+def _objectstore_s3_stub_error(response: dict[str, Any]) -> dict[str, Any] | None:
+    status = int(response.get("status_code") or 0)
+    code = str(response.get("error_code") or "")
+    if 200 <= status < 300 and not code:
+        return None
+    return {
+        "Error": {
+            "Code": code,
+            "Message": str(response.get("message") or "stub error"),
+        },
+        "ResponseMetadata": {"HTTPStatusCode": status, "RequestId": "req-stub"},
+    }
+
+
+def _run_fixture_objectstore_s3(
+    fixture: dict[str, Any], runtime: Any
+) -> tuple[bool, str, Any, Any, _DummyEffectsApp]:
+    steps = ((fixture.get("input") or {}).get("objectstore") or {}).get("steps") or []
+    if not steps:
+        return (
+            False,
+            "objectstore fixture missing input.objectstore.steps",
+            None,
+            None,
+            _DummyEffectsApp(),
+        )
+
+    store_module = sys.modules.get("apptheory.objectstore")
+    if store_module is None:
+        return (
+            False,
+            "objectstore s3_stub: apptheory.objectstore is not loaded",
+            None,
+            None,
+            _DummyEffectsApp(),
+        )
+    client = _S3StubClient()
+    original_loader = store_module._load_s3_client
+    store_module._load_s3_client = lambda _region: client
+    try:
+        store = runtime.create_s3_object_store(runtime.S3ObjectStoreConfig(region_name="us-east-1"))
+    finally:
+        store_module._load_s3_client = original_loader
+
+    actual_steps = [
+        _run_objectstore_s3_stub_step(runtime, store, client, step) for step in steps
+    ]
+    actual_output = {"steps": actual_steps}
+    expected_output = (fixture.get("expect") or {}).get("output_json")
+    if stable_json(actual_output) != stable_json(expected_output):
+        return (
+            False,
+            "output_json mismatch",
+            actual_output,
+            expected_output,
+            _DummyEffectsApp(),
+        )
+    return True, "", actual_output, expected_output, _DummyEffectsApp()
+
+
+def _run_objectstore_s3_stub_step(
+    runtime: Any, store: Any, client: _S3StubClient, step: dict[str, Any]
+) -> dict[str, Any]:
+    operation = str(step.get("operation") or "").strip().lower()
+    result: dict[str, Any] = {
+        "name": str(step.get("name") or ""),
+        "operation": operation,
+    }
+    response = step.get("s3_response")
+    if not isinstance(response, dict):
+        return _objectstore_s3_error_result(
+            result, RuntimeError("objectstore s3_stub: step missing s3_response")
+        )
+    if operation not in ("get", "delete"):
+        return _objectstore_s3_error_result(
+            result, RuntimeError(f"objectstore s3_stub: unsupported operation: {operation}")
+        )
+    try:
+        ref = _objectstore_step_ref(runtime, step)
+        client.response = response
+        if operation == "get":
+            output = store.get(
+                runtime.ObjectStoreGetInput(
+                    ref=ref, max_bytes=int(step.get("max_bytes") or 0)
+                )
+            )
+            return _objectstore_s3_success_result(result, output)
+        store.delete(runtime.ObjectStoreDeleteInput(ref=ref))
+        return _objectstore_s3_success_result(result, None)
+    except Exception as exc:  # noqa: BLE001
+        return _objectstore_s3_error_result(result, exc)
+
+
+def _objectstore_s3_success_result(result: dict[str, Any], output: Any | None) -> dict[str, Any]:
+    out = dict(result)
+    out["ok"] = True
+    if output is not None:
+        out["ref"] = _objectstore_ref_json(output.ref)
+        out["payload"] = _objectstore_body_json(bytes(output.payload))
+        if getattr(output, "content_type", ""):
+            out["content_type"] = output.content_type
+        if getattr(output, "metadata", None):
+            out["metadata"] = _objectstore_metadata(output.metadata)
+    return out
+
+
+def _objectstore_s3_error_result(result: dict[str, Any], error: Exception) -> dict[str, Any]:
+    out = dict(result)
+    out["ok"] = False
+    out["error"] = _objectstore_s3_error_json(error)
+    return out
+
+
+def _objectstore_s3_error_json(error: Exception) -> dict[str, Any]:
+    if str(getattr(error, "code", "") or "") == "objectstore.not_found":
+        return {"code": "objectstore.not_found"}
+    out: dict[str, Any] = {"code": "objectstore.sdk_error"}
+    response = getattr(error, "response", None)
+    sdk_code = ""
+    status = 0
+    if isinstance(response, dict):
+        info = response.get("Error")
+        if isinstance(info, dict):
+            sdk_code = str(info.get("Code") or "")
+        metadata = response.get("ResponseMetadata")
+        if isinstance(metadata, dict):
+            status = int(metadata.get("HTTPStatusCode") or 0)
+    if sdk_code:
+        out["sdk_code"] = sdk_code
+    if status:
+        out["status_code"] = status
+    return out
 
 
 def _run_objectstore_step(

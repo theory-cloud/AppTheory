@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import datetime as dt
 import json as jsonlib
 from collections.abc import Callable
@@ -70,6 +71,12 @@ class Context:
     request_id: str
     trace_id: str
     tenant_id: str
+    # The caller-supplied tenant extracted before authentication, if any.
+    #
+    # This value is untrusted and must never be used for authorization. It is
+    # provided so pre-auth hooks (for example the P2 PolicyHook) can inspect the
+    # requested tenant without being handed the authoritative ``tenant_id``.
+    requested_tenant_id: str
     auth_identity: str
     # The well-formed, client-supplied ``x-request-id`` header value, or an empty
     # string when the header is absent or malformed.
@@ -104,6 +111,7 @@ class Context:
         request_id: str = "",
         trace_id: str = "",
         tenant_id: str = "",
+        requested_tenant_id: str = "",
         auth_identity: str = "",
         client_request_id: str = "",
         remaining_ms: int = 0,
@@ -121,6 +129,7 @@ class Context:
         self.request_id = str(request_id)
         self.trace_id = str(trace_id or getattr(request, "trace_id", "") or "")
         self.tenant_id = str(tenant_id)
+        self.requested_tenant_id = str(requested_tenant_id)
         self.auth_identity = str(auth_identity)
         self.client_request_id = str(client_request_id or "")
         self.remaining_ms = int(remaining_ms or 0)
@@ -157,6 +166,18 @@ class Context:
         if not name:
             return default
         return self._values.get(name, default)
+
+    def policy_hook_view(self) -> Context:
+        """Return a shallow policy-hook view with the authoritative tenant cleared.
+
+        The view shares request-scoped state but clears ``tenant_id`` so a
+        pre-auth PolicyHook cannot mistake a caller-supplied tenant for the
+        verified one. The untrusted caller value remains available as
+        ``requested_tenant_id``.
+        """
+        view = copy.copy(self)
+        view.tenant_id = ""
+        return view
 
     def source_provenance(self) -> SourceProvenance:
         """Return normalized source-provenance metadata for the request."""

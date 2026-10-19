@@ -20,6 +20,20 @@ type AppTheoryRestApiRouterProps struct {
 	ApiKeySourceType awsapigateway.ApiKeySourceType `field:"optional" json:"apiKeySourceType" yaml:"apiKeySourceType"`
 	// Name of the REST API.
 	ApiName *string `field:"optional" json:"apiName" yaml:"apiName"`
+	// Optional API Gateway authorization type for the Lambda integration methods.
+	//
+	// Usually omitted: when `authorizer` is set, API Gateway derives the type from the
+	// authorizer itself. Set this explicitly to override that inference.
+	// Default: undefined (derived from `authorizer`, or `NONE` when no authorizer is set).
+	//
+	AuthorizationType awsapigateway.AuthorizationType `field:"optional" json:"authorizationType" yaml:"authorizationType"`
+	// Optional API Gateway authorizer applied to every Lambda integration method.
+	//
+	// When omitted, methods keep API Gateway's open default (`AuthorizationType.NONE`).
+	// CORS preflight `OPTIONS` methods stay unauthenticated regardless of this setting.
+	// Default: undefined (no authorizer).
+	//
+	Authorizer awsapigateway.IAuthorizer `field:"optional" json:"authorizer" yaml:"authorizer"`
 	// Whether the REST API uses binary media types.
 	//
 	// Specify media types that should be treated as binary.

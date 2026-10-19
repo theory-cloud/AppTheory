@@ -649,6 +649,10 @@ type Options struct {
 	OnRateLimit  func(*http.Request, *limited.LimitDecision)
 
 	SkipRequest func(*http.Request) bool
+
+	TrustedProxyCIDRs []string
+
+	AllowCredentialIdentity bool
 }
 
 func Middleware(Options) func(http.HandlerFunc) http.HandlerFunc
@@ -2028,13 +2032,15 @@ type Context struct {
 	clock   Clock
 	ids     IDGenerator
 
-	RequestID       string
-	TraceID         string
-	TenantID        string
-	AuthIdentity    string
-	AuthPrincipal   *AuthPrincipal
-	RemainingMS     int
-	MiddlewareTrace []string
+	RequestID string
+	TraceID   string
+	TenantID  string
+
+	RequestedTenantID string
+	AuthIdentity      string
+	AuthPrincipal     *AuthPrincipal
+	RemainingMS       int
+	MiddlewareTrace   []string
 
 	TenantBound bool
 
@@ -3246,16 +3252,20 @@ type MemorySessionStore struct {
 type MemorySessionStoreOption func(*MemorySessionStore)
 
 type MemoryStreamStore struct {
-	mu       sync.Mutex
-	idGen    apptheory.IDGenerator
-	sessions map[string]*memoryStreamSession
+	mu                  sync.Mutex
+	idGen               apptheory.IDGenerator
+	sessions            map[string]*memoryStreamSession
+	maxEventBytes       int
+	maxEventsPerSession int
+	maxBytesPerSession  int
 }
 
 type MemoryStreamStoreOption func(*MemoryStreamStore)
 
 type MemoryTaskStore struct {
-	mu       sync.RWMutex
-	sessions map[string]map[string]*TaskRecord
+	mu                 sync.RWMutex
+	sessions           map[string]map[string]*TaskRecord
+	maxTasksPerSession int
 }
 
 type OriginValidator func(string) bool
@@ -3381,6 +3391,7 @@ type Server struct {
 	extensionCapabilities     map[string]map[string]any
 	cacheableResults          CacheableResultConfig
 	includeServerInfoMetadata bool
+	verboseHandlerErrors      bool
 
 	resourceSubscribeHook   ResourceSubscriptionHook
 	resourceUnsubscribeHook ResourceSubscriptionHook
@@ -3405,6 +3416,7 @@ type Session struct {
 	ID        string            `json:"id"`
 	CreatedAt time.Time         `json:"createdAt"`
 	ExpiresAt time.Time         `json:"expiresAt"`
+	Principal string            `json:"principal,omitempty"`
 	Data      map[string]string `json:"data,omitempty"`
 }
 
@@ -3646,13 +3658,21 @@ func WithServerInfoMetadata(bool) ServerOption
 
 func WithSessionStore(SessionStore) ServerOption
 
+func WithStreamEventByteLimit(int) MemoryStreamStoreOption
+
+func WithStreamEventsPerSessionLimit(int) MemoryStreamStoreOption
+
 func WithStreamIDGenerator(apptheory.IDGenerator) MemoryStreamStoreOption
+
+func WithStreamSessionByteLimit(int) MemoryStreamStoreOption
 
 func WithStreamStore(StreamStore) ServerOption
 
 func WithTaskRuntime(TaskRuntimeOptions) ServerOption
 
 func WithToolContextHook(ToolContextHook) ServerOption
+
+func WithVerboseHandlerErrors(bool) ServerOption
 
 func WrapStreamingTool[Args any](
 	ToolLifecycleOptions[Args],
@@ -3773,6 +3793,82 @@ func (sessionRecord) TableName() string
 
 ## github.com/theory-cloud/apptheory/v6/runtime/mcpfacade
 
+const DefaultRefreshGraceWindow = 120 * time.Second
+
+const MaxRefreshGraceWindow = 120 * time.Second
+
+const MaxRefreshReuseRateCeiling = 120
+
+const MaxRouteRefreshHandleTTL = 30 * 24 * time.Hour
+
+const MinRefreshReuseRateCeiling = 9
+
+const MinRouteRefreshHandleTTL = time.Minute
+
+const RouteRefreshEventGraceServed RouteRefreshEventClass = "grace_served"
+
+const RouteRefreshEventIssued RouteRefreshEventClass = "issued"
+
+const RouteRefreshEventLockAcquired RouteRefreshEventClass = "lock_acquired"
+
+const RouteRefreshEventRefreshed RouteRefreshEventClass = "refreshed"
+
+const RouteRefreshEventReuse RouteRefreshEventClass = "reuse"
+
+const RouteRefreshEventStateFailure RouteRefreshEventClass = "state_failure"
+
+const RouteRefreshEventUpstreamReauthRequired RouteRefreshEventClass = "upstream_reauth_required"
+
+const RouteRefreshEventValidationRejected RouteRefreshEventClass = "validation_rejected"
+
+const RouteRefreshExpirySignalAbsent = "absent"
+
+const RouteRefreshExpirySignalExpired = "expired"
+
+const RouteRefreshOutcomeAccessTokenOnly = "access_token_only"
+
+const RouteRefreshOutcomeBindingRejected = "binding_rejected"
+
+const RouteRefreshOutcomeRateLimited = "rate_limited"
+
+const RouteRefreshOutcomeRevokedFamily = "revoked_family"
+
+const RouteRefreshOutcomeRevokedWalk = "revoked_walk"
+
+const RouteRefreshReasonAccessTokenOnly = "access_token_only"
+
+const RouteRefreshReasonAlreadyServed = "already_served"
+
+const RouteRefreshReasonBindingRejected = "binding_rejected"
+
+const RouteRefreshReasonClientMismatch = "client_mismatch"
+
+const RouteRefreshReasonClientRejected = "client_rejected"
+
+const RouteRefreshReasonFamilyRevokeFailed = "family_revoke_failed"
+
+const RouteRefreshReasonFamilyRevokeUnavailable = "family_revoke_unavailable"
+
+const RouteRefreshReasonHandleMalformed = "handle_malformed"
+
+const RouteRefreshReasonLockContention = "lock_contention"
+
+const RouteRefreshReasonRecordAbsent = "record_absent"
+
+const RouteRefreshReasonRecordExpired = "record_expired"
+
+const RouteRefreshReasonRecordRevoked = "record_revoked"
+
+const RouteRefreshReasonResourceMismatch = "resource_mismatch"
+
+const RouteRefreshReasonRewriteFailure = "rewrite_failure"
+
+const RouteRefreshReasonStoreFailure = "store_failure"
+
+const RouteRefreshReasonSuccessorBody = "successor_body"
+
+const RouteRefreshReasonUpstreamRejected = "upstream_rejected"
+
 const TransportPostureIAM TransportPosture = "iam"
 
 const TransportPostureJWT TransportPosture = "jwt"
@@ -3838,6 +3934,10 @@ type FacadeConfig struct {
 	LifecycleScopes []string
 
 	ProviderHints func(*apptheory.Context) (map[string]string, error)
+
+	RouteRefreshPolicy RouteRefreshPolicy
+
+	RouteRefreshEvents RouteRefreshEventHook
 }
 
 type HandlerFactory func(mcproutes.EndpointKind) apptheory.Handler
@@ -3874,6 +3974,58 @@ type RouteInventory struct {
 	CallbackPattern string
 
 	IssuerMode mcproutes.IssuerMode
+}
+
+type RouteRefreshEvent struct {
+	Class RouteRefreshEventClass
+
+	Reason string
+
+	Outcome string
+
+	ErrorCode string
+
+	At time.Time
+
+	Issuer            string
+	Stage             string
+	CanonicalResource string
+	ClientNamespace   string
+	EndpointKind      string
+	PartnerID         string
+	AgentID           string
+
+	ClientIDHash                     string
+	SubjectIDHash                    string
+	HandleHash                       string
+	FamilyHash                       string
+	SuccessorHandleHash              string
+	UpstreamRefreshTokenHash         string
+	PreviousUpstreamRefreshTokenHash string
+	ScopeFingerprint                 string
+
+	StatusFrom string
+	StatusTo   string
+
+	ChainGeneration int
+
+	ChainDepth int
+
+	ExpirySignal string
+
+	UpstreamClass string
+
+	RevokedRecords int
+}
+
+type RouteRefreshEventClass string
+
+type RouteRefreshEventHook func(context.Context, RouteRefreshEvent)
+
+type RouteRefreshPolicy struct {
+	HandleTTL        time.Duration
+	GraceWindow      time.Duration
+	ReuseRateCeiling int
 }
 
 type TransportPosture string
@@ -4107,6 +4259,8 @@ const ErrorCodeRawSDKEscapeHatch = "m15.microvm.raw_sdk_escape_hatch"
 const ErrorCodeRealLifecycleIncomplete = "m16.microvm.lifecycle_incomplete"
 
 const ErrorCodeRouteContractIncomplete = "m16.microvm.route_contract_incomplete"
+
+const ErrorCodeSessionOwnerMismatch = "m15.microvm.session_owner_mismatch"
 
 const ErrorCodeSessionRegistryIncomplete = "m15.microvm.session_registry_incomplete"
 
@@ -5496,6 +5650,8 @@ var ErrAuthorizationCodeNotFound = errors.New("store: authorization code not fou
 
 var ErrAuthorizationCodeReplayed = errors.New("store: authorization code replayed")
 
+var ErrBrokerExpired = errors.New("store: route refresh broker record expired")
+
 var ErrBrokerLocked = errors.New("store: route refresh broker record is locked")
 
 var ErrBrokerNotFound = errors.New("store: route refresh broker record not found")
@@ -5643,6 +5799,15 @@ type RateLimitStoreOptions struct {
 	Window time.Duration
 }
 
+type RouteRefreshBrokerFamilyStore interface {
+	ListFamily(context.Context, string) ([]*RouteRefreshBrokerRecord, error)
+	RevokeFamily(context.Context, string) ([]*RouteRefreshBrokerRecord, error)
+}
+
+type RouteRefreshBrokerHandleTTLReporter interface {
+	RouteRefreshBrokerHandleTTL() time.Duration
+}
+
 type RouteRefreshBrokerRecord struct {
 	HandleHash                    string
 	Issuer                        string
@@ -5664,6 +5829,9 @@ type RouteRefreshBrokerRecord struct {
 	Status                        string
 	RefreshLockOwner              string
 	RefreshLockExpiresAt          time.Time
+	ChainGeneration               int
+	FamilyHash                    string
+	DepthOneServedAt              time.Time
 	Version                       int
 }
 
@@ -5792,9 +5960,21 @@ func (*MemoryRouteRefreshBrokerStore) CompareAndSwap(
 
 func (*MemoryRouteRefreshBrokerStore) Get(context.Context, string) (*RouteRefreshBrokerRecord, error)
 
+func (*MemoryRouteRefreshBrokerStore) ListFamily(
+	context.Context,
+	string,
+) ([]*RouteRefreshBrokerRecord, error)
+
 func (*MemoryRouteRefreshBrokerStore) Put(context.Context, *RouteRefreshBrokerRecord) error
 
 func (*MemoryRouteRefreshBrokerStore) Revoke(context.Context, string) (*RouteRefreshBrokerRecord, error)
+
+func (*MemoryRouteRefreshBrokerStore) RevokeFamily(
+	context.Context,
+	string,
+) ([]*RouteRefreshBrokerRecord, error)
+
+func (*MemoryRouteRefreshBrokerStore) RouteRefreshBrokerHandleTTL() time.Duration
 
 func (*MemoryTransactionStore) Consume(context.Context, string) (*TransactionRecord, error)
 
