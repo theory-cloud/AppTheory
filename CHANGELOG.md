@@ -1,5 +1,42 @@
 # Changelog
 
+## [6.3.0](https://github.com/theory-cloud/AppTheory/compare/v6.2.0...v6.3.0) (2026-10-19)
+
+
+### Features
+
+* **go:** pin tabletheory v6.1.0 ([c1033fe](https://github.com/theory-cloud/AppTheory/commit/c1033fee63b30ab103d4d04707cab7b22b20e745))
+* **mcpfacade:** add refresh-handle policy, depth classification, families, and telemetry ([23b75b1](https://github.com/theory-cloud/AppTheory/commit/23b75b1ceaa9b2f82e6a40da6cf1a4bfed182ee5))
+* **py:** pin tabletheory-py 6.1.0 release asset ([3ca5099](https://github.com/theory-cloud/AppTheory/commit/3ca5099ed5596968346760b7a43bc6f8fbcdc5d7))
+* **ts:** pin tabletheory-ts 6.1.0 release asset ([cbfac34](https://github.com/theory-cloud/AppTheory/commit/cbfac34b665dbd1e92525537a2efbdf5df4c9424))
+
+
+### Bug Fixes
+
+* **cdk:** allow an API Gateway authorizer on the remote MCP construct ([f03e9f7](https://github.com/theory-cloud/AppTheory/commit/f03e9f7232e1e417cb87232af9493b460e1a4f4f))
+* **cdk:** regenerate the jsii Go bundle with the Linux toolchain ([1298b34](https://github.com/theory-cloud/AppTheory/commit/1298b346c80a9fe9993dc50b58ba9b12a3761b92))
+* **ci:** refresh dependency scans on every pull-request revision ([6ccad59](https://github.com/theory-cloud/AppTheory/commit/6ccad592444fed33800908c46337500032a85a60))
+* **examples:** require an operator-supplied MicroVM demo bearer token ([76daeee](https://github.com/theory-cloud/AppTheory/commit/76daeeed4f003eef6ad182f5ebb28937a1ee0b16))
+* **limited:** derive rate-limit identity from the transport and fingerprint credentials ([2777ad7](https://github.com/theory-cloud/AppTheory/commit/2777ad765adb0700f0f1f8b706fdd06201b77a4f))
+* **mcp:** bind sessions, bound state, carry identity, redact handler errors ([d26441c](https://github.com/theory-cloud/AppTheory/commit/d26441c8bfe3848f8d4eab4effa2547ed0bdcfcd))
+* **mcp:** canonicalize control errors in tool and task responses ([3164a8b](https://github.com/theory-cloud/AppTheory/commit/3164a8bbce71ac05549efd5b45d4c6b7714481b0))
+* **mcp:** follow cursors in the TypeScript and Python stream stores ([575c514](https://github.com/theory-cloud/AppTheory/commit/575c5145fc86cde38555513e5b03b57691e5347f))
+* **mcp:** reap expired in-memory sessions on insert ([7e37bd0](https://github.com/theory-cloud/AppTheory/commit/7e37bd08ffd547599fb4a54d740f7be7e6f5891a))
+* **microvm:** bind session ownership and isolate pre-auth policy context ([88276a5](https://github.com/theory-cloud/AppTheory/commit/88276a5dc86e0fe6b18fe17f778e61766081c8b2))
+* **microvm:** bound the TypeScript invoke response read by size ([b0d02c6](https://github.com/theory-cloud/AppTheory/commit/b0d02c623bafdde57bcd2e1dd524f8c7e2ede569))
+* **microvm:** reject expired session records instead of reviving them ([b2b5b13](https://github.com/theory-cloud/AppTheory/commit/b2b5b13201d249ce2770c98416bc91740d43a5a2))
+* **objectstore:** map a missing S3 object to the typed not-found error ([7f68d35](https://github.com/theory-cloud/AppTheory/commit/7f68d35b7762f336e26250f310b8d9d8e6c57bb5))
+* **objectstore:** return typed not-found for a missing S3 object ([17448ea](https://github.com/theory-cloud/AppTheory/commit/17448ea1883db868de8e5089e2201eeb7b4a1d69))
+* **observability:** log the verified tenant after authentication ([1bd148f](https://github.com/theory-cloud/AppTheory/commit/1bd148fb793743651f5c2f7b6716304e4559e8c2))
+* **py:** avoid launching an unjoined async release task in the stream drain ([939b6ac](https://github.com/theory-cloud/AppTheory/commit/939b6ac9951b02a0ee82144b1e88613bf8a7692b))
+* **py:** bound streaming-body drains and support cooperative cancellation ([da43c3d](https://github.com/theory-cloud/AppTheory/commit/da43c3d44f9720799421ea4063ede8f047df9f05))
+* **py:** return 403 for microvm session owner mismatch ([5a6c038](https://github.com/theory-cloud/AppTheory/commit/5a6c0380e672e0b2606d92a0ddcaae53b9b30f56))
+* **security:** remediate Codex Security packet (2026-10-18) ([e979336](https://github.com/theory-cloud/AppTheory/commit/e979336acf45ae343953908df4ff1903442d83d7))
+* **security:** wave 2 remediation of the Codex Security packet ([9429253](https://github.com/theory-cloud/AppTheory/commit/942925306451f2c7ba86a8d14c79385e2bf8e36e))
+* **test:** satisfy lint on the S3 stub contract harness ([b567c25](https://github.com/theory-cloud/AppTheory/commit/b567c25ccf6bbb1271144b1ba277ba807b78d8fe))
+* **ts:** redact mcp task store and task result errors ([601115c](https://github.com/theory-cloud/AppTheory/commit/601115c0b12184a40b9334a858f8038ad84588ab))
+* **ts:** return 403 for microvm session owner mismatch ([ad6bc8e](https://github.com/theory-cloud/AppTheory/commit/ad6bc8e285ec9d918bb2eeeb0c368792280ab259))
+
 ## [6.3.0-rc](https://github.com/theory-cloud/AppTheory/compare/v6.2.0...v6.3.0-rc) (2026-10-18)
 
 
