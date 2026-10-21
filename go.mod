@@ -18,7 +18,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.51.4
 	github.com/oklog/ulid/v2 v2.1.2
 	github.com/stretchr/testify v1.12.1
-	github.com/theory-cloud/tabletheory/v6 v6.1.0
+	github.com/theory-cloud/tabletheory/v6 v6.1.1
 	go.uber.org/zap v1.28.0
 	gopkg.in/yaml.v3 v3.0.1
 	pgregory.net/rapid v1.3.0
