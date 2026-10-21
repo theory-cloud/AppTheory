@@ -370,7 +370,7 @@ write_probe_sh <<'FIXTURE'
 #!/usr/bin/env bash
 (cd ts && npm ci --ignore-scripts --no-audit --no-fund >/dev/null)
 bash -c 'cd cdk && npm ci --ignore-scripts --no-audit --no-fund >/dev/null'
-npm_config_loglevel=warn npm install --ignore-scripts --prefix "${p}" release-please@17.1.3
+npm_config_loglevel=warn npm install --ignore-scripts --prefix "${p}" release-please@17.11.2
 stamp="$(npm ci --ignore-scripts >/dev/null)"
 echo "cdk-synth: FAIL (CDK dependencies incomplete; run 'cd cdk && npm ci')"
 FIXTURE
