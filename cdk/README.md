@@ -116,15 +116,19 @@ new AppTheoryHttpApi(stack, "Api", { handler: fn, apiName: "my-api" });
   skip these value checks and remain subject to IAM validation at deployment.
   When omitted, CloudFormation generates the role name. These props supersede
   direct `CfnRole` property-override escape hatches.
-- `AppTheoryAppProps.logRemovalPolicy` forwards to the app function's
-  AppTheory-created log group. All AppTheory-created function log groups,
-  whether named explicitly or created through the anonymous path, default to
-  `RemovalPolicy.DESTROY` for the prototype's self-cleaning posture; set
-  `RemovalPolicy.RETAIN` explicitly when logs must survive stack deletion.
-  `RemovalPolicy.SNAPSHOT` fails synthesis because CloudWatch Logs groups do
-  not support snapshot removal policies. This supported surface supersedes
-  direct `CfnLogGroup.applyRemovalPolicy` escape hatches. Caller-provided log
-  groups keep their own removal policy.
+- `AppTheoryAppProps.logRetention` and `AppTheoryAppProps.logRemovalPolicy` are
+  deprecated in favor of `logGroup` and apply only to the app function's
+  AppTheory-created log group. Create a `logs.LogGroup` with the wanted
+  `retention` and `removalPolicy` and pass it as `logGroup`: an explicit
+  `logGroup` wins over `logRetention`, and combining it with `logRemovalPolicy`
+  fails synthesis. All AppTheory-created function log groups, whether named
+  explicitly or created through the anonymous path, default to
+  `RemovalPolicy.RETAIN`; set `RemovalPolicy.DESTROY` explicitly for a
+  self-cleaning stack. `RemovalPolicy.SNAPSHOT` fails synthesis because
+  CloudWatch Logs groups do not support snapshot removal policies. This
+  supported surface supersedes direct `CfnLogGroup.applyRemovalPolicy` escape
+  hatches. Caller-provided log groups keep their own retention and removal
+  policy.
 - Regional WAF is supported only on `AppTheoryRestApi` and `AppTheoryRestApiRouter`
   because API Gateway REST API stages use the WAF-supported
   `/restapis/{apiId}/stages/{stageName}` ARN shape. `AppTheoryHttpApi` and

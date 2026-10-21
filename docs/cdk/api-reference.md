@@ -124,18 +124,30 @@ so a bad token-resolved name fails deployment rather than synthesis. AppTheory s
 silently using an unnamed or differently named role when the generated role cannot be renamed. This prop supersedes
 direct `CfnRole.addPropertyOverride("RoleName", ...)` escape hatches for stable function role names.
 
-## Function log group removal policy
+## Function log group retention and removal policy
 
+`logRetention` and `logRemovalPolicy` are deprecated in the Lambda L2 (`@deprecated use logGroup instead`).
 `AppTheoryFunction` accepts the inherited `logRemovalPolicy` prop for log groups it creates, and
-`AppTheoryAppProps.logRemovalPolicy` forwards that contract to the app's named function:
+`AppTheoryAppProps.logRemovalPolicy` forwards that contract to the app's named function. Create a
+`logs.LogGroup`, configure its `retention` and `removalPolicy`, and pass it as `logGroup` instead:
 
 ```ts
+const logGroup = new logs.LogGroup(this, "RuntimeLogs", {
+  logGroupName: "/aws/lambda/orders-api",
+  retention: logs.RetentionDays.ONE_MONTH,
+  removalPolicy: RemovalPolicy.RETAIN,
+});
+
 new AppTheoryApp(this, "Runtime", {
   appName: "orders-api",
   code: lambda.Code.fromAsset("dist"),
-  logRemovalPolicy: RemovalPolicy.RETAIN,
+  logGroup,
 });
 ```
+
+Until the deprecated props are removed, they keep working: an explicit `logGroup` wins over `logRetention`, and
+combining `logGroup` with `logRemovalPolicy` fails synthesis. Without `logGroup`, the deprecated props configure the
+AppTheory-created log group exactly as before.
 
 All AppTheory-created function log groups default to `RemovalPolicy.RETAIN`, including the anonymous path whose
 function name CloudFormation generates, so deleting a stack preserves the execution logs. This is a breaking default
