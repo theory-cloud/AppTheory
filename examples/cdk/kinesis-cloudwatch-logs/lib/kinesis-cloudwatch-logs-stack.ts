@@ -112,7 +112,7 @@ export class KinesisCloudWatchLogsStack extends cdk.Stack {
       filterPatternText: "",
       distribution: logs.Distribution.BY_LOG_STREAM,
     });
-    subscription.subscriptionFilter.addDependency(destination.destination);
+    subscription.subscriptionFilter.addResourceDependency(destination.destination);
 
     new cdk.CfnOutput(this, "KinesisStreamName", {
       value: logsStream.streamName,
