@@ -51,12 +51,28 @@ function buildReleasePleaseArgs() {
   return releasePleaseArgs;
 }
 
-function installAutomatedCommitPolicy(packageRoot) {
-  const codeSuggesterModule = require.resolve("code-suggester", { paths: [packageRoot] });
-  const codeSuggester = require(codeSuggesterModule);
-  if (typeof codeSuggester.createPullRequest !== "function") {
+// release-please vendors its commit transport at build/src/util/code-suggester
+// as of 17.11 instead of depending on the standalone `code-suggester` package.
+// Both release-please call sites read `createPullRequest` off that module object
+// at call time, so patching the resolved module instance enforces the
+// automated-commit policy for the vendored transport too.
+function resolveCommitTransport(packageRoot) {
+  let transportModule;
+  try {
+    transportModule = require.resolve(`${packageRoot}/build/src/util/code-suggester/index.js`);
+  } catch {
     throw new SafeInvocationError("pinned release-please commit transport is unavailable");
   }
+
+  const transport = require(transportModule);
+  if (typeof transport?.createPullRequest !== "function") {
+    throw new SafeInvocationError("pinned release-please commit transport is unavailable");
+  }
+  return transport;
+}
+
+function installAutomatedCommitPolicy(packageRoot) {
+  const codeSuggester = resolveCommitTransport(packageRoot);
 
   const createPullRequest = codeSuggester.createPullRequest;
   codeSuggester.createPullRequest = async (octokit, changes, options) => {
