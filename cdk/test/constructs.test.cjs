@@ -560,7 +560,7 @@ test("AppTheoryFunction exposes log retention, VPC, alias, provisioned concurren
   assert.equal(logGroup.Properties?.RetentionInDays, 7);
 });
 
-test("AppTheoryFunction binds explicit-name log groups through the Lambda L2", () => {
+test("AppTheoryFunction binds explicit-name log groups through the Lambda L2 (deprecated logRetention path)", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
 
@@ -582,7 +582,7 @@ test("AppTheoryFunction binds explicit-name log groups through the Lambda L2", (
   assert.deepEqual(fn.Properties?.LoggingConfig, { LogGroup: { Ref: logGroupId } });
 });
 
-test("AppTheoryFunction applies the requested removal policy to its named log group", () => {
+test("AppTheoryFunction applies the requested removal policy to its named log group (deprecated logRemovalPolicy path)", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
 
@@ -667,7 +667,7 @@ test("AppTheoryFunction fails closed when its managed log group is not backed by
   }
 });
 
-test("AppTheoryFunction rejects SNAPSHOT for its managed log group", () => {
+test("AppTheoryFunction rejects SNAPSHOT for its managed log group (deprecated logRemovalPolicy path)", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
 
@@ -682,6 +682,60 @@ test("AppTheoryFunction rejects SNAPSHOT for its managed log group", () => {
       }),
     /cannot apply RemovalPolicy\.SNAPSHOT because AWS::Logs::LogGroup does not support snapshot removal policies/,
   );
+});
+
+test("AppTheoryFunction prefers a caller-provided logGroup over the deprecated logRetention", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const logGroup = new logs.LogGroup(stack, "ExistingLogGroup", {
+    logGroupName: "/aws/lambda/migrated-handler",
+    retention: logs.RetentionDays.THREE_MONTHS,
+    removalPolicy: cdk.RemovalPolicy.RETAIN,
+  });
+
+  new apptheory.AppTheoryFunction(stack, "Fn", {
+    functionName: "migrated-handler",
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    logGroup,
+    logRetention: logs.RetentionDays.ONE_WEEK,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const logGroups = resourcesOfType(template, "AWS::Logs::LogGroup");
+  const [logGroupId] = Object.entries(template.Resources ?? {}).find(
+    ([, resource]) => resource.Type === "AWS::Logs::LogGroup",
+  );
+  const [, fn] = Object.entries(template.Resources ?? {}).find(
+    ([, resource]) => resource.Type === "AWS::Lambda::Function",
+  );
+
+  assert.equal(logGroups.length, 1, "Should not synthesize a managed log group beside the caller-provided one");
+  assert.equal(logGroups[0].Properties?.LogGroupName, "/aws/lambda/migrated-handler");
+  assert.equal(logGroups[0].Properties?.RetentionInDays, 90, "Caller-owned retention must win over logRetention");
+  assert.equal(logGroups[0].DeletionPolicy, "Retain");
+  assert.deepEqual(fn.Properties?.LoggingConfig, { LogGroup: { Ref: logGroupId } });
+});
+
+test("AppTheory deprecated log props carry jsii deprecation notices pointing at logGroup", () => {
+  const assembly = JSON.parse(fs.readFileSync(path.join(__dirname, "..", ".jsii"), "utf8"));
+
+  const appProps = assembly.types["@theory-cloud/apptheory-cdk.AppTheoryAppProps"];
+  const appByName = new Map(appProps.properties.map((property) => [property.name, property]));
+  for (const name of ["logRetention", "logRemovalPolicy"]) {
+    const docs = appByName.get(name)?.docs ?? {};
+    assert.match(docs.deprecated ?? "", /logGroup/, `${name} must point callers at logGroup`);
+    assert.equal(docs.stability, "deprecated", `${name} must stay deprecated, not removed`);
+  }
+
+  // jsii (JSII5015) forbids re-declaring inherited interface members, so the
+  // Lambda L2 props stay inherited and the migration guidance lives on the
+  // AppTheory interface itself.
+  const functionProps = assembly.types["@theory-cloud/apptheory-cdk.AppTheoryFunctionProps"];
+  const ownProps = functionProps.properties.map((property) => property.name).sort();
+  assert.deepEqual(ownProps, ["alias", "roleName"]);
+  assert.match(functionProps.docs?.remarks ?? "", /deprecated upstream[\s\S]*logGroup/);
 });
 
 test("AppTheoryFunction defaults its named log group to RETAIN", () => {
@@ -724,7 +778,7 @@ test("AppTheoryFunction defaults its anonymous log group to RETAIN", () => {
   assert.equal(logGroups[0].UpdateReplacePolicy, "Retain");
 });
 
-test("AppTheoryFunction honors an explicit destructive logRemovalPolicy opt-in", () => {
+test("AppTheoryFunction honors an explicit destructive logRemovalPolicy opt-in (deprecated path)", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
 
@@ -3767,7 +3821,7 @@ test("AppTheoryApp rejects invalid execution role names", () => {
   }
 });
 
-test("AppTheoryApp forwards logRemovalPolicy to its named function log group", () => {
+test("AppTheoryApp forwards logRemovalPolicy to its named function log group (deprecated path)", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
 
@@ -3812,7 +3866,7 @@ test("AppTheoryApp defaults its named function log group to RETAIN", () => {
   assert.equal(functionLogGroup.UpdateReplacePolicy, "Retain");
 });
 
-test("AppTheoryApp honors an explicit destructive logRemovalPolicy opt-in", () => {
+test("AppTheoryApp honors an explicit destructive logRemovalPolicy opt-in (deprecated path)", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
 
@@ -3834,7 +3888,7 @@ test("AppTheoryApp honors an explicit destructive logRemovalPolicy opt-in", () =
   assert.equal(functionLogGroup.UpdateReplacePolicy, "Delete");
 });
 
-test("AppTheoryApp rejects SNAPSHOT for its managed function log group", () => {
+test("AppTheoryApp rejects SNAPSHOT for its managed function log group (deprecated logRemovalPolicy path)", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
 
@@ -3849,6 +3903,34 @@ test("AppTheoryApp rejects SNAPSHOT for its managed function log group", () => {
       }),
     /cannot apply RemovalPolicy\.SNAPSHOT because AWS::Logs::LogGroup does not support snapshot removal policies/,
   );
+});
+
+test("AppTheoryApp prefers a caller-provided logGroup over the deprecated logRetention", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const logGroup = new logs.LogGroup(stack, "ExistingLogGroup", {
+    logGroupName: "/aws/lambda/apptheory-migrated",
+    retention: logs.RetentionDays.TWO_WEEKS,
+    removalPolicy: cdk.RemovalPolicy.DESTROY,
+  });
+
+  new apptheory.AppTheoryApp(stack, "App", {
+    appName: "apptheory-migrated",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    logGroup,
+    logRetention: logs.RetentionDays.ONE_WEEK,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const functionLogGroups = resourcesOfType(template, "AWS::Logs::LogGroup").filter(
+    (resource) => resource.Properties?.LogGroupName === "/aws/lambda/apptheory-migrated",
+  );
+
+  assert.equal(functionLogGroups.length, 1, "Should reuse the caller-provided app log group");
+  assert.equal(functionLogGroups[0].Properties?.RetentionInDays, 14, "Caller-owned retention must win over logRetention");
+  assert.equal(functionLogGroups[0].DeletionPolicy, "Delete");
 });
 
 test("AppTheoryApp exposes production deployment surface without raw CDK escape hatches", () => {
