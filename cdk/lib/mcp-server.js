@@ -125,7 +125,7 @@ var AppTheoryMcpOriginReachability;
  * `mcpfacade.RegisterMCPFacade`.
  */
 class AppTheoryMcpServer extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMcpServer", version: "6.3.0" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMcpServer", version: "6.3.1" };
     routeSequence = 0;
     routeIdMode = AppTheoryMcpRouteIdMode.LEGACY;
     routeIds = new Set();
