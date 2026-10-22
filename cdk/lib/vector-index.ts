@@ -195,7 +195,7 @@ export class AppTheoryVectorIndex extends Construct {
     });
     this.index.applyRemovalPolicy(removalPolicy);
     if (this.vectorBucket) {
-      this.index.addDependency(this.vectorBucket);
+      this.index.addResourceDependency(this.vectorBucket);
     }
     this.indexArn = this.index.attrIndexArn;
 

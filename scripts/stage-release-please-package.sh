@@ -31,4 +31,4 @@ npm_config_loglevel=warn npm install \
   --no-package-lock \
   --no-save \
   --prefix "${package_root}" \
-  release-please@17.1.3
+  release-please@17.11.2
