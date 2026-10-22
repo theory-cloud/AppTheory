@@ -1,5 +1,22 @@
 # Changelog
 
+## [6.3.1-rc](https://github.com/theory-cloud/AppTheory/compare/v6.3.0...v6.3.1-rc) (2026-10-22)
+
+
+### Bug Fixes
+
+* **cdk:** deprecate logRetention and logRemovalPolicy in favor of logGroup ([7f9c9ba](https://github.com/theory-cloud/AppTheory/commit/7f9c9ba141b15a8b042a85957c26a2b018aadf30))
+* **cdk:** pack the jsii bundle from cdk/ so it matches CI ([fa5ed6d](https://github.com/theory-cloud/AppTheory/commit/fa5ed6ddd6512c69c919a9c2b9fb2ebdeedc5106))
+* **cdk:** replace deprecated CfnResource.addDependency calls ([229582f](https://github.com/theory-cloud/AppTheory/commit/229582f194ee20d45a99286cad1d3af76cb7dc8f))
+* **cdk:** replace deprecated CfnResource.addDependency calls ([373562f](https://github.com/theory-cloud/AppTheory/commit/373562f6f5944e2e956d4c263bb53b3548e62e39))
+* deprecate-forward logRetention/logRemovalPolicy and pin release-please 17.11.2 ([cc9c6e3](https://github.com/theory-cloud/AppTheory/commit/cc9c6e32edea3dfe5fad3b9cee6f95f0b5c640b8))
+* **deps:** pin tabletheory v6.1.1 in the Go module ([ee1ec71](https://github.com/theory-cloud/AppTheory/commit/ee1ec71435e11980f47874710cbba753b1363b45))
+* **deps:** pin tabletheory-py 6.1.1 release asset ([1340779](https://github.com/theory-cloud/AppTheory/commit/1340779b8f93bd0029734ce085063ab075357989))
+* **deps:** pin tabletheory-ts 6.1.1 release asset ([9c71024](https://github.com/theory-cloud/AppTheory/commit/9c71024bc54c7c89affddafc35e484bb3e6f49fa))
+* **go:** bump Go toolchain pin to 1.27.3 ([c40d5eb](https://github.com/theory-cloud/AppTheory/commit/c40d5ebda3a99fdab5bd5d7a1f320c889c01bf81))
+* **go:** bump Go toolchain pin to 1.27.3 ([79dd28e](https://github.com/theory-cloud/AppTheory/commit/79dd28eed0afbe6e7d0bd7d11e07d46d0faac071))
+* **release:** pin release-please 17.11.2 to drop deprecated glob and inflight ([2568c85](https://github.com/theory-cloud/AppTheory/commit/2568c85cb7c63f85c4a6d67ddc472d5e2985a0c3))
+
 ## [6.3.0](https://github.com/theory-cloud/AppTheory/compare/v6.2.0...v6.3.0) (2026-10-19)
 
 
