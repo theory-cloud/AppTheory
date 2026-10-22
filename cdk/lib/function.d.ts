@@ -95,6 +95,16 @@ export interface AppTheoryFunctionAliasOptions {
  * the destructive behavior. Combining an explicit `logRemovalPolicy` with a
  * caller-provided `logGroup` fails synthesis because caller-provided resources
  * own their removal policy.
+ *
+ * Both `logRetention` and `logRemovalPolicy` are deprecated upstream in favor
+ * of `logGroup` (`@deprecated use logGroup instead` on the inherited Lambda L2
+ * props). The migration is to create a `logs.LogGroup` with the desired
+ * `retention` and `removalPolicy` and pass it as `logGroup`; AppTheory then
+ * uses that group unchanged. An explicit `logGroup` wins over `logRetention`,
+ * and combining it with `logRemovalPolicy` fails synthesis.
+ *
+ * jsii forbids re-declaring the inherited props, so the deprecation notice is
+ * carried by the base Lambda L2 interface rather than restated here.
  */
 export interface AppTheoryFunctionProps extends lambda.FunctionProps {
     /**

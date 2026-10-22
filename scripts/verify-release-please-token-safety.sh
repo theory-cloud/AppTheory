@@ -26,7 +26,7 @@ grep -Fq 'bash scripts/invoke-release-please-pr.sh' "${wrapper}" ||
   fail "release wrapper must enter the environment-only transport"
 grep -Fq 'unset RELEASE_PLEASE_TOKEN GH_TOKEN GITHUB_TOKEN' "${transport}" ||
   fail "transport must remove all GitHub credentials before entering npm"
-grep -Fq 'release-please@17.1.3' "${stager}" ||
+grep -Fq 'release-please@17.11.2' "${stager}" ||
   fail "credential-free npm boundary must pin release-please"
 grep -Fq 'GitHub credentials are forbidden at the npm boundary' "${stager}" ||
   fail "npm boundary must fail closed when any GitHub credential is present"
@@ -35,6 +35,8 @@ grep -Fq 'requiredEnvironment("RELEASE_PLEASE_TOKEN")' "${launcher}" ||
   fail "launcher must read the release credential from the environment"
 grep -Fq 'parser.parseAsync(releasePleaseArgs)' "${launcher}" ||
   fail "launcher must call the pinned release-please parser in-process"
+grep -Fq 'build/src/util/code-suggester/index.js' "${launcher}" ||
+  fail "launcher must patch the commit transport release-please actually ships"
 grep -Fq '`${options.message}\n\n[skip ci]`' "${launcher}" ||
   fail "release-please commits must suppress redundant pull_request CI events"
 
@@ -67,7 +69,7 @@ while [[ $# -gt 0 ]]; do
       found_ignore_scripts="true"
       shift
       ;;
-    release-please@17.1.3)
+    release-please@17.11.2)
       found_pin="true"
       shift
       ;;
@@ -83,12 +85,9 @@ if [[ -z "${prefix}" || "${found_pin}" != "true" || "${found_ignore_scripts}" !=
 fi
 
 module_dir="${prefix}/node_modules/release-please/build/src/bin"
-code_suggester_dir="${prefix}/node_modules/code-suggester/build/src"
+code_suggester_dir="${prefix}/node_modules/release-please/build/src/util/code-suggester"
 mkdir -p "${module_dir}"
 mkdir -p "${code_suggester_dir}"
-cat > "${prefix}/node_modules/code-suggester/package.json" <<'FAKE_CODE_SUGGESTER_PACKAGE'
-{"name":"code-suggester","main":"build/src/index.js"}
-FAKE_CODE_SUGGESTER_PACKAGE
 cat > "${code_suggester_dir}/index.js" <<'FAKE_CODE_SUGGESTER'
 exports.createPullRequest = async (_octokit, _changes, options) => {
   if (typeof options?.message !== "string" || !options.message.endsWith("\n\n[skip ci]")) {
@@ -98,7 +97,8 @@ exports.createPullRequest = async (_octokit, _changes, options) => {
 FAKE_CODE_SUGGESTER
 cat > "${module_dir}/release-please.js" <<'FAKE_MODULE'
 const fs = require("node:fs");
-const codeSuggester = require("code-suggester");
+// Mirrors release-please's own require of its vendored commit transport.
+const codeSuggester = require("../util/code-suggester");
 
 exports.parser = {
   parseAsync: async (args) => {

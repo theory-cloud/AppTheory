@@ -19,7 +19,27 @@ export interface AppTheoryAppProps {
     readonly environment?: Record<string, string>;
     readonly memorySize?: number;
     readonly timeoutSeconds?: number;
+    /**
+     * Retention for the app function's AppTheory-managed named log group.
+     *
+     * The value is forwarded unchanged to AppTheoryFunction, which ignores it
+     * when `logGroup` supplies the log group.
+     *
+     * @deprecated Configure `retention` on an explicit `logs.LogGroup` and pass
+     * it as `logGroup` instead. AppTheory keeps honoring this property for
+     * existing stacks and has no planned removal date.
+     * @default logs.RetentionDays.ONE_MONTH for AppTheory-managed log groups
+     */
     readonly logRetention?: logs.RetentionDays;
+    /**
+     * Log group the app function writes to.
+     *
+     * When set, AppTheory uses this group unchanged: the caller owns its
+     * retention and removal policy. `logRetention` is ignored, and combining this
+     * property with `logRemovalPolicy` fails synthesis.
+     *
+     * @default an AppTheory-managed log group named `/aws/lambda/<appName>`
+     */
     readonly logGroup?: logs.ILogGroupRef;
     /**
      * Removal policy for the app function's AppTheory-managed named log group.
@@ -28,6 +48,9 @@ export interface AppTheoryAppProps {
      * `logGroup` and `logRemovalPolicy` fails synthesis because caller-provided
      * log groups own their removal policy.
      *
+     * @deprecated Configure `removalPolicy` on an explicit `logs.LogGroup` and
+     * pass it as `logGroup` instead. AppTheory keeps honoring this property for
+     * existing stacks and has no planned removal date.
      * @default RemovalPolicy.RETAIN
      */
     readonly logRemovalPolicy?: RemovalPolicy;

@@ -31,7 +31,14 @@ type AppTheoryAppProps struct {
 	Environment          *map[string]*string            `field:"optional" json:"environment" yaml:"environment"`
 	Handler              *string                        `field:"optional" json:"handler" yaml:"handler"`
 	HostedZone           awsroute53.IHostedZone         `field:"optional" json:"hostedZone" yaml:"hostedZone"`
-	LogGroup             interfacesawslogs.ILogGroupRef `field:"optional" json:"logGroup" yaml:"logGroup"`
+	// Log group the app function writes to.
+	//
+	// When set, AppTheory uses this group unchanged: the caller owns its
+	// retention and removal policy. `logRetention` is ignored, and combining this
+	// property with `logRemovalPolicy` fails synthesis.
+	// Default: an AppTheory-managed log group named `/aws/lambda/<appName>`.
+	//
+	LogGroup interfacesawslogs.ILogGroupRef `field:"optional" json:"logGroup" yaml:"logGroup"`
 	// Removal policy for the app function's AppTheory-managed named log group.
 	//
 	// The value is forwarded unchanged to AppTheoryFunction. Supplying both
@@ -39,7 +46,19 @@ type AppTheoryAppProps struct {
 	// log groups own their removal policy.
 	// Default: RemovalPolicy.RETAIN
 	//
-	LogRemovalPolicy   awscdk.RemovalPolicy  `field:"optional" json:"logRemovalPolicy" yaml:"logRemovalPolicy"`
+	// Deprecated: Configure `removalPolicy` on an explicit `logs.LogGroup` and
+	// pass it as `logGroup` instead. AppTheory keeps honoring this property for
+	// existing stacks and has no planned removal date.
+	LogRemovalPolicy awscdk.RemovalPolicy `field:"optional" json:"logRemovalPolicy" yaml:"logRemovalPolicy"`
+	// Retention for the app function's AppTheory-managed named log group.
+	//
+	// The value is forwarded unchanged to AppTheoryFunction, which ignores it
+	// when `logGroup` supplies the log group.
+	// Default: logs.RetentionDays.ONE_MONTH for AppTheory-managed log groups
+	//
+	// Deprecated: Configure `retention` on an explicit `logs.LogGroup` and pass
+	// it as `logGroup` instead. AppTheory keeps honoring this property for
+	// existing stacks and has no planned removal date.
 	LogRetention       awslogs.RetentionDays `field:"optional" json:"logRetention" yaml:"logRetention"`
 	MemorySize         *float64              `field:"optional" json:"memorySize" yaml:"memorySize"`
 	RateLimitTableName *string               `field:"optional" json:"rateLimitTableName" yaml:"rateLimitTableName"`

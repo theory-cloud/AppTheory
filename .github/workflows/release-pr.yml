@@ -130,7 +130,7 @@ jobs:
           # NOTE: release-please-action currently does not apply `release-as` when using
           # `config-file`+`manifest-file` (manifest mode). Use the CLI so the stable
           # release PR can be forced to the premain RC baseline.
-          # Wrapper stages release-please@17.1.3 without credentials in npm and
+          # Wrapper stages release-please@17.11.2 without credentials in npm and
           # invokes its parser in-process with an environment-only token. It
           # always applies --draft-pull-request internally.
           scripts/run-release-please-pr.sh \
@@ -146,7 +146,7 @@ jobs:
           RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
-          # Wrapper stages release-please@17.1.3 without credentials in npm and
+          # Wrapper stages release-please@17.11.2 without credentials in npm and
           # invokes its parser in-process with an environment-only token. It
           # always applies --draft-pull-request internally.
           scripts/run-release-please-pr.sh \
@@ -203,7 +203,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         if: steps.release_pr.outputs.exists == 'true'
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.3"
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: steps.release_pr.outputs.exists == 'true'

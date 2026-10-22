@@ -47,7 +47,7 @@ Skipped full-rubric and deterministic-build contexts are not release/security pr
 
 Release Please credentials are environment-only secrets. They must never be placed in shell, npm, Node, or
 operating-system process arguments. `scripts/run-release-please-pr.sh` is the only supported Release Please CLI
-entry point. Its transport stages the pinned `release-please@17.1.3` package in an npm process from which
+entry point. Its transport stages the pinned `release-please@17.11.2` package in an npm process from which
 `RELEASE_PLEASE_TOKEN`, `GH_TOKEN`, and `GITHUB_TOKEN` have all been removed. Only after npm exits does the
 launcher provide `RELEASE_PLEASE_TOKEN` to the Release Please parser in-process; ambient GitHub credentials are
 removed from that process as well. The package staging step also disables lifecycle scripts and fails closed if
