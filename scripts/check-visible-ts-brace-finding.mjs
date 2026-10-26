@@ -86,6 +86,10 @@ const expectation = {
   // @typescript-eslint/typescript-estree 8.71.1; the minimatch / brace-expansion
   // path below is unchanged, and the gate still requires an exact graph plus an
   // empty scanner report.
+  // Re-anchored for the 2026-10-26 ts-runtime group: eslint 10.13.0 and
+  // @typescript-eslint/typescript-estree 8.71.2. The parent set, the hoisted
+  // minimatch 10.2.6 / brace-expansion 5.0.12 path, and the fail-closed
+  // empty-report requirement are all unchanged.
   minimatchParents: [
     {
       dependencyRange: "^10.2.4",
@@ -95,12 +99,12 @@ const expectation = {
     {
       dependencyRange: "^10.2.2",
       path: "node_modules/@typescript-eslint/typescript-estree",
-      version: "8.71.1",
+      version: "8.71.2",
     },
     {
       dependencyRange: "^10.2.5",
       path: "node_modules/eslint",
-      version: "10.12.0",
+      version: "10.13.0",
     },
     {
       dependencyRange: "^9.0.3 || ^10.1.2",
@@ -241,10 +245,10 @@ function runSelfTest() {
     },
     "node_modules/@eslint/config-array": { version: "0.23.5", dependencies: { minimatch: "^10.2.4" } },
     "node_modules/@typescript-eslint/typescript-estree": {
-      version: "8.71.1",
+      version: "8.71.2",
       dependencies: { minimatch: "^10.2.2" },
     },
-    "node_modules/eslint": { version: "10.12.0", dependencies: { minimatch: "^10.2.5" } },
+    "node_modules/eslint": { version: "10.13.0", dependencies: { minimatch: "^10.2.5" } },
     "node_modules/eslint-plugin-import-x": {
       version: "4.17.1",
       dependencies: { minimatch: "^9.0.3 || ^10.1.2" },
