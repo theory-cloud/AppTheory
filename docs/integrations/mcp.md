@@ -700,9 +700,10 @@ For streaming tool calls, AppTheory assigns SSE event ids and persists them in t
 
 ### Declining the optional common stream with `405 Method Not Allowed`
 
-The MCP authorization/discovery stream is optional. Both the 2025-03-26 and 2025-06-18 revisions state that a server
-which does not offer the GET stream may answer `405 Method Not Allowed` ("Listening for Messages from the Server"),
-and clients such as Codex `rmcp` treat that status as "no common stream" and continue with POST requests.
+The optional GET stream is how a server sends unsolicited messages to a client, and a server is not required to offer
+it. Both the 2025-03-26 and 2025-06-18 revisions state that a server which does not offer that stream may answer
+`405 Method Not Allowed` ("Listening for Messages from the Server"), and clients such as Codex `rmcp` treat that status
+as "no common stream" and continue with POST requests.
 
 The default posture keeps the compliant listener. On deployments whose adapter cannot deliver a streaming body — the
 buffered API Gateway HTTP API v2 adapter drains a body for 5s and otherwise fails closed with an
