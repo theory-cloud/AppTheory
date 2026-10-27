@@ -53,7 +53,7 @@ var AppTheoryHttpApiRouteAuthorizer;
     AppTheoryHttpApiRouteAuthorizer["NONE"] = "none";
 })(AppTheoryHttpApiRouteAuthorizer || (exports.AppTheoryHttpApiRouteAuthorizer = AppTheoryHttpApiRouteAuthorizer = {}));
 class AppTheoryHttpApi extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryHttpApi", version: "6.3.1" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryHttpApi", version: "6.4.0-rc" };
     api;
     stage;
     accessLogGroup;
