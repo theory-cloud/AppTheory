@@ -3402,7 +3402,8 @@ type Server struct {
 	taskRuntime             taskRuntimeConfig
 	taskExecutions          *taskExecutionTracker
 
-	initialSessionListenerBudget *initialSessionListenerBudgetConfig
+	initialSessionListenerEnabled bool
+	initialSessionListenerBudget  *initialSessionListenerBudgetConfig
 }
 
 type ServerIdentity struct {
@@ -3643,6 +3644,8 @@ func WithDynamoStreamSpillEncryption(objectstore.S3EncryptionConfig) DynamoStrea
 func WithExtensionCapabilities(map[string]map[string]any) ServerOption
 
 func WithInitialSessionListenerBudget(InitialSessionListenerBudgetOptions) ServerOption
+
+func WithInitialSessionListenerEnabled(bool) ServerOption
 
 func WithLogger(*slog.Logger) ServerOption
 

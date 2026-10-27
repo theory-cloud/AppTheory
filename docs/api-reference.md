@@ -623,7 +623,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>1222 exported top-level symbols</summary>
+<summary>1223 exported top-level symbols</summary>
 
 ```text
 AccountAssertion, AccountAssertionAssumeFailed, AccountAssertionMismatch, AccountAssertionNotConfigured, AccountAssertionState, AccountAssertionUnavailable,
@@ -774,7 +774,8 @@ WindowConfig, WindowLimit, WithAPI, WithAuthHook, WithAuthPrincipalHook, WithAWS
 WithCapabilityConfig, WithClock, WithCompletionHooks, WithControllerClock, WithControllerDeploymentDefaults, WithControllerExecutionRoleArn, WithControllerID,
 WithControllerIDGenerator, WithControllerLogging, WithControllerProviderID, WithControllerSessionTTL, WithCORS, WithDeviceAuthorizationEndpoint, WithDynamoStreamSpillEncryption,
 WithEMFClock, WithEMFNamespace, WithEMFService, WithEMFWriter, WithEnvironmentErrorNotifications, WithErrorNotifier, WithExtensionCapabilities, WithHTTPErrorFormat,
-WithIdentifier, WithIDGenerator, WithInitialSessionListenerBudget, WithLegacyHTTPErrorShape, WithLifecycleContract, WithLifecycleHandler, WithLimits, WithLogger,
+WithIdentifier, WithIDGenerator, WithInitialSessionListenerBudget, WithInitialSessionListenerEnabled, WithLegacyHTTPErrorShape, WithLifecycleContract,
+WithLifecycleHandler, WithLimits, WithLogger,
 WithLoggingLevelHook, WithObservability, WithOriginValidator, WithPolicyHook, WithProfileClock, WithProfileEnvironment, WithProfileSanitizer, WithProfileWriter,
 WithRegistryClientTTL, WithRequestIDSource, WithResourceSubscriptionHooks, WithRevocationEndpoint, WithSanitizer, WithServerIDGenerator, WithServerInfoMetadata,
 WithSessionReconstructionClock, WithSessionReconstructionStaleAfter, WithSessionStore, WithStreamEventByteLimit, WithStreamEventsPerSessionLimit, WithStreamIDGenerator,
