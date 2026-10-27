@@ -564,6 +564,69 @@ test("mcp server streams, resumes SSE, and testkit invokes deterministically", a
   assert.equal((await harness.invoke({ method: "GET", sessionId })).response.status, 404);
 });
 
+test("mcp initial session listener defaults to enabled and can be declined with 405", async () => {
+  const defaultServer = createMcpServer("Listener MCP", "1", { idGenerator: sequenceIdGenerator(["sess-listener"]) });
+  const defaultHarness = createMcpTestHarness(defaultServer);
+  const defaultSessionId = (await defaultHarness.initialize()).response.headers[MCP_HEADER_SESSION_ID][0];
+  const keepalive = await defaultHarness.invoke({ method: "GET", sessionId: defaultSessionId });
+  assert.equal(keepalive.response.status, 200);
+  assert.equal(keepalive.body.toString("utf8"), ": keepalive\n\n");
+
+  const streamStore = new MemoryMcpStreamStore({ idGenerator: sequenceIdGenerator(["stream-listener"]) });
+  const server = createMcpServer("Listener MCP", "1", {
+    idGenerator: sequenceIdGenerator(["sess-declined"]),
+    streamStore,
+    initialSessionListenerEnabled: false,
+  });
+  const harness = createMcpTestHarness(server);
+  const sessionId = (await harness.initialize()).response.headers[MCP_HEADER_SESSION_ID][0];
+
+  const declined = await harness.invoke({ method: "GET", sessionId });
+  assert.equal(declined.response.status, 405);
+  assert.deepEqual(declined.response.headers.allow, ["DELETE, GET, POST"]);
+  assert.deepEqual(declined.response.headers["content-type"], ["application/json"]);
+  assert.deepEqual(declined.bodyJson, { error: "method not allowed" });
+
+  // The session stays usable over POST after the declined common stream.
+  assert.equal((await harness.call(sessionId, "tools/list")).response.status, 200);
+
+  // Validation order is unchanged: the 405 is not reachable without a valid session.
+  assert.equal(
+    (await harness.invoke({ method: "GET", sessionId, headers: { origin: ["https://evil.example"] } })).response.status,
+    403,
+  );
+  assert.equal((await harness.invoke({ method: "GET" })).response.status, 400);
+  assert.equal((await harness.invoke({ method: "GET", sessionId: "missing" })).response.status, 404);
+  assert.equal(
+    (await harness.invoke({ method: "GET", sessionId, protocolVersion: MCP_PROTOCOL_VERSION_LEGACY })).response.status,
+    400,
+  );
+
+  // Last-Event-ID replay keeps working with the listener declined.
+  const streamId = await streamStore.create(sessionId);
+  const firstEventId = await streamStore.append(
+    sessionId,
+    streamId,
+    Buffer.from(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { ok: true } })),
+  );
+  await streamStore.append(
+    sessionId,
+    streamId,
+    Buffer.from(JSON.stringify({ jsonrpc: "2.0", method: "notifications/progress", params: { seq: 2 } })),
+  );
+  await streamStore.close(sessionId, streamId);
+  const replay = await harness.invoke({ method: "GET", sessionId, lastEventId: firstEventId });
+  assert.equal(replay.response.status, 200);
+  assert.match(JSON.stringify(replay.sseFrames), /notifications\/progress/);
+
+  // The stateless 2026-07-28 shape keeps its early Allow: POST rejection.
+  const stateless = await harness.invoke({ method: "GET", protocolVersion: MCP_PROTOCOL_VERSION_2026_07_28 });
+  assert.equal(stateless.response.status, 405);
+  assert.deepEqual(stateless.response.headers.allow, ["POST"]);
+
+  assert.equal((await harness.invoke({ method: "DELETE", sessionId })).response.status, 202);
+});
+
 test("mcp task runtime handles lifecycle and error paths", async () => {
   const taskStore = new MemoryMcpTaskStore({ now: () => new Date("2026-07-03T00:00:02Z") });
   const server = createMcpServer("Task MCP", "1", {

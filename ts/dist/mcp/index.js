@@ -917,6 +917,7 @@ export class McpServer {
     cacheableResults;
     includeServerInfoMetadata;
     verboseHandlerErrors;
+    initialSessionListenerEnabled;
     toolRegistry = new McpToolRegistry();
     resourceRegistry = new McpResourceRegistry();
     promptRegistry = new McpPromptRegistry();
@@ -936,6 +937,8 @@ export class McpServer {
         this.includeServerInfoMetadata =
             options.includeServerInfoMetadata !== false;
         this.verboseHandlerErrors = options.verboseHandlerErrors === true;
+        this.initialSessionListenerEnabled =
+            options.initialSessionListenerEnabled !== false;
     }
     registry() {
         return this.toolRegistry;
@@ -1100,6 +1103,11 @@ export class McpServer {
         }
         const lastEventId = firstHeader(headers, MCP_HEADER_LAST_EVENT_ID);
         if (!lastEventId) {
+            // A server may decline the optional common stream with 405 Method Not
+            // Allowed; GET stays allowed for Last-Event-ID replay.
+            if (!this.initialSessionListenerEnabled) {
+                return methodNotAllowedResponse("DELETE, GET, POST");
+            }
             return sseBytesResponse(200, [Buffer.from(": keepalive\n\n", "utf8")], sessionId);
         }
         try {

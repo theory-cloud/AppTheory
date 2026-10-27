@@ -105,7 +105,8 @@ type Server struct {
 	taskRuntime             taskRuntimeConfig
 	taskExecutions          *taskExecutionTracker
 
-	initialSessionListenerBudget *initialSessionListenerBudgetConfig
+	initialSessionListenerEnabled bool
+	initialSessionListenerBudget  *initialSessionListenerBudgetConfig
 }
 
 // ServerOption configures a Server.
@@ -259,24 +260,42 @@ func WithInitialSessionListenerBudget(opts InitialSessionListenerBudgetOptions) 
 	}
 }
 
+// WithInitialSessionListenerEnabled controls the initial GET /mcp session
+// listener (requests without Last-Event-ID). It defaults to true.
+//
+// Set it to false on deployments whose HTTP adapter cannot deliver a streaming
+// response body, such as the buffered API Gateway HTTP API v2 adapter. MCP
+// permits a server to decline the optional common stream with
+// 405 Method Not Allowed ("Listening for Messages from the Server", MCP
+// 2025-03-26 and 2025-06-18); clients such as Codex rmcp treat that as
+// "no common stream" and continue over POST. The 405 is only returned after
+// origin, session, and protocol-version validation, and Last-Event-ID replay
+// requests keep their existing behavior.
+func WithInitialSessionListenerEnabled(enabled bool) ServerOption {
+	return func(s *Server) {
+		s.initialSessionListenerEnabled = enabled
+	}
+}
+
 // NewServer creates an MCP server with the given name, version, and options.
 func NewServer(name, version string, opts ...ServerOption) *Server {
 	s := &Server{
-		name:                      name,
-		version:                   version,
-		registry:                  NewToolRegistry(),
-		resourceRegistry:          NewResourceRegistry(),
-		promptRegistry:            NewPromptRegistry(),
-		sessionStore:              NewMemorySessionStore(),
-		streamStore:               NewMemoryStreamStore(),
-		cancellations:             newCancellationTracker(),
-		idGen:                     apptheory.RandomIDGenerator{},
-		logger:                    slog.Default(),
-		originValidator:           AllowOrigins("https://claude.ai", "https://claude.com"),
-		capabilities:              DefaultCapabilityConfig(),
-		cacheableResults:          normalizeCacheableResultConfig(CacheableResultConfig{}),
-		includeServerInfoMetadata: true,
-		taskExecutions:            newTaskExecutionTracker(),
+		name:                          name,
+		version:                       version,
+		registry:                      NewToolRegistry(),
+		resourceRegistry:              NewResourceRegistry(),
+		promptRegistry:                NewPromptRegistry(),
+		sessionStore:                  NewMemorySessionStore(),
+		streamStore:                   NewMemoryStreamStore(),
+		cancellations:                 newCancellationTracker(),
+		idGen:                         apptheory.RandomIDGenerator{},
+		logger:                        slog.Default(),
+		originValidator:               AllowOrigins("https://claude.ai", "https://claude.com"),
+		capabilities:                  DefaultCapabilityConfig(),
+		cacheableResults:              normalizeCacheableResultConfig(CacheableResultConfig{}),
+		includeServerInfoMetadata:     true,
+		initialSessionListenerEnabled: true,
+		taskExecutions:                newTaskExecutionTracker(),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -511,6 +530,11 @@ func (s *Server) handleGET(c *apptheory.Context) (*apptheory.Response, error) {
 
 	lastEventID := firstHeader(c.Request.Headers, headerLastEventID)
 	if lastEventID == "" {
+		// A server may decline the optional common stream with 405 Method Not
+		// Allowed; GET stays allowed for Last-Event-ID replay.
+		if !s.initialSessionListenerEnabled {
+			return methodNotAllowed("DELETE, GET, POST"), nil
+		}
 		// No resumable stream requested. Keep the connection open as a session-level
 		// SSE listener (clients will reconnect in a tight loop if we return EOF).
 		return s.openSessionListener(ctx, sessionID, c.RemainingMS)
