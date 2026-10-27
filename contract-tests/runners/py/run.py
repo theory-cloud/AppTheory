@@ -2615,6 +2615,10 @@ def _new_fixture_mcp_server(runtime: Any, setup: dict[str, Any]) -> Any:
         options["include_server_info_metadata"] = bool(
             server_config["include_server_info_metadata"]
         )
+    if "initial_session_listener_enabled" in server_config:
+        options["initial_session_listener_enabled"] = bool(
+            server_config["initial_session_listener_enabled"]
+        )
     if server_config.get("cacheable_results"):
         options["cacheable_results"] = server_config["cacheable_results"]
     task_runtime = setup.get("task_runtime") or {}

@@ -2539,6 +2539,9 @@ async function newFixtureMCPServer(runtime, setup) {
   if (serverConfig.include_server_info_metadata !== undefined) {
     options.includeServerInfoMetadata = Boolean(serverConfig.include_server_info_metadata);
   }
+  if (serverConfig.initial_session_listener_enabled !== undefined) {
+    options.initialSessionListenerEnabled = Boolean(serverConfig.initial_session_listener_enabled);
+  }
   if (serverConfig.cacheable_results) {
     const config = serverConfig.cacheable_results;
     const hint = (value) => ({
