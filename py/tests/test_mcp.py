@@ -474,6 +474,72 @@ class McpRuntimeTests(unittest.TestCase):
         replay = harness.invoke(method="GET", session_id=session_id, last_event_id="1")
         self.assertEqual([frame.id for frame in replay.sse_frames], ["2", "3"])
 
+    def test_initial_session_listener_defaults_to_enabled_and_can_be_declined(self) -> None:
+        default_server = create_mcp_server(
+            "PyMCP", "test", {"id_generator": sequence_mcp_id_generator(["sess-keepalive"])}
+        )
+        default_harness = create_mcp_test_harness(default_server)
+        default_session_id = default_harness.initialize(id="init").response.headers["mcp-session-id"][0]
+        keepalive = default_harness.invoke(method="GET", session_id=default_session_id)
+        self.assertEqual(keepalive.response.status, 200)
+        self.assertEqual(keepalive.body, b": keepalive\n\n")
+
+        stream_store = MemoryMcpStreamStore(id_generator=sequence_mcp_id_generator(["stream-listener"]))
+        server = create_mcp_server(
+            "PyMCP",
+            "test",
+            {
+                "id_generator": sequence_mcp_id_generator(["sess-declined"]),
+                "stream_store": stream_store,
+                "initial_session_listener_enabled": False,
+            },
+        )
+        harness = create_mcp_test_harness(server)
+        session_id = harness.initialize(id="init").response.headers["mcp-session-id"][0]
+
+        declined = harness.invoke(method="GET", session_id=session_id)
+        self.assertEqual(declined.response.status, 405)
+        self.assertEqual(declined.response.headers["allow"], ["DELETE, GET, POST"])
+        self.assertEqual(declined.response.headers["content-type"], ["application/json"])
+        self.assertEqual(declined.body_json, {"error": "method not allowed"})
+
+        # The session stays usable over POST after the declined common stream.
+        self.assertEqual(harness.call(session_id, "tools/list", {}, "list").response.status, 200)
+
+        # Validation order is unchanged: the 405 is not reachable without a valid session.
+        bad_origin = harness.invoke(
+            method="GET", session_id=session_id, headers={"origin": ["https://evil.example"]}
+        )
+        self.assertEqual(bad_origin.response.status, 403)
+        self.assertEqual(harness.invoke(method="GET").response.status, 400)
+        self.assertEqual(harness.invoke(method="GET", session_id="missing").response.status, 404)
+        bad_protocol = harness.invoke(
+            method="GET", session_id=session_id, protocol_version=MCP_PROTOCOL_VERSION_LEGACY
+        )
+        self.assertEqual(bad_protocol.response.status, 400)
+
+        # Last-Event-ID replay keeps working with the listener declined.
+        stream_id = stream_store.create(session_id)
+        first_event_id = stream_store.append(
+            session_id, stream_id, json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"ok": True}})
+        )
+        stream_store.append(
+            session_id,
+            stream_id,
+            json.dumps({"jsonrpc": "2.0", "method": "notifications/progress", "params": {"seq": 2}}),
+        )
+        stream_store.close(session_id, stream_id)
+        replay = harness.invoke(method="GET", session_id=session_id, last_event_id=first_event_id)
+        self.assertEqual(replay.response.status, 200)
+        self.assertIn(b"notifications/progress", replay.body)
+
+        # The stateless 2026-07-28 shape keeps its early Allow: POST rejection.
+        stateless = harness.invoke(method="GET", protocol_version=MCP_PROTOCOL_VERSION_2026_07_28)
+        self.assertEqual(stateless.response.status, 405)
+        self.assertEqual(stateless.response.headers["allow"], ["POST"])
+
+        self.assertEqual(harness.invoke(method="DELETE", session_id=session_id).response.status, 202)
+
     def test_resource_context_type_is_public(self) -> None:
         self.assertEqual(McpResourceContext(uri="theory://x").uri, "theory://x")
 

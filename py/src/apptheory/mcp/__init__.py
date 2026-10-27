@@ -467,6 +467,7 @@ class McpServerOptions:
     cacheable_results: McpCacheableResultConfig | dict[str, Any] | None = None
     include_server_info_metadata: bool = True
     verbose_handler_errors: bool = False
+    initial_session_listener_enabled: bool = True
     logger: Any | None = None
 
 
@@ -1234,6 +1235,7 @@ class McpServer:
         self.cacheable_results = _normalize_cacheable_result_config(opts.cacheable_results)
         self.include_server_info_metadata = bool(opts.include_server_info_metadata)
         self.verbose_handler_errors = bool(opts.verbose_handler_errors)
+        self.initial_session_listener_enabled = bool(opts.initial_session_listener_enabled)
         self.logger = opts.logger
         self.tool_registry = McpToolRegistry()
         self.resource_registry = McpResourceRegistry()
@@ -1411,6 +1413,10 @@ class McpServer:
             return protocol_response
         last_event_id = _first_header(headers, MCP_HEADER_LAST_EVENT_ID)
         if not last_event_id:
+            # A server may decline the optional common stream with 405 Method Not
+            # Allowed; GET stays allowed for Last-Event-ID replay.
+            if not self.initial_session_listener_enabled:
+                return _method_not_allowed_response("DELETE, GET, POST")
             return _sse_bytes_response(200, [b": keepalive\n\n"], session_id)
         try:
             stream_id = self.stream_store.stream_for_event(session_id, last_event_id)

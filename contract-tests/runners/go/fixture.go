@@ -330,11 +330,12 @@ type FixtureMCPSetup struct {
 }
 
 type FixtureMCPServer struct {
-	Name                      string                      `json:"name,omitempty"`
-	Version                   string                      `json:"version,omitempty"`
-	IncludeServerInfoMetadata *bool                       `json:"include_server_info_metadata,omitempty"`
-	ExtensionCapabilities     map[string]map[string]any   `json:"extension_capabilities,omitempty"`
-	CacheableResults          *FixtureMCPCacheableResults `json:"cacheable_results,omitempty"`
+	Name                          string                      `json:"name,omitempty"`
+	Version                       string                      `json:"version,omitempty"`
+	IncludeServerInfoMetadata     *bool                       `json:"include_server_info_metadata,omitempty"`
+	InitialSessionListenerEnabled *bool                       `json:"initial_session_listener_enabled,omitempty"`
+	ExtensionCapabilities         map[string]map[string]any   `json:"extension_capabilities,omitempty"`
+	CacheableResults              *FixtureMCPCacheableResults `json:"cacheable_results,omitempty"`
 }
 
 type FixtureMCPCacheableResults struct {
