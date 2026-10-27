@@ -86,6 +86,35 @@ func TestServeAPIGatewayV2_GETMCP_ListenerDeliversKeepalive(t *testing.T) {
 	}
 }
 
+// TestServeAPIGatewayV2_GETMCP_ListenerDisabledReturns405 pins the opt-out
+// posture through the buffered HTTP API v2 adapter: the declined common stream
+// is a complete buffered 405 response, not a 5s drain that fails closed with a
+// 500.
+func TestServeAPIGatewayV2_GETMCP_ListenerDisabledReturns405(t *testing.T) {
+	s := NewServer("test-server", "1.0.0", WithInitialSessionListenerEnabled(false))
+	sessionID := initializeSessionViaV2(t, s)
+
+	start := time.Now()
+	out := serveV2WithMCPApp(t, s, "GET", "/mcp", v2SingleHeaders(sseSessionHeaders(sessionID)), "", nil)
+	elapsed := time.Since(start)
+
+	if elapsed > time.Second {
+		t.Fatalf("declined common stream took %s; want an immediate buffered 405", elapsed)
+	}
+	if out.StatusCode != 405 {
+		t.Fatalf("status: got %d, want 405 (body: %q)", out.StatusCode, out.Body)
+	}
+	if got := out.Headers["allow"]; got != "DELETE, GET, POST" {
+		t.Fatalf("allow: got %q, want %q", got, "DELETE, GET, POST")
+	}
+	if ct := out.Headers["content-type"]; ct != "application/json" {
+		t.Fatalf("content-type: got %q, want application/json", ct)
+	}
+	if out.Body != `{"error":"method not allowed"}` {
+		t.Fatalf("body: got %q, want method-not-allowed envelope", out.Body)
+	}
+}
+
 // TestServeAPIGatewayV2_GETMCP_ResumeReplayDelivered pins the GET /mcp
 // Last-Event-ID resume shape through the HTTP API v2 adapter: a terminated
 // stream replay must be delivered as a body, never silently dropped into an

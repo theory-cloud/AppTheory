@@ -1,11 +1,11 @@
 ---
 title: Contract Fixtures
-description: "The 321 contract vectors: 308 shared runtime fixtures plus thirteen nested MCP route-algebra, auth-facade and limiter conformance tables." # apptheory-fixture-count: 321
+description: "The 322 contract vectors: 309 shared runtime fixtures plus thirteen nested MCP route-algebra, auth-facade and limiter conformance tables." # apptheory-fixture-count: 322
 ---
 
 # Contract Fixtures
 
-AppTheory ships **321 machine-readable contract vectors** in `contract-tests/fixtures/`. <!-- apptheory-fixture-count: 321 --> Go, TypeScript, and Python execute 308 shared runner fixtures on every commit, including the `tier: mcp` SP09 runtime contracts, the `tier: oauth` SP12 protected-resource, bearer, DCR, and PKCE contracts, and the `tier: objectstore` SP13 bounded object-store contract. The remaining thirteen nested tables are the shared MCP route-algebra expectation and facade route-inventory tables plus the MCP auth-facade transport-posture and route-model tables (consumed by Go and CDK-TS tests), and the M2 acceptance, M3a provider/store conformance, M3c-1a facade conformance, the M3c-2 facade journey and threat-controls tables, and the multi-window limiter cancellation table that the Go, TypeScript, and Python suites each load directly.
+AppTheory ships **322 machine-readable contract vectors** in `contract-tests/fixtures/`. <!-- apptheory-fixture-count: 322 --> Go, TypeScript, and Python execute 309 shared runner fixtures on every commit, including the `tier: mcp` SP09 runtime contracts, the `tier: oauth` SP12 protected-resource, bearer, DCR, and PKCE contracts, and the `tier: objectstore` SP13 bounded object-store contract. The remaining thirteen nested tables are the shared MCP route-algebra expectation and facade route-inventory tables plus the MCP auth-facade transport-posture and route-model tables (consumed by Go and CDK-TS tests), and the M2 acceptance, M3a provider/store conformance, M3c-1a facade conformance, the M3c-2 facade journey and threat-controls tables, and the multi-window limiter cancellation table that the Go, TypeScript, and Python suites each load directly.
 
 This page explains what the fixtures are, what they cover, and how to evolve them safely.
 
@@ -55,7 +55,7 @@ its `tier` field and stable `id`. Directory names are organizational metadata, n
 
 ## Categories
 
-The 321 contract vectors span these behavior areas (counts approximate; see `contract-tests/fixtures/` for the canonical inventory). All three runtimes execute the 308 generic fixtures; Go and CDK-TS additionally consume the MCP route-algebra, facade-inventory, and auth-facade tables, and the multi-window limiter cancellation table is executed by all three runtimes. <!-- apptheory-fixture-count: 321 -->
+The 322 contract vectors span these behavior areas (counts approximate; see `contract-tests/fixtures/` for the canonical inventory). All three runtimes execute the 309 generic fixtures; Go and CDK-TS additionally consume the MCP route-algebra, facade-inventory, and auth-facade tables, and the multi-window limiter cancellation table is executed by all three runtimes. <!-- apptheory-fixture-count: 322 -->
 
 | Category | Covers |
 | --- | --- |
@@ -103,7 +103,7 @@ coerced. Both apply identically in Go, TypeScript, and Python.
 ./scripts/verify-contract-tests.sh
 ```
 
-This validates the 308 generic fixture envelopes and runs the Go, TypeScript, and Python runners against that tree. The Go, TypeScript, and Python suites load the M2 acceptance, M3a provider/store conformance, M3c-1a facade conformance, the M3c-2 facade journey and threat-controls tables, and the multi-window limiter cancellation table directly, and the Go and CDK unit suites additionally load the thirteen nested route-algebra, facade-inventory, and auth-facade tables. `make rubric` runs all of these gates alongside lint, build, API snapshots, and example synthesis. <!-- apptheory-fixture-count: 321 -->
+This validates the 309 generic fixture envelopes and runs the Go, TypeScript, and Python runners against that tree. The Go, TypeScript, and Python suites load the M2 acceptance, M3a provider/store conformance, M3c-1a facade conformance, the M3c-2 facade journey and threat-controls tables, and the multi-window limiter cancellation table directly, and the Go and CDK unit suites additionally load the thirteen nested route-algebra, facade-inventory, and auth-facade tables. `make rubric` runs all of these gates alongside lint, build, API snapshots, and example synthesis. <!-- apptheory-fixture-count: 322 -->
 
 For single-runtime debugging from the repository root:
 

@@ -142,6 +142,9 @@ func appendFixtureMCPServerOptions(opts []mcp.ServerOption, config FixtureMCPSer
 	if config.IncludeServerInfoMetadata != nil {
 		opts = append(opts, mcp.WithServerInfoMetadata(*config.IncludeServerInfoMetadata))
 	}
+	if config.InitialSessionListenerEnabled != nil {
+		opts = append(opts, mcp.WithInitialSessionListenerEnabled(*config.InitialSessionListenerEnabled))
+	}
 	if config.CacheableResults != nil {
 		cache := config.CacheableResults
 		opts = append(opts, mcp.WithCacheableResultConfig(mcp.CacheableResultConfig{

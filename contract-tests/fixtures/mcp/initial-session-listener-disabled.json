@@ -1,0 +1,201 @@
+{
+  "id": "mcp.transport.initial_session_listener_disabled",
+  "tier": "mcp",
+  "name": "MCP declines the optional common stream with 405 when the initial session listener is disabled",
+  "setup": {
+    "mcp": {
+      "server": {
+        "name": "ContractMCP",
+        "version": "sp09",
+        "initial_session_listener_enabled": false
+      },
+      "id_sequence": [
+        "sess-listener"
+      ],
+      "tools": [
+        {
+          "name": "echo",
+          "description": "Echo text",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message"
+            ]
+          },
+          "handler": "echo_text"
+        }
+      ]
+    }
+  },
+  "input": {
+    "mcp": {
+      "steps": [
+        {
+          "name": "initialize",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"init\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\"}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "get_common_stream_declined",
+          "request": {
+            "method": "GET",
+            "path": "/mcp",
+            "headers": {
+              "mcp-session-id": [
+                "sess-listener"
+              ],
+              "mcp-protocol-version": [
+                "2025-11-25"
+              ],
+              "accept": [
+                "text/event-stream"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": ""
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "tools_list_after_405",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "mcp-session-id": [
+                "sess-listener"
+              ],
+              "mcp-protocol-version": [
+                "2025-11-25"
+              ],
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"list\",\"method\":\"tools/list\"}"
+            },
+            "is_base64": false
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "mcp": {
+      "steps": [
+        {
+          "status": 200,
+          "headers": {
+            "x-request-id": [
+              "req_mcp_123"
+            ],
+            "content-type": [
+              "application/json"
+            ],
+            "mcp-session-id": [
+              "sess-listener"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "init",
+            "result": {
+              "protocolVersion": "2025-11-25",
+              "capabilities": {
+                "tools": {}
+              },
+              "serverInfo": {
+                "name": "ContractMCP",
+                "version": "sp09"
+              }
+            }
+          }
+        },
+        {
+          "status": 405,
+          "headers": {
+            "x-request-id": [
+              "req_mcp_123"
+            ],
+            "content-type": [
+              "application/json"
+            ],
+            "allow": [
+              "DELETE, GET, POST"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "error": "method not allowed"
+          }
+        },
+        {
+          "status": 200,
+          "headers": {
+            "x-request-id": [
+              "req_mcp_123"
+            ],
+            "content-type": [
+              "application/json"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "list",
+            "result": {
+              "tools": [
+                {
+                  "name": "echo",
+                  "description": "Echo text",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "message": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "message"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

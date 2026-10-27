@@ -458,6 +458,16 @@ export interface McpServerOptions {
    * with a client-safe message and logs the original.
    */
   verboseHandlerErrors?: boolean;
+  /**
+   * Serve the optional common stream on GET /mcp requests without
+   * Last-Event-ID. Defaults to true. Set it to false on deployments whose HTTP
+   * adapter cannot deliver a streaming response body (the buffered API Gateway
+   * HTTP API v2 adapter): the server then declines the common stream with 405
+   * Method Not Allowed after origin, session, and protocol validation, which
+   * MCP clients such as Codex rmcp read as "no common stream". Last-Event-ID
+   * replay requests are unaffected.
+   */
+  initialSessionListenerEnabled?: boolean;
 }
 
 type RegisteredTool = {
@@ -1542,6 +1552,7 @@ export class McpServer {
   private readonly cacheableResults: NormalizedCacheableResultConfig;
   private readonly includeServerInfoMetadata: boolean;
   private readonly verboseHandlerErrors: boolean;
+  private readonly initialSessionListenerEnabled: boolean;
   private readonly toolRegistry = new McpToolRegistry();
   private readonly resourceRegistry = new McpResourceRegistry();
   private readonly promptRegistry = new McpPromptRegistry();
@@ -1567,6 +1578,8 @@ export class McpServer {
     this.includeServerInfoMetadata =
       options.includeServerInfoMetadata !== false;
     this.verboseHandlerErrors = options.verboseHandlerErrors === true;
+    this.initialSessionListenerEnabled =
+      options.initialSessionListenerEnabled !== false;
   }
 
   registry(): McpToolRegistry {
@@ -1828,6 +1841,11 @@ export class McpServer {
 
     const lastEventId = firstHeader(headers, MCP_HEADER_LAST_EVENT_ID);
     if (!lastEventId) {
+      // A server may decline the optional common stream with 405 Method Not
+      // Allowed; GET stays allowed for Last-Event-ID replay.
+      if (!this.initialSessionListenerEnabled) {
+        return methodNotAllowedResponse("DELETE, GET, POST");
+      }
       return sseBytesResponse(
         200,
         [Buffer.from(": keepalive\n\n", "utf8")],

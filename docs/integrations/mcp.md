@@ -695,6 +695,59 @@ For streaming tool calls, AppTheory assigns SSE event ids and persists them in t
   Lambda concurrency indefinitely
 - if you want that path to stay open for a bounded window before EOF, opt in with
   `WithInitialSessionListenerBudget(...)`
+- if your HTTP adapter cannot deliver a streaming response body at all, decline the common stream with
+  `WithInitialSessionListenerEnabled(false)`; clients then receive `405 Method Not Allowed` and continue over POST
+
+### Declining the optional common stream with `405 Method Not Allowed`
+
+The optional GET stream is how a server sends unsolicited messages to a client, and a server is not required to offer
+it. Both the 2025-03-26 and 2025-06-18 revisions state that a server which does not offer that stream may answer
+`405 Method Not Allowed` ("Listening for Messages from the Server"), and clients such as Codex `rmcp` treat that status
+as "no common stream" and continue with POST requests.
+
+The default posture keeps the compliant listener. On deployments whose adapter cannot deliver a streaming body — the
+buffered API Gateway HTTP API v2 adapter drains a body for 5s and otherwise fails closed with an
+`app.internal` 500 — disable the listener instead of paying that failure path:
+
+```go
+srv := mcp.NewServer("my-mcp-server", "dev",
+  mcp.WithInitialSessionListenerEnabled(false),
+)
+```
+
+```ts
+const server = createMcpServer("my-mcp-server", "dev", {
+  initialSessionListenerEnabled: false,
+});
+```
+
+```python
+server = create_mcp_server(
+    "my-mcp-server",
+    "dev",
+    {"initial_session_listener_enabled": False},
+)
+```
+
+With the option set, a `GET /mcp` request **without** `last-event-id` returns an immediate, complete buffered
+response after origin, session, and protocol-version validation:
+
+```http
+HTTP/1.1 405 Method Not Allowed
+Allow: DELETE, GET, POST
+Content-Type: application/json
+
+{"error":"method not allowed"}
+```
+
+`GET` stays in the `Allow` set because `Last-Event-ID` replay is still served. Important scope notes:
+
+- the option is explicit opt-in; without it, AppTheory keeps the default keepalive listener
+- it applies only to `GET /mcp` without `last-event-id`
+- validation order is unchanged: a bad `Origin` stays `403`, a missing session `400`, an unknown session `404`, and a
+  bad or mismatched `mcp-protocol-version` `400`; the 405 is not reachable without a valid session
+- initialize/negotiation, POST, DELETE, replay, and the stateless `2026-07-28` `Allow: POST` rejection are unchanged
+- the response is a single buffered body, so it is complete before any adapter drain budget applies
 
 ### Keeping the initial keepalive path open for a bounded window on Lambda
 
