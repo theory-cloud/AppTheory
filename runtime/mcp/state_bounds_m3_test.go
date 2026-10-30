@@ -15,7 +15,7 @@ import (
 	tablecore "github.com/theory-cloud/tabletheory/v6/pkg/core"
 )
 
-const m3StateBoundsFixture = "../../contract-tests/fixtures/mcp/state-bounds-conformance.v1.json"
+const m3StateBoundsFixture = "../../contract-tests/conformance/state-bounds-conformance.v1.json"
 
 type m3StateBoundsLimits struct {
 	MemorySessionsPerStore        int   `json:"memory_sessions_per_store"`

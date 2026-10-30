@@ -1800,7 +1800,7 @@ class _M3SpillStore:
 class M3StateBoundsTests(unittest.TestCase):
     def test_shared_fixture_pins_limits_and_cases(self) -> None:
         fixture = json.loads(
-            (Path(__file__).resolve().parents[2] / "contract-tests/fixtures/mcp/state-bounds-conformance.v1.json").read_text()
+            (Path(__file__).resolve().parents[2] / "contract-tests/conformance/state-bounds-conformance.v1.json").read_text()
         )
         self.assertEqual("m3.mcp-state-bounds/v1", fixture["contract"]["id"])
         self.assertEqual(1000, fixture["limits"]["memory_sessions_per_store"])

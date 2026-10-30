@@ -2458,7 +2458,7 @@ class M3ListOwnershipTests(unittest.TestCase):
         fixture = json.loads(
             (
                 Path(__file__).resolve().parents[2]
-                / "contract-tests/fixtures/microvm-operations/microvm-list-ownership.v1.json"
+                / "contract-tests/conformance/microvm-list-ownership.v1.json"
             ).read_text()
         )
         self.assertEqual("m3.microvm-list-ownership/v1", fixture["contract"]["id"])

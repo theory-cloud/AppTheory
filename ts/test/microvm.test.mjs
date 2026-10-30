@@ -2654,7 +2654,7 @@ test("pre-auth policy hook sees only the requested tenant", async () => {
 const M3_OWNERSHIP_FIXTURE = JSON.parse(
   readFileSync(
     new URL(
-      "../../contract-tests/fixtures/microvm-operations/microvm-list-ownership.v1.json",
+      "../../contract-tests/conformance/microvm-list-ownership.v1.json",
       import.meta.url,
     ),
     "utf8",

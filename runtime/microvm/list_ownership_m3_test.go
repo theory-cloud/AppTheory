@@ -13,7 +13,7 @@ import (
 	tablemocks "github.com/theory-cloud/tabletheory/v6/pkg/mocks"
 )
 
-const m3ListOwnershipFixture = "../../contract-tests/fixtures/microvm-operations/microvm-list-ownership.v1.json"
+const m3ListOwnershipFixture = "../../contract-tests/conformance/microvm-list-ownership.v1.json"
 
 type m3ListOwnershipDocument struct {
 	Contract struct {

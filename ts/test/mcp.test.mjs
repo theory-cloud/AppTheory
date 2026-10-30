@@ -1429,7 +1429,7 @@ test("mcp tasks/result preserves stored control errors", async () => {
 const M3_STATE_BOUNDS_FIXTURE = JSON.parse(
   readFileSync(
     new URL(
-      "../../contract-tests/fixtures/mcp/state-bounds-conformance.v1.json",
+      "../../contract-tests/conformance/state-bounds-conformance.v1.json",
       import.meta.url,
     ),
     "utf8",
