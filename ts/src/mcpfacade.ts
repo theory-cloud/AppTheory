@@ -159,9 +159,10 @@ export interface RootDiscoveryConfig {
  * - `graceWindowSeconds` is the lost-response replay window measured from the
  *   winning rotation. Absent or zero selects `DEFAULT_REFRESH_GRACE_WINDOW_SECONDS`;
  *   inside the window the rotated handle replays the full stored successor body.
- * - `reuseRateCeiling` bounds, per refresh family per hour, how many out-of-grace
- *   depth-1 presentations are answered with the access token only. It must lie
- *   in `[9, 120]`.
+ *   At and beyond the window the family is revoked with no token material.
+ * - `reuseRateCeiling` is retained for configuration compatibility and must lie
+ *   in `[9, 120]`; no refresh path uses it now that the beyond-grace serve was
+ *   removed.
  */
 export interface RouteRefreshPolicy {
   handleTTLSeconds: number;

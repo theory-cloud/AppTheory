@@ -371,12 +371,10 @@ class RouteRefreshPolicy:
     is bounded by ``MAX_REFRESH_GRACE_WINDOW_SECONDS``, and it is exclusive at
     its end: a presentation at exactly ``grace_expires_at`` is beyond grace.
 
-    ``reuse_rate_ceiling`` bounds, per refresh family per hour, how many
-    out-of-grace depth-1 presentations are answered with the access token only.
-    It must lie in ``[MIN_REFRESH_REUSE_RATE_CEILING,
-    MAX_REFRESH_REUSE_RATE_CEILING]``; the floor is above the benign dual-session
-    cadence of roughly eight rotations per hour per family, so the ceiling
-    throttles harvest without tripping on the race it exists to protect.
+    ``reuse_rate_ceiling`` is retained for configuration compatibility and must
+    lie in ``[MIN_REFRESH_REUSE_RATE_CEILING,
+    MAX_REFRESH_REUSE_RATE_CEILING]``; no refresh path uses it now that the
+    beyond-grace serve was removed.
     """
 
     handle_ttl_seconds: int

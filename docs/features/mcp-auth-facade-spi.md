@@ -137,7 +137,7 @@ atomic operations, not conventions**: replay handling and single-flight refresh 
 | `TransactionStore` | hash(upstream state) | `Put`, `Consume` (single-use) | ≤ 10 min |
 | `AuthorizationCodeStore` | hash(facade code) | `Put`, `Consume` (single-use, **retained** after consume so a replay is distinguishable from an unknown code) | ≤ 600 s (60 s recommended) |
 | `ClientStore` | hash(client id) | `Put`, `Get`, `Update` (compare-and-swap on version) | none (age-out policy) |
-| `RouteRefreshBrokerStore` | hash(route handle) | `Get`, `AcquireLock` (exclusive, expiring), `CompareAndSwap` (versioned), `Revoke` (idempotent, terminal); optional family capability (`ListFamily`, `RevokeFamily`) and handle-lifetime reporter | `RouteRefreshPolicy.HandleTTL` (≤ min(upstream refresh lifetime, session lifetime, local policy)) |
+| `RouteRefreshBrokerStore` | hash(route handle) | `Get`, `AcquireLock` (exclusive, expiring), `CompareAndSwap` (versioned), `Revoke` (idempotent, terminal); **required** transactional family capability (`CreateFamily`, `RotateFamily`, `ListFamily`, `RevokeFamily`); optional handle-lifetime reporter | `RouteRefreshPolicy.HandleTTL` (≤ min(upstream refresh lifetime, session lifetime, local policy)) |
 | `RateLimitStore` | (identifier, resource, operation) | `CheckAndIncrement` (atomic) | window |
 
 Every store takes an injected clock, so TTL expiry and lock expiry are deterministic in tests. The in-memory
@@ -155,11 +155,9 @@ persist nor encrypt and must not be used as a durable store.
 **The grace body is retained for the record's lifetime, not for the grace window.** The broker record's
 `EncryptedGraceRefreshResponse` field holds the successor token response a rotation produced — the successor
 handle plus the upstream access token that was already returned to that client — and it is the only carrier of the
-successor handle, because the record has no separate successor-handle field. It serves three purposes: the grace
-replay, the structural depth classification (does the named successor still exist as a live head?), and the bounded
-successor walk that revokes a family-less (pre-policy) record. A store must therefore **not** clear the field when
-the grace window closes: doing so would truncate a post-expiry revoke to the single presented record and leave the
-successor live. The field expires with the record, under the record's own TTL (the broker handle lifetime in the
+successor handle, because the record has no separate successor-handle field. It serves the grace replay and
+incident-visible lineage. A store must **not** clear the field when the grace window closes: the field expires with
+the record, under the record's own TTL (the broker handle lifetime in the policy), never at the grace deadline. The field expires with the record, under the record's own TTL (the broker handle lifetime in the
 policy), never at the grace deadline, and a durable store **must** encrypt it at rest for that whole lifetime like
 every other `Encrypted*` field. Nothing extra is exposed by keeping it: it adds no material that is not already
 covered by the encryption obligation (the successor handle and an access token the client already received).
@@ -176,51 +174,49 @@ The brokered refresh handle has three encoded policy values (see `FacadeConfig.R
   120 s; the maximum is 120 s. Inside the window the rotated (previous) handle replays the full stored successor
   body, including handle material, because that is the lost-response recovery path. The boundary is exclusive: a
   presentation at exactly the deadline is beyond grace.
-- **`ReuseRateCeiling`** — the per-family hourly budget of beyond-grace access-token-only serves, required and
-  bounded to `[9, 120]`. The floor sits above the benign dual-session cadence (two sessions rotating roughly four
-  times an hour ≈ eight presentations per family per hour), so the ceiling throttles harvest without throttling the
-  race it protects. It is a harvest throttle, not head-acquisition prevention.
+- **`ReuseRateCeiling`** — retained for configuration compatibility, required and bounded to `[9, 120]`. It
+  previously budgeted the removed beyond-grace access-token-only serve; no refresh path uses it now.
 
-### Beyond-grace classification
+### Beyond-grace reuse
 
-A rotated-away handle presented after its grace window is classified by **chain depth**:
+Every rotated-away handle presented at or after its grace deadline is reuse. The facade revokes the whole refresh
+family and returns the same non-oracle `invalid_grant` an unknown handle gets, with **no** access token, refresh
+handle, or ID token. There is no depth classification, no first-presentation carve-out, and no per-handle serve
+marker: the first and every later beyond-grace presentation are refused identically. A reuse telemetry event fires
+on **every** such presentation, with the `revoked_family` outcome. Within-grace grace-service responses replay the
+stored successor body byte-for-byte and are not budget-counted.
 
-- **Depth 1** (the presented record's successor is a live, unrevoked head with no grace deadline set, and — for a
-  family-marked record — the successor's family matches and its generation is exactly the presented generation plus
-  one) is the benign shared-credential-store race. It is answered with the **access token only**: no beyond-grace
-  serve ever carries handle material, so no serve can upgrade a presenter from a rotated-away predecessor to the
-  head. Each handle serves this way **at most once**; the once-per-handle marker is written under the refresh lock
-  before the response is rendered. A denied per-family budget is answered with the uniform `invalid_grant` and does
-  **not** consume the handle's single serve and does **not** revoke anything.
-- **Depth 2 or more** — including a missing, expired, unparseable, revoked, or already-rotated successor, or a
-  generation/family mismatch — is theft class: the refresh family is revoked and the client receives the same
-  `invalid_grant` an unknown handle gets. Walk exhaustion defaults to depth 2 (fail closed).
-
-A reuse telemetry event fires on **every** out-of-grace presentation, whatever its outcome. The once-per-handle
-bound and the rate ceiling apply beyond grace only; within-grace grace-service responses are not budget-counted.
-
-### Family identity and revocation
+### Family identity, tombstone, and migration
 
 Every record carries a chain-root/family hash and a chain-generation counter. A handle the facade mints is the root
 of its own family (generation 1, family hash = hash of its own handle); every successor records the presented
-generation plus one and inherits the family hash. A confirmed theft revokes the whole family through the optional
-`RouteRefreshBrokerFamilyStore` capability (`RevokeFamily`, with `ListFamily` for incident enumeration), so a
-long-lived chain is not limited by the eight-link successor walk. A store without that capability, and any record
-that predates the family hash, falls back to the bounded walk and reports a state event, so the degradation is
-visible rather than silent.
+generation plus one and inherits the family hash.
 
-**Pre-policy records.** A record that predates the counter carries generation 0 and an empty family hash. It is
-classified **structurally** (its successor is read and inspected) rather than by arithmetic, and on its first
-mutation under the policy it becomes the root of a new family: the mutation assigns family = self and normalizes
-its generation to 1, and its successor records generation 2. The default is deliberately explicit because a
-pre-policy record's true chain position is unknowable.
+The front channel **requires** `RouteRefreshBrokerTransactionalFamilyStore`: `CreateFamily` atomically creates an
+active family-state record and its generation-1 root; `RotateFamily` checks the lock owner, expected version, active
+family, family/generation/identity bindings, and successor uniqueness in one serialized transaction before creating
+the successor and updating the predecessor; `RevokeFamily` writes a terminal family tombstone and revokes every
+live member it handles; `ListFamily` remains the incident enumeration surface. Every `Get`, `AcquireLock`, and
+`RotateFamily` of a family-marked handle honors the tombstone, so revocation covers every member, including
+successors minted before the tombstone, and no root creation or rotation can undo it. Revocation is idempotent; a
+family whose members have all aged out keeps its tombstone, so it cannot be recreated. Registration refuses a
+base-store-only, legacy-family-only, or partially duck-typed broker before routes, roots, or successors.
+
+**Pre-policy and partially backfilled records.** A family-less record (generation 0, empty family hash) is
+unsupported for ordinary rotation. It is refused before the upstream call and before any successor is minted; it is
+never normalized online, because an unknown-length lineage cannot be safely detached from ancestors whose later
+reuse must revoke it. Migration or reauthorization is required: quiesce legacy refresh traffic, then either backfill
+the complete lineage and family state under the store's transactional conformance proof and resume, or revoke/reject
+legacy handles and require a new authorization grant. A family-marked record whose required family state is
+missing/corrupt is likewise refused; an operator can inspect it through `ListFamily`, but ordinary rotation fails
+closed. There is no bounded-walk fallback and no eight-link success exit.
 
 ### Telemetry and the expiry signal
 
 `RouteRefreshEvents` is an optional synchronous hook with the SPEC.md:346-352 taxonomy: `issued`,
-`validation_rejected`, `lock_acquired`, `grace_served`, `refreshed`, `reuse` (with an outcome of
-`access_token_only`, `revoked_family`, `revoked_walk`, `rate_limited`, or `binding_rejected`),
-`upstream_reauth_required`, and `state_failure`. Events carry route identifiers, status transitions, and hashes
+`validation_rejected`, `lock_acquired`, `grace_served`, `refreshed`, `reuse` (the live outcome is `revoked_family`; `access_token_only`, `revoked_walk`,
+`rate_limited`, and `binding_rejected` are retained only for telemetry compatibility), `upstream_reauth_required`,
+and `state_failure`. Events carry route identifiers, status transitions, and hashes
 only — never an authorization code, access token, upstream refresh token, route refresh handle, ID token, cookie, or
 provider session id. The hook runs synchronously and its panic/exception is contained.
 
@@ -233,8 +229,9 @@ attribution.
 The framework-owned front channel — the `/authorize` terminator, the stage-global upstream callback, the
 `/token` authorization-code grant, and the `/register` dynamic-client-registration route of DESIGN §8 — is declared by
 one `FacadeConfig` field set. **Declaring the set is what mounts the front channel:** with `Provider` set,
-registration validates the rest of the set, fails closed on an incomplete or contradictory set, and mounts the four
-route shapes driven by the provider and the five stores; with `Provider` absent the front channel stays unowned and no
+registration validates the rest of the set, fails closed on an incomplete or contradictory set (including a broker
+store that lacks any transactional family method), and mounts the four route shapes driven by the provider and the
+five stores; with `Provider` absent the front channel stays unowned and no
 front-channel field may be set (the `/register` and callback routes then mount only through the application-owned
 `RegisterHandler` / `CallbackHandler`).
 

@@ -177,13 +177,12 @@ class RouteRefreshBrokerRecord:
     generation plus one and inherits its ``family_hash``, so the depth of a
     rotated-away handle relative to the head is arithmetic rather than
     guesswork. A record that predates the policy carries generation 0 and an
-    empty family hash; it is classified structurally (successor walk) and
-    becomes the root of a new family on its first mutation under the policy.
+    empty family hash; it is unsupported for ordinary rotation and must be
+    migrated or reauthorized, never normalized online.
 
-    ``depth_one_served_at`` records that this rotated-away handle has already
-    been answered once beyond its grace window with the access token only. The
-    second such presentation is theft class, so the flag is written before the
-    serve.
+    ``depth_one_served_at`` is retained for stored-record compatibility. It
+    marked the removed beyond-grace access-token-only serve and is no longer
+    written.
     """
 
     handle_hash: str = ""
