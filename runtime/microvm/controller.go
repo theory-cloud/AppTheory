@@ -745,7 +745,15 @@ func (c *Controller) handleRealList(ctx context.Context, request ControllerReque
 	}
 	bindings := make([]ProviderSessionBinding, 0, len(records))
 	recordsByKey := make(map[SessionKey]SessionRecord, len(records))
+	callerSubject := strings.TrimSpace(request.AuthContext.Subject)
 	for _, record := range records {
+		// Defense in depth: a custom registry may ignore AuthSubject, so the
+		// controller re-applies the exact non-empty owner rule before any
+		// binding, metadata, or refresh write exists.
+		storedOwner := strings.TrimSpace(record.AuthSubject)
+		if callerSubject == "" || storedOwner == "" || storedOwner != callerSubject {
+			continue
+		}
 		if validationErr := ValidateSessionRecord(record); validationErr != nil {
 			safe := asSafeError(validationErr, request.RequestID)
 			return controllerErrorResponse(request, safe), safe
@@ -1191,10 +1199,11 @@ func (c *Controller) sessionRecordFromProviderSession(request ControllerRequest,
 	record.ProviderTerminatedAt = session.TerminatedAt.UTC()
 	record.LastAction = request.Command
 	record.LastCommandID = request.RequestID
-	// An existing record's owner is authoritative: a refresh/update never
-	// overwrites a stored AuthSubject with the caller's subject.
-	if strings.TrimSpace(record.AuthSubject) == "" {
-		record.AuthSubject = request.AuthContext.Subject
+	// Only a genuinely new record may initialize its owner from the
+	// authenticated request. An existing record's owner is authoritative: a
+	// refresh/update never fills an empty owner or overwrites a stored subject.
+	if existing == nil {
+		record.AuthSubject = strings.TrimSpace(request.AuthContext.Subject)
 	}
 	record.Metadata = cloneStringMap(request.SessionSpec.Metadata)
 	if existing != nil {

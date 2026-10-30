@@ -31,6 +31,7 @@ func ownerControllerRequest(command Command, requestID string, sessionID string,
 func TestRealControllerEnforcesSessionOwnership(t *testing.T) {
 	now := time.Unix(1400, 0).UTC()
 	registry := NewMemorySessionRegistry()
+	registry.now = func() time.Time { return now }
 	controller, provider := newOwnershipController(t, now, registry)
 
 	run, err := controller.Handle(context.Background(), ownerControllerRequest(CommandRun, "req-owner-run", "", "subject-1"))
@@ -129,12 +130,17 @@ func TestRealControllerEnforcesSessionOwnership(t *testing.T) {
 	require.Equal(t, "subject-1", updated.AuthSubject)
 	require.Len(t, updated.TokenMetadata, 1)
 
-	// List semantics are unchanged: a different subject in the same tenant still
-	// lists the session, and listing does not rewrite its owner.
+	// List semantics now require exact, non-empty owner equality: another
+	// subject in the same tenant does not see this session, and listing never
+	// rewrites its owner.
 	list, err := controller.Handle(context.Background(), ownerControllerRequest(CommandList, "req-owner-list-2", "", "subject-2"))
 	require.NoError(t, err)
-	require.Len(t, list.Sessions, 1)
-	require.Equal(t, run.SessionID, list.Sessions[0].SessionID)
+	require.Empty(t, list.Sessions)
+
+	ownerList, err := controller.Handle(context.Background(), ownerControllerRequest(CommandList, "req-owner-list-1", "", "subject-1"))
+	require.NoError(t, err)
+	require.Len(t, ownerList.Sessions, 1)
+	require.Equal(t, run.SessionID, ownerList.Sessions[0].SessionID)
 
 	listed, err := registry.Get(context.Background(), key)
 	require.NoError(t, err)
