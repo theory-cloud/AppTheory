@@ -398,6 +398,11 @@ Three shared conformance tables drive all three runtimes from one source (`contr
   (rotation, the grace replay, the beyond-grace depth-1 access-token-only serve, the second-serve/theft revocation,
   the byte-identical refusal set, the scope/resource rule, the handle bound, replayed-code revocation, and the
   upstream terminal/transient failures).
+- `facade-middleware-order.v1.json` — the runtime-bearer ordering rows executed through a really-mounted plain `App`
+  and `SecureApp`: the bearer guard runs before application middleware on `POST`/`GET`/`DELETE`, a short-circuiting
+  cache middleware cannot serve a credential-free request or perform a cache lookup, a pass-through writer cannot run
+  before denial, valid credentials order as guard → middleware → handler, and the pre-authorization `PolicyHook` still
+  runs before the guard.
 
 Any store — the in-memory ones now, an application's durable store later — must pass the store conformance suite. A
 fake provider (real RSA keys, real local HTTP, configurable success/error/slow/oversized-filler/oversized-valid-json/
