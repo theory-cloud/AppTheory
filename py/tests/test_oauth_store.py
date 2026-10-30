@@ -15,7 +15,9 @@ from apptheory.oauth.store import (
     AuthorizationCodeRecord,
     BrokerExpiredError,
     BrokerLockedError,
+    BrokerFamilyExistsError,
     BrokerRevokedError,
+    BrokerSuccessorExistsError,
     BrokerVersionConflictError,
     ClientRecord,
     ClientVersionConflictError,
@@ -63,6 +65,25 @@ class TTLIgnoringBrokerStore(MemoryRouteRefreshBrokerStore):
         super().__init__(now=now, ttl=self.TTL_SECONDS, lock_ttl_seconds=lock_ttl_seconds)
 
 
+class NonTombstoneBrokerStore(MemoryRouteRefreshBrokerStore):
+    """Deliberately broken: revokes members individually and never writes the family tombstone."""
+
+    def revoke_family(self, family_hash: str) -> list[RouteRefreshBrokerRecord]:
+        revoked: list[RouteRefreshBrokerRecord] = []
+        for record in self.list_family(family_hash):
+            updated = self.revoke(record.handle_hash)
+            if updated is not None:
+                revoked.append(updated)
+        return revoked
+
+
+class NonAtomicRotateBrokerStore(MemoryRouteRefreshBrokerStore):
+    """Deliberately broken: returns a successor without storing it or updating the predecessor."""
+
+    def rotate_family(self, rotation: Any) -> RouteRefreshBrokerRecord:
+        return rotation.successor
+
+
 class NonBumpingBrokerStore(MemoryRouteRefreshBrokerStore):
     """Deliberately broken: a read hides the version bump a lock or revoke advanced.
 
@@ -88,7 +109,13 @@ class NonBumpingBrokerStore(MemoryRouteRefreshBrokerStore):
 # mismatch or as the store's own error surfacing through a scenario that assumes
 # the operation succeeds: hiding a lock's version bump makes the versioned-swap
 # row present a stale version, so its store call raises a version conflict.
-_BROKEN_STORE_FAILURES = (AssertionError, BrokerVersionConflictError)
+_BROKEN_STORE_FAILURES = (
+    AssertionError,
+    BrokerVersionConflictError,
+    BrokerFamilyExistsError,
+    BrokerSuccessorExistsError,
+    KeyError,
+)
 
 
 def _load_fixture(name: str) -> dict[str, Any]:
@@ -108,7 +135,7 @@ class StoreConformanceTests(unittest.TestCase):
 
     def test_fixture_table_is_complete(self) -> None:
         cases = self.fixture["cases"]
-        self.assertEqual(len(cases), 48)
+        self.assertEqual(len(cases), 65)
         self.assertEqual(
             {case["store"] for case in cases},
             {"transaction", "authorization_code", "client", "route_refresh_broker", "rate_limit"},
@@ -119,8 +146,8 @@ class StoreConformanceTests(unittest.TestCase):
         cases = self.fixture["cases"]
         ran = run_store_conformance(STORE_CLASSES, cases, self.clock)
         print(f"store conformance: {ran} cases run")
-        self.assertEqual(ran, 48)
-        self.assertEqual(len(cases), 48)
+        self.assertEqual(ran, 65)
+        self.assertEqual(len(cases), 65)
 
     def test_fixture_lock_ttl_is_the_mandated_default(self) -> None:
         # A conforming durable store is judged against the table's
@@ -145,7 +172,7 @@ class StoreConformanceTests(unittest.TestCase):
         # rows (one with a put_version, one without) share one scenario, and the
         # two revoke_family rows share one scenario.
         pairs = {(case["store"], case["scenario"]) for case in self.fixture["cases"]}
-        self.assertEqual(len(pairs), 43)
+        self.assertEqual(len(pairs), 59)
 
 
 class TransactionStoreTests(unittest.TestCase):
@@ -309,18 +336,25 @@ class RouteRefreshBrokerStoreTests(unittest.TestCase):
 
     def test_family_capability_lists_and_revokes_every_member(self) -> None:
         store = MemoryRouteRefreshBrokerStore(now=self.clock.now, ttl=900)
-        for index in range(2):
-            store.put(
-                RouteRefreshBrokerRecord(
-                    handle_hash=f"member-{index}",
-                    status=STATUS_ACTIVE,
-                    chain_generation=1,
-                    family_hash="family-a",
-                )
+        store.create_family(
+            RouteRefreshBrokerRecord(
+                handle_hash="family-a",
+                status=STATUS_ACTIVE,
+                chain_generation=1,
+                family_hash="family-a",
             )
+        )
         store.put(
             RouteRefreshBrokerRecord(
-                handle_hash="other-0",
+                handle_hash="member-1",
+                status=STATUS_ACTIVE,
+                chain_generation=2,
+                family_hash="family-a",
+            )
+        )
+        store.create_family(
+            RouteRefreshBrokerRecord(
+                handle_hash="family-b",
                 status=STATUS_ACTIVE,
                 chain_generation=1,
                 family_hash="family-b",
@@ -532,6 +566,21 @@ class StoreConformanceNonVacuityTests(unittest.TestCase):
                 "store.route_refresh_broker.acquire_lock_bumps_version",
                 "store.route_refresh_broker.revoke_bumps_version",
             ],
+        )
+
+    def test_non_tombstone_broker_store_fails_the_table(self) -> None:
+        self._assert_broken_bundle_fails(
+            self._stores(route_refresh_broker=NonTombstoneBrokerStore),
+            [
+                "store.route_refresh_broker.family_tombstone_revokes_more_than_eight_members",
+                "store.route_refresh_broker.family_tombstone_covers_more_than_one_hundred_members",
+            ],
+        )
+
+    def test_non_atomic_rotate_broker_store_fails_the_table(self) -> None:
+        self._assert_broken_bundle_fails(
+            self._stores(route_refresh_broker=NonAtomicRotateBrokerStore),
+            ["store.route_refresh_broker.family_rotate_is_atomic"],
         )
 
 

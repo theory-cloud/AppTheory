@@ -1122,6 +1122,18 @@ function responseHandle(response) {
   return payload.refresh_token;
 }
 
+/**
+ * Replaces the stored record behind one presented handle, so a row can model a
+ * pre-policy or partially backfilled record without the facade exposing its
+ * store.
+ */
+async function rewriteBrokerRecord(harness, handle, mutate) {
+  const record = await harness.stores.routeRefreshBroker.get(hashKey(handle));
+  assert.ok(record, "the minted handle must have a broker record");
+  mutate(record);
+  await harness.stores.routeRefreshBroker.put(record);
+}
+
 /** Reads the access token a token response returned. */
 function responseAccessToken(response) {
   const payload = JSON.parse(bodyString(response));
@@ -1176,62 +1188,6 @@ async function registerOtherClient(harness) {
     version: 0,
   });
 }
-
-/**
- * Pins the brokered refresh framework defaults of operator ruling R3, so a
- * change to any of them is a deliberate edit here rather than a silent behavior
- * change. The TypeScript tests are external to the runtime module, so unlike the
- * Go in-package test these pin each value at the boundary it produces rather
- * than by reading the constant.
- */
-test("the brokered refresh defaults are pinned", async (t) => {
-  // The handle byte bound: a 512-byte handle is read (and refused as the unknown
-  // handle it is), while 513 bytes are refused as invalid_request before the
-  // client is even identified.
-  const bound = await newFrontChannelHarness(t);
-  const atBound = await bound.token(refreshForm("a".repeat(512)));
-  assert.equal(atBound.status, 400);
-  assert.equal(
-    JSON.parse(bodyString(atBound)).error,
-    "invalid_grant",
-    "a 512-byte handle must be read, not refused as malformed",
-  );
-  const overBound = await bound.token(refreshForm("a".repeat(513)));
-  assert.equal(overBound.status, 400);
-  assert.equal(JSON.parse(bodyString(overBound)).error, "invalid_request");
-
-  // The grace window: a replayed rotation is inside the window one millisecond
-  // before two minutes, and at exactly two minutes it is beyond grace, so the
-  // first such presentation serves the access token only.
-  const grace = await newFrontChannelHarness(t);
-  const handle = await mintedRefreshHandle(grace);
-  const first = await grace.token(refreshForm(handle));
-  assert.equal(first.status, 200);
-  grace.clock.advance(120_000 - 1);
-  const replayed = await grace.token(refreshForm(handle));
-  assert.equal(replayed.status, 200, "119.999s must still replay the successor");
-  assert.equal(bodyString(replayed), bodyString(first));
-  grace.clock.advance(1);
-  const reused = await grace.token(refreshForm(handle));
-  assert.equal(reused.status, 200, "exactly 120s is beyond grace");
-  assert.ok(!bodyString(reused).includes("refresh_token"));
-  assert.equal(JSON.parse(bodyString(reused)).access_token, REFRESH_ACCESS_TOKEN);
-
-  // The reference broker store's default lock TTL: fifteen seconds, which is
-  // above the three-second coalesce wait cap a waiter is bounded by.
-  const lock = await newFrontChannelHarness(t);
-  const lockHandle = await mintedRefreshHandle(lock);
-  const lockRecord = await brokerRecord(lock, lockHandle);
-  const locked = await lock.stores.routeRefreshBroker.acquireLock(
-    hashKey(lockHandle),
-    "owner",
-    lockRecord.version,
-  );
-  assert.equal(
-    locked.refreshLockExpiresAt.getTime() - lock.clock.now().getTime(),
-    15_000,
-  );
-});
 
 /**
  * Pins the happy rotation: the refresh answers 200 with the upstream access token
@@ -1356,102 +1312,6 @@ test("refresh replays the same successor within the grace window", async (t) => 
 });
 
 /**
- * Pins the beyond-grace depth-1 semantics: the first presentation of a rotated
- * handle after its grace window is the benign immediate-predecessor replay and
- * is answered with the access token only — no handle material, no upstream call,
- * no revocation. The second presentation of the same handle is theft class, so
- * the whole family is revoked and the client gets the uniform invalid_grant.
- */
-test("refresh after the grace window serves the access token only then revokes the family", async (t) => {
-  const harness = await newFrontChannelHarness(t);
-  const handle = await mintedRefreshHandle(harness);
-
-  const rotated = await harness.token(refreshForm(handle));
-  assert.equal(rotated.status, 200, bodyString(rotated));
-  const successor = responseHandle(rotated);
-  assert.equal(harness.fake.refreshCallCount(), 1);
-
-  harness.clock.advance(120_000 + 1_000);
-  const served = await harness.token(refreshForm(handle));
-  assert.equal(served.status, 200, bodyString(served));
-  const servedBody = bodyString(served);
-  assert.ok(servedBody.includes(`"access_token":"${REFRESH_ACCESS_TOKEN}"`));
-  assert.ok(!servedBody.includes("refresh_token"));
-  assert.ok(!servedBody.includes(UPSTREAM_REFRESH_TOKEN));
-  assert.ok(!servedBody.includes(ROTATED_UPSTREAM_REFRESH_TOKEN));
-  assert.ok(!servedBody.includes(REFRESH_ID_TOKEN));
-  assert.equal(harness.fake.refreshCallCount(), 1);
-  const marked = await brokerRecord(harness, handle);
-  assert.notEqual(marked.depthOneServedAt, undefined);
-  assert.equal(marked.status, "active");
-
-  const second = await harness.token(refreshForm(handle));
-  assert.equal(second.status, 400);
-  assert.match(bodyString(second), /"error":"invalid_grant"/);
-  assert.ok(!bodyString(second).includes("access_token"));
-
-  assert.equal((await brokerRecord(harness, handle)).status, "revoked");
-  assert.equal((await brokerRecord(harness, successor)).status, "revoked");
-
-  const after = await harness.token(refreshForm(successor));
-  assert.equal(after.status, 400);
-  assert.match(bodyString(after), /"error":"invalid_grant"/);
-  assert.equal(harness.fake.refreshCallCount(), 1);
-});
-
-/**
- * Pins depth two: a rotated-away handle whose successor has itself rotated
- * again is not an immediate-predecessor replay, so the family is revoked with
- * no serve of any kind.
- */
-test("refresh deep reuse revokes the family without a serve", async (t) => {
-  const harness = await newFrontChannelHarness(t);
-  const root = await mintedRefreshHandle(harness);
-  const first = await harness.token(refreshForm(root));
-  assert.equal(first.status, 200, bodyString(first));
-  const second = await harness.token(refreshForm(responseHandle(first)));
-  assert.equal(second.status, 200, bodyString(second));
-  const head = responseHandle(second);
-
-  harness.clock.advance(120_000 + 1_000);
-  const stale = await harness.token(refreshForm(root));
-  assert.equal(stale.status, 400);
-  assert.match(bodyString(stale), /"error":"invalid_grant"/);
-  assert.ok(!bodyString(stale).includes("access_token"));
-  assert.equal(harness.fake.refreshCallCount(), 2);
-
-  for (const handle of [root, responseHandle(first), head]) {
-    assert.equal((await brokerRecord(harness, handle)).status, "revoked");
-  }
-});
-
-/**
- * Pins that beyond grace the request binding is enforced before the benign
- * serve: a request that asks for another scope or resource never receives even
- * the access token only, and does not consume the handle's single serve.
- */
-test("refresh beyond grace validates the request binding before a serve", async (t) => {
-  const harness = await newFrontChannelHarness(t);
-  const handle = await mintedRefreshHandle(harness);
-  assert.equal((await harness.token(refreshForm(handle))).status, 200);
-  harness.clock.advance(120_000 + 1_000);
-
-  const wrongScope = await harness.token(refreshForm(handle, { scope: "" }));
-  assert.equal(wrongScope.status, 400);
-  assert.match(bodyString(wrongScope), /"error":"invalid_scope"/);
-  const wrongResource = await harness.token(
-    refreshForm(handle, { resource: `${BASE_URL}/other/mcp` }),
-  );
-  assert.equal(wrongResource.status, 400);
-  assert.match(bodyString(wrongResource), /"error":"invalid_target"/);
-  assert.equal((await brokerRecord(harness, handle)).depthOneServedAt, undefined);
-
-  const served = await harness.token(refreshForm(handle));
-  assert.equal(served.status, 200, bodyString(served));
-  assert.ok(!bodyString(served).includes("refresh_token"));
-});
-
-/**
  * Pins the no-oracle rule: an unknown handle, a revoked handle, and a handle
  * presented by another registered client are one byte-identical invalid_grant
  * response. This is the Go test's own shape (three harnesses), and the
@@ -1480,7 +1340,11 @@ test("refresh refusals are one invalid_grant body", async (t) => {
   const refusals = [unknown, revoked, other];
   for (const [index, response] of refusals.entries()) {
     assert.equal(response.status, 400, `refusal ${index}`);
-    assert.match(bodyString(response), /"error":"invalid_grant"/, `refusal ${index}`);
+    assert.match(
+      bodyString(response),
+      /"error":"invalid_grant"/,
+      `refusal ${index}`,
+    );
     assert.equal(
       bodyString(response),
       bodyString(unknown),
@@ -1543,12 +1407,22 @@ test("refresh refuses a handle at another route", async (t) => {
  */
 test("refresh binds scope and resource", async (t) => {
   const cases = [
-    { name: "absent_scope_and_resource_take_the_granted_values", overrides: {} },
+    {
+      name: "absent_scope_and_resource_take_the_granted_values",
+      overrides: {},
+    },
     {
       name: "exact_scope_and_resource_are_accepted",
-      overrides: { scope: ROTATED_UPSTREAM_SCOPE, resource: REFRESH_BOUND_RESOURCE },
+      overrides: {
+        scope: ROTATED_UPSTREAM_SCOPE,
+        resource: REFRESH_BOUND_RESOURCE,
+      },
     },
-    { name: "subset_scope_is_refused", overrides: { scope: "" }, error: "invalid_scope" },
+    {
+      name: "subset_scope_is_refused",
+      overrides: { scope: "" },
+      error: "invalid_scope",
+    },
     {
       name: "wider_scope_is_refused",
       overrides: { scope: `${ROTATED_UPSTREAM_SCOPE} extra:scope` },
@@ -1564,23 +1438,35 @@ test("refresh binds scope and resource", async (t) => {
   for (const testCase of cases) {
     const harness = await newFrontChannelHarness(t);
     const handle = await mintedRefreshHandle(harness);
-    const response = await harness.token(refreshForm(handle, testCase.overrides));
+    const response = await harness.token(
+      refreshForm(handle, testCase.overrides),
+    );
     const context = `refresh binding ${testCase.name}`;
     if (testCase.error === undefined) {
       assert.equal(response.status, 200, `${context}: ${bodyString(response)}`);
       assert.ok(
-        bodyString(response).includes(`"access_token":"${REFRESH_ACCESS_TOKEN}"`),
+        bodyString(response).includes(
+          `"access_token":"${REFRESH_ACCESS_TOKEN}"`,
+        ),
         context,
       );
       assert.equal(harness.fake.refreshCallCount(), 1, context);
       continue;
     }
     assert.equal(response.status, 400, `${context}: ${bodyString(response)}`);
-    assert.match(bodyString(response), new RegExp(`"error":"${testCase.error}"`), context);
+    assert.match(
+      bodyString(response),
+      new RegExp(`"error":"${testCase.error}"`),
+      context,
+    );
     // A refused request never reached the upstream, and the handle was not
     // rotated by it.
     assert.equal(harness.fake.refreshCallCount(), 0, context);
-    assert.equal((await brokerRecord(harness, handle)).status, "issued", context);
+    assert.equal(
+      (await brokerRecord(harness, handle)).status,
+      "issued",
+      context,
+    );
   }
 });
 
@@ -1686,98 +1572,6 @@ test("refresh concurrent callers receive one successor", async (t) => {
 });
 
 /**
- * Pins the once-per-handle bound under concurrency: once the grace window has
- * passed, exactly one concurrent presenter of the rotated handle is answered
- * with the access token only, every other presenter is refused with the same
- * invalid_grant and revokes the family, and no caller reaches the upstream.
- */
-test("refresh concurrent reuse after grace serves at most once", async (t) => {
-  const harness = await newFrontChannelHarness(t);
-  const handle = await mintedRefreshHandle(harness);
-  const rotated = await harness.token(refreshForm(handle));
-  assert.equal(rotated.status, 200, bodyString(rotated));
-  const successor = responseHandle(rotated);
-  harness.clock.advance(120_000 + 1_000);
-
-  const callers = 16;
-  const responses = await Promise.all(
-    Array.from({ length: callers }, () => harness.token(refreshForm(handle))),
-  );
-
-  let served = 0;
-  for (const [index, response] of responses.entries()) {
-    const body = bodyString(response);
-    if (response.status === 200) {
-      served += 1;
-      assert.ok(!body.includes("refresh_token"), `caller ${index} must not receive a handle`);
-      assert.ok(
-        !body.includes(ROTATED_UPSTREAM_REFRESH_TOKEN),
-        `caller ${index} must not receive upstream material`,
-      );
-      continue;
-    }
-    assert.equal(response.status, 400, `caller ${index} body ${body}`);
-    assert.match(body, /"error":"invalid_grant"/, `caller ${index}`);
-  }
-  assert.equal(served, 1, "exactly one caller may be served the access token");
-  assert.equal(harness.fake.refreshCallCount(), 1);
-  assert.equal((await brokerRecord(harness, handle)).status, "revoked");
-  assert.equal((await brokerRecord(harness, successor)).status, "revoked");
-});
-
-/**
- * Pins the reuse-detection revoke walk of ruling R1.4 and its bounded limit: the
- * walk revokes the presented record and then follows the successor handle each
- * revoked record names, stopping at the limit so a crafted or cyclic stored value
- * can never loop. A ten-link chain seeded by hand therefore ends with exactly the
- * first eight links revoked.
- */
-test("refresh reuse revokes the grant up to the bounded walk limit", async (t) => {
-  const harness = await newFrontChannelHarness(t);
-  const handles = Array.from({ length: 10 }, () => unknownHandle());
-  for (const [index, handle] of handles.entries()) {
-    const successor = handles[index + 1];
-    await harness.stores.routeRefreshBroker.put({
-      handleHash: hashKey(handle),
-      issuer: UPSTREAM_ISS,
-      stage: "",
-      canonicalResource: REFRESH_BOUND_RESOURCE,
-      clientNamespace: "acme",
-      endpointKind: "namespace",
-      partnerId: "",
-      agentId: "",
-      clientIdHash: hashKey(CLIENT_ID),
-      subjectIdHash: hashKey("user-1"),
-      scopes: [ROTATED_UPSTREAM_SCOPE],
-      scopeFingerprint: hashKey(ROTATED_UPSTREAM_SCOPE),
-      encryptedUpstreamRefreshToken: UPSTREAM_REFRESH_TOKEN,
-      upstreamRefreshTokenHash: hashKey(UPSTREAM_REFRESH_TOKEN),
-      upstreamClientId: CLIENT_ID,
-      // Every record claims a grace window that closed long ago, so presenting
-      // the first is reuse, and each names the next link as its successor.
-      encryptedGraceRefreshResponse:
-        successor === undefined
-          ? ""
-          : JSON.stringify({ refresh_token: successor }),
-      graceExpiresAt: new Date(0),
-      status: "issued",
-      version: 0,
-    });
-  }
-
-  const reused = await harness.token(refreshForm(handles[0]));
-  assert.equal(reused.status, 400);
-  assert.match(bodyString(reused), /"error":"invalid_grant"/);
-  assert.equal(harness.fake.refreshCallCount(), 0);
-
-  for (const [index, handle] of handles.entries()) {
-    const record = await brokerRecord(harness, handle);
-    const expected = index < 8 ? "revoked" : "issued";
-    assert.equal(record.status, expected, `chain link ${index}`);
-  }
-});
-
-/**
  * Pins the route refresh policy as fail-closed configuration: a missing or zero
  * handle TTL, an out-of-range TTL or ceiling, and a grace window outside its
  * bound are registration errors rather than silent fallbacks, and a policy that
@@ -1818,7 +1612,11 @@ test("route refresh policy fails closed at registration", async (t) => {
     },
     {
       name: "grace negative",
-      policy: { handleTTLSeconds: 900, graceWindowSeconds: -1, reuseRateCeiling: 9 },
+      policy: {
+        handleTTLSeconds: 900,
+        graceWindowSeconds: -1,
+        reuseRateCeiling: 9,
+      },
       want: /route refresh policy grace window must be within/,
     },
     {
@@ -1924,279 +1722,6 @@ test("route refresh telemetry tells expiry from absence", async (t) => {
 });
 
 /**
- * Pins the telemetry taxonomy and its redaction: the real request path emits
- * issuance, lock, refresh, grace, reuse, and validation events, and no event
- * carries raw credential or handle material.
- */
-test("route refresh telemetry covers the taxonomy without raw material", async (t) => {
-  const events = [];
-  const harness = await newFrontChannelHarness(t, {
-    routeRefreshEvents: (event) => events.push(event),
-  });
-  const handle = await mintedRefreshHandle(harness);
-  const rotated = await harness.token(refreshForm(handle));
-  assert.equal(rotated.status, 200, bodyString(rotated));
-  const successor = responseHandle(rotated);
-
-  harness.clock.advance(119_000);
-  assert.equal((await harness.token(refreshForm(handle))).status, 200);
-  harness.clock.advance(2_000);
-  const served = await harness.token(refreshForm(handle));
-  assert.equal(served.status, 200, bodyString(served));
-  assert.ok(!bodyString(served).includes("refresh_token"));
-
-  const missing = await unknownHandle();
-  assert.equal((await harness.token(refreshForm(missing))).status, 400);
-
-  const issued = events.find((event) => event.class === ROUTE_REFRESH_EVENT_ISSUED);
-  assert.ok(issued !== undefined, "expected an issued event");
-  assert.equal(issued.handleHash, hashKey(handle));
-  assert.equal(issued.familyHash, hashKey(handle));
-  assert.equal(issued.chainGeneration, 1);
-
-  const lock = events.find(
-    (event) => event.class === ROUTE_REFRESH_EVENT_LOCK_ACQUIRED,
-  );
-  assert.ok(lock !== undefined, "expected a lock_acquired event");
-  assert.equal(lock.statusTo, "refreshing");
-
-  const refreshed = events.find(
-    (event) => event.class === ROUTE_REFRESH_EVENT_REFRESHED,
-  );
-  assert.ok(refreshed !== undefined, "expected a refreshed event");
-  assert.equal(refreshed.statusFrom, "refreshing");
-  assert.equal(refreshed.statusTo, "active");
-  assert.equal(refreshed.successorHandleHash, hashKey(successor));
-  assert.equal(refreshed.chainGeneration, 2);
-  assert.notEqual(refreshed.previousUpstreamRefreshTokenHash, "");
-  assert.notEqual(refreshed.upstreamRefreshTokenHash, "");
-
-  assert.ok(
-    events.find((event) => event.class === ROUTE_REFRESH_EVENT_GRACE_SERVED) !==
-      undefined,
-    "expected a grace_served event",
-  );
-  const reuse = events.find(
-    (event) =>
-      event.class === ROUTE_REFRESH_EVENT_REUSE &&
-      event.outcome === ROUTE_REFRESH_OUTCOME_ACCESS_TOKEN_ONLY,
-  );
-  assert.ok(reuse !== undefined, "expected an access_token_only reuse event");
-  assert.equal(reuse.reason, ROUTE_REFRESH_REASON_ACCESS_TOKEN_ONLY);
-  assert.equal(reuse.chainDepth, 1);
-  assert.equal(reuse.statusTo, "active");
-
-  const encoded = JSON.stringify(events);
-  for (const secret of [
-    handle,
-    successor,
-    UPSTREAM_REFRESH_TOKEN,
-    ROTATED_UPSTREAM_REFRESH_TOKEN,
-    REFRESH_ACCESS_TOKEN,
-    REFRESH_ID_TOKEN,
-    VERIFIER,
-    UPSTREAM_CODE,
-    CLIENT_STATE,
-  ]) {
-    assert.ok(
-      !encoded.includes(secret),
-      `telemetry must carry hashes, never raw material ${JSON.stringify(secret)}`,
-    );
-  }
-  assert.ok(!encoded.includes("id_token"));
-});
-
-/**
- * Pins the single-use bound of a beyond-grace serve: the marker is written
- * before the response, and a later presentation of the same handle is theft
- * class even though the per-family budget is barely touched.
- */
-test("route refresh beyond-grace serve is single-use per handle", async (t) => {
-  const events = [];
-  const harness = await newFrontChannelHarness(t, {
-    routeRefreshEvents: (event) => events.push(event),
-  });
-  const handle = await mintedRefreshHandle(harness);
-  const rotated = await harness.token(refreshForm(handle));
-  assert.equal(rotated.status, 200, bodyString(rotated));
-  const successor = responseHandle(rotated);
-
-  harness.clock.advance(120_000 + 1_000);
-  const first = await harness.token(refreshForm(handle));
-  assert.equal(first.status, 200, bodyString(first));
-  assert.notEqual((await brokerRecord(harness, handle)).depthOneServedAt, undefined);
-
-  const second = await harness.token(refreshForm(handle));
-  assert.equal(second.status, 400);
-  assert.match(bodyString(second), /"error":"invalid_grant"/);
-  const theft = events.find(
-    (event) =>
-      event.class === ROUTE_REFRESH_EVENT_REUSE &&
-      event.reason === ROUTE_REFRESH_REASON_ALREADY_SERVED,
-  );
-  assert.ok(theft !== undefined, "expected an already_served reuse event");
-  assert.equal(theft.chainDepth, 1);
-  assert.equal((await brokerRecord(harness, handle)).status, "revoked");
-  assert.equal((await brokerRecord(harness, successor)).status, "revoked");
-});
-
-/**
- * Pins the per-family hourly budget: benign depth-1 serves are allowed up to
- * the configured ceiling, and the next one is refused without revoking the
- * family. Every cycle rotates the head, closes the predecessor's grace window,
- * and presents the predecessor, so each serve is a distinct handle.
- */
-test("route refresh depth-one serves are budgeted per family", async (t) => {
-  const events = [];
-  const harness = await newFrontChannelHarness(t, {
-    routeRefreshEvents: (event) => events.push(event),
-  });
-  let head = await mintedRefreshHandle(harness);
-  const ceiling = 9;
-
-  for (let served = 0; served < ceiling; served += 1) {
-    const rotated = await harness.token(refreshForm(head));
-    assert.equal(rotated.status, 200, `rotation ${served}: ${bodyString(rotated)}`);
-    const predecessor = head;
-    head = responseHandle(rotated);
-    harness.clock.advance(120_000 + 1_000);
-    const response = await harness.token(refreshForm(predecessor));
-    assert.equal(response.status, 200, `serve ${served}: ${bodyString(response)}`);
-    assert.ok(!bodyString(response).includes("refresh_token"));
-  }
-
-  const rotated = await harness.token(refreshForm(head));
-  assert.equal(rotated.status, 200, bodyString(rotated));
-  const predecessor = head;
-  head = responseHandle(rotated);
-  harness.clock.advance(120_000 + 1_000);
-  const limited = await harness.token(refreshForm(predecessor));
-  assert.equal(limited.status, 400);
-  assert.match(bodyString(limited), /"error":"invalid_grant"/);
-  assert.ok(!bodyString(limited).includes("access_token"));
-
-  const limitedEvent = events.find(
-    (event) =>
-      event.class === ROUTE_REFRESH_EVENT_REUSE &&
-      event.outcome === ROUTE_REFRESH_OUTCOME_RATE_LIMITED,
-  );
-  assert.ok(limitedEvent !== undefined, "expected a rate_limited reuse event");
-  assert.equal(limitedEvent.chainDepth, 1);
-  assert.notEqual(
-    (await brokerRecord(harness, head)).status,
-    "revoked",
-    "a rate-limited serve must not revoke the family",
-  );
-  assert.notEqual((await brokerRecord(harness, predecessor)).status, "revoked");
-});
-
-/**
- * Pins the pre-policy default: a family-less, generation-0 rotated-away record
- * is classified structurally (successor walk, not arithmetic), serves the
- * access token only once, and its second presentation revokes through the
- * bounded walk because it has no family to revoke.
- */
-test("route refresh classifies and walk-revokes a legacy record", async (t) => {
-  const events = [];
-  const harness = await newFrontChannelHarness(t, {
-    routeRefreshEvents: (event) => events.push(event),
-  });
-  const legacyHandle = unknownHandle();
-  const successorHandle = unknownHandle();
-  const seed = (handleHash, overrides) => ({
-    handleHash,
-    issuer: UPSTREAM_ISS,
-    stage: "",
-    canonicalResource: REFRESH_BOUND_RESOURCE,
-    clientNamespace: "acme",
-    endpointKind: "namespace",
-    partnerId: "",
-    agentId: "",
-    clientIdHash: hashKey(CLIENT_ID),
-    subjectIdHash: hashKey("user-1"),
-    scopes: [ROTATED_UPSTREAM_SCOPE],
-    scopeFingerprint: hashKey(ROTATED_UPSTREAM_SCOPE),
-    encryptedUpstreamRefreshToken: UPSTREAM_REFRESH_TOKEN,
-    upstreamRefreshTokenHash: hashKey(UPSTREAM_REFRESH_TOKEN),
-    upstreamClientId: CLIENT_ID,
-    status: "active",
-    version: 0,
-    ...overrides,
-  });
-  await harness.stores.routeRefreshBroker.put(
-    seed(hashKey(legacyHandle), {
-      encryptedGraceRefreshResponse: JSON.stringify({
-        access_token: "legacy-access-token",
-        token_type: "Bearer",
-        expires_in: 900,
-        refresh_token: successorHandle,
-      }),
-      graceExpiresAt: new Date(0),
-    }),
-  );
-  await harness.stores.routeRefreshBroker.put(seed(hashKey(successorHandle)));
-  harness.clock.advance(120_000 + 1_000);
-
-  const served = await harness.token(refreshForm(legacyHandle));
-  assert.equal(served.status, 200, bodyString(served));
-  assert.ok(bodyString(served).includes(`"access_token":"legacy-access-token"`));
-  assert.ok(!bodyString(served).includes("refresh_token"));
-  const reuse = events.find(
-    (event) =>
-      event.class === ROUTE_REFRESH_EVENT_REUSE &&
-      event.outcome === ROUTE_REFRESH_OUTCOME_ACCESS_TOKEN_ONLY,
-  );
-  assert.ok(reuse !== undefined, "expected an access_token_only reuse event");
-  assert.equal(reuse.chainDepth, 1);
-  assert.equal(reuse.chainGeneration, 0);
-
-  const second = await harness.token(refreshForm(legacyHandle));
-  assert.equal(second.status, 400);
-  assert.match(bodyString(second), /"error":"invalid_grant"/);
-  const revoked = events.find(
-    (event) =>
-      event.class === ROUTE_REFRESH_EVENT_REUSE &&
-      event.outcome === ROUTE_REFRESH_OUTCOME_REVOKED_WALK,
-  );
-  assert.ok(revoked !== undefined, "expected a revoked_walk reuse event");
-  assert.equal(revoked.revokedRecords, 2);
-
-  assert.equal((await brokerRecord(harness, legacyHandle)).status, "revoked");
-  assert.equal((await brokerRecord(harness, successorHandle)).status, "revoked");
-});
-
-/**
- * Pins that revoke-by-family beats the eight-link walk limit: a chain longer
- * than the walk is revoked completely, so a confirmed theft leaves no live
- * member behind.
- */
-test("route refresh family revoke beats the walk limit", async (t) => {
-  const harness = await newFrontChannelHarness(t);
-  let head = await mintedRefreshHandle(harness);
-  const handles = [head];
-  for (let rotation = 0; rotation < 10; rotation += 1) {
-    const response = await harness.token(refreshForm(head));
-    assert.equal(response.status, 200, `rotation ${rotation}: ${bodyString(response)}`);
-    head = responseHandle(response);
-    handles.push(head);
-  }
-  assert.equal(handles.length, 11);
-
-  harness.clock.advance(120_000 + 1_000);
-  const reused = await harness.token(refreshForm(handles[0]));
-  assert.equal(reused.status, 400);
-  assert.match(bodyString(reused), /"error":"invalid_grant"/);
-
-  for (const handle of handles) {
-    assert.equal(
-      (await brokerRecord(harness, handle)).status,
-      "revoked",
-      `handle ${handle} must be revoked`,
-    );
-  }
-});
-
-/**
  * Pins the coalesce wait cap: a caller that cannot take a lock another caller
  * holds answers 503 temporarily_unavailable with a Retry-After, makes no upstream
  * call, and waits the whole cap first. This test takes about three seconds,
@@ -2289,32 +1814,6 @@ test("refresh version conflict retry yields", async (t) => {
 });
 
 /**
- * Pins the terminal provider failure: the recorded upstream material is dead, so
- * the facade answers invalid_grant and revokes the presented record, and a later
- * attempt never reaches the upstream again.
- */
-test("refresh terminal upstream failure revokes", async (t) => {
-  const harness = await newFrontChannelHarness(t, {
-    providerOptions: (options) => {
-      options.refreshTokenStatus = 400;
-      options.refreshTokenBody = { error: "invalid_grant" };
-    },
-  });
-  const handle = await mintedRefreshHandle(harness);
-
-  const response = await harness.token(refreshForm(handle));
-  assert.equal(response.status, 400, bodyString(response));
-  assert.match(bodyString(response), /"error":"invalid_grant"/);
-  assert.equal(harness.fake.refreshCallCount(), 1);
-  assert.equal((await brokerRecord(harness, handle)).status, "revoked");
-
-  const after = await harness.token(refreshForm(handle));
-  assert.equal(after.status, 400);
-  assert.match(bodyString(after), /"error":"invalid_grant"/);
-  assert.equal(harness.fake.refreshCallCount(), 1);
-});
-
-/**
  * Pins the transient provider failure: the facade answers 503
  * temporarily_unavailable with a Retry-After, releases the lock and restores the
  * record's status, and does not revoke the grant, so the very next attempt
@@ -2343,7 +1842,9 @@ test("refresh transient upstream failure keeps the handle", async (t) => {
 
   const recovered = await harness.token(refreshForm(handle));
   assert.equal(recovered.status, 200, bodyString(recovered));
-  assert.ok(bodyString(recovered).includes(`"access_token":"${REFRESH_ACCESS_TOKEN}"`));
+  assert.ok(
+    bodyString(recovered).includes(`"access_token":"${REFRESH_ACCESS_TOKEN}"`),
+  );
   assert.notEqual(responseHandle(recovered), handle);
   assert.equal(harness.fake.refreshCallCount(), 2);
   assert.equal((await brokerRecord(harness, handle)).status, "active");
@@ -2404,17 +1905,32 @@ test("refresh responses never carry upstream material", async (t) => {
   const responses = [
     { name: "authorize", response: authorize, codeOK: false, stateOK: false },
     { name: "callback", response: callback, codeOK: true, stateOK: true },
-    { name: "code_exchange", response: exchange, codeOK: false, stateOK: false },
+    {
+      name: "code_exchange",
+      response: exchange,
+      codeOK: false,
+      stateOK: false,
+    },
     { name: "refresh", response: rotated, codeOK: false, stateOK: false },
     { name: "grace_replay", response: grace, codeOK: false, stateOK: false },
-    { name: "scope_refused", response: scopeRefused, codeOK: false, stateOK: false },
+    {
+      name: "scope_refused",
+      response: scopeRefused,
+      codeOK: false,
+      stateOK: false,
+    },
     {
       name: "resource_refused",
       response: resourceRefused,
       codeOK: false,
       stateOK: false,
     },
-    { name: "oversized_handle", response: oversized, codeOK: false, stateOK: false },
+    {
+      name: "oversized_handle",
+      response: oversized,
+      codeOK: false,
+      stateOK: false,
+    },
   ];
 
   const secrets = [
@@ -2442,7 +1958,10 @@ test("refresh responses never carry upstream material", async (t) => {
       );
     }
     if (!entry.codeOK) {
-      assert.ok(!scanned.includes(code), `${entry.name} response must not carry the facade code`);
+      assert.ok(
+        !scanned.includes(code),
+        `${entry.name} response must not carry the facade code`,
+      );
     }
     for (const [token, names] of delivered) {
       if (names.has(entry.name)) continue;
@@ -2486,7 +2005,7 @@ const REFRESH_GROUP = "refresh";
  * must also be a deliberate edit in the Go, TypeScript, and Python loaders, so no
  * runtime can silently execute a smaller table.
  */
-const REFRESH_CASE_COUNT = 16;
+const REFRESH_CASE_COUNT = 19;
 
 /**
  * Stages the fake upstream a refresh row's scenario needs. Only the two
@@ -2532,16 +2051,39 @@ async function refreshScenarioResponse(harness, scenario) {
       );
       return replayed;
     }
-    case "beyond_grace_depth_one_serves_access_token_only":
+    case "beyond_grace_first_presentation_revokes_family_without_tokens":
       assert.equal((await harness.token(refreshForm(handle))).status, 200);
       harness.clock.advance(120_000 + 1_000);
       return await harness.token(refreshForm(handle));
-    case "beyond_grace_second_serve_revokes_family": {
+    case "beyond_grace_repeated_presentation_is_invalid_grant": {
       assert.equal((await harness.token(refreshForm(handle))).status, 200);
       harness.clock.advance(120_000 + 1_000);
-      assert.equal((await harness.token(refreshForm(handle))).status, 200);
+      assert.equal((await harness.token(refreshForm(handle))).status, 400);
       return await harness.token(refreshForm(handle));
     }
+    case "reuse_after_nine_rotations_revokes_whole_family": {
+      let current = handle;
+      for (let index = 0; index < 9; index += 1) {
+        const rotated = await harness.token(refreshForm(current));
+        assert.equal(rotated.status, 200);
+        current = responseHandle(rotated);
+      }
+      harness.clock.advance(120_000 + 1_000);
+      assert.equal((await harness.token(refreshForm(handle))).status, 400);
+      return await harness.token(refreshForm(current));
+    }
+    case "legacy_lineage_refused_without_tokens":
+      await rewriteBrokerRecord(harness, handle, (record) => {
+        record.familyHash = "";
+        record.chainGeneration = 0;
+      });
+      return await harness.token(refreshForm(handle));
+    case "missing_family_state_fails_closed":
+      await rewriteBrokerRecord(harness, handle, (record) => {
+        record.familyHash = "missing-family-state";
+        record.chainGeneration = 2;
+      });
+      return await harness.token(refreshForm(handle));
     case "unknown_handle":
       return await harness.token(refreshForm(unknownHandle()));
     case "other_client_handle":
@@ -2554,7 +2096,10 @@ async function refreshScenarioResponse(harness, scenario) {
         "POST",
         oauthTokenPath(boundRouteEndpoint("agent")),
         null,
-        Buffer.from(new URLSearchParams(refreshForm(handle)).toString(), "utf8"),
+        Buffer.from(
+          new URLSearchParams(refreshForm(handle)).toString(),
+          "utf8",
+        ),
       );
     case "scope_subset_refused":
       return await harness.token(refreshForm(handle, { scope: "" }));
@@ -2585,7 +2130,9 @@ async function refreshScenarioResponse(harness, scenario) {
     case "upstream_transient_failure":
       return await harness.token(refreshForm(handle));
     default:
-      return assert.fail(`unknown refresh scenario ${JSON.stringify(scenario)}`);
+      return assert.fail(
+        `unknown refresh scenario ${JSON.stringify(scenario)}`,
+      );
   }
 }
 
@@ -2610,7 +2157,11 @@ test("refresh enforces the shared refresh table through the real handlers", asyn
     const response = await refreshScenarioResponse(harness, row.scenario);
     const context = `row ${row.id}`;
 
-    assert.equal(response.status, row.expect_status, `${context} body ${bodyString(response)}`);
+    assert.equal(
+      response.status,
+      row.expect_status,
+      `${context} body ${bodyString(response)}`,
+    );
     if (row.expect_error !== undefined && row.expect_error !== "") {
       assert.match(
         bodyString(response),
@@ -2620,7 +2171,11 @@ test("refresh enforces the shared refresh table through the real handlers", asyn
     }
     if (row.expect_retry_after === true) {
       const value = firstHeader(response.headers, "retry-after");
-      assert.notEqual(value, undefined, `${context} must carry a Retry-After header`);
+      assert.notEqual(
+        value,
+        undefined,
+        `${context} must carry a Retry-After header`,
+      );
       assert.ok(
         Number.parseInt(value, 10) >= 1,
         `${context} must not ask for a retry sooner than one second`,
@@ -2628,7 +2183,10 @@ test("refresh enforces the shared refresh table through the real handlers", asyn
     }
     const scanned = responseScan(response);
     for (const absent of row.expect_absent ?? []) {
-      assert.ok(!scanned.includes(absent), `${context} must not carry ${JSON.stringify(absent)}`);
+      assert.ok(
+        !scanned.includes(absent),
+        `${context} must not carry ${JSON.stringify(absent)}`,
+      );
     }
   }
   assert.equal(executed, REFRESH_CASE_COUNT);
@@ -2762,7 +2320,9 @@ function journeyTransportToken(harness, token) {
         claims(JOURNEY_ROUTE_RESOURCE, "mcp:read", 900),
       );
     default:
-      throw new Error(`unknown journey transport token ${JSON.stringify(token)}`);
+      throw new Error(
+        `unknown journey transport token ${JSON.stringify(token)}`,
+      );
   }
 }
 
@@ -2805,13 +2365,20 @@ async function newJourneySession(t, precondition) {
   const callbackResponse = await harness.serve(
     "GET",
     DEFAULT_CALLBACK_PATH,
-    { code: [UPSTREAM_CODE], state: [session.upstreamState], iss: [UPSTREAM_ISS] },
+    {
+      code: [UPSTREAM_CODE],
+      state: [session.upstreamState],
+      iss: [UPSTREAM_ISS],
+    },
     null,
   );
   assert.equal(callbackResponse.status, 302, `${precondition} callback`);
   session.facadeCode = locationQuery(callbackResponse).get("code");
   assert.ok(session.facadeCode, `${precondition} facade code`);
-  if (precondition === "authorize_consumed" || precondition === "authorize_callback") {
+  if (
+    precondition === "authorize_consumed" ||
+    precondition === "authorize_callback"
+  ) {
     return session;
   }
 
@@ -2841,7 +2408,10 @@ async function executeJourneyTransportRow(t, row) {
     case "none":
       break;
     case "valid":
-      assert.ok(session.accessToken, `${row.id} needs the precondition's exchange`);
+      assert.ok(
+        session.accessToken,
+        `${row.id} needs the precondition's exchange`,
+      );
       headers.authorization = [`Bearer ${session.accessToken}`];
       break;
     case "wrong_audience":
@@ -2852,7 +2422,9 @@ async function executeJourneyTransportRow(t, row) {
       ];
       break;
     default:
-      assert.fail(`row ${row.id} carries unknown token ${JSON.stringify(row.token)}`);
+      assert.fail(
+        `row ${row.id} carries unknown token ${JSON.stringify(row.token)}`,
+      );
   }
 
   const response = await harness.serve(
@@ -2874,11 +2446,18 @@ async function executeJourneyTransportRow(t, row) {
   } else if (row.expect_challenge_error !== undefined) {
     assert.equal(
       challenge,
-      insufficientScopeWWWAuthenticate([row.expect_challenge_scope], JOURNEY_METADATA_URL),
+      insufficientScopeWWWAuthenticate(
+        [row.expect_challenge_scope],
+        JOURNEY_METADATA_URL,
+      ),
       `row ${row.id} must carry the RFC 6750 insufficient_scope challenge`,
     );
   } else {
-    assert.equal(challenge, undefined, `row ${row.id} must advertise no challenge`);
+    assert.equal(
+      challenge,
+      undefined,
+      `row ${row.id} must advertise no challenge`,
+    );
   }
   if (row.expect_handler_invocations !== undefined) {
     assert.equal(
@@ -2920,14 +2499,25 @@ async function executeJourneyRegisterRow(t, row) {
     row.request === undefined
       ? Buffer.alloc(0)
       : Buffer.from(JSON.stringify(row.request), "utf8");
-  for (let attempt = 0; attempt < (row.prime_registrations ?? 0); attempt += 1) {
+  for (
+    let attempt = 0;
+    attempt < (row.prime_registrations ?? 0);
+    attempt += 1
+  ) {
     const primed = await harness.serve(
       "POST",
       registerPath,
       null,
-      Buffer.from(`{"redirect_uris":["https://client.example/callback"]}`, "utf8"),
+      Buffer.from(
+        `{"redirect_uris":["https://client.example/callback"]}`,
+        "utf8",
+      ),
     );
-    assert.equal(primed.status, 201, `row ${row.id} priming attempt ${attempt + 1}`);
+    assert.equal(
+      primed.status,
+      201,
+      `row ${row.id} priming attempt ${attempt + 1}`,
+    );
   }
 
   const response = await harness.serve("POST", registerPath, null, body);
@@ -2935,15 +2525,30 @@ async function executeJourneyRegisterRow(t, row) {
 
   const scanned = bodyString(response);
   for (const token of row.expect_body_has ?? []) {
-    assert.ok(scanned.includes(token), `row ${row.id} body must carry ${token}`);
+    assert.ok(
+      scanned.includes(token),
+      `row ${row.id} body must carry ${token}`,
+    );
   }
   if (row.expect_no_store === true) {
-    assert.equal(firstHeader(response.headers, "cache-control"), "no-store", `row ${row.id}`);
-    assert.equal(firstHeader(response.headers, "pragma"), "no-cache", `row ${row.id}`);
+    assert.equal(
+      firstHeader(response.headers, "cache-control"),
+      "no-store",
+      `row ${row.id}`,
+    );
+    assert.equal(
+      firstHeader(response.headers, "pragma"),
+      "no-cache",
+      `row ${row.id}`,
+    );
   }
   if (row.expect_retry_after === true) {
     const value = firstHeader(response.headers, "retry-after");
-    assert.notEqual(value, undefined, `row ${row.id} must carry a retry-after header`);
+    assert.notEqual(
+      value,
+      undefined,
+      `row ${row.id} must carry a retry-after header`,
+    );
     assert.ok(
       Number.parseInt(value, 10) >= 1,
       `row ${row.id} must not ask for a retry sooner than one second`,
@@ -2953,7 +2558,10 @@ async function executeJourneyRegisterRow(t, row) {
     const clientId = JSON.parse(scanned).client_id;
     assert.ok(clientId, `row ${row.id} must mint a client id`);
     const record = await harness.stores.client.get(hashKey(clientId));
-    assert.ok(record !== null, `row ${row.id} must persist the registered client`);
+    assert.ok(
+      record !== null,
+      `row ${row.id} must persist the registered client`,
+    );
     assert.equal(record.boundRoute, JOURNEY_ROUTE_RESOURCE, `row ${row.id}`);
   }
 }
@@ -2963,7 +2571,9 @@ async function executeJourneyAuthorizeRow(t, row) {
   const harness = session.harness;
 
   const query = {
-    client_id: [row.client === "unknown" ? JOURNEY_UNKNOWN_CLIENT_ID : CLIENT_ID],
+    client_id: [
+      row.client === "unknown" ? JOURNEY_UNKNOWN_CLIENT_ID : CLIENT_ID,
+    ],
     redirect_uri: [CLIENT_REDIRECT],
     response_type: ["code"],
     code_challenge: [pkceChallengeS256(VERIFIER)],
@@ -3010,7 +2620,9 @@ async function executeJourneyAuthorizeRow(t, row) {
   for (const key of row.expect_location_query_has ?? []) {
     assert.ok(queryResult.has(key), `row ${row.id} location must carry ${key}`);
   }
-  for (const [key, value] of Object.entries(row.expect_location_query_equals ?? {})) {
+  for (const [key, value] of Object.entries(
+    row.expect_location_query_equals ?? {},
+  )) {
     assert.equal(queryResult.get(key), value, `row ${row.id} location ${key}`);
   }
   if (row.expect_upstream_state_distinct === true) {
@@ -3028,8 +2640,12 @@ async function executeJourneyCallbackRow(t, row) {
   const session = await newJourneySession(t, row.precondition);
   const harness = session.harness;
 
-  const state = row.state === "precondition" ? session.upstreamState : row.state;
-  assert.ok(state !== "", `row ${row.id} needs the precondition's upstream state`);
+  const state =
+    row.state === "precondition" ? session.upstreamState : row.state;
+  assert.ok(
+    state !== "",
+    `row ${row.id} needs the precondition's upstream state`,
+  );
   const code = row.code === "upstream" ? UPSTREAM_CODE : row.code;
   const query = { code: [code], state: [state] };
   if (row.iss !== undefined && row.iss !== null) {
@@ -3037,7 +2653,12 @@ async function executeJourneyCallbackRow(t, row) {
   }
 
   const before = harness.tokenCalls();
-  const response = await harness.serve("GET", DEFAULT_CALLBACK_PATH, query, null);
+  const response = await harness.serve(
+    "GET",
+    DEFAULT_CALLBACK_PATH,
+    query,
+    null,
+  );
 
   assert.equal(response.status, row.expect_status, `row ${row.id}`);
   const location = locationOf(response);
@@ -3058,7 +2679,9 @@ async function executeJourneyCallbackRow(t, row) {
   for (const key of row.expect_location_query_has ?? []) {
     assert.ok(queryResult.has(key), `row ${row.id} location must carry ${key}`);
   }
-  for (const [key, value] of Object.entries(row.expect_location_query_equals ?? {})) {
+  for (const [key, value] of Object.entries(
+    row.expect_location_query_equals ?? {},
+  )) {
     assert.equal(queryResult.get(key), value, `row ${row.id} location ${key}`);
   }
   if ((row.expect_absent_from_location ?? []).length > 0) {
@@ -3102,8 +2725,16 @@ async function executeJourneyCallbackRow(t, row) {
     );
   }
   if (row.terminal === true) {
-    assert.equal(response.status, 400, `row ${row.id}: a consumed state is terminal`);
-    assert.equal(location, "", `row ${row.id}: a consumed state must not redirect`);
+    assert.equal(
+      response.status,
+      400,
+      `row ${row.id}: a consumed state is terminal`,
+    );
+    assert.equal(
+      location,
+      "",
+      `row ${row.id}: a consumed state must not redirect`,
+    );
     assert.equal(
       harness.tokenCalls(),
       before,
@@ -3135,7 +2766,10 @@ async function executeJourneyTokenRow(t, row) {
       break;
     case "refresh":
     case "revoked_refresh":
-      assert.ok(session.handle, `row ${row.id} needs the precondition's handle`);
+      assert.ok(
+        session.handle,
+        `row ${row.id} needs the precondition's handle`,
+      );
       response = await harness.token({
         grant_type: "refresh_token",
         refresh_token: session.handle,
@@ -3143,16 +2777,24 @@ async function executeJourneyTokenRow(t, row) {
       });
       break;
     default:
-      assert.fail(`row ${row.id} carries unknown token mode ${JSON.stringify(row.mode)}`);
+      assert.fail(
+        `row ${row.id} carries unknown token mode ${JSON.stringify(row.mode)}`,
+      );
   }
 
   assert.equal(response.status, row.expect_status, `row ${row.id}`);
   const scanned = bodyString(response);
   for (const token of row.expect_body_has ?? []) {
-    assert.ok(scanned.includes(token), `row ${row.id} body must carry ${token}`);
+    assert.ok(
+      scanned.includes(token),
+      `row ${row.id} body must carry ${token}`,
+    );
   }
   for (const token of row.expect_body_absent ?? []) {
-    assert.ok(!scanned.includes(token), `row ${row.id} must not carry ${token}`);
+    assert.ok(
+      !scanned.includes(token),
+      `row ${row.id} must not carry ${token}`,
+    );
   }
   if (row.expect_error !== undefined) {
     assert.ok(
@@ -3190,7 +2832,11 @@ async function executeJourneyTokenRow(t, row) {
   }
   if (row.expect_rotated_handle === true) {
     const handle = journeyTokenField(response, "refresh_token");
-    assert.notEqual(handle, session.handle, `row ${row.id} must rotate the route handle`);
+    assert.notEqual(
+      handle,
+      session.handle,
+      `row ${row.id} must rotate the route handle`,
+    );
   }
   if (row.expect_broker_revoked === true) {
     const record = await harness.stores.routeRefreshBroker.get(
@@ -3259,7 +2905,9 @@ test("the shared journey table executes every step through the mounted routes", 
           await executeJourneyTokenRow(t2, row);
           break;
         default:
-          assert.fail(`row ${row.id} carries unknown stage ${JSON.stringify(row.stage)}`);
+          assert.fail(
+            `row ${row.id} carries unknown stage ${JSON.stringify(row.stage)}`,
+          );
       }
     });
   }
@@ -3301,7 +2949,10 @@ const THREAT_PIN_SOURCES = {
     file: "facade-provider-conformance.v1.json",
     byCaseID: true,
   },
-  store_conformance: { file: "facade-store-conformance.v1.json", byCaseID: true },
+  store_conformance: {
+    file: "facade-store-conformance.v1.json",
+    byCaseID: true,
+  },
   route_challenge: { file: "route-challenge.v1.json", byKey: true },
 };
 
@@ -3371,7 +3022,10 @@ test("the shared threat-controls table pins every threat row to an executed row"
   const tables = new Map();
   const tableFor = (sourceKey) => {
     if (!tables.has(sourceKey)) {
-      tables.set(sourceKey, loadPinnedTable(THREAT_PIN_SOURCES[sourceKey].file));
+      tables.set(
+        sourceKey,
+        loadPinnedTable(THREAT_PIN_SOURCES[sourceKey].file),
+      );
     }
     return tables.get(sourceKey);
   };
@@ -3443,4 +3097,119 @@ test("front-channel routed metadata advertises the iss it sends", async (t) => {
   // carries, so the claim matches the front channel's own behavior.
   const { callback } = await harness.authorizeAndCallback();
   assert.equal(locationQuery(callback).get("iss"), document.issuer);
+});
+
+test("beyond-grace refresh revokes the family without serving tokens", async (t) => {
+  const harness = await newFrontChannelHarness(t);
+  const handle = await mintedRefreshHandle(harness);
+  const rotated = await harness.token(refreshForm(handle));
+  assert.equal(rotated.status, 200, bodyString(rotated));
+  const successor = responseHandle(rotated);
+  const beforeReuse = harness.tokenCalls();
+
+  harness.clock.advance(120_000 + 1_000);
+  const first = await harness.token(refreshForm(handle));
+  assert.equal(first.status, 400, bodyString(first));
+  const body = bodyString(first);
+  assert.match(body, /"error":"invalid_grant"/);
+  for (const absent of ["access_token", "refresh_token", "id_token"]) {
+    assert.ok(
+      !body.includes(absent),
+      `beyond-grace body must not carry ${absent}`,
+    );
+  }
+  assert.ok(!body.includes(UPSTREAM_REFRESH_TOKEN));
+  assert.equal(harness.tokenCalls(), beforeReuse);
+
+  await assert.rejects(
+    harness.stores.routeRefreshBroker.get(hashKey(handle)),
+    /revoked/,
+  );
+  await assert.rejects(
+    harness.stores.routeRefreshBroker.get(hashKey(successor)),
+    /revoked/,
+  );
+
+  const second = await harness.token(refreshForm(handle));
+  assert.equal(second.status, 400);
+  assert.equal(bodyString(second), body);
+});
+
+test("legacy refresh lineage fails closed without an upstream call", async (t) => {
+  const harness = await newFrontChannelHarness(t);
+  const handle = await mintedRefreshHandle(harness);
+  assert.equal(harness.tokenCalls(), 1);
+  await rewriteBrokerRecord(harness, handle, (record) => {
+    record.familyHash = "";
+    record.chainGeneration = 0;
+  });
+
+  const refused = await harness.token(refreshForm(handle));
+  assert.equal(refused.status, 400, bodyString(refused));
+  const body = bodyString(refused);
+  assert.match(body, /"error":"invalid_grant"/);
+  for (const absent of ["access_token", "refresh_token", "id_token"]) {
+    assert.ok(!body.includes(absent));
+  }
+  assert.equal(
+    harness.tokenCalls(),
+    1,
+    "a legacy record must not reach the upstream",
+  );
+
+  const record = await harness.stores.routeRefreshBroker.get(hashKey(handle));
+  assert.equal(record.familyHash, "", "a legacy record must not be normalized");
+  assert.equal(record.chainGeneration, 0);
+  assert.equal(record.status, "issued");
+});
+
+test("reuse after more than eight rotations revokes every family member", async (t) => {
+  const harness = await newFrontChannelHarness(t);
+  let current = await mintedRefreshHandle(harness);
+  const handles = [current];
+  for (let index = 0; index < 11; index += 1) {
+    const rotated = await harness.token(refreshForm(current));
+    assert.equal(rotated.status, 200, bodyString(rotated));
+    current = responseHandle(rotated);
+    handles.push(current);
+  }
+  harness.clock.advance(120_000 + 1_000);
+  const reused = await harness.token(refreshForm(handles[0]));
+  assert.equal(reused.status, 400, bodyString(reused));
+
+  for (const handle of handles) {
+    await assert.rejects(
+      harness.stores.routeRefreshBroker.get(hashKey(handle)),
+      /revoked/,
+    );
+  }
+});
+
+test("concurrent beyond-grace reuse never serves a token", async (t) => {
+  const harness = await newFrontChannelHarness(t);
+  const handle = await mintedRefreshHandle(harness);
+  const rotated = await harness.token(refreshForm(handle));
+  assert.equal(rotated.status, 200);
+  const beforeReuse = harness.tokenCalls();
+  harness.clock.advance(120_000 + 1_000);
+
+  const form = new URLSearchParams(refreshForm(handle)).toString();
+  const responses = await Promise.all(
+    Array.from({ length: 16 }, () =>
+      harness.serve(
+        "POST",
+        oauthTokenPath(boundRouteEndpoint("namespace")),
+        null,
+        Buffer.from(form, "utf8"),
+      ),
+    ),
+  );
+  for (const response of responses) {
+    assert.equal(response.status, 400, bodyString(response));
+    const body = bodyString(response);
+    assert.match(body, /"error":"invalid_grant"/);
+    assert.ok(!body.includes("access_token"));
+    assert.ok(!body.includes("refresh_token"));
+  }
+  assert.equal(harness.tokenCalls(), beforeReuse);
 });

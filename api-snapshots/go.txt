@@ -3856,7 +3856,11 @@ const RouteRefreshReasonFamilyRevokeFailed = "family_revoke_failed"
 
 const RouteRefreshReasonFamilyRevokeUnavailable = "family_revoke_unavailable"
 
+const RouteRefreshReasonFamilyStateUnavailable = "family_state_unavailable"
+
 const RouteRefreshReasonHandleMalformed = "handle_malformed"
+
+const RouteRefreshReasonLegacyLineage = "legacy_lineage_unsupported"
 
 const RouteRefreshReasonLockContention = "lock_contention"
 
@@ -3869,6 +3873,8 @@ const RouteRefreshReasonRecordRevoked = "record_revoked"
 const RouteRefreshReasonResourceMismatch = "resource_mismatch"
 
 const RouteRefreshReasonRewriteFailure = "rewrite_failure"
+
+const RouteRefreshReasonRotatedReuse = "rotated_reuse"
 
 const RouteRefreshReasonStoreFailure = "store_failure"
 
@@ -5625,6 +5631,10 @@ func (*ProviderError) Unwrap() error
 
 ## github.com/theory-cloud/apptheory/v6/runtime/oauth/store
 
+const BrokerFamilyStatusActive = "active"
+
+const BrokerFamilyStatusRevoked = "revoked"
+
 const BrokerStatusActive = "active"
 
 const BrokerStatusExpired = "expired"
@@ -5661,6 +5671,16 @@ var ErrAuthorizationCodeReplayed = errors.New("store: authorization code replaye
 
 var ErrBrokerExpired = errors.New("store: route refresh broker record expired")
 
+var ErrBrokerFamilyCapabilityMissing = errors.New("store: route refresh broker store lacks the transactional family capability")
+
+var ErrBrokerFamilyExists = errors.New("store: route refresh family already exists")
+
+var ErrBrokerFamilyMismatch = errors.New("store: route refresh family or generation binding mismatch")
+
+var ErrBrokerFamilyStateUnavailable = errors.New("store: route refresh family state is missing or corrupt")
+
+var ErrBrokerLegacyLineageUnsupported = errors.New("store: route refresh legacy lineage is unsupported for ordinary rotation")
+
 var ErrBrokerLocked = errors.New("store: route refresh broker record is locked")
 
 var ErrBrokerNotFound = errors.New("store: route refresh broker record not found")
@@ -5668,6 +5688,8 @@ var ErrBrokerNotFound = errors.New("store: route refresh broker record not found
 var ErrBrokerNotSeedable = errors.New("store: route refresh broker store cannot be seeded")
 
 var ErrBrokerRevoked = errors.New("store: route refresh broker record is revoked")
+
+var ErrBrokerSuccessorExists = errors.New("store: route refresh successor already exists")
 
 var ErrBrokerVersionConflict = errors.New("store: route refresh broker version conflict")
 
@@ -5769,11 +5791,12 @@ type MemoryRateLimitStore struct {
 }
 
 type MemoryRouteRefreshBrokerStore struct {
-	mu      sync.Mutex
-	now     func() time.Time
-	ttl     time.Duration
-	lockTTL time.Duration
-	records map[string]*brokerEntry
+	mu       sync.Mutex
+	now      func() time.Time
+	ttl      time.Duration
+	lockTTL  time.Duration
+	records  map[string]*brokerEntry
+	families map[string]*RouteRefreshFamilyState
 }
 
 type MemoryTransactionStore struct {
@@ -5872,6 +5895,30 @@ type RouteRefreshBrokerStoreOptions struct {
 	LockTTL time.Duration
 }
 
+type RouteRefreshBrokerTransactionalFamilyStore interface {
+	RouteRefreshBrokerFamilyStore
+
+	CreateFamily(context.Context, *RouteRefreshBrokerRecord) (*RouteRefreshBrokerRecord, error)
+	RotateFamily(context.Context, RouteRefreshFamilyRotation) (*RouteRefreshBrokerRecord, error)
+}
+
+type RouteRefreshFamilyRotation struct {
+	PresentedHandleHash  string
+	LockOwner            string
+	ExpectedVersion      int
+	Successor            *RouteRefreshBrokerRecord
+	GraceRefreshResponse string
+	GraceExpiresAt       time.Time
+}
+
+type RouteRefreshFamilyState struct {
+	FamilyHash string
+	Status     string
+	Version    int
+	CreatedAt  time.Time
+	RevokedAt  time.Time
+}
+
 type Stores struct {
 	Transaction        TransactionStore
 	AuthorizationCode  AuthorizationCodeStore
@@ -5967,6 +6014,11 @@ func (*MemoryRouteRefreshBrokerStore) CompareAndSwap(
 	int,
 ) (*RouteRefreshBrokerRecord, error)
 
+func (*MemoryRouteRefreshBrokerStore) CreateFamily(
+	context.Context,
+	*RouteRefreshBrokerRecord,
+) (*RouteRefreshBrokerRecord, error)
+
 func (*MemoryRouteRefreshBrokerStore) Get(context.Context, string) (*RouteRefreshBrokerRecord, error)
 
 func (*MemoryRouteRefreshBrokerStore) ListFamily(
@@ -5982,6 +6034,11 @@ func (*MemoryRouteRefreshBrokerStore) RevokeFamily(
 	context.Context,
 	string,
 ) ([]*RouteRefreshBrokerRecord, error)
+
+func (*MemoryRouteRefreshBrokerStore) RotateFamily(
+	context.Context,
+	RouteRefreshFamilyRotation,
+) (*RouteRefreshBrokerRecord, error)
 
 func (*MemoryRouteRefreshBrokerStore) RouteRefreshBrokerHandleTTL() time.Duration
 

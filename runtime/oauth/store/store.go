@@ -118,18 +118,19 @@ type RouteRefreshBrokerSeeder interface {
 	Put(ctx context.Context, record *RouteRefreshBrokerRecord) error
 }
 
-// RouteRefreshBrokerFamilyStore is the optional family capability of a broker
-// store. A refresh family is the chain of handles one authorization grant
-// produced; FamilyHash names it on every record. ListFamily answers which
-// handles belong to a family and what state each is in, so an incident
-// responder can enumerate a family without walking successor links. RevokeFamily
-// revokes every record of a family in one operation and returns the records it
-// revoked, so a confirmed theft is not limited by the eight-link successor walk
-// a long-lived chain would exhaust.
+// RouteRefreshBrokerFamilyStore is the enumeration/revocation half of the
+// family capability of a broker store. A refresh family is the chain of handles
+// one authorization grant produced; FamilyHash names it on every record.
+// ListFamily answers which live handles belong to a family and what state each
+// is in, so an incident responder can enumerate a family without walking
+// successor links. RevokeFamily revokes every live record of a family in one
+// operation and returns the records it revoked.
 //
-// A store that does not implement this capability remains fully usable: the
-// facade falls back to the bounded successor walk for revocation and reports a
-// state event, so the degradation is visible rather than silent.
+// This pair alone is not enough for the framework-owned front channel: a
+// conforming store must implement RouteRefreshBrokerTransactionalFamilyStore,
+// which adds atomic root creation and atomic rotation. The pair remains
+// exported because it is the incident surface and because a durable store may
+// keep the old pair while it migrates.
 type RouteRefreshBrokerFamilyStore interface {
 	ListFamily(ctx context.Context, familyHash string) ([]*RouteRefreshBrokerRecord, error)
 	RevokeFamily(ctx context.Context, familyHash string) ([]*RouteRefreshBrokerRecord, error)
@@ -141,6 +142,75 @@ type RouteRefreshBrokerFamilyStore interface {
 // long-lived ceiling while its store silently keeps a shorter one.
 type RouteRefreshBrokerHandleTTLReporter interface {
 	RouteRefreshBrokerHandleTTL() time.Duration
+}
+
+// RouteRefreshFamilyStatus values of the transactional family state.
+const (
+	// BrokerFamilyStatusActive is a family whose handles may rotate.
+	BrokerFamilyStatusActive = "active"
+	// BrokerFamilyStatusRevoked is the terminal family tombstone. Every Get,
+	// AcquireLock, and RotateFamily for a family-marked handle honors it, and no
+	// root creation or rotation can undo it.
+	BrokerFamilyStatusRevoked = "revoked"
+)
+
+// RouteRefreshFamilyState is the store-internal family-state record a
+// transactional broker store keeps alongside the handles of one refresh
+// family. It is the authoritative revocation tombstone: a family is more than
+// the records enumerated at one instant, so a durable store retains the state
+// at least as long as any member can be addressed, including members minted
+// before the tombstone.
+type RouteRefreshFamilyState struct {
+	FamilyHash string
+	Status     string
+	Version    int
+	CreatedAt  time.Time
+	RevokedAt  time.Time
+}
+
+// RouteRefreshFamilyRotation is one atomic rotation request: the presented
+// handle is still locked by LockOwner at ExpectedVersion, its family is active,
+// and Successor does not exist. The store creates Successor, checks the family
+// and generation bindings, updates the presented record with the grace response
+// and deadline, clears the lock, and returns the stored successor — all in one
+// serialized transaction. There is no separate successor Put followed by a
+// predecessor compare-and-swap.
+type RouteRefreshFamilyRotation struct {
+	PresentedHandleHash  string
+	LockOwner            string
+	ExpectedVersion      int
+	Successor            *RouteRefreshBrokerRecord
+	GraceRefreshResponse string
+	GraceExpiresAt       time.Time
+}
+
+// RouteRefreshBrokerTransactionalFamilyStore is the mandatory family
+// capability of a broker store used by the framework-owned front channel. It
+// extends the enumeration/revocation pair with atomic root creation and atomic
+// rotation, and every operation honors the family tombstone.
+//
+// CreateFamily atomically creates an active family-state record and its
+// generation-1 root broker record; a pre-existing family ID (active or revoked)
+// is never overwritten or reactivated, and the root handle is not returned if
+// either write fails. RotateFamily checks, in one serialized transaction, that
+// the presented record is still locked by the caller at the expected version,
+// its family is active, the family/generation bindings match, and the successor
+// does not exist, before it creates the successor and updates the predecessor.
+// RevokeFamily atomically writes a terminal tombstone and returns every live
+// member it handled; it is idempotent, and Get, AcquireLock, and RotateFamily
+// honor it for every family-marked handle. ListFamily remains the incident and
+// conformance enumeration surface and lists live members even when the family
+// state is missing, so a partially backfilled lineage can be inspected.
+//
+// Registration requires this capability whenever the front channel is
+// configured: a store that only implements the optional
+// RouteRefreshBrokerFamilyStore, or that is missing any method, fails before
+// routes are mounted and before a root or successor can be minted.
+type RouteRefreshBrokerTransactionalFamilyStore interface {
+	RouteRefreshBrokerFamilyStore
+
+	CreateFamily(ctx context.Context, root *RouteRefreshBrokerRecord) (*RouteRefreshBrokerRecord, error)
+	RotateFamily(ctx context.Context, rotation RouteRefreshFamilyRotation) (*RouteRefreshBrokerRecord, error)
 }
 
 // HashKey returns the store key for a protected value: the unpadded base64url
@@ -236,13 +306,11 @@ type ClientRecord struct {
 // successor records the presented handle's generation plus one and inherits its
 // FamilyHash, so the depth of a rotated-away handle relative to the head is
 // arithmetic rather than guesswork. A record that predates the policy carries
-// ChainGeneration 0 and an empty FamilyHash; it is classified structurally
-// (successor walk) and becomes the root of a new family on its first mutation
-// under the policy.
+// ChainGeneration 0 and an empty FamilyHash; it is unsupported for ordinary
+// rotation and must be migrated or reauthorized, never normalized online.
 //
-// DepthOneServedAt records that this rotated-away handle has already been
-// answered once beyond its grace window with the access token only. The second
-// such presentation is theft class, so the flag is written before the serve.
+// DepthOneServedAt is retained for stored-record compatibility. It marked the
+// removed beyond-grace access-token-only serve and is no longer written.
 type RouteRefreshBrokerRecord struct {
 	HandleHash                    string
 	Issuer                        string
@@ -332,6 +400,28 @@ var (
 	// conformance row starts from, because it does not implement
 	// RouteRefreshBrokerSeeder.
 	ErrBrokerNotSeedable = errors.New("store: route refresh broker store cannot be seeded")
+	// ErrBrokerFamilyCapabilityMissing reports a broker store that does not
+	// implement RouteRefreshBrokerTransactionalFamilyStore, so a conformance row
+	// or the front channel cannot rely on atomic root creation and rotation.
+	ErrBrokerFamilyCapabilityMissing = errors.New("store: route refresh broker store lacks the transactional family capability")
+	// ErrBrokerFamilyExists reports CreateFamily for a family ID that already
+	// exists, active or revoked. The family is never overwritten or reactivated.
+	ErrBrokerFamilyExists = errors.New("store: route refresh family already exists")
+	// ErrBrokerFamilyStateUnavailable reports a family-marked record whose
+	// required family state is missing or corrupt. The record is unsupported for
+	// ordinary rotation and is never normalized or served.
+	ErrBrokerFamilyStateUnavailable = errors.New("store: route refresh family state is missing or corrupt")
+	// ErrBrokerFamilyMismatch reports a root, successor, or presented record that
+	// does not carry the family identity and generation bindings the family state
+	// requires.
+	ErrBrokerFamilyMismatch = errors.New("store: route refresh family or generation binding mismatch")
+	// ErrBrokerSuccessorExists reports a rotation whose successor handle is already
+	// stored. A rotation never overwrites a handle.
+	ErrBrokerSuccessorExists = errors.New("store: route refresh successor already exists")
+	// ErrBrokerLegacyLineageUnsupported reports a family-less (pre-policy) record
+	// presented for ordinary rotation. Such a lineage is migration or
+	// reauthorization, never online normalization.
+	ErrBrokerLegacyLineageUnsupported = errors.New("store: route refresh legacy lineage is unsupported for ordinary rotation")
 )
 
 // RateLimitBucketKey identifies one windowed bucket and carries its per-window

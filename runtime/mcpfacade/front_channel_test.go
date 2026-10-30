@@ -180,7 +180,7 @@ type recordingBrokerStore struct {
 	oauthstore.RouteRefreshBrokerStore
 	oauthstore.RouteRefreshBrokerSeeder
 
-	family oauthstore.RouteRefreshBrokerFamilyStore
+	family oauthstore.RouteRefreshBrokerTransactionalFamilyStore
 
 	mu      sync.Mutex
 	handles []string
@@ -218,7 +218,7 @@ func (s *recordingBrokerStore) handleHashes() []string {
 	return append([]string(nil), s.handles...)
 }
 
-// ListFamily delegates the optional family capability to the reference store.
+// ListFamily delegates the family capability to the reference store.
 func (s *recordingBrokerStore) ListFamily(
 	ctx context.Context,
 	familyHash string,
@@ -226,12 +226,31 @@ func (s *recordingBrokerStore) ListFamily(
 	return s.family.ListFamily(ctx, familyHash)
 }
 
-// RevokeFamily delegates the optional family capability to the reference store.
+// RevokeFamily delegates the family capability to the reference store.
 func (s *recordingBrokerStore) RevokeFamily(
 	ctx context.Context,
 	familyHash string,
 ) ([]*oauthstore.RouteRefreshBrokerRecord, error) {
 	return s.family.RevokeFamily(ctx, familyHash)
+}
+
+// CreateFamily delegates the atomic root creation to the reference store.
+func (s *recordingBrokerStore) CreateFamily(
+	ctx context.Context,
+	root *oauthstore.RouteRefreshBrokerRecord,
+) (*oauthstore.RouteRefreshBrokerRecord, error) {
+	s.mu.Lock()
+	s.handles = append(s.handles, root.HandleHash)
+	s.mu.Unlock()
+	return s.family.CreateFamily(ctx, root)
+}
+
+// RotateFamily delegates the atomic rotation to the reference store.
+func (s *recordingBrokerStore) RotateFamily(
+	ctx context.Context,
+	rotation oauthstore.RouteRefreshFamilyRotation,
+) (*oauthstore.RouteRefreshBrokerRecord, error) {
+	return s.family.RotateFamily(ctx, rotation)
 }
 
 func newFrontChannelHarness(t *testing.T) *frontChannelHarness {
@@ -248,8 +267,8 @@ func newFrontChannelHarnessWith(t *testing.T, options frontChannelHarnessOptions
 	var reference oauthstore.RouteRefreshBrokerStore = oauthstore.NewMemoryRouteRefreshBrokerStore(oauthstore.RouteRefreshBrokerStoreOptions{Now: clock.Now})
 	seeder, ok := reference.(oauthstore.RouteRefreshBrokerSeeder)
 	require.True(t, ok, "the reference broker store must implement the seeder")
-	family, ok := reference.(oauthstore.RouteRefreshBrokerFamilyStore)
-	require.True(t, ok, "the reference broker store must implement the family capability")
+	family, ok := reference.(oauthstore.RouteRefreshBrokerTransactionalFamilyStore)
+	require.True(t, ok, "the reference broker store must implement the transactional family capability")
 	broker := &recordingBrokerStore{
 		RouteRefreshBrokerStore:  reference,
 		RouteRefreshBrokerSeeder: seeder,

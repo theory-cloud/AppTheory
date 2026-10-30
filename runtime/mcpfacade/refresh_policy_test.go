@@ -49,7 +49,9 @@ func (r *eventRecorder) requireClass(t *testing.T, class RouteRefreshEventClass,
 }
 
 // TestRouteRefreshTelemetryCoversTheTaxonomy pins that every class the policy
-// requires an operator to attribute is emitted by the real request path.
+// requires an operator to attribute is emitted by the real request path, and
+// that a beyond-grace presentation is reuse that revokes the family rather than
+// serving a token.
 func TestRouteRefreshTelemetryCoversTheTaxonomy(t *testing.T) {
 	recorder := &eventRecorder{}
 	harness := newFrontChannelHarnessWith(t, frontChannelHarnessOptions{routeRefreshEvents: recorder.add})
@@ -57,15 +59,19 @@ func TestRouteRefreshTelemetryCoversTheTaxonomy(t *testing.T) {
 
 	rotated := harness.token(refreshTestForm(handle))
 	require.Equal(t, 200, rotated.Status)
+	successor := refreshTestHandle(t, rotated)
 
 	harness.clock.Advance(DefaultRefreshGraceWindow - time.Second)
 	grace := harness.token(refreshTestForm(handle))
 	require.Equal(t, 200, grace.Status)
 
 	harness.clock.Advance(2 * time.Second)
-	benign := harness.token(refreshTestForm(handle))
-	require.Equal(t, 200, benign.Status)
-	require.NotContains(t, string(benign.Body), "refresh_token")
+	reuse := harness.token(refreshTestForm(handle))
+	require.Equal(t, 400, reuse.Status)
+	require.Contains(t, string(reuse.Body), `"error":"invalid_grant"`)
+	for _, absent := range []string{"access_token", "refresh_token", "id_token"} {
+		require.NotContains(t, string(reuse.Body), absent)
+	}
 
 	unknown, err := newTestHandle()
 	require.NoError(t, err)
@@ -83,9 +89,11 @@ func TestRouteRefreshTelemetryCoversTheTaxonomy(t *testing.T) {
 	require.NotEmpty(t, refreshed.SuccessorHandleHash)
 
 	recorder.requireClass(t, RouteRefreshEventGraceServed, "")
-	reuse := recorder.requireClass(t, RouteRefreshEventReuse, RouteRefreshOutcomeAccessTokenOnly)
-	require.Equal(t, 1, reuse.ChainDepth)
-	require.Equal(t, oauthstore.BrokerStatusActive, reuse.StatusTo)
+	reuseEvent := recorder.requireClass(t, RouteRefreshEventReuse, RouteRefreshOutcomeRevokedFamily)
+	require.Equal(t, RouteRefreshReasonRotatedReuse, reuseEvent.Reason)
+	require.GreaterOrEqual(t, reuseEvent.RevokedRecords, 1)
+	require.Equal(t, facadeErrorInvalidGrant, reuseEvent.ErrorCode)
+	require.Equal(t, oauthstore.BrokerStatusRevoked, reuseEvent.StatusTo)
 
 	absentEvent := recorder.requireClass(t, RouteRefreshEventValidationRejected, "")
 	foundAbsent := false
@@ -98,6 +106,10 @@ func TestRouteRefreshTelemetryCoversTheTaxonomy(t *testing.T) {
 	require.True(t, foundAbsent, "expected a record_absent validation event")
 	require.NotEmpty(t, absentEvent)
 
+	// The family tombstone covers the minted successor even though the reuse
+	// presentation was of the predecessor.
+	requireFamilyRevoked(t, harness, successor)
+
 	// No event may carry raw credential or handle material, only hashes.
 	encoded, err := json.Marshal(recorder.all())
 	require.NoError(t, err)
@@ -108,15 +120,15 @@ func TestRouteRefreshTelemetryCoversTheTaxonomy(t *testing.T) {
 		frontTestRotatedUpstreamScope,
 		frontTestRefreshIDToken,
 		handle,
-		refreshTestHandle(t, rotated),
+		successor,
 	} {
 		require.NotContainsf(t, string(encoded), secret, "telemetry must carry hashes, never raw material")
 	}
 }
 
 // TestRouteRefreshTelemetryAttributesUpstreamRejection pins the upstream
-// attribution class: a terminal upstream rejection revokes the presented record
-// and reports the provider class.
+// attribution class: a terminal upstream rejection revokes the family and
+// reports the provider class.
 func TestRouteRefreshTelemetryAttributesUpstreamRejection(t *testing.T) {
 	recorder := &eventRecorder{}
 	harness := newFrontChannelHarnessWith(t, frontChannelHarnessOptions{
@@ -134,6 +146,7 @@ func TestRouteRefreshTelemetryAttributesUpstreamRejection(t *testing.T) {
 	event := recorder.requireClass(t, RouteRefreshEventUpstreamReauthRequired, "")
 	require.Equal(t, "invalid_grant", event.UpstreamClass)
 	require.Equal(t, oauthstore.BrokerStatusRevoked, event.StatusTo)
+	requireFamilyRevoked(t, harness, handle)
 }
 
 // TestRouteRefreshExpiryIsAttributable pins the store's internal
@@ -174,12 +187,11 @@ func TestRouteRefreshExpiryIsAttributable(t *testing.T) {
 	require.True(t, absentSignal, "expected an absent attribution")
 }
 
-// TestRouteRefreshLegacyRecordIsClassifiedStructurallyAndWalkRevoked pins the
-// pre-policy default: a family-less, generation-0 rotated-away record is
-// classified by the successor walk (not by arithmetic), serves the access token
-// only once, and its second presentation revokes through the bounded walk
-// because it has no family to revoke.
-func TestRouteRefreshLegacyRecordIsClassifiedStructurallyAndWalkRevoked(t *testing.T) {
+// TestRouteRefreshLegacyRecordFailsClosed pins the pre-policy rule: a
+// family-less record is unsupported for ordinary rotation. It is refused before
+// any upstream call, serves no credential material, is not normalized, and
+// leaves the successor untouched. Migration or reauthorization is required.
+func TestRouteRefreshLegacyRecordFailsClosed(t *testing.T) {
 	recorder := &eventRecorder{}
 	harness := newFrontChannelHarnessWith(t, frontChannelHarnessOptions{routeRefreshEvents: recorder.add})
 	successorHandle, err := newTestHandle()
@@ -190,23 +202,26 @@ func TestRouteRefreshLegacyRecordIsClassifiedStructurallyAndWalkRevoked(t *testi
 	seedLegacyRotatedRecord(t, harness, legacyHandle, successorHandle)
 	harness.clock.Advance(DefaultRefreshGraceWindow + time.Second)
 
-	served := harness.token(refreshTestForm(legacyHandle))
-	require.Equal(t, 200, served.Status)
-	require.Contains(t, string(served.Body), `"access_token":"legacy-access-token"`)
-	require.NotContains(t, string(served.Body), "refresh_token")
+	refused := harness.token(refreshTestForm(legacyHandle))
+	require.Equal(t, 400, refused.Status)
+	require.Contains(t, string(refused.Body), `"error":"invalid_grant"`)
+	for _, absent := range []string{"access_token", "refresh_token", "id_token"} {
+		require.NotContains(t, string(refused.Body), absent)
+	}
 
-	reuse := recorder.requireClass(t, RouteRefreshEventReuse, RouteRefreshOutcomeAccessTokenOnly)
-	require.Equal(t, 1, reuse.ChainDepth)
-	require.Zero(t, reuse.ChainGeneration)
+	stateFailure := recorder.requireClass(t, RouteRefreshEventValidationRejected, "")
+	require.Equal(t, RouteRefreshReasonLegacyLineage, stateFailure.Reason)
 
-	second := harness.token(refreshTestForm(legacyHandle))
-	require.Equal(t, 400, second.Status)
-	require.Contains(t, string(second.Body), `"error":"invalid_grant"`)
-	revoked := recorder.requireClass(t, RouteRefreshEventReuse, RouteRefreshOutcomeRevokedWalk)
-	require.Equal(t, 2, revoked.RevokedRecords)
-
-	require.Equal(t, oauthstore.BrokerStatusRevoked, brokerRecord(t, harness, legacyHandle).Status)
-	require.Equal(t, oauthstore.BrokerStatusRevoked, brokerRecord(t, harness, successorHandle).Status)
+	// The legacy record is neither normalized nor revoked, and its successor is
+	// untouched: no false revocation claim is made.
+	legacy, err := harness.stores.RouteRefreshBroker.Get(context.Background(), oauthstore.HashKey(legacyHandle))
+	require.NoError(t, err)
+	require.Empty(t, legacy.FamilyHash)
+	require.Zero(t, legacy.ChainGeneration)
+	require.Equal(t, oauthstore.BrokerStatusActive, legacy.Status)
+	successor, err := harness.stores.RouteRefreshBroker.Get(context.Background(), oauthstore.HashKey(successorHandle))
+	require.NoError(t, err)
+	require.Equal(t, oauthstore.BrokerStatusActive, successor.Status)
 }
 
 // seedLegacyRotatedRecord places a pre-policy rotated-away handle and its live
@@ -257,70 +272,40 @@ func seedLegacyRotatedRecord(t *testing.T, harness *frontChannelHarness, legacyH
 	}))
 }
 
-// TestRouteRefreshFamilyRevokeBeatsTheWalkLimit pins revoke-by-family: a chain
-// longer than the eight-link successor walk is revoked completely, so a
-// confirmed theft cannot leave live members behind.
-func TestRouteRefreshFamilyRevokeBeatsTheWalkLimit(t *testing.T) {
+// TestRouteRefreshFamilyRevokeBeatsTheEightLinkBudget pins revoke-by-family: a
+// chain longer than the removed eight-link successor walk is revoked completely,
+// so a confirmed theft cannot leave a live head behind.
+func TestRouteRefreshFamilyRevokeBeatsTheEightLinkBudget(t *testing.T) {
 	harness := newFrontChannelHarness(t)
 	root := mintedRefreshHandle(t, harness)
 	handles := []string{root}
 	head := root
-	for rotation := 0; rotation < refreshRevokeChainLimit+2; rotation++ {
+	const rotations = 11
+	for rotation := 0; rotation < rotations; rotation++ {
 		response := harness.token(refreshTestForm(head))
 		require.Equalf(t, 200, response.Status, "rotation %d body %s", rotation, response.Body)
 		head = refreshTestHandle(t, response)
 		handles = append(handles, head)
 	}
-	require.Len(t, handles, refreshRevokeChainLimit+3)
+	require.Len(t, handles, rotations+1)
 
 	harness.clock.Advance(DefaultRefreshGraceWindow + time.Second)
 	reused := harness.token(refreshTestForm(root))
 	require.Equal(t, 400, reused.Status)
 	require.Contains(t, string(reused.Body), `"error":"invalid_grant"`)
 
+	// Every handle of the family, including the live head, is revoked by the
+	// tombstone: a read reports ErrBrokerRevoked and cannot be locked or rotated.
 	for _, handle := range handles {
-		require.Equalf(t, oauthstore.BrokerStatusRevoked, brokerRecord(t, harness, handle).Status, "handle %s", handle)
+		requireFamilyRevoked(t, harness, handle)
 	}
 }
 
-// TestRouteRefreshDepthOneIsBudgetedPerFamily pins the per-family repeat-rate
-// ceiling: benign depth-1 serves are allowed up to the configured budget, and
-// the next one is refused without revoking the family. Each cycle rotates the
-// head, closes the predecessor's grace window, and presents the predecessor, so
-// every serve is a distinct immediate-predecessor replay.
-func TestRouteRefreshDepthOneIsBudgetedPerFamily(t *testing.T) {
-	harness := newFrontChannelHarness(t)
-	head := mintedRefreshHandle(t, harness)
-
-	for served := 0; served < MinRefreshReuseRateCeiling; served++ {
-		rotated := harness.token(refreshTestForm(head))
-		require.Equalf(t, 200, rotated.Status, "rotation %d body %s", served, rotated.Body)
-		predecessor := head
-		head = refreshTestHandle(t, rotated)
-		harness.clock.Advance(DefaultRefreshGraceWindow + time.Second)
-		response := harness.token(refreshTestForm(predecessor))
-		require.Equalf(t, 200, response.Status, "serve %d body %s", served, response.Body)
-		require.NotContains(t, string(response.Body), "refresh_token")
-	}
-
-	rotated := harness.token(refreshTestForm(head))
-	require.Equal(t, 200, rotated.Status)
-	predecessor := head
-	head = refreshTestHandle(t, rotated)
-	harness.clock.Advance(DefaultRefreshGraceWindow + time.Second)
-	limited := harness.token(refreshTestForm(predecessor))
-	require.Equal(t, 400, limited.Status)
-	require.Contains(t, string(limited.Body), `"error":"invalid_grant"`)
-	require.NotContains(t, string(limited.Body), "access_token")
-	require.NotEqual(t, oauthstore.BrokerStatusRevoked, brokerRecord(t, harness, head).Status,
-		"a rate-limited serve must not revoke the family")
-}
-
-// TestRouteRefreshHandleIsSingleUseBeyondGrace pins the once-per-handle bound:
-// the first beyond-grace serve writes the marker under the lock, and a later
-// presentation is theft class even after the rate window resets.
-func TestRouteRefreshHandleIsSingleUseBeyondGrace(t *testing.T) {
-	harness := newFrontChannelHarness(t)
+// TestRouteRefreshFirstBeyondGracePresentationRevokesFamily pins the removal of
+// the access-token-only serve: the FIRST beyond-grace presentation is reuse.
+func TestRouteRefreshFirstBeyondGracePresentationRevokesFamily(t *testing.T) {
+	recorder := &eventRecorder{}
+	harness := newFrontChannelHarnessWith(t, frontChannelHarnessOptions{routeRefreshEvents: recorder.add})
 	handle := mintedRefreshHandle(t, harness)
 	rotated := harness.token(refreshTestForm(handle))
 	require.Equal(t, 200, rotated.Status)
@@ -328,16 +313,18 @@ func TestRouteRefreshHandleIsSingleUseBeyondGrace(t *testing.T) {
 
 	harness.clock.Advance(DefaultRefreshGraceWindow + time.Second)
 	first := harness.token(refreshTestForm(handle))
-	require.Equal(t, 200, first.Status)
-	record := brokerRecord(t, harness, handle)
-	require.False(t, record.DepthOneServedAt.IsZero())
+	require.Equal(t, 400, first.Status)
+	require.Contains(t, string(first.Body), `"error":"invalid_grant"`)
+	require.NotContains(t, string(first.Body), "access_token")
+	require.NotContains(t, string(first.Body), "refresh_token")
 
-	// A second presentation is theft class even though the per-family budget has
-	// barely been touched.
+	requireFamilyRevoked(t, harness, handle)
+	requireFamilyRevoked(t, harness, successor)
+	recorder.requireClass(t, RouteRefreshEventReuse, RouteRefreshOutcomeRevokedFamily)
+
 	second := harness.token(refreshTestForm(handle))
 	require.Equal(t, 400, second.Status)
-	require.Equal(t, oauthstore.BrokerStatusRevoked, brokerRecord(t, harness, handle).Status)
-	require.Equal(t, oauthstore.BrokerStatusRevoked, brokerRecord(t, harness, successor).Status)
+	require.Equal(t, string(first.Body), string(second.Body), "repeated reuse stays the uniform invalid_grant")
 }
 
 // newTestHandle mints a route handle shaped exactly like the framework's own.
@@ -346,7 +333,8 @@ func newTestHandle() (string, error) {
 }
 
 // TestRouteRefreshGraceBoundaryIsExclusive pins the boundary-inclusivity
-// decision: a replay at exactly the grace deadline is beyond grace.
+// decision: a replay at exactly the grace deadline is beyond grace and is reused
+// without any credential material.
 func TestRouteRefreshGraceBoundaryIsExclusive(t *testing.T) {
 	harness := newFrontChannelHarness(t)
 	handle := mintedRefreshHandle(t, harness)
@@ -355,45 +343,69 @@ func TestRouteRefreshGraceBoundaryIsExclusive(t *testing.T) {
 
 	harness.clock.Advance(DefaultRefreshGraceWindow)
 	response := harness.token(refreshTestForm(handle))
-	require.Equal(t, 200, response.Status)
-	require.NotContains(t, string(response.Body), "refresh_token",
-		"a replay at exactly the grace deadline is beyond grace")
+	require.Equal(t, 400, response.Status)
+	require.Contains(t, string(response.Body), `"error":"invalid_grant"`)
+	require.NotContains(t, string(response.Body), "access_token")
+	require.NotContains(t, string(response.Body), "refresh_token")
 }
 
-// TestRouteRefreshLockContentionOnDepthOneRetries pins that a busy record is
-// retried inside the coalesce window before classification, so a concurrent
-// rotation does not turn a benign presentation into an immediate refusal.
-func TestRouteRefreshLockContentionOnDepthOneRetries(t *testing.T) {
-	harness := newFrontChannelHarness(t)
-	handle := mintedRefreshHandle(t, harness)
-	rotated := harness.token(refreshTestForm(handle))
-	require.Equal(t, 200, rotated.Status)
-	harness.clock.Advance(DefaultRefreshGraceWindow + time.Second)
+// TestRouteRefreshFamilyRevocationIsLinearizable pins both interleavings at the
+// facade: a revocation before a rotation mints nothing, and a rotation before a
+// revocation leaves the successor unusable.
+func TestRouteRefreshFamilyRevocationIsLinearizable(t *testing.T) {
+	t.Run("revocation_before_rotation", func(t *testing.T) {
+		harness := newFrontChannelHarness(t)
+		handle := mintedRefreshHandle(t, harness)
+		record := brokerRecord(t, harness, handle)
+		locked, err := harness.stores.RouteRefreshBroker.AcquireLock(
+			context.Background(), record.HandleHash, "test-holder", record.Version)
+		require.NoError(t, err)
+		familyStore, ok := harness.stores.RouteRefreshBroker.(oauthstore.RouteRefreshBrokerTransactionalFamilyStore)
+		require.True(t, ok)
+		_, err = familyStore.RevokeFamily(context.Background(), record.FamilyHash)
+		require.NoError(t, err)
 
-	record := brokerRecord(t, harness, handle)
-	_, err := harness.stores.RouteRefreshBroker.AcquireLock(
-		context.Background(), record.HandleHash, "test-holder", record.Version)
-	require.NoError(t, err)
+		successorKey := oauthstore.HashKey("late-successor")
+		_, err = familyStore.RotateFamily(context.Background(), oauthstore.RouteRefreshFamilyRotation{
+			PresentedHandleHash: locked.HandleHash,
+			LockOwner:           locked.RefreshLockOwner,
+			ExpectedVersion:     locked.Version,
+			Successor: &oauthstore.RouteRefreshBrokerRecord{
+				HandleHash:        successorKey,
+				FamilyHash:        record.FamilyHash,
+				ChainGeneration:   record.ChainGeneration + 1,
+				Issuer:            record.Issuer,
+				CanonicalResource: record.CanonicalResource,
+				ClientIDHash:      record.ClientIDHash,
+				SubjectIDHash:     record.SubjectIDHash,
+				ScopeFingerprint:  record.ScopeFingerprint,
+				UpstreamClientID:  record.UpstreamClientID,
+				Status:            oauthstore.BrokerStatusIssued,
+			},
+		})
+		require.ErrorIs(t, err, oauthstore.ErrBrokerRevoked)
+		_, err = harness.stores.RouteRefreshBroker.Get(context.Background(), successorKey)
+		require.ErrorIs(t, err, oauthstore.ErrBrokerNotFound)
+	})
 
-	// The holder releases the lock after a moment, so the retrying caller
-	// observes the unlocked record and serves it.
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		held, getErr := harness.stores.RouteRefreshBroker.Get(context.Background(), record.HandleHash)
-		if getErr != nil {
-			return
-		}
-		held.RefreshLockOwner = ""
-		held.RefreshLockExpiresAt = time.Time{}
-		held.Status = oauthstore.BrokerStatusActive
-		if _, swapErr := harness.stores.RouteRefreshBroker.CompareAndSwap(
-			context.Background(), held, held.Version,
-		); swapErr != nil {
-			return
-		}
-	}()
+	t.Run("rotation_before_revocation", func(t *testing.T) {
+		harness := newFrontChannelHarness(t)
+		handle := mintedRefreshHandle(t, harness)
+		rotated := harness.token(refreshTestForm(handle))
+		require.Equal(t, 200, rotated.Status)
+		successor := refreshTestHandle(t, rotated)
+		record := brokerRecord(t, harness, handle)
+		familyStore, ok := harness.stores.RouteRefreshBroker.(oauthstore.RouteRefreshBrokerTransactionalFamilyStore)
+		require.True(t, ok)
+		_, err := familyStore.RevokeFamily(context.Background(), record.FamilyHash)
+		require.NoError(t, err)
+		requireFamilyRevoked(t, harness, successor)
+	})
+}
 
-	response := harness.token(refreshTestForm(handle))
-	require.Equal(t, 200, response.Status)
-	require.NotContains(t, string(response.Body), "refresh_token")
+// requireFamilyRevoked asserts a handle is covered by its family tombstone.
+func requireFamilyRevoked(t *testing.T, harness *frontChannelHarness, handle string) {
+	t.Helper()
+	_, err := harness.stores.RouteRefreshBroker.Get(context.Background(), oauthstore.HashKey(handle))
+	require.ErrorIs(t, err, oauthstore.ErrBrokerRevoked)
 }

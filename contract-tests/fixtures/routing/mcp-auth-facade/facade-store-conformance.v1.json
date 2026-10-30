@@ -3,8 +3,8 @@
     "id": "m17.mcp-auth-facade/v1",
     "section": "store-spi",
     "kind": "conformance",
-    "status": "M3a",
-    "notes": "One conformance table for the five store SPIs of DESIGN §7. Every store (the framework's in-memory reference stores now, an application's durable store later) must pass every row. The rows are executed by the runtime loader tests in Go, TypeScript and Python against the in-memory reference stores; the same rows and outcomes must hold in all three. Scenario names dispatch to each runtime's store methods; `expect` carries the observable outcome. Consume-once and compare-and-swap are required atomic operations, not conventions. The broker lock TTL those rows measure is the framework-mandated 15 seconds (oauthstore.DefaultRouteRefreshLockTTL, TS DEFAULT_ROUTE_REFRESH_LOCK_TTL_SECONDS, py UTC_NOW_LOCK_TTL_SECONDS): the M2.1 hardened upstream HTTP deadline plus a five-second margin, and each runtime's suite pins the table's lock_ttl_seconds to that default so a conforming durable store is judged against the mandated value."
+    "status": "M2",
+    "notes": "One conformance table for the five store SPIs of DESIGN §7. Every store (the framework's in-memory reference stores now, an application's durable store later) must pass every row. The rows are executed by the runtime loader tests in Go, TypeScript and Python against the in-memory reference stores; the same rows and outcomes must hold in all three. Scenario names dispatch to each runtime's store methods; `expect` carries the observable outcome. Consume-once and compare-and-swap are required atomic operations, not conventions. The broker lock TTL those rows measure is the framework-mandated 15 seconds (oauthstore.DefaultRouteRefreshLockTTL, TS DEFAULT_ROUTE_REFRESH_LOCK_TTL_SECONDS, py UTC_NOW_LOCK_TTL_SECONDS): the M2.1 hardened upstream HTTP deadline plus a five-second margin, and each runtime's suite pins the table's lock_ttl_seconds to that default so a conforming durable store is judged against the mandated value. The `family_*` rows execute the mandatory transactional family capability: atomic root creation, atomic rotation, tombstone-honoring read/lock/rotate, fail-closed legacy and partially backfilled lineages, both rotation/revocation linearization orders, revocation of families past the removed eight-link budget and past one DynamoDB transaction's 100-action cap, idempotent terminal revocation, and listed-versus-aged-out enumeration. A family-marked handle's Get, AcquireLock, and RotateFamily honor the family tombstone; ListFamily remains the incident surface and lists live members even when family state is missing."
   },
   "clock": {
     "epoch": "2026-01-01T00:00:00Z",
@@ -23,8 +23,13 @@
     "replayed": "the record was already consumed (distinguishable from not_found)",
     "expired": "the record existed but its TTL elapsed",
     "locked": "the broker record already holds an unexpired refresh lock",
-    "revoked": "the broker record is revoked; it cannot be refreshed or locked",
+    "revoked": "the broker record or its family is revoked; it cannot be refreshed or locked",
     "version_conflict": "compare-and-swap failed: the caller's version is stale",
+    "family_exists": "the family ID already exists (active or revoked); it is never overwritten or reactivated",
+    "family_state_unavailable": "a family-marked record has no usable family state; every read, lock, rotation, and revocation fails closed",
+    "family_mismatch": "a root, successor, or presented record does not carry the required family/generation binding",
+    "successor_exists": "the rotation successor handle is already stored; a rotation never overwrites a handle",
+    "legacy_lineage_unsupported": "a family-less record was presented for ordinary rotation; the lineage is migration or reauthorization, never online normalization",
     "allowed": "the rate-limit check is within the window budget",
     "limited": "the rate-limit check exceeded the window budget"
   },
@@ -386,6 +391,113 @@
       "scenario": "compare_and_swap_inherits_status",
       "params": { "put": 1 },
       "expect": { "status": "refreshing" }
+    },
+    {
+      "id": "store.route_refresh_broker.family_create_is_atomic",
+      "store": "route_refresh_broker",
+      "scenario": "family_create",
+      "expect": { "create": "ok", "root_version": 1, "root_generation": 1, "root_family_is_self": true, "second_create": "family_exists", "root_after_second_version": 1, "root_get": "ok" }
+    },
+    {
+      "id": "store.route_refresh_broker.family_create_requires_generation_one",
+      "store": "route_refresh_broker",
+      "scenario": "family_create_binding",
+      "params": { "generation": 0 },
+      "expect": { "create": "family_mismatch", "root_get": "not_found" }
+    },
+    {
+      "id": "store.route_refresh_broker.family_create_requires_self_family",
+      "store": "route_refresh_broker",
+      "scenario": "family_create_binding",
+      "params": { "generation": 1, "family_binding": "other" },
+      "expect": { "create": "family_mismatch", "root_get": "not_found" }
+    },
+    {
+      "id": "store.route_refresh_broker.family_rotate_is_atomic",
+      "store": "route_refresh_broker",
+      "scenario": "family_rotate",
+      "expect": { "rotate": "ok", "successor_get": "ok", "successor_version": 1, "successor_generation": 2, "successor_family_matches": true, "presented_get": "ok", "presented_version": 3, "presented_status": "active", "presented_grace_set": true, "presented_lock_cleared": true }
+    },
+    {
+      "id": "store.route_refresh_broker.family_rotate_requires_the_lock_owner",
+      "store": "route_refresh_broker",
+      "scenario": "family_rotate_wrong_owner",
+      "expect": { "rotate": "locked", "successor_get": "not_found", "presented_version": 2, "presented_status": "refreshing" }
+    },
+    {
+      "id": "store.route_refresh_broker.family_rotate_stale_version_conflicts",
+      "store": "route_refresh_broker",
+      "scenario": "family_rotate_stale_version",
+      "expect": { "rotate": "version_conflict", "successor_get": "not_found" }
+    },
+    {
+      "id": "store.route_refresh_broker.family_rotate_rejects_existing_successor",
+      "store": "route_refresh_broker",
+      "scenario": "family_rotate_existing_successor",
+      "expect": { "rotate": "successor_exists", "successor_status_after": "issued", "successor_version_after": 1, "presented_status_after": "refreshing", "presented_version_after": 2 }
+    },
+    {
+      "id": "store.route_refresh_broker.family_rotate_rejects_generation_mismatch",
+      "store": "route_refresh_broker",
+      "scenario": "family_rotate_generation_mismatch",
+      "expect": { "rotate": "family_mismatch", "successor_get": "not_found" }
+    },
+    {
+      "id": "store.route_refresh_broker.family_rotate_rejects_family_mismatch",
+      "store": "route_refresh_broker",
+      "scenario": "family_rotate_family_mismatch",
+      "expect": { "rotate": "family_mismatch", "successor_get": "not_found" }
+    },
+    {
+      "id": "store.route_refresh_broker.family_rotate_refuses_legacy_lineage",
+      "store": "route_refresh_broker",
+      "scenario": "family_rotate_legacy",
+      "expect": { "rotate": "legacy_lineage_unsupported", "successor_get": "not_found", "presented_version": 2, "presented_status": "refreshing" }
+    },
+    {
+      "id": "store.route_refresh_broker.family_missing_state_fails_closed",
+      "store": "route_refresh_broker",
+      "scenario": "family_missing_state",
+      "expect": { "get": "family_state_unavailable", "lock": "family_state_unavailable", "rotate": "family_state_unavailable", "revoke": "family_state_unavailable", "list": "ok", "listed": 1, "record_status": "none", "successor_get": "not_found" }
+    },
+    {
+      "id": "store.route_refresh_broker.family_mixed_lineage_cannot_detach_suffix",
+      "store": "route_refresh_broker",
+      "scenario": "family_mixed_lineage",
+      "expect": { "legacy_lock": "ok", "legacy_rotate": "legacy_lineage_unsupported", "list": "ok", "listed": 2, "legacy_listed": false, "successor_get": "ok", "successor_generation": 2 }
+    },
+    {
+      "id": "store.route_refresh_broker.family_tombstone_revokes_more_than_eight_members",
+      "store": "route_refresh_broker",
+      "scenario": "family_tombstone_every_member",
+      "params": { "rotations": 11 },
+      "expect": { "revoke": "ok", "revoked": 12, "list": "ok", "listed": 12, "all_listed_revoked": true, "head_get": "revoked", "head_lock": "revoked", "head_rotate": "revoked", "late_successor_get": "not_found", "create_again": "family_exists", "revoke_again": "ok", "revoke_again_count": 12 }
+    },
+    {
+      "id": "store.route_refresh_broker.family_tombstone_covers_more_than_one_hundred_members",
+      "store": "route_refresh_broker",
+      "scenario": "family_tombstone_beyond_batch",
+      "params": { "members": 120 },
+      "expect": { "revoke": "ok", "revoked": 121, "list": "ok", "listed": 121, "all_listed_revoked": true, "first_get": "revoked", "last_get": "revoked", "create_again": "family_exists" }
+    },
+    {
+      "id": "store.route_refresh_broker.family_revocation_linearized_before_rotation",
+      "store": "route_refresh_broker",
+      "scenario": "family_revocation_first",
+      "expect": { "revoke": "ok", "revoked": 1, "rotate": "revoked", "presented_get": "revoked", "successor_get": "not_found", "lock_again": "revoked", "revoke_again": "ok" }
+    },
+    {
+      "id": "store.route_refresh_broker.family_rotation_linearized_before_revocation",
+      "store": "route_refresh_broker",
+      "scenario": "family_rotation_first",
+      "expect": { "revoke": "ok", "revoked": 2, "successor_get": "revoked", "successor_lock": "revoked", "successor_rotate": "revoked", "late_successor_get": "not_found" }
+    },
+    {
+      "id": "store.route_refresh_broker.family_tombstone_survives_member_expiry",
+      "store": "route_refresh_broker",
+      "scenario": "family_tombstone_survives_expiry",
+      "params": { "advance_seconds": 901 },
+      "expect": { "list": "ok", "listed": 0, "get": "expired", "create_again": "family_exists", "revoke_again": "ok", "revoke_again_count": 0 }
     }
   ]
 }
