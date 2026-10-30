@@ -6,7 +6,7 @@ import { normalizeDynamoDBStreamRecord, normalizeEventBridgeWorkloadEnvelope, } 
 import { normalizeHTTPErrorFormat, } from "./http-error-format.js";
 import { RandomIdGenerator } from "./ids.js";
 import { applyAppSyncContextValues, appSyncErrorResponse, appSyncPayloadFromResponse, appSyncRequestFromEvent, appSyncRequestIdFromContext, appSyncRequestIdFromResponse, createAppSyncContext, isAppSyncResolverEvent, requestFromAppSync, } from "./internal/aws-appsync.js";
-import { albTargetGroupResponseFromResponse, apigatewayProxyResponseFromResponse, apigatewayV2ResponseFromResponse, lambdaFunctionURLResponseFromResponse, requestFromALBTargetGroup, requestFromAPIGatewayProxy, requestFromAPIGatewayV2, requestFromLambdaFunctionURL, requestFromWebSocketEvent, settleWithin, } from "./internal/aws-http.js";
+import { albTargetGroupResponseFromResponse, apigatewayProxyResponseFromResponse, apigatewayV2ResponseFromResponse, lambdaFunctionURLResponseFromResponse, requestFromALBTargetGroup, requestFromAPIGatewayProxy, requestFromAPIGatewayV2, requestFromLambdaFunctionURL, requestFromWebSocketEvent, } from "./internal/aws-http.js";
 import { serveLambdaFunctionURLStreaming, } from "./internal/aws-lambda-streaming.js";
 import { dynamoDBTableNameFromStreamArn, eventBridgeRuleNameFromArn, kinesisStreamNameFromArn, snsTopicNameFromArn, sqsQueueNameFromArn, webSocketManagementEndpoint, } from "./internal/aws-names.js";
 import { canonicalizeHeaders, cloneQuery, firstHeaderValue, normalizeBodyStream, normalizeMethod, normalizePath, } from "./internal/http.js";
@@ -1665,32 +1665,17 @@ function timeoutForContext(ctx, config) {
     timeoutMs = Math.floor(timeoutMs);
     return timeoutMs;
 }
-// TIMEOUT_MIDDLEWARE_JOIN_GRACE_MS bounds how long the timeout middleware waits
-// for the handler it timed out to unwind before returning the timeout response.
-//
-// A handler that observes its abort signal unwinds immediately and is never left
-// running. A handler that ignores cancellation is exactly the case this
-// middleware exists to bound, so its response is not held open for the handler's
-// full runtime; it is the one documented place where a handler the middleware
-// started can still be running when the response returns.
-const TIMEOUT_MIDDLEWARE_JOIN_GRACE_MS = 250;
 /**
  * Creates middleware that fails requests closed when timeout policy expires.
  *
- * The handler chain runs on a task raced against the deadline signal, and the
- * middleware reports `app.timeout` when the deadline fires while the chain is
- * still running -- at the deadline, not after the chain returns. A handler that
- * observes its signal unwinds immediately and is never left running; a handler
- * that ignores cancellation is exactly the case this middleware exists to bound.
- *
- * The middleware does not abandon the handler: after the deadline it joins it for
- * a bounded grace window (TIMEOUT_MIDDLEWARE_JOIN_GRACE_MS) before returning the
- * timeout response. A handler that ignores cancellation and does not unwind
- * within that window is the one documented place where work the middleware
- * started can still be running when the response returns; the Lambda function
- * timeout remains its outer bound. A handler that never yields (for example a
- * synchronous CPU loop with no await point) cannot be interrupted by the
- * middleware by construction.
+ * The handler chain runs on the invoking task with an abort signal that carries
+ * the deadline, and the middleware reports `app.timeout` once the chain returns
+ * if its abort signal fired. It starts no handler promise, race, or task of its
+ * own: a handler that observes its signal unwinds immediately, and a handler
+ * that ignores it runs until it returns, bounded by the Lambda function timeout
+ * rather than abandoned by the middleware. There is no grace window and no
+ * abandoned work, and a handler that ignores cancellation can hold the
+ * invocation until the Lambda function timeout.
  */
 export function timeoutMiddleware(config = {}) {
     const cfg = normalizeTimeoutConfig(config);
@@ -1716,38 +1701,22 @@ export function timeoutMiddleware(config = {}) {
         const timer = setTimeout(() => {
             controller.abort(cfg.timeoutMessage);
         }, timeoutMs);
-        const run = Promise.resolve().then(() => next(handlerCtx));
-        let removeDeadlineAbortListener = () => { };
-        const deadlinePromise = new Promise((_resolve, reject) => {
-            const onAbort = () => reject(new AppError("app.timeout", cfg.timeoutMessage));
-            if (controller.signal.aborted) {
-                onAbort();
-                return;
-            }
-            controller.signal.addEventListener("abort", onAbort, { once: true });
-            removeDeadlineAbortListener = () => controller.signal.removeEventListener("abort", onAbort);
-        });
         try {
-            const resp = await Promise.race([run, deadlinePromise]);
-            if (controller.signal.aborted) {
-                throw new AppError("app.timeout", cfg.timeoutMessage);
+            const resp = await next(handlerCtx);
+            if (!controller.signal.aborted) {
+                return resp;
             }
-            return resp;
         }
         catch (err) {
-            if (err instanceof AppError && err.code === "app.timeout") {
-                // The deadline won. Join the handler within the bounded grace window so a
-                // cooperative handler is never left running, then report the timeout
-                // without holding the invocation open for an uncooperative handler.
-                await settleWithin(run, TIMEOUT_MIDDLEWARE_JOIN_GRACE_MS);
+            if (!controller.signal.aborted) {
+                throw err;
             }
-            throw err;
         }
         finally {
             clearTimeout(timer);
-            removeDeadlineAbortListener();
             removeParentAbortListener();
         }
+        throw new AppError("app.timeout", cfg.timeoutMessage);
     };
 }
 function extractTenantId(headers, query) {
