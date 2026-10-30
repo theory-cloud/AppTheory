@@ -263,17 +263,21 @@ the runtime puts around a body forwards close to the body it wraps. See
 ### Timeout middleware
 
 `TimeoutMiddleware` (Go/TypeScript) and `timeout_middleware` (Python) fail a
-request closed when its timeout policy expires. The handler chain runs on a worker
-with a deadline-bearing context, and the middleware reports `app.timeout`/HTTP 408
-**at the deadline** — not after the handler returns. A handler that observes its
-canceled context returns immediately and is never left running; a handler that
-ignores cancellation is exactly the case the middleware exists to bound. After the
-deadline the middleware joins the worker for a bounded grace window (250 ms in all
-three runtimes) before it returns the timeout response, so an uncooperative
-handler cannot hold the invocation open. A synchronous handler with no
-cancellation point cannot be interrupted by the middleware by construction; it is
-the documented residual, bounded by the Lambda function timeout rather than by the
-middleware waiting for it.
+request closed when its timeout policy expires. The handler chain runs on the
+**invoking** goroutine/thread/task with a deadline-bearing context (Go), abort
+signal (TypeScript), or cancellation token (Python), and the middleware reports
+`app.timeout`/HTTP 408 **after the chain returns** when the deadline passed. It
+starts no second execution context, so there is nothing to abandon: a handler
+that observes its cancellation unwinds immediately and is never left running,
+and a handler that ignores it runs until it returns. There is no grace window and
+no worker to join.
+
+The tradeoff is explicit: a handler or dependency that never observes
+cancellation is bounded only by the Lambda function timeout, not by the
+middleware. That is the normative no-carve-out rule — the middleware must not
+return while work it started can still run, and a bounded wait that ends in
+abandoning that work is not a join. See
+[Invocation-scoped work](../development/planning/apptheory/supporting/apptheory-runtime-contract-v0.md#invocation-scoped-work-normative).
 
 ### The invocation-scope guard
 

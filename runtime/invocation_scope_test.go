@@ -581,26 +581,92 @@ func TestJoinAbandonedBodyStreamIsBounded(t *testing.T) {
 	}
 }
 
-// TestTimeoutMiddlewareReturnsTimeoutAtDeadline covers E1: a handler that blocks
-// or ignores cancellation must not hold the invocation past the deadline. The
-// middleware reports app.timeout at the deadline (plus its bounded join) rather
-// than after the handler finishes.
-func TestTimeoutMiddlewareReturnsTimeoutAtDeadline(t *testing.T) {
+// TestTimeoutMiddlewareRunsTheHandlerOnTheInvokingGoroutine pins the ordinary
+// path: the middleware hands the response through untouched and the handler runs
+// on the goroutine that serves the invocation, not on a worker the middleware
+// starts.
+func TestTimeoutMiddlewareRunsTheHandlerOnTheInvokingGoroutine(t *testing.T) {
+	app := New(WithTier(TierP0))
+	app.Use(TimeoutMiddleware(TimeoutConfig{DefaultTimeout: time.Second}))
+
+	invoking := currentGoroutineID(t)
+	handlerGoroutine := 0
+	app.Get("/ok", func(_ *Context) (*Response, error) {
+		handlerGoroutine = currentGoroutineID(t)
+		return Text(200, "ok"), nil
+	})
+
+	resp := app.Serve(context.Background(), Request{Method: "GET", Path: "/ok"})
+	if resp.Status != 200 {
+		t.Fatalf("expected ordinary success (200), got %d", resp.Status)
+	}
+	if got := string(resp.Body); got != "ok" {
+		t.Fatalf("expected response body %q, got %q", "ok", got)
+	}
+	if handlerGoroutine != invoking {
+		t.Fatalf(
+			"timeout middleware ran the handler on goroutine %d instead of the invoking goroutine %d",
+			handlerGoroutine,
+			invoking,
+		)
+	}
+	assertNoGoroutineFor(t, "TimeoutMiddleware.func", "timeout middleware returned")
+}
+
+// TestTimeoutMiddlewareReportsTimeoutAfterACooperativeHandlerUnwinds pins the
+// cooperative path: the handler observes its deadline-bearing context and
+// unwinds first, and only then does the middleware report app.timeout.
+func TestTimeoutMiddlewareReportsTimeoutAfterACooperativeHandlerUnwinds(t *testing.T) {
 	app := New(WithTier(TierP0))
 	app.Use(TimeoutMiddleware(TimeoutConfig{DefaultTimeout: 10 * time.Millisecond}))
 
-	release := make(chan struct{})
-	handlerStarted := make(chan struct{})
-	app.Get("/blocked", func(_ *Context) (*Response, error) {
-		close(handlerStarted)
-		<-release
+	unwound := make(chan struct{})
+	var deadlineErr error
+	app.Get("/cooperative", func(ctx *Context) (*Response, error) {
+		<-ctx.Context().Done()
+		deadlineErr = ctx.Context().Err()
+		close(unwound)
 		return Text(200, "late"), nil
 	})
 
-	started := time.Now()
+	resp := app.Serve(context.Background(), Request{Method: "GET", Path: "/cooperative"})
+	if resp.Status != 408 {
+		t.Fatalf("expected timeout response (408), got %d", resp.Status)
+	}
+	// Serve returned on the invoking goroutine, so a closed unwound channel is
+	// proof the handler unwound before the timeout was reported: the middleware
+	// cannot return first and the handler's work cannot land afterwards.
+	select {
+	case <-unwound:
+	default:
+		t.Fatal("the timeout middleware returned before the cooperative handler unwound")
+	}
+	if !errors.Is(deadlineErr, context.DeadlineExceeded) {
+		t.Fatalf("expected the handler context deadline to fire, got %v", deadlineErr)
+	}
+	assertNoGoroutineFor(t, "TimeoutMiddleware.func", "timeout middleware returned")
+}
+
+// TestTimeoutMiddlewareWaitsForAnUncooperativeHandler pins the negative control:
+// a handler that ignores its canceled context is not abandoned, so the middleware
+// cannot return an early 408 and no side effect can land after it returns.
+func TestTimeoutMiddlewareWaitsForAnUncooperativeHandler(t *testing.T) {
+	app := New(WithTier(TierP0))
+	app.Use(TimeoutMiddleware(TimeoutConfig{DefaultTimeout: 5 * time.Millisecond}))
+
+	handlerStarted := make(chan struct{})
+	release := make(chan struct{})
+	sideEffect := make(chan struct{})
+	app.Get("/uncooperative", func(_ *Context) (*Response, error) {
+		close(handlerStarted)
+		<-release
+		close(sideEffect)
+		return Text(200, "late"), nil
+	})
+
 	done := make(chan Response, 1)
 	go func() {
-		done <- app.Serve(context.Background(), Request{Method: "GET", Path: "/blocked"})
+		done <- app.Serve(context.Background(), Request{Method: "GET", Path: "/uncooperative"})
 	}()
 
 	select {
@@ -609,55 +675,101 @@ func TestTimeoutMiddlewareReturnsTimeoutAtDeadline(t *testing.T) {
 		t.Fatal("timeout middleware never ran its handler")
 	}
 
+	// The deadline is 5ms and the handler ignores it: the middleware must keep
+	// waiting instead of returning 408 while the handler still runs. The wait is
+	// well past the removal's old 250ms grace window, so only inline execution
+	// holds here.
+	select {
+	case resp := <-done:
+		t.Fatalf(
+			"timeout middleware returned before the uncooperative handler exited (status %d)",
+			resp.Status,
+		)
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	select {
+	case <-sideEffect:
+		t.Fatal("the uncooperative handler ran its side effect before it was released")
+	default:
+	}
+
+	close(release)
+
 	var resp Response
 	select {
 	case resp = <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("timeout middleware did not return while the handler was blocked")
+		t.Fatal("timeout middleware did not return after the handler exited")
 	}
 	if resp.Status != 408 {
 		t.Fatalf("expected timeout response (408), got %d", resp.Status)
 	}
-	// The deadline is 10ms and the post-deadline join is bounded, so the response
-	// must be available well before the handler would ever return.
-	if elapsed := time.Since(started); elapsed > time.Second {
-		t.Fatalf("timeout middleware held the invocation for %s on a blocked handler", elapsed)
-	}
-
-	close(release)
-	time.Sleep(20 * time.Millisecond)
-	assertNoGoroutineFor(t, "TimeoutMiddleware.func", "timeout middleware returned")
-}
-
-// TestTimeoutMiddlewareNeverAbandonsAnUncooperativeHandler covers the other half
-// of E1: a handler that ignores cancellation is joined for the bounded grace
-// window, so a handler that unwinds within that window finishes inside the
-// invocation rather than after the middleware returns.
-func TestTimeoutMiddlewareNeverAbandonsAnUncooperativeHandler(t *testing.T) {
-	app := New(WithTier(TierP0))
-	app.Use(TimeoutMiddleware(TimeoutConfig{DefaultTimeout: 5 * time.Millisecond}))
-
-	sideEffect := make(chan struct{})
-	app.Get("/uncooperative", func(_ *Context) (*Response, error) {
-		time.Sleep(30 * time.Millisecond)
-		close(sideEffect)
-		return Text(200, "late"), nil
-	})
-
-	resp := app.Serve(context.Background(), Request{Method: "GET", Path: "/uncooperative"})
-	if resp.Status != 408 {
-		t.Fatalf("expected timeout response (408), got %d", resp.Status)
-	}
-
-	// The handler unwinds inside the middleware's bounded join (30ms < 250ms), so
-	// its side effect is already inside the invocation: it cannot land after the
-	// middleware returned.
+	// The side effect is on the handler's own path and the middleware only returns
+	// after it, so the assertion proves there is no post-return side effect.
 	select {
 	case <-sideEffect:
 	default:
 		t.Fatal("the timeout middleware returned before the handler it timed out finished")
 	}
 	assertNoGoroutineFor(t, "TimeoutMiddleware.func", "timeout middleware returned")
+}
+
+// TestTimeoutMiddlewareAppliesToTheAPIGatewayV2Adapter pins the same wait on a
+// real adapter invocation: the adapter returns 408 only after the handler it
+// timed out has exited, never while that handler can still write.
+func TestTimeoutMiddlewareAppliesToTheAPIGatewayV2Adapter(t *testing.T) {
+	app := New(WithTier(TierP0), WithIDGenerator(fixedIDGenerator("req_timeout")))
+	app.Use(TimeoutMiddleware(TimeoutConfig{DefaultTimeout: 5 * time.Millisecond}))
+
+	handlerStarted := make(chan struct{})
+	release := make(chan struct{})
+	var handlerFinished bool
+	app.Get("/held", func(_ *Context) (*Response, error) {
+		close(handlerStarted)
+		<-release
+		handlerFinished = true
+		return Text(200, "late"), nil
+	})
+
+	out := make(chan events.APIGatewayV2HTTPResponse, 1)
+	go func() {
+		out <- app.ServeAPIGatewayV2(context.Background(), eventsAPIGatewayV2Request("/held"))
+	}()
+
+	select {
+	case <-handlerStarted:
+	case <-time.After(time.Second):
+		t.Fatal("the adapter never ran the handler")
+	}
+
+	select {
+	case got := <-out:
+		t.Fatalf(
+			"the adapter returned before the timed-out handler exited (status %d)",
+			got.StatusCode,
+		)
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	close(release)
+
+	var resp events.APIGatewayV2HTTPResponse
+	select {
+	case resp = <-out:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the adapter did not return after the handler exited")
+	}
+	if resp.StatusCode != 408 {
+		t.Fatalf("expected timeout response (408), got %d", resp.StatusCode)
+	}
+	if !handlerFinished {
+		t.Fatal("the adapter returned before the handler it timed out finished")
+	}
+	if !strings.Contains(resp.Body, `"app.timeout"`) {
+		t.Fatalf("expected app.timeout error body, got %q", resp.Body)
+	}
+	assertNoGoroutineFor(t, "TimeoutMiddleware.func", "adapter returned")
 }
 
 // streamingRouteRequest builds a v1 proxy event that takes the response-streaming
