@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
   MCP_CODE_INVALID_PARAMS,
@@ -24,6 +25,10 @@ import {
   McpPromptRegistry,
   McpResourceRegistry,
   McpSessionNotFoundError,
+  McpSessionCapacityError,
+  McpStreamAggregateBackfillError,
+  McpStreamAggregateCapacityError,
+  McpStreamTransactionRequiredError,
   McpStreamNotFoundError,
   McpTaskInvalidCursorError,
   McpTaskNotFoundError,
@@ -303,6 +308,85 @@ function fakeDb() {
     },
     async delete(model, key) {
       items.delete(keyOf(model, key));
+    },
+    async transactWrite(actions) {
+      const evaluate = (action, existing) => {
+        const expression = String(action.conditionExpression ?? "").trim();
+        if (!expression) {
+          return true;
+        }
+        const names = action.expressionAttributeNames ?? {};
+        const values = action.expressionAttributeValues ?? {};
+        for (const clause of expression.split(/\s+AND\s+/i)) {
+          const match = clause.trim().match(/^(#?[\w]+)\s*=\s*(:[\w]+)$/);
+          if (!match) {
+            throw new Error(`unsupported fake condition: ${clause}`);
+          }
+          const field = String(names[match[1]] ?? match[1]);
+          const expected = values[match[2]];
+          if (!expected) {
+            throw new Error(`missing fake condition value: ${match[2]}`);
+          }
+          const actual = existing[field];
+          if (expected.BOOL !== undefined) {
+            if (Boolean(actual) !== expected.BOOL) return false;
+            continue;
+          }
+          if (expected.N !== undefined) {
+            if (Number(actual ?? 0) !== Number(expected.N)) return false;
+            continue;
+          }
+          if (expected.S !== undefined) {
+            if (String(actual ?? "") !== expected.S) return false;
+            continue;
+          }
+          throw new Error("unsupported fake condition value");
+        }
+        return true;
+      };
+
+      for (const action of actions) {
+        const key = action.key ?? action.item;
+        const itemKey = keyOf(action.model, key);
+        const existing = items.get(itemKey);
+        if (action.kind === "condition" && !existing) {
+          const err = new Error("conditional check failed");
+          err.name = "ErrConditionFailed";
+          throw err;
+        }
+        if (action.kind !== "put" && !existing) {
+          const err = new Error("conditional check failed");
+          err.name = "ErrConditionFailed";
+          throw err;
+        }
+        if ((action.kind === "update" || action.kind === "condition") && !evaluate(action, existing)) {
+          const err = new Error("conditional check failed");
+          err.name = "ErrConditionFailed";
+          throw err;
+        }
+      }
+
+      for (const action of actions) {
+        if (action.kind === "put") {
+          items.set(keyOf(action.model, action.item), clone(action.item));
+          continue;
+        }
+        if (action.kind === "delete") {
+          items.delete(keyOf(action.model, action.key));
+          continue;
+        }
+        if (action.kind === "update") {
+          const itemKey = keyOf(action.model, action.key ?? action.item);
+          const existing = items.get(itemKey) ?? {};
+          const next = clone(existing);
+          for (const field of action.fields ?? []) {
+            if (Object.prototype.hasOwnProperty.call(action.item, field)) {
+              next[field] = clone(action.item[field]);
+            }
+          }
+          items.set(itemKey, next);
+        }
+      }
     },
     query(model) {
       const state = { partition: "", limit: 1000, cursor: "" };
@@ -808,9 +892,17 @@ test("dynamo-backed MCP stream store follows cursors for replay and deletion", a
   assert.equal(Buffer.from(replayed.at(-1).data).toString(), "event-1099");
 
   await streams.deleteSession("sess-pages");
+  const remaining = [...db.items.keys()].filter((key) =>
+    key.startsWith(`${streamModel.name}:sess-pages:`),
+  );
+  assert.deepEqual(remaining, [`${streamModel.name}:sess-pages:!session`]);
   assert.equal(
-    [...db.items.keys()].filter((key) => key.startsWith(`${streamModel.name}:sess-pages:`)).length,
-    0,
+    db.items.get(`${streamModel.name}:sess-pages:!session`).deleted,
+    true,
+  );
+  await assert.rejects(
+    () => streams.append("sess-pages", streamId, Buffer.from("late")),
+    McpStreamNotFoundError,
   );
 });
 
@@ -1333,3 +1425,246 @@ test("mcp tasks/result preserves stored control errors", async () => {
   assert.equal(resp.error.code, MCP_CODE_SERVER_ERROR);
   assert.equal(resp.error.message, "task canceled");
 });
+
+const M3_STATE_BOUNDS_FIXTURE = JSON.parse(
+  readFileSync(
+    new URL(
+      "../../contract-tests/fixtures/mcp/state-bounds-conformance.v1.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+);
+
+test("M3 shared state-bounds fixture pins required limits and cases", () => {
+  assert.equal(M3_STATE_BOUNDS_FIXTURE.contract.id, "m3.mcp-state-bounds/v1");
+  assert.equal(M3_STATE_BOUNDS_FIXTURE.limits.memory_sessions_per_store, 1000);
+  assert.equal(
+    M3_STATE_BOUNDS_FIXTURE.limits.durable_aggregate_events_per_session,
+    10000,
+  );
+  assert.equal(
+    M3_STATE_BOUNDS_FIXTURE.limits.durable_aggregate_bytes_per_session,
+    64 * 1024 * 1024,
+  );
+  assert.equal(
+    M3_STATE_BOUNDS_FIXTURE.errors.session_capacity.message,
+    "Session capacity exceeded",
+  );
+  assert.equal(
+    M3_STATE_BOUNDS_FIXTURE.errors.session_capacity.jsonrpc_code,
+    -32000,
+  );
+  assert.equal(M3_STATE_BOUNDS_FIXTURE.errors.session_capacity.http_status, 200);
+  assert.equal(
+    M3_STATE_BOUNDS_FIXTURE.errors.session_capacity.session_header,
+    false,
+  );
+  const ids = new Set(M3_STATE_BOUNDS_FIXTURE.cases.map((item) => item.id));
+  for (const id of [
+    "memory.session.capacity_refuses_new_live_session",
+    "memory.session.expired_first_reclaims_before_admission",
+    "memory.session.same_id_live_refresh_consumes_no_capacity",
+    "memory.session.expired_incoming_put_not_revived",
+    "memory.session.cleanup_removes_associated_state",
+    "http.initialize.capacity_refusal_maps_server_error",
+    "durable.aggregate.count_boundary",
+    "durable.aggregate.byte_boundary",
+    "durable.aggregate.spill_counts_toward_aggregate",
+    "durable.aggregate.pre_aggregate_schema_refused",
+    "durable.aggregate.concurrent_append_unique_sequence",
+    "durable.aggregate.non_transactional_backend_refused",
+    "durable.delete.paginates_beyond_1000_records",
+    "durable.delete.late_append_refused",
+  ]) {
+    assert.equal(ids.has(id), true, `fixture must carry ${id}`);
+  }
+});
+
+test("M3 memory session store enforces capacity, expiry, and same-ID refresh", async () => {
+  let now = new Date(10_000);
+  const store = new MemoryMcpSessionStore({
+    now: () => now,
+    maxSessions: 2,
+  });
+  await store.put({ id: "one", createdAt: "", expiresAt: new Date(70_000).toISOString() });
+  await store.put({ id: "two", createdAt: "", expiresAt: new Date(70_000).toISOString() });
+  await assert.rejects(
+    () =>
+      store.put({
+        id: "three",
+        createdAt: "",
+        expiresAt: new Date(70_000).toISOString(),
+      }),
+    McpSessionCapacityError,
+  );
+  await store.get("one");
+  await store.get("two");
+  await assert.rejects(() => store.get("three"), McpSessionNotFoundError);
+
+  await store.put({
+    id: "one",
+    createdAt: "",
+    expiresAt: new Date(70_000).toISOString(),
+    data: { refreshed: "true" },
+  });
+
+  now = new Date(80_000);
+  const expired = await store.putAndCollectExpired({
+    id: "four",
+    createdAt: "",
+    expiresAt: new Date(140_000).toISOString(),
+  });
+  assert.deepEqual(expired.sort(), ["one", "two"]);
+  await assert.rejects(
+    () =>
+      store.put({
+        id: "stale",
+        createdAt: "",
+        expiresAt: new Date(79_000).toISOString(),
+      }),
+    /session expired/,
+  );
+});
+
+test("M3 initialize capacity refusal maps to CodeServerError without a session header", async () => {
+  const sessionStore = new MemoryMcpSessionStore({ maxSessions: 1 });
+  await sessionStore.put({
+    id: "occupied",
+    createdAt: "",
+    expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+  });
+  const server = createMcpServer("M3", "1", { sessionStore });
+  const response = await post(server, rpc("init", "initialize", {
+    protocolVersion: MCP_PROTOCOL_VERSION,
+  }));
+  assert.equal(response.status, 200);
+  assert.equal(response.headers["mcp-session-id"], undefined);
+  const body = await json(response);
+  assert.equal(body.error.code, MCP_CODE_SERVER_ERROR);
+  assert.equal(body.error.message, "Session capacity exceeded");
+});
+
+function m3StreamDb() {
+  return fakeDb();
+}
+
+test("M3 dynamo aggregate enforces count, bytes, spill, and pre-aggregate refusal", async () => {
+  const db = m3StreamDb();
+  const model = defaultMcpStreamModel("m3-streams");
+  const spill = {
+    objects: new Map(),
+    async put(key, data) {
+      this.objects.set(key, Buffer.from(data));
+    },
+    async get(key) {
+      const value = this.objects.get(key);
+      if (!value) throw new Error("missing spill object");
+      return value;
+    },
+    async delete(key) {
+      this.objects.delete(key);
+    },
+  };
+  const store = new DynamoMcpStreamStore(db, {
+    model,
+    idGenerator: sequenceIdGenerator(["stream-count"]),
+    maxAggregateEvents: 3,
+    maxAggregateBytes: 24,
+    inlineMaxBytes: 4,
+    spillStore: spill,
+  });
+  const streamId = await store.create("sess-count");
+  const payload = Buffer.from("0123456789");
+  assert.equal(await store.append("sess-count", streamId, payload), "1");
+  assert.equal(await store.append("sess-count", streamId, payload), "2");
+  await assert.rejects(
+    () => store.append("sess-count", streamId, payload),
+    McpStreamAggregateCapacityError,
+  );
+  assert.equal(spill.objects.size, 2);
+
+  const stateKey = `${model.name}:sess-count:!session`;
+  const state = db.items.get(stateKey);
+  delete state.aggregateVersion;
+  db.items.set(stateKey, state);
+  await assert.rejects(
+    () => store.append("sess-count", streamId, Buffer.from("z")),
+    McpStreamAggregateBackfillError,
+  );
+});
+
+test("M3 dynamo append requires a transaction and cleans refused spills", async () => {
+  const db = m3StreamDb();
+  const noTx = { ...db, transactWrite: undefined };
+  const model = defaultMcpStreamModel("m3-no-tx");
+  const store = new DynamoMcpStreamStore(noTx, {
+    model,
+    idGenerator: sequenceIdGenerator(["stream-no-tx"]),
+  });
+  const streamId = await store.create("sess-no-tx");
+  await assert.rejects(
+    () => store.append("sess-no-tx", streamId, Buffer.from("x")),
+    McpStreamTransactionRequiredError,
+  );
+
+  const spill = {
+    objects: new Map(),
+    async put(key, data) {
+      this.objects.set(key, Buffer.from(data));
+    },
+    async get() {
+      throw new Error("unused");
+    },
+    async delete(key) {
+      this.objects.delete(key);
+    },
+  };
+  const txDb = m3StreamDb();
+  const txModel = defaultMcpStreamModel("m3-refusal");
+  const txStore = new DynamoMcpStreamStore(txDb, {
+    model: txModel,
+    idGenerator: sequenceIdGenerator(["stream-refusal"]),
+    inlineMaxBytes: 4,
+    spillStore: spill,
+    appendRetries: 1,
+  });
+  const txStream = await txStore.create("sess-refusal");
+  const original = txDb.transactWrite;
+  txDb.transactWrite = async (actions) => {
+    const stateKey = `${txModel.name}:sess-refusal:!session`;
+    const state = txDb.items.get(stateKey);
+    state.deleted = true;
+    txDb.items.set(stateKey, state);
+    return original(actions);
+  };
+  await assert.rejects(
+    () => txStore.append("sess-refusal", txStream, Buffer.from("0123456789")),
+    McpStreamNotFoundError,
+  );
+  assert.equal(spill.objects.size, 0);
+});
+
+test("M3 dynamo concurrent appends never overshoot the aggregate", async () => {
+  const db = m3StreamDb();
+  const model = defaultMcpStreamModel("m3-race");
+  const store = new DynamoMcpStreamStore(db, {
+    model,
+    idGenerator: sequenceIdGenerator(["stream-race"]),
+    maxAggregateEvents: 1,
+    appendRetries: 16,
+  });
+  const streamId = await store.create("sess-race");
+  const results = await Promise.allSettled([
+    store.append("sess-race", streamId, Buffer.from("a")),
+    store.append("sess-race", streamId, Buffer.from("b")),
+  ]);
+  const fulfilled = results.filter((item) => item.status === "fulfilled");
+  const rejected = results.filter((item) => item.status === "rejected");
+  assert.equal(fulfilled.length, 1);
+  assert.equal(rejected.length, 1);
+  assert.ok(rejected[0].reason instanceof McpStreamAggregateCapacityError);
+  const state = db.items.get(`${model.name}:sess-race:!session`);
+  assert.equal(state.eventCount, 1);
+});
+

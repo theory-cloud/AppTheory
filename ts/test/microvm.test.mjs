@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
   MICROVM_ERROR_CONTROLLER_COMMAND_FAILED,
@@ -1447,7 +1448,9 @@ test("microvm provider validation and fake cover M16 real operations", async () 
 
 test("microvm real controller uses canonical commands and stores only token metadata", async () => {
   const provider = createFakeMicroVMProvider(new Date(0));
-  const registry = createMemoryMicroVMSessionRegistry();
+  const registry = createMemoryMicroVMSessionRegistry({
+    now: () => new Date(1000),
+  });
   const controller = createRealMicroVMController(provider, registry, {
     controller_id: "controller-1",
     provider_id: MICROVM_AWS_LAMBDA_PROVIDER_ID,
@@ -1569,7 +1572,9 @@ test("microvm real controller uses canonical commands and stores only token meta
 
 test("microvm real controller enforces session ownership on keyed loads", async () => {
   const provider = createFakeMicroVMProvider(new Date(0));
-  const registry = createMemoryMicroVMSessionRegistry();
+  const registry = createMemoryMicroVMSessionRegistry({
+    now: () => new Date(1000),
+  });
   const controller = createRealMicroVMController(provider, registry, {
     controller_id: "controller-1",
     ids: { newID: () => "owned-session" },
@@ -1638,14 +1643,25 @@ test("microvm real controller enforces session ownership on keyed loads", async 
     (err) => err?.code === MICROVM_ERROR_SESSION_OWNER_MISMATCH,
   );
 
-  // List semantics are unchanged: the registry lister is still tenant-bound,
-  // and ownership is not applied to the listed records.
+  // List semantics now require exact, non-empty owner equality: another
+  // subject in the same tenant does not see this session, and listing never
+  // rewrites its owner.
   const listedByOther = await controller.handle(
     other({ command: MicroVMCommand.List, request_id: "req-other-list" }),
   );
   assert.equal(listedByOther.error, undefined);
-  assert.equal(listedByOther.sessions.length, 1);
-  assert.equal(listedByOther.sessions[0].session_id, "owned-session");
+  assert.equal(listedByOther.sessions.length, 0);
+
+  const listedByOwner = await controller.handle(
+    controllerRequest({
+      command: MicroVMCommand.List,
+      request_id: "req-owner-list",
+      session_id: "",
+    }),
+  );
+  assert.equal(listedByOwner.error, undefined);
+  assert.equal(listedByOwner.sessions.length, 1);
+  assert.equal(listedByOwner.sessions[0].session_id, "owned-session");
 
   const stored = await registry.get({
     tenant_id: "tenant-1",
@@ -1654,7 +1670,6 @@ test("microvm real controller enforces session ownership on keyed loads", async 
   });
   assert.equal(stored.auth_subject, "subject-1");
   assert.equal(stored.state, MicroVMRealState.Running);
-
   // A same-subject token refresh preserves the stored owner.
   const token = await controller.handle(
     controllerRequest({
@@ -2635,3 +2650,173 @@ test("pre-auth policy hook sees only the requested tenant", async () => {
   assert.equal(handlerViews[0].tenantId, "caller-tenant");
   assert.equal(handlerViews[0].requestedTenantId, "caller-tenant");
 });
+
+const M3_OWNERSHIP_FIXTURE = JSON.parse(
+  readFileSync(
+    new URL(
+      "../../contract-tests/fixtures/microvm-operations/microvm-list-ownership.v1.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+);
+
+test("M3 shared list-ownership fixture pins required cases and denial shapes", () => {
+  assert.equal(M3_OWNERSHIP_FIXTURE.contract.id, "m3.microvm-list-ownership/v1");
+  assert.equal(
+    M3_OWNERSHIP_FIXTURE.errors.owner_mismatch.code,
+    MICROVM_ERROR_SESSION_OWNER_MISMATCH,
+  );
+  assert.equal(M3_OWNERSHIP_FIXTURE.errors.owner_mismatch.status, 403);
+  assert.equal(
+    M3_OWNERSHIP_FIXTURE.errors.registry_incomplete,
+    MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+  );
+  const ids = new Set(M3_OWNERSHIP_FIXTURE.cases.map((item) => item.id));
+  for (const id of [
+    "list.same_subject_live_records_only",
+    "list.empty_subject_returns_empty",
+    "list.cross_subject_excluded",
+    "list.ownerless_excluded",
+    "list.canonical_precedence_over_legacy_duplicate",
+    "list.caller_owned_legacy_duplicate_cannot_override_canonical_ownerless",
+    "list.expired_records_excluded_before_provider",
+    "controller.list.defense_in_depth_filters_registry_ignoring_subject",
+    "keyed.owner_mismatch_preserves_denial_shape",
+    "keyed.ownerless_record_preserves_registry_incomplete_shape",
+    "keyed.ownerless_legacy_read_not_rekeyed_and_owned_rekey_preserves_owner",
+    "write.existing_ownerless_record_not_adopted",
+  ]) {
+    assert.equal(ids.has(id), true, `fixture must carry ${id}`);
+  }
+});
+
+test("M3 memory registry list applies exact owner, expiry, and canonical precedence", async () => {
+  const now = new Date(2000);
+  const registry = createMemoryMicroVMSessionRegistry({ now: () => now });
+  const legacyPK = "TENANT#tenant-1#NAMESPACE#namespace-1";
+
+  const put = async (overrides) => {
+    const record = validRecord({ expires_at: new Date(4000), ...overrides });
+    await registry.put(record);
+    return record;
+  };
+  await put({ session_id: "own-live", auth_subject: "subject-a", endpoint: "canonical-live" });
+  await put({ session_id: "session-other", auth_subject: "subject-b" });
+  await put({ session_id: "own-expired", auth_subject: "subject-a", expires_at: new Date(1000) });
+  await put({ session_id: "ownerless", auth_subject: "subject-a" });
+  await put({ session_id: "prefer", auth_subject: "subject-a", endpoint: "canonical" });
+  await put({ session_id: "dup", auth_subject: "subject-a" });
+
+  const keys = [...registry.records.keys()];
+  for (const key of keys) {
+    const value = registry.records.get(key);
+    if (value.session_id === "ownerless" || value.session_id === "dup") {
+      registry.records.set(key, { ...value, auth_subject: "" });
+    }
+    if (value.session_id === "prefer") {
+      registry.records.set("legacy-prefer", {
+        ...value,
+        pk: legacyPK,
+        endpoint: "legacy",
+      });
+    }
+    if (value.session_id === "dup") {
+      registry.records.set("legacy-dup-owned", {
+        ...value,
+        pk: legacyPK,
+        auth_subject: "subject-a",
+        endpoint: "legacy-owned",
+      });
+    }
+  }
+
+  const ownerList = await registry.list({
+    tenant_id: "tenant-1",
+    namespace: "namespace-1",
+    auth_subject: "subject-a",
+  });
+  assert.deepEqual(
+    ownerList.map((item) => item.session_id),
+    ["own-live", "prefer"],
+  );
+  assert.equal(
+    ownerList.find((item) => item.session_id === "prefer").endpoint,
+    "canonical",
+    "canonical record wins over its legacy duplicate",
+  );
+
+  const emptySubject = await registry.list({
+    tenant_id: "tenant-1",
+    namespace: "namespace-1",
+  });
+  assert.deepEqual(emptySubject, []);
+
+  const otherList = await registry.list({
+    tenant_id: "tenant-1",
+    namespace: "namespace-1",
+    auth_subject: "subject-b",
+  });
+  assert.deepEqual(
+    otherList.map((item) => item.session_id),
+    ["session-other"],
+  );
+});
+
+test("M3 controller list defense in depth filters a subject-ignoring registry", async () => {
+  const now = new Date(1000);
+  const provider = createFakeMicroVMProvider(now);
+  const originalList = provider.list.bind(provider);
+  let known = [];
+  provider.list = async (input) => {
+    known = input.known_sessions;
+    return originalList(input);
+  };
+  let puts = 0;
+  const records = [
+    validRecord({ session_id: "own-live", auth_subject: "subject-a", expires_at: new Date(4000) }),
+    validRecord({ session_id: "other", auth_subject: "subject-b", expires_at: new Date(4000) }),
+    { ...validRecord({ session_id: "ownerless", expires_at: new Date(4000) }), auth_subject: "" },
+  ];
+  const registry = {
+    async put(record) {
+      puts += 1;
+      return record;
+    },
+    async get() {
+      throw new MicroVMSafeError(
+        MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+        "not found",
+        "",
+      );
+    },
+    async delete() {},
+    async list() {
+      return records;
+    },
+  };
+  const controller = createRealMicroVMController(provider, registry, {
+    controller_id: "controller-1",
+    provider_id: MICROVM_AWS_LAMBDA_PROVIDER_ID,
+    clock: { now: () => now },
+    ttl_ms: 60_000,
+    logging: { disabled: true },
+  });
+  const response = await controller.handle(
+    controllerRequest({
+      command: MicroVMCommand.List,
+      request_id: "req-defense",
+      session_id: "",
+      auth_context: {
+        subject: "subject-a",
+        tenant_id: "tenant-1",
+        namespace: "namespace-1",
+      },
+    }),
+  );
+  assert.equal(response.error, undefined);
+  assert.equal(known.length, 1);
+  assert.equal(known[0].session_id, "own-live");
+  assert.equal(puts, 0);
+});
+

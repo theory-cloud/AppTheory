@@ -315,6 +315,27 @@ export interface McpServerOptions {
 export declare class McpSessionNotFoundError extends Error {
     constructor(message?: string);
 }
+export declare class McpSessionExpiredError extends Error {
+    constructor(message?: string);
+}
+export declare class McpSessionCapacityError extends Error {
+    constructor(message?: string);
+}
+export declare class McpStreamAggregateCapacityError extends Error {
+    constructor(message?: string);
+}
+export declare class McpStreamAggregateBackfillError extends Error {
+    constructor(message?: string);
+}
+export declare class McpStreamTransactionRequiredError extends Error {
+    constructor(message?: string);
+}
+export declare class McpStreamAppendConflictError extends Error {
+    constructor(message?: string);
+}
+export declare class McpStreamEventTooLargeError extends Error {
+    constructor(message?: string);
+}
 export declare class McpStreamNotFoundError extends Error {
     constructor(message?: string);
 }
@@ -368,12 +389,15 @@ export declare class McpPromptRegistry {
 export declare class MemoryMcpSessionStore implements McpSessionStore {
     private readonly sessions;
     private readonly now;
+    private readonly maxSessions;
     constructor(options?: {
         now?: () => Date;
         seed?: McpSession[];
+        maxSessions?: number;
     });
     get(id: string): Promise<McpSession>;
     put(session: McpSession): Promise<void>;
+    putAndCollectExpired(session: McpSession): Promise<string[]>;
     delete(id: string): Promise<void>;
 }
 export declare class MemoryMcpStreamStore implements McpStreamStore {
@@ -433,6 +457,11 @@ export declare class DynamoMcpTaskStore implements McpTaskStore {
     cancel(lookup: McpTaskLookup): Promise<McpTaskRecord>;
     deleteSession(sessionId: string): Promise<void>;
 }
+export interface McpStreamSpillStore {
+    put(key: string, data: Uint8Array, expiresAt: number, sha256: string): Promise<void>;
+    get(key: string, maxBytes: number): Promise<Uint8Array>;
+    delete(key: string): Promise<void>;
+}
 export declare class DynamoMcpStreamStore implements McpStreamStore {
     private readonly db;
     private readonly model;
@@ -440,20 +469,37 @@ export declare class DynamoMcpStreamStore implements McpStreamStore {
     private readonly now;
     private readonly streamTtlMs;
     private readonly maxEventBytes;
+    private readonly maxAggregateEvents;
+    private readonly maxAggregateBytes;
+    private readonly inlineMaxBytes;
+    private readonly spillStore;
+    private readonly spillPrefix;
+    private readonly appendRetries;
     constructor(db: TheorydbClient, options?: {
         model?: Model;
         idGenerator?: IdGenerator;
         now?: () => Date;
         streamTtlMinutes?: number;
         maxEventBytes?: number;
+        maxAggregateEvents?: number;
+        maxAggregateBytes?: number;
+        inlineMaxBytes?: number;
+        spillStore?: McpStreamSpillStore | null;
+        spillPrefix?: string;
+        appendRetries?: number;
     });
     create(sessionId: string): Promise<string>;
+    private readSessionState;
+    private ensureSessionState;
     append(sessionId: string, streamId: string, data?: Uint8Array): Promise<string>;
+    private appendOnce;
     close(sessionId: string, streamId: string): Promise<void>;
     subscribe(sessionId: string, streamId: string, afterEventId?: string): Promise<McpStreamEvent[]>;
     streamForEvent(sessionId: string, eventId: string): Promise<string>;
     deleteSession(sessionId: string): Promise<void>;
     private streamRecord;
+    private streamItemData;
+    private spillKey;
     private eventRecords;
     private expiresAtUnix;
     private sessionItems;
@@ -492,6 +538,7 @@ export declare class McpServer {
     private handlePostResponse;
     private handleGet;
     private handleDelete;
+    private cleanupSessionState;
     private handleInitializeHTTP;
     private handleNotification;
     private handleRequestHTTP;

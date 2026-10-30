@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
 
 import {
   defineModel,
@@ -10,6 +11,8 @@ import type { Context, Handler } from "../context.js";
 import { RandomIdGenerator, type IdGenerator } from "../ids.js";
 import { getLogger } from "../logger.js";
 import { bearerTokenClaimsFromContext } from "../oauth/index.js";
+import type { ObjectStore } from "../objectstore.js";
+import { createS3ObjectStore } from "../objectstore.js";
 import type { Headers, Response } from "../types.js";
 
 export const MCP_PROTOCOL_VERSION = "2025-11-25";
@@ -55,7 +58,23 @@ const DEFAULT_TASK_TABLE_NAME = "mcp-tasks";
 const DEFAULT_STREAM_TABLE_NAME = "mcp-streams";
 const DEFAULT_STREAM_TTL_MINUTES = 60;
 const DEFAULT_STREAM_MAX_EVENT_BYTES = 10 * 1024 * 1024;
+const DEFAULT_STREAM_AGGREGATE_EVENTS = 10000;
+const DEFAULT_STREAM_AGGREGATE_BYTES = 64 * 1024 * 1024;
+const DEFAULT_STREAM_AGGREGATE_VERSION = 1;
+const DEFAULT_STREAM_SPILL_INLINE_MAX_BYTES = 32 * 1024;
+const DEFAULT_STREAM_SPILL_PREFIX = "mcp-stream-events";
+const STREAM_SESSION_ITEM_ID = "!session";
+const STREAM_SESSION_DELETE_QUIET_PASSES = 2;
+const STREAM_APPEND_RETRIES = 5;
 const STREAM_EVENT_TOO_LARGE_MESSAGE = "stream event too large";
+const STREAM_AGGREGATE_CAPACITY_MESSAGE = "stream aggregate capacity exceeded";
+const STREAM_AGGREGATE_BACKFILL_MESSAGE = "stream aggregate backfill required";
+const STREAM_TRANSACTION_REQUIRED_MESSAGE =
+  "stream append requires a transactional backend";
+const STREAM_APPEND_CONFLICT_MESSAGE = "stream append conflict";
+const DEFAULT_MEMORY_SESSION_CAPACITY = 1000;
+const SESSION_CAPACITY_EXCEEDED_MESSAGE = "Session capacity exceeded";
+const SESSION_EXPIRED_MESSAGE = "session expired";
 const DEFAULT_MEMORY_STREAM_MAX_EVENT_BYTES = 10 * 1024 * 1024;
 const DEFAULT_MEMORY_STREAM_MAX_EVENTS_PER_SESSION = 10000;
 const DEFAULT_MEMORY_STREAM_MAX_TOTAL_BYTES_PER_SESSION = 64 * 1024 * 1024;
@@ -523,6 +542,55 @@ export class McpSessionNotFoundError extends Error {
   }
 }
 
+export class McpSessionExpiredError extends Error {
+  constructor(message = SESSION_EXPIRED_MESSAGE) {
+    super(message);
+    this.name = "McpSessionExpiredError";
+  }
+}
+
+export class McpSessionCapacityError extends Error {
+  constructor(message = SESSION_CAPACITY_EXCEEDED_MESSAGE) {
+    super(message);
+    this.name = "McpSessionCapacityError";
+  }
+}
+
+export class McpStreamAggregateCapacityError extends Error {
+  constructor(message = STREAM_AGGREGATE_CAPACITY_MESSAGE) {
+    super(message);
+    this.name = "McpStreamAggregateCapacityError";
+  }
+}
+
+export class McpStreamAggregateBackfillError extends Error {
+  constructor(message = STREAM_AGGREGATE_BACKFILL_MESSAGE) {
+    super(message);
+    this.name = "McpStreamAggregateBackfillError";
+  }
+}
+
+export class McpStreamTransactionRequiredError extends Error {
+  constructor(message = STREAM_TRANSACTION_REQUIRED_MESSAGE) {
+    super(message);
+    this.name = "McpStreamTransactionRequiredError";
+  }
+}
+
+export class McpStreamAppendConflictError extends Error {
+  constructor(message = STREAM_APPEND_CONFLICT_MESSAGE) {
+    super(message);
+    this.name = "McpStreamAppendConflictError";
+  }
+}
+
+export class McpStreamEventTooLargeError extends Error {
+  constructor(message = STREAM_EVENT_TOO_LARGE_MESSAGE) {
+    super(message);
+    this.name = "McpStreamEventTooLargeError";
+  }
+}
+
 export class McpStreamNotFoundError extends Error {
   constructor(message = "stream not found") {
     super(message);
@@ -797,9 +865,20 @@ export class McpPromptRegistry {
 export class MemoryMcpSessionStore implements McpSessionStore {
   private readonly sessions = new Map<string, McpSession>();
   private readonly now: () => Date;
+  private readonly maxSessions: number;
 
-  constructor(options: { now?: () => Date; seed?: McpSession[] } = {}) {
+  constructor(
+    options: {
+      now?: () => Date;
+      seed?: McpSession[];
+      maxSessions?: number;
+    } = {},
+  ) {
     this.now = options.now ?? (() => new Date());
+    this.maxSessions = positiveInteger(
+      options.maxSessions,
+      DEFAULT_MEMORY_SESSION_CAPACITY,
+    );
     for (const session of options.seed ?? []) {
       this.sessions.set(session.id, cloneSession(session));
     }
@@ -819,11 +898,34 @@ export class MemoryMcpSessionStore implements McpSessionStore {
   }
 
   async put(session: McpSession): Promise<void> {
+    await this.putAndCollectExpired(session);
+  }
+
+  // putAndCollectExpired performs the atomic sweep/count/insert and returns the
+  // expired session IDs so the server can clean their associated stream, task,
+  // replay, and cancellation state.
+  async putAndCollectExpired(session: McpSession): Promise<string[]> {
     const normalized = cloneSession(session);
     if (!normalized.id) {
       throw new Error("missing session id");
     }
+    const now = this.now();
+    if (sessionExpiredAt(now, normalized)) {
+      throw new McpSessionExpiredError();
+    }
+
+    const expired: string[] = [];
+    for (const [id, existing] of this.sessions) {
+      if (sessionExpiredAt(now, existing)) {
+        this.sessions.delete(id);
+        expired.push(id);
+      }
+    }
+    if (!this.sessions.has(normalized.id) && this.sessions.size >= this.maxSessions) {
+      throw new McpSessionCapacityError();
+    }
     this.sessions.set(normalized.id, normalized);
+    return expired;
   }
 
   async delete(id: string): Promise<void> {
@@ -1310,6 +1412,68 @@ export class DynamoMcpTaskStore implements McpTaskStore {
   }
 }
 
+export interface McpStreamSpillStore {
+  put(
+    key: string,
+    data: Uint8Array,
+    expiresAt: number,
+    sha256: string,
+  ): Promise<void>;
+  get(key: string, maxBytes: number): Promise<Uint8Array>;
+  delete(key: string): Promise<void>;
+}
+
+class S3McpStreamSpillStore implements McpStreamSpillStore {
+  private readonly bucket: string;
+  private store?: Promise<ObjectStore>;
+
+  constructor(bucket: string) {
+    this.bucket = bucket;
+  }
+
+  private objectStore(): Promise<ObjectStore> {
+    this.store ??= createS3ObjectStore();
+    return this.store;
+  }
+
+  async put(
+    key: string,
+    data: Uint8Array,
+    expiresAt: number,
+    sha256: string,
+  ): Promise<void> {
+    const store = await this.objectStore();
+    await store.put({
+      ref: { bucket: this.bucket, key },
+      payload: data,
+      contentType: "application/json",
+      metadata: { "expires-at": String(expiresAt), sha256 },
+    });
+  }
+
+  async get(key: string, maxBytes: number): Promise<Uint8Array> {
+    const store = await this.objectStore();
+    const out = await store.get({
+      ref: { bucket: this.bucket, key },
+      maxBytes,
+    });
+    return out.payload;
+  }
+
+  async delete(key: string): Promise<void> {
+    const store = await this.objectStore();
+    await store.delete({ ref: { bucket: this.bucket, key } });
+  }
+}
+
+function defaultDynamoStreamSpillStore(): McpStreamSpillStore | null {
+  const bucket = String(process.env["MCP_STREAM_SPILL_BUCKET"] ?? "").trim();
+  if (!bucket) {
+    return null;
+  }
+  return new S3McpStreamSpillStore(bucket);
+}
+
 export class DynamoMcpStreamStore implements McpStreamStore {
   private readonly db: TheorydbClient;
   private readonly model: Model;
@@ -1317,6 +1481,12 @@ export class DynamoMcpStreamStore implements McpStreamStore {
   private readonly now: () => Date;
   private readonly streamTtlMs: number;
   private readonly maxEventBytes: number;
+  private readonly maxAggregateEvents: number;
+  private readonly maxAggregateBytes: number;
+  private readonly inlineMaxBytes: number;
+  private readonly spillStore: McpStreamSpillStore | null;
+  private readonly spillPrefix: string;
+  private readonly appendRetries: number;
 
   constructor(
     db: TheorydbClient,
@@ -1326,6 +1496,12 @@ export class DynamoMcpStreamStore implements McpStreamStore {
       now?: () => Date;
       streamTtlMinutes?: number;
       maxEventBytes?: number;
+      maxAggregateEvents?: number;
+      maxAggregateBytes?: number;
+      inlineMaxBytes?: number;
+      spillStore?: McpStreamSpillStore | null;
+      spillPrefix?: string;
+      appendRetries?: number;
     } = {},
   ) {
     this.db = db;
@@ -1349,6 +1525,36 @@ export class DynamoMcpStreamStore implements McpStreamStore {
         DEFAULT_STREAM_MAX_EVENT_BYTES,
       ),
     );
+    this.maxAggregateEvents = positiveInteger(
+      options.maxAggregateEvents,
+      DEFAULT_STREAM_AGGREGATE_EVENTS,
+    );
+    this.maxAggregateBytes = positiveInteger(
+      options.maxAggregateBytes,
+      DEFAULT_STREAM_AGGREGATE_BYTES,
+    );
+    this.inlineMaxBytes = positiveInteger(
+      options.inlineMaxBytes,
+      envPositiveInteger(
+        "MCP_STREAM_SPILL_INLINE_MAX_BYTES",
+        DEFAULT_STREAM_SPILL_INLINE_MAX_BYTES,
+      ),
+    );
+    this.spillStore =
+      options.spillStore === undefined
+        ? defaultDynamoStreamSpillStore()
+        : options.spillStore;
+    this.spillPrefix = String(
+      options.spillPrefix ??
+        process.env["MCP_STREAM_SPILL_PREFIX"] ??
+        DEFAULT_STREAM_SPILL_PREFIX,
+    )
+      .trim()
+      .replace(/^\/+|\/+$/g, "");
+    this.appendRetries = positiveInteger(
+      options.appendRetries,
+      STREAM_APPEND_RETRIES,
+    );
     this.db.register(this.model);
   }
 
@@ -1358,6 +1564,8 @@ export class DynamoMcpStreamStore implements McpStreamStore {
       this.idGenerator.newId(),
       "stream id generator returned empty id",
     );
+    const expiresAt = this.expiresAtUnix(this.now());
+    await this.ensureSessionState(sid, expiresAt);
     await this.db.create(this.model.name, {
       sessionId: sid,
       itemId: `STREAM#${streamId}`,
@@ -1367,9 +1575,71 @@ export class DynamoMcpStreamStore implements McpStreamStore {
       sequence: 0,
       eventId: "",
       data: "",
-      expiresAt: this.expiresAtUnix(this.now()),
+      expiresAt,
     });
     return streamId;
+  }
+
+  private async readSessionState(
+    sessionId: string,
+  ): Promise<Record<string, unknown> | null> {
+    try {
+      return await this.db.get(this.model.name, {
+        sessionId,
+        itemId: STREAM_SESSION_ITEM_ID,
+      });
+    } catch (err) {
+      if (isNotFoundError(err)) {
+        return null;
+      }
+      throw err;
+    }
+  }
+
+  private async ensureSessionState(
+    sessionId: string,
+    expiresAt: number,
+  ): Promise<void> {
+    const existing = await this.readSessionState(sessionId);
+    if (existing) {
+      if (Boolean(existing["deleted"])) {
+        throw new McpStreamNotFoundError();
+      }
+      await this.db.update(
+        this.model.name,
+        { ...existing, expiresAt },
+        ["expiresAt"],
+      );
+      return;
+    }
+    try {
+      await this.db.create(
+        this.model.name,
+        {
+          sessionId,
+          itemId: STREAM_SESSION_ITEM_ID,
+          streamId: "",
+          kind: "session",
+          closed: false,
+          sequence: 0,
+          eventId: "",
+          aggregateVersion: DEFAULT_STREAM_AGGREGATE_VERSION,
+          eventCount: 0,
+          aggregateBytes: 0,
+          deleted: false,
+          expiresAt,
+        },
+        { ifNotExists: true },
+      );
+    } catch (err) {
+      const raced = await this.readSessionState(sessionId);
+      if (!raced) {
+        throw err;
+      }
+      if (Boolean(raced["deleted"])) {
+        throw new McpStreamNotFoundError();
+      }
+    }
   }
 
   async append(
@@ -1380,27 +1650,151 @@ export class DynamoMcpStreamStore implements McpStreamStore {
     const sid = normalizeRequired(sessionId, "missing session id");
     const payload = cloneBytes(data);
     if (payload.length > this.maxEventBytes) {
-      throw new Error(STREAM_EVENT_TOO_LARGE_MESSAGE);
+      throw new McpStreamEventTooLargeError();
     }
     const stream = await this.streamRecord(sid, streamId);
-    const sequence = Number(stream["sequence"] ?? 0) + 1;
+    if (typeof (this.db as { transactWrite?: unknown }).transactWrite !== "function") {
+      throw new McpStreamTransactionRequiredError();
+    }
+    for (let attempt = 0; attempt < this.appendRetries; attempt += 1) {
+      const result = await this.appendOnce(sid, stream, payload);
+      if (typeof result === "string") {
+        return result;
+      }
+    }
+    throw new McpStreamAppendConflictError();
+  }
+
+  private async appendOnce(
+    sessionId: string,
+    stream: Record<string, unknown>,
+    payload: Uint8Array,
+  ): Promise<string | { retry: true }> {
+    let state: Record<string, unknown>;
+    try {
+      state = await this.db.get(this.model.name, {
+        sessionId,
+        itemId: STREAM_SESSION_ITEM_ID,
+      });
+    } catch (err) {
+      if (isNotFoundError(err)) {
+        throw new McpStreamNotFoundError();
+      }
+      throw err;
+    }
+    if (Boolean(state["deleted"])) {
+      throw new McpStreamNotFoundError();
+    }
+    if (Number(state["aggregateVersion"] ?? 0) !== DEFAULT_STREAM_AGGREGATE_VERSION) {
+      throw new McpStreamAggregateBackfillError();
+    }
+    const eventCount = Number(state["eventCount"] ?? 0);
+    const aggregateBytes = Number(state["aggregateBytes"] ?? 0);
+    if (eventCount + 1 > this.maxAggregateEvents) {
+      throw new McpStreamAggregateCapacityError();
+    }
+    if (aggregateBytes + payload.length > this.maxAggregateBytes) {
+      throw new McpStreamAggregateCapacityError();
+    }
+
+    const sequence = Number(state["sequence"] ?? 0) + 1;
     const eventId = String(sequence);
     const expiresAt = this.expiresAtUnix(this.now());
-    stream["sequence"] = sequence;
-    stream["expiresAt"] = expiresAt;
-    await this.db.save(this.model.name, stream);
-    await this.db.create(this.model.name, {
-      sessionId: sid,
+    const sha256 = sha256Hex(payload);
+    const eventItem: Record<string, unknown> = {
+      sessionId,
       itemId: `EVENT#${eventId}`,
-      streamId: String(streamId ?? "").trim(),
+      streamId: String(stream["streamId"] ?? ""),
       kind: "event",
       closed: false,
       sequence,
       eventId,
-      data: Buffer.from(payload).toString("base64"),
       expiresAt,
-    });
-    return eventId;
+      dataBytes: payload.length,
+      dataSha256: sha256,
+    };
+    let spilledRef = "";
+    if (this.spillStore && payload.length > this.inlineMaxBytes) {
+      spilledRef = this.spillKey(sessionId, eventId);
+      await this.spillStore.put(spilledRef, payload, expiresAt, sha256);
+      eventItem["dataStorage"] = "s3";
+      eventItem["dataRef"] = spilledRef;
+    } else {
+      eventItem["data"] = Buffer.from(payload).toString("base64");
+    }
+
+    const nextState = {
+      ...state,
+      sequence,
+      eventCount: eventCount + 1,
+      aggregateBytes: aggregateBytes + payload.length,
+      expiresAt,
+    };
+    const actions = [
+      {
+        kind: "update" as const,
+        model: this.model.name,
+        item: nextState,
+        fields: ["sequence", "eventCount", "aggregateBytes", "expiresAt"],
+        conditionExpression:
+          "#deleted = :deleted AND #aggregateVersion = :version AND #sequence = :sequence AND #eventCount = :eventCount AND #aggregateBytes = :aggregateBytes",
+        expressionAttributeNames: {
+          "#deleted": "deleted",
+          "#aggregateVersion": "aggregateVersion",
+          "#sequence": "sequence",
+          "#eventCount": "eventCount",
+          "#aggregateBytes": "aggregateBytes",
+        },
+        expressionAttributeValues: {
+          ":deleted": { BOOL: false },
+          ":version": { N: String(DEFAULT_STREAM_AGGREGATE_VERSION) },
+          ":sequence": { N: String(Number(state["sequence"] ?? 0)) },
+          ":eventCount": { N: String(eventCount) },
+          ":aggregateBytes": { N: String(aggregateBytes) },
+        },
+      },
+      {
+        kind: "put" as const,
+        model: this.model.name,
+        item: { ...stream, expiresAt },
+      },
+      {
+        kind: "put" as const,
+        model: this.model.name,
+        item: eventItem,
+      },
+    ];
+
+    try {
+      await this.db.transactWrite(actions);
+      return eventId;
+    } catch (err) {
+      let failure: unknown = err;
+      if (spilledRef && this.spillStore) {
+        try {
+          await this.spillStore.delete(spilledRef);
+        } catch (cleanupErr) {
+          failure = new AggregateError([err, cleanupErr], "spill cleanup failed");
+        }
+      }
+      if (!isConditionalCheckFailedError(err)) {
+        throw failure;
+      }
+      const latest = await this.readSessionState(sessionId).catch(() => null);
+      if (!latest) {
+        throw new McpStreamNotFoundError();
+      }
+      if (Boolean(latest["deleted"])) {
+        throw new McpStreamNotFoundError();
+      }
+      if (
+        Number(latest["aggregateVersion"] ?? 0) !==
+        DEFAULT_STREAM_AGGREGATE_VERSION
+      ) {
+        throw new McpStreamAggregateBackfillError();
+      }
+      return { retry: true };
+    }
   }
 
   async close(sessionId: string, streamId: string): Promise<void> {
@@ -1430,14 +1824,16 @@ export class DynamoMcpStreamStore implements McpStreamStore {
     ) {
       throw new McpEventNotFoundError();
     }
-    return events
-      .filter((item) => String(item["streamId"]) === stream)
-      .filter((item) => Number(item["sequence"] ?? 0) > after)
-      .sort(compareStreamItems)
-      .map((item) => ({
-        id: String(item["eventId"] ?? ""),
-        data: Buffer.from(String(item["data"] ?? ""), "base64"),
-      }));
+    return await Promise.all(
+      events
+        .filter((item) => String(item["streamId"]) === stream)
+        .filter((item) => Number(item["sequence"] ?? 0) > after)
+        .sort(compareStreamItems)
+        .map(async (item) => ({
+          id: String(item["eventId"] ?? ""),
+          data: await this.streamItemData(item),
+        })),
+    );
   }
 
   async streamForEvent(sessionId: string, eventId: string): Promise<string> {
@@ -1458,15 +1854,61 @@ export class DynamoMcpStreamStore implements McpStreamStore {
     if (!sid) {
       return;
     }
-    const items = await this.sessionItems(sid);
-    await Promise.all(
-      items.map((item) =>
-        this.db.delete(this.model.name, {
+    const expiresAt = this.expiresAtUnix(this.now());
+    const existing = await this.readSessionState(sid);
+    if (existing) {
+      await this.db.save(this.model.name, {
+        ...existing,
+        deleted: true,
+        expiresAt,
+      });
+    } else {
+      await this.db.create(
+        this.model.name,
+        {
           sessionId: sid,
-          itemId: String(item["itemId"] ?? ""),
-        }),
-      ),
-    );
+          itemId: STREAM_SESSION_ITEM_ID,
+          streamId: "",
+          kind: "session",
+          closed: false,
+          sequence: 0,
+          eventId: "",
+          aggregateVersion: DEFAULT_STREAM_AGGREGATE_VERSION,
+          eventCount: 0,
+          aggregateBytes: 0,
+          deleted: true,
+          expiresAt,
+        },
+        { ifNotExists: true },
+      );
+    }
+
+    let quietPasses = 0;
+    for (;;) {
+      const items = await this.sessionItems(sid);
+      let deletedAny = false;
+      for (const item of items) {
+        const itemId = String(item["itemId"] ?? "");
+        if (itemId === STREAM_SESSION_ITEM_ID) {
+          continue;
+        }
+        const dataRef = String(item["dataRef"] ?? "");
+        if (dataRef && this.spillStore) {
+          await this.spillStore.delete(dataRef);
+        }
+        await this.db.delete(this.model.name, { sessionId: sid, itemId });
+        deletedAny = true;
+      }
+      if (deletedAny) {
+        quietPasses = 0;
+        continue;
+      }
+      quietPasses += 1;
+      if (quietPasses >= STREAM_SESSION_DELETE_QUIET_PASSES) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
   }
 
   private async streamRecord(
@@ -1474,6 +1916,10 @@ export class DynamoMcpStreamStore implements McpStreamStore {
     streamId: string,
   ): Promise<Record<string, unknown>> {
     try {
+      const state = await this.readSessionState(sessionId);
+      if (state && Boolean(state["deleted"])) {
+        throw new McpStreamNotFoundError();
+      }
       const record = await this.db.get(this.model.name, {
         sessionId: String(sessionId ?? "").trim(),
         itemId: `STREAM#${String(streamId ?? "").trim()}`,
@@ -1491,6 +1937,38 @@ export class DynamoMcpStreamStore implements McpStreamStore {
       }
       throw err;
     }
+  }
+
+  private async streamItemData(item: Record<string, unknown>): Promise<Uint8Array> {
+    const dataRef = String(item["dataRef"] ?? "");
+    if (String(item["dataStorage"] ?? "") === "s3" || dataRef) {
+      if (!this.spillStore) {
+        throw new Error("stream spill store not configured");
+      }
+      const payload = await this.spillStore.get(
+        dataRef,
+        positiveInteger(
+          Number(item["dataBytes"] ?? 0),
+          this.maxEventBytes,
+        ),
+      );
+      const expectedBytes = Number(item["dataBytes"] ?? 0);
+      if (expectedBytes > 0 && payload.length !== expectedBytes) {
+        throw new Error("stream spill payload size mismatch");
+      }
+      const expectedHash = String(item["dataSha256"] ?? "");
+      if (expectedHash && sha256Hex(payload) !== expectedHash) {
+        throw new Error("stream spill payload hash mismatch");
+      }
+      return payload;
+    }
+    return Buffer.from(String(item["data"] ?? ""), "base64");
+  }
+
+  private spillKey(sessionId: string, eventId: string): string {
+    const name = `sessions/${sha256Hex(Buffer.from(sessionId, "utf8"))}/events/${eventId}.json`;
+    const prefix = this.spillPrefix.replace(/^\/+|\/+$/g, "");
+    return prefix ? `${prefix}/${name}` : name;
   }
 
   private async eventRecords(
@@ -1907,11 +2385,31 @@ export class McpServer {
       return protocolResponse;
     }
     await this.sessionStore.delete(sessionId);
-    await this.streamStore.deleteSession(sessionId);
-    if (this.taskRuntime.store) {
-      await this.taskRuntime.store.deleteSession(sessionId);
-    }
+    await this.cleanupSessionState(sessionId);
     return emptyResponse(202);
+  }
+
+  private async cleanupSessionState(sessionId: string): Promise<void> {
+    const id = String(sessionId ?? "").trim();
+    if (!id) {
+      return;
+    }
+    const failures: unknown[] = [];
+    try {
+      await this.streamStore.deleteSession(id);
+    } catch (err) {
+      failures.push(err);
+    }
+    if (this.taskRuntime.store) {
+      try {
+        await this.taskRuntime.store.deleteSession(id);
+      } catch (err) {
+        failures.push(err);
+      }
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(failures, "failed to clean session state");
+    }
   }
 
   private async handleInitializeHTTP(
@@ -1919,10 +2417,29 @@ export class McpServer {
     ctx?: Context,
   ): Promise<Response> {
     const negotiated = negotiateProtocolVersion(request.params);
-    const session = await this.createSession(
-      negotiated,
-      principalFromContext(ctx),
-    );
+    let session: McpSession;
+    try {
+      session = await this.createSession(
+        negotiated,
+        principalFromContext(ctx),
+      );
+    } catch (err) {
+      if (err instanceof McpSessionCapacityError) {
+        return this.marshalSingleResponse(
+          newErrorResponse(
+            request.id,
+            MCP_CODE_SERVER_ERROR,
+            SESSION_CAPACITY_EXCEEDED_MESSAGE,
+          ),
+        );
+      }
+      getLogger().error("mcp session create failed", {
+        error: errorMessage(err),
+      });
+      return this.marshalSingleResponse(
+        newErrorResponse(request.id, MCP_CODE_INTERNAL_ERROR, "session error"),
+      );
+    }
     const response = this.handleInitialize(request, negotiated);
     return this.marshalSingleResponse(response, session.id, true);
   }
@@ -2666,9 +3183,28 @@ export class McpServer {
     sessionId: string,
     ctx?: Context,
   ): Promise<McpSession> {
-    const session = await this.sessionStore.get(sessionId);
+    let session: McpSession;
+    try {
+      session = await this.sessionStore.get(sessionId);
+    } catch (err) {
+      if (err instanceof McpSessionNotFoundError) {
+        await this.cleanupSessionState(sessionId).catch((cleanupErr) => {
+          getLogger().warn("mcp session cleanup failed", {
+            sessionId,
+            error: errorMessage(cleanupErr),
+          });
+        });
+      }
+      throw err;
+    }
     if (sessionExpiredAt(new Date(), session)) {
       await this.sessionStore.delete(sessionId);
+      await this.cleanupSessionState(sessionId).catch((cleanupErr) => {
+        getLogger().warn("mcp expired session cleanup failed", {
+          sessionId,
+          error: errorMessage(cleanupErr),
+        });
+      });
       throw new McpSessionNotFoundError();
     }
     const storedPrincipal = String(session.principal ?? "").trim();
@@ -2752,6 +3288,21 @@ export class McpServer {
     };
     if (principal) {
       session.principal = principal;
+    }
+    const sweeper = this.sessionStore as McpSessionStore & {
+      putAndCollectExpired?: (value: McpSession) => Promise<string[]>;
+    };
+    if (typeof sweeper.putAndCollectExpired === "function") {
+      const expired = await sweeper.putAndCollectExpired(session);
+      for (const expiredId of expired) {
+        try {
+          await this.cleanupSessionState(expiredId);
+        } catch (err) {
+          await this.sessionStore.delete(session.id).catch(() => undefined);
+          throw err;
+        }
+      }
+      return session;
     }
     await this.sessionStore.put(session);
     return session;
@@ -2886,6 +3437,14 @@ export function defaultMcpStreamModel(tableName?: string): Model {
       { attribute: "sequence", type: "N", optional: true },
       { attribute: "eventId", type: "S", optional: true },
       { attribute: "data", type: "S", optional: true },
+      { attribute: "aggregateVersion", type: "N", optional: true },
+      { attribute: "eventCount", type: "N", optional: true },
+      { attribute: "aggregateBytes", type: "N", optional: true },
+      { attribute: "deleted", type: "BOOL", optional: true },
+      { attribute: "dataStorage", type: "S", optional: true },
+      { attribute: "dataRef", type: "S", optional: true },
+      { attribute: "dataBytes", type: "N", optional: true },
+      { attribute: "dataSha256", type: "S", optional: true },
       { attribute: "expiresAt", type: "N", optional: true, roles: ["ttl"] },
     ],
   });
@@ -4279,6 +4838,23 @@ function streamItemExpired(item: Record<string, unknown>, now: Date): boolean {
     return false;
   }
   return now.getTime() >= expiresAt * 1000;
+}
+
+function sha256Hex(data: Uint8Array): string {
+  return createHash("sha256").update(data).digest("hex");
+}
+
+function isConditionalCheckFailedError(err: unknown): boolean {
+  if (!(err instanceof Error)) {
+    return false;
+  }
+  const name = err.name.toLowerCase();
+  const message = err.message.toLowerCase();
+  return (
+    name.includes("condition") ||
+    message.includes("condition") ||
+    message.includes("conditional")
+  );
 }
 
 function envPositiveInteger(name: string, fallback: number): number {

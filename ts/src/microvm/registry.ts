@@ -89,8 +89,30 @@ function sessionFromRegistryRecordForRead(
   return microVMSessionFromRegistryRecord(normalized);
 }
 
+function isListableRegistryRecord(
+  record: MicroVMSessionRegistryRecord,
+  subject: string | undefined,
+  now: Date,
+): boolean {
+  const owner = String(record.auth_subject ?? "").trim();
+  const caller = String(subject ?? "").trim();
+  if (!owner || !caller || owner !== caller) {
+    return false;
+  }
+  const expires = record.expires_at;
+  if (validDate(expires) && expires.getTime() <= now.getTime()) {
+    return false;
+  }
+  return true;
+}
+
 export class MemoryMicroVMSessionRegistry implements MicroVMSessionRegistry {
   private readonly records = new Map<string, MicroVMSessionRegistryRecord>();
+  private readonly now: () => Date;
+
+  constructor(options: { now?: () => Date } = {}) {
+    this.now = options.now ?? (() => new Date());
+  }
 
   async put(record: MicroVMSessionRecord): Promise<MicroVMSessionRecord> {
     const registry = microVMSessionRecordToRegistryRecord(record);
@@ -220,6 +242,7 @@ export class MemoryMicroVMSessionRegistry implements MicroVMSessionRegistry {
         String(input?.request_id ?? "").trim(),
       );
     }
+    const now = this.now();
     const canonicalPK = microVMSessionRegistryPartitionKey(tenant, namespace);
     const out: MicroVMSessionRecord[] = [];
     const seen = new Set<string>();
@@ -231,11 +254,13 @@ export class MemoryMicroVMSessionRegistry implements MicroVMSessionRegistry {
       ) {
         continue;
       }
-      const session = microVMSessionFromRegistryRecord(
-        cloneMicroVMSessionRegistryRecord(record),
-      );
-      seen.add(session.session_id);
-      out.push(session);
+      // Canonical precedence is recorded before owner filtering so a
+      // caller-owned legacy duplicate cannot bypass an excluded canonical item.
+      seen.add(record.session_id);
+      if (!isListableRegistryRecord(record, input.auth_subject, now)) {
+        continue;
+      }
+      out.push(microVMSessionFromRegistryRecord(cloneMicroVMSessionRegistryRecord(record)));
     }
     for (const record of this.records.values()) {
       if (
@@ -246,20 +271,25 @@ export class MemoryMicroVMSessionRegistry implements MicroVMSessionRegistry {
         continue;
       }
       if (seen.has(record.session_id)) continue;
-      const session = sessionFromRegistryRecordForRead(
-        cloneMicroVMSessionRegistryRecord(record),
-        true,
+      if (!isListableRegistryRecord(record, input.auth_subject, now)) {
+        continue;
+      }
+      out.push(
+        sessionFromRegistryRecordForRead(
+          cloneMicroVMSessionRegistryRecord(record),
+          true,
+        ),
       );
-      seen.add(session.session_id);
-      out.push(session);
     }
     out.sort((a, b) => a.session_id.localeCompare(b.session_id));
     return out;
   }
 }
 
-export function createMemoryMicroVMSessionRegistry(): MemoryMicroVMSessionRegistry {
-  return new MemoryMicroVMSessionRegistry();
+export function createMemoryMicroVMSessionRegistry(
+  options: { now?: () => Date } = {},
+): MemoryMicroVMSessionRegistry {
+  return new MemoryMicroVMSessionRegistry(options);
 }
 
 export async function reconstructMicroVMSessionRecord(
@@ -400,6 +430,7 @@ export function createReconstructingMicroVMSessionRegistry(
 export class TableTheoryMicroVMSessionRegistry implements MicroVMSessionRegistry {
   private readonly db: MicroVMTableTheoryClient;
   private readonly modelName: string;
+  private readonly now: () => Date;
 
   constructor(
     db: MicroVMTableTheoryClient,
@@ -413,6 +444,7 @@ export class TableTheoryMicroVMSessionRegistry implements MicroVMSessionRegistry
       );
     }
     this.db = db;
+    this.now = options.now ?? (() => new Date());
     this.modelName =
       String(options.model_name ?? "").trim() ||
       MICROVM_SESSION_REGISTRY_MODEL_NAME;
@@ -565,15 +597,18 @@ export class TableTheoryMicroVMSessionRegistry implements MicroVMSessionRegistry
     }
     const canonicalPK = microVMSessionRegistryPartitionKey(tenant, namespace);
     try {
+      const now = this.now();
       const items = await this.db.list(this.modelName, { pk: canonicalPK });
       const out: MicroVMSessionRecord[] = [];
       const seen = new Set<string>();
       for (const item of items) {
-        const session = microVMSessionFromRegistryRecord(
-          registryRecordFromTableItem(item),
-        );
-        seen.add(session.session_id);
-        out.push(session);
+        const record = registryRecordFromTableItem(item);
+        // Canonical precedence is recorded before owner filtering.
+        seen.add(record.session_id);
+        if (!isListableRegistryRecord(record, input.auth_subject, now)) {
+          continue;
+        }
+        out.push(microVMSessionFromRegistryRecord(record));
       }
       // Union in the pre-M1 partition so un-migrated items stay listable; the canonical item wins.
       const legacyPK = legacySessionRegistryPartitionKey(tenant, namespace);
@@ -590,9 +625,10 @@ export class TableTheoryMicroVMSessionRegistry implements MicroVMSessionRegistry
           ) {
             continue;
           }
-          const session = sessionFromRegistryRecordForRead(record, true);
-          seen.add(session.session_id);
-          out.push(session);
+          if (!isListableRegistryRecord(record, input.auth_subject, now)) {
+            continue;
+          }
+          out.push(sessionFromRegistryRecordForRead(record, true));
         }
       }
       out.sort((a, b) => a.session_id.localeCompare(b.session_id));

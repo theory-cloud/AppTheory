@@ -614,6 +614,7 @@ export interface TableTheoryMicroVMSessionRegistryOptions {
     model_name?: string;
     table_name?: string;
     auto_register?: boolean;
+    now?: () => Date;
 }
 export interface MicroVMRegistryClientOptions {
     ttl_ms?: number;
