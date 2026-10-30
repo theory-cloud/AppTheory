@@ -118,17 +118,30 @@ rejected before the runtime handler runs. This singleton is deliberately public 
 `transportPosture: AppTheoryMcpTransportPosture.NONE_PUBLIC` and pays the mandatory defense-in-depth floor:
 
 ```ts
+import * as acm from "aws-cdk-lib/aws-certificatemanager";
+
+const certificate = acm.Certificate.fromCertificateArn(
+  this,
+  "McpCertificate",
+  "arn:aws:acm:us-east-1:123456789012:certificate/11111111-2222-3333-4444-555555555555",
+);
+
 const mcp = new AppTheoryMcpServer(this, "McpServer", {
   handler,
   routeFamily: { patterns: ["/mcp"] },
   // `none-public` is never a default: name it, and record the floor.
   transportPosture: AppTheoryMcpTransportPosture.NONE_PUBLIC,
-  // The origin is reachable only through a locked front door (CloudFront).
-  // Use AppTheoryMcpOriginReachability.DISABLED when the execute-api default
-  // endpoint is disabled instead.
-  originReachability: AppTheoryMcpOriginReachability.LOCKED,
-  // The owning stage must keep an explicit throttling decision under this posture.
-  ownedApi: { stage: { throttlingEnabled: true } },
+  // AgentCore clients do not present client certificates, so use DISABLED with
+  // an ordinary custom domain. LOCKED instead requires
+  // ownedApi.domain.mutualTlsAuthentication and fails synthesis without it.
+  originReachability: AppTheoryMcpOriginReachability.DISABLED,
+  ownedApi: {
+    // The owning stage must keep an explicit throttling decision under this posture.
+    stage: { throttlingEnabled: true },
+    // DISABLED disables the execute-api default endpoint and advertises only
+    // this custom domain.
+    domain: { domainName: "mcp.example.com", certificate },
+  },
 });
 ```
 
@@ -363,8 +376,11 @@ If you do select `none-public`, secure it yourself:
 
 - **Enforce auth in your handler** (e.g., require a shared secret header or JWT verification).
 - **Put the endpoint on a custom domain** and front it with CloudFront/WAF (if that matches your platform).
-- **Record the origin posture**: `originReachability: AppTheoryMcpOriginReachability.LOCKED` for a locked front door, or
-  `.DISABLED` when the execute-api default endpoint is off. A directly reachable origin is refused.
+- **Record the origin posture**: `originReachability: AppTheoryMcpOriginReachability.DISABLED` with an ordinary
+  `ownedApi.domain` disables the execute-api default endpoint and advertises only that domain.
+  `AppTheoryMcpOriginReachability.LOCKED` is stricter: it requires
+  `ownedApi.domain.mutualTlsAuthentication`, and every API mapping bound to the owned API must target an in-stack
+  domain with a truststore URI. Attach-mode LOCKED is unsupported. A directly reachable origin is refused.
 - **Use a private network path** if your AgentCore integration supports it.
 
 AppTheory is a framework — if you need a different domain/auth story, wire it the way your platform requires.

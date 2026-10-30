@@ -17,6 +17,38 @@ or deprecation posture must add or update a section here before the release is p
 
 ### Unreleased
 
+- **CDK MCP front door: `DISABLED` and `LOCKED` are enforced, not aliases.** This is an intentional
+  **synthesis-breaking security correction** for configurations that only asserted a posture.
+  - Owned `originReachability: DISABLED` now requires an effective ordinary `ownedApi.domain` (or the deprecated
+    equivalent), emits `DisableExecuteApiEndpoint: true`, and advertises only `https://<domain>/...`. A later L1
+    re-enable of the default endpoint fails final synthesis.
+  - Owned `LOCKED` now additionally requires `ownedApi.domain.mutualTlsAuthentication` and a final whole-stack proof
+    that every `AWS::ApiGatewayV2::ApiMapping` bound to the owned API targets an in-stack
+    `AWS::ApiGatewayV2::DomainName` with `MutualTlsAuthentication.TruststoreUri`. Missing, contradictory, imported, or
+    unresolvable mapping/domain evidence fails synthesis. `LOCKED` is an mTLS ingress model, not `DISABLED`.
+  - Attach-mode `LOCKED` fails for imported and concrete APIs. Attach-mode `DISABLED` is accepted only on a same-stack
+    concrete `HttpApi` whose emitted `DisableExecuteApiEndpoint` resolves to literal `true`; an imported API fails.
+  - Supplying `ownedApi.domain.mutualTlsAuthentication` without owned `LOCKED` fails as contradictory.
+  - Migrate before deploying: mTLS-capable clients can add an owned mutual-TLS domain and keep `LOCKED`; all other
+    clients should use `DISABLED` with an ordinary owned custom domain. Attach users must move to an owned mTLS domain,
+    or to a same-stack concrete API that disables the default endpoint for `DISABLED`. The new optional prop is
+    `AppTheoryMcpServerDomainOptions.mutualTlsAuthentication`.
+
+- **CDK explicit routes reject every authorizer value except `IAM` or `NONE`.** An omitted
+  `AppTheoryHttpApiRouteOptions.authorizer` still defaults to `NONE`, but uppercase `IAM`, misspellings, `null`,
+  numbers, objects, and unchecked configuration values now fail synthesis before the route is emitted instead of
+  silently becoming a public `NONE` route.
+
+- **The generated Lambda@Edge challenge-restoration handler is asynchronous.** It now returns a promise so
+  Lambda@Edge observes the origin response instead of discarding a synchronous return value. Redeploy the construct to
+  update the function code; clients see the restored `WWW-Authenticate` header once CloudFront propagates the new
+  version.
+
+- **The Remote MCP CDK guide now configures the function it passes to the construct.** The example attaches
+  `RESOURCE_METADATA_URL_TEMPLATE` to `props.handler` through `handler.addEnvironment(...)` instead of creating a second
+  unreferenced function. If you copied the old example, move that environment variable onto the actual MCP handler; the
+  construct still injects no environment variable.
+
 - **Object store: S3 `Get` now returns the typed not-found error for an absent object.** Go returns
   `objectstore.ErrObjectNotFound`; TypeScript and Python return `objectstore.not_found` for S3 `NoSuchKey`,
   `NoSuchVersion`, and an HTTP 404. The original SDK error stays in the chain (`errors.As`, `cause`, `__cause__`), so
@@ -189,9 +221,9 @@ new AppTheoryMcpServer(this, "ConsolidatedMcp", {
   handler,
   transportPosture: AppTheoryMcpTransportPosture.RUNTIME_BEARER,
   runtimePosture: { requireBearerToken: true },
-  originReachability: AppTheoryMcpOriginReachability.LOCKED,
+  originReachability: AppTheoryMcpOriginReachability.DISABLED,
   denialSignal: {},
-  ownedApi: { stage: { throttlingEnabled: true } },
+  ownedApi: { stage: { throttlingEnabled: true }, domain: { domainName: "mcp.example.com", certificate } },
   routeModel: AppTheoryMcpRouteModel.CONSOLIDATED,
 });
 ```
@@ -741,9 +773,12 @@ new AppTheoryMcpServer(this, "McpServer", {
   handler,
   facade: { providerId: "autheory" },
   runtimePosture: { requireBearerToken: true },
-  originReachability: AppTheoryMcpOriginReachability.LOCKED,
+  originReachability: AppTheoryMcpOriginReachability.DISABLED,
   denialSignal: { metricName: "apptheory.mcp.auth_denied" },
-  ownedApi: { stage: { throttlingEnabled: true } },
+  ownedApi: {
+    stage: { throttlingEnabled: true },
+    domain: { domainName: "mcp.example.com", certificate },
+  },
 });
 
 // After (explicit JWT): a static issuer and audience at the gateway.
@@ -761,7 +796,10 @@ new AppTheoryMcpServer(this, "McpServer", {
   handler,
   transportPosture: AppTheoryMcpTransportPosture.NONE_PUBLIC,
   originReachability: AppTheoryMcpOriginReachability.DISABLED,
-  ownedApi: { stage: { throttlingEnabled: true } },
+  ownedApi: {
+    stage: { throttlingEnabled: true },
+    domain: { domainName: "mcp.example.com", certificate },
+  },
 });
 ```
 

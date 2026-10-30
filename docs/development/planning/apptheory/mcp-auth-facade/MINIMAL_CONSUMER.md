@@ -75,14 +75,21 @@ new AppTheoryMcpServer(this, "AcmeMcp", {
   facade: { providerId: "acme" },                 // presence attaches the OAuth facade: selects the runtime-bearer default
   routeFamily: { patterns: ["/{client_namespace}/mcp"], rootAuthorizationServerDiscovery: false },
   runtimePosture: { requireBearerToken: true },    // the runtime-posture declaration the pairing requires
-  owningApiDefense: {                              // mandatory under runtime-bearer (DD-1)
-    accessLogging: true,
-    throttling: { rateLimit: 100, burstLimit: 200 },
+  originReachability: AppTheoryMcpOriginReachability.DISABLED, // mandatory proven decision (DD-2)
+  ownedApi: {
+    // The single public domain. DISABLED disables the execute-api default
+    // endpoint and advertises only this domain.
+    domain: { domainName: "mcp.example.com", certificate: acmeCertificate },
+    // Mandatory explicit stage-throttling decision under runtime-bearer.
+    stage: { throttlingEnabled: true },
   },
-  originReachability: "locked",                    // mandatory decision (DD-2)
   denialSignal: { metricName: "apptheory.mcp.auth_denied" }, // mandatory declaration (DD-3)
 });
 ```
+
+`AppTheoryMcpOriginReachability.LOCKED` is stricter, not an alias: it additionally requires
+`ownedApi.domain.mutualTlsAuthentication` and final proof that every mapped domain carries a truststore URI. Use it only
+when every client can present a trusted certificate; attach-mode LOCKED is unsupported.
 
 `transportPosture` is deliberately **not** set: the `facade` attach is the predicate that selects the
 `runtime-bearer` default (`DEFAULT_SEMANTICS.md`). The prop names above are the shipped construct's; the

@@ -72,9 +72,9 @@ new AppTheoryMcpServer(this, "ConsolidatedMcp", {
   handler,
   transportPosture: AppTheoryMcpTransportPosture.RUNTIME_BEARER,
   runtimePosture: { requireBearerToken: true },
-  originReachability: AppTheoryMcpOriginReachability.LOCKED,
+  originReachability: AppTheoryMcpOriginReachability.DISABLED,
   denialSignal: {},
-  ownedApi: { stage: { throttlingEnabled: true } },
+  ownedApi: { stage: { throttlingEnabled: true }, domain: { domainName: "mcp.example.com", certificate } },
   routeModel: AppTheoryMcpRouteModel.CONSOLIDATED,
 });
 ```
@@ -237,6 +237,20 @@ supplying it with `iam`, `runtime-bearer`, or `none-public` fails synthesis.
   must stay on; in attach mode `owningApiDefense` records the owning API's access-logging and throttling decisions;
 - `runtime-bearer` also requires a `denialSignal` declaration naming the `apptheory.mcp.auth_denied` metric with the
   bounded `outcome` and `route_family` dimensions.
+
+The origin decision is enforced, not asserted:
+
+- owned `disabled` requires an effective ordinary `ownedApi.domain`, emits
+  `DisableExecuteApiEndpoint: true`, and advertises only `https://<domain>/...`. A later L1 re-enable of the default
+  endpoint fails final synthesis.
+- owned `locked` additionally requires `ownedApi.domain.mutualTlsAuthentication`. Final synthesis proves every
+  `AWS::ApiGatewayV2::ApiMapping` bound to the owned API targets an in-stack `AWS::ApiGatewayV2::DomainName` with
+  `MutualTlsAuthentication.TruststoreUri`, and that the default endpoint stays disabled. LOCKED is an mTLS ingress
+  model, not a DISABLED alias and not a CloudFront/VPC-origin assertion.
+- attach `locked` is unsupported. Attach `disabled` is accepted only on a same-stack concrete `HttpApi` whose emitted
+  `DisableExecuteApiEndpoint` resolves to `true`; imported APIs fail. In attach mode `endpoint`/`endpoints` remain
+  execute-api origin templates, not public-authority declarations.
+- Supplying `ownedApi.domain.mutualTlsAuthentication` without owned `locked` fails as contradictory.
 
 Discovery, protected-resource metadata, authorize, and token routes stay explicitly `NONE` so a supplied API's default
 authorizer cannot intercept OAuth traffic: OAuth clients must fetch those documents before they hold a token. Scope
