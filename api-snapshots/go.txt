@@ -3748,6 +3748,8 @@ func (*MemorySessionStore) Put(context.Context, *Session) error
 
 func (*MemorySessionStore) PutAndCollectExpired(context.Context, *Session) ([]string, error)
 
+func (*MemorySessionStore) Seed(*Session)
+
 func (*MemoryStreamStore) Append(context.Context, string, string, json.RawMessage) (string, error)
 
 func (*MemoryStreamStore) Close(context.Context, string, string) error

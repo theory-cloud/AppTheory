@@ -93,7 +93,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/ts.txt`.
 
 <details>
-<summary>925 exported top-level symbols</summary>
+<summary>933 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, AGENT_MCP_PATTERN, ALBTargetGroupRequest, ALBTargetGroupResponse, APIGatewayProxyRequest, APIGatewayProxyResponse,
@@ -150,8 +150,8 @@ MCP_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION_2026_07_28, MCP_PROTOCOL_VERSION_LEGA
 McpCacheableResultConfig, McpCacheHint, McpCacheScope, McpContentBlock, McpDiscoverResult, McpEventNotFoundError, McpExtensionCapabilities, McpInputRequest,
 McpInputRequiredResult, McpJSONRecord, McpJSONValue, mcpPath, McpPromptArgument, McpPromptDef, McpPromptHandler, McpPromptMessage, McpPromptRegistry, McpPromptResult,
 McpProtocolShape, McpRequestID, McpResourceContent, McpResourceContext, McpResourceDef, McpResourceHandler, McpResourceRegistry, McpResourceTemplateDef, McpResultType,
-McpRPCError, McpRPCRequest, McpRPCResponse, McpServer, McpServerIdentity, McpServerOptions, McpSession, McpSessionNotFoundError, McpSessionStore, McpSSEEvent, McpStreamEvent,
-McpStreamingToolHandler, McpStreamNotFoundError, McpStreamStore, McpTask, McpTaskInvalidCursorError, McpTaskListRequest, McpTaskListResult, McpTaskLookup, McpTaskMetadata,
+McpRPCError, McpRPCRequest, McpRPCResponse, McpServer, McpServerIdentity, McpServerOptions, McpSession, McpSessionCapacityError, McpSessionExpiredError, McpSessionNotFoundError, McpSessionStore, McpSSEEvent, McpStreamAggregateBackfillError, McpStreamAggregateCapacityError, McpStreamAppendConflictError, McpStreamEvent,
+McpStreamingToolHandler, McpStreamEventTooLargeError, McpStreamNotFoundError, McpStreamSpillStore, McpStreamStore, McpStreamTransactionRequiredError, McpTask, McpTaskInvalidCursorError, McpTaskListRequest, McpTaskListResult, McpTaskLookup, McpTaskMetadata,
 McpTaskNotFoundError, McpTaskRecord, McpTaskRuntimeOptions, McpTaskStatus, McpTaskStore, McpTaskSupport, McpTaskTerminalError, McpTestHarness, McpTestHarnessOptions,
 McpTestInvokeOptions, McpTestResult, McpTestSSEFrame, McpToolAuthContext, McpToolContext, McpToolDef, McpToolExecution, McpToolHandler, McpToolRegistry, McpToolResult,
 McpTransportPosture, MemoryAuthorizationCodeStore, MemoryAuthorizationCodeStoreOptions, MemoryClientStore, MemoryClientStoreOptions, MemoryMcpSessionStore, MemoryMcpStreamStore,

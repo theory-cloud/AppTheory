@@ -623,7 +623,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>1240 exported top-level symbols</summary>
+<summary>1248 exported top-level symbols</summary>
 
 ```text
 AccountAssertion, AccountAssertionAssumeFailed, AccountAssertionMismatch, AccountAssertionNotConfigured, AccountAssertionState, AccountAssertionUnavailable,
@@ -676,7 +676,7 @@ ErrorCodeProviderOperationFailed, ErrorCodeProviderOperationUnsupported, ErrorCo
 ErrorCodeRealLifecycleIncomplete, ErrorCodeRouteContractIncomplete, ErrorCodeSessionOwnerMismatch, ErrorCodeSessionRegistryIncomplete, ErrorCodeTenantBindingViolation,
 ErrorCodeTokenSafetyViolation, ErrorCodeUnauthenticatedController, ErrorCodeUnsupportedOperation, ErrorEnvelope, ErrorEnvelopeFromError, ErrorNotifier, ErrorType,
 ErrorTypeConflict, ErrorTypeInternal, ErrorTypeInvalidInput, ErrorTypeNotFound, ErrorTypeRateLimit, ErrRecordKeyRequired, ErrRefreshTokenExpired, ErrRefreshTokenNotFound,
-ErrSessionNotFound, ErrStreamEventTooLarge, ErrStreamNotFound, ErrTaskNotFound, ErrTaskTerminal, ErrTransactionExpired, ErrTransactionNotFound, ErrUnsupportedOperation,
+ErrSessionCapacityExceeded, ErrSessionExpired, ErrSessionNotFound, ErrStreamAggregateBackfillRequired, ErrStreamAggregateCapacityExceeded, ErrStreamAppendConflict, ErrStreamEventTooLarge, ErrStreamNotFound, ErrStreamTransactionRequired, ErrTaskNotFound, ErrTaskTerminal, ErrTransactionExpired, ErrTransactionNotFound, ErrUnsupportedOperation,
 EscapeHatches, ETag, Event, EventBridgeEvent, EventBridgeEventOptions, EventBridgeHandler, EventBridgePattern, EventBridgeRule, EventBridgeScheduledWorkloadResultSummary,
 EventBridgeScheduledWorkloadSummary, EventBridgeSelector, EventBridgeWorkloadEnvelope, EventBus, EventBusConfig, EventContext, EventHandler, EventMiddleware, EventQuery,
 FacadeConfig, Factory, FakeClient, FakeEmbedder, FakeProvider, FakeSNSClient, FakeStore, FakeStreamerClient, FixedWindowStrategy, FullyRedact, GenerateOpenAPI,
@@ -750,7 +750,7 @@ SecureRouteHTTP, SecureRouteSurface, SecureRouteWebSocket, SemanticIndex, Semant
 SensitiveFields, Server, ServerIdentity, ServerOption, Session, SessionCommandInput, SessionKey, SessionListInput, SessionQueryInput, SessionReconstructionHook,
 SessionReconstructionOption, SessionReconstructionRequest, SessionRecord, SessionRecordFromRegistryRecord, SessionRecordToRegistryRecord, SessionRegistry,
 SessionRegistryContract, SessionRegistryLister, SessionRegistryPartitionKey, SessionRegistryRecord, SessionRegistrySortKey, SessionRegistryTableName, SessionSpec, SessionStatus,
-SessionStore, SessionTokenMetadata, SessionTokenMetadataFromProviderToken, SetLogger, SlidingWindowStrategy, SNSEvent, SNSEventOptions, SNSHandler, SNSNotifierOptions,
+SessionExpirySweeper, SessionStore, SessionTokenMetadata, SessionTokenMetadataFromProviderToken, SetLogger, SlidingWindowStrategy, SNSEvent, SNSEventOptions, SNSHandler, SNSNotifierOptions,
 SNSPublishCall, SNSRecordOptions, SourceProvenance, SpanRecord, SQSEvent, SQSEventOptions, SQSHandler, SQSMessageOptions, SSEEvent, SSEMessage, SSEResponse, SSEStreamResponse,
 StageGlobalRoute, StateFailed, StateImagePrepared, StateImagePreparing, StateReadinessProbing, StateReady, StateRequested, StateResuming, StateRunning, StateStarted,
 StateStarting, StateStopped, StateStopping, StateSuspended, StateSuspending, StateTearingDown, StateTerminated, StateTerminating, StateValidated, StateValidating,
@@ -778,7 +778,7 @@ WithIdentifier, WithIDGenerator, WithInitialSessionListenerBudget, WithInitialSe
 WithLifecycleHandler, WithLimits, WithLogger,
 WithLoggingLevelHook, WithObservability, WithOriginValidator, WithPolicyHook, WithProfileClock, WithProfileEnvironment, WithProfileSanitizer, WithProfileWriter,
 WithRegistryClientTTL, WithRequestIDSource, WithResourceSubscriptionHooks, WithRevocationEndpoint, WithRouteGuard, WithSanitizer, WithServerIDGenerator, WithServerInfoMetadata,
-WithSessionReconstructionClock, WithSessionReconstructionStaleAfter, WithSessionStore, WithStreamEventByteLimit, WithStreamEventsPerSessionLimit, WithStreamIDGenerator,
+WithSessionCapacityLimit, WithSessionReconstructionClock, WithSessionReconstructionStaleAfter, WithSessionStore, WithStreamEventByteLimit, WithStreamEventsPerSessionLimit, WithStreamIDGenerator,
 WithStreamSessionByteLimit, WithStreamStore, WithTaskRuntime, WithTenantClaim, WithTier, WithToolContextHook, WithVerboseHandlerErrors, WithWebSocketClientFactory,
 WithWebSocketSupport, WithZapLogger, WrapError, XMLSanitizationPattern
 ```
