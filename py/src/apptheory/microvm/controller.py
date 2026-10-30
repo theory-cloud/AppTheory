@@ -202,6 +202,11 @@ class MicroVMRealController:
                 "",
             ) from None
         self._clock = clock or time.time
+        set_registry_clock = getattr(registry, "set_registry_clock", None)
+        if callable(set_registry_clock):
+            set_registry_clock(self._clock)
+        elif hasattr(registry, "_clock"):
+            registry._clock = self._clock
         self._ids = id_generator or _random_microvm_session_id
         self._ttl_seconds = int(ttl_seconds or 0) if int(ttl_seconds or 0) > 0 else 3600
         self._deployment_defaults = _normalize_deployment_defaults(

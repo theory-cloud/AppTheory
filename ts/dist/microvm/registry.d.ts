@@ -21,6 +21,7 @@ export declare class ReconstructingMicroVMSessionRegistry implements MicroVMSess
     private readonly staleAfterMs;
     private readonly clock;
     constructor(registry: MicroVMSessionRegistry, hook: MicroVMSessionReconstructionHook, options?: ReconstructingMicroVMSessionRegistryOptions);
+    setRegistryClock(now: () => Date): void;
     put(record: MicroVMSessionRecord): Promise<MicroVMSessionRecord>;
     get(key: MicroVMSessionKey): Promise<MicroVMSessionRecord>;
     delete(key: MicroVMSessionKey): Promise<void>;

@@ -301,6 +301,9 @@ func NewRealController(provider Provider, registry SessionRegistry, opts ...Cont
 			opt(controller)
 		}
 	}
+	if setter, ok := registry.(interface{ setClock(func() time.Time) }); ok {
+		setter.setClock(controller.clock.Now)
+	}
 	if !controller.loggingConfigured {
 		logging, err := environmentProviderLogging()
 		if err != nil {

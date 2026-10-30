@@ -189,6 +189,20 @@ func cloneSession(session *Session) Session {
 	return stored
 }
 
+// Seed stores a session exactly as supplied, without the Put admission checks.
+// It exists only for deterministic fixtures that must model state retained by
+// an earlier process (for example, an already-expired session). Production
+// callers must use Put.
+func (m *MemorySessionStore) Seed(session *Session) {
+	if m == nil || session == nil || session.ID == "" {
+		return
+	}
+	stored := cloneSession(session)
+	m.mu.Lock()
+	m.store[stored.ID] = &stored
+	m.mu.Unlock()
+}
+
 // Delete removes a session by ID. It is a no-op if the session does not exist.
 func (m *MemorySessionStore) Delete(_ context.Context, id string) error {
 	m.mu.Lock()

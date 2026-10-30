@@ -211,9 +211,9 @@ func newFixtureMCPSessionStore(config FixtureMCPSessionStore) (*mcp.MemorySessio
 			ExpiresAt: timeFromUnixMilliseconds(seed.ExpiresUnixMS),
 			Data:      cloneStringMap(seed.Data),
 		}
-		if err := store.Put(context.Background(), sess); err != nil {
-			return nil, fmt.Errorf("seed session %q: %w", seed.ID, err)
-		}
+		// Fixture seeds model state retained by an earlier process, including
+		// already-expired sessions, so they bypass the public Put admission checks.
+		store.Seed(sess)
 	}
 	return store, nil
 }

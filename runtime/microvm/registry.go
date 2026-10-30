@@ -218,6 +218,17 @@ func (r *ReconstructingSessionRegistry) List(ctx context.Context, input SessionL
 	return lister.List(ctx, input)
 }
 
+// setClock aligns a wrapped built-in registry with the controller clock so
+// live-record filtering and provider refresh use the same instant.
+func (r *ReconstructingSessionRegistry) setClock(now func() time.Time) {
+	if r == nil || r.registry == nil || now == nil {
+		return
+	}
+	if setter, ok := r.registry.(interface{ setClock(func() time.Time) }); ok {
+		setter.setClock(now)
+	}
+}
+
 // ReconstructSessionRecord invokes a product-owned hook and validates the returned operational state.
 func ReconstructSessionRecord(ctx context.Context, request SessionReconstructionRequest, hook SessionReconstructionHook) (SessionRecord, error) {
 	if ctx == nil {
@@ -667,6 +678,13 @@ func (r *TableTheorySessionRegistry) registryNow() time.Time {
 	return r.now().UTC()
 }
 
+func (r *TableTheorySessionRegistry) setClock(now func() time.Time) {
+	if r == nil || now == nil {
+		return
+	}
+	r.now = now
+}
+
 // listLegacyRecords reads the pre-M1 partition and returns the records for the requested identity
 // that are not already present in the canonical partition, so List can union the two partitions
 // while keeping the canonical item when both forms exist.
@@ -851,6 +869,13 @@ func (r *MemorySessionRegistry) registryNow() time.Time {
 		return time.Now().UTC()
 	}
 	return r.now().UTC()
+}
+
+func (r *MemorySessionRegistry) setClock(now func() time.Time) {
+	if r == nil || now == nil {
+		return
+	}
+	r.now = now
 }
 
 func normalizeSessionRegistryRecord(record SessionRegistryRecord) SessionRegistryRecord {

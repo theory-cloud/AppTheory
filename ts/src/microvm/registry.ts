@@ -371,6 +371,13 @@ export class ReconstructingMicroVMSessionRegistry implements MicroVMSessionRegis
     this.clock = options.clock ?? { now: () => new Date() };
   }
 
+  setRegistryClock(now: () => Date): void {
+    const inner = this.registry as unknown as { now?: () => Date };
+    if (typeof inner.now === "function") {
+      inner.now = now;
+    }
+  }
+
   async put(record: MicroVMSessionRecord): Promise<MicroVMSessionRecord> {
     return await this.registry.put(record);
   }

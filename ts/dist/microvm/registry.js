@@ -194,6 +194,12 @@ export class ReconstructingMicroVMSessionRegistry {
         this.staleAfterMs = staleAfterMs > 0 ? staleAfterMs : 0;
         this.clock = options.clock ?? { now: () => new Date() };
     }
+    setRegistryClock(now) {
+        const inner = this.registry;
+        if (typeof inner.now === "function") {
+            inner.now = now;
+        }
+    }
     async put(record) {
         return await this.registry.put(record);
     }

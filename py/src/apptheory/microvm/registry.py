@@ -249,6 +249,10 @@ class ReconstructingMicroVMSessionRegistry:
         self._stale_after_seconds = int(stale_after_seconds or 0) if int(stale_after_seconds or 0) > 0 else 0
         self._clock = clock or time.time
 
+    def set_registry_clock(self, clock: Callable[[], float]) -> None:
+        if hasattr(self._registry, "_clock"):
+            self._registry._clock = clock
+
     def put(self, record: MicroVMSessionRecord) -> MicroVMSessionRecord:
         return self._registry.put(record)
 

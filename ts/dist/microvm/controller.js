@@ -156,6 +156,13 @@ export class MicroVMRealController {
         this.deploymentDefaults = normalizeMicroVMControllerDeploymentDefaults(options.deployment_defaults ??
             environmentMicroVMControllerDeploymentDefaults());
         this.clock = options.clock ?? { now: () => new Date() };
+        const clockAware = registry;
+        if (typeof clockAware.setRegistryClock === "function") {
+            clockAware.setRegistryClock(() => this.clock.now());
+        }
+        else if (typeof clockAware.now === "function") {
+            clockAware.now = () => this.clock.now();
+        }
         this.ids = options.ids ?? { newID: () => randomMicroVMSessionID() };
         const ttlMs = Math.trunc(Number(options.ttl_ms) || 0);
         this.ttlMs = ttlMs > 0 ? ttlMs : 60 * 60 * 1000;

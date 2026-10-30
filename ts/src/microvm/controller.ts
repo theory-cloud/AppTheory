@@ -326,6 +326,15 @@ export class MicroVMRealController implements MicroVMControllerRouteTarget {
         environmentMicroVMControllerDeploymentDefaults(),
     );
     this.clock = options.clock ?? { now: () => new Date() };
+    const clockAware = registry as unknown as {
+      setRegistryClock?: (now: () => Date) => void;
+      now?: () => Date;
+    };
+    if (typeof clockAware.setRegistryClock === "function") {
+      clockAware.setRegistryClock(() => this.clock.now());
+    } else if (typeof clockAware.now === "function") {
+      clockAware.now = () => this.clock.now();
+    }
     this.ids = options.ids ?? { newID: () => randomMicroVMSessionID() };
     const ttlMs = Math.trunc(Number(options.ttl_ms) || 0);
     this.ttlMs = ttlMs > 0 ? ttlMs : 60 * 60 * 1000;
