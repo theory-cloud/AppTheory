@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"sync"
 )
 
@@ -77,6 +78,37 @@ func cancellationKey(sessionID string, requestID any) (string, bool) {
 		return "", false
 	}
 	return sessionID + "\x00" + idKey, true
+}
+
+// cancelSession cancels and forgets every in-flight request owned by sessionID.
+// It is part of DeleteSession cleanup so a deleted or expired session cannot
+// leave cancellation entries or live handler contexts behind.
+func (t *cancellationTracker) cancelSession(sessionID string) int {
+	if t == nil {
+		return 0
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return 0
+	}
+	prefix := sessionID + "\x00"
+
+	t.mu.Lock()
+	entries := make([]*cancellationEntry, 0)
+	for key, entry := range t.requests {
+		if strings.HasPrefix(key, prefix) {
+			entries = append(entries, entry)
+			delete(t.requests, key)
+		}
+	}
+	t.mu.Unlock()
+
+	for _, entry := range entries {
+		if entry != nil && entry.cancel != nil {
+			entry.cancel()
+		}
+	}
+	return len(entries)
 }
 
 func requestIDKey(requestID any) (string, bool) {

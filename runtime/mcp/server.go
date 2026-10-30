@@ -705,18 +705,38 @@ func (s *Server) handleDELETE(c *apptheory.Context) (*apptheory.Response, error)
 		s.logger.ErrorContext(ctx, "failed to delete session", "sessionId", sessionID, "error", err)
 		return internalServerError(), nil
 	}
+	if err := s.cleanupSessionState(ctx, sessionID); err != nil {
+		s.logger.ErrorContext(ctx, "failed to clean up session state", "sessionId", sessionID, "error", err)
+	}
+
+	return &apptheory.Response{Status: 202}, nil
+}
+
+// cleanupSessionState removes every associated stream, task, replay, and
+// cancellation record owned by sessionID. It is shared by explicit DELETE,
+// Get-observed expiry, and the expired-first sweep performed by the built-in
+// session store during initialization.
+func (s *Server) cleanupSessionState(ctx context.Context, sessionID string) error {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return nil
+	}
+
+	var errs []error
 	if s.streamStore != nil {
 		if err := s.streamStore.DeleteSession(ctx, sessionID); err != nil {
-			s.logger.ErrorContext(ctx, "failed to delete stream session", "sessionId", sessionID, "error", err)
+			errs = append(errs, fmt.Errorf("delete stream session: %w", err))
 		}
 	}
 	if s.taskRuntime.store != nil {
 		if err := s.taskRuntime.store.DeleteSession(ctx, sessionID); err != nil {
-			s.logger.ErrorContext(ctx, "failed to delete task session", "sessionId", sessionID, "error", err)
+			errs = append(errs, fmt.Errorf("delete task session: %w", err))
 		}
 	}
-
-	return &apptheory.Response{Status: 202}, nil
+	if s.cancellations != nil {
+		s.cancellations.cancelSession(sessionID)
+	}
+	return errors.Join(errs...)
 }
 
 // dispatch routes a parsed JSON-RPC request to the appropriate MCP method handler.
@@ -1566,6 +1586,14 @@ func (s *Server) getSession(ctx context.Context, sessionID string) (*Session, er
 
 	sess, err := s.sessionStore.Get(ctx, sessionID)
 	if err != nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			// The built-in store deletes an expired session as it observes it,
+			// so the server cannot see the record; clean the associated state
+			// for the requested ID without turning the 404 into a 500.
+			if cleanupErr := s.cleanupSessionState(ctx, sessionID); cleanupErr != nil {
+				s.logger.WarnContext(ctx, "failed to clean up missing session state", "sessionId", sessionID, "error", cleanupErr)
+			}
+		}
 		return nil, err
 	}
 	if sessionPrincipalMismatch(ctx, sess) {
@@ -1574,6 +1602,9 @@ func (s *Server) getSession(ctx context.Context, sessionID string) (*Session, er
 	if sessionExpiredAt(now, sess) {
 		if deleteErr := s.sessionStore.Delete(ctx, sessionID); deleteErr != nil && !errors.Is(deleteErr, ErrSessionNotFound) {
 			s.logger.WarnContext(ctx, "failed to delete expired session", "sessionId", sessionID, "error", deleteErr)
+		}
+		if cleanupErr := s.cleanupSessionState(ctx, sessionID); cleanupErr != nil {
+			s.logger.WarnContext(ctx, "failed to clean up expired session state", "sessionId", sessionID, "error", cleanupErr)
 		}
 		return nil, ErrSessionNotFound
 	}
@@ -1599,7 +1630,7 @@ func (s *Server) handleInitializeHTTP(ctx context.Context, req *Request) (*appth
 	sess, err := s.createSession(ctx, selectedPV)
 	if err != nil {
 		s.logger.ErrorContext(ctx, "failed to create session", "error", err)
-		return jsonRPCErrorResponse(req.ID, CodeInternalError, "session error"), nil
+		return s.marshalSingleResponse(initializeStoreErrorResponse(req, err), "", false)
 	}
 
 	resp := s.handleInitialize(req, selectedPV)
@@ -1654,10 +1685,38 @@ func (s *Server) createSession(ctx context.Context, selectedPV string) (*Session
 			"protocolVersion": selectedPV,
 		},
 	}
+
+	if sweeper, ok := s.sessionStore.(SessionExpirySweeper); ok {
+		expiredIDs, err := sweeper.PutAndCollectExpired(ctx, sess)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create session: %w", err)
+		}
+		for _, expiredID := range expiredIDs {
+			if cleanupErr := s.cleanupSessionState(ctx, expiredID); cleanupErr != nil {
+				if deleteErr := s.sessionStore.Delete(ctx, sess.ID); deleteErr != nil {
+					cleanupErr = errors.Join(cleanupErr, deleteErr)
+				}
+				return nil, fmt.Errorf("failed to clean expired session state: %w", cleanupErr)
+			}
+		}
+		return sess, nil
+	}
+
 	if err := s.sessionStore.Put(ctx, sess); err != nil {
 		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
 	return sess, nil
+}
+
+// initializeStoreErrorResponse keeps the capacity refusal distinct from every
+// other session-store failure: only the typed capacity error becomes JSON-RPC
+// CodeServerError with the fixed public message; other errors keep the generic
+// internal-error mapping.
+func initializeStoreErrorResponse(req *Request, err error) *Response {
+	if errors.Is(err, ErrSessionCapacityExceeded) {
+		return NewErrorResponse(req.ID, CodeServerError, ErrSessionCapacityExceeded.Error())
+	}
+	return NewErrorResponse(req.ID, CodeInternalError, "session error")
 }
 
 func (s *Server) handleInitializeBatch(ctx context.Context, req *Request, batchProtocolVersion string) (*Response, *Session, *Response) {
@@ -1670,7 +1729,7 @@ func (s *Server) handleInitializeBatch(ctx context.Context, req *Request, batchP
 	}
 	sess, err := s.createSession(ctx, selectedPV)
 	if err != nil {
-		return nil, nil, NewErrorResponse(req.ID, CodeInternalError, "session error")
+		return nil, nil, initializeStoreErrorResponse(req, err)
 	}
 	return s.handleInitialize(req, selectedPV), sess, nil
 }
