@@ -24,6 +24,14 @@ or deprecation posture must add or update a section here before the release is p
   is only distinguishable from a denial when the caller holds `s3:ListBucket`; without it S3 answers 403
   `AccessDenied`, which remains an error. `Delete` is unchanged and stays idempotent.
 
+- **MCP auth facade: HTTP discovery origins use parsed-IP loopback semantics.** An HTTP origin is now accepted
+  only for the exact hostname `localhost` or a host that parses as a loopback IP literal (127.0.0.0/8, IPv6 `::1` in
+  its `::1` and expanded spellings, or an IPv4-mapped IPv6 address whose mapped IPv4 address is loopback). DNS names
+  such as `127.attacker.example`, `127.0.0.1.example.com`, and `127.0.0.1.attacker.example` are rejected, as are
+  trailing-dot, short-IPv4, integer-IPv4, unspecified, and public addresses. A deployment that unsafely configured
+  such a hostname for cleartext metadata must use an HTTPS non-loopback origin or a real loopback literal; HTTPS
+  origins are otherwise unchanged. The shared origin table is executed by Go, TypeScript, and Python.
+
 - **MCP auth facade: brokered refresh now requires a transactional family store.** This is a
   **startup-breaking change for every consumer of the framework-owned front channel**
   (`mcpfacade.RegisterMCPFacade` / `RegisterMCPFacadeSecure`, `registerMcpFacade`, `register_mcp_facade` with
