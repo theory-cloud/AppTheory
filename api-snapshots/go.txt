@@ -2340,6 +2340,8 @@ type Response struct {
 	IsBase64   bool
 }
 
+type RouteGuard func(*Context) (*Response, error)
+
 type RouteOption func(*routeOptions)
 
 type SNSHandler func(*EventContext, events.SNSEventRecord) (any, error)
@@ -2617,6 +2619,8 @@ func WithPolicyHook(PolicyHook) Option
 
 func WithRequestIDSource(RequestIDSource) Option
 
+func WithRouteGuard(...RouteGuard) RouteOption
+
 func WithTenantClaim(string) Option
 
 func WithTier(Tier) Option
@@ -2779,7 +2783,7 @@ func (*SecureApp) GenerateOpenAPIJSON(SecureOpenAPISpec) ([]byte, error)
 
 func (*SecureApp) Get(string, Handler, AuthPosture) *SecureApp
 
-func (*SecureApp) Handle(string, string, Handler, AuthPosture) *SecureApp
+func (*SecureApp) Handle(string, string, Handler, AuthPosture, ...RouteOption) *SecureApp
 
 func (*SecureApp) HandleLambda(context.Context, json.RawMessage) (any, error)
 
@@ -5568,6 +5572,8 @@ func ProtectedResourceWWWAuthenticate(string) string
 func RFC9728ResourceMetadataURL(string) (string, bool)
 
 func RegisterMCPServer(*apptheory.SecureApp, apptheory.Handler, MCPServerConfig) error
+
+func RequireBearerTokenGuard(RequireBearerTokenOptions) apptheory.RouteGuard
 
 func RequireBearerTokenMiddleware(RequireBearerTokenOptions) apptheory.Middleware
 
