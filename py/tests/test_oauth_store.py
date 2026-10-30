@@ -15,7 +15,9 @@ from apptheory.oauth.store import (
     AuthorizationCodeRecord,
     BrokerExpiredError,
     BrokerLockedError,
+    BrokerFamilyExistsError,
     BrokerRevokedError,
+    BrokerSuccessorExistsError,
     BrokerVersionConflictError,
     ClientRecord,
     ClientVersionConflictError,
@@ -63,6 +65,25 @@ class TTLIgnoringBrokerStore(MemoryRouteRefreshBrokerStore):
         super().__init__(now=now, ttl=self.TTL_SECONDS, lock_ttl_seconds=lock_ttl_seconds)
 
 
+class NonTombstoneBrokerStore(MemoryRouteRefreshBrokerStore):
+    """Deliberately broken: revokes members individually and never writes the family tombstone."""
+
+    def revoke_family(self, family_hash: str) -> list[RouteRefreshBrokerRecord]:
+        revoked: list[RouteRefreshBrokerRecord] = []
+        for record in self.list_family(family_hash):
+            updated = self.revoke(record.handle_hash)
+            if updated is not None:
+                revoked.append(updated)
+        return revoked
+
+
+class NonAtomicRotateBrokerStore(MemoryRouteRefreshBrokerStore):
+    """Deliberately broken: returns a successor without storing it or updating the predecessor."""
+
+    def rotate_family(self, rotation: Any) -> RouteRefreshBrokerRecord:
+        return rotation.successor
+
+
 class NonBumpingBrokerStore(MemoryRouteRefreshBrokerStore):
     """Deliberately broken: a read hides the version bump a lock or revoke advanced.
 
@@ -88,7 +109,13 @@ class NonBumpingBrokerStore(MemoryRouteRefreshBrokerStore):
 # mismatch or as the store's own error surfacing through a scenario that assumes
 # the operation succeeds: hiding a lock's version bump makes the versioned-swap
 # row present a stale version, so its store call raises a version conflict.
-_BROKEN_STORE_FAILURES = (AssertionError, BrokerVersionConflictError)
+_BROKEN_STORE_FAILURES = (
+    AssertionError,
+    BrokerVersionConflictError,
+    BrokerFamilyExistsError,
+    BrokerSuccessorExistsError,
+    KeyError,
+)
 
 
 def _load_fixture(name: str) -> dict[str, Any]:
@@ -539,6 +566,21 @@ class StoreConformanceNonVacuityTests(unittest.TestCase):
                 "store.route_refresh_broker.acquire_lock_bumps_version",
                 "store.route_refresh_broker.revoke_bumps_version",
             ],
+        )
+
+    def test_non_tombstone_broker_store_fails_the_table(self) -> None:
+        self._assert_broken_bundle_fails(
+            self._stores(route_refresh_broker=NonTombstoneBrokerStore),
+            [
+                "store.route_refresh_broker.family_tombstone_revokes_more_than_eight_members",
+                "store.route_refresh_broker.family_tombstone_covers_more_than_one_hundred_members",
+            ],
+        )
+
+    def test_non_atomic_rotate_broker_store_fails_the_table(self) -> None:
+        self._assert_broken_bundle_fails(
+            self._stores(route_refresh_broker=NonAtomicRotateBrokerStore),
+            ["store.route_refresh_broker.family_rotate_is_atomic"],
         )
 
 

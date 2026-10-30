@@ -602,6 +602,8 @@ func (s *MemoryRouteRefreshBrokerStore) CreateFamily(
 // successor handle does not exist. The store creates the successor, writes the
 // grace response onto the presented record, clears the lock, and returns the
 // stored successor. A failure leaves neither record changed.
+//
+//nolint:gocyclo // the validation order is the security contract.
 func (s *MemoryRouteRefreshBrokerStore) RotateFamily(
 	_ context.Context,
 	rotation RouteRefreshFamilyRotation,

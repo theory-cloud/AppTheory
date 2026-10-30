@@ -121,8 +121,7 @@ func (b *completeBroker) RevokeFamily(ctx context.Context, familyHash string) ([
 func capabilityVariant(t *testing.T, variant string, stores oauthstore.Stores) oauthstore.RouteRefreshBrokerStore {
 	t.Helper()
 	reference := stores.RouteRefreshBroker
-	base, ok := reference.(oauthstore.RouteRefreshBrokerStore)
-	require.True(t, ok)
+	base := reference
 	seeder, ok := reference.(oauthstore.RouteRefreshBrokerSeeder)
 	require.True(t, ok)
 	family, ok := reference.(oauthstore.RouteRefreshBrokerFamilyStore)

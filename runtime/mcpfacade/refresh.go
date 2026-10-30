@@ -210,6 +210,8 @@ func refreshLockFailure(err error, elapsed time.Duration) (*apptheory.Response, 
 // response ends the request here, without a lock and without an upstream call.
 // A returned record with a non-zero GraceExpiresAt has been rotated away and its
 // grace window has closed: the caller classifies that presentation.
+//
+//nolint:gocyclo // the validation order is the security contract.
 func (front *frontChannelConfig) resolveRefreshRecord(
 	ctx *apptheory.Context,
 	form url.Values,

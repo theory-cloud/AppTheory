@@ -32,6 +32,7 @@ const (
 	conformanceOutcomeSuccessorExists          = "successor_exists"
 	conformanceOutcomeLegacyLineageUnsupported = "legacy_lineage_unsupported"
 	conformanceOutcomeFamilyCapabilityMissing  = "family_capability_missing"
+	conformanceNone                            = "none"
 )
 
 // Conformance snapshot keys used by more than one row.
@@ -365,7 +366,7 @@ func (h *conformanceHarness) authorizationCodeConsumeRecordPayload(testCase Conf
 // sentinel when the consume returned no record.
 func codeRecordStatusField(record *AuthorizationCodeRecord) string {
 	if record == nil {
-		return "none"
+		return conformanceNone
 	}
 	return record.Status
 }
@@ -484,7 +485,7 @@ func (h *conformanceHarness) putVersionParam(testCase ConformanceCase) int {
 // "none" sentinel when the fetch returned no record.
 func brokerRecordStatusField(record *RouteRefreshBrokerRecord) string {
 	if record == nil {
-		return "none"
+		return conformanceNone
 	}
 	return record.Status
 }
@@ -882,16 +883,6 @@ func (h *conformanceHarness) brokerExpiredVsUnknown(testCase ConformanceCase) (m
 	}, nil
 }
 
-// brokerFamilyStore returns the optional family capability, or ErrBrokerNotSeedable
-// when the store does not implement it.
-func (h *conformanceHarness) brokerFamilyStore() (RouteRefreshBrokerFamilyStore, error) {
-	family, ok := h.stores.RouteRefreshBroker.(RouteRefreshBrokerFamilyStore)
-	if !ok {
-		return nil, fmt.Errorf("%w: %T", ErrBrokerNotSeedable, h.stores.RouteRefreshBroker)
-	}
-	return family, nil
-}
-
 // putBrokerFamily seeds one handle with a family hash through the store's own
 // create path.
 func (h *conformanceHarness) putBrokerFamily(key, familyHash string) error {
@@ -923,11 +914,11 @@ func (h *conformanceHarness) brokerListFamily(testCase ConformanceCase) (map[str
 	otherHash := h.key(testCase, "other-family")
 	familySize := h.size(testCase, "family_size")
 	otherSize := h.size(testCase, "other_family_size")
-	if err := h.seedFamilyWithRoot(testCase, familyHash, familySize, "member"); err != nil {
-		return nil, err
+	if seedErr := h.seedFamilyWithRoot(testCase, familyHash, familySize, "member"); seedErr != nil {
+		return nil, seedErr
 	}
-	if err := h.seedFamilyWithRoot(testCase, otherHash, otherSize, "other"); err != nil {
-		return nil, err
+	if seedErr := h.seedFamilyWithRoot(testCase, otherHash, otherSize, "other"); seedErr != nil {
+		return nil, seedErr
 	}
 	records, err := family.ListFamily(h.ctx(), familyHash)
 	if err != nil {
@@ -985,11 +976,11 @@ func (h *conformanceHarness) brokerRevokeFamily(testCase ConformanceCase) (map[s
 	otherHash := h.key(testCase, "other-family")
 	familySize := h.size(testCase, "family_size")
 	otherSize := h.size(testCase, "other_family_size")
-	if err := h.seedFamilyWithRoot(testCase, familyHash, familySize, "member"); err != nil {
-		return nil, err
+	if seedErr := h.seedFamilyWithRoot(testCase, familyHash, familySize, "member"); seedErr != nil {
+		return nil, seedErr
 	}
-	if err := h.seedFamilyWithRoot(testCase, otherHash, otherSize, "other"); err != nil {
-		return nil, err
+	if seedErr := h.seedFamilyWithRoot(testCase, otherHash, otherSize, "other"); seedErr != nil {
+		return nil, seedErr
 	}
 	familyKeys := make([]string, 0, familySize)
 	for index := 0; index < familySize; index++ {

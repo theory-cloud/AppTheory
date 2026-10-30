@@ -74,13 +74,13 @@ func (s nonTombstoneBrokerStore) RevokeFamily(
 	ctx context.Context,
 	familyHash string,
 ) ([]*store.RouteRefreshBrokerRecord, error) {
-	records, err := s.MemoryRouteRefreshBrokerStore.ListFamily(ctx, familyHash)
+	records, err := s.ListFamily(ctx, familyHash)
 	if err != nil {
 		return nil, err
 	}
 	revoked := make([]*store.RouteRefreshBrokerRecord, 0, len(records))
 	for _, record := range records {
-		updated, revokeErr := s.MemoryRouteRefreshBrokerStore.Revoke(ctx, record.HandleHash)
+		updated, revokeErr := s.Revoke(ctx, record.HandleHash)
 		if revokeErr != nil {
 			return nil, revokeErr
 		}

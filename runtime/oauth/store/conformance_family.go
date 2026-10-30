@@ -116,7 +116,7 @@ func fieldOutcome(record *RouteRefreshBrokerRecord, err error) error {
 // brokerRecordFamily reports a record's family hash, or the "none" sentinel.
 func brokerRecordFamily(record *RouteRefreshBrokerRecord) string {
 	if record == nil {
-		return "none"
+		return conformanceNone
 	}
 	return record.FamilyHash
 }
@@ -173,7 +173,11 @@ func (h *conformanceHarness) brokerFamilyCreateBinding(testCase ConformanceCase)
 	familyHash := h.key(testCase, "family")
 	root := h.familyRoot(familyHash)
 	root.ChainGeneration = h.size(testCase, "generation")
-	if binding, _ := testCase.Params["family_binding"].(string); binding == "other" {
+	binding := ""
+	if raw, ok := testCase.Params["family_binding"].(string); ok {
+		binding = raw
+	}
+	if binding == "other" {
 		root.FamilyHash = h.key(testCase, "other-family")
 	}
 	_, createErr := family.CreateFamily(h.ctx(), root)
@@ -193,8 +197,8 @@ func (h *conformanceHarness) brokerFamilyRotate(testCase ConformanceCase) (map[s
 		return nil, err
 	}
 	familyHash := h.key(testCase, "family")
-	if _, err := family.CreateFamily(h.ctx(), h.familyRoot(familyHash)); err != nil {
-		return nil, err
+	if _, createErr := family.CreateFamily(h.ctx(), h.familyRoot(familyHash)); createErr != nil {
+		return nil, createErr
 	}
 	root, err := h.stores.RouteRefreshBroker.Get(h.ctx(), familyHash)
 	if err != nil {
@@ -242,7 +246,10 @@ func (h *conformanceHarness) brokerFamilyRotateWrongOwner(testCase ConformanceCa
 		LockOwner:           "another-owner",
 		ExpectedVersion:     locked.Version,
 	}, locked, successorKey, locked.ChainGeneration+1, familyHash)
-	presented, _ := h.stores.RouteRefreshBroker.Get(h.ctx(), locked.HandleHash)
+	presented, presentedErr := h.stores.RouteRefreshBroker.Get(h.ctx(), locked.HandleHash)
+	if presentedErr != nil {
+		return nil, presentedErr
+	}
 	_, successorGetErr := h.stores.RouteRefreshBroker.Get(h.ctx(), successorKey)
 	return map[string]any{
 		"rotate":            outcomeFor(rotateErr),
@@ -295,8 +302,14 @@ func (h *conformanceHarness) brokerFamilyRotateExistingSuccessor(testCase Confor
 		LockOwner:           "conformance-owner",
 		ExpectedVersion:     locked.Version,
 	}, locked, successorKey, locked.ChainGeneration+1, familyHash)
-	presented, _ := h.stores.RouteRefreshBroker.Get(h.ctx(), locked.HandleHash)
-	successor, _ := h.stores.RouteRefreshBroker.Get(h.ctx(), successorKey)
+	presented, presentedErr := h.stores.RouteRefreshBroker.Get(h.ctx(), locked.HandleHash)
+	if presentedErr != nil {
+		return nil, presentedErr
+	}
+	successor, successorErr := h.stores.RouteRefreshBroker.Get(h.ctx(), successorKey)
+	if successorErr != nil {
+		return nil, successorErr
+	}
 	return map[string]any{
 		"rotate":                  outcomeFor(rotateErr),
 		"successor_status_after":  brokerRecordStatusField(successor),
@@ -354,8 +367,8 @@ func (h *conformanceHarness) brokerFamilyRotateLegacy(testCase ConformanceCase) 
 		return nil, err
 	}
 	key := h.key(testCase, "legacy")
-	if err := h.putBroker(key); err != nil {
-		return nil, err
+	if putErr := h.putBroker(key); putErr != nil {
+		return nil, putErr
 	}
 	record, err := h.stores.RouteRefreshBroker.Get(h.ctx(), key)
 	if err != nil {
@@ -374,7 +387,10 @@ func (h *conformanceHarness) brokerFamilyRotateLegacy(testCase ConformanceCase) 
 		GraceRefreshResponse: fmt.Sprintf(`{"refresh_token":%q}`, successorKey),
 		GraceExpiresAt:       h.now().Add(time.Minute),
 	})
-	presented, _ := h.stores.RouteRefreshBroker.Get(h.ctx(), key)
+	presented, presentedErr := h.stores.RouteRefreshBroker.Get(h.ctx(), key)
+	if presentedErr != nil {
+		return nil, presentedErr
+	}
 	_, successorGetErr := h.stores.RouteRefreshBroker.Get(h.ctx(), successorKey)
 	return map[string]any{
 		"rotate":            outcomeFor(rotateErr),
@@ -432,8 +448,8 @@ func (h *conformanceHarness) brokerFamilyMixedLineage(testCase ConformanceCase) 
 		return nil, err
 	}
 	familyHash := h.key(testCase, "family")
-	if _, err := family.CreateFamily(h.ctx(), h.familyRoot(familyHash)); err != nil {
-		return nil, err
+	if _, createErr := family.CreateFamily(h.ctx(), h.familyRoot(familyHash)); createErr != nil {
+		return nil, createErr
 	}
 	root, err := h.stores.RouteRefreshBroker.Get(h.ctx(), familyHash)
 	if err != nil {
@@ -457,15 +473,15 @@ func (h *conformanceHarness) brokerFamilyMixedLineage(testCase ConformanceCase) 
 	if !ok {
 		return nil, fmt.Errorf("%w: %T", ErrBrokerNotSeedable, h.stores.RouteRefreshBroker)
 	}
-	if err := seeder.Put(h.ctx(), &RouteRefreshBrokerRecord{
+	if putErr := seeder.Put(h.ctx(), &RouteRefreshBrokerRecord{
 		HandleHash:                    legacyKey,
 		Issuer:                        "https://auth.example.test",
 		Stage:                         "lab",
 		CanonicalResource:             "https://mcp.example.test/mcp",
 		EncryptedGraceRefreshResponse: fmt.Sprintf(`{"refresh_token":%q}`, successorKey),
 		Status:                        BrokerStatusActive,
-	}); err != nil {
-		return nil, err
+	}); putErr != nil {
+		return nil, putErr
 	}
 	legacy, err := h.stores.RouteRefreshBroker.Get(h.ctx(), legacyKey)
 	if err != nil {
@@ -501,14 +517,16 @@ func (h *conformanceHarness) brokerFamilyMixedLineage(testCase ConformanceCase) 
 // brokerFamilyTombstoneEveryMember rotates a family past the removed
 // eight-link budget, revokes it, and proves every enumerated member is
 // unusable, no late successor can be minted, and revocation is idempotent.
+//
+//nolint:gocyclo // one branch per shared-table binding under test.
 func (h *conformanceHarness) brokerFamilyTombstoneEveryMember(testCase ConformanceCase) (map[string]any, error) {
 	family, err := h.familyStore()
 	if err != nil {
 		return nil, err
 	}
 	familyHash := h.key(testCase, "family")
-	if _, err := family.CreateFamily(h.ctx(), h.familyRoot(familyHash)); err != nil {
-		return nil, err
+	if _, createErr := family.CreateFamily(h.ctx(), h.familyRoot(familyHash)); createErr != nil {
+		return nil, createErr
 	}
 	current, err := h.stores.RouteRefreshBroker.Get(h.ctx(), familyHash)
 	if err != nil {
@@ -578,8 +596,8 @@ func (h *conformanceHarness) brokerFamilyTombstoneBeyondBatch(testCase Conforman
 		return nil, err
 	}
 	familyHash := h.key(testCase, "family")
-	if _, err := family.CreateFamily(h.ctx(), h.familyRoot(familyHash)); err != nil {
-		return nil, err
+	if _, createErr := family.CreateFamily(h.ctx(), h.familyRoot(familyHash)); createErr != nil {
+		return nil, createErr
 	}
 	members := h.count(testCase, "members")
 	for index := 0; index < members; index++ {
@@ -693,8 +711,8 @@ func (h *conformanceHarness) brokerFamilyTombstoneSurvivesExpiry(testCase Confor
 		return nil, err
 	}
 	familyHash := h.key(testCase, "family")
-	if _, err := family.CreateFamily(h.ctx(), h.familyRoot(familyHash)); err != nil {
-		return nil, err
+	if _, createErr := family.CreateFamily(h.ctx(), h.familyRoot(familyHash)); createErr != nil {
+		return nil, createErr
 	}
 	if _, err := family.RevokeFamily(h.ctx(), familyHash); err != nil {
 		return nil, err
@@ -725,8 +743,8 @@ func (h *conformanceHarness) createAndLockFamily(testCase ConformanceCase) (*Rou
 		return nil, "", err
 	}
 	familyHash := h.key(testCase, "family")
-	if _, err := family.CreateFamily(h.ctx(), h.familyRoot(familyHash)); err != nil {
-		return nil, "", err
+	if _, createErr := family.CreateFamily(h.ctx(), h.familyRoot(familyHash)); createErr != nil {
+		return nil, "", createErr
 	}
 	root, err := h.stores.RouteRefreshBroker.Get(h.ctx(), familyHash)
 	if err != nil {
