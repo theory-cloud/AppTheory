@@ -272,14 +272,14 @@ export declare const MAX_ROUTE_REFRESH_HANDLE_TTL_SECONDS = 2592000;
 export declare const DEFAULT_REFRESH_GRACE_WINDOW_SECONDS = 120;
 /** The hard bound on the lossless replay carve-out. */
 export declare const MAX_REFRESH_GRACE_WINDOW_SECONDS = 120;
-/** The smallest accepted per-family hourly budget of beyond-grace serves. */
+/**
+ * The smallest accepted value of the retained reuse-rate ceiling. The field no
+ * longer gates a token serve; the floor and cap keep every existing
+ * configuration valid.
+ */
 export declare const MIN_REFRESH_REUSE_RATE_CEILING = 9;
-/** The configured budget cap, so the throttle never becomes an unbounded path. */
+/** The retained reuse-rate ceiling's upper bound. */
 export declare const MAX_REFRESH_REUSE_RATE_CEILING = 120;
-/** The fixed window of the per-family reuse budget, in seconds. */
-export declare const REFRESH_REUSE_RATE_WINDOW_SECONDS = 3600;
-/** The rate-limit operation the reuse budget is counted under. */
-export declare const REFRESH_REUSE_RATE_OPERATION = "route_refresh_reuse_depth1";
 /**
  * The generation of a handle the facade mints as the root of a new refresh
  * family. Every successor records the presented generation plus one, so depth
@@ -302,9 +302,12 @@ export declare const ROUTE_REFRESH_EVENT_REUSE: "reuse";
 export declare const ROUTE_REFRESH_EVENT_UPSTREAM_REAUTH_REQUIRED: "upstream_reauth_required";
 export declare const ROUTE_REFRESH_EVENT_STATE_FAILURE: "state_failure";
 /** The reuse outcomes of a {@link ROUTE_REFRESH_EVENT_REUSE} event. */
+/** Retained for telemetry compatibility; the beyond-grace serve was removed. */
 export declare const ROUTE_REFRESH_OUTCOME_ACCESS_TOKEN_ONLY: "access_token_only";
 export declare const ROUTE_REFRESH_OUTCOME_REVOKED_FAMILY: "revoked_family";
+/** Retained for telemetry compatibility; the bounded walk was removed. */
 export declare const ROUTE_REFRESH_OUTCOME_REVOKED_WALK: "revoked_walk";
+/** Retained for telemetry compatibility; the reuse budget no longer gates a serve. */
 export declare const ROUTE_REFRESH_OUTCOME_RATE_LIMITED: "rate_limited";
 export declare const ROUTE_REFRESH_OUTCOME_BINDING_REJECTED: "binding_rejected";
 /** The failure or trigger reasons of a validation or state event. */
@@ -321,10 +324,15 @@ export declare const ROUTE_REFRESH_REASON_STORE_FAILURE: "store_failure";
 export declare const ROUTE_REFRESH_REASON_REWRITE_FAILURE: "rewrite_failure";
 export declare const ROUTE_REFRESH_REASON_FAMILY_REVOKE_UNAVAILABLE: "family_revoke_unavailable";
 export declare const ROUTE_REFRESH_REASON_FAMILY_REVOKE_FAILED: "family_revoke_failed";
+/** Retained for telemetry compatibility; reuse is reuse on first occurrence. */
 export declare const ROUTE_REFRESH_REASON_ALREADY_SERVED: "already_served";
 export declare const ROUTE_REFRESH_REASON_UPSTREAM_REJECTED: "upstream_rejected";
 export declare const ROUTE_REFRESH_REASON_SUCCESSOR_BODY: "successor_body";
+/** Retained for telemetry compatibility; no token is served beyond grace. */
 export declare const ROUTE_REFRESH_REASON_ACCESS_TOKEN_ONLY: "access_token_only";
+export declare const ROUTE_REFRESH_REASON_ROTATED_REUSE: "rotated_reuse";
+export declare const ROUTE_REFRESH_REASON_LEGACY_LINEAGE: "legacy_lineage_unsupported";
+export declare const ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE: "family_state_unavailable";
 /** The store's absent-versus-expired signal; the client body stays uniform. */
 export declare const ROUTE_REFRESH_EXPIRY_SIGNAL_ABSENT: "absent";
 export declare const ROUTE_REFRESH_EXPIRY_SIGNAL_EXPIRED: "expired";

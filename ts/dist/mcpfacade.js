@@ -2,7 +2,7 @@ import { Buffer } from "node:buffer";
 import { randomBytes } from "node:crypto";
 import { Authenticated, createApp, Public, SecureApp } from "./app.js";
 import { CONTRACT_VERSION, ISSUER_MODE_FAMILY, ISSUER_MODE_ROUTE, PARAM_AGENT_ID, PARAM_CLIENT_NAMESPACE, PARAM_PARTNER_ID, authorizationServerPathForResourcePath, callbackPathForConfiguredPath, mcpPath, oauthAuthorizationServerPath, oauthAuthorizationServerSuffixPath, oauthAuthorizePath, oauthRegisterPath, oauthTokenPath, parseMcpPath, resourcePathFromProtectedResourcePath, supportedEndpointTemplates, supportedIssuerModes, supportedOAuthDiscoveryTemplates, supportedOAuthFacadeTemplates, } from "./mcproutes.js";
-import { authorizationServerMetadataHandler, BrokerExpiredError, BrokerLockedError, BrokerNotFoundError, BrokerRevokedError, BrokerVersionConflictError, canonicalizeIssuerURL, canonicalResourceURL, hashKey, newPKCECodeVerifier, pkceChallengeS256, pkceVerifyS256, protectedResourceMetadataHandler, ProviderError, requireBearerTokenGuard, } from "./oauth/index.js";
+import { authorizationServerMetadataHandler, BrokerExpiredError, BrokerFamilyMismatchError, BrokerFamilyStateUnavailableError, BrokerLegacyLineageUnsupportedError, BrokerLockedError, BrokerNotFoundError, BrokerRevokedError, BrokerVersionConflictError, canonicalizeIssuerURL, canonicalResourceURL, hashKey, newPKCECodeVerifier, pkceChallengeS256, pkceVerifyS256, protectedResourceMetadataHandler, ProviderError, requireBearerTokenGuard, } from "./oauth/index.js";
 import { originURL } from "./response.js";
 export const URL_MODE_PUBLIC_BASE_URL = "public_base_url";
 export const URL_MODE_REQUEST_HOST = "request_host";
@@ -389,6 +389,30 @@ function validateFrontChannelStores(stores) {
     if (missing.length > 0) {
         throw new Error(`${ERROR_PREFIX} front channel requires all five stores; missing ${missing.join(", ")}`);
     }
+    const missingFamily = missingTransactionalFamilyMethods(bundle.routeRefreshBroker);
+    if (missingFamily.length > 0) {
+        throw new Error(`${ERROR_PREFIX} front channel requires a transactional refresh-family broker store; route refresh broker is missing ${missingFamily.join(", ")}`);
+    }
+}
+/**
+ * Reports the transactional family methods a broker store lacks. Registration
+ * checks each method separately so a partially duck-typed store is refused
+ * eagerly and the error names exactly what must be added; the old optional
+ * listFamily/revokeFamily pair alone is not sufficient.
+ */
+function missingTransactionalFamilyMethods(broker) {
+    const value = (broker ??
+        {});
+    const missing = [];
+    if (typeof value.createFamily !== "function")
+        missing.push("createFamily");
+    if (typeof value.rotateFamily !== "function")
+        missing.push("rotateFamily");
+    if (typeof value.listFamily !== "function")
+        missing.push("listFamily");
+    if (typeof value.revokeFamily !== "function")
+        missing.push("revokeFamily");
+    return missing;
 }
 /**
  * Reports whether an upstream client id is usable: a non-empty, well-formed
@@ -2079,10 +2103,11 @@ async function handleCallback(config, ctx) {
         return facadeUpstreamErrorPage();
     }
     const handle = newOpaqueToken();
-    const seeder = front.stores
+    const familyStore = front.stores
         .routeRefreshBroker;
-    if (typeof seeder.put !== "function") {
-        throw new Error(`${ERROR_PREFIX} route refresh broker store cannot be seeded`);
+    if (typeof familyStore.createFamily !== "function" ||
+        typeof familyStore.rotateFamily !== "function") {
+        throw new Error(`${ERROR_PREFIX} route refresh broker store lacks the transactional family capability`);
     }
     const broker = {
         handleHash: hashKey(handle),
@@ -2105,8 +2130,8 @@ async function handleCallback(config, ctx) {
         chainGeneration: REFRESH_CHAIN_ROOT_GENERATION,
         familyHash: hashKey(handle),
     };
-    await seeder.put(broker);
-    const issuedEvent = routeRefreshEventFor(ROUTE_REFRESH_EVENT_ISSUED, ctx.now(), broker);
+    const stored = await familyStore.createFamily(broker);
+    const issuedEvent = routeRefreshEventFor(ROUTE_REFRESH_EVENT_ISSUED, ctx.now(), stored);
     issuedEvent.statusTo = "issued";
     emitRouteRefresh(front, issuedEvent);
     const facadeCode = newOpaqueToken();
@@ -2337,14 +2362,14 @@ export const MAX_ROUTE_REFRESH_HANDLE_TTL_SECONDS = 2_592_000;
 export const DEFAULT_REFRESH_GRACE_WINDOW_SECONDS = 120;
 /** The hard bound on the lossless replay carve-out. */
 export const MAX_REFRESH_GRACE_WINDOW_SECONDS = 120;
-/** The smallest accepted per-family hourly budget of beyond-grace serves. */
+/**
+ * The smallest accepted value of the retained reuse-rate ceiling. The field no
+ * longer gates a token serve; the floor and cap keep every existing
+ * configuration valid.
+ */
 export const MIN_REFRESH_REUSE_RATE_CEILING = 9;
-/** The configured budget cap, so the throttle never becomes an unbounded path. */
+/** The retained reuse-rate ceiling's upper bound. */
 export const MAX_REFRESH_REUSE_RATE_CEILING = 120;
-/** The fixed window of the per-family reuse budget, in seconds. */
-export const REFRESH_REUSE_RATE_WINDOW_SECONDS = 3600;
-/** The rate-limit operation the reuse budget is counted under. */
-export const REFRESH_REUSE_RATE_OPERATION = "route_refresh_reuse_depth1";
 /**
  * The generation of a handle the facade mints as the root of a new refresh
  * family. Every successor records the presented generation plus one, so depth
@@ -2371,21 +2396,12 @@ const REFRESH_COALESCE_WAIT_CAP_MS = 3_000;
  */
 const REFRESH_COALESCE_POLL_INTERVAL_MS = 50;
 /**
- * Bounds the reuse-detection revoke walk of ruling R1.4: the walk follows the
- * successor handle each revoked record names, so the limit is what keeps a
- * crafted or cyclic stored value from looping. The real chain of one
- * facade-opened grant is one link.
- */
-const REFRESH_REVOKE_CHAIN_LIMIT = 8;
-/**
  * The fixed Retry-After the refresh 503 class carries. Unlike the registration
  * endpoint there is no rate-limit window to derive a delay from: the caller was
  * refused either because another caller holds the in-flight lock or because a
  * store could not answer, and both are worth exactly one second of backoff.
  */
 const REFRESH_RETRY_AFTER_SECONDS = 1;
-/** The fail-closed class a broker store that cannot be seeded raises. */
-const ROUTE_REFRESH_BROKER_NOT_SEEDABLE = "route refresh broker store cannot be seeded";
 /**
  * The closed class vocabulary of the route refresh broker telemetry the facade
  * emits: broker issuance, local validation rejections, refresh lock
@@ -2402,9 +2418,12 @@ export const ROUTE_REFRESH_EVENT_REUSE = "reuse";
 export const ROUTE_REFRESH_EVENT_UPSTREAM_REAUTH_REQUIRED = "upstream_reauth_required";
 export const ROUTE_REFRESH_EVENT_STATE_FAILURE = "state_failure";
 /** The reuse outcomes of a {@link ROUTE_REFRESH_EVENT_REUSE} event. */
+/** Retained for telemetry compatibility; the beyond-grace serve was removed. */
 export const ROUTE_REFRESH_OUTCOME_ACCESS_TOKEN_ONLY = "access_token_only";
 export const ROUTE_REFRESH_OUTCOME_REVOKED_FAMILY = "revoked_family";
+/** Retained for telemetry compatibility; the bounded walk was removed. */
 export const ROUTE_REFRESH_OUTCOME_REVOKED_WALK = "revoked_walk";
+/** Retained for telemetry compatibility; the reuse budget no longer gates a serve. */
 export const ROUTE_REFRESH_OUTCOME_RATE_LIMITED = "rate_limited";
 export const ROUTE_REFRESH_OUTCOME_BINDING_REJECTED = "binding_rejected";
 /** The failure or trigger reasons of a validation or state event. */
@@ -2421,10 +2440,15 @@ export const ROUTE_REFRESH_REASON_STORE_FAILURE = "store_failure";
 export const ROUTE_REFRESH_REASON_REWRITE_FAILURE = "rewrite_failure";
 export const ROUTE_REFRESH_REASON_FAMILY_REVOKE_UNAVAILABLE = "family_revoke_unavailable";
 export const ROUTE_REFRESH_REASON_FAMILY_REVOKE_FAILED = "family_revoke_failed";
+/** Retained for telemetry compatibility; reuse is reuse on first occurrence. */
 export const ROUTE_REFRESH_REASON_ALREADY_SERVED = "already_served";
 export const ROUTE_REFRESH_REASON_UPSTREAM_REJECTED = "upstream_rejected";
 export const ROUTE_REFRESH_REASON_SUCCESSOR_BODY = "successor_body";
+/** Retained for telemetry compatibility; no token is served beyond grace. */
 export const ROUTE_REFRESH_REASON_ACCESS_TOKEN_ONLY = "access_token_only";
+export const ROUTE_REFRESH_REASON_ROTATED_REUSE = "rotated_reuse";
+export const ROUTE_REFRESH_REASON_LEGACY_LINEAGE = "legacy_lineage_unsupported";
+export const ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE = "family_state_unavailable";
 /** The store's absent-versus-expired signal; the client body stays uniform. */
 export const ROUTE_REFRESH_EXPIRY_SIGNAL_ABSENT = "absent";
 export const ROUTE_REFRESH_EXPIRY_SIGNAL_EXPIRED = "expired";
@@ -2562,11 +2586,10 @@ async function handleRefreshTokenGrant(config, kind, ctx, form) {
         }
         // A record whose grace deadline has passed was already rotated away.
         // `resolveRefreshRecord` only returns such a record; a live grace window is
-        // served there. Beyond grace the classification decides between a benign
-        // access-token-only serve and a theft-class family revocation, and no path
-        // hands out handle material.
+        // served there. Beyond grace every presentation is reuse: the family is
+        // revoked, and no path hands out access, refresh, or ID token material.
         if (record.graceExpiresAt !== undefined) {
-            return await serveRotatedRefreshHandle(config, ctx, form, record);
+            return await revokeRotatedRefreshFamily(config, ctx, record, ROUTE_REFRESH_REASON_ROTATED_REUSE);
         }
         let locked;
         try {
@@ -2613,7 +2636,8 @@ function refreshLockFailure(err, elapsedMs) {
     }
     if (err instanceof BrokerRevokedError ||
         err instanceof BrokerNotFoundError ||
-        err instanceof BrokerExpiredError) {
+        err instanceof BrokerExpiredError ||
+        err instanceof BrokerLegacyLineageUnsupportedError) {
         return { response: facadeErrorPage(400, "invalid_grant"), wait: false };
     }
     return { response: facadeTemporarilyUnavailablePage(), wait: false };
@@ -2646,6 +2670,19 @@ async function resolveRefreshRecord(config, ctx, form, clientID, handle, routeRe
             emitRecordStateRejection(front, ctx, null, ROUTE_REFRESH_REASON_RECORD_EXPIRED, ROUTE_REFRESH_EXPIRY_SIGNAL_EXPIRED);
             return { record: null, response: facadeErrorPage(400, "invalid_grant") };
         }
+        if (err instanceof BrokerRevokedError) {
+            emitRecordStateRejection(front, ctx, null, ROUTE_REFRESH_REASON_RECORD_REVOKED, "");
+            return { record: null, response: facadeErrorPage(400, "invalid_grant") };
+        }
+        if (err instanceof BrokerLegacyLineageUnsupportedError) {
+            emitRecordStateRejection(front, ctx, null, ROUTE_REFRESH_REASON_LEGACY_LINEAGE, "");
+            return { record: null, response: facadeErrorPage(400, "invalid_grant") };
+        }
+        if (err instanceof BrokerFamilyStateUnavailableError ||
+            err instanceof BrokerFamilyMismatchError) {
+            emitStateFailure(front, ctx, null, ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE);
+            return { record: null, response: facadeTemporarilyUnavailablePage() };
+        }
         emitStateFailure(front, ctx, null, ROUTE_REFRESH_REASON_STORE_FAILURE);
         return { record: null, response: facadeTemporarilyUnavailablePage() };
     }
@@ -2663,6 +2700,19 @@ async function resolveRefreshRecord(config, ctx, form, clientID, handle, routeRe
     }
     if (record.status === "revoked") {
         emitRecordStateRejection(front, ctx, record, ROUTE_REFRESH_REASON_RECORD_REVOKED, "");
+        return { record: null, response: facadeErrorPage(400, "invalid_grant") };
+    }
+    // A family-less record predates the family policy and is unsupported for
+    // ordinary rotation: an unknown-length lineage cannot be normalized without
+    // detaching a suffix from ancestors whose later reuse must revoke it. A
+    // family-marked record with generation below the root is equally corrupt.
+    // Both fail closed before the lock and before any upstream call.
+    if ((record.familyHash ?? "") === "") {
+        emitRecordStateRejection(front, ctx, record, ROUTE_REFRESH_REASON_LEGACY_LINEAGE, "");
+        return { record: null, response: facadeErrorPage(400, "invalid_grant") };
+    }
+    if ((record.chainGeneration ?? 0) < REFRESH_CHAIN_ROOT_GENERATION) {
+        emitRecordStateRejection(front, ctx, record, ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE, "");
         return { record: null, response: facadeErrorPage(400, "invalid_grant") };
     }
     // R1.4 reuse: a non-zero grace deadline that has passed means the handle was
@@ -2798,42 +2848,44 @@ async function rotateRefreshGrant(config, ctx, presented, locked) {
     // byte-for-byte and the framework's own handle, and never an id_token or any
     // upstream refresh material.
     const body = Buffer.from(JSON.stringify(successorTokenPayload(upstream, handle)), "utf8");
-    const seeder = front.stores
+    const familyStore = front.stores
         .routeRefreshBroker;
-    if (typeof seeder.put !== "function") {
-        // The same fail-closed class openBrokerRecord raises: a broker store that
-        // cannot be seeded cannot hold the successor, so the rotation cannot
-        // complete and no successor handle may be handed out.
-        throw new Error(`${ERROR_PREFIX} ${ROUTE_REFRESH_BROKER_NOT_SEEDABLE}`);
+    if (typeof familyStore.rotateFamily !== "function") {
+        throw new Error(`${ERROR_PREFIX} route refresh broker store lacks the transactional family capability`);
     }
-    await seeder.put(successor);
-    const completed = {
-        ...structuredClone(locked),
-        encryptedGraceRefreshResponse: body.toString("utf8"),
+    // One atomic transaction creates the successor and updates the presented
+    // record's grace response/status. There is deliberately no separate successor
+    // put followed by a predecessor compare-and-swap: a crash between the two
+    // would leave a minted successor nothing can revoke.
+    const rotation = {
+        presentedHandleHash: locked.handleHash,
+        lockOwner: locked.refreshLockOwner ?? "",
+        expectedVersion: locked.version,
+        successor,
+        graceRefreshResponse: body.toString("utf8"),
         graceExpiresAt: new Date(ctx.now().getTime() + front.policy.graceWindowSeconds * 1000),
-        status: "active",
     };
-    delete completed.refreshLockOwner;
-    delete completed.refreshLockExpiresAt;
-    // A pre-policy record becomes the root of its family at its first mutation
-    // under the policy: the presented record claims family=self and generation 1,
-    // and its successor records generation 2. This is the documented default for
-    // records that predate the family hash and the generation counter.
-    if ((completed.chainGeneration ?? 0) < REFRESH_CHAIN_ROOT_GENERATION) {
-        completed.chainGeneration = REFRESH_CHAIN_ROOT_GENERATION;
-    }
-    if ((completed.familyHash ?? "") === "") {
-        completed.familyHash = completed.handleHash;
-    }
     try {
-        await front.stores.routeRefreshBroker.compareAndSwap(completed, locked.version);
+        await familyStore.rotateFamily(rotation);
     }
-    catch {
-        // The rotation did not land, so the successor handle was never handed to
-        // any client. Discard it and fail closed: a success response may never be
-        // returned for state that was not persisted. The lock is left to expire,
-        // because the compare-and-swap that would release it failed too.
-        await discardRefreshRecord(front, successor.handleHash);
+    catch (err) {
+        if (err instanceof BrokerRevokedError) {
+            const event = routeRefreshEventFor(ROUTE_REFRESH_EVENT_REUSE, ctx.now(), presented);
+            event.reason = ROUTE_REFRESH_REASON_RECORD_REVOKED;
+            event.errorCode = "invalid_grant";
+            event.statusTo = "revoked";
+            emitRouteRefresh(front, event);
+            return facadeErrorPage(400, "invalid_grant");
+        }
+        if (err instanceof BrokerLegacyLineageUnsupportedError) {
+            emitStateFailure(front, ctx, presented, ROUTE_REFRESH_REASON_LEGACY_LINEAGE);
+            return facadeErrorPage(400, "invalid_grant");
+        }
+        if (err instanceof BrokerFamilyStateUnavailableError ||
+            err instanceof BrokerFamilyMismatchError) {
+            emitStateFailure(front, ctx, presented, ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE);
+            return facadeTemporarilyUnavailablePage();
+        }
         emitStateFailure(front, ctx, presented, ROUTE_REFRESH_REASON_REWRITE_FAILURE);
         return facadeTemporarilyUnavailablePage();
     }
@@ -2865,10 +2917,7 @@ async function failedRefreshGrant(config, ctx, presented, locked, upstreamErr) {
         ? upstreamErr.errorClass
         : "temporarily_unavailable";
     if (errorClass === "invalid_grant" || errorClass === "reauth_required") {
-        try {
-            await revokeBrokerRecord(front, presented.handleHash);
-        }
-        catch {
+        if (!(await revokeFamilyForRecord(front, presented))) {
             // The grant is dead upstream but could not be revoked here, so the
             // client is not told the handle is invalid while it is still live.
             emitStateFailure(front, ctx, presented, ROUTE_REFRESH_REASON_STORE_FAILURE, errorClass);
@@ -2903,408 +2952,74 @@ async function failedRefreshGrant(config, ctx, presented, locked, upstreamErr) {
     return facadeTemporarilyUnavailablePage();
 }
 /**
- * Classifies a presentation of a rotated-away handle whose grace window has
- * closed (ruling R1.4 under the handle policy). The classification is by chain
- * depth:
- *
- * - Depth 1 (the immediate predecessor of a live head) is the benign shared
- *   credential-store race. It is answered with the ACCESS TOKEN ONLY: no
- *   beyond-grace serve ever carries handle material, so no serve can upgrade a
- *   presenter from a rotated-away predecessor to the head. Each handle serves
- *   this way at most once; a second serve is theft class, and a per-family
- *   hourly budget throttles access-token harvest.
- * - Depth 2 or more is theft class: the family is revoked and the client gets
- *   the uniform invalid_grant.
+ * Revokes the whole family a reused handle belongs to and renders the uniform
+ * invalid_grant. A family-hashed record is revoked through the store's
+ * transactional family tombstone, so a long-lived chain is not limited by any
+ * walk budget. A family-less record cannot be revoked safely because its true
+ * lineage is unknowable; it is answered with the same uniform invalid_grant and
+ * no revocation claim is made. A store failure is the retryable class rather
+ * than invalid_grant: the client must not act on state the facade could not
+ * revoke.
  */
-async function serveRotatedRefreshHandle(config, ctx, form, record) {
+async function revokeRotatedRefreshFamily(config, ctx, record, reason) {
     const front = config.frontChannel;
     if (front === null) {
         throw new Error(`${ERROR_PREFIX} front channel is not configured`);
     }
-    let classification;
-    try {
-        classification = await classifyRotatedRefreshHandle(front, record);
+    if ((record.familyHash ?? "") === "") {
+        const event = routeRefreshEventFor(ROUTE_REFRESH_EVENT_STATE_FAILURE, ctx.now(), record);
+        event.reason = ROUTE_REFRESH_REASON_LEGACY_LINEAGE;
+        event.errorCode = "invalid_grant";
+        emitRouteRefresh(front, event);
+        return facadeErrorPage(400, "invalid_grant");
     }
-    catch {
-        emitStateFailure(front, ctx, record, ROUTE_REFRESH_REASON_STORE_FAILURE);
+    const familyStore = front.stores
+        .routeRefreshBroker;
+    if (typeof familyStore.revokeFamily !== "function") {
+        const event = routeRefreshEventFor(ROUTE_REFRESH_EVENT_STATE_FAILURE, ctx.now(), record);
+        event.reason = ROUTE_REFRESH_REASON_FAMILY_REVOKE_UNAVAILABLE;
+        emitRouteRefresh(front, event);
         return facadeTemporarilyUnavailablePage();
     }
-    if (classification.depth >= 2) {
-        return await revokeRotatedRefreshFamily(config, ctx, record, classification.depth, ROUTE_REFRESH_REASON_STORE_FAILURE);
-    }
-    // The request binding is validated before the benign serve: a request that
-    // asks for a different resource or scope must never receive a token, even the
-    // access token only.
-    const bindingFailure = refreshRequestBindingFailure(form, record);
-    if (bindingFailure.response !== null) {
-        const event = routeRefreshEventFor(ROUTE_REFRESH_EVENT_REUSE, ctx.now(), record);
-        event.reason = ROUTE_REFRESH_REASON_BINDING_REJECTED;
-        event.outcome = ROUTE_REFRESH_OUTCOME_BINDING_REJECTED;
-        event.errorCode = bindingFailure.errorCode;
-        event.chainDepth = 1;
-        emitRouteRefresh(front, event);
-        return bindingFailure.response;
-    }
-    return await serveDepthOneRefreshHandle(config, ctx, record);
-}
-/**
- * Returns the depth of a beyond-grace presentation. Depth is classified
- * structurally from the presented record and, when the record carries a family
- * hash and a generation, checked arithmetically against its successor. A record
- * that predates the policy (generation 0, empty family) is classified
- * structurally only. Walk exhaustion — a missing, expired, unparseable,
- * revoked, or already-rotated successor, or a generation/family mismatch — is
- * depth 2, the fail-closed default.
- */
-async function classifyRotatedRefreshHandle(front, record) {
-    const successorHash = successorHandleHash(record.encryptedGraceRefreshResponse ?? "");
-    if (successorHash === null) {
-        return { depth: 2 };
-    }
-    let successor;
+    let records;
     try {
-        successor = await front.stores.routeRefreshBroker.get(successorHash);
+        records = await familyStore.revokeFamily(record.familyHash ?? "");
     }
-    catch (err) {
-        if (err instanceof BrokerNotFoundError ||
-            err instanceof BrokerExpiredError) {
-            return { depth: 2 };
-        }
-        throw err;
-    }
-    if (successor === null) {
-        return { depth: 2 };
-    }
-    if (successor.status === "revoked" ||
-        successor.graceExpiresAt !== undefined) {
-        return { depth: 2 };
-    }
-    const generation = record.chainGeneration ?? 0;
-    if ((record.familyHash ?? "") !== "" && generation > 0) {
-        if ((successor.familyHash ?? "") !== record.familyHash ||
-            (successor.chainGeneration ?? 0) !== generation + 1) {
-            return { depth: 2 };
-        }
-    }
-    return { depth: 1 };
-}
-/**
- * Answers one beyond-grace depth-1 presentation with the stored successor's
- * access token and no handle material. The serve is single-use per handle and
- * budgeted per family per hour. The once-per-handle marker is written under the
- * refresh lock before the response is rendered, so two concurrent presentations
- * of the same handle cannot both be served.
- */
-async function serveDepthOneRefreshHandle(config, ctx, initial) {
-    const front = config.frontChannel;
-    if (front === null) {
-        throw new Error(`${ERROR_PREFIX} front channel is not configured`);
-    }
-    let record = initial;
-    const start = Date.now();
-    for (;;) {
-        if (record.depthOneServedAt !== undefined) {
-            return await revokeRotatedRefreshFamily(config, ctx, record, 1, ROUTE_REFRESH_REASON_ALREADY_SERVED);
-        }
-        let locked;
-        try {
-            locked = await front.stores.routeRefreshBroker.acquireLock(record.handleHash, newOpaqueToken(), record.version);
-        }
-        catch (err) {
-            const outcome = refreshLockFailure(err, Date.now() - start);
-            if (outcome.response !== null) {
-                return outcome.response;
-            }
-            if (outcome.wait) {
-                await sleep(REFRESH_COALESCE_POLL_INTERVAL_MS);
-            }
-            let refreshed;
-            try {
-                refreshed = await front.stores.routeRefreshBroker.get(record.handleHash);
-            }
-            catch (getErr) {
-                if (getErr instanceof BrokerNotFoundError ||
-                    getErr instanceof BrokerExpiredError) {
-                    return facadeErrorPage(400, "invalid_grant");
-                }
-                emitStateFailure(front, ctx, record, ROUTE_REFRESH_REASON_STORE_FAILURE);
-                return facadeTemporarilyUnavailablePage();
-            }
-            if (refreshed === null) {
-                return facadeErrorPage(400, "invalid_grant");
-            }
-            record = refreshed;
-            continue;
-        }
-        const lockEvent = routeRefreshEventFor(ROUTE_REFRESH_EVENT_LOCK_ACQUIRED, ctx.now(), record);
-        lockEvent.statusTo = "refreshing";
-        lockEvent.chainDepth = 1;
-        emitRouteRefresh(front, lockEvent);
-        if (locked.depthOneServedAt !== undefined) {
-            await releaseRefreshLock(front, record, locked);
-            return await revokeRotatedRefreshFamily(config, ctx, record, 1, ROUTE_REFRESH_REASON_ALREADY_SERVED);
-        }
-        // The per-family hourly budget is checked under the lock. A denied check
-        // does not consume the handle's single serve: the marker is written only
-        // when the response is actually rendered.
-        let allowed;
-        try {
-            const result = await front.stores.rateLimit.checkAndIncrement({
-                identifier: refreshReuseRateIdentifier(record),
-                resource: record.canonicalResource,
-                operation: REFRESH_REUSE_RATE_OPERATION,
-                limit: front.policy.reuseRateCeiling,
-                windowSeconds: REFRESH_REUSE_RATE_WINDOW_SECONDS,
-            });
-            allowed = result.allowed;
-        }
-        catch {
-            await releaseRefreshLock(front, record, locked);
-            emitStateFailure(front, ctx, record, ROUTE_REFRESH_REASON_STORE_FAILURE);
-            return facadeTemporarilyUnavailablePage();
-        }
-        if (!allowed) {
-            await releaseRefreshLock(front, record, locked);
-            const event = routeRefreshEventFor(ROUTE_REFRESH_EVENT_REUSE, ctx.now(), record);
-            event.reason = ROUTE_REFRESH_REASON_ACCESS_TOKEN_ONLY;
-            event.outcome = ROUTE_REFRESH_OUTCOME_RATE_LIMITED;
-            event.chainDepth = 1;
-            emitRouteRefresh(front, event);
-            return facadeErrorPage(400, "invalid_grant");
-        }
-        const body = refreshAccessTokenOnlyBody(record.encryptedGraceRefreshResponse ?? "");
-        if (body === null) {
-            await releaseRefreshLock(front, record, locked);
-            return await revokeRotatedRefreshFamily(config, ctx, record, 1, ROUTE_REFRESH_REASON_STORE_FAILURE);
-        }
-        const completed = {
-            ...structuredClone(locked),
-            depthOneServedAt: ctx.now(),
-            status: record.status,
-        };
-        delete completed.refreshLockOwner;
-        delete completed.refreshLockExpiresAt;
-        try {
-            await front.stores.routeRefreshBroker.compareAndSwap(completed, locked.version);
-        }
-        catch {
-            // The marker did not land, so the serve must not either: a second
-            // presentation could otherwise be served again. The lock is left to
-            // expire, which delays the next attempt but never reports a success.
-            emitStateFailure(front, ctx, record, ROUTE_REFRESH_REASON_REWRITE_FAILURE);
-            return facadeTemporarilyUnavailablePage();
-        }
-        const event = routeRefreshEventFor(ROUTE_REFRESH_EVENT_REUSE, ctx.now(), record);
-        event.reason = ROUTE_REFRESH_REASON_ACCESS_TOKEN_ONLY;
-        event.outcome = ROUTE_REFRESH_OUTCOME_ACCESS_TOKEN_ONLY;
-        event.chainDepth = 1;
-        event.statusTo = record.status;
+    catch {
+        const event = routeRefreshEventFor(ROUTE_REFRESH_EVENT_STATE_FAILURE, ctx.now(), record);
+        event.reason = ROUTE_REFRESH_REASON_FAMILY_REVOKE_FAILED;
         emitRouteRefresh(front, event);
-        return refreshTokenPage(body);
-    }
-}
-/**
- * Revokes the whole family a reused handle belongs to and renders the uniform
- * invalid_grant. A family-hashed record is revoked through the store's family
- * capability, so a long-lived chain is not limited by the eight-link walk; a
- * family-less record (and a store without the capability) uses the bounded
- * successor walk. A store failure is the retryable class rather than
- * invalid_grant: the client must not be allowed to act on state the facade
- * could not revoke.
- */
-async function revokeRotatedRefreshFamily(config, ctx, record, depth, reason) {
-    const front = config.frontChannel;
-    if (front === null) {
-        throw new Error(`${ERROR_PREFIX} front channel is not configured`);
-    }
-    let revoked = 0;
-    let outcome = ROUTE_REFRESH_OUTCOME_REVOKED_WALK;
-    if ((record.familyHash ?? "") !== "") {
-        const familyStore = front.stores
-            .routeRefreshBroker;
-        if (typeof familyStore.revokeFamily !== "function") {
-            const event = routeRefreshEventFor(ROUTE_REFRESH_EVENT_STATE_FAILURE, ctx.now(), record);
-            event.reason = ROUTE_REFRESH_REASON_FAMILY_REVOKE_UNAVAILABLE;
-            event.chainDepth = depth;
-            emitRouteRefresh(front, event);
-        }
-        else {
-            let records;
-            try {
-                records = await familyStore.revokeFamily(record.familyHash ?? "");
-            }
-            catch {
-                const event = routeRefreshEventFor(ROUTE_REFRESH_EVENT_STATE_FAILURE, ctx.now(), record);
-                event.reason = ROUTE_REFRESH_REASON_FAMILY_REVOKE_FAILED;
-                event.chainDepth = depth;
-                emitRouteRefresh(front, event);
-                return facadeTemporarilyUnavailablePage();
-            }
-            revoked = records.length;
-            outcome = ROUTE_REFRESH_OUTCOME_REVOKED_FAMILY;
-        }
-    }
-    if (outcome === ROUTE_REFRESH_OUTCOME_REVOKED_WALK) {
-        try {
-            revoked = await revokeRefreshChainCount(front, record);
-        }
-        catch {
-            emitStateFailure(front, ctx, record, ROUTE_REFRESH_REASON_STORE_FAILURE);
-            return facadeTemporarilyUnavailablePage();
-        }
+        return facadeTemporarilyUnavailablePage();
     }
     const event = routeRefreshEventFor(ROUTE_REFRESH_EVENT_REUSE, ctx.now(), record);
     event.reason = reason;
-    event.outcome = outcome;
-    event.chainDepth = depth;
-    event.revokedRecords = revoked;
+    event.outcome = ROUTE_REFRESH_OUTCOME_REVOKED_FAMILY;
+    event.revokedRecords = records.length;
     event.errorCode = "invalid_grant";
     event.statusTo = "revoked";
     emitRouteRefresh(front, event);
     return facadeErrorPage(400, "invalid_grant");
 }
 /**
- * The per-family bucket identity of the reuse budget. A family-less record is
- * budgeted against its own handle, because it has no family to share a budget
- * with.
+ * Revokes the family of a record whose upstream material is terminally dead and
+ * reports whether the revocation landed. A family-less record cannot be revoked
+ * safely and is reported as a failure rather than a success.
  */
-function refreshReuseRateIdentifier(record) {
-    const familyHash = record.familyHash ?? "";
-    return familyHash !== "" ? familyHash : record.handleHash;
-}
-/**
- * Renders the access-token-only response a beyond-grace depth-1 serve returns:
- * the stored successor body's access token, token type, lifetime, and scope,
- * with the refresh handle removed. No handle material is ever part of it.
- */
-function refreshAccessTokenOnlyBody(stored) {
-    if (stored === "")
-        return null;
-    let payload;
+async function revokeFamilyForRecord(front, record) {
+    if ((record.familyHash ?? "") === "")
+        return false;
+    const familyStore = front.stores
+        .routeRefreshBroker;
+    if (typeof familyStore.revokeFamily !== "function")
+        return false;
     try {
-        payload = JSON.parse(stored);
+        await familyStore.revokeFamily(record.familyHash ?? "");
+        return true;
     }
     catch {
-        return null;
-    }
-    if (payload === null || typeof payload !== "object")
-        return null;
-    const storedPayload = payload;
-    const accessToken = typeof storedPayload["access_token"] === "string"
-        ? storedPayload["access_token"]
-        : "";
-    if (accessToken.trim() === "")
-        return null;
-    const body = {
-        access_token: accessToken,
-        token_type: typeof storedPayload["token_type"] === "string"
-            ? storedPayload["token_type"]
-            : "",
-    };
-    const expiresIn = storedPayload["expires_in"];
-    if (typeof expiresIn === "number" &&
-        Number.isFinite(expiresIn) &&
-        expiresIn !== 0) {
-        body["expires_in"] = expiresIn;
-    }
-    const scope = storedPayload["scope"];
-    if (typeof scope === "string" && scope !== "")
-        body["scope"] = scope;
-    return Buffer.from(JSON.stringify(body), "utf8");
-}
-/**
- * Revokes one record and the successors it names. The chain is what a rotation
- * leaves behind: each rotated record stores its successor's token response, so
- * parsing that response yields the successor handle to revoke next. A record that
- * is already gone is not an error (revocation is idempotent) and a stored value
- * that does not parse simply ends the walk, so the presented record is revoked
- * either way. The walk is bounded by REFRESH_REVOKE_CHAIN_LIMIT so a crafted or
- * cyclic value can never loop.
- */
-async function revokeRefreshChainCount(front, record) {
-    let handleHash = record.handleHash;
-    for (let walked = 0; walked < REFRESH_REVOKE_CHAIN_LIMIT; walked += 1) {
-        let revoked;
-        try {
-            revoked = await front.stores.routeRefreshBroker.revoke(handleHash);
-        }
-        catch (err) {
-            if (err instanceof BrokerNotFoundError ||
-                err instanceof BrokerExpiredError) {
-                return walked;
-            }
-            throw err;
-        }
-        const successorHash = successorHandleHash(revoked.encryptedGraceRefreshResponse ?? "");
-        if (successorHash === null) {
-            return walked + 1;
-        }
-        handleHash = successorHash;
-    }
-    return REFRESH_REVOKE_CHAIN_LIMIT;
-}
-/**
- * Reads the successor handle a rotated record stored as its grace response and
- * returns its broker key. Only the handle is needed to revoke the successor, so
- * the walk never has to read it. An unparseable value, an empty handle, and an
- * oversized one all end the walk.
- */
-function successorHandleHash(stored) {
-    if (stored === "") {
-        return null;
-    }
-    let payload;
-    try {
-        payload = JSON.parse(stored);
-    }
-    catch {
-        return null;
-    }
-    if (payload === null || typeof payload !== "object") {
-        return null;
-    }
-    const raw = payload["refresh_token"];
-    const handle = typeof raw === "string" ? raw.trim() : "";
-    if (handle === "" ||
-        Buffer.byteLength(handle, "utf8") > FRONT_CHANNEL_MAX_REFRESH_HANDLE_BYTES) {
-        return null;
-    }
-    return hashKey(handle);
-}
-/**
- * Revokes one broker record. A record that is already gone is not an error,
- * because revocation is idempotent; every other store failure is reported.
- */
-async function revokeBrokerRecord(front, handleHash) {
-    try {
-        await front.stores.routeRefreshBroker.revoke(handleHash);
-    }
-    catch (err) {
-        if (!(err instanceof BrokerNotFoundError) &&
-            !(err instanceof BrokerExpiredError)) {
-            throw err;
-        }
+        return false;
     }
 }
-/**
- * Discards a successor record that was persisted but never handed to a client.
- * It is best effort: the handle is unreachable, so a failed discard only leaves a
- * record nothing can present.
- */
-async function discardRefreshRecord(front, handleHash) {
-    try {
-        await front.stores.routeRefreshBroker.revoke(handleHash);
-    }
-    catch {
-        return;
-    }
-}
-/**
- * Returns a locked record to the status it had before the lock was taken, with
- * the lock cleared, so a caller that failed for a transient reason can try again
- * instead of waiting out the lock TTL. It is best effort: a failed release leaves
- * the lock to expire, which delays the next attempt but never reports a success.
- */
 async function releaseRefreshLock(front, presented, locked) {
     const released = {
         ...structuredClone(locked),
@@ -3331,10 +3046,6 @@ async function releaseRefreshLock(front, presented, locked) {
 function successorBrokerRecord(presented, handle, upstream) {
     const rotated = upstream.refreshToken ?? "";
     const material = rotated.trim() === "" ? presented.encryptedUpstreamRefreshToken : rotated;
-    const generation = Math.max(presented.chainGeneration ?? 0, REFRESH_CHAIN_ROOT_GENERATION);
-    const family = (presented.familyHash ?? "") !== ""
-        ? presented.familyHash
-        : presented.handleHash;
     return {
         handleHash: hashKey(handle),
         issuer: presented.issuer,
@@ -3353,8 +3064,8 @@ function successorBrokerRecord(presented, handle, upstream) {
         upstreamClientId: presented.upstreamClientId,
         status: "issued",
         version: 0,
-        chainGeneration: generation + 1,
-        familyHash: family,
+        chainGeneration: (presented.chainGeneration ?? 0) + 1,
+        familyHash: presented.familyHash ?? "",
     };
 }
 /**
