@@ -28,6 +28,7 @@ import {
   McpEventNotFoundError,
   McpPromptRegistry,
   McpResourceRegistry,
+  McpSessionExpiredError,
   McpSessionNotFoundError,
   McpSessionCapacityError,
   McpStreamAggregateBackfillError,
@@ -2596,6 +2597,115 @@ test("M3 initialize capacity refusal maps to CodeServerError without a session h
   const body = await json(response);
   assert.equal(body.error.code, MCP_CODE_SERVER_ERROR);
   assert.equal(body.error.message, "Session capacity exceeded");
+});
+
+test("M3 memory session store reports observed expiry distinctly", async () => {
+  const store = new MemoryMcpSessionStore({
+    now: () => new Date(80_000),
+    seed: [
+      {
+        id: "expired",
+        createdAt: "",
+        expiresAt: new Date(70_000).toISOString(),
+      },
+    ],
+  });
+  await assert.rejects(() => store.get("expired"), McpSessionExpiredError);
+  await assert.rejects(
+    () => store.get("unknown"),
+    McpSessionNotFoundError,
+  );
+});
+
+test("M3 unknown session IDs create no tombstone or durable state", async () => {
+  const db = m3StreamDb();
+  const model = defaultMcpStreamModel("m3-unknown-id");
+  const streamStore = new DynamoMcpStreamStore(db, {
+    model,
+    idGenerator: sequenceIdGenerator(["unused"]),
+  });
+  const server = createMcpServer("M3", "1", { streamStore });
+
+  const response = await post(server, rpc("forged", "ping"), {
+    [MCP_HEADER_SESSION_ID]: ["forged-session"],
+    [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION],
+  });
+  assert.equal(response.status, 404);
+  const records = [...db.items.keys()].filter((key) =>
+    key.startsWith(`${model.name}:forged-session:`),
+  );
+  assert.deepEqual(records, []);
+});
+
+test("M3 cross-instance misses keep the owner's durable stream history", async () => {
+  const db = m3StreamDb();
+  const model = defaultMcpStreamModel("m3-cross-instance");
+  const streamStore = new DynamoMcpStreamStore(db, {
+    model,
+    idGenerator: sequenceIdGenerator(["victim-stream"]),
+  });
+  const serverA = createMcpServer("M3A", "1", { streamStore });
+  serverA
+    .registry()
+    .registerStreamingTool({ name: "victim-stream", inputSchema: {} }, () => ({
+      content: [textBlock("history")],
+    }));
+  const init = await initialize(serverA);
+  const headers = {
+    [MCP_HEADER_SESSION_ID]: [init.sessionId],
+    [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION],
+  };
+  const streamed = await post(
+    serverA,
+    rpc("history", "tools/call", { name: "victim-stream" }),
+    headers,
+  );
+  assert.equal(streamed.status, 200);
+  const stateKey = `${model.name}:${init.sessionId}:!session`;
+  assert.equal(db.items.get(stateKey).eventCount, 2);
+
+  const serverB = createMcpServer("M3B", "1", { streamStore });
+  const miss = await post(serverB, rpc("wrong-instance", "ping"), headers);
+  assert.equal(miss.status, 404);
+
+  const state = db.items.get(stateKey);
+  assert.equal(state.deleted, false);
+  assert.equal(state.eventCount, 2);
+  const events = await streamStore.subscribe(init.sessionId, "victim-stream");
+  assert.equal(events.length, 2);
+});
+
+test("M3 observed expiry still cleans associated durable state", async () => {
+  const db = m3StreamDb();
+  const model = defaultMcpStreamModel("m3-observed-expiry");
+  const streamStore = new DynamoMcpStreamStore(db, {
+    model,
+    idGenerator: sequenceIdGenerator(["expired-stream"]),
+  });
+  const sessionStore = new MemoryMcpSessionStore({
+    seed: [
+      {
+        id: "sess-expired",
+        createdAt: "",
+        expiresAt: new Date(1_000).toISOString(),
+      },
+    ],
+  });
+  const server = createMcpServer("M3", "1", { sessionStore, streamStore });
+  const streamId = await streamStore.create("sess-expired");
+  await streamStore.append("sess-expired", streamId, Buffer.from("old"));
+
+  const response = await post(server, rpc("expired", "ping"), {
+    [MCP_HEADER_SESSION_ID]: ["sess-expired"],
+    [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION],
+  });
+  assert.equal(response.status, 404);
+  const state = db.items.get(`${model.name}:sess-expired:!session`);
+  assert.equal(state.deleted, true);
+  await assert.rejects(
+    () => streamStore.subscribe("sess-expired", streamId),
+    McpStreamNotFoundError,
+  );
 });
 
 function m3StreamDb() {

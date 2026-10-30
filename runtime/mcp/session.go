@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -44,8 +45,11 @@ type SessionExpirySweeper interface {
 var ErrSessionNotFound = errors.New("session not found")
 
 // ErrSessionExpired is returned by a built-in store when an incoming session
-// record is already expired. Expired state is never revived.
-var ErrSessionExpired = errors.New("session expired")
+// record is already expired or when Get observes an expired record. Expired
+// state is never revived. It wraps ErrSessionNotFound so every not-found caller
+// keeps its 404 mapping while the server can gate associated cleanup on a
+// proved expiry rather than on an arbitrary process-local miss.
+var ErrSessionExpired = fmt.Errorf("session expired: %w", ErrSessionNotFound)
 
 // ErrSessionCapacityExceeded is the fixed-capacity refusal of the built-in
 // in-memory session store. Its message is the public JSON-RPC error message, so
@@ -102,8 +106,8 @@ func NewMemorySessionStore(opts ...MemorySessionStoreOption) *MemorySessionStore
 	return m
 }
 
-// Get retrieves a session by ID. It returns ErrSessionNotFound if the session
-// does not exist or has expired.
+// Get retrieves a session by ID. It returns ErrSessionExpired when it observes
+// an expired record and ErrSessionNotFound when the ID was never stored.
 func (m *MemorySessionStore) Get(_ context.Context, id string) (*Session, error) {
 	m.mu.RLock()
 	sess, ok := m.store[id]
@@ -119,7 +123,7 @@ func (m *MemorySessionStore) Get(_ context.Context, id string) (*Session, error)
 		m.mu.Lock()
 		delete(m.store, id)
 		m.mu.Unlock()
-		return nil, ErrSessionNotFound
+		return nil, ErrSessionExpired
 	}
 
 	// Return a copy to prevent mutation of internal state.

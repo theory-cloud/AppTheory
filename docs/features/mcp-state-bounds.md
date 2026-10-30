@@ -38,10 +38,20 @@ the generic `session error` / internal-error mapping.
 
 The server cleans all state owned by a session with one helper used by explicit `DELETE`, Get-observed
 expiry, and the expired-first sweep during initialize. Cleanup removes session, stream, event/replay,
-task, and cancellation state. The built-in in-memory session store exposes an optional
-`PutAndCollectExpired` capability so the server learns which expired IDs the atomic Put removed; custom
-`SessionStore` implementations keep the base SPI and are cleaned best-effort on the request path.
-Custom external cleanup failures are never converted into a successful initialization.
+task, and cancellation state.
+
+Get-observed expiry means the session store itself proved the record expired: the built-in stores return
+a distinct observed-expiry error, and the server also cleans when a store hands back an expired record
+that it must reject. A `Mcp-Session-Id` that is merely absent from one process-local session store is not
+an expiry: it may belong to a different warm instance that still owns the live session, or it may be
+forged. Such an unknown ID returns the ordinary 404 **without** creating a tombstone, deleting durable
+stream/task/spill state, or waiting on deletion quiet passes. This protects live cross-instance state and
+avoids write amplification from unknown IDs.
+
+The built-in in-memory session store exposes an optional `PutAndCollectExpired` capability so the server
+learns which expired IDs the atomic Put removed; custom `SessionStore` implementations keep the base SPI
+and must report observed expiry distinctly to request request-path cleanup. Custom external cleanup
+failures are never converted into a successful initialization.
 
 ## Durable stream aggregate
 

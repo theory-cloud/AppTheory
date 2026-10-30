@@ -76,6 +76,7 @@ from apptheory import (
 from apptheory.mcp import (
     McpCallerAuth,
     McpSessionCapacityError,
+    McpSessionExpiredError,
     McpStreamAggregateBackfillError,
     McpStreamAggregateCapacityError,
     McpStreamEventTooLargeError,
@@ -2183,6 +2184,102 @@ class M3StateBoundsTests(unittest.TestCase):
             store.create("sess-late")
         self.assertTrue(table.items[key].deleted)
         self.assertEqual(0, table.items[key].event_count)
+
+    def test_memory_session_get_reports_observed_expiry_distinctly(self) -> None:
+        store = MemoryMcpSessionStore(
+            clock=_FixedClock(datetime(1970, 1, 1, 0, 1, 20, tzinfo=UTC)),
+            seed=[{"id": "expired", "expires_at": "1970-01-01T00:01:10Z"}],
+        )
+        with self.assertRaises(McpSessionExpiredError):
+            store.get("expired")
+        with self.assertRaises(McpSessionNotFoundError):
+            store.get("unknown")
+
+    def test_unknown_session_id_creates_no_durable_state(self) -> None:
+        table = _FakeTheoryTable()
+        stream_store = DynamoMcpStreamStore(
+            table=table,
+            id_generator=sequence_mcp_id_generator(["unused"]),
+            clock=_FixedClock(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)),
+        )
+        server = create_mcp_server("M3", "1", {"stream_store": stream_store})
+        response = server.serve(
+            {
+                "method": "POST",
+                "headers": _post_headers(session_id="forged-session"),
+                "body": json.dumps({"jsonrpc": "2.0", "id": "forged", "method": "ping"}),
+            }
+        )
+        self.assertEqual(404, response.status)
+        self.assertEqual({}, {key: item for key, item in table.items.items() if key[0] == "forged-session"})
+
+    def test_cross_instance_miss_keeps_victim_durable_history(self) -> None:
+        table = _FakeTheoryTable()
+        stream_store = DynamoMcpStreamStore(
+            table=table,
+            id_generator=sequence_mcp_id_generator(["victim-stream"]),
+            clock=_FixedClock(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)),
+        )
+        server_a = create_mcp_server("A", "1", {"stream_store": stream_store})
+        server_a.registry().register_streaming_tool(
+            {"name": "victim", "inputSchema": {}},
+            lambda _args, _emit, _ctx: {"content": []},
+        )
+        initialized = server_a.serve(
+            {
+                "method": "POST",
+                "headers": _post_headers(),
+                "body": json.dumps(
+                    {"jsonrpc": "2.0", "id": "init", "method": "initialize", "params": {"protocolVersion": MCP_PROTOCOL_VERSION}}
+                ),
+            }
+        )
+        session_id = initialized.headers[MCP_HEADER_SESSION_ID][0]
+        streamed = server_a.serve(
+            {
+                "method": "POST",
+                "headers": _post_headers(session_id=session_id),
+                "body": json.dumps({"jsonrpc": "2.0", "id": "s1", "method": "tools/call", "params": {"name": "victim"}}),
+            }
+        )
+        self.assertEqual(200, streamed.status)
+        self.assertEqual(2, table.items[(session_id, "!session")].event_count)
+
+        server_b = create_mcp_server("B", "1", {"stream_store": stream_store})
+        miss = server_b.serve(
+            {
+                "method": "POST",
+                "headers": _post_headers(session_id=session_id),
+                "body": json.dumps({"jsonrpc": "2.0", "id": "s2", "method": "ping"}),
+            }
+        )
+        self.assertEqual(404, miss.status)
+        self.assertFalse(table.items[(session_id, "!session")].deleted)
+        self.assertEqual(2, len(stream_store.subscribe(session_id, "victim-stream")))
+
+    def test_observed_expiry_cleans_associated_durable_state(self) -> None:
+        table = _FakeTheoryTable()
+        stream_store = DynamoMcpStreamStore(
+            table=table,
+            id_generator=sequence_mcp_id_generator(["expired-stream"]),
+            clock=_FixedClock(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)),
+        )
+        session_store = MemoryMcpSessionStore(seed=[{"id": "sess-expired", "expires_at": "1970-01-01T00:00:00Z"}])
+        server = create_mcp_server("M3", "1", {"session_store": session_store, "stream_store": stream_store})
+        stream_id = stream_store.create("sess-expired")
+        stream_store.append("sess-expired", stream_id, b"old")
+
+        response = server.serve(
+            {
+                "method": "POST",
+                "headers": _post_headers(session_id="sess-expired"),
+                "body": json.dumps({"jsonrpc": "2.0", "id": "expired", "method": "ping"}),
+            }
+        )
+        self.assertEqual(404, response.status)
+        self.assertTrue(table.items[("sess-expired", "!session")].deleted)
+        with self.assertRaises(McpStreamNotFoundError):
+            stream_store.subscribe("sess-expired", stream_id)
 
 
 if __name__ == "__main__":

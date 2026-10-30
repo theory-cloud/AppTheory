@@ -534,7 +534,7 @@ class McpSessionNotFoundError(Exception):
         super().__init__(message)
 
 
-class McpSessionExpiredError(Exception):
+class McpSessionExpiredError(McpSessionNotFoundError):
     def __init__(self, message: str = SESSION_EXPIRED_MESSAGE) -> None:
         super().__init__(message)
 
@@ -803,7 +803,7 @@ class MemoryMcpSessionStore:
                 raise McpSessionNotFoundError()
             if _session_expired_at(self._clock.now(), session):
                 self._sessions.pop(key, None)
-                raise McpSessionNotFoundError()
+                raise McpSessionExpiredError()
             return _clone_session(session)
 
     def put(self, session: McpSession | dict[str, Any]) -> None:
@@ -2282,9 +2282,14 @@ class McpServer:
     def _get_session(self, session_id: str, *, principal: str = "") -> McpSession:
         try:
             session = _clone_session(self.session_store.get(session_id))
-        except McpSessionNotFoundError:
+        except McpSessionExpiredError:
+            # Only an observed expired record proves that associated cleanup is
+            # legitimate. An unknown ID may belong to another warm instance, so
+            # it keeps the original 404 with no tombstone or durable deletion.
             with contextlib.suppress(Exception):
                 self._cleanup_session_state(session_id)
+            raise McpSessionNotFoundError() from None
+        except McpSessionNotFoundError:
             raise
         if session.principal and session.principal != str(principal or "").strip():
             raise McpSessionNotFoundError()

@@ -542,7 +542,7 @@ export class McpSessionNotFoundError extends Error {
   }
 }
 
-export class McpSessionExpiredError extends Error {
+export class McpSessionExpiredError extends McpSessionNotFoundError {
   constructor(message = SESSION_EXPIRED_MESSAGE) {
     super(message);
     this.name = "McpSessionExpiredError";
@@ -892,7 +892,7 @@ export class MemoryMcpSessionStore implements McpSessionStore {
     }
     if (sessionExpiredAt(this.now(), session)) {
       this.sessions.delete(key);
-      throw new McpSessionNotFoundError();
+      throw new McpSessionExpiredError();
     }
     return cloneSession(session);
   }
@@ -3232,13 +3232,18 @@ export class McpServer {
     try {
       session = await this.sessionStore.get(sessionId);
     } catch (err) {
-      if (err instanceof McpSessionNotFoundError) {
+      // Associated cleanup tombstones and deletes durable stream, task, and
+      // spill state. It is only legitimate when the store observed an expired
+      // record; an arbitrary process-local miss may belong to another warm
+      // instance and must keep the original 404 with no side effects.
+      if (err instanceof McpSessionExpiredError) {
         await this.cleanupSessionState(sessionId).catch((cleanupErr) => {
-          getLogger().warn("mcp session cleanup failed", {
+          getLogger().warn("mcp expired session cleanup failed", {
             sessionId,
             error: errorMessage(cleanupErr),
           });
         });
+        throw new McpSessionNotFoundError();
       }
       throw err;
     }

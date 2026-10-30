@@ -315,7 +315,7 @@ export interface McpServerOptions {
 export declare class McpSessionNotFoundError extends Error {
     constructor(message?: string);
 }
-export declare class McpSessionExpiredError extends Error {
+export declare class McpSessionExpiredError extends McpSessionNotFoundError {
     constructor(message?: string);
 }
 export declare class McpSessionCapacityError extends Error {

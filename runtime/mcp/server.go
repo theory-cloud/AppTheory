@@ -1559,12 +1559,14 @@ func (s *Server) getSession(ctx context.Context, sessionID string) (*Session, er
 
 	sess, err := s.sessionStore.Get(ctx, sessionID)
 	if err != nil {
-		if errors.Is(err, ErrSessionNotFound) {
-			// The built-in store deletes an expired session as it observes it,
-			// so the server cannot see the record; clean the associated state
-			// for the requested ID without turning the 404 into a 500.
+		// Associated cleanup tombstones and deletes stream, task, replay, and
+		// spill state, so it is only legitimate when the store observed an
+		// expired record. An arbitrary process-local miss may belong to another
+		// warm instance and must return the original 404 without touching
+		// durable state or creating a tombstone.
+		if errors.Is(err, ErrSessionExpired) {
 			if cleanupErr := s.cleanupSessionState(ctx, sessionID); cleanupErr != nil {
-				s.logger.WarnContext(ctx, "failed to clean up missing session state", "sessionId", sessionID, "error", cleanupErr)
+				s.logger.WarnContext(ctx, "failed to clean up expired session state", "sessionId", sessionID, "error", cleanupErr)
 			}
 		}
 		return nil, err

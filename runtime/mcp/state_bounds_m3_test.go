@@ -566,6 +566,82 @@ func TestM3DynamoDeletePaginatesBeyond1000AndRejectsLateAppend(t *testing.T) {
 	require.ErrorIs(t, err, ErrStreamNotFound)
 }
 
+func TestM3UnknownSessionIDDoesNotCleanDurableState(t *testing.T) {
+	now := time.Unix(120_000, 0).UTC()
+	ctx := context.Background()
+	db := newFakeMCPTableDB()
+	streamStore := newM3DynamoStore(db, now)
+	server := NewServer("m3", "test", WithStreamStore(streamStore))
+
+	_, err := server.getSession(ctx, "forged-session")
+	require.ErrorIs(t, err, ErrSessionNotFound)
+	require.False(t, errors.Is(err, ErrSessionExpired))
+	require.Empty(t, db.sessionStreamRecords("forged-session"),
+		"an unknown ID must not create a tombstone or durable record")
+}
+
+func TestM3CrossInstanceSessionMissKeepsVictimDurableHistory(t *testing.T) {
+	now := time.Now().UTC()
+	ctx := context.Background()
+	db := newFakeMCPTableDB()
+	streamStore := newM3DynamoStore(db, now)
+	sessionStoreA := NewMemorySessionStore()
+	require.NoError(t, sessionStoreA.Put(ctx, &Session{ID: "sess-victim", ExpiresAt: now.Add(time.Hour)}))
+
+	streamID, err := streamStore.Create(ctx, "sess-victim")
+	require.NoError(t, err)
+	_, err = streamStore.Append(ctx, "sess-victim", streamID, json.RawMessage(`{"event":1}`))
+	require.NoError(t, err)
+
+	serverA := NewServer("m3a", "test", WithSessionStore(sessionStoreA), WithStreamStore(streamStore))
+	_, err = serverA.getSession(ctx, "sess-victim")
+	require.NoError(t, err)
+
+	serverB := NewServer("m3b", "test", WithSessionStore(NewMemorySessionStore()), WithStreamStore(streamStore))
+	_, err = serverB.getSession(ctx, "sess-victim")
+	require.ErrorIs(t, err, ErrSessionNotFound)
+	require.False(t, errors.Is(err, ErrSessionExpired),
+		"a process-local miss is not a proved expiry")
+
+	state, ok := db.getStreamRecord("sess-victim", dynamoStreamSessionStateEventID)
+	require.True(t, ok)
+	require.False(t, state.Deleted, "the owner's aggregate must not be tombstoned")
+	require.Equal(t, int64(1), state.EventCount)
+	require.Equal(t, 1, countM3EventRecords(db, "sess-victim"),
+		"the owner's replay history must survive a foreign-instance miss")
+	eventRecord, ok := db.getStreamRecord("sess-victim", dynamoStreamEventIDForSeq(1))
+	require.True(t, ok)
+	require.Equal(t, streamID, eventRecord.StreamID)
+}
+
+func TestM3ObservedExpiryStillCleansDurableState(t *testing.T) {
+	now := time.Now().UTC()
+	ctx := context.Background()
+	db := newFakeMCPTableDB()
+	streamStore := newM3DynamoStore(db, now)
+	sessionStore := NewMemorySessionStore()
+	sessionStore.Seed(&Session{
+		ID:        "sess-expired",
+		CreatedAt: now.Add(-2 * time.Minute),
+		ExpiresAt: now.Add(-time.Minute),
+	})
+
+	streamID, err := streamStore.Create(ctx, "sess-expired")
+	require.NoError(t, err)
+	_, err = streamStore.Append(ctx, "sess-expired", streamID, json.RawMessage(`{"event":1}`))
+	require.NoError(t, err)
+
+	server := NewServer("m3", "test", WithSessionStore(sessionStore), WithStreamStore(streamStore))
+	_, err = server.getSession(ctx, "sess-expired")
+	require.ErrorIs(t, err, ErrSessionNotFound)
+	require.ErrorIs(t, err, ErrSessionExpired)
+
+	state, ok := db.getStreamRecord("sess-expired", dynamoStreamSessionStateEventID)
+	require.True(t, ok)
+	require.True(t, state.Deleted)
+	require.Equal(t, 0, countM3EventRecords(db, "sess-expired"))
+}
+
 func countM3EventRecords(db *fakeMCPTableDB, sessionID string) int {
 	count := 0
 	for _, record := range db.sessionStreamRecords(sessionID) {
