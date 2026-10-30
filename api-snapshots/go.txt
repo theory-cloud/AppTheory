@@ -3098,7 +3098,7 @@ var ErrEventNotFound = errors.New("event not found")
 
 var ErrSessionCapacityExceeded = errors.New("Session capacity exceeded")
 
-var ErrSessionExpired = errors.New("session expired")
+var ErrSessionExpired = fmt.Errorf("session expired: %w", ErrSessionNotFound)
 
 var ErrSessionNotFound = errors.New("session not found")
 
