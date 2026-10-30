@@ -53,7 +53,6 @@ class _TimeoutCancellationCarrier:
     cancelled: _DeadlineCancellation
 
 
-
 def _clone_context_with_timeout_ctx(ctx: Context, carrier: Any) -> Context:
     clone = Context(
         request=ctx.request,
