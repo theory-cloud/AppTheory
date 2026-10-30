@@ -1547,3 +1547,27 @@ class TransactionalFamilyCapabilityTests(unittest.TestCase):
                     "revoke_family": "revoke_family",
                 }[row["missing"]]
                 self.assertIn(wanted, str(raised.exception))
+
+
+class OriginValidationConformanceTests(unittest.TestCase):
+    """Pins normalize_request_origin to the shared parsed-IP origin table."""
+
+    def test_shared_origin_table(self) -> None:
+        fixture = json.loads(
+            (
+                _REPO_ROOT
+                / "contract-tests"
+                / "fixtures"
+                / "routing"
+                / "mcp-auth-facade"
+                / "facade-origin-validation.v1.json"
+            ).read_text()
+        )
+        self.assertGreater(len(fixture["cases"]), 0)
+        for row in fixture["cases"]:
+            with self.subTest(case=row["id"]):
+                canonical = normalize_request_origin(row["raw"])
+                if row["expect"] == "accepted":
+                    self.assertEqual(canonical, row["canonical"])
+                else:
+                    self.assertIsNone(canonical, f"{row['raw']} must be rejected")

@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import { randomBytes } from "node:crypto";
+import { isIP } from "node:net";
 
 import type { App, AuthPosture, SecureRoute } from "./app.js";
 import { Authenticated, createApp, Public, SecureApp } from "./app.js";
@@ -2684,10 +2685,33 @@ function defaultPortForScheme(scheme: string): string {
 
 function isLoopbackHostname(host: string): boolean {
   const value = host.trim().toLowerCase();
-  if (value === "localhost" || value === "::1") {
+  if (value === "localhost") {
     return true;
   }
-  return /^127\./.test(value);
+  const family = isIP(value);
+  if (family === 4) {
+    const octets = value.split(".");
+    return octets.length === 4 && Number(octets[0]) === 127;
+  }
+  if (family === 6) {
+    if (value === "::1") {
+      return true;
+    }
+    // Parse the expanded all-zero form (0:0:0:0:0:0:0:1) and the IPv4-mapped
+    // forms, including the expanded ::ffff:127.0.0.1 spelling. A lexical
+    // prefix check would accept DNS names such as 127.attacker.example.
+    const expandedLoopback = /^(?:0{1,4}:){7}1$/;
+    if (expandedLoopback.test(value)) {
+      return true;
+    }
+    const mapped =
+      /^(?:::ffff:|(?:0{1,4}:){5}ffff:)(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+    const match = mapped.exec(value);
+    if (match !== null) {
+      return Number(match[1]) === 127;
+    }
+  }
+  return false;
 }
 
 function isAllowedDiscoveryScheme(scheme: string, hostname: string): boolean {

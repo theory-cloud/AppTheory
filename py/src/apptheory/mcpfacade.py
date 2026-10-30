@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import ipaddress
 import json as jsonlib
 import re
 import secrets
@@ -4296,10 +4297,27 @@ def _default_port_for_scheme(scheme: str) -> str:
 
 
 def _is_loopback_hostname(host: str) -> bool:
+    """Report whether a hostname is loopback under parsed-IP semantics.
+
+    The exact hostname ``localhost`` is accepted. Otherwise the hostname must
+    parse as an IP literal: any address in 127.0.0.0/8, IPv6 ``::1`` in any
+    spelling, or an IPv4-mapped IPv6 address whose mapped IPv4 address is
+    loopback. A lexical ``127.`` prefix is deliberately not enough, because it
+    would accept DNS names such as ``127.attacker.example``.
+    """
     value = str(host or "").strip().lower()
-    if value in ("localhost", "::1"):
+    if value == "localhost":
         return True
-    return value.startswith("127.")
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    if isinstance(address, ipaddress.IPv4Address):
+        return address.is_loopback
+    if address.is_loopback:
+        return True
+    mapped = address.ipv4_mapped
+    return mapped is not None and mapped.is_loopback
 
 
 def _is_allowed_discovery_scheme(scheme: str, hostname: str) -> bool:
