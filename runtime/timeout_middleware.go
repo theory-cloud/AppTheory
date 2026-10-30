@@ -13,34 +13,19 @@ type TimeoutConfig struct {
 	TimeoutMessage    string
 }
 
-// timeoutMiddlewareJoinGrace bounds how long the timeout middleware waits for
-// the handler chain it timed out to unwind before returning the timeout
-// response.
-//
-// A handler that observes its canceled context returns immediately and is never
-// left running. A handler that ignores cancellation is exactly the case this
-// middleware exists to bound, so its response is not held open for the
-// handler's full runtime; it is the one documented place where a handler the
-// middleware started can still be running when the response returns.
-const timeoutMiddlewareJoinGrace = 250 * time.Millisecond
-
 // TimeoutMiddleware fails a request closed when its timeout policy expires.
 //
-// The handler chain runs on a worker goroutine with a deadline-bearing context,
-// and the middleware reports app.timeout when the deadline fires while the chain
-// is still running -- at the deadline, not after the chain returns. A handler
-// that observes its canceled context returns immediately and is never left
-// running; a handler that ignores cancellation is exactly the case this
-// middleware exists to bound.
+// The handler chain runs on the invoking goroutine with a deadline-bearing
+// context, and the middleware reports app.timeout when the deadline passed while
+// the chain was running. It starts no goroutine of its own: a handler that
+// observes its canceled context returns immediately, and a handler that ignores
+// it runs until it returns, bounded by the Lambda function timeout rather than
+// abandoned by the middleware. There is no grace window and no abandoned work.
 //
-// The middleware does not abandon the worker: after the deadline it joins the
-// worker for a bounded grace window (timeoutMiddlewareJoinGrace) before
-// returning the timeout response. A handler that ignores cancellation and does
-// not unwind within that window is the one documented place where work the
-// middleware started can still be running when the response returns; the Lambda
-// function timeout remains its outer bound. A synchronous handler that never
-// checks cancellation (for example a CPU loop with no cancellation points)
-// cannot be interrupted by the middleware by construction.
+// A handler that ignores cancellation can therefore hold the invocation until
+// the Lambda function timeout. That is the required no-carve-out behavior: the
+// middleware cannot return while work it started can still run, and it never
+// walks away from the chain with a bounded join.
 func TimeoutMiddleware(config TimeoutConfig) Middleware {
 	cfg := normalizeTimeoutConfig(config)
 
@@ -59,46 +44,18 @@ func TimeoutMiddleware(config TimeoutConfig) Middleware {
 
 			handlerCtx := withDerivedTimeoutContext(timeoutCtx, ctx)
 
-			type result struct {
-				resp *Response
-				err  error
-			}
-
-			// Buffered so the worker can always send and exit, even when the
-			// middleware has already returned on the deadline.
-			done := make(chan result, 1)
-			go func() {
-				resp, err := runHandlerWithRecovery(next, handlerCtx)
-				done <- result{resp: resp, err: err}
-			}()
-
-			select {
-			case res := <-done:
-				if timeoutCtx.Err() != nil {
-					return nil, &AppError{Code: errorCodeTimeout, Message: cfg.TimeoutMessage}
-				}
-				return res.resp, res.err
-			case <-timeoutCtx.Done():
-				// The deadline fired and the handler chain's context is
-				// canceled. Join the worker for a bounded grace window so a
-				// cooperative handler is never left running, then return the
-				// timeout response without holding the invocation open for an
-				// uncooperative handler.
-				joinCtx, joinCancel := context.WithTimeout(context.Background(), timeoutMiddlewareJoinGrace)
-				defer joinCancel()
-				select {
-				case <-done:
-				case <-joinCtx.Done():
-				}
+			resp, err := runHandlerWithRecovery(next, handlerCtx)
+			if timeoutCtx.Err() != nil {
 				return nil, &AppError{Code: errorCodeTimeout, Message: cfg.TimeoutMessage}
 			}
+			return resp, err
 		}
 	}
 }
 
-// runHandlerWithRecovery runs the handler chain on the middleware's worker
-// goroutine and converts a panic into the internal error the serve pipeline
-// expects, so the middleware keeps its panic recovery on the worker path.
+// runHandlerWithRecovery runs the handler chain on the calling goroutine and
+// converts a panic into the internal error the serve pipeline expects, so the
+// middleware keeps its panic recovery on the invoking execution context.
 func runHandlerWithRecovery(next Handler, ctx *Context) (resp *Response, err error) {
 	defer func() {
 		if r := recover(); r != nil {
