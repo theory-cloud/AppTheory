@@ -73,12 +73,13 @@ oldest-event eviction semantics; durable streams never delete live replay histor
 
 ### Aggregate schema, backfill, and recreate
 
-New sessions initialize a versioned aggregate record. A session written by an earlier release has no
-aggregate counters and is treated as **pre-aggregate**: missing counters are never interpreted as zero,
-because that would let retained data bypass the bound. Appends to such a session fail with
-`stream aggregate backfill required` until an operator/product-owned backfill atomically counts every
-retained inline and spilled record and writes the current schema. M3 does not run an automatic runtime
-migration.
+New sessions initialize a versioned aggregate record. A record that is missing entirely cannot prove the
+session is active, so append returns the typed stream-not-found error identically in Go, TypeScript, and
+Python. A present record with missing or older counters is the **pre-aggregate** case: missing counters
+are never interpreted as zero, because that would let retained data bypass the bound. Appends to a
+pre-aggregate session fail with `stream aggregate backfill required` until an operator/product-owned
+backfill atomically counts every retained inline and spilled record and writes the current schema. M3
+does not run an automatic runtime migration.
 
 The supported alternatives are:
 

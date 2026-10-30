@@ -1313,7 +1313,9 @@ class DynamoMcpStreamStore:
     def _append_once(self, session_id: str, stream: Any, payload: bytes) -> str | bool:
         state = self._session_state(session_id)
         if state is None:
-            raise McpStreamAggregateBackfillError()
+            # No session record cannot prove the session active; that is a
+            # not-found condition, not a pre-aggregate record needing backfill.
+            raise McpStreamNotFoundError()
         if bool(_field(state, "deleted")):
             raise McpStreamNotFoundError()
         if int(_field(state, "aggregate_version") or 0) != DEFAULT_STREAM_AGGREGATE_VERSION:

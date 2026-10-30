@@ -2000,6 +2000,19 @@ class M3StateBoundsTests(unittest.TestCase):
         with self.assertRaises(McpStreamAggregateBackfillError):
             store.append("sess-count", stream_id, b"z")
 
+    def test_dynamo_missing_session_state_maps_to_not_found(self) -> None:
+        table = _FakeTheoryTable()
+        store = DynamoMcpStreamStore(
+            table=table,
+            id_generator=sequence_mcp_id_generator(["stream-missing"]),
+            clock=_FixedClock(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)),
+        )
+        stream_id = store.create("sess-missing")
+        table.items.pop(("sess-missing", "!session"))
+        with self.assertRaises(McpStreamNotFoundError):
+            store.append("sess-missing", stream_id, b"x")
+        self.assertFalse(any(key[1].startswith("EVENT#") for key in table.items))
+
     def test_dynamo_append_requires_transaction_and_cleans_refused_spills(self) -> None:
         class _NoTxTable(_FakeTheoryTable):
             transact_write = None  # type: ignore[assignment]

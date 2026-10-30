@@ -2832,6 +2832,25 @@ test("M3 dynamo concurrent appends never overshoot the aggregate", async () => {
   assert.equal(state.eventCount, 1);
 });
 
+test("M3 missing session state maps to not found", async () => {
+  const db = m3StreamDb();
+  const model = defaultMcpStreamModel("m3-missing-state");
+  const store = new DynamoMcpStreamStore(db, {
+    model,
+    idGenerator: sequenceIdGenerator(["stream-missing"]),
+  });
+  const streamId = await store.create("sess-missing");
+  db.items.delete(`${model.name}:sess-missing:!session`);
+  await assert.rejects(
+    () => store.append("sess-missing", streamId, Buffer.from("x")),
+    McpStreamNotFoundError,
+  );
+  const events = [...db.items.keys()].filter((key) =>
+    key.startsWith(`${model.name}:sess-missing:EVENT#`),
+  );
+  assert.deepEqual(events, []);
+});
+
 test("M3 retryable cleanup failures are not hidden by a later success", async () => {
   const db = m3StreamDb();
   const model = defaultMcpStreamModel("m3-retry-cleanup");

@@ -533,6 +533,24 @@ func TestM3DynamoSpillRefusalCleanupIsJoined(t *testing.T) {
 	require.Equal(t, 0, countM3EventRecords(db, "sess-spill-refusal"))
 }
 
+func TestM3DynamoMissingSessionStateMapsToNotFound(t *testing.T) {
+	now := time.Unix(150_000, 0).UTC()
+	ctx := context.Background()
+	db := newFakeMCPTableDB()
+	store := newM3DynamoStore(db, now)
+
+	streamID, err := store.Create(ctx, "sess-missing")
+	require.NoError(t, err)
+	db.mu.Lock()
+	delete(db.streams["sess-missing"], dynamoStreamSessionStateEventID)
+	db.mu.Unlock()
+
+	_, err = store.Append(ctx, "sess-missing", streamID, json.RawMessage(`{"x":1}`))
+	require.ErrorIs(t, err, ErrStreamNotFound)
+	require.NotErrorIs(t, err, ErrStreamAggregateBackfillRequired)
+	require.Equal(t, 0, countM3EventRecords(db, "sess-missing"))
+}
+
 func TestM3DynamoRetryableCleanupFailureIsNotHiddenBySuccess(t *testing.T) {
 	now := time.Unix(105_000, 0).UTC()
 	ctx := context.Background()
