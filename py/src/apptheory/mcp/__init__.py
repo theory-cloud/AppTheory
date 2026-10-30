@@ -1251,23 +1251,50 @@ class DynamoMcpStreamStore:
         if state is not None:
             if bool(_field(state, "deleted")):
                 raise McpStreamNotFoundError()
-            _set_item_attr(state, "expires_at", expires_at)
-            self._table.save(state)
+            self._refresh_session_state_expiry(session_id, expires_at)
             return
-        self._table.put(
-            _McpStreamItem(
-                session_id=session_id,
-                item_id=STREAM_SESSION_ITEM_ID,
-                stream_id="",
-                kind="session",
-                sequence=0,
-                aggregate_version=DEFAULT_STREAM_AGGREGATE_VERSION,
-                event_count=0,
-                aggregate_bytes=0,
-                deleted=False,
-                expires_at=expires_at,
+        try:
+            self._table.put(
+                _McpStreamItem(
+                    session_id=session_id,
+                    item_id=STREAM_SESSION_ITEM_ID,
+                    stream_id="",
+                    kind="session",
+                    sequence=0,
+                    aggregate_version=DEFAULT_STREAM_AGGREGATE_VERSION,
+                    event_count=0,
+                    aggregate_bytes=0,
+                    deleted=False,
+                    expires_at=expires_at,
+                ),
+                condition_expression="attribute_not_exists(#pk)",
+                expression_attribute_names={"#pk": "sessionId"},
             )
-        )
+        except Exception as exc:
+            if not _is_conditional_failure(exc):
+                raise
+            raced = self._session_state(session_id)
+            if raced is None:
+                raise
+            if bool(_field(raced, "deleted")):
+                raise McpStreamNotFoundError() from exc
+
+    def _refresh_session_state_expiry(self, session_id: str, expires_at: int) -> None:
+        try:
+            self._table.update(
+                session_id,
+                STREAM_SESSION_ITEM_ID,
+                {"expires_at": expires_at},
+                condition_expression="#deleted = :deleted",
+                expression_attribute_names={"#deleted": "deleted"},
+                expression_attribute_values={":deleted": False},
+            )
+        except Exception as exc:
+            if not _is_conditional_failure(exc):
+                raise
+            latest = self._session_state(session_id)
+            if latest is None or bool(_field(latest, "deleted")):
+                raise McpStreamNotFoundError() from exc
 
     def append(self, session_id: str, stream_id: str, data: bytes | bytearray | str | None = None) -> str:
         sid = _normalize_required(session_id, "missing session id")

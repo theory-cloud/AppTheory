@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -8,6 +9,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -122,11 +124,53 @@ class _FakeTheoryTable:
         self.items: dict[tuple[str, str], Any] = {}
         self._lock = threading.RLock()
 
-    def put(self, item: Any) -> None:
-        self.items[self._key(item)] = item
+    def put(
+        self,
+        item: Any,
+        *,
+        condition_expression: str | None = None,
+        expression_attribute_names: dict[str, str] | None = None,
+        expression_attribute_values: dict[str, Any] | None = None,
+    ) -> None:
+        with self._lock:
+            key = self._key(item)
+            if not self._condition_met(
+                self.items.get(key),
+                condition_expression,
+                expression_attribute_names or {},
+                expression_attribute_values or {},
+            ):
+                raise _FakeConditionFailed("conditional check failed")
+            self.items[key] = item
 
     def save(self, item: Any) -> None:
         self.put(item)
+
+    def update(
+        self,
+        session_id: str,
+        item_id: str,
+        updates: dict[str, Any],
+        *,
+        condition_expression: str | None = None,
+        expression_attribute_names: dict[str, str] | None = None,
+        expression_attribute_values: dict[str, Any] | None = None,
+    ) -> Any:
+        with self._lock:
+            key = (str(session_id), str(item_id))
+            existing = self.items.get(key)
+            if not self._condition_met(
+                existing,
+                condition_expression,
+                expression_attribute_names or {},
+                expression_attribute_values or {},
+            ):
+                raise _FakeConditionFailed("conditional check failed")
+            if existing is None:
+                raise _FakeNotFound("not found")
+            for name, value in updates.items():
+                setattr(existing, name, value)
+            return existing
 
     def get(self, session_id: str, item_id: str) -> Any:
         key = (str(session_id), str(item_id))
@@ -150,59 +194,24 @@ class _FakeTheoryTable:
     def _transact_write_locked(self, actions: Any) -> None:
         from tabletheory_py import TransactConditionCheck, TransactDelete, TransactPut, TransactUpdate
 
-        def attribute_name(action: Any, token: str) -> str:
-            names = getattr(action, "expression_attribute_names", None) or {}
-            return str(names.get(token, token))
-
-        def field_name(attribute: str) -> str:
-            return {
-                "aggregateVersion": "aggregate_version",
-                "eventCount": "event_count",
-                "aggregateBytes": "aggregate_bytes",
-                "expiresAt": "expires_at",
-            }.get(attribute, attribute)
-
-        def condition_met(action: Any, existing: Any | None) -> bool:
-            expression = str(getattr(action, "condition_expression", None) or "").strip()
-            if not expression:
-                return True
-            if existing is None:
-                return False
-            values = getattr(action, "expression_attribute_values", None) or {}
-            for clause in expression.split(" AND "):
-                match = re.match(r"^(#?\w+)\s*(=|<=|>=|<|>)\s*(:\w+)$", clause.strip())
-                if match is None:
-                    raise AssertionError(f"unsupported fake condition: {clause}")
-                attribute = field_name(attribute_name(action, match.group(1)))
-                operator = match.group(2)
-                expected = values.get(match.group(3))
-                actual = getattr(existing, attribute, None)
-                if isinstance(expected, bool):
-                    if operator != "=" or bool(actual) != expected:
-                        return False
-                elif isinstance(expected, (int, float)):
-                    left = int(actual or 0)
-                    right = int(expected)
-                    checks = {
-                        "=": left == right,
-                        "<=": left <= right,
-                        ">=": left >= right,
-                        "<": left < right,
-                        ">": left > right,
-                    }
-                    if not checks[operator]:
-                        return False
-                elif operator != "=" or str(actual or "") != str(expected or ""):
-                    return False
-            return True
-
         for action in actions:
             if isinstance(action, TransactPut):
-                if action.condition_expression and self._key(action.item) in self.items:
+                existing = self.items.get(self._key(action.item))
+                if not self._condition_met(
+                    existing,
+                    getattr(action, "condition_expression", None),
+                    getattr(action, "expression_attribute_names", None) or {},
+                    getattr(action, "expression_attribute_values", None) or {},
+                ):
                     raise _FakeConditionFailed("conditional check failed")
                 continue
             existing = self.items.get((str(action.pk), str(action.sk or "")), None)
-            if not condition_met(action, existing):
+            if not self._condition_met(
+                existing,
+                getattr(action, "condition_expression", None),
+                getattr(action, "expression_attribute_names", None) or {},
+                getattr(action, "expression_attribute_values", None) or {},
+            ):
                 raise _FakeConditionFailed("conditional check failed")
 
         for action in actions:
@@ -217,6 +226,63 @@ class _FakeTheoryTable:
                         setattr(existing, name, value)
             elif isinstance(action, TransactConditionCheck):
                 continue
+
+    def _condition_met(
+        self,
+        existing: Any | None,
+        expression: str | None,
+        names: dict[str, str],
+        values: dict[str, Any],
+    ) -> bool:
+        text = str(expression or "").strip()
+        if not text:
+            return True
+        for clause in text.split(" AND "):
+            clause = clause.strip()
+            missing = re.match(r"^attribute_not_exists\(\s*(#?\w+)\s*\)$", clause, re.IGNORECASE)
+            if missing is not None:
+                attribute = self._field_name(str(names.get(missing.group(1), missing.group(1))))
+                if existing is None or getattr(existing, attribute, None) in (None, ""):
+                    continue
+                return False
+            match = re.match(r"^(#?\w+)\s*(=|<=|>=|<|>)\s*(:\w+)$", clause)
+            if match is None:
+                raise AssertionError(f"unsupported fake condition: {clause}")
+            if existing is None:
+                return False
+            attribute = self._field_name(str(names.get(match.group(1), match.group(1))))
+            operator = match.group(2)
+            expected = values.get(match.group(3))
+            actual = getattr(existing, attribute, None)
+            if isinstance(expected, bool):
+                if operator != "=" or bool(actual) != expected:
+                    return False
+            elif isinstance(expected, (int, float)):
+                left = int(actual or 0)
+                right = int(expected)
+                checks = {
+                    "=": left == right,
+                    "<=": left <= right,
+                    ">=": left >= right,
+                    "<": left < right,
+                    ">": left > right,
+                }
+                if not checks[operator]:
+                    return False
+            elif operator != "=" or str(actual or "") != str(expected or ""):
+                return False
+        return True
+
+    @staticmethod
+    def _field_name(attribute: str) -> str:
+        return {
+            "sessionId": "session_id",
+            "itemId": "item_id",
+            "aggregateVersion": "aggregate_version",
+            "eventCount": "event_count",
+            "aggregateBytes": "aggregate_bytes",
+            "expiresAt": "expires_at",
+        }.get(attribute, attribute)
 
     def _key(self, item: Any) -> tuple[str, str]:
         session_id = str(getattr(item, "session_id", ""))
@@ -1995,6 +2061,128 @@ class M3StateBoundsTests(unittest.TestCase):
         self.assertEqual(1, successes)
         self.assertEqual(1, failures)
         self.assertEqual(1, table.items[("sess-race", "!session")].event_count)
+
+    def test_dynamo_second_create_keeps_aggregate_and_stream_state(self) -> None:
+        table = _FakeTheoryTable()
+        store = DynamoMcpStreamStore(
+            table=table,
+            id_generator=sequence_mcp_id_generator(["stream-one", "stream-two"]),
+            clock=_FixedClock(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)),
+        )
+        first = store.create("sess-twice")
+        self.assertEqual("1", store.append("sess-twice", first, b"one"))
+        second = store.create("sess-twice")
+        self.assertEqual("stream-two", second)
+        self.assertEqual("2", store.append("sess-twice", second, b"two"))
+
+        state = table.items[("sess-twice", "!session")]
+        self.assertFalse(state.deleted)
+        self.assertEqual(2, state.sequence)
+        self.assertEqual(2, state.event_count)
+        self.assertEqual(6, state.aggregate_bytes)
+        self.assertFalse(hasattr(state, "version"))
+        self.assertEqual(["one"], [event.data.decode() for event in store.subscribe("sess-twice", first)])
+        self.assertEqual(["two"], [event.data.decode() for event in store.subscribe("sess-twice", second)])
+
+    def test_dynamo_existing_session_refresh_preserves_concurrent_aggregate(self) -> None:
+        table = _FakeTheoryTable()
+        store = DynamoMcpStreamStore(
+            table=table,
+            id_generator=sequence_mcp_id_generator(["stream-one", "stream-two"]),
+            clock=_FixedClock(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)),
+        )
+        first = store.create("sess-race-state")
+        store.append("sess-race-state", first, b"one")
+
+        key = ("sess-race-state", "!session")
+        original_save = table.save
+        original_update = table.update
+
+        def bump_concurrent_append() -> None:
+            current = table.items[key]
+            bumped = copy.deepcopy(current)
+            bumped.sequence += 1
+            bumped.event_count += 1
+            bumped.aggregate_bytes += 3
+            table.items[key] = bumped
+
+        def racing_save(item: Any) -> None:
+            bump_concurrent_append()
+            original_save(item)
+
+        def racing_update(session_id: str, item_id: str, updates: dict[str, Any], **kwargs: Any) -> Any:
+            bump_concurrent_append()
+            return original_update(session_id, item_id, updates, **kwargs)
+
+        table.save = racing_save
+        table.update = racing_update
+        store.create("sess-race-state")
+
+        state = table.items[key]
+        self.assertEqual(2, state.sequence)
+        self.assertEqual(2, state.event_count)
+        self.assertEqual(6, state.aggregate_bytes)
+
+    def test_dynamo_existing_session_refresh_cannot_resurrect_tombstone(self) -> None:
+        table = _FakeTheoryTable()
+        store = DynamoMcpStreamStore(
+            table=table,
+            id_generator=sequence_mcp_id_generator(["stream-one", "stream-two"]),
+            clock=_FixedClock(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)),
+        )
+        store.create("sess-resurrect")
+
+        key = ("sess-resurrect", "!session")
+        original_save = table.save
+        original_update = table.update
+
+        def racing_save(item: Any) -> None:
+            tombstone = copy.deepcopy(item)
+            tombstone.deleted = True
+            table.items[key] = tombstone
+            original_save(item)
+
+        def racing_update(session_id: str, item_id: str, updates: dict[str, Any], **kwargs: Any) -> Any:
+            table.items[key].deleted = True
+            return original_update(session_id, item_id, updates, **kwargs)
+
+        table.save = racing_save
+        table.update = racing_update
+        with self.assertRaises(McpStreamNotFoundError):
+            store.create("sess-resurrect")
+        self.assertTrue(table.items[key].deleted)
+
+    def test_dynamo_new_session_create_cannot_overwrite_racing_tombstone(self) -> None:
+        table = _FakeTheoryTable()
+        store = DynamoMcpStreamStore(
+            table=table,
+            id_generator=sequence_mcp_id_generator(["stream-late"]),
+            clock=_FixedClock(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)),
+        )
+        key = ("sess-late", "!session")
+        original_put = table.put
+
+        def racing_put(item: Any, **kwargs: Any) -> None:
+            if (str(item.session_id), str(item.item_id)) == key:
+                table.items[key] = SimpleNamespace(
+                    session_id="sess-late",
+                    item_id="!session",
+                    stream_id="",
+                    kind="session",
+                    sequence=0,
+                    aggregate_version=1,
+                    event_count=0,
+                    aggregate_bytes=0,
+                    deleted=True,
+                    expires_at=int(datetime(2026, 1, 1, 1, 0, 0, tzinfo=UTC).timestamp()),
+                )
+            original_put(item, **kwargs)
+
+        table.put = racing_put
+        with self.assertRaises(McpStreamNotFoundError):
+            store.create("sess-late")
+        self.assertTrue(table.items[key].deleted)
+        self.assertEqual(0, table.items[key].event_count)
 
 
 if __name__ == "__main__":
