@@ -89,9 +89,17 @@ export interface AppTheoryMcpRuntimePostureOptions {
 
 /** Direct-origin reachability decision required under `runtime-bearer` and `none-public`. */
 export enum AppTheoryMcpOriginReachability {
-  /** The execute-api default endpoint is disabled. */
+  /**
+   * Disable the execute-api default endpoint and advertise an owned ordinary
+   * custom domain as the only MCP authority.
+   */
   DISABLED = "disabled",
-  /** The origin is reachable only through a locked front door (CloudFront / VPC origin). */
+  /**
+   * Disable the execute-api default endpoint and require mutual TLS on every
+   * custom domain mapped to the construct-owned API. The owned domain's
+   * `mutualTlsAuthentication` is the concrete lock; an enum alone or an
+   * external/attached front door never satisfies it.
+   */
   LOCKED = "locked",
 }
 
@@ -147,6 +155,18 @@ export interface AppTheoryMcpServerDomainOptions {
    * @default undefined
    */
   readonly hostedZone?: route53.IHostedZone;
+
+  /**
+   * Mutual TLS truststore for the owned custom domain.
+   *
+   * Supplying this is the concrete `AppTheoryMcpOriginReachability.LOCKED`
+   * evidence: the construct disables the default execute-api endpoint and
+   * requires every API mapping bound to the owned API to target a domain whose
+   * `MutualTlsAuthentication` carries a truststore URI. Supplying it with any
+   * other origin decision, or selecting `LOCKED` without it, fails synthesis.
+   * @default undefined
+   */
+  readonly mutualTlsAuthentication?: apigwv2.MTLSConfig;
 }
 
 /** Stage configuration for an AppTheory-owned MCP HTTP API. */
@@ -611,6 +631,7 @@ export class AppTheoryMcpServer extends Construct {
         corsPreflight: buildCorsPreflight(props.cors),
         createDefaultStage: false,
         disableExecuteApiEndpoint: originReachability === AppTheoryMcpOriginReachability.DISABLED
+          || originReachability === AppTheoryMcpOriginReachability.LOCKED
           ? true
           : undefined,
       });
@@ -742,6 +763,12 @@ export class AppTheoryMcpServer extends Construct {
         throw new Error("AppTheoryMcpServer: domain configuration requires construct-owned API mode");
       }
       this.setupCustomDomain(ownedOptions.domain, ownedStage);
+      if (
+        originReachability === AppTheoryMcpOriginReachability.LOCKED
+        && this.ownedApi !== undefined
+      ) {
+        registerOwnedLockedOriginValidation(this, this.ownedApi);
+      }
       endpointBase = `https://${ownedOptions.domain.domainName}`;
     } else if (props.api) {
       const stack = Stack.of(this);
@@ -759,7 +786,8 @@ export class AppTheoryMcpServer extends Construct {
     );
     if (
       props.api === undefined
-      && originReachability === AppTheoryMcpOriginReachability.DISABLED
+      && (originReachability === AppTheoryMcpOriginReachability.DISABLED
+        || originReachability === AppTheoryMcpOriginReachability.LOCKED)
       && this.endpoints.some((endpoint) => endpoint.includes(".execute-api."))
     ) {
       throw new Error(
@@ -832,6 +860,7 @@ export class AppTheoryMcpServer extends Construct {
     const domainName = new apigwv2.DomainName(this, "DomainName", {
       domainName: options.domainName,
       certificate,
+      mtls: options.mutualTlsAuthentication,
     });
     (this as { domainName?: apigwv2.DomainName }).domainName = domainName;
     const apiMapping = new apigwv2.ApiMapping(this, "ApiMapping", {
@@ -1511,10 +1540,11 @@ function validateDefenseInDepth(
  * Resolve the declared direct-origin decision to a proven posture.
  *
  * Every supplied value is checked, not only the two postures that require the
- * decision. A DISABLED declaration is never accepted as an assertion: an owned
- * API must name the custom domain that replaces the disabled execute-api
- * authority, and an attach declaration must be provable on a concrete
- * same-stack API at final synthesis. LOCKED evidence is resolved separately.
+ * decision. Neither value is ever accepted as an assertion: DISABLED needs the
+ * owned ordinary domain that replaces the disabled execute-api authority (or a
+ * provable concrete attach), and LOCKED additionally needs mutual TLS on every
+ * domain mapped to the owned API. Attach-mode LOCKED is unsupported because an
+ * external API carries no in-stack truststore or mapping evidence.
  */
 function resolveOriginReachability(
   scope: Construct,
@@ -1522,7 +1552,15 @@ function resolveOriginReachability(
   owned: NormalizedOwnedApiOptions,
 ): AppTheoryMcpOriginReachability | undefined {
   const decision = props.originReachability;
-  if (decision === undefined) return undefined;
+  const mutualTls = owned.domain?.mutualTlsAuthentication;
+  if (decision === undefined) {
+    if (mutualTls !== undefined) {
+      throw new Error(
+        "AppTheoryMcpServer: ownedApi.domain.mutualTlsAuthentication is only valid with originReachability LOCKED",
+      );
+    }
+    return undefined;
+  }
   if (
     decision !== AppTheoryMcpOriginReachability.DISABLED
     && decision !== AppTheoryMcpOriginReachability.LOCKED
@@ -1531,7 +1569,27 @@ function resolveOriginReachability(
       "AppTheoryMcpServer: originReachability must be AppTheoryMcpOriginReachability.DISABLED or .LOCKED",
     );
   }
+  if (mutualTls !== undefined && decision !== AppTheoryMcpOriginReachability.LOCKED) {
+    throw new Error(
+      "AppTheoryMcpServer: ownedApi.domain.mutualTlsAuthentication is only valid with originReachability LOCKED",
+    );
+  }
   if (decision === AppTheoryMcpOriginReachability.LOCKED) {
+    if (props.api !== undefined) {
+      throw new Error(
+        "AppTheoryMcpServer: originReachability LOCKED is unsupported in attach mode; an API owned outside the construct carries no in-stack mutual-TLS mapping evidence",
+      );
+    }
+    if (owned.domain === undefined) {
+      throw new Error(
+        "AppTheoryMcpServer: originReachability LOCKED requires an effective ownedApi.domain with mutualTlsAuthentication",
+      );
+    }
+    if (mutualTls === undefined) {
+      throw new Error(
+        "AppTheoryMcpServer: originReachability LOCKED requires ownedApi.domain.mutualTlsAuthentication; disablement alone is the DISABLED posture",
+      );
+    }
     return decision;
   }
   if (props.api !== undefined) {
@@ -1572,6 +1630,104 @@ function registerOwnedDisabledOriginValidation(
       ];
     },
   });
+}
+
+/**
+ * Final whole-stack proof for an owned LOCKED API.
+ *
+ * LOCKED is not an alias of DISABLED: at final synthesis the default endpoint
+ * must still be disabled and every `CfnApiMapping` bound to the owned API,
+ * including mappings another scope adds after construction, must resolve to an
+ * in-stack `CfnDomainName` whose `MutualTlsAuthentication` carries a truststore
+ * URI. An unresolvable mapping or domain fails closed instead of counting as
+ * evidence.
+ */
+function registerOwnedLockedOriginValidation(
+  scope: Construct,
+  api: apigwv2.HttpApi,
+): void {
+  const stack = Stack.of(scope);
+  const cfnApi = api.node.defaultChild as apigwv2.CfnApi;
+  stack.node.addValidation({
+    validate: () => {
+      const errors: string[] = [];
+      if (stack.resolve(cfnApi.disableExecuteApiEndpoint) !== true) {
+        errors.push(
+          "AppTheoryMcpServer: originReachability LOCKED requires AWS::ApiGatewayV2::Api.Properties.DisableExecuteApiEndpoint to resolve to true",
+        );
+      }
+      const mappings = cfnApiMappingsBoundToApi(scope, api);
+      if (mappings.length === 0) {
+        errors.push(
+          "AppTheoryMcpServer: originReachability LOCKED requires at least one AWS::ApiGatewayV2::ApiMapping bound to the owned API",
+        );
+      }
+      const domains = cfnDomainNames(scope);
+      for (const mapping of mappings) {
+        const domain = domains.find(
+          (candidate) => comparableApiId(scope, candidate.ref)
+            === comparableApiId(scope, mapping.domainName),
+        );
+        if (domain === undefined) {
+          errors.push(
+            `AppTheoryMcpServer: originReachability LOCKED cannot resolve mapping ${mapping.node.path} to an in-stack AWS::ApiGatewayV2::DomainName; mutual-TLS evidence is unverifiable`,
+          );
+          continue;
+        }
+        if (!hasTruststoreUri(stack, domain)) {
+          errors.push(
+            `AppTheoryMcpServer: originReachability LOCKED requires every mapping to target a domain with MutualTlsAuthentication.TruststoreUri (${mapping.node.path} -> ${domain.node.path})`,
+          );
+        }
+      }
+      return errors;
+    },
+  });
+}
+
+function hasTruststoreUri(stack: Stack, domain: apigwv2.CfnDomainName): boolean {
+  const resolved = stack.resolve(domain.mutualTlsAuthentication);
+  if (resolved === undefined || resolved === null || typeof resolved !== "object") {
+    return false;
+  }
+  const authentication = resolved as Record<string, unknown>;
+  const truststoreUri = authentication.truststoreUri ?? authentication.TruststoreUri;
+  return truststoreUri !== undefined && truststoreUri !== null && truststoreUri !== "";
+}
+
+/** Every in-stack `CfnApiMapping` whose resolved `ApiId` is the supplied API. */
+function cfnApiMappingsBoundToApi(
+  scope: Construct,
+  api: apigwv2.IHttpApi,
+): apigwv2.CfnApiMapping[] {
+  const stack = Stack.of(scope);
+  const apiKey = comparableApiId(scope, api.apiId);
+  const found: apigwv2.CfnApiMapping[] = [];
+  const visit = (node: Construct): void => {
+    if (node instanceof apigwv2.CfnApiMapping && comparableApiId(scope, node.apiId) === apiKey) {
+      found.push(node);
+    }
+    for (const child of node.node.children) {
+      visit(child);
+    }
+  };
+  visit(stack);
+  return found;
+}
+
+function cfnDomainNames(scope: Construct): apigwv2.CfnDomainName[] {
+  const stack = Stack.of(scope);
+  const found: apigwv2.CfnDomainName[] = [];
+  const visit = (node: Construct): void => {
+    if (node instanceof apigwv2.CfnDomainName) {
+      found.push(node);
+    }
+    for (const child of node.node.children) {
+      visit(child);
+    }
+  };
+  visit(stack);
+  return found;
 }
 
 /**

@@ -223,10 +223,17 @@ test("the documented new-API swap passes the transition check", () => {
       handler: handler(stack),
       transportPosture: apptheory.AppTheoryMcpTransportPosture.RUNTIME_BEARER,
       runtimePosture: { requireBearerToken: true },
-      originReachability: apptheory.AppTheoryMcpOriginReachability.LOCKED,
+      originReachability: apptheory.AppTheoryMcpOriginReachability.DISABLED,
       denialSignal: {},
       sessionState: { enabled: false },
-      ownedApi: { stage: { throttlingEnabled: true } },
+      ownedApi: {
+        stage: { throttlingEnabled: true },
+        domain: {
+          domainName: "mcp.example.com",
+          certificateArn:
+            "arn:aws:acm:us-east-1:123456789012:certificate/11111111-2222-3333-4444-555555555555",
+        },
+      },
       routeModel: apptheory.AppTheoryMcpRouteModel.CONSOLIDATED,
     });
   });

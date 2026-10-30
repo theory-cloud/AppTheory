@@ -36,15 +36,31 @@ produces no auth denials and has nothing to signal — its only signal is the AP
 
 - **What:** the app must record, in encoded config, whether the `execute-api` default endpoint (and any custom
   domain) is directly reachable, and if so either **disable** it (`disableExecuteApiEndpoint`) or **lock the
-  origin** (CloudFront with a locked origin / VPC origin, or a custom domain that fronts the locked origin).
+  origin** with concrete, in-stack mutual-TLS evidence on the custom domain that fronts the API.
 - **Why:** runtime bearer is fail-closed per request, but direct reachability changes who can reach that gate
   and whether the edge restoration/throttle path applies. It must be a decided, recorded posture — not an
-  accident of deployment shape.
-- **How:** a required `originReachability` decision on the construct (`disabled` | `locked`). **Operator decision
-  (2026-10-12), security-lean:** a directly reachable origin (`direct`) is **not** allowed under `runtime-bearer` or
-  `none-public`; the construct refuses `direct` at synthesis. This overrules the earlier recommendation in this
-  document's open decisions.
-- **Enforceable at synth:** yes (presence + mutual-exclusion checks).
+  accident of deployment shape, and not an assertion the construct cannot verify.
+- **How:** a required `originReachability` decision on the construct (`disabled` | `locked`), enforced against the
+  resources the construct can inspect:
+  - owned `disabled`: requires the effective `ownedApi.domain` (an ordinary domain, no mTLS), emits
+    `DisableExecuteApiEndpoint: true`, and advertises only the custom-domain authority. Final synthesis rejects a
+    later L1 re-enable; a disabled execute-api endpoint is never advertised.
+  - owned `locked`: additionally requires `ownedApi.domain.mutualTlsAuthentication` and a final whole-stack proof
+    that the default endpoint stays disabled and every `AWS::ApiGatewayV2::ApiMapping` bound to the owned API
+    resolves to an in-stack `AWS::ApiGatewayV2::DomainName` carrying
+    `MutualTlsAuthentication.TruststoreUri`. An additional ordinary domain, removed mTLS, a re-enabled endpoint,
+    or unresolvable mapping/domain evidence fails synthesis. LOCKED is therefore an ingress-enforcement model,
+    not an alias of DISABLED and not a CloudFront/VPC-origin assertion.
+  - attach mode: `LOCKED` is unsupported because an API owned outside the construct carries no in-stack lock
+    evidence. `DISABLED` is accepted only on a same-stack concrete `HttpApi` whose emitted
+    `DisableExecuteApiEndpoint` resolves to literal `true`; imported APIs and assertion-only external front doors
+    fail.
+  - Supplying `mutualTlsAuthentication` without owned `LOCKED` fails as contradictory rather than silently
+    changing the declared posture.
+- **Operator decision (2026-10-12), security-lean:** a directly reachable origin (`direct`) is **not** allowed
+  under `runtime-bearer` or `none-public`; the construct refuses it at synthesis. The CDK-owner M5 selection
+  (owned mutual-TLS domain) supplies the concrete LOCKED model; it does not reopen that decision.
+- **Enforceable at synth:** yes (source validation plus final whole-stack resource proof).
 
 ### DD-3 — Denial telemetry replacement
 

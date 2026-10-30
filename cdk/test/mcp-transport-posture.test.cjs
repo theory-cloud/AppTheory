@@ -325,15 +325,15 @@ test("AppTheoryMcpServer posture marker agrees with the resolved posture", () =>
   {
     const app = new cdk.App();
     const stack = new cdk.Stack(app, "MarkerAttachStack");
-    const importedApi = apigwv2.HttpApi.fromHttpApiAttributes(stack, "Frontdoor", {
-      httpApiId: "api-marker-attach",
+    const attachedApi = new apigwv2.HttpApi(stack, "Frontdoor", {
+      disableExecuteApiEndpoint: true,
     });
     const server = new apptheory.AppTheoryMcpServer(stack, "McpServer", {
       handler: handler(stack),
-      api: importedApi,
+      api: attachedApi,
       transportPosture: posture.RUNTIME_BEARER,
       runtimePosture: { requireBearerToken: true },
-      originReachability: reachability.LOCKED,
+      originReachability: reachability.DISABLED,
       denialSignal: { metricName: "apptheory.mcp.auth_denied" },
       owningApiDefense: { accessLogging: true, throttling: { rateLimit: 50, burstLimit: 100 } },
       sessionState: { enabled: false },
@@ -359,7 +359,7 @@ const nonePublicFloor = failClosedFloor("none-public");
 const attachRuntimeBearer = {
   transportPosture: posture.RUNTIME_BEARER,
   runtimePosture: { requireBearerToken: true },
-  originReachability: reachability.LOCKED,
+  originReachability: reachability.DISABLED,
   denialSignal: {},
   owningApiDefense: { accessLogging: true, throttling: { rateLimit: 50, burstLimit: 100 } },
   sessionState: { enabled: false },
@@ -370,7 +370,7 @@ const failClosedCases = [
     name: "runtime bearer without a runtime posture declaration",
     props: {
       transportPosture: posture.RUNTIME_BEARER,
-      originReachability: reachability.LOCKED,
+      originReachability: reachability.DISABLED,
       denialSignal: {},
       ownedApi: { stage: { throttlingEnabled: true } },
     },
@@ -452,6 +452,15 @@ const failClosedCases = [
     error: /requires owningApiDefense\.throttling rateLimit and burstLimit to be positive finite numbers/,
   },
   {
+    name: "runtime bearer in attach mode with LOCKED",
+    props: {
+      ...attachRuntimeBearer,
+      originReachability: reachability.LOCKED,
+    },
+    api: true,
+    error: /originReachability LOCKED is unsupported in attach mode/,
+  },
+  {
     name: "runtime bearer in owned mode without an explicit throttle decision",
     props: {
       ...runtimeBearerFloor,
@@ -496,7 +505,7 @@ const failClosedCases = [
     props: {
       facade: { providerId: "   " },
       runtimePosture: { requireBearerToken: true },
-      originReachability: reachability.LOCKED,
+      originReachability: reachability.DISABLED,
       denialSignal: {},
       ownedApi: { stage: { throttlingEnabled: true } },
     },
@@ -507,7 +516,7 @@ const failClosedCases = [
     props: {
       facade: { providerId: cdk.Fn.ref("ProviderId") },
       runtimePosture: { requireBearerToken: true },
-      originReachability: reachability.LOCKED,
+      originReachability: reachability.DISABLED,
       denialSignal: {},
       ownedApi: { stage: { throttlingEnabled: true } },
     },
