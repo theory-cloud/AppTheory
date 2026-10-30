@@ -108,7 +108,7 @@ class StoreConformanceTests(unittest.TestCase):
 
     def test_fixture_table_is_complete(self) -> None:
         cases = self.fixture["cases"]
-        self.assertEqual(len(cases), 48)
+        self.assertEqual(len(cases), 65)
         self.assertEqual(
             {case["store"] for case in cases},
             {"transaction", "authorization_code", "client", "route_refresh_broker", "rate_limit"},
@@ -119,8 +119,8 @@ class StoreConformanceTests(unittest.TestCase):
         cases = self.fixture["cases"]
         ran = run_store_conformance(STORE_CLASSES, cases, self.clock)
         print(f"store conformance: {ran} cases run")
-        self.assertEqual(ran, 48)
-        self.assertEqual(len(cases), 48)
+        self.assertEqual(ran, 65)
+        self.assertEqual(len(cases), 65)
 
     def test_fixture_lock_ttl_is_the_mandated_default(self) -> None:
         # A conforming durable store is judged against the table's
@@ -145,7 +145,7 @@ class StoreConformanceTests(unittest.TestCase):
         # rows (one with a put_version, one without) share one scenario, and the
         # two revoke_family rows share one scenario.
         pairs = {(case["store"], case["scenario"]) for case in self.fixture["cases"]}
-        self.assertEqual(len(pairs), 43)
+        self.assertEqual(len(pairs), 59)
 
 
 class TransactionStoreTests(unittest.TestCase):
@@ -309,18 +309,25 @@ class RouteRefreshBrokerStoreTests(unittest.TestCase):
 
     def test_family_capability_lists_and_revokes_every_member(self) -> None:
         store = MemoryRouteRefreshBrokerStore(now=self.clock.now, ttl=900)
-        for index in range(2):
-            store.put(
-                RouteRefreshBrokerRecord(
-                    handle_hash=f"member-{index}",
-                    status=STATUS_ACTIVE,
-                    chain_generation=1,
-                    family_hash="family-a",
-                )
+        store.create_family(
+            RouteRefreshBrokerRecord(
+                handle_hash="family-a",
+                status=STATUS_ACTIVE,
+                chain_generation=1,
+                family_hash="family-a",
             )
+        )
         store.put(
             RouteRefreshBrokerRecord(
-                handle_hash="other-0",
+                handle_hash="member-1",
+                status=STATUS_ACTIVE,
+                chain_generation=2,
+                family_hash="family-a",
+            )
+        )
+        store.create_family(
+            RouteRefreshBrokerRecord(
+                handle_hash="family-b",
                 status=STATUS_ACTIVE,
                 chain_generation=1,
                 family_hash="family-b",

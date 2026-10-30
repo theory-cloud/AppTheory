@@ -47,6 +47,9 @@ STATUS_CONSUMED = "consumed"
 STATUS_EXPIRED = "expired"
 STATUS_REVOKED = "revoked"
 
+BROKER_FAMILY_STATUS_ACTIVE = "active"
+BROKER_FAMILY_STATUS_REVOKED = "revoked"
+
 
 class StoreError(Exception):
     """Base class for reference-store failures."""
@@ -75,6 +78,30 @@ class BrokerExpiredError(StoreError):
     facade can attribute the failure (expiry versus absence) while the
     client-facing body stays the uniform ``invalid_grant``.
     """
+
+
+class BrokerFamilyCapabilityMissingError(StoreError):
+    """The broker store lacks the transactional family capability."""
+
+
+class BrokerFamilyExistsError(StoreError):
+    """``create_family`` was called for a family ID that already exists."""
+
+
+class BrokerFamilyStateUnavailableError(StoreError):
+    """A family-marked record's required family state is missing or corrupt."""
+
+
+class BrokerFamilyMismatchError(StoreError):
+    """A root, successor, or presented record fails its family/generation binding."""
+
+
+class BrokerSuccessorExistsError(StoreError):
+    """A rotation successor handle is already stored."""
+
+
+class BrokerLegacyLineageUnsupportedError(StoreError):
+    """A family-less record was presented for ordinary rotation."""
 
 
 @dataclass(slots=True)
@@ -186,6 +213,36 @@ class RouteRefreshBrokerRecord:
 
 
 @dataclass(slots=True)
+class RouteRefreshFamilyState:
+    """The store-internal family-state record behind one refresh family."""
+
+    family_hash: str = ""
+    status: str = BROKER_FAMILY_STATUS_ACTIVE
+    version: int = 0
+    created_at: datetime | None = None
+    revoked_at: datetime | None = None
+
+
+@dataclass(slots=True)
+class RouteRefreshFamilyRotation:
+    """One atomic rotation request.
+
+    The presented handle is still locked by ``lock_owner`` at
+    ``expected_version``, its family is active, and ``successor`` does not
+    exist. The store creates the successor, checks the family/generation and
+    identity bindings, writes the grace response onto the presented record,
+    clears the lock, and returns the stored successor.
+    """
+
+    presented_handle_hash: str = ""
+    lock_owner: str = ""
+    expected_version: int = 0
+    successor: RouteRefreshBrokerRecord | None = None
+    grace_refresh_response: str = ""
+    grace_expires_at: datetime | None = None
+
+
+@dataclass(slots=True)
 class RateLimitBucketKey:
     """A rate-limit bucket identity plus its per-window budget.
 
@@ -269,24 +326,39 @@ class RouteRefreshBrokerSeeder(Protocol):
 
 
 class RouteRefreshBrokerFamilyStore(Protocol):
-    """The optional family capability of a broker store.
+    """The enumeration/revocation half of the family capability of a broker store.
 
     A refresh family is the chain of handles one authorization grant produced;
-    ``family_hash`` names it on every record. ``list_family`` answers which
-    handles belong to a family and what state each is in, so an incident
-    responder can enumerate a family without walking successor links.
-    ``revoke_family`` revokes every record of a family in one operation and
-    returns the records it revoked, so a confirmed theft is not limited by the
-    eight-link successor walk a long-lived chain would exhaust.
+    ``family_hash`` names it on every record. ``list_family`` answers which live
+    handles belong to a family and what state each is in, and ``revoke_family``
+    revokes every live record of a family in one operation.
 
-    A store that does not implement this capability remains fully usable: the
-    facade falls back to the bounded successor walk for revocation and reports a
-    state event, so the degradation is visible rather than silent.
+    This pair alone is not enough for the framework-owned front channel: a
+    conforming store must implement
+    :class:`RouteRefreshBrokerTransactionalFamilyStore`, which adds atomic root
+    creation and atomic rotation. The pair remains exported as the incident
+    surface and for stores that keep it while they migrate.
     """
 
     def list_family(self, family_hash: str) -> list[RouteRefreshBrokerRecord]: ...
 
     def revoke_family(self, family_hash: str) -> list[RouteRefreshBrokerRecord]: ...
+
+
+class RouteRefreshBrokerTransactionalFamilyStore(RouteRefreshBrokerFamilyStore, Protocol):
+    """The mandatory transactional family capability of a broker store.
+
+    ``create_family`` atomically creates an active family-state record and its
+    generation-1 root record. ``rotate_family`` checks the lock owner, expected
+    version, active family, family/generation/identity bindings, and successor
+    uniqueness in one serialized transaction before creating the successor and
+    updating the predecessor. Every get, acquire_lock, and rotate_family of a
+    family-marked handle honors the family tombstone.
+    """
+
+    def create_family(self, root: RouteRefreshBrokerRecord) -> RouteRefreshBrokerRecord: ...
+
+    def rotate_family(self, rotation: RouteRefreshFamilyRotation) -> RouteRefreshBrokerRecord: ...
 
 
 class RouteRefreshBrokerHandleTTLReporter(Protocol):
@@ -500,6 +572,7 @@ class MemoryRouteRefreshBrokerStore:
         self._ttl = UTC_NOW_TTL_ROUTE_REFRESH_BROKER_SECONDS if ttl is None else int(ttl)
         self._lock_ttl_seconds = lock_ttl_seconds
         self._records: dict[str, tuple[RouteRefreshBrokerRecord, datetime]] = {}
+        self._families: dict[str, RouteRefreshFamilyState] = {}
         self._lock = threading.Lock()
 
     def put(self, record: RouteRefreshBrokerRecord) -> None:
@@ -528,6 +601,8 @@ class MemoryRouteRefreshBrokerStore:
     def get(self, handle_hash: str) -> RouteRefreshBrokerRecord | None:
         with self._lock:
             stored = self._live(handle_hash, self._now())
+            if stored is not None:
+                self._raise_family_error(stored)
         return _copy_record(stored) if stored is not None else None
 
     def acquire_lock(self, handle_hash: str, lock_owner: str, expected_version: int) -> RouteRefreshBrokerRecord:
@@ -535,6 +610,7 @@ class MemoryRouteRefreshBrokerStore:
             stored = self._live(handle_hash, self._now())
             if stored is None:
                 raise KeyError(handle_hash)
+            self._raise_family_error(stored)
             if stored.status == STATUS_REVOKED:
                 raise BrokerRevokedError(f"broker record {handle_hash!r} is revoked")
             # The lock check precedes the version check: concurrent callers all
@@ -555,6 +631,7 @@ class MemoryRouteRefreshBrokerStore:
             stored = self._live(record.handle_hash, self._now())
             if stored is None:
                 raise KeyError(record.handle_hash)
+            self._raise_family_error(stored)
             if stored.status == STATUS_REVOKED:
                 raise BrokerRevokedError(f"broker record {record.handle_hash!r} is revoked")
             if stored.version != expected_version:
@@ -587,6 +664,105 @@ class MemoryRouteRefreshBrokerStore:
         ``RouteRefreshBrokerHandleTTLReporter``."""
         return float(self._ttl)
 
+    def _raise_family_error(self, record: RouteRefreshBrokerRecord) -> None:
+        """Raise the tombstone/binding error a family-marked record carries.
+
+        A family-less record is readable for migration and incident work; the
+        facade refuses its rotation separately.
+        """
+        if not record.family_hash:
+            return
+        state = self._families.get(record.family_hash)
+        if state is None or not state.family_hash:
+            raise BrokerFamilyStateUnavailableError("route refresh family state is missing or corrupt")
+        if state.status == BROKER_FAMILY_STATUS_REVOKED:
+            raise BrokerRevokedError("route refresh family is revoked")
+        if record.chain_generation < 1:
+            raise BrokerFamilyMismatchError("route refresh family generation mismatch")
+        if record.chain_generation == 1 and record.handle_hash != record.family_hash:
+            raise BrokerFamilyMismatchError("route refresh family root mismatch")
+
+    def create_family(self, root: RouteRefreshBrokerRecord) -> RouteRefreshBrokerRecord:
+        """Atomically create an active family-state record and its generation-1
+        root. A pre-existing family ID is never overwritten or reactivated."""
+        if not root.handle_hash or not root.family_hash:
+            raise StoreError("family root needs a handle and family hash")
+        if root.family_hash != root.handle_hash or root.chain_generation != 1:
+            raise BrokerFamilyMismatchError("route refresh family root mismatch")
+        if root.status not in ("", STATUS_ISSUED, STATUS_ACTIVE):
+            raise BrokerFamilyMismatchError("route refresh family root status mismatch")
+        with self._lock:
+            if root.family_hash in self._families:
+                raise BrokerFamilyExistsError("route refresh family already exists")
+            if root.handle_hash in self._records:
+                raise BrokerSuccessorExistsError("route refresh successor already exists")
+            now = self._now()
+            stored = _copy_record(root, status=root.status or STATUS_ISSUED, version=1)
+            self._families[root.family_hash] = RouteRefreshFamilyState(
+                family_hash=root.family_hash,
+                status=BROKER_FAMILY_STATUS_ACTIVE,
+                version=1,
+                created_at=now,
+            )
+            self._records[stored.handle_hash] = (stored, now)
+            return _copy_record(stored)
+
+    def rotate_family(self, rotation: RouteRefreshFamilyRotation) -> RouteRefreshBrokerRecord:
+        """One atomic rotation: lock owner, expected version, active family,
+        family/generation/identity bindings, and successor uniqueness."""
+        if not rotation.presented_handle_hash or rotation.successor is None or not rotation.successor.handle_hash:
+            raise StoreError("rotation needs a presented handle and successor")
+        if not rotation.lock_owner:
+            raise BrokerLockedError("route refresh broker record is locked")
+        with self._lock:
+            now = self._now()
+            stored = self._live(rotation.presented_handle_hash, now)
+            if stored is None:
+                raise KeyError(rotation.presented_handle_hash)
+            if not stored.family_hash:
+                raise BrokerLegacyLineageUnsupportedError("route refresh legacy lineage is unsupported")
+            self._raise_family_error(stored)
+            if stored.status == STATUS_REVOKED:
+                raise BrokerRevokedError("route refresh broker record is revoked")
+            if (
+                not stored.refresh_lock_owner
+                or stored.refresh_lock_owner != rotation.lock_owner
+                or stored.refresh_lock_expires_at is None
+                or now >= stored.refresh_lock_expires_at
+            ):
+                raise BrokerLockedError("route refresh broker record is locked")
+            if stored.version != rotation.expected_version:
+                raise BrokerVersionConflictError("broker version conflict")
+            successor = rotation.successor
+            if successor.handle_hash == stored.handle_hash:
+                raise BrokerSuccessorExistsError("route refresh successor already exists")
+            if (
+                successor.family_hash != stored.family_hash
+                or successor.chain_generation != stored.chain_generation + 1
+                or not _same_broker_identity(stored, successor)
+            ):
+                raise BrokerFamilyMismatchError("route refresh family or generation binding mismatch")
+            if successor.handle_hash in self._records:
+                raise BrokerSuccessorExistsError("route refresh successor already exists")
+            stored_successor = _copy_record(successor, status=successor.status or STATUS_ISSUED, version=1)
+            if stored_successor.status != STATUS_ISSUED:
+                raise BrokerFamilyMismatchError("route refresh successor status mismatch")
+            stored_successor.refresh_lock_owner = ""
+            stored_successor.refresh_lock_expires_at = None
+            completed = _copy_record(
+                stored,
+                encrypted_grace_refresh_response=rotation.grace_refresh_response,
+                grace_expires_at=rotation.grace_expires_at,
+                status=STATUS_ACTIVE,
+                refresh_lock_owner="",
+                refresh_lock_expires_at=None,
+                version=stored.version + 1,
+            )
+            stored_at = self._records[stored.handle_hash][1]
+            self._records[stored_successor.handle_hash] = (stored_successor, now)
+            self._records[stored.handle_hash] = (completed, stored_at)
+            return _copy_record(stored_successor)
+
     def list_family(self, family_hash: str) -> list[RouteRefreshBrokerRecord]:
         """Returns every live record of one refresh family. Aged-out records are
         purged as they are observed and are not listed; a blank family hash is
@@ -605,13 +781,25 @@ class MemoryRouteRefreshBrokerStore:
             return family
 
     def revoke_family(self, family_hash: str) -> list[RouteRefreshBrokerRecord]:
-        """Revokes every live record of one refresh family and returns the
-        records it handled. Revocation is idempotent, so already-revoked members
-        are returned unchanged rather than reported as errors."""
+        """Atomically writes the family tombstone and revokes every live member
+        it handles. A family that never existed is an idempotent no-op; a family
+        with live members but no family state fails closed."""
         if (family_hash or "").strip() == "":
             return []
         with self._lock:
             now = self._now()
+            state = self._families.get(family_hash)
+            if state is None:
+                for stored, stored_at in self._records.values():
+                    if now >= stored_at + timedelta(seconds=self._ttl):
+                        continue
+                    if stored.family_hash == family_hash:
+                        raise BrokerFamilyStateUnavailableError("route refresh family state is missing or corrupt")
+                return []
+            if state.status != BROKER_FAMILY_STATUS_REVOKED:
+                state.status = BROKER_FAMILY_STATUS_REVOKED
+                state.revoked_at = now
+                state.version += 1
             family: list[RouteRefreshBrokerRecord] = []
             for handle_hash, (stored, stored_at) in list(self._records.items()):
                 if now >= stored_at + timedelta(seconds=self._ttl):
@@ -679,6 +867,23 @@ def _lock_is_held(record: RouteRefreshBrokerRecord, now: datetime) -> bool:
         bool(record.refresh_lock_owner)
         and record.refresh_lock_expires_at is not None
         and now < record.refresh_lock_expires_at
+    )
+
+
+def _same_broker_identity(presented: RouteRefreshBrokerRecord, successor: RouteRefreshBrokerRecord) -> bool:
+    """Report whether a successor preserves every identity field a handle binds."""
+    return (
+        presented.issuer == successor.issuer
+        and presented.stage == successor.stage
+        and presented.canonical_resource == successor.canonical_resource
+        and presented.client_namespace == successor.client_namespace
+        and presented.endpoint_kind == successor.endpoint_kind
+        and presented.partner_id == successor.partner_id
+        and presented.agent_id == successor.agent_id
+        and presented.client_id_hash == successor.client_id_hash
+        and presented.subject_id_hash == successor.subject_id_hash
+        and presented.scope_fingerprint == successor.scope_fingerprint
+        and presented.upstream_client_id == successor.upstream_client_id
     )
 
 
@@ -1274,10 +1479,20 @@ def _seed_broker_family(store: Any, key: str, family_hash: str) -> None:
             stage="lab",
             canonical_resource="https://mcp.example.test/mcp",
             status=STATUS_ACTIVE,
-            chain_generation=1,
+            chain_generation=2,
             family_hash=family_hash,
         )
     )
+
+
+def _seed_family_with_root(store: Any, family_hash: str, size: int, prefix: str) -> None:
+    """Create a family root through the transactional capability and backfill
+    the remaining members through the store's create path."""
+    if size <= 0:
+        return
+    store.create_family(_copy_record(_family_root(family_hash), status=STATUS_ACTIVE))
+    for index in range(1, size):
+        _seed_broker_family(store, f"{prefix}-{index}", family_hash)
 
 
 def _scenario_broker_list_family(
@@ -1291,10 +1506,8 @@ def _scenario_broker_list_family(
         raise AssertionError("the broker store must implement the family capability")
     family_hash = "family-hash"
     other_hash = "other-family-hash"
-    for index in range(int(params.get("family_size", 0))):
-        _seed_broker_family(store, f"member-{index}", family_hash)
-    for index in range(int(params.get("other_family_size", 0))):
-        _seed_broker_family(store, f"other-{index}", other_hash)
+    _seed_family_with_root(store, family_hash, int(params.get("family_size", 0)), "member")
+    _seed_family_with_root(store, other_hash, int(params.get("other_family_size", 0)), "other")
     family_list = cast("Any", list_family)
     actual = {
         "family_size": len(cast("list[RouteRefreshBrokerRecord]", family_list(family_hash))),
@@ -1317,12 +1530,10 @@ def _scenario_broker_revoke_family(
     other_hash = "other-family-hash"
     family_size = int(params.get("family_size", 0))
     other_size = int(params.get("other_family_size", 0))
-    family_keys = [f"member-{index}" for index in range(family_size)]
-    other_keys = [f"other-{index}" for index in range(other_size)]
-    for key in family_keys:
-        _seed_broker_family(store, key, family_hash)
-    for key in other_keys:
-        _seed_broker_family(store, key, other_hash)
+    _seed_family_with_root(store, family_hash, family_size, "member")
+    _seed_family_with_root(store, other_hash, other_size, "other")
+    family_keys = ([family_hash] + [f"member-{index}" for index in range(1, family_size)]) if family_size > 0 else []
+    other_keys = ([other_hash] + [f"other-{index}" for index in range(1, other_size)]) if other_size > 0 else []
     revoked = revoke_family(family_hash)
     family_statuses = sorted(_broker_status(store, key) for key in family_keys)
     other_statuses = sorted(_broker_status(store, key) for key in other_keys)
@@ -1337,7 +1548,10 @@ def _scenario_broker_revoke_family(
 
 
 def _broker_status(store: Any, key: str) -> str:
-    record = store.get(key)
+    try:
+        record = store.get(key)
+    except BrokerRevokedError:
+        return STATUS_REVOKED
     if record is None:
         raise AssertionError(f"broker record {key!r} must exist")
     return record.status
@@ -1456,6 +1670,441 @@ def _rate_limit_key(params: dict[str, Any]) -> RateLimitBucketKey:
     )
 
 
+def _family_root(family_hash: str) -> RouteRefreshBrokerRecord:
+    return RouteRefreshBrokerRecord(
+        handle_hash=family_hash,
+        issuer="https://auth.example.test",
+        stage="lab",
+        canonical_resource="https://mcp.example.test/mcp",
+        client_namespace="conformance",
+        endpoint_kind="namespace",
+        client_id_hash="client-hash",
+        subject_id_hash="subject-hash",
+        scopes=["mcp:tools"],
+        scope_fingerprint="scope-fingerprint",
+        upstream_client_id="upstream-client",
+        upstream_refresh_token_hash=hash_key("upstream-refresh-root"),
+        status=STATUS_ISSUED,
+        chain_generation=1,
+        family_hash=family_hash,
+    )
+
+
+def _family_member(
+    presented: RouteRefreshBrokerRecord, handle_hash: str, family_hash: str, generation: int
+) -> RouteRefreshBrokerRecord:
+    return _copy_record(
+        presented,
+        handle_hash=handle_hash,
+        family_hash=family_hash,
+        chain_generation=generation,
+        status=STATUS_ISSUED,
+        version=0,
+        encrypted_upstream_refresh_token="upstream-refresh-successor",  # noqa: S106 - a deterministic fixture value, not a credential
+        upstream_refresh_token_hash=hash_key("upstream-refresh-successor"),
+        refresh_lock_owner="",
+        refresh_lock_expires_at=None,
+    )
+
+
+def _family_outcome(operation: Any) -> str:
+    try:
+        operation()
+        return "ok"
+    except BrokerFamilyExistsError:
+        return "family_exists"
+    except BrokerFamilyStateUnavailableError:
+        return "family_state_unavailable"
+    except BrokerFamilyMismatchError:
+        return "family_mismatch"
+    except BrokerSuccessorExistsError:
+        return "successor_exists"
+    except BrokerLegacyLineageUnsupportedError:
+        return "legacy_lineage_unsupported"
+    except BrokerRevokedError:
+        return "revoked"
+    except BrokerLockedError:
+        return "locked"
+    except BrokerVersionConflictError:
+        return "version_conflict"
+    except BrokerExpiredError:
+        return "expired"
+    except KeyError:
+        return "not_found"
+
+
+def _family_read(store: Any, handle_hash: str) -> RouteRefreshBrokerRecord | None:
+    try:
+        return store.get(handle_hash)
+    except StoreError:
+        return None
+
+
+def _family_rotate(
+    store: Any,
+    locked: RouteRefreshBrokerRecord,
+    successor_key: str,
+    family_hash: str,
+    *,
+    lock_owner: str = "conformance-owner",
+    expected_version: int | None = None,
+    generation: int | None = None,
+) -> RouteRefreshBrokerRecord:
+    return store.rotate_family(
+        RouteRefreshFamilyRotation(
+            presented_handle_hash=locked.handle_hash,
+            lock_owner=lock_owner,
+            expected_version=locked.version if expected_version is None else expected_version,
+            successor=_family_member(
+                locked,
+                successor_key,
+                family_hash,
+                (locked.chain_generation + 1) if generation is None else generation,
+            ),
+            grace_refresh_response='{"refresh_token":"' + successor_key + '"}',
+            grace_expires_at=locked.refresh_lock_expires_at,
+        )
+    )
+
+
+def _family_create_and_lock(store: Any, family_hash: str) -> RouteRefreshBrokerRecord:
+    store.create_family(_family_root(family_hash))
+    root = store.get(family_hash)
+    if root is None:
+        raise AssertionError("the family root must exist")
+    return store.acquire_lock(root.handle_hash, "conformance-owner", root.version)
+
+
+def _run_family_scenario(  # noqa: C901 - one branch per shared-table scenario
+    stores: dict[str, Any], scenario: str, params: dict[str, Any], expect: dict[str, Any], clock: Any
+) -> None:
+    store = _broker_store(stores, clock, None, UTC_NOW_LOCK_TTL_SECONDS)
+    family_hash = "family-hash"
+    actual: dict[str, Any] = {}
+    if scenario == "family_create":
+        created = store.create_family(_family_root(family_hash))
+        second = _family_outcome(lambda: store.create_family(_family_root(family_hash)))
+        stored = store.get(family_hash)
+        actual = {
+            "create": "ok",
+            "root_version": created.version,
+            "root_generation": created.chain_generation,
+            "root_family_is_self": created.family_hash == created.handle_hash,
+            "second_create": second,
+            "root_after_second_version": stored.version if stored is not None else -1,
+            "root_get": "ok" if stored is not None else "not_found",
+        }
+    elif scenario == "family_create_binding":
+        root = _family_root(family_hash)
+        root.chain_generation = int(params.get("generation", 0))
+        if params.get("family_binding") == "other":
+            root.family_hash = "other-family-hash"
+        create = _family_outcome(lambda: store.create_family(root))
+        actual = {
+            "create": create,
+            "root_get": "ok" if _family_read(store, root.handle_hash) is not None else "not_found",
+        }
+    elif scenario == "family_rotate":
+        store.create_family(_family_root(family_hash))
+        root = store.get(family_hash)
+        if root is None:
+            raise AssertionError("the family root must exist")
+        locked = store.acquire_lock(root.handle_hash, "conformance-owner", root.version)
+        rotate = _family_outcome(lambda: _family_rotate(store, locked, "successor", family_hash))
+        successor = _family_read(store, "successor")
+        presented = _family_read(store, root.handle_hash)
+        actual = {
+            "rotate": rotate,
+            "successor_get": "ok" if successor is not None else "not_found",
+            "successor_version": successor.version if successor is not None else -1,
+            "successor_generation": successor.chain_generation if successor is not None else -1,
+            "successor_family_matches": successor is not None and successor.family_hash == family_hash,
+            "presented_get": "ok" if presented is not None else "not_found",
+            "presented_version": presented.version if presented is not None else -1,
+            "presented_status": presented.status if presented is not None else "none",
+            "presented_grace_set": bool(
+                presented is not None
+                and presented.encrypted_grace_refresh_response
+                and presented.grace_expires_at is not None
+            ),
+            "presented_lock_cleared": bool(
+                presented is not None and not presented.refresh_lock_owner and presented.refresh_lock_expires_at is None
+            ),
+        }
+    elif scenario == "family_rotate_wrong_owner":
+        locked = _family_create_and_lock(store, family_hash)
+        rotate = _family_outcome(
+            lambda: _family_rotate(store, locked, "successor", family_hash, lock_owner="another-owner")
+        )
+        presented = _family_read(store, locked.handle_hash)
+        actual = {
+            "rotate": rotate,
+            "successor_get": "ok" if _family_read(store, "successor") is not None else "not_found",
+            "presented_version": presented.version if presented is not None else -1,
+            "presented_status": presented.status if presented is not None else "none",
+        }
+    elif scenario == "family_rotate_stale_version":
+        locked = _family_create_and_lock(store, family_hash)
+        rotate = _family_outcome(
+            lambda: _family_rotate(store, locked, "successor", family_hash, expected_version=locked.version - 1)
+        )
+        actual = {
+            "rotate": rotate,
+            "successor_get": "ok" if _family_read(store, "successor") is not None else "not_found",
+        }
+    elif scenario == "family_rotate_existing_successor":
+        locked = _family_create_and_lock(store, family_hash)
+        store.put(_family_member(locked, "successor", family_hash, locked.chain_generation + 1))
+        rotate = _family_outcome(lambda: _family_rotate(store, locked, "successor", family_hash))
+        presented = _family_read(store, locked.handle_hash)
+        successor = _family_read(store, "successor")
+        actual = {
+            "rotate": rotate,
+            "successor_status_after": successor.status if successor is not None else "none",
+            "successor_version_after": successor.version if successor is not None else -1,
+            "presented_status_after": presented.status if presented is not None else "none",
+            "presented_version_after": presented.version if presented is not None else -1,
+        }
+    elif scenario in ("family_rotate_generation_mismatch", "family_rotate_family_mismatch"):
+        locked = _family_create_and_lock(store, family_hash)
+        generation = (
+            locked.chain_generation + 2
+            if scenario == "family_rotate_generation_mismatch"
+            else locked.chain_generation + 1
+        )
+        successor_family = "other-family-hash" if scenario == "family_rotate_family_mismatch" else family_hash
+        rotate = _family_outcome(
+            lambda: _family_rotate(store, locked, "successor", successor_family, generation=generation)
+        )
+        actual = {
+            "rotate": rotate,
+            "successor_get": "ok" if _family_read(store, "successor") is not None else "not_found",
+        }
+    elif scenario == "family_rotate_legacy":
+        store.put(
+            RouteRefreshBrokerRecord(
+                handle_hash="legacy",
+                issuer="https://auth.example.test",
+                stage="lab",
+                canonical_resource="https://mcp.example.test/mcp",
+                status=STATUS_ACTIVE,
+            )
+        )
+        legacy = store.get("legacy")
+        if legacy is None:
+            raise AssertionError("the legacy record must exist")
+        locked = store.acquire_lock("legacy", "conformance-owner", legacy.version)
+        rotate = _family_outcome(
+            lambda: store.rotate_family(
+                RouteRefreshFamilyRotation(
+                    presented_handle_hash="legacy",
+                    lock_owner="conformance-owner",
+                    expected_version=locked.version,
+                    successor=_family_member(locked, "successor", "", 2),
+                    grace_refresh_response='{"refresh_token":"successor"}',
+                    grace_expires_at=locked.refresh_lock_expires_at,
+                )
+            )
+        )
+        presented = _family_read(store, "legacy")
+        actual = {
+            "rotate": rotate,
+            "successor_get": "ok" if _family_read(store, "successor") is not None else "not_found",
+            "presented_version": presented.version if presented is not None else -1,
+            "presented_status": presented.status if presented is not None else "none",
+        }
+    elif scenario == "family_missing_state":
+        store.put(_family_member(_family_root(family_hash), "member", family_hash, 1))
+        get = _family_outcome(lambda: store.get("member"))
+        lock = _family_outcome(lambda: store.acquire_lock("member", "conformance-owner", 1))
+        rotate = _family_outcome(
+            lambda: store.rotate_family(
+                RouteRefreshFamilyRotation(
+                    presented_handle_hash="member",
+                    lock_owner="conformance-owner",
+                    expected_version=1,
+                    successor=_family_member(_family_root(family_hash), "successor", family_hash, 2),
+                    grace_refresh_response='{"refresh_token":"successor"}',
+                    grace_expires_at=None,
+                )
+            )
+        )
+        revoke = _family_outcome(lambda: store.revoke_family(family_hash))
+        actual = {
+            "get": get,
+            "lock": lock,
+            "rotate": rotate,
+            "revoke": revoke,
+            "list": "ok",
+            "listed": len(store.list_family(family_hash)),
+            "record_status": "none",
+            "successor_get": "ok" if _family_read(store, "successor") is not None else "not_found",
+        }
+    elif scenario == "family_mixed_lineage":
+        store.create_family(_family_root(family_hash))
+        root = store.get(family_hash)
+        if root is None:
+            raise AssertionError("the family root must exist")
+        locked = store.acquire_lock(root.handle_hash, "conformance-owner", root.version)
+        successor = _family_rotate(store, locked, "successor", family_hash)
+        store.put(
+            RouteRefreshBrokerRecord(
+                handle_hash="legacy",
+                issuer="https://auth.example.test",
+                stage="lab",
+                canonical_resource="https://mcp.example.test/mcp",
+                encrypted_grace_refresh_response='{"refresh_token":"successor"}',
+                status=STATUS_ACTIVE,
+            )
+        )
+        legacy = store.get("legacy")
+        if legacy is None:
+            raise AssertionError("the legacy record must exist")
+        legacy_lock = _family_outcome(lambda: store.acquire_lock("legacy", "conformance-owner", legacy.version))
+        legacy_rotate = _family_outcome(
+            lambda: store.rotate_family(
+                RouteRefreshFamilyRotation(
+                    presented_handle_hash="legacy",
+                    lock_owner="conformance-owner",
+                    expected_version=legacy.version + 1,
+                    successor=_family_member(legacy, "legacy-successor", successor.family_hash, 2),
+                    grace_refresh_response='{"refresh_token":"legacy-successor"}',
+                    grace_expires_at=None,
+                )
+            )
+        )
+        listed = store.list_family(family_hash)
+        actual = {
+            "legacy_lock": legacy_lock,
+            "legacy_rotate": legacy_rotate,
+            "list": "ok",
+            "listed": len(listed),
+            "legacy_listed": any(record.handle_hash == "legacy" for record in listed),
+            "successor_get": "ok",
+            "successor_generation": successor.chain_generation,
+        }
+    elif scenario == "family_tombstone_every_member":
+        store.create_family(_family_root(family_hash))
+        current = store.get(family_hash)
+        if current is None:
+            raise AssertionError("the family head must exist")
+        for index in range(int(params.get("rotations", 1))):
+            locked = store.acquire_lock(current.handle_hash, f"owner-{index}", current.version)
+            current = store.rotate_family(
+                RouteRefreshFamilyRotation(
+                    presented_handle_hash=locked.handle_hash,
+                    lock_owner=f"owner-{index}",
+                    expected_version=locked.version,
+                    successor=_family_member(locked, f"successor-{index}", family_hash, locked.chain_generation + 1),
+                    grace_refresh_response='{"refresh_token":"successor-' + str(index) + '"}',
+                    grace_expires_at=locked.refresh_lock_expires_at,
+                )
+            )
+        revoked = store.revoke_family(family_hash)
+        listed = store.list_family(family_hash)
+        head_get = _family_outcome(lambda: store.get(current.handle_hash))
+        head_lock = _family_outcome(lambda: store.acquire_lock(current.handle_hash, "late-owner", -1))
+        head_rotate = _family_outcome(
+            lambda: store.rotate_family(
+                RouteRefreshFamilyRotation(
+                    presented_handle_hash=current.handle_hash,
+                    lock_owner="late-owner",
+                    expected_version=-1,
+                    successor=_family_member(current, "late-successor", family_hash, current.chain_generation + 1),
+                    grace_refresh_response='{"refresh_token":"late-successor"}',
+                    grace_expires_at=None,
+                )
+            )
+        )
+        revoked_again = store.revoke_family(family_hash)
+        actual = {
+            "revoke": "ok",
+            "revoked": len(revoked),
+            "list": "ok",
+            "listed": len(listed),
+            "all_listed_revoked": all(record.status == STATUS_REVOKED for record in listed),
+            "head_get": head_get,
+            "head_lock": head_lock,
+            "head_rotate": head_rotate,
+            "late_successor_get": "ok" if _family_read(store, "late-successor") is not None else "not_found",
+            "create_again": _family_outcome(lambda: store.create_family(_family_root(family_hash))),
+            "revoke_again": "ok",
+            "revoke_again_count": len(revoked_again),
+        }
+    elif scenario == "family_tombstone_beyond_batch":
+        store.create_family(_family_root(family_hash))
+        members = int(params.get("members", 1))
+        for index in range(members):
+            store.put(_family_member(_family_root(family_hash), f"member-{index}", family_hash, index + 2))
+        revoked = store.revoke_family(family_hash)
+        listed = store.list_family(family_hash)
+        actual = {
+            "revoke": "ok",
+            "revoked": len(revoked),
+            "list": "ok",
+            "listed": len(listed),
+            "all_listed_revoked": all(record.status == STATUS_REVOKED for record in listed),
+            "first_get": _family_outcome(lambda: store.get("member-0")),
+            "last_get": _family_outcome(lambda: store.get(f"member-{members - 1}")),
+            "create_again": _family_outcome(lambda: store.create_family(_family_root(family_hash))),
+        }
+    elif scenario == "family_revocation_first":
+        locked = _family_create_and_lock(store, family_hash)
+        revoked = store.revoke_family(family_hash)
+        rotate = _family_outcome(lambda: _family_rotate(store, locked, "successor", family_hash))
+        actual = {
+            "revoke": "ok",
+            "revoked": len(revoked),
+            "rotate": rotate,
+            "presented_get": _family_outcome(lambda: store.get(locked.handle_hash)),
+            "successor_get": "ok" if _family_read(store, "successor") is not None else "not_found",
+            "lock_again": _family_outcome(lambda: store.acquire_lock(locked.handle_hash, "late-owner", -1)),
+            "revoke_again": _family_outcome(lambda: store.revoke_family(family_hash)),
+        }
+    elif scenario == "family_rotation_first":
+        locked = _family_create_and_lock(store, family_hash)
+        successor = _family_rotate(store, locked, "successor", family_hash)
+        revoked = store.revoke_family(family_hash)
+        successor_rotate = _family_outcome(
+            lambda: store.rotate_family(
+                RouteRefreshFamilyRotation(
+                    presented_handle_hash=successor.handle_hash,
+                    lock_owner="late-owner",
+                    expected_version=-1,
+                    successor=_family_member(successor, "late-successor", family_hash, successor.chain_generation + 1),
+                    grace_refresh_response='{"refresh_token":"late-successor"}',
+                    grace_expires_at=None,
+                )
+            )
+        )
+        actual = {
+            "revoke": "ok",
+            "revoked": len(revoked),
+            "successor_get": _family_outcome(lambda: store.get(successor.handle_hash)),
+            "successor_lock": _family_outcome(lambda: store.acquire_lock(successor.handle_hash, "late-owner", -1)),
+            "successor_rotate": successor_rotate,
+            "late_successor_get": "ok" if _family_read(store, "late-successor") is not None else "not_found",
+        }
+    elif scenario == "family_tombstone_survives_expiry":
+        store.create_family(_family_root(family_hash))
+        store.revoke_family(family_hash)
+        clock.advance(timedelta(seconds=int(params.get("advance_seconds", 0))))
+        get = _family_outcome(lambda: store.get(family_hash))
+        listed = store.list_family(family_hash)
+        revoked_again = store.revoke_family(family_hash)
+        actual = {
+            "list": "ok",
+            "listed": len(listed),
+            "get": get,
+            "create_again": _family_outcome(lambda: store.create_family(_family_root(family_hash))),
+            "revoke_again": "ok",
+            "revoke_again_count": len(revoked_again),
+        }
+    else:
+        raise AssertionError(f"unknown family scenario {scenario}")
+    _assert_expected(expect, actual)
+
+
 _STORE_SCENARIOS: dict[tuple[str, str], Any] = {
     ("transaction", "consume_single_use"): _scenario_transaction_consume_single_use,
     ("transaction", "consume_unknown"): _scenario_transaction_consume_unknown,
@@ -1507,6 +2156,31 @@ _STORE_SCENARIOS: dict[tuple[str, str], Any] = {
     ("rate_limit", "check_and_increment"): _scenario_rate_limit_check_and_increment,
     ("rate_limit", "window_reset"): _scenario_rate_limit_window_reset,
 }
+
+
+for _family_scenario in (
+    "family_create",
+    "family_create_binding",
+    "family_rotate",
+    "family_rotate_wrong_owner",
+    "family_rotate_stale_version",
+    "family_rotate_existing_successor",
+    "family_rotate_generation_mismatch",
+    "family_rotate_family_mismatch",
+    "family_rotate_legacy",
+    "family_missing_state",
+    "family_mixed_lineage",
+    "family_tombstone_every_member",
+    "family_tombstone_beyond_batch",
+    "family_revocation_first",
+    "family_rotation_first",
+    "family_tombstone_survives_expiry",
+):
+    _STORE_SCENARIOS[("route_refresh_broker", _family_scenario)] = (
+        lambda stores, params, expect, clock, _scenario=_family_scenario: _run_family_scenario(
+            stores, _scenario, params, expect, clock
+        )
+    )
 
 
 __all__ = [
