@@ -25,7 +25,7 @@ from datetime import datetime, timedelta
 from typing import Any, cast
 from urllib.parse import quote_plus
 
-from apptheory.app import App, Handler, SecureApp, _resolve, create_app
+from apptheory.app import App, Handler, RouteGuard, SecureApp, _resolve, create_app
 from apptheory.cloudfront import origin_url
 from apptheory.context import Context
 from apptheory.mcproutes import (
@@ -64,7 +64,7 @@ from apptheory.oauth import (
     new_pkce_code_verifier,
     pkce_challenge_s256,
     pkce_verify_s256,
-    require_bearer_token_middleware,
+    require_bearer_token_guard,
 )
 from apptheory.oauth.store import (
     STATUS_ACTIVE,
@@ -655,6 +655,10 @@ class _RouteRegistration:
     pattern: str
     handler: Handler
     auth_required: bool
+    # ``guard`` is the route-level pre-middleware authorization guard. Every
+    # facade route that requires runtime credential validation carries one so
+    # application middleware cannot short-circuit it.
+    guard: RouteGuard | None = None
     # ``posture`` is the declared SecureApp authorization posture, used only by
     # the SecureApp registrar. The plain-App path never reads it; a registration
     # built outside :func:`_build_registrations` declares none, and the SecureApp
@@ -1155,10 +1159,10 @@ def _transport_posture_declaration(config: _NormalizedConfig) -> AuthPosture:
     RequireAuth route option, which requires a resolved principal; the SecureApp
     counterpart of that requirement is ``authenticated()``, so the application's
     own principal resolver stays the authority for the transport route.
-    Runtime-bearer registers no route option on the plain surface because the
-    RFC 9728 bearer middleware enforces the request and fails closed, so the
-    declared posture is ``public()`` and that validator is the authority.
-    None-public is deliberately public by contract.
+    Runtime-bearer declares ``public()`` because the RFC 9728 bearer guard runs
+    as route metadata before application middleware and fails closed; the
+    declared posture itself performs no principal resolution. None-public is
+    deliberately public by contract.
     """
     if config.transport_posture in ("iam", "jwt"):
         return authenticated()
@@ -1169,6 +1173,9 @@ def _build_registrations(config: _NormalizedConfig, inventory: RouteInventory) -
     registrations: list[_RouteRegistration] = []
     auth_required = config.transport_posture in ("iam", "jwt")
     transport_posture = _transport_posture_declaration(config)
+    transport_guard = (
+        require_bearer_token_guard(config.require_bearer_token) if config.require_bearer_token is not None else None
+    )
     # Every other facade route is public by contract: a client must reach the
     # RFC 9728 metadata before it holds a token, /authorize and /token are the
     # unauthenticated client-facing protocol surface (PKCE and the single-use code
@@ -1177,16 +1184,20 @@ def _build_registrations(config: _NormalizedConfig, inventory: RouteInventory) -
     surface_posture = public()
     for route in inventory.routes:
         handler = _checked_mcp_handler(route.kind, config.mcp_handler)
-        if config.require_bearer_token is not None:
-            handler = _with_bearer_assertion(config.require_bearer_token, handler)
         registrations.append(
-            _RouteRegistration("POST", route.mcp_pattern, handler, auth_required, posture=transport_posture)
+            _RouteRegistration(
+                "POST", route.mcp_pattern, handler, auth_required, guard=transport_guard, posture=transport_posture
+            )
         )
         registrations.append(
-            _RouteRegistration("GET", route.mcp_pattern, handler, auth_required, posture=transport_posture)
+            _RouteRegistration(
+                "GET", route.mcp_pattern, handler, auth_required, guard=transport_guard, posture=transport_posture
+            )
         )
         registrations.append(
-            _RouteRegistration("DELETE", route.mcp_pattern, handler, auth_required, posture=transport_posture)
+            _RouteRegistration(
+                "DELETE", route.mcp_pattern, handler, auth_required, guard=transport_guard, posture=transport_posture
+            )
         )
         # The OAuth surface follows the posture-derived inventory, not mere
         # handler presence: under the none-public posture nothing OAuth-surface
@@ -1435,6 +1446,7 @@ def _register_routes(app: App, registrations: list[_RouteRegistration]) -> None:
                 registration.pattern,
                 registration.handler,
                 auth_required=registration.auth_required,
+                guard=registration.guard,
             )
         except Exception as err:
             raise ValueError(f"{_ERROR_PREFIX} register {registration.method} {registration.pattern}: {err}") from err
@@ -1448,6 +1460,7 @@ def _register_secure_routes(secure_app: SecureApp, registrations: list[_RouteReg
                 registration.pattern,
                 registration.handler,
                 _declared_posture(registration),
+                guard=registration.guard,
             )
         except Exception as err:
             raise ValueError(f"{_ERROR_PREFIX} register {registration.method} {registration.pattern}: {err}") from err
@@ -1652,15 +1665,6 @@ def _checked_register_handler(kind: str, next_handler: Handler) -> Handler:
                 f"{_ERROR_PREFIX} request path is not a registration path for endpoint kind {_quote(kind)}"
             )
         return _resolve(next_handler(ctx))
-
-    return handler
-
-
-def _with_bearer_assertion(options: RequireBearerTokenOptions, next_handler: Handler) -> Handler:
-    middleware = require_bearer_token_middleware(options)
-
-    def handler(ctx: Context) -> Response:
-        return _resolve(middleware(ctx, lambda inner: _resolve(next_handler(inner))))
 
     return handler
 

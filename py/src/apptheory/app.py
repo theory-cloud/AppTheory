@@ -48,7 +48,7 @@ from apptheory.request_id_source import (
     well_formed_client_request_id,
 )
 from apptheory.response import Response, normalize_response
-from apptheory.router import Router
+from apptheory.router import Match, Router
 from apptheory.secure_openapi import (
     SecureOpenAPISpec,
     generate_secure_openapi,
@@ -93,6 +93,7 @@ def _resolve[T](value: T | Awaitable[T]) -> T:
 Handler = Callable[[Context], Response | Awaitable[Response]]
 NextHandler = Callable[[Context], Response]
 Middleware = Callable[[Context, NextHandler], Response | Awaitable[Response]]
+RouteGuard = Callable[[Context], Response | Awaitable[Response | None] | None]
 AuthHook = Callable[[Context], str | Awaitable[str]]
 PrincipalAuthHook = Callable[[Context], "AuthPrincipal | Awaitable[AuthPrincipal | None] | None"]
 
@@ -361,9 +362,17 @@ class App:
         self._secure_principal_resolver = None
         self._secure_routes = []
 
-    def handle(self, method: str, pattern: str, handler: Handler, *, auth_required: bool = False) -> App:
+    def handle(
+        self,
+        method: str,
+        pattern: str,
+        handler: Handler,
+        *,
+        auth_required: bool = False,
+        guard: RouteGuard | None = None,
+    ) -> App:
         """Register a handler for an HTTP method and route pattern."""
-        self._router.add(method, pattern, handler, auth_required=auth_required)
+        self._router.add(method, pattern, handler, auth_required=auth_required, guard=guard)
         return self
 
     def _register_secure_route(
@@ -376,6 +385,7 @@ class App:
         surface: str,
         appsync_parent_type: str = "",
         appsync_field: str = "",
+        guard: RouteGuard | None = None,
     ) -> None:
         if not self._secure:
             raise RuntimeError("apptheory: secure core is required")
@@ -388,6 +398,7 @@ class App:
             surface=surface,
             posture=kind.value,
             scopes=scopes,
+            guard=guard,
         )
         self._secure_routes.append(
             SecureRoute(
@@ -450,14 +461,22 @@ class App:
             )
         )
 
-    def handle_strict(self, method: str, pattern: str, handler: Handler, *, auth_required: bool = False) -> App:
+    def handle_strict(
+        self,
+        method: str,
+        pattern: str,
+        handler: Handler,
+        *,
+        auth_required: bool = False,
+        guard: RouteGuard | None = None,
+    ) -> App:
         """Register a route and raise registration errors.
 
         Deprecated: handle now fails closed on invalid registrations. Use handle
         for normal application registration and catch errors during tests only
         when required.
         """
-        self._router.add_strict(method, pattern, handler, auth_required=auth_required)
+        self._router.add_strict(method, pattern, handler, auth_required=auth_required, guard=guard)
         return self
 
     def get(self, pattern: str, handler: Handler) -> App:
@@ -569,6 +588,17 @@ class App:
 
             wrapped = apply_one(wrapped)
         return wrapped
+
+    def _run_route_guard(self, match: Match, request_ctx: Context) -> Response | None:
+        """Run a route's pre-middleware guards in registration order.
+
+        Each guard is a single callable in this runtime; the first response
+        ends the chain before any application middleware runs.
+        """
+        guard = match.guard
+        if guard is None:
+            return None
+        return _resolve(guard(request_ctx))
 
     def _apply_event_middlewares(self, handler: EventHandler) -> EventHandler:
         wrapped = handler
@@ -767,8 +797,12 @@ class App:
                     scopes=match.secure_scopes,
                     posture_present=match.posture_present,
                 )
-            handler = self._apply_middlewares(match.handler)
-            resp = _resolve(handler(request_ctx))
+            guard_resp = self._run_route_guard(match, request_ctx)
+            if guard_resp is None:
+                handler = self._apply_middlewares(match.handler)
+                resp = _resolve(handler(request_ctx))
+            else:
+                resp = guard_resp
         except Exception as exc:  # noqa: BLE001
             return respond_to_error(exc, normalized, fallback_request_id)
 
@@ -1169,6 +1203,16 @@ class App:
         # Authentication rebinds the tenant to the verified claim. Log the tenant
         # the request was actually authorized under, not the caller-supplied value.
         tenant_id = request_ctx.tenant_id
+
+        try:
+            guard_resp = self._run_route_guard(match, request_ctx)
+            if guard_resp is not None:
+                guard_resp = normalize_response(guard_resp)
+        except Exception as exc:  # noqa: BLE001
+            error_code = exc.code if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
+            return finish(respond_to_error(exc, normalized, request_id, trace_id), error_code)
+        if guard_resp is not None:
+            return finish(guard_resp, "")
 
         trace.append("handler")
 
@@ -1878,27 +1922,77 @@ class SecureApp:
         self.__core._secure_routes = []
         self.__core._websocket_enabled = bool(websocket_support)
 
-    def handle(self, method: str, pattern: str, handler: Handler, posture: AuthPosture) -> SecureApp:
-        self.__core._register_secure_route(method, pattern, handler, posture, surface="http")
+    def handle(
+        self,
+        method: str,
+        pattern: str,
+        handler: Handler,
+        posture: AuthPosture,
+        *,
+        guard: RouteGuard | None = None,
+    ) -> SecureApp:
+        self.__core._register_secure_route(method, pattern, handler, posture, surface="http", guard=guard)
         return self
 
-    def get(self, pattern: str, handler: Handler, posture: AuthPosture) -> SecureApp:
-        return self.handle("GET", pattern, handler, posture)
+    def get(
+        self,
+        pattern: str,
+        handler: Handler,
+        posture: AuthPosture,
+        *,
+        guard: RouteGuard | None = None,
+    ) -> SecureApp:
+        return self.handle("GET", pattern, handler, posture, guard=guard)
 
-    def post(self, pattern: str, handler: Handler, posture: AuthPosture) -> SecureApp:
-        return self.handle("POST", pattern, handler, posture)
+    def post(
+        self,
+        pattern: str,
+        handler: Handler,
+        posture: AuthPosture,
+        *,
+        guard: RouteGuard | None = None,
+    ) -> SecureApp:
+        return self.handle("POST", pattern, handler, posture, guard=guard)
 
-    def put(self, pattern: str, handler: Handler, posture: AuthPosture) -> SecureApp:
-        return self.handle("PUT", pattern, handler, posture)
+    def put(
+        self,
+        pattern: str,
+        handler: Handler,
+        posture: AuthPosture,
+        *,
+        guard: RouteGuard | None = None,
+    ) -> SecureApp:
+        return self.handle("PUT", pattern, handler, posture, guard=guard)
 
-    def patch(self, pattern: str, handler: Handler, posture: AuthPosture) -> SecureApp:
-        return self.handle("PATCH", pattern, handler, posture)
+    def patch(
+        self,
+        pattern: str,
+        handler: Handler,
+        posture: AuthPosture,
+        *,
+        guard: RouteGuard | None = None,
+    ) -> SecureApp:
+        return self.handle("PATCH", pattern, handler, posture, guard=guard)
 
-    def options(self, pattern: str, handler: Handler, posture: AuthPosture) -> SecureApp:
-        return self.handle("OPTIONS", pattern, handler, posture)
+    def options(
+        self,
+        pattern: str,
+        handler: Handler,
+        posture: AuthPosture,
+        *,
+        guard: RouteGuard | None = None,
+    ) -> SecureApp:
+        return self.handle("OPTIONS", pattern, handler, posture, guard=guard)
 
-    def delete(self, pattern: str, handler: Handler, posture: AuthPosture) -> SecureApp:
-        return self.handle("DELETE", pattern, handler, posture)
+    def delete(
+        self,
+        pattern: str,
+        handler: Handler,
+        posture: AuthPosture,
+        *,
+        guard: RouteGuard | None = None,
+    ) -> SecureApp:
+        return self.handle("DELETE", pattern, handler, posture, guard=guard)
 
     def appsync_field(
         self,
