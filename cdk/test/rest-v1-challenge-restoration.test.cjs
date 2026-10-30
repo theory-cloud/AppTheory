@@ -717,7 +717,7 @@ function originResponseEvent(headers) {
   return { Records: [{ cf: { response: { headers } } }] };
 }
 
-test("restores the challenge from the remap artifact and removes the consumed header", () => {
+test("restores the challenge from the remap artifact and removes the consumed header", async () => {
   const stack = newStack();
   new AppTheoryRestV1ChallengeRestoration(stack, "Restoration", {
     ...locked(),
@@ -726,13 +726,18 @@ test("restores the challenge from the remap artifact and removes the consumed he
   const handler = loadInlineHandler(assertions.Template.fromStack(stack).toJSON());
   const challenge = 'Bearer resource_metadata="https://example.com/.well-known/oauth-protected-resource"';
 
-  const response = handler(
+  const pending = handler(
     originResponseEvent({
       "x-amzn-remapped-www-authenticate": [
         { key: "x-amzn-remapped-www-authenticate", value: challenge },
       ],
     }),
   );
+  assert.ok(
+    pending instanceof Promise,
+    "the generated Lambda@Edge handler must complete through its returned promise",
+  );
+  const response = await pending;
   assert.deepEqual(response.headers["www-authenticate"], [
     { key: "WWW-Authenticate", value: challenge },
   ]);
@@ -743,7 +748,7 @@ test("restores the challenge from the remap artifact and removes the consumed he
   );
 });
 
-test("leaves an origin-emitted challenge intact and still removes the source header", () => {
+test("leaves an origin-emitted challenge intact and still removes the source header", async () => {
   const stack = newStack();
   new AppTheoryRestV1ChallengeRestoration(stack, "Restoration", {
     ...locked(),
@@ -751,7 +756,7 @@ test("leaves an origin-emitted challenge intact and still removes the source hea
   });
   const handler = loadInlineHandler(assertions.Template.fromStack(stack).toJSON());
 
-  const response = handler(
+  const response = await handler(
     originResponseEvent({
       "www-authenticate": [{ key: "WWW-Authenticate", value: "canonical" }],
       "x-amzn-remapped-www-authenticate": [
@@ -765,7 +770,7 @@ test("leaves an origin-emitted challenge intact and still removes the source hea
   assert.equal(response.headers["x-amzn-remapped-www-authenticate"], undefined);
 });
 
-test("restores from a bridge alias only when the alias bridge is enabled", () => {
+test("restores from a bridge alias only when the alias bridge is enabled", async () => {
   const enabledStack = newStack();
   new AppTheoryRestV1ChallengeRestoration(enabledStack, "Restoration", {
     ...locked(),
@@ -776,7 +781,7 @@ test("restores from a bridge alias only when the alias bridge is enabled", () =>
     assertions.Template.fromStack(enabledStack).toJSON(),
   );
   const challenge = 'Bearer resource_metadata="https://example.com/.well-known/oauth-protected-resource"';
-  const enabledResponse = enabledHandler(
+  const enabledResponse = await enabledHandler(
     originResponseEvent({
       "x-theory-www-authenticate": [
         { key: "x-theory-www-authenticate", value: challenge },
@@ -798,7 +803,7 @@ test("restores from a bridge alias only when the alias bridge is enabled", () =>
   const disabledHandler = loadInlineHandler(
     assertions.Template.fromStack(disabledStack).toJSON(),
   );
-  const disabledResponse = disabledHandler(
+  const disabledResponse = await disabledHandler(
     originResponseEvent({
       "x-theory-www-authenticate": [
         { key: "x-theory-www-authenticate", value: challenge },
