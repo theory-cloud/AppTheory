@@ -281,7 +281,7 @@ func (d *DynamoStreamStore) appendOnce(
 		return dynamoAppendResult{eventID: eventID}, nil
 	}
 
-	failure, cleanupFailed := d.cleanupSpilledStreamEvent(ctx, record, spilled, txErr)
+	cleanupFailed, failure := d.cleanupSpilledStreamEvent(ctx, record, spilled, txErr)
 	if !tableerrors.IsConditionFailed(txErr) {
 		return dynamoAppendResult{}, failure
 	}
@@ -470,13 +470,13 @@ func (d *DynamoStreamStore) cleanupSpilledStreamEvent(
 	record *dynamoStreamRecord,
 	spilled bool,
 	appendErr error,
-) (error, bool) {
+) (bool, error) {
 	if spilled && record != nil {
 		if cleanupErr := d.spillStore.delete(ctx, record.DataRef); cleanupErr != nil {
-			return errors.Join(appendErr, cleanupErr), true
+			return true, errors.Join(appendErr, cleanupErr)
 		}
 	}
-	return appendErr, false
+	return false, appendErr
 }
 
 func (d *DynamoStreamStore) Close(ctx context.Context, sessionID, streamID string) error {
