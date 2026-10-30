@@ -1667,4 +1667,3 @@ test("M3 dynamo concurrent appends never overshoot the aggregate", async () => {
   const state = db.items.get(`${model.name}:sess-race:!session`);
   assert.equal(state.eventCount, 1);
 });
-

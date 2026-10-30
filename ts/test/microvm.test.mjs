@@ -2819,4 +2819,3 @@ test("M3 controller list defense in depth filters a subject-ignoring registry", 
   assert.equal(known[0].session_id, "own-live");
   assert.equal(puts, 0);
 });
-
