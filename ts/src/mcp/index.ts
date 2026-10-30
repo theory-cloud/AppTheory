@@ -564,7 +564,10 @@ export class McpStreamAggregateCapacityError extends Error {
 }
 
 export class McpStreamAggregateBackfillError extends Error {
-  constructor(message = STREAM_AGGREGATE_BACKFILL_MESSAGE, options?: ErrorOptions) {
+  constructor(
+    message = STREAM_AGGREGATE_BACKFILL_MESSAGE,
+    options?: ErrorOptions,
+  ) {
     super(message, options);
     this.name = "McpStreamAggregateBackfillError";
   }
