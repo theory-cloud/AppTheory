@@ -223,12 +223,13 @@ func (d *DynamoStreamStore) Append(ctx context.Context, sessionID, streamID stri
 	}
 	for attempt := 0; attempt < retries; attempt++ {
 		result, attemptErr := d.appendOnce(ctx, sessionID, streamID, meta, payload)
-		if attemptErr == nil {
-			return result.eventID, nil
+		if result.retry {
+			continue
 		}
-		if !result.retry {
+		if attemptErr != nil {
 			return "", attemptErr
 		}
+		return result.eventID, nil
 	}
 	return "", ErrStreamAppendConflict
 }
@@ -280,23 +281,33 @@ func (d *DynamoStreamStore) appendOnce(
 		return dynamoAppendResult{eventID: eventID}, nil
 	}
 
-	failure := d.cleanupSpilledStreamEvent(ctx, record, spilled, txErr)
+	failure, cleanupFailed := d.cleanupSpilledStreamEvent(ctx, record, spilled, txErr)
 	if !tableerrors.IsConditionFailed(txErr) {
 		return dynamoAppendResult{}, failure
+	}
+
+	notFoundFailure := ErrStreamNotFound
+	if cleanupFailed {
+		notFoundFailure = errors.Join(ErrStreamNotFound, failure)
 	}
 
 	latest, latestErr := d.getSessionState(ctx, sessionID)
 	switch {
 	case latestErr != nil && tableerrors.IsNotFound(latestErr):
-		return dynamoAppendResult{}, ErrStreamNotFound
+		return dynamoAppendResult{}, notFoundFailure
 	case latestErr != nil:
 		return dynamoAppendResult{}, errors.Join(failure, latestErr)
 	case latest.Deleted:
-		return dynamoAppendResult{}, ErrStreamNotFound
+		return dynamoAppendResult{}, notFoundFailure
 	case latest.AggregateVersion != dynamoStreamAggregateSchemaVersion:
 		return dynamoAppendResult{}, errors.Join(ErrStreamAggregateBackfillRequired, failure)
+	case cleanupFailed:
+		// The transaction did not commit, but its spilled payload could not be
+		// removed. Stop retrying so a later success cannot hide the orphaned
+		// object or its cleanup failure.
+		return dynamoAppendResult{}, errors.Join(ErrStreamAppendConflict, failure)
 	default:
-		return dynamoAppendResult{retry: true}, failure
+		return dynamoAppendResult{retry: true}, nil
 	}
 }
 
@@ -459,13 +470,13 @@ func (d *DynamoStreamStore) cleanupSpilledStreamEvent(
 	record *dynamoStreamRecord,
 	spilled bool,
 	appendErr error,
-) error {
+) (error, bool) {
 	if spilled && record != nil {
 		if cleanupErr := d.spillStore.delete(ctx, record.DataRef); cleanupErr != nil {
-			return errors.Join(appendErr, cleanupErr)
+			return errors.Join(appendErr, cleanupErr), true
 		}
 	}
-	return appendErr
+	return appendErr, false
 }
 
 func (d *DynamoStreamStore) Close(ctx context.Context, sessionID, streamID string) error {

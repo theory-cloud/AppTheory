@@ -564,8 +564,8 @@ export class McpStreamAggregateCapacityError extends Error {
 }
 
 export class McpStreamAggregateBackfillError extends Error {
-  constructor(message = STREAM_AGGREGATE_BACKFILL_MESSAGE) {
-    super(message);
+  constructor(message = STREAM_AGGREGATE_BACKFILL_MESSAGE, options?: ErrorOptions) {
+    super(message, options);
     this.name = "McpStreamAggregateBackfillError";
   }
 }
@@ -578,8 +578,11 @@ export class McpStreamTransactionRequiredError extends Error {
 }
 
 export class McpStreamAppendConflictError extends Error {
-  constructor(message = STREAM_APPEND_CONFLICT_MESSAGE) {
-    super(message);
+  constructor(
+    message = STREAM_APPEND_CONFLICT_MESSAGE,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
     this.name = "McpStreamAppendConflictError";
   }
 }
@@ -592,8 +595,8 @@ export class McpStreamEventTooLargeError extends Error {
 }
 
 export class McpStreamNotFoundError extends Error {
-  constructor(message = "stream not found") {
-    super(message);
+  constructor(message = "stream not found", options?: ErrorOptions) {
+    super(message, options);
     this.name = "McpStreamNotFoundError";
   }
 }
@@ -1816,6 +1819,7 @@ export class DynamoMcpStreamStore implements McpStreamStore {
       return eventId;
     } catch (err) {
       let failure: unknown = err;
+      let cleanupFailed = false;
       if (spilledRef && this.spillStore) {
         try {
           await this.spillStore.delete(spilledRef);
@@ -1824,23 +1828,31 @@ export class DynamoMcpStreamStore implements McpStreamStore {
             [err, cleanupErr],
             "spill cleanup failed",
           );
+          cleanupFailed = true;
         }
       }
       if (!isConditionalCheckFailedError(err)) {
         throw failure;
       }
+      const cause = cleanupFailed ? { cause: failure } : undefined;
       const latest = await this.readSessionState(sessionId).catch(() => null);
       if (!latest) {
-        throw new McpStreamNotFoundError();
+        throw new McpStreamNotFoundError(undefined, cause);
       }
       if (latest["deleted"]) {
-        throw new McpStreamNotFoundError();
+        throw new McpStreamNotFoundError(undefined, cause);
       }
       if (
         Number(latest["aggregateVersion"] ?? 0) !==
         DEFAULT_STREAM_AGGREGATE_VERSION
       ) {
-        throw new McpStreamAggregateBackfillError();
+        throw new McpStreamAggregateBackfillError(undefined, cause);
+      }
+      if (cleanupFailed) {
+        // The transaction did not commit, but its spilled payload could not be
+        // removed. Stop retrying so a later success cannot hide the orphaned
+        // object or its cleanup failure.
+        throw new McpStreamAppendConflictError(undefined, { cause: failure });
       }
       return { retry: true };
     }

@@ -325,19 +325,19 @@ export declare class McpStreamAggregateCapacityError extends Error {
     constructor(message?: string);
 }
 export declare class McpStreamAggregateBackfillError extends Error {
-    constructor(message?: string);
+    constructor(message?: string, options?: ErrorOptions);
 }
 export declare class McpStreamTransactionRequiredError extends Error {
     constructor(message?: string);
 }
 export declare class McpStreamAppendConflictError extends Error {
-    constructor(message?: string);
+    constructor(message?: string, options?: ErrorOptions);
 }
 export declare class McpStreamEventTooLargeError extends Error {
     constructor(message?: string);
 }
 export declare class McpStreamNotFoundError extends Error {
-    constructor(message?: string);
+    constructor(message?: string, options?: ErrorOptions);
 }
 export declare class McpEventNotFoundError extends Error {
     constructor(message?: string);

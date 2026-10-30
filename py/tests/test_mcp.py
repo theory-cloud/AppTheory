@@ -79,6 +79,7 @@ from apptheory.mcp import (
     McpSessionExpiredError,
     McpStreamAggregateBackfillError,
     McpStreamAggregateCapacityError,
+    McpStreamAppendConflictError,
     McpStreamEventTooLargeError,
     McpStreamTransactionRequiredError,
     McpTaskCapacityError,
@@ -2184,6 +2185,52 @@ class M3StateBoundsTests(unittest.TestCase):
             store.create("sess-late")
         self.assertTrue(table.items[key].deleted)
         self.assertEqual(0, table.items[key].event_count)
+
+    def test_dynamo_retryable_cleanup_failure_is_not_hidden_by_success(self) -> None:
+        table = _FakeTheoryTable()
+
+        class _FlakySpillStore(_M3SpillStore):
+            def __init__(self) -> None:
+                super().__init__()
+                self.delete_calls = 0
+
+            def delete(self, key: str) -> None:
+                self.delete_calls += 1
+                if self.delete_calls == 1:
+                    raise RuntimeError("spill cleanup unavailable")
+                super().delete(key)
+
+        spill = _FlakySpillStore()
+        store = DynamoMcpStreamStore(
+            table=table,
+            id_generator=sequence_mcp_id_generator(["stream-retry"]),
+            clock=_FixedClock(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)),
+            inline_max_bytes=4,
+            spill_store=spill,
+            append_retries=4,
+        )
+        stream_id = store.create("sess-retry")
+        state_key = ("sess-retry", "!session")
+        original = table.transact_write
+        injected = False
+
+        def one_retryable_failure(actions: Any) -> None:
+            nonlocal injected
+            if not injected:
+                injected = True
+                table.items[state_key].sequence += 1
+            original(actions)
+
+        table.transact_write = one_retryable_failure
+        with self.assertRaises(McpStreamAppendConflictError) as caught:
+            store.append("sess-retry", stream_id, b"0123456789")
+        cause = caught.exception.__cause__
+        self.assertIsInstance(cause, ExceptionGroup)
+        assert isinstance(cause, ExceptionGroup)
+        self.assertEqual("spill cleanup failed", cause.message)
+        self.assertIn("cleanup unavailable", str(cause.exceptions[1]))
+        self.assertFalse(any(key[0] == "sess-retry" and key[1].startswith("EVENT#") for key in table.items))
+        self.assertEqual(1, len(spill.objects), "the orphan is left to lifecycle retry")
 
     def test_memory_session_get_reports_observed_expiry_distinctly(self) -> None:
         store = MemoryMcpSessionStore(

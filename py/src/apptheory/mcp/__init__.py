@@ -1402,11 +1402,13 @@ class DynamoMcpStreamStore:
             return event_id
         except Exception as exc:
             failure: Exception = exc
+            cleanup_failed = False
             if spilled_ref and self._spill_store is not None:
                 try:
                     self._spill_store.delete(spilled_ref)
                 except Exception as cleanup_exc:  # noqa: BLE001
                     failure = ExceptionGroup("spill cleanup failed", [exc, cleanup_exc])
+                    cleanup_failed = True
             if not _is_conditional_failure(exc):
                 raise failure from exc
             latest = self._session_state(session_id)
@@ -1414,6 +1416,11 @@ class DynamoMcpStreamStore:
                 raise McpStreamNotFoundError() from failure
             if int(_field(latest, "aggregate_version") or 0) != DEFAULT_STREAM_AGGREGATE_VERSION:
                 raise McpStreamAggregateBackfillError() from failure
+            if cleanup_failed:
+                # The transaction did not commit, but its spilled payload could
+                # not be removed. Stop retrying so a later success cannot hide
+                # the orphaned object or its cleanup failure.
+                raise McpStreamAppendConflictError() from failure
             return True
 
     def close(self, session_id: str, stream_id: str) -> None:

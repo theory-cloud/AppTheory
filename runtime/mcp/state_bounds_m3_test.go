@@ -533,6 +533,42 @@ func TestM3DynamoSpillRefusalCleanupIsJoined(t *testing.T) {
 	require.Equal(t, 0, countM3EventRecords(db, "sess-spill-refusal"))
 }
 
+func TestM3DynamoRetryableCleanupFailureIsNotHiddenBySuccess(t *testing.T) {
+	now := time.Unix(105_000, 0).UTC()
+	ctx := context.Background()
+	db := newFakeMCPTableDB()
+	store := newM3DynamoStore(db, now)
+	spill := newFakeDynamoStreamSpillStore()
+	store.spillStore = spill
+	store.inlineMaxBytes = 4
+	store.appendRetries = 4
+
+	streamID, err := store.Create(ctx, "sess-retry-cleanup")
+	require.NoError(t, err)
+
+	// Force one retryable condition failure, then allow any later attempt to
+	// succeed. A cleanup failure must still surface rather than being dropped.
+	injected := false
+	db.beforeTransactExecute = func() {
+		if injected {
+			return
+		}
+		injected = true
+		state := db.streams["sess-retry-cleanup"][dynamoStreamSessionStateEventID]
+		state.NextSeq++
+		db.streams["sess-retry-cleanup"][dynamoStreamSessionStateEventID] = state
+	}
+	spill.deleteFailures = 1
+	spill.deleteErr = errors.New("spill cleanup unavailable")
+
+	_, err = store.Append(ctx, "sess-retry-cleanup", streamID, json.RawMessage(`{"a":"0123456789"}`))
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrStreamAppendConflict)
+	require.Contains(t, err.Error(), "spill cleanup unavailable")
+	require.Equal(t, 0, countM3EventRecords(db, "sess-retry-cleanup"))
+	require.Equal(t, 1, spill.count(), "the orphan is left to lifecycle retry")
+}
+
 func TestM3DynamoDeletePaginatesBeyond1000AndRejectsLateAppend(t *testing.T) {
 	now := time.Unix(110_000, 0).UTC()
 	ctx := context.Background()

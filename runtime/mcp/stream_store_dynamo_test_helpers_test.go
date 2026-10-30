@@ -18,10 +18,12 @@ import (
 )
 
 type fakeDynamoStreamSpillStore struct {
-	mu        sync.Mutex
-	objects   map[string][]byte
-	gets      int
-	beforePut func(string)
+	mu             sync.Mutex
+	objects        map[string][]byte
+	gets           int
+	beforePut      func(string)
+	deleteFailures int
+	deleteErr      error
 }
 
 func newFakeDynamoStreamSpillStore() *fakeDynamoStreamSpillStore {
@@ -63,6 +65,13 @@ func (s *fakeDynamoStreamSpillStore) delete(_ context.Context, key string) error
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if s.deleteFailures > 0 {
+		s.deleteFailures--
+		if s.deleteErr != nil {
+			return s.deleteErr
+		}
+		return errors.New("spill delete failed")
+	}
 	delete(s.objects, key)
 	return nil
 }
@@ -111,6 +120,7 @@ type fakeMCPTableDB struct {
 	session                 map[string]sessionRecord
 	streams                 map[string]map[string]dynamoStreamRecord
 	beforeCreateStreamEvent func(dynamoStreamRecord)
+	beforeTransactExecute   func()
 	afterMatchStreamRecords func(*fakeMCPTableQuery, []dynamoStreamRecord)
 }
 
@@ -310,6 +320,10 @@ func (b *fakeMCPTransactionBuilder) execute(ctx context.Context) error {
 
 	b.db.mu.Lock()
 	defer b.db.mu.Unlock()
+
+	if b.db.beforeTransactExecute != nil {
+		b.db.beforeTransactExecute()
+	}
 
 	for _, check := range b.conditionChecks {
 		existing, exists := b.db.lockedStreamRecord(check.record.SessionID, check.record.EventID)

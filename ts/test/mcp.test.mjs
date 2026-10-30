@@ -33,6 +33,7 @@ import {
   McpSessionCapacityError,
   McpStreamAggregateBackfillError,
   McpStreamAggregateCapacityError,
+  McpStreamAppendConflictError,
   McpStreamTransactionRequiredError,
   McpStreamNotFoundError,
   McpTaskInvalidCursorError,
@@ -2829,6 +2830,64 @@ test("M3 dynamo concurrent appends never overshoot the aggregate", async () => {
   assert.ok(rejected[0].reason instanceof McpStreamAggregateCapacityError);
   const state = db.items.get(`${model.name}:sess-race:!session`);
   assert.equal(state.eventCount, 1);
+});
+
+test("M3 retryable cleanup failures are not hidden by a later success", async () => {
+  const db = m3StreamDb();
+  const model = defaultMcpStreamModel("m3-retry-cleanup");
+  let deleteCalls = 0;
+  const spill = {
+    objects: new Map(),
+    async put(key, data) {
+      this.objects.set(key, Buffer.from(data));
+    },
+    async get(key) {
+      return this.objects.get(key);
+    },
+    async delete(key) {
+      deleteCalls += 1;
+      if (deleteCalls === 1) {
+        throw new Error("spill cleanup unavailable");
+      }
+      this.objects.delete(key);
+    },
+  };
+  const store = new DynamoMcpStreamStore(db, {
+    model,
+    idGenerator: sequenceIdGenerator(["stream-retry"]),
+    inlineMaxBytes: 4,
+    spillStore: spill,
+    appendRetries: 4,
+  });
+  const streamId = await store.create("sess-retry");
+  const stateKey = `${model.name}:sess-retry:!session`;
+  const original = db.transactWrite;
+  let injected = false;
+  db.transactWrite = async (actions) => {
+    if (!injected) {
+      injected = true;
+      const state = db.items.get(stateKey);
+      state.sequence += 1;
+      db.items.set(stateKey, state);
+    }
+    return original(actions);
+  };
+
+  await assert.rejects(
+    () => store.append("sess-retry", streamId, Buffer.from("0123456789")),
+    (err) => {
+      assert.ok(err instanceof McpStreamAppendConflictError);
+      assert.ok(err.cause instanceof AggregateError);
+      assert.match(err.cause.message, /spill cleanup failed/);
+      assert.match(String(err.cause.errors[1].message), /cleanup unavailable/);
+      return true;
+    },
+  );
+  const events = [...db.items.keys()].filter((key) =>
+    key.startsWith(`${model.name}:sess-retry:EVENT#`),
+  );
+  assert.deepEqual(events, []);
+  assert.equal(spill.objects.size, 1, "the orphan is left to lifecycle retry");
 });
 
 test("M3 dynamo sessions accept a second stream without resetting aggregate state", async () => {
