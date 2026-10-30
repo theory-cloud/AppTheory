@@ -343,20 +343,22 @@ type brokerEntry struct {
 // MemoryRouteRefreshBrokerStore is the in-memory reference
 // RouteRefreshBrokerStore.
 type MemoryRouteRefreshBrokerStore struct {
-	mu      sync.Mutex
-	now     func() time.Time
-	ttl     time.Duration
-	lockTTL time.Duration
-	records map[string]*brokerEntry
+	mu       sync.Mutex
+	now      func() time.Time
+	ttl      time.Duration
+	lockTTL  time.Duration
+	records  map[string]*brokerEntry
+	families map[string]*RouteRefreshFamilyState
 }
 
 // NewMemoryRouteRefreshBrokerStore returns an empty in-memory broker store.
 func NewMemoryRouteRefreshBrokerStore(opts RouteRefreshBrokerStoreOptions) *MemoryRouteRefreshBrokerStore {
 	return &MemoryRouteRefreshBrokerStore{
-		now:     storeClock(opts.Now),
-		ttl:     storeTTL(opts.TTL, DefaultRouteRefreshBrokerTTL),
-		lockTTL: storeTTL(opts.LockTTL, DefaultRouteRefreshLockTTL),
-		records: make(map[string]*brokerEntry),
+		now:      storeClock(opts.Now),
+		ttl:      storeTTL(opts.TTL, DefaultRouteRefreshBrokerTTL),
+		lockTTL:  storeTTL(opts.LockTTL, DefaultRouteRefreshLockTTL),
+		records:  make(map[string]*brokerEntry),
+		families: make(map[string]*RouteRefreshFamilyState),
 	}
 }
 
@@ -373,6 +375,41 @@ func (s *MemoryRouteRefreshBrokerStore) entryLocked(handleHash string) (*brokerE
 		return nil, ErrBrokerExpired
 	}
 	return entry, nil
+}
+
+// familyStateLocked proves a family-marked record's family state is present,
+// active, and consistent with the record's generation. A family-less record
+// reports ErrBrokerLegacyLineageUnsupported because it is migration or
+// reauthorization, never online normalization. The caller holds the store
+// mutex.
+func (s *MemoryRouteRefreshBrokerStore) familyStateLocked(record *RouteRefreshBrokerRecord) error {
+	if record == nil || strings.TrimSpace(record.FamilyHash) == "" {
+		return ErrBrokerLegacyLineageUnsupported
+	}
+	state, ok := s.families[record.FamilyHash]
+	if !ok || strings.TrimSpace(state.FamilyHash) == "" {
+		return ErrBrokerFamilyStateUnavailable
+	}
+	if state.Status == BrokerFamilyStatusRevoked {
+		return ErrBrokerRevoked
+	}
+	if record.ChainGeneration < 1 {
+		return ErrBrokerFamilyMismatch
+	}
+	if record.ChainGeneration == 1 && record.HandleHash != record.FamilyHash {
+		return ErrBrokerFamilyMismatch
+	}
+	return nil
+}
+
+// checkFamilyLocked applies the family-state check only to family-marked
+// records: a family-less record stays readable for migration and incident
+// enumeration, while the facade refuses to rotate it.
+func (s *MemoryRouteRefreshBrokerStore) checkFamilyLocked(record *RouteRefreshBrokerRecord) error {
+	if record == nil || strings.TrimSpace(record.FamilyHash) == "" {
+		return nil
+	}
+	return s.familyStateLocked(record)
 }
 
 // Put stores a copy of the broker record at version 1, normalizing a zero
@@ -402,6 +439,9 @@ func (s *MemoryRouteRefreshBrokerStore) Get(_ context.Context, handleHash string
 	if err != nil {
 		return nil, err
 	}
+	if err := s.checkFamilyLocked(entry.record); err != nil {
+		return nil, err
+	}
 	return recordCopy(entry.record), nil
 }
 
@@ -425,6 +465,9 @@ func (s *MemoryRouteRefreshBrokerStore) AcquireLock(
 		return nil, err
 	}
 	record := entry.record
+	if err := s.checkFamilyLocked(record); err != nil {
+		return nil, err
+	}
 	if record.Status == BrokerStatusRevoked {
 		return nil, ErrBrokerRevoked
 	}
@@ -461,6 +504,9 @@ func (s *MemoryRouteRefreshBrokerStore) CompareAndSwap(
 		return nil, err
 	}
 	current := entry.record
+	if err := s.checkFamilyLocked(current); err != nil {
+		return nil, err
+	}
 	if current.Status == BrokerStatusRevoked {
 		return nil, ErrBrokerRevoked
 	}
@@ -509,6 +555,139 @@ func (s *MemoryRouteRefreshBrokerStore) RouteRefreshBrokerHandleTTL() time.Durat
 	return s.ttl
 }
 
+// CreateFamily atomically creates an active family-state record and its
+// generation-1 root broker record. A pre-existing family ID, active or revoked,
+// is never overwritten or reactivated, and a root handle that already exists is
+// never replaced.
+func (s *MemoryRouteRefreshBrokerStore) CreateFamily(
+	_ context.Context,
+	root *RouteRefreshBrokerRecord,
+) (*RouteRefreshBrokerRecord, error) {
+	if root == nil || strings.TrimSpace(root.HandleHash) == "" || strings.TrimSpace(root.FamilyHash) == "" {
+		return nil, fmt.Errorf("%w: family root needs a handle and family hash", ErrRecordKeyRequired)
+	}
+	if root.FamilyHash != root.HandleHash || root.ChainGeneration != 1 {
+		return nil, ErrBrokerFamilyMismatch
+	}
+	if root.Status != "" && root.Status != BrokerStatusIssued && root.Status != BrokerStatusActive {
+		return nil, ErrBrokerFamilyMismatch
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.families[root.FamilyHash]; ok {
+		return nil, ErrBrokerFamilyExists
+	}
+	if _, ok := s.records[root.HandleHash]; ok {
+		return nil, ErrBrokerSuccessorExists
+	}
+	now := s.now()
+	stored := recordCopy(root)
+	if stored.Status == "" {
+		stored.Status = BrokerStatusIssued
+	}
+	stored.Version = 1
+	s.families[root.FamilyHash] = &RouteRefreshFamilyState{
+		FamilyHash: root.FamilyHash,
+		Status:     BrokerFamilyStatusActive,
+		Version:    1,
+		CreatedAt:  now,
+	}
+	s.records[root.HandleHash] = &brokerEntry{record: stored, storedAt: now}
+	return recordCopy(stored), nil
+}
+
+// RotateFamily performs one atomic rotation: the presented record is still
+// locked by the caller at the expected version, its family is active, the
+// successor carries the same identity and the next generation, and the
+// successor handle does not exist. The store creates the successor, writes the
+// grace response onto the presented record, clears the lock, and returns the
+// stored successor. A failure leaves neither record changed.
+func (s *MemoryRouteRefreshBrokerStore) RotateFamily(
+	_ context.Context,
+	rotation RouteRefreshFamilyRotation,
+) (*RouteRefreshBrokerRecord, error) {
+	if strings.TrimSpace(rotation.PresentedHandleHash) == "" || rotation.Successor == nil ||
+		strings.TrimSpace(rotation.Successor.HandleHash) == "" {
+		return nil, fmt.Errorf("%w: rotation needs a presented handle and successor", ErrRecordKeyRequired)
+	}
+	if strings.TrimSpace(rotation.LockOwner) == "" {
+		return nil, ErrBrokerLocked
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry, err := s.entryLocked(rotation.PresentedHandleHash)
+	if err != nil {
+		return nil, err
+	}
+	presented := entry.record
+	if strings.TrimSpace(presented.FamilyHash) == "" {
+		return nil, ErrBrokerLegacyLineageUnsupported
+	}
+	if err := s.familyStateLocked(presented); err != nil {
+		return nil, err
+	}
+	if presented.Status == BrokerStatusRevoked {
+		return nil, ErrBrokerRevoked
+	}
+	now := s.now()
+	if presented.RefreshLockOwner == "" || presented.RefreshLockOwner != rotation.LockOwner ||
+		!now.Before(presented.RefreshLockExpiresAt) {
+		return nil, ErrBrokerLocked
+	}
+	if rotation.ExpectedVersion != presented.Version {
+		return nil, ErrBrokerVersionConflict
+	}
+	successor := rotation.Successor
+	if successor.HandleHash == presented.HandleHash {
+		return nil, ErrBrokerSuccessorExists
+	}
+	if successor.FamilyHash != presented.FamilyHash ||
+		successor.ChainGeneration != presented.ChainGeneration+1 ||
+		!sameBrokerIdentity(presented, successor) {
+		return nil, ErrBrokerFamilyMismatch
+	}
+	if _, exists := s.records[successor.HandleHash]; exists {
+		return nil, ErrBrokerSuccessorExists
+	}
+	storedSuccessor := recordCopy(successor)
+	if storedSuccessor.Status == "" {
+		storedSuccessor.Status = BrokerStatusIssued
+	}
+	if storedSuccessor.Status != BrokerStatusIssued {
+		return nil, ErrBrokerFamilyMismatch
+	}
+	storedSuccessor.Version = 1
+	completed := recordCopy(presented)
+	completed.EncryptedGraceRefreshResponse = rotation.GraceRefreshResponse
+	completed.GraceExpiresAt = rotation.GraceExpiresAt
+	completed.Status = BrokerStatusActive
+	completed.RefreshLockOwner = ""
+	completed.RefreshLockExpiresAt = time.Time{}
+	completed.Version = presented.Version + 1
+	s.records[storedSuccessor.HandleHash] = &brokerEntry{record: storedSuccessor, storedAt: now}
+	s.records[presented.HandleHash] = &brokerEntry{record: completed, storedAt: entry.storedAt}
+	return recordCopy(storedSuccessor), nil
+}
+
+// sameBrokerIdentity reports whether a successor preserves every identity field
+// a handle is bound to: issuer, stage, route resource, namespace, endpoint kind,
+// partner, agent, client, subject, scope fingerprint, and upstream client. A
+// rotation may change only the handle, the generation, and the upstream
+// refresh material.
+func sameBrokerIdentity(presented, successor *RouteRefreshBrokerRecord) bool {
+	return presented.Issuer == successor.Issuer &&
+		presented.Stage == successor.Stage &&
+		presented.CanonicalResource == successor.CanonicalResource &&
+		presented.ClientNamespace == successor.ClientNamespace &&
+		presented.EndpointKind == successor.EndpointKind &&
+		presented.PartnerID == successor.PartnerID &&
+		presented.AgentID == successor.AgentID &&
+		presented.ClientIDHash == successor.ClientIDHash &&
+		presented.SubjectIDHash == successor.SubjectIDHash &&
+		presented.ScopeFingerprint == successor.ScopeFingerprint &&
+		presented.UpstreamClientID == successor.UpstreamClientID
+}
+
 // ListFamily returns every live record of one refresh family. Aged-out records
 // are purged as they are observed and are not listed; a blank family hash is
 // answered with an empty list, because no record can belong to no family.
@@ -535,9 +714,16 @@ func (s *MemoryRouteRefreshBrokerStore) ListFamily(
 	return family, nil
 }
 
-// RevokeFamily revokes every live record of one refresh family and returns the
-// records it handled. Revocation is idempotent, so already-revoked members are
-// returned unchanged rather than reported as errors.
+// RevokeFamily atomically writes the family revocation tombstone and revokes
+// every live record of the family, returning the records it handled. The
+// tombstone is authoritative and terminal: every Get, AcquireLock, and
+// RotateFamily of a family-marked handle honors it, and no root creation or
+// rotation can undo it. Revocation is idempotent, so a second call returns the
+// same live members unchanged. A family that never existed is an idempotent
+// no-op; a family with live members but no family state is a partially
+// backfilled or corrupt lineage and fails closed. The in-memory tombstone is
+// retained for the store's lifetime, which covers every member's lifetime; a
+// durable store must retain it at least as long as any member can be addressed.
 func (s *MemoryRouteRefreshBrokerStore) RevokeFamily(
 	_ context.Context,
 	familyHash string,
@@ -548,6 +734,26 @@ func (s *MemoryRouteRefreshBrokerStore) RevokeFamily(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
+	state, ok := s.families[familyHash]
+	if !ok {
+		// A family that never existed is an idempotent no-op. A family with live
+		// members but no family state is a partially backfilled or corrupt
+		// lineage: fail closed rather than creating a tombstone from inference.
+		for _, entry := range s.records {
+			if isExpired(now, entry.storedAt.Add(s.ttl)) {
+				continue
+			}
+			if entry.record.FamilyHash == familyHash {
+				return nil, ErrBrokerFamilyStateUnavailable
+			}
+		}
+		return nil, nil
+	}
+	if state.Status != BrokerFamilyStatusRevoked {
+		state.Status = BrokerFamilyStatusRevoked
+		state.RevokedAt = now
+		state.Version++
+	}
 	family := make([]*RouteRefreshBrokerRecord, 0)
 	for handleHash, entry := range s.records {
 		if isExpired(now, entry.storedAt.Add(s.ttl)) {

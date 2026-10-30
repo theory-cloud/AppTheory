@@ -172,7 +172,7 @@ func (h *conformanceHarness) brokerFamilyCreateBinding(testCase ConformanceCase)
 	}
 	familyHash := h.key(testCase, "family")
 	root := h.familyRoot(familyHash)
-	root.ChainGeneration = h.count(testCase, "generation")
+	root.ChainGeneration = h.size(testCase, "generation")
 	if binding, _ := testCase.Params["family_binding"].(string); binding == "other" {
 		root.FamilyHash = h.key(testCase, "other-family")
 	}
@@ -701,8 +701,10 @@ func (h *conformanceHarness) brokerFamilyTombstoneSurvivesExpiry(testCase Confor
 	}
 	advance, _ := conformanceNumber(testCase.Params[conformanceParamAdvance])
 	h.advance(int(advance))
-	listed, listErr := family.ListFamily(h.ctx(), familyHash)
+	// Read before listing: the read observes the aged-out record, and the list
+	// purges it. After both, the tombstone must still refuse recreation.
 	_, getErr := h.stores.RouteRefreshBroker.Get(h.ctx(), familyHash)
+	listed, listErr := family.ListFamily(h.ctx(), familyHash)
 	_, createAgainErr := family.CreateFamily(h.ctx(), h.familyRoot(familyHash))
 	revoked, revokeErr := family.RevokeFamily(h.ctx(), familyHash)
 	return map[string]any{

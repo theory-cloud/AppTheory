@@ -45,7 +45,7 @@ func (s nonTerminalCodeStore) Consume(
 type nonBumpingBrokerStore struct {
 	store.RouteRefreshBrokerStore
 	store.RouteRefreshBrokerSeeder
-	store.RouteRefreshBrokerFamilyStore
+	store.RouteRefreshBrokerTransactionalFamilyStore
 }
 
 // Get hides the version bump a lock or revoke advanced on a record that is now
@@ -62,6 +62,47 @@ func (s nonBumpingBrokerStore) Get(
 		record.Version--
 	}
 	return record, nil
+}
+
+// nonTombstoneBrokerStore revokes members individually and never writes the
+// family tombstone, so a re-created family ID is not refused.
+type nonTombstoneBrokerStore struct {
+	*store.MemoryRouteRefreshBrokerStore
+}
+
+func (s nonTombstoneBrokerStore) RevokeFamily(
+	ctx context.Context,
+	familyHash string,
+) ([]*store.RouteRefreshBrokerRecord, error) {
+	records, err := s.MemoryRouteRefreshBrokerStore.ListFamily(ctx, familyHash)
+	if err != nil {
+		return nil, err
+	}
+	revoked := make([]*store.RouteRefreshBrokerRecord, 0, len(records))
+	for _, record := range records {
+		updated, revokeErr := s.MemoryRouteRefreshBrokerStore.Revoke(ctx, record.HandleHash)
+		if revokeErr != nil {
+			return nil, revokeErr
+		}
+		revoked = append(revoked, updated)
+	}
+	return revoked, nil
+}
+
+// nonAtomicRotateBrokerStore returns a successor without storing it or updating
+// the predecessor, so a rotation can hand out a handle nothing can revoke.
+type nonAtomicRotateBrokerStore struct {
+	*store.MemoryRouteRefreshBrokerStore
+}
+
+func (s nonAtomicRotateBrokerStore) RotateFamily(
+	_ context.Context,
+	rotation store.RouteRefreshFamilyRotation,
+) (*store.RouteRefreshBrokerRecord, error) {
+	if rotation.Successor == nil {
+		return nil, store.ErrRecordKeyRequired
+	}
+	return rotation.Successor, nil
 }
 
 // conformanceRecorder captures the failures RunConformance reports instead of
@@ -115,10 +156,34 @@ func nonBumpingBrokerStores(clock *store.ManualClock) store.Stores {
 		panic(fmt.Sprintf("reference broker type = %T, want *store.MemoryRouteRefreshBrokerStore", stores.RouteRefreshBroker))
 	}
 	stores.RouteRefreshBroker = nonBumpingBrokerStore{
-		RouteRefreshBrokerStore:       real,
-		RouteRefreshBrokerSeeder:      real,
-		RouteRefreshBrokerFamilyStore: real,
+		RouteRefreshBrokerStore:                    real,
+		RouteRefreshBrokerSeeder:                   real,
+		RouteRefreshBrokerTransactionalFamilyStore: real,
 	}
+	return stores
+}
+
+// nonTombstoneBrokerStores wraps the reference broker so a family revocation
+// revokes members individually and leaves no tombstone behind.
+func nonTombstoneBrokerStores(clock *store.ManualClock) store.Stores {
+	stores := newStores(clock)
+	real, ok := stores.RouteRefreshBroker.(*store.MemoryRouteRefreshBrokerStore)
+	if !ok {
+		panic(fmt.Sprintf("reference broker type = %T, want *store.MemoryRouteRefreshBrokerStore", stores.RouteRefreshBroker))
+	}
+	stores.RouteRefreshBroker = nonTombstoneBrokerStore{MemoryRouteRefreshBrokerStore: real}
+	return stores
+}
+
+// nonAtomicRotateBrokerStores wraps the reference broker so a rotation returns a
+// successor without storing it or updating the predecessor.
+func nonAtomicRotateBrokerStores(clock *store.ManualClock) store.Stores {
+	stores := newStores(clock)
+	real, ok := stores.RouteRefreshBroker.(*store.MemoryRouteRefreshBrokerStore)
+	if !ok {
+		panic(fmt.Sprintf("reference broker type = %T, want *store.MemoryRouteRefreshBrokerStore", stores.RouteRefreshBroker))
+	}
+	stores.RouteRefreshBroker = nonAtomicRotateBrokerStore{MemoryRouteRefreshBrokerStore: real}
 	return stores
 }
 
@@ -180,6 +245,21 @@ func TestStoreConformanceFailsBrokenStores(t *testing.T) {
 			wantFailures: []string{
 				"store.route_refresh_broker.acquire_lock_bumps_version",
 				"store.route_refresh_broker.revoke_bumps_version",
+			},
+		},
+		{
+			name:   "non_tombstone_broker",
+			stores: nonTombstoneBrokerStores,
+			wantFailures: []string{
+				"store.route_refresh_broker.family_tombstone_revokes_more_than_eight_members",
+				"store.route_refresh_broker.family_tombstone_covers_more_than_one_hundred_members",
+			},
+		},
+		{
+			name:   "non_atomic_rotate_broker",
+			stores: nonAtomicRotateBrokerStores,
+			wantFailures: []string{
+				"store.route_refresh_broker.family_rotate_is_atomic",
 			},
 		},
 	}

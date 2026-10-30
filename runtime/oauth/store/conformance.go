@@ -905,7 +905,7 @@ func (h *conformanceHarness) putBrokerFamily(key, familyHash string) error {
 		Stage:             "lab",
 		CanonicalResource: "https://mcp.example.test/mcp",
 		Status:            BrokerStatusActive,
-		ChainGeneration:   1,
+		ChainGeneration:   2,
 		FamilyHash:        familyHash,
 	})
 }
@@ -959,7 +959,9 @@ func (h *conformanceHarness) seedFamilyWithRoot(
 	if err != nil {
 		return err
 	}
-	if _, err := family.CreateFamily(h.ctx(), h.familyRoot(familyHash)); err != nil {
+	root := h.familyRoot(familyHash)
+	root.Status = BrokerStatusActive
+	if _, err := family.CreateFamily(h.ctx(), root); err != nil {
 		return err
 	}
 	for index := 1; index < size; index++ {
@@ -1009,11 +1011,18 @@ func (h *conformanceHarness) brokerRevokeFamily(testCase ConformanceCase) (map[s
 	if err != nil {
 		return nil, err
 	}
+	if _, err := family.ListFamily(h.ctx(), familyHash); err != nil {
+		return nil, err
+	}
 	familyStatuses := make([]string, 0, len(familyKeys))
 	for _, key := range familyKeys {
-		record, err := h.stores.RouteRefreshBroker.Get(h.ctx(), key)
-		if err != nil {
-			return nil, err
+		record, getErr := h.stores.RouteRefreshBroker.Get(h.ctx(), key)
+		if errors.Is(getErr, ErrBrokerRevoked) {
+			familyStatuses = append(familyStatuses, BrokerStatusRevoked)
+			continue
+		}
+		if getErr != nil {
+			return nil, getErr
 		}
 		familyStatuses = append(familyStatuses, record.Status)
 	}
@@ -1285,6 +1294,10 @@ func assertConformanceExpectations(tb testing.TB, testCase ConformanceCase, obse
 // JSON number matches the Go integer the runner observed and a JSON array
 // matches the Go slice.
 func conformanceValuesEqual(actual, expected any) bool {
+	if actualBool, ok := actual.(bool); ok {
+		expectedBool, ok := expected.(bool)
+		return ok && actualBool == expectedBool
+	}
 	if actualNumber, ok := conformanceNumber(actual); ok {
 		expectedNumber, ok := conformanceNumber(expected)
 		return ok && actualNumber == expectedNumber

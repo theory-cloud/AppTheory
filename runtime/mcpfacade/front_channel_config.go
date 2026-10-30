@@ -1,6 +1,7 @@
 package mcpfacade
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -66,7 +67,42 @@ func validateFrontChannelStores(stores oauthstore.Stores) error {
 	if len(missing) > 0 {
 		return fmt.Errorf("mcpfacade: front channel requires all five stores; missing %s", strings.Join(missing, ", "))
 	}
+	if missingFamily := missingTransactionalFamilyMethods(stores.RouteRefreshBroker); len(missingFamily) > 0 {
+		return fmt.Errorf(
+			"mcpfacade: front channel requires a transactional refresh-family broker store; route refresh broker is missing %s",
+			strings.Join(missingFamily, ", "),
+		)
+	}
 	return nil
+}
+
+// missingTransactionalFamilyMethods reports the transactional family methods a
+// broker store lacks. Registration checks each method separately so a partially
+// duck-typed store is refused eagerly and the error names exactly what must be
+// added; the old optional ListFamily/RevokeFamily pair alone is not sufficient.
+func missingTransactionalFamilyMethods(broker oauthstore.RouteRefreshBrokerStore) []string {
+	missing := make([]string, 0, 4)
+	if _, ok := broker.(interface {
+		CreateFamily(context.Context, *oauthstore.RouteRefreshBrokerRecord) (*oauthstore.RouteRefreshBrokerRecord, error)
+	}); !ok {
+		missing = append(missing, "CreateFamily")
+	}
+	if _, ok := broker.(interface {
+		RotateFamily(context.Context, oauthstore.RouteRefreshFamilyRotation) (*oauthstore.RouteRefreshBrokerRecord, error)
+	}); !ok {
+		missing = append(missing, "RotateFamily")
+	}
+	if _, ok := broker.(interface {
+		ListFamily(context.Context, string) ([]*oauthstore.RouteRefreshBrokerRecord, error)
+	}); !ok {
+		missing = append(missing, "ListFamily")
+	}
+	if _, ok := broker.(interface {
+		RevokeFamily(context.Context, string) ([]*oauthstore.RouteRefreshBrokerRecord, error)
+	}); !ok {
+		missing = append(missing, "RevokeFamily")
+	}
+	return missing
 }
 
 // validUpstreamClientID reports whether an upstream client id is usable: a

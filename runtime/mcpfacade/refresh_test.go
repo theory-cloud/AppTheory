@@ -138,11 +138,9 @@ func TestRefreshGrantDefaultsArePinned(t *testing.T) {
 	require.Equal(t, 30*24*time.Hour, MaxRouteRefreshHandleTTL)
 	require.Equal(t, 9, MinRefreshReuseRateCeiling)
 	require.Equal(t, 120, MaxRefreshReuseRateCeiling)
-	require.Equal(t, time.Hour, refreshReuseRateWindow)
 	require.Equal(t, 3*time.Second, refreshCoalesceWaitCap)
 	require.Equal(t, 50*time.Millisecond, refreshCoalescePollInterval)
 	require.Equal(t, 512, frontChannelMaxRefreshHandleBytes)
-	require.Equal(t, 8, refreshRevokeChainLimit)
 	require.Equal(t, 1, refreshRetryAfterSeconds)
 	require.Less(t, refreshCoalesceWaitCap, oauthstore.DefaultRouteRefreshLockTTL)
 	require.Greater(t, DefaultRefreshGraceWindow, refreshCoalesceWaitCap)
@@ -246,14 +244,12 @@ func TestRefreshGrantReplaysTheSameSuccessorWithinTheGraceWindow(t *testing.T) {
 	require.Equal(t, 1, harness.fake.RefreshCallCount())
 }
 
-// TestRefreshGrantAfterTheGraceWindowServesAccessTokenOnlyThenRevokesFamily pins
-// the pinned beyond-grace serve semantics: the first presentation of a rotated
-// handle after its grace window is the benign immediate-predecessor replay and is
-// answered with the access token only — no handle material — without an upstream
-// call and without revoking anything. The second presentation of the same handle
-// from this session is theft class, so the whole family is revoked and the client
-// gets the uniform invalid_grant.
-func TestRefreshGrantAfterTheGraceWindowServesAccessTokenOnlyThenRevokesFamily(t *testing.T) {
+// TestRefreshGrantAfterTheGraceWindowRevokesWithoutTokens pins the removed
+// beyond-grace serve: the FIRST presentation of a rotated handle after its grace
+// window is reuse. The family is revoked without an upstream call and without
+// any access, refresh, or ID token material; the same uniform invalid_grant is
+// repeated on every later presentation, and the minted successor is unusable.
+func TestRefreshGrantAfterTheGraceWindowRevokesWithoutTokens(t *testing.T) {
 	harness := newFrontChannelHarness(t)
 	handle := mintedRefreshHandle(t, harness)
 
@@ -264,23 +260,18 @@ func TestRefreshGrantAfterTheGraceWindowServesAccessTokenOnlyThenRevokesFamily(t
 
 	harness.clock.Advance(DefaultRefreshGraceWindow + time.Second)
 	first := harness.token(refreshTestForm(handle))
-	require.Equal(t, 200, first.Status)
-	require.Contains(t, string(first.Body), `"access_token":"`+frontTestRefreshAccessToken+`"`)
-	require.NotContains(t, string(first.Body), "refresh_token")
-	require.NotContains(t, string(first.Body), frontTestRefreshToken)
-	require.NotContains(t, string(first.Body), frontTestRotatedUpstreamRefreshToken)
-	require.NotContains(t, string(first.Body), frontTestRefreshIDToken)
+	require.Equal(t, 400, first.Status)
+	require.Contains(t, string(first.Body), `"error":"invalid_grant"`)
+	for _, absent := range []string{"access_token", "refresh_token", frontTestRefreshToken, frontTestRotatedUpstreamRefreshToken, frontTestRefreshIDToken} {
+		require.NotContains(t, string(first.Body), absent)
+	}
 	require.Equal(t, 1, harness.fake.RefreshCallCount())
-	served := brokerRecord(t, harness, handle)
-	require.False(t, served.DepthOneServedAt.IsZero(), "the once-per-handle marker must be written before the serve")
-	require.Equal(t, oauthstore.BrokerStatusActive, served.Status)
+	requireFamilyRevoked(t, harness, handle)
+	requireFamilyRevoked(t, harness, successor)
 
 	second := harness.token(refreshTestForm(handle))
 	require.Equal(t, 400, second.Status)
-	require.Contains(t, string(second.Body), `"error":"invalid_grant"`)
-
-	require.Equal(t, oauthstore.BrokerStatusRevoked, brokerRecord(t, harness, handle).Status)
-	require.Equal(t, oauthstore.BrokerStatusRevoked, brokerRecord(t, harness, successor).Status)
+	require.Equal(t, string(first.Body), string(second.Body))
 
 	after := harness.token(refreshTestForm(successor))
 	require.Equal(t, 400, after.Status)
@@ -310,7 +301,7 @@ func TestRefreshGrantDeepStaleReuseRevokesFamilyWithoutAServe(t *testing.T) {
 	require.Equal(t, 2, harness.fake.RefreshCallCount())
 
 	for _, revoked := range []string{root, refreshTestHandle(t, first), head} {
-		require.Equalf(t, oauthstore.BrokerStatusRevoked, brokerRecord(t, harness, revoked).Status, "handle %s", revoked)
+		requireFamilyRevoked(t, harness, revoked)
 	}
 }
 
@@ -538,13 +529,12 @@ func TestRefreshGrantConcurrentCallersReceiveOneSuccessor(t *testing.T) {
 	require.NotEqual(t, handle, refreshTestHandle(t, apptheory.Response{Body: bodies[0]}))
 }
 
-// TestRefreshGrantConcurrentReuseAfterGraceServesAtMostOnce pins the
-// once-per-handle bound under concurrency: once the grace window has passed,
-// exactly one concurrent presenter of the rotated handle is answered with the
-// access token only, and every other presenter is refused with the same
-// invalid_grant and revokes the family. No upstream call is made by any of them,
-// so the serve never becomes an upstream harvest path.
-func TestRefreshGrantConcurrentReuseAfterGraceServesAtMostOnce(t *testing.T) {
+// TestRefreshGrantConcurrentReuseAfterGraceRevokesWithoutServing pins the
+// first-presentation rule under concurrency: once the grace window has passed,
+// no presenter of the rotated handle is served any token, every presenter gets
+// the same invalid_grant, and the family is revoked exactly once. No upstream
+// call is made by any of them, so reuse never becomes an upstream harvest path.
+func TestRefreshGrantConcurrentReuseAfterGraceRevokesWithoutServing(t *testing.T) {
 	harness := newFrontChannelHarness(t)
 	handle := mintedRefreshHandle(t, harness)
 	rotated := harness.token(refreshTestForm(handle))
@@ -571,21 +561,15 @@ func TestRefreshGrantConcurrentReuseAfterGraceServesAtMostOnce(t *testing.T) {
 	close(start)
 	group.Wait()
 
-	served := 0
 	for index := 0; index < callers; index++ {
-		if statuses[index] == 200 {
-			served++
-			require.NotContainsf(t, string(bodies[index]), "refresh_token", "caller %d", index)
-			require.NotContainsf(t, string(bodies[index]), frontTestRotatedUpstreamRefreshToken, "caller %d", index)
-			continue
-		}
 		require.Equalf(t, 400, statuses[index], "caller %d body %s", index, bodies[index])
 		require.Containsf(t, string(bodies[index]), `"error":"invalid_grant"`, "caller %d", index)
+		require.NotContainsf(t, string(bodies[index]), "access_token", "caller %d", index)
+		require.NotContainsf(t, string(bodies[index]), "refresh_token", "caller %d", index)
 	}
-	require.Equal(t, 1, served, "exactly one caller may be served the access token")
-	require.Equal(t, 1, harness.fake.RefreshCallCount())
-	require.Equal(t, oauthstore.BrokerStatusRevoked, brokerRecord(t, harness, handle).Status)
-	require.Equal(t, oauthstore.BrokerStatusRevoked, brokerRecord(t, harness, successor).Status)
+	require.Equal(t, 1, harness.fake.RefreshCallCount(), "no beyond-grace caller may reach the upstream")
+	requireFamilyRevoked(t, harness, handle)
+	requireFamilyRevoked(t, harness, successor)
 }
 
 // TestRefreshGrantLockContentionAnswersRetryable pins the coalesce wait cap: a
@@ -698,7 +682,7 @@ func TestRefreshGrantTerminalUpstreamFailureRevokes(t *testing.T) {
 	require.Equal(t, 400, response.Status)
 	require.Contains(t, string(response.Body), `"error":"invalid_grant"`)
 	require.Equal(t, 1, harness.fake.RefreshCallCount())
-	require.Equal(t, oauthstore.BrokerStatusRevoked, brokerRecord(t, harness, handle).Status)
+	requireFamilyRevoked(t, harness, handle)
 
 	after := harness.token(refreshTestForm(handle))
 	require.Equal(t, 400, after.Status)
