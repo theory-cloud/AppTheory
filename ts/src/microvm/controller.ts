@@ -326,6 +326,15 @@ export class MicroVMRealController implements MicroVMControllerRouteTarget {
         environmentMicroVMControllerDeploymentDefaults(),
     );
     this.clock = options.clock ?? { now: () => new Date() };
+    const clockAware = registry as unknown as {
+      setRegistryClock?: (now: () => Date) => void;
+      now?: () => Date;
+    };
+    if (typeof clockAware.setRegistryClock === "function") {
+      clockAware.setRegistryClock(() => this.clock.now());
+    } else if (typeof clockAware.now === "function") {
+      clockAware.now = () => this.clock.now();
+    }
     this.ids = options.ids ?? { newID: () => randomMicroVMSessionID() };
     const ttlMs = Math.trunc(Number(options.ttl_ms) || 0);
     this.ttlMs = ttlMs > 0 ? ttlMs : 60 * 60 * 1000;
@@ -648,8 +657,19 @@ export class MicroVMRealController implements MicroVMControllerRouteTarget {
       });
       const bindings: MicroVMProviderSessionBinding[] = [];
       const recordsByKey = new Map<string, MicroVMSessionRecord>();
+      const callerSubject = String(request.auth_context.subject ?? "").trim();
       for (const record of records) {
+        // Defense in depth: a custom registry may ignore auth_subject, so the
+        // controller re-applies the exact non-empty owner rule before any
+        // binding, metadata, or refresh write exists.
+        const storedOwner = String(record.auth_subject ?? "").trim();
+        if (!callerSubject || !storedOwner || storedOwner !== callerSubject) {
+          continue;
+        }
         validateMicroVMSessionRecord(record);
+        if (isExpiredMicroVMSessionRecord(record, this.now())) {
+          continue;
+        }
         const binding = microVMProviderBindingFromRecord(record);
         bindings.push(binding);
         recordsByKey.set(
@@ -737,9 +757,7 @@ export class MicroVMRealController implements MicroVMControllerRouteTarget {
         ],
         last_action: microVMCommandFromOperation(operation),
         last_command_id: request.request_id,
-        auth_subject:
-          String(record.auth_subject ?? "").trim() ||
-          request.auth_context.subject,
+        auth_subject: String(record.auth_subject ?? "").trim(),
         updated_at: now,
         last_observed_at: now,
         generation: record.generation + 1,
@@ -823,9 +841,12 @@ export class MicroVMRealController implements MicroVMControllerRouteTarget {
         current && current.generation > 0 ? current.generation + 1 : 1,
       last_action: request.command,
       last_command_id: request.request_id,
-      auth_subject:
-        String(current?.auth_subject ?? "").trim() ||
-        request.auth_context.subject,
+      // Only a genuinely new record may initialize its owner from the request;
+      // an existing record's stored owner is authoritative and an empty owner
+      // fails validation before any write.
+      auth_subject: current
+        ? String(current.auth_subject ?? "").trim()
+        : String(request.auth_context.subject ?? "").trim(),
     };
     if (validDate(session.started_at as Date)) {
       record.provider_started_at = cloneMicroVMDate(session.started_at as Date);
@@ -1068,6 +1089,19 @@ export function microVMCommandFromOperation(
     default:
       return normalizeMicroVMCommand(String(operation)) as MicroVMCommandName;
   }
+}
+
+function isExpiredMicroVMSessionRecord(
+  record: MicroVMSessionRecord,
+  now: Date,
+): boolean {
+  const expires =
+    record.expires_at instanceof Date
+      ? record.expires_at
+      : new Date(String(record.expires_at ?? ""));
+  return (
+    Number.isFinite(expires.getTime()) && expires.getTime() <= now.getTime()
+  );
 }
 
 export function desiredStateForMicroVMRealCommand(

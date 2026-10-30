@@ -18,37 +18,44 @@ import (
 )
 
 const (
-	defaultStreamTTLMinutes         = 60
-	defaultDynamoStreamPollInterval = 100 * time.Millisecond
-	defaultDynamoStreamBatchSize    = 128
-	defaultDynamoStreamTableName    = "mcp-streams"
-	dynamoStreamDeleteQuietPasses   = 2
-	dynamoStreamEventIDWidth        = 20
-	dynamoStreamFirstEventID        = "0"
-	dynamoStreamMetadataEventPrefix = "!stream#"
-	dynamoStreamSessionStateEventID = "!session"
-	dynamoStreamRecordKindSession   = "session"
-	dynamoStreamRecordKindStream    = "stream"
-	dynamoStreamRecordKindEvent     = "event"
-	envStreamTTLMinutes             = "MCP_STREAM_TTL_MINUTES"
-	envStreamTableName              = "MCP_STREAM_TABLE"
+	defaultStreamTTLMinutes            = 60
+	defaultDynamoStreamPollInterval    = 100 * time.Millisecond
+	defaultDynamoStreamBatchSize       = 128
+	defaultDynamoStreamTableName       = "mcp-streams"
+	dynamoStreamDeleteQuietPasses      = 2
+	dynamoStreamEventIDWidth           = 20
+	dynamoStreamFirstEventID           = "0"
+	dynamoStreamMetadataEventPrefix    = "!stream#"
+	dynamoStreamSessionStateEventID    = "!session"
+	dynamoStreamRecordKindSession      = "session"
+	dynamoStreamRecordKindStream       = "stream"
+	dynamoStreamRecordKindEvent        = "event"
+	defaultDynamoStreamAggregateEvents = 10000
+	defaultDynamoStreamAggregateBytes  = int64(64 << 20)
+	dynamoStreamAggregateSchemaVersion = 1
+	dynamoStreamAppendRetries          = 5
+	envStreamTTLMinutes                = "MCP_STREAM_TTL_MINUTES"
+	envStreamTableName                 = "MCP_STREAM_TABLE"
 )
 
 type dynamoStreamRecord struct {
-	SessionID   string          `theorydb:"pk,attr:sessionId" json:"sessionId"`
-	EventID     string          `theorydb:"sk,attr:eventId" json:"eventId"`
-	StreamID    string          `theorydb:"attr:streamId" json:"streamId"`
-	Kind        string          `theorydb:"attr:kind" json:"kind"`
-	CreatedAt   time.Time       `theorydb:"attr:createdAt" json:"createdAt"`
-	ExpiresAt   int64           `theorydb:"ttl,attr:expiresAt" json:"expiresAt"`
-	DataBytes   int64           `theorydb:"attr:dataBytes,omitempty" json:"dataBytes,omitempty"`
-	DataSHA256  string          `theorydb:"attr:dataSha256,omitempty" json:"dataSha256,omitempty"`
-	DataRef     string          `theorydb:"attr:dataRef,omitempty" json:"dataRef,omitempty"`
-	DataStorage string          `theorydb:"attr:dataStorage,omitempty" json:"dataStorage,omitempty"`
-	NextSeq     int64           `theorydb:"attr:nextSeq,omitempty" json:"nextSeq,omitempty"`
-	Closed      bool            `theorydb:"attr:closed,omitempty" json:"closed,omitempty"`
-	Deleted     bool            `theorydb:"attr:deleted,omitempty" json:"deleted,omitempty"`
-	Data        json.RawMessage `theorydb:"attr:data,omitempty" json:"data,omitempty"`
+	SessionID        string          `theorydb:"pk,attr:sessionId" json:"sessionId"`
+	EventID          string          `theorydb:"sk,attr:eventId" json:"eventId"`
+	StreamID         string          `theorydb:"attr:streamId" json:"streamId"`
+	Kind             string          `theorydb:"attr:kind" json:"kind"`
+	CreatedAt        time.Time       `theorydb:"attr:createdAt" json:"createdAt"`
+	ExpiresAt        int64           `theorydb:"ttl,attr:expiresAt" json:"expiresAt"`
+	DataBytes        int64           `theorydb:"attr:dataBytes,omitempty" json:"dataBytes,omitempty"`
+	DataSHA256       string          `theorydb:"attr:dataSha256,omitempty" json:"dataSha256,omitempty"`
+	DataRef          string          `theorydb:"attr:dataRef,omitempty" json:"dataRef,omitempty"`
+	DataStorage      string          `theorydb:"attr:dataStorage,omitempty" json:"dataStorage,omitempty"`
+	NextSeq          int64           `theorydb:"attr:nextSeq,omitempty" json:"nextSeq,omitempty"`
+	AggregateVersion int64           `theorydb:"attr:aggregateVersion" json:"aggregateVersion,omitempty"`
+	EventCount       int64           `theorydb:"attr:eventCount" json:"eventCount,omitempty"`
+	AggregateBytes   int64           `theorydb:"attr:aggregateBytes" json:"aggregateBytes,omitempty"`
+	Closed           bool            `theorydb:"attr:closed,omitempty" json:"closed,omitempty"`
+	Deleted          bool            `theorydb:"attr:deleted,omitempty" json:"deleted,omitempty"`
+	Data             json.RawMessage `theorydb:"attr:data,omitempty" json:"data,omitempty"`
 }
 
 func (dynamoStreamRecord) TableName() string {
@@ -64,23 +71,42 @@ func (dynamoStreamRecord) TableName() string {
 // server instances can replay and continue an active stream from shared state.
 // Replay is bounded by each event record's ExpiresAt value at runtime; DynamoDB
 // TTL and S3 lifecycle cleanup are backstops, not access checks.
-// The strongest DeleteSession/Append race protection is enabled when the
-// provided TableTheory DB implements TransactWrite, which is the production
-// TableTheory path.
+// Append requires a TableTheory DB that implements TransactWrite: the versioned
+// per-session aggregate, sequence, stream metadata, and event record are admitted
+// in one conditional transaction. A backend without transactional conditional
+// writes is refused before any event write.
 type DynamoStreamStore struct {
-	db             tablecore.DB
-	idGen          apptheory.IDGenerator
-	now            func() time.Time
-	pollInterval   time.Duration
-	batchSize      int
-	spillStore     dynamoStreamSpillStore
-	inlineMaxBytes int
-	maxEventBytes  int
+	db                 tablecore.DB
+	idGen              apptheory.IDGenerator
+	now                func() time.Time
+	pollInterval       time.Duration
+	batchSize          int
+	spillStore         dynamoStreamSpillStore
+	inlineMaxBytes     int
+	maxEventBytes      int
+	maxAggregateEvents int
+	maxAggregateBytes  int64
+	appendRetries      int
 }
 
 var _ StreamStore = (*DynamoStreamStore)(nil)
 
 var errDynamoStreamSessionDeleted = errors.New("stream session deleted")
+
+var (
+	// ErrStreamAggregateCapacityExceeded is returned when a session has reached
+	// its fixed aggregate event or logical-byte budget.
+	ErrStreamAggregateCapacityExceeded = errors.New("stream aggregate capacity exceeded")
+	// ErrStreamAggregateBackfillRequired is returned for a pre-aggregate session
+	// whose counters cannot be proven. Missing counters are never treated as zero.
+	ErrStreamAggregateBackfillRequired = errors.New("stream aggregate backfill required")
+	// ErrStreamTransactionRequired is returned when the backend cannot execute a
+	// single transactional conditional write. Append refuses before any event write.
+	ErrStreamTransactionRequired = errors.New("stream append requires a transactional backend")
+	// ErrStreamAppendConflict is returned when concurrent writers keep the
+	// optimistic aggregate condition from converging within the retry budget.
+	ErrStreamAppendConflict = errors.New("stream append conflict")
+)
 
 type dynamoStreamTransactWriter interface {
 	TransactWrite(context.Context, func(tablecore.TransactionBuilder) error) error
@@ -124,14 +150,17 @@ func NewDynamoStreamStore(db tablecore.DB, opts ...DynamoStreamStoreOption) Stre
 	}
 
 	return &DynamoStreamStore{
-		db:             db,
-		idGen:          apptheory.RandomIDGenerator{},
-		now:            func() time.Time { return time.Now().UTC() },
-		pollInterval:   defaultDynamoStreamPollInterval,
-		batchSize:      defaultDynamoStreamBatchSize,
-		spillStore:     spillStore,
-		inlineMaxBytes: dynamoStreamSpillInlineMaxBytes(),
-		maxEventBytes:  dynamoStreamMaxEventBytes(),
+		db:                 db,
+		idGen:              apptheory.RandomIDGenerator{},
+		now:                func() time.Time { return time.Now().UTC() },
+		pollInterval:       defaultDynamoStreamPollInterval,
+		batchSize:          defaultDynamoStreamBatchSize,
+		spillStore:         spillStore,
+		inlineMaxBytes:     dynamoStreamSpillInlineMaxBytes(),
+		maxEventBytes:      dynamoStreamMaxEventBytes(),
+		maxAggregateEvents: defaultDynamoStreamAggregateEvents,
+		maxAggregateBytes:  defaultDynamoStreamAggregateBytes,
+		appendRetries:      dynamoStreamAppendRetries,
 	}
 }
 
@@ -142,7 +171,7 @@ func (d *DynamoStreamStore) Create(ctx context.Context, sessionID string) (strin
 		return "", errors.New("missing session id")
 	}
 
-	if err := d.touchSessionState(ctx, sessionID); err != nil {
+	if err := d.ensureSessionState(ctx, sessionID); err != nil {
 		if errors.Is(err, errDynamoStreamSessionDeleted) {
 			return "", ErrStreamNotFound
 		}
@@ -172,41 +201,198 @@ func (d *DynamoStreamStore) Create(ctx context.Context, sessionID string) (strin
 
 func (d *DynamoStreamStore) Append(ctx context.Context, sessionID, streamID string, data json.RawMessage) (string, error) {
 	ctx = normalizeStreamContext(ctx)
-	sessionID, streamID, meta, err := d.appendTarget(ctx, sessionID, streamID)
+	streamSessionID, normalizedStreamID, meta, err := d.appendTarget(ctx, sessionID, streamID)
 	if err != nil {
 		return "", err
 	}
+	sessionID = streamSessionID
+	streamID = normalizedStreamID
 	if preflightErr := d.preflightStreamPayloadSize(data); preflightErr != nil {
 		return "", preflightErr
 	}
-
-	now := d.now().UTC()
-	eventID, err := d.nextSessionEventID(ctx, sessionID, now)
-	if err != nil {
-		if errors.Is(err, errDynamoStreamSessionDeleted) {
-			return "", ErrStreamNotFound
-		}
-		return "", err
+	if _, ok := d.db.(dynamoStreamTransactWriter); !ok {
+		return "", ErrStreamTransactionRequired
 	}
 
 	payload := make([]byte, len(data))
 	copy(payload, data)
 
-	if activeErr := d.requireAppendSessionActive(ctx, sessionID); activeErr != nil {
-		return "", activeErr
+	retries := d.appendRetries
+	if retries <= 0 {
+		retries = dynamoStreamAppendRetries
+	}
+	for attempt := 0; attempt < retries; attempt++ {
+		result, attemptErr := d.appendOnce(ctx, sessionID, streamID, meta, payload)
+		if result.retry {
+			continue
+		}
+		if attemptErr != nil {
+			return "", attemptErr
+		}
+		return result.eventID, nil
+	}
+	return "", ErrStreamAppendConflict
+}
+
+type dynamoAppendResult struct {
+	eventID string
+	retry   bool
+}
+
+// appendOnce reads the aggregate, proves its schema and bounds, and submits one
+// transaction that conditionally updates the aggregate/stream state and creates
+// the event. A condition failure is classified as a tombstone, a schema
+// refusal, or a concurrent counter change that is safe to retry.
+func (d *DynamoStreamStore) appendOnce(
+	ctx context.Context,
+	sessionID string,
+	streamID string,
+	meta *dynamoStreamRecord,
+	payload []byte,
+) (dynamoAppendResult, error) {
+	state, err := d.getSessionState(ctx, sessionID)
+	if err != nil {
+		if tableerrors.IsNotFound(err) {
+			return dynamoAppendResult{}, ErrStreamNotFound
+		}
+		return dynamoAppendResult{}, err
+	}
+	if budgetErr := d.appendBudgetError(state, len(payload)); budgetErr != nil {
+		return dynamoAppendResult{}, budgetErr
 	}
 
+	now := d.now().UTC()
 	expiresAt := d.expiresAtUnix(now)
-	meta.ExpiresAt = expiresAt
+	eventID := dynamoStreamEventIDForSeq(state.NextSeq + 1)
 	record, spilled, err := d.newStreamEventRecord(ctx, sessionID, streamID, eventID, payload, now, expiresAt)
 	if err != nil {
-		return "", err
+		return dynamoAppendResult{}, err
 	}
 
-	if err := d.createStreamEventRecord(ctx, sessionID, meta, record, spilled); err != nil {
-		return "", err
+	nextState := *state
+	nextState.NextSeq = state.NextSeq + 1
+	nextState.EventCount = state.EventCount + 1
+	nextState.AggregateBytes = state.AggregateBytes + int64(len(payload))
+	nextState.ExpiresAt = expiresAt
+	meta.ExpiresAt = expiresAt
+
+	txErr := d.transactAppend(ctx, state, &nextState, meta, record)
+	if txErr == nil {
+		return dynamoAppendResult{eventID: eventID}, nil
 	}
-	return eventID, nil
+
+	cleanupFailed, failure := d.cleanupSpilledStreamEvent(ctx, record, spilled, txErr)
+	if !tableerrors.IsConditionFailed(txErr) {
+		return dynamoAppendResult{}, failure
+	}
+
+	notFoundFailure := ErrStreamNotFound
+	if cleanupFailed {
+		notFoundFailure = errors.Join(ErrStreamNotFound, failure)
+	}
+
+	latest, latestErr := d.getSessionState(ctx, sessionID)
+	switch {
+	case latestErr != nil && tableerrors.IsNotFound(latestErr):
+		return dynamoAppendResult{}, notFoundFailure
+	case latestErr != nil:
+		return dynamoAppendResult{}, errors.Join(failure, latestErr)
+	case latest.Deleted:
+		return dynamoAppendResult{}, notFoundFailure
+	case latest.AggregateVersion != dynamoStreamAggregateSchemaVersion:
+		return dynamoAppendResult{}, errors.Join(ErrStreamAggregateBackfillRequired, failure)
+	case cleanupFailed:
+		// The transaction did not commit, but its spilled payload could not be
+		// removed. Stop retrying so a later success cannot hide the orphaned
+		// object or its cleanup failure.
+		return dynamoAppendResult{}, errors.Join(ErrStreamAppendConflict, failure)
+	default:
+		return dynamoAppendResult{retry: true}, nil
+	}
+}
+
+func (d *DynamoStreamStore) appendBudgetError(state *dynamoStreamRecord, payloadBytes int) error {
+	if state.Deleted {
+		return ErrStreamNotFound
+	}
+	if state.AggregateVersion != dynamoStreamAggregateSchemaVersion {
+		return ErrStreamAggregateBackfillRequired
+	}
+	if d.maxAggregateEvents > 0 && state.EventCount+1 > int64(d.maxAggregateEvents) {
+		return ErrStreamAggregateCapacityExceeded
+	}
+	if d.maxAggregateBytes > 0 && state.AggregateBytes+int64(payloadBytes) > d.maxAggregateBytes {
+		return ErrStreamAggregateCapacityExceeded
+	}
+	return nil
+}
+
+func (d *DynamoStreamStore) transactAppend(
+	ctx context.Context,
+	observed *dynamoStreamRecord,
+	next *dynamoStreamRecord,
+	meta *dynamoStreamRecord,
+	record *dynamoStreamRecord,
+) error {
+	txDB, ok := d.db.(dynamoStreamTransactWriter)
+	if !ok {
+		return ErrStreamTransactionRequired
+	}
+	conditions := []tablecore.TransactCondition{
+		{
+			Kind:     tablecore.TransactConditionKindField,
+			Field:    "Deleted",
+			Operator: "=",
+			Value:    false,
+		},
+		{
+			Kind:     tablecore.TransactConditionKindField,
+			Field:    "AggregateVersion",
+			Operator: "=",
+			Value:    int64(dynamoStreamAggregateSchemaVersion),
+		},
+		{
+			Kind:     tablecore.TransactConditionKindField,
+			Field:    "NextSeq",
+			Operator: "=",
+			Value:    observed.NextSeq,
+		},
+		{
+			Kind:     tablecore.TransactConditionKindField,
+			Field:    "EventCount",
+			Operator: "=",
+			Value:    observed.EventCount,
+		},
+		{
+			Kind:     tablecore.TransactConditionKindField,
+			Field:    "AggregateBytes",
+			Operator: "=",
+			Value:    observed.AggregateBytes,
+		},
+	}
+	payloadBytes := next.AggregateBytes - observed.AggregateBytes
+	if d.maxAggregateEvents > 0 {
+		conditions = append(conditions, tablecore.TransactCondition{
+			Kind:     tablecore.TransactConditionKindField,
+			Field:    "EventCount",
+			Operator: "<=",
+			Value:    int64(d.maxAggregateEvents - 1),
+		})
+	}
+	if d.maxAggregateBytes > 0 {
+		conditions = append(conditions, tablecore.TransactCondition{
+			Kind:     tablecore.TransactConditionKindField,
+			Field:    "AggregateBytes",
+			Operator: "<=",
+			Value:    d.maxAggregateBytes - payloadBytes,
+		})
+	}
+	return txDB.TransactWrite(ctx, func(tx tablecore.TransactionBuilder) error {
+		tx.Update(next, []string{"NextSeq", "EventCount", "AggregateBytes", "ExpiresAt"}, conditions...)
+		tx.Put(meta)
+		tx.Create(record)
+		return nil
+	})
 }
 
 func (d *DynamoStreamStore) appendTarget(
@@ -239,16 +425,6 @@ func (d *DynamoStreamStore) preflightStreamPayloadSize(data json.RawMessage) err
 	}
 	if d.spillStore == nil && len(data) > defaultDynamoStreamMaxInlineBytes {
 		return ErrStreamEventTooLarge
-	}
-	return nil
-}
-
-func (d *DynamoStreamStore) requireAppendSessionActive(ctx context.Context, sessionID string) error {
-	if err := d.assertSessionActive(ctx, sessionID); err != nil {
-		if errors.Is(err, errDynamoStreamSessionDeleted) {
-			return ErrStreamNotFound
-		}
-		return err
 	}
 	return nil
 }
@@ -289,74 +465,18 @@ func (d *DynamoStreamStore) newStreamEventRecord(
 	return record, spilled, nil
 }
 
-func (d *DynamoStreamStore) createStreamEventRecord(
-	ctx context.Context,
-	sessionID string,
-	meta *dynamoStreamRecord,
-	record *dynamoStreamRecord,
-	spilled bool,
-) error {
-	if err := d.createActiveSessionStreamEvent(ctx, sessionID, meta, record); err != nil {
-		return d.cleanupSpilledStreamEvent(ctx, record, spilled, err)
-	}
-	return nil
-}
-
-func (d *DynamoStreamStore) createActiveSessionStreamEvent(
-	ctx context.Context,
-	sessionID string,
-	meta *dynamoStreamRecord,
-	record *dynamoStreamRecord,
-) error {
-	if txDB, ok := d.db.(dynamoStreamTransactWriter); ok {
-		state := &dynamoStreamRecord{
-			SessionID: sessionID,
-			EventID:   dynamoStreamSessionStateEventID,
-		}
-		err := txDB.TransactWrite(ctx, func(tx tablecore.TransactionBuilder) error {
-			tx.ConditionCheck(state, tablecore.TransactCondition{
-				Kind:     tablecore.TransactConditionKindField,
-				Field:    "Deleted",
-				Operator: "=",
-				Value:    false,
-			})
-			tx.Put(meta)
-			tx.Create(record)
-			return nil
-		})
-		if err != nil {
-			if tableerrors.IsConditionFailed(err) {
-				return ErrStreamNotFound
-			}
-			return err
-		}
-		return nil
-	}
-
-	if activeErr := d.requireAppendSessionActive(ctx, sessionID); activeErr != nil {
-		return activeErr
-	}
-	if metaErr := d.db.Model(meta).WithContext(ctx).CreateOrUpdate(); metaErr != nil {
-		return metaErr
-	}
-	if activeErr := d.requireAppendSessionActive(ctx, sessionID); activeErr != nil {
-		return activeErr
-	}
-	return d.db.Model(record).WithContext(ctx).Create()
-}
-
 func (d *DynamoStreamStore) cleanupSpilledStreamEvent(
 	ctx context.Context,
 	record *dynamoStreamRecord,
 	spilled bool,
 	appendErr error,
-) error {
+) (bool, error) {
 	if spilled && record != nil {
 		if cleanupErr := d.spillStore.delete(ctx, record.DataRef); cleanupErr != nil {
-			return errors.Join(appendErr, cleanupErr)
+			return true, errors.Join(appendErr, cleanupErr)
 		}
 	}
-	return appendErr
+	return false, appendErr
 }
 
 func (d *DynamoStreamStore) Close(ctx context.Context, sessionID, streamID string) error {
@@ -681,47 +801,66 @@ func (d *DynamoStreamStore) isStreamClosed(ctx context.Context, sessionID, strea
 	return record.Closed, nil
 }
 
-func (d *DynamoStreamStore) touchSessionState(ctx context.Context, sessionID string) error {
+// ensureSessionState creates the versioned aggregate state for a genuinely new
+// session and refreshes the expiry of an existing one. It never adds aggregate
+// counters to an existing pre-M3 record, because treating missing counters as
+// zero would let legacy data bypass the aggregate bound.
+func (d *DynamoStreamStore) ensureSessionState(ctx context.Context, sessionID string) error {
 	now := d.now().UTC()
-	_, err := d.updateSessionState(ctx, sessionID, now, false)
-	return err
-}
+	expiresAt := d.expiresAtUnix(now)
 
-func (d *DynamoStreamStore) nextSessionEventID(ctx context.Context, sessionID string, now time.Time) (string, error) {
-	state, err := d.updateSessionState(ctx, sessionID, now, true)
-	if err != nil {
-		return "", err
+	for attempt := 0; attempt < 2; attempt++ {
+		state, err := d.getSessionState(ctx, sessionID)
+		if err == nil {
+			if state.Deleted {
+				return errDynamoStreamSessionDeleted
+			}
+			return d.refreshSessionStateExpiry(ctx, sessionID, expiresAt)
+		}
+		if !tableerrors.IsNotFound(err) {
+			return err
+		}
+
+		record := &dynamoStreamRecord{
+			SessionID:        sessionID,
+			EventID:          dynamoStreamSessionStateEventID,
+			Kind:             dynamoStreamRecordKindSession,
+			CreatedAt:        now,
+			ExpiresAt:        expiresAt,
+			NextSeq:          0,
+			AggregateVersion: dynamoStreamAggregateSchemaVersion,
+			EventCount:       0,
+			AggregateBytes:   0,
+			Deleted:          false,
+		}
+		createErr := d.db.Model(record).WithContext(ctx).IfNotExists().Create()
+		if createErr == nil {
+			return nil
+		}
+		if !tableerrors.IsConditionFailed(createErr) {
+			return createErr
+		}
 	}
-	return dynamoStreamEventIDForSeq(state.NextSeq), nil
+	return ErrStreamAppendConflict
 }
 
-func (d *DynamoStreamStore) updateSessionState(ctx context.Context, sessionID string, now time.Time, increment bool) (*dynamoStreamRecord, error) {
+func (d *DynamoStreamStore) refreshSessionStateExpiry(ctx context.Context, sessionID string, expiresAt int64) error {
 	query := d.db.Model(&dynamoStreamRecord{}).
 		WithContext(ctx).
 		Where("SessionID", "=", sessionID).
 		Where("EventID", "=", dynamoStreamSessionStateEventID)
 
-	ub := query.UpdateBuilder().
-		SetIfNotExists("Kind", nil, dynamoStreamRecordKindSession).
-		SetIfNotExists("CreatedAt", nil, now).
-		SetIfNotExists("Deleted", nil, false).
-		Set("ExpiresAt", d.expiresAtUnix(now))
-
-	if increment {
-		ub = ub.Add("NextSeq", int64(1))
-	}
-
-	ub.ConditionNotExists("Deleted")
-	ub.OrCondition("Deleted", "=", false)
-
-	var state dynamoStreamRecord
-	if err := ub.ExecuteWithResult(&state); err != nil {
+	err := query.UpdateBuilder().
+		Set("ExpiresAt", expiresAt).
+		Condition("Deleted", "=", false).
+		Execute()
+	if err != nil {
 		if tableerrors.IsConditionFailed(err) {
-			return nil, errDynamoStreamSessionDeleted
+			return errDynamoStreamSessionDeleted
 		}
-		return nil, err
+		return err
 	}
-	return &state, nil
+	return nil
 }
 
 func (d *DynamoStreamStore) assertSessionActive(ctx context.Context, sessionID string) error {

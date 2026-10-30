@@ -9,6 +9,7 @@ import types
 import unittest
 import urllib.request
 import urllib.response
+from pathlib import Path
 from unittest.mock import patch
 
 import apptheory as app
@@ -1417,7 +1418,7 @@ class MicroVMLifecycleTests(unittest.TestCase):
 
     def test_real_controller_commands_and_token_metadata_safety(self) -> None:
         provider = app.create_fake_microvm_provider(now=1.0)
-        registry = app.create_memory_microvm_session_registry()
+        registry = app.create_memory_microvm_session_registry(clock=lambda: 10.0)
         controller = app.create_real_microvm_controller(
             provider,
             registry,
@@ -1503,7 +1504,7 @@ class MicroVMLifecycleTests(unittest.TestCase):
 
     def test_real_controller_enforces_session_ownership_on_keyed_loads(self) -> None:
         provider = app.create_fake_microvm_provider(now=1.0)
-        registry = app.create_memory_microvm_session_registry()
+        registry = app.create_memory_microvm_session_registry(clock=lambda: 10.0)
         controller = app.create_real_microvm_controller(
             provider,
             registry,
@@ -1571,8 +1572,8 @@ class MicroVMLifecycleTests(unittest.TestCase):
             )
         self.assertEqual(app.MICROVM_ERROR_SESSION_OWNER_MISMATCH, invoke_ctx.exception.code)
 
-        # List semantics are unchanged: the registry lister is still tenant-bound,
-        # and ownership is not applied to the listed records.
+        # List semantics now require exact, non-empty owner equality: another
+        # subject in the same tenant does not see this session.
         listed_by_other = controller.handle(
             self._controller_request(
                 command=app.COMMAND_LIST,
@@ -1582,8 +1583,18 @@ class MicroVMLifecycleTests(unittest.TestCase):
             )
         )
         self.assertIsNone(listed_by_other.error)
-        self.assertEqual(1, len(listed_by_other.sessions))
-        self.assertEqual("owned-session", listed_by_other.sessions[0].session_id)
+        self.assertEqual(0, len(listed_by_other.sessions))
+
+        listed_by_owner = controller.handle(
+            self._controller_request(
+                command=app.COMMAND_LIST,
+                request_id="req-owner-list",
+                session_id="",
+            )
+        )
+        self.assertIsNone(listed_by_owner.error)
+        self.assertEqual(1, len(listed_by_owner.sessions))
+        self.assertEqual("owned-session", listed_by_owner.sessions[0].session_id)
 
         stored = registry.get(("tenant-1", "namespace-1", "owned-session"))
         self.assertEqual("subject-1", stored.auth_subject)
@@ -2415,6 +2426,167 @@ class PreAuthPolicyContextTests(unittest.TestCase):
         self.assertEqual(1, len(policy_views))
         self.assertEqual(("", "caller-tenant"), policy_views[0])
         self.assertEqual([("caller-tenant", "caller-tenant")], handler_views)
+
+
+class M3ListOwnershipTests(unittest.TestCase):
+    def _record(self, session_id: str, subject: str, *, expires_at: float = 4000.0, endpoint: str = "") -> app.MicroVMSessionRecord:
+        return app.MicroVMSessionRecord(
+            tenant_id="tenant-1",
+            namespace="namespace-1",
+            session_id=session_id,
+            state=app.STATE_RUNNING,
+            desired_state=app.STATE_RUNNING,
+            provider_id=app.MICROVM_DEFAULT_SESSION_PROVIDER_ID,
+            provider_microvm_id="provider-" + session_id,
+            provider_state=app.STATE_RUNNING,
+            aws_lifecycle_state=app.STATE_RUNNING,
+            image_ref="image-ref",
+            network_connector_ref="network-ref",
+            controller_id="controller-1",
+            created_at=1.0,
+            updated_at=1.0,
+            last_observed_at=1.0,
+            expires_at=expires_at,
+            generation=1,
+            last_action=app.COMMAND_CREATE,
+            last_command_id="req-" + session_id,
+            auth_subject=subject,
+            endpoint=endpoint,
+        )
+
+    def test_shared_fixture_pins_required_cases_and_shapes(self) -> None:
+        fixture = json.loads(
+            (
+                Path(__file__).resolve().parents[2]
+                / "contract-tests/conformance/microvm-list-ownership.v1.json"
+            ).read_text()
+        )
+        self.assertEqual("m3.microvm-list-ownership/v1", fixture["contract"]["id"])
+        self.assertEqual("m15.microvm.session_owner_mismatch", fixture["errors"]["owner_mismatch"]["code"])
+        self.assertEqual(403, fixture["errors"]["owner_mismatch"]["status"])
+        self.assertEqual(app.MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE, fixture["errors"]["registry_incomplete"])
+        ids = {item["id"] for item in fixture["cases"]}
+        for case_id in (
+            "list.same_subject_live_records_only",
+            "list.empty_subject_returns_empty",
+            "list.cross_subject_excluded",
+            "list.ownerless_excluded",
+            "list.canonical_precedence_over_legacy_duplicate",
+            "list.caller_owned_legacy_duplicate_cannot_override_canonical_ownerless",
+            "list.expired_records_excluded_before_provider",
+            "controller.list.defense_in_depth_filters_registry_ignoring_subject",
+            "keyed.owner_mismatch_preserves_denial_shape",
+            "keyed.ownerless_record_preserves_registry_incomplete_shape",
+            "keyed.ownerless_legacy_read_not_rekeyed_and_owned_rekey_preserves_owner",
+            "write.existing_ownerless_record_not_adopted",
+        ):
+            self.assertIn(case_id, ids)
+
+    def test_memory_registry_list_applies_owner_expiry_and_canonical_precedence(self) -> None:
+        registry = app.create_memory_microvm_session_registry(clock=lambda: 2000.0)
+        registry.put(self._record("own-live", "subject-a", endpoint="canonical-live"))
+        registry.put(self._record("session-other", "subject-b"))
+        registry.put(self._record("own-expired", "subject-a", expires_at=1000.0))
+        registry.put(self._record("ownerless", "subject-a"))
+        registry.put(self._record("prefer", "subject-a", endpoint="canonical"))
+        registry.put(self._record("dup", "subject-a"))
+
+        legacy_pk = "TENANT#tenant-1#NAMESPACE#namespace-1"
+        for key, value in list(registry._records.items()):
+            if value.session_id in {"ownerless", "dup"}:
+                value.auth_subject = ""
+            if value.session_id == "prefer":
+                legacy = app.microvm_session_record_to_registry_record(
+                    self._record("prefer", "subject-a", endpoint="legacy")
+                )
+                legacy.pk = legacy_pk
+                registry._records[("legacy-prefer", "")] = legacy
+            if value.session_id == "dup":
+                legacy_dup = app.microvm_session_record_to_registry_record(
+                    self._record("dup", "subject-a", endpoint="legacy-owned")
+                )
+                legacy_dup.pk = legacy_pk
+                registry._records[("legacy-dup", "")] = legacy_dup
+
+        listed = registry.list({"tenant_id": "tenant-1", "namespace": "namespace-1", "auth_subject": "subject-a"})
+        self.assertEqual(["own-live", "prefer"], [record.session_id for record in listed])
+        self.assertEqual("canonical", next(record.endpoint for record in listed if record.session_id == "prefer"))
+        self.assertEqual([], registry.list({"tenant_id": "tenant-1", "namespace": "namespace-1"}))
+        self.assertEqual(
+            ["session-other"],
+            [
+                record.session_id
+                for record in registry.list(
+                    {"tenant_id": "tenant-1", "namespace": "namespace-1", "auth_subject": "subject-b"}
+                )
+            ],
+        )
+
+    def test_controller_list_defense_in_depth_filters_subject_ignoring_registry(self) -> None:
+        records = [
+            self._record("own-live", "subject-a"),
+            self._record("other", "subject-b"),
+            self._record("ownerless", ""),
+        ]
+
+        class _IgnoringRegistry:
+            def __init__(self) -> None:
+                self.puts = 0
+
+            def put(self, record: Any) -> Any:
+                self.puts += 1
+                return record
+
+            def get(self, key: Any) -> Any:
+                raise app.MicroVMSafeError(app.MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE, "not found", "")
+
+            def delete(self, key: Any) -> None:
+                return None
+
+            def list(self, input_: Any) -> list[Any]:
+                return list(records)
+
+        class _RecordingProvider:
+            def __init__(self, inner: Any) -> None:
+                self.inner = inner
+                self.known: list[Any] = []
+
+            def list(self, input_: Any) -> Any:
+                self.known = list(input_.known_sessions)
+                return self.inner.list(input_)
+
+            def __getattr__(self, name: str) -> Any:
+                return getattr(self.inner, name)
+
+        registry = _IgnoringRegistry()
+        provider = _RecordingProvider(app.create_fake_microvm_provider(now=1.0))
+        controller = app.create_real_microvm_controller(
+            provider,
+            registry,
+            controller_id="controller-1",
+            provider_id=app.MICROVM_AWS_LAMBDA_PROVIDER_ID,
+            clock=lambda: 10.0,
+            ttl_seconds=60,
+            logging={"disabled": True},
+        )
+        response = controller.handle(
+            {
+                "command": app.COMMAND_LIST,
+                "request_id": "req-defense",
+                "tenant_id": "tenant-1",
+                "namespace": "namespace-1",
+                "auth_context": {
+                    "subject": "subject-a",
+                    "tenant_id": "tenant-1",
+                    "namespace": "namespace-1",
+                },
+                "session_id": "",
+            }
+        )
+        self.assertIsNone(response.error)
+        self.assertEqual(1, len(provider.known))
+        self.assertEqual("own-live", provider.known[0].session_id)
+        self.assertEqual(0, registry.puts)
 
 
 if __name__ == "__main__":

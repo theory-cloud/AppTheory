@@ -37,7 +37,8 @@ func NewDynamoSessionStore(db tablecore.DB) SessionStore {
 	return &DynamoSessionStore{db: db}
 }
 
-// Get retrieves a session by ID. Returns ErrSessionNotFound if the session does not exist.
+// Get retrieves a session by ID. Returns ErrSessionExpired when it observes an
+// expired record and ErrSessionNotFound when the session was never stored.
 func (d *DynamoSessionStore) Get(ctx context.Context, id string) (*Session, error) {
 	var record sessionRecord
 	err := d.db.Model(&sessionRecord{}).
@@ -53,7 +54,7 @@ func (d *DynamoSessionStore) Get(ctx context.Context, id string) (*Session, erro
 
 	sess := recordToSession(&record)
 	if sessionExpiredAt(time.Now().UTC(), sess) {
-		return nil, ErrSessionNotFound
+		return nil, ErrSessionExpired
 	}
 	return sess, nil
 }

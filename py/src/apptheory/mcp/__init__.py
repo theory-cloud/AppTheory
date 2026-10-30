@@ -6,10 +6,13 @@ import asyncio
 import base64
 import contextlib
 import datetime as dt
+import hashlib
 import inspect
 import json as jsonlib
 import os
 import re
+import threading
+import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field, is_dataclass
 from typing import Any, Literal, Protocol, TypeVar, cast
@@ -70,9 +73,27 @@ MAX_MEMORY_STREAM_SESSION_BYTES = 64 * 1024 * 1024
 MAX_MEMORY_TASKS_PER_SESSION = 1000
 DEFAULT_STREAM_TTL_MINUTES = 60
 DEFAULT_STREAM_MAX_EVENT_BYTES = 10 * 1024 * 1024
+DEFAULT_STREAM_AGGREGATE_EVENTS = 10000
+DEFAULT_STREAM_AGGREGATE_BYTES = 64 * 1024 * 1024
+DEFAULT_STREAM_AGGREGATE_VERSION = 1
+DEFAULT_STREAM_SPILL_INLINE_MAX_BYTES = 32 * 1024
+DEFAULT_STREAM_SPILL_PREFIX = "mcp-stream-events"
+STREAM_SESSION_ITEM_ID = "!session"
+STREAM_SESSION_DELETE_QUIET_PASSES = 2
+STREAM_APPEND_RETRIES = 5
+DEFAULT_MEMORY_SESSION_CAPACITY = 1000
+SESSION_CAPACITY_EXCEEDED_MESSAGE = "Session capacity exceeded"
+SESSION_EXPIRED_MESSAGE = "session expired"
+STREAM_AGGREGATE_CAPACITY_MESSAGE = "stream aggregate capacity exceeded"
+STREAM_AGGREGATE_BACKFILL_MESSAGE = "stream aggregate backfill required"
+STREAM_TRANSACTION_REQUIRED_MESSAGE = "stream append requires a transactional backend"
+STREAM_APPEND_CONFLICT_MESSAGE = "stream append conflict"
 GENERIC_HANDLER_ERROR_MESSAGE = "internal error"
 ENV_STREAM_TTL_MINUTES = "MCP_STREAM_TTL_MINUTES"
 ENV_STREAM_MAX_EVENT_BYTES = "MCP_STREAM_MAX_EVENT_BYTES"
+ENV_STREAM_SPILL_BUCKET = "MCP_STREAM_SPILL_BUCKET"
+ENV_STREAM_SPILL_PREFIX = "MCP_STREAM_SPILL_PREFIX"
+ENV_STREAM_SPILL_INLINE_MAX_BYTES = "MCP_STREAM_SPILL_INLINE_MAX_BYTES"
 
 McpTaskSupport = Literal["forbidden", "optional", "required"]
 McpTaskStatus = Literal["working", "input_required", "completed", "failed", "canceled"]
@@ -513,6 +534,36 @@ class McpSessionNotFoundError(Exception):
         super().__init__(message)
 
 
+class McpSessionExpiredError(McpSessionNotFoundError):
+    def __init__(self, message: str = SESSION_EXPIRED_MESSAGE) -> None:
+        super().__init__(message)
+
+
+class McpSessionCapacityError(Exception):
+    def __init__(self, message: str = SESSION_CAPACITY_EXCEEDED_MESSAGE) -> None:
+        super().__init__(message)
+
+
+class McpStreamAggregateCapacityError(Exception):
+    def __init__(self, message: str = STREAM_AGGREGATE_CAPACITY_MESSAGE) -> None:
+        super().__init__(message)
+
+
+class McpStreamAggregateBackfillError(Exception):
+    def __init__(self, message: str = STREAM_AGGREGATE_BACKFILL_MESSAGE) -> None:
+        super().__init__(message)
+
+
+class McpStreamTransactionRequiredError(Exception):
+    def __init__(self, message: str = STREAM_TRANSACTION_REQUIRED_MESSAGE) -> None:
+        super().__init__(message)
+
+
+class McpStreamAppendConflictError(Exception):
+    def __init__(self, message: str = STREAM_APPEND_CONFLICT_MESSAGE) -> None:
+        super().__init__(message)
+
+
 class McpStreamNotFoundError(Exception):
     def __init__(self, message: str = "stream not found") -> None:
         super().__init__(message)
@@ -728,9 +779,17 @@ class McpPromptRegistry:
 
 
 class MemoryMcpSessionStore:
-    def __init__(self, *, clock: Clock | None = None, seed: list[McpSession | dict[str, Any]] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        clock: Clock | None = None,
+        seed: list[McpSession | dict[str, Any]] | None = None,
+        max_sessions: int = DEFAULT_MEMORY_SESSION_CAPACITY,
+    ) -> None:
         self._sessions: dict[str, McpSession] = {}
         self._clock = clock or RealClock()
+        self._lock = threading.RLock()
+        self._max_sessions = _positive_integer(max_sessions, DEFAULT_MEMORY_SESSION_CAPACITY)
         for session in seed or []:
             normalized = _clone_session(session)
             if normalized.id:
@@ -738,22 +797,40 @@ class MemoryMcpSessionStore:
 
     def get(self, id: str) -> McpSession:
         key = str(id or "").strip()
-        session = self._sessions.get(key)
-        if session is None:
-            raise McpSessionNotFoundError()
-        if _session_expired_at(self._clock.now(), session):
-            self._sessions.pop(key, None)
-            raise McpSessionNotFoundError()
-        return _clone_session(session)
+        with self._lock:
+            session = self._sessions.get(key)
+            if session is None:
+                raise McpSessionNotFoundError()
+            if _session_expired_at(self._clock.now(), session):
+                self._sessions.pop(key, None)
+                raise McpSessionExpiredError()
+            return _clone_session(session)
 
     def put(self, session: McpSession | dict[str, Any]) -> None:
+        self.put_and_collect_expired(session)
+
+    def put_and_collect_expired(self, session: McpSession | dict[str, Any]) -> list[str]:
+        """Atomically sweep/count/insert and return the expired session IDs removed."""
         normalized = _clone_session(session)
         if not normalized.id:
             raise ValueError("missing session id")
-        self._sessions[normalized.id] = normalized
+        now = self._clock.now()
+        with self._lock:
+            if _session_expired_at(now, normalized):
+                raise McpSessionExpiredError()
+            expired: list[str] = []
+            for key, existing in list(self._sessions.items()):
+                if _session_expired_at(now, existing):
+                    self._sessions.pop(key, None)
+                    expired.append(key)
+            if normalized.id not in self._sessions and len(self._sessions) >= self._max_sessions:
+                raise McpSessionCapacityError()
+            self._sessions[normalized.id] = normalized
+            return expired
 
     def delete(self, id: str) -> None:
-        self._sessions.pop(str(id or "").strip(), None)
+        with self._lock:
+            self._sessions.pop(str(id or "").strip(), None)
 
 
 @dataclass(slots=True)
@@ -1014,10 +1091,13 @@ class DynamoMcpTaskStore:
         if not session_id:
             return McpTaskListResult()
         try:
+            requested_cursor = str(_field(request, "cursor") or "").strip()
             page = self._table.query(
                 session_id,
                 limit=_task_list_limit(_int_field(request, "limit")),
-                cursor=str(_field(request, "cursor") or ""),
+                # The pinned client's first-page contract is cursor=None; an
+                # empty string is rejected as an invalid cursor.
+                cursor=requested_cursor or None,
             )
             now = self._clock.now()
             records = sorted(
@@ -1055,23 +1135,73 @@ class DynamoMcpTaskStore:
         # deleting as we page would shift the remaining items and leak tasks.
         # Expired items are deleted too, so this bypasses `list`'s filter.
         task_ids: list[str] = []
-        cursor = ""
+        cursor: str | None = None
         while True:
             page = self._table.query(sid, limit=MAX_TASK_LIST_LIMIT, cursor=cursor)
             task_ids.extend(
                 str(_field(item, "task_id") or _field(item, "taskId") or "")
                 for item in getattr(page, "items", []) or []
             )
-            next_cursor = str(getattr(page, "next_cursor", None) or getattr(page, "cursor", "") or "")
+            next_cursor = getattr(page, "next_cursor", None)
+            if next_cursor is None:
+                next_cursor = getattr(page, "cursor", None)
             if not next_cursor:
                 break
-            cursor = next_cursor
+            cursor = str(next_cursor)
         for task_id in task_ids:
             try:
                 self._table.delete(sid, task_id)
             except Exception as exc:
                 if not _is_not_found_error(exc):
                     raise
+
+
+class _S3McpStreamSpillStore:
+    def __init__(self, bucket: str) -> None:
+        self._bucket = bucket
+        self._store: Any | None = None
+
+    def _object_store(self) -> Any:
+        if self._store is None:
+            from apptheory.objectstore import create_s3_object_store
+
+            self._store = create_s3_object_store()
+        return self._store
+
+    def put(self, key: str, data: bytes, expires_at: int, sha256: str) -> None:
+        from apptheory.objectstore import ObjectRef, ObjectStorePutInput
+
+        self._object_store().put(
+            ObjectStorePutInput(
+                ref=ObjectRef(bucket=self._bucket, key=key),
+                payload=data,
+                content_type="application/json",
+                metadata={"expires-at": str(expires_at), "sha256": sha256},
+            )
+        )
+
+    def get(self, key: str, max_bytes: int) -> bytes:
+        from apptheory.objectstore import ObjectRef, ObjectStoreGetInput
+
+        out = self._object_store().get(
+            ObjectStoreGetInput(
+                ref=ObjectRef(bucket=self._bucket, key=key),
+                max_bytes=max_bytes,
+            )
+        )
+        return bytes(out.payload)
+
+    def delete(self, key: str) -> None:
+        from apptheory.objectstore import ObjectRef, ObjectStoreDeleteInput
+
+        self._object_store().delete(ObjectStoreDeleteInput(ref=ObjectRef(bucket=self._bucket, key=key)))
+
+
+def _stream_spill_store_from_env() -> Any | None:
+    bucket = str(os.environ.get(ENV_STREAM_SPILL_BUCKET) or "").strip()
+    if not bucket:
+        return None
+    return _S3McpStreamSpillStore(bucket)
 
 
 class DynamoMcpStreamStore:
@@ -1082,24 +1212,109 @@ class DynamoMcpStreamStore:
         table_name: str | None = None,
         id_generator: IdGenerator | None = None,
         clock: Clock | None = None,
+        max_aggregate_events: int = DEFAULT_STREAM_AGGREGATE_EVENTS,
+        max_aggregate_bytes: int = DEFAULT_STREAM_AGGREGATE_BYTES,
+        inline_max_bytes: int | None = None,
+        spill_store: Any | None = None,
+        spill_prefix: str | None = None,
+        append_retries: int = STREAM_APPEND_RETRIES,
     ) -> None:
         self._table = table or _new_theorydb_table(default_mcp_stream_model(table_name), table_name)
         self._id_generator = id_generator or RealIdGenerator()
         self._clock = clock or RealClock()
+        self._max_aggregate_events = _positive_integer(max_aggregate_events, DEFAULT_STREAM_AGGREGATE_EVENTS)
+        self._max_aggregate_bytes = _positive_integer(max_aggregate_bytes, DEFAULT_STREAM_AGGREGATE_BYTES)
+        self._inline_max_bytes = _positive_integer(
+            inline_max_bytes
+            or _env_positive_integer(ENV_STREAM_SPILL_INLINE_MAX_BYTES, DEFAULT_STREAM_SPILL_INLINE_MAX_BYTES),
+            DEFAULT_STREAM_SPILL_INLINE_MAX_BYTES,
+        )
+        self._spill_store = spill_store if spill_store is not None else _stream_spill_store_from_env()
+        self._spill_prefix = str(
+            spill_prefix or os.environ.get(ENV_STREAM_SPILL_PREFIX) or DEFAULT_STREAM_SPILL_PREFIX
+        ).strip("/")
+        self._append_retries = _positive_integer(append_retries, STREAM_APPEND_RETRIES)
 
     def create(self, session_id: str) -> str:
         sid = _normalize_required(session_id, "missing session id")
         stream_id = _normalize_required(self._id_generator.new_id(), "stream id generator returned empty id")
+        expires_at = self._expires_at()
+        self._ensure_session_state(sid, expires_at)
         self._table.put(
             _McpStreamItem(
                 session_id=sid,
                 item_id=f"STREAM#{stream_id}",
                 stream_id=stream_id,
                 kind="stream",
-                expires_at=self._expires_at(),
+                expires_at=expires_at,
             )
         )
         return stream_id
+
+    def _ensure_session_state(self, session_id: str, expires_at: int) -> None:
+        state = self._session_state(session_id)
+        if state is not None:
+            if bool(_field(state, "deleted")):
+                raise McpStreamNotFoundError()
+            self._refresh_session_state_expiry(session_id, expires_at)
+            return
+        try:
+            self._table.put(
+                _McpStreamItem(
+                    session_id=session_id,
+                    item_id=STREAM_SESSION_ITEM_ID,
+                    stream_id="",
+                    kind="session",
+                    sequence=0,
+                    aggregate_version=DEFAULT_STREAM_AGGREGATE_VERSION,
+                    event_count=0,
+                    aggregate_bytes=0,
+                    deleted=False,
+                    expires_at=expires_at,
+                ),
+                condition_expression="attribute_not_exists(#pk)",
+                expression_attribute_names={"#pk": "sessionId"},
+            )
+        except Exception as exc:
+            if not _is_conditional_failure(exc):
+                raise
+            raced = self._session_state(session_id)
+            if raced is None:
+                raise McpStreamAppendConflictError() from exc
+            if bool(_field(raced, "deleted")):
+                raise McpStreamNotFoundError() from exc
+            # Another writer created the live record first. Creating a session
+            # still promises a refreshed expiry, so the refresh must apply or
+            # surface a bounded conflict instead of silently returning.
+            self._refresh_session_state_expiry(session_id, expires_at)
+
+    def _refresh_session_state_expiry(self, session_id: str, expires_at: int) -> None:
+        failure: Exception | None = None
+        for _ in range(2):
+            try:
+                self._table.update(
+                    session_id,
+                    STREAM_SESSION_ITEM_ID,
+                    {"expires_at": expires_at},
+                    # A record written before the aggregate schema still has a
+                    # valid tombstone flag semantics: absent deleted means live.
+                    # Never rewrite aggregate counters here.
+                    condition_expression="attribute_not_exists(#deleted) OR #deleted = :deleted",
+                    expression_attribute_names={"#deleted": "deleted"},
+                    expression_attribute_values={":deleted": False},
+                )
+                return
+            except Exception as exc:
+                if not _is_conditional_failure(exc):
+                    raise
+                failure = exc
+                latest = self._session_state(session_id)
+                if latest is None or bool(_field(latest, "deleted")):
+                    raise McpStreamNotFoundError() from exc
+                # The record is live, so the condition should have matched. Retry
+                # once against the observed state; reporting success without an
+                # applied refresh would hide a racing tombstone or a stale write.
+        raise McpStreamAppendConflictError() from failure
 
     def append(self, session_id: str, stream_id: str, data: bytes | bytearray | str | None = None) -> str:
         sid = _normalize_required(session_id, "missing session id")
@@ -1107,25 +1322,128 @@ class DynamoMcpStreamStore:
         if len(payload) > _stream_max_event_bytes():
             raise McpStreamEventTooLargeError()
         stream = self._stream_record(sid, stream_id)
-        sequence = int(_field(stream, "sequence") or 0) + 1
+        if not callable(getattr(self._table, "transact_write", None)):
+            raise McpStreamTransactionRequiredError()
+        for _ in range(self._append_retries):
+            outcome = self._append_once(sid, stream, payload)
+            if isinstance(outcome, str):
+                return outcome
+        raise McpStreamAppendConflictError()
+
+    def _append_once(self, session_id: str, stream: Any, payload: bytes) -> str | bool:
+        state = self._session_state(session_id)
+        if state is None:
+            # No session record cannot prove the session active; that is a
+            # not-found condition, not a pre-aggregate record needing backfill.
+            raise McpStreamNotFoundError()
+        if bool(_field(state, "deleted")):
+            raise McpStreamNotFoundError()
+        if int(_field(state, "aggregate_version") or 0) != DEFAULT_STREAM_AGGREGATE_VERSION:
+            raise McpStreamAggregateBackfillError()
+        event_count = int(_field(state, "event_count") or 0)
+        aggregate_bytes = int(_field(state, "aggregate_bytes") or 0)
+        if event_count + 1 > self._max_aggregate_events:
+            raise McpStreamAggregateCapacityError()
+        if aggregate_bytes + len(payload) > self._max_aggregate_bytes:
+            raise McpStreamAggregateCapacityError()
+
+        sequence = int(_field(state, "sequence") or 0) + 1
         event_id = str(sequence)
         expires_at = self._expires_at()
-        _set_item_attr(stream, "sequence", sequence)
-        _set_item_attr(stream, "expires_at", expires_at)
-        self._table.save(stream)
-        self._table.put(
-            _McpStreamItem(
-                session_id=sid,
-                item_id=f"EVENT#{event_id}",
-                stream_id=str(stream_id or "").strip(),
-                kind="event",
-                sequence=sequence,
-                event_id=event_id,
-                data=_base64_encode(payload),
-                expires_at=expires_at,
-            )
+        sha256 = hashlib.sha256(payload).hexdigest()
+        event_item = _McpStreamItem(
+            session_id=session_id,
+            item_id=f"EVENT#{event_id}",
+            stream_id=str(_field(stream, "stream_id") or ""),
+            kind="event",
+            sequence=sequence,
+            event_id=event_id,
+            expires_at=expires_at,
+            data_bytes=len(payload),
+            data_sha256=sha256,
         )
-        return event_id
+        spilled_ref = ""
+        if self._spill_store is not None and len(payload) > self._inline_max_bytes:
+            spilled_ref = self._spill_key(session_id, event_id)
+            self._spill_store.put(spilled_ref, payload, expires_at, sha256)
+            event_item.data_storage = "s3"
+            event_item.data_ref = spilled_ref
+        else:
+            event_item.data = _base64_encode(payload)
+
+        stream_item = _McpStreamItem(
+            session_id=session_id,
+            item_id=str(_field(stream, "item_id") or _field(stream, "itemId") or ""),
+            stream_id=str(_field(stream, "stream_id") or ""),
+            kind="stream",
+            closed=bool(_field(stream, "closed")),
+            expires_at=expires_at,
+        )
+
+        from tabletheory_py import TransactPut, TransactUpdate
+
+        observed_sequence = int(_field(state, "sequence") or 0)
+        actions = [
+            TransactUpdate(
+                pk=session_id,
+                sk=STREAM_SESSION_ITEM_ID,
+                updates={
+                    "sequence": sequence,
+                    "event_count": event_count + 1,
+                    "aggregate_bytes": aggregate_bytes + len(payload),
+                    "expires_at": expires_at,
+                },
+                condition_expression=(
+                    "#deleted = :deleted AND #aggregate_version = :version AND "
+                    "#sequence = :sequence AND #event_count = :event_count AND "
+                    "#aggregate_bytes = :aggregate_bytes AND "
+                    "#event_count <= :max_events AND #aggregate_bytes <= :max_bytes"
+                ),
+                expression_attribute_names={
+                    "#deleted": "deleted",
+                    "#aggregate_version": "aggregateVersion",
+                    "#sequence": "sequence",
+                    "#event_count": "eventCount",
+                    "#aggregate_bytes": "aggregateBytes",
+                },
+                expression_attribute_values={
+                    ":deleted": False,
+                    ":version": DEFAULT_STREAM_AGGREGATE_VERSION,
+                    ":sequence": observed_sequence,
+                    ":event_count": event_count,
+                    ":aggregate_bytes": aggregate_bytes,
+                    ":max_events": self._max_aggregate_events - 1,
+                    ":max_bytes": self._max_aggregate_bytes - len(payload),
+                },
+            ),
+            TransactPut(stream_item),
+            TransactPut(event_item),
+        ]
+        try:
+            self._table.transact_write(actions)
+            return event_id
+        except Exception as exc:
+            failure: Exception = exc
+            cleanup_failed = False
+            if spilled_ref and self._spill_store is not None:
+                try:
+                    self._spill_store.delete(spilled_ref)
+                except Exception as cleanup_exc:  # noqa: BLE001
+                    failure = ExceptionGroup("spill cleanup failed", [exc, cleanup_exc])
+                    cleanup_failed = True
+            if not _is_conditional_failure(exc):
+                raise failure from exc
+            latest = self._session_state(session_id)
+            if latest is None or bool(_field(latest, "deleted")):
+                raise McpStreamNotFoundError() from failure
+            if int(_field(latest, "aggregate_version") or 0) != DEFAULT_STREAM_AGGREGATE_VERSION:
+                raise McpStreamAggregateBackfillError() from failure
+            if cleanup_failed:
+                # The transaction did not commit, but its spilled payload could
+                # not be removed. Stop retrying so a later success cannot hide
+                # the orphaned object or its cleanup failure.
+                raise McpStreamAppendConflictError() from failure
+            return True
 
     def close(self, session_id: str, stream_id: str) -> None:
         stream = self._stream_record(session_id, stream_id)
@@ -1154,7 +1472,7 @@ class DynamoMcpStreamStore:
             out.append(
                 McpStreamEvent(
                     id=str(_field(item, "event_id") or _field(item, "eventId") or ""),
-                    data=_base64_decode(str(_field(item, "data") or "")),
+                    data=self._stream_item_data(item),
                 )
             )
         return out
@@ -1170,17 +1488,66 @@ class DynamoMcpStreamStore:
         sid = str(session_id or "").strip()
         if not sid:
             return
-        for item in self._session_items(sid):
-            try:
-                self._table.delete(sid, str(_field(item, "item_id") or _field(item, "itemId") or ""))
-            except Exception as exc:
-                if not _is_not_found_error(exc):
-                    raise
+        expires_at = self._expires_at()
+        state = self._session_state(sid)
+        if state is not None:
+            _set_item_attr(state, "deleted", True)
+            _set_item_attr(state, "expires_at", expires_at)
+            self._table.save(state)
+        else:
+            self._table.put(
+                _McpStreamItem(
+                    session_id=sid,
+                    item_id=STREAM_SESSION_ITEM_ID,
+                    stream_id="",
+                    kind="session",
+                    sequence=0,
+                    aggregate_version=DEFAULT_STREAM_AGGREGATE_VERSION,
+                    event_count=0,
+                    aggregate_bytes=0,
+                    deleted=True,
+                    expires_at=expires_at,
+                )
+            )
+        quiet_passes = 0
+        while True:
+            deleted_any = False
+            for item in self._session_items(sid):
+                item_id = str(_field(item, "item_id") or _field(item, "itemId") or "")
+                if item_id == STREAM_SESSION_ITEM_ID:
+                    continue
+                data_ref = str(_field(item, "data_ref") or _field(item, "dataRef") or "")
+                if data_ref and self._spill_store is not None:
+                    self._spill_store.delete(data_ref)
+                try:
+                    self._table.delete(sid, item_id)
+                except Exception as exc:
+                    if not _is_not_found_error(exc):
+                        raise
+                deleted_any = True
+            if deleted_any:
+                quiet_passes = 0
+                continue
+            quiet_passes += 1
+            if quiet_passes >= STREAM_SESSION_DELETE_QUIET_PASSES:
+                return
+            time.sleep(0.01)
 
     def _expires_at(self) -> int:
         return _epoch_seconds(self._clock.now()) + _stream_ttl_seconds()
 
+    def _session_state(self, session_id: str) -> Any | None:
+        try:
+            return self._table.get(str(session_id or "").strip(), STREAM_SESSION_ITEM_ID)
+        except Exception as exc:
+            if _is_not_found_error(exc):
+                return None
+            raise
+
     def _stream_record(self, session_id: str, stream_id: str) -> Any:
+        state = self._session_state(session_id)
+        if state is not None and bool(_field(state, "deleted")):
+            raise McpStreamNotFoundError()
         try:
             item = self._table.get(str(session_id or "").strip(), f"STREAM#{str(stream_id or '').strip()}")
         except Exception as exc:
@@ -1190,6 +1557,27 @@ class DynamoMcpStreamStore:
         if _stream_record_expired_at(self._clock.now(), item):
             raise McpStreamNotFoundError()
         return item
+
+    def _stream_item_data(self, item: Any) -> bytes:
+        data_ref = str(_field(item, "data_ref") or _field(item, "dataRef") or "")
+        if str(_field(item, "data_storage") or _field(item, "dataStorage") or "") == "s3" or data_ref:
+            if self._spill_store is None:
+                raise ValueError("stream spill store not configured")
+            expected_bytes = int(_field(item, "data_bytes") or _field(item, "dataBytes") or 0)
+            max_bytes = expected_bytes if expected_bytes > 0 else _stream_max_event_bytes()
+            payload = self._spill_store.get(data_ref, max_bytes)
+            if expected_bytes > 0 and len(payload) != expected_bytes:
+                raise ValueError("stream spill payload size mismatch")
+            expected_hash = str(_field(item, "data_sha256") or _field(item, "dataSha256") or "")
+            if expected_hash and hashlib.sha256(payload).hexdigest() != expected_hash:
+                raise ValueError("stream spill payload hash mismatch")
+            return bytes(payload)
+        return _base64_decode(str(_field(item, "data") or ""))
+
+    def _spill_key(self, session_id: str, event_id: str) -> str:
+        name = f"sessions/{hashlib.sha256(session_id.encode()).hexdigest()}/events/{event_id}.json"
+        prefix = self._spill_prefix.strip("/")
+        return f"{prefix}/{name}" if prefix else name
 
     def _event_records(self, session_id: str) -> list[Any]:
         now = self._clock.now()
@@ -1202,14 +1590,19 @@ class DynamoMcpStreamStore:
     def _session_items(self, session_id: str) -> list[Any]:
         try:
             items: list[Any] = []
-            cursor = ""
+            # The pinned client decodes a cursor only when it is present; its
+            # documented first-page contract is cursor=None. An empty string is
+            # rejected as "invalid cursor", so it must never be sent.
+            cursor: str | None = None
             while True:
                 page = self._table.query(str(session_id or "").strip(), limit=1000, cursor=cursor)
                 items.extend(getattr(page, "items", []) or [])
-                next_cursor = str(getattr(page, "next_cursor", None) or getattr(page, "cursor", "") or "")
+                next_cursor = getattr(page, "next_cursor", None)
+                if next_cursor is None:
+                    next_cursor = getattr(page, "cursor", None)
                 if not next_cursor:
                     break
-                cursor = next_cursor
+                cursor = str(next_cursor)
             return items
         except Exception as exc:
             if _is_not_found_error(exc):
@@ -1448,14 +1841,42 @@ class McpServer:
         if protocol_response is not None:
             return protocol_response
         self.session_store.delete(session_id)
-        self.stream_store.delete_session(session_id)
-        if self.task_runtime.store is not None:
-            self.task_runtime.store.delete_session(session_id)
+        self._cleanup_session_state(session_id)
         return _empty_response(202)
+
+    def _cleanup_session_state(self, session_id: str) -> None:
+        sid = str(session_id or "").strip()
+        if not sid:
+            return
+        failures: list[Exception] = []
+        try:
+            self.stream_store.delete_session(sid)
+        except Exception as exc:  # noqa: BLE001
+            failures.append(exc)
+        if self.task_runtime.store is not None:
+            try:
+                self.task_runtime.store.delete_session(sid)
+            except Exception as exc:  # noqa: BLE001
+                failures.append(exc)
+        if failures:
+            raise ExceptionGroup("failed to clean session state", failures)
 
     def _handle_initialize_http(self, request: _ParsedRPCRequest, *, principal: str = "") -> Response:
         negotiated = _negotiate_protocol_version(request.params)
-        session = self._create_session(negotiated, principal=principal)
+        try:
+            session = self._create_session(negotiated, principal=principal)
+        except McpSessionCapacityError:
+            return self._marshal_single_response(
+                _new_error_response(
+                    request.id,
+                    MCP_CODE_SERVER_ERROR,
+                    SESSION_CAPACITY_EXCEEDED_MESSAGE,
+                )
+            )
+        except Exception:  # noqa: BLE001
+            return self._marshal_single_response(
+                _new_error_response(request.id, MCP_CODE_INTERNAL_ERROR, "session error")
+            )
         return self._marshal_single_response(self._handle_initialize(request, negotiated), session.id, True)
 
     def _handle_notification(self, session: McpSession, request: _ParsedRPCRequest) -> None:
@@ -1893,11 +2314,23 @@ class McpServer:
         return True
 
     def _get_session(self, session_id: str, *, principal: str = "") -> McpSession:
-        session = _clone_session(self.session_store.get(session_id))
+        try:
+            session = _clone_session(self.session_store.get(session_id))
+        except McpSessionExpiredError:
+            # Only an observed expired record proves that associated cleanup is
+            # legitimate. An unknown ID may belong to another warm instance, so
+            # it keeps the original 404 with no tombstone or durable deletion.
+            with contextlib.suppress(Exception):
+                self._cleanup_session_state(session_id)
+            raise McpSessionNotFoundError() from None
+        except McpSessionNotFoundError:
+            raise
         if session.principal and session.principal != str(principal or "").strip():
             raise McpSessionNotFoundError()
         if _session_expired_at(self.clock.now(), session):
             self.session_store.delete(session_id)
+            with contextlib.suppress(Exception):
+                self._cleanup_session_state(session_id)
             raise McpSessionNotFoundError()
         refreshed = _clone_session(session)
         refreshed.expires_at = _iso_no_millis(self.clock.now() + dt.timedelta(milliseconds=self.session_ttl_ms))
@@ -1939,6 +2372,17 @@ class McpServer:
             data={"protocolVersion": protocol_version},
             principal=str(principal or "").strip(),
         )
+        sweeper = getattr(self.session_store, "put_and_collect_expired", None)
+        if callable(sweeper):
+            expired = cast(list[str], sweeper(session))
+            for expired_id in expired:
+                try:
+                    self._cleanup_session_state(expired_id)
+                except Exception:
+                    with contextlib.suppress(Exception):
+                        self.session_store.delete(session.id)
+                    raise
+            return session
         self.session_store.put(session)
         return session
 
@@ -2165,6 +2609,15 @@ def _positive_integer(value: Any, fallback: int) -> int:
     try:
         n = int(value or 0)
     except Exception:  # noqa: BLE001
+        n = 0
+    return n if n > 0 else fallback
+
+
+def _env_positive_integer(name: str, fallback: int) -> int:
+    raw = str(os.environ.get(name) or "").strip()
+    try:
+        n = int(raw)
+    except ValueError:
         n = 0
     return n if n > 0 else fallback
 
@@ -3510,6 +3963,12 @@ def _is_not_found_error(exc: Exception) -> bool:
     )
 
 
+def _is_conditional_failure(exc: Exception) -> bool:
+    name = type(exc).__name__.lower()
+    message = str(exc).lower()
+    return "condition" in name or "condition" in message or "conditional" in message
+
+
 def _theorydb_meta(
     name: str,
     *,
@@ -3576,9 +4035,22 @@ class _McpStreamItem:
     stream_id: str = _s("streamId")
     kind: str = _s("kind")
     closed: bool = _b("closed", omitempty=True)
-    sequence: int = _n("sequence", omitempty=True)
+    # The aggregate fields are not omitempty: the pinned client strips empty
+    # values from a written item, and DynamoDB evaluates a condition that
+    # compares an absent attribute as false. A freshly created session must
+    # persist deleted=false, sequence=0, eventCount=0 and aggregateBytes=0 so
+    # the first conditional append and the expiry refresh can match the record.
+    sequence: int = _n("sequence")
     event_id: str = _s("eventId", omitempty=True)
     data: str = _s("data", omitempty=True)
+    aggregate_version: int = _n("aggregateVersion", omitempty=True)
+    event_count: int = _n("eventCount")
+    aggregate_bytes: int = _n("aggregateBytes")
+    deleted: bool = _b("deleted")
+    data_storage: str = _s("dataStorage", omitempty=True)
+    data_ref: str = _s("dataRef", omitempty=True)
+    data_bytes: int = _n("dataBytes", omitempty=True)
+    data_sha256: str = _s("dataSha256", omitempty=True)
     expires_at: int = _n("expiresAt", roles=["ttl"])
 
 
@@ -3692,12 +4164,18 @@ __all__ = [
     "McpServerIdentity",
     "McpServerOptions",
     "McpSession",
+    "McpSessionCapacityError",
+    "McpSessionExpiredError",
     "McpSessionNotFoundError",
     "McpSessionStore",
+    "McpStreamAggregateBackfillError",
+    "McpStreamAggregateCapacityError",
+    "McpStreamAppendConflictError",
     "McpStreamEvent",
     "McpStreamEventTooLargeError",
     "McpStreamNotFoundError",
     "McpStreamStore",
+    "McpStreamTransactionRequiredError",
     "McpStreamingToolHandler",
     "McpTask",
     "McpTaskCapacityError",

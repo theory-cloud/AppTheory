@@ -705,15 +705,8 @@ func (s *Server) handleDELETE(c *apptheory.Context) (*apptheory.Response, error)
 		s.logger.ErrorContext(ctx, "failed to delete session", "sessionId", sessionID, "error", err)
 		return internalServerError(), nil
 	}
-	if s.streamStore != nil {
-		if err := s.streamStore.DeleteSession(ctx, sessionID); err != nil {
-			s.logger.ErrorContext(ctx, "failed to delete stream session", "sessionId", sessionID, "error", err)
-		}
-	}
-	if s.taskRuntime.store != nil {
-		if err := s.taskRuntime.store.DeleteSession(ctx, sessionID); err != nil {
-			s.logger.ErrorContext(ctx, "failed to delete task session", "sessionId", sessionID, "error", err)
-		}
+	if err := s.cleanupSessionState(ctx, sessionID); err != nil {
+		s.logger.ErrorContext(ctx, "failed to clean up session state", "sessionId", sessionID, "error", err)
 	}
 
 	return &apptheory.Response{Status: 202}, nil
@@ -1566,6 +1559,16 @@ func (s *Server) getSession(ctx context.Context, sessionID string) (*Session, er
 
 	sess, err := s.sessionStore.Get(ctx, sessionID)
 	if err != nil {
+		// Associated cleanup tombstones and deletes stream, task, replay, and
+		// spill state, so it is only legitimate when the store observed an
+		// expired record. An arbitrary process-local miss may belong to another
+		// warm instance and must return the original 404 without touching
+		// durable state or creating a tombstone.
+		if errors.Is(err, ErrSessionExpired) {
+			if cleanupErr := s.cleanupSessionState(ctx, sessionID); cleanupErr != nil {
+				s.logger.WarnContext(ctx, "failed to clean up expired session state", "sessionId", sessionID, "error", cleanupErr)
+			}
+		}
 		return nil, err
 	}
 	if sessionPrincipalMismatch(ctx, sess) {
@@ -1574,6 +1577,9 @@ func (s *Server) getSession(ctx context.Context, sessionID string) (*Session, er
 	if sessionExpiredAt(now, sess) {
 		if deleteErr := s.sessionStore.Delete(ctx, sessionID); deleteErr != nil && !errors.Is(deleteErr, ErrSessionNotFound) {
 			s.logger.WarnContext(ctx, "failed to delete expired session", "sessionId", sessionID, "error", deleteErr)
+		}
+		if cleanupErr := s.cleanupSessionState(ctx, sessionID); cleanupErr != nil {
+			s.logger.WarnContext(ctx, "failed to clean up expired session state", "sessionId", sessionID, "error", cleanupErr)
 		}
 		return nil, ErrSessionNotFound
 	}
@@ -1599,7 +1605,7 @@ func (s *Server) handleInitializeHTTP(ctx context.Context, req *Request) (*appth
 	sess, err := s.createSession(ctx, selectedPV)
 	if err != nil {
 		s.logger.ErrorContext(ctx, "failed to create session", "error", err)
-		return jsonRPCErrorResponse(req.ID, CodeInternalError, "session error"), nil
+		return s.marshalSingleResponse(initializeStoreErrorResponse(req, err), "", false)
 	}
 
 	resp := s.handleInitialize(req, selectedPV)
@@ -1640,26 +1646,6 @@ func (s *Server) negotiateInitializeProtocolVersionDefault(req *Request, default
 	return requested, nil
 }
 
-func (s *Server) createSession(ctx context.Context, selectedPV string) (*Session, error) {
-	now := time.Now().UTC()
-	ttl := sessionTTL()
-
-	newID := s.idGen.NewID()
-	sess := &Session{
-		ID:        newID,
-		CreatedAt: now,
-		ExpiresAt: now.Add(ttl),
-		Principal: callerIdentityFromContext(ctx),
-		Data: map[string]string{
-			"protocolVersion": selectedPV,
-		},
-	}
-	if err := s.sessionStore.Put(ctx, sess); err != nil {
-		return nil, fmt.Errorf("failed to create session: %w", err)
-	}
-	return sess, nil
-}
-
 func (s *Server) handleInitializeBatch(ctx context.Context, req *Request, batchProtocolVersion string) (*Response, *Session, *Response) {
 	selectedPV, errResp := s.negotiateInitializeProtocolVersionDefault(req, batchProtocolVersion)
 	if errResp != nil {
@@ -1670,7 +1656,7 @@ func (s *Server) handleInitializeBatch(ctx context.Context, req *Request, batchP
 	}
 	sess, err := s.createSession(ctx, selectedPV)
 	if err != nil {
-		return nil, nil, NewErrorResponse(req.ID, CodeInternalError, "session error")
+		return nil, nil, initializeStoreErrorResponse(req, err)
 	}
 	return s.handleInitialize(req, selectedPV), sess, nil
 }

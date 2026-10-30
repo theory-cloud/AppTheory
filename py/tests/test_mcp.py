@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import copy
+import dataclasses
 import json
 import os
+import re
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -64,9 +71,20 @@ from apptheory import (
     create_mcp_test_harness,
     detect_mcp_protocol_version,
     detect_mcp_protocol_version_for_message,
+    default_mcp_stream_model,
     sequence_mcp_id_generator,
 )
-from apptheory.mcp import McpCallerAuth, McpStreamEventTooLargeError, McpTaskCapacityError
+from apptheory.mcp import (
+    McpCallerAuth,
+    McpSessionCapacityError,
+    McpSessionExpiredError,
+    McpStreamAggregateBackfillError,
+    McpStreamAggregateCapacityError,
+    McpStreamAppendConflictError,
+    McpStreamEventTooLargeError,
+    McpStreamTransactionRequiredError,
+    McpTaskCapacityError,
+)
 
 
 def _response_json(response: Any) -> Any:
@@ -82,13 +100,23 @@ def _post_headers(*, session_id: str = "", accept: str = "application/json, text
 
 
 class _Page:
-    def __init__(self, items: list[Any], cursor: str = "", next_cursor: str = "") -> None:
+    def __init__(self, items: list[Any], next_cursor: str | None = None) -> None:
         self.items = items
-        self.cursor = cursor
-        self.next_cursor = next_cursor or cursor
+        # The pinned client exposes next_cursor=None on the final page and has
+        # no cursor attribute; keep the alias only because older doubles used it.
+        self.next_cursor = next_cursor
+        self.cursor = next_cursor
 
 
 class _FakeNotFound(Exception):
+    pass
+
+
+class _FakeConditionFailed(Exception):
+    pass
+
+
+class _FakeValidationError(Exception):
     pass
 
 
@@ -103,12 +131,55 @@ class _FixedClock:
 class _FakeTheoryTable:
     def __init__(self) -> None:
         self.items: dict[tuple[str, str], Any] = {}
+        self._lock = threading.RLock()
 
-    def put(self, item: Any) -> None:
-        self.items[self._key(item)] = item
+    def put(
+        self,
+        item: Any,
+        *,
+        condition_expression: str | None = None,
+        expression_attribute_names: dict[str, str] | None = None,
+        expression_attribute_values: dict[str, Any] | None = None,
+    ) -> None:
+        with self._lock:
+            key = self._key(item)
+            if not self._condition_met(
+                self.items.get(key),
+                condition_expression,
+                expression_attribute_names or {},
+                expression_attribute_values or {},
+            ):
+                raise _FakeConditionFailed("conditional check failed")
+            self.items[key] = item
 
     def save(self, item: Any) -> None:
         self.put(item)
+
+    def update(
+        self,
+        session_id: str,
+        item_id: str,
+        updates: dict[str, Any],
+        *,
+        condition_expression: str | None = None,
+        expression_attribute_names: dict[str, str] | None = None,
+        expression_attribute_values: dict[str, Any] | None = None,
+    ) -> Any:
+        with self._lock:
+            key = (str(session_id), str(item_id))
+            existing = self.items.get(key)
+            if not self._condition_met(
+                existing,
+                condition_expression,
+                expression_attribute_names or {},
+                expression_attribute_values or {},
+            ):
+                raise _FakeConditionFailed("conditional check failed")
+            if existing is None:
+                raise _FakeNotFound("not found")
+            for name, value in updates.items():
+                setattr(existing, name, value)
+            return existing
 
     def get(self, session_id: str, item_id: str) -> Any:
         key = (str(session_id), str(item_id))
@@ -116,19 +187,216 @@ class _FakeTheoryTable:
             raise _FakeNotFound("not found")
         return self.items[key]
 
-    def query(self, session_id: str, *, limit: int = 1000, cursor: str = "") -> _Page:
+    def query(self, session_id: str, *, limit: int = 1000, cursor: str | None = None) -> _Page:
+        if cursor is not None and str(cursor) == "":
+            # The pinned client treats any present cursor as encoded state and
+            # rejects an empty one; only None selects the first page.
+            raise _FakeValidationError("invalid cursor")
         selected = [item for (pk, _), item in self.items.items() if pk == str(session_id)]
-        start = int(str(cursor or "0") or "0")
-        next_cursor = str(start + limit) if start + limit < len(selected) else ""
-        return _Page(selected[start : start + limit], cursor=next_cursor, next_cursor=next_cursor)
+        start = int(str(cursor)) if cursor is not None else 0
+        next_cursor = str(start + limit) if start + limit < len(selected) else None
+        return _Page(selected[start : start + limit], next_cursor=next_cursor)
 
     def delete(self, session_id: str, item_id: str) -> None:
         self.items.pop((str(session_id), str(item_id)), None)
+
+    def transact_write(self, actions: Any) -> None:
+        with self._lock:
+            self._transact_write_locked(actions)
+
+    def _transact_write_locked(self, actions: Any) -> None:
+        from tabletheory_py import TransactConditionCheck, TransactDelete, TransactPut, TransactUpdate
+
+        for action in actions:
+            if isinstance(action, TransactPut):
+                existing = self.items.get(self._key(action.item))
+                if not self._condition_met(
+                    existing,
+                    getattr(action, "condition_expression", None),
+                    getattr(action, "expression_attribute_names", None) or {},
+                    getattr(action, "expression_attribute_values", None) or {},
+                ):
+                    raise _FakeConditionFailed("conditional check failed")
+                continue
+            existing = self.items.get((str(action.pk), str(action.sk or "")), None)
+            if not self._condition_met(
+                existing,
+                getattr(action, "condition_expression", None),
+                getattr(action, "expression_attribute_names", None) or {},
+                getattr(action, "expression_attribute_values", None) or {},
+            ):
+                raise _FakeConditionFailed("conditional check failed")
+
+        for action in actions:
+            if isinstance(action, TransactPut):
+                self.put(action.item)
+            elif isinstance(action, TransactDelete):
+                self.delete(str(action.pk), str(action.sk or ""))
+            elif isinstance(action, TransactUpdate):
+                existing = self.items.get((str(action.pk), str(action.sk or "")))
+                if existing is not None:
+                    for name, value in action.updates.items():
+                        setattr(existing, name, value)
+            elif isinstance(action, TransactConditionCheck):
+                continue
+
+    def _condition_met(
+        self,
+        existing: Any | None,
+        expression: str | None,
+        names: dict[str, str],
+        values: dict[str, Any],
+    ) -> bool:
+        text = str(expression or "").strip()
+        if not text:
+            return True
+        return self._eval_condition(existing, text, names, values)
+
+    def _eval_condition(
+        self,
+        existing: Any | None,
+        expression: str,
+        names: dict[str, str],
+        values: dict[str, Any],
+    ) -> bool:
+        # OR binds looser than AND, matching DynamoDB's condition grammar.
+        or_parts = self._split_condition(expression, "OR")
+        if len(or_parts) > 1:
+            return any(self._eval_condition(existing, part, names, values) for part in or_parts)
+        and_parts = self._split_condition(expression, "AND")
+        if len(and_parts) > 1:
+            return all(self._eval_condition(existing, part, names, values) for part in and_parts)
+        clause = self._strip_parens(expression)
+        missing = re.match(r"^attribute_not_exists\(\s*(#?\w+)\s*\)$", clause, re.IGNORECASE)
+        if missing is not None:
+            attribute = self._field_name(str(names.get(missing.group(1), missing.group(1))))
+            return not self._attribute_present(existing, attribute)
+        present = re.match(r"^attribute_exists\(\s*(#?\w+)\s*\)$", clause, re.IGNORECASE)
+        if present is not None:
+            attribute = self._field_name(str(names.get(present.group(1), present.group(1))))
+            return self._attribute_present(existing, attribute)
+        match = re.match(r"^(#?\w+)\s*(=|<=|>=|<|>)\s*(:\w+)$", clause)
+        if match is None:
+            raise AssertionError(f"unsupported fake condition: {clause}")
+        attribute = self._field_name(str(names.get(match.group(1), match.group(1))))
+        if not self._attribute_present(existing, attribute):
+            # DynamoDB evaluates a comparison against a missing attribute to
+            # false, regardless of the operator or the expected zero value.
+            return False
+        operator = match.group(2)
+        expected = values.get(match.group(3))
+        actual = self._attribute_value(existing, attribute)
+        if isinstance(expected, bool):
+            return operator == "=" and isinstance(actual, bool) and actual is expected
+        if isinstance(expected, (int, float)):
+            if isinstance(actual, bool) or not isinstance(actual, (int, float)):
+                return False
+            left = actual
+            right = expected
+            checks = {
+                "=": left == right,
+                "<=": left <= right,
+                ">=": left >= right,
+                "<": left < right,
+                ">": left > right,
+            }
+            return checks[operator]
+        if isinstance(expected, str):
+            return operator == "=" and isinstance(actual, str) and actual == expected
+        return operator == "=" and actual == expected
+
+    def _attribute_present(self, existing: Any | None, attribute: str) -> bool:
+        if existing is None:
+            return False
+        if isinstance(existing, dict):
+            return attribute in existing
+        if dataclasses.is_dataclass(existing) and not isinstance(existing, type):
+            for spec in dataclasses.fields(existing):
+                if spec.name != attribute:
+                    continue
+                meta = (spec.metadata or {}).get("theorydb") or {}
+                return not (meta.get("omitempty") and _fake_is_empty(getattr(existing, attribute, None)))
+            return hasattr(existing, attribute)
+        return attribute in vars(existing)
+
+    @staticmethod
+    def _attribute_value(existing: Any | None, attribute: str) -> Any:
+        if existing is None:
+            return None
+        if isinstance(existing, dict):
+            return existing.get(attribute)
+        return getattr(existing, attribute, None)
+
+    @classmethod
+    def _split_condition(cls, expression: str, operator: str) -> list[str]:
+        target = f" {operator} "
+        depth = 0
+        start = 0
+        out: list[str] = []
+        index = 0
+        while index < len(expression):
+            char = expression[index]
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+            elif depth == 0 and expression.startswith(target, index):
+                out.append(expression[start:index].strip())
+                index += len(target)
+                start = index
+                continue
+            index += 1
+        if not out:
+            return [expression.strip()]
+        out.append(expression[start:].strip())
+        return out
+
+    @classmethod
+    def _strip_parens(cls, expression: str) -> str:
+        text = expression.strip()
+        while len(text) >= 2 and text[0] == "(" and text[-1] == ")":
+            depth = 0
+            closes_at_end = False
+            for index, char in enumerate(text):
+                if char == "(":
+                    depth += 1
+                elif char == ")":
+                    depth -= 1
+                    if depth == 0:
+                        closes_at_end = index == len(text) - 1
+                        break
+            if not closes_at_end:
+                break
+            text = text[1:-1].strip()
+        return text
+
+    @staticmethod
+    def _field_name(attribute: str) -> str:
+        return {
+            "sessionId": "session_id",
+            "itemId": "item_id",
+            "aggregateVersion": "aggregate_version",
+            "eventCount": "event_count",
+            "aggregateBytes": "aggregate_bytes",
+            "expiresAt": "expires_at",
+        }.get(attribute, attribute)
 
     def _key(self, item: Any) -> tuple[str, str]:
         session_id = str(getattr(item, "session_id", ""))
         item_id = str(getattr(item, "item_id", "") or getattr(item, "task_id", ""))
         return session_id, item_id
+
+
+def _fake_is_empty(value: Any) -> bool:
+    if value is None or value is False:
+        return True
+    if value == 0:
+        return True
+    if isinstance(value, str | bytes | bytearray) and len(value) == 0:
+        return True
+    if isinstance(value, dict | list | set | tuple) and len(value) == 0:
+        return True
+    return False
 
 
 class McpRuntimeTests(unittest.TestCase):
@@ -1239,7 +1507,10 @@ class McpRuntimeTests(unittest.TestCase):
         self.assertEqual(replayed[-1].data, b"event-1099")
 
         store.delete_session("sess-pages")
-        self.assertEqual([key for key in table.items if key[0] == "sess-pages"], [])
+        self.assertEqual([key for key in table.items if key[0] == "sess-pages"], [("sess-pages", "!session")])
+        self.assertTrue(bool(getattr(table.items[("sess-pages", "!session")], "deleted")))
+        with self.assertRaises(McpStreamNotFoundError):
+            store.append("sess-pages", stream_id, "late")
 
     def test_sessions_bind_to_authenticated_principal(self) -> None:
         server = create_mcp_server("PyMCP", "test", {"id_generator": sequence_mcp_id_generator(["sess-principal"])})
@@ -1690,6 +1961,557 @@ class McpRuntimeTests(unittest.TestCase):
         verbose_session = verbose_harness.initialize(id="init").response.headers[MCP_HEADER_SESSION_ID][0]
         verbose_error = verbose_harness.call(verbose_session, "tools/call", {"name": "boom"}, "boom")
         self.assertEqual(verbose_error.body_json["error"]["message"], "secret detail")
+
+
+class _MutableM3Clock:
+    def __init__(self, moment: datetime) -> None:
+        self.moment = moment
+
+    def now(self) -> datetime:
+        return self.moment
+
+
+class _M3SpillStore:
+    def __init__(self) -> None:
+        self.objects: dict[str, bytes] = {}
+
+    def put(self, key: str, data: bytes, expires_at: int, sha256: str) -> None:
+        self.objects[key] = bytes(data)
+
+    def get(self, key: str, max_bytes: int) -> bytes:
+        return self.objects[key]
+
+    def delete(self, key: str) -> None:
+        self.objects.pop(key, None)
+
+
+class M3StateBoundsTests(unittest.TestCase):
+    def test_shared_fixture_pins_limits_and_cases(self) -> None:
+        fixture = json.loads(
+            (Path(__file__).resolve().parents[2] / "contract-tests/conformance/state-bounds-conformance.v1.json").read_text()
+        )
+        self.assertEqual("m3.mcp-state-bounds/v1", fixture["contract"]["id"])
+        self.assertEqual(1000, fixture["limits"]["memory_sessions_per_store"])
+        self.assertEqual(10000, fixture["limits"]["durable_aggregate_events_per_session"])
+        self.assertEqual(64 * 1024 * 1024, fixture["limits"]["durable_aggregate_bytes_per_session"])
+        self.assertEqual("Session capacity exceeded", fixture["errors"]["session_capacity"]["message"])
+        self.assertEqual(-32000, fixture["errors"]["session_capacity"]["jsonrpc_code"])
+        self.assertEqual(200, fixture["errors"]["session_capacity"]["http_status"])
+        self.assertFalse(fixture["errors"]["session_capacity"]["session_header"])
+        ids = {item["id"] for item in fixture["cases"]}
+        for case_id in (
+            "memory.session.capacity_refuses_new_live_session",
+            "memory.session.expired_first_reclaims_before_admission",
+            "memory.session.same_id_live_refresh_consumes_no_capacity",
+            "memory.session.expired_incoming_put_not_revived",
+            "memory.session.cleanup_removes_associated_state",
+            "http.initialize.capacity_refusal_maps_server_error",
+            "durable.aggregate.count_boundary",
+            "durable.aggregate.byte_boundary",
+            "durable.aggregate.spill_counts_toward_aggregate",
+            "durable.aggregate.pre_aggregate_schema_refused",
+            "durable.aggregate.concurrent_append_unique_sequence",
+            "durable.aggregate.non_transactional_backend_refused",
+            "durable.delete.paginates_beyond_1000_records",
+            "durable.delete.late_append_refused",
+        ):
+            self.assertIn(case_id, ids)
+
+    def test_memory_session_capacity_expiry_and_same_id_refresh(self) -> None:
+        clock = _MutableM3Clock(datetime(1970, 1, 1, 0, 0, 10, tzinfo=UTC))
+        store = MemoryMcpSessionStore(clock=clock, max_sessions=2)
+        store.put({"id": "one", "expires_at": "1970-01-01T00:02:00Z"})
+        store.put({"id": "two", "expires_at": "1970-01-01T00:02:00Z"})
+        with self.assertRaises(McpSessionCapacityError):
+            store.put({"id": "three", "expires_at": "1970-01-01T00:02:00Z"})
+        store.get("one")
+        store.get("two")
+        with self.assertRaises(McpSessionNotFoundError):
+            store.get("three")
+
+        store.put({"id": "one", "expires_at": "1970-01-01T00:02:00Z", "data": {"refreshed": "true"}})
+
+        clock.moment = datetime(1970, 1, 1, 0, 3, 20, tzinfo=UTC)
+        expired = store.put_and_collect_expired({"id": "four", "expires_at": "1970-01-01T00:05:00Z"})
+        self.assertEqual(["one", "two"], sorted(expired))
+        with self.assertRaisesRegex(Exception, "session expired"):
+            store.put({"id": "stale", "expires_at": "1970-01-01T00:03:00Z"})
+
+    def test_initialize_capacity_maps_server_error_without_session_header(self) -> None:
+        store = MemoryMcpSessionStore(max_sessions=1)
+        store.put({"id": "occupied", "expires_at": "2099-01-01T00:00:00Z"})
+        server = create_mcp_server("M3", "1", {"session_store": store})
+        response = server.serve(
+            {
+                "method": "POST",
+                "headers": _post_headers(),
+                "body": json.dumps(
+                    {"jsonrpc": "2.0", "id": "init", "method": "initialize", "params": {"protocolVersion": MCP_PROTOCOL_VERSION}}
+                ),
+            }
+        )
+        self.assertEqual(200, response.status)
+        self.assertEqual([], response.headers.get(MCP_HEADER_SESSION_ID, []))
+        body = _response_json(response)
+        self.assertEqual(MCP_CODE_SERVER_ERROR, body["error"]["code"])
+        self.assertEqual("Session capacity exceeded", body["error"]["message"])
+
+    def test_cleanup_removes_stream_and_task_state(self) -> None:
+        clock = _MutableM3Clock(datetime(1970, 1, 1, 0, 0, 20, tzinfo=UTC))
+        session_store = MemoryMcpSessionStore(clock=clock, max_sessions=2)
+        stream_store = MemoryMcpStreamStore(id_generator=sequence_mcp_id_generator(["stream-cleanup"]))
+        task_store = MemoryMcpTaskStore(clock=clock)
+        server = create_mcp_server(
+            "M3",
+            "1",
+            {"session_store": session_store, "stream_store": stream_store, "task_runtime": {"store": task_store}},
+        )
+        session_store.put({"id": "sess-cleanup", "expires_at": "1970-01-01T01:00:00Z"})
+        stream_id = stream_store.create("sess-cleanup")
+        stream_store.append("sess-cleanup", stream_id, "event")
+        task_store.create(
+            McpTaskRecord(
+                session_id="sess-cleanup",
+                method="tools/call",
+                task=McpTask(task_id="task-cleanup", status="working", created_at="1970-01-01T00:00:20Z"),
+            )
+        )
+        server._cleanup_session_state("sess-cleanup")
+        with self.assertRaises(McpStreamNotFoundError):
+            stream_store.subscribe("sess-cleanup", stream_id)
+        with self.assertRaises(McpTaskNotFoundError):
+            task_store.get({"session_id": "sess-cleanup", "task_id": "task-cleanup"})
+
+    def test_dynamo_aggregate_count_bytes_spill_and_pre_aggregate(self) -> None:
+        table = _FakeTheoryTable()
+        spill = _M3SpillStore()
+        store = DynamoMcpStreamStore(
+            table=table,
+            id_generator=sequence_mcp_id_generator(["stream-count"]),
+            clock=_FixedClock(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)),
+            max_aggregate_events=3,
+            max_aggregate_bytes=24,
+            inline_max_bytes=4,
+            spill_store=spill,
+        )
+        stream_id = store.create("sess-count")
+        payload = b"0123456789"
+        self.assertEqual("1", store.append("sess-count", stream_id, payload))
+        self.assertEqual("2", store.append("sess-count", stream_id, payload))
+        with self.assertRaises(McpStreamAggregateCapacityError):
+            store.append("sess-count", stream_id, payload)
+        self.assertEqual(2, len(spill.objects))
+
+        state = table.items[("sess-count", "!session")]
+        state.aggregate_version = 0
+        with self.assertRaises(McpStreamAggregateBackfillError):
+            store.append("sess-count", stream_id, b"z")
+
+    def test_dynamo_missing_session_state_maps_to_not_found(self) -> None:
+        table = _FakeTheoryTable()
+        store = DynamoMcpStreamStore(
+            table=table,
+            id_generator=sequence_mcp_id_generator(["stream-missing"]),
+            clock=_FixedClock(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)),
+        )
+        stream_id = store.create("sess-missing")
+        table.items.pop(("sess-missing", "!session"))
+        with self.assertRaises(McpStreamNotFoundError):
+            store.append("sess-missing", stream_id, b"x")
+        self.assertFalse(any(key[1].startswith("EVENT#") for key in table.items))
+
+    def test_dynamo_append_requires_transaction_and_cleans_refused_spills(self) -> None:
+        class _NoTxTable(_FakeTheoryTable):
+            transact_write = None  # type: ignore[assignment]
+
+        no_tx = DynamoMcpStreamStore(
+            table=_NoTxTable(),
+            id_generator=sequence_mcp_id_generator(["stream-no-tx"]),
+            clock=_FixedClock(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)),
+        )
+        stream_id = no_tx.create("sess-no-tx")
+        with self.assertRaises(McpStreamTransactionRequiredError):
+            no_tx.append("sess-no-tx", stream_id, b"x")
+
+        table = _FakeTheoryTable()
+        spill = _M3SpillStore()
+        store = DynamoMcpStreamStore(
+            table=table,
+            id_generator=sequence_mcp_id_generator(["stream-refusal"]),
+            clock=_FixedClock(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)),
+            inline_max_bytes=4,
+            spill_store=spill,
+            append_retries=1,
+        )
+        refusal_stream = store.create("sess-refusal")
+        original = table.transact_write
+
+        def tombstone_first(actions: Any) -> None:
+            state = table.items[("sess-refusal", "!session")]
+            state.deleted = True
+            original(actions)
+
+        table.transact_write = tombstone_first
+        with self.assertRaises(McpStreamNotFoundError):
+            store.append("sess-refusal", refusal_stream, b"0123456789")
+        self.assertEqual({}, spill.objects)
+
+    def test_dynamo_concurrent_appends_do_not_overshoot(self) -> None:
+        table = _FakeTheoryTable()
+        store = DynamoMcpStreamStore(
+            table=table,
+            id_generator=sequence_mcp_id_generator(["stream-race"]),
+            clock=_FixedClock(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)),
+            max_aggregate_events=1,
+            append_retries=16,
+        )
+        stream_id = store.create("sess-race")
+
+        def attempt() -> str:
+            return store.append("sess-race", stream_id, b"x")
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(attempt) for _ in range(2)]
+            successes = 0
+            failures = 0
+            for future in futures:
+                try:
+                    future.result()
+                    successes += 1
+                except McpStreamAggregateCapacityError:
+                    failures += 1
+        self.assertEqual(1, successes)
+        self.assertEqual(1, failures)
+        self.assertEqual(1, table.items[("sess-race", "!session")].event_count)
+
+    def test_fake_table_matches_real_omitempty_and_cursor_semantics(self) -> None:
+        from apptheory.mcp import _McpStreamItem
+
+        table = _FakeTheoryTable()
+        table.put(
+            _McpStreamItem(
+                session_id="sess-fake",
+                item_id="!session",
+                stream_id="",
+                kind="session",
+                sequence=0,
+                aggregate_version=0,
+                event_count=0,
+                aggregate_bytes=0,
+                deleted=False,
+                expires_at=1000,
+            )
+        )
+        state = table.items[("sess-fake", "!session")]
+        # The pinned client strips omitempty zero values before writing. The
+        # aggregate fields must be present even at zero, while aggregateVersion
+        # (still omitempty) is absent when zero.
+        self.assertTrue(table._attribute_present(state, "sequence"))
+        self.assertTrue(table._attribute_present(state, "event_count"))
+        self.assertTrue(table._attribute_present(state, "aggregate_bytes"))
+        self.assertTrue(table._attribute_present(state, "deleted"))
+        self.assertFalse(table._attribute_present(state, "aggregate_version"))
+        with self.assertRaises(_FakeConditionFailed):
+            table.put(
+                _McpStreamItem(session_id="sess-fake", item_id="!session", kind="session"),
+                condition_expression="#aggregate_version = :version",
+                expression_attribute_names={"#aggregate_version": "aggregateVersion"},
+                expression_attribute_values={":version": 0},
+            )
+        self.assertTrue(
+            table._condition_met(
+                state,
+                "attribute_not_exists(#deleted) OR #deleted = :deleted",
+                {"#deleted": "deleted"},
+                {":deleted": False},
+            )
+        )
+        state.deleted = True
+        self.assertFalse(
+            table._condition_met(
+                state,
+                "attribute_not_exists(#deleted) OR #deleted = :deleted",
+                {"#deleted": "deleted"},
+                {":deleted": False},
+            )
+        )
+
+    def test_fake_table_query_uses_the_real_cursor_contract_and_paginates(self) -> None:
+        table = _FakeTheoryTable()
+        for index in range(1205):
+            table.put(SimpleNamespace(session_id="sess-page", item_id=f"EVENT#{index:04d}", kind="event"))
+        with self.assertRaises(_FakeValidationError):
+            table.query("sess-page", cursor="")
+        first = table.query("sess-page", limit=1000)
+        self.assertEqual(1000, len(first.items))
+        self.assertEqual("1000", first.next_cursor)
+        second = table.query("sess-page", limit=1000, cursor=first.next_cursor)
+        self.assertEqual(205, len(second.items))
+        self.assertIsNone(second.next_cursor)
+
+    def test_dynamo_second_create_keeps_aggregate_and_stream_state(self) -> None:
+        table = _FakeTheoryTable()
+        store = DynamoMcpStreamStore(
+            table=table,
+            id_generator=sequence_mcp_id_generator(["stream-one", "stream-two"]),
+            clock=_FixedClock(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)),
+        )
+        first = store.create("sess-twice")
+        self.assertEqual("1", store.append("sess-twice", first, b"one"))
+        second = store.create("sess-twice")
+        self.assertEqual("stream-two", second)
+        self.assertEqual("2", store.append("sess-twice", second, b"two"))
+
+        state = table.items[("sess-twice", "!session")]
+        self.assertFalse(state.deleted)
+        self.assertEqual(2, state.sequence)
+        self.assertEqual(2, state.event_count)
+        self.assertEqual(6, state.aggregate_bytes)
+        self.assertFalse(hasattr(state, "version"))
+        self.assertEqual(["one"], [event.data.decode() for event in store.subscribe("sess-twice", first)])
+        self.assertEqual(["two"], [event.data.decode() for event in store.subscribe("sess-twice", second)])
+
+    def test_dynamo_existing_session_refresh_preserves_concurrent_aggregate(self) -> None:
+        table = _FakeTheoryTable()
+        store = DynamoMcpStreamStore(
+            table=table,
+            id_generator=sequence_mcp_id_generator(["stream-one", "stream-two"]),
+            clock=_FixedClock(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)),
+        )
+        first = store.create("sess-race-state")
+        store.append("sess-race-state", first, b"one")
+
+        key = ("sess-race-state", "!session")
+        original_save = table.save
+        original_update = table.update
+
+        def bump_concurrent_append() -> None:
+            current = table.items[key]
+            bumped = copy.deepcopy(current)
+            bumped.sequence += 1
+            bumped.event_count += 1
+            bumped.aggregate_bytes += 3
+            table.items[key] = bumped
+
+        def racing_save(item: Any) -> None:
+            bump_concurrent_append()
+            original_save(item)
+
+        def racing_update(session_id: str, item_id: str, updates: dict[str, Any], **kwargs: Any) -> Any:
+            bump_concurrent_append()
+            return original_update(session_id, item_id, updates, **kwargs)
+
+        table.save = racing_save
+        table.update = racing_update
+        store.create("sess-race-state")
+
+        state = table.items[key]
+        self.assertEqual(2, state.sequence)
+        self.assertEqual(2, state.event_count)
+        self.assertEqual(6, state.aggregate_bytes)
+
+    def test_dynamo_existing_session_refresh_cannot_resurrect_tombstone(self) -> None:
+        table = _FakeTheoryTable()
+        store = DynamoMcpStreamStore(
+            table=table,
+            id_generator=sequence_mcp_id_generator(["stream-one", "stream-two"]),
+            clock=_FixedClock(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)),
+        )
+        store.create("sess-resurrect")
+
+        key = ("sess-resurrect", "!session")
+        original_save = table.save
+        original_update = table.update
+
+        def racing_save(item: Any) -> None:
+            tombstone = copy.deepcopy(item)
+            tombstone.deleted = True
+            table.items[key] = tombstone
+            original_save(item)
+
+        def racing_update(session_id: str, item_id: str, updates: dict[str, Any], **kwargs: Any) -> Any:
+            table.items[key].deleted = True
+            return original_update(session_id, item_id, updates, **kwargs)
+
+        table.save = racing_save
+        table.update = racing_update
+        with self.assertRaises(McpStreamNotFoundError):
+            store.create("sess-resurrect")
+        self.assertTrue(table.items[key].deleted)
+
+    def test_dynamo_new_session_create_cannot_overwrite_racing_tombstone(self) -> None:
+        table = _FakeTheoryTable()
+        store = DynamoMcpStreamStore(
+            table=table,
+            id_generator=sequence_mcp_id_generator(["stream-late"]),
+            clock=_FixedClock(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)),
+        )
+        key = ("sess-late", "!session")
+        original_put = table.put
+
+        def racing_put(item: Any, **kwargs: Any) -> None:
+            if (str(item.session_id), str(item.item_id)) == key:
+                table.items[key] = SimpleNamespace(
+                    session_id="sess-late",
+                    item_id="!session",
+                    stream_id="",
+                    kind="session",
+                    sequence=0,
+                    aggregate_version=1,
+                    event_count=0,
+                    aggregate_bytes=0,
+                    deleted=True,
+                    expires_at=int(datetime(2026, 1, 1, 1, 0, 0, tzinfo=UTC).timestamp()),
+                )
+            original_put(item, **kwargs)
+
+        table.put = racing_put
+        with self.assertRaises(McpStreamNotFoundError):
+            store.create("sess-late")
+        self.assertTrue(table.items[key].deleted)
+        self.assertEqual(0, table.items[key].event_count)
+
+    def test_dynamo_retryable_cleanup_failure_is_not_hidden_by_success(self) -> None:
+        table = _FakeTheoryTable()
+
+        class _FlakySpillStore(_M3SpillStore):
+            def __init__(self) -> None:
+                super().__init__()
+                self.delete_calls = 0
+
+            def delete(self, key: str) -> None:
+                self.delete_calls += 1
+                if self.delete_calls == 1:
+                    raise RuntimeError("spill cleanup unavailable")
+                super().delete(key)
+
+        spill = _FlakySpillStore()
+        store = DynamoMcpStreamStore(
+            table=table,
+            id_generator=sequence_mcp_id_generator(["stream-retry"]),
+            clock=_FixedClock(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)),
+            inline_max_bytes=4,
+            spill_store=spill,
+            append_retries=4,
+        )
+        stream_id = store.create("sess-retry")
+        state_key = ("sess-retry", "!session")
+        original = table.transact_write
+        injected = False
+
+        def one_retryable_failure(actions: Any) -> None:
+            nonlocal injected
+            if not injected:
+                injected = True
+                table.items[state_key].sequence += 1
+            original(actions)
+
+        table.transact_write = one_retryable_failure
+        with self.assertRaises(McpStreamAppendConflictError) as caught:
+            store.append("sess-retry", stream_id, b"0123456789")
+        cause = caught.exception.__cause__
+        self.assertIsInstance(cause, ExceptionGroup)
+        assert isinstance(cause, ExceptionGroup)
+        self.assertEqual("spill cleanup failed", cause.message)
+        self.assertIn("cleanup unavailable", str(cause.exceptions[1]))
+        self.assertFalse(any(key[0] == "sess-retry" and key[1].startswith("EVENT#") for key in table.items))
+        self.assertEqual(1, len(spill.objects), "the orphan is left to lifecycle retry")
+
+    def test_memory_session_get_reports_observed_expiry_distinctly(self) -> None:
+        store = MemoryMcpSessionStore(
+            clock=_FixedClock(datetime(1970, 1, 1, 0, 1, 20, tzinfo=UTC)),
+            seed=[{"id": "expired", "expires_at": "1970-01-01T00:01:10Z"}],
+        )
+        with self.assertRaises(McpSessionExpiredError):
+            store.get("expired")
+        with self.assertRaises(McpSessionNotFoundError):
+            store.get("unknown")
+
+    def test_unknown_session_id_creates_no_durable_state(self) -> None:
+        table = _FakeTheoryTable()
+        stream_store = DynamoMcpStreamStore(
+            table=table,
+            id_generator=sequence_mcp_id_generator(["unused"]),
+            clock=_FixedClock(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)),
+        )
+        server = create_mcp_server("M3", "1", {"stream_store": stream_store})
+        response = server.serve(
+            {
+                "method": "POST",
+                "headers": _post_headers(session_id="forged-session"),
+                "body": json.dumps({"jsonrpc": "2.0", "id": "forged", "method": "ping"}),
+            }
+        )
+        self.assertEqual(404, response.status)
+        self.assertEqual({}, {key: item for key, item in table.items.items() if key[0] == "forged-session"})
+
+    def test_cross_instance_miss_keeps_victim_durable_history(self) -> None:
+        table = _FakeTheoryTable()
+        stream_store = DynamoMcpStreamStore(
+            table=table,
+            id_generator=sequence_mcp_id_generator(["victim-stream"]),
+            clock=_FixedClock(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)),
+        )
+        server_a = create_mcp_server("A", "1", {"stream_store": stream_store})
+        server_a.registry().register_streaming_tool(
+            {"name": "victim", "inputSchema": {}},
+            lambda _args, _emit, _ctx: {"content": []},
+        )
+        initialized = server_a.serve(
+            {
+                "method": "POST",
+                "headers": _post_headers(),
+                "body": json.dumps(
+                    {"jsonrpc": "2.0", "id": "init", "method": "initialize", "params": {"protocolVersion": MCP_PROTOCOL_VERSION}}
+                ),
+            }
+        )
+        session_id = initialized.headers[MCP_HEADER_SESSION_ID][0]
+        streamed = server_a.serve(
+            {
+                "method": "POST",
+                "headers": _post_headers(session_id=session_id),
+                "body": json.dumps({"jsonrpc": "2.0", "id": "s1", "method": "tools/call", "params": {"name": "victim"}}),
+            }
+        )
+        self.assertEqual(200, streamed.status)
+        self.assertEqual(2, table.items[(session_id, "!session")].event_count)
+
+        server_b = create_mcp_server("B", "1", {"stream_store": stream_store})
+        miss = server_b.serve(
+            {
+                "method": "POST",
+                "headers": _post_headers(session_id=session_id),
+                "body": json.dumps({"jsonrpc": "2.0", "id": "s2", "method": "ping"}),
+            }
+        )
+        self.assertEqual(404, miss.status)
+        self.assertFalse(table.items[(session_id, "!session")].deleted)
+        self.assertEqual(2, len(stream_store.subscribe(session_id, "victim-stream")))
+
+    def test_observed_expiry_cleans_associated_durable_state(self) -> None:
+        table = _FakeTheoryTable()
+        stream_store = DynamoMcpStreamStore(
+            table=table,
+            id_generator=sequence_mcp_id_generator(["expired-stream"]),
+            clock=_FixedClock(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)),
+        )
+        session_store = MemoryMcpSessionStore(seed=[{"id": "sess-expired", "expires_at": "1970-01-01T00:00:00Z"}])
+        server = create_mcp_server("M3", "1", {"session_store": session_store, "stream_store": stream_store})
+        stream_id = stream_store.create("sess-expired")
+        stream_store.append("sess-expired", stream_id, b"old")
+
+        response = server.serve(
+            {
+                "method": "POST",
+                "headers": _post_headers(session_id="sess-expired"),
+                "body": json.dumps({"jsonrpc": "2.0", "id": "expired", "method": "ping"}),
+            }
+        )
+        self.assertEqual(404, response.status)
+        self.assertTrue(table.items[("sess-expired", "!session")].deleted)
+        with self.assertRaises(McpStreamNotFoundError):
+            stream_store.subscribe("sess-expired", stream_id)
 
 
 if __name__ == "__main__":
