@@ -1608,9 +1608,7 @@ export class DynamoMcpStreamStore implements McpStreamStore {
       if (existing["deleted"]) {
         throw new McpStreamNotFoundError();
       }
-      await this.db.update(this.model.name, { ...existing, expiresAt }, [
-        "expiresAt",
-      ]);
+      await this.refreshSessionStateExpiry(sessionId, existing, expiresAt);
       return;
     }
     try {
@@ -1638,6 +1636,43 @@ export class DynamoMcpStreamStore implements McpStreamStore {
         throw err;
       }
       if (raced["deleted"]) {
+        throw new McpStreamNotFoundError();
+      }
+    }
+  }
+
+  // refreshSessionStateExpiry updates only the expiry of an existing aggregate
+  // record. It never rewrites aggregate counters and needs no version role: the
+  // conditional model update is the same pinned operation appendOnce uses.
+  private async refreshSessionStateExpiry(
+    sessionId: string,
+    existing: Record<string, unknown>,
+    expiresAt: number,
+  ): Promise<void> {
+    if (
+      typeof (this.db as { transactWrite?: unknown }).transactWrite !==
+      "function"
+    ) {
+      throw new McpStreamTransactionRequiredError();
+    }
+    try {
+      await this.db.transactWrite([
+        {
+          kind: "update",
+          model: this.model.name,
+          item: { ...existing, expiresAt },
+          fields: ["expiresAt"],
+          conditionExpression: "#deleted = :deleted",
+          expressionAttributeNames: { "#deleted": "deleted" },
+          expressionAttributeValues: { ":deleted": { BOOL: false } },
+        },
+      ]);
+    } catch (err) {
+      if (!isConditionalCheckFailedError(err)) {
+        throw err;
+      }
+      const latest = await this.readSessionState(sessionId);
+      if (!latest || latest["deleted"]) {
         throw new McpStreamNotFoundError();
       }
     }

@@ -491,6 +491,7 @@ export declare class DynamoMcpStreamStore implements McpStreamStore {
     create(sessionId: string): Promise<string>;
     private readSessionState;
     private ensureSessionState;
+    private refreshSessionStateExpiry;
     append(sessionId: string, streamId: string, data?: Uint8Array): Promise<string>;
     private appendOnce;
     close(sessionId: string, streamId: string): Promise<void>;

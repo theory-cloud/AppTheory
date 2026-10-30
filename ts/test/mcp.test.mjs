@@ -2,6 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
+import { TheorydbClient } from "@theory-cloud/tabletheory-ts";
+import { createStatefulDynamoDBClient } from "@theory-cloud/tabletheory-ts/testkit";
+import { CreateTableCommand } from "@aws-sdk/client-dynamodb";
+
 import {
   MCP_CODE_INVALID_PARAMS,
   MCP_CODE_METHOD_NOT_FOUND,
@@ -2715,4 +2719,121 @@ test("M3 dynamo concurrent appends never overshoot the aggregate", async () => {
   assert.ok(rejected[0].reason instanceof McpStreamAggregateCapacityError);
   const state = db.items.get(`${model.name}:sess-race:!session`);
   assert.equal(state.eventCount, 1);
+});
+
+test("M3 dynamo sessions accept a second stream without resetting aggregate state", async () => {
+  const db = m3StreamDb();
+  const model = defaultMcpStreamModel("m3-double-create");
+  const store = new DynamoMcpStreamStore(db, {
+    model,
+    idGenerator: sequenceIdGenerator(["stream-first", "stream-second"]),
+  });
+
+  const first = await store.create("sess-double");
+  assert.equal(await store.append("sess-double", first, Buffer.from("one")), "1");
+
+  const second = await store.create("sess-double");
+  assert.equal(second, "stream-second");
+  assert.equal(
+    await store.append("sess-double", second, Buffer.from("two")),
+    "2",
+  );
+
+  const state = db.items.get(`${model.name}:sess-double:!session`);
+  assert.equal(state.deleted, false);
+  assert.equal(state.sequence, 2);
+  assert.equal(state.eventCount, 2);
+  assert.equal(state.aggregateBytes, 6);
+  assert.equal(Object.hasOwn(state, "version"), false);
+
+  const firstEvents = await store.subscribe("sess-double", first);
+  const secondEvents = await store.subscribe("sess-double", second);
+  assert.deepEqual(
+    firstEvents.map((event) => Buffer.from(event.data).toString()),
+    ["one"],
+  );
+  assert.deepEqual(
+    secondEvents.map((event) => Buffer.from(event.data).toString()),
+    ["two"],
+  );
+});
+
+test("M3 durable sessions serve two streaming tool calls in one session", async () => {
+  const db = m3StreamDb();
+  const model = defaultMcpStreamModel("m3-stream-twice");
+  const streamStore = new DynamoMcpStreamStore(db, {
+    model,
+    idGenerator: sequenceIdGenerator([
+      "stream-one",
+      "stream-two",
+      "stream-unused",
+    ]),
+  });
+  const server = createMcpServer("M3", "1", { streamStore });
+  server
+    .registry()
+    .registerStreamingTool({ name: "stream-echo", inputSchema: {} }, () => ({
+      content: [textBlock("ok")],
+    }));
+
+  const init = await initialize(server);
+  assert.ok(init.sessionId);
+  const headers = {
+    [MCP_HEADER_SESSION_ID]: [init.sessionId],
+    [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION],
+  };
+
+  for (const id of ["stream-first", "stream-second"]) {
+    const response = await post(
+      server,
+      rpc(id, "tools/call", { name: "stream-echo" }),
+      headers,
+    );
+    assert.equal(response.status, 200);
+    const frames = parseMcpTestSSEFrames(Buffer.from(response.body));
+    const result = JSON.parse(frames.at(-1).data);
+    assert.equal(result.id, id);
+    assert.equal(result.result.content[0].text, "ok");
+  }
+
+  const state = db.items.get(`${model.name}:${init.sessionId}:!session`);
+  assert.equal(state.deleted, false);
+  assert.equal(state.sequence, 4);
+  assert.equal(state.eventCount, 4);
+});
+
+test("M3 pinned TableTheory client accepts a second durable stream create", async () => {
+  const { client } = createStatefulDynamoDBClient();
+  await client.send(
+    new CreateTableCommand({
+      TableName: "m3-real-client",
+      KeySchema: [
+        { AttributeName: "sessionId", KeyType: "HASH" },
+        { AttributeName: "itemId", KeyType: "RANGE" },
+      ],
+      AttributeDefinitions: [
+        { AttributeName: "sessionId", AttributeType: "S" },
+        { AttributeName: "itemId", AttributeType: "S" },
+      ],
+      BillingMode: "PAY_PER_REQUEST",
+    }),
+  );
+  const db = new TheorydbClient(client);
+  const model = defaultMcpStreamModel("m3-real-client");
+  const store = new DynamoMcpStreamStore(db, {
+    model,
+    idGenerator: sequenceIdGenerator(["real-first", "real-second"]),
+  });
+
+  const first = await store.create("sess-real");
+  assert.equal(await store.append("sess-real", first, Buffer.from("one")), "1");
+  const second = await store.create("sess-real");
+  assert.equal(second, "real-second");
+  assert.equal(await store.append("sess-real", second, Buffer.from("two")), "2");
+
+  const replay = await store.subscribe("sess-real", second);
+  assert.deepEqual(
+    replay.map((event) => Buffer.from(event.data).toString()),
+    ["two"],
+  );
 });
