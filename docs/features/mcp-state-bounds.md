@@ -50,7 +50,7 @@ avoids write amplification from unknown IDs.
 
 The built-in in-memory session store exposes an optional `PutAndCollectExpired` capability so the server
 learns which expired IDs the atomic Put removed; custom `SessionStore` implementations keep the base SPI
-and must report observed expiry distinctly to request request-path cleanup. Custom external cleanup
+and must report observed expiry distinctly to enable request-path cleanup. Custom external cleanup
 failures are never converted into a successful initialization.
 
 ## Durable stream aggregate
@@ -73,13 +73,19 @@ oldest-event eviction semantics; durable streams never delete live replay histor
 
 ### Aggregate schema, backfill, and recreate
 
-New sessions initialize a versioned aggregate record. A record that is missing entirely cannot prove the
-session is active, so append returns the typed stream-not-found error identically in Go, TypeScript, and
-Python. A present record with missing or older counters is the **pre-aggregate** case: missing counters
-are never interpreted as zero, because that would let retained data bypass the bound. Appends to a
-pre-aggregate session fail with `stream aggregate backfill required` until an operator/product-owned
-backfill atomically counts every retained inline and spilled record and writes the current schema. M3
-does not run an automatic runtime migration.
+New sessions initialize a versioned aggregate record. The Python store persists the initial
+`deleted=false`, `sequence=0`, `eventCount=0`, and `aggregateBytes=0` values explicitly, because the
+pinned client strips empty model fields from a write and a DynamoDB condition that compares an absent
+attribute is false; without those values the first conditional append could never match the record.
+Refreshing an existing session's expiry is a conditional write that only updates `expiresAt`: it never
+rewrites aggregate counters, and a conditional failure is re-read and surfaced as deleted/not-found or
+a bounded conflict instead of being reported as a successful refresh. A record that is missing entirely
+cannot prove the session is active, so append returns the typed stream-not-found error identically in Go,
+TypeScript, and Python. A present record with missing or older counters is the **pre-aggregate** case:
+missing counters are never interpreted as zero, because that would let retained data bypass the bound.
+Appends to a pre-aggregate session fail with `stream aggregate backfill required` until an
+operator/product-owned backfill atomically counts every retained inline and spilled record and writes
+the current schema. M3 does not run an automatic runtime migration.
 
 The supported alternatives are:
 

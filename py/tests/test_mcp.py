@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 import json
 import os
 import re
@@ -99,10 +100,12 @@ def _post_headers(*, session_id: str = "", accept: str = "application/json, text
 
 
 class _Page:
-    def __init__(self, items: list[Any], cursor: str = "", next_cursor: str = "") -> None:
+    def __init__(self, items: list[Any], next_cursor: str | None = None) -> None:
         self.items = items
-        self.cursor = cursor
-        self.next_cursor = next_cursor or cursor
+        # The pinned client exposes next_cursor=None on the final page and has
+        # no cursor attribute; keep the alias only because older doubles used it.
+        self.next_cursor = next_cursor
+        self.cursor = next_cursor
 
 
 class _FakeNotFound(Exception):
@@ -110,6 +113,10 @@ class _FakeNotFound(Exception):
 
 
 class _FakeConditionFailed(Exception):
+    pass
+
+
+class _FakeValidationError(Exception):
     pass
 
 
@@ -180,11 +187,15 @@ class _FakeTheoryTable:
             raise _FakeNotFound("not found")
         return self.items[key]
 
-    def query(self, session_id: str, *, limit: int = 1000, cursor: str = "") -> _Page:
+    def query(self, session_id: str, *, limit: int = 1000, cursor: str | None = None) -> _Page:
+        if cursor is not None and str(cursor) == "":
+            # The pinned client treats any present cursor as encoded state and
+            # rejects an empty one; only None selects the first page.
+            raise _FakeValidationError("invalid cursor")
         selected = [item for (pk, _), item in self.items.items() if pk == str(session_id)]
-        start = int(str(cursor or "0") or "0")
-        next_cursor = str(start + limit) if start + limit < len(selected) else ""
-        return _Page(selected[start : start + limit], cursor=next_cursor, next_cursor=next_cursor)
+        start = int(str(cursor)) if cursor is not None else 0
+        next_cursor = str(start + limit) if start + limit < len(selected) else None
+        return _Page(selected[start : start + limit], next_cursor=next_cursor)
 
     def delete(self, session_id: str, item_id: str) -> None:
         self.items.pop((str(session_id), str(item_id)), None)
@@ -239,41 +250,125 @@ class _FakeTheoryTable:
         text = str(expression or "").strip()
         if not text:
             return True
-        for clause in text.split(" AND "):
-            clause = clause.strip()
-            missing = re.match(r"^attribute_not_exists\(\s*(#?\w+)\s*\)$", clause, re.IGNORECASE)
-            if missing is not None:
-                attribute = self._field_name(str(names.get(missing.group(1), missing.group(1))))
-                if existing is None or getattr(existing, attribute, None) in (None, ""):
+        return self._eval_condition(existing, text, names, values)
+
+    def _eval_condition(
+        self,
+        existing: Any | None,
+        expression: str,
+        names: dict[str, str],
+        values: dict[str, Any],
+    ) -> bool:
+        # OR binds looser than AND, matching DynamoDB's condition grammar.
+        or_parts = self._split_condition(expression, "OR")
+        if len(or_parts) > 1:
+            return any(self._eval_condition(existing, part, names, values) for part in or_parts)
+        and_parts = self._split_condition(expression, "AND")
+        if len(and_parts) > 1:
+            return all(self._eval_condition(existing, part, names, values) for part in and_parts)
+        clause = self._strip_parens(expression)
+        missing = re.match(r"^attribute_not_exists\(\s*(#?\w+)\s*\)$", clause, re.IGNORECASE)
+        if missing is not None:
+            attribute = self._field_name(str(names.get(missing.group(1), missing.group(1))))
+            return not self._attribute_present(existing, attribute)
+        present = re.match(r"^attribute_exists\(\s*(#?\w+)\s*\)$", clause, re.IGNORECASE)
+        if present is not None:
+            attribute = self._field_name(str(names.get(present.group(1), present.group(1))))
+            return self._attribute_present(existing, attribute)
+        match = re.match(r"^(#?\w+)\s*(=|<=|>=|<|>)\s*(:\w+)$", clause)
+        if match is None:
+            raise AssertionError(f"unsupported fake condition: {clause}")
+        attribute = self._field_name(str(names.get(match.group(1), match.group(1))))
+        if not self._attribute_present(existing, attribute):
+            # DynamoDB evaluates a comparison against a missing attribute to
+            # false, regardless of the operator or the expected zero value.
+            return False
+        operator = match.group(2)
+        expected = values.get(match.group(3))
+        actual = self._attribute_value(existing, attribute)
+        if isinstance(expected, bool):
+            return operator == "=" and isinstance(actual, bool) and actual is expected
+        if isinstance(expected, (int, float)):
+            if isinstance(actual, bool) or not isinstance(actual, (int, float)):
+                return False
+            left = actual
+            right = expected
+            checks = {
+                "=": left == right,
+                "<=": left <= right,
+                ">=": left >= right,
+                "<": left < right,
+                ">": left > right,
+            }
+            return checks[operator]
+        if isinstance(expected, str):
+            return operator == "=" and isinstance(actual, str) and actual == expected
+        return operator == "=" and actual == expected
+
+    def _attribute_present(self, existing: Any | None, attribute: str) -> bool:
+        if existing is None:
+            return False
+        if isinstance(existing, dict):
+            return attribute in existing
+        if dataclasses.is_dataclass(existing) and not isinstance(existing, type):
+            for spec in dataclasses.fields(existing):
+                if spec.name != attribute:
                     continue
-                return False
-            match = re.match(r"^(#?\w+)\s*(=|<=|>=|<|>)\s*(:\w+)$", clause)
-            if match is None:
-                raise AssertionError(f"unsupported fake condition: {clause}")
-            if existing is None:
-                return False
-            attribute = self._field_name(str(names.get(match.group(1), match.group(1))))
-            operator = match.group(2)
-            expected = values.get(match.group(3))
-            actual = getattr(existing, attribute, None)
-            if isinstance(expected, bool):
-                if operator != "=" or bool(actual) != expected:
-                    return False
-            elif isinstance(expected, (int, float)):
-                left = int(actual or 0)
-                right = int(expected)
-                checks = {
-                    "=": left == right,
-                    "<=": left <= right,
-                    ">=": left >= right,
-                    "<": left < right,
-                    ">": left > right,
-                }
-                if not checks[operator]:
-                    return False
-            elif operator != "=" or str(actual or "") != str(expected or ""):
-                return False
-        return True
+                meta = (spec.metadata or {}).get("theorydb") or {}
+                return not (meta.get("omitempty") and _fake_is_empty(getattr(existing, attribute, None)))
+            return hasattr(existing, attribute)
+        return attribute in vars(existing)
+
+    @staticmethod
+    def _attribute_value(existing: Any | None, attribute: str) -> Any:
+        if existing is None:
+            return None
+        if isinstance(existing, dict):
+            return existing.get(attribute)
+        return getattr(existing, attribute, None)
+
+    @classmethod
+    def _split_condition(cls, expression: str, operator: str) -> list[str]:
+        target = f" {operator} "
+        depth = 0
+        start = 0
+        out: list[str] = []
+        index = 0
+        while index < len(expression):
+            char = expression[index]
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+            elif depth == 0 and expression.startswith(target, index):
+                out.append(expression[start:index].strip())
+                index += len(target)
+                start = index
+                continue
+            index += 1
+        if not out:
+            return [expression.strip()]
+        out.append(expression[start:].strip())
+        return out
+
+    @classmethod
+    def _strip_parens(cls, expression: str) -> str:
+        text = expression.strip()
+        while len(text) >= 2 and text[0] == "(" and text[-1] == ")":
+            depth = 0
+            closes_at_end = False
+            for index, char in enumerate(text):
+                if char == "(":
+                    depth += 1
+                elif char == ")":
+                    depth -= 1
+                    if depth == 0:
+                        closes_at_end = index == len(text) - 1
+                        break
+            if not closes_at_end:
+                break
+            text = text[1:-1].strip()
+        return text
 
     @staticmethod
     def _field_name(attribute: str) -> str:
@@ -290,6 +385,18 @@ class _FakeTheoryTable:
         session_id = str(getattr(item, "session_id", ""))
         item_id = str(getattr(item, "item_id", "") or getattr(item, "task_id", ""))
         return session_id, item_id
+
+
+def _fake_is_empty(value: Any) -> bool:
+    if value is None or value is False:
+        return True
+    if value == 0:
+        return True
+    if isinstance(value, str | bytes | bytearray) and len(value) == 0:
+        return True
+    if isinstance(value, dict | list | set | tuple) and len(value) == 0:
+        return True
+    return False
 
 
 class McpRuntimeTests(unittest.TestCase):
@@ -2076,6 +2183,71 @@ class M3StateBoundsTests(unittest.TestCase):
         self.assertEqual(1, successes)
         self.assertEqual(1, failures)
         self.assertEqual(1, table.items[("sess-race", "!session")].event_count)
+
+    def test_fake_table_matches_real_omitempty_and_cursor_semantics(self) -> None:
+        from apptheory.mcp import _McpStreamItem
+
+        table = _FakeTheoryTable()
+        table.put(
+            _McpStreamItem(
+                session_id="sess-fake",
+                item_id="!session",
+                stream_id="",
+                kind="session",
+                sequence=0,
+                aggregate_version=0,
+                event_count=0,
+                aggregate_bytes=0,
+                deleted=False,
+                expires_at=1000,
+            )
+        )
+        state = table.items[("sess-fake", "!session")]
+        # The pinned client strips omitempty zero values before writing. The
+        # aggregate fields must be present even at zero, while aggregateVersion
+        # (still omitempty) is absent when zero.
+        self.assertTrue(table._attribute_present(state, "sequence"))
+        self.assertTrue(table._attribute_present(state, "event_count"))
+        self.assertTrue(table._attribute_present(state, "aggregate_bytes"))
+        self.assertTrue(table._attribute_present(state, "deleted"))
+        self.assertFalse(table._attribute_present(state, "aggregate_version"))
+        with self.assertRaises(_FakeConditionFailed):
+            table.put(
+                _McpStreamItem(session_id="sess-fake", item_id="!session", kind="session"),
+                condition_expression="#aggregate_version = :version",
+                expression_attribute_names={"#aggregate_version": "aggregateVersion"},
+                expression_attribute_values={":version": 0},
+            )
+        self.assertTrue(
+            table._condition_met(
+                state,
+                "attribute_not_exists(#deleted) OR #deleted = :deleted",
+                {"#deleted": "deleted"},
+                {":deleted": False},
+            )
+        )
+        state.deleted = True
+        self.assertFalse(
+            table._condition_met(
+                state,
+                "attribute_not_exists(#deleted) OR #deleted = :deleted",
+                {"#deleted": "deleted"},
+                {":deleted": False},
+            )
+        )
+
+    def test_fake_table_query_uses_the_real_cursor_contract_and_paginates(self) -> None:
+        table = _FakeTheoryTable()
+        for index in range(1205):
+            table.put(SimpleNamespace(session_id="sess-page", item_id=f"EVENT#{index:04d}", kind="event"))
+        with self.assertRaises(_FakeValidationError):
+            table.query("sess-page", cursor="")
+        first = table.query("sess-page", limit=1000)
+        self.assertEqual(1000, len(first.items))
+        self.assertEqual("1000", first.next_cursor)
+        second = table.query("sess-page", limit=1000, cursor=first.next_cursor)
+        self.assertEqual(205, len(second.items))
+        self.assertIsNone(second.next_cursor)
 
     def test_dynamo_second_create_keeps_aggregate_and_stream_state(self) -> None:
         table = _FakeTheoryTable()

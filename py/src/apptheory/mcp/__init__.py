@@ -1091,10 +1091,13 @@ class DynamoMcpTaskStore:
         if not session_id:
             return McpTaskListResult()
         try:
+            requested_cursor = str(_field(request, "cursor") or "").strip()
             page = self._table.query(
                 session_id,
                 limit=_task_list_limit(_int_field(request, "limit")),
-                cursor=str(_field(request, "cursor") or ""),
+                # The pinned client's first-page contract is cursor=None; an
+                # empty string is rejected as an invalid cursor.
+                cursor=requested_cursor or None,
             )
             now = self._clock.now()
             records = sorted(
@@ -1132,17 +1135,19 @@ class DynamoMcpTaskStore:
         # deleting as we page would shift the remaining items and leak tasks.
         # Expired items are deleted too, so this bypasses `list`'s filter.
         task_ids: list[str] = []
-        cursor = ""
+        cursor: str | None = None
         while True:
             page = self._table.query(sid, limit=MAX_TASK_LIST_LIMIT, cursor=cursor)
             task_ids.extend(
                 str(_field(item, "task_id") or _field(item, "taskId") or "")
                 for item in getattr(page, "items", []) or []
             )
-            next_cursor = str(getattr(page, "next_cursor", None) or getattr(page, "cursor", "") or "")
+            next_cursor = getattr(page, "next_cursor", None)
+            if next_cursor is None:
+                next_cursor = getattr(page, "cursor", None)
             if not next_cursor:
                 break
-            cursor = next_cursor
+            cursor = str(next_cursor)
         for task_id in task_ids:
             try:
                 self._table.delete(sid, task_id)
@@ -1275,26 +1280,41 @@ class DynamoMcpStreamStore:
                 raise
             raced = self._session_state(session_id)
             if raced is None:
-                raise
+                raise McpStreamAppendConflictError() from exc
             if bool(_field(raced, "deleted")):
                 raise McpStreamNotFoundError() from exc
+            # Another writer created the live record first. Creating a session
+            # still promises a refreshed expiry, so the refresh must apply or
+            # surface a bounded conflict instead of silently returning.
+            self._refresh_session_state_expiry(session_id, expires_at)
 
     def _refresh_session_state_expiry(self, session_id: str, expires_at: int) -> None:
-        try:
-            self._table.update(
-                session_id,
-                STREAM_SESSION_ITEM_ID,
-                {"expires_at": expires_at},
-                condition_expression="#deleted = :deleted",
-                expression_attribute_names={"#deleted": "deleted"},
-                expression_attribute_values={":deleted": False},
-            )
-        except Exception as exc:
-            if not _is_conditional_failure(exc):
-                raise
-            latest = self._session_state(session_id)
-            if latest is None or bool(_field(latest, "deleted")):
-                raise McpStreamNotFoundError() from exc
+        failure: Exception | None = None
+        for _ in range(2):
+            try:
+                self._table.update(
+                    session_id,
+                    STREAM_SESSION_ITEM_ID,
+                    {"expires_at": expires_at},
+                    # A record written before the aggregate schema still has a
+                    # valid tombstone flag semantics: absent deleted means live.
+                    # Never rewrite aggregate counters here.
+                    condition_expression="attribute_not_exists(#deleted) OR #deleted = :deleted",
+                    expression_attribute_names={"#deleted": "deleted"},
+                    expression_attribute_values={":deleted": False},
+                )
+                return
+            except Exception as exc:
+                if not _is_conditional_failure(exc):
+                    raise
+                failure = exc
+                latest = self._session_state(session_id)
+                if latest is None or bool(_field(latest, "deleted")):
+                    raise McpStreamNotFoundError() from exc
+                # The record is live, so the condition should have matched. Retry
+                # once against the observed state; reporting success without an
+                # applied refresh would hide a racing tombstone or a stale write.
+        raise McpStreamAppendConflictError() from failure
 
     def append(self, session_id: str, stream_id: str, data: bytes | bytearray | str | None = None) -> str:
         sid = _normalize_required(session_id, "missing session id")
@@ -1570,14 +1590,19 @@ class DynamoMcpStreamStore:
     def _session_items(self, session_id: str) -> list[Any]:
         try:
             items: list[Any] = []
-            cursor = ""
+            # The pinned client decodes a cursor only when it is present; its
+            # documented first-page contract is cursor=None. An empty string is
+            # rejected as "invalid cursor", so it must never be sent.
+            cursor: str | None = None
             while True:
                 page = self._table.query(str(session_id or "").strip(), limit=1000, cursor=cursor)
                 items.extend(getattr(page, "items", []) or [])
-                next_cursor = str(getattr(page, "next_cursor", None) or getattr(page, "cursor", "") or "")
+                next_cursor = getattr(page, "next_cursor", None)
+                if next_cursor is None:
+                    next_cursor = getattr(page, "cursor", None)
                 if not next_cursor:
                     break
-                cursor = next_cursor
+                cursor = str(next_cursor)
             return items
         except Exception as exc:
             if _is_not_found_error(exc):
@@ -4010,13 +4035,18 @@ class _McpStreamItem:
     stream_id: str = _s("streamId")
     kind: str = _s("kind")
     closed: bool = _b("closed", omitempty=True)
-    sequence: int = _n("sequence", omitempty=True)
+    # The aggregate fields are not omitempty: the pinned client strips empty
+    # values from a written item, and DynamoDB evaluates a condition that
+    # compares an absent attribute as false. A freshly created session must
+    # persist deleted=false, sequence=0, eventCount=0 and aggregateBytes=0 so
+    # the first conditional append and the expiry refresh can match the record.
+    sequence: int = _n("sequence")
     event_id: str = _s("eventId", omitempty=True)
     data: str = _s("data", omitempty=True)
     aggregate_version: int = _n("aggregateVersion", omitempty=True)
-    event_count: int = _n("eventCount", omitempty=True)
-    aggregate_bytes: int = _n("aggregateBytes", omitempty=True)
-    deleted: bool = _b("deleted", omitempty=True)
+    event_count: int = _n("eventCount")
+    aggregate_bytes: int = _n("aggregateBytes")
+    deleted: bool = _b("deleted")
     data_storage: str = _s("dataStorage", omitempty=True)
     data_ref: str = _s("dataRef", omitempty=True)
     data_bytes: int = _n("dataBytes", omitempty=True)
