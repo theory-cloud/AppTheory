@@ -38,6 +38,15 @@ const routeModelFixture = JSON.parse(
 const posture = apptheory.AppTheoryMcpTransportPosture;
 const reachability = apptheory.AppTheoryMcpOriginReachability;
 
+const DOMAIN_CERTIFICATE_ARN =
+  "arn:aws:acm:us-east-1:123456789012:certificate/11111111-2222-3333-4444-555555555555";
+
+// DISABLED and LOCKED are proven postures, so the owned floor names the custom
+// domain that replaces the disabled execute-api authority.
+function ordinaryDomain() {
+  return { domainName: "mcp.example.com", certificateArn: DOMAIN_CERTIFICATE_ARN };
+}
+
 // Fixture OAuth-surface route name -> the matching derived route-inventory field,
 // the method the construct wires for it, and the v2 route-model key it must equal.
 // `upstream_callback` is not derived per kind, so it is driven from the route-model
@@ -159,9 +168,9 @@ function failClosedFloor(postureName) {
     return {
       transportPosture: posture.RUNTIME_BEARER,
       runtimePosture: { requireBearerToken: true },
-      originReachability: reachability.LOCKED,
+      originReachability: reachability.DISABLED,
       denialSignal: {},
-      ownedApi: { stage: { throttlingEnabled: true } },
+      ownedApi: { stage: { throttlingEnabled: true }, domain: ordinaryDomain() },
       sessionState: { enabled: false },
     };
   }
@@ -169,7 +178,7 @@ function failClosedFloor(postureName) {
     return {
       transportPosture: posture.NONE_PUBLIC,
       originReachability: reachability.DISABLED,
-      ownedApi: { stage: { throttlingEnabled: true } },
+      ownedApi: { stage: { throttlingEnabled: true }, domain: ordinaryDomain() },
       sessionState: { enabled: false },
     };
   }
@@ -316,15 +325,15 @@ test("AppTheoryMcpServer posture marker agrees with the resolved posture", () =>
   {
     const app = new cdk.App();
     const stack = new cdk.Stack(app, "MarkerAttachStack");
-    const importedApi = apigwv2.HttpApi.fromHttpApiAttributes(stack, "Frontdoor", {
-      httpApiId: "api-marker-attach",
+    const attachedApi = new apigwv2.HttpApi(stack, "Frontdoor", {
+      disableExecuteApiEndpoint: true,
     });
     const server = new apptheory.AppTheoryMcpServer(stack, "McpServer", {
       handler: handler(stack),
-      api: importedApi,
+      api: attachedApi,
       transportPosture: posture.RUNTIME_BEARER,
       runtimePosture: { requireBearerToken: true },
-      originReachability: reachability.LOCKED,
+      originReachability: reachability.DISABLED,
       denialSignal: { metricName: "apptheory.mcp.auth_denied" },
       owningApiDefense: { accessLogging: true, throttling: { rateLimit: 50, burstLimit: 100 } },
       sessionState: { enabled: false },
@@ -350,7 +359,7 @@ const nonePublicFloor = failClosedFloor("none-public");
 const attachRuntimeBearer = {
   transportPosture: posture.RUNTIME_BEARER,
   runtimePosture: { requireBearerToken: true },
-  originReachability: reachability.LOCKED,
+  originReachability: reachability.DISABLED,
   denialSignal: {},
   owningApiDefense: { accessLogging: true, throttling: { rateLimit: 50, burstLimit: 100 } },
   sessionState: { enabled: false },
@@ -361,7 +370,7 @@ const failClosedCases = [
     name: "runtime bearer without a runtime posture declaration",
     props: {
       transportPosture: posture.RUNTIME_BEARER,
-      originReachability: reachability.LOCKED,
+      originReachability: reachability.DISABLED,
       denialSignal: {},
       ownedApi: { stage: { throttlingEnabled: true } },
     },
@@ -443,6 +452,15 @@ const failClosedCases = [
     error: /requires owningApiDefense\.throttling rateLimit and burstLimit to be positive finite numbers/,
   },
   {
+    name: "runtime bearer in attach mode with LOCKED",
+    props: {
+      ...attachRuntimeBearer,
+      originReachability: reachability.LOCKED,
+    },
+    api: true,
+    error: /originReachability LOCKED is unsupported in attach mode/,
+  },
+  {
     name: "runtime bearer in owned mode without an explicit throttle decision",
     props: {
       ...runtimeBearerFloor,
@@ -487,7 +505,7 @@ const failClosedCases = [
     props: {
       facade: { providerId: "   " },
       runtimePosture: { requireBearerToken: true },
-      originReachability: reachability.LOCKED,
+      originReachability: reachability.DISABLED,
       denialSignal: {},
       ownedApi: { stage: { throttlingEnabled: true } },
     },
@@ -498,7 +516,7 @@ const failClosedCases = [
     props: {
       facade: { providerId: cdk.Fn.ref("ProviderId") },
       runtimePosture: { requireBearerToken: true },
-      originReachability: reachability.LOCKED,
+      originReachability: reachability.DISABLED,
       denialSignal: {},
       ownedApi: { stage: { throttlingEnabled: true } },
     },

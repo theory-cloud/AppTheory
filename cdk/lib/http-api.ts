@@ -183,6 +183,11 @@ export interface AppTheoryHttpApiRouteOptions {
   readonly methods: string[];
   /**
    * Gateway authorization posture for the route.
+   *
+   * Omit for `NONE`. Every explicit value other than `IAM` or `NONE` — an
+   * uppercase spelling, a misspelling, `null`, a number, an object, or any
+   * unchecked configuration value — fails synthesis before this route is
+   * emitted instead of silently falling back to `NONE`.
    * @default AppTheoryHttpApiRouteAuthorizer.NONE
    */
   readonly authorizer?: AppTheoryHttpApiRouteAuthorizer;
@@ -495,9 +500,19 @@ function normalizeExplicitRoutePath(value: string): string {
 }
 
 function explicitRouteAuthorizer(posture?: AppTheoryHttpApiRouteAuthorizer): apigwv2.IHttpRouteAuthorizer {
-  return posture === AppTheoryHttpApiRouteAuthorizer.IAM
-    ? new apigwv2Authorizers.HttpIamAuthorizer()
-    : new apigwv2.HttpNoneAuthorizer();
+  if (posture === undefined) {
+    return new apigwv2.HttpNoneAuthorizer();
+  }
+  switch (posture) {
+    case AppTheoryHttpApiRouteAuthorizer.IAM:
+      return new apigwv2Authorizers.HttpIamAuthorizer();
+    case AppTheoryHttpApiRouteAuthorizer.NONE:
+      return new apigwv2.HttpNoneAuthorizer();
+    default:
+      throw new Error(
+        `AppTheoryHttpApi: routes authorizer must be AppTheoryHttpApiRouteAuthorizer.IAM or .NONE (got ${JSON.stringify(posture)})`,
+      );
+  }
 }
 
 function configureRouteSettings(
