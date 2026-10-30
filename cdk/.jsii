@@ -14535,7 +14535,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/http-api.ts",
-          "line": 301
+          "line": 306
         },
         "parameters": [
           {
@@ -14561,7 +14561,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/http-api.ts",
-        "line": 295
+        "line": 300
       },
       "name": "AppTheoryHttpApi",
       "properties": [
@@ -14569,7 +14569,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 296
+            "line": 301
           },
           "name": "api",
           "type": {
@@ -14580,7 +14580,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 297
+            "line": 302
           },
           "name": "stage",
           "type": {
@@ -14591,7 +14591,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 298
+            "line": 303
           },
           "name": "accessLogGroup",
           "optional": true,
@@ -14603,7 +14603,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 299
+            "line": 304
           },
           "name": "domain",
           "optional": true,
@@ -14940,7 +14940,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/http-api.ts",
-        "line": 199
+        "line": 204
       },
       "name": "AppTheoryHttpApiProps",
       "properties": [
@@ -14949,7 +14949,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 200
+            "line": 205
           },
           "name": "handler",
           "type": {
@@ -14961,7 +14961,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 201
+            "line": 206
           },
           "name": "apiName",
           "optional": true,
@@ -14979,7 +14979,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 221
+            "line": 226
           },
           "name": "cors",
           "optional": true,
@@ -15006,7 +15006,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 274
+            "line": 279
           },
           "name": "domain",
           "optional": true,
@@ -15024,7 +15024,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 248
+            "line": 253
           },
           "name": "routes",
           "optional": true,
@@ -15047,7 +15047,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 261
+            "line": 266
           },
           "name": "routeSettings",
           "optional": true,
@@ -15070,7 +15070,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 215
+            "line": 220
           },
           "name": "scopePermissionToRoute",
           "optional": true,
@@ -15087,7 +15087,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 280
+            "line": 285
           },
           "name": "stage",
           "optional": true,
@@ -15107,7 +15107,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 292
+            "line": 297
           },
           "name": "waf",
           "optional": true,
@@ -15211,12 +15211,13 @@
           "abstract": true,
           "docs": {
             "default": "AppTheoryHttpApiRouteAuthorizer.NONE",
+            "remarks": "Omit for `NONE`. Every explicit value other than `IAM` or `NONE` — an\nuppercase spelling, a misspelling, `null`, a number, an object, or any\nunchecked configuration value — fails synthesis before this route is\nemitted instead of silently falling back to `NONE`.",
             "summary": "Gateway authorization posture for the route."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 188
+            "line": 193
           },
           "name": "authorizer",
           "optional": true,
@@ -15237,7 +15238,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/http-api.ts",
-        "line": 192
+        "line": 197
       },
       "name": "AppTheoryHttpApiRouteThrottling",
       "properties": [
@@ -15250,7 +15251,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 196
+            "line": 201
           },
           "name": "burstLimit",
           "optional": true,
@@ -15267,7 +15268,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 194
+            "line": 199
           },
           "name": "rateLimit",
           "optional": true,
@@ -31728,5 +31729,5 @@
     }
   },
   "version": "6.4.0",
-  "fingerprint": "J3KEhBk8OpObz0X5wttQsYl/IotjQCZybG7DT8IhBMc="
+  "fingerprint": "pQruS4yb3bTCdytdHbbnp0aMl/5mLFuTzmOpDc8SFvA="
 }
