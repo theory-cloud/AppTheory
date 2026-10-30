@@ -3096,11 +3096,23 @@ const ToolLifecycleOutcomeUnhandledError ToolLifecycleOutcome = "unhandled_error
 
 var ErrEventNotFound = errors.New("event not found")
 
+var ErrSessionCapacityExceeded = errors.New("Session capacity exceeded")
+
+var ErrSessionExpired = errors.New("session expired")
+
 var ErrSessionNotFound = errors.New("session not found")
+
+var ErrStreamAggregateBackfillRequired = errors.New("stream aggregate backfill required")
+
+var ErrStreamAggregateCapacityExceeded = errors.New("stream aggregate capacity exceeded")
+
+var ErrStreamAppendConflict = errors.New("stream append conflict")
 
 var ErrStreamEventTooLarge = errors.New("stream event too large")
 
 var ErrStreamNotFound = errors.New("stream not found")
+
+var ErrStreamTransactionRequired = errors.New("stream append requires a transactional backend")
 
 var ErrTaskNotFound = errors.New("task not found")
 
@@ -3197,14 +3209,17 @@ type DynamoSessionStore struct {
 }
 
 type DynamoStreamStore struct {
-	db             tablecore.DB
-	idGen          apptheory.IDGenerator
-	now            func() time.Time
-	pollInterval   time.Duration
-	batchSize      int
-	spillStore     dynamoStreamSpillStore
-	inlineMaxBytes int
-	maxEventBytes  int
+	db                 tablecore.DB
+	idGen              apptheory.IDGenerator
+	now                func() time.Time
+	pollInterval       time.Duration
+	batchSize          int
+	spillStore         dynamoStreamSpillStore
+	inlineMaxBytes     int
+	maxEventBytes      int
+	maxAggregateEvents int
+	maxAggregateBytes  int64
+	appendRetries      int
 }
 
 type DynamoStreamStoreOption func(*dynamoStreamStoreOptions)
@@ -3248,9 +3263,10 @@ type LoggingLevelRequest struct {
 }
 
 type MemorySessionStore struct {
-	mu    sync.RWMutex
-	store map[string]*Session
-	clock apptheory.Clock
+	mu          sync.RWMutex
+	store       map[string]*Session
+	clock       apptheory.Clock
+	maxSessions int
 }
 
 type MemorySessionStoreOption func(*MemorySessionStore)
@@ -3423,6 +3439,10 @@ type Session struct {
 	ExpiresAt time.Time         `json:"expiresAt"`
 	Principal string            `json:"principal,omitempty"`
 	Data      map[string]string `json:"data,omitempty"`
+}
+
+type SessionExpirySweeper interface {
+	PutAndCollectExpired(context.Context, *Session) ([]string, error)
 }
 
 type SessionStore interface {
@@ -3663,6 +3683,8 @@ func WithServerIDGenerator(apptheory.IDGenerator) ServerOption
 
 func WithServerInfoMetadata(bool) ServerOption
 
+func WithSessionCapacityLimit(int) MemorySessionStoreOption
+
 func WithSessionStore(SessionStore) ServerOption
 
 func WithStreamEventByteLimit(int) MemoryStreamStoreOption
@@ -3723,6 +3745,8 @@ func (*MemorySessionStore) Delete(context.Context, string) error
 func (*MemorySessionStore) Get(context.Context, string) (*Session, error)
 
 func (*MemorySessionStore) Put(context.Context, *Session) error
+
+func (*MemorySessionStore) PutAndCollectExpired(context.Context, *Session) ([]string, error)
 
 func (*MemoryStreamStore) Append(context.Context, string, string, json.RawMessage) (string, error)
 
@@ -4593,6 +4617,7 @@ type LifecycleTransition struct {
 type MemorySessionRegistry struct {
 	mu      sync.Mutex
 	records map[string]SessionRegistryRecord
+	now     func() time.Time
 }
 
 type Operation string
@@ -4953,7 +4978,8 @@ type SessionTokenMetadata struct {
 }
 
 type TableTheorySessionRegistry struct {
-	db tablecore.DB
+	db  tablecore.DB
+	now func() time.Time
 }
 
 type TenantBindingRule struct {

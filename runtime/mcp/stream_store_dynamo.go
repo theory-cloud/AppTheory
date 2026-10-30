@@ -71,9 +71,10 @@ func (dynamoStreamRecord) TableName() string {
 // server instances can replay and continue an active stream from shared state.
 // Replay is bounded by each event record's ExpiresAt value at runtime; DynamoDB
 // TTL and S3 lifecycle cleanup are backstops, not access checks.
-// The strongest DeleteSession/Append race protection is enabled when the
-// provided TableTheory DB implements TransactWrite, which is the production
-// TableTheory path.
+// Append requires a TableTheory DB that implements TransactWrite: the versioned
+// per-session aggregate, sequence, stream metadata, and event record are admitted
+// in one conditional transaction. A backend without transactional conditional
+// writes is refused before any event write.
 type DynamoStreamStore struct {
 	db                 tablecore.DB
 	idGen              apptheory.IDGenerator
