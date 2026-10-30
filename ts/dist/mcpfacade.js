@@ -1866,6 +1866,11 @@ function isLoopbackHostname(host) {
         if (match !== null) {
             return Number(match[1]) === 127;
         }
+        const hexMapped = /^(?:::ffff:|(?:0{1,4}:){5}ffff:)([0-9a-f]{1,4}):([0-9a-f]{1,4})$/;
+        const hexMatch = hexMapped.exec(value);
+        if (hexMatch !== null) {
+            return parseInt(hexMatch[1] ?? "", 16) >> 8 === 127;
+        }
     }
     return false;
 }

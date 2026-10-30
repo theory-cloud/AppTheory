@@ -18,6 +18,8 @@
     { "id": "origin.http_loopback_v6_accepted", "raw": "http://[::1]:8080/", "expect": "accepted", "canonical": "http://[::1]:8080" },
     { "id": "origin.http_loopback_v6_expanded_accepted", "raw": "http://[0:0:0:0:0:0:0:1]", "expect": "accepted", "canonical": "http://[0:0:0:0:0:0:0:1]" },
     { "id": "origin.http_loopback_v4_mapped_v6_accepted", "raw": "http://[::ffff:127.0.0.1]", "expect": "accepted", "canonical": "http://[::ffff:127.0.0.1]" },
+    { "id": "origin.http_loopback_hex_mapped_v6_accepted", "raw": "http://[::ffff:7f00:1]", "expect": "accepted", "canonical": "http://[::ffff:7f00:1]" },
+    { "id": "origin.http_loopback_hex_mapped_v6_expanded_accepted", "raw": "http://[0:0:0:0:0:ffff:7f00:1]", "expect": "accepted", "canonical": "http://[0:0:0:0:0:ffff:7f00:1]" },
     { "id": "origin.https_127_prefixed_dns_accepted", "raw": "https://127.attacker.example", "expect": "accepted", "canonical": "https://127.attacker.example" },
     { "id": "origin.https_localhost_accepted", "raw": "https://localhost", "expect": "accepted", "canonical": "https://localhost" },
     { "id": "origin.http_127_prefixed_dns_rejected", "raw": "http://127.attacker.example", "expect": "rejected" },
