@@ -1,6 +1,8 @@
+import type { RouteGuard } from "../context.js";
 /** Per-route registration options consumed by the internal router. */
 export interface RouteOptions {
     authRequired?: boolean;
+    guard?: RouteGuard;
 }
 /** Private metadata carried only by SecureApp registrations. */
 export interface SecureRouteMetadata {
@@ -8,6 +10,7 @@ export interface SecureRouteMetadata {
     posture: "public" | "optional" | "authenticated" | "authenticated_any_of" | "internal_only";
     scopes: string[];
     posturePresent: boolean;
+    guard: RouteGuard | null;
 }
 interface ParsedRouteSegment {
     kind: "static" | "param" | "proxy";
@@ -19,6 +22,7 @@ interface Route<THandler> {
     segments: ParsedRouteSegment[];
     handler: THandler;
     authRequired: boolean;
+    guard: RouteGuard | null;
     secure: SecureRouteMetadata | null;
     staticCount: number;
     paramCount: number;
@@ -30,6 +34,7 @@ export interface Match<THandler> {
     handler: THandler;
     params: Record<string, string>;
     authRequired: boolean;
+    guard: RouteGuard | null;
 }
 /** Fail-closed HTTP route matcher used by the AppTheory runtime. */
 export declare class Router<THandler> {

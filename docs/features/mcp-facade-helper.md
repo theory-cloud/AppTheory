@@ -155,7 +155,7 @@ has always had, restated in `SecureApp`'s explicit vocabulary.
 | Route family | Plain `App` expression | `SecureApp` posture | Who authenticates |
 | --- | --- | --- | --- |
 | MCP transport (`POST`/`GET`/`DELETE`), posture `iam` or `jwt` | `RequireAuth()` route option | `Authenticated()` | The application's `SecurePrincipalResolver`. The gateway has already validated the caller; the app still decides who it is. |
-| MCP transport, posture `runtime-bearer` | no route option | `Public()` | The facade's RFC 9728 bearer validator (`RequireBearerToken`), which fails closed. The `SecureApp` resolver is deliberately not consulted, because the request carries an OAuth bearer token rather than an app session. |
+| MCP transport, posture `runtime-bearer` | route-level bearer guard | `Public()` | The facade's RFC 9728 bearer guard (`RequireBearerToken`), which the runtime runs after route authorization and before application middleware, and which fails closed. The `SecureApp` resolver is deliberately not consulted, because the request carries an OAuth bearer token rather than an app session. |
 | MCP transport, posture `none-public` | no route option | `Public()` | Nobody, by explicit `FacadeConfig` contract. Never a default. |
 | Protected-resource metadata (RFC 9728) | no route option | `Public()` | Nobody: clients fetch it before they hold a token. |
 | Authorization-server discovery, canonical and suffix (RFC 8414) | no route option | `Public()` | Nobody: discovery is public by design. |
@@ -165,17 +165,22 @@ has always had, restated in `SecureApp`'s explicit vocabulary.
 | Root authorization-server document, when `RootAuthorizationServer` is set | no route option | `Public()` | Nobody: public metadata. |
 
 `Public()` here is a declaration, never an omission. No facade route is unauthenticated by accident: under
-`runtime-bearer` the transport route is public at the `SecureApp` layer *and* wrapped in the RFC 9728 bearer
-middleware, so a credential-free request is answered with the `WWW-Authenticate` challenge (401) and a token missing a
-route scope with the `insufficient_scope` challenge (403) before the application's MCP handler runs. Under `iam` and
-`jwt` the transport route takes the application's own principal gate, exactly as `RequireAuth` does on a plain `App`,
-so the same request is answered with the app's own denial instead.
+`runtime-bearer` the transport route is public at the `SecureApp` layer *and* carries a route-level RFC 9728 bearer
+guard that the runtime executes after route authorization and before application middleware, so a credential-free
+request is answered with the `WWW-Authenticate` challenge (401) and a token missing a route scope with the
+`insufficient_scope` challenge (403) before any application middleware or the MCP handler runs. A middleware that
+returns a cached response or performs a write without calling `next` therefore cannot observe a denied request.
+Under `iam` and `jwt` the transport route takes the application's own principal gate, exactly as `RequireAuth` does on
+a plain `App`, so the same request is answered with the app's own denial instead.
 
 A consumer can assert all of this instead of trusting prose: `SecureApp.Routes()` (Go), `secureApp.routes()`
 (TypeScript), and `secure_app.routes()` (Python) return the registered routes with their declared postures, and the
 shared `secure_app_mount` conformance rows in
 `contract-tests/fixtures/routing/mcp-auth-facade/facade-conformance.v1.json` pin that table for every transport
-posture in all three runtimes.
+posture in all three runtimes. The `middleware_order` rows in
+`contract-tests/fixtures/routing/mcp-auth-facade/facade-middleware-order.v1.json` pin the transport ordering itself:
+bearer guard → application middleware → handler on valid credentials, and zero middleware invocation, cache lookup, or
+write on denial for `POST`, `GET`, and `DELETE` on both surfaces.
 
 The runtime conformance kit carries the same closed-by-default variants as its plain-`App` helpers, so a consumer's
 own suite asserts either surface with the same three outcomes: `AssertCredentialFreeDeniedSecureApp` /
@@ -187,9 +192,10 @@ own suite asserts either surface with the same three outcomes: `AssertCredential
 enforcement on the closed-by-default app, so a consumer proves the same 401, 403, and admitted-transport outcomes
 without dropping to a plain `App`.
 
-The `PolicyHook` (tier P2) runs before the posture gate on both surfaces, so a consumer whose hook denies a request
-denies it on facade routes too. That is the consumer's declared authority, not a framework loophole, and it is the same
-on either surface.
+The `PolicyHook` (tier P2) runs before the posture gate and before the runtime-bearer guard on both surfaces, so a
+consumer whose hook denies a request denies it on facade routes too. The hook still receives an unverified tenant
+view, and this ordering is unchanged: the bearer guard only moves ahead of application middleware. That is the
+consumer's declared authority, not a framework loophole, and it is the same on either surface.
 
 ### CDK pairing
 
@@ -269,9 +275,9 @@ principal is rejected with HTTP 401 and the MCP handler never runs. `FacadeConfi
 explicitly (`TransportPostureIAM`, `TransportPostureJWT`, `TransportPostureRuntimeBearer`, or
 `TransportPostureNonePublic`), and registration fails closed when the posture and its required runtime assertion
 disagree. Applications that authenticate MCP themselves either configure `FacadeConfig.RequireBearerToken`, which
-performs RFC 9728 bearer validation with the correct `WWW-Authenticate` challenge and is valid only with
-`TransportPostureRuntimeBearer`, or select `TransportPostureNonePublic` and keep their own middleware around the
-supplied handler.
+performs RFC 9728 bearer validation as a route-level guard before application middleware with the correct
+`WWW-Authenticate` challenge and is valid only with `TransportPostureRuntimeBearer`, or select
+`TransportPostureNonePublic` and keep their own middleware around the supplied handler.
 
 ## Framework-owned front channel
 
@@ -336,7 +342,7 @@ override is wired separately, through the construct's
 `FacadeConfig` (issuer, JWKS URI, optional registration-endpoint override, `issuerMode`, URL mode + public base URL or
 allowed hostnames, per-kind scopes, capability overrides, the MCP handler, the all-or-none authorize/token handler
 factories, the optional register factory, the optional callback handler, the optional root discovery config, the
-transport posture, and the runtime bearer assertion). The derived route tables come from the shared route algebra
+transport posture, and the runtime bearer guard). The derived route tables come from the shared route algebra
 (`mcproutes`), so there is no per-language route list to drift.
 
 They mount the MCP transport routes; the RFC 9728 protected-resource metadata route; both canonical and

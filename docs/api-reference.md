@@ -623,7 +623,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>1223 exported top-level symbols</summary>
+<summary>1226 exported top-level symbols</summary>
 
 ```text
 AccountAssertion, AccountAssertionAssumeFailed, AccountAssertionMismatch, AccountAssertionNotConfigured, AccountAssertionState, AccountAssertionUnavailable,
@@ -731,10 +731,10 @@ RateLimitStoreOptions, RateLimitStrategy, RateLimitWindow, RawJSON, ReadResource
 RecordStatus, RecordStatusFailed, RecordStatusPending, RecordStatusProcessing, RecordStatusSkipped, RecordStatusSucceeded, RefreshLeaseInput, RefreshRequest,
 RefreshSemaphoreSlotInput, RefreshStage, RefreshTokenRecord, RefreshTokenStore, RegisterControllerRoutes, RegisterMCPFacade, RegisterMCPFacadeSecure, RegisterMCPServer,
 RegisterMicroVMControllerRoutes, RegistryClient, RegistryClientOption, RelatedTaskMetadata, ReleaseLeaseInput, ReleaseSemaphoreSlotInput, ReportKinesisPutRecordsFailures,
-Request, RequestIDSource, RequestIDSourceDefault, RequestIDSourceServer, RequireAnyScope, RequireAuth, RequireBearerTokenMiddleware, RequireBearerTokenOptions,
+Request, RequestIDSource, RequestIDSourceDefault, RequestIDSourceServer, RequireAnyScope, RequireAuth, RequireBearerTokenGuard, RequireBearerTokenMiddleware, RequireBearerTokenOptions,
 RequiredForbiddenOperationFields, RequiredOperations, RequireEventBridgeWorkloadEnvelope, RequireScope, ResourceContent, ResourceDef, ResourceHandler,
 ResourceMetadataURLFromMcpEndpoint, ResourceName, ResourcePathFromProtectedResourcePath, ResourceRegistry, ResourceSubscription, ResourceSubscriptionHook, ResourceTemplateDef,
-Response, ResultType, ResultTypeComplete, ResultTypeInputRequired, RFC9728ResourceMetadataURL, RootDiscoveryConfig, Route, RouteInventory, RouteOption,
+Response, ResultType, ResultTypeComplete, ResultTypeInputRequired, RFC9728ResourceMetadataURL, RootDiscoveryConfig, Route, RouteGuard, RouteInventory, RouteOption,
 RouteRefreshBrokerFamilyStore, RouteRefreshBrokerHandleTTLReporter, RouteRefreshBrokerRecord, RouteRefreshBrokerSeeder, RouteRefreshBrokerStore, RouteRefreshBrokerStoreOptions,
 RouteRefreshEvent, RouteRefreshEventClass, RouteRefreshEventGraceServed, RouteRefreshEventHook, RouteRefreshEventIssued, RouteRefreshEventLockAcquired,
 RouteRefreshEventRefreshed, RouteRefreshEventReuse, RouteRefreshEventStateFailure, RouteRefreshEventUpstreamReauthRequired, RouteRefreshEventValidationRejected,
@@ -777,7 +777,7 @@ WithEMFClock, WithEMFNamespace, WithEMFService, WithEMFWriter, WithEnvironmentEr
 WithIdentifier, WithIDGenerator, WithInitialSessionListenerBudget, WithInitialSessionListenerEnabled, WithLegacyHTTPErrorShape, WithLifecycleContract,
 WithLifecycleHandler, WithLimits, WithLogger,
 WithLoggingLevelHook, WithObservability, WithOriginValidator, WithPolicyHook, WithProfileClock, WithProfileEnvironment, WithProfileSanitizer, WithProfileWriter,
-WithRegistryClientTTL, WithRequestIDSource, WithResourceSubscriptionHooks, WithRevocationEndpoint, WithSanitizer, WithServerIDGenerator, WithServerInfoMetadata,
+WithRegistryClientTTL, WithRequestIDSource, WithResourceSubscriptionHooks, WithRevocationEndpoint, WithRouteGuard, WithSanitizer, WithServerIDGenerator, WithServerInfoMetadata,
 WithSessionReconstructionClock, WithSessionReconstructionStaleAfter, WithSessionStore, WithStreamEventByteLimit, WithStreamEventsPerSessionLimit, WithStreamIDGenerator,
 WithStreamSessionByteLimit, WithStreamStore, WithTaskRuntime, WithTenantClaim, WithTier, WithToolContextHook, WithVerboseHandlerErrors, WithWebSocketClientFactory,
 WithWebSocketSupport, WithZapLogger, WrapError, XMLSanitizationPattern

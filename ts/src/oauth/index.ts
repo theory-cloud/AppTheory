@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 
-import type { Context, Handler, Middleware } from "../context.js";
+import type { Context, Handler, Middleware, RouteGuard } from "../context.js";
 import { metadataJSON } from "../response.js";
 import type { Headers, Response } from "../types.js";
 
@@ -434,6 +434,34 @@ export function bearerTokenFromHeaders(headers: Headers | undefined): string {
 }
 
 /**
+ * Validates the request credential and binds any verified claims to the
+ * context. A non-null response is the denial to return.
+ */
+async function authorizeBearerToken(
+  ctx: Context,
+  options: RequireBearerTokenOptions,
+  resourceMetadataURLTemplate: ResourceMetadataURLTemplate | null,
+): Promise<Response | null> {
+  const token = bearerTokenFromHeaders(ctx.request.headers);
+  if (options.claimsValidator) {
+    const claims = await options.claimsValidator(ctx, token);
+    ctx.set(CONTEXT_KEY_BEARER_TOKEN, token);
+    ctx.set(CONTEXT_KEY_BEARER_CLAIMS, cloneClaims(claims));
+    return null;
+  }
+  if (!options.validator) {
+    return await unauthorizedResponse(
+      ctx,
+      options,
+      resourceMetadataURLTemplate,
+    );
+  }
+  await options.validator(ctx, token);
+  ctx.set(CONTEXT_KEY_BEARER_TOKEN, token);
+  return null;
+}
+
+/**
  * Enforces `Authorization: Bearer <token>` and, when missing or invalid,
  * returns 401 with the MCP 2025-06-18 compatible WWW-Authenticate challenge
  * that points to the protected resource metadata.
@@ -449,25 +477,45 @@ export function requireBearerTokenMiddleware(
     options.resourceMetadataURLTemplate,
   );
   return async (ctx, next) => {
-    let token: string;
     try {
-      token = bearerTokenFromHeaders(ctx.request.headers);
-      if (options.claimsValidator) {
-        const claims = await options.claimsValidator(ctx, token);
-        ctx.set(CONTEXT_KEY_BEARER_TOKEN, token);
-        ctx.set(CONTEXT_KEY_BEARER_CLAIMS, cloneClaims(claims));
-        return await next(ctx);
-      }
-      if (!options.validator) {
-        return await unauthorizedResponse(
-          ctx,
-          options,
-          resourceMetadataURLTemplate,
-        );
-      }
-      await options.validator(ctx, token);
-      ctx.set(CONTEXT_KEY_BEARER_TOKEN, token);
+      const denied = await authorizeBearerToken(
+        ctx,
+        options,
+        resourceMetadataURLTemplate,
+      );
+      if (denied) return denied;
       return await next(ctx);
+    } catch (err) {
+      return await bearerErrorResponse(
+        ctx,
+        options,
+        err,
+        resourceMetadataURLTemplate,
+      );
+    }
+  };
+}
+
+/**
+ * Returns the same credential decision as {@link requireBearerTokenMiddleware}
+ * in route-guard form. The runtime runs a route guard after a route's
+ * authorization gate and before application middleware, so a short-circuiting
+ * middleware cannot bypass bearer validation. Verified claims are bound to the
+ * context before the guard admits the request.
+ */
+export function requireBearerTokenGuard(
+  options: RequireBearerTokenOptions = {},
+): RouteGuard {
+  const resourceMetadataURLTemplate = compileResourceMetadataURLTemplate(
+    options.resourceMetadataURLTemplate,
+  );
+  return async (ctx) => {
+    try {
+      return await authorizeBearerToken(
+        ctx,
+        options,
+        resourceMetadataURLTemplate,
+      );
     } catch (err) {
       return await bearerErrorResponse(
         ctx,

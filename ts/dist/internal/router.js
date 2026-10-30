@@ -29,6 +29,7 @@ export class Router {
             segments: parsed.segments,
             handler,
             authRequired: Boolean(options.authRequired),
+            guard: options.guard ?? null,
             secure: null,
             staticCount: parsed.staticCount,
             paramCount: parsed.paramCount,
@@ -38,7 +39,9 @@ export class Router {
     }
     /** Registers one posture-bearing secure route. */
     addSecure(method, pattern, handler, metadata) {
-        this.addStrict(method, pattern, handler, {});
+        this.addStrict(method, pattern, handler, {
+            ...(metadata.guard ? { guard: metadata.guard } : {}),
+        });
         const route = this._routes[this._routes.length - 1];
         if (!route)
             throw routeRegistrationError("secure route invariant");
@@ -47,6 +50,7 @@ export class Router {
             posture: metadata.posture,
             scopes: [...metadata.scopes],
             posturePresent: Boolean(metadata.posturePresent),
+            guard: metadata.guard,
         };
     }
     /** Registers a route using the fail-closed route-registration path. */

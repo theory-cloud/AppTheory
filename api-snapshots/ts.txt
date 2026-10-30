@@ -567,6 +567,7 @@ RequireBearerTokenOptions	interface
 ResolvedCapabilities	interface
 Response	interface
 RootDiscoveryConfig	interface
+RouteGuard	type
 RouteInventory	interface
 RouteOptions	interface
 RouteRefreshBrokerFamilyStore	interface
@@ -850,6 +851,7 @@ registerMcpFacade	function
 registerMcpFacadeSecure	function
 registerMicroVMControllerRoutes	function
 reportKinesisPutRecordsFailures	function
+requireBearerTokenGuard	function
 requireBearerTokenMiddleware	function
 requireEventBridgeWorkloadEnvelope	function
 required	const

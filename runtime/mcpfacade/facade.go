@@ -298,6 +298,10 @@ type routeRegistration struct {
 	pattern string
 	handler apptheory.Handler
 	options []apptheory.RouteOption
+	// guard is the route-level pre-middleware authorization guard. Every facade
+	// route that requires runtime credential validation carries one so
+	// application middleware cannot short-circuit it.
+	guard apptheory.RouteGuard
 	// posture is the declared SecureApp authorization posture for this route,
 	// used only by RegisterMCPFacadeSecure. The plain-App path ignores it and
 	// keeps expressing its route security through options.
@@ -620,6 +624,10 @@ func buildRegistrations(config normalizedConfig, inventory *RouteInventory) ([]r
 	registrations := make([]routeRegistration, 0, len(inventory.Routes)*9+2)
 	transportOptions := transportRouteOptions(config)
 	transportPosture := transportPostureDeclaration(config)
+	var transportGuard apptheory.RouteGuard
+	if config.requireBearerToken != nil {
+		transportGuard = oauth.RequireBearerTokenGuard(*config.requireBearerToken)
+	}
 	// Every other facade route is public by contract: clients must reach the
 	// RFC 9728 metadata before they hold a token, /authorize and /token are the
 	// unauthenticated client-facing protocol surface (PKCE and the single-use
@@ -628,13 +636,10 @@ func buildRegistrations(config normalizedConfig, inventory *RouteInventory) ([]r
 	surfacePosture := apptheory.Public()
 	for _, route := range inventory.Routes {
 		mcpHandler := checkedMCPHandler(route.Kind, config.mcpHandler)
-		if config.requireBearerToken != nil {
-			mcpHandler = oauth.RequireBearerTokenMiddleware(*config.requireBearerToken)(mcpHandler)
-		}
 		registrations = append(registrations,
-			routeRegistration{method: "POST", pattern: route.MCPPattern, handler: mcpHandler, options: transportOptions, posture: transportPosture},
-			routeRegistration{method: "GET", pattern: route.MCPPattern, handler: mcpHandler, options: transportOptions, posture: transportPosture},
-			routeRegistration{method: "DELETE", pattern: route.MCPPattern, handler: mcpHandler, options: transportOptions, posture: transportPosture},
+			routeRegistration{method: "POST", pattern: route.MCPPattern, handler: mcpHandler, options: transportOptions, guard: transportGuard, posture: transportPosture},
+			routeRegistration{method: "GET", pattern: route.MCPPattern, handler: mcpHandler, options: transportOptions, guard: transportGuard, posture: transportPosture},
+			routeRegistration{method: "DELETE", pattern: route.MCPPattern, handler: mcpHandler, options: transportOptions, guard: transportGuard, posture: transportPosture},
 		)
 
 		// The OAuth surface follows the posture-derived inventory, not mere
@@ -738,7 +743,7 @@ func validateRouteRegistrations(registrations []routeRegistration) error {
 func preflightSecureRegistrations(secure *apptheory.SecureApp, registrations []routeRegistration) error {
 	probe := apptheory.NewSecure(apptheory.SecureOptions{Tier: apptheory.TierP0})
 	if err := validateRegistrationEntries(registrations, func(registration routeRegistration) error {
-		return handleSecureRoute(probe, registration.method, registration.pattern, registration.handler, registration.posture)
+		return handleSecureRoute(probe, registration)
 	}); err != nil {
 		return err
 	}
@@ -809,7 +814,8 @@ func validateRegistrationEntries(registrations []routeRegistration, install func
 
 func registerRoutes(app *apptheory.App, registrations []routeRegistration) error {
 	for _, registration := range registrations {
-		if err := handleRoute(app, registration.method, registration.pattern, registration.handler, registration.options...); err != nil {
+		options := routeRegistrationOptions(registration)
+		if err := handleRoute(app, registration.method, registration.pattern, registration.handler, options...); err != nil {
 			return fmt.Errorf("mcpfacade: register %s %s: %w", registration.method, registration.pattern, err)
 		}
 	}
@@ -818,11 +824,19 @@ func registerRoutes(app *apptheory.App, registrations []routeRegistration) error
 
 func registerSecureRoutes(secure *apptheory.SecureApp, registrations []routeRegistration) error {
 	for _, registration := range registrations {
-		if err := handleSecureRoute(secure, registration.method, registration.pattern, registration.handler, registration.posture); err != nil {
+		if err := handleSecureRoute(secure, registration); err != nil {
 			return fmt.Errorf("mcpfacade: register %s %s: %w", registration.method, registration.pattern, err)
 		}
 	}
 	return nil
+}
+
+func routeRegistrationOptions(registration routeRegistration) []apptheory.RouteOption {
+	options := append([]apptheory.RouteOption(nil), registration.options...)
+	if registration.guard != nil {
+		options = append(options, apptheory.WithRouteGuard(registration.guard))
+	}
+	return options
 }
 
 func handleRoute(app *apptheory.App, method, pattern string, handler apptheory.Handler, options ...apptheory.RouteOption) (err error) {
@@ -845,7 +859,7 @@ func handleRoute(app *apptheory.App, method, pattern string, handler apptheory.H
 // invalid route exactly as App.Handle does, so the SecureApp registrar recovers
 // the same way handleRoute does and preserves the (*RouteInventory, error)
 // contract of the two Register* entry points.
-func handleSecureRoute(secure *apptheory.SecureApp, method, pattern string, handler apptheory.Handler, posture apptheory.AuthPosture) (err error) {
+func handleSecureRoute(secure *apptheory.SecureApp, registration routeRegistration) (err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			switch value := recovered.(type) {
@@ -856,7 +870,7 @@ func handleSecureRoute(secure *apptheory.SecureApp, method, pattern string, hand
 			}
 		}
 	}()
-	secure.Handle(method, pattern, handler, posture)
+	secure.Handle(registration.method, registration.pattern, registration.handler, registration.posture, routeRegistrationOptions(registration)...)
 	return nil
 }
 
@@ -864,9 +878,10 @@ func handleSecureRoute(secure *apptheory.SecureApp, method, pattern string, hand
 // transport routes (POST, GET, and DELETE on every MCP pattern).
 //
 // IAM and JWT carry the existing RequireAuth route option; the gateway rejects
-// the request before the runtime under those postures. RuntimeBearer and
-// NonePublic register no route option: RuntimeBearer enforces the RFC 9728
-// bearer middleware (which fails closed), and NonePublic is deliberately public.
+// the request before the runtime under those postures. NonePublic registers no
+// route option because it is deliberately public. RuntimeBearer attaches its
+// RFC 9728 bearer guard as route metadata (see buildRegistrations), not as a
+// route option, so the runtime runs it before application middleware.
 func transportRouteOptions(config normalizedConfig) []apptheory.RouteOption {
 	if config.transportPosture == TransportPostureIAM || config.transportPosture == TransportPostureJWT {
 		return []apptheory.RouteOption{apptheory.RequireAuth()}
@@ -884,10 +899,10 @@ func transportRouteOptions(config normalizedConfig) []apptheory.RouteOption {
 // counterpart of that requirement is Authenticated(), so the application's own
 // SecurePrincipalResolver remains the authority for the transport route.
 //
-// RuntimeBearer registers no route option on the plain surface because the RFC
-// 9728 bearer middleware enforces the request and fails closed, so the declared
-// posture here is Public and the facade's bearer validator is the authority.
-// NonePublic is deliberately public by contract.
+// RuntimeBearer declares Public() because the RFC 9728 bearer guard enforces
+// the request before application middleware and fails closed; the declared
+// posture itself performs no principal resolution. NonePublic is deliberately
+// public by contract.
 func transportPostureDeclaration(config normalizedConfig) apptheory.AuthPosture {
 	if config.transportPosture == TransportPostureIAM || config.transportPosture == TransportPostureJWT {
 		return apptheory.Authenticated()

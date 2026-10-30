@@ -1,3 +1,4 @@
+import type { RouteGuard } from "../context.js";
 import { AppTheoryError } from "../errors.js";
 
 import { normalizeMethod, normalizePath, splitPath } from "./http.js";
@@ -5,6 +6,7 @@ import { normalizeMethod, normalizePath, splitPath } from "./http.js";
 /** Per-route registration options consumed by the internal router. */
 export interface RouteOptions {
   authRequired?: boolean;
+  guard?: RouteGuard;
 }
 
 /** Private metadata carried only by SecureApp registrations. */
@@ -18,6 +20,7 @@ export interface SecureRouteMetadata {
     | "internal_only";
   scopes: string[];
   posturePresent: boolean;
+  guard: RouteGuard | null;
 }
 
 interface ParsedRouteSegment {
@@ -45,6 +48,7 @@ interface Route<THandler> {
   segments: ParsedRouteSegment[];
   handler: THandler;
   authRequired: boolean;
+  guard: RouteGuard | null;
   secure: SecureRouteMetadata | null;
   staticCount: number;
   paramCount: number;
@@ -57,6 +61,7 @@ export interface Match<THandler> {
   handler: THandler;
   params: Record<string, string>;
   authRequired: boolean;
+  guard: RouteGuard | null;
 }
 
 /** Fail-closed HTTP route matcher used by the AppTheory runtime. */
@@ -101,6 +106,7 @@ export class Router<THandler> {
       segments: parsed.segments,
       handler,
       authRequired: Boolean(options.authRequired),
+      guard: options.guard ?? null,
       secure: null,
       staticCount: parsed.staticCount,
       paramCount: parsed.paramCount,
@@ -116,7 +122,9 @@ export class Router<THandler> {
     handler: THandler,
     metadata: SecureRouteMetadata,
   ): void {
-    this.addStrict(method, pattern, handler, {});
+    this.addStrict(method, pattern, handler, {
+      ...(metadata.guard ? { guard: metadata.guard } : {}),
+    });
     const route = this._routes[this._routes.length - 1];
     if (!route) throw routeRegistrationError("secure route invariant");
     route.secure = {
@@ -124,6 +132,7 @@ export class Router<THandler> {
       posture: metadata.posture,
       scopes: [...metadata.scopes],
       posturePresent: Boolean(metadata.posturePresent),
+      guard: metadata.guard,
     };
   }
 

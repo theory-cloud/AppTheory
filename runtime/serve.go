@@ -248,6 +248,10 @@ func (a *App) serveP0(ctx context.Context, req Request, opts serveOptions) (resp
 		}
 	}
 
+	if denied, ok := a.serveRouteGuardsP0(match.Route.Guards, requestCtx, normalized, opts); ok {
+		return denied
+	}
+
 	handler := a.applyMiddlewares(match.Route.Handler)
 	out, handlerErr := handler(requestCtx)
 	if handlerErr != nil {
@@ -397,6 +401,18 @@ func (a *App) servePortableMatch(tier Tier, normalized Request, match *routeMatc
 	// request was actually authorized under, not the caller-supplied header value.
 	state.tenantID = requestCtx.TenantID
 
+	if out, guardErr := applyRouteGuards(match.Route.Guards, requestCtx); guardErr != nil {
+		state.errorCode = errorCodeForError(guardErr)
+		return a.respondToServeError(opts, guardErr, normalized, state.requestID, state.traceID)
+	} else if out != nil {
+		resp, normErr := normalizeResponse(out)
+		if normErr != nil {
+			state.errorCode = errorCodeForError(normErr)
+			return a.respondToServeError(opts, normErr, normalized, state.requestID, state.traceID)
+		}
+		return resp
+	}
+
 	requestCtx.MiddlewareTrace = append(requestCtx.MiddlewareTrace, "handler")
 
 	handler := a.applyMiddlewares(match.Route.Handler)
@@ -427,6 +443,39 @@ func (a *App) servePortableMatch(tier Tier, normalized Request, match *routeMatc
 	resp = limitStreamedResponse(requestCtx.Context(), resp, a.limits.MaxResponseBytes)
 
 	return resp
+}
+
+// applyRouteGuards runs a route's pre-middleware guards in registration order.
+// The first guard that returns a response or an error ends the chain.
+func applyRouteGuards(guards []RouteGuard, requestCtx *Context) (*Response, error) {
+	for _, guard := range guards {
+		if guard == nil {
+			continue
+		}
+		response, err := guard(requestCtx)
+		if err != nil || response != nil {
+			return response, err
+		}
+	}
+	return nil, nil
+}
+
+// serveRouteGuardsP0 runs the P0 route guards and returns their response, if
+// any. Keeping the guard response normalization out of serveP0 keeps that
+// function's branch count within the repo's complexity gate.
+func (a *App) serveRouteGuardsP0(guards []RouteGuard, requestCtx *Context, request Request, opts serveOptions) (Response, bool) {
+	out, err := applyRouteGuards(guards, requestCtx)
+	if err != nil {
+		return a.respondToServeError(opts, err, request, opts.fallbackRequestID), true
+	}
+	if out == nil {
+		return Response{}, false
+	}
+	resp, normErr := normalizeResponse(out)
+	if normErr != nil {
+		return a.respondToServeError(opts, normErr, request, opts.fallbackRequestID), true
+	}
+	return resp, true
 }
 
 func (a *App) authorizePortableRoute(matched route, requestCtx *Context, requestID string, errorResponder requestErrorResponder) (Response, string, bool) {

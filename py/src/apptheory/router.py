@@ -19,6 +19,7 @@ class Match:
     secure_posture: str = ""
     secure_scopes: list[str] | None = None
     posture_present: bool = False
+    guard: Any | None = None
 
 
 @dataclass(slots=True)
@@ -28,6 +29,7 @@ class _Route:
     segments: list[tuple[str, str]]
     handler: Any
     auth_required: bool
+    guard: Any | None
     secure_surface: str
     secure_posture: str
     secure_scopes: list[str]
@@ -44,11 +46,27 @@ class Router:
     def __init__(self) -> None:
         self._routes: list[_Route] = []
 
-    def add(self, method: str, pattern: str, handler: Any, *, auth_required: bool = False) -> None:
+    def add(
+        self,
+        method: str,
+        pattern: str,
+        handler: Any,
+        *,
+        auth_required: bool = False,
+        guard: Any | None = None,
+    ) -> None:
         """Register a route using the fail-closed route-registration path."""
-        self.add_strict(method, pattern, handler, auth_required=auth_required)
+        self.add_strict(method, pattern, handler, auth_required=auth_required, guard=guard)
 
-    def add_strict(self, method: str, pattern: str, handler: Any, *, auth_required: bool = False) -> None:
+    def add_strict(
+        self,
+        method: str,
+        pattern: str,
+        handler: Any,
+        *,
+        auth_required: bool = False,
+        guard: Any | None = None,
+    ) -> None:
         """Register a route through the deprecated strict compatibility path."""
         if handler is None:
             raise _route_registration_error("route handler is nil")
@@ -66,6 +84,7 @@ class Router:
                 segments=segments,
                 handler=handler,
                 auth_required=bool(auth_required),
+                guard=guard,
                 secure_surface="",
                 secure_posture="",
                 secure_scopes=[],
@@ -86,9 +105,10 @@ class Router:
         surface: str,
         posture: str,
         scopes: list[str],
+        guard: Any | None = None,
     ) -> None:
         """Register one posture-bearing secure route."""
-        self.add_strict(method, pattern, handler)
+        self.add_strict(method, pattern, handler, guard=guard)
         route = self._routes[-1]
         route.secure_surface = str(surface)
         route.secure_posture = str(posture)
@@ -125,6 +145,7 @@ class Router:
             secure_posture=best.secure_posture,
             secure_scopes=list(best.secure_scopes),
             posture_present=best.posture_present,
+            guard=best.guard,
         ), allowed
 
     @staticmethod
