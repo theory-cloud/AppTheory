@@ -222,15 +222,20 @@ func (d *DynamoStreamStore) Append(ctx context.Context, sessionID, streamID stri
 		retries = dynamoStreamAppendRetries
 	}
 	for attempt := 0; attempt < retries; attempt++ {
-		eventID, attemptErr, retry := d.appendOnce(ctx, sessionID, streamID, meta, payload)
+		result, attemptErr := d.appendOnce(ctx, sessionID, streamID, meta, payload)
 		if attemptErr == nil {
-			return eventID, nil
+			return result.eventID, nil
 		}
-		if !retry {
+		if !result.retry {
 			return "", attemptErr
 		}
 	}
 	return "", ErrStreamAppendConflict
+}
+
+type dynamoAppendResult struct {
+	eventID string
+	retry   bool
 }
 
 // appendOnce reads the aggregate, proves its schema and bounds, and submits one
@@ -243,33 +248,24 @@ func (d *DynamoStreamStore) appendOnce(
 	streamID string,
 	meta *dynamoStreamRecord,
 	payload []byte,
-) (eventID string, err error, retry bool) {
+) (dynamoAppendResult, error) {
 	state, err := d.getSessionState(ctx, sessionID)
 	if err != nil {
 		if tableerrors.IsNotFound(err) {
-			return "", ErrStreamNotFound, false
+			return dynamoAppendResult{}, ErrStreamNotFound
 		}
-		return "", err, false
+		return dynamoAppendResult{}, err
 	}
-	if state.Deleted {
-		return "", ErrStreamNotFound, false
-	}
-	if state.AggregateVersion != dynamoStreamAggregateSchemaVersion {
-		return "", ErrStreamAggregateBackfillRequired, false
-	}
-	if d.maxAggregateEvents > 0 && state.EventCount+1 > int64(d.maxAggregateEvents) {
-		return "", ErrStreamAggregateCapacityExceeded, false
-	}
-	if d.maxAggregateBytes > 0 && state.AggregateBytes+int64(len(payload)) > d.maxAggregateBytes {
-		return "", ErrStreamAggregateCapacityExceeded, false
+	if budgetErr := d.appendBudgetError(state, len(payload)); budgetErr != nil {
+		return dynamoAppendResult{}, budgetErr
 	}
 
 	now := d.now().UTC()
 	expiresAt := d.expiresAtUnix(now)
-	eventID = dynamoStreamEventIDForSeq(state.NextSeq + 1)
+	eventID := dynamoStreamEventIDForSeq(state.NextSeq + 1)
 	record, spilled, err := d.newStreamEventRecord(ctx, sessionID, streamID, eventID, payload, now, expiresAt)
 	if err != nil {
-		return "", err, false
+		return dynamoAppendResult{}, err
 	}
 
 	nextState := *state
@@ -281,27 +277,43 @@ func (d *DynamoStreamStore) appendOnce(
 
 	txErr := d.transactAppend(ctx, state, &nextState, meta, record)
 	if txErr == nil {
-		return eventID, nil, false
+		return dynamoAppendResult{eventID: eventID}, nil
 	}
 
 	failure := d.cleanupSpilledStreamEvent(ctx, record, spilled, txErr)
 	if !tableerrors.IsConditionFailed(txErr) {
-		return "", failure, false
+		return dynamoAppendResult{}, failure
 	}
 
 	latest, latestErr := d.getSessionState(ctx, sessionID)
 	switch {
 	case latestErr != nil && tableerrors.IsNotFound(latestErr):
-		return "", ErrStreamNotFound, false
+		return dynamoAppendResult{}, ErrStreamNotFound
 	case latestErr != nil:
-		return "", errors.Join(failure, latestErr), false
+		return dynamoAppendResult{}, errors.Join(failure, latestErr)
 	case latest.Deleted:
-		return "", ErrStreamNotFound, false
+		return dynamoAppendResult{}, ErrStreamNotFound
 	case latest.AggregateVersion != dynamoStreamAggregateSchemaVersion:
-		return "", errors.Join(ErrStreamAggregateBackfillRequired, failure), false
+		return dynamoAppendResult{}, errors.Join(ErrStreamAggregateBackfillRequired, failure)
 	default:
-		return "", failure, true
+		return dynamoAppendResult{retry: true}, failure
 	}
+}
+
+func (d *DynamoStreamStore) appendBudgetError(state *dynamoStreamRecord, payloadBytes int) error {
+	if state.Deleted {
+		return ErrStreamNotFound
+	}
+	if state.AggregateVersion != dynamoStreamAggregateSchemaVersion {
+		return ErrStreamAggregateBackfillRequired
+	}
+	if d.maxAggregateEvents > 0 && state.EventCount+1 > int64(d.maxAggregateEvents) {
+		return ErrStreamAggregateCapacityExceeded
+	}
+	if d.maxAggregateBytes > 0 && state.AggregateBytes+int64(payloadBytes) > d.maxAggregateBytes {
+		return ErrStreamAggregateCapacityExceeded
+	}
+	return nil
 }
 
 func (d *DynamoStreamStore) transactAppend(

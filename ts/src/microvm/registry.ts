@@ -260,7 +260,11 @@ export class MemoryMicroVMSessionRegistry implements MicroVMSessionRegistry {
       if (!isListableRegistryRecord(record, input.auth_subject, now)) {
         continue;
       }
-      out.push(microVMSessionFromRegistryRecord(cloneMicroVMSessionRegistryRecord(record)));
+      out.push(
+        microVMSessionFromRegistryRecord(
+          cloneMicroVMSessionRegistryRecord(record),
+        ),
+      );
     }
     for (const record of this.records.values()) {
       if (

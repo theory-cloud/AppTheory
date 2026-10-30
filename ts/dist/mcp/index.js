@@ -422,7 +422,8 @@ export class MemoryMcpSessionStore {
                 expired.push(id);
             }
         }
-        if (!this.sessions.has(normalized.id) && this.sessions.size >= this.maxSessions) {
+        if (!this.sessions.has(normalized.id) &&
+            this.sessions.size >= this.maxSessions) {
             throw new McpSessionCapacityError();
         }
         this.sessions.set(normalized.id, normalized);
@@ -935,10 +936,12 @@ export class DynamoMcpStreamStore {
     async ensureSessionState(sessionId, expiresAt) {
         const existing = await this.readSessionState(sessionId);
         if (existing) {
-            if (Boolean(existing["deleted"])) {
+            if (existing["deleted"]) {
                 throw new McpStreamNotFoundError();
             }
-            await this.db.update(this.model.name, { ...existing, expiresAt }, ["expiresAt"]);
+            await this.db.update(this.model.name, { ...existing, expiresAt }, [
+                "expiresAt",
+            ]);
             return;
         }
         try {
@@ -962,7 +965,7 @@ export class DynamoMcpStreamStore {
             if (!raced) {
                 throw err;
             }
-            if (Boolean(raced["deleted"])) {
+            if (raced["deleted"]) {
                 throw new McpStreamNotFoundError();
             }
         }
@@ -974,7 +977,8 @@ export class DynamoMcpStreamStore {
             throw new McpStreamEventTooLargeError();
         }
         const stream = await this.streamRecord(sid, streamId);
-        if (typeof this.db.transactWrite !== "function") {
+        if (typeof this.db.transactWrite !==
+            "function") {
             throw new McpStreamTransactionRequiredError();
         }
         for (let attempt = 0; attempt < this.appendRetries; attempt += 1) {
@@ -999,10 +1003,11 @@ export class DynamoMcpStreamStore {
             }
             throw err;
         }
-        if (Boolean(state["deleted"])) {
+        if (state["deleted"]) {
             throw new McpStreamNotFoundError();
         }
-        if (Number(state["aggregateVersion"] ?? 0) !== DEFAULT_STREAM_AGGREGATE_VERSION) {
+        if (Number(state["aggregateVersion"] ?? 0) !==
+            DEFAULT_STREAM_AGGREGATE_VERSION) {
             throw new McpStreamAggregateBackfillError();
         }
         const eventCount = Number(state["eventCount"] ?? 0);
@@ -1100,7 +1105,7 @@ export class DynamoMcpStreamStore {
             if (!latest) {
                 throw new McpStreamNotFoundError();
             }
-            if (Boolean(latest["deleted"])) {
+            if (latest["deleted"]) {
                 throw new McpStreamNotFoundError();
             }
             if (Number(latest["aggregateVersion"] ?? 0) !==
@@ -1206,7 +1211,7 @@ export class DynamoMcpStreamStore {
     async streamRecord(sessionId, streamId) {
         try {
             const state = await this.readSessionState(sessionId);
-            if (state && Boolean(state["deleted"])) {
+            if (state && state["deleted"]) {
                 throw new McpStreamNotFoundError();
             }
             const record = await this.db.get(this.model.name, {

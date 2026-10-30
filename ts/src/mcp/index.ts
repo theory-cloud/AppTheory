@@ -921,7 +921,10 @@ export class MemoryMcpSessionStore implements McpSessionStore {
         expired.push(id);
       }
     }
-    if (!this.sessions.has(normalized.id) && this.sessions.size >= this.maxSessions) {
+    if (
+      !this.sessions.has(normalized.id) &&
+      this.sessions.size >= this.maxSessions
+    ) {
       throw new McpSessionCapacityError();
     }
     this.sessions.set(normalized.id, normalized);
@@ -1602,14 +1605,12 @@ export class DynamoMcpStreamStore implements McpStreamStore {
   ): Promise<void> {
     const existing = await this.readSessionState(sessionId);
     if (existing) {
-      if (Boolean(existing["deleted"])) {
+      if (existing["deleted"]) {
         throw new McpStreamNotFoundError();
       }
-      await this.db.update(
-        this.model.name,
-        { ...existing, expiresAt },
-        ["expiresAt"],
-      );
+      await this.db.update(this.model.name, { ...existing, expiresAt }, [
+        "expiresAt",
+      ]);
       return;
     }
     try {
@@ -1636,7 +1637,7 @@ export class DynamoMcpStreamStore implements McpStreamStore {
       if (!raced) {
         throw err;
       }
-      if (Boolean(raced["deleted"])) {
+      if (raced["deleted"]) {
         throw new McpStreamNotFoundError();
       }
     }
@@ -1653,7 +1654,10 @@ export class DynamoMcpStreamStore implements McpStreamStore {
       throw new McpStreamEventTooLargeError();
     }
     const stream = await this.streamRecord(sid, streamId);
-    if (typeof (this.db as { transactWrite?: unknown }).transactWrite !== "function") {
+    if (
+      typeof (this.db as { transactWrite?: unknown }).transactWrite !==
+      "function"
+    ) {
       throw new McpStreamTransactionRequiredError();
     }
     for (let attempt = 0; attempt < this.appendRetries; attempt += 1) {
@@ -1682,10 +1686,13 @@ export class DynamoMcpStreamStore implements McpStreamStore {
       }
       throw err;
     }
-    if (Boolean(state["deleted"])) {
+    if (state["deleted"]) {
       throw new McpStreamNotFoundError();
     }
-    if (Number(state["aggregateVersion"] ?? 0) !== DEFAULT_STREAM_AGGREGATE_VERSION) {
+    if (
+      Number(state["aggregateVersion"] ?? 0) !==
+      DEFAULT_STREAM_AGGREGATE_VERSION
+    ) {
       throw new McpStreamAggregateBackfillError();
     }
     const eventCount = Number(state["eventCount"] ?? 0);
@@ -1774,7 +1781,10 @@ export class DynamoMcpStreamStore implements McpStreamStore {
         try {
           await this.spillStore.delete(spilledRef);
         } catch (cleanupErr) {
-          failure = new AggregateError([err, cleanupErr], "spill cleanup failed");
+          failure = new AggregateError(
+            [err, cleanupErr],
+            "spill cleanup failed",
+          );
         }
       }
       if (!isConditionalCheckFailedError(err)) {
@@ -1784,7 +1794,7 @@ export class DynamoMcpStreamStore implements McpStreamStore {
       if (!latest) {
         throw new McpStreamNotFoundError();
       }
-      if (Boolean(latest["deleted"])) {
+      if (latest["deleted"]) {
         throw new McpStreamNotFoundError();
       }
       if (
@@ -1917,7 +1927,7 @@ export class DynamoMcpStreamStore implements McpStreamStore {
   ): Promise<Record<string, unknown>> {
     try {
       const state = await this.readSessionState(sessionId);
-      if (state && Boolean(state["deleted"])) {
+      if (state && state["deleted"]) {
         throw new McpStreamNotFoundError();
       }
       const record = await this.db.get(this.model.name, {
@@ -1939,7 +1949,9 @@ export class DynamoMcpStreamStore implements McpStreamStore {
     }
   }
 
-  private async streamItemData(item: Record<string, unknown>): Promise<Uint8Array> {
+  private async streamItemData(
+    item: Record<string, unknown>,
+  ): Promise<Uint8Array> {
     const dataRef = String(item["dataRef"] ?? "");
     if (String(item["dataStorage"] ?? "") === "s3" || dataRef) {
       if (!this.spillStore) {
@@ -1947,10 +1959,7 @@ export class DynamoMcpStreamStore implements McpStreamStore {
       }
       const payload = await this.spillStore.get(
         dataRef,
-        positiveInteger(
-          Number(item["dataBytes"] ?? 0),
-          this.maxEventBytes,
-        ),
+        positiveInteger(Number(item["dataBytes"] ?? 0), this.maxEventBytes),
       );
       const expectedBytes = Number(item["dataBytes"] ?? 0);
       if (expectedBytes > 0 && payload.length !== expectedBytes) {
@@ -2419,10 +2428,7 @@ export class McpServer {
     const negotiated = negotiateProtocolVersion(request.params);
     let session: McpSession;
     try {
-      session = await this.createSession(
-        negotiated,
-        principalFromContext(ctx),
-      );
+      session = await this.createSession(negotiated, principalFromContext(ctx));
     } catch (err) {
       if (err instanceof McpSessionCapacityError) {
         return this.marshalSingleResponse(

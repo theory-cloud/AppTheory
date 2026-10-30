@@ -320,7 +320,10 @@ func (d m3NonTransactDB) WithContext(context.Context) tablecore.DB {
 }
 
 func newM3DynamoStore(db tablecore.DB, now time.Time) *DynamoStreamStore {
-	store := NewDynamoStreamStore(db).(*DynamoStreamStore)
+	store, ok := NewDynamoStreamStore(db).(*DynamoStreamStore)
+	if !ok {
+		panic("NewDynamoStreamStore returned a non-DynamoStreamStore")
+	}
 	store.now = func() time.Time { return now }
 	return store
 }

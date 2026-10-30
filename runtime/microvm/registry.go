@@ -828,8 +828,28 @@ func (r *MemorySessionRegistry) List(_ context.Context, input SessionListInput) 
 	defer r.mu.Unlock()
 	now := r.registryNow()
 	canonicalPK := SessionRegistryPartitionKey(input.TenantID, input.Namespace)
-	out := make([]SessionRecord, 0)
 	seen := make(map[string]struct{})
+	out, err := r.appendCanonicalList(input, canonicalPK, now, seen)
+	if err != nil {
+		return nil, err
+	}
+	out, err = r.appendLegacyList(input, canonicalPK, now, seen, out)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].SessionID < out[j].SessionID
+	})
+	return out, nil
+}
+
+func (r *MemorySessionRegistry) appendCanonicalList(
+	input SessionListInput,
+	canonicalPK string,
+	now time.Time,
+	seen map[string]struct{},
+) ([]SessionRecord, error) {
+	out := make([]SessionRecord, 0)
 	for _, record := range r.records {
 		if record.TenantID != input.TenantID || record.Namespace != input.Namespace || record.PK != canonicalPK {
 			continue
@@ -843,6 +863,16 @@ func (r *MemorySessionRegistry) List(_ context.Context, input SessionListInput) 
 			out = append(out, session)
 		}
 	}
+	return out, nil
+}
+
+func (r *MemorySessionRegistry) appendLegacyList(
+	input SessionListInput,
+	canonicalPK string,
+	now time.Time,
+	seen map[string]struct{},
+	out []SessionRecord,
+) ([]SessionRecord, error) {
 	for _, record := range r.records {
 		if record.TenantID != input.TenantID || record.Namespace != input.Namespace || record.PK == canonicalPK {
 			continue
@@ -858,9 +888,6 @@ func (r *MemorySessionRegistry) List(_ context.Context, input SessionListInput) 
 			out = append(out, session)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].SessionID < out[j].SessionID
-	})
 	return out, nil
 }
 

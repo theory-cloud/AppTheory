@@ -663,11 +663,7 @@ export class MicroVMRealController implements MicroVMControllerRouteTarget {
         // controller re-applies the exact non-empty owner rule before any
         // binding, metadata, or refresh write exists.
         const storedOwner = String(record.auth_subject ?? "").trim();
-        if (
-          !callerSubject ||
-          !storedOwner ||
-          storedOwner !== callerSubject
-        ) {
+        if (!callerSubject || !storedOwner || storedOwner !== callerSubject) {
           continue;
         }
         validateMicroVMSessionRecord(record);
@@ -1108,7 +1104,8 @@ function isExpiredMicroVMSessionRecord(
   );
 }
 
-export function desiredStateForMicroVMRealCommand(  command: MicroVMCommandName | string,
+export function desiredStateForMicroVMRealCommand(
+  command: MicroVMCommandName | string,
   fallback: MicroVMLifecycleState | string,
 ): MicroVMLifecycleState | string {
   switch (normalizeMicroVMCommand(command)) {
