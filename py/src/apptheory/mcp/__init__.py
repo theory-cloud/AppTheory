@@ -2308,7 +2308,7 @@ class McpServer:
         )
         sweeper = getattr(self.session_store, "put_and_collect_expired", None)
         if callable(sweeper):
-            expired = sweeper(session)
+            expired = cast(list[str], sweeper(session))
             for expired_id in expired:
                 try:
                     self._cleanup_session_state(expired_id)
