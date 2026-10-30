@@ -2802,6 +2802,53 @@ test("M3 durable sessions serve two streaming tool calls in one session", async 
   assert.equal(state.eventCount, 4);
 });
 
+test("M3 spill prefixes trim edge slashes deterministically", async () => {
+  const longRun = "/".repeat(200_000);
+  const cases = [
+    ["plain/prefix", "plain/prefix"],
+    ["/plain/prefix/", "plain/prefix"],
+    ["//plain/prefix//", "plain/prefix"],
+    [`${longRun}tenant${longRun}`, "tenant"],
+    ["/", ""],
+    ["", ""],
+    ["tenant//nested", "tenant//nested"],
+  ];
+
+  for (const [configured, expected] of cases) {
+    const db = m3StreamDb();
+    const spill = {
+      objects: new Map(),
+      async put(key, data) {
+        this.objects.set(key, Buffer.from(data));
+      },
+      async get() {
+        throw new Error("unused");
+      },
+      async delete(key) {
+        this.objects.delete(key);
+      },
+    };
+    const store = new DynamoMcpStreamStore(db, {
+      model: defaultMcpStreamModel("m3-prefix-trim"),
+      idGenerator: sequenceIdGenerator(["stream-prefix"]),
+      inlineMaxBytes: 1,
+      spillStore: spill,
+      spillPrefix: configured,
+    });
+    const streamId = await store.create("sess-prefix");
+    await store.append("sess-prefix", streamId, Buffer.from("payload"));
+
+    const keys = [...spill.objects.keys()];
+    assert.equal(keys.length, 1);
+    const lead = expected ? `${expected}/` : "";
+    assert.ok(
+      keys[0].startsWith(`${lead}sessions/`),
+      `${JSON.stringify(configured)} -> ${keys[0]}`,
+    );
+    assert.ok(!keys[0].startsWith("/"));
+  }
+});
+
 test("M3 pinned TableTheory client accepts a second durable stream create", async () => {
   const { client } = createStatefulDynamoDBClient();
   await client.send(

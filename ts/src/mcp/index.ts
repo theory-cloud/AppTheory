@@ -1547,13 +1547,13 @@ export class DynamoMcpStreamStore implements McpStreamStore {
       options.spillStore === undefined
         ? defaultDynamoStreamSpillStore()
         : options.spillStore;
-    this.spillPrefix = String(
-      options.spillPrefix ??
-        process.env["MCP_STREAM_SPILL_PREFIX"] ??
-        DEFAULT_STREAM_SPILL_PREFIX,
-    )
-      .trim()
-      .replace(/^\/+|\/+$/g, "");
+    this.spillPrefix = trimEdgeSlashes(
+      String(
+        options.spillPrefix ??
+          process.env["MCP_STREAM_SPILL_PREFIX"] ??
+          DEFAULT_STREAM_SPILL_PREFIX,
+      ).trim(),
+    );
     this.appendRetries = positiveInteger(
       options.appendRetries,
       STREAM_APPEND_RETRIES,
@@ -2015,7 +2015,7 @@ export class DynamoMcpStreamStore implements McpStreamStore {
 
   private spillKey(sessionId: string, eventId: string): string {
     const name = `sessions/${sha256Hex(Buffer.from(sessionId, "utf8"))}/events/${eventId}.json`;
-    const prefix = this.spillPrefix.replace(/^\/+|\/+$/g, "");
+    const prefix = this.spillPrefix;
     return prefix ? `${prefix}/${name}` : name;
   }
 
@@ -3663,6 +3663,20 @@ function positiveInteger(value: number | undefined, fallback: number): number {
     return Math.floor(n);
   }
   return fallback;
+}
+
+// trimEdgeSlashes removes leading and trailing "/" characters without a
+// backtracking regular expression, so the cost stays linear in the input.
+function trimEdgeSlashes(value: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && value.charCodeAt(start) === 47) {
+    start += 1;
+  }
+  while (end > start && value.charCodeAt(end - 1) === 47) {
+    end -= 1;
+  }
+  return value.slice(start, end);
 }
 
 function protocolShapeForVersion(value: string): McpProtocolShape {

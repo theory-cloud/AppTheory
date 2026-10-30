@@ -893,11 +893,9 @@ export class DynamoMcpStreamStore {
             options.spillStore === undefined
                 ? defaultDynamoStreamSpillStore()
                 : options.spillStore;
-        this.spillPrefix = String(options.spillPrefix ??
+        this.spillPrefix = trimEdgeSlashes(String(options.spillPrefix ??
             process.env["MCP_STREAM_SPILL_PREFIX"] ??
-            DEFAULT_STREAM_SPILL_PREFIX)
-            .trim()
-            .replace(/^\/+|\/+$/g, "");
+            DEFAULT_STREAM_SPILL_PREFIX).trim());
         this.appendRetries = positiveInteger(options.appendRetries, STREAM_APPEND_RETRIES);
         this.db.register(this.model);
     }
@@ -1287,7 +1285,7 @@ export class DynamoMcpStreamStore {
     }
     spillKey(sessionId, eventId) {
         const name = `sessions/${sha256Hex(Buffer.from(sessionId, "utf8"))}/events/${eventId}.json`;
-        const prefix = this.spillPrefix.replace(/^\/+|\/+$/g, "");
+        const prefix = this.spillPrefix;
         return prefix ? `${prefix}/${name}` : name;
     }
     async eventRecords(sessionId) {
@@ -2483,6 +2481,19 @@ function positiveInteger(value, fallback) {
         return Math.floor(n);
     }
     return fallback;
+}
+// trimEdgeSlashes removes leading and trailing "/" characters without a
+// backtracking regular expression, so the cost stays linear in the input.
+function trimEdgeSlashes(value) {
+    let start = 0;
+    let end = value.length;
+    while (start < end && value.charCodeAt(start) === 47) {
+        start += 1;
+    }
+    while (end > start && value.charCodeAt(end - 1) === 47) {
+        end -= 1;
+    }
+    return value.slice(start, end);
 }
 function protocolShapeForVersion(value) {
     if (value === MCP_PROTOCOL_VERSION) {
