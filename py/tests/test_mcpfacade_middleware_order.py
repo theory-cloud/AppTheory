@@ -20,6 +20,7 @@ from apptheory import (
     PolicyDecision,
     RequireBearerTokenOptions,
     SecureApp,
+    bearer_token_claims_from_context,
     create_app,
     new_memory_bearer_token_validator,
     register_mcp_facade,
@@ -60,6 +61,15 @@ def _headers_for(mount: dict[str, object], credential: str) -> dict[str, list[st
     return {"authorization": [f"Bearer {token}"]}
 
 
+def _record_claims(ctx, recorder: dict[str, object]) -> None:
+    claims = bearer_token_claims_from_context(ctx)
+    if claims is None:
+        return
+    recorder["claimsSeen"] = True
+    recorder["claimsSubject"] = claims.subject
+    recorder["claimsScopes"] = list(claims.scopes)
+
+
 def _middleware(name: str, recorder: dict[str, object]):
     if name == "short_circuit_cache":
 
@@ -67,6 +77,7 @@ def _middleware(name: str, recorder: dict[str, object]):
             recorder["middlewareInvocations"] += 1
             recorder["cacheLookups"] += 1
             recorder["order"].append("middleware")
+            _record_claims(ctx, recorder)
             return _response(200, "cached-protected")
 
         return short_circuit
@@ -77,6 +88,7 @@ def _middleware(name: str, recorder: dict[str, object]):
             recorder["middlewareInvocations"] += 1
             recorder["middlewareWrites"] += 1
             recorder["order"].append("middleware")
+            _record_claims(ctx, recorder)
             return next_handler(ctx)
 
         return pass_through
@@ -166,6 +178,9 @@ class MiddlewareOrderConformanceTest(unittest.TestCase):
             "middlewareWrites": 0,
             "handlerInvocations": 0,
             "policyInvocations": 0,
+            "claimsSeen": False,
+            "claimsSubject": "",
+            "claimsScopes": [],
         }
         config = _config(self.mount, recorder)
         middleware = _middleware(str(case["middleware"]), recorder)
@@ -194,6 +209,12 @@ class MiddlewareOrderConformanceTest(unittest.TestCase):
         self.assertEqual(expected["middleware_writes"], recorder["middlewareWrites"])
         self.assertEqual(expected["handler_invocations"], recorder["handlerInvocations"])
         self.assertEqual(expected["policy_hook_invocations"], recorder["policyInvocations"])
+        if case["credential"] == "valid" and case["policy"] != "deny":
+            self.assertTrue(recorder["claimsSeen"])
+            self.assertEqual(self.mount["subject"], recorder["claimsSubject"])
+            self.assertEqual(self.mount["scopes"]["namespace"], recorder["claimsScopes"])
+        else:
+            self.assertFalse(recorder["claimsSeen"])
         if "body" in expected:
             self.assertEqual(expected["body"], actual.body.decode("utf-8"))
 

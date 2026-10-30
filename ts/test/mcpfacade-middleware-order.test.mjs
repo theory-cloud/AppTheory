@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 
 import {
   SecureApp,
+  bearerTokenClaimsFromContext,
   createApp,
   newMemoryBearerTokenValidator,
   registerMcpFacade,
@@ -68,12 +69,21 @@ function headerValues(mount, credential) {
   return { authorization: [`Bearer ${token}`] };
 }
 
+function recordClaims(ctx, recorder) {
+  const claims = bearerTokenClaimsFromContext(ctx);
+  if (!claims) return;
+  recorder.claimsSeen = true;
+  recorder.claimsSubject = claims.subject;
+  recorder.claimsScopes = [...claims.scopes];
+}
+
 function middlewareFor(name, recorder) {
   if (name === "short_circuit_cache") {
-    return async (_ctx, _next) => {
+    return async (ctx, _next) => {
       recorder.middlewareInvocations += 1;
       recorder.cacheLookups += 1;
       recorder.order.push("middleware");
+      recordClaims(ctx, recorder);
       return response(200, "cached-protected");
     };
   }
@@ -82,6 +92,7 @@ function middlewareFor(name, recorder) {
       recorder.middlewareInvocations += 1;
       recorder.middlewareWrites += 1;
       recorder.order.push("middleware");
+      recordClaims(ctx, recorder);
       return next(ctx);
     };
   }
@@ -155,6 +166,9 @@ test("runtime-bearer guard executes before application middleware", async () => 
           middlewareWrites: 0,
           handlerInvocations: 0,
           policyInvocations: 0,
+          claimsSeen: false,
+          claimsSubject: "",
+          claimsScopes: [],
         };
         const config = baseConfig(FIXTURE.mount, recorder);
         const middleware = middlewareFor(testCase.middleware, recorder);
@@ -171,7 +185,9 @@ test("runtime-bearer guard executes before application middleware", async () => 
           surface.use(middleware);
           registerMcpFacadeSecure(surface, config);
         } else {
-          throw new Error(`unknown middleware_order surface ${testCase.surface}`);
+          throw new Error(
+            `unknown middleware_order surface ${testCase.surface}`,
+          );
         }
 
         const actual = await surface.serve(
@@ -207,6 +223,16 @@ test("runtime-bearer guard executes before application middleware", async () => 
           recorder.policyInvocations,
           testCase.expect.policy_hook_invocations,
         );
+        if (testCase.credential === "valid" && testCase.policy !== "deny") {
+          assert.equal(recorder.claimsSeen, true);
+          assert.equal(recorder.claimsSubject, FIXTURE.mount.subject);
+          assert.deepEqual(
+            recorder.claimsScopes,
+            FIXTURE.mount.scopes.namespace,
+          );
+        } else {
+          assert.equal(recorder.claimsSeen, false);
+        }
         if (testCase.expect.body !== undefined) {
           assert.equal(
             Buffer.from(actual.body).toString("utf8"),

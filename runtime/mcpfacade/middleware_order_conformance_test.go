@@ -75,20 +75,34 @@ type middlewareOrderRecorder struct {
 	middlewareWrites      int
 	handlerInvocations    int
 	policyInvocations     int
+	claimsSeen            bool
+	claimsSubject         string
+	claimsScopes          []string
 }
 
 func (r *middlewareOrderRecorder) record(name string) {
 	r.order = append(r.order, name)
 }
 
+func (r *middlewareOrderRecorder) recordClaims(ctx *apptheory.Context) {
+	claims, ok := oauth.BearerTokenClaimsFromContext(ctx)
+	if !ok {
+		return
+	}
+	r.claimsSeen = true
+	r.claimsSubject = claims.Subject
+	r.claimsScopes = append([]string(nil), claims.Scopes...)
+}
+
 func middlewareOrderMiddleware(name string, recorder *middlewareOrderRecorder) apptheory.Middleware {
 	switch name {
 	case "short_circuit_cache":
 		return func(next apptheory.Handler) apptheory.Handler {
-			return func(*apptheory.Context) (*apptheory.Response, error) {
+			return func(ctx *apptheory.Context) (*apptheory.Response, error) {
 				recorder.middlewareInvocations++
 				recorder.cacheLookups++
 				recorder.record("middleware")
+				recorder.recordClaims(ctx)
 				return apptheory.Text(200, "cached-protected"), nil
 			}
 		}
@@ -98,6 +112,7 @@ func middlewareOrderMiddleware(name string, recorder *middlewareOrderRecorder) a
 				recorder.middlewareInvocations++
 				recorder.middlewareWrites++
 				recorder.record("middleware")
+				recorder.recordClaims(ctx)
 				return next(ctx)
 			}
 		}
@@ -248,6 +263,13 @@ func TestMiddlewareOrderConformance(t *testing.T) {
 					require.Equal(t, testCase.Expect.MiddlewareWrites, recorder.middlewareWrites)
 					require.Equal(t, testCase.Expect.HandlerInvocations, recorder.handlerInvocations)
 					require.Equal(t, testCase.Expect.PolicyHookInvocations, recorder.policyInvocations)
+					if testCase.Credential == "valid" && testCase.Policy != "deny" {
+						require.True(t, recorder.claimsSeen)
+						require.Equal(t, mount.Subject, recorder.claimsSubject)
+						require.Equal(t, mount.Scopes["namespace"], recorder.claimsScopes)
+					} else {
+						require.False(t, recorder.claimsSeen)
+					}
 					if testCase.Expect.Body != "" {
 						require.Equal(t, testCase.Expect.Body, string(response.Body))
 					}
