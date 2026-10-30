@@ -31,6 +31,7 @@ import type {
   EventMiddleware,
   Handler,
   Middleware,
+  RouteGuard,
   WebSocketClientFactory,
 } from "./context.js";
 import { AppError, AppTheoryError } from "./errors.js";
@@ -145,6 +146,8 @@ export interface CORSConfig {
 /** Per-route registration options. */
 export interface RouteOptions {
   authRequired?: boolean;
+  /** Runs after route authorization and before application middleware. */
+  guard?: RouteGuard;
 }
 
 /** Hook that resolves the authenticated identity for protected routes. */
@@ -636,6 +639,7 @@ export class App {
     surface: "http" | "appsync",
     appSyncParentType = "",
     appSyncField = "",
+    options: RouteOptions = {},
   ): void {
     if (!this._secure) throw new Error("apptheory: secure core is required");
     const posture = decodeAuthPosture(postureValue);
@@ -645,6 +649,7 @@ export class App {
       posture: posture.kind,
       scopes: posture.scopes,
       posturePresent: true,
+      guard: options.guard ?? null,
     });
     this._secureRoutes.push({
       surface,
@@ -1156,6 +1161,13 @@ export class App {
         if (this._secure) {
           await this._authorizeSecure(match.route.secure, requestCtx);
         }
+        const guard = match.route.guard;
+        if (guard) {
+          const denied = await guard(requestCtx);
+          if (denied) {
+            return normalizeResponse(denied);
+          }
+        }
         const handler = this._applyMiddlewares(match.route.handler) as Handler;
         const out = await handler(requestCtx);
         if (!out) {
@@ -1428,6 +1440,33 @@ export class App {
     // Authentication rebinds the tenant to the verified claim. Log the tenant the
     // request was actually authorized under, not the caller-supplied header value.
     tenantId = requestCtx.tenantId;
+
+    const guard = match.route.guard;
+    if (guard) {
+      let denied: Response | null | undefined;
+      try {
+        denied = await guard(requestCtx);
+      } catch (err) {
+        const code = errorCodeFrom(err);
+        return finish(
+          respondToServeError(err, normalized, requestId, traceId),
+          code,
+        );
+      }
+      if (denied) {
+        let guarded: Response;
+        try {
+          guarded = normalizeResponse(denied);
+        } catch (err) {
+          const code = errorCodeFrom(err);
+          return finish(
+            respondToServeError(err, normalized, requestId, traceId),
+            code,
+          );
+        }
+        return finish(guarded, "");
+      }
+    }
 
     middlewareTrace.push("handler");
 
@@ -2268,28 +2307,68 @@ export class SecureApp {
     pattern: string,
     handler: Handler,
     posture: AuthPosture,
+    options: RouteOptions = {},
   ): this {
-    this.#core[secureRegisterRoute](method, pattern, handler, posture, "http");
+    this.#core[secureRegisterRoute](
+      method,
+      pattern,
+      handler,
+      posture,
+      "http",
+      "",
+      "",
+      options,
+    );
     return this;
   }
 
-  get(pattern: string, handler: Handler, posture: AuthPosture): this {
-    return this.handle("GET", pattern, handler, posture);
+  get(
+    pattern: string,
+    handler: Handler,
+    posture: AuthPosture,
+    options: RouteOptions = {},
+  ): this {
+    return this.handle("GET", pattern, handler, posture, options);
   }
-  post(pattern: string, handler: Handler, posture: AuthPosture): this {
-    return this.handle("POST", pattern, handler, posture);
+  post(
+    pattern: string,
+    handler: Handler,
+    posture: AuthPosture,
+    options: RouteOptions = {},
+  ): this {
+    return this.handle("POST", pattern, handler, posture, options);
   }
-  put(pattern: string, handler: Handler, posture: AuthPosture): this {
-    return this.handle("PUT", pattern, handler, posture);
+  put(
+    pattern: string,
+    handler: Handler,
+    posture: AuthPosture,
+    options: RouteOptions = {},
+  ): this {
+    return this.handle("PUT", pattern, handler, posture, options);
   }
-  patch(pattern: string, handler: Handler, posture: AuthPosture): this {
-    return this.handle("PATCH", pattern, handler, posture);
+  patch(
+    pattern: string,
+    handler: Handler,
+    posture: AuthPosture,
+    options: RouteOptions = {},
+  ): this {
+    return this.handle("PATCH", pattern, handler, posture, options);
   }
-  options(pattern: string, handler: Handler, posture: AuthPosture): this {
-    return this.handle("OPTIONS", pattern, handler, posture);
+  options(
+    pattern: string,
+    handler: Handler,
+    posture: AuthPosture,
+    options: RouteOptions = {},
+  ): this {
+    return this.handle("OPTIONS", pattern, handler, posture, options);
   }
-  delete(pattern: string, handler: Handler, posture: AuthPosture): this {
-    return this.handle("DELETE", pattern, handler, posture);
+  delete(
+    pattern: string,
+    handler: Handler,
+    posture: AuthPosture,
+    options: RouteOptions = {},
+  ): this {
+    return this.handle("DELETE", pattern, handler, posture, options);
   }
   appSyncField(
     parentTypeName: string,

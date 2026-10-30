@@ -238,7 +238,7 @@ export class App {
         this._router.add(method, pattern, handler, options);
         return this;
     }
-    [secureRegisterRoute](method, pattern, handler, postureValue, surface, appSyncParentType = "", appSyncField = "") {
+    [secureRegisterRoute](method, pattern, handler, postureValue, surface, appSyncParentType = "", appSyncField = "", options = {}) {
         if (!this._secure)
             throw new Error("apptheory: secure core is required");
         const posture = decodeAuthPosture(postureValue);
@@ -248,6 +248,7 @@ export class App {
             posture: posture.kind,
             scopes: posture.scopes,
             posturePresent: true,
+            guard: options.guard ?? null,
         });
         this._secureRoutes.push({
             surface,
@@ -611,6 +612,13 @@ export class App {
                 if (this._secure) {
                     await this._authorizeSecure(match.route.secure, requestCtx);
                 }
+                const guard = match.route.guard;
+                if (guard) {
+                    const denied = await guard(requestCtx);
+                    if (denied) {
+                        return normalizeResponse(denied);
+                    }
+                }
                 const handler = this._applyMiddlewares(match.route.handler);
                 const out = await handler(requestCtx);
                 if (!out) {
@@ -774,6 +782,28 @@ export class App {
         // Authentication rebinds the tenant to the verified claim. Log the tenant the
         // request was actually authorized under, not the caller-supplied header value.
         tenantId = requestCtx.tenantId;
+        const guard = match.route.guard;
+        if (guard) {
+            let denied;
+            try {
+                denied = await guard(requestCtx);
+            }
+            catch (err) {
+                const code = errorCodeFrom(err);
+                return finish(respondToServeError(err, normalized, requestId, traceId), code);
+            }
+            if (denied) {
+                let guarded;
+                try {
+                    guarded = normalizeResponse(denied);
+                }
+                catch (err) {
+                    const code = errorCodeFrom(err);
+                    return finish(respondToServeError(err, normalized, requestId, traceId), code);
+                }
+                return finish(guarded, "");
+            }
+        }
         middlewareTrace.push("handler");
         let out;
         try {
@@ -1395,27 +1425,27 @@ export class SecureApp {
         });
         this.#core = new App(coreOptions);
     }
-    handle(method, pattern, handler, posture) {
-        this.#core[secureRegisterRoute](method, pattern, handler, posture, "http");
+    handle(method, pattern, handler, posture, options = {}) {
+        this.#core[secureRegisterRoute](method, pattern, handler, posture, "http", "", "", options);
         return this;
     }
-    get(pattern, handler, posture) {
-        return this.handle("GET", pattern, handler, posture);
+    get(pattern, handler, posture, options = {}) {
+        return this.handle("GET", pattern, handler, posture, options);
     }
-    post(pattern, handler, posture) {
-        return this.handle("POST", pattern, handler, posture);
+    post(pattern, handler, posture, options = {}) {
+        return this.handle("POST", pattern, handler, posture, options);
     }
-    put(pattern, handler, posture) {
-        return this.handle("PUT", pattern, handler, posture);
+    put(pattern, handler, posture, options = {}) {
+        return this.handle("PUT", pattern, handler, posture, options);
     }
-    patch(pattern, handler, posture) {
-        return this.handle("PATCH", pattern, handler, posture);
+    patch(pattern, handler, posture, options = {}) {
+        return this.handle("PATCH", pattern, handler, posture, options);
     }
-    options(pattern, handler, posture) {
-        return this.handle("OPTIONS", pattern, handler, posture);
+    options(pattern, handler, posture, options = {}) {
+        return this.handle("OPTIONS", pattern, handler, posture, options);
     }
-    delete(pattern, handler, posture) {
-        return this.handle("DELETE", pattern, handler, posture);
+    delete(pattern, handler, posture, options = {}) {
+        return this.handle("DELETE", pattern, handler, posture, options);
     }
     appSyncField(parentTypeName, fieldName, handler, posture) {
         this.#core[secureRegisterAppSync](parentTypeName, fieldName, handler, posture);

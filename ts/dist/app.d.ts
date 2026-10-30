@@ -1,7 +1,7 @@
 import type { ALBTargetGroupRequest, ALBTargetGroupResponse, AppSyncResolverEvent, APIGatewayProxyRequest, APIGatewayProxyResponse, APIGatewayV2HTTPRequest, APIGatewayV2HTTPResponse, APIGatewayWebSocketProxyRequest, DynamoDBStreamEvent, DynamoDBStreamEventResponse, DynamoDBStreamRecord, EventBridgeEvent, EventBridgeSelector, KinesisEvent, KinesisEventResponse, KinesisEventRecord, LambdaFunctionURLRequest, LambdaFunctionURLResponse, SNSEvent, SNSEventRecord, SQSEvent, SQSEventResponse, SQSMessage } from "./aws-types.js";
 import { type Clock } from "./clock.js";
 import { Context, EventContext } from "./context.js";
-import type { EventMiddleware, Handler, Middleware, WebSocketClientFactory } from "./context.js";
+import type { EventMiddleware, Handler, Middleware, RouteGuard, WebSocketClientFactory } from "./context.js";
 import { type HTTPErrorFormat } from "./http-error-format.js";
 import { type IdGenerator } from "./ids.js";
 import { type RequestIdSource } from "./request-id-source.js";
@@ -26,6 +26,8 @@ export interface CORSConfig {
 /** Per-route registration options. */
 export interface RouteOptions {
     authRequired?: boolean;
+    /** Runs after route authorization and before application middleware. */
+    guard?: RouteGuard;
 }
 /** Hook that resolves the authenticated identity for protected routes. */
 export type AuthHook = (ctx: Context) => string | Promise<string>;
@@ -205,7 +207,7 @@ export declare class App {
     getHTTPErrorFormat(): HTTPErrorFormat;
     /** Registers a handler for an HTTP method and route pattern. */
     handle(method: string, pattern: string, handler: Handler, options?: RouteOptions): this;
-    [secureRegisterRoute](method: string, pattern: string, handler: Handler, postureValue: AuthPosture, surface: "http" | "appsync", appSyncParentType?: string, appSyncField?: string): void;
+    [secureRegisterRoute](method: string, pattern: string, handler: Handler, postureValue: AuthPosture, surface: "http" | "appsync", appSyncParentType?: string, appSyncField?: string, options?: RouteOptions): void;
     [secureRegisterAppSync](parentTypeName: string, fieldName: string, handler: Handler, posture: AuthPosture): void;
     [secureRegisterWebSocket](routeKey: string, handler: Handler, postureValue: AuthPosture): void;
     [secureRoutesSnapshot](): SecureRoute[];
@@ -297,13 +299,13 @@ export declare class App {
 export declare class SecureApp {
     #private;
     constructor(options?: SecureOptions);
-    handle(method: string, pattern: string, handler: Handler, posture: AuthPosture): this;
-    get(pattern: string, handler: Handler, posture: AuthPosture): this;
-    post(pattern: string, handler: Handler, posture: AuthPosture): this;
-    put(pattern: string, handler: Handler, posture: AuthPosture): this;
-    patch(pattern: string, handler: Handler, posture: AuthPosture): this;
-    options(pattern: string, handler: Handler, posture: AuthPosture): this;
-    delete(pattern: string, handler: Handler, posture: AuthPosture): this;
+    handle(method: string, pattern: string, handler: Handler, posture: AuthPosture, options?: RouteOptions): this;
+    get(pattern: string, handler: Handler, posture: AuthPosture, options?: RouteOptions): this;
+    post(pattern: string, handler: Handler, posture: AuthPosture, options?: RouteOptions): this;
+    put(pattern: string, handler: Handler, posture: AuthPosture, options?: RouteOptions): this;
+    patch(pattern: string, handler: Handler, posture: AuthPosture, options?: RouteOptions): this;
+    options(pattern: string, handler: Handler, posture: AuthPosture, options?: RouteOptions): this;
+    delete(pattern: string, handler: Handler, posture: AuthPosture, options?: RouteOptions): this;
     appSyncField(parentTypeName: string, fieldName: string, handler: Handler, posture: AuthPosture): this;
     webSocket(routeKey: string, handler: Handler, posture: AuthPosture): this;
     routes(): SecureRoute[];

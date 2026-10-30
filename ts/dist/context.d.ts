@@ -148,6 +148,12 @@ export declare class Context {
 }
 /** AppTheory HTTP route handler. */
 export type Handler = (ctx: Context) => Response | Promise<Response>;
+/**
+ * Runs after a route's authorization gate and before application middleware.
+ * A non-null response denies the request without running any application
+ * middleware or the route handler.
+ */
+export type RouteGuard = (ctx: Context) => Response | null | undefined | Promise<Response | null | undefined>;
 /** Middleware that wraps an AppTheory HTTP handler. */
 export type Middleware = (ctx: Context, next: Handler) => Response | Promise<Response>;
 /** Context passed to non-HTTP event workload handlers. */
