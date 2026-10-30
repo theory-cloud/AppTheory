@@ -75,10 +75,38 @@
         }
       },
       "Properties": {
+        "DisableExecuteApiEndpoint": true,
         "Name": "Api",
         "ProtocolType": "HTTP"
       },
       "Type": "AWS::ApiGatewayV2::Api"
+    },
+    "McpServerApiMappingF7ED8E9E": {
+      "DependsOn": [
+        "McpServerStage3B37C8A0"
+      ],
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "DomainName": {
+          "Ref": "McpServerDomainNameADAB057B"
+        },
+        "Stage": "$default"
+      },
+      "Type": "AWS::ApiGatewayV2::ApiMapping"
+    },
+    "McpServerDomainNameADAB057B": {
+      "Properties": {
+        "DomainName": "mcp.example.com",
+        "DomainNameConfigurations": [
+          {
+            "CertificateArn": "arn:aws:acm:us-east-1:123456789012:certificate/11111111-2222-3333-4444-555555555555",
+            "EndpointType": "REGIONAL"
+          }
+        ]
+      },
+      "Type": "AWS::ApiGatewayV2::DomainName"
     },
     "McpServerRouteAnyProxyA59995DD": {
       "Properties": {

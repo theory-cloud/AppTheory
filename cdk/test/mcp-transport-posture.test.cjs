@@ -38,6 +38,15 @@ const routeModelFixture = JSON.parse(
 const posture = apptheory.AppTheoryMcpTransportPosture;
 const reachability = apptheory.AppTheoryMcpOriginReachability;
 
+const DOMAIN_CERTIFICATE_ARN =
+  "arn:aws:acm:us-east-1:123456789012:certificate/11111111-2222-3333-4444-555555555555";
+
+// DISABLED and LOCKED are proven postures, so the owned floor names the custom
+// domain that replaces the disabled execute-api authority.
+function ordinaryDomain() {
+  return { domainName: "mcp.example.com", certificateArn: DOMAIN_CERTIFICATE_ARN };
+}
+
 // Fixture OAuth-surface route name -> the matching derived route-inventory field,
 // the method the construct wires for it, and the v2 route-model key it must equal.
 // `upstream_callback` is not derived per kind, so it is driven from the route-model
@@ -159,9 +168,9 @@ function failClosedFloor(postureName) {
     return {
       transportPosture: posture.RUNTIME_BEARER,
       runtimePosture: { requireBearerToken: true },
-      originReachability: reachability.LOCKED,
+      originReachability: reachability.DISABLED,
       denialSignal: {},
-      ownedApi: { stage: { throttlingEnabled: true } },
+      ownedApi: { stage: { throttlingEnabled: true }, domain: ordinaryDomain() },
       sessionState: { enabled: false },
     };
   }
@@ -169,7 +178,7 @@ function failClosedFloor(postureName) {
     return {
       transportPosture: posture.NONE_PUBLIC,
       originReachability: reachability.DISABLED,
-      ownedApi: { stage: { throttlingEnabled: true } },
+      ownedApi: { stage: { throttlingEnabled: true }, domain: ordinaryDomain() },
       sessionState: { enabled: false },
     };
   }

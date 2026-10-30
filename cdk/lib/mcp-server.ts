@@ -563,6 +563,7 @@ export class AppTheoryMcpServer extends Construct {
     validateOwningMode(props);
     normalizeLegacyAuthConfig(props);
     const routeFamily = normalizeRouteFamily(props);
+    const ownedOptions = normalizeOwnedApiOptions(props);
 
     const posture = props.transportPosture
       ?? (props.facade !== undefined
@@ -571,7 +572,8 @@ export class AppTheoryMcpServer extends Construct {
     validateTransportPosture(posture);
     validateFacadeAttachment(props.facade);
     validatePostureGuards(props, routeFamily, posture);
-    validateDefenseInDepth(props, posture);
+    validateDefenseInDepth(props, posture, ownedOptions);
+    const originReachability = resolveOriginReachability(this, props, ownedOptions);
     const routeModel = resolveRouteModel(props);
     validateRouteModelPosture(routeModel, posture);
     const routeIdMode = resolveRouteIdMode(props);
@@ -597,7 +599,6 @@ export class AppTheoryMcpServer extends Construct {
     this.mcpPath = this.mcpPaths[0];
     this.protectedResourceMetadataPath = this.protectedResourceMetadataPaths[0];
 
-    const ownedOptions = normalizeOwnedApiOptions(props);
     let ownedStage: apigwv2.IStage | undefined;
     let ownedStageName = "$default";
     if (props.api) {
@@ -609,9 +610,15 @@ export class AppTheoryMcpServer extends Construct {
         apiName: ownedOptions.apiName,
         corsPreflight: buildCorsPreflight(props.cors),
         createDefaultStage: false,
+        disableExecuteApiEndpoint: originReachability === AppTheoryMcpOriginReachability.DISABLED
+          ? true
+          : undefined,
       });
       (this as { ownedApi?: apigwv2.HttpApi }).ownedApi = api;
       this.api = api;
+      if (originReachability === AppTheoryMcpOriginReachability.DISABLED) {
+        registerOwnedDisabledOriginValidation(this, api);
+      }
 
       const stage = new apigwv2.HttpStage(this, "Stage", {
         httpApi: api,
@@ -750,6 +757,15 @@ export class AppTheoryMcpServer extends Construct {
     this.endpoints = this.mcpPaths.map(
       (pattern) => `${stripTrailingSlash(endpointBase)}${pattern}`,
     );
+    if (
+      props.api === undefined
+      && originReachability === AppTheoryMcpOriginReachability.DISABLED
+      && this.endpoints.some((endpoint) => endpoint.includes(".execute-api."))
+    ) {
+      throw new Error(
+        "AppTheoryMcpServer: originReachability DISABLED must advertise the owned custom domain, never the disabled execute-api endpoint",
+      );
+    }
     this.endpoint = this.endpoints[0];
   }
 
@@ -1447,6 +1463,7 @@ function validatePostureGuards(
 function validateDefenseInDepth(
   props: AppTheoryMcpServerProps,
   posture: AppTheoryMcpTransportPosture,
+  owned: NormalizedOwnedApiOptions,
 ): void {
   if (
     posture !== AppTheoryMcpTransportPosture.RUNTIME_BEARER
@@ -1474,12 +1491,12 @@ function validateDefenseInDepth(
   if (props.api !== undefined) {
     validateOwningApiDefense(props.owningApiDefense, label);
   } else {
-    if (props.ownedApi?.stage?.throttlingEnabled !== true) {
+    if (owned.stage?.throttlingEnabled !== true) {
       throw new Error(
         `AppTheoryMcpServer: transportPosture ${label} requires an explicit ownedApi.stage.throttlingEnabled: true throttling decision`,
       );
     }
-    if (props.ownedApi?.stage?.accessLogging === false) {
+    if (owned.stage?.accessLogging === false) {
       throw new Error(
         `AppTheoryMcpServer: transportPosture ${label} requires access logging`,
       );
@@ -1488,6 +1505,118 @@ function validateDefenseInDepth(
   if (posture === AppTheoryMcpTransportPosture.RUNTIME_BEARER) {
     validateDenialSignal(props.denialSignal);
   }
+}
+
+/**
+ * Resolve the declared direct-origin decision to a proven posture.
+ *
+ * Every supplied value is checked, not only the two postures that require the
+ * decision. A DISABLED declaration is never accepted as an assertion: an owned
+ * API must name the custom domain that replaces the disabled execute-api
+ * authority, and an attach declaration must be provable on a concrete
+ * same-stack API at final synthesis. LOCKED evidence is resolved separately.
+ */
+function resolveOriginReachability(
+  scope: Construct,
+  props: AppTheoryMcpServerProps,
+  owned: NormalizedOwnedApiOptions,
+): AppTheoryMcpOriginReachability | undefined {
+  const decision = props.originReachability;
+  if (decision === undefined) return undefined;
+  if (
+    decision !== AppTheoryMcpOriginReachability.DISABLED
+    && decision !== AppTheoryMcpOriginReachability.LOCKED
+  ) {
+    throw new Error(
+      "AppTheoryMcpServer: originReachability must be AppTheoryMcpOriginReachability.DISABLED or .LOCKED",
+    );
+  }
+  if (decision === AppTheoryMcpOriginReachability.LOCKED) {
+    return decision;
+  }
+  if (props.api !== undefined) {
+    if (!(props.api instanceof apigwv2.HttpApi)) {
+      throw new Error(
+        "AppTheoryMcpServer: originReachability DISABLED in attach mode requires a same-stack concrete HttpApi; an imported API exposes no DisableExecuteApiEndpoint evidence",
+      );
+    }
+    registerAttachDisabledOriginValidation(scope, props.api);
+    return decision;
+  }
+  if (owned.domain === undefined) {
+    throw new Error(
+      "AppTheoryMcpServer: originReachability DISABLED requires an effective ownedApi.domain; the disabled execute-api endpoint is never a public authority",
+    );
+  }
+  return decision;
+}
+
+/**
+ * Final synthesis proof for an owned DISABLED API: the default execute-api
+ * endpoint must still be disabled in the emitted template, even if a later L1
+ * override tries to re-enable it.
+ */
+function registerOwnedDisabledOriginValidation(
+  scope: Construct,
+  api: apigwv2.HttpApi,
+): void {
+  const stack = Stack.of(scope);
+  const cfnApi = api.node.defaultChild as apigwv2.CfnApi;
+  stack.node.addValidation({
+    validate: () => {
+      if (stack.resolve(cfnApi.disableExecuteApiEndpoint) === true) {
+        return [];
+      }
+      return [
+        "AppTheoryMcpServer: originReachability DISABLED requires AWS::ApiGatewayV2::Api.Properties.DisableExecuteApiEndpoint to resolve to true",
+      ];
+    },
+  });
+}
+
+/**
+ * Final synthesis proof for an attach DISABLED declaration: the concrete API
+ * must bind to exactly one in-stack CfnApi whose DisableExecuteApiEndpoint
+ * resolves to literal true. The construct never mutates the attached API.
+ */
+function registerAttachDisabledOriginValidation(
+  scope: Construct,
+  api: apigwv2.IHttpApi,
+): void {
+  const stack = Stack.of(scope);
+  stack.node.addValidation({
+    validate: () => {
+      const cfnApis = cfnApisBoundToApi(scope, api);
+      if (cfnApis.length !== 1) {
+        return [
+          "AppTheoryMcpServer: originReachability DISABLED in attach mode requires exactly one same-stack AWS::ApiGatewayV2::Api; the attached API's DisableExecuteApiEndpoint cannot be proven",
+        ];
+      }
+      if (stack.resolve(cfnApis[0].disableExecuteApiEndpoint) !== true) {
+        return [
+          "AppTheoryMcpServer: originReachability DISABLED in attach mode requires the attached AWS::ApiGatewayV2::Api to set DisableExecuteApiEndpoint=true",
+        ];
+      }
+      return [];
+    },
+  });
+}
+
+/** Every in-stack `CfnApi` whose `Ref` is the supplied API's id. */
+function cfnApisBoundToApi(scope: Construct, api: apigwv2.IHttpApi): apigwv2.CfnApi[] {
+  const stack = Stack.of(scope);
+  const apiKey = comparableApiId(scope, api.apiId);
+  const found: apigwv2.CfnApi[] = [];
+  const visit = (node: Construct): void => {
+    if (node instanceof apigwv2.CfnApi && comparableApiId(scope, node.ref) === apiKey) {
+      found.push(node);
+    }
+    for (const child of node.node.children) {
+      visit(child);
+    }
+  };
+  visit(stack);
+  return found;
 }
 
 function validateOwningApiDefense(

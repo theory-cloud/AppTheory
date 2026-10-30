@@ -12,6 +12,13 @@ const assertions = require("aws-cdk-lib/assertions");
 
 const apptheory = require("../lib");
 
+const DOMAIN_CERTIFICATE_ARN =
+  "arn:aws:acm:us-east-1:123456789012:certificate/11111111-2222-3333-4444-555555555555";
+
+function ordinaryDomain() {
+  return { domainName: "mcp.example.com", certificateArn: DOMAIN_CERTIFICATE_ARN };
+}
+
 const fixture = JSON.parse(
   fs.readFileSync(
     path.resolve(
@@ -1231,7 +1238,7 @@ test("AppTheoryMcpServer none-public keeps every route public", () => {
     transportPosture: apptheory.AppTheoryMcpTransportPosture.NONE_PUBLIC,
     originReachability: apptheory.AppTheoryMcpOriginReachability.DISABLED,
     sessionState: { enabled: false },
-    ownedApi: { stage: { throttlingEnabled: true } },
+    ownedApi: { stage: { throttlingEnabled: true }, domain: ordinaryDomain() },
   });
   const template = assertions.Template.fromStack(stack).toJSON();
   const routes = routeAuthorizations(template);
@@ -1402,7 +1409,7 @@ test("AppTheoryMcpServer consolidated mode grants one API-scoped permission when
     transportPosture: apptheory.AppTheoryMcpTransportPosture.NONE_PUBLIC,
     originReachability: apptheory.AppTheoryMcpOriginReachability.DISABLED,
     sessionState: { enabled: false },
-    ownedApi: { stage: { throttlingEnabled: true } },
+    ownedApi: { stage: { throttlingEnabled: true }, domain: ordinaryDomain() },
     routeModel: apptheory.AppTheoryMcpRouteModel.CONSOLIDATED,
     scopePermissionToRoute: false,
   });
@@ -1532,7 +1539,7 @@ test("AppTheoryMcpServer consolidated template is stable", () => {
     transportPosture: apptheory.AppTheoryMcpTransportPosture.NONE_PUBLIC,
     originReachability: apptheory.AppTheoryMcpOriginReachability.DISABLED,
     sessionState: { enabled: false },
-    ownedApi: { stage: { throttlingEnabled: true } },
+    ownedApi: { stage: { throttlingEnabled: true }, domain: ordinaryDomain() },
     routeModel: apptheory.AppTheoryMcpRouteModel.CONSOLIDATED,
   });
 
