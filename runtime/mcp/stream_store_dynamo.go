@@ -327,39 +327,57 @@ func (d *DynamoStreamStore) transactAppend(
 	if !ok {
 		return ErrStreamTransactionRequired
 	}
+	conditions := []tablecore.TransactCondition{
+		{
+			Kind:     tablecore.TransactConditionKindField,
+			Field:    "Deleted",
+			Operator: "=",
+			Value:    false,
+		},
+		{
+			Kind:     tablecore.TransactConditionKindField,
+			Field:    "AggregateVersion",
+			Operator: "=",
+			Value:    int64(dynamoStreamAggregateSchemaVersion),
+		},
+		{
+			Kind:     tablecore.TransactConditionKindField,
+			Field:    "NextSeq",
+			Operator: "=",
+			Value:    observed.NextSeq,
+		},
+		{
+			Kind:     tablecore.TransactConditionKindField,
+			Field:    "EventCount",
+			Operator: "=",
+			Value:    observed.EventCount,
+		},
+		{
+			Kind:     tablecore.TransactConditionKindField,
+			Field:    "AggregateBytes",
+			Operator: "=",
+			Value:    observed.AggregateBytes,
+		},
+	}
+	payloadBytes := next.AggregateBytes - observed.AggregateBytes
+	if d.maxAggregateEvents > 0 {
+		conditions = append(conditions, tablecore.TransactCondition{
+			Kind:     tablecore.TransactConditionKindField,
+			Field:    "EventCount",
+			Operator: "<=",
+			Value:    int64(d.maxAggregateEvents - 1),
+		})
+	}
+	if d.maxAggregateBytes > 0 {
+		conditions = append(conditions, tablecore.TransactCondition{
+			Kind:     tablecore.TransactConditionKindField,
+			Field:    "AggregateBytes",
+			Operator: "<=",
+			Value:    d.maxAggregateBytes - payloadBytes,
+		})
+	}
 	return txDB.TransactWrite(ctx, func(tx tablecore.TransactionBuilder) error {
-		tx.Update(next, []string{"NextSeq", "EventCount", "AggregateBytes", "ExpiresAt"},
-			tablecore.TransactCondition{
-				Kind:     tablecore.TransactConditionKindField,
-				Field:    "Deleted",
-				Operator: "=",
-				Value:    false,
-			},
-			tablecore.TransactCondition{
-				Kind:     tablecore.TransactConditionKindField,
-				Field:    "AggregateVersion",
-				Operator: "=",
-				Value:    int64(dynamoStreamAggregateSchemaVersion),
-			},
-			tablecore.TransactCondition{
-				Kind:     tablecore.TransactConditionKindField,
-				Field:    "NextSeq",
-				Operator: "=",
-				Value:    observed.NextSeq,
-			},
-			tablecore.TransactCondition{
-				Kind:     tablecore.TransactConditionKindField,
-				Field:    "EventCount",
-				Operator: "=",
-				Value:    observed.EventCount,
-			},
-			tablecore.TransactCondition{
-				Kind:     tablecore.TransactConditionKindField,
-				Field:    "AggregateBytes",
-				Operator: "=",
-				Value:    observed.AggregateBytes,
-			},
-		)
+		tx.Update(next, []string{"NextSeq", "EventCount", "AggregateBytes", "ExpiresAt"}, conditions...)
 		tx.Put(meta)
 		tx.Create(record)
 		return nil

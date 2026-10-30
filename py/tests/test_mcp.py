@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -169,17 +170,29 @@ class _FakeTheoryTable:
                 return False
             values = getattr(action, "expression_attribute_values", None) or {}
             for clause in expression.split(" AND "):
-                left, _, right = clause.strip().partition("=")
-                attribute = field_name(attribute_name(action, left.strip()))
-                expected = values.get(right.strip())
+                match = re.match(r"^(#?\w+)\s*(=|<=|>=|<|>)\s*(:\w+)$", clause.strip())
+                if match is None:
+                    raise AssertionError(f"unsupported fake condition: {clause}")
+                attribute = field_name(attribute_name(action, match.group(1)))
+                operator = match.group(2)
+                expected = values.get(match.group(3))
                 actual = getattr(existing, attribute, None)
                 if isinstance(expected, bool):
-                    if bool(actual) != expected:
+                    if operator != "=" or bool(actual) != expected:
                         return False
                 elif isinstance(expected, (int, float)):
-                    if int(actual or 0) != int(expected):
+                    left = int(actual or 0)
+                    right = int(expected)
+                    checks = {
+                        "=": left == right,
+                        "<=": left <= right,
+                        ">=": left >= right,
+                        "<": left < right,
+                        ">": left > right,
+                    }
+                    if not checks[operator]:
                         return False
-                elif str(actual or "") != str(expected or ""):
+                elif operator != "=" or str(actual or "") != str(expected or ""):
                     return False
             return True
 

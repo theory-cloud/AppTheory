@@ -1347,7 +1347,8 @@ class DynamoMcpStreamStore:
                 condition_expression=(
                     "#deleted = :deleted AND #aggregate_version = :version AND "
                     "#sequence = :sequence AND #event_count = :event_count AND "
-                    "#aggregate_bytes = :aggregate_bytes"
+                    "#aggregate_bytes = :aggregate_bytes AND "
+                    "#event_count <= :max_events AND #aggregate_bytes <= :max_bytes"
                 ),
                 expression_attribute_names={
                     "#deleted": "deleted",
@@ -1362,6 +1363,8 @@ class DynamoMcpStreamStore:
                     ":sequence": observed_sequence,
                     ":event_count": event_count,
                     ":aggregate_bytes": aggregate_bytes,
+                    ":max_events": self._max_aggregate_events - 1,
+                    ":max_bytes": self._max_aggregate_bytes - len(payload),
                 },
             ),
             TransactPut(stream_item),

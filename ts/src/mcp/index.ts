@@ -1744,7 +1744,7 @@ export class DynamoMcpStreamStore implements McpStreamStore {
         item: nextState,
         fields: ["sequence", "eventCount", "aggregateBytes", "expiresAt"],
         conditionExpression:
-          "#deleted = :deleted AND #aggregateVersion = :version AND #sequence = :sequence AND #eventCount = :eventCount AND #aggregateBytes = :aggregateBytes",
+          "#deleted = :deleted AND #aggregateVersion = :version AND #sequence = :sequence AND #eventCount = :eventCount AND #aggregateBytes = :aggregateBytes AND #eventCount <= :maxEvents AND #aggregateBytes <= :maxBytes",
         expressionAttributeNames: {
           "#deleted": "deleted",
           "#aggregateVersion": "aggregateVersion",
@@ -1758,6 +1758,10 @@ export class DynamoMcpStreamStore implements McpStreamStore {
           ":sequence": { N: String(Number(state["sequence"] ?? 0)) },
           ":eventCount": { N: String(eventCount) },
           ":aggregateBytes": { N: String(aggregateBytes) },
+          ":maxEvents": { N: String(this.maxAggregateEvents - 1) },
+          ":maxBytes": {
+            N: String(this.maxAggregateBytes - payload.length),
+          },
         },
       },
       {

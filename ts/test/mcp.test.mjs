@@ -74,14 +74,22 @@ function sessionHeader(response) {
   return response.headers?.[MCP_HEADER_SESSION_ID]?.[0] ?? "";
 }
 
-async function initialize(server, id = "init", protocolVersion = MCP_PROTOCOL_VERSION) {
+async function initialize(
+  server,
+  id = "init",
+  protocolVersion = MCP_PROTOCOL_VERSION,
+) {
   const response = await post(server, {
     jsonrpc: "2.0",
     id,
     method: "initialize",
     params: { protocolVersion },
   });
-  return { response, body: await json(response), sessionId: sessionHeader(response) };
+  return {
+    response,
+    body: await json(response),
+    sessionId: sessionHeader(response),
+  };
 }
 
 function rpc(id, method, params = {}) {
@@ -95,22 +103,38 @@ test("detectMcpProtocolVersion gives the header precedence over request _meta", 
     method: "ping",
     params: {
       _meta: {
-        "io.modelcontextprotocol/protocolVersion": MCP_PROTOCOL_VERSION_2026_07_28,
+        "io.modelcontextprotocol/protocolVersion":
+          MCP_PROTOCOL_VERSION_2026_07_28,
       },
     },
   };
 
-  assert.equal(detectMcpProtocolVersion({}, request2026), MCP_PROTOCOL_SHAPE_2026_07_28);
   assert.equal(
-    detectMcpProtocolVersion({ "MCP-Protocol-Version": [MCP_PROTOCOL_VERSION] }, request2026),
+    detectMcpProtocolVersion({}, request2026),
+    MCP_PROTOCOL_SHAPE_2026_07_28,
+  );
+  assert.equal(
+    detectMcpProtocolVersion(
+      { "MCP-Protocol-Version": [MCP_PROTOCOL_VERSION] },
+      request2026,
+    ),
     MCP_PROTOCOL_SHAPE_2025_11_25,
   );
   assert.equal(
-    detectMcpProtocolVersion({ [MCP_HEADER_PROTOCOL_VERSION]: ["2099-01-01"] }, request2026),
+    detectMcpProtocolVersion(
+      { [MCP_HEADER_PROTOCOL_VERSION]: ["2099-01-01"] },
+      request2026,
+    ),
     MCP_PROTOCOL_SHAPE_UNKNOWN,
   );
-  assert.equal(detectMcpProtocolVersion({}, JSON.stringify(request2026)), MCP_PROTOCOL_SHAPE_2026_07_28);
-  assert.equal(detectMcpProtocolVersion({}, { jsonrpc: "2.0", method: "ping" }), MCP_PROTOCOL_SHAPE_UNKNOWN);
+  assert.equal(
+    detectMcpProtocolVersion({}, JSON.stringify(request2026)),
+    MCP_PROTOCOL_SHAPE_2026_07_28,
+  );
+  assert.equal(
+    detectMcpProtocolVersion({}, { jsonrpc: "2.0", method: "ping" }),
+    MCP_PROTOCOL_SHAPE_UNKNOWN,
+  );
   assert.equal(
     detectMcpProtocolVersionForMessage({}, request2026),
     MCP_PROTOCOL_SHAPE_2026_07_28,
@@ -143,7 +167,8 @@ test("mcp 2026-07-28 requests stay stateless", async () => {
     server,
     rpc("discover", "server/discover", {
       _meta: {
-        "io.modelcontextprotocol/protocolVersion": MCP_PROTOCOL_VERSION_2026_07_28,
+        "io.modelcontextprotocol/protocolVersion":
+          MCP_PROTOCOL_VERSION_2026_07_28,
         "io.modelcontextprotocol/clientCapabilities": {},
       },
     }),
@@ -183,7 +208,8 @@ test("mcp 2026-07-28 requests stay stateless", async () => {
     rpc("init", "initialize", {
       protocolVersion: MCP_PROTOCOL_VERSION_2026_07_28,
       _meta: {
-        "io.modelcontextprotocol/protocolVersion": MCP_PROTOCOL_VERSION_2026_07_28,
+        "io.modelcontextprotocol/protocolVersion":
+          MCP_PROTOCOL_VERSION_2026_07_28,
         "io.modelcontextprotocol/clientCapabilities": {},
       },
     }),
@@ -198,7 +224,9 @@ test("mcp 2026-07-28 requests stay stateless", async () => {
 
   const deleted = await server.serve({
     method: "DELETE",
-    headers: { [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION_2026_07_28] },
+    headers: {
+      [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION_2026_07_28],
+    },
   });
   assert.equal(deleted.status, 405);
   // RFC 9110 15.5.5: the stateless 2026-07-28 shape permits only POST.
@@ -207,22 +235,27 @@ test("mcp 2026-07-28 requests stay stateless", async () => {
 
 test("mcp 2026-07-28 tools support multi-round input_required results", async () => {
   const server = createMcpServer("MCP", "test");
-  server.registry().registerTool({ name: "continue", inputSchema: {} }, (args, context) => {
-    if (context.requestState === "confirm" && context.inputResponses?.confirmation) {
-      return { content: [textBlock(`confirmed ${args.message}`)] };
-    }
-    return {
-      content: [],
-      resultType: MCP_RESULT_TYPE_INPUT_REQUIRED,
-      inputRequests: {
-        confirmation: {
-          method: "elicitation/create",
-          params: { message: "Confirm" },
+  server
+    .registry()
+    .registerTool({ name: "continue", inputSchema: {} }, (args, context) => {
+      if (
+        context.requestState === "confirm" &&
+        context.inputResponses?.confirmation
+      ) {
+        return { content: [textBlock(`confirmed ${args.message}`)] };
+      }
+      return {
+        content: [],
+        resultType: MCP_RESULT_TYPE_INPUT_REQUIRED,
+        inputRequests: {
+          confirmation: {
+            method: "elicitation/create",
+            params: { message: "Confirm" },
+          },
         },
-      },
-      requestState: "confirm",
-    };
-  });
+        requestState: "confirm",
+      };
+    });
   const headers = {
     [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION_2026_07_28],
     [MCP_HEADER_METHOD]: ["tools/call"],
@@ -236,7 +269,8 @@ test("mcp 2026-07-28 tools support multi-round input_required results", async ()
         name: "continue",
         arguments: { message: "contract" },
         _meta: {
-          "io.modelcontextprotocol/protocolVersion": MCP_PROTOCOL_VERSION_2026_07_28,
+          "io.modelcontextprotocol/protocolVersion":
+            MCP_PROTOCOL_VERSION_2026_07_28,
           "io.modelcontextprotocol/clientCapabilities": { elicitation: {} },
         },
       }),
@@ -245,7 +279,10 @@ test("mcp 2026-07-28 tools support multi-round input_required results", async ()
   );
   assert.equal(first.result.resultType, MCP_RESULT_TYPE_INPUT_REQUIRED);
   assert.equal(first.result.requestState, "confirm");
-  assert.equal(first.result.inputRequests.confirmation.method, "elicitation/create");
+  assert.equal(
+    first.result.inputRequests.confirmation.method,
+    "elicitation/create",
+  );
   assert.equal(first.result.content, undefined);
 
   const second = await json(
@@ -257,7 +294,8 @@ test("mcp 2026-07-28 tools support multi-round input_required results", async ()
         requestState: "confirm",
         inputResponses: { confirmation: { action: "accept" } },
         _meta: {
-          "io.modelcontextprotocol/protocolVersion": MCP_PROTOCOL_VERSION_2026_07_28,
+          "io.modelcontextprotocol/protocolVersion":
+            MCP_PROTOCOL_VERSION_2026_07_28,
           "io.modelcontextprotocol/clientCapabilities": { elicitation: {} },
         },
       }),
@@ -318,25 +356,40 @@ function fakeDb() {
         const names = action.expressionAttributeNames ?? {};
         const values = action.expressionAttributeValues ?? {};
         for (const clause of expression.split(/\s+AND\s+/i)) {
-          const match = clause.trim().match(/^(#?[\w]+)\s*=\s*(:[\w]+)$/);
+          const match = clause
+            .trim()
+            .match(/^(#?[\w]+)\s*(=|<=|>=|<|>)\s*(:[\w]+)$/);
           if (!match) {
             throw new Error(`unsupported fake condition: ${clause}`);
           }
           const field = String(names[match[1]] ?? match[1]);
-          const expected = values[match[2]];
+          const operator = match[2];
+          const expected = values[match[3]];
           if (!expected) {
-            throw new Error(`missing fake condition value: ${match[2]}`);
+            throw new Error(`missing fake condition value: ${match[3]}`);
           }
           const actual = existing[field];
           if (expected.BOOL !== undefined) {
+            if (operator !== "=") {
+              throw new Error("unsupported fake boolean comparison");
+            }
             if (Boolean(actual) !== expected.BOOL) return false;
             continue;
           }
           if (expected.N !== undefined) {
-            if (Number(actual ?? 0) !== Number(expected.N)) return false;
+            const left = Number(actual ?? 0);
+            const right = Number(expected.N);
+            if (operator === "=" && left !== right) return false;
+            if (operator === "<=" && !(left <= right)) return false;
+            if (operator === ">=" && !(left >= right)) return false;
+            if (operator === "<" && !(left < right)) return false;
+            if (operator === ">" && !(left > right)) return false;
             continue;
           }
           if (expected.S !== undefined) {
+            if (operator !== "=") {
+              throw new Error("unsupported fake string comparison");
+            }
             if (String(actual ?? "") !== expected.S) return false;
             continue;
           }
@@ -359,7 +412,10 @@ function fakeDb() {
           err.name = "ErrConditionFailed";
           throw err;
         }
-        if ((action.kind === "update" || action.kind === "condition") && !evaluate(action, existing)) {
+        if (
+          (action.kind === "update" || action.kind === "condition") &&
+          !evaluate(action, existing)
+        ) {
           const err = new Error("conditional check failed");
           err.name = "ErrConditionFailed";
           throw err;
@@ -411,9 +467,14 @@ function fakeDb() {
           const all = [...items.entries()]
             .filter(([key]) => key.startsWith(`${model}:${state.partition}:`))
             .map(([, value]) => clone(value))
-            .sort((a, b) => String(a.taskId ?? a.itemId).localeCompare(String(b.taskId ?? b.itemId)));
+            .sort((a, b) =>
+              String(a.taskId ?? a.itemId).localeCompare(
+                String(b.taskId ?? b.itemId),
+              ),
+            );
           const pageItems = all.slice(start, start + state.limit);
-          const next = start + state.limit < all.length ? String(start + state.limit) : "";
+          const next =
+            start + state.limit < all.length ? String(start + state.limit) : "";
           return { items: pageItems, cursor: next };
         },
       };
@@ -442,8 +503,17 @@ function taskRecord(overrides = {}) {
 
 test("mcp registries normalize definitions and fail closed", async () => {
   const tools = new McpToolRegistry();
-  assert.throws(() => tools.registerTool({ name: "", inputSchema: {} }, () => ({ content: [] })), /tool name/);
-  assert.throws(() => tools.registerTool({ name: "echo", inputSchema: {} }, null), /handler/);
+  assert.throws(
+    () =>
+      tools.registerTool({ name: "", inputSchema: {} }, () => ({
+        content: [],
+      })),
+    /tool name/,
+  );
+  assert.throws(
+    () => tools.registerTool({ name: "echo", inputSchema: {} }, null),
+    /handler/,
+  );
   tools.registerTool(
     {
       name: " echo ",
@@ -458,57 +528,145 @@ test("mcp registries normalize definitions and fail closed", async () => {
       structuredContent: { ok: true },
     }),
   );
-  assert.throws(() => tools.registerTool({ name: "echo", inputSchema: {} }, () => ({ content: [] })), /already/);
+  assert.throws(
+    () =>
+      tools.registerTool({ name: "echo", inputSchema: {} }, () => ({
+        content: [],
+      })),
+    /already/,
+  );
   assert.equal(tools.len(), 1);
   assert.equal(tools.supportsTasks(), true);
   assert.equal(tools.taskSupport("echo"), "optional");
   assert.deepEqual(tools.list()[0].execution, { taskSupport: "optional" });
-  assert.deepEqual(await tools.call("echo", { message: "hi" }, { sessionId: "s", requestId: "r", method: "tools/call" }), {
-    content: [textBlock("s:hi")],
-    structuredContent: { ok: true },
-  });
-  await assert.rejects(() => tools.call("missing", {}, { sessionId: "s", requestId: "r", method: "tools/call" }), /tool not found/);
+  assert.deepEqual(
+    await tools.call(
+      "echo",
+      { message: "hi" },
+      { sessionId: "s", requestId: "r", method: "tools/call" },
+    ),
+    {
+      content: [textBlock("s:hi")],
+      structuredContent: { ok: true },
+    },
+  );
+  await assert.rejects(
+    () =>
+      tools.call(
+        "missing",
+        {},
+        { sessionId: "s", requestId: "r", method: "tools/call" },
+      ),
+    /tool not found/,
+  );
 
   const streamed = new McpToolRegistry();
-  assert.throws(() => streamed.registerStreamingTool({ name: "", inputSchema: {} }, () => ({ content: [] })), /tool name/);
-  streamed.registerStreamingTool({ name: "stream", inputSchema: {}, execution: { taskSupport: "ignored" } }, (args, emit) => {
-    emit({ data: { message: args.message, seq: 1, total: 1 } });
-    return { content: [textBlock("done")], isError: true };
-  });
+  assert.throws(
+    () =>
+      streamed.registerStreamingTool({ name: "", inputSchema: {} }, () => ({
+        content: [],
+      })),
+    /tool name/,
+  );
+  streamed.registerStreamingTool(
+    { name: "stream", inputSchema: {}, execution: { taskSupport: "ignored" } },
+    (args, emit) => {
+      emit({ data: { message: args.message, seq: 1, total: 1 } });
+      return { content: [textBlock("done")], isError: true };
+    },
+  );
   assert.equal(streamed.supportsStreaming("stream"), true);
   const emitted = [];
-  assert.deepEqual(await streamed.callStreaming("stream", { message: "half" }, (event) => emitted.push(event), { sessionId: "s", requestId: "r", method: "tools/call" }), {
-    content: [textBlock("done")],
-    isError: true,
-  });
+  assert.deepEqual(
+    await streamed.callStreaming(
+      "stream",
+      { message: "half" },
+      (event) => emitted.push(event),
+      { sessionId: "s", requestId: "r", method: "tools/call" },
+    ),
+    {
+      content: [textBlock("done")],
+      isError: true,
+    },
+  );
   assert.deepEqual(emitted, [{ data: { message: "half", seq: 1, total: 1 } }]);
 
   const resources = new McpResourceRegistry();
-  assert.throws(() => resources.registerResource({ uri: "relative", name: "bad" }, () => []), /absolute/);
-  assert.throws(() => resources.registerResource({ uri: "file:///ok", name: "" }, () => []), /name/);
+  assert.throws(
+    () =>
+      resources.registerResource({ uri: "relative", name: "bad" }, () => []),
+    /absolute/,
+  );
+  assert.throws(
+    () => resources.registerResource({ uri: "file:///ok", name: "" }, () => []),
+    /name/,
+  );
   resources.registerResource(
-    { uri: "file:///ok", name: " ok ", title: " OK ", description: " Desc ", mimeType: "text/plain", size: 3 },
+    {
+      uri: "file:///ok",
+      name: " ok ",
+      title: " OK ",
+      description: " Desc ",
+      mimeType: "text/plain",
+      size: 3,
+    },
     ({ uri }) => [{ uri, text: "abc", mimeType: "text/plain", blob: "YWJj" }],
   );
-  assert.throws(() => resources.registerResource({ uri: "file:///ok", name: "dup" }, () => []), /already/);
-  resources.registerResourceTemplate({ uriTemplate: "file:///items/{id}", name: "item", title: "Item" });
-  assert.throws(() => resources.registerResourceTemplate({ uriTemplate: "bad template", name: "bad" }), /absolute/);
+  assert.throws(
+    () =>
+      resources.registerResource({ uri: "file:///ok", name: "dup" }, () => []),
+    /already/,
+  );
+  resources.registerResourceTemplate({
+    uriTemplate: "file:///items/{id}",
+    name: "item",
+    title: "Item",
+  });
+  assert.throws(
+    () =>
+      resources.registerResourceTemplate({
+        uriTemplate: "bad template",
+        name: "bad",
+      }),
+    /absolute/,
+  );
   assert.equal(resources.len(), 1);
   assert.equal(resources.templateLen(), 1);
   assert.equal(resources.list()[0].title, "OK");
   assert.equal(resources.listTemplates()[0].uriTemplate, "file:///items/{id}");
-  assert.deepEqual(await resources.read("file:///ok"), [{ uri: "file:///ok", mimeType: "text/plain", text: "abc", blob: "YWJj" }]);
-  await assert.rejects(() => resources.read("file:///missing"), /resource not found/);
+  assert.deepEqual(await resources.read("file:///ok"), [
+    { uri: "file:///ok", mimeType: "text/plain", text: "abc", blob: "YWJj" },
+  ]);
+  await assert.rejects(
+    () => resources.read("file:///missing"),
+    /resource not found/,
+  );
 
   const prompts = new McpPromptRegistry();
-  assert.throws(() => prompts.registerPrompt({ name: "" }, () => ({ messages: [] })), /prompt name/);
-  prompts.registerPrompt(
-    { name: "greet", title: " Greet ", description: " hi ", arguments: [{ name: "name", required: true, title: "Name" }] },
-    (args) => ({ description: "Rendered", messages: [{ role: "user", content: textBlock(`Hello ${args.name}`) }] }),
+  assert.throws(
+    () => prompts.registerPrompt({ name: "" }, () => ({ messages: [] })),
+    /prompt name/,
   );
-  assert.throws(() => prompts.registerPrompt({ name: "greet" }, () => ({ messages: [] })), /already/);
+  prompts.registerPrompt(
+    {
+      name: "greet",
+      title: " Greet ",
+      description: " hi ",
+      arguments: [{ name: "name", required: true, title: "Name" }],
+    },
+    (args) => ({
+      description: "Rendered",
+      messages: [{ role: "user", content: textBlock(`Hello ${args.name}`) }],
+    }),
+  );
+  assert.throws(
+    () => prompts.registerPrompt({ name: "greet" }, () => ({ messages: [] })),
+    /already/,
+  );
   assert.equal(prompts.len(), 1);
-  assert.deepEqual(prompts.list()[0].arguments, [{ name: "name", title: "Name", required: true }]);
+  assert.deepEqual(prompts.list()[0].arguments, [
+    { name: "name", title: "Name", required: true },
+  ]);
   assert.deepEqual(await prompts.get("greet", { name: "Ada" }), {
     description: "Rendered",
     messages: [{ role: "user", content: textBlock("Hello Ada") }],
@@ -521,19 +679,33 @@ test("mcp memory stores are deterministic and fail closed", async () => {
   const sessionStore = new MemoryMcpSessionStore({
     now: () => now,
     seed: [
-      { id: "live", createdAt: "2026-07-03T00:00:00Z", expiresAt: "2026-07-03T01:00:00Z", data: { p: "v" } },
-      { id: "old", createdAt: "2026-07-02T00:00:00Z", expiresAt: "2026-07-02T01:00:00Z" },
+      {
+        id: "live",
+        createdAt: "2026-07-03T00:00:00Z",
+        expiresAt: "2026-07-03T01:00:00Z",
+        data: { p: "v" },
+      },
+      {
+        id: "old",
+        createdAt: "2026-07-02T00:00:00Z",
+        expiresAt: "2026-07-02T01:00:00Z",
+      },
     ],
   });
   assert.equal((await sessionStore.get(" live ")).data.p, "v");
   await assert.rejects(() => sessionStore.get("old"), McpSessionNotFoundError);
   await sessionStore.put({ id: "new", createdAt: "", expiresAt: "" });
   assert.equal((await sessionStore.get("new")).id, "new");
-  await assert.rejects(() => sessionStore.put({ id: "", createdAt: "", expiresAt: "" }), /missing session id/);
+  await assert.rejects(
+    () => sessionStore.put({ id: "", createdAt: "", expiresAt: "" }),
+    /missing session id/,
+  );
   await sessionStore.delete("new");
   await assert.rejects(() => sessionStore.get("new"), McpSessionNotFoundError);
 
-  const streams = new MemoryMcpStreamStore({ idGenerator: sequenceIdGenerator(["stream-1", "stream-2"]) });
+  const streams = new MemoryMcpStreamStore({
+    idGenerator: sequenceIdGenerator(["stream-1", "stream-2"]),
+  });
   await assert.rejects(() => streams.create(""), /missing session id/);
   const streamId = await streams.create("sess");
   assert.equal(streamId, "stream-1");
@@ -542,27 +714,71 @@ test("mcp memory stores are deterministic and fail closed", async () => {
   assert.equal(first, "1");
   assert.equal(second, "2");
   assert.equal(await streams.streamForEvent("sess", "1"), streamId);
-  assert.deepEqual((await streams.subscribe("sess", streamId, "1")).map((event) => Buffer.from(event.data).toString()), ["two"]);
-  await assert.rejects(() => streams.subscribe("sess", streamId, "9"), McpEventNotFoundError);
+  assert.deepEqual(
+    (await streams.subscribe("sess", streamId, "1")).map((event) =>
+      Buffer.from(event.data).toString(),
+    ),
+    ["two"],
+  );
+  await assert.rejects(
+    () => streams.subscribe("sess", streamId, "9"),
+    McpEventNotFoundError,
+  );
   await streams.close("sess", streamId);
   await streams.deleteSession("sess");
-  await assert.rejects(() => streams.streamForEvent("sess", "1"), McpStreamNotFoundError);
+  await assert.rejects(
+    () => streams.streamForEvent("sess", "1"),
+    McpStreamNotFoundError,
+  );
 
-  const tasks = new MemoryMcpTaskStore({ now: () => new Date("2026-07-03T00:00:02Z") });
+  const tasks = new MemoryMcpTaskStore({
+    now: () => new Date("2026-07-03T00:00:02Z"),
+  });
   const created = await tasks.create(taskRecord());
   assert.equal(created.task.taskId, "task-1");
   await assert.rejects(() => tasks.create(taskRecord()), /already exists/);
-  await assert.rejects(() => tasks.get({ sessionId: "sess-1", taskId: "missing" }), McpTaskNotFoundError);
-  await tasks.create(taskRecord({ task: { ...taskRecord().task, taskId: "task-2", createdAt: "2026-07-03T00:00:01Z" } }));
-  assert.deepEqual((await tasks.list({ sessionId: "sess-1", limit: 1 })).nextCursor, "1");
-  await assert.rejects(() => tasks.list({ sessionId: "sess-1", cursor: "bad" }), McpTaskInvalidCursorError);
-  const updated = await tasks.update({ ...created, task: { ...created.task, status: "completed", lastUpdatedAt: "2026-07-03T00:00:03Z" }, result: { ok: true } });
+  await assert.rejects(
+    () => tasks.get({ sessionId: "sess-1", taskId: "missing" }),
+    McpTaskNotFoundError,
+  );
+  await tasks.create(
+    taskRecord({
+      task: {
+        ...taskRecord().task,
+        taskId: "task-2",
+        createdAt: "2026-07-03T00:00:01Z",
+      },
+    }),
+  );
+  assert.deepEqual(
+    (await tasks.list({ sessionId: "sess-1", limit: 1 })).nextCursor,
+    "1",
+  );
+  await assert.rejects(
+    () => tasks.list({ sessionId: "sess-1", cursor: "bad" }),
+    McpTaskInvalidCursorError,
+  );
+  const updated = await tasks.update({
+    ...created,
+    task: {
+      ...created.task,
+      status: "completed",
+      lastUpdatedAt: "2026-07-03T00:00:03Z",
+    },
+    result: { ok: true },
+  });
   assert.equal(updated.task.status, "completed");
   await assert.rejects(() => tasks.update(updated), McpTaskTerminalError);
-  const canceled = await tasks.cancel({ sessionId: "sess-1", taskId: "task-2" });
+  const canceled = await tasks.cancel({
+    sessionId: "sess-1",
+    taskId: "task-2",
+  });
   assert.equal(canceled.task.status, "canceled");
   assert.equal(canceled.error.message, "task canceled");
-  await assert.rejects(() => tasks.cancel({ sessionId: "sess-1", taskId: "task-2" }), McpTaskTerminalError);
+  await assert.rejects(
+    () => tasks.cancel({ sessionId: "sess-1", taskId: "task-2" }),
+    McpTaskTerminalError,
+  );
   await tasks.deleteSession("sess-1");
   assert.deepEqual(await tasks.list({ sessionId: "sess-1" }), { tasks: [] });
 });
@@ -573,56 +789,270 @@ test("mcp server handles core HTTP, registry, and session paths", async () => {
     sessionTtlMs: 60000,
     originValidator: (origin) => origin === "https://allowed.example",
   });
-  server.registry().registerTool({ name: "echo", inputSchema: { type: "object" } }, (args, context) => ({
-    content: [textBlock(`${context.sessionId}:${args.message}`)],
-  }));
-  server.resources().registerResource({ uri: "file:///unit", name: "unit" }, () => [{ uri: "file:///unit", text: "resource" }]);
-  server.resources().registerResourceTemplate({ uriTemplate: "file:///unit/{id}", name: "unit-template" });
-  server.prompts().registerPrompt({ name: "greet", arguments: [{ name: "name", required: true }] }, (args) => ({
-    messages: [{ role: "user", content: textBlock(`Hello ${args.name}`) }],
-  }));
+  server
+    .registry()
+    .registerTool(
+      { name: "echo", inputSchema: { type: "object" } },
+      (args, context) => ({
+        content: [textBlock(`${context.sessionId}:${args.message}`)],
+      }),
+    );
+  server
+    .resources()
+    .registerResource({ uri: "file:///unit", name: "unit" }, () => [
+      { uri: "file:///unit", text: "resource" },
+    ]);
+  server
+    .resources()
+    .registerResourceTemplate({
+      uriTemplate: "file:///unit/{id}",
+      name: "unit-template",
+    });
+  server
+    .prompts()
+    .registerPrompt(
+      { name: "greet", arguments: [{ name: "name", required: true }] },
+      (args) => ({
+        messages: [{ role: "user", content: textBlock(`Hello ${args.name}`) }],
+      }),
+    );
 
   const patched = await server.serve({ method: "PATCH" });
   assert.equal(patched.status, 405);
   // RFC 9110 15.5.5: the MCP endpoint registers GET, POST, DELETE.
   assert.deepEqual(patched.headers["allow"], ["DELETE, GET, POST"]);
-  assert.equal((await post(server, rpc("x", "ping"), { origin: ["https://blocked.example"] })).status, 403);
-  assert.match(JSON.stringify(await json(await server.serve({ method: "POST", headers: { accept: ["application/json, text/event-stream"] }, body: "{}" }))), /Content-Type/);
-  assert.match(JSON.stringify(await json(await server.serve({ method: "POST", headers: { "content-type": ["application/json"], accept: ["application/json"] }, body: "{}" }))), /Accept/);
-  assert.equal((await json(await server.serve({ method: "POST", headers: POST_HEADERS, body: "{" }))).error.code, -32700);
-  assert.match(JSON.stringify(await json(await server.serve({ method: "POST", headers: POST_HEADERS, body: JSON.stringify({ jsonrpc: "2.0", result: {} }) }))), /invalid JSON-RPC response/);
+  assert.equal(
+    (
+      await post(server, rpc("x", "ping"), {
+        origin: ["https://blocked.example"],
+      })
+    ).status,
+    403,
+  );
+  assert.match(
+    JSON.stringify(
+      await json(
+        await server.serve({
+          method: "POST",
+          headers: { accept: ["application/json, text/event-stream"] },
+          body: "{}",
+        }),
+      ),
+    ),
+    /Content-Type/,
+  );
+  assert.match(
+    JSON.stringify(
+      await json(
+        await server.serve({
+          method: "POST",
+          headers: {
+            "content-type": ["application/json"],
+            accept: ["application/json"],
+          },
+          body: "{}",
+        }),
+      ),
+    ),
+    /Accept/,
+  );
+  assert.equal(
+    (
+      await json(
+        await server.serve({
+          method: "POST",
+          headers: POST_HEADERS,
+          body: "{",
+        }),
+      )
+    ).error.code,
+    -32700,
+  );
+  assert.match(
+    JSON.stringify(
+      await json(
+        await server.serve({
+          method: "POST",
+          headers: POST_HEADERS,
+          body: JSON.stringify({ jsonrpc: "2.0", result: {} }),
+        }),
+      ),
+    ),
+    /invalid JSON-RPC response/,
+  );
 
   const initialized = await initialize(server);
   assert.equal(initialized.body.result.serverInfo.name, "Unit MCP");
-  assert.equal(initialized.body.result.capabilities.tools instanceof Object, true);
+  assert.equal(
+    initialized.body.result.capabilities.tools instanceof Object,
+    true,
+  );
   assert.equal(initialized.sessionId, "sess-1");
 
-  const sessionHeaders = { [MCP_HEADER_SESSION_ID]: [initialized.sessionId], [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION] };
-  assert.equal((await post(server, { jsonrpc: "2.0", method: "notifications/initialized" }, sessionHeaders)).status, 202);
-  assert.deepEqual((await json(await post(server, rpc("ping", "ping"), sessionHeaders))).result, {});
-  assert.equal((await json(await post(server, rpc("tools", "tools/list"), sessionHeaders))).result.tools[0].name, "echo");
-  assert.equal((await json(await post(server, rpc("call", "tools/call", { name: "echo", arguments: { message: "hi" } }), sessionHeaders))).result.content[0].text, "sess-1:hi");
-  assert.equal((await json(await post(server, rpc("resources", "resources/list"), sessionHeaders))).result.resources[0].uri, "file:///unit");
-  assert.equal((await json(await post(server, rpc("read", "resources/read", { uri: "file:///unit" }), sessionHeaders))).result.contents[0].text, "resource");
-  assert.equal((await json(await post(server, rpc("templates", "resources/templates/list"), sessionHeaders))).result.resourceTemplates[0].uriTemplate, "file:///unit/{id}");
-  assert.equal((await json(await post(server, rpc("prompts", "prompts/list"), sessionHeaders))).result.prompts[0].name, "greet");
-  assert.equal((await json(await post(server, rpc("prompt", "prompts/get", { name: "greet", arguments: { name: "Ada" } }), sessionHeaders))).result.messages[0].content.text, "Hello Ada");
+  const sessionHeaders = {
+    [MCP_HEADER_SESSION_ID]: [initialized.sessionId],
+    [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION],
+  };
+  assert.equal(
+    (
+      await post(
+        server,
+        { jsonrpc: "2.0", method: "notifications/initialized" },
+        sessionHeaders,
+      )
+    ).status,
+    202,
+  );
+  assert.deepEqual(
+    (await json(await post(server, rpc("ping", "ping"), sessionHeaders)))
+      .result,
+    {},
+  );
+  assert.equal(
+    (await json(await post(server, rpc("tools", "tools/list"), sessionHeaders)))
+      .result.tools[0].name,
+    "echo",
+  );
+  assert.equal(
+    (
+      await json(
+        await post(
+          server,
+          rpc("call", "tools/call", {
+            name: "echo",
+            arguments: { message: "hi" },
+          }),
+          sessionHeaders,
+        ),
+      )
+    ).result.content[0].text,
+    "sess-1:hi",
+  );
+  assert.equal(
+    (
+      await json(
+        await post(server, rpc("resources", "resources/list"), sessionHeaders),
+      )
+    ).result.resources[0].uri,
+    "file:///unit",
+  );
+  assert.equal(
+    (
+      await json(
+        await post(
+          server,
+          rpc("read", "resources/read", { uri: "file:///unit" }),
+          sessionHeaders,
+        ),
+      )
+    ).result.contents[0].text,
+    "resource",
+  );
+  assert.equal(
+    (
+      await json(
+        await post(
+          server,
+          rpc("templates", "resources/templates/list"),
+          sessionHeaders,
+        ),
+      )
+    ).result.resourceTemplates[0].uriTemplate,
+    "file:///unit/{id}",
+  );
+  assert.equal(
+    (
+      await json(
+        await post(server, rpc("prompts", "prompts/list"), sessionHeaders),
+      )
+    ).result.prompts[0].name,
+    "greet",
+  );
+  assert.equal(
+    (
+      await json(
+        await post(
+          server,
+          rpc("prompt", "prompts/get", {
+            name: "greet",
+            arguments: { name: "Ada" },
+          }),
+          sessionHeaders,
+        ),
+      )
+    ).result.messages[0].content.text,
+    "Hello Ada",
+  );
 
-  assert.equal((await post(server, rpc("missing-session", "ping"), {})).status, 400);
-  assert.equal((await post(server, rpc("bad-session", "ping"), { [MCP_HEADER_SESSION_ID]: ["missing"] })).status, 404);
-  assert.match(JSON.stringify(await json(await post(server, rpc("bad-proto", "tasks/list"), { ...sessionHeaders, [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION_LEGACY] }))), /MCP-Protocol-Version mismatch/);
-  assert.match(JSON.stringify(await json(await post(server, rpc("bad-resource", "resources/read", { uri: "file:///missing" }), sessionHeaders))), /resource not found/);
-  assert.match(JSON.stringify(await json(await post(server, rpc("bad-prompt", "prompts/get", { name: "missing" }), sessionHeaders))), /prompt not found/);
+  assert.equal(
+    (await post(server, rpc("missing-session", "ping"), {})).status,
+    400,
+  );
+  assert.equal(
+    (
+      await post(server, rpc("bad-session", "ping"), {
+        [MCP_HEADER_SESSION_ID]: ["missing"],
+      })
+    ).status,
+    404,
+  );
+  assert.match(
+    JSON.stringify(
+      await json(
+        await post(server, rpc("bad-proto", "tasks/list"), {
+          ...sessionHeaders,
+          [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION_LEGACY],
+        }),
+      ),
+    ),
+    /MCP-Protocol-Version mismatch/,
+  );
+  assert.match(
+    JSON.stringify(
+      await json(
+        await post(
+          server,
+          rpc("bad-resource", "resources/read", { uri: "file:///missing" }),
+          sessionHeaders,
+        ),
+      ),
+    ),
+    /resource not found/,
+  );
+  assert.match(
+    JSON.stringify(
+      await json(
+        await post(
+          server,
+          rpc("bad-prompt", "prompts/get", { name: "missing" }),
+          sessionHeaders,
+        ),
+      ),
+    ),
+    /prompt not found/,
+  );
 });
 
 test("mcp server streams, resumes SSE, and testkit invokes deterministically", async () => {
-  const server = createMcpServer("Stream MCP", "1", { idGenerator: sequenceIdGenerator(["sess-stream", "stream-1"]) });
-  server.registry().registerStreamingTool({ name: "stream", inputSchema: {} }, async (args, emit) => {
-    await emit({ data: { seq: 1, total: 2, message: `half ${args.message}` } });
-    await emit({ data: "almost" });
-    return { content: [textBlock(`done ${args.message}`)] };
+  const server = createMcpServer("Stream MCP", "1", {
+    idGenerator: sequenceIdGenerator(["sess-stream", "stream-1"]),
   });
-  const harness = createMcpTestHarness(server, { path: "mcp", appIdGenerator: fixedIdGenerator("req-test") });
+  server
+    .registry()
+    .registerStreamingTool(
+      { name: "stream", inputSchema: {} },
+      async (args, emit) => {
+        await emit({
+          data: { seq: 1, total: 2, message: `half ${args.message}` },
+        });
+        await emit({ data: "almost" });
+        return { content: [textBlock(`done ${args.message}`)] };
+      },
+    );
+  const harness = createMcpTestHarness(server, {
+    path: "mcp",
+    appIdGenerator: fixedIdGenerator("req-test"),
+  });
   const init = await harness.initialize();
   assert.equal(init.bodyJson.result.serverInfo.name, "Stream MCP");
   const sessionId = init.response.headers[MCP_HEADER_SESSION_ID][0];
@@ -633,56 +1063,116 @@ test("mcp server streams, resumes SSE, and testkit invokes deterministically", a
   });
   assert.equal(result.response.headers["content-type"][0], "text/event-stream");
   assert.equal(result.sseFrames.length, 4);
-  assert.deepEqual(result.sseFrames.map((frame) => frame.id), ["1", "2", "3", "4"]);
+  assert.deepEqual(
+    result.sseFrames.map((frame) => frame.id),
+    ["1", "2", "3", "4"],
+  );
   assert.match(result.sseFrames[1].data, /half go/);
   assert.match(result.sseFrames[3].data, /done go/);
 
-  const replay = await harness.invoke({ method: "GET", sessionId, lastEventId: "2" });
-  assert.deepEqual(replay.sseFrames.map((frame) => frame.id), ["3", "4"]);
-  assert.deepEqual(parseMcpTestSSEFrames(Buffer.from(": keepalive\n\nid: 9\nevent: message\ndata: a\ndata: b\n\n")).filter((frame) => frame.id || frame.data), [
-    { id: "9", event: "message", data: "a\nb" },
-  ]);
+  const replay = await harness.invoke({
+    method: "GET",
+    sessionId,
+    lastEventId: "2",
+  });
+  assert.deepEqual(
+    replay.sseFrames.map((frame) => frame.id),
+    ["3", "4"],
+  );
+  assert.deepEqual(
+    parseMcpTestSSEFrames(
+      Buffer.from(": keepalive\n\nid: 9\nevent: message\ndata: a\ndata: b\n\n"),
+    ).filter((frame) => frame.id || frame.data),
+    [{ id: "9", event: "message", data: "a\nb" }],
+  );
 
-  assert.equal((await harness.invoke({ method: "GET", sessionId, headers: { accept: ["application/json"] } })).response.status, 400);
-  assert.equal((await harness.invoke({ method: "DELETE", sessionId })).response.status, 202);
-  assert.equal((await harness.invoke({ method: "GET", sessionId })).response.status, 404);
+  assert.equal(
+    (
+      await harness.invoke({
+        method: "GET",
+        sessionId,
+        headers: { accept: ["application/json"] },
+      })
+    ).response.status,
+    400,
+  );
+  assert.equal(
+    (await harness.invoke({ method: "DELETE", sessionId })).response.status,
+    202,
+  );
+  assert.equal(
+    (await harness.invoke({ method: "GET", sessionId })).response.status,
+    404,
+  );
 });
 
 test("mcp initial session listener defaults to enabled and can be declined with 405", async () => {
-  const defaultServer = createMcpServer("Listener MCP", "1", { idGenerator: sequenceIdGenerator(["sess-listener"]) });
+  const defaultServer = createMcpServer("Listener MCP", "1", {
+    idGenerator: sequenceIdGenerator(["sess-listener"]),
+  });
   const defaultHarness = createMcpTestHarness(defaultServer);
-  const defaultSessionId = (await defaultHarness.initialize()).response.headers[MCP_HEADER_SESSION_ID][0];
-  const keepalive = await defaultHarness.invoke({ method: "GET", sessionId: defaultSessionId });
+  const defaultSessionId = (await defaultHarness.initialize()).response.headers[
+    MCP_HEADER_SESSION_ID
+  ][0];
+  const keepalive = await defaultHarness.invoke({
+    method: "GET",
+    sessionId: defaultSessionId,
+  });
   assert.equal(keepalive.response.status, 200);
   assert.equal(keepalive.body.toString("utf8"), ": keepalive\n\n");
 
-  const streamStore = new MemoryMcpStreamStore({ idGenerator: sequenceIdGenerator(["stream-listener"]) });
+  const streamStore = new MemoryMcpStreamStore({
+    idGenerator: sequenceIdGenerator(["stream-listener"]),
+  });
   const server = createMcpServer("Listener MCP", "1", {
     idGenerator: sequenceIdGenerator(["sess-declined"]),
     streamStore,
     initialSessionListenerEnabled: false,
   });
   const harness = createMcpTestHarness(server);
-  const sessionId = (await harness.initialize()).response.headers[MCP_HEADER_SESSION_ID][0];
+  const sessionId = (await harness.initialize()).response.headers[
+    MCP_HEADER_SESSION_ID
+  ][0];
 
   const declined = await harness.invoke({ method: "GET", sessionId });
   assert.equal(declined.response.status, 405);
   assert.deepEqual(declined.response.headers.allow, ["DELETE, GET, POST"]);
-  assert.deepEqual(declined.response.headers["content-type"], ["application/json"]);
+  assert.deepEqual(declined.response.headers["content-type"], [
+    "application/json",
+  ]);
   assert.deepEqual(declined.bodyJson, { error: "method not allowed" });
 
   // The session stays usable over POST after the declined common stream.
-  assert.equal((await harness.call(sessionId, "tools/list")).response.status, 200);
+  assert.equal(
+    (await harness.call(sessionId, "tools/list")).response.status,
+    200,
+  );
 
   // Validation order is unchanged: the 405 is not reachable without a valid session.
   assert.equal(
-    (await harness.invoke({ method: "GET", sessionId, headers: { origin: ["https://evil.example"] } })).response.status,
+    (
+      await harness.invoke({
+        method: "GET",
+        sessionId,
+        headers: { origin: ["https://evil.example"] },
+      })
+    ).response.status,
     403,
   );
   assert.equal((await harness.invoke({ method: "GET" })).response.status, 400);
-  assert.equal((await harness.invoke({ method: "GET", sessionId: "missing" })).response.status, 404);
   assert.equal(
-    (await harness.invoke({ method: "GET", sessionId, protocolVersion: MCP_PROTOCOL_VERSION_LEGACY })).response.status,
+    (await harness.invoke({ method: "GET", sessionId: "missing" })).response
+      .status,
+    404,
+  );
+  assert.equal(
+    (
+      await harness.invoke({
+        method: "GET",
+        sessionId,
+        protocolVersion: MCP_PROTOCOL_VERSION_LEGACY,
+      })
+    ).response.status,
     400,
   );
 
@@ -691,30 +1181,55 @@ test("mcp initial session listener defaults to enabled and can be declined with 
   const firstEventId = await streamStore.append(
     sessionId,
     streamId,
-    Buffer.from(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { ok: true } })),
+    Buffer.from(
+      JSON.stringify({ jsonrpc: "2.0", id: 1, result: { ok: true } }),
+    ),
   );
   await streamStore.append(
     sessionId,
     streamId,
-    Buffer.from(JSON.stringify({ jsonrpc: "2.0", method: "notifications/progress", params: { seq: 2 } })),
+    Buffer.from(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "notifications/progress",
+        params: { seq: 2 },
+      }),
+    ),
   );
   await streamStore.close(sessionId, streamId);
-  const replay = await harness.invoke({ method: "GET", sessionId, lastEventId: firstEventId });
+  const replay = await harness.invoke({
+    method: "GET",
+    sessionId,
+    lastEventId: firstEventId,
+  });
   assert.equal(replay.response.status, 200);
   assert.match(JSON.stringify(replay.sseFrames), /notifications\/progress/);
 
   // The stateless 2026-07-28 shape keeps its early Allow: POST rejection.
-  const stateless = await harness.invoke({ method: "GET", protocolVersion: MCP_PROTOCOL_VERSION_2026_07_28 });
+  const stateless = await harness.invoke({
+    method: "GET",
+    protocolVersion: MCP_PROTOCOL_VERSION_2026_07_28,
+  });
   assert.equal(stateless.response.status, 405);
   assert.deepEqual(stateless.response.headers.allow, ["POST"]);
 
-  assert.equal((await harness.invoke({ method: "DELETE", sessionId })).response.status, 202);
+  assert.equal(
+    (await harness.invoke({ method: "DELETE", sessionId })).response.status,
+    202,
+  );
 });
 
 test("mcp task runtime handles lifecycle and error paths", async () => {
-  const taskStore = new MemoryMcpTaskStore({ now: () => new Date("2026-07-03T00:00:02Z") });
+  const taskStore = new MemoryMcpTaskStore({
+    now: () => new Date("2026-07-03T00:00:02Z"),
+  });
   const server = createMcpServer("Task MCP", "1", {
-    idGenerator: sequenceIdGenerator(["sess-task", "task-1", "task-2", "task-3"]),
+    idGenerator: sequenceIdGenerator([
+      "sess-task",
+      "task-1",
+      "task-2",
+      "task-3",
+    ]),
     taskRuntime: {
       store: taskStore,
       defaultTtlMs: 60000,
@@ -724,99 +1239,341 @@ test("mcp task runtime handles lifecycle and error paths", async () => {
       modelImmediateResponse: "poll tasks/result",
     },
   });
-  server.registry().registerTool({ name: "task_echo", inputSchema: {}, execution: { taskSupport: "optional" } }, (args) => ({
-    content: [textBlock(args.message)],
-    structuredContent: { message: args.message },
-  }));
-  server.registry().registerTool({ name: "required", inputSchema: {}, execution: { taskSupport: "required" } }, () => ({ content: [textBlock("required")] }));
-  server.registry().registerTool({ name: "plain", inputSchema: {} }, () => ({ content: [textBlock("plain")] }));
-  server.registry().registerTool({ name: "fails", inputSchema: {}, execution: { taskSupport: "optional" } }, () => {
-    throw new Error("boom");
-  });
+  server
+    .registry()
+    .registerTool(
+      {
+        name: "task_echo",
+        inputSchema: {},
+        execution: { taskSupport: "optional" },
+      },
+      (args) => ({
+        content: [textBlock(args.message)],
+        structuredContent: { message: args.message },
+      }),
+    );
+  server
+    .registry()
+    .registerTool(
+      {
+        name: "required",
+        inputSchema: {},
+        execution: { taskSupport: "required" },
+      },
+      () => ({ content: [textBlock("required")] }),
+    );
+  server
+    .registry()
+    .registerTool({ name: "plain", inputSchema: {} }, () => ({
+      content: [textBlock("plain")],
+    }));
+  server
+    .registry()
+    .registerTool(
+      {
+        name: "fails",
+        inputSchema: {},
+        execution: { taskSupport: "optional" },
+      },
+      () => {
+        throw new Error("boom");
+      },
+    );
 
   const init = await initialize(server);
-  const headers = { [MCP_HEADER_SESSION_ID]: [init.sessionId], [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION] };
-  const created = await json(await post(server, rpc("create", "tools/call", { name: "task_echo", arguments: { message: "task result" }, task: {} }), headers));
+  const headers = {
+    [MCP_HEADER_SESSION_ID]: [init.sessionId],
+    [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION],
+  };
+  const created = await json(
+    await post(
+      server,
+      rpc("create", "tools/call", {
+        name: "task_echo",
+        arguments: { message: "task result" },
+        task: {},
+      }),
+      headers,
+    ),
+  );
   assert.equal(created.result.task.taskId, "task-1");
-  assert.equal(created.result._meta["io.modelcontextprotocol/model-immediate-response"], "poll tasks/result");
-  assert.equal((await json(await post(server, rpc("result", "tasks/result", { taskId: "task-1" }), headers))).result.structuredContent.message, "task result");
-  assert.equal((await json(await post(server, rpc("get", "tasks/get", { taskId: "task-1" }), headers))).result.status, "completed");
-  assert.equal((await json(await post(server, rpc("list", "tasks/list"), headers))).result.tasks[0].taskId, "task-1");
-  assert.equal((await json(await post(server, rpc("cancel", "tasks/cancel", { taskId: "task-1" }), headers))).error.code, MCP_CODE_INVALID_PARAMS);
+  assert.equal(
+    created.result._meta["io.modelcontextprotocol/model-immediate-response"],
+    "poll tasks/result",
+  );
+  assert.equal(
+    (
+      await json(
+        await post(
+          server,
+          rpc("result", "tasks/result", { taskId: "task-1" }),
+          headers,
+        ),
+      )
+    ).result.structuredContent.message,
+    "task result",
+  );
+  assert.equal(
+    (
+      await json(
+        await post(
+          server,
+          rpc("get", "tasks/get", { taskId: "task-1" }),
+          headers,
+        ),
+      )
+    ).result.status,
+    "completed",
+  );
+  assert.equal(
+    (await json(await post(server, rpc("list", "tasks/list"), headers))).result
+      .tasks[0].taskId,
+    "task-1",
+  );
+  assert.equal(
+    (
+      await json(
+        await post(
+          server,
+          rpc("cancel", "tasks/cancel", { taskId: "task-1" }),
+          headers,
+        ),
+      )
+    ).error.code,
+    MCP_CODE_INVALID_PARAMS,
+  );
 
-  assert.equal((await json(await post(server, rpc("required", "tools/call", { name: "required", arguments: {} }), headers))).error.code, MCP_CODE_METHOD_NOT_FOUND);
-  assert.equal((await json(await post(server, rpc("plain-task", "tools/call", { name: "plain", arguments: {}, task: {} }), headers))).error.code, MCP_CODE_METHOD_NOT_FOUND);
-  assert.equal((await json(await post(server, rpc("ttl-low", "tools/call", { name: "task_echo", arguments: {}, task: { ttl: 0 } }), headers))).error.message, "Invalid params: task.ttl must be positive");
-  assert.equal((await json(await post(server, rpc("ttl-high", "tools/call", { name: "task_echo", arguments: {}, task: { ttl: 999999 } }), headers))).error.message, "Invalid params: task.ttl exceeds maximum");
-  assert.equal((await json(await post(server, rpc("missing-task", "tasks/get", {}), headers))).error.message, "Invalid params: missing taskId");
-  const failed = await json(await post(server, rpc("failed", "tools/call", { name: "fails", arguments: {}, task: {} }), headers));
+  assert.equal(
+    (
+      await json(
+        await post(
+          server,
+          rpc("required", "tools/call", { name: "required", arguments: {} }),
+          headers,
+        ),
+      )
+    ).error.code,
+    MCP_CODE_METHOD_NOT_FOUND,
+  );
+  assert.equal(
+    (
+      await json(
+        await post(
+          server,
+          rpc("plain-task", "tools/call", {
+            name: "plain",
+            arguments: {},
+            task: {},
+          }),
+          headers,
+        ),
+      )
+    ).error.code,
+    MCP_CODE_METHOD_NOT_FOUND,
+  );
+  assert.equal(
+    (
+      await json(
+        await post(
+          server,
+          rpc("ttl-low", "tools/call", {
+            name: "task_echo",
+            arguments: {},
+            task: { ttl: 0 },
+          }),
+          headers,
+        ),
+      )
+    ).error.message,
+    "Invalid params: task.ttl must be positive",
+  );
+  assert.equal(
+    (
+      await json(
+        await post(
+          server,
+          rpc("ttl-high", "tools/call", {
+            name: "task_echo",
+            arguments: {},
+            task: { ttl: 999999 },
+          }),
+          headers,
+        ),
+      )
+    ).error.message,
+    "Invalid params: task.ttl exceeds maximum",
+  );
+  assert.equal(
+    (
+      await json(
+        await post(server, rpc("missing-task", "tasks/get", {}), headers),
+      )
+    ).error.message,
+    "Invalid params: missing taskId",
+  );
+  const failed = await json(
+    await post(
+      server,
+      rpc("failed", "tools/call", { name: "fails", arguments: {}, task: {} }),
+      headers,
+    ),
+  );
   // The task body runs inside the tools/call invocation, so the reply already
   // carries the terminal state.
   assert.equal(failed.result.task.status, "failed");
   // Generic handler errors are sanitized by default.
-  assert.equal((await json(await post(server, rpc("failed-result", "tasks/result", { taskId: "task-2" }), headers))).error.message, "internal error");
+  assert.equal(
+    (
+      await json(
+        await post(
+          server,
+          rpc("failed-result", "tasks/result", { taskId: "task-2" }),
+          headers,
+        ),
+      )
+    ).error.message,
+    "internal error",
+  );
 
-  const noTasks = createMcpServer("No Tasks", "1", { idGenerator: sequenceIdGenerator(["sess-no-tasks"]) });
-  noTasks.registry().registerTool({ name: "plain", inputSchema: {} }, () => ({ content: [textBlock("plain")] }));
+  const noTasks = createMcpServer("No Tasks", "1", {
+    idGenerator: sequenceIdGenerator(["sess-no-tasks"]),
+  });
+  noTasks
+    .registry()
+    .registerTool({ name: "plain", inputSchema: {} }, () => ({
+      content: [textBlock("plain")],
+    }));
   const noTasksInit = await initialize(noTasks);
-  const noTasksHeaders = { [MCP_HEADER_SESSION_ID]: [noTasksInit.sessionId], [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION] };
-  assert.equal((await json(await post(noTasks, rpc("task-disabled", "tools/call", { name: "plain", task: {} }), noTasksHeaders))).error.code, MCP_CODE_METHOD_NOT_FOUND);
+  const noTasksHeaders = {
+    [MCP_HEADER_SESSION_ID]: [noTasksInit.sessionId],
+    [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION],
+  };
+  assert.equal(
+    (
+      await json(
+        await post(
+          noTasks,
+          rpc("task-disabled", "tools/call", { name: "plain", task: {} }),
+          noTasksHeaders,
+        ),
+      )
+    ).error.code,
+    MCP_CODE_METHOD_NOT_FOUND,
+  );
 });
 
 test("mcp tools/call task augmentation is gated to the 2025-11-25 protocol", async () => {
-  const taskStore = new MemoryMcpTaskStore({ now: () => new Date("2026-07-03T00:00:02Z") });
+  const taskStore = new MemoryMcpTaskStore({
+    now: () => new Date("2026-07-03T00:00:02Z"),
+  });
   const server = createMcpServer("Task Gate MCP", "1", {
-    idGenerator: sequenceIdGenerator(["sess-1125", "task-1", "sess-618", "sess-326"]),
+    idGenerator: sequenceIdGenerator([
+      "sess-1125",
+      "task-1",
+      "sess-618",
+      "sess-326",
+    ]),
     taskRuntime: { store: taskStore, defaultTtlMs: 60000 },
   });
-  server.registry().registerTool(
-    { name: "task_echo", inputSchema: {}, execution: { taskSupport: "optional" } },
-    (args) => ({ content: [textBlock(`echo ${args.message}`)] }),
-  );
+  server
+    .registry()
+    .registerTool(
+      {
+        name: "task_echo",
+        inputSchema: {},
+        execution: { taskSupport: "optional" },
+      },
+      (args) => ({ content: [textBlock(`echo ${args.message}`)] }),
+    );
 
   const callTask = (sessionId, protocolVersion, id) =>
     post(
       server,
-      rpc(id, "tools/call", { name: "task_echo", arguments: { message: "hi" }, task: {} }),
-      { [MCP_HEADER_SESSION_ID]: [sessionId], [MCP_HEADER_PROTOCOL_VERSION]: [protocolVersion] },
+      rpc(id, "tools/call", {
+        name: "task_echo",
+        arguments: { message: "hi" },
+        task: {},
+      }),
+      {
+        [MCP_HEADER_SESSION_ID]: [sessionId],
+        [MCP_HEADER_PROTOCOL_VERSION]: [protocolVersion],
+      },
     );
 
   const okInit = await initialize(server, "init-ok", MCP_PROTOCOL_VERSION);
-  const ok = await json(await callTask(okInit.sessionId, MCP_PROTOCOL_VERSION, "ok"));
+  const ok = await json(
+    await callTask(okInit.sessionId, MCP_PROTOCOL_VERSION, "ok"),
+  );
   assert.equal(ok.result.task.taskId, "task-1");
-  assert.equal((await taskStore.list({ sessionId: okInit.sessionId })).tasks.length, 1);
+  assert.equal(
+    (await taskStore.list({ sessionId: okInit.sessionId })).tasks.length,
+    1,
+  );
 
   for (const protocolVersion of ["2025-06-18", "2025-03-26"]) {
-    const init = await initialize(server, `init-${protocolVersion}`, protocolVersion);
-    const denied = await json(await callTask(init.sessionId, protocolVersion, `denied-${protocolVersion}`));
+    const init = await initialize(
+      server,
+      `init-${protocolVersion}`,
+      protocolVersion,
+    );
+    const denied = await json(
+      await callTask(
+        init.sessionId,
+        protocolVersion,
+        `denied-${protocolVersion}`,
+      ),
+    );
     assert.equal(denied.error.code, MCP_CODE_METHOD_NOT_FOUND, protocolVersion);
-    assert.equal(denied.error.message, "Method not found: tasks not enabled", protocolVersion);
-    assert.deepEqual(await taskStore.list({ sessionId: init.sessionId }), { tasks: [] }, protocolVersion);
+    assert.equal(
+      denied.error.message,
+      "Method not found: tasks not enabled",
+      protocolVersion,
+    );
+    assert.deepEqual(
+      await taskStore.list({ sessionId: init.sessionId }),
+      { tasks: [] },
+      protocolVersion,
+    );
   }
 });
 
 test("dynamo task store enforces task expiry and deletes every session page", async () => {
   const db = fakeDb();
   const taskModel = defaultMcpTaskModel("unit-tasks-expiry");
-  const writer = new DynamoMcpTaskStore(db, { model: taskModel, now: () => new Date("2026-07-03T00:00:05Z") });
+  const writer = new DynamoMcpTaskStore(db, {
+    model: taskModel,
+    now: () => new Date("2026-07-03T00:00:05Z"),
+  });
   const created = await writer.create(taskRecord());
   assert.equal(created.task.status, "working");
   assert.equal(created.task.ttl, 60000);
 
   const stored = db.items.get(`${taskModel.name}:sess-1:task-1`);
-  assert.equal(stored.expiresAt, Math.floor((Date.parse("2026-07-03T00:00:00Z") + 60000) / 1000));
+  assert.equal(
+    stored.expiresAt,
+    Math.floor((Date.parse("2026-07-03T00:00:00Z") + 60000) / 1000),
+  );
   // A fresh task is returned normally and keeps its ttl duration.
   const fresh = await writer.get({ sessionId: "sess-1", taskId: "task-1" });
   assert.equal(fresh.task.taskId, "task-1");
   assert.equal(fresh.task.ttl, 60000);
 
   // Once `now` passes `expiresAt`, the record is never surfaced.
-  const later = new DynamoMcpTaskStore(db, { model: taskModel, now: () => new Date("2026-07-03T01:00:00Z") });
-  await assert.rejects(() => later.get({ sessionId: "sess-1", taskId: "task-1" }), McpTaskNotFoundError);
+  const later = new DynamoMcpTaskStore(db, {
+    model: taskModel,
+    now: () => new Date("2026-07-03T01:00:00Z"),
+  });
+  await assert.rejects(
+    () => later.get({ sessionId: "sess-1", taskId: "task-1" }),
+    McpTaskNotFoundError,
+  );
   assert.deepEqual(await later.list({ sessionId: "sess-1" }), { tasks: [] });
 
   const pageModel = defaultMcpTaskModel("unit-tasks-pages");
-  const paged = new DynamoMcpTaskStore(db, { model: pageModel, now: () => new Date("2026-07-03T00:00:05Z") });
+  const paged = new DynamoMcpTaskStore(db, {
+    model: pageModel,
+    now: () => new Date("2026-07-03T00:00:05Z"),
+  });
   for (let index = 0; index < 1200; index += 1) {
     await paged.create(
       taskRecord({
@@ -836,40 +1593,90 @@ test("dynamo task store enforces task expiry and deletes every session page", as
   assert.equal(firstPage.nextCursor, "500");
   await paged.deleteSession("sess-1");
   assert.deepEqual(await paged.list({ sessionId: "sess-1" }), { tasks: [] });
-  assert.equal([...db.items.keys()].filter((key) => key.startsWith(`${pageModel.name}:sess-1:`)).length, 0);
+  assert.equal(
+    [...db.items.keys()].filter((key) =>
+      key.startsWith(`${pageModel.name}:sess-1:`),
+    ).length,
+    0,
+  );
 });
 
 test("dynamo-backed MCP stores use TableTheory clients without raw SDK escape hatches", async () => {
   const db = fakeDb();
   const taskModel = defaultMcpTaskModel("unit-tasks");
   const streamModel = defaultMcpStreamModel("unit-streams");
-  const tasks = new DynamoMcpTaskStore(db, { model: taskModel, now: () => new Date("2026-07-03T00:00:05Z") });
+  const tasks = new DynamoMcpTaskStore(db, {
+    model: taskModel,
+    now: () => new Date("2026-07-03T00:00:05Z"),
+  });
   assert.ok(db.registered.includes(taskModel.name));
   const created = await tasks.create(taskRecord());
-  assert.equal((await tasks.get({ sessionId: "sess-1", taskId: "task-1" })).task.status, "working");
-  const complete = await tasks.update({ ...created, task: { ...created.task, status: "completed", lastUpdatedAt: "2026-07-03T00:00:01Z" }, result: { content: [textBlock("ok")] } });
+  assert.equal(
+    (await tasks.get({ sessionId: "sess-1", taskId: "task-1" })).task.status,
+    "working",
+  );
+  const complete = await tasks.update({
+    ...created,
+    task: {
+      ...created.task,
+      status: "completed",
+      lastUpdatedAt: "2026-07-03T00:00:01Z",
+    },
+    result: { content: [textBlock("ok")] },
+  });
   assert.equal(complete.result.content[0].text, "ok");
   await assert.rejects(() => tasks.update(complete), McpTaskTerminalError);
-  await assert.rejects(() => tasks.get({ sessionId: "sess-1", taskId: "missing" }), McpTaskNotFoundError);
-  await tasks.create(taskRecord({ task: { ...taskRecord().task, taskId: "task-2", createdAt: "2026-07-03T00:00:02Z" } }));
-  assert.equal((await tasks.list({ sessionId: "sess-1", limit: 1 })).tasks.length, 1);
-  const canceled = await tasks.cancel({ sessionId: "sess-1", taskId: "task-2" });
+  await assert.rejects(
+    () => tasks.get({ sessionId: "sess-1", taskId: "missing" }),
+    McpTaskNotFoundError,
+  );
+  await tasks.create(
+    taskRecord({
+      task: {
+        ...taskRecord().task,
+        taskId: "task-2",
+        createdAt: "2026-07-03T00:00:02Z",
+      },
+    }),
+  );
+  assert.equal(
+    (await tasks.list({ sessionId: "sess-1", limit: 1 })).tasks.length,
+    1,
+  );
+  const canceled = await tasks.cancel({
+    sessionId: "sess-1",
+    taskId: "task-2",
+  });
   assert.equal(canceled.task.status, "canceled");
   await tasks.deleteSession("sess-1");
   assert.deepEqual(await tasks.list({ sessionId: "sess-1" }), { tasks: [] });
 
-  const streams = new DynamoMcpStreamStore(db, { model: streamModel, idGenerator: sequenceIdGenerator(["stream-dyn"]) });
+  const streams = new DynamoMcpStreamStore(db, {
+    model: streamModel,
+    idGenerator: sequenceIdGenerator(["stream-dyn"]),
+  });
   assert.ok(db.registered.includes(streamModel.name));
   const streamId = await streams.create("sess-stream");
   assert.equal(streamId, "stream-dyn");
   await streams.append("sess-stream", streamId, Buffer.from("one"));
   await streams.append("sess-stream", streamId, Buffer.from("two"));
   assert.equal(await streams.streamForEvent("sess-stream", "1"), streamId);
-  assert.deepEqual((await streams.subscribe("sess-stream", streamId, "1")).map((event) => Buffer.from(event.data).toString()), ["two"]);
-  await assert.rejects(() => streams.subscribe("sess-stream", streamId, "9"), McpEventNotFoundError);
+  assert.deepEqual(
+    (await streams.subscribe("sess-stream", streamId, "1")).map((event) =>
+      Buffer.from(event.data).toString(),
+    ),
+    ["two"],
+  );
+  await assert.rejects(
+    () => streams.subscribe("sess-stream", streamId, "9"),
+    McpEventNotFoundError,
+  );
   await streams.close("sess-stream", streamId);
   await streams.deleteSession("sess-stream");
-  await assert.rejects(() => streams.streamForEvent("sess-stream", "1"), McpEventNotFoundError);
+  await assert.rejects(
+    () => streams.streamForEvent("sess-stream", "1"),
+    McpEventNotFoundError,
+  );
 });
 
 test("dynamo-backed MCP stream store follows cursors for replay and deletion", async () => {
@@ -883,10 +1690,17 @@ test("dynamo-backed MCP stream store follows cursors for replay and deletion", a
   const streamId = await streams.create("sess-pages");
   let lastEventId = "";
   for (let index = 0; index < 1100; index += 1) {
-    lastEventId = await streams.append("sess-pages", streamId, Buffer.from(`event-${index}`));
+    lastEventId = await streams.append(
+      "sess-pages",
+      streamId,
+      Buffer.from(`event-${index}`),
+    );
   }
 
-  assert.equal(await streams.streamForEvent("sess-pages", lastEventId), streamId);
+  assert.equal(
+    await streams.streamForEvent("sess-pages", lastEventId),
+    streamId,
+  );
   const replayed = await streams.subscribe("sess-pages", streamId);
   assert.equal(replayed.length, 1100);
   assert.equal(Buffer.from(replayed.at(-1).data).toString(), "event-1099");
@@ -917,10 +1731,22 @@ function authContext(options = {}) {
   const headers = { ...defaults, ...(options.headers ?? {}) };
   let body = Buffer.alloc(0);
   if (options.body !== undefined) {
-    body = Buffer.from(typeof options.body === "string" ? options.body : JSON.stringify(options.body), "utf8");
+    body = Buffer.from(
+      typeof options.body === "string"
+        ? options.body
+        : JSON.stringify(options.body),
+      "utf8",
+    );
   }
   return {
-    request: { method, path: "/mcp", headers, query: {}, body, isBase64: false },
+    request: {
+      method,
+      path: "/mcp",
+      headers,
+      query: {},
+      body,
+      isBase64: false,
+    },
     authIdentity: String(options.identity ?? ""),
     tenantId: String(options.tenantId ?? ""),
     tenantBound: options.tenantBound === true,
@@ -959,15 +1785,23 @@ test("mcp sessions are bound to the authenticated principal", async () => {
   };
 
   const same = await json(
-    await handler(authContext({ identity: "alice", body: rpc("same", "ping"), headers })),
+    await handler(
+      authContext({ identity: "alice", body: rpc("same", "ping"), headers }),
+    ),
   );
   assert.deepEqual(same.result, {});
   assert.equal(
-    (await json(await handler(authContext({
-      identity: "alice",
-      body: rpc("call", "tools/call", { name: "ping" }),
-      headers,
-    })))).result.content[0].text,
+    (
+      await json(
+        await handler(
+          authContext({
+            identity: "alice",
+            body: rpc("call", "tools/call", { name: "ping" }),
+            headers,
+          }),
+        ),
+      )
+    ).result.content[0].text,
     "pong",
   );
 
@@ -978,23 +1812,34 @@ test("mcp sessions are bound to the authenticated principal", async () => {
   assert.equal((await json(other)).error, "session not found");
 
   assert.equal(
-    (await handler(authContext({ identity: "bob", method: "GET", headers }))).status,
+    (await handler(authContext({ identity: "bob", method: "GET", headers })))
+      .status,
     404,
   );
   assert.equal(
-    (await handler(authContext({ identity: "alice", method: "GET", headers }))).status,
+    (await handler(authContext({ identity: "alice", method: "GET", headers })))
+      .status,
     200,
   );
   assert.equal(
-    (await handler(authContext({ identity: "bob", method: "DELETE", headers }))).status,
+    (await handler(authContext({ identity: "bob", method: "DELETE", headers })))
+      .status,
     404,
   );
   assert.equal(
-    (await handler(authContext({ identity: "alice", method: "DELETE", headers }))).status,
+    (
+      await handler(
+        authContext({ identity: "alice", method: "DELETE", headers }),
+      )
+    ).status,
     202,
   );
   assert.equal(
-    (await handler(authContext({ identity: "alice", body: rpc("gone", "ping"), headers }))).status,
+    (
+      await handler(
+        authContext({ identity: "alice", body: rpc("gone", "ping"), headers }),
+      )
+    ).status,
     404,
   );
 });
@@ -1007,7 +1852,12 @@ test("mcp sessions use secure principal and tenant-bound identity fallbacks", as
 
   const svcInit = await handler(
     authContext({
-      principal: { identity: "svc-1", scopes: ["read"], claims: {}, kind: "service" },
+      principal: {
+        identity: "svc-1",
+        scopes: ["read"],
+        claims: {},
+        kind: "service",
+      },
       body: initializeBody("init-svc"),
     }),
   );
@@ -1016,11 +1866,27 @@ test("mcp sessions use secure principal and tenant-bound identity fallbacks", as
     [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION],
   };
   assert.equal(
-    (await handler(authContext({ identity: "svc-1", body: rpc("svc", "ping"), headers: svcHeaders }))).status,
+    (
+      await handler(
+        authContext({
+          identity: "svc-1",
+          body: rpc("svc", "ping"),
+          headers: svcHeaders,
+        }),
+      )
+    ).status,
     200,
   );
   assert.equal(
-    (await handler(authContext({ identity: "svc-2", body: rpc("svc-other", "ping"), headers: svcHeaders }))).status,
+    (
+      await handler(
+        authContext({
+          identity: "svc-2",
+          body: rpc("svc-other", "ping"),
+          headers: svcHeaders,
+        }),
+      )
+    ).status,
     404,
   );
 
@@ -1036,11 +1902,27 @@ test("mcp sessions use secure principal and tenant-bound identity fallbacks", as
     [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION],
   };
   assert.equal(
-    (await handler(authContext({ identity: "tenant-1", body: rpc("tenant", "ping"), headers: tenantHeaders }))).status,
+    (
+      await handler(
+        authContext({
+          identity: "tenant-1",
+          body: rpc("tenant", "ping"),
+          headers: tenantHeaders,
+        }),
+      )
+    ).status,
     200,
   );
   assert.equal(
-    (await handler(authContext({ identity: "tenant-2", body: rpc("tenant-other", "ping"), headers: tenantHeaders }))).status,
+    (
+      await handler(
+        authContext({
+          identity: "tenant-2",
+          body: rpc("tenant-other", "ping"),
+          headers: tenantHeaders,
+        }),
+      )
+    ).status,
     404,
   );
 });
@@ -1050,23 +1932,38 @@ test("mcp tool contexts carry authenticated caller identity", async () => {
     idGenerator: sequenceIdGenerator(["sess-ctx", "task-1", "sess-anon"]),
     taskRuntime: { store: new MemoryMcpTaskStore() },
   });
-  server.registry().registerTool({ name: "whoami", inputSchema: {} }, (args, context) => ({
-    content: [textBlock(JSON.stringify(context.auth ?? null))],
-  }));
-  server.registry().registerStreamingTool(
-    { name: "stream-who", inputSchema: {} },
-    (args, emit, context) => ({
+  server
+    .registry()
+    .registerTool({ name: "whoami", inputSchema: {} }, (args, context) => ({
       content: [textBlock(JSON.stringify(context.auth ?? null))],
-    }),
-  );
-  server.registry().registerTool(
-    { name: "task-who", inputSchema: {}, execution: { taskSupport: "optional" } },
-    (args, context) => ({
-      content: [textBlock(JSON.stringify(context.auth ?? null))],
-    }),
-  );
+    }));
+  server
+    .registry()
+    .registerStreamingTool(
+      { name: "stream-who", inputSchema: {} },
+      (args, emit, context) => ({
+        content: [textBlock(JSON.stringify(context.auth ?? null))],
+      }),
+    );
+  server
+    .registry()
+    .registerTool(
+      {
+        name: "task-who",
+        inputSchema: {},
+        execution: { taskSupport: "optional" },
+      },
+      (args, context) => ({
+        content: [textBlock(JSON.stringify(context.auth ?? null))],
+      }),
+    );
   const handler = server.handler();
-  const principal = { identity: "alice", scopes: ["read", "write"], claims: {}, kind: "user" };
+  const principal = {
+    identity: "alice",
+    scopes: ["read", "write"],
+    claims: {},
+    kind: "user",
+  };
   const auth = {
     identity: "alice",
     tenantId: "tenant-1",
@@ -1086,37 +1983,45 @@ test("mcp tool contexts carry authenticated caller identity", async () => {
   };
 
   const normal = await json(
-    await handler(authContext({
-      ...auth,
-      body: rpc("normal", "tools/call", { name: "whoami" }),
-      headers,
-    })),
+    await handler(
+      authContext({
+        ...auth,
+        body: rpc("normal", "tools/call", { name: "whoami" }),
+        headers,
+      }),
+    ),
   );
   assert.deepEqual(JSON.parse(normal.result.content[0].text), expected);
 
-  const streamed = await handler(authContext({
-    ...auth,
-    body: rpc("stream", "tools/call", { name: "stream-who" }),
-    headers,
-  }));
+  const streamed = await handler(
+    authContext({
+      ...auth,
+      body: rpc("stream", "tools/call", { name: "stream-who" }),
+      headers,
+    }),
+  );
   const frames = parseMcpTestSSEFrames(Buffer.from(streamed.body));
   const streamResult = JSON.parse(frames.at(-1).data);
   assert.deepEqual(JSON.parse(streamResult.result.content[0].text), expected);
 
   const task = await json(
-    await handler(authContext({
-      ...auth,
-      body: rpc("task", "tools/call", { name: "task-who", task: {} }),
-      headers,
-    })),
+    await handler(
+      authContext({
+        ...auth,
+        body: rpc("task", "tools/call", { name: "task-who", task: {} }),
+        headers,
+      }),
+    ),
   );
   assert.equal(task.result.task.taskId, "task-1");
   const taskResult = await json(
-    await handler(authContext({
-      ...auth,
-      body: rpc("task-result", "tasks/result", { taskId: "task-1" }),
-      headers,
-    })),
+    await handler(
+      authContext({
+        ...auth,
+        body: rpc("task-result", "tasks/result", { taskId: "task-1" }),
+        headers,
+      }),
+    ),
   );
   assert.deepEqual(JSON.parse(taskResult.result.content[0].text), expected);
 
@@ -1129,11 +2034,13 @@ test("mcp tool contexts carry authenticated caller identity", async () => {
     [MCP_HEADER_SESSION_ID]: [sessionHeader(anonInit)],
     [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION],
   };
-  const anon = await json(await server.serve({
-    method: "POST",
-    headers: { ...POST_HEADERS, ...anonHeaders },
-    body: JSON.stringify(rpc("anon", "tools/call", { name: "whoami" })),
-  }));
+  const anon = await json(
+    await server.serve({
+      method: "POST",
+      headers: { ...POST_HEADERS, ...anonHeaders },
+      body: JSON.stringify(rpc("anon", "tools/call", { name: "whoami" })),
+    }),
+  );
   assert.equal(anon.result.content[0].text, "null");
 });
 
@@ -1151,12 +2058,21 @@ test("mcp memory stream store bounds events and rejects oversize payloads", asyn
   const streamId = await streams.create("sess-bounded");
   await streams.append("sess-bounded", streamId, Buffer.from("aa"));
   await streams.append("sess-bounded", streamId, Buffer.from("bb"));
-  const third = await streams.append("sess-bounded", streamId, Buffer.from("cc"));
+  const third = await streams.append(
+    "sess-bounded",
+    streamId,
+    Buffer.from("cc"),
+  );
   assert.deepEqual(
-    (await streams.subscribe("sess-bounded", streamId)).map((event) => Buffer.from(event.data).toString()),
+    (await streams.subscribe("sess-bounded", streamId)).map((event) =>
+      Buffer.from(event.data).toString(),
+    ),
     ["bb", "cc"],
   );
-  await assert.rejects(() => streams.streamForEvent("sess-bounded", "1"), McpEventNotFoundError);
+  await assert.rejects(
+    () => streams.streamForEvent("sess-bounded", "1"),
+    McpEventNotFoundError,
+  );
 
   const bytes = new MemoryMcpStreamStore({
     idGenerator: sequenceIdGenerator(["stream-bytes"]),
@@ -1167,7 +2083,9 @@ test("mcp memory stream store bounds events and rejects oversize payloads", asyn
   await bytes.append("sess-bytes", bytesStream, Buffer.from("bb"));
   await bytes.append("sess-bytes", bytesStream, Buffer.from("ccc"));
   assert.deepEqual(
-    (await bytes.subscribe("sess-bytes", bytesStream)).map((event) => Buffer.from(event.data).toString()),
+    (await bytes.subscribe("sess-bytes", bytesStream)).map((event) =>
+      Buffer.from(event.data).toString(),
+    ),
     ["bb", "ccc"],
   );
   assert.equal(third, "3");
@@ -1180,32 +2098,63 @@ test("mcp memory task store caps tasks per session", async () => {
   });
   const first = await tasks.create(taskRecord());
   await tasks.create(
-    taskRecord({ task: { ...taskRecord().task, taskId: "task-2", createdAt: "2026-07-03T00:00:01Z" } }),
+    taskRecord({
+      task: {
+        ...taskRecord().task,
+        taskId: "task-2",
+        createdAt: "2026-07-03T00:00:01Z",
+      },
+    }),
   );
   await assert.rejects(
-    () => tasks.create(taskRecord({ task: { ...taskRecord().task, taskId: "task-3" } })),
+    () =>
+      tasks.create(
+        taskRecord({ task: { ...taskRecord().task, taskId: "task-3" } }),
+      ),
     /Task capacity exceeded/,
   );
   await tasks.update({
     ...first,
-    task: { ...first.task, status: "completed", lastUpdatedAt: "2026-07-03T00:00:02Z" },
+    task: {
+      ...first.task,
+      status: "completed",
+      lastUpdatedAt: "2026-07-03T00:00:02Z",
+    },
   });
-  await tasks.create(taskRecord({ task: { ...taskRecord().task, taskId: "task-3" } }));
-  assert.equal((await tasks.get({ sessionId: "sess-1", taskId: "task-3" })).task.taskId, "task-3");
-  await assert.rejects(() => tasks.get({ sessionId: "sess-1", taskId: "task-1" }), McpTaskNotFoundError);
+  await tasks.create(
+    taskRecord({ task: { ...taskRecord().task, taskId: "task-3" } }),
+  );
+  assert.equal(
+    (await tasks.get({ sessionId: "sess-1", taskId: "task-3" })).task.taskId,
+    "task-3",
+  );
+  await assert.rejects(
+    () => tasks.get({ sessionId: "sess-1", taskId: "task-1" }),
+    McpTaskNotFoundError,
+  );
 
   const reaping = new MemoryMcpTaskStore({
     now: () => new Date("2026-07-03T00:01:00Z"),
     maxTasksPerSession: 1,
   });
   await reaping.create(
-    taskRecord({ task: { ...taskRecord().task, taskId: "expired", ttl: 1000 } }),
+    taskRecord({
+      task: { ...taskRecord().task, taskId: "expired", ttl: 1000 },
+    }),
   );
   await reaping.create(
-    taskRecord({ task: { ...taskRecord().task, taskId: "fresh", ttl: 600000 } }),
+    taskRecord({
+      task: { ...taskRecord().task, taskId: "fresh", ttl: 600000 },
+    }),
   );
-  assert.equal((await reaping.get({ sessionId: "sess-1", taskId: "fresh" })).task.taskId, "fresh");
-  await assert.rejects(() => reaping.get({ sessionId: "sess-1", taskId: "expired" }), McpTaskNotFoundError);
+  assert.equal(
+    (await reaping.get({ sessionId: "sess-1", taskId: "fresh" })).task.taskId,
+    "fresh",
+  );
+  await assert.rejects(
+    () => reaping.get({ sessionId: "sess-1", taskId: "expired" }),
+    McpTaskNotFoundError,
+  );
 });
 
 test("dynamo stream store writes ttl and hides expired records", async () => {
@@ -1228,7 +2177,10 @@ test("dynamo stream store writes ttl and hides expired records", async () => {
   await streams.append("sess-ttl", streamId, Buffer.from("one"));
   const event = db.items.get(`${streamModel.name}:sess-ttl:EVENT#1`);
   assert.equal(event.expiresAt, expectedExpiry);
-  assert.equal(db.items.get(`${streamModel.name}:sess-ttl:STREAM#${streamId}`).expiresAt, expectedExpiry);
+  assert.equal(
+    db.items.get(`${streamModel.name}:sess-ttl:STREAM#${streamId}`).expiresAt,
+    expectedExpiry,
+  );
   await assert.rejects(
     () => streams.append("sess-ttl", streamId, Buffer.from("12345")),
     /stream event too large/,
@@ -1261,16 +2213,21 @@ test("mcp handler errors are sanitized unless verboseHandlerErrors is enabled", 
     server.registry().registerTool({ name: "fails", inputSchema: {} }, () => {
       throw new Error("boom");
     });
-    server.resources().registerResource({ uri: "file:///boom", name: "boom" }, () => {
-      throw new Error("boom");
-    });
+    server
+      .resources()
+      .registerResource({ uri: "file:///boom", name: "boom" }, () => {
+        throw new Error("boom");
+      });
     server.prompts().registerPrompt({ name: "boom" }, () => {
       throw new Error("boom");
     });
     return server;
   };
 
-  for (const [verbose, expected] of [[false, "internal error"], [true, "boom"]]) {
+  for (const [verbose, expected] of [
+    [false, "internal error"],
+    [true, "boom"],
+  ]) {
     const server = build(verbose ? { verboseHandlerErrors: true } : {});
     const init = await initialize(server);
     const headers = {
@@ -1278,19 +2235,51 @@ test("mcp handler errors are sanitized unless verboseHandlerErrors is enabled", 
       [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION],
     };
     assert.equal(
-      (await json(await post(server, rpc("tool", "tools/call", { name: "fails" }), headers))).error.message,
+      (
+        await json(
+          await post(
+            server,
+            rpc("tool", "tools/call", { name: "fails" }),
+            headers,
+          ),
+        )
+      ).error.message,
       expected,
     );
     assert.equal(
-      (await json(await post(server, rpc("resource", "resources/read", { uri: "file:///boom" }), headers))).error.message,
+      (
+        await json(
+          await post(
+            server,
+            rpc("resource", "resources/read", { uri: "file:///boom" }),
+            headers,
+          ),
+        )
+      ).error.message,
       expected,
     );
     assert.equal(
-      (await json(await post(server, rpc("prompt", "prompts/get", { name: "boom" }), headers))).error.message,
+      (
+        await json(
+          await post(
+            server,
+            rpc("prompt", "prompts/get", { name: "boom" }),
+            headers,
+          ),
+        )
+      ).error.message,
       expected,
     );
     assert.match(
-      JSON.stringify(await json(await post(server, rpc("missing", "resources/read", { uri: "file:///missing" }), headers))),
+      JSON.stringify(
+        await json(
+          await post(
+            server,
+            rpc("missing", "resources/read", { uri: "file:///missing" }),
+            headers,
+          ),
+        ),
+      ),
       /resource not found/,
     );
   }
@@ -1298,7 +2287,10 @@ test("mcp handler errors are sanitized unless verboseHandlerErrors is enabled", 
 
 test("mcp task store errors are redacted unless verboseHandlerErrors is enabled", async () => {
   const secret = "task store secret detail";
-  for (const [verbose, expected] of [[false, "internal error"], [true, secret]]) {
+  for (const [verbose, expected] of [
+    [false, "internal error"],
+    [true, secret],
+  ]) {
     const store = new MemoryMcpTaskStore();
     store.get = async () => {
       throw new Error(secret);
@@ -1308,17 +2300,27 @@ test("mcp task store errors are redacted unless verboseHandlerErrors is enabled"
       taskRuntime: { store, defaultTtlMs: 60000 },
       ...(verbose ? { verboseHandlerErrors: true } : {}),
     });
-    server.registry().registerTool(
-      { name: "task_tool", inputSchema: {}, execution: { taskSupport: "optional" } },
-      () => ({ content: [textBlock("ok")] }),
-    );
+    server
+      .registry()
+      .registerTool(
+        {
+          name: "task_tool",
+          inputSchema: {},
+          execution: { taskSupport: "optional" },
+        },
+        () => ({ content: [textBlock("ok")] }),
+      );
     const init = await initialize(server);
     const headers = {
       [MCP_HEADER_SESSION_ID]: [init.sessionId],
       [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION],
     };
     const resp = await json(
-      await post(server, rpc("store-error", "tasks/get", { taskId: "task-1" }), headers),
+      await post(
+        server,
+        rpc("store-error", "tasks/get", { taskId: "task-1" }),
+        headers,
+      ),
     );
     assert.equal(resp.error.code, MCP_CODE_SERVER_ERROR);
     assert.equal(resp.error.message, expected);
@@ -1334,17 +2336,27 @@ test("mcp task store errors preserve control messages", async () => {
     idGenerator: sequenceIdGenerator(["sess-task-store-control"]),
     taskRuntime: { store, defaultTtlMs: 60000 },
   });
-  server.registry().registerTool(
-    { name: "task_tool", inputSchema: {}, execution: { taskSupport: "optional" } },
-    () => ({ content: [textBlock("ok")] }),
-  );
+  server
+    .registry()
+    .registerTool(
+      {
+        name: "task_tool",
+        inputSchema: {},
+        execution: { taskSupport: "optional" },
+      },
+      () => ({ content: [textBlock("ok")] }),
+    );
   const init = await initialize(server);
   const headers = {
     [MCP_HEADER_SESSION_ID]: [init.sessionId],
     [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION],
   };
   const resp = await json(
-    await post(server, rpc("store-control", "tasks/get", { taskId: "task-1" }), headers),
+    await post(
+      server,
+      rpc("store-control", "tasks/get", { taskId: "task-1" }),
+      headers,
+    ),
   );
   assert.equal(resp.error.code, MCP_CODE_SERVER_ERROR);
   assert.equal(resp.error.message, "task capacity exceeded");
@@ -1352,7 +2364,10 @@ test("mcp task store errors preserve control messages", async () => {
 
 test("mcp tasks/result redacts stored task errors unless verboseHandlerErrors is enabled", async () => {
   const secret = "db DSN postgres://user:secret@host/app: boom";
-  for (const [verbose, expected] of [[false, "internal error"], [true, secret]]) {
+  for (const [verbose, expected] of [
+    [false, "internal error"],
+    [true, secret],
+  ]) {
     const now = new Date("2026-07-03T00:00:02Z");
     const store = new MemoryMcpTaskStore({ now: () => now });
     const server = createMcpServer("Task Result Error MCP", "1", {
@@ -1360,10 +2375,16 @@ test("mcp tasks/result redacts stored task errors unless verboseHandlerErrors is
       taskRuntime: { store, defaultTtlMs: 600000 },
       ...(verbose ? { verboseHandlerErrors: true } : {}),
     });
-    server.registry().registerTool(
-      { name: "task_tool", inputSchema: {}, execution: { taskSupport: "optional" } },
-      () => ({ content: [textBlock("ok")] }),
-    );
+    server
+      .registry()
+      .registerTool(
+        {
+          name: "task_tool",
+          inputSchema: {},
+          execution: { taskSupport: "optional" },
+        },
+        () => ({ content: [textBlock("ok")] }),
+      );
     const init = await initialize(server);
     const headers = {
       [MCP_HEADER_SESSION_ID]: [init.sessionId],
@@ -1383,7 +2404,11 @@ test("mcp tasks/result redacts stored task errors unless verboseHandlerErrors is
       error: { code: MCP_CODE_SERVER_ERROR, message: secret },
     });
     const resp = await json(
-      await post(server, rpc("stored-error", "tasks/result", { taskId: "task-stored" }), headers),
+      await post(
+        server,
+        rpc("stored-error", "tasks/result", { taskId: "task-stored" }),
+        headers,
+      ),
     );
     assert.equal(resp.error.code, MCP_CODE_SERVER_ERROR);
     assert.equal(resp.error.message, expected);
@@ -1397,10 +2422,16 @@ test("mcp tasks/result preserves stored control errors", async () => {
     idGenerator: sequenceIdGenerator(["sess-task-result-control"]),
     taskRuntime: { store, defaultTtlMs: 600000 },
   });
-  server.registry().registerTool(
-    { name: "task_tool", inputSchema: {}, execution: { taskSupport: "optional" } },
-    () => ({ content: [textBlock("ok")] }),
-  );
+  server
+    .registry()
+    .registerTool(
+      {
+        name: "task_tool",
+        inputSchema: {},
+        execution: { taskSupport: "optional" },
+      },
+      () => ({ content: [textBlock("ok")] }),
+    );
   const init = await initialize(server);
   const headers = {
     [MCP_HEADER_SESSION_ID]: [init.sessionId],
@@ -1420,7 +2451,11 @@ test("mcp tasks/result preserves stored control errors", async () => {
     error: { code: MCP_CODE_SERVER_ERROR, message: "task canceled" },
   });
   const resp = await json(
-    await post(server, rpc("stored-cancel", "tasks/result", { taskId: "task-canceled" }), headers),
+    await post(
+      server,
+      rpc("stored-cancel", "tasks/result", { taskId: "task-canceled" }),
+      headers,
+    ),
   );
   assert.equal(resp.error.code, MCP_CODE_SERVER_ERROR);
   assert.equal(resp.error.message, "task canceled");
@@ -1455,7 +2490,10 @@ test("M3 shared state-bounds fixture pins required limits and cases", () => {
     M3_STATE_BOUNDS_FIXTURE.errors.session_capacity.jsonrpc_code,
     -32000,
   );
-  assert.equal(M3_STATE_BOUNDS_FIXTURE.errors.session_capacity.http_status, 200);
+  assert.equal(
+    M3_STATE_BOUNDS_FIXTURE.errors.session_capacity.http_status,
+    200,
+  );
   assert.equal(
     M3_STATE_BOUNDS_FIXTURE.errors.session_capacity.session_header,
     false,
@@ -1487,8 +2525,16 @@ test("M3 memory session store enforces capacity, expiry, and same-ID refresh", a
     now: () => now,
     maxSessions: 2,
   });
-  await store.put({ id: "one", createdAt: "", expiresAt: new Date(70_000).toISOString() });
-  await store.put({ id: "two", createdAt: "", expiresAt: new Date(70_000).toISOString() });
+  await store.put({
+    id: "one",
+    createdAt: "",
+    expiresAt: new Date(70_000).toISOString(),
+  });
+  await store.put({
+    id: "two",
+    createdAt: "",
+    expiresAt: new Date(70_000).toISOString(),
+  });
   await assert.rejects(
     () =>
       store.put({
@@ -1535,9 +2581,12 @@ test("M3 initialize capacity refusal maps to CodeServerError without a session h
     expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
   });
   const server = createMcpServer("M3", "1", { sessionStore });
-  const response = await post(server, rpc("init", "initialize", {
-    protocolVersion: MCP_PROTOCOL_VERSION,
-  }));
+  const response = await post(
+    server,
+    rpc("init", "initialize", {
+      protocolVersion: MCP_PROTOCOL_VERSION,
+    }),
+  );
   assert.equal(response.status, 200);
   assert.equal(response.headers["mcp-session-id"], undefined);
   const body = await json(response);

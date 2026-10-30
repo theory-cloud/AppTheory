@@ -907,6 +907,26 @@ func fakeMCPMatchStreamCondition(record dynamoStreamRecord, exists bool, conditi
 			return false
 		}
 		return reflect.DeepEqual(value, condition.value)
+	case "<", "<=", ">", ">=":
+		value, ok := fakeMCPStreamFieldValue(record, exists, condition.field)
+		if !ok {
+			return false
+		}
+		actual, actualOK := fakeMCPInt64(value)
+		want, wantOK := fakeMCPInt64(condition.value)
+		if !actualOK || !wantOK {
+			return false
+		}
+		switch condition.operator {
+		case "<":
+			return actual < want
+		case "<=":
+			return actual <= want
+		case ">":
+			return actual > want
+		default:
+			return actual >= want
+		}
 	default:
 		return false
 	}
