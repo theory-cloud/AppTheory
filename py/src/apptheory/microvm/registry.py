@@ -66,9 +66,19 @@ def _call_registry_list(list_fn: Any, partition_key: str) -> list[Any]:
         return list(cast(Any, list_fn(pk=partition_key)) or [])
 
 
+def _registry_record_listable(record: MicroVMSessionRegistryRecord, subject: str, now_epoch: float) -> bool:
+    owner = str(record.auth_subject or "").strip()
+    caller = str(subject or "").strip()
+    if not owner or not caller or owner != caller:
+        return False
+    expires_at = float(record.expires_at or 0.0)
+    return not (expires_at > 0 and now_epoch >= expires_at)
+
+
 class MemoryMicroVMSessionRegistry:
-    def __init__(self) -> None:
+    def __init__(self, *, clock: Callable[[], float] | None = None) -> None:
         self._records: dict[tuple[str, str], MicroVMSessionRegistryRecord] = {}
+        self._clock = clock or time.time
 
     def put(self, record: MicroVMSessionRecord) -> MicroVMSessionRecord:
         registry = microvm_session_record_to_registry_record(record)
@@ -127,6 +137,7 @@ class MemoryMicroVMSessionRegistry:
     def list(self, input_: MicroVMSessionListInput | dict[str, Any]) -> list[MicroVMSessionRecord]:
         normalized = _normalize_session_list_input(input_)
         canonical_pk = microvm_session_registry_partition_key(normalized.tenant_id, normalized.namespace)
+        now_epoch = float(self._clock())
         out: list[MicroVMSessionRecord] = []
         seen: set[str] = set()
         for record in self._records.values():
@@ -136,9 +147,11 @@ class MemoryMicroVMSessionRegistry:
                 or record.pk != canonical_pk
             ):
                 continue
-            session = microvm_session_from_registry_record(_clone_session_registry_record(record))
-            seen.add(session.session_id)
-            out.append(session)
+            # Canonical precedence is recorded before owner filtering.
+            seen.add(record.session_id)
+            if not _registry_record_listable(record, normalized.auth_subject, now_epoch):
+                continue
+            out.append(microvm_session_from_registry_record(_clone_session_registry_record(record)))
         for record in self._records.values():
             if (
                 record.tenant_id != normalized.tenant_id
@@ -147,17 +160,17 @@ class MemoryMicroVMSessionRegistry:
                 or record.session_id in seen
             ):
                 continue
-            session = _session_from_registry_record_for_read(
-                _clone_session_registry_record(record), allow_legacy_key=True
+            if not _registry_record_listable(record, normalized.auth_subject, now_epoch):
+                continue
+            out.append(
+                _session_from_registry_record_for_read(_clone_session_registry_record(record), allow_legacy_key=True)
             )
-            seen.add(session.session_id)
-            out.append(session)
         out.sort(key=lambda record: record.session_id)
         return out
 
 
-def create_memory_microvm_session_registry() -> MemoryMicroVMSessionRegistry:
-    return MemoryMicroVMSessionRegistry()
+def create_memory_microvm_session_registry(*, clock: Callable[[], float] | None = None) -> MemoryMicroVMSessionRegistry:
+    return MemoryMicroVMSessionRegistry(clock=clock)
 
 
 MicroVMSessionReconstructionHook = Callable[[MicroVMSessionReconstructionRequest], MicroVMSessionRecord]
@@ -293,7 +306,13 @@ def create_reconstructing_microvm_session_registry(
 
 
 class TableTheoryMicroVMSessionRegistry:
-    def __init__(self, table: Any | None = None, *, table_name: str | None = None) -> None:
+    def __init__(
+        self,
+        table: Any | None = None,
+        *,
+        table_name: str | None = None,
+        clock: Callable[[], float] | None = None,
+    ) -> None:
         if table is None:
             try:
                 from tabletheory_py import Table  # type: ignore[import-not-found]
@@ -311,6 +330,7 @@ class TableTheoryMicroVMSessionRegistry:
                     "",
                 ) from exc
         self._table = table
+        self._clock = clock or time.time
 
     def put(self, record: MicroVMSessionRecord) -> MicroVMSessionRecord:
         registry = microvm_session_record_to_registry_record(record)
@@ -409,14 +429,18 @@ class TableTheoryMicroVMSessionRegistry:
             list_fn = getattr(self._table, "list", None) or getattr(self._table, "all", None)
             if not callable(list_fn):
                 raise RuntimeError("table list unavailable")
+            now_epoch = float(self._clock())
             out: list[MicroVMSessionRecord] = []
             seen: set[str] = set()
             for item in _call_registry_list(list_fn, canonical_pk):
-                session = microvm_session_from_registry_record(
-                    cast(MicroVMSessionRegistryRecord | dict[str, Any], item)
+                record = _normalize_session_registry_record(item)
+                # Canonical precedence is recorded before owner filtering.
+                seen.add(record.session_id)
+                if not _registry_record_listable(record, normalized.auth_subject, now_epoch):
+                    continue
+                out.append(
+                    microvm_session_from_registry_record(cast(MicroVMSessionRegistryRecord | dict[str, Any], item))
                 )
-                seen.add(session.session_id)
-                out.append(session)
             # Union in the pre-M1 partition so un-migrated items stay listable; the canonical item wins.
             legacy_pk = _legacy_session_registry_partition_key(normalized.tenant_id, normalized.namespace)
             if legacy_pk and legacy_pk != canonical_pk:
@@ -428,9 +452,9 @@ class TableTheoryMicroVMSessionRegistry:
                         or record.session_id in seen
                     ):
                         continue
-                    session = _session_from_registry_record_for_read(item, allow_legacy_key=True)
-                    seen.add(session.session_id)
-                    out.append(session)
+                    if not _registry_record_listable(record, normalized.auth_subject, now_epoch):
+                        continue
+                    out.append(_session_from_registry_record_for_read(item, allow_legacy_key=True))
             out.sort(key=lambda record: record.session_id)
             return out
         except Exception as exc:

@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -64,9 +67,18 @@ from apptheory import (
     create_mcp_test_harness,
     detect_mcp_protocol_version,
     detect_mcp_protocol_version_for_message,
+    default_mcp_stream_model,
     sequence_mcp_id_generator,
 )
-from apptheory.mcp import McpCallerAuth, McpStreamEventTooLargeError, McpTaskCapacityError
+from apptheory.mcp import (
+    McpCallerAuth,
+    McpSessionCapacityError,
+    McpStreamAggregateBackfillError,
+    McpStreamAggregateCapacityError,
+    McpStreamEventTooLargeError,
+    McpStreamTransactionRequiredError,
+    McpTaskCapacityError,
+)
 
 
 def _response_json(response: Any) -> Any:
@@ -92,6 +104,10 @@ class _FakeNotFound(Exception):
     pass
 
 
+class _FakeConditionFailed(Exception):
+    pass
+
+
 class _FixedClock:
     def __init__(self, moment: datetime) -> None:
         self._moment = moment
@@ -103,6 +119,7 @@ class _FixedClock:
 class _FakeTheoryTable:
     def __init__(self) -> None:
         self.items: dict[tuple[str, str], Any] = {}
+        self._lock = threading.RLock()
 
     def put(self, item: Any) -> None:
         self.items[self._key(item)] = item
@@ -124,6 +141,69 @@ class _FakeTheoryTable:
 
     def delete(self, session_id: str, item_id: str) -> None:
         self.items.pop((str(session_id), str(item_id)), None)
+
+    def transact_write(self, actions: Any) -> None:
+        with self._lock:
+            self._transact_write_locked(actions)
+
+    def _transact_write_locked(self, actions: Any) -> None:
+        from tabletheory_py import TransactConditionCheck, TransactDelete, TransactPut, TransactUpdate
+
+        def attribute_name(action: Any, token: str) -> str:
+            names = getattr(action, "expression_attribute_names", None) or {}
+            return str(names.get(token, token))
+
+        def field_name(attribute: str) -> str:
+            return {
+                "aggregateVersion": "aggregate_version",
+                "eventCount": "event_count",
+                "aggregateBytes": "aggregate_bytes",
+                "expiresAt": "expires_at",
+            }.get(attribute, attribute)
+
+        def condition_met(action: Any, existing: Any | None) -> bool:
+            expression = str(getattr(action, "condition_expression", None) or "").strip()
+            if not expression:
+                return True
+            if existing is None:
+                return False
+            values = getattr(action, "expression_attribute_values", None) or {}
+            for clause in expression.split(" AND "):
+                left, _, right = clause.strip().partition("=")
+                attribute = field_name(attribute_name(action, left.strip()))
+                expected = values.get(right.strip())
+                actual = getattr(existing, attribute, None)
+                if isinstance(expected, bool):
+                    if bool(actual) != expected:
+                        return False
+                elif isinstance(expected, (int, float)):
+                    if int(actual or 0) != int(expected):
+                        return False
+                elif str(actual or "") != str(expected or ""):
+                    return False
+            return True
+
+        for action in actions:
+            if isinstance(action, TransactPut):
+                if action.condition_expression and self._key(action.item) in self.items:
+                    raise _FakeConditionFailed("conditional check failed")
+                continue
+            existing = self.items.get((str(action.pk), str(action.sk or "")), None)
+            if not condition_met(action, existing):
+                raise _FakeConditionFailed("conditional check failed")
+
+        for action in actions:
+            if isinstance(action, TransactPut):
+                self.put(action.item)
+            elif isinstance(action, TransactDelete):
+                self.delete(str(action.pk), str(action.sk or ""))
+            elif isinstance(action, TransactUpdate):
+                existing = self.items.get((str(action.pk), str(action.sk or "")))
+                if existing is not None:
+                    for name, value in action.updates.items():
+                        setattr(existing, name, value)
+            elif isinstance(action, TransactConditionCheck):
+                continue
 
     def _key(self, item: Any) -> tuple[str, str]:
         session_id = str(getattr(item, "session_id", ""))
@@ -1239,7 +1319,10 @@ class McpRuntimeTests(unittest.TestCase):
         self.assertEqual(replayed[-1].data, b"event-1099")
 
         store.delete_session("sess-pages")
-        self.assertEqual([key for key in table.items if key[0] == "sess-pages"], [])
+        self.assertEqual([key for key in table.items if key[0] == "sess-pages"], [("sess-pages", "!session")])
+        self.assertTrue(bool(getattr(table.items[("sess-pages", "!session")], "deleted")))
+        with self.assertRaises(McpStreamNotFoundError):
+            store.append("sess-pages", stream_id, "late")
 
     def test_sessions_bind_to_authenticated_principal(self) -> None:
         server = create_mcp_server("PyMCP", "test", {"id_generator": sequence_mcp_id_generator(["sess-principal"])})
@@ -1690,6 +1773,215 @@ class McpRuntimeTests(unittest.TestCase):
         verbose_session = verbose_harness.initialize(id="init").response.headers[MCP_HEADER_SESSION_ID][0]
         verbose_error = verbose_harness.call(verbose_session, "tools/call", {"name": "boom"}, "boom")
         self.assertEqual(verbose_error.body_json["error"]["message"], "secret detail")
+
+
+class _MutableM3Clock:
+    def __init__(self, moment: datetime) -> None:
+        self.moment = moment
+
+    def now(self) -> datetime:
+        return self.moment
+
+
+class _M3SpillStore:
+    def __init__(self) -> None:
+        self.objects: dict[str, bytes] = {}
+
+    def put(self, key: str, data: bytes, expires_at: int, sha256: str) -> None:
+        self.objects[key] = bytes(data)
+
+    def get(self, key: str, max_bytes: int) -> bytes:
+        return self.objects[key]
+
+    def delete(self, key: str) -> None:
+        self.objects.pop(key, None)
+
+
+class M3StateBoundsTests(unittest.TestCase):
+    def test_shared_fixture_pins_limits_and_cases(self) -> None:
+        fixture = json.loads(
+            (Path(__file__).resolve().parents[2] / "contract-tests/fixtures/mcp/state-bounds-conformance.v1.json").read_text()
+        )
+        self.assertEqual("m3.mcp-state-bounds/v1", fixture["contract"]["id"])
+        self.assertEqual(1000, fixture["limits"]["memory_sessions_per_store"])
+        self.assertEqual(10000, fixture["limits"]["durable_aggregate_events_per_session"])
+        self.assertEqual(64 * 1024 * 1024, fixture["limits"]["durable_aggregate_bytes_per_session"])
+        self.assertEqual("Session capacity exceeded", fixture["errors"]["session_capacity"]["message"])
+        self.assertEqual(-32000, fixture["errors"]["session_capacity"]["jsonrpc_code"])
+        self.assertEqual(200, fixture["errors"]["session_capacity"]["http_status"])
+        self.assertFalse(fixture["errors"]["session_capacity"]["session_header"])
+        ids = {item["id"] for item in fixture["cases"]}
+        for case_id in (
+            "memory.session.capacity_refuses_new_live_session",
+            "memory.session.expired_first_reclaims_before_admission",
+            "memory.session.same_id_live_refresh_consumes_no_capacity",
+            "memory.session.expired_incoming_put_not_revived",
+            "memory.session.cleanup_removes_associated_state",
+            "http.initialize.capacity_refusal_maps_server_error",
+            "durable.aggregate.count_boundary",
+            "durable.aggregate.byte_boundary",
+            "durable.aggregate.spill_counts_toward_aggregate",
+            "durable.aggregate.pre_aggregate_schema_refused",
+            "durable.aggregate.concurrent_append_unique_sequence",
+            "durable.aggregate.non_transactional_backend_refused",
+            "durable.delete.paginates_beyond_1000_records",
+            "durable.delete.late_append_refused",
+        ):
+            self.assertIn(case_id, ids)
+
+    def test_memory_session_capacity_expiry_and_same_id_refresh(self) -> None:
+        clock = _MutableM3Clock(datetime(1970, 1, 1, 0, 0, 10, tzinfo=UTC))
+        store = MemoryMcpSessionStore(clock=clock, max_sessions=2)
+        store.put({"id": "one", "expires_at": "1970-01-01T00:02:00Z"})
+        store.put({"id": "two", "expires_at": "1970-01-01T00:02:00Z"})
+        with self.assertRaises(McpSessionCapacityError):
+            store.put({"id": "three", "expires_at": "1970-01-01T00:02:00Z"})
+        store.get("one")
+        store.get("two")
+        with self.assertRaises(McpSessionNotFoundError):
+            store.get("three")
+
+        store.put({"id": "one", "expires_at": "1970-01-01T00:02:00Z", "data": {"refreshed": "true"}})
+
+        clock.moment = datetime(1970, 1, 1, 0, 3, 20, tzinfo=UTC)
+        expired = store.put_and_collect_expired({"id": "four", "expires_at": "1970-01-01T00:05:00Z"})
+        self.assertEqual(["one", "two"], sorted(expired))
+        with self.assertRaisesRegex(Exception, "session expired"):
+            store.put({"id": "stale", "expires_at": "1970-01-01T00:03:00Z"})
+
+    def test_initialize_capacity_maps_server_error_without_session_header(self) -> None:
+        store = MemoryMcpSessionStore(max_sessions=1)
+        store.put({"id": "occupied", "expires_at": "2099-01-01T00:00:00Z"})
+        server = create_mcp_server("M3", "1", {"session_store": store})
+        response = server.serve(
+            {
+                "method": "POST",
+                "headers": _post_headers(),
+                "body": json.dumps(
+                    {"jsonrpc": "2.0", "id": "init", "method": "initialize", "params": {"protocolVersion": MCP_PROTOCOL_VERSION}}
+                ),
+            }
+        )
+        self.assertEqual(200, response.status)
+        self.assertEqual([], response.headers.get(MCP_HEADER_SESSION_ID, []))
+        body = _response_json(response)
+        self.assertEqual(MCP_CODE_SERVER_ERROR, body["error"]["code"])
+        self.assertEqual("Session capacity exceeded", body["error"]["message"])
+
+    def test_cleanup_removes_stream_and_task_state(self) -> None:
+        clock = _MutableM3Clock(datetime(1970, 1, 1, 0, 0, 20, tzinfo=UTC))
+        session_store = MemoryMcpSessionStore(clock=clock, max_sessions=2)
+        stream_store = MemoryMcpStreamStore(id_generator=sequence_mcp_id_generator(["stream-cleanup"]))
+        task_store = MemoryMcpTaskStore(clock=clock)
+        server = create_mcp_server(
+            "M3",
+            "1",
+            {"session_store": session_store, "stream_store": stream_store, "task_runtime": {"store": task_store}},
+        )
+        session_store.put({"id": "sess-cleanup", "expires_at": "1970-01-01T01:00:00Z"})
+        stream_id = stream_store.create("sess-cleanup")
+        stream_store.append("sess-cleanup", stream_id, "event")
+        task_store.create(
+            McpTaskRecord(
+                session_id="sess-cleanup",
+                method="tools/call",
+                task=McpTask(task_id="task-cleanup", status="working", created_at="1970-01-01T00:00:20Z"),
+            )
+        )
+        server._cleanup_session_state("sess-cleanup")
+        with self.assertRaises(McpStreamNotFoundError):
+            stream_store.subscribe("sess-cleanup", stream_id)
+        with self.assertRaises(McpTaskNotFoundError):
+            task_store.get({"session_id": "sess-cleanup", "task_id": "task-cleanup"})
+
+    def test_dynamo_aggregate_count_bytes_spill_and_pre_aggregate(self) -> None:
+        table = _FakeTheoryTable()
+        spill = _M3SpillStore()
+        store = DynamoMcpStreamStore(
+            table=table,
+            id_generator=sequence_mcp_id_generator(["stream-count"]),
+            clock=_FixedClock(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)),
+            max_aggregate_events=3,
+            max_aggregate_bytes=24,
+            inline_max_bytes=4,
+            spill_store=spill,
+        )
+        stream_id = store.create("sess-count")
+        payload = b"0123456789"
+        self.assertEqual("1", store.append("sess-count", stream_id, payload))
+        self.assertEqual("2", store.append("sess-count", stream_id, payload))
+        with self.assertRaises(McpStreamAggregateCapacityError):
+            store.append("sess-count", stream_id, payload)
+        self.assertEqual(2, len(spill.objects))
+
+        state = table.items[("sess-count", "!session")]
+        state.aggregate_version = 0
+        with self.assertRaises(McpStreamAggregateBackfillError):
+            store.append("sess-count", stream_id, b"z")
+
+    def test_dynamo_append_requires_transaction_and_cleans_refused_spills(self) -> None:
+        class _NoTxTable(_FakeTheoryTable):
+            transact_write = None  # type: ignore[assignment]
+
+        no_tx = DynamoMcpStreamStore(
+            table=_NoTxTable(),
+            id_generator=sequence_mcp_id_generator(["stream-no-tx"]),
+            clock=_FixedClock(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)),
+        )
+        stream_id = no_tx.create("sess-no-tx")
+        with self.assertRaises(McpStreamTransactionRequiredError):
+            no_tx.append("sess-no-tx", stream_id, b"x")
+
+        table = _FakeTheoryTable()
+        spill = _M3SpillStore()
+        store = DynamoMcpStreamStore(
+            table=table,
+            id_generator=sequence_mcp_id_generator(["stream-refusal"]),
+            clock=_FixedClock(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)),
+            inline_max_bytes=4,
+            spill_store=spill,
+            append_retries=1,
+        )
+        refusal_stream = store.create("sess-refusal")
+        original = table.transact_write
+
+        def tombstone_first(actions: Any) -> None:
+            state = table.items[("sess-refusal", "!session")]
+            state.deleted = True
+            original(actions)
+
+        table.transact_write = tombstone_first
+        with self.assertRaises(McpStreamNotFoundError):
+            store.append("sess-refusal", refusal_stream, b"0123456789")
+        self.assertEqual({}, spill.objects)
+
+    def test_dynamo_concurrent_appends_do_not_overshoot(self) -> None:
+        table = _FakeTheoryTable()
+        store = DynamoMcpStreamStore(
+            table=table,
+            id_generator=sequence_mcp_id_generator(["stream-race"]),
+            clock=_FixedClock(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)),
+            max_aggregate_events=1,
+            append_retries=16,
+        )
+        stream_id = store.create("sess-race")
+
+        def attempt() -> str:
+            return store.append("sess-race", stream_id, b"x")
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(attempt) for _ in range(2)]
+            successes = 0
+            failures = 0
+            for future in futures:
+                try:
+                    future.result()
+                    successes += 1
+                except McpStreamAggregateCapacityError:
+                    failures += 1
+        self.assertEqual(1, successes)
+        self.assertEqual(1, failures)
+        self.assertEqual(1, table.items[("sess-race", "!session")].event_count)
 
 
 if __name__ == "__main__":
