@@ -93,7 +93,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/ts.txt`.
 
 <details>
-<summary>911 exported top-level symbols</summary>
+<summary>913 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, AGENT_MCP_PATTERN, ALBTargetGroupRequest, ALBTargetGroupResponse, APIGatewayProxyRequest, APIGatewayProxyResponse,
@@ -197,7 +197,7 @@ RateLimitResult, RateLimitStore, RateLimitStrategy, rateLimitTableName, RateLimi
 ReconstructingMicroVMSessionRegistryOptions, reconstructMicroVMSessionRecord, RecordStatus, REFRESH_CHAIN_ROOT_GENERATION, REFRESH_REUSE_RATE_OPERATION,
 REFRESH_REUSE_RATE_WINDOW_SECONDS, RefreshLeaseInput, RefreshRequest, RefreshSemaphoreSlotInput, registerControllerRoutes, registerMcpFacade, registerMcpFacadeSecure,
 registerMicroVMControllerRoutes, ReleaseLeaseInput, ReleaseSemaphoreSlotInput, reportKinesisPutRecordsFailures, Request, REQUEST_ID_SOURCE_DEFAULT, REQUEST_ID_SOURCE_SERVER,
-RequestIdSource, requireBearerTokenMiddleware, RequireBearerTokenOptions, required, requiredForbiddenMicroVMOperationFields, requireEventBridgeWorkloadEnvelope,
+RequestIdSource, requireBearerTokenGuard, requireBearerTokenMiddleware, RequireBearerTokenOptions, required, requiredForbiddenMicroVMOperationFields, requireEventBridgeWorkloadEnvelope,
 ResolvedCapabilities, resourceIndicatorMatches, resourceMetadataURLFromMcpEndpoint, resourceName, resourcePathFromProtectedResourcePath, Response, rfc9728ResourceMetadataURL,
 RootDiscoveryConfig, ROUTE_REFRESH_EVENT_GRACE_SERVED, ROUTE_REFRESH_EVENT_ISSUED, ROUTE_REFRESH_EVENT_LOCK_ACQUIRED, ROUTE_REFRESH_EVENT_REFRESHED, ROUTE_REFRESH_EVENT_REUSE,
 ROUTE_REFRESH_EVENT_STATE_FAILURE, ROUTE_REFRESH_EVENT_UPSTREAM_REAUTH_REQUIRED, ROUTE_REFRESH_EVENT_VALIDATION_REJECTED, ROUTE_REFRESH_EXPIRY_SIGNAL_ABSENT,
@@ -206,7 +206,7 @@ ROUTE_REFRESH_OUTCOME_REVOKED_FAMILY, ROUTE_REFRESH_OUTCOME_REVOKED_WALK, ROUTE_
 ROUTE_REFRESH_REASON_BINDING_REJECTED, ROUTE_REFRESH_REASON_CLIENT_MISMATCH, ROUTE_REFRESH_REASON_CLIENT_REJECTED, ROUTE_REFRESH_REASON_FAMILY_REVOKE_FAILED,
 ROUTE_REFRESH_REASON_FAMILY_REVOKE_UNAVAILABLE, ROUTE_REFRESH_REASON_HANDLE_MALFORMED, ROUTE_REFRESH_REASON_LOCK_CONTENTION, ROUTE_REFRESH_REASON_RECORD_ABSENT,
 ROUTE_REFRESH_REASON_RECORD_EXPIRED, ROUTE_REFRESH_REASON_RECORD_REVOKED, ROUTE_REFRESH_REASON_RESOURCE_MISMATCH, ROUTE_REFRESH_REASON_REWRITE_FAILURE,
-ROUTE_REFRESH_REASON_STORE_FAILURE, ROUTE_REFRESH_REASON_SUCCESSOR_BODY, ROUTE_REFRESH_REASON_UPSTREAM_REJECTED, RouteInventory, RouteOptions, RouteRefreshBrokerFamilyStore,
+ROUTE_REFRESH_REASON_STORE_FAILURE, ROUTE_REFRESH_REASON_SUCCESSOR_BODY, ROUTE_REFRESH_REASON_UPSTREAM_REJECTED, RouteGuard, RouteInventory, RouteOptions, RouteRefreshBrokerFamilyStore,
 RouteRefreshBrokerHandleTTLReporter, RouteRefreshBrokerRecord, RouteRefreshBrokerSeeder, RouteRefreshBrokerStatus, RouteRefreshBrokerStore, RouteRefreshEvent,
 RouteRefreshEventClass, RouteRefreshEventHook, RouteRefreshPolicy, runStoreConformance, S3Encryption, S3EncryptionConfig, S3EncryptionMode, S3ObjectStoreConfig, S3VectorStore,
 S3VectorStoreConfig, safeJSONForHTML, sanitizeErrorEnvelope, sanitizeFields, sanitizeFieldValue, sanitizeJSON, sanitizeJSONValue, sanitizeLogString, sanitizeXML, SecureApp,
