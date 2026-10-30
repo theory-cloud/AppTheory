@@ -19,13 +19,19 @@ var ConformanceEpoch = time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
 
 // Conformance outcome vocabulary, matching the fixture's outcomes block.
 const (
-	conformanceOutcomeOK              = "ok"
-	conformanceOutcomeNotFound        = "not_found"
-	conformanceOutcomeReplayed        = "replayed"
-	conformanceOutcomeExpired         = "expired"
-	conformanceOutcomeLocked          = "locked"
-	conformanceOutcomeRevoked         = "revoked"
-	conformanceOutcomeVersionConflict = "version_conflict"
+	conformanceOutcomeOK                       = "ok"
+	conformanceOutcomeNotFound                 = "not_found"
+	conformanceOutcomeReplayed                 = "replayed"
+	conformanceOutcomeExpired                  = "expired"
+	conformanceOutcomeLocked                   = "locked"
+	conformanceOutcomeRevoked                  = "revoked"
+	conformanceOutcomeVersionConflict          = "version_conflict"
+	conformanceOutcomeFamilyExists             = "family_exists"
+	conformanceOutcomeFamilyStateUnavailable   = "family_state_unavailable"
+	conformanceOutcomeFamilyMismatch           = "family_mismatch"
+	conformanceOutcomeSuccessorExists          = "successor_exists"
+	conformanceOutcomeLegacyLineageUnsupported = "legacy_lineage_unsupported"
+	conformanceOutcomeFamilyCapabilityMissing  = "family_capability_missing"
 )
 
 // Conformance snapshot keys used by more than one row.
@@ -136,6 +142,22 @@ var conformanceScenarios = map[string]func(*conformanceHarness, ConformanceCase)
 	"broker_expired_vs_unknown":          (*conformanceHarness).brokerExpiredVsUnknown,
 	"list_family":                        (*conformanceHarness).brokerListFamily,
 	"revoke_family":                      (*conformanceHarness).brokerRevokeFamily,
+	"family_create":                      (*conformanceHarness).brokerFamilyCreate,
+	"family_create_binding":              (*conformanceHarness).brokerFamilyCreateBinding,
+	"family_rotate":                      (*conformanceHarness).brokerFamilyRotate,
+	"family_rotate_wrong_owner":          (*conformanceHarness).brokerFamilyRotateWrongOwner,
+	"family_rotate_stale_version":        (*conformanceHarness).brokerFamilyRotateStaleVersion,
+	"family_rotate_existing_successor":   (*conformanceHarness).brokerFamilyRotateExistingSuccessor,
+	"family_rotate_generation_mismatch":  (*conformanceHarness).brokerFamilyRotateGenerationMismatch,
+	"family_rotate_family_mismatch":      (*conformanceHarness).brokerFamilyRotateFamilyMismatch,
+	"family_rotate_legacy":               (*conformanceHarness).brokerFamilyRotateLegacy,
+	"family_missing_state":               (*conformanceHarness).brokerFamilyMissingState,
+	"family_mixed_lineage":               (*conformanceHarness).brokerFamilyMixedLineage,
+	"family_tombstone_every_member":      (*conformanceHarness).brokerFamilyTombstoneEveryMember,
+	"family_tombstone_beyond_batch":      (*conformanceHarness).brokerFamilyTombstoneBeyondBatch,
+	"family_revocation_first":            (*conformanceHarness).brokerFamilyRevocationFirst,
+	"family_rotation_first":              (*conformanceHarness).brokerFamilyRotationFirst,
+	"family_tombstone_survives_expiry":   (*conformanceHarness).brokerFamilyTombstoneSurvivesExpiry,
 	"acquire_lock_bumps_version":         (*conformanceHarness).brokerAcquireLockBumpsVersion,
 	"revoke_bumps_version":               (*conformanceHarness).brokerRevokeBumpsVersion,
 	"acquire_lock_sets_refreshing":       (*conformanceHarness).brokerAcquireLockSetsRefreshing,
@@ -890,8 +912,10 @@ func (h *conformanceHarness) putBrokerFamily(key, familyHash string) error {
 
 // brokerListFamily seeds two families and reports what the family listing
 // returns for one of them, so a store that cannot enumerate a family is visible.
+// Each family is created through the transactional capability, because the
+// front channel requires family state for a family-marked handle.
 func (h *conformanceHarness) brokerListFamily(testCase ConformanceCase) (map[string]any, error) {
-	family, err := h.brokerFamilyStore()
+	family, err := h.familyStore()
 	if err != nil {
 		return nil, err
 	}
@@ -899,15 +923,11 @@ func (h *conformanceHarness) brokerListFamily(testCase ConformanceCase) (map[str
 	otherHash := h.key(testCase, "other-family")
 	familySize := h.size(testCase, "family_size")
 	otherSize := h.size(testCase, "other_family_size")
-	for index := 0; index < familySize; index++ {
-		if seedErr := h.putBrokerFamily(h.key(testCase, fmt.Sprintf("member-%d", index)), familyHash); seedErr != nil {
-			return nil, seedErr
-		}
+	if err := h.seedFamilyWithRoot(testCase, familyHash, familySize, "member"); err != nil {
+		return nil, err
 	}
-	for index := 0; index < otherSize; index++ {
-		if seedErr := h.putBrokerFamily(h.key(testCase, fmt.Sprintf("other-%d", index)), otherHash); seedErr != nil {
-			return nil, seedErr
-		}
+	if err := h.seedFamilyWithRoot(testCase, otherHash, otherSize, "other"); err != nil {
+		return nil, err
 	}
 	records, err := family.ListFamily(h.ctx(), familyHash)
 	if err != nil {
@@ -923,11 +943,39 @@ func (h *conformanceHarness) brokerListFamily(testCase ConformanceCase) (map[str
 	}, nil
 }
 
+// seedFamilyWithRoot creates a family root through the transactional capability
+// and backfills the remaining members through the store's create path. It
+// returns the handle keys it stored.
+func (h *conformanceHarness) seedFamilyWithRoot(
+	testCase ConformanceCase,
+	familyHash string,
+	size int,
+	prefix string,
+) error {
+	if size <= 0 {
+		return nil
+	}
+	family, err := h.familyStore()
+	if err != nil {
+		return err
+	}
+	if _, err := family.CreateFamily(h.ctx(), h.familyRoot(familyHash)); err != nil {
+		return err
+	}
+	for index := 1; index < size; index++ {
+		key := h.key(testCase, fmt.Sprintf("%s-%d", prefix, index))
+		if err := h.putBrokerFamily(key, familyHash); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // brokerRevokeFamily seeds two families, revokes one through the family
 // capability, and reports what was revoked and what the other family's state is,
 // so a family revoke that misses members or leaks across families is visible.
 func (h *conformanceHarness) brokerRevokeFamily(testCase ConformanceCase) (map[string]any, error) {
-	family, err := h.brokerFamilyStore()
+	family, err := h.familyStore()
 	if err != nil {
 		return nil, err
 	}
@@ -935,21 +983,27 @@ func (h *conformanceHarness) brokerRevokeFamily(testCase ConformanceCase) (map[s
 	otherHash := h.key(testCase, "other-family")
 	familySize := h.size(testCase, "family_size")
 	otherSize := h.size(testCase, "other_family_size")
-	familyKeys := make([]string, 0, familySize)
-	otherKeys := make([]string, 0, otherSize)
-	for index := 0; index < familySize; index++ {
-		key := h.key(testCase, fmt.Sprintf("member-%d", index))
-		if seedErr := h.putBrokerFamily(key, familyHash); seedErr != nil {
-			return nil, seedErr
-		}
-		familyKeys = append(familyKeys, key)
+	if err := h.seedFamilyWithRoot(testCase, familyHash, familySize, "member"); err != nil {
+		return nil, err
 	}
-	for index := 0; index < otherSize; index++ {
-		key := h.key(testCase, fmt.Sprintf("other-%d", index))
-		if seedErr := h.putBrokerFamily(key, otherHash); seedErr != nil {
-			return nil, seedErr
+	if err := h.seedFamilyWithRoot(testCase, otherHash, otherSize, "other"); err != nil {
+		return nil, err
+	}
+	familyKeys := make([]string, 0, familySize)
+	for index := 0; index < familySize; index++ {
+		if index == 0 {
+			familyKeys = append(familyKeys, familyHash)
+			continue
 		}
-		otherKeys = append(otherKeys, key)
+		familyKeys = append(familyKeys, h.key(testCase, fmt.Sprintf("member-%d", index)))
+	}
+	otherKeys := make([]string, 0, otherSize)
+	for index := 0; index < otherSize; index++ {
+		if index == 0 {
+			otherKeys = append(otherKeys, otherHash)
+			continue
+		}
+		otherKeys = append(otherKeys, h.key(testCase, fmt.Sprintf("other-%d", index)))
 	}
 	revoked, err := family.RevokeFamily(h.ctx(), familyHash)
 	if err != nil {
@@ -1180,6 +1234,18 @@ func outcomeFor(err error) string {
 		return conformanceOutcomeLocked
 	case errors.Is(err, ErrBrokerRevoked):
 		return conformanceOutcomeRevoked
+	case errors.Is(err, ErrBrokerFamilyCapabilityMissing):
+		return conformanceOutcomeFamilyCapabilityMissing
+	case errors.Is(err, ErrBrokerFamilyExists):
+		return conformanceOutcomeFamilyExists
+	case errors.Is(err, ErrBrokerFamilyStateUnavailable):
+		return conformanceOutcomeFamilyStateUnavailable
+	case errors.Is(err, ErrBrokerFamilyMismatch):
+		return conformanceOutcomeFamilyMismatch
+	case errors.Is(err, ErrBrokerSuccessorExists):
+		return conformanceOutcomeSuccessorExists
+	case errors.Is(err, ErrBrokerLegacyLineageUnsupported):
+		return conformanceOutcomeLegacyLineageUnsupported
 	case errors.Is(err, ErrClientVersionConflict), errors.Is(err, ErrBrokerVersionConflict):
 		return conformanceOutcomeVersionConflict
 	default:

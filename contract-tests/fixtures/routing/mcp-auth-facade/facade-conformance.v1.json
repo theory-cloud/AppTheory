@@ -600,18 +600,44 @@
       "expect_absent": ["upstream-refresh-token", "id_token"]
     },
     {
-      "id": "refresh.beyond_grace_depth_one_serves_access_token_only",
+      "id": "refresh.beyond_grace_first_presentation_revokes_family_without_tokens",
       "group": "refresh",
-      "scenario": "beyond_grace_depth_one_serves_access_token_only",
-      "expect_status": 200,
-      "expect_absent": ["refresh_token", "upstream-refresh-token", "id_token"]
-    },
-    {
-      "id": "refresh.beyond_grace_second_serve_revokes_family",
-      "group": "refresh",
-      "scenario": "beyond_grace_second_serve_revokes_family",
+      "scenario": "beyond_grace_first_presentation_revokes_family_without_tokens",
       "expect_status": 400,
       "expect_error": "invalid_grant",
+      "expect_absent": ["access_token", "refresh_token", "upstream-refresh-token", "id_token"]
+    },
+    {
+      "id": "refresh.beyond_grace_repeated_presentation_is_invalid_grant",
+      "group": "refresh",
+      "scenario": "beyond_grace_repeated_presentation_is_invalid_grant",
+      "expect_status": 400,
+      "expect_error": "invalid_grant",
+      "expect_absent": ["access_token", "refresh_token", "upstream-refresh-token", "id_token"]
+    },
+    {
+      "id": "refresh.reuse_after_nine_rotations_revokes_whole_family",
+      "group": "refresh",
+      "scenario": "reuse_after_nine_rotations_revokes_whole_family",
+      "expect_status": 400,
+      "expect_error": "invalid_grant",
+      "expect_absent": ["access_token", "refresh_token", "upstream-refresh-token", "id_token"]
+    },
+    {
+      "id": "refresh.legacy_lineage_refused_without_tokens",
+      "group": "refresh",
+      "scenario": "legacy_lineage_refused_without_tokens",
+      "expect_status": 400,
+      "expect_error": "invalid_grant",
+      "expect_absent": ["access_token", "refresh_token", "upstream-refresh-token", "id_token"]
+    },
+    {
+      "id": "refresh.missing_family_state_fails_closed",
+      "group": "refresh",
+      "scenario": "missing_family_state_fails_closed",
+      "expect_status": 503,
+      "expect_error": "temporarily_unavailable",
+      "expect_retry_after": true,
       "expect_absent": ["access_token", "refresh_token", "upstream-refresh-token", "id_token"]
     },
     {

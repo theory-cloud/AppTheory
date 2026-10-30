@@ -857,7 +857,7 @@ const refreshGroup = "refresh"
 // refreshCaseCount is the number of refresh rows the shared fixture must carry; a
 // change to the table must also be a deliberate edit in the Go, TypeScript, and
 // Python loaders, so no runtime can silently execute a smaller table.
-const refreshCaseCount = 16
+const refreshCaseCount = 19
 
 // refreshConformanceDocument and refreshConformanceCase are the refresh rows.
 // Each row names the scenario the loader implements after the common setup, and
@@ -961,14 +961,38 @@ func refreshScenarioResponse(
 		replayed := harness.token(refreshTestForm(handle))
 		require.Equal(t, string(first.Body), string(replayed.Body), "the grace replay must be byte-identical")
 		return replayed
-	case "beyond_grace_depth_one_serves_access_token_only":
+	case "beyond_grace_first_presentation_revokes_family_without_tokens":
 		require.Equal(t, 200, harness.token(refreshTestForm(handle)).Status)
 		harness.clock.Advance(DefaultRefreshGraceWindow + time.Second)
 		return harness.token(refreshTestForm(handle))
-	case "beyond_grace_second_serve_revokes_family":
+	case "beyond_grace_repeated_presentation_is_invalid_grant":
 		require.Equal(t, 200, harness.token(refreshTestForm(handle)).Status)
 		harness.clock.Advance(DefaultRefreshGraceWindow + time.Second)
-		require.Equal(t, 200, harness.token(refreshTestForm(handle)).Status)
+		first := harness.token(refreshTestForm(handle))
+		require.Equal(t, 400, first.Status)
+		return harness.token(refreshTestForm(handle))
+	case "reuse_after_nine_rotations_revokes_whole_family":
+		current := handle
+		for range 9 {
+			response := harness.token(refreshTestForm(current))
+			require.Equal(t, 200, response.Status)
+			current = refreshResponseHandle(t, response)
+		}
+		harness.clock.Advance(DefaultRefreshGraceWindow + time.Second)
+		require.Equal(t, 400, harness.token(refreshTestForm(handle)).Status)
+		return harness.token(refreshTestForm(current))
+	case "legacy_lineage_refused_without_tokens":
+		harness.rewriteBrokerRecord(t, handle, func(record *oauthstore.RouteRefreshBrokerRecord) {
+			record.FamilyHash = ""
+			record.ChainGeneration = 0
+			record.DepthOneServedAt = time.Time{}
+		})
+		return harness.token(refreshTestForm(handle))
+	case "missing_family_state_fails_closed":
+		harness.rewriteBrokerRecord(t, handle, func(record *oauthstore.RouteRefreshBrokerRecord) {
+			record.FamilyHash = "missing-family-state"
+			record.ChainGeneration = 2
+		})
 		return harness.token(refreshTestForm(handle))
 	case "unknown_handle":
 		unknown, err := oauth.NewOpaqueToken()
@@ -1008,4 +1032,30 @@ func refreshScenarioResponse(
 		t.Fatalf("unknown refresh scenario %q", scenario)
 		return apptheory.Response{}
 	}
+}
+
+// refreshResponseHandle reads the framework handle a refresh success returned.
+func refreshResponseHandle(t *testing.T, response apptheory.Response) string {
+	t.Helper()
+	var payload struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body, &payload))
+	require.NotEmpty(t, payload.RefreshToken)
+	return payload.RefreshToken
+}
+
+// rewriteBrokerRecord replaces the stored record behind one presented handle,
+// so a row can model a pre-policy or partially backfilled record without the
+// front channel having to expose its store.
+func (harness *frontChannelHarness) rewriteBrokerRecord(
+	t *testing.T,
+	handle string,
+	mutate func(*oauthstore.RouteRefreshBrokerRecord),
+) {
+	t.Helper()
+	record, err := harness.stores.RouteRefreshBroker.Get(context.Background(), oauthstore.HashKey(handle))
+	require.NoError(t, err)
+	mutate(record)
+	require.NoError(t, harness.broker.Put(context.Background(), record))
 }

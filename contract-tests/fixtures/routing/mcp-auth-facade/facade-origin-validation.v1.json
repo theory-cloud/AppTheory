@@ -1,0 +1,38 @@
+{
+  "contract": {
+    "id": "mcp.auth.facade.origin_validation",
+    "kind": "conformance",
+    "status": "M2",
+    "notes": "Shared accept/reject rows for the facade's request-origin and public-base validation. Go's NormalizeRequestOrigin is the reference: a URL is accepted only as an absolute origin with no userinfo, path, query, or fragment; HTTPS is accepted for any host, and HTTP only when the hostname is a loopback IP literal parsed by the address family's own parser or the exact hostname `localhost` (case-insensitive, no trailing dot, no DNS suffix). The rows pin loopback as parsed-IP semantics, not a lexical `127.` prefix: `127.attacker.example`, `127.0.0.1.example.com`, `127.0.0.1.attacker.example`, and the trailing-dot form are rejected, while every address in 127.0.0.0/8, IPv6 `::1` (including its expanded and IPv4-mapped forms), and the literal `localhost` are accepted. The canonical value is the origin after scheme/host case folding and scheme-default-port removal; IP literals keep the text the parser preserved. Each runtime's loader applies its own validator to every row, so a lexical prefix check or a parser that accepts a short/integer IPv4 form is visible."
+  },
+  "cases": [
+    { "id": "origin.https_dns_accepted", "raw": "https://mcp.example.com", "expect": "accepted", "canonical": "https://mcp.example.com" },
+    { "id": "origin.https_default_port_stripped", "raw": "https://mcp.example.com:443", "expect": "accepted", "canonical": "https://mcp.example.com" },
+    { "id": "origin.https_nondefault_port_kept", "raw": "https://mcp.example.com:8443", "expect": "accepted", "canonical": "https://mcp.example.com:8443" },
+    { "id": "origin.https_uppercase_host_folded", "raw": "HTTPS://ExAMPLE.com./", "expect": "accepted", "canonical": "https://example.com" },
+    { "id": "origin.http_localhost_accepted", "raw": "http://localhost", "expect": "accepted", "canonical": "http://localhost" },
+    { "id": "origin.http_localhost_case_and_port", "raw": "http://LOCALHOST:8080/", "expect": "accepted", "canonical": "http://localhost:8080" },
+    { "id": "origin.http_localhost_default_port", "raw": "http://localhost:80", "expect": "accepted", "canonical": "http://localhost" },
+    { "id": "origin.http_loopback_v4_accepted", "raw": "http://127.0.0.1:8080", "expect": "accepted", "canonical": "http://127.0.0.1:8080" },
+    { "id": "origin.http_loopback_v4_whole_block", "raw": "http://127.9.9.9", "expect": "accepted", "canonical": "http://127.9.9.9" },
+    { "id": "origin.http_loopback_v6_accepted", "raw": "http://[::1]:8080/", "expect": "accepted", "canonical": "http://[::1]:8080" },
+    { "id": "origin.http_loopback_v6_expanded_accepted", "raw": "http://[0:0:0:0:0:0:0:1]", "expect": "accepted", "canonical": "http://[0:0:0:0:0:0:0:1]" },
+    { "id": "origin.http_loopback_v4_mapped_v6_accepted", "raw": "http://[::ffff:127.0.0.1]", "expect": "accepted", "canonical": "http://[::ffff:127.0.0.1]" },
+    { "id": "origin.https_127_prefixed_dns_accepted", "raw": "https://127.attacker.example", "expect": "accepted", "canonical": "https://127.attacker.example" },
+    { "id": "origin.https_localhost_accepted", "raw": "https://localhost", "expect": "accepted", "canonical": "https://localhost" },
+    { "id": "origin.http_127_prefixed_dns_rejected", "raw": "http://127.attacker.example", "expect": "rejected" },
+    { "id": "origin.http_127_prefixed_subdomain_rejected", "raw": "http://127.0.0.1.example.com", "expect": "rejected" },
+    { "id": "origin.http_127_prefixed_suffix_domain_rejected", "raw": "http://127.0.0.1.attacker.example", "expect": "rejected" },
+    { "id": "origin.http_loopback_trailing_dot_rejected", "raw": "http://127.0.0.1.", "expect": "rejected" },
+    { "id": "origin.http_localhost_trailing_dot_rejected", "raw": "http://localhost.", "expect": "rejected" },
+    { "id": "origin.http_short_ipv4_rejected", "raw": "http://127.1", "expect": "rejected" },
+    { "id": "origin.http_integer_ipv4_rejected", "raw": "http://2130706433", "expect": "rejected" },
+    { "id": "origin.http_zero_address_rejected", "raw": "http://0.0.0.0", "expect": "rejected" },
+    { "id": "origin.http_unspecified_v6_rejected", "raw": "http://[::]", "expect": "rejected" },
+    { "id": "origin.http_public_ipv4_rejected", "raw": "http://8.8.8.8", "expect": "rejected" },
+    { "id": "origin.http_public_ipv6_rejected", "raw": "http://[2606:4700:4700::1111]", "expect": "rejected" },
+    { "id": "origin.userinfo_rejected", "raw": "http://127.0.0.1@attacker.example", "expect": "rejected" },
+    { "id": "origin.path_rejected", "raw": "http://127.0.0.1/path", "expect": "rejected" },
+    { "id": "origin.query_rejected", "raw": "https://mcp.example.com?", "expect": "rejected" }
+  ]
+}
