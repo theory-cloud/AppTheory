@@ -32,6 +32,9 @@ function contextValue(app: cdk.App, key: string): string | undefined {
 function copyDir(src: string, dest: string): void {
   mkdirSync(dest, { recursive: true });
   for (const entry of readdirSync(src, { withFileTypes: true })) {
+    if (shouldSkipAssetEntry(entry.name)) {
+      continue;
+    }
     const from = path.join(src, entry.name);
     const to = path.join(dest, entry.name);
     if (entry.isDirectory()) {
@@ -42,6 +45,16 @@ function copyDir(src: string, dest: string): void {
       copyFileSync(from, to);
     }
   }
+}
+
+function shouldSkipAssetEntry(name: string): boolean {
+  return (
+    name === "__pycache__" ||
+    name.endsWith("_test.go") ||
+    name.endsWith(".pyc") ||
+    name.endsWith(".pyo") ||
+    name.endsWith(".egg-info")
+  );
 }
 
 export class MultiLangStack extends Stack {
@@ -109,15 +122,28 @@ export class MultiLangStack extends Stack {
       code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers", "ts"), {
         bundling: {
           image: lambda.Runtime.NODEJS_24_X.bundlingImage,
-          command: ["bash", "-c", "cp -R /asset-input/* /asset-output/"],
+          command: [
+            "bash",
+            "-c",
+            [
+              "set -euo pipefail",
+              "cp /asset-input/handler.mjs /asset-input/package.json /asset-output/",
+              "mkdir -p /asset-output/vendor/apptheory",
+              "cp -R /runtime/ts-dist/. /asset-output/vendor/apptheory/",
+            ].join(" && "),
+          ],
+          volumes: [
+            {
+              hostPath: path.join(repoRoot, "ts", "dist"),
+              containerPath: "/runtime/ts-dist",
+            },
+          ],
           local: {
             tryBundle(outputDir: string) {
               const handlerDir = path.join(__dirname, "..", "handlers", "ts");
               copyFileSync(path.join(handlerDir, "handler.mjs"), path.join(outputDir, "handler.mjs"));
               copyFileSync(path.join(handlerDir, "package.json"), path.join(outputDir, "package.json"));
-              const sdkIn = path.join(repoRoot, "ts", "dist", "index.js");
-              mkdirSync(path.join(outputDir, "vendor", "apptheory"), { recursive: true });
-              copyFileSync(sdkIn, path.join(outputDir, "vendor", "apptheory", "index.js"));
+              copyDir(path.join(repoRoot, "ts", "dist"), path.join(outputDir, "vendor", "apptheory"));
               return true;
             },
           },
@@ -132,7 +158,23 @@ export class MultiLangStack extends Stack {
       code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers", "py"), {
         bundling: {
           image: lambda.Runtime.PYTHON_3_14.bundlingImage,
-          command: ["bash", "-c", "cp -R /asset-input/* /asset-output/"],
+          command: [
+            "bash",
+            "-c",
+            [
+              "set -euo pipefail",
+              "cp /asset-input/handler.py /asset-output/",
+              "cp -R /runtime/apptheory /asset-output/apptheory",
+              "find /asset-output/apptheory -type d \\( -name __pycache__ -o -name '*.egg-info' \\) -prune -exec rm -rf {} +",
+              "find /asset-output/apptheory -type f \\( -name '*.pyc' -o -name '*.pyo' \\) -delete",
+            ].join(" && "),
+          ],
+          volumes: [
+            {
+              hostPath: path.join(repoRoot, "py", "src", "apptheory"),
+              containerPath: "/runtime/apptheory",
+            },
+          ],
           local: {
             tryBundle(outputDir: string) {
               const handlerDir = path.join(__dirname, "..", "handlers", "py");
