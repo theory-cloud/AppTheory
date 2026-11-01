@@ -135,11 +135,12 @@ The repository pins AWS CDK `2.273.0`, whose published tarball bundles the patch
 the documented removal condition of the former `brace-expansion 5.0.9` bundled-dependency exception (operator-ruled
 2026-10-03), so that exception is retired - standard maintenance, not a new exception grant. The CDK npm-audit and
 GovTheory OSV gates still verify the exact bundled graph, now as a positive assertion (`brace-expansion >= 5.0.12`),
-and accept exactly one reviewed, self-expiring exception - `braces 3.0.3` reached only through the
-`jsii-pacmak` / `jsii-rosetta` / `fast-glob` / `micromatch` dev chain (operator-ruled 2026-10-04) - carrying a hard
-`recheck_by 2026-11-02` and a registry-backed removal condition (see
-`gov-infra/planning/apptheory-10of10-rubric.md` SEC-2). Any vulnerable bundle, AWS CDK, minimatch, brace-expansion,
-package-path, or finding drift fails closed.
+and accept exactly two reviewed, self-expiring exceptions - `braces 3.0.3` reached only through the
+`jsii-pacmak` / `jsii-rosetta` / `fast-glob` / `micromatch` dev chain (operator-ruled 2026-10-04), and
+`minimatch 10.2.5` bundled inside `aws-cdk-lib` (`GHSA-g3hv-75wg-m249`; operator-ruled 2026-10-03, the original
+bundled-dependency ruling) - carrying hard `recheck_by` deadlines (2026-11-02 and 2026-12-01) and removal conditions
+(see `gov-infra/planning/apptheory-10of10-rubric.md` SEC-2). Any vulnerable bundle, AWS CDK, minimatch,
+brace-expansion, package-path, or finding drift fails closed.
 
 The TypeScript lint graph no longer carries a `minimatch@3.x` parent. Landing the eslint 10 train
 (`eslint` 10.11.0, `@eslint/js` 10.0.1, `eslint-plugin-unicorn` ^76.0.0) with `eslint-plugin-import` swapped for the
@@ -148,5 +149,6 @@ maintained `eslint-plugin-import-x` fork dropped `@eslint/eslintrc` and hoisted 
 `GHSA-rgw5-rvv9-x895` / `GHSA-mh99-v99m-4gvg` exception that covered it are therefore gone, and the `ts/` SEC-2 checker
 now grants no exception: it requires both an empty OSV report and the exact parent, minimatch, brace-expansion, and
 version graph, and any drift fails closed. The `ts/` lockfile class is therefore exception-free and advisory-variant
-independent, because the only remaining brace-expansion instance (`5.0.12`) is past every recorded 5.x fix; the
-`aws-cdk` lockfile class carries only the remaining `braces 3.0.3` jsii-toolchain exception.
+independent for the brace-expansion path, because the only remaining brace-expansion instance (`5.0.12`) is past
+every recorded 5.x fix; the `aws-cdk` lockfile class carries the `braces 3.0.3` jsii-toolchain exception and the
+`minimatch 10.2.5` bundled-dependency exception.
