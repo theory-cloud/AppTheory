@@ -1,0 +1,266 @@
+{
+  "version": 1,
+  "profile": {
+    "name": "apptheory-examples-local",
+    "composeFile": "scripts/local/docker-compose.yml",
+    "dynamodbLocal": {
+      "image": "amazon/dynamodb-local:3.1.0",
+      "port": 8130
+    },
+    "ports": {
+      "first": 8130,
+      "last": 8199,
+      "stride": 10
+    }
+  },
+  "entrypoints": {
+    "examples/testkit/ts.mjs": {
+      "run": "testkit-ts",
+      "class": "L1",
+      "description": "TypeScript testkit example: HTTP API v2 request/response, EventBridge workload envelopes and schedules, and DynamoDB stream normalization, all in process with no AWS."
+    },
+    "examples/testkit/ts-streaming.mjs": {
+      "run": "testkit-ts-streaming",
+      "class": "L1",
+      "description": "TypeScript testkit streaming example: Lambda Function URL streaming chunks, cookies, header mutation and late-error framing."
+    },
+    "examples/testkit/py.py": {
+      "run": "testkit-py",
+      "class": "L1",
+      "description": "Python testkit example: HTTP API v2 request/response, EventBridge workload envelopes and schedules, and DynamoDB stream normalization, all in process with no AWS."
+    },
+    "examples/mcp/tools-only-ts/server.mjs": {
+      "run": "mcp-tools-only-ts",
+      "class": "L1",
+      "description": "TypeScript MCP Streamable HTTP server: initialize, tools/list, tools/call and the exported Lambda entry, driven by the real server and the MCP testkit."
+    },
+    "examples/mcp/tools-only-py/server.py": {
+      "run": "mcp-tools-only-py",
+      "class": "L1",
+      "description": "Python MCP Streamable HTTP server: initialize, tools/list, tools/call and the exported Lambda entry, driven by the real server and the MCP testkit."
+    },
+    "examples/mcp/tools-only/main.go": {
+      "run": "mcp-go-tools-only",
+      "class": "L1",
+      "description": "Go MCP tools-only server: real MCP protocol messages through the testkit transport."
+    },
+    "examples/mcp/tools-resources-prompts/main.go": {
+      "run": "mcp-go-tools-resources-prompts",
+      "class": "L1",
+      "description": "Go MCP server exposing tools, resources and prompts: real protocol messages through the testkit transport."
+    },
+    "examples/mcp/resumable-sse/main.go": {
+      "run": "mcp-go-resumable-sse",
+      "class": "L1",
+      "description": "Go MCP resumable SSE server: real streaming tool call, cursor resume and replay assertions through the testkit transport. Warm-container delivery is A3b."
+    },
+    "examples/migration/rate-limited-http/main.go": {
+      "run": "rate-limited-http",
+      "class": "L1",
+      "description": "Lift-to-AppTheory migration server as a real net/http process on DynamoDB Local: real pkg/limited middleware, the rate-limits table provisioned from the real model, 60 allowed requests and the 429 refusal."
+    },
+    "examples/cdk/hello-world/bin/apptheory-hello-world.ts": {
+      "run": "cdk-synth-all",
+      "class": "I",
+      "description": "CDK app anchor for the synth row: every CDK example in the tree is synthesized and compared with its pinned template hash (plus focused construct assertions) by scripts/verify-cdk-synth.sh."
+    },
+    "examples/cdk/hello-world/handlers/go/main.go": {
+      "pending": "A3a",
+      "description": "hello-world Go handler; A3a runs it through the local runner with HTTP assertions."
+    },
+    "examples/cdk/hello-world/handlers/py/handler.py": {
+      "pending": "A3a",
+      "description": "hello-world Python handler; A3a runs it through the local runner with HTTP assertions."
+    },
+    "examples/cdk/hello-world/handlers/ts/handler.mjs": {
+      "pending": "A3a",
+      "description": "hello-world TypeScript handler; A3a runs it through the local runner with HTTP assertions."
+    },
+    "examples/cdk/hello-world/handlers/ts/app.mjs": {
+      "pending": "A3a",
+      "description": "hello-world TypeScript app module imported by the handler; A3a exercises it through the same handler row."
+    },
+    "examples/cdk/import-pipeline/bin/app.ts": {
+      "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
+      "class": "I",
+      "description": "Import pipeline CDK app, synthesized and hash-checked with focused construct assertions."
+    },
+    "examples/cdk/import-pipeline/handlers/ingest/main.go": {
+      "pending": "A4",
+      "description": "Import pipeline ingest handler; A4 runs it with generated event payloads and the SQS emulator."
+    },
+    "examples/cdk/import-pipeline/handlers/worker/main.go": {
+      "pending": "A4",
+      "description": "Import pipeline worker handler; A4 runs it against the DynamoDB Local jobs table."
+    },
+    "examples/cdk/kinesis-cloudwatch-logs/bin/app.ts": {
+      "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
+      "class": "I",
+      "description": "Kinesis/CloudWatch Logs CDK app, synthesized and hash-checked with focused construct assertions."
+    },
+    "examples/cdk/kinesis-cloudwatch-logs/handlers/go/main.go": {
+      "pending": "A4",
+      "description": "Kinesis/CloudWatch Logs handler; A4 invokes it with real event payloads."
+    },
+    "examples/cdk/lambda-role/bin/app.ts": {
+      "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
+      "class": "I",
+      "description": "Lambda role CDK app, synthesized and hash-checked with focused IAM/KMS assertions, including the compiled handler asset."
+    },
+    "examples/cdk/lambda-role/handlers/custom.ts": {
+      "pending": "A3b",
+      "description": "lambda-role custom-permission handler; A3b runs the compiled handler locally."
+    },
+    "examples/cdk/lambda-role/handlers/encrypted.ts": {
+      "pending": "A3b",
+      "description": "lambda-role encrypted handler; A3b runs the compiled handler locally with the local key material."
+    },
+    "examples/cdk/lambda-role/handlers/index.ts": {
+      "pending": "A3b",
+      "description": "lambda-role baseline handler; A3b runs the compiled handler locally."
+    },
+    "examples/cdk/lesser-parity/bin/app.ts": {
+      "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
+      "class": "I",
+      "description": "Lesser-parity CDK app, synthesized and hash-checked with focused construct assertions."
+    },
+    "examples/cdk/lesser-parity/handlers/api.mjs": {
+      "pending": "A3b",
+      "description": "Lesser-parity API handler; A3b runs it through the local runner with HTTP assertions."
+    },
+    "examples/cdk/lesser-parity/handlers/graphql.mjs": {
+      "pending": "A3b",
+      "description": "Lesser-parity GraphQL handler; A3b runs it through the local runner."
+    },
+    "examples/cdk/lesser-parity/handlers/sse.mjs": {
+      "pending": "A3b",
+      "description": "Lesser-parity SSE handler; A3b runs it with the documented buffered-streaming gap."
+    },
+    "examples/cdk/lesser-parity/handlers/worker.mjs": {
+      "pending": "A3b",
+      "description": "Lesser-parity worker handler; A3b invokes it with generated event payloads."
+    },
+    "examples/cdk/media-cdn/bin/app.ts": {
+      "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
+      "class": "I",
+      "description": "Media CDN CDK app, synthesized and hash-checked with focused CloudFront/key-group assertions. Signed-URL behavior is A5b or I."
+    },
+    "examples/cdk/microvm-controller/bin/app.ts": {
+      "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
+      "class": "I",
+      "description": "MicroVM controller CDK app, synthesized and hash-checked with focused construct assertions."
+    },
+    "examples/cdk/microvm-controller/controller/main.go": {
+      "pending": "A4",
+      "description": "MicroVM controller; A4 runs the real routes against the TableTheory session registry on DynamoDB Local, with the provider boundary as the named gap."
+    },
+    "examples/cdk/microvm-controller/workloads/go/main.go": {
+      "pending": "A4",
+      "description": "MicroVM Go workload; A4 runs it up to the provider boundary."
+    },
+    "examples/cdk/microvm-controller/workloads/py/server.py": {
+      "pending": "A4",
+      "description": "MicroVM Python workload; A4 runs it up to the provider boundary."
+    },
+    "examples/cdk/microvm-controller/workloads/ts/server.js": {
+      "pending": "A4",
+      "description": "MicroVM TypeScript workload (compiled server.js shipped in the image); A4 runs it up to the provider boundary."
+    },
+    "examples/cdk/microvm-controller/workloads/ts/server.ts": {
+      "pending": "A4",
+      "description": "MicroVM TypeScript workload source; A4 runs the built workload up to the provider boundary."
+    },
+    "examples/cdk/multilang/bin/apptheory-multilang.ts": {
+      "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
+      "class": "I",
+      "description": "Multilang CDK app, synthesized and hash-checked with focused construct assertions; the TS Lambda asset is staged self-contained (A1 asset fix)."
+    },
+    "examples/cdk/multilang/handlers/go/main.go": {
+      "pending": "A3b",
+      "description": "Multilang Go handler; A3b runs it through the local runner with HTTP and REST assertions."
+    },
+    "examples/cdk/multilang/handlers/py/handler.py": {
+      "pending": "A3b",
+      "description": "Multilang Python handler; A3b runs it through the local runner with HTTP and REST assertions."
+    },
+    "examples/cdk/multilang/handlers/ts/handler.mjs": {
+      "pending": "A3b",
+      "description": "Multilang TypeScript handler; A3b runs it through the local runner with HTTP and REST assertions."
+    },
+    "examples/cdk/path-routed-frontend/bin/app.ts": {
+      "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
+      "class": "I",
+      "description": "Path-routed frontend CDK app, synthesized and hash-checked with focused cache-behavior and generated-function assertions. A5b adds gateway execution of the generated CloudFront Functions."
+    },
+    "examples/cdk/restv1-router/bin/app.ts": {
+      "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
+      "class": "I",
+      "description": "REST v1 router CDK app, synthesized and hash-checked with focused route, integration and stage assertions."
+    },
+    "examples/cdk/restv1-router/handlers/api.mjs": {
+      "pending": "A3b",
+      "description": "REST v1 router catch-all handler; A3b runs it through the local runner."
+    },
+    "examples/cdk/restv1-router/handlers/graphql.mjs": {
+      "pending": "A3b",
+      "description": "REST v1 router GraphQL handler; A3b runs it through the local runner."
+    },
+    "examples/cdk/restv1-router/handlers/inventory.mjs": {
+      "pending": "A3b",
+      "description": "REST v1 router inventory handler; A3b runs it through the local runner with path-parameter assertions."
+    },
+    "examples/cdk/restv1-router/handlers/sse.mjs": {
+      "pending": "A3b",
+      "description": "REST v1 router SSE handler; A3b runs it with the documented buffered-streaming gap."
+    },
+    "examples/cdk/s3-vectors-semantic-search/bin/app.ts": {
+      "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
+      "class": "I",
+      "description": "S3 Vectors semantic search CDK app, synthesized and hash-checked with focused construct assertions."
+    },
+    "examples/cdk/s3-vectors-semantic-search/handler/main.go": {
+      "pending": "A4",
+      "description": "S3 Vectors search handler; A4 runs its HTTP and auth surface locally, with managed S3 Vectors/Bedrock as the named gap."
+    },
+    "examples/cdk/sqs-queue/bin/app.ts": {
+      "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
+      "class": "I",
+      "description": "SQS queue CDK app, synthesized and hash-checked with focused queue, DLQ, redrive and event-source-mapping assertions."
+    },
+    "examples/cdk/sqs-queue/handlers/dlq-handler.mjs": {
+      "pending": "A4",
+      "description": "SQS DLQ handler; A4 invokes it with messages received from the local SQS emulator."
+    },
+    "examples/cdk/sqs-queue/handlers/producer.mjs": {
+      "pending": "A4",
+      "description": "SQS producer handler; A4 sends to the local SQS emulator through the real handler."
+    },
+    "examples/cdk/sqs-queue/handlers/worker.mjs": {
+      "pending": "A4",
+      "description": "SQS worker handler; A4 invokes it with messages received from the local SQS emulator."
+    },
+    "examples/cdk/ssr-only-provided-assets-site/bin/app.ts": {
+      "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
+      "class": "I",
+      "description": "SSR site with provided assets CDK app, synthesized and hash-checked with focused construct assertions."
+    },
+    "examples/cdk/ssr-site/bin/apptheory-ssr-site.ts": {
+      "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
+      "class": "I",
+      "description": "SSR site CDK app, synthesized and hash-checked with focused CloudFront/origin assertions; A5b runs it through the local gateway."
+    },
+    "examples/cdk/ssr-site/scripts/generate-assets-manifest.mjs": {
+      "pending": "A5b",
+      "description": "SSR site asset manifest generator; A5b runs it as part of the local gateway flow."
+    },
+    "examples/cdk/ssr-site/scripts/upload-assets.sh": {
+      "pending": "A5b",
+      "description": "Deployed-AWS asset upload script; A5b owns its local replacement through the gateway origin."
+    },
+    "examples/cdk/codebuild-job-runner/bin/app.ts": {
+      "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
+      "class": "I",
+      "description": "CodeBuild job runner CDK app, synthesized and hash-checked with focused project, state-change-rule and grant assertions."
+    }
+  }
+}
