@@ -23,7 +23,7 @@ export class LambdaRoleStack extends cdk.Stack {
         super(scope, id, props);
 
         // The handlers ship as TypeScript source. Compile them into the asset so
-        // every deployed function runs JavaScript: locally through the checked-in
+        // every deployed function runs JavaScript: locally through the project's
         // TypeScript compiler, and in Docker by mounting the same installed tree.
         const handlersDir = path.join(__dirname, "..", "handlers");
         const handlerCode = lambda.Code.fromAsset(handlersDir, {
