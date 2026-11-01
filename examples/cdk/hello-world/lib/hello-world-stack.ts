@@ -1,6 +1,6 @@
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import type { Dirent } from "node:fs";
 import * as path from "node:path";
 
@@ -89,6 +89,35 @@ function resetAssetStage(exampleDir: string, name: string): string {
 function stageHandlerFiles(handlersDir: string, stageDir: string, files: string[]): void {
   for (const file of files) {
     copyFileSync(path.join(handlersDir, file), path.join(stageDir, file));
+  }
+}
+
+// The vendored AppTheory runtime imports its declared dependencies, including
+// @theory-cloud/tabletheory-ts, when the barrel entry loads. A Lambda asset
+// that carries only ts/dist therefore fails at init in a clean runtime. Stage
+// the runtime's production dependency closure next to the vendored dist so the
+// asset is self-contained.
+function stageNodeDependencies(runtimeDir: string, stageDir: string): void {
+  const runtimeNodeModules = path.join(runtimeDir, "node_modules");
+  const marker = path.join(runtimeNodeModules, "@theory-cloud", "tabletheory-ts", "package.json");
+  if (!existsSync(marker)) {
+    throw new Error(
+      `missing ${marker}; run 'cd ts && npm ci --ignore-scripts' before synthesizing the TypeScript asset`,
+    );
+  }
+  const listed = execFileSync("npm", ["ls", "--omit=dev", "--all", "--parseable"], {
+    cwd: runtimeDir,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const prefix = `${runtimeNodeModules}${path.sep}`;
+  const destination = path.join(stageDir, "node_modules");
+  for (const line of listed.split("\n")) {
+    const dependency = line.trim();
+    if (!dependency.startsWith(prefix)) {
+      continue;
+    }
+    copyDir(dependency, path.join(destination, dependency.slice(prefix.length)));
   }
 }
 
@@ -219,6 +248,7 @@ export class HelloWorldStack extends Stack {
         const stageDir = resetAssetStage(path.join(__dirname, ".."), "ts");
         stageHandlerFiles(handlerDir, stageDir, ["app.mjs", "handler.mjs", "package.json"]);
         copyDir(path.join(repoRoot, "ts", "dist"), path.join(stageDir, "vendor", "apptheory"));
+        stageNodeDependencies(path.join(repoRoot, "ts"), stageDir);
         return new AppTheoryFunction(this, "Handler", {
           runtime: lambda.Runtime.NODEJS_24_X,
           handler: "handler.handler",

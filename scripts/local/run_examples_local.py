@@ -921,7 +921,15 @@ def run_mcp_go_resumable_sse(harness: Harness) -> str:
 def run_cdk_synth_all(harness: Harness) -> str:
     result = harness.run(["bash", "scripts/verify-cdk-synth.sh"], timeout=3600)
     expect_output(result.stdout, ["cdk-synth: PASS"], "CDK synth")
-    return "synthesized every CDK example and matched its pinned template hash"
+    proof = harness.run(
+        [sys.executable, "scripts/local/verify-lambda-assets.py"],
+        timeout=3600,
+    )
+    expect_output(proof.stdout, ["lambda-assets: PASS"], "Lambda asset runtime proof")
+    return (
+        "synthesized every CDK example and matched its pinned template hash; "
+        "loaded the staged TypeScript and Python assets in the official Lambda runtime images"
+    )
 
 
 def run_rate_limited_http(harness: Harness) -> str:

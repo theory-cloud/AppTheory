@@ -62,7 +62,7 @@
     "examples/cdk/hello-world/bin/apptheory-hello-world.ts": {
       "run": "cdk-synth-all",
       "class": "I",
-      "description": "CDK app anchor for the synth row: every CDK example in the tree is synthesized and compared with its pinned template hash (plus focused construct assertions) by scripts/verify-cdk-synth.sh."
+      "description": "CDK app anchor for the synth row: every CDK example in the tree is synthesized and compared with its pinned template hash (plus focused construct assertions for the six once-uncovered examples, and an official Lambda runtime image invocation of the staged TypeScript and Python assets)."
     },
     "examples/cdk/hello-world/handlers/go/main.go": {
       "pending": "A3a",
