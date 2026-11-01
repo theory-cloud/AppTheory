@@ -1,4 +1,5 @@
 import { execSync } from "node:child_process";
+import { mkdirSync, rmSync } from "node:fs";
 import * as path from "node:path";
 import {
     AppTheoryKmsKey,
@@ -22,38 +23,21 @@ export class LambdaRoleStack extends cdk.Stack {
     constructor(scope: Construct, id: string, props?: StackProps) {
         super(scope, id, props);
 
-        // The handlers ship as TypeScript source. Compile them into the asset so
-        // every deployed function runs JavaScript: locally through the project's
-        // TypeScript compiler, and in Docker by mounting the same installed tree.
-        const handlersDir = path.join(__dirname, "..", "handlers");
-        const handlerCode = lambda.Code.fromAsset(handlersDir, {
-            bundling: {
-                image: lambda.Runtime.NODEJS_24_X.bundlingImage,
-                command: [
-                    "bash",
-                    "-c",
-                    [
-                        "set -euo pipefail",
-                        "/node_modules/.bin/tsc -p tsconfig.json --outDir /asset-output",
-                    ].join(" && "),
-                ],
-                volumes: [
-                    {
-                        hostPath: path.join(handlersDir, "..", "node_modules"),
-                        containerPath: "/node_modules",
-                    },
-                ],
-                local: {
-                    tryBundle(outputDir: string) {
-                        execSync(
-                            `npx --no-install tsc -p tsconfig.json --outDir ${JSON.stringify(outputDir)}`,
-                            { cwd: handlersDir, stdio: "inherit" },
-                        );
-                        return true;
-                    },
-                },
-            },
+        // The handlers ship as TypeScript source. Compile them at synth time so
+        // every deployed function runs JavaScript. Compiling here instead of
+        // through a Docker bundling command keeps checkout-absolute paths out of
+        // the CDK asset fingerprint; the deployed bytes depend only on the
+        // handler sources and the checked-in compiler.
+        const exampleDir = path.join(__dirname, "..");
+        const handlersDir = path.join(exampleDir, "handlers");
+        const stageDir = path.join(exampleDir, ".cdk-asset-stage", "handler-asset");
+        rmSync(stageDir, { force: true, recursive: true });
+        mkdirSync(stageDir, { recursive: true });
+        execSync(`npx --no-install tsc -p tsconfig.json --outDir ${JSON.stringify(stageDir)}`, {
+            cwd: handlersDir,
+            stdio: "inherit",
         });
+        const handlerCode = lambda.Code.fromAsset(stageDir);
 
         // ========================================================================
         // Pattern 1: Basic Lambda Role
