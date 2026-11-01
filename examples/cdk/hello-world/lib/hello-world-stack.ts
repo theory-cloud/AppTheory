@@ -203,7 +203,22 @@ export class HelloWorldStack extends Stack {
             ]),
             bundling: {
               image: lambda.Runtime.NODEJS_24_X.bundlingImage,
-              command: ["bash", "-c", "cp -R /asset-input/* /asset-output/"],
+              command: [
+                "bash",
+                "-c",
+                [
+                  "set -euo pipefail",
+                  "cp /asset-input/app.mjs /asset-input/handler.mjs /asset-input/package.json /asset-output/",
+                  "mkdir -p /asset-output/vendor/apptheory",
+                  "cp -R /runtime/ts-dist/. /asset-output/vendor/apptheory/",
+                ].join(" && "),
+              ],
+              volumes: [
+                {
+                  hostPath: path.join(repoRoot, "ts", "dist"),
+                  containerPath: "/runtime/ts-dist",
+                },
+              ],
               local: {
                 tryBundle(outputDir: string) {
                   const handlerDir = path.join(__dirname, "..", "handlers", "ts");
@@ -231,7 +246,23 @@ export class HelloWorldStack extends Stack {
             ]),
             bundling: {
               image: lambda.Runtime.PYTHON_3_14.bundlingImage,
-              command: ["bash", "-c", "cp -R /asset-input/* /asset-output/"],
+              command: [
+                "bash",
+                "-c",
+                [
+                  "set -euo pipefail",
+                  "cp /asset-input/handler.py /asset-output/",
+                  "cp -R /runtime/apptheory /asset-output/apptheory",
+                  "find /asset-output/apptheory -type d \\( -name __pycache__ -o -name '*.egg-info' \\) -prune -exec rm -rf {} +",
+                  "find /asset-output/apptheory -type f \\( -name '*.pyc' -o -name '*.pyo' \\) -delete",
+                ].join(" && "),
+              ],
+              volumes: [
+                {
+                  hostPath: path.join(repoRoot, "py", "src", "apptheory"),
+                  containerPath: "/runtime/apptheory",
+                },
+              ],
               local: {
                 tryBundle(outputDir: string) {
                   const handlerDir = path.join(__dirname, "..", "handlers", "py");
