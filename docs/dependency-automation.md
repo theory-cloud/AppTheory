@@ -138,9 +138,10 @@ GovTheory OSV gates still verify the exact bundled graph, now as a positive asse
 and accept exactly two reviewed, self-expiring exceptions - `braces 3.0.3` reached only through the
 `jsii-pacmak` / `jsii-rosetta` / `fast-glob` / `micromatch` dev chain (operator-ruled 2026-10-04), and
 `minimatch 10.2.5` bundled inside `aws-cdk-lib` (`GHSA-g3hv-75wg-m249`; operator-ruled 2026-10-03, the original
-bundled-dependency ruling) - carrying hard `recheck_by` deadlines (2026-11-02 and 2026-12-01) and removal conditions
-(see `gov-infra/planning/apptheory-10of10-rubric.md` SEC-2). Any vulnerable bundle, AWS CDK, minimatch,
-brace-expansion, package-path, or finding drift fails closed.
+bundled-dependency ruling) - carrying hard `recheck_by` deadlines (2026-12-01 for both; the `braces` deadline was
+renewed 2026-11-01 from 2026-11-02 because the registry still published no patched `braces`, latest `3.0.3`) and
+removal conditions (see `gov-infra/planning/apptheory-10of10-rubric.md` SEC-2). Any vulnerable bundle, AWS CDK,
+minimatch, brace-expansion, package-path, or finding drift fails closed.
 
 The TypeScript lint graph no longer carries a `minimatch@3.x` parent. Landing the eslint 10 train
 (`eslint` 10.11.0, `@eslint/js` 10.0.1, `eslint-plugin-unicorn` ^76.0.0) with `eslint-plugin-import` swapped for the

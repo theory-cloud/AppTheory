@@ -38,6 +38,11 @@
 //           upstream fix).
 // Removal condition: a patched braces (> 3.0.3) is published, or the jsii
 //           toolchain no longer resolves braces <= 3.0.3.
+// Renewal:  2026-11-01 - recheck_by moved from 2026-11-02 to 2026-12-01 as
+//           standard maintenance under the same 2026-10-04 ruling (no new
+//           exception grant). The registry was checked 2026-11-01: the latest
+//           published braces is still 3.0.3, so no patched release exists and
+//           the removal condition remains unmet.
 //
 // ---------------------------------------------------------------------------
 // E3 - minimatch 10.2.5 bundled inside aws-cdk-lib
@@ -85,8 +90,9 @@
 // Each remaining exception is exact: lockfile, package, version, node path /
 // dependency chain, and advisory ids. Each is ALSO self-expiring and fail
 // closed:
-//   * recheck_by - E2 2026-11-02, E3 2026-12-01 - after that date the exception
-//     no longer applies and the checker fails, forcing a fresh review;
+//   * recheck_by - E2 2026-12-01 (renewed 2026-11-01), E3 2026-12-01 - after
+//     that date the exception no longer applies and the checker fails, forcing
+//     a fresh review;
 //   * a removal probe runs on every invocation (never only when a finding
 //     happens to appear), so a stale exception cannot survive by simply never
 //     matching again; when a removal condition is met the checker fails with a
@@ -364,7 +370,9 @@ const E2 = {
   ],
   operatorRuling: "2026-10-04",
   owner: "theory-cloud/AppTheory steward (Factory dependency sweeps)",
-  recheckBy: "2026-11-02",
+  recheckBy: "2026-12-01",
+  renewal:
+    "Renewed 2026-11-01 (standard maintenance under the existing 2026-10-04 ruling; no new exception grant). The previous recheck_by was 2026-11-02. Evidence checked 2026-11-01: the npm registry's latest published braces is still 3.0.3, so NO patched braces (> 3.0.3) exists and the removal condition is unmet.",
   justification:
     "AWS-published build-toolchain transitive chain with no upstream fix: braces <= 3.0.3 is affected and npm publishes no patched release, so the jsii-pacmak dev toolchain cannot be upgraded out of it. Build-time only; AppTheory ships no runtime package or Lambda with it. Operator-ruled 2026-10-04, same treatment as the retired bundled-dependency exception. Self-expiring; see the removal condition in this file.",
   removalCondition:
@@ -1069,20 +1077,27 @@ function runSelfTest() {
     expected: true,
   });
 
-  // (e) after recheck_by an exception stops applying.
+  // (e) after recheck_by an exception stops applying. E2's deadline was renewed
+  // from 2026-11-02 to 2026-12-01 on 2026-11-01, so the cases below pin the
+  // renewed boundary AND prove the superseded date no longer expires.
   cases.push({
     label: "(e) E2 recheck_by boundary: the day before is live",
-    actual: recheckExpired("2026-11-01T23:59:59Z", E2.recheckBy),
+    actual: recheckExpired("2026-11-30T23:59:59Z", E2.recheckBy),
+    expected: false,
+  });
+  cases.push({
+    label: "(e) E2 recheck_by boundary: the superseded 2026-11-02 deadline no longer expires",
+    actual: recheckExpired("2026-11-02T00:00:00Z", E2.recheckBy),
     expected: false,
   });
   cases.push({
     label: "(e) E2 recheck_by boundary: the deadline itself expires",
-    actual: recheckExpired("2026-11-02T00:00:00Z", E2.recheckBy),
+    actual: recheckExpired("2026-12-01T00:00:00Z", E2.recheckBy),
     expected: true,
   });
   cases.push({
     label: "(e) E2 recheck_by boundary: after the deadline expires",
-    actual: recheckExpired("2026-12-01T00:00:00Z", E2.recheckBy),
+    actual: recheckExpired("2026-12-02T00:00:00Z", E2.recheckBy),
     expected: true,
   });
   cases.push({

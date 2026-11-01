@@ -113,7 +113,11 @@ which are pure propagation of this single advisory. The advisory's range is `aff
 publishes **no** patched `braces`, so no installable version pair clears it; the chain is the dev
 toolchain of the cdk devDependency `jsii-pacmak`, build-time only. Scope: `cdk/package-lock.json` only
 (the example lockfiles do not carry the jsii chain). **Removal condition:** a patched `braces` (> 3.0.3)
-is published, or the jsii toolchain no longer resolves `braces <= 3.0.3`. **Hard recheck by 2026-11-02.**
+is published, or the jsii toolchain no longer resolves `braces <= 3.0.3`. **Hard recheck by 2026-12-01
+(renewed 2026-11-01 from 2026-11-02).** The renewal is standard maintenance under the same 2026-10-04
+ruling, not a new exception grant: on **2026-11-01** the npm registry's latest published `braces` was still
+**3.0.3**, so no patched release exists and the removal condition remains unmet. The checker records the
+renewal and its evidence in `E2.renewal`.
 
 **E3 - minimatch 10.2.5 bundled inside aws-cdk-lib.** Finding `GHSA-g3hv-75wg-m249` (moderate,
 `CVE-2026-118764`) on `minimatch@10.2.5` at `node_modules/aws-cdk-lib/node_modules/minimatch`
