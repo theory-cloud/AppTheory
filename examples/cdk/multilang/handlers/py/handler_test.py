@@ -67,6 +67,12 @@ def main() -> None:
     assert connect["statusCode"] == 200
     assert _json_body(connect)["route_key"] == "$connect"
 
+    disconnect = env.invoke_websocket(
+        app, build_websocket_event(route_key="$disconnect", connection_id="conn-1")
+    )
+    assert disconnect["statusCode"] == 200
+    assert _json_body(disconnect)["route_key"] == "$disconnect"
+
     sqs = env.invoke_sqs(
         app,
         build_sqs_event(

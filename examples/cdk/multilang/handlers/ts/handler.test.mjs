@@ -73,6 +73,16 @@ try {
   assert.equal(connect.statusCode, 200);
   assert.equal(JSON.parse(connect.body).route_key, "$connect");
 
+  const disconnect = await handler(
+    {
+      ...connectEvent,
+      requestContext: { ...connectEvent.requestContext, routeKey: "$disconnect" },
+    },
+    {},
+  );
+  assert.equal(disconnect.statusCode, 200);
+  assert.equal(JSON.parse(disconnect.body).route_key, "$disconnect");
+
   const sqs = await handler(
     buildSQSEvent("arn:aws:sqs:us-east-1:123:queue1", [{ messageId: "msg-1" }]),
     {},
