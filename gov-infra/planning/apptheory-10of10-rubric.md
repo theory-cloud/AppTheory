@@ -105,7 +105,7 @@ scope was cdk/ plus four examples, which left eight example lockfiles carrying t
 AWS path with no gate coverage and no recorded exception; the SEC-2 Node scan set is now the same full
 list, so every lockfile is either reported vulnerable or reported excepted. Owner: AppTheory steward
 (Factory dependency sweeps). **Removal condition:** the `aws-cdk-lib` version this repository pins bundles
-`brace-expansion >= 5.0.12`. **That condition was met:** the pinned aws-cdk-lib 2.273.0 tarball bundles
+`brace-expansion >= 5.0.12`. **That condition was met:** the pinned aws-cdk-lib 2.275.0 tarball bundles
 the patched `brace-expansion@5.0.12`, so the exception was retired as standard maintenance and the
 bundled-graph anchor now asserts the fixed bundle positively.
 
@@ -122,8 +122,8 @@ ruling, not a new exception grant: on **2026-11-01** the npm registry's latest p
 **3.0.3**, so no patched release exists and the removal condition remains unmet. The checker records the
 renewal and its evidence in `E2.renewal`.
 
-**E3 - minimatch 10.2.5 bundled inside aws-cdk-lib.** Finding `GHSA-g3hv-75wg-m249` (moderate,
-`CVE-2026-118764`) on `minimatch@10.2.5` at `node_modules/aws-cdk-lib/node_modules/minimatch`
+**E3 - minimatch 10.2.6 bundled inside aws-cdk-lib.** Finding `GHSA-g3hv-75wg-m249` (moderate,
+`CVE-2026-118764`) on `minimatch@10.2.6` at `node_modules/aws-cdk-lib/node_modules/minimatch`
 (bundled), reached only through aws-cdk-lib's own bundled `minimatch`; npm lists the derived
 `aws-cdk-lib` entry as pure propagation. AWS publishes it and only AWS can publish a tarball that bundles
 the patched release (`minimatch 11.0.1` exists on npm but cannot be installed into the bundled subtree);
@@ -136,12 +136,13 @@ ships it. Scope: the same full bundled-path set as E1 - `cdk/package-lock.json` 
 2026-10-04.
 
 **E4 - minimatch 10.2.6 kept for eslint-plugin-import-x (TypeScript lint tooling, dev-only).** Finding
-`GHSA-g3hv-75wg-m249` (moderate, `CVE-2026-118764`) on `minimatch@10.2.6` at `node_modules/minimatch`,
-resolved only by the `eslint-plugin-import-x` lint-plugin edge. Every other minimatch consumer in
-`ts/package-lock.json` - `eslint`, `@eslint/config-array`, and `@typescript-eslint/typescript-estree` -
-is overridden to the patched `minimatch@11.0.1` at its own nested node path, so the 10.2.6 node has
-exactly one parent; the graph anchor pins all four minimatch nodes and the exact parent set, and any
-parent, path, version, or override drift fails closed. The blocked upgrade: `minimatch 11` removed the
+`GHSA-g3hv-75wg-m249` (moderate, `CVE-2026-118764`) on `minimatch@10.2.6` at
+`node_modules/eslint-plugin-import-x/node_modules/minimatch`, resolved only by the
+`eslint-plugin-import-x` lint-plugin edge. Every other minimatch consumer in `ts/package-lock.json` -
+`eslint`, `@eslint/config-array`, and `@typescript-eslint/typescript-estree` - is overridden to the
+patched `minimatch@11.0.1` at the single hoisted root node, so the 10.2.6 node has exactly one parent; the
+graph anchor pins both minimatch nodes and the exact parent set, and any parent, path, version, or
+override drift fails closed. The blocked upgrade: `minimatch 11` removed the
 `makeRe` export that `eslint-plugin-import-x` 4.17.1 imports at module load, so loading the plugin under a
 minimatch 11 override throws and ESLint cannot load its config; 4.17.1 is the latest published release and
 still declares minimatch `^9.0.3 || ^10.1.2`. **Dev-only:** the node is `dev: true`, the root package's
