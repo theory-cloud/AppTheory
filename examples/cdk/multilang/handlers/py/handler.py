@@ -13,7 +13,7 @@ from apptheory import (
 )
 
 
-def _build_app():
+def build_app():
     tier = os.getenv("APPTHEORY_TIER", "p2")
     name = os.getenv("APPTHEORY_DEMO_NAME", "apptheory-multilang")
     lang = os.getenv("APPTHEORY_LANG", "py")
@@ -29,7 +29,6 @@ def _build_app():
 
     app = create_app(tier=tier)
 
-    @app.get("/")
     def root(ctx):
         return json(
             200,
@@ -42,6 +41,8 @@ def _build_app():
                 "tenant_id": ctx.tenant_id,
             },
         )
+
+    app.get("/", root)
 
     app.sqs(queue_name, lambda _ctx, _msg: None)
 
@@ -82,7 +83,6 @@ def _build_app():
     )
     app.dynamodb(table_name, dynamodb_handler)
 
-    @app.get("/hello/{name}")
     def hello(ctx):
         return json(
             200,
@@ -96,7 +96,8 @@ def _build_app():
             },
         )
 
-    @app.get("/sse")
+    app.get("/hello/{name}", hello)
+
     def sse_demo(_ctx):
         return sse(
             200,
@@ -108,6 +109,8 @@ def _build_app():
                 )
             ],
         )
+
+    app.get("/sse", sse_demo)
 
     def ws_connect(ctx):
         ws = ctx.as_websocket()
@@ -161,7 +164,7 @@ def _build_app():
     return app
 
 
-_APP = _build_app()
+_APP = build_app()
 
 
 def handler(event, context):  # noqa: ARG001
