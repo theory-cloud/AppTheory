@@ -124,7 +124,11 @@ passed `npm audit` with zero vulnerabilities. The removal rationale was:
 - `@eslint/eslintrc` / `eslint` → `ajv`: ESLint selects its compatible `ajv@6.14.0`; AppTheory does not override
   lint-tool internals without an active advisory.
 - `@eslint/config-array` / `eslint` / `eslint-plugin-import-x` → `minimatch`: the lint stack remains audit-clean on its
-  upstream-selected `minimatch` versions, and none of these packages are runtime dependencies.
+  upstream-selected `minimatch` versions, and none of these packages are runtime dependencies. **Reinstated
+  2026-11-01** for `GHSA-g3hv-75wg-m249`: the fresh advisory affects every minimatch `< 11.0.1`, and the lint stack
+  cannot simply take 11 because `eslint-plugin-import-x` imports the removed `makeRe` export. The overrides now pin
+  `11.0.1` for every consumer except `eslint-plugin-import-x`, which keeps `10.2.6` under the reviewed dev-only
+  exception described above.
 - `fast-xml-parser` / `fast-xml-builder`: the regenerated TypeScript lockfile no longer contains those packages, so
   keeping orphan overrides would hide dependency graph drift instead of fixing it.
 - `flatted` / `js-yaml`: upstream-selected lint-tool transitive versions remain audit-clean; local pins were redundant.
@@ -143,13 +147,19 @@ renewed 2026-11-01 from 2026-11-02 because the registry still published no patch
 removal conditions (see `gov-infra/planning/apptheory-10of10-rubric.md` SEC-2). Any vulnerable bundle, AWS CDK,
 minimatch, brace-expansion, package-path, or finding drift fails closed.
 
-The TypeScript lint graph no longer carries a `minimatch@3.x` parent. Landing the eslint 10 train
-(`eslint` 10.11.0, `@eslint/js` 10.0.1, `eslint-plugin-unicorn` ^76.0.0) with `eslint-plugin-import` swapped for the
-maintained `eslint-plugin-import-x` fork dropped `@eslint/eslintrc` and hoisted the whole lint stack onto one
-`minimatch@10.2.6` → `brace-expansion@5.0.12` path. The vulnerable `brace-expansion@1.1.17` instance and the
-`GHSA-rgw5-rvv9-x895` / `GHSA-mh99-v99m-4gvg` exception that covered it are therefore gone, and the `ts/` SEC-2 checker
-now grants no exception: it requires both an empty OSV report and the exact parent, minimatch, brace-expansion, and
-version graph, and any drift fails closed. The `ts/` lockfile class is therefore exception-free and advisory-variant
-independent for the brace-expansion path, because the only remaining brace-expansion instance (`5.0.12`) is past
-every recorded 5.x fix; the `aws-cdk` lockfile class carries the `braces 3.0.3` jsii-toolchain exception and the
-`minimatch 10.2.5` bundled-dependency exception.
+The TypeScript lint graph carries one active `overrides` block and one dev-only exception. `ts/package.json`
+overrides `minimatch` to the patched `11.0.1` for `eslint`, `@eslint/config-array`, and
+`@typescript-eslint/typescript-estree` (each forced at its own node path, because npm 11 otherwise dedupes those
+consumers onto the nested exception copy), while `eslint-plugin-import-x` keeps `10.2.6`:
+minimatch 11 removed the `makeRe` export that `eslint-plugin-import-x` 4.17.1 imports at module load, so a
+minimatch 11 override there throws at ESLint config load and the plugin's rules stop evaluating. 4.17.1 is the
+latest published release and still declares `^9.0.3 || ^10.1.2`. The single remaining `minimatch@10.2.6` node is
+covered by the operator-ruled 2026-11-01 **dev-only exception** (`GHSA-g3hv-75wg-m249`), recorded in
+`scripts/check-visible-ts-brace-finding.mjs` with `recheck_by` 2026-12-01 and the removal condition
+"`eslint-plugin-import-x` publishes a release compatible with `minimatch >= 11.0.1`". It is lint tooling only:
+every minimatch node is `dev: true`, the root package declares no minimatch runtime dependency,
+`npm ls --omit=dev --all` inside `ts/` reports none, and the published package ships only `dist`, `LICENSE`,
+`README.md`, and `package.json`. The checker requires the exact minimatch / brace-expansion / runner
+(`@isaacs/nonrecursive-glob-match`) graph, the exact minimatch parent set, and the exact reviewed override map, and
+any drift - or any other advisory, version, path, or lockfile - fails closed. The `ts/` brace-expansion path
+itself remains exception-free: the only instance (`5.0.12`) is past every recorded 5.x fix.
