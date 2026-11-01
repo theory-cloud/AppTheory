@@ -45,9 +45,9 @@
 //           the removal condition remains unmet.
 //
 // ---------------------------------------------------------------------------
-// E3 - minimatch 10.2.5 bundled inside aws-cdk-lib
+// E3 - minimatch 10.2.6 bundled inside aws-cdk-lib
 // ---------------------------------------------------------------------------
-// Finding   GHSA-g3hv-75wg-m249 (moderate) on minimatch@10.2.5 at
+// Finding   GHSA-g3hv-75wg-m249 (moderate) on minimatch@10.2.6 at
 //           node_modules/aws-cdk-lib/node_modules/minimatch (inBundle), reached
 //           only through aws-cdk-lib's own bundled minimatch. npm also lists the
 //           derived aws-cdk-lib entry, which is pure propagation of this single
@@ -74,7 +74,7 @@
 // node_modules/aws-cdk-lib/node_modules/brace-expansion (inBundle), reached only
 // through aws-cdk-lib's own bundled minimatch. Its documented removal condition -
 // "the aws-cdk-lib version this repository pins bundles brace-expansion >=
-// 5.0.12" - is now met: this repository pins aws-cdk-lib 2.273.0, whose
+// 5.0.12" - is now met: this repository pins aws-cdk-lib 2.275.0, whose
 // published tarball bundles brace-expansion 5.0.12. Retiring the exception is
 // STANDARD MAINTENANCE, not a new exception grant.
 //
@@ -288,7 +288,7 @@ function canonicalLockfilePath(value) {
 // ---------------------------------------------------------------------------
 
 // The reviewed bundled graph anchor: the exact AWS CDK bundled brace-expansion
-// path this repository resolves after the aws-cdk-lib 2.273.0 bump, whose
+// path this repository resolves after the aws-cdk-lib 2.275.0 bump, whose
 // published tarball bundles the patched brace-expansion 5.0.12. It is not an
 // exception; it is the integrity assertion every routed lockfile must satisfy.
 // It fails closed on a vulnerable bundle (any version below the patched floor),
@@ -299,9 +299,9 @@ const AWS_CDK_BUNDLE = {
   packageName: "brace-expansion",
   packagePath: "node_modules/aws-cdk-lib/node_modules/brace-expansion",
   packageVersion: "5.0.12",
-  cdkVersion: "2.273.0",
+  cdkVersion: "2.275.0",
   minimatchPath: "node_modules/aws-cdk-lib/node_modules/minimatch",
-  minimatchVersion: "10.2.5",
+  minimatchVersion: "10.2.6",
   patchedFloor: "5.0.12",
 };
 
@@ -385,7 +385,7 @@ const E3 = {
   lockfiles: AWS_CDK_LOCKFILES,
   packageName: "minimatch",
   packagePath: AWS_CDK_BUNDLE.minimatchPath,
-  packageVersion: "10.2.5",
+  packageVersion: "10.2.6",
   patchedFloor: "11.0.1",
   effects: ["aws-cdk-lib"],
   // npm reports the derived aws-cdk-lib entry as pure propagation of the
@@ -535,7 +535,7 @@ function awsCdkBundleGraphProblems(packages) {
     cdkPackage.bundleDependencies.includes("minimatch") &&
     minimatchPackage?.version === expectation.minimatchVersion &&
     minimatchPackage?.inBundle === true &&
-    minimatchPackage?.dependencies?.[expectation.packageName] === "^5.0.5" &&
+    minimatchPackage?.dependencies?.[expectation.packageName] === "^5.0.8" &&
     bracePackage?.inBundle === true &&
     bracePackage?.dependencies?.["balanced-match"] === "^4.0.2";
 
@@ -730,7 +730,7 @@ function runSelfTest() {
     "node_modules/aws-cdk-lib/node_modules/minimatch": {
       version: expectation.minimatchVersion,
       inBundle: true,
-      dependencies: { "brace-expansion": "^5.0.5" },
+      dependencies: { "brace-expansion": "^5.0.8" },
     },
     "node_modules/aws-cdk-lib/node_modules/brace-expansion": {
       version: "5.0.12",
@@ -924,7 +924,7 @@ function runSelfTest() {
   expectOsv(
     "(b3) osv E3 a different version fails",
     osvResult(canonical),
-    osvPkg(E3.packageName, "10.2.6"),
+    osvPkg(E3.packageName, "10.2.7"),
     { id: E3.advisories[0].id, aliases: [E3.advisories[0].alias] },
     canonical,
     false,
@@ -1125,7 +1125,7 @@ function runSelfTest() {
     expected: true,
   });
   cases.push({
-    label: "(f) E3 stays live: the pinned aws-cdk-lib bundles minimatch 10.2.5",
+    label: "(f) E3 stays live: the pinned aws-cdk-lib bundles minimatch 10.2.6",
     actual: e3RemovalReasons(validPackages()).length === 0,
     expected: true,
   });
@@ -1388,7 +1388,7 @@ async function main() {
           version: expectation.cdkVersion,
         },
         minimatch: {
-          dependencyRange: "^5.0.5",
+          dependencyRange: "^5.0.8",
           path: "node_modules/aws-cdk-lib/node_modules/minimatch",
           version: expectation.minimatchVersion,
         },

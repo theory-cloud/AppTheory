@@ -6,7 +6,7 @@
     ]
   },
   "dependencies": {
-    "aws-cdk-lib": "2.273.0",
+    "aws-cdk-lib": "2.275.0",
     "constructs": "^10.8.1"
   },
   "dependencyClosure": {
@@ -299,6 +299,19 @@
             },
             "python": {
               "module": "aws_cdk.aws_appconfig"
+            }
+          }
+        },
+        "aws-cdk-lib.aws_appfabric": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.AppFabric"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.appfabric"
+            },
+            "python": {
+              "module": "aws_cdk.aws_appfabric"
             }
           }
         },
@@ -2597,6 +2610,32 @@
             }
           }
         },
+        "aws-cdk-lib.aws_licensemanagerlinuxsubscriptions": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.LicenseManagerLinuxSubscriptions"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.licensemanagerlinuxsubscriptions"
+            },
+            "python": {
+              "module": "aws_cdk.aws_licensemanagerlinuxsubscriptions"
+            }
+          }
+        },
+        "aws-cdk-lib.aws_licensemanagerusersubscriptions": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.LicenseManagerUserSubscriptions"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.licensemanagerusersubscriptions"
+            },
+            "python": {
+              "module": "aws_cdk.aws_licensemanagerusersubscriptions"
+            }
+          }
+        },
         "aws-cdk-lib.aws_lightsail": {
           "targets": {
             "dotnet": {
@@ -3309,6 +3348,19 @@
             },
             "python": {
               "module": "aws_cdk.aws_pipes"
+            }
+          }
+        },
+        "aws-cdk-lib.aws_polly": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.Polly"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.polly"
+            },
+            "python": {
+              "module": "aws_cdk.aws_polly"
             }
           }
         },
@@ -4795,6 +4847,22 @@
             },
             "python": {
               "module": "aws_cdk.interfaces.aws_appconfig"
+            }
+          }
+        },
+        "aws-cdk-lib.interfaces.aws_appfabric": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.AppFabric"
+            },
+            "go": {
+              "packageName": "interfacesawsappfabric"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.appfabric"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_appfabric"
             }
           }
         },
@@ -7358,6 +7426,38 @@
             }
           }
         },
+        "aws-cdk-lib.interfaces.aws_licensemanagerlinuxsubscriptions": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.LicenseManagerLinuxSubscriptions"
+            },
+            "go": {
+              "packageName": "interfacesawslicensemanagerlinuxsubscriptions"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.licensemanagerlinuxsubscriptions"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_licensemanagerlinuxsubscriptions"
+            }
+          }
+        },
+        "aws-cdk-lib.interfaces.aws_licensemanagerusersubscriptions": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.LicenseManagerUserSubscriptions"
+            },
+            "go": {
+              "packageName": "interfacesawslicensemanagerusersubscriptions"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.licensemanagerusersubscriptions"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_licensemanagerusersubscriptions"
+            }
+          }
+        },
         "aws-cdk-lib.interfaces.aws_lightsail": {
           "targets": {
             "dotnet": {
@@ -8235,6 +8335,22 @@
             },
             "python": {
               "module": "aws_cdk.interfaces.aws_pipes"
+            }
+          }
+        },
+        "aws-cdk-lib.interfaces.aws_polly": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.Polly"
+            },
+            "go": {
+              "packageName": "interfacesawspolly"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.polly"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_polly"
             }
           }
         },
@@ -31729,5 +31845,5 @@
     }
   },
   "version": "6.4.0",
-  "fingerprint": "pQruS4yb3bTCdytdHbbnp0aMl/5mLFuTzmOpDc8SFvA="
+  "fingerprint": "w+Dh3IYg042T/+u54ZmXPFuMvrkyMyw/KvDPQ8el/eo="
 }
