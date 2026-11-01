@@ -1,4 +1,5 @@
 cdk.out/
 node_modules/
 dist/
+.cdk-asset-stage/
 
