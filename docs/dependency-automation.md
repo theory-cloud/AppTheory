@@ -191,7 +191,7 @@ held.
 | `.github/workflows/pages.yml` | `ruby/setup-ruby` v1.334.0 -> v1.335.0 at the same SHA-pinned commit (absorbs dependabot #1205). |
 | `ts/` | No manifest range changed. `npm update` moved caret/transitive nodes, re-hoisted the patched minimatch, and left every exact devDependency pin in place. |
 | `go.mod` / `go.sum` | No directive or module path changed. `go get -u ./...` moved the AWS SDK graph to its latest patch/minor releases. TableTheory remains `v6.1.1`. |
-| `py/` | No lockfile exists and no advisory requires a move; the exact pins are already the newest compatible releases (build 1.6.1, setuptools 84.2.1, wheel 0.48.0, ruff 0.17.2, pyright 1.1.414). |
+| `py/` | No lockfile exists: `requirements-build.txt` and `requirements-lint.txt` are exact pins, and every pin is the newest compatible release, re-checked against the PyPI JSON metadata on 2026-11-01 (build 1.6.1, setuptools 84.2.1, wheel 0.48.0, ruff 0.17.3, pyright 1.1.414). Only `ruff` moved: 0.17.2 -> 0.17.3 (published 2026-10-27), and `make lint` passes on the new pin with no lint or format drift. |
 | `contract-tests/runners/` | No package-manager manifest: the Go runner builds from the root module, and the Python/TypeScript runners use the stdlib and source imports, so there is no runner lockfile to refresh. |
 
 ### Exception re-evaluation
