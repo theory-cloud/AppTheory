@@ -713,30 +713,37 @@ osv_scan_lockfile() {
 
   local filter_status=0
   local exception_marker=""
+  local expected_marker=""
+  if [[ "${checker_kind}" == "ts" ]]; then
+    expected_marker="exception-applied: ts-dev-import-x-minimatch "
+  else
+    expected_marker="exception-applied: "
+  fi
   set +e
   if [[ "${checker_kind}" == "ts" ]]; then
-    check_visible_ts_brace_finding "${tmp_report}" "${lf}"
+    check_visible_ts_brace_finding "${tmp_report}" "${lf}" >"${tmp_marker}"
     filter_status=$?
   else
     node scripts/check-visible-aws-cdk-finding.mjs osv "${tmp_report}" "${lf}" >"${tmp_marker}"
     filter_status=$?
-    exception_marker="$(cat "${tmp_marker}")"
-    [[ -z "${exception_marker}" ]] || printf '%s\n' "${exception_marker}"
   fi
+  exception_marker="$(cat "${tmp_marker}")"
+  [[ -z "${exception_marker}" ]] || printf '%s\n' "${exception_marker}"
   set -e
   rm -f "${tmp_report}" "${tmp_marker}"
 
-  # The TypeScript checker (scripts/check-visible-ts-brace-finding.mjs) grants no
-  # dependency-audit exception: it passes only on an empty findings set. The
-  # aws-cdk checker (scripts/check-visible-aws-cdk-finding.mjs) grants exactly two
-  # reviewed, self-expiring exceptions - an AWS-published bundled dependency and
-  # an AWS-published build-toolchain transitive chain (operator rulings, scope,
-  # and automatic registry-backed removal conditions are documented there).
-  # osv-scanner exits exactly 1 when it reports findings, and a different status
-  # for an operational error (a timeout, a killed scan, or no scanner output at
-  # all). Only exit 1 is accepted, and only when the checker passed AND printed
-  # the machine marker proving an exact reviewed exception caused it; every other
-  # status, or a status-1 finding without the marker, fails closed.
+  # Both checkers grant only reviewed, self-expiring exceptions that name the
+  # exact lockfile, package, version, node path / dependency chain, and advisory
+  # ids. The TypeScript checker (scripts/check-visible-ts-brace-finding.mjs)
+  # grants one dev-only lint-tool exception; the aws-cdk checker
+  # (scripts/check-visible-aws-cdk-finding.mjs) grants two AWS-published ones
+  # (operator rulings, scope, and automatic removal conditions are documented in
+  # each checker). osv-scanner exits exactly 1 when it reports findings, and a
+  # different status for an operational error (a timeout, a killed scan, or no
+  # scanner output at all). Only exit 1 is accepted, and only when the checker
+  # passed AND printed the machine marker proving an exact reviewed exception
+  # caused it; every other status, or a status-1 finding without that checker's
+  # marker, fails closed.
   if [[ "${filter_status}" -ne 0 ]]; then
     return "${filter_status}"
   fi
@@ -745,8 +752,8 @@ osv_scan_lockfile() {
       echo "FAIL: osv-scanner exited ${scan_status} for ${lf}; only exit 1 (findings) is accepted, and any other status is an operational error" >&2
       return 1
     fi
-    if [[ "${checker_kind}" == "ts" ]] || ! grep -Fq 'exception-applied: ' <<<"${exception_marker}"; then
-      echo "FAIL: osv-scanner exited ${scan_status} for ${lf} without any reviewed exception" >&2
+    if ! grep -Fq "${expected_marker}" <<<"${exception_marker}"; then
+      echo "FAIL: osv-scanner exited ${scan_status} for ${lf} without the reviewed ${checker_kind} exception marker" >&2
       return 1
     fi
   fi
@@ -793,9 +800,9 @@ gov_cmd_vuln() {
   done
 
   # Every npm lockfile in the repository. Each aws-cdk-lib-carrying lockfile is
-  # routed through the reviewed, self-expiring bundled-dependency exception in
-  # scripts/check-visible-aws-cdk-finding.mjs, whose E1.lockfiles list must stay
-  # identical to the entries below (that checker's self-test compares them).
+  # routed through the reviewed, self-expiring bundled-dependency exceptions in
+  # scripts/check-visible-aws-cdk-finding.mjs, whose AWS_CDK_LOCKFILES list must
+  # stay identical to the entries below (that checker's self-test compares them).
   # Scanning the full set keeps "vulnerable" and "explicitly excepted" the two
   # only possible outcomes; an unscanned lockfile would be neither.
   local -a node_lockfiles=(
