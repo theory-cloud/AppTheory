@@ -17,14 +17,17 @@
 // E4 - minimatch 10.2.6 kept for eslint-plugin-import-x
 // ---------------------------------------------------------------------------
 // Finding   GHSA-g3hv-75wg-m249 (moderate, CVE-2026-118764) on
-//           minimatch@10.2.6 at node_modules/minimatch, resolved only by the
-//           eslint-plugin-import-x lint-plugin edge. Every other consumer of
-//           minimatch in this lockfile - eslint, @eslint/config-array, and
-//           @typescript-eslint/typescript-estree - is overridden to the
-//           patched 11.0.1 at its own nested node path, so the 10.2.6 node has
-//           exactly one parent. The graph anchor below pins all four minimatch
-//           nodes and the exact parent set; a fifth consumer, a relocated
-//           path, or a version change fails closed before any finding is read.
+//           minimatch@10.2.6 at
+//           node_modules/eslint-plugin-import-x/node_modules/minimatch, resolved
+//           only by the eslint-plugin-import-x lint-plugin edge. Every other
+//           consumer of minimatch in this lockfile - eslint,
+//           @eslint/config-array, and @typescript-eslint/typescript-estree - is
+//           overridden to the patched 11.0.1 at the single hoisted
+//           node_modules/minimatch node, so the 10.2.6 node has exactly one
+//           parent. The graph anchor below pins both minimatch nodes, the
+//           patched consumers' dedupe shape, and the exact parent set; a fifth
+//           consumer, a relocated path, or a version change fails closed before
+//           any finding is read.
 // Why an upgrade cannot resolve it (2026-11-01): minimatch 11 removed the
 //           `makeRe` export that eslint-plugin-import-x 4.17.1 imports at module
 //           load (lib/rules/no-internal-modules.js), so loading the plugin under
@@ -262,25 +265,23 @@ const expectation = {
     path: "node_modules/@isaacs/nonrecursive-glob-match",
     version: "1.0.3",
   },
-  // The patched minimatch the lint stack moved to. npm 11 keeps the previously
-  // hoisted 10.2.6 at the root and gives each overridden consumer its own
-  // nested 11.0.1 node; the anchor pins that exact shape instead of assuming a
-  // dedupe that npm does not perform.
+  // The patched minimatch the lint stack moved to. The 2026-11-01 lockfile
+  // refresh let npm re-hoist the override target: the patched 11.0.1 now sits
+  // at the single root node, every overridden consumer dedupes onto it, and the
+  // reviewed 10.2.6 node moved to its one remaining parent
+  // (eslint-plugin-import-x). The anchor pins that exact shape instead of
+  // assuming the older nested-per-consumer topology.
   minimatchPatched: {
     braceExpansionRange: "^5.0.12",
     dev: true,
     globMatchRange: "^1.0.1",
-    paths: [
-      "node_modules/@eslint/config-array/node_modules/minimatch",
-      "node_modules/@typescript-eslint/typescript-estree/node_modules/minimatch",
-      "node_modules/eslint/node_modules/minimatch",
-    ],
+    paths: ["node_modules/minimatch"],
     version: "11.0.1",
   },
   minimatchReviewed: {
     braceExpansionRange: "^5.0.8",
     dev: true,
-    path: "node_modules/minimatch",
+    path: "node_modules/eslint-plugin-import-x/node_modules/minimatch",
     version: "10.2.6",
   },
   // Every package in the lockfile that declares a minimatch dependency. The
@@ -295,7 +296,7 @@ const expectation = {
     {
       dependencyRange: "^10.2.2",
       path: "node_modules/@typescript-eslint/typescript-estree",
-      version: "8.72.0",
+      version: "8.72.1",
     },
     {
       dependencyRange: "^10.2.5",
@@ -699,33 +700,17 @@ function runSelfTest() {
 
   const validPackages = () => ({
     "node_modules/minimatch": {
+      version: "11.0.1",
+      dev: true,
+      dependencies: {
+        "@isaacs/nonrecursive-glob-match": "^1.0.1",
+        "brace-expansion": "^5.0.12",
+      },
+    },
+    "node_modules/eslint-plugin-import-x/node_modules/minimatch": {
       version: "10.2.6",
       dev: true,
       dependencies: { "brace-expansion": "^5.0.8" },
-    },
-    "node_modules/eslint/node_modules/minimatch": {
-      version: "11.0.1",
-      dev: true,
-      dependencies: {
-        "@isaacs/nonrecursive-glob-match": "^1.0.1",
-        "brace-expansion": "^5.0.12",
-      },
-    },
-    "node_modules/@eslint/config-array/node_modules/minimatch": {
-      version: "11.0.1",
-      dev: true,
-      dependencies: {
-        "@isaacs/nonrecursive-glob-match": "^1.0.1",
-        "brace-expansion": "^5.0.12",
-      },
-    },
-    "node_modules/@typescript-eslint/typescript-estree/node_modules/minimatch": {
-      version: "11.0.1",
-      dev: true,
-      dependencies: {
-        "@isaacs/nonrecursive-glob-match": "^1.0.1",
-        "brace-expansion": "^5.0.12",
-      },
     },
     "node_modules/brace-expansion": {
       version: "5.0.12",
@@ -735,7 +720,7 @@ function runSelfTest() {
     "node_modules/@isaacs/nonrecursive-glob-match": { version: "1.0.3", dev: true },
     "node_modules/@eslint/config-array": { version: "0.23.5", dependencies: { minimatch: "^10.2.4" } },
     "node_modules/@typescript-eslint/typescript-estree": {
-      version: "8.72.0",
+      version: "8.72.1",
       dependencies: { minimatch: "^10.2.2" },
     },
     "node_modules/eslint": { version: "10.13.0", dependencies: { minimatch: "^10.2.5" } },
@@ -760,8 +745,8 @@ function runSelfTest() {
   );
 
   const relocated = validPackages();
-  delete relocated["node_modules/minimatch"];
-  relocated["node_modules/eslint-plugin-import-x/node_modules/minimatch"] = {
+  delete relocated["node_modules/eslint-plugin-import-x/node_modules/minimatch"];
+  relocated["node_modules/some-new-tool/node_modules/minimatch"] = {
     version: "10.2.6",
     dev: true,
     dependencies: { "brace-expansion": "^5.0.8" },
@@ -770,7 +755,7 @@ function runSelfTest() {
   expect("a relocated reviewed minimatch path fails the graph", lockfileGraphProblems(relocated).length, 2);
 
   const upgradedReviewedNode = validPackages();
-  upgradedReviewedNode["node_modules/minimatch"] = {
+  upgradedReviewedNode["node_modules/eslint-plugin-import-x/node_modules/minimatch"] = {
     version: "11.0.1",
     dev: true,
     dependencies: { "@isaacs/nonrecursive-glob-match": "^1.0.1", "brace-expansion": "^5.0.12" },
@@ -782,7 +767,7 @@ function runSelfTest() {
   );
 
   const driftedPatchedVersion = validPackages();
-  driftedPatchedVersion["node_modules/eslint/node_modules/minimatch"].version = "11.0.2";
+  driftedPatchedVersion["node_modules/minimatch"].version = "11.0.2";
   expect(
     "a drifted patched minimatch version fails the graph",
     lockfileGraphProblems(driftedPatchedVersion).length,
@@ -806,8 +791,8 @@ function runSelfTest() {
   expect("a production minimatch fails the graph", lockfileGraphProblems(productionMinimatch).length, 1);
 
   const productionPatched = validPackages();
-  productionPatched["node_modules/eslint/node_modules/minimatch"].dev = false;
-  expect("a production patched minimatch fails the graph", lockfileGraphProblems(productionPatched).length, 1);
+  productionPatched["node_modules/eslint-plugin-import-x/node_modules/minimatch"].dev = false;
+  expect("a production reviewed minimatch fails the graph", lockfileGraphProblems(productionPatched).length, 1);
 
   const runtimeDependency = validPackages();
   runtimeDependency[""] = { dependencies: { minimatch: "^11.0.1" } };
@@ -945,10 +930,10 @@ function runSelfTest() {
 
   expect("the reviewed lockfile has no local removal reason", e4RemovalReasons(validPackages()).length, 0);
   const upgradedNode = validPackages();
-  upgradedNode["node_modules/minimatch"] = { version: "11.0.1", dev: true };
+  upgradedNode["node_modules/eslint-plugin-import-x/node_modules/minimatch"] = { version: "11.0.1", dev: true };
   expect("an in-place upgrade meets the removal condition", e4RemovalReasons(upgradedNode).length, 1);
   const missingNode = validPackages();
-  delete missingNode["node_modules/minimatch"];
+  delete missingNode["node_modules/eslint-plugin-import-x/node_modules/minimatch"];
   expect("a removed reviewed node meets the removal condition", e4RemovalReasons(missingNode).length, 1);
 
   const registry = (latestParentVersion, minimatchRange, publishedPatchedMinimatch = ["11.0.1", "11.0.3"]) =>
