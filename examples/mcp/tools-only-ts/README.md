@@ -4,6 +4,7 @@ This example builds a minimal MCP server with the TypeScript AppTheory runtime a
 
 - Transport: dual-version Streamable HTTP (`2025-11-25` POST/GET/DELETE plus stateless `2026-07-28` POST)
 - Runtime: TypeScript package (`ts/dist` in this repository)
+- Lambda entry: `handler` export delegating to `app.handleLambda`
 - Validation: `node server.test.mjs`
 
 The same handler answers `server/discover` for both shapes. See the parent `examples/mcp/README.md` for a stateless
