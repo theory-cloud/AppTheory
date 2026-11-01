@@ -1,3 +1,5 @@
+import { execSync } from "node:child_process";
+import { mkdirSync, rmSync } from "node:fs";
 import * as path from "node:path";
 import {
     AppTheoryKmsKey,
@@ -21,6 +23,22 @@ export class LambdaRoleStack extends cdk.Stack {
     constructor(scope: Construct, id: string, props?: StackProps) {
         super(scope, id, props);
 
+        // The handlers ship as TypeScript source. Compile them at synth time so
+        // every deployed function runs JavaScript. Compiling here instead of
+        // through a Docker bundling command keeps checkout-absolute paths out of
+        // the CDK asset fingerprint; the deployed bytes depend only on the
+        // handler sources and the checked-in compiler.
+        const exampleDir = path.join(__dirname, "..");
+        const handlersDir = path.join(exampleDir, "handlers");
+        const stageDir = path.join(exampleDir, ".cdk-asset-stage", "handler-asset");
+        rmSync(stageDir, { force: true, recursive: true });
+        mkdirSync(stageDir, { recursive: true });
+        execSync(`npx --no-install tsc -p tsconfig.json --outDir ${JSON.stringify(stageDir)}`, {
+            cwd: handlersDir,
+            stdio: "inherit",
+        });
+        const handlerCode = lambda.Code.fromAsset(stageDir);
+
         // ========================================================================
         // Pattern 1: Basic Lambda Role
         // Baseline permissions for CloudWatch Logs only
@@ -34,7 +52,7 @@ export class LambdaRoleStack extends cdk.Stack {
         new lambda.Function(this, "BasicFn", {
             runtime: lambda.Runtime.NODEJS_24_X,
             handler: "index.handler",
-            code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers")),
+            code: handlerCode,
             role: basicRole.role,
             description: "Basic Lambda with minimal permissions",
         });
@@ -56,7 +74,7 @@ export class LambdaRoleStack extends cdk.Stack {
         new lambda.Function(this, "TracingFn", {
             runtime: lambda.Runtime.NODEJS_24_X,
             handler: "index.handler",
-            code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers")),
+            code: handlerCode,
             role: tracingRole.role,
             tracing: lambda.Tracing.ACTIVE,
             description: "Lambda with X-Ray tracing enabled",
@@ -89,7 +107,7 @@ export class LambdaRoleStack extends cdk.Stack {
         new lambda.Function(this, "EncryptedFn", {
             runtime: lambda.Runtime.NODEJS_24_X,
             handler: "encrypted.handler",
-            code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers")),
+            code: handlerCode,
             role: encryptedRole.role,
             environmentEncryption: envKey.key,
             environment: {
@@ -136,7 +154,7 @@ export class LambdaRoleStack extends cdk.Stack {
         new lambda.Function(this, "CustomFn", {
             runtime: lambda.Runtime.NODEJS_24_X,
             handler: "custom.handler",
-            code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers")),
+            code: handlerCode,
             role: customRole.role,
             environment: {
                 BUCKET_NAME: dataBucket.bucketName,
@@ -170,7 +188,7 @@ export class LambdaRoleStack extends cdk.Stack {
         new lambda.Function(this, "DynamicFn", {
             runtime: lambda.Runtime.NODEJS_24_X,
             handler: "index.handler",
-            code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers")),
+            code: handlerCode,
             role: dynamicRole.role,
             description: "Lambda with dynamically added permissions",
         });

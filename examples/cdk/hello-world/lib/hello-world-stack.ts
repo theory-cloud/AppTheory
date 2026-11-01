@@ -64,9 +64,32 @@ function shouldSkipAssetEntry(name: string): boolean {
   );
 }
 
+const assetExclude = [
+  "__pycache__",
+  "**/__pycache__",
+  "*.pyc",
+  "**/*.pyc",
+  "*.pyo",
+  "**/*.pyo",
+  "*.egg-info",
+  "**/*.egg-info",
+];
+
 function cleanOutputDir(outputDir: string): void {
   rmSync(outputDir, { force: true, recursive: true });
   mkdirSync(outputDir, { recursive: true });
+}
+
+function resetAssetStage(exampleDir: string, name: string): string {
+  const stageDir = path.join(exampleDir, ".cdk-asset-stage", name);
+  cleanOutputDir(stageDir);
+  return stageDir;
+}
+
+function stageHandlerFiles(handlersDir: string, stageDir: string, files: string[]): void {
+  for (const file of files) {
+    copyFileSync(path.join(handlersDir, file), path.join(stageDir, file));
+  }
 }
 
 function assetHashFor(paths: string[]): string {
@@ -191,27 +214,23 @@ export class HelloWorldStack extends Stack {
           }),
           environment: { APPTHEORY_HELLO_LANG: "go", APPTHEORY_TIER: "p2" },
         });
-      case "ts":
+      case "ts": {
+        const handlerDir = path.join(__dirname, "..", "handlers", "ts");
+        const stageDir = resetAssetStage(path.join(__dirname, ".."), "ts");
+        stageHandlerFiles(handlerDir, stageDir, ["app.mjs", "handler.mjs", "package.json"]);
+        copyDir(path.join(repoRoot, "ts", "dist"), path.join(stageDir, "vendor", "apptheory"));
         return new AppTheoryFunction(this, "Handler", {
           runtime: lambda.Runtime.NODEJS_24_X,
           handler: "handler.handler",
-          code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers", "ts"), {
-            assetHashType: cdk.AssetHashType.CUSTOM,
-            assetHash: assetHashFor([
-              path.join(__dirname, "..", "handlers", "ts"),
-              path.join(repoRoot, "ts", "dist"),
-            ]),
+          code: lambda.Code.fromAsset(stageDir, {
+            exclude: assetExclude,
             bundling: {
               image: lambda.Runtime.NODEJS_24_X.bundlingImage,
-              command: ["bash", "-c", "cp -R /asset-input/* /asset-output/"],
+              command: ["bash", "-c", "set -euo pipefail && cp -R /asset-input/. /asset-output/"],
               local: {
                 tryBundle(outputDir: string) {
-                  const handlerDir = path.join(__dirname, "..", "handlers", "ts");
                   cleanOutputDir(outputDir);
-                  copyFileSync(path.join(handlerDir, "app.mjs"), path.join(outputDir, "app.mjs"));
-                  copyFileSync(path.join(handlerDir, "handler.mjs"), path.join(outputDir, "handler.mjs"));
-                  copyFileSync(path.join(handlerDir, "package.json"), path.join(outputDir, "package.json"));
-                  copyDir(path.join(repoRoot, "ts", "dist"), path.join(outputDir, "vendor", "apptheory"));
+                  copyDir(stageDir, outputDir);
                   return true;
                 },
               },
@@ -219,25 +238,24 @@ export class HelloWorldStack extends Stack {
           }),
           environment: { APPTHEORY_HELLO_LANG: "ts", APPTHEORY_TIER: "p2" },
         });
-      case "py":
+      }
+      case "py": {
+        const handlerDir = path.join(__dirname, "..", "handlers", "py");
+        const stageDir = resetAssetStage(path.join(__dirname, ".."), "py");
+        stageHandlerFiles(handlerDir, stageDir, ["handler.py"]);
+        copyDir(path.join(repoRoot, "py", "src", "apptheory"), path.join(stageDir, "apptheory"));
         return new AppTheoryFunction(this, "Handler", {
           runtime: lambda.Runtime.PYTHON_3_14,
           handler: "handler.handler",
-          code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers", "py"), {
-            assetHashType: cdk.AssetHashType.CUSTOM,
-            assetHash: assetHashFor([
-              path.join(__dirname, "..", "handlers", "py", "handler.py"),
-              path.join(repoRoot, "py", "src", "apptheory"),
-            ]),
+          code: lambda.Code.fromAsset(stageDir, {
+            exclude: assetExclude,
             bundling: {
               image: lambda.Runtime.PYTHON_3_14.bundlingImage,
-              command: ["bash", "-c", "cp -R /asset-input/* /asset-output/"],
+              command: ["bash", "-c", "set -euo pipefail && cp -R /asset-input/. /asset-output/"],
               local: {
                 tryBundle(outputDir: string) {
-                  const handlerDir = path.join(__dirname, "..", "handlers", "py");
                   cleanOutputDir(outputDir);
-                  copyFileSync(path.join(handlerDir, "handler.py"), path.join(outputDir, "handler.py"));
-                  copyDir(path.join(repoRoot, "py", "src", "apptheory"), path.join(outputDir, "apptheory"));
+                  copyDir(stageDir, outputDir);
                   return true;
                 },
               },
@@ -245,6 +263,7 @@ export class HelloWorldStack extends Stack {
           }),
           environment: { APPTHEORY_HELLO_LANG: "py", APPTHEORY_TIER: "p2" },
         });
+      }
     }
   }
 }

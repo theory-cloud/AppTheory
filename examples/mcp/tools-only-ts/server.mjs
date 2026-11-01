@@ -36,3 +36,7 @@ export function createToolsOnlyApp(options = {}) {
   app.delete("/mcp", handler);
   return app;
 }
+
+const app = createToolsOnlyApp();
+
+export const handler = async (event, context) => app.handleLambda(event, context);

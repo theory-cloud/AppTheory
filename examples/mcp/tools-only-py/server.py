@@ -45,3 +45,10 @@ def create_tools_only_app(options: dict[str, Any] | None = None):
     app.get("/mcp", handler)
     app.delete("/mcp", handler)
     return app
+
+
+_APP = create_tools_only_app()
+
+
+def handler(event: Any, context: Any = None) -> Any:
+    return _APP.handle_lambda(event, ctx=context)

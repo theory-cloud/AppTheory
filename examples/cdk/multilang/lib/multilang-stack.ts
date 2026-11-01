@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import { copyFileSync, mkdirSync, readdirSync } from "node:fs";
+import { copyFileSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import * as path from "node:path";
 
 import {
@@ -32,6 +32,9 @@ function contextValue(app: cdk.App, key: string): string | undefined {
 function copyDir(src: string, dest: string): void {
   mkdirSync(dest, { recursive: true });
   for (const entry of readdirSync(src, { withFileTypes: true })) {
+    if (shouldSkipAssetEntry(entry.name)) {
+      continue;
+    }
     const from = path.join(src, entry.name);
     const to = path.join(dest, entry.name);
     if (entry.isDirectory()) {
@@ -42,6 +45,45 @@ function copyDir(src: string, dest: string): void {
       copyFileSync(from, to);
     }
   }
+}
+
+function shouldSkipAssetEntry(name: string): boolean {
+  return (
+    name === "__pycache__" ||
+    name.endsWith("_test.go") ||
+    name.endsWith(".pyc") ||
+    name.endsWith(".pyo") ||
+    name.endsWith(".egg-info")
+  );
+}
+
+const assetExclude = [
+  "__pycache__",
+  "**/__pycache__",
+  "*.pyc",
+  "**/*.pyc",
+  "*.pyo",
+  "**/*.pyo",
+  "*.egg-info",
+  "**/*.egg-info",
+];
+
+function resetAssetStage(exampleDir: string, name: string): string {
+  const stageDir = path.join(exampleDir, ".cdk-asset-stage", name);
+  rmSync(stageDir, { force: true, recursive: true });
+  mkdirSync(stageDir, { recursive: true });
+  return stageDir;
+}
+
+function stageHandlerFiles(handlersDir: string, stageDir: string, files: string[]): void {
+  for (const file of files) {
+    copyFileSync(path.join(handlersDir, file), path.join(stageDir, file));
+  }
+}
+
+function cleanOutputDir(outputDir: string): void {
+  rmSync(outputDir, { force: true, recursive: true });
+  mkdirSync(outputDir, { recursive: true });
 }
 
 export class MultiLangStack extends Stack {
@@ -103,21 +145,22 @@ export class MultiLangStack extends Stack {
       environment: { ...commonEnv, APPTHEORY_LANG: "go" },
     });
 
+    const tsHandlersDir = path.join(__dirname, "..", "handlers", "ts");
+    const tsStageDir = resetAssetStage(path.join(__dirname, ".."), "ts");
+    stageHandlerFiles(tsHandlersDir, tsStageDir, ["handler.mjs", "package.json"]);
+    copyDir(path.join(repoRoot, "ts", "dist"), path.join(tsStageDir, "vendor", "apptheory"));
     const tsHandler = new AppTheoryFunction(this, "TsHandler", {
       runtime: lambda.Runtime.NODEJS_24_X,
       handler: "handler.handler",
-      code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers", "ts"), {
+      code: lambda.Code.fromAsset(tsStageDir, {
+        exclude: assetExclude,
         bundling: {
           image: lambda.Runtime.NODEJS_24_X.bundlingImage,
-          command: ["bash", "-c", "cp -R /asset-input/* /asset-output/"],
+          command: ["bash", "-c", "set -euo pipefail && cp -R /asset-input/. /asset-output/"],
           local: {
             tryBundle(outputDir: string) {
-              const handlerDir = path.join(__dirname, "..", "handlers", "ts");
-              copyFileSync(path.join(handlerDir, "handler.mjs"), path.join(outputDir, "handler.mjs"));
-              copyFileSync(path.join(handlerDir, "package.json"), path.join(outputDir, "package.json"));
-              const sdkIn = path.join(repoRoot, "ts", "dist", "index.js");
-              mkdirSync(path.join(outputDir, "vendor", "apptheory"), { recursive: true });
-              copyFileSync(sdkIn, path.join(outputDir, "vendor", "apptheory", "index.js"));
+              cleanOutputDir(outputDir);
+              copyDir(tsStageDir, outputDir);
               return true;
             },
           },
@@ -126,19 +169,22 @@ export class MultiLangStack extends Stack {
       environment: { ...commonEnv, APPTHEORY_LANG: "ts" },
     });
 
+    const pyHandlersDir = path.join(__dirname, "..", "handlers", "py");
+    const pyStageDir = resetAssetStage(path.join(__dirname, ".."), "py");
+    stageHandlerFiles(pyHandlersDir, pyStageDir, ["handler.py"]);
+    copyDir(path.join(repoRoot, "py", "src", "apptheory"), path.join(pyStageDir, "apptheory"));
     const pyHandler = new AppTheoryFunction(this, "PyHandler", {
       runtime: lambda.Runtime.PYTHON_3_14,
       handler: "handler.handler",
-      code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers", "py"), {
+      code: lambda.Code.fromAsset(pyStageDir, {
+        exclude: assetExclude,
         bundling: {
           image: lambda.Runtime.PYTHON_3_14.bundlingImage,
-          command: ["bash", "-c", "cp -R /asset-input/* /asset-output/"],
+          command: ["bash", "-c", "set -euo pipefail && cp -R /asset-input/. /asset-output/"],
           local: {
             tryBundle(outputDir: string) {
-              const handlerDir = path.join(__dirname, "..", "handlers", "py");
-              copyFileSync(path.join(handlerDir, "handler.py"), path.join(outputDir, "handler.py"));
-              const sdkIn = path.join(repoRoot, "py", "src", "apptheory");
-              copyDir(sdkIn, path.join(outputDir, "apptheory"));
+              cleanOutputDir(outputDir);
+              copyDir(pyStageDir, outputDir);
               return true;
             },
           },
