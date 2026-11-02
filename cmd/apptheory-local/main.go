@@ -7,18 +7,23 @@
 //
 // Usage:
 //
-//	apptheory-local run  --app <cdk-app-dir> [flags]
-//	apptheory-local plan --app <cdk-app-dir> [flags]
-//	apptheory-local down --app <cdk-app-dir> [flags]
+//	apptheory-local run    --app <cdk-app-dir> [flags]
+//	apptheory-local plan   --app <cdk-app-dir> [flags]
+//	apptheory-local invoke --app <cdk-app-dir> --function <id> --event <file> [flags]
+//	apptheory-local invoke --handler-dir <dir> --runtime <runtime> --handler <name> [flags]
+//	apptheory-local down   --app <cdk-app-dir> [flags]
 //
 // `run` is the default when no subcommand is given. Every flag is a command
 // line flag; the runner reads no operator environment variable.
 package main
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"sort"
@@ -31,9 +36,16 @@ import (
 const usageText = `apptheory-local runs an AppTheory app's real Lambda handlers locally.
 
 Usage:
-  apptheory-local [run] --app <cdk-app-dir> [flags]   serve the app locally
-  apptheory-local plan  --app <cdk-app-dir> [flags]   synthesize and print the derived surface
-  apptheory-local down  --app <cdk-app-dir> [flags]   remove this app's leftover containers and networks
+  apptheory-local [run]  --app <cdk-app-dir> [flags]   serve the app locally
+  apptheory-local plan   --app <cdk-app-dir> [flags]   synthesize and print the derived surface
+  apptheory-local invoke --app <cdk-app-dir> --function <id> --event <file> [flags]
+  apptheory-local invoke --handler-dir <dir> --runtime <runtime> --handler <name> [flags]
+  apptheory-local down   --app <cdk-app-dir> [flags]   remove this app's leftover containers and networks
+
+Invoke sends a Lambda event to one warm function container and prints one JSON
+result per event. Use --stdio to read newline-delimited events from stdin, which
+keeps the container warm across requests. Handler mode is for examples that
+ship a handler but no CDK definition; it derives no routes.
 
 Flags:
 `
@@ -49,7 +61,7 @@ func run(args []string) int {
 		args = args[1:]
 	}
 	switch command {
-	case "run", "plan", "down":
+	case "run", "plan", commandInvoke, "down":
 	case "help", "-h", "--help":
 		fmt.Print(usageText)
 		return 0
@@ -69,11 +81,36 @@ func run(args []string) int {
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
-	if strings.TrimSpace(config.app) == "" {
+	if command == commandInvoke {
+		if err := validateInvokeConfig(config); err != nil {
+			fmt.Fprintf(os.Stderr, "apptheory-local: %v\n", err)
+			return 2
+		}
+	} else if strings.TrimSpace(config.app) == "" {
 		fmt.Fprintln(os.Stderr, "apptheory-local: --app is required")
 		return 2
 	}
 	return config.execute(command)
+}
+
+const commandInvoke = "invoke"
+
+func validateInvokeConfig(config *commandConfig) error {
+	if strings.TrimSpace(config.app) == "" && strings.TrimSpace(config.handlerDir) == "" {
+		return errors.New("invoke needs --app or --handler-dir")
+	}
+	if strings.TrimSpace(config.app) != "" && strings.TrimSpace(config.function) == "" {
+		return errors.New("invoke --app needs --function")
+	}
+	if strings.TrimSpace(config.handlerDir) != "" {
+		if strings.TrimSpace(config.runtime) == "" || strings.TrimSpace(config.handler) == "" {
+			return errors.New("invoke --handler-dir needs --runtime and --handler")
+		}
+	}
+	if !config.stdio && len(config.events) == 0 {
+		return errors.New("invoke needs --event or --stdio")
+	}
+	return nil
 }
 
 type commandConfig struct {
@@ -90,6 +127,15 @@ type commandConfig struct {
 	endpoints      stringList
 	addHosts       stringList
 	backends       stringList
+	function       string
+	events         stringList
+	stdio          bool
+	handlerDir     string
+	runtime        string
+	handler        string
+	architecture   string
+	memoryMB       int
+	timeoutSeconds int
 }
 
 func (c *commandConfig) register(flags *flag.FlagSet) {
@@ -106,7 +152,16 @@ func (c *commandConfig) register(flags *flag.FlagSet) {
 	flags.Var(&c.images, "image", "runtime image override class=tag@sha256:... (repeatable)")
 	flags.Var(&c.endpoints, "endpoint", "local AWS endpoint service=url (repeatable)")
 	flags.Var(&c.addHosts, "add-host", "extra /etc/hosts entry name=address for function containers (repeatable)")
-	flags.Var(&c.backends, "backend", "local emulator the runner starts on the run network: dynamodb (repeatable)")
+	flags.Var(&c.backends, "backend", "local emulator the runner starts on the run network: dynamodb, or a profile container such as moto or s3proxy (repeatable)")
+	flags.StringVar(&c.function, "function", "", "invoke: function logical id from the CDK assembly")
+	flags.Var(&c.events, "event", "invoke: JSON event file (repeatable)")
+	flags.BoolVar(&c.stdio, "stdio", false, "invoke: read newline-delimited JSON events from stdin and keep the container warm")
+	flags.StringVar(&c.handlerDir, "handler-dir", "", "invoke: built handler code directory (no CDK app)")
+	flags.StringVar(&c.runtime, "runtime", "", "invoke --handler-dir: Lambda runtime (provided.al2023, nodejs24.x, python3.14)")
+	flags.StringVar(&c.handler, "handler", "", "invoke --handler-dir: handler name (bootstrap for a provided runtime)")
+	flags.StringVar(&c.architecture, "architecture", "", "invoke --handler-dir: built architecture (default arm64 for provided, x86_64 otherwise)")
+	flags.IntVar(&c.memoryMB, "memory", 0, "invoke --handler-dir: memory in MB (default 128)")
+	flags.IntVar(&c.timeoutSeconds, "timeout", 0, "invoke --handler-dir: function timeout in seconds (default 3)")
 }
 
 func (c *commandConfig) execute(command string) int {
@@ -115,8 +170,8 @@ func (c *commandConfig) execute(command string) int {
 		fmt.Fprintf(os.Stderr, "apptheory-local: %v\n", err)
 		return 2
 	}
-	if c.jsonOutput {
-		// Machine output owns stdout; synthesis progress goes to stderr.
+	if c.jsonOutput || command == commandInvoke {
+		// Machine output owns stdout; progress goes to stderr.
 		options.Stdout = os.Stderr
 	}
 	runner, err := localrunner.NewRunner(options)
@@ -130,11 +185,51 @@ func (c *commandConfig) execute(command string) int {
 	switch command {
 	case "plan":
 		return c.plan(ctx, runner)
+	case commandInvoke:
+		return c.invoke(ctx, runner)
 	case "down":
 		return c.down(ctx, runner)
 	default:
 		return c.serve(ctx, runner)
 	}
+}
+
+func (c *commandConfig) invoke(ctx context.Context, runner *localrunner.Runner) int {
+	reader, closeReader, err := c.invokeReader()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "apptheory-local: %v\n", err)
+		return 1
+	}
+	defer closeReader()
+	if err := runner.RunInvoke(ctx, c.function, reader, os.Stdout); err != nil {
+		fmt.Fprintf(os.Stderr, "apptheory-local: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func (c *commandConfig) invokeReader() (io.Reader, func(), error) {
+	if c.stdio {
+		return os.Stdin, func() {}, nil
+	}
+	var readers []io.Reader
+	var files []*os.File
+	for _, path := range c.events {
+		file, err := os.Open(path) //nolint:gosec // the caller names the event file
+		if err != nil {
+			for _, opened := range files {
+				_ = opened.Close() //nolint:errcheck // best-effort cleanup on the error path
+			}
+			return nil, func() {}, fmt.Errorf("open event file %s: %w", path, err)
+		}
+		files = append(files, file)
+		readers = append(readers, file, bytes.NewReader([]byte("\n")))
+	}
+	return io.MultiReader(readers...), func() {
+		for _, file := range files {
+			_ = file.Close() //nolint:errcheck // input files are only read
+		}
+	}, nil
 }
 
 func (c *commandConfig) plan(ctx context.Context, runner *localrunner.Runner) int {
@@ -224,8 +319,20 @@ func (c *commandConfig) options() (localrunner.Options, error) {
 	if _, err := splitPairList(c.addHosts, "add-host"); err != nil {
 		return localrunner.Options{}, err
 	}
+	var handler *localrunner.HandlerSpec
+	if strings.TrimSpace(c.handlerDir) != "" {
+		handler = &localrunner.HandlerSpec{
+			CodeDir:      c.handlerDir,
+			Runtime:      c.runtime,
+			Handler:      c.handler,
+			Architecture: c.architecture,
+			MemoryMB:     c.memoryMB,
+			Timeout:      c.timeoutSeconds,
+		}
+	}
 	return localrunner.Options{
 		AppDir:         c.app,
+		Handler:        handler,
 		Context:        contexts,
 		AssemblyDir:    c.assemblyDir,
 		ScratchDir:     c.scratchDir,
