@@ -251,7 +251,7 @@ func deriveSpec(dir string, stacks []assemblyStack) (*Spec, error) {
 // Derive turns a cloud assembly into the local runner's specification. It fails
 // closed on any construct the transport cannot serve faithfully.
 func deriveSpecInternal(dir string, stacks []assemblyStack) (*Spec, error) {
-	spec := &Spec{AssemblyDir: dir}
+	spec := &Spec{AssemblyDir: dir, functionURLTargets: map[string]string{}}
 	for _, stack := range stacks {
 		if err := deriveStack(spec, dir, stacks, stack); err != nil {
 			return nil, err

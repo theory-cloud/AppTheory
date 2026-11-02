@@ -236,6 +236,10 @@ type Spec struct {
 	// cloudFrontTopology keeps the parsed policies and function code the
 	// gateway needs. It never appears in plan output.
 	cloudFrontTopology *localcloudfront.Topology
+	// functionURLTargets maps a qualified AWS::Lambda::Url logical id to the
+	// qualified Lambda function it targets, including URLs the transport does
+	// not serve. It lets the skip report name CloudFront origin functions.
+	functionURLTargets map[string]string
 }
 
 // RuntimeClass maps a Lambda runtime name to the image class the profile pins.

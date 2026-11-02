@@ -519,21 +519,28 @@ func deriveFunctionURLs(spec *Spec, stacks []assemblyStack, stack assemblyStack)
 		if err := json.Unmarshal(resource.Properties, &props); err != nil {
 			return fmt.Errorf("%s/%s: parse Function URL properties: %w", stack.Name, id, err)
 		}
-		if props.AuthType != noneAuthorization {
-			return unsupported(
-				stack.Name+"/"+id,
-				"Function URL auth type %q is not run locally; the local transport must not bypass it",
-				props.AuthType,
-			)
-		}
 		functionID, ok := findRefByType(props.TargetFunctionARN, types, typeLambdaFunction, "Arn")
 		if !ok {
 			return unsupported(stack.Name+"/"+id, "Function URL target is not a Lambda function ARN")
 		}
+		qualifiedURL := qualify(stacks, stack.Name, id)
+		qualifiedFunction := qualify(stacks, stack.Name, functionID)
+		spec.functionURLTargets[qualifiedURL] = qualifiedFunction
+		if props.AuthType != noneAuthorization {
+			spec.Skipped = append(spec.Skipped, Skipped{
+				LogicalID: qualifiedURL,
+				Kind:      typeFunctionURL,
+				Reason: fmt.Sprintf(
+					"Function URL auth type %q is not run locally as a standalone URL; the local transport must not bypass it",
+					props.AuthType,
+				),
+			})
+			continue
+		}
 		spec.FunctionURLs = append(spec.FunctionURLs, FunctionURLSpec{
-			LogicalID: qualify(stacks, stack.Name, id),
+			LogicalID: qualifiedURL,
 			Stack:     stack.Name,
-			Function:  qualify(stacks, stack.Name, functionID),
+			Function:  qualifiedFunction,
 			Streaming: props.InvokeMode == responseStreamMode,
 		})
 	}
@@ -547,14 +554,29 @@ func deriveSkipped(spec *Spec) {
 	for _, id := range spec.RuntimeFunctions() {
 		served[id] = struct{}{}
 	}
+	originFunctions := map[string]struct{}{}
+	for _, distribution := range spec.CloudFront {
+		for _, origin := range distribution.Origins {
+			if origin.FunctionURL == "" {
+				continue
+			}
+			if functionID, ok := spec.functionURLTargets[origin.FunctionURL]; ok {
+				originFunctions[functionID] = struct{}{}
+			}
+		}
+	}
 	for _, function := range spec.Functions {
 		if _, ok := served[function.LogicalID]; ok {
 			continue
 		}
+		reason := "not targeted by an HTTP route, Function URL, event source mapping or EventBridge rule the local runner can invoke"
+		if _, isOrigin := originFunctions[function.LogicalID]; isOrigin {
+			reason = "CloudFront origin function; the local gateway does not start it until A5b wires origins"
+		}
 		spec.Skipped = append(spec.Skipped, Skipped{
 			LogicalID: function.LogicalID,
 			Kind:      typeLambdaFunction,
-			Reason:    "not targeted by an HTTP route, Function URL, event source mapping or EventBridge rule the local runner can invoke",
+			Reason:    reason,
 		})
 	}
 }
