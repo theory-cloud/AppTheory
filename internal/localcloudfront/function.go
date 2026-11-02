@@ -89,13 +89,21 @@ type EventRequest struct {
 	Cookies     map[string]HeaderValue `json:"cookies"`
 }
 
+// CookieValue is one response cookie: its value and the Set-Cookie attributes.
+// MultiValue is set when the response carried the cookie name more than once.
+type CookieValue struct {
+	Value      string        `json:"value"`
+	Attributes string        `json:"attributes,omitempty"`
+	MultiValue []CookieValue `json:"multiValue,omitempty"`
+}
+
 // EventResponse is the response object. The body is optional: when it is
 // absent the origin body is returned unchanged.
 type EventResponse struct {
 	StatusCode        int                    `json:"statusCode"`
 	StatusDescription string                 `json:"statusDescription,omitempty"`
 	Headers           map[string]HeaderValue `json:"headers"`
-	Cookies           map[string]HeaderValue `json:"cookies"`
+	Cookies           map[string]CookieValue `json:"cookies"`
 	Body              *ResponseBody          `json:"body,omitempty"`
 }
 

@@ -24,18 +24,18 @@ const (
 
 // Distribution is one AWS::CloudFront::Distribution the gateway can serve.
 type Distribution struct {
-	LogicalID         string         `json:"logicalId"`
-	Stack             string         `json:"stack"`
-	Comment           string         `json:"comment,omitempty"`
-	Enabled           bool           `json:"enabled"`
-	Aliases           []string       `json:"aliases,omitempty"`
-	DefaultRootObject string         `json:"defaultRootObject,omitempty"`
-	DefaultBehavior   *Behavior      `json:"defaultBehavior"`
-	CacheBehaviors    []*Behavior    `json:"cacheBehaviors,omitempty"`
-	Origins           []*Origin      `json:"origins"`
-	OriginGroups      []*OriginGroup `json:"originGroups,omitempty"`
-	Reported          []string       `json:"reported,omitempty"`
-	Refusals          []string       `json:"refusals,omitempty"`
+	LogicalID         string                `json:"logicalId"`
+	Stack             string                `json:"stack"`
+	Comment           string                `json:"comment,omitempty"`
+	Enabled           bool                  `json:"enabled"`
+	Aliases           []string              `json:"aliases,omitempty"`
+	DefaultRootObject string                `json:"defaultRootObject,omitempty"`
+	DefaultBehavior   *Behavior             `json:"defaultBehavior"`
+	CacheBehaviors    []*Behavior           `json:"cacheBehaviors,omitempty"`
+	Origins           []*DistributionOrigin `json:"origins"`
+	OriginGroups      []*OriginGroup        `json:"originGroups,omitempty"`
+	Reported          []string              `json:"reported,omitempty"`
+	Refusals          []string              `json:"refusals,omitempty"`
 }
 
 // Servable reports whether every property the distribution uses is either
@@ -54,7 +54,7 @@ func (d *Distribution) BehaviorForURI(uri string) *Behavior {
 }
 
 // Origin returns an origin by id.
-func (d *Distribution) Origin(id string) (*Origin, bool) {
+func (d *Distribution) Origin(id string) (*DistributionOrigin, bool) {
 	for _, origin := range d.Origins {
 		if origin.ID == id {
 			return origin, true
@@ -89,8 +89,8 @@ type Behavior struct {
 	Refusals               []string `json:"refusals,omitempty"`
 }
 
-// Origin is one distribution origin.
-type Origin struct {
+// DistributionOrigin is one distribution origin.
+type DistributionOrigin struct {
 	ID                  string            `json:"id"`
 	DomainName          string            `json:"domainName,omitempty"`
 	DomainExpression    string            `json:"domainExpression,omitempty"`
@@ -194,8 +194,9 @@ const (
 
 // HeaderForwarding is a headers config.
 type HeaderForwarding struct {
-	Mode  ForwardingMode `json:"mode"`
-	Names []string       `json:"names,omitempty"`
+	Mode              ForwardingMode `json:"mode"`
+	Names             []string       `json:"names,omitempty"`
+	CloudFrontHeaders bool           `json:"cloudFrontHeaders,omitempty"`
 }
 
 // CookieForwarding is a cookies config.
@@ -816,12 +817,12 @@ func normalizeMethods(methods []string) []string {
 	return out
 }
 
-func parseOrigins(raw json.RawMessage, stack string, index *resourceIndex, distributionID string) ([]*Origin, error) {
+func parseOrigins(raw json.RawMessage, stack string, index *resourceIndex, distributionID string) ([]*DistributionOrigin, error) {
 	var values []json.RawMessage
 	if err := json.Unmarshal(raw, &values); err != nil {
 		return nil, fmt.Errorf("%s: Origins: %w", distributionID, err)
 	}
-	origins := make([]*Origin, 0, len(values))
+	origins := make([]*DistributionOrigin, 0, len(values))
 	for position, value := range values {
 		origin, err := parseOrigin(value, stack, index, distributionID, position)
 		if err != nil {
@@ -839,12 +840,12 @@ func parseOrigin(
 	index *resourceIndex,
 	distributionID string,
 	position int,
-) (*Origin, error) {
+) (*DistributionOrigin, error) {
 	properties, err := decodeObject(raw)
 	if err != nil {
 		return nil, fmt.Errorf("%s: Origins[%d]: %w", distributionID, position, err)
 	}
-	origin := &Origin{}
+	origin := &DistributionOrigin{}
 	for _, key := range sortedKeys(properties) {
 		value := properties[key]
 		switch key {

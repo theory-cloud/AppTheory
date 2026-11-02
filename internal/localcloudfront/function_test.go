@@ -114,7 +114,7 @@ func TestExecutorViewerResponse(t *testing.T) {
 	event.Response = &EventResponse{
 		StatusCode: 200,
 		Headers:    map[string]HeaderValue{"content-type": {Value: "text/html"}},
-		Cookies:    map[string]HeaderValue{},
+		Cookies:    map[string]CookieValue{},
 	}
 	code := `
 		function handler(event) {

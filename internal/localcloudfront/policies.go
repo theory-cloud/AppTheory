@@ -89,7 +89,7 @@ var managedPolicyTable = map[PolicyKind]map[string]*Policy{
 		"33f36d7e-f396-46d9-90e0-52428a34d9dc": {
 			Kind: PolicyOriginRequest, ID: "33f36d7e-f396-46d9-90e0-52428a34d9dc", Managed: true,
 			OriginRequest: &OriginRequestPolicy{
-				Headers:      HeaderForwarding{Mode: ForwardAll},
+				Headers:      HeaderForwarding{Mode: ForwardAll, CloudFrontHeaders: true},
 				Cookies:      CookieForwarding{Mode: ForwardAll},
 				QueryStrings: QueryForwarding{Mode: ForwardAll},
 			},
@@ -99,7 +99,7 @@ var managedPolicyTable = map[PolicyKind]map[string]*Policy{
 		"b689b0a8-53d0-40ab-baf2-68738e2966ac": {
 			Kind: PolicyOriginRequest, ID: "b689b0a8-53d0-40ab-baf2-68738e2966ac", Managed: true,
 			OriginRequest: &OriginRequestPolicy{
-				Headers:      HeaderForwarding{Mode: ForwardAllExcept, Names: []string{"host"}},
+				Headers:      HeaderForwarding{Mode: ForwardAllExcept, Names: []string{"host"}, CloudFrontHeaders: true},
 				Cookies:      CookieForwarding{Mode: ForwardAll},
 				QueryStrings: QueryForwarding{Mode: ForwardAll},
 			},
@@ -396,6 +396,10 @@ func parseHeaderForwarding(raw json.RawMessage, allowAllViewer bool) (HeaderForw
 			}
 			if config.Mode == "allViewerAndWhitelistCloudFront" {
 				config.Mode = ForwardAll
+				config.CloudFrontHeaders = true
+			}
+			if config.Mode == ForwardAllExcept {
+				config.CloudFrontHeaders = true
 			}
 			if config.Mode == "allExcept" && !allowAllViewer {
 				return config, fmt.Errorf("HeaderBehavior %q is not valid for a cache policy", behavior)
