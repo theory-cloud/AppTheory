@@ -1926,6 +1926,19 @@ def run_mcp_tools_resources_prompts(harness: Harness) -> str:
         )
         if [tool.get("name") for tool in ((tools.get("result") or {}).get("tools") or [])] != ["echo"]:
             raise HarnessFailure(f"tools-resources-prompts tools/list: {tools}")
+        call = _mcp_jsonrpc(
+            client,
+            "tools-resources-prompts tools/call",
+            mcp_event(
+                "tools/call",
+                session=session,
+                protocol=protocol,
+                payload={"name": "echo", "arguments": {"message": "hello-res"}},
+            ),
+        )
+        call_content = (call.get("result") or {}).get("content") or []
+        if not call_content or call_content[0].get("text") != "hello-res":
+            raise HarnessFailure(f"tools-resources-prompts tools/call: {call}")
         resources = _mcp_jsonrpc(
             client,
             "tools-resources-prompts resources/list",
