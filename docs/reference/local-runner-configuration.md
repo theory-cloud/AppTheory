@@ -48,6 +48,10 @@ local-run: ready
 shutting down: removing 1 container(s) and network …
 ```
 
+The address to call is on the `serving …` line. The `127.0.0.1:<port>` on the
+`function …` line is the internal Runtime Interface Emulator port, not the app
+URL.
+
 `plan --json` emits:
 
 ```json
@@ -59,6 +63,12 @@ shutting down: removing 1 container(s) and network …
   "skipped": [{"logicalId": "…", "kind": "AWS::Lambda::Function", "reason": "…"}]
 }
 ```
+
+An unserved function whose `MemorySize`/`Timeout` is a CloudFormation expression
+is listed as `unresolved (<intrinsic>)`, for example `unresolved (Ref)`, instead
+of a default. The JSON carries `unresolvedMemorySize`/`unresolvedTimeout` and
+`memorySizeExpression`/`timeoutExpression` for the same function. A served
+function with an unresolved limit still fails closed.
 
 ## Run your own app
 
@@ -84,10 +94,22 @@ TypeScript and Python apps need a Go toolchain only to run the command; their
 handlers run in the official Node or Python image, not in a Go process.
 
 The app directory must contain `cdk.json` and a local CDK CLI at
-`node_modules/.bin/cdk` (`npm install --save-dev aws-cdk`). The runner does not
-install packages. `--profile` is required for `run`: it pins runtime images by
-digest and names the endpoint variables. The smallest valid profile names the
-images the app uses plus the Python image the in-container preflight needs:
+`node_modules/.bin/cdk`. A CDK v2 app declares `aws-cdk-lib` and `constructs`
+and installs the CLI as a dev dependency:
+
+```bash
+npm install --save aws-cdk-lib@2.275.0 constructs@10.8.1
+npm install --save-dev aws-cdk@2.1147.0
+```
+
+`HttpLambdaIntegration` is exported from
+`aws-cdk-lib/aws-apigatewayv2-integrations`, which ships inside `aws-cdk-lib`;
+there is no separate integrations package. The runner does not install
+packages. `--profile` is required for `run`: it pins runtime images by digest
+and names the endpoint variables. The smallest valid profile names the images
+the app uses plus the Python image the in-container preflight needs:
+
+#### `local-profile.json`
 
 ```json
 {
@@ -110,10 +132,18 @@ images the app uses plus the Python image the in-container preflight needs:
 }
 ```
 
+Malformed JSON fails when the command starts, before synthesis. A missing image
+class or an unpinned tag fails after synthesis, when the images for the served
+functions are resolved, and before any function container starts; the error
+names the profile path and the reason. A missing Python pin for the preflight
+fails after the run network is created, still before any function container
+starts.
+
 Add a `go` pin for a Go app (`provided:al2023`) or use `python` for a Python
 app. Add `dynamodbLocal` and `endpoints.dynamodb` only when the run needs
-DynamoDB Local. The user guide walks through the same flow with a complete
-external app: [Run an app locally](/examples/local-runner/).
+DynamoDB Local. The user guide has a complete minimal app (`package.json`,
+`cdk.json`, `bin/app.js`, handler and profile) with the plan, run, curl and stop
+commands: [Run an app locally](/examples/local-runner/).
 
 ## Local execution profile
 
@@ -160,7 +190,8 @@ node_modules/.bin/cdk synth --quiet --no-notices --no-version-reporting \
 ```
 
 with this clean environment (everything else is inherited only if it is not
-`AWS_*`, `CDK_*` or a proxy variable):
+`AWS_*`, `CDK_*`, a proxy variable, or one of `DYNAMODB_ENDPOINT`,
+`DDB_ENDPOINT`, `TABLE_NAME`, `QUEUE_URL`):
 
 ```
 AWS_REGION=us-east-1
@@ -172,6 +203,10 @@ AWS_CONFIG_FILE=/dev/null
 AWS_SHARED_CREDENTIALS_FILE=/dev/null
 CDK_DEFAULT_ACCOUNT=123456789012
 CDK_DEFAULT_REGION=us-east-1
+CI=1
+NO_COLOR=1
+FORCE_COLOR=0
+JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1
 TS_NODE_TRANSPILE_ONLY=1
 ```
 
@@ -248,8 +283,8 @@ runs on the same network with the same environment. It must report:
 
 - credentials are the `dummy` static keys and no session token is present;
 - every configured endpoint host resolves and answers an HTTP request;
-- `boto3` (from the runtime image) resolves DynamoDB to the configured local
-  endpoint and `ListTables` succeeds;
+- when a DynamoDB endpoint is configured, `boto3` (from the runtime image)
+  resolves DynamoDB to that endpoint and `ListTables` succeeds;
 - `dynamodb.us-east-1.amazonaws.com`, `s3.amazonaws.com` and
   `sqs.us-east-1.amazonaws.com` do **not** resolve.
 
@@ -313,10 +348,10 @@ handler are dropped and recomputed by the local HTTP server.
 - The RIE port is published on loopback only (`-p 127.0.0.1::8080`).
 - On success, failure or `SIGTERM`/`SIGINT`, the runner removes exactly its own
   containers and network, then deletes `<scratch>/runs/<app>-<run>`. Shutdown
-  is ordered: stop accepting requests, force-remove every container labelled
-  with the run id (including one whose start was interrupted), close the
-  listeners and their in-flight connections, then remove the network. It never
-  waits for a handler before removing containers, so a request that is still
-  running cannot hold cleanup past its budget.
+  is ordered: close the listeners (stop accepting requests), force-remove every
+  container labelled with the run id (including one whose start was
+  interrupted), close any connections still in flight, then remove the network.
+  It never waits for a handler before removing containers, so a request that is
+  still running cannot hold cleanup past its budget.
 - `SIGKILL` cannot run cleanup. `apptheory-local down --app <dir>` is the
   recovery path: it removes containers and networks labelled with that app.

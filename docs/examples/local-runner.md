@@ -60,19 +60,99 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
 TypeScript and Python apps need a Go toolchain only to run `apptheory-local`;
 their handlers keep running in the official Node or Python runtime image and
 never see the Go toolchain. A Go handler is built by its CDK bundling step
-before the runner starts, as it is for a deployment.
+during synthesis, before any function container starts.
 
 ### What your app needs
 
 - `cdk.json` and a synthesized HTTP API v2, REST API v1 or Function URL. The
   CDK definition is the only routing source.
-- A local CDK CLI in the app directory: `npm install --save-dev aws-cdk`. The
+- A CDK v2 app with `aws-cdk-lib` and `constructs`, and the CDK CLI installed in
+  the app directory as a dev dependency:
+
+  ```bash
+  npm install --save aws-cdk-lib@2.275.0 constructs@10.8.1
+  npm install --save-dev aws-cdk@2.1147.0
+  ```
+
+  `HttpLambdaIntegration` is exported from
+  `aws-cdk-lib/aws-apigatewayv2-integrations`, which ships inside
+  `aws-cdk-lib`; there is no separate integrations package to install. The
   runner executes `node_modules/.bin/cdk`; it does not install packages.
 - A local profile passed with `--profile`. It is required for `run` (and for
   any served function), because it pins every runtime image by digest.
 
-A minimal profile only names the images the app uses, plus the Python image for
-the in-container preflight. This one runs a Node app with no DynamoDB backend:
+The minimal profile below names only the images the app uses, plus the Python
+image for the in-container preflight. The complete example includes one.
+
+### A complete minimal app
+
+These five files are a working Node app: one Lambda function behind one HTTP
+API v2 route. Create a directory outside this checkout, save each file there,
+then run the commands in the next section.
+
+#### `package.json`
+
+```json
+{
+  "name": "my-local-app",
+  "private": true,
+  "dependencies": {
+    "aws-cdk-lib": "2.275.0",
+    "constructs": "10.8.1"
+  },
+  "devDependencies": {
+    "aws-cdk": "2.1147.0"
+  }
+}
+```
+
+#### `cdk.json`
+
+```json
+{
+  "app": "node bin/app.js"
+}
+```
+
+#### `bin/app.js`
+
+```javascript
+const cdk = require("aws-cdk-lib");
+const apigwv2 = require("aws-cdk-lib/aws-apigatewayv2");
+const integrations = require("aws-cdk-lib/aws-apigatewayv2-integrations");
+const lambda = require("aws-cdk-lib/aws-lambda");
+
+const app = new cdk.App();
+const stack = new cdk.Stack(app, "MyLocalAppStack");
+
+const handler = new lambda.Function(stack, "Handler", {
+  runtime: lambda.Runtime.NODEJS_24_X,
+  handler: "index.handler",
+  code: lambda.Code.fromAsset("handler"),
+});
+
+const api = new apigwv2.HttpApi(stack, "Api");
+api.addRoutes({
+  path: "/hello",
+  methods: [apigwv2.HttpMethod.GET],
+  integration: new integrations.HttpLambdaIntegration("HandlerIntegration", handler),
+});
+```
+
+#### `handler/index.js`
+
+```javascript
+exports.handler = async (event) => ({
+  statusCode: 200,
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    message: "hello from your local app",
+    path: event.rawPath,
+  }),
+});
+```
+
+#### `local-profile.json`
 
 ```json
 {
@@ -95,17 +175,80 @@ the in-container preflight. This one runs a Node app with no DynamoDB backend:
 }
 ```
 
-Add a `go` pin for a Go app (`provided:al2023`) or use `python` for a Python
-app. Add `dynamodbLocal` and an `endpoints.dynamodb` entry when you pass
+Add a `go` pin (`provided:al2023`) for a Go app or use `python` for a Python
+app. Add `dynamodbLocal` and an `endpoints.dynamodb` entry only when you pass
 `--backend dynamodb`; the [configuration reference](/reference/local-runner-configuration/)
-has the full schema. The runner validates the profile before it synthesizes
-anything: a missing image class, an unpinned tag or malformed JSON fails with
-the profile path and the reason.
+has the full schema.
+
+Profile validation happens in two stages. Malformed JSON fails when the command
+starts, before it synthesizes anything. A missing image class or an unpinned tag
+is reported after synthesis, when the runner resolves the images for the served
+functions — still before any function container starts — with the profile path
+and the reason. A missing Python pin for the preflight is reported after the run
+network is created, before any function container starts.
+
+### Plan, run, call and stop
+
+From the app directory, with a sibling AppTheory checkout at `~/code/AppTheory`:
+
+```bash
+cd ~/code/my-local-app
+npm install
+
+# Print the derived surface without starting a container.
+go run -C ~/code/AppTheory ./cmd/apptheory-local plan \
+  --app ~/code/my-local-app --profile ~/code/my-local-app/local-profile.json
+
+# Serve the app. Keep this terminal open.
+go run -C ~/code/AppTheory ./cmd/apptheory-local \
+  --app ~/code/my-local-app --profile ~/code/my-local-app/local-profile.json \
+  --name-prefix my-local-app
+```
+
+The served URL is the address on the `serving …` line the runner prints before
+`local-run: ready`:
+
+```
+function Handler… (nodejs24.x, public.ecr.aws/lambda/nodejs:24@sha256:…) ready on 127.0.0.1:49xxx
+serving httpv2 Api… at http://127.0.0.1:18780
+local-run: ready
+```
+
+Call the URL from another terminal (replace the port with the one the `serving`
+line printed):
+
+```bash
+curl -i http://127.0.0.1:18780/hello
+```
+
+The response is:
+
+```json
+{"message":"hello from your local app","path":"/hello"}
+```
+
+The `127.0.0.1:<port>` on the `function …` line is the internal Runtime
+Interface Emulator port, not the app URL. Stop the run with `Ctrl-C` (`SIGINT`)
+or `SIGTERM`; the command closes the listeners, removes its containers and
+network, deletes the scratch directory and exits 0.
+
+A built binary replaces `go run -C` in the same commands:
+
+```bash
+go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
+~/bin/apptheory-local plan \
+  --app ~/code/my-local-app --profile ~/code/my-local-app/local-profile.json
+~/bin/apptheory-local \
+  --app ~/code/my-local-app --profile ~/code/my-local-app/local-profile.json \
+  --name-prefix my-local-app
+```
 
 ## What "locally" means
 
 - **No AWS credentials.** The runner sets static dummy keys and removes every
-  inherited `AWS_*`, `CDK_*` and proxy variable from the processes it starts.
+  inherited `AWS_*`, `CDK_*`, proxy variable, and the `DYNAMODB_ENDPOINT`,
+  `DDB_ENDPOINT`, `TABLE_NAME` and `QUEUE_URL` aliases from the processes it
+  starts.
 - **No real AWS.** Function containers get closed DNS (`127.0.0.2`) and only the
   `/etc/hosts` entries the runner adds. Every SDK endpoint is overridden to a
   local URL. A preflight probe inside the run network must prove that a real AWS
@@ -126,21 +269,25 @@ the profile path and the reason.
      integrations;
    - `AWS::ApiGateway::RestApi`, its resource tree, methods and stage;
    - `AWS::Lambda::Url` Function URLs.
-3. **Preflight.** A probe container on the run's private network proves the
-   dummy credentials, endpoint reachability, the DynamoDB SDK endpoint and
-   closed DNS.
-4. **Run.** One container per served function, from the official image for its
+3. **Resolve images.** The profile's digest-pinned image for each served
+   function's runtime is selected before any container starts. A missing image
+   class or a tag that is not pinned by digest fails here, after synthesis.
+4. **Preflight.** A probe container on the run's private network proves the
+   dummy credentials, endpoint reachability, the DynamoDB SDK endpoint when one
+   is configured, and closed DNS.
+5. **Run.** One container per served function, from the official image for its
    runtime, digest-pinned in the profile. Handlers run under the embedded
    Runtime Interface Emulator; the transport invokes
    `/2015-03-31/functions/function/invocations`.
-5. **Serve.** One loopback listener per API (and per Function URL) builds the
+6. **Serve.** One loopback listener per API (and per Function URL) builds the
    provider event for the matched route, invokes the handler and decodes the
    response — including the RIE's buffered streaming frame.
-6. **Shut down.** `Ctrl-C` (`SIGINT`) or `SIGTERM` stops accepting requests,
-   force-removes the run's containers (which aborts an in-flight invocation),
-   closes the listeners, removes the network and deletes the scratch directory.
-   A `SIGKILL` cannot be caught: after one, `apptheory-local down --app <dir>`
-   removes everything that run left behind.
+7. **Shut down.** `Ctrl-C` (`SIGINT`) or `SIGTERM` stops accepting requests by
+   closing the listeners, force-removes the run's containers (which aborts an
+   in-flight invocation), closes any connections still in flight, removes the
+   network and deletes the scratch directory. A `SIGKILL` cannot be caught:
+   after one, `apptheory-local down --app <dir>` removes everything that run
+   left behind.
 
 ## Capability matrix
 
@@ -194,8 +341,8 @@ the harness records it.
 - Docker (on macOS, colima) with the daemon running. The runner creates one
   private network per run and publishes the RIE port on `127.0.0.1` only.
 - The app's CDK CLI installed in the app directory
-  (`node_modules/.bin/cdk`); run `npm ci` there once. The runner does not
-  install packages.
+  (`node_modules/.bin/cdk`); run `npm install` there once, or `npm ci` when the
+  app has a lockfile. The runner does not install packages.
 - Bind-mounted code must live under `$HOME` or the working directory (the
   checkout): colima does not share `/private/tmp`. The runner refuses a mount
   outside those roots.

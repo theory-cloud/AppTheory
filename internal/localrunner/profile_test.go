@@ -98,12 +98,17 @@ func TestProfileRejectsUnpinnedOrMismatchedImages(t *testing.T) {
 				t.Fatal("test profile document has no image pins")
 			}
 			images["go"] = pin
-			profile, err := LoadProfile(writeProfile(t, document))
+			path := writeProfile(t, document)
+			profile, err := LoadProfile(path)
 			if err != nil {
 				t.Fatalf("load profile: %v", err)
 			}
-			if _, err := profile.ImageFor("provided.al2023"); err == nil {
+			_, imageErr := profile.ImageFor("provided.al2023")
+			if imageErr == nil {
 				t.Fatalf("%s must fail closed", name)
+			}
+			if !strings.Contains(imageErr.Error(), path) {
+				t.Fatalf("%s error does not name the profile path %s: %v", name, path, imageErr)
 			}
 		})
 	}
@@ -151,14 +156,22 @@ func TestDocumentedMinimalProfileIsValid(t *testing.T) {
 				"--profile",
 				"cdk.json",
 				"node_modules/.bin/cdk",
+				"npm install --save aws-cdk-lib@2.275.0 constructs@10.8.1",
+				"npm install --save-dev aws-cdk@2.1147.0",
+				"aws-cdk-lib/aws-apigatewayv2-integrations",
+				"Malformed JSON fails when the command",
+				"after synthesis",
 			} {
 				if !strings.Contains(section, fragment) {
 					t.Fatalf("%s: Run your own app does not mention %q", document, fragment)
 				}
 			}
+			if strings.Contains(section, "validates the profile before it synthesizes") {
+				t.Fatalf("%s: Run your own app repeats the old profile-validation order", document)
+			}
 
 			path := filepath.Join(t.TempDir(), "local-profile.json")
-			if err := os.WriteFile(path, []byte(documentedJSONBlock(t, section)), 0o600); err != nil {
+			if err := os.WriteFile(path, []byte(documentedBlock(t, section, "#### `local-profile.json`", "json")), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			profile, err := LoadProfile(path)
@@ -176,6 +189,93 @@ func TestDocumentedMinimalProfileIsValid(t *testing.T) {
 				t.Fatalf("%s: the minimal profile must not require DynamoDB Local", document)
 			}
 		})
+	}
+}
+
+func TestDocumentedMinimalAppIsComplete(t *testing.T) {
+	document := filepath.Join("..", "..", "docs", "examples", "local-runner.md")
+	section := documentedSection(t, document, "## Run your own app")
+
+	var packageJSON struct {
+		Dependencies    map[string]string `json:"dependencies"`
+		DevDependencies map[string]string `json:"devDependencies"`
+	}
+	if err := json.Unmarshal([]byte(documentedBlock(t, section, "#### `package.json`", "json")), &packageJSON); err != nil {
+		t.Fatalf("documented package.json is not JSON: %v", err)
+	}
+	for _, dependency := range []string{"aws-cdk-lib", "constructs"} {
+		if packageJSON.Dependencies[dependency] == "" {
+			t.Fatalf("documented package.json has no %s dependency", dependency)
+		}
+	}
+	if packageJSON.DevDependencies["aws-cdk"] == "" {
+		t.Fatal("documented package.json has no aws-cdk dev dependency")
+	}
+
+	var cdkJSON struct {
+		App string `json:"app"`
+	}
+	if err := json.Unmarshal([]byte(documentedBlock(t, section, "#### `cdk.json`", "json")), &cdkJSON); err != nil {
+		t.Fatalf("documented cdk.json is not JSON: %v", err)
+	}
+	if cdkJSON.App != "node bin/app.js" {
+		t.Fatalf("documented cdk.json app = %q", cdkJSON.App)
+	}
+
+	app := documentedBlock(t, section, "#### `bin/app.js`", "javascript")
+	for _, fragment := range []string{
+		"HttpApi",
+		"HttpLambdaIntegration",
+		`Code.fromAsset("handler")`,
+		"Runtime.NODEJS_24_X",
+	} {
+		if !strings.Contains(app, fragment) {
+			t.Fatalf("documented bin/app.js does not mention %q", fragment)
+		}
+	}
+
+	handler := documentedBlock(t, section, "#### `handler/index.js`", "javascript")
+	if !strings.Contains(handler, "exports.handler") {
+		t.Fatal("documented handler does not export a handler")
+	}
+
+	for _, fragment := range []string{
+		"go run -C ~/code/AppTheory ./cmd/apptheory-local plan",
+		"go run -C ~/code/AppTheory ./cmd/apptheory-local \\\n",
+		"--app ~/code/my-local-app",
+		"--profile ~/code/my-local-app/local-profile.json",
+		"--name-prefix my-local-app",
+		"curl -i http://127.0.0.1:18780/hello",
+		"serving httpv2",
+		"local-run: ready",
+		"SIGTERM",
+		"not the app URL",
+	} {
+		if !strings.Contains(section, fragment) {
+			t.Fatalf("documented minimal app does not mention %q", fragment)
+		}
+	}
+}
+
+func TestDocumentedShutdownOrderMatchesTheRunner(t *testing.T) {
+	document := filepath.Join("..", "..", "docs", "reference", "local-runner-configuration.md")
+	raw, err := os.ReadFile(document) //nolint:gosec // checked-in documentation path
+	if err != nil {
+		t.Fatalf("read %s: %v", document, err)
+	}
+	text := string(raw)
+	for _, fragment := range []string{
+		"close the listeners (stop accepting requests)",
+		"force-remove every",
+		"close any connections still in flight",
+		"then remove the network",
+	} {
+		if !strings.Contains(text, fragment) {
+			t.Fatalf("%s: shutdown order does not mention %q", document, fragment)
+		}
+	}
+	if strings.Contains(text, "close the\n  listeners and their in-flight connections, then remove the network") {
+		t.Fatalf("%s: shutdown order still closes the listeners after removing containers", document)
 	}
 }
 
@@ -197,17 +297,24 @@ func documentedSection(t *testing.T, path, heading string) string {
 	return rest
 }
 
-func documentedJSONBlock(t *testing.T, section string) string {
+// documentedBlock returns the body of the first fenced block after heading.
+func documentedBlock(t *testing.T, section, heading, language string) string {
 	t.Helper()
-	const marker = "```json\n"
+	marker := "\n" + heading + "\n"
 	start := strings.Index(section, marker)
 	if start < 0 {
-		t.Fatal("documented section has no JSON block")
+		t.Fatalf("documented section has no %q heading", heading)
 	}
 	rest := section[start+len(marker):]
-	end := strings.Index(rest, "\n```")
-	if end < 0 {
-		t.Fatal("documented JSON block is not closed")
+	opener := "```" + language + "\n"
+	open := strings.Index(rest, opener)
+	if open < 0 {
+		t.Fatalf("%s has no %s block", heading, language)
 	}
-	return rest[:end]
+	body := rest[open+len(opener):]
+	end := strings.Index(body, "\n```")
+	if end < 0 {
+		t.Fatalf("%s block is not closed", heading)
+	}
+	return body[:end]
 }
