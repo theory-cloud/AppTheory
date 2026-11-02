@@ -15,17 +15,21 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
 const (
 	defaultMaxConcurrent = maxConcurrency
-	shutdownTimeout      = 10 * time.Second
-	labelRun             = "apptheory.local.run"
-	labelApp             = "apptheory.local.app"
-	labelManaged         = "apptheory.local.managed"
-	backendDynamoDB      = "dynamodb"
-	backendDynamoDBName  = "dynamodb-local"
+	// cleanupTimeout bounds the run-wide container listing. Each removal has its
+	// own cleanupStepTimeout so one slow Docker call cannot starve the rest.
+	cleanupTimeout      = 10 * time.Second
+	cleanupStepTimeout  = 5 * time.Second
+	labelRun            = "apptheory.local.run"
+	labelApp            = "apptheory.local.app"
+	labelManaged        = "apptheory.local.managed"
+	backendDynamoDB     = "dynamodb"
+	backendDynamoDBName = "dynamodb-local"
 )
 
 // Options configure one local run.
@@ -343,6 +347,12 @@ func (r *Runner) startBackends(ctx context.Context) error {
 			return fmt.Errorf("backend %s: %w", backend, err)
 		}
 		name := r.backendsContainerName(backend)
+		// Register the container before starting it, so a signal that lands
+		// while the start or the address lookup is in flight still cleans it up.
+		r.backends[backend] = backendProcess{
+			Container: name,
+			Endpoint:  Endpoint{Service: backend, URL: "http://" + backendDynamoDBName + ":8000"},
+		}
 		options := ContainerOptions{
 			Name:    name,
 			Network: r.network,
@@ -359,10 +369,6 @@ func (r *Runner) startBackends(ctx context.Context) error {
 			return err
 		}
 		r.options.AddHosts = append(r.options.AddHosts, backendDynamoDBName+":"+address)
-		r.backends[backend] = backendProcess{
-			Container: name,
-			Endpoint:  Endpoint{Service: backend, URL: "http://" + backendDynamoDBName + ":8000"},
-		}
 		r.logf("backend %s (%s) ready at %s", backend, image, r.backends[backend].Endpoint.URL)
 	}
 	return nil
@@ -372,27 +378,64 @@ func (r *Runner) backendsContainerName(backend string) string {
 	return r.namePrefix + "-" + backend
 }
 
+// cleanupFunc removes everything the run created. It stops accepting requests
+// first, then force-removes the containers (which also aborts an in-flight RIE
+// invocation), then closes any transport connections that are still open. The
+// order matters: waiting for a graceful HTTP shutdown before touching Docker
+// can consume the whole cleanup budget and leave containers and the network
+// behind when a handler is still running.
 func (r *Runner) cleanupFunc() func() {
 	return func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-		defer cancel()
-		for _, server := range r.servers {
-			_ = server.Shutdown(shutdownCtx) //nolint:errcheck // shutting down the run's own listeners
-		}
 		for _, listener := range r.listeners {
 			_ = listener.Close() //nolint:errcheck // shutting down the run's own listeners
 		}
-		for _, process := range r.invokers {
-			r.docker.RemoveContainer(shutdownCtx, process.Container)
+		r.removeRunContainers()
+		for _, server := range r.servers {
+			_ = server.Close() //nolint:errcheck // abort connections whose containers are gone
 		}
-		r.invokers = map[string]*FunctionProcess{}
-		for _, backend := range r.backends {
-			r.docker.RemoveContainer(shutdownCtx, backend.Container)
-		}
-		r.backends = map[string]backendProcess{}
-		r.docker.RemoveNetwork(shutdownCtx, r.network)
+		networkCtx, cancel := context.WithTimeout(context.Background(), cleanupStepTimeout)
+		r.docker.RemoveNetwork(networkCtx, r.network)
+		cancel()
 		_ = os.RemoveAll(r.scratch) //nolint:errcheck // scratch cleanup is best effort
 	}
+}
+
+// removeRunContainers removes every container the run created. It lists by the
+// run label instead of trusting the tracked map, because a `docker run` that
+// was interrupted by the signal can create the container before the runner has
+// finished registering it. Tracked names are removed too, so a failed listing
+// cannot leak a known container.
+func (r *Runner) removeRunContainers() {
+	listCtx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+	names, err := r.docker.ListContainers(listCtx, labelRun+"="+r.runID)
+	cancel()
+	if err != nil {
+		names = nil
+	}
+	seen := make(map[string]struct{}, len(names)+len(r.invokers)+len(r.backends))
+	for _, name := range names {
+		seen[name] = struct{}{}
+	}
+	for _, process := range r.invokers {
+		seen[process.Container] = struct{}{}
+	}
+	for _, backend := range r.backends {
+		seen[backend.Container] = struct{}{}
+	}
+
+	var wait sync.WaitGroup
+	for name := range seen {
+		wait.Add(1)
+		go func(name string) {
+			defer wait.Done()
+			removeCtx, removeCancel := context.WithTimeout(context.Background(), cleanupStepTimeout)
+			defer removeCancel()
+			r.docker.RemoveContainer(removeCtx, name)
+		}(name)
+	}
+	wait.Wait()
+	r.invokers = map[string]*FunctionProcess{}
+	r.backends = map[string]backendProcess{}
 }
 
 // resolveImages pins every served function's runtime image and checks the
@@ -537,6 +580,15 @@ func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image
 		Labels:   r.labels(),
 		Detach:   true,
 	}
+	// Register the container before starting it, so a signal that lands while
+	// the runtime image is still starting or waiting to accept connections
+	// still removes it.
+	process := &FunctionProcess{
+		Function:  function,
+		Container: name,
+		Image:     image,
+	}
+	r.invokers[function.LogicalID] = process
 	if _, startErr := r.docker.StartContainer(ctx, options); startErr != nil {
 		return startErr
 	}
@@ -544,12 +596,7 @@ func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image
 	if err != nil {
 		return err
 	}
-	r.invokers[function.LogicalID] = &FunctionProcess{
-		Function:  function,
-		Container: name,
-		Image:     image,
-		Port:      port,
-	}
+	process.Port = port
 	r.logf("function %s (%s, %s) ready on 127.0.0.1:%d", function.LogicalID, function.Runtime, image, port)
 	return nil
 }

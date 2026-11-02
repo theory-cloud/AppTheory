@@ -254,6 +254,11 @@ handler are dropped and recomputed by the local HTTP server.
   `<name-prefix>-dynamodb`.
 - The RIE port is published on loopback only (`-p 127.0.0.1::8080`).
 - On success, failure or `SIGTERM`/`SIGINT`, the runner removes exactly its own
-  containers and network, then deletes `<scratch>/runs/<app>-<run>`.
-- `apptheory-local down --app <dir>` removes containers and networks labelled
-  with that app, for a run that was killed with `SIGKILL`.
+  containers and network, then deletes `<scratch>/runs/<app>-<run>`. Shutdown
+  is ordered: stop accepting requests, force-remove every container labelled
+  with the run id (including one whose start was interrupted), close the
+  listeners and their in-flight connections, then remove the network. It never
+  waits for a handler before removing containers, so a request that is still
+  running cannot hold cleanup past its budget.
+- `SIGKILL` cannot run cleanup. `apptheory-local down --app <dir>` is the
+  recovery path: it removes containers and networks labelled with that app.

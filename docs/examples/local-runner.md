@@ -58,9 +58,11 @@ caller: `provided.al2023` for Go, `nodejs:24` for Node, `python:3.14` for Python
 5. **Serve.** One loopback listener per API (and per Function URL) builds the
    provider event for the matched route, invokes the handler and decodes the
    response — including the RIE's buffered streaming frame.
-6. **Shut down.** `Ctrl-C` removes the run's containers and network and deletes
-   its scratch directory. `apptheory-local down --app <dir>` removes anything a
-   previous run of that app left behind.
+6. **Shut down.** `Ctrl-C` (`SIGINT`) or `SIGTERM` stops accepting requests,
+   force-removes the run's containers (which aborts an in-flight invocation),
+   closes the listeners, removes the network and deletes the scratch directory.
+   A `SIGKILL` cannot be caught: after one, `apptheory-local down --app <dir>`
+   removes everything that run left behind.
 
 ## Capability matrix
 
