@@ -256,7 +256,9 @@ func TestRunnerCleanupDoesNotWaitForInFlightRequest(t *testing.T) {
 	rie := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		startedOnce.Do(func() { close(started) })
 		<-release
-		_, _ = writer.Write([]byte(`{"statusCode":200,"headers":{"content-type":"application/json"},"body":"{}"}`))
+		if _, err := writer.Write([]byte(`{"statusCode":200,"headers":{"content-type":"application/json"},"body":"{}"}`)); err != nil {
+			t.Errorf("write blocking response: %v", err)
+		}
 	}))
 	defer rie.Close()
 
@@ -278,7 +280,9 @@ func TestRunnerCleanupDoesNotWaitForInFlightRequest(t *testing.T) {
 	go func() {
 		response, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/hello", port)) //nolint:gosec,noctx // loopback listener the test owns
 		if err == nil {
-			_ = response.Body.Close()
+			if closeErr := response.Body.Close(); closeErr != nil {
+				t.Errorf("close response body: %v", closeErr)
+			}
 		}
 		requestDone <- err
 	}()

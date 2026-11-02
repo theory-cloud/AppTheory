@@ -403,39 +403,60 @@ func (r *Runner) cleanupFunc() func() {
 // removeRunContainers removes every container the run created. It lists by the
 // run label instead of trusting the tracked map, because a `docker run` that
 // was interrupted by the signal can create the container before the runner has
-// finished registering it. Tracked names are removed too, so a failed listing
-// cannot leak a known container.
+// finished registering it. A second listing catches a container the daemon
+// created while the first sweep was running. Tracked names are attempted too,
+// so a failed listing cannot leak a known container.
 func (r *Runner) removeRunContainers() {
-	listCtx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
-	names, err := r.docker.ListContainers(listCtx, labelRun+"="+r.runID)
-	cancel()
-	if err != nil {
-		names = nil
+	deadline := time.Now().Add(cleanupTimeout)
+	removed := map[string]struct{}{}
+	for pass := 0; pass < 2; pass++ {
+		pending := map[string]struct{}{}
+		listCtx, cancel := cleanupOperationContext(deadline)
+		names, err := r.docker.ListContainers(listCtx, labelRun+"="+r.runID)
+		cancel()
+		if err == nil {
+			for _, name := range names {
+				pending[name] = struct{}{}
+			}
+		}
+		for _, process := range r.invokers {
+			pending[process.Container] = struct{}{}
+		}
+		for _, backend := range r.backends {
+			pending[backend.Container] = struct{}{}
+		}
+		var wait sync.WaitGroup
+		for name := range pending {
+			if _, alreadyRemoved := removed[name]; alreadyRemoved {
+				continue
+			}
+			removed[name] = struct{}{}
+			wait.Add(1)
+			go func(name string) {
+				defer wait.Done()
+				removeCtx, removeCancel := cleanupOperationContext(deadline)
+				defer removeCancel()
+				r.docker.RemoveContainer(removeCtx, name)
+			}(name)
+		}
+		wait.Wait()
 	}
-	seen := make(map[string]struct{}, len(names)+len(r.invokers)+len(r.backends))
-	for _, name := range names {
-		seen[name] = struct{}{}
-	}
-	for _, process := range r.invokers {
-		seen[process.Container] = struct{}{}
-	}
-	for _, backend := range r.backends {
-		seen[backend.Container] = struct{}{}
-	}
-
-	var wait sync.WaitGroup
-	for name := range seen {
-		wait.Add(1)
-		go func(name string) {
-			defer wait.Done()
-			removeCtx, removeCancel := context.WithTimeout(context.Background(), cleanupStepTimeout)
-			defer removeCancel()
-			r.docker.RemoveContainer(removeCtx, name)
-		}(name)
-	}
-	wait.Wait()
 	r.invokers = map[string]*FunctionProcess{}
 	r.backends = map[string]backendProcess{}
+}
+
+// cleanupOperationContext returns a context bounded by both the remaining
+// run-wide budget and one step, so a single slow Docker call cannot consume the
+// budget needed to remove the rest.
+func cleanupOperationContext(deadline time.Time) (context.Context, context.CancelFunc) {
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		remaining = time.Millisecond
+	}
+	if remaining > cleanupStepTimeout {
+		remaining = cleanupStepTimeout
+	}
+	return context.WithTimeout(context.Background(), remaining)
 }
 
 // resolveImages pins every served function's runtime image and checks the
@@ -563,8 +584,8 @@ func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image
 			strings.Join(function.UnresolvedEnvironment, ", "),
 		)
 	}
-	if err := unresolvedLimitsError(function); err != nil {
-		return err
+	if limitErr := unresolvedLimitsError(function); limitErr != nil {
+		return limitErr
 	}
 	name := r.containerName(function.LogicalID)
 	options := ContainerOptions{
