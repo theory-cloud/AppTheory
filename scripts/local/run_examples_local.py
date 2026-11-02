@@ -1789,6 +1789,10 @@ class McpWarmContainer:
             self.process.wait(timeout=30)
             raise HarnessFailure("MCP container did not shut down")
         stderr = self._stderr()
+        if self.process.returncode != 0:
+            raise HarnessFailure(
+                f"MCP container {self.prefix} exited {self.process.returncode}", stderr
+            )
         _assert_local_runner_cleanup(self.harness, self.prefix)
         return stderr
 
@@ -2254,6 +2258,10 @@ def stop_local_app(harness: Harness, run: LocalAppRun) -> str:
         os.unlink(run.log_path)
     except FileNotFoundError:
         pass
+    if run.process.returncode != 0:
+        raise HarnessFailure(
+            f"apptheory-local {run.prefix} exited {run.process.returncode} after SIGTERM", output
+        )
     expect_output(output, [LOCAL_RUNNER_READY, "shutting down"], f"apptheory-local {run.prefix} run")
     _assert_local_runner_cleanup(harness, run.prefix)
     return output
