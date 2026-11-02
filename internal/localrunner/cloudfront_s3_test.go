@@ -218,3 +218,94 @@ func TestS3OriginUnreachableBackendIsAnError(t *testing.T) {
 		t.Fatal("an unreachable S3 backend must be an error")
 	}
 }
+
+func TestS3OriginPassesVersionAndConditionalHeaders(t *testing.T) {
+	origin, _ := newTestS3Origin(t, func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Query().Get("versionId") != "v1" {
+			t.Errorf("versionId = %q", request.URL.Query().Get("versionId"))
+		}
+		if request.Header.Get("If-Modified-Since") == "" || request.Header.Get("If-None-Match") == "" {
+			t.Errorf("conditional headers were not forwarded: %v", request.Header)
+		}
+		writer.Header().Set("Content-Type", "text/plain")
+		writer.Header().Set("Content-Length", "2")
+		_, _ = writer.Write([]byte("ok")) //nolint:errcheck // test response fixture
+	})
+	response, err := origin.Fetch(context.Background(), localcloudfront.OriginRequest{
+		Method: http.MethodGet,
+		URI:    "/hello.txt",
+		Query:  "versionId=v1",
+		Header: http.Header{
+			"If-None-Match":     {`"abc"`},
+			"If-Modified-Since": {"Wed, 21 Oct 2015 07:28:00 GMT"},
+		},
+	})
+	if err != nil || response.StatusCode != 200 {
+		t.Fatalf("response = %d err = %v", response.StatusCode, err)
+	}
+}
+
+func TestS3OriginMapsAccessDeniedAndInvalidRange(t *testing.T) {
+	cases := []struct {
+		status int
+		code   string
+		want   int
+	}{
+		{status: http.StatusForbidden, code: "AccessDenied", want: http.StatusForbidden},
+		{status: http.StatusRequestedRangeNotSatisfiable, code: "InvalidRange", want: http.StatusRequestedRangeNotSatisfiable},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.code, func(t *testing.T) {
+			origin, _ := newTestS3Origin(t, func(writer http.ResponseWriter, _ *http.Request) {
+				writer.Header().Set("Content-Type", "application/xml")
+				writer.WriteHeader(testCase.status)
+				_, _ = writer.Write([]byte(`<Error><Code>` + testCase.code + `</Code><Message>no</Message></Error>`)) //nolint:errcheck // test response fixture
+			})
+			response, err := origin.Fetch(context.Background(), localcloudfront.OriginRequest{Method: http.MethodGet, URI: "/x"})
+			if err != nil || response.StatusCode != testCase.want {
+				t.Fatalf("response = %d err = %v", response.StatusCode, err)
+			}
+			if !strings.Contains(string(response.Body), testCase.code) {
+				t.Fatalf("body = %q", response.Body)
+			}
+		})
+	}
+}
+
+func TestS3OriginHeadMissingIs403UnderOAC(t *testing.T) {
+	origin, _ := newTestS3Origin(t, func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusNotFound)
+	})
+	response, err := origin.Fetch(context.Background(), localcloudfront.OriginRequest{Method: http.MethodHead, URI: "/x"})
+	if err != nil || response.StatusCode != http.StatusForbidden {
+		t.Fatalf("response = %d err = %v", response.StatusCode, err)
+	}
+	if len(response.Body) != 0 {
+		t.Fatalf("HEAD error body = %q", response.Body)
+	}
+}
+
+func TestS3OriginPassesExpires(t *testing.T) {
+	origin, _ := newTestS3Origin(t, func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "text/plain")
+		writer.Header().Set("Expires", "Wed, 21 Oct 2015 07:28:00 GMT")
+		writer.Header().Set("Content-Length", "2")
+		_, _ = writer.Write([]byte("ok")) //nolint:errcheck // test response fixture
+	})
+	response, err := origin.Fetch(context.Background(), localcloudfront.OriginRequest{Method: http.MethodGet, URI: "/x"})
+	if err != nil || response.Header.Get("Expires") != "Wed, 21 Oct 2015 07:28:00 GMT" {
+		t.Fatalf("expires = %q err = %v", response.Header.Get("Expires"), err)
+	}
+}
+
+func TestS3OriginReadErrorIsAnError(t *testing.T) {
+	origin, _ := newTestS3Origin(t, func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "text/plain")
+		writer.Header().Set("Content-Length", "100")
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write([]byte("short")) //nolint:errcheck // test response fixture
+	})
+	if _, err := origin.Fetch(context.Background(), localcloudfront.OriginRequest{Method: http.MethodGet, URI: "/x"}); err == nil {
+		t.Fatal("a short object body must be an error")
+	}
+}

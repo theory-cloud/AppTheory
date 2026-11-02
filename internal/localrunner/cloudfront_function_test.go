@@ -293,3 +293,47 @@ func TestLocalOACSignerRoundTripsAndRejectsTampering(t *testing.T) {
 		t.Fatal("an unsigned request verified")
 	}
 }
+
+func TestFunctionURLOriginRefusesAWSIAMWithoutASigner(t *testing.T) {
+	origin := &functionURLOrigin{
+		originID: "Origin1", urlID: "Url1", authType: "AWS_IAM",
+		domainName: "url.lambda-url.us-east-1.local", invoker: &recordingInvoker{},
+	}
+	_, err := origin.Fetch(context.Background(), functionURLRequest())
+	if err == nil || !strings.Contains(err.Error(), "OAC signer") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestFunctionURLOriginFallsBackToTheOriginDomainAndLogsARejectedSignature(t *testing.T) {
+	var logged string
+	invoker := &recordingInvoker{response: []byte(`{"statusCode":200,"body":"ok"}`)}
+	origin := &functionURLOrigin{
+		originID: "Origin1", urlID: "Url1", authType: "AWS_IAM",
+		domainName: "url.lambda-url.us-east-1.local",
+		invoker:    invoker,
+		signer:     newLocalOACSigner(),
+		verifyFn:   func(*signedRequest) error { return errors.New("bad signature") },
+		logf:       func(format string, args ...any) { logged = format },
+	}
+	request := functionURLRequest()
+	request.Host = ""
+	response, err := origin.Fetch(context.Background(), request)
+	if err != nil || response.StatusCode != http.StatusForbidden {
+		t.Fatalf("response = %d err = %v", response.StatusCode, err)
+	}
+	if !strings.Contains(logged, "signature was rejected") {
+		t.Fatalf("log = %q", logged)
+	}
+}
+
+func TestFunctionURLOriginDecodeErrorIsAnError(t *testing.T) {
+	origin := &functionURLOrigin{
+		originID: "Origin1", urlID: "Url1", authType: noneAuthorization,
+		domainName: "url.lambda-url.us-east-1.local",
+		invoker:    &recordingInvoker{response: []byte("not json")},
+	}
+	if _, err := origin.Fetch(context.Background(), functionURLRequest()); err == nil {
+		t.Fatal("an invalid Lambda response must be an error")
+	}
+}

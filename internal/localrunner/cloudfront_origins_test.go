@@ -157,3 +157,98 @@ func TestFunctionURLAuthTypeAndBucketCORS(t *testing.T) {
 		t.Fatal("CORS declaration detection is wrong")
 	}
 }
+
+func TestCloudFrontOriginWiringReportsEachMissingPiece(t *testing.T) {
+	base := &Runner{
+		options:        Options{Stdout: io.Discard},
+		backends:       map[string]backendProcess{"s3proxy": {HostURL: "http://127.0.0.1:1", Endpoints: []Endpoint{{Service: "s3"}}}},
+		resourceValues: resourceValues{"Stack/Bucket": {Type: typeS3Bucket, Name: "bucket"}},
+		invokers:       map[string]*FunctionProcess{},
+	}
+	cases := []struct {
+		name         string
+		distribution *localcloudfront.Distribution
+		spec         *Spec
+		want         string
+	}{
+		{
+			name: "group member missing",
+			distribution: &localcloudfront.Distribution{
+				LogicalID: "D",
+				Origins: []*localcloudfront.DistributionOrigin{{
+					ID: "Bucket", DomainName: "bucket.s3.local", Kind: localcloudfront.OriginS3, Bucket: "Bucket", S3: &localcloudfront.S3Origin{},
+				}},
+				OriginGroups: []*localcloudfront.OriginGroup{{ID: "Group", Members: []string{"Bucket", "Nope"}}},
+			},
+			spec: &Spec{},
+			want: "not an origin",
+		},
+		{
+			name: "unknown kind",
+			distribution: &localcloudfront.Distribution{
+				LogicalID: "D",
+				Origins:   []*localcloudfront.DistributionOrigin{{ID: "Odd", DomainName: "odd.example"}},
+			},
+			spec: &Spec{},
+			want: "not implemented locally",
+		},
+		{
+			name: "function URL target missing",
+			distribution: &localcloudfront.Distribution{
+				LogicalID: "D",
+				Origins: []*localcloudfront.DistributionOrigin{{
+					ID: "Fn", DomainName: "url.lambda-url.local", Kind: localcloudfront.OriginCustom, FunctionURL: "Missing",
+				}},
+			},
+			spec: &Spec{},
+			want: "does not target a Lambda function",
+		},
+		{
+			name: "function URL invoker missing",
+			distribution: &localcloudfront.Distribution{
+				LogicalID: "D",
+				Origins: []*localcloudfront.DistributionOrigin{{
+					ID: "Fn", DomainName: "url.lambda-url.local", Kind: localcloudfront.OriginCustom, FunctionURL: "Url1",
+				}},
+			},
+			spec: &Spec{functionURLTargets: map[string]string{"Url1": "Function1"}},
+			want: "is not running",
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, err := base.cloudFrontOrigins(testCase.spec, testCase.distribution)
+			if err == nil || !strings.Contains(err.Error(), testCase.want) {
+				t.Fatalf("err = %v, want %q", err, testCase.want)
+			}
+		})
+	}
+}
+
+func TestFunctionURLAuthTypeRejectsAnUnknownType(t *testing.T) {
+	spec := &Spec{Resources: []ResourceSpec{{
+		Stack: "Stack", LogicalID: "Url1", Type: typeFunctionURL, Properties: json.RawMessage(`{"AuthType":"OTHER"}`),
+	}}}
+	if _, err := functionURLAuthType(spec, "Url1"); err == nil || !strings.Contains(err.Error(), "not implemented") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestBucketNameAcceptsAQualifiedKeyAndRejectsAMissingBucket(t *testing.T) {
+	runner := &Runner{resourceValues: resourceValues{
+		"Stack/Bucket": {Type: typeS3Bucket, Name: "bucket"},
+		"Stack/Other":  {Type: typeDynamoTable, Name: "table"},
+	}}
+	if name, ok := runner.bucketName("Stack/Bucket"); !ok || name != "bucket" {
+		t.Fatalf("qualified bucket = %q %v", name, ok)
+	}
+	if name, ok := runner.bucketName("Bucket"); !ok || name != "bucket" {
+		t.Fatalf("bare bucket = %q %v", name, ok)
+	}
+	if _, ok := runner.bucketName("Stack/Other"); ok {
+		t.Fatal("a non-bucket resource must not resolve as a bucket")
+	}
+	if bucketDeclaresCORS(&Spec{Resources: []ResourceSpec{{Stack: "Stack", LogicalID: "Bucket", Type: typeS3Bucket, Properties: json.RawMessage(`{`)}}}, "Bucket") {
+		t.Fatal("malformed properties must not report CORS")
+	}
+}

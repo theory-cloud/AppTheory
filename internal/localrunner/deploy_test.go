@@ -1,6 +1,7 @@
 package localrunner
 
 import (
+	"archive/zip"
 	"context"
 	"encoding/json"
 	"io"
@@ -250,5 +251,100 @@ func TestDeploymentContentType(t *testing.T) {
 	}
 	if got := deploymentContentType("a.bin", map[string]string{"content-type": "application/custom"}); got != "application/custom" {
 		t.Fatalf("declared content type = %q", got)
+	}
+}
+
+func TestProvisionDeploymentsCopiesAZipSource(t *testing.T) {
+	assembly := t.TempDir()
+	zipPath := filepath.Join(assembly, "asset.zip")
+	file, err := os.Create(zipPath)
+	if err != nil {
+		t.Fatalf("create zip: %v", err)
+	}
+	archive := zip.NewWriter(file)
+	entry, err := archive.Create("assets/app.js")
+	if err != nil {
+		t.Fatalf("create zip entry: %v", err)
+	}
+	if _, err := entry.Write([]byte("console.log(1)\n")); err != nil {
+		t.Fatalf("write zip entry: %v", err)
+	}
+	if err := archive.Close(); err != nil {
+		t.Fatalf("close zip: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close zip file: %v", err)
+	}
+	manifest := map[string]any{
+		"files": map[string]any{
+			"hash": map[string]any{
+				"source": map[string]any{"path": "asset.zip", "packaging": "zip"},
+				"destinations": map[string]any{
+					"current_account-current_region": map[string]any{"objectKey": "hash.zip"},
+				},
+			},
+		},
+	}
+	raw, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(assembly, "Stack.assets.json"), raw, 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	resource := ResourceSpec{
+		Stack: "Stack", LogicalID: "Deployment", Type: typeBucketDeploy,
+		Properties: json.RawMessage(`{"SourceObjectKeys":["hash.zip"],"DestinationBucketName":{"Ref":"Bucket"}}`),
+	}
+	_, stub := newDeploymentRunner(t, assembly, []ResourceSpec{resource})
+	put, ok := stub.puts["/bucket/assets/app.js"]
+	if !ok || put.body != "console.log(1)\n" || put.contentType != "text/javascript" {
+		t.Fatalf("zip upload = %+v", stub.puts)
+	}
+}
+
+func TestProvisionDeploymentsWithoutTheS3BackendDoesNothing(t *testing.T) {
+	runner := &Runner{options: Options{Stdout: io.Discard}}
+	err := runner.provisionDeployments(context.Background(), &Spec{Resources: []ResourceSpec{{
+		Stack: "Stack", LogicalID: "Deployment", Type: typeBucketDeploy,
+	}}})
+	if err != nil {
+		t.Fatalf("provision without s3: %v", err)
+	}
+}
+
+func TestProvisionDeploymentsRequiresTheAssetManifest(t *testing.T) {
+	runner := &Runner{
+		options:        Options{Stdout: io.Discard},
+		backends:       map[string]backendProcess{"s3proxy": {HostURL: "http://127.0.0.1:1", Endpoints: []Endpoint{{Service: "s3"}}}},
+		resourceValues: resourceValues{"Stack/Bucket": {Type: typeS3Bucket, Name: "bucket"}},
+	}
+	resource := ResourceSpec{
+		Stack: "Stack", LogicalID: "Deployment", Type: typeBucketDeploy,
+		Properties: json.RawMessage(`{"SourceObjectKeys":["hash.zip"],"DestinationBucketName":{"Ref":"Bucket"}}`),
+	}
+	err := runner.provisionDeployments(context.Background(), &Spec{AssemblyDir: t.TempDir(), Resources: []ResourceSpec{resource}})
+	if err == nil || !strings.Contains(err.Error(), "read asset manifest") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestDeploymentBucketRejectsANonReference(t *testing.T) {
+	runner := &Runner{options: Options{Stdout: io.Discard}, resourceValues: resourceValues{}}
+	_, err := runner.deploymentBucket(ResourceSpec{Stack: "Stack", LogicalID: "Deployment"}, bucketDeploymentProperties{
+		DestinationBucketName: json.RawMessage(`"literal-bucket"`),
+	})
+	if err == nil || !strings.Contains(err.Error(), "direct reference") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestPutDeploymentObjectRejectsAnInvalidExpires(t *testing.T) {
+	runner := &Runner{options: Options{Stdout: io.Discard}}
+	err := runner.putDeploymentObject(context.Background(), nil, "bucket", "key", []byte("x"), bucketDeploymentProperties{
+		SystemMetadata: map[string]string{"expires": "not an HTTP date"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "HTTP date") {
+		t.Fatalf("err = %v", err)
 	}
 }
