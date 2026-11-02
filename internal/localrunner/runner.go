@@ -91,6 +91,7 @@ type Runner struct {
 	backends       map[string]backendProcess
 	resourceValues resourceValues
 	tables         map[string]tableInfo
+	localSecrets   map[string]string
 	servers        []*http.Server
 	listeners      []net.Listener
 	semaphore      chan struct{}
@@ -106,16 +107,17 @@ func NewRunner(options Options) (*Runner, error) {
 	}
 
 	runner := &Runner{
-		options:   options,
-		docker:    NewDocker(),
-		appHash:   hashOf(options.AppDir),
-		runID:     shortID(),
-		invokers:  map[string]*FunctionProcess{},
-		backends:  map[string]backendProcess{},
-		tables:    map[string]tableInfo{},
-		endpoints: append([]Endpoint(nil), options.Endpoints...),
-		images:    map[string]string{},
-		semaphore: make(chan struct{}, options.MaxConcurrency),
+		options:      options,
+		docker:       NewDocker(),
+		appHash:      hashOf(options.AppDir),
+		runID:        shortID(),
+		invokers:     map[string]*FunctionProcess{},
+		backends:     map[string]backendProcess{},
+		tables:       map[string]tableInfo{},
+		localSecrets: map[string]string{},
+		endpoints:    append([]Endpoint(nil), options.Endpoints...),
+		images:       map[string]string{},
+		semaphore:    make(chan struct{}, options.MaxConcurrency),
 	}
 	runner.namePrefix = sanitizeNamePrefix(options.NamePrefix, "apptheory-local-"+runner.appHash)
 	runner.network = runner.namePrefix + "-net"

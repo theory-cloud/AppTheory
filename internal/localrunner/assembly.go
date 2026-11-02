@@ -20,6 +20,10 @@ const (
 	typeEventsRule      = "AWS::Events::Rule"
 	typeEventSourceMap  = "AWS::Lambda::EventSourceMapping"
 	typeKinesisStream   = "AWS::Kinesis::Stream"
+	typeSecretsSecret   = "AWS::SecretsManager::Secret" //nolint:gosec // CloudFormation resource type name, not a credential
+	typeIAMRole         = "AWS::IAM::Role"
+	typeMicrovmImage    = "AWS::Lambda::MicrovmImage"
+	typeS3VectorsIndex  = "AWS::S3Vectors::Index"
 	typeHTTPAPI         = "AWS::ApiGatewayV2::Api"
 	typeHTTPRoute       = "AWS::ApiGatewayV2::Route"
 	typeHTTPIntegration = "AWS::ApiGatewayV2::Integration"

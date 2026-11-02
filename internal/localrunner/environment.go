@@ -1,6 +1,8 @@
 package localrunner
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -48,18 +50,24 @@ func (r *Runner) resolveEnvironment(spec *Spec, targets []string) error {
 	}
 	for index := range spec.Functions {
 		function := &spec.Functions[index]
-		if len(function.EnvironmentExpressions) == 0 {
-			continue
-		}
 		if _, ok := served[function.LogicalID]; !ok {
 			continue
 		}
-		for name, raw := range function.EnvironmentExpressions {
-			value, err := r.resolveExpression(raw, function.Stack, resources, provisioned)
+		if len(function.EnvironmentExpressions) > 0 {
+			for name, raw := range function.EnvironmentExpressions {
+				value, err := r.resolveExpression(raw, function.Stack, resources, provisioned)
+				if err != nil {
+					return fmt.Errorf("function %s: environment %s: %w", function.LogicalID, name, err)
+				}
+				function.Environment[name] = value
+			}
+		}
+		for name, value := range function.Environment {
+			resolved, err := r.resolveDynamicSecret(function.LogicalID, name, value)
 			if err != nil {
 				return fmt.Errorf("function %s: environment %s: %w", function.LogicalID, name, err)
 			}
-			function.Environment[name] = value
+			function.Environment[name] = resolved
 		}
 		function.UnresolvedEnvironment = nil
 		function.EnvironmentExpressions = nil
@@ -171,7 +179,9 @@ func (r *Runner) resolveRef(id, stack string, resources map[string]map[string]Re
 		return value.KeyID, nil
 	case typeSQSQueue:
 		return value.URL, nil
-	case typeS3Bucket, typeDynamoTable, typeEventsRule, typeLambdaFunction:
+	case typeSecretsSecret:
+		return value.ARN, nil
+	case typeS3Bucket, typeDynamoTable, typeEventsRule, typeLambdaFunction, typeKinesisStream:
 		return value.Name, nil
 	default:
 		return "", fmt.Errorf("ref to %s (%s) is not resolvable locally", id, resource.Type)
@@ -198,13 +208,17 @@ const attrArn = "Arn"
 // attribute returns the GetAtt attributes the local resource value supports.
 func (v resourceValue) attribute(attr string) (string, bool) {
 	switch attr {
-	case attrArn:
+	case attrArn, "ImageArn", "IndexArn":
 		return v.ARN, v.ARN != ""
-	case "Name", "QueueName", "FunctionName":
+	case "Name", "QueueName", "FunctionName", "RoleName":
 		return v.Name, v.Name != ""
 	case "KeyId":
 		return v.KeyID, v.KeyID != ""
 	case "QueueUrl":
+		return v.URL, v.URL != ""
+	case "StreamArn":
+		return v.StreamARN, v.StreamARN != ""
+	case "ApiEndpoint":
 		return v.URL, v.URL != ""
 	case "DomainName":
 		return v.Name + ".s3.amazonaws.com", v.Name != ""
@@ -216,8 +230,10 @@ func (v resourceValue) attribute(attr string) (string, bool) {
 }
 
 // localResourceValue derives the deterministic local name for a resource and,
-// for a KMS key or S3 bucket that the run started a backend for, the value
-// provisioning created.
+// for a KMS key, S3 bucket, DynamoDB table or SQS queue the run started a
+// backend for, the value provisioning created.
+//
+//nolint:gocyclo // one case per supported template resource type.
 func (r *Runner) localResourceValue(resource ResourceSpec, provisioned resourceValues) (resourceValue, error) {
 	key := resource.Stack + "/" + resource.LogicalID
 	if value, ok := provisioned[key]; ok {
@@ -227,7 +243,7 @@ func (r *Runner) localResourceValue(resource ResourceSpec, provisioned resourceV
 	if err != nil {
 		return resourceValue{}, err
 	}
-	value := resourceValue{Name: name}
+	value := resourceValue{Type: resource.Type, Name: name}
 	switch resource.Type {
 	case typeKMSKey:
 		return resourceValue{}, fmt.Errorf(
@@ -244,12 +260,76 @@ func (r *Runner) localResourceValue(resource ResourceSpec, provisioned resourceV
 		value.ARN = "arn:" + LocalPartition + ":sqs:" + LocalRegion + ":" + LocalAccountID + ":" + name
 	case typeDynamoTable:
 		value.ARN = "arn:" + LocalPartition + ":dynamodb:" + LocalRegion + ":" + LocalAccountID + ":table/" + name
+		value.StreamARN = value.ARN + "/stream/local"
 	case typeEventsRule:
 		value.ARN = "arn:" + LocalPartition + ":events:" + LocalRegion + ":" + LocalAccountID + ":rule/" + name
+	case typeKinesisStream:
+		value.ARN = "arn:" + LocalPartition + ":kinesis:" + LocalRegion + ":" + LocalAccountID + ":stream/" + name
+	case typeSecretsSecret:
+		value.Name = "local-secret-" + stableHash(resource.Stack+"/"+resource.LogicalID, 24)
+		value.ARN = "arn:" + LocalPartition + ":secretsmanager:" + LocalRegion + ":" + LocalAccountID + ":secret:" + value.Name
+	case typeIAMRole:
+		value.ARN = "arn:" + LocalPartition + ":iam::" + LocalAccountID + ":role/" + name
+	case typeMicrovmImage:
+		value.ARN = "arn:" + LocalPartition + ":lambda:" + LocalRegion + ":" + LocalAccountID + ":microvm-image:" + name
+	case typeS3VectorsIndex:
+		indexARN, err := s3VectorsIndexARN(resource)
+		if err != nil {
+			return resourceValue{}, err
+		}
+		value.ARN = indexARN
+	case typeHTTPAPI:
+		value.URL = ClosedEndpoint
 	case typeLambdaFunction:
 		value.ARN = "arn:" + LocalPartition + ":lambda:" + LocalRegion + ":" + LocalAccountID + ":function:" + name
 	}
 	return value, nil
+}
+
+func s3VectorsIndexARN(resource ResourceSpec) (string, error) {
+	var props struct {
+		VectorBucketName string `json:"VectorBucketName"`
+		IndexName        string `json:"IndexName"`
+	}
+	if len(resource.Properties) > 0 {
+		if err := json.Unmarshal(resource.Properties, &props); err != nil {
+			return "", fmt.Errorf("parse S3 Vectors index %s properties: %w", resource.LogicalID, err)
+		}
+	}
+	if strings.TrimSpace(props.VectorBucketName) == "" || strings.TrimSpace(props.IndexName) == "" {
+		return "", fmt.Errorf("S3 Vectors index %s does not declare VectorBucketName and IndexName", resource.LogicalID)
+	}
+	return "arn:" + LocalPartition + ":s3vectors:" + LocalRegion + ":" + LocalAccountID +
+		":bucket/" + props.VectorBucketName + "/index/" + props.IndexName, nil
+}
+
+func stableHash(value string, length int) string {
+	sum := sha256.Sum256([]byte(value))
+	encoded := hex.EncodeToString(sum[:])
+	if length > 0 && length < len(encoded) {
+		return encoded[:length]
+	}
+	return encoded
+}
+
+// resolveDynamicSecret replaces a deploy-time Secrets Manager dynamic reference
+// with a deterministic local secret. The value is recorded for the session's
+// describe operation, never written to a log or a plan document.
+func (r *Runner) resolveDynamicSecret(functionID, name, value string) (string, error) {
+	trimmed := strings.TrimSpace(value)
+	if !strings.Contains(trimmed, "{{resolve:") {
+		return value, nil
+	}
+	if !strings.HasPrefix(trimmed, "{{resolve:secretsmanager:") || !strings.HasSuffix(trimmed, "}}") {
+		return "", fmt.Errorf("dynamic reference %q is not a Secrets Manager secret the runner can resolve locally", trimmed)
+	}
+	secret := "local-secret-" + stableHash(trimmed, 24)
+	if r.localSecrets == nil {
+		r.localSecrets = map[string]string{}
+	}
+	r.localSecrets[name] = secret
+	r.logf("function %s: resolved deploy-time secret %s locally", functionID, name)
+	return secret, nil
 }
 
 func (r *Runner) queueURL(name string) string {
