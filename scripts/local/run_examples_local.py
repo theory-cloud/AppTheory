@@ -36,6 +36,7 @@ import json
 import os
 import re
 import select
+import shutil
 import signal
 import socket
 import subprocess
@@ -91,11 +92,21 @@ IMPORT_APP = "examples/cdk/import-pipeline"
 KINESIS_APP = "examples/cdk/kinesis-cloudwatch-logs"
 MICROVM_APP = "examples/cdk/microvm-controller"
 VECTORS_APP = "examples/cdk/s3-vectors-semantic-search"
+SSR_SITE_APP = "examples/cdk/ssr-site"
+SSR_ONLY_APP = "examples/cdk/ssr-only-provided-assets-site"
+PATH_ROUTED_APP = "examples/cdk/path-routed-frontend"
+MEDIA_CDN_APP = "examples/cdk/media-cdn"
 CONFORMANCE_SCRIPT = "examples/microvm-conformance/run_local.py"
 MICROVM_DEMO_TOKEN = "local-demo-token"
 MICROVM_WORKLOAD_GO = STATE_DIR / "bin" / "microvm-workload-go"
 LOCAL_PROFILE = "scripts/local/examples-local.json"
 MCP_HANDLER_BIN_DIR = STATE_DIR / "handlers"
+# The upload-assets.sh row uses the host AWS CLI when it runs; when the host
+# CLI is unusable (a broken Homebrew awscli, for example) the harness installs
+# this pinned v1 CLI into its own state directory. Both are the real CLI; the
+# script and its AWS path are unchanged.
+AWS_CLI_VERSION = "1.45.64"
+AWS_CLI_DIR = STATE_DIR / "awscli"
 MCP_EXAMPLES = {
     "tools-only": "examples/mcp/tools-only",
     "tools-resources-prompts": "examples/mcp/tools-resources-prompts",
@@ -2492,6 +2503,112 @@ def one_api_url(spec: dict, run: LocalAppRun) -> str:
     return run.apis[logical_id]
 
 
+# --- A5b CloudFront gateway helpers -----------------------------------------
+
+
+def local_app_distribution(run: LocalAppRun, prefix: str) -> tuple[str, str]:
+    """Return (distribution logical id, local URL) for one distribution."""
+    for distribution in run.spec.get("cloudFront") or []:
+        logical_id = str(distribution.get("logicalId") or "")
+        if logical_id.startswith(prefix) and logical_id in run.apis:
+            return logical_id, run.apis[logical_id]
+    raise HarnessFailure(
+        f"plan has no served distribution starting with {prefix!r}; "
+        f"cloudFront={[d.get('logicalId') for d in run.spec.get('cloudFront') or []]}, apis={run.apis}"
+    )
+
+
+def session_distribution(session: LocalSession, prefix: str) -> tuple[str, str]:
+    for distribution in session.info.get("cloudFront") or []:
+        logical_id = str(distribution.get("logicalId") or "")
+        if logical_id.startswith(prefix) and distribution.get("url"):
+            return logical_id, str(distribution["url"])
+    raise HarnessFailure(
+        f"session has no served distribution starting with {prefix!r}: {session.info.get('cloudFront')}"
+    )
+
+
+def session_endpoint(session: LocalSession, service: str) -> str:
+    for endpoint in session.info.get("endpoints") or []:
+        if endpoint.get("service") == service:
+            return str(endpoint.get("url"))
+    raise HarnessFailure(f"session reports no {service} endpoint: {session.info.get('endpoints')}")
+
+
+def s3_put(session: LocalSession, bucket: str, key: str, body: str, content_type: str) -> None:
+    session.request(
+        "s3.put",
+        bucket=bucket,
+        objectKey=key,
+        body=body,
+        contentType=content_type,
+    )
+
+
+def usable_aws_cli() -> str | None:
+    executable = shutil.which("aws")
+    if not executable:
+        return None
+    try:
+        result = subprocess.run(  # noqa: S603 - the host CLI is the subject
+            [executable, "--version"], capture_output=True, text=True, timeout=30, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return executable if result.returncode == 0 else None
+
+
+def ensure_aws_cli(harness: Harness) -> str | None:
+    """Return a PATH entry for a working AWS CLI, or None when the host CLI runs.
+
+    upload-assets.sh is a real AWS CLI script. The host CLI is used whenever it
+    starts; a broken host CLI gets a pinned v1 CLI installed under the harness
+    state directory, so the script still runs the real CLI rather than a stub.
+    """
+    if usable_aws_cli():
+        return None
+    aws = AWS_CLI_DIR / "bin" / "aws"
+    if not aws.exists():
+        print("  ... installing a pinned AWS CLI for upload-assets.sh (the host aws is unusable)")
+        harness.run([sys.executable, "-m", "venv", str(AWS_CLI_DIR)], timeout=300)
+        harness.run(
+            [
+                str(AWS_CLI_DIR / "bin" / "pip"),
+                "install",
+                "--disable-pip-version-check",
+                "-q",
+                f"awscli=={AWS_CLI_VERSION}",
+            ],
+            timeout=900,
+        )
+    if not aws.exists():
+        raise HarnessFailure(f"the pinned AWS CLI was not installed: {aws}")
+    probe = subprocess.run(  # noqa: S603 - the harness owns this executable
+        [str(aws), "--version"], capture_output=True, text=True, timeout=30, check=False
+    )
+    if probe.returncode != 0:
+        raise HarnessFailure(f"the pinned AWS CLI does not start: {aws}", _combined_output(probe))
+    return str(AWS_CLI_DIR / "bin")
+
+
+def assert_html(status: int, body: str, headers: dict, label: str, needle: str) -> None:
+    expect_status(status, 200, label, body)
+    if "text/html" not in headers.get("content-type", ""):
+        raise HarnessFailure(f"{label}: content-type {headers.get('content-type')!r}", body)
+    if needle not in body:
+        raise HarnessFailure(f"{label}: body does not contain {needle!r}", body)
+
+
+def assert_json_body(status: int, body: str, headers: dict, label: str) -> dict:
+    expect_status(status, 200, label, body)
+    if "application/json" not in headers.get("content-type", ""):
+        raise HarnessFailure(f"{label}: content-type {headers.get('content-type')!r}", body)
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise HarnessFailure(f"{label}: body is not JSON: {exc}", body) from exc
+
+
 def _exercise_hello_world(base: str, lang: str) -> None:
     """Assert the real handler's HTTP behaviour for one language."""
     request_id = f"local-{lang}-probe"
@@ -3210,6 +3327,291 @@ def _run_multilang_go_events(harness: Harness) -> str:
         stop_local_session(harness, session)
 
 
+def run_ssr_site_gateway(harness: Harness) -> str:
+    run = start_local_app(harness, SSR_SITE_APP, name="ssr-site-gateway", backends=("dynamodb", "s3proxy"))
+    try:
+        _, base = local_app_distribution(run, "SiteDistribution")
+        request_id = "a5b-ssr-request"
+        status, body, headers = http_request("GET", base + "/", headers={"x-request-id": request_id})
+        assert_html(status, body, headers, "ssr-site /", "<h1>Hello from AppTheory SSR Site</h1>")
+        if headers.get("x-request-id") != request_id:
+            raise HarnessFailure(
+                f"ssr-site /: the viewer-response function did not echo x-request-id "
+                f"({headers.get('x-request-id')!r})",
+                body,
+            )
+        status, body, headers = http_request("GET", base + "/actions/ping")
+        payload = assert_json_body(status, body, headers, "ssr-site GET /actions/ping")
+        if payload.get("method") != "GET" or payload.get("path") != "/actions/ping":
+            raise HarnessFailure(f"ssr-site GET /actions/ping: {payload}", body)
+        status, body, headers = http_request("POST", base + "/actions/ping", body=b"")
+        payload = assert_json_body(status, body, headers, "ssr-site POST /actions/ping")
+        if payload.get("method") != "POST":
+            raise HarnessFailure(f"ssr-site POST /actions/ping: {payload}", body)
+        status, body, headers = http_request("GET", base + "/assets/hello.txt")
+        expect_status(status, 200, "ssr-site /assets/hello.txt", body)
+        if body != "hello\n\n" or "text/plain" not in headers.get("content-type", ""):
+            raise HarnessFailure(f"ssr-site asset = {headers.get('content-type')!r} {body!r}", body)
+        for name in ("etag", "last-modified"):
+            if not headers.get(name):
+                raise HarnessFailure(f"ssr-site /assets/hello.txt has no {name}: {headers}", body)
+        status, body, headers = http_request("GET", base + "/marketing/")
+        assert_html(status, body, headers, "ssr-site /marketing/", "<h1>Marketing from AppTheory S3</h1>")
+        status, body, headers = http_request("GET", base + "/_facetheory/data/home.json")
+        expect_status(status, 200, "ssr-site /_facetheory/data/home.json", body)
+        if body != '{"route":"home"}\n':
+            raise HarnessFailure(f"ssr-site hydration object = {body!r}", body)
+        status, body, headers = http_request("GET", base + "/assets/missing.txt")
+        expect_status(status, 403, "ssr-site /assets/missing.txt", body)
+        if "AccessDenied" not in body:
+            raise HarnessFailure(f"ssr-site missing asset is not AccessDenied: {body}", body)
+        status, body, headers = http_request("HEAD", base + "/assets/hello.txt")
+        expect_status(status, 200, "ssr-site HEAD /assets/hello.txt", body)
+        if headers.get("content-length") != "7" or body:
+            raise HarnessFailure(f"ssr-site HEAD = {headers.get('content-length')!r} {body!r}", body)
+        status, body, _ = http_request("OPTIONS", base + "/assets/hello.txt")
+        expect_status(status, 403, "ssr-site OPTIONS /assets/hello.txt", body)
+        if "AccessForbidden" not in body:
+            raise HarnessFailure(f"ssr-site OPTIONS is not AccessForbidden: {body}", body)
+        return (
+            "SSR HTML through the origin group after the S3 primary returned 403, request-id echo, "
+            "static/hydration objects from the deployment, 403 for a missing OAC object, HEAD and OPTIONS"
+        )
+    finally:
+        stop_local_app(harness, run)
+
+
+def run_ssr_only_gateway(harness: Harness) -> str:
+    run = start_local_app(harness, SSR_ONLY_APP, name="ssr-only-gateway", backends=("s3proxy",))
+    try:
+        _, base = local_app_distribution(run, "SiteDistribution")
+        request_id = "a5b-ssr-only-request"
+        status, body, headers = http_request("GET", base + "/", headers={"x-request-id": request_id})
+        assert_html(status, body, headers, "ssr-only /", f'<p id="request-id">{request_id}</p>')
+        if headers.get("x-request-id") != request_id:
+            raise HarnessFailure(
+                f"ssr-only /: the viewer-response function did not echo x-request-id ({headers.get('x-request-id')!r})",
+                body,
+            )
+        status, body, headers = http_request("GET", base + "/assets/app.js")
+        expect_status(status, 200, "ssr-only /assets/app.js", body)
+        if "text/javascript" not in headers.get("content-type", "") or "AppTheory SSR_ONLY" not in body:
+            raise HarnessFailure(f"ssr-only app.js = {headers.get('content-type')!r} {body!r}", body)
+        status, body, headers = http_request("GET", base + "/assets/site.css")
+        expect_status(status, 200, "ssr-only /assets/site.css", body)
+        if "text/css" not in headers.get("content-type", ""):
+            raise HarnessFailure(f"ssr-only site.css = {headers.get('content-type')!r}", body)
+        status, body, headers = http_request("GET", base + "/assets/probe.txt")
+        expect_status(status, 200, "ssr-only /assets/probe.txt", body)
+        status, body, headers = http_request("GET", base + "/assets/missing.txt")
+        expect_status(status, 403, "ssr-only /assets/missing.txt", body)
+        if "AccessDenied" not in body:
+            raise HarnessFailure(f"ssr-only missing asset is not AccessDenied: {body}", body)
+        status, body, _ = http_request("OPTIONS", base + "/assets/app.js")
+        expect_status(status, 403, "ssr-only OPTIONS /assets/app.js", body)
+        return (
+            "AWS_IAM Function URL origin through local OAC signing, the handler's request-id echo, "
+            "provided-bucket assets, 403 for a missing OAC object, OPTIONS refusal"
+        )
+    finally:
+        stop_local_app(harness, run)
+
+
+def run_path_routed_gateway(harness: Harness) -> str:
+    session = start_local_session(harness, PATH_ROUTED_APP, name="path-routed-gateway", backends=("s3proxy",))
+    try:
+        _, base = session_distribution(session, "FrontendDistribution")
+        client = session.resource(logical_prefix="ClientBucket")
+        auth = session.resource(logical_prefix="AuthBucket")
+        s3_put(session, client["logicalId"], "l/index.html", "<!doctype html><title>client spa</title>", "text/html")
+        s3_put(session, client["logicalId"], "l/app.js", 'console.log("client")', "text/javascript")
+        s3_put(session, auth["logicalId"], "auth/index.html", "<!doctype html><title>auth spa</title>", "text/html")
+        s3_put(session, auth["logicalId"], "auth/app.js", 'console.log("auth")', "text/javascript")
+        status, body, headers = http_request("GET", base + "/l/dashboard")
+        assert_html(status, body, headers, "path-routed /l/dashboard", "<title>client spa</title>")
+        status, body, headers = http_request("GET", base + "/l/app.js")
+        expect_status(status, 200, "path-routed /l/app.js", body)
+        if body != 'console.log("client")' or "text/javascript" not in headers.get("content-type", ""):
+            raise HarnessFailure(f"path-routed unchanged file = {headers.get('content-type')!r} {body!r}", body)
+        status, body, headers = http_request("GET", base + "/auth/settings")
+        assert_html(status, body, headers, "path-routed /auth/settings", "<title>auth spa</title>")
+        status, body, headers = http_request("GET", base + "/auth/app.js")
+        expect_status(status, 200, "path-routed /auth/app.js", body)
+        if body != 'console.log("auth")':
+            raise HarnessFailure(f"path-routed auth file = {body!r}", body)
+        for path in ("/auth/wallet/balance", "/api/whatever"):
+            status, body, _ = http_request("GET", base + path)
+            expect_status(status, 503, f"path-routed {path}", body)
+            if "external network" not in body:
+                raise HarnessFailure(f"path-routed {path} does not name the external origin: {body}", body)
+        status, body, _ = http_request("POST", base + "/l/dashboard", body=b"")
+        expect_status(status, 403, "path-routed POST /l/dashboard", body)
+        status, body, _ = http_request("GET", base + "/l/missing.js")
+        expect_status(status, 403, "path-routed /l/missing.js", body)
+        if "AccessDenied" not in body:
+            raise HarnessFailure(f"path-routed missing file is not AccessDenied: {body}", body)
+        return (
+            "the generated SPA function rewrote /l and /auth to index.html, files served unchanged, "
+            "the external API origin refused by name, POST refused by AllowedMethods, missing file 403"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def run_media_cdn_gateway(harness: Harness) -> str:
+    session = start_local_session(harness, MEDIA_CDN_APP, name="media-cdn-gateway", backends=("s3proxy",))
+    try:
+        _, base = session_distribution(session, "PublicMediaCdnDistribution")
+        private = [
+            entry for entry in session.info.get("cloudFront") or []
+            if str(entry.get("logicalId") or "").startswith("PrivateMediaCdnDistribution")
+        ]
+        if len(private) != 1 or private[0].get("servable") or not private[0].get("refusals"):
+            raise HarnessFailure(f"the private distribution is not refused with a named reason: {private}")
+        refusal = "; ".join(str(reason) for reason in private[0]["refusals"])
+        if "TrustedKeyGroups" not in refusal and "signed" not in refusal.lower():
+            raise HarnessFailure(f"the private distribution refusal does not name signed URLs: {refusal}")
+        bucket = session.resource(logical_prefix="PublicMediaCdnMediaBucket")
+        s3_put(session, bucket["logicalId"], "probe.txt", "media-probe\n", "text/plain")
+        status, body, headers = http_request("GET", base + "/probe.txt")
+        expect_status(status, 200, "media-cdn /probe.txt", body)
+        if body != "media-probe\n" or "text/plain" not in headers.get("content-type", ""):
+            raise HarnessFailure(f"media-cdn probe = {headers.get('content-type')!r} {body!r}", body)
+        if not headers.get("etag"):
+            raise HarnessFailure("media-cdn /probe.txt has no ETag", body)
+        status, body, _ = http_request("GET", base + "/missing.txt")
+        expect_status(status, 403, "media-cdn /missing.txt", body)
+        if "AccessDenied" not in body:
+            raise HarnessFailure(f"media-cdn missing object is not AccessDenied: {body}", body)
+        return (
+            "the public distribution served a probe object from its provisioned bucket; "
+            f"the private distribution stayed refused ({refusal})"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def run_ssr_assets_manifest(harness: Harness) -> str:
+    staging = Path(tempfile.mkdtemp(prefix="a5b-manifest-", dir=str(STATE_DIR)))
+    try:
+        manifest_path = staging / "manifest.json"
+        result = harness.run(
+            [
+                "node",
+                "examples/cdk/ssr-site/scripts/generate-assets-manifest.mjs",
+                "--assets-dir",
+                "examples/cdk/ssr-site/assets",
+                "--out",
+                str(manifest_path),
+            ],
+            timeout=300,
+        )
+        expect_output(result.stdout, ["wrote 1 entries"], "generate-assets-manifest")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        files = manifest.get("files") or []
+        if len(files) != 1 or files[0].get("path") != "hello.txt":
+            raise HarnessFailure(f"manifest files = {files}", manifest_path.read_text(encoding="utf-8"))
+        asset_bytes = (ROOT / "examples/cdk/ssr-site/assets/hello.txt").read_bytes()
+        expected = hashlib.sha256(asset_bytes).hexdigest()
+        if files[0].get("sha256") != expected or files[0].get("bytes") != len(asset_bytes):
+            raise HarnessFailure(f"manifest entry = {files[0]}, want sha256 {expected} bytes {len(asset_bytes)}")
+        run = start_local_app(harness, SSR_SITE_APP, name="ssr-assets-manifest", backends=("dynamodb", "s3proxy"))
+        try:
+            _, base = local_app_distribution(run, "SiteDistribution")
+            status, body, headers = http_request("GET", base + "/assets/hello.txt")
+            expect_status(status, 200, "manifest /assets/hello.txt", body)
+            if hashlib.sha256(body.encode("utf-8")).hexdigest() != files[0]["sha256"] or len(body.encode("utf-8")) != files[0]["bytes"]:
+                raise HarnessFailure("the served asset does not match the generated manifest")
+            return f"generated a {len(files)}-entry manifest from the real assets and matched it to the gateway response"
+        finally:
+            stop_local_app(harness, run)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+def run_ssr_assets_upload(harness: Harness) -> str:
+    aws_bin = ensure_aws_cli(harness)
+    staging = Path(tempfile.mkdtemp(prefix="a5b-upload-", dir=str(STATE_DIR)))
+    try:
+        assets = staging / "assets"
+        shutil.copytree(ROOT / "examples/cdk/ssr-site/assets", assets)
+        # The deployment already uploaded the unchanged asset, and aws s3 sync
+        # skips an object whose size and ETag still match. Change the staged
+        # copy so the script performs a real upload with its metadata.
+        staged_asset = assets / "hello.txt"
+        staged_asset.write_bytes(staged_asset.read_bytes() + b"uploaded\n")
+        generated = harness.run(
+            [
+                "node",
+                "examples/cdk/ssr-site/scripts/generate-assets-manifest.mjs",
+                "--assets-dir",
+                str(assets),
+                "--out",
+                str(assets / "manifest.json"),
+            ],
+            timeout=300,
+        )
+        expect_output(generated.stdout, ["wrote 1 entries"], "upload manifest generation")
+        session = start_local_session(harness, SSR_SITE_APP, name="ssr-assets-upload", backends=("dynamodb", "s3proxy"))
+        try:
+            _, base = session_distribution(session, "SiteDistribution")
+            bucket = session.resource(logical_prefix="SiteAssetsBucket")
+            endpoint = session_endpoint(session, "s3")
+            env = {
+                "ASSETS_DIR": str(assets),
+                "ASSETS_BUCKET": str(bucket["name"]),
+                "ASSETS_PREFIX": "assets",
+                "MANIFEST_FILE": str(assets / "manifest.json"),
+                "MANIFEST_KEY": "assets/manifest.json",
+                "SYNC_DELETE": "1",
+                "AWS_ENDPOINT_URL_S3": endpoint,
+                "AWS_ACCESS_KEY_ID": "dummy",
+                "AWS_SECRET_ACCESS_KEY": "dummy",
+                "AWS_DEFAULT_REGION": "us-east-1",
+                "AWS_EC2_METADATA_DISABLED": "true",
+                "AWS_CONFIG_FILE": os.devnull,
+                "AWS_SHARED_CREDENTIALS_FILE": os.devnull,
+            }
+            if aws_bin:
+                env["PATH"] = aws_bin + os.pathsep + harness.env.get("PATH", "")
+            result = harness.run(
+                ["bash", "examples/cdk/ssr-site/scripts/upload-assets.sh"],
+                env=env,
+                timeout=900,
+            )
+            expect_output(
+                _combined_output(result),
+                ["syncing assets", "uploading manifest"],
+                "upload-assets.sh",
+            )
+            status, body, headers = http_request("GET", base + "/assets/hello.txt")
+            expect_status(status, 200, "upload /assets/hello.txt", body)
+            if headers.get("cache-control") != "public, max-age=31536000, immutable":
+                raise HarnessFailure(f"uploaded asset cache-control = {headers.get('cache-control')!r}", body)
+            if body != "hello\n\nuploaded\n":
+                raise HarnessFailure(f"uploaded asset body = {body!r}", body)
+            status, body, headers = http_request("GET", base + "/assets/manifest.json")
+            expect_status(status, 200, "upload /assets/manifest.json", body)
+            if "application/json" not in headers.get("content-type", ""):
+                raise HarnessFailure(f"uploaded manifest type = {headers.get('content-type')!r}", body)
+            if headers.get("cache-control") != "no-cache, max-age=0, must-revalidate":
+                raise HarnessFailure(f"uploaded manifest cache-control = {headers.get('cache-control')!r}", body)
+            manifest = json.loads(body)
+            files = manifest.get("files") or []
+            if len(files) != 1 or files[0].get("path") != "hello.txt":
+                raise HarnessFailure(f"served manifest = {manifest}", body)
+            status, body, _ = http_request("GET", base + "/assets/missing.txt")
+            expect_status(status, 403, "upload /assets/missing.txt", body)
+            return (
+                "the real AWS CLI synced the assets and manifest to s3proxy with dummy credentials; "
+                "the gateway served both with the script's cache-control and the uploaded manifest"
+            )
+        finally:
+            stop_local_session(harness, session)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
 RUNNERS: dict[str, Callable[[Harness], str]] = {
     "testkit-ts": run_testkit_ts,
     "testkit-ts-streaming": run_testkit_ts_streaming,
@@ -3250,6 +3652,12 @@ RUNNERS: dict[str, Callable[[Harness], str]] = {
     "microvm-workload-ts": run_microvm_workload_ts,
     "microvm-conformance": run_microvm_conformance,
     "s3-vectors": run_s3_vectors,
+    "ssr-site-gateway": run_ssr_site_gateway,
+    "ssr-only-gateway": run_ssr_only_gateway,
+    "path-routed-gateway": run_path_routed_gateway,
+    "media-cdn-gateway": run_media_cdn_gateway,
+    "ssr-assets-manifest": run_ssr_assets_manifest,
+    "ssr-assets-upload": run_ssr_assets_upload,
 }
 
 

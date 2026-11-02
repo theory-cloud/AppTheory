@@ -68,13 +68,23 @@ class RealTreeTests(unittest.TestCase):
         self.assertFalse(any(".cdk-asset-stage" in path for path in discovered))
         self.assertFalse(any("node_modules" in path for path in discovered))
 
-    def test_a4_rows_are_wired(self) -> None:
+    def test_a5b_rows_are_wired(self) -> None:
         _, entries = harness.load_manifest(harness.MANIFEST_PATH)
-        self.assertEqual([], [entry.key for entry in entries if entry.pending == "A4"])
+        self.assertEqual([], [entry.key for entry in entries if entry.pending])
         classified = [entry for entry in entries if not entry.pending]
-        self.assertEqual(55, len(classified))
-        milestones = {entry.pending for entry in entries if entry.pending}
-        self.assertEqual({"A5b"}, milestones)
+        self.assertEqual(57, len(classified))
+        by_key = {entry.key: entry for entry in entries}
+        expected = {
+            "examples/cdk/ssr-site/bin/apptheory-ssr-site.ts": "ssr-site-gateway",
+            "examples/cdk/ssr-only-provided-assets-site/bin/app.ts": "ssr-only-gateway",
+            "examples/cdk/path-routed-frontend/bin/app.ts": "path-routed-gateway",
+            "examples/cdk/media-cdn/bin/app.ts": "media-cdn-gateway",
+            "examples/cdk/ssr-site/scripts/generate-assets-manifest.mjs": "ssr-assets-manifest",
+            "examples/cdk/ssr-site/scripts/upload-assets.sh": "ssr-assets-upload",
+        }
+        for key, runner in expected.items():
+            self.assertEqual(runner, by_key[key].runner, key)
+            self.assertIn(by_key[key].class_name, harness.CLASSES, key)
 
     def test_l3_rows_name_a_gap(self) -> None:
         _, entries = harness.load_manifest(harness.MANIFEST_PATH)
