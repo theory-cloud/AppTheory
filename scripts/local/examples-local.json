@@ -115,7 +115,7 @@
       "run": "mcp-go-resumable-sse",
       "class": "L3",
       "gap": "Incremental SSE delivery; the RIE buffers the complete stream. Session creation, event IDs and Last-Event-ID replay are asserted on a warm container.",
-      "description": "Go MCP resumable SSE server: a warm provided.al2023 container keeps the session, the buffered tool-call stream carries priming/progress/result IDs, and Last-Event-ID replay returns the progress events and final result."
+      "description": "Go MCP resumable SSE server: a warm provided.al2023 container keeps the session, the buffered tool-call stream carries priming/progress/result IDs, and Last-Event-ID replay returns the progress events and final result. Handler-only example: it ships no CDK definition, so no route table is synthesized."
     },
     "examples/migration/rate-limited-http/main.go": {
       "run": "rate-limited-http",
