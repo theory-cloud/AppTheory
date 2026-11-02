@@ -31,8 +31,8 @@ resolution.
 | Rate-limit table provisioning | `scripts/local/cmd/rate-limit-table` |
 | Built-asset runtime proof | `scripts/local/verify-lambda-assets.py` |
 | Lambda runtime image pins | `scripts/local/examples-local.json` (`lambda.images`) |
-| Runner emulator pins | `scripts/local/examples-local.json` (`containers.moto`, `containers.s3proxy` and their endpoints) |
-| Local runner | `cmd/apptheory-local` with `internal/localrunner` |
+| Runner emulator pins | `scripts/local/examples-local.json` (`containers.moto`, `containers.s3proxy`, `containers.sqs` and their endpoints) |
+| Local runner | `cmd/apptheory-local` with `internal/localrunner`; `session` provides the JSON command channel |
 | Self-tests | `scripts/local/test_examples_local.py` |
 | CI job | `.github/workflows/examples-local.yml` |
 
@@ -42,8 +42,8 @@ resolution.
 - **L2** — runs locally with an emulator and documented fidelity limits.
 - **L3** — exercised as fully as possible locally, plus a named cloud gap that
   is never faked.
-- **PENDING-MILESTONE** — a row owned by a later milestone (`A3a`, `A3b`, `A4`,
-  `A5a`, `A5b`). It is listed in the run report and never counted as pass.
+- **PENDING-MILESTONE** — a row owned by a later milestone. It is listed in
+  the run report and never counted as pass; the current manifest has only A5b.
 
 A handler that a CDK definition would connect to a cloud event source is L3
 when the harness invokes it with a generated event, because that event source is
@@ -175,7 +175,7 @@ events; no route table is synthesized for them.
 
 | Row | Class | How it is verified |
 | --- | --- | --- |
-| `examples/cdk/multilang/handlers/{go,py,ts}` | L3 | Each language's own HTTP API v2 listener serves root, hello, a 405 and a 404. The Go REST API serves hello and three buffered SSE events. Three WebSocket APIs are reported not served. Gap: WebSocket frames and event-source delivery. |
+| `examples/cdk/multilang/handlers/{go,py,ts}` | L3 | Each language's own HTTP API v2 listener serves root, hello, a 405 and a 404. The Go REST API serves hello and three buffered SSE events. Three WebSocket APIs are reported not served. The Go row also invokes the CDK SQS, DynamoDB stream and EventBridge handlers. Gap: WebSocket frames and managed event-source delivery. |
 | `examples/cdk/lesser-parity/handlers/{api,graphql,sse}` | L1/L3 | The REST API serves the catch-all, the dedicated GraphQL route, the buffered SSE route and the declared CORS preflight. `TABLE_NAME` and `QUEUE_URL` are resolved local values. The SSE row is L3 for buffered delivery. |
 | `examples/cdk/lesser-parity/handlers/worker.mjs` | L3 | A generated two-record SQS batch is processed by the real handler; the invalid record is returned as a partial batch failure. Gap: SQS event delivery. |
 | `examples/cdk/restv1-router/handlers/{api,graphql,inventory}` | L1 | Catch-all GET/POST, the GraphQL route with GET falling through, and inventory GET/PUT/DELETE with path parameters, a 404 refusal and CORS preflight. |
@@ -184,8 +184,32 @@ events; no route table is synthesized for them.
 | `examples/cdk/lambda-role/handlers/encrypted.ts` | L2 | The compiled handler round-trips plaintext through moto KMS and reports `match=true`. Gap: emulated KMS (no HSM, key policies or grants). |
 | `examples/cdk/lambda-role/handlers/custom.ts` | L3 | The compiled handler writes and reads an object on s3proxy; the SSM lookup fails closed to `not-configured`. Gap: SSM Parameter Store; S3 is emulated. |
 
+### A4: event sources and data
+
+The A4 rows use `apptheory-local session`, which starts every function the CDK
+definition targets and answers a JSON command protocol. Messages come from
+ElasticMQ, items and stream records come from DynamoDB Local, and every event
+shape is built from the example's own CDK definition.
+
+| Row | Class | How it is verified |
+| --- | --- | --- |
+| `examples/cdk/sqs-queue/handlers/producer.mjs` | L3 | `producer.mjs` sends through the real SQS SDK to ElasticMQ; the received body carries `eventType`, `payload` and a timestamp, and its `messageId` matches the handler's response. Gap: managed SQS event-source mapping. |
+| `examples/cdk/sqs-queue/handlers/worker.mjs` | L3 | Two messages are received from `events-queue` and invoked as the CDK mapping's batch; `worker.mjs` reports only the simulated failure as a partial batch failure. Gap: managed polling/visibility/deletion. |
+| `examples/cdk/sqs-queue/handlers/dlq-handler.mjs` | L3 | `events-queue` redrives a failing message to `events-queue-dlq` after `maxReceiveCount=5`; `dlq-handler.mjs` processes the message actually read from the DLQ and acknowledges it. Gap: managed SQS mapping. |
+| `examples/cdk/import-pipeline/handlers/{ingest,worker}/main.go` | L3 | A real object is written to s3proxy and the CDK `IngestRule` EventBridge event is built from it. Ingest writes the job META and three work messages; worker consumes the real messages and writes SUCCEEDED/FAILED records. The raw PAN is absent and the stored error is masked. Gaps: S3 → EventBridge delivery and CodeBuild. |
+| `examples/cdk/kinesis-cloudwatch-logs/handlers/go/main.go` | L3 | A gzip+base64 CloudWatch Logs subscription payload is built from local log content and accepted; a malformed Kinesis record is returned as its sequence-number partial failure. Gap: managed Kinesis/CloudWatch Logs delivery. |
+| `examples/cdk/microvm-controller/controller/main.go` | L3 | The CDK authorizer refuses missing, wrong and tenant-less credentials. `list` and `run` reach the managed provider boundary; `get`, `suspend`, `resume`, `terminate`, `auth-token`, `shell-auth-token` and `invoke` read the TableTheory registry on DynamoDB Local and refuse a missing session. Gap: managed MicroVM provider. |
+| `examples/cdk/microvm-controller/workloads/go/main.go`, `py/server.py`, `ts/server.js` | L1 | Each workload server runs as a host process and answers GET and POST with its HTTP contract. `server.ts` is covered by the built `server.js` the image ships. |
+| `examples/cdk/s3-vectors-semantic-search/handler/main.go` | L3 | Health reports the CDK vector index; missing/wrong auth, missing query and invalid `top_k` are refused; authorized seed/search reach the closed Bedrock endpoint with `vectorstore.embedding_failed`. Gap: managed S3 Vectors/Bedrock. |
+| `examples/microvm-conformance/run_local.py` | L3 | The real dry-run and token-leak scanner pass; live mode runs against the local controller, passes its auth refusals and stops at the managed provider boundary. Gap: managed MicroVM provider; no EqualToAI/Host live proof claimed. |
+
+The `multilang` Go row's additional event assertions use the same session: the
+SQS mapping, the DynamoDB stream record built from a real local write, and both
+EventBridge rules are invoked and their responses asserted. Its remaining gap is
+WebSocket frames and managed delivery.
+
 Handler and script rows inside the remaining CDK examples are
-`PENDING-MILESTONE` (A4, A5b) and are never counted as pass.
+`PENDING-MILESTONE` (A5b) and are never counted as pass.
 
 ## Preflight
 
@@ -204,11 +228,12 @@ container, so every run starts from an empty backend.
 
 The runner rows do not share that container. `apptheory-local --backend dynamodb`
 starts its own in-memory DynamoDB Local, from the same digest-pinned image, on
-the run's private network. `--backend moto` and `--backend s3proxy` add the
-digest-pinned KMS/STS and S3 emulators and provision the assembly's keys and
-buckets. The runner's in-container preflight proves every endpoint answers and
-that no real AWS hostname resolves. This keeps each runner row isolated from the
-host-side examples.
+the run's private network. `--backend moto`, `--backend s3proxy` and
+`--backend sqs` add the digest-pinned KMS/STS, S3 and ElasticMQ emulators and
+provision the assembly's keys, buckets, tables and queues. The runner's
+in-container preflight proves every endpoint answers and that no real AWS
+hostname resolves. This keeps each runner row isolated from the host-side
+examples.
 
 ## Built Lambda assets run in the official runtime
 
@@ -255,5 +280,6 @@ The job runs on `ubuntu-24.04-arm`: the hello-world Go function deploys an arm64
 the function's declared architecture. On an amd64 host the same function fails
 closed with a clear architecture error rather than silently emulating it. The
 MCP handler rows build the real Go binaries for linux/arm64 and run them in the
-same official runtime image; the moto and s3proxy rows start their profile
-containers on the CI host's Docker daemon.
+same official runtime image; the moto, s3proxy and ElasticMQ rows start their
+profile containers on the CI host's Docker daemon, and the MicroVM workload rows
+run as host processes.

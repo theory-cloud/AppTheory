@@ -49,6 +49,16 @@ const (
 	// maxConcurrency is the documented local bound. Above it the runtime
 	// interface emulator and Docker's port allocation become unreliable.
 	maxConcurrency = 32
+
+	// Local service names shared by the profile, event sources and readiness
+	// probes. backendDynamoDB is defined with the runner's backend constants.
+	backendSQS     = "sqs"
+	backendKinesis = "kinesis"
+	boolTrue       = "true"
+
+	streamEventInsert = "INSERT"
+	streamEventModify = "MODIFY"
+	streamEventRemove = "REMOVE"
 )
 
 // APIClass names a supported HTTP surface kind.
@@ -115,6 +125,15 @@ type Route struct {
 	Method   string   `json:"method"`
 	Path     string   `json:"path"`
 	Function string   `json:"function,omitempty"`
+	// AuthorizerFunction is the Lambda function a CUSTOM HTTP API authorizer
+	// invokes before the route handler. The transport runs it; a route with an
+	// authorizer is never served without it.
+	AuthorizerFunction string `json:"authorizerFunction,omitempty"`
+	// AuthorizerIdentitySources lists the provider identity sources the
+	// authorizer event carries, in configured order, for example
+	// $request.header.Authorization. The transport refuses a request that does
+	// not carry every source before invoking the authorizer.
+	AuthorizerIdentitySources []string `json:"authorizerIdentitySources,omitempty"`
 	// Mock is set for a REST API MOCK integration. A mock route has no
 	// function and no invoker; the transport returns the declared response.
 	Mock      *MockResponse `json:"mock,omitempty"`
@@ -122,6 +141,43 @@ type Route struct {
 	// RouteKey is the API Gateway v2 route key, kept verbatim from the
 	// template. REST v1 and Function URL routes leave it empty.
 	RouteKey string `json:"routeKey,omitempty"`
+}
+
+// EventSourceSpec is one AWS::Lambda::EventSourceMapping the assembly
+// declares. It is reported, and its function is started, so a local session can
+// receive real messages and build the provider event the mapping would deliver.
+type EventSourceSpec struct {
+	LogicalID string `json:"logicalId"`
+	Stack     string `json:"stack"`
+	Function  string `json:"function"`
+	// Type is sqs, dynamodb or kinesis.
+	Type string `json:"type"`
+	// Source is the logical id of the queue, table or stream the mapping reads.
+	Source string `json:"source"`
+	// SourceName is the queue name, table name or stream name.
+	SourceName string `json:"sourceName"`
+	// SourceARN is the provider-shaped ARN the derived mapping reports. A
+	// session builds DynamoDB stream events from the provisioned table's real
+	// local stream ARN instead.
+	SourceARN               string `json:"sourceArn"`
+	BatchSize               int    `json:"batchSize,omitempty"`
+	ReportBatchItemFailures bool   `json:"reportBatchItemFailures,omitempty"`
+	Enabled                 bool   `json:"enabled"`
+	StartingPosition        string `json:"startingPosition,omitempty"`
+}
+
+// RuleSpec is one AWS::Events::Rule with a Lambda target. It is reported so a
+// local session can build the event the rule would deliver.
+type RuleSpec struct {
+	LogicalID string `json:"logicalId"`
+	Stack     string `json:"stack"`
+	Name      string `json:"name"`
+	ARN       string `json:"arn"`
+	Schedule  string `json:"schedule,omitempty"`
+	// EventPattern is the rule's declared pattern, kept verbatim.
+	EventPattern json.RawMessage `json:"eventPattern,omitempty"`
+	Targets      []string        `json:"targets,omitempty"`
+	Enabled      bool            `json:"enabled"`
 }
 
 // APISpec is one supported HTTP surface.
@@ -165,6 +221,8 @@ type Spec struct {
 	Functions    []FunctionSpec    `json:"functions"`
 	APIs         []APISpec         `json:"apis"`
 	FunctionURLs []FunctionURLSpec `json:"functionUrls"`
+	EventSources []EventSourceSpec `json:"eventSources,omitempty"`
+	Rules        []RuleSpec        `json:"rules,omitempty"`
 	Skipped      []Skipped         `json:"skipped"`
 	// Resources is the assembly index used to resolve function environment
 	// references. It is internal and not part of the plan document.
@@ -195,8 +253,10 @@ func (s *Spec) Function(logicalID string) (FunctionSpec, bool) {
 	return FunctionSpec{}, false
 }
 
-// ServedFunctions returns the logical ids any supported surface targets, in
-// sorted order.
+// ServedFunctions returns the logical ids any HTTP surface targets, in sorted
+// order. A function that only an event source mapping or EventBridge rule
+// targets is not served over HTTP; use RuntimeFunctions for everything the
+// runner must start.
 func (s *Spec) ServedFunctions() []string {
 	seen := map[string]struct{}{}
 	for _, api := range s.APIs {
@@ -205,10 +265,44 @@ func (s *Spec) ServedFunctions() []string {
 				continue
 			}
 			seen[route.Function] = struct{}{}
+			if route.AuthorizerFunction != "" {
+				seen[route.AuthorizerFunction] = struct{}{}
+			}
 		}
 	}
 	for _, url := range s.FunctionURLs {
 		seen[url.Function] = struct{}{}
+	}
+	out := make([]string, 0, len(seen))
+	for id := range seen {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// RuntimeFunctions returns every function the runner must start: HTTP route and
+// Function URL targets, HTTP API authorizers, enabled event-source consumers
+// and enabled EventBridge rule targets. It is the local run's function set.
+func (s *Spec) RuntimeFunctions() []string {
+	seen := map[string]struct{}{}
+	for _, id := range s.ServedFunctions() {
+		seen[id] = struct{}{}
+	}
+	for _, source := range s.EventSources {
+		if source.Enabled && source.Function != "" {
+			seen[source.Function] = struct{}{}
+		}
+	}
+	for _, rule := range s.Rules {
+		if !rule.Enabled {
+			continue
+		}
+		for _, target := range rule.Targets {
+			if target != "" {
+				seen[target] = struct{}{}
+			}
+		}
 	}
 	out := make([]string, 0, len(seen))
 	for id := range seen {

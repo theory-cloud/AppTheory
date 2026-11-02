@@ -69,6 +69,10 @@ type Options struct {
 	// a CDK app. It is for examples that ship a Lambda handler but no CDK
 	// definition; the invoke caller supplies every request event.
 	Handler *HandlerSpec
+	// ExtraFunctions names additional CDK functions a session starts even
+	// though no route, event source or rule targets them. It exists for
+	// examples whose producer is invoked by a caller (the local session).
+	ExtraFunctions []string
 	// AllowNoSurface lets an invoke read an assembly whose functions have no
 	// HTTP route. Run and plan leave it false and refuse such an assembly.
 	AllowNoSurface bool
@@ -90,6 +94,9 @@ type Runner struct {
 	invokers       map[string]*FunctionProcess
 	backends       map[string]backendProcess
 	resourceValues resourceValues
+	tables         map[string]tableInfo
+	localSecrets   map[string]string
+	apiURLs        map[string]string
 	servers        []*http.Server
 	listeners      []net.Listener
 	semaphore      chan struct{}
@@ -105,15 +112,18 @@ func NewRunner(options Options) (*Runner, error) {
 	}
 
 	runner := &Runner{
-		options:   options,
-		docker:    NewDocker(),
-		appHash:   hashOf(options.AppDir),
-		runID:     shortID(),
-		invokers:  map[string]*FunctionProcess{},
-		backends:  map[string]backendProcess{},
-		endpoints: append([]Endpoint(nil), options.Endpoints...),
-		images:    map[string]string{},
-		semaphore: make(chan struct{}, options.MaxConcurrency),
+		options:      options,
+		docker:       NewDocker(),
+		appHash:      hashOf(options.AppDir),
+		runID:        shortID(),
+		invokers:     map[string]*FunctionProcess{},
+		backends:     map[string]backendProcess{},
+		tables:       map[string]tableInfo{},
+		localSecrets: map[string]string{},
+		apiURLs:      map[string]string{},
+		endpoints:    append([]Endpoint(nil), options.Endpoints...),
+		images:       map[string]string{},
+		semaphore:    make(chan struct{}, options.MaxConcurrency),
 	}
 	runner.namePrefix = sanitizeNamePrefix(options.NamePrefix, "apptheory-local-"+runner.appHash)
 	runner.network = runner.namePrefix + "-net"
@@ -339,61 +349,104 @@ func (r *Runner) Plan(ctx context.Context) (*Spec, error) {
 }
 
 // Run plans the app, starts the run's network, proves it cannot reach AWS,
-// starts every served function container and serves the derived HTTP surface
-// until the context is canceled.
+// starts every function the CDK definition targets and serves the derived HTTP
+// surface until the context is canceled.
 func (r *Runner) Run(ctx context.Context) error {
 	cleanup := r.cleanupFunc()
 	defer cleanup()
 
+	if _, err := r.prepareRun(ctx); err != nil {
+		return err
+	}
+	r.logf("local-run: ready")
+	return r.serve(ctx)
+}
+
+// prepareRun creates the complete local environment a run or a session uses:
+// synthesis, images, scratch, network, backends, provisioning, environment
+// resolution, preflight, function containers and HTTP listeners. It does not
+// log the ready marker or wait; Run and RunSession own those steps.
+//
+//nolint:gocyclo // the startup order is documented and pinned by the docs-order test.
+func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 	spec, err := r.Plan(ctx)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	targets, err := r.runtimeFunctions(spec)
+	if err != nil {
+		return nil, err
 	}
 	for _, skipped := range spec.Skipped {
 		r.logf("not served: %s (%s): %s", skipped.LogicalID, skipped.Kind, skipped.Reason)
 	}
 	if err = r.docker.Available(ctx); err != nil {
-		return err
+		return nil, err
 	}
 	arch, err := r.docker.ServerArch(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if err = r.resolveImages(spec, arch, spec.ServedFunctions()); err != nil {
-		return err
+	if err = r.resolveImages(spec, arch, targets); err != nil {
+		return nil, err
 	}
 	if err = r.prepareScratch(spec); err != nil {
-		return err
+		return nil, err
 	}
 
 	if err = r.docker.CreateNetwork(ctx, r.network, r.labels()); err != nil {
-		return err
+		return nil, err
 	}
 	r.logf("network %s", r.network)
 	if err = r.startBackends(ctx); err != nil {
-		return err
+		return nil, err
 	}
 	if err = r.provisionResources(ctx, spec); err != nil {
-		return err
+		return nil, err
 	}
-	if err = r.resolveEnvironment(spec, spec.ServedFunctions()); err != nil {
-		return err
+	if err = r.resolveEnvironment(spec, targets); err != nil {
+		return nil, err
 	}
 	preflight, err := r.Preflight(ctx, r.network, r.options.AddHosts)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, check := range sortedKeys(preflight.Checks) {
 		r.logf("preflight %s: %s", check, preflight.Checks[check])
 	}
-	if err := r.startFunctions(ctx, spec); err != nil {
-		return err
+	if err := r.startFunctions(ctx, spec, targets); err != nil {
+		return nil, err
 	}
 	if err := r.startServers(ctx, spec); err != nil {
-		return err
+		return nil, err
 	}
-	r.logf("local-run: ready")
-	return r.serve(ctx)
+	return spec, nil
+}
+
+// runtimeFunctions returns the CDK-targeted function set plus any explicit
+// session targets. An explicit target must exist in the assembly; a typo fails
+// before a container starts rather than silently starting nothing.
+func (r *Runner) runtimeFunctions(spec *Spec) ([]string, error) {
+	seen := map[string]struct{}{}
+	for _, id := range spec.RuntimeFunctions() {
+		seen[id] = struct{}{}
+	}
+	for _, id := range r.options.ExtraFunctions {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := spec.Function(id); !ok {
+			return nil, fmt.Errorf("session target %q names no function in the assembly", id)
+		}
+		seen[id] = struct{}{}
+	}
+	out := make([]string, 0, len(seen))
+	for id := range seen {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 // backendProcess is a local emulator container the run owns.
@@ -661,8 +714,8 @@ func (r *Runner) prepareScratch(spec *Spec) error {
 	return nil
 }
 
-func (r *Runner) startFunctions(ctx context.Context, spec *Spec) error {
-	for _, id := range spec.ServedFunctions() {
+func (r *Runner) startFunctions(ctx context.Context, spec *Spec, targets []string) error {
+	for _, id := range targets {
 		function, _ := spec.Function(id)
 		image, err := r.imageFor(function)
 		if err != nil {
@@ -782,12 +835,13 @@ func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 		}
 		r.listeners = append(r.listeners, listener)
 		r.servers = append(r.servers, server)
+		r.apiURLs[target.LogicalID] = "http://" + listener.Addr().String()
 		go func() {
 			if serveErr := server.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
 				r.logf("listener for %s stopped: %v", target.LogicalID, serveErr)
 			}
 		}()
-		r.logf("serving %s %s at http://%s", target.Class, target.LogicalID, listener.Addr().String())
+		r.logf("serving %s %s at %s", target.Class, target.LogicalID, r.apiURLs[target.LogicalID])
 	}
 	return nil
 }

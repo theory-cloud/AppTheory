@@ -58,3 +58,21 @@ func mustMap(t *testing.T, value any) map[string]any {
 	}
 	return mapped
 }
+
+func mustSlice(t *testing.T, value any) []any {
+	t.Helper()
+	sliced, ok := value.([]any)
+	if !ok {
+		t.Fatalf("unexpected value type %T", value)
+	}
+	return sliced
+}
+
+func mustString(t *testing.T, value any) string {
+	t.Helper()
+	text, ok := value.(string)
+	if !ok {
+		t.Fatalf("unexpected value type %T", value)
+	}
+	return text
+}

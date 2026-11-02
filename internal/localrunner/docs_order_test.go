@@ -29,7 +29,7 @@ func TestDocumentedRunStepOrderMatchesTheRunner(t *testing.T) {
 		{doc: "**Resolve environment references.**", calls: []string{"r.resolveEnvironment("}},
 		{doc: "**Preflight.**", calls: []string{"r.Preflight("}},
 		{doc: "**Run.**", calls: []string{"r.startFunctions("}},
-		{doc: "**Serve or invoke.**", calls: []string{"r.startServers(", "r.serve("}},
+		{doc: "**Serve, invoke or session.**", calls: []string{"r.startServers("}},
 	}
 
 	document := filepath.Join("..", "..", "docs", "examples", "local-runner.md")
@@ -46,7 +46,15 @@ func TestDocumentedRunStepOrderMatchesTheRunner(t *testing.T) {
 	})
 
 	runBody := goFunctionBody(t, "runner.go", "func (r *Runner) Run(ctx context.Context) error {")
-	assertInOrder(t, "runner.go", runBody, "Run call", flattenedCalls(steps))
+	assertInOrder(t, "runner.go", runBody, "Run call", []string{"r.prepareRun(", "r.serve("})
+	prepareRunBody := goFunctionBody(t, "runner.go", "func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {")
+	assertInOrder(t, "runner.go", prepareRunBody, "prepareRun call", flattenedCalls(steps))
+	runSessionBody := goFunctionBody(t, "session.go", "func (r *Runner) RunSession(ctx context.Context, in io.Reader, out io.Writer) error {")
+	assertInOrder(t, "session.go", runSessionBody, "RunSession call", []string{
+		"r.prepareRun(",
+		`r.logf("local-run: ready")`,
+		"r.serveSession(",
+	})
 
 	if !strings.Contains(section, "read-only call native to the service") {
 		t.Fatalf("%s: the Start backends step must describe the readiness call", document)
@@ -74,6 +82,15 @@ func TestDocumentedRunStepOrderMatchesTheRunner(t *testing.T) {
 		"r.startFunction(",
 		"r.streamInvocations(",
 	})
+	sessionSection := documentedSection(t, document, "## Automation sessions")
+	assertInOrder(t, document, sessionSection, "documented session operation", []string{
+		"`describe`", "`invoke`", "`sqs.send`", "`sqs.receive`", "`sqs.event`",
+		"`ddb.put`", "`ddb.get`", "`ddb.scan`", "`ddb.stream-event`",
+		"`s3.put`", "`eventbridge.event`", "`kinesis.event`", "`kinesis.cloudwatch-event`", "`shutdown`",
+	})
+	if !strings.Contains(sessionSection, "one JSON command per line") {
+		t.Fatalf("%s: the session section must describe the line protocol", document)
+	}
 }
 
 func flattenedCalls(steps []documentedRunStep) []string {
