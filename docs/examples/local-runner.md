@@ -310,8 +310,9 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
     closing the listeners, force-removes the run's containers (which aborts an
     in-flight invocation), closes any connections still in flight, removes the
     network and deletes the scratch directory. A `SIGKILL` cannot be caught:
-    after one, `apptheory-local down --app <dir>` removes everything that run
-    left behind.
+    after one, `apptheory-local down --app <dir>` removes the containers and
+    networks labelled with that app; it does not delete the stale run scratch
+    directory.
 
 ## Invoking one function
 
