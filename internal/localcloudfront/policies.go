@@ -380,6 +380,7 @@ func parseOriginRequestPolicyConfig(raw json.RawMessage, policy *Policy) (*Origi
 	return origin, nil
 }
 
+//nolint:gocyclo // the switch enumerates CloudFront header behaviors
 func parseHeaderForwarding(raw json.RawMessage, allowAllViewer bool) (HeaderForwarding, error) {
 	properties, err := decodeObject(raw)
 	if err != nil {
@@ -393,19 +394,30 @@ func parseHeaderForwarding(raw json.RawMessage, allowAllViewer bool) (HeaderForw
 			if err := json.Unmarshal(properties[key], &behavior); err != nil {
 				return config, fmt.Errorf("HeaderBehavior: %w", err)
 			}
-			config.Mode = ForwardingMode(behavior)
-			if !validHeaderMode(config.Mode, allowAllViewer) {
-				return config, fmt.Errorf("HeaderBehavior %q is not supported locally", behavior)
-			}
-			if config.Mode == "allViewerAndWhitelistCloudFront" {
+			switch behavior {
+			case "none":
+				config.Mode = ForwardNone
+			case "whitelist":
+				config.Mode = ForwardWhitelist
+			case "allViewer":
+				if !allowAllViewer {
+					return config, fmt.Errorf("HeaderBehavior %q is not valid for a cache policy", behavior)
+				}
+				config.Mode = ForwardAll
+			case "allViewerAndWhitelistCloudFront":
+				if !allowAllViewer {
+					return config, fmt.Errorf("HeaderBehavior %q is not valid for a cache policy", behavior)
+				}
 				config.Mode = ForwardAll
 				config.CloudFrontHeaders = true
-			}
-			if config.Mode == ForwardAllExcept {
+			case "allExcept":
+				if !allowAllViewer {
+					return config, fmt.Errorf("HeaderBehavior %q is not valid for a cache policy", behavior)
+				}
+				config.Mode = ForwardAllExcept
 				config.CloudFrontHeaders = true
-			}
-			if config.Mode == "allExcept" && !allowAllViewer {
-				return config, fmt.Errorf("HeaderBehavior %q is not valid for a cache policy", behavior)
+			default:
+				return config, fmt.Errorf("HeaderBehavior %q is not supported locally", behavior)
 			}
 		case "Headers":
 			if err := json.Unmarshal(properties[key], &config.Names); err != nil {
@@ -419,19 +431,6 @@ func parseHeaderForwarding(raw json.RawMessage, allowAllViewer bool) (HeaderForw
 		}
 	}
 	return config, nil
-}
-
-func validHeaderMode(mode ForwardingMode, allowAllViewer bool) bool {
-	switch mode {
-	case ForwardNone, ForwardWhitelist:
-		return true
-	case ForwardAll, ForwardAllExcept:
-		return allowAllViewer
-	case "allViewerAndWhitelistCloudFront":
-		return allowAllViewer
-	default:
-		return false
-	}
 }
 
 type forwardingFields struct {

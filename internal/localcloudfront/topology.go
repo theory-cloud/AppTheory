@@ -512,6 +512,11 @@ func (d *Distribution) validate(topology *Topology) {
 		}
 	}
 	for _, group := range d.OriginGroups {
+		for _, member := range group.Members {
+			if _, ok := d.Origin(member); !ok {
+				group.Refusals = append(group.Refusals, fmt.Sprintf("member %q names no origin", member))
+			}
+		}
 		if len(group.Refusals) > 0 {
 			for _, refusal := range group.Refusals {
 				d.Refusals = append(d.Refusals, fmt.Sprintf("origin group %q: %s", group.ID, refusal))
@@ -1206,9 +1211,10 @@ func parseFunction(stack, id string, resource Resource, index *resourceIndex) (*
 						return nil, fmt.Errorf("%s/%s: FunctionConfig.Runtime: %w", stack, id, err)
 					}
 				case propertyComment:
-					if err := json.Unmarshal(config[configKey], &function.Comment); err == nil {
-						function.Reported = append(function.Reported, reportProperty("function", propertyComment))
+					if err := json.Unmarshal(config[configKey], &function.Comment); err != nil {
+						return nil, fmt.Errorf("%s/%s: FunctionConfig.Comment: %w", stack, id, err)
 					}
+					function.Reported = append(function.Reported, reportProperty("function", propertyComment))
 				case propertyKeyValueStoreAssociations:
 					function.Refusals = append(function.Refusals, refuseProperty("function", configKey))
 				default:
@@ -1282,6 +1288,9 @@ func parseOriginAccessControl(stack, id string, resource Resource, index *resour
 }
 
 func isEmptyValue(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return true
+	}
 	var value any
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return false
