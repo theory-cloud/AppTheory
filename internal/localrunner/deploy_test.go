@@ -257,23 +257,23 @@ func TestDeploymentContentType(t *testing.T) {
 func TestProvisionDeploymentsCopiesAZipSource(t *testing.T) {
 	assembly := t.TempDir()
 	zipPath := filepath.Join(assembly, "asset.zip")
-	file, err := os.Create(zipPath)
+	zipFile, err := os.Create(zipPath) //nolint:gosec // test fixture path under t.TempDir
 	if err != nil {
 		t.Fatalf("create zip: %v", err)
 	}
-	archive := zip.NewWriter(file)
+	archive := zip.NewWriter(zipFile)
 	entry, err := archive.Create("assets/app.js")
 	if err != nil {
 		t.Fatalf("create zip entry: %v", err)
 	}
-	if _, err := entry.Write([]byte("console.log(1)\n")); err != nil {
-		t.Fatalf("write zip entry: %v", err)
+	if _, writeErr := entry.Write([]byte("console.log(1)\n")); writeErr != nil {
+		t.Fatalf("write zip entry: %v", writeErr)
 	}
-	if err := archive.Close(); err != nil {
-		t.Fatalf("close zip: %v", err)
+	if closeErr := archive.Close(); closeErr != nil {
+		t.Fatalf("close zip: %v", closeErr)
 	}
-	if err := file.Close(); err != nil {
-		t.Fatalf("close zip file: %v", err)
+	if closeErr := zipFile.Close(); closeErr != nil {
+		t.Fatalf("close zip file: %v", closeErr)
 	}
 	manifest := map[string]any{
 		"files": map[string]any{
