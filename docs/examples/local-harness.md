@@ -171,20 +171,30 @@ The asset staging now vendors the TypeScript runtime's production dependency
 closure (`npm ls --omit=dev --all --parseable`) next to the vendored `dist`, and
 the `staged-asset.test.mjs` regression test stages the same tree without a
 symlink. `scripts/local/verify-lambda-assets.py` then synthesizes the
-hello-world TypeScript/Python and multilang stacks, finds the asset
-directories, and invokes each one through the Runtime Interface Emulator in
-`public.ecr.aws/lambda/nodejs:24` and `public.ecr.aws/lambda/python:3.14`. The
-harness runs this proof as part of the CDK row.
+hello-world TypeScript/Python stacks and both multilang assets (TypeScript and
+Python), finds the asset directories, and invokes each one through the Runtime
+Interface Emulator in `public.ecr.aws/lambda/nodejs:24` and
+`public.ecr.aws/lambda/python:3.14`. The harness runs this proof as part of the
+CDK row.
 
-The Python asset does not have the init failure: `apptheory` guards
-`tabletheory_py` behind the jobs import, so the hello-world Python handler loads
-and answers in the official Python image. The Python asset still does not vendor
-`tabletheory_py`, so jobs and rate-limit paths are not available in it; that is
-a named gap, not a passing check.
+The script is runnable standalone on a fresh checkout:
+`python3 scripts/local/verify-lambda-assets.py`. It requires a running Docker
+daemon and installs the `cdk/` and `ts/` dependency trees with `npm ci` when
+they are missing, the same prerequisite `scripts/verify-cdk-synth.sh`
+provisions, so it does not fail with a bare module-resolution error. Use
+`--keep` to inspect the synthesized assets.
+
+The Python assets do not have the init failure: `apptheory` guards
+`tabletheory_py` behind the jobs import, so the hello-world and multilang Python
+handlers load and answer in the official Python image. The Python assets still
+do not vendor `tabletheory_py`, so jobs and rate-limit paths are not available
+in them; that is a named gap, not a passing check.
 
 ## CI
 
 `.github/workflows/examples-local.yml` runs `make examples-local` with only a
 DynamoDB Local service container on `8130` and no AWS secrets. The harness
 supplies dummy credentials and `--external` keeps it from starting a second
-container. The job does not need an AWS account, role or region.
+container. The job does not need an AWS account, role or region. It also runs
+`make verify-cdk-synth-location-independent`, which re-synthesizes the examples
+from a copy under `$HOME` and requires every pinned hash to match again.

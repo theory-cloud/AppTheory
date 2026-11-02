@@ -3,10 +3,10 @@
 
 ``scripts/verify-cdk-synth.sh`` proves the templates are deterministic; this
 script proves the *code* those templates deploy actually runs. It synthesizes
-the hello-world TypeScript and Python stacks and the multilang stack, finds the
-asset directories CDK produced, and invokes each one in the official Lambda
-runtime image (``public.ecr.aws/lambda/nodejs:24`` / ``python:3.14``, both of
-which embed the Runtime Interface Emulator).
+the hello-world TypeScript and Python stacks and the multilang TypeScript and
+Python assets, finds the asset directories CDK produced, and invokes each one in
+the official Lambda runtime image (``public.ecr.aws/lambda/nodejs:24`` /
+``python:3.14``, both of which embed the Runtime Interface Emulator).
 
 Running the built asset, not an in-process import, is the point: LOCAL-A0 found
 that the staged TypeScript assets shipped only ``ts/dist`` and failed at init in
@@ -17,6 +17,11 @@ the checkout cannot see that failure.
 Every container and the scratch synthesis tree live under ``$HOME`` (the
 Docker/colima share) and are removed afterwards. Nothing here contacts AWS:
 the images and the local Docker daemon are the only dependencies.
+
+The script is runnable standalone on a fresh checkout: when the ``cdk/`` or
+``ts/`` dependency trees the examples link against are missing, it installs
+them with ``npm ci`` (the same prerequisite the synth gate provisions) and
+prints what it is doing. A Docker daemon is always required.
 """
 
 from __future__ import annotations
@@ -89,6 +94,20 @@ CASES: tuple[AssetCase, ...] = (
             "APPTHEORY_DEMO_NAME": "apptheory-multilang",
         },
     ),
+    AssetCase(
+        name="multilang-py",
+        example="examples/cdk/multilang",
+        language="py",
+        synth_args=(),
+        asset_marker="apptheory/__init__.py",
+        path="/",
+        expected={"ok": True, "lang": "py"},
+        environment={
+            "APPTHEORY_LANG": "py",
+            "APPTHEORY_TIER": "p2",
+            "APPTHEORY_DEMO_NAME": "apptheory-multilang",
+        },
+    ),
 )
 
 IMAGES = {
@@ -149,18 +168,66 @@ def synth_env() -> dict:
     return env
 
 
+def npm_ci(project_dir: Path) -> None:
+    print(f"  ... installing {project_dir.relative_to(ROOT)} dependencies (npm ci)")
+    result = run(
+        ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
+        cwd=project_dir,
+        timeout=1800,
+    )
+    if result.returncode != 0:
+        raise AssetFailure(
+            f"npm ci failed for {project_dir.relative_to(ROOT)}; the CDK examples need this dependency tree "
+            "before they can be synthesized (run `make examples-local` or `scripts/verify-cdk-synth.sh` "
+            "to provision it)",
+            combined(result),
+        )
+
+
+def ensure_cdk_dependencies() -> None:
+    """Install the cdk/ tree the examples link against, when it is missing."""
+    cdk_dir = ROOT / "cdk"
+    if not cdk_dir.is_dir():
+        raise AssetFailure(f"missing {cdk_dir}; run this script from an AppTheory checkout")
+    complete = (cdk_dir / "node_modules" / "constructs" / "package.json").is_file() and (
+        cdk_dir / "node_modules" / "aws-cdk-lib" / "package.json"
+    ).is_file()
+    if complete:
+        return
+    npm_ci(cdk_dir)
+    if not (cdk_dir / "node_modules" / "constructs" / "package.json").is_file():
+        raise AssetFailure(
+            "cdk/node_modules is still incomplete after npm ci (missing constructs); "
+            "run `cd cdk && npm ci --ignore-scripts` and retry"
+        )
+
+
+def ensure_ts_dependencies() -> None:
+    """Install the ts/ tree whose dist and dependency closure the assets vendor."""
+    ts_dir = ROOT / "ts"
+    if not ts_dir.is_dir():
+        raise AssetFailure(f"missing {ts_dir}; run this script from an AppTheory checkout")
+    marker = ts_dir / "node_modules" / "@theory-cloud" / "tabletheory-ts" / "package.json"
+    if marker.is_file():
+        return
+    npm_ci(ts_dir)
+    if not marker.is_file():
+        raise AssetFailure(
+            "ts/node_modules is still incomplete after npm ci (missing @theory-cloud/tabletheory-ts); "
+            "run `cd ts && npm ci --ignore-scripts` and retry"
+        )
+
+
 def ensure_example_dependencies(example_dir: Path) -> None:
     cdk = example_dir / "node_modules" / ".bin" / "cdk"
     if cdk.is_file():
         return
-    print(f"  ... installing {example_dir.relative_to(ROOT)} dependencies (npm ci)")
-    result = run(
-        ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
-        cwd=example_dir,
-        timeout=1800,
-    )
-    if result.returncode != 0:
-        raise AssetFailure(f"npm ci failed for {example_dir}", combined(result))
+    if not example_dir.is_dir():
+        raise AssetFailure(
+            f"example directory is missing: {example_dir.relative_to(ROOT)} "
+            "(run this script from the AppTheory checkout root)"
+        )
+    npm_ci(example_dir)
     if not cdk.is_file():
         raise AssetFailure(f"cdk CLI is still missing after npm ci: {cdk}")
 
@@ -342,6 +409,15 @@ def main(argv: list[str] | None = None) -> int:
     args.work_dir.mkdir(parents=True, exist_ok=True)
 
     print("lambda-assets: built assets in the official Lambda runtime images")
+    try:
+        ensure_cdk_dependencies()
+        ensure_ts_dependencies()
+    except AssetFailure as failure:
+        print(f"  FAIL  {failure.message}", file=sys.stderr)
+        for line in failure.output.strip().splitlines()[-40:]:
+            print(f"        | {line}", file=sys.stderr)
+        print("lambda-assets: FAIL", file=sys.stderr)
+        return 1
     staged = run(
         ["node", "examples/cdk/hello-world/handlers/ts/staged-asset.test.mjs"],
         timeout=300,
