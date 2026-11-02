@@ -1,6 +1,9 @@
 package localrunner
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func testAPI(routes ...Route) APISpec {
 	return APISpec{Class: APIHTTPV2, LogicalID: "Api", Stage: "$default", Routes: routes}
@@ -74,6 +77,83 @@ func TestMatchPathGreedyProxyNeedsASegment(t *testing.T) {
 	params, ok = matchPath("/api/{proxy+}", "/api/a/b")
 	if !ok || params["proxy"] != "a/b" {
 		t.Fatalf("unexpected greedy match: %+v %v", params, ok)
+	}
+}
+
+func TestWebSocketAPIIsReportedNotServed(t *testing.T) {
+	stack := assemblyStack{Name: "Stack", Template: template{Resources: map[string]templateResource{
+		"WsApi": {
+			Type: typeHTTPAPI,
+			Properties: json.RawMessage(`{
+				"Name": "demo-ws",
+				"ProtocolType": "WEBSOCKET",
+				"RouteSelectionExpression": "$request.body.action"
+			}`),
+		},
+	}}}
+	spec := &Spec{}
+	if err := deriveHTTPAPIs(spec, []assemblyStack{stack}, stack); err != nil {
+		t.Fatalf("a WebSocket API must be reported, not fatal: %v", err)
+	}
+	if len(spec.Skipped) != 1 || spec.Skipped[0].LogicalID != "WsApi" {
+		t.Fatalf("unexpected skipped surfaces: %+v", spec.Skipped)
+	}
+	if len(spec.APIs) != 0 {
+		t.Fatalf("a WebSocket API must not be served as HTTP: %+v", spec.APIs)
+	}
+}
+
+func TestRESTMockRouteUsesDeclaredResponse(t *testing.T) {
+	stack := assemblyStack{Name: "Stack"}
+	props := restMethodProperties{
+		HTTPMethod: "OPTIONS",
+		ResourceID: json.RawMessage(`{"Ref":"Res"}`),
+		Integration: struct {
+			Type                 string                    `json:"Type"`
+			URI                  json.RawMessage           `json:"Uri"`
+			ResponseTransferMode string                    `json:"ResponseTransferMode"`
+			IntegrationResponses []restIntegrationResponse `json:"IntegrationResponses"`
+		}{
+			Type: mockIntegration,
+			IntegrationResponses: []restIntegrationResponse{{
+				StatusCode: "200",
+				ResponseParameters: map[string]string{
+					"method.response.header.Access-Control-Allow-Origin": "'*'",
+					"method.response.header.Access-Control-Max-Age":      "'600'",
+					"integration.response.body":                          "ignored",
+				},
+			}},
+		},
+	}
+	route, err := restMockRoute(stack, map[string]string{"Res": "/sse"}, "Method", props)
+	if err != nil {
+		t.Fatalf("mock route: %v", err)
+	}
+	if route.Function != "" || route.Mock == nil {
+		t.Fatalf("a mock route must not name a function: %+v", route)
+	}
+	if route.Mock.StatusCode != 200 || route.Path != "/sse" || route.Method != "OPTIONS" {
+		t.Fatalf("unexpected mock route: %+v", route.Mock)
+	}
+	if route.Mock.Headers["Access-Control-Allow-Origin"] != "*" ||
+		route.Mock.Headers["Access-Control-Max-Age"] != "600" {
+		t.Fatalf("declared headers were not unquoted: %+v", route.Mock.Headers)
+	}
+	if _, exists := route.Mock.Headers["integration.response.body"]; exists {
+		t.Fatalf("only method.response.header parameters become headers: %+v", route.Mock.Headers)
+	}
+}
+
+func TestRESTMockRouteRefusesAnUnusableDeclaration(t *testing.T) {
+	stack := assemblyStack{Name: "Stack"}
+	props := restMethodProperties{HTTPMethod: "OPTIONS"}
+	props.Integration.Type = mockIntegration
+	if _, err := restMockRoute(stack, nil, "Method", props); err == nil {
+		t.Fatal("a MOCK integration without IntegrationResponses must fail closed")
+	}
+	props.Integration.IntegrationResponses = []restIntegrationResponse{{StatusCode: "not-a-status"}}
+	if _, err := restMockRoute(stack, nil, "Method", props); err == nil {
+		t.Fatal("a non-HTTP MOCK status must fail closed")
 	}
 }
 

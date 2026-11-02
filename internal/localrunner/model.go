@@ -96,13 +96,24 @@ type FunctionSpec struct {
 	CodeProblem string `json:"codeProblem,omitempty"`
 }
 
+// MockResponse is a REST API MOCK integration: the template declares the
+// status and headers the transport returns instead of invoking a function. CDK
+// uses it for CORS preflight.
+type MockResponse struct {
+	StatusCode int               `json:"statusCode"`
+	Headers    map[string]string `json:"headers,omitempty"`
+}
+
 // Route is one HTTP route bound to a function.
 type Route struct {
-	Class     APIClass `json:"class"`
-	Method    string   `json:"method"`
-	Path      string   `json:"path"`
-	Function  string   `json:"function"`
-	Streaming bool     `json:"streaming"`
+	Class    APIClass `json:"class"`
+	Method   string   `json:"method"`
+	Path     string   `json:"path"`
+	Function string   `json:"function,omitempty"`
+	// Mock is set for a REST API MOCK integration. A mock route has no
+	// function and no invoker; the transport returns the declared response.
+	Mock      *MockResponse `json:"mock,omitempty"`
+	Streaming bool          `json:"streaming"`
 	// RouteKey is the API Gateway v2 route key, kept verbatim from the
 	// template. REST v1 and Function URL routes leave it empty.
 	RouteKey string `json:"routeKey,omitempty"`
@@ -174,6 +185,9 @@ func (s *Spec) ServedFunctions() []string {
 	seen := map[string]struct{}{}
 	for _, api := range s.APIs {
 		for _, route := range api.Routes {
+			if route.Function == "" {
+				continue
+			}
 			seen[route.Function] = struct{}{}
 		}
 	}

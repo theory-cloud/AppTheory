@@ -2,6 +2,7 @@ package localrunner
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,6 +30,7 @@ const (
 	assetPathMetadataKey = "aws:asset:path"
 	streamingURIMarker   = "/response-streaming-invocations"
 	proxyIntegration     = "AWS_PROXY"
+	mockIntegration      = "MOCK"
 	httpProtocol         = "HTTP"
 	websocketProtocol    = "WEBSOCKET"
 	noneAuthorization    = "NONE"
@@ -115,10 +117,18 @@ type restMethodProperties struct {
 	AuthorizationType string          `json:"AuthorizationType"`
 	AuthorizerID      json.RawMessage `json:"AuthorizerId"`
 	Integration       struct {
-		Type                 string          `json:"Type"`
-		URI                  json.RawMessage `json:"Uri"`
-		ResponseTransferMode string          `json:"ResponseTransferMode"`
+		Type                 string                    `json:"Type"`
+		URI                  json.RawMessage           `json:"Uri"`
+		ResponseTransferMode string                    `json:"ResponseTransferMode"`
+		IntegrationResponses []restIntegrationResponse `json:"IntegrationResponses"`
 	} `json:"Integration"`
+}
+
+// restIntegrationResponse is a declared REST MOCK integration response. CDK
+// emits one for a CORS preflight method.
+type restIntegrationResponse struct {
+	StatusCode         string            `json:"StatusCode"`
+	ResponseParameters map[string]string `json:"ResponseParameters"`
 }
 
 type restStageProperties struct {
@@ -198,10 +208,14 @@ func deriveSpec(dir string, stacks []assemblyStack) (*Spec, error) {
 		return nil, err
 	}
 	if len(spec.ServedFunctions()) == 0 {
-		return nil, fmt.Errorf(
+		message := fmt.Sprintf(
 			"cloud assembly %s defines no HTTP API v2 route, REST API v1 route or Function URL the local runner can serve",
 			dir,
 		)
+		for _, skipped := range spec.Skipped {
+			message += fmt.Sprintf("; %s is not served (%s)", skipped.LogicalID, skipped.Reason)
+		}
+		return nil, errors.New(message)
 	}
 	spec.sort()
 	return spec, nil

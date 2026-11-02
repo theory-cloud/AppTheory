@@ -135,6 +135,48 @@ func TestTransportReportsInvokerFailure(t *testing.T) {
 	})
 }
 
+func TestTransportServesDeclaredMockWithoutInvoking(t *testing.T) {
+	api := APISpec{
+		Class:     APIRESTV1,
+		LogicalID: "Rest",
+		Stage:     "prod",
+		Routes: []Route{
+			{
+				Class:  APIRESTV1,
+				Method: "OPTIONS",
+				Path:   "/sse",
+				Mock: &MockResponse{StatusCode: 200, Headers: map[string]string{
+					"Access-Control-Allow-Origin": "*",
+					"Access-Control-Max-Age":      "600",
+				}},
+			},
+		},
+	}
+	invoker := &fakeInvoker{response: []byte(`{"statusCode":200,"body":"unexpected"}`)}
+	server := httptest.NewServer(NewTransport(api, map[string]Invoker{"Fn": invoker}, nil, nil))
+	defer server.Close()
+
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodOptions, server.URL+"/sse", nil)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("options request: %v", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != 200 {
+		t.Fatalf("unexpected status %d", response.StatusCode)
+	}
+	if response.Header.Get("Access-Control-Allow-Origin") != "*" ||
+		response.Header.Get("Access-Control-Max-Age") != "600" {
+		t.Fatalf("declared mock headers missing: %+v", response.Header)
+	}
+	if len(invoker.payloads) != 0 {
+		t.Fatalf("a mock route must not invoke a function: %d invocation(s)", len(invoker.payloads))
+	}
+}
+
 func TestTransportFunctionURLMatchesEveryPath(t *testing.T) {
 	api := APISpec{
 		Class:     APIFunctionURL,
