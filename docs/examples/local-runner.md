@@ -19,6 +19,10 @@ go run ./cmd/apptheory-local --app examples/cdk/hello-world -c lang=go \
 go run ./cmd/apptheory-local plan --app examples/cdk/hello-world -c lang=go --json
 ```
 
+`apptheory-local invoke` starts one function instead of an HTTP surface. It is
+for event-source handlers and for examples that ship a handler but no CDK
+definition; see [Invoking one function](#invoking-one-function).
+
 The command is language-neutral. A Go, TypeScript or Python handler is served by
 the same binary because the runtime comes from the CDK stack, not from the
 caller: `provided.al2023` for Go, `nodejs:24` for Node, `python:3.14` for Python.
@@ -78,8 +82,9 @@ during synthesis, before any function container starts.
   `aws-cdk-lib/aws-apigatewayv2-integrations`, which ships inside
   `aws-cdk-lib`; there is no separate integrations package to install. The
   runner executes `node_modules/.bin/cdk`; it does not install packages.
-- A local profile passed with `--profile`. It is required for `run` (and for
-  any served function), because it pins every runtime image by digest.
+- A local profile passed with `--profile`. It is required for `run` and
+  `invoke`, because it pins every runtime image by digest and the Python image
+  the preflight needs.
 
 The minimal profile below names only the images the app uses, plus the Python
 image for the in-container preflight. The complete example includes one.
@@ -180,7 +185,7 @@ app. Add `dynamodbLocal` and an `endpoints.dynamodb` entry only when you pass
 `--backend dynamodb`; the [configuration reference](/reference/local-runner-configuration/)
 has the full schema.
 
-Profile validation happens in two stages. Malformed JSON fails when the command
+Profile validation happens in three stages. Malformed JSON fails when the command
 starts, before it synthesizes anything. A missing image class or an unpinned tag
 is reported after synthesis, when the runner resolves the images for the served
 functions — still before any function container starts — with the profile path
@@ -269,25 +274,93 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
      integrations;
    - `AWS::ApiGateway::RestApi`, its resource tree, methods and stage;
    - `AWS::Lambda::Url` Function URLs.
+   A WebSocket API is listed under `skipped`; it does not stop an app that also
+   has HTTP or REST routes. A REST `MOCK` integration is served from the
+   status and headers the template declares (CDK uses it for CORS preflight).
 3. **Resolve images.** The profile's digest-pinned image for each served
    function's runtime is selected before any container starts. A missing image
    class or a tag that is not pinned by digest fails here, after synthesis.
-4. **Preflight.** A probe container on the run's private network proves the
-   dummy credentials, endpoint reachability, the DynamoDB SDK endpoint when one
-   is configured, and closed DNS.
-5. **Run.** One container per served function, from the official image for its
+4. **Prepare the run workspace.** Inline `Code.ZipFile` code is materialized
+   under the run scratch directory, then the run's private Docker network is
+   created.
+5. **Start backends.** `--backend dynamodb`, `--backend moto` and
+   `--backend s3proxy` start the profile's digest-pinned emulators on the run's
+   private network. Before it reports a backend ready, the runner waits up to
+   60 seconds for every endpoint configured on that backend to answer a
+   read-only call native to the service over its published loopback port:
+   `ListTables` for DynamoDB Local, `ListKeys` and `GetCallerIdentity` for moto
+   KMS/STS, `ListBuckets` for s3proxy and `ListQueues` for SQS. A service with
+   no native probe is checked with a plain HTTP request. On timeout the run
+   fails with the backend, its image and the last error, before any resource is
+   provisioned. A backend with no published host port is reported ready without
+   this wait.
+6. **Provision resources.** When the S3 or moto backend is ready, the runner
+   creates every bucket and key the assembly declares and records the values
+   environment resolution needs.
+7. **Resolve environment references.** A served function's `Ref`/`Fn::GetAtt`
+   environment values are resolved to deterministic local values: a DynamoDB
+   table name, an SQS queue name or URL, an EventBridge rule name, an S3 bucket
+   name or ARN, and a KMS key id or ARN. The S3 bucket and KMS key values are
+   the ones provisioned in the previous step. An expression the runner cannot
+   resolve fails closed with the function and variable named.
+8. **Preflight.** A probe container on the run's private network proves the
+   dummy credentials, every configured endpoint, the DynamoDB SDK endpoint when
+   one is configured, and closed DNS.
+9. **Run.** One container per served function, from the official image for its
    runtime, digest-pinned in the profile. Handlers run under the embedded
    Runtime Interface Emulator; the transport invokes
    `/2015-03-31/functions/function/invocations`.
-6. **Serve.** One loopback listener per API (and per Function URL) builds the
-   provider event for the matched route, invokes the handler and decodes the
-   response — including the RIE's buffered streaming frame.
-7. **Shut down.** `Ctrl-C` (`SIGINT`) or `SIGTERM` stops accepting requests by
-   closing the listeners, force-removes the run's containers (which aborts an
-   in-flight invocation), closes any connections still in flight, removes the
-   network and deletes the scratch directory. A `SIGKILL` cannot be caught:
-   after one, `apptheory-local down --app <dir>` removes everything that run
-   left behind.
+10. **Serve or invoke.** One loopback listener per API (and per Function URL)
+    builds the provider event for the matched route, invokes the handler and
+    decodes the response — including the RIE's buffered streaming frame.
+    `invoke` instead sends explicit events to one warm container.
+11. **Shut down.** `Ctrl-C` (`SIGINT`) or `SIGTERM` stops accepting requests by
+    closing the listeners, force-removes the run's containers (which aborts an
+    in-flight invocation), closes any connections still in flight, removes the
+    network and deletes the scratch directory. A `SIGKILL` cannot be caught:
+    after one, `apptheory-local down --app <dir>` removes the containers and
+    networks labelled with that app; it does not delete the stale run scratch
+    directory. That directory is `<scratch>/runs/<app>-<run>`, where `--scratch`
+    defaults to `<user cache>/apptheory-local`; it is safe to delete by hand.
+
+## Invoking one function
+
+`plan` and `run` are about HTTP surfaces. `invoke` starts one function and
+sends it events, which is how the harness exercises event-source handlers and
+handler-only examples. It prepares the run in the same order as `run` — images,
+scratch, network, backends, provisioning, environment resolution and preflight
+— before it starts only the requested function:
+
+```bash
+# One CDK function with one event.
+apptheory-local invoke --app examples/cdk/lesser-parity \
+  --function WorkerFn847949AF --profile scripts/local/examples-local.json \
+  --event sqs-event.json
+
+# A warm container driven over stdin: one JSON event per line in, one JSON
+# result per line out. The container keeps its in-memory state across requests.
+apptheory-local invoke --handler-dir ~/.cache/mcp-tools-only \
+  --runtime provided.al2023 --handler bootstrap \
+  --profile scripts/local/examples-local.json --stdio
+```
+
+The result is one JSON object per event:
+
+```json
+{"proxy":true,"statusCode":200,"headers":{"content-type":["application/json"]},"body":"{\"ok\":true}"}
+```
+
+`proxy` is `true` when the handler returned a Lambda proxy response. Otherwise
+`raw` carries the handler's JSON result unchanged, and `handlerError` names a
+handler that crashed. `--handler-dir` mode derives no routes: it starts the
+built handler and the caller supplies every event. It exists because the Go MCP
+examples ship a handler but no CDK definition. A handler-only row is never
+described as CDK-routed.
+
+Streaming over a warm container is still buffered by the RIE: a tool call's
+complete SSE body arrives after the handler finishes, and `streamed` marks the
+framed response. The MCP rows assert session creation, event ids and
+Last-Event-ID replay content; they never claim incremental delivery.
 
 ## Capability matrix
 
@@ -306,14 +379,17 @@ the harness records it.
 | Inline `Code.ZipFile` | Supported (Node, Python) | Materialized under the run scratch directory before the container starts. |
 | arm64 `provided.al2023` | Supported (L1) | Uses the host-arch image; a bootstrap built for the other architecture fails closed with a clear error. |
 | DynamoDB Local | Supported (L2) | `--backend dynamodb` starts the profile's digest-pinned `amazon/dynamodb-local` on the run network; SDK clients resolve through `AWS_ENDPOINT_URL_DYNAMODB`. |
-| Other emulators (SQS, S3, KMS, ...) | Endpoint injection only | Pass `--endpoint service=url` and `--add-host name=address`; the profile names the environment variables. Example wiring is A4. |
-| WebSocket APIs | Not served (A3b) | A WebSocket API in the assembly fails the run with a clear error. |
+| KMS and STS (moto) | Supported (L2) | `--backend moto` starts the profile's digest-pinned moto container and injects `AWS_ENDPOINT_URL_KMS`/`_STS` (and the profile's aliases). KMS keys declared by the assembly are created; `Ref`/`Fn::GetAtt Arn` resolve to the created key. No HSM, key policies or grants. |
+| S3 (s3proxy) | Supported (L2) | `--backend s3proxy` starts the digest-pinned s3proxy container, creates the assembly's buckets, and injects the S3 endpoint as the container address so the SDK uses path-style addressing. No bucket policies, IAM or event notifications. |
+| Other emulators (SQS, ...) | Endpoint injection only | Pass `--endpoint service=url` and `--add-host name=address`; the profile names the environment variables. SQS event delivery is A4. |
+| WebSocket APIs | Reported, not served | A WebSocket API is listed under `skipped` with its reason, and an app with no other surface fails with that list. Its `$connect`/`$disconnect`/`$default` routes are not invoked. |
 | CloudFront / CloudFront Functions | Not served (A5) | The Function URL behind a distribution runs; the distribution itself is reported as not served. |
-| REST `MOCK` integrations | Not served (A3b) | Fails closed instead of returning a synthesized response. |
+| REST `MOCK` integrations | Supported (L1) | The transport returns the `IntegrationResponses` status and headers the template declares and invokes no function. CDK emits these for CORS preflight. |
 | Authorizers (REST, HTTP API, Function URL `AWS_IAM`) | Not served | Fails closed; the local transport must never bypass a real authorizer. |
 | Lambda layers, container-image functions | Not served | Fail closed when a served function needs them. |
-| CloudFormation-expression environment values | Not resolved (A4) | A served function whose environment value is `Ref`/`GetAtt` fails with the variable names; only literal values are injected. |
+| CloudFormation-expression environment values | Supported for `Ref`/`Fn::GetAtt`/`Fn::Join` | Tables, queues, rules, buckets, KMS keys and functions resolve to deterministic local values (KMS/S3 require their backend). An unsupported expression fails with the function and variable named. |
 | CloudFormation-expression `MemorySize`/`Timeout` | Not resolved | A served function whose limit is `Ref`/`GetAtt`/`Fn::If` fails with the property named; the AWS defaults apply only when the property is absent. |
+| One function, explicit events (`invoke`) | Supported | Starts one function and sends newline-delimited JSON events to a warm container; `--handler-dir` runs a handler that has no CDK definition and derives no routes. |
 | Stage-prefixed URLs (`/prod/...`) | Not honoured | The stage is reported in the event; URLs are served at the root, as API Gateway does for custom domains. |
 | Multiple APIs in one stack | Supported | Each API gets its own listener and route table, so `ANY /` surfaces never shadow each other. |
 
@@ -322,15 +398,17 @@ the harness records it.
 - **Streaming is buffered.** A handler that streams is not incremental under the
   Runtime Interface Emulator. Tests can assert the complete bytes and the status
   and headers, never the timing of individual chunks.
-- **WebSocket events** are not delivered; A3b owns a local WebSocket front end.
+- **WebSocket events** are not delivered. A WebSocket API is reported as not
+  served; its routes are never invoked.
 - **CloudFront** is not emulated; A5 owns the local gateway.
 - **Event sources** (SQS, Kinesis, scheduled rules, DynamoDB streams) are not
   delivered by the HTTP transport. Those functions are listed as "not served
-  locally" by `plan` and by the run log.
-- **CloudFormation intrinsics in function environment** are not resolved. Apps
-  that pass a table name or bucket name through `Ref` are A3b/A4 work. The same
-  applies to `MemorySize` and `Timeout`: an expression is refused rather than
-  replaced by the AWS default.
+  locally" by `plan` and by the run log; `invoke` can send a generated event.
+- **SSM Parameter Store** has no local emulator. A handler that reads a
+  parameter sees the call fail and must handle it; the lambda-role custom row
+  asserts that fallback and is class L3 with the named gap.
+- **S3 event notifications** are absent from s3proxy; S3 event paths remain A4
+  work.
 - **One container per function.** In-flight invocations are bounded to 32 and
   queue behind the function's container; the local runner is not a load test.
 

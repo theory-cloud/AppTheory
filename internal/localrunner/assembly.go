@@ -2,6 +2,7 @@ package localrunner
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,11 @@ import (
 // Resource types the assembly reader understands.
 const (
 	typeLambdaFunction  = "AWS::Lambda::Function"
+	typeDynamoTable     = "AWS::DynamoDB::Table"
+	typeSQSQueue        = "AWS::SQS::Queue"
+	typeS3Bucket        = "AWS::S3::Bucket"
+	typeKMSKey          = "AWS::KMS::Key"
+	typeEventsRule      = "AWS::Events::Rule"
 	typeHTTPAPI         = "AWS::ApiGatewayV2::Api"
 	typeHTTPRoute       = "AWS::ApiGatewayV2::Route"
 	typeHTTPIntegration = "AWS::ApiGatewayV2::Integration"
@@ -29,6 +35,7 @@ const (
 	assetPathMetadataKey = "aws:asset:path"
 	streamingURIMarker   = "/response-streaming-invocations"
 	proxyIntegration     = "AWS_PROXY"
+	mockIntegration      = "MOCK"
 	httpProtocol         = "HTTP"
 	websocketProtocol    = "WEBSOCKET"
 	noneAuthorization    = "NONE"
@@ -115,10 +122,18 @@ type restMethodProperties struct {
 	AuthorizationType string          `json:"AuthorizationType"`
 	AuthorizerID      json.RawMessage `json:"AuthorizerId"`
 	Integration       struct {
-		Type                 string          `json:"Type"`
-		URI                  json.RawMessage `json:"Uri"`
-		ResponseTransferMode string          `json:"ResponseTransferMode"`
+		Type                 string                    `json:"Type"`
+		URI                  json.RawMessage           `json:"Uri"`
+		ResponseTransferMode string                    `json:"ResponseTransferMode"`
+		IntegrationResponses []restIntegrationResponse `json:"IntegrationResponses"`
 	} `json:"Integration"`
+}
+
+// restIntegrationResponse is a declared REST MOCK integration response. CDK
+// emits one for a CORS preflight method.
+type restIntegrationResponse struct {
+	StatusCode         string            `json:"StatusCode"`
+	ResponseParameters map[string]string `json:"ResponseParameters"`
 }
 
 type restStageProperties struct {
@@ -184,27 +199,55 @@ func loadAssembly(dir string) ([]assemblyStack, error) {
 	return stacks, nil
 }
 
+// deriveSpec turns a cloud assembly into the local runner's specification and
+// refuses an assembly with no HTTP surface. Invoke uses deriveSpecInternal
+// directly: a function can be invoked without an HTTP route.
+func deriveSpec(dir string, stacks []assemblyStack) (*Spec, error) {
+	spec, err := deriveSpecInternal(dir, stacks)
+	if err != nil {
+		return nil, err
+	}
+	if len(spec.ServedFunctions()) == 0 {
+		return nil, noSurfaceError(spec, dir)
+	}
+	return spec, nil
+}
+
 // Derive turns a cloud assembly into the local runner's specification. It fails
 // closed on any construct the transport cannot serve faithfully.
-func deriveSpec(dir string, stacks []assemblyStack) (*Spec, error) {
+func deriveSpecInternal(dir string, stacks []assemblyStack) (*Spec, error) {
 	spec := &Spec{AssemblyDir: dir}
 	for _, stack := range stacks {
 		if err := deriveStack(spec, dir, stacks, stack); err != nil {
 			return nil, err
+		}
+		for _, id := range sortedKeys(stack.Template.Resources) {
+			resource := stack.Template.Resources[id]
+			spec.Resources = append(spec.Resources, ResourceSpec{
+				Stack:      stack.Name,
+				LogicalID:  id,
+				Type:       resource.Type,
+				Properties: resource.Properties,
+			})
 		}
 	}
 	deriveSkipped(spec)
 	if err := validateServedFunctions(spec); err != nil {
 		return nil, err
 	}
-	if len(spec.ServedFunctions()) == 0 {
-		return nil, fmt.Errorf(
-			"cloud assembly %s defines no HTTP API v2 route, REST API v1 route or Function URL the local runner can serve",
-			dir,
-		)
-	}
 	spec.sort()
 	return spec, nil
+}
+
+func noSurfaceError(spec *Spec, dir string) error {
+	message := fmt.Sprintf(
+		"cloud assembly %s defines no HTTP API v2 route, REST API v1 route or Function URL the local runner can serve",
+		dir,
+	)
+	for _, skipped := range spec.Skipped {
+		message += fmt.Sprintf("; %s is not served (%s)", skipped.LogicalID, skipped.Reason)
+	}
+	return errors.New(message)
 }
 
 // validateServedFunctions fails closed on a function the transport cannot run
@@ -223,13 +266,6 @@ func validateServedFunctions(spec *Spec) error {
 		}
 		if function.LayerCount > 0 {
 			return unsupported(id, "function uses %d Lambda layer(s); the local runner does not assemble layers", function.LayerCount)
-		}
-		if len(function.UnresolvedEnvironment) > 0 {
-			return unsupported(
-				id,
-				"environment variables %s are CloudFormation expressions; the local runner only injects literal values",
-				strings.Join(function.UnresolvedEnvironment, ", "),
-			)
 		}
 		if err := unresolvedLimitsError(function); err != nil {
 			return err
@@ -351,10 +387,12 @@ func parseFunction(assemblyDir string, stack assemblyStack, id string, resource 
 		function.CodeProblem = "container-image Lambda functions (Code.ImageUri) are not supported locally"
 		return function, nil
 	}
+	function.EnvironmentExpressions = map[string]string{}
 	for name, raw := range props.Environment.Variables {
 		value, err := decodeString(raw)
 		if err != nil {
 			function.UnresolvedEnvironment = append(function.UnresolvedEnvironment, name)
+			function.EnvironmentExpressions[name] = string(raw)
 			continue
 		}
 		function.Environment[name] = value

@@ -67,6 +67,14 @@ func (t *Transport) ServeHTTP(writer http.ResponseWriter, request *http.Request)
 		}
 		route, params = matched, matchedParams
 	}
+	if route.Mock != nil {
+		for name, value := range route.Mock.Headers {
+			writer.Header().Set(name, value)
+		}
+		writer.WriteHeader(route.Mock.StatusCode)
+		t.logf("%s %s -> %d (MOCK integration declared by the template)", request.Method, path, route.Mock.StatusCode)
+		return
+	}
 	invoker, ok := t.Invokers[route.Function]
 	if !ok {
 		t.fail(writer, http.StatusBadGateway, "Internal Server Error", requestID,
@@ -206,6 +214,11 @@ func RouteTable(spec *Spec) []string {
 	for _, api := range spec.APIs {
 		lines = append(lines, fmt.Sprintf("api %-8s %-28s stage=%s", api.Class, api.LogicalID, api.Stage))
 		for _, route := range api.Routes {
+			if route.Mock != nil {
+				lines = append(lines, fmt.Sprintf("  %-6s %-24s -> MOCK %d (declared by the template)",
+					route.Method, route.Path, route.Mock.StatusCode))
+				continue
+			}
 			lines = append(lines, fmt.Sprintf("  %-6s %-24s -> %s%s",
 				route.Method, route.Path, route.Function, streamingSuffix(route.Streaming)))
 		}

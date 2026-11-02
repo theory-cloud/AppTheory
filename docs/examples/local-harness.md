@@ -31,6 +31,7 @@ resolution.
 | Rate-limit table provisioning | `scripts/local/cmd/rate-limit-table` |
 | Built-asset runtime proof | `scripts/local/verify-lambda-assets.py` |
 | Lambda runtime image pins | `scripts/local/examples-local.json` (`lambda.images`) |
+| Runner emulator pins | `scripts/local/examples-local.json` (`containers.moto`, `containers.s3proxy` and their endpoints) |
 | Local runner | `cmd/apptheory-local` with `internal/localrunner` |
 | Self-tests | `scripts/local/test_examples_local.py` |
 | CI job | `.github/workflows/examples-local.yml` |
@@ -43,6 +44,13 @@ resolution.
   is never faked.
 - **PENDING-MILESTONE** — a row owned by a later milestone (`A3a`, `A3b`, `A4`,
   `A5a`, `A5b`). It is listed in the run report and never counted as pass.
+
+A handler that a CDK definition would connect to a cloud event source is L3
+when the harness invokes it with a generated event, because that event source is
+the named gap. A handler-only row has no deployment surface to emulate — the
+handler is its entire surface — so it is L1 unless a different named gap
+applies. `examples/mcp/resumable-sse` is handler-only and L3 for incremental SSE
+delivery, not for an event source.
 
 Every classified example is verified by a real process, real HTTP behavior or a
 real synthesized template. There are no fake apps, fake repositories or mocked
@@ -135,9 +143,9 @@ these rules, so a validator that stops failing closed fails the harness.
 | Row | Class | How it is verified |
 | --- | --- | --- |
 | `examples/testkit/ts.mjs`, `ts-streaming.mjs`, `py.py` | L1 | The real runtime code handles HTTP API v2, EventBridge work, DynamoDB Stream records and Function URL streaming; the harness asserts the example's PASS marker. |
-| `examples/mcp/tools-only` (Go) | L1 | Real MCP protocol messages through the testkit transport; named tests must run and pass. |
-| `examples/mcp/tools-resources-prompts` (Go) | L1 | Same transport, tools + resources + prompts. |
-| `examples/mcp/resumable-sse` (Go) | L1 | Real streaming tool call, disconnect, cursor resume and replay. Warm-container delivery is A3b. |
+| `examples/mcp/tools-only` (Go) | L1 | The real binary runs in a warm `provided.al2023` container; the harness sends MCP HTTP API v2 events for initialize, tools/list, tools/call and two refusals. |
+| `examples/mcp/tools-resources-prompts` (Go) | L1 | Same warm container; tools, resources/read and prompts/get are asserted, plus an invalid-method refusal. |
+| `examples/mcp/resumable-sse` (Go) | L3 | A warm container keeps the MCP session; the buffered stream's priming, progress and result ids are asserted, and Last-Event-ID replay returns the progress events and final result. It is handler-only (`--handler-dir`, no CDK definition). Gap: incremental SSE delivery (the RIE buffers). |
 | `examples/mcp/tools-only-ts`, `tools-only-py` | L1 | The real MCP server and its exported Lambda entry, driven by the MCP testkit. |
 | `examples/migration/rate-limited-http` | L1 | A real `net/http` process against DynamoDB Local: the `rate-limits` table is created from `pkg/limited`, 60 requests are allowed with the expected headers, and the 61st is the 429 refusal. |
 | Every CDK app entrypoint | I | `scripts/verify-cdk-synth.sh` synthesizes the stack, checks its pinned template hash, and runs focused construct assertions for the six examples that were never synthesized in CI. |
@@ -159,8 +167,25 @@ described in [Run an app locally](/examples/local-runner/) and its generated
 configuration in
 [Local runner configuration](/reference/local-runner-configuration/).
 
-Handler and script rows inside the other CDK examples remain
-`PENDING-MILESTONE` (A3b, A4, A5a, A5b) and are never counted as pass.
+### A3b: HTTP, REST, MCP and compiled handlers
+
+The fourteen A3b rows run through the same runner. The MCP examples have no CDK
+definition, so their rows use `invoke --handler-dir` with explicit MCP HTTP
+events; no route table is synthesized for them.
+
+| Row | Class | How it is verified |
+| --- | --- | --- |
+| `examples/cdk/multilang/handlers/{go,py,ts}` | L3 | Each language's own HTTP API v2 listener serves root, hello, a 405 and a 404. The Go REST API serves hello and three buffered SSE events. Three WebSocket APIs are reported not served. Gap: WebSocket frames and event-source delivery. |
+| `examples/cdk/lesser-parity/handlers/{api,graphql,sse}` | L1/L3 | The REST API serves the catch-all, the dedicated GraphQL route, the buffered SSE route and the declared CORS preflight. `TABLE_NAME` and `QUEUE_URL` are resolved local values. The SSE row is L3 for buffered delivery. |
+| `examples/cdk/lesser-parity/handlers/worker.mjs` | L3 | A generated two-record SQS batch is processed by the real handler; the invalid record is returned as a partial batch failure. Gap: SQS event delivery. |
+| `examples/cdk/restv1-router/handlers/{api,graphql,inventory}` | L1 | Catch-all GET/POST, the GraphQL route with GET falling through, and inventory GET/PUT/DELETE with path parameters, a 404 refusal and CORS preflight. |
+| `examples/cdk/restv1-router/handlers/sse.mjs` | L3 | The real `streamifyResponse` handler returns all 10 events and `[DONE]` as one buffered body. Gap: incremental SSE delivery. |
+| `examples/cdk/lambda-role/handlers/index.ts` | L1 | The compiled asset serves the basic, tracing and dynamic functions; each returns the expected 200 payload. |
+| `examples/cdk/lambda-role/handlers/encrypted.ts` | L2 | The compiled handler round-trips plaintext through moto KMS and reports `match=true`. Gap: emulated KMS (no HSM, key policies or grants). |
+| `examples/cdk/lambda-role/handlers/custom.ts` | L3 | The compiled handler writes and reads an object on s3proxy; the SSM lookup fails closed to `not-configured`. Gap: SSM Parameter Store; S3 is emulated. |
+
+Handler and script rows inside the remaining CDK examples are
+`PENDING-MILESTONE` (A4, A5b) and are never counted as pass.
 
 ## Preflight
 
@@ -179,9 +204,11 @@ container, so every run starts from an empty backend.
 
 The runner rows do not share that container. `apptheory-local --backend dynamodb`
 starts its own in-memory DynamoDB Local, from the same digest-pinned image, on
-the run's private network; the runner's in-container preflight proves the SDK
-resolves to it and that no real AWS hostname resolves. This keeps each runner
-row isolated from the host-side examples.
+the run's private network. `--backend moto` and `--backend s3proxy` add the
+digest-pinned KMS/STS and S3 emulators and provision the assembly's keys and
+buckets. The runner's in-container preflight proves every endpoint answers and
+that no real AWS hostname resolves. This keeps each runner row isolated from the
+host-side examples.
 
 ## Built Lambda assets run in the official runtime
 
@@ -226,4 +253,7 @@ from a copy under `$HOME` and requires every pinned hash to match again.
 The job runs on `ubuntu-24.04-arm`: the hello-world Go function deploys an arm64
 `provided.al2023` bootstrap, and the local runner runs the official image for
 the function's declared architecture. On an amd64 host the same function fails
-closed with a clear architecture error rather than silently emulating it.
+closed with a clear architecture error rather than silently emulating it. The
+MCP handler rows build the real Go binaries for linux/arm64 and run them in the
+same official runtime image; the moto and s3proxy rows start their profile
+containers on the CI host's Docker daemon.

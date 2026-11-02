@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
 
 // deriveHTTPAPIs reads AWS::ApiGatewayV2::Api resources with ProtocolType HTTP
-// and their routes. A WebSocket API, an authorizer or a non-proxy integration
-// fails closed: the local transport cannot serve it faithfully.
+// and their routes. A WebSocket API is reported as not served, so an app that
+// also has HTTP surfaces still runs; an authorizer or a non-proxy integration
+// fails closed because the local transport cannot serve it faithfully.
 func deriveHTTPAPIs(spec *Spec, stacks []assemblyStack, stack assemblyStack) error {
 	types := stack.resourceTypes()
 	if err := rejectHTTPAuthorizers(stack); err != nil {
@@ -26,11 +28,12 @@ func deriveHTTPAPIs(spec *Spec, stacks []assemblyStack, stack assemblyStack) err
 		}
 		switch props.ProtocolType {
 		case websocketProtocol:
-			return unsupported(
-				stack.Name+"/"+id,
-				"WebSocket API %q is not served by the local runner; WebSocket delivery is A3b",
-				props.Name,
-			)
+			spec.Skipped = append(spec.Skipped, Skipped{
+				LogicalID: qualify(stacks, stack.Name, id),
+				Kind:      typeHTTPAPI,
+				Reason:    "WebSocket API; the local HTTP transport does not deliver WebSocket frames, so its $connect/$disconnect/$default routes are not invoked",
+			})
+			continue
 		case httpProtocol, "":
 		default:
 			return unsupported(stack.Name+"/"+id, "unsupported API Gateway v2 protocol %q", props.ProtocolType)
@@ -304,6 +307,9 @@ func restRoute(stack assemblyStack, types map[string]string, paths map[string]st
 	if len(props.AuthorizerID) > 0 {
 		return Route{}, unsupported(stack.Name+"/"+id, "method has an authorizer; the local transport must not bypass it")
 	}
+	if props.Integration.Type == mockIntegration {
+		return restMockRoute(stack, paths, id, props)
+	}
 	if props.Integration.Type != proxyIntegration {
 		return Route{}, unsupported(
 			stack.Name+"/"+id,
@@ -328,6 +334,56 @@ func restRoute(stack assemblyStack, types map[string]string, paths map[string]st
 		Function:  functionID,
 		Streaming: streaming,
 	}, nil
+}
+
+// restMockRoute serves a REST API MOCK integration from the response the
+// template declares. CDK emits these for CORS preflight; the transport returns
+// exactly the declared status and headers and invokes no function.
+func restMockRoute(stack assemblyStack, paths map[string]string, id string, props restMethodProperties) (Route, error) {
+	if len(props.Integration.IntegrationResponses) == 0 {
+		return Route{}, unsupported(stack.Name+"/"+id, "MOCK integration declares no IntegrationResponses")
+	}
+	declared := props.Integration.IntegrationResponses[0]
+	statusCode, err := strconv.Atoi(strings.TrimSpace(declared.StatusCode))
+	if err != nil || statusCode < 100 || statusCode > 599 {
+		return Route{}, unsupported(
+			stack.Name+"/"+id,
+			"MOCK integration status %q is not an HTTP status",
+			declared.StatusCode,
+		)
+	}
+	headers := map[string]string{}
+	for name, value := range declared.ResponseParameters {
+		const prefix = "method.response.header."
+		if !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		headerName := strings.TrimSpace(strings.TrimPrefix(name, prefix))
+		if headerName == "" {
+			continue
+		}
+		headers[headerName] = unquoteAPIGatewayValue(value)
+	}
+	path, ok := paths[resourceKey(props.ResourceID)]
+	if !ok {
+		path = "/"
+	}
+	return Route{
+		Class:  APIRESTV1,
+		Method: strings.ToUpper(props.HTTPMethod),
+		Path:   path,
+		Mock:   &MockResponse{StatusCode: statusCode, Headers: headers},
+	}, nil
+}
+
+// unquoteAPIGatewayValue removes the single quotes API Gateway uses around
+// static mapping values, for example "'*'" or "'600'".
+func unquoteAPIGatewayValue(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if len(trimmed) >= 2 && strings.HasPrefix(trimmed, "'") && strings.HasSuffix(trimmed, "'") {
+		return trimmed[1 : len(trimmed)-1]
+	}
+	return trimmed
 }
 
 // restResourcePaths reconstructs each resource's path from its parent chain. The

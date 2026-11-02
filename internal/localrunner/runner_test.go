@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -101,8 +103,9 @@ func testAssembly(t *testing.T, base string) string {
 }
 
 // fakeRunnerDocker answers the Docker commands the lifecycle issues. Function
-// containers are not real: the RIE port is a listener the test owns.
-func fakeRunnerDocker(t *testing.T, riePort int, calls *[]string) *Docker {
+// containers are not real: the RIE port is a listener the test owns. Backend
+// containers answer on a separate loopback port owned by the test.
+func fakeRunnerDocker(t *testing.T, riePort, backendPort int, calls *[]string) *Docker {
 	t.Helper()
 	var mu sync.Mutex
 	record := func(argv []string) {
@@ -131,6 +134,9 @@ func fakeRunnerDocker(t *testing.T, riePort int, calls *[]string) *Docker {
 			}
 			return "true\n", "", nil
 		case "port":
+			if len(argv) > 2 && strings.Contains(argv[2], "dynamodb") {
+				return "127.0.0.1:" + strconv.Itoa(backendPort) + "\n", "", nil
+			}
 			return "127.0.0.1:" + strconv.Itoa(riePort) + "\n", "", nil
 		case "logs":
 			return "function log\n", "", nil
@@ -174,8 +180,15 @@ func TestRunnerLifecycle(t *testing.T) {
 	base := testBase(t)
 	runner := newTestRunner(t, base)
 	listener := listenLoopback(t)
+	backend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("content-type", "application/x-amz-json-1.0")
+		if _, err := writer.Write([]byte(`{"TableNames":[]}`)); err != nil {
+			t.Errorf("write backend response: %v", err)
+		}
+	}))
+	defer backend.Close()
 	var calls []string
-	runner.docker = fakeRunnerDocker(t, listenerPort(t, listener), &calls)
+	runner.docker = fakeRunnerDocker(t, listenerPort(t, listener), serverPort(t, backend.URL), &calls)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -346,25 +359,25 @@ func TestResolveImagesAndArchitecture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := runner.resolveImages(spec, archARM64); err != nil {
+	if err := runner.resolveImages(spec, archARM64, spec.ServedFunctions()); err != nil {
 		t.Fatalf("resolve images: %v", err)
 	}
-	if err := runner.resolveImages(spec, archAMD64); err == nil || !strings.Contains(err.Error(), "cross-architecture") {
+	if err := runner.resolveImages(spec, archAMD64, spec.ServedFunctions()); err == nil || !strings.Contains(err.Error(), "cross-architecture") {
 		t.Fatalf("architecture mismatch must fail: %v", err)
 	}
 	missing := &Spec{APIs: []APISpec{{Routes: []Route{{Function: "Missing"}}}}}
-	if err := runner.resolveImages(missing, archARM64); err == nil {
+	if err := runner.resolveImages(missing, archARM64, missing.ServedFunctions()); err == nil {
 		t.Fatal("a route to an undefined function must fail")
 	}
 	unsupportedRuntime := &Spec{
 		Functions: []FunctionSpec{{LogicalID: "Fn", Runtime: "java21", AssetDir: base}},
 		APIs:      []APISpec{{Routes: []Route{{Function: "Fn"}}}},
 	}
-	if err := runner.resolveImages(unsupportedRuntime, archARM64); err == nil {
+	if err := runner.resolveImages(unsupportedRuntime, archARM64, unsupportedRuntime.ServedFunctions()); err == nil {
 		t.Fatal("an unsupported runtime must fail")
 	}
 	noProfile := &Runner{images: map[string]string{}}
-	if err := noProfile.resolveImages(spec, archARM64); err == nil {
+	if err := noProfile.resolveImages(spec, archARM64, spec.ServedFunctions()); err == nil {
 		t.Fatal("a run without a profile must fail")
 	}
 }
@@ -461,7 +474,7 @@ func TestImageForAndLabels(t *testing.T) {
 	if err := runner.resolveImages(&Spec{
 		Functions: []FunctionSpec{{LogicalID: "Fn", Runtime: "nodejs24.x", Handler: "index.handler"}},
 		APIs:      []APISpec{{Routes: []Route{{Function: "Fn"}}}},
-	}, archARM64); err != nil {
+	}, archARM64, []string{"Fn"}); err != nil {
 		t.Fatalf("resolve node image: %v", err)
 	}
 	if _, err := runner.imageFor(FunctionSpec{LogicalID: "Fn", Runtime: "nodejs24.x"}); err != nil {
@@ -481,7 +494,7 @@ func TestImageForAndLabels(t *testing.T) {
 func TestPreflightParsesProbeOutput(t *testing.T) {
 	base := testBase(t)
 	runner := newTestRunner(t, base)
-	runner.docker = fakeRunnerDocker(t, 1, &[]string{})
+	runner.docker = fakeRunnerDocker(t, 1, 1, &[]string{})
 	result, err := runner.Preflight(context.Background(), "test-run-net", nil)
 	if err != nil {
 		t.Fatalf("preflight: %v", err)

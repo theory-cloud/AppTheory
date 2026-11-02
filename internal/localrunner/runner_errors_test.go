@@ -43,25 +43,25 @@ func TestRunFailsOnArchitectureMismatch(t *testing.T) {
 
 func TestBackendAndFunctionStartupErrors(t *testing.T) {
 	base := testBase(t)
-	runner, err := NewRunner(Options{
+	if _, err := NewRunner(Options{
 		AppDir:     base,
 		ScratchDir: filepath.Join(base, "scratch"),
 		Backends:   []string{backendDynamoDB},
 		Stdout:     &syncBuffer{},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := runner.startBackends(context.Background()); err == nil || !strings.Contains(err.Error(), "DynamoDB Local") {
-		t.Fatalf("a backend without a profile must fail: %v", err)
+	}); err == nil || !strings.Contains(err.Error(), "profile") {
+		t.Fatalf("a backend without a profile must fail before any container starts: %v", err)
 	}
 
 	startup := newTestRunner(t, base)
-	startup.docker = fakeRunnerDocker(t, 1, &[]string{})
+	startup.docker = fakeRunnerDocker(t, 1, 1, &[]string{})
 	cases := map[string]FunctionSpec{
-		"no asset":       {LogicalID: "Fn", Runtime: "nodejs24.x", Handler: "index.handler"},
-		"no handler":     {LogicalID: "Fn", Runtime: "nodejs24.x", AssetDir: base},
-		"unresolved env": {LogicalID: "Fn", Runtime: "nodejs24.x", Handler: "index.handler", AssetDir: base, UnresolvedEnvironment: []string{"TABLE"}},
+		"no asset":   {LogicalID: "Fn", Runtime: "nodejs24.x", Handler: "index.handler"},
+		"no handler": {LogicalID: "Fn", Runtime: "nodejs24.x", AssetDir: base},
+		"unresolved env": {
+			LogicalID: "Fn", Runtime: "nodejs24.x", Handler: "index.handler", AssetDir: base,
+			UnresolvedEnvironment:  []string{"TABLE"},
+			EnvironmentExpressions: map[string]string{"TABLE": `{"Ref":"Table"}`},
+		},
 		"unresolved memory": {
 			LogicalID: "Fn", Runtime: "nodejs24.x", Handler: "index.handler", AssetDir: base, UnresolvedMemorySize: true,
 		},

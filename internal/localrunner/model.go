@@ -10,6 +10,7 @@
 package localrunner
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -74,9 +75,13 @@ type FunctionSpec struct {
 	LayerCount   int               `json:"layerCount"`
 	Environment  map[string]string `json:"environment,omitempty"`
 	// UnresolvedEnvironment lists environment names whose template value is a
-	// CloudFormation expression. A served function with one of these fails
-	// closed instead of inventing a value.
+	// CloudFormation expression. The runner resolves the supported references
+	// before a function starts; one it cannot resolve fails closed.
 	UnresolvedEnvironment []string `json:"unresolvedEnvironment,omitempty"`
+	// EnvironmentExpressions holds the raw CloudFormation expression behind
+	// each unresolved name. It is internal: the runner resolves it to a local
+	// value and never prints it.
+	EnvironmentExpressions map[string]string `json:"-"`
 	// UnresolvedMemorySize and UnresolvedTimeout report that the template value
 	// is a CloudFormation expression. A served function with one of these fails
 	// closed instead of silently applying the AWS default.
@@ -96,13 +101,24 @@ type FunctionSpec struct {
 	CodeProblem string `json:"codeProblem,omitempty"`
 }
 
+// MockResponse is a REST API MOCK integration: the template declares the
+// status and headers the transport returns instead of invoking a function. CDK
+// uses it for CORS preflight.
+type MockResponse struct {
+	StatusCode int               `json:"statusCode"`
+	Headers    map[string]string `json:"headers,omitempty"`
+}
+
 // Route is one HTTP route bound to a function.
 type Route struct {
-	Class     APIClass `json:"class"`
-	Method    string   `json:"method"`
-	Path      string   `json:"path"`
-	Function  string   `json:"function"`
-	Streaming bool     `json:"streaming"`
+	Class    APIClass `json:"class"`
+	Method   string   `json:"method"`
+	Path     string   `json:"path"`
+	Function string   `json:"function,omitempty"`
+	// Mock is set for a REST API MOCK integration. A mock route has no
+	// function and no invoker; the transport returns the declared response.
+	Mock      *MockResponse `json:"mock,omitempty"`
+	Streaming bool          `json:"streaming"`
 	// RouteKey is the API Gateway v2 route key, kept verbatim from the
 	// template. REST v1 and Function URL routes leave it empty.
 	RouteKey string `json:"routeKey,omitempty"`
@@ -135,6 +151,14 @@ type Skipped struct {
 	Reason    string `json:"reason"`
 }
 
+// ResourceSpec is one template resource the runner can resolve a reference to.
+type ResourceSpec struct {
+	Stack      string          `json:"stack"`
+	LogicalID  string          `json:"logicalId"`
+	Type       string          `json:"type"`
+	Properties json.RawMessage `json:"-"`
+}
+
 // Spec is everything the local runner derived from the cloud assembly.
 type Spec struct {
 	AssemblyDir  string            `json:"assemblyDir"`
@@ -142,6 +166,9 @@ type Spec struct {
 	APIs         []APISpec         `json:"apis"`
 	FunctionURLs []FunctionURLSpec `json:"functionUrls"`
 	Skipped      []Skipped         `json:"skipped"`
+	// Resources is the assembly index used to resolve function environment
+	// references. It is internal and not part of the plan document.
+	Resources []ResourceSpec `json:"-"`
 }
 
 // RuntimeClass maps a Lambda runtime name to the image class the profile pins.
@@ -174,6 +201,9 @@ func (s *Spec) ServedFunctions() []string {
 	seen := map[string]struct{}{}
 	for _, api := range s.APIs {
 		for _, route := range api.Routes {
+			if route.Function == "" {
+				continue
+			}
 			seen[route.Function] = struct{}{}
 		}
 	}

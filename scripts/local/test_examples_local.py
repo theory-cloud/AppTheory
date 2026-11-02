@@ -68,6 +68,14 @@ class RealTreeTests(unittest.TestCase):
         self.assertFalse(any(".cdk-asset-stage" in path for path in discovered))
         self.assertFalse(any("node_modules" in path for path in discovered))
 
+    def test_a3b_rows_are_wired(self) -> None:
+        _, entries = harness.load_manifest(harness.MANIFEST_PATH)
+        self.assertEqual([], [entry.key for entry in entries if entry.pending == "A3b"])
+        classified = [entry for entry in entries if not entry.pending]
+        self.assertEqual(42, len(classified))
+        milestones = {entry.pending for entry in entries if entry.pending}
+        self.assertEqual({"A4", "A5b"}, milestones)
+
     def test_profile_ports_stay_off_reserved_ranges(self) -> None:
         profile, _ = harness.load_manifest(harness.MANIFEST_PATH)
         ports = profile["ports"]
@@ -292,6 +300,34 @@ class LeaseTests(unittest.TestCase):
             self.assertNotIn(http_port, seen)
             self.assertNotIn(aux_port, seen)
             seen.update((base, http_port, aux_port))
+
+
+class LocalRunnerHelperTests(unittest.TestCase):
+    """The A3b helpers keep the wire format and assertions honest."""
+
+    def test_parse_sse_reads_ids_and_data(self) -> None:
+        events = harness._parse_sse(
+            "id: 1\ndata: \n\n"
+            'id: 2\nevent: message\ndata: {"jsonrpc":"2.0"}\n\n'
+        )
+        self.assertEqual([("1", ""), ("2", '{"jsonrpc":"2.0"}')], events)
+
+    def test_mcp_event_is_an_http_api_v2_request(self) -> None:
+        event = harness.mcp_event(
+            "tools/list", session="abc123", protocol="2025-11-25"
+        )
+        self.assertEqual("2.0", event["version"])
+        self.assertEqual("POST /mcp", event["routeKey"])
+        self.assertEqual("local.execute-api.us-east-1.amazonaws.com", event["requestContext"]["domainName"])
+        self.assertEqual("abc123", event["headers"]["mcp-session-id"])
+        self.assertEqual("2025-11-25", event["headers"]["mcp-protocol-version"])
+        self.assertFalse(event["isBase64Encoded"])
+
+    def test_request_id_accepts_both_runtime_shapes(self) -> None:
+        harness._assert_request_id({"request_id": "a" * 32}, "hex")
+        harness._assert_request_id({"request_id": "7f08dd02-7030-4ecc-9c60-0cd609076abf"}, "uuid")
+        with self.assertRaises(harness.HarnessFailure):
+            harness._assert_request_id({"request_id": ""}, "empty")
 
 
 if __name__ == "__main__":
