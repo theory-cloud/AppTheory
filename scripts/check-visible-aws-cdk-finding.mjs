@@ -717,9 +717,52 @@ function rubricNodeLockfiles() {
   return entries.length > 0 ? entries : null;
 }
 
+// Fallback for the release-build snapshot, which has no `.git`. Every npm
+// lockfile lives under these three source roots; dependency trees and build
+// output are pruned, so the walk matches the tracked set.
+function filesystemNodeLockfiles() {
+  const roots = ["cdk", "ts", "examples"];
+  const skipped = new Set([
+    "node_modules",
+    ".git",
+    "dist",
+    ".cdk-asset-stage",
+    "__pycache__",
+    ".venv",
+    ".ruff_cache",
+  ]);
+  const found = [];
+  const visit = (dir) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (skipped.has(entry.name)) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        visit(full);
+        continue;
+      }
+      if (
+        entry.isFile() &&
+        (entry.name === "package-lock.json" || entry.name === "npm-shrinkwrap.json")
+      ) {
+        found.push(path.relative(repositoryRoot, full).split(path.sep).join("/"));
+      }
+    }
+  };
+  for (const root of roots) visit(path.join(repositoryRoot, root));
+  return found.length > 0 ? found.sort() : null;
+}
+
 // Enumerates every tracked npm lockfile, the authority for "no lockfile may go
-// unscanned". Returns null when Git or the worktree is unavailable, which fails
-// the completeness comparison rather than silently skipping it.
+// unscanned". Git is authoritative; when it is unavailable (the source snapshot
+// the deterministic-build gate checks), fall back to the same bounded walk.
+// Returns null when neither source produces a lockfile, which fails the
+// completeness comparison rather than silently skipping it.
 function trackedNodeLockfiles() {
   let output;
   try {
@@ -729,13 +772,13 @@ function trackedNodeLockfiles() {
       stdio: ["ignore", "pipe", "pipe"],
     });
   } catch {
-    return null;
+    return filesystemNodeLockfiles();
   }
   const entries = output
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line !== "");
-  return entries.length > 0 ? entries : null;
+  return entries.length > 0 ? entries : filesystemNodeLockfiles();
 }
 
 function runSelfTest() {
