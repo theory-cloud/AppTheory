@@ -107,6 +107,7 @@
 // stdout per exception beginning "exception-applied: " so a calling gate can
 // prove that a non-zero scanner exit was caused by exactly the reviewed finding.
 // ===========================================================================
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -149,6 +150,7 @@ function normalizePath(value) {
 }
 
 function sameStringSet(actual, expected) {
+  if (!Array.isArray(actual) || !Array.isArray(expected)) return false;
   if (actual.length !== expected.length) return false;
   const actualSorted = [...actual].sort();
   const expectedSorted = [...expected].sort();
@@ -326,7 +328,8 @@ const expectation = {
 // This list must stay identical to the Node lockfile set gov-verify-rubric.sh
 // scans; any lockfile outside this list that starts routing here still fails
 // closed, because the bundled-graph anchor above is enforced on every routed
-// lockfile.
+// lockfile. The self-test also compares this list with every tracked npm
+// lockfile, so a new example lockfile cannot be left unscanned.
 const AWS_CDK_LOCKFILES = [
   "cdk/package-lock.json",
   "examples/cdk/codebuild-job-runner/package-lock.json",
@@ -335,8 +338,11 @@ const AWS_CDK_LOCKFILES = [
   "examples/cdk/kinesis-cloudwatch-logs/package-lock.json",
   "examples/cdk/lambda-role/package-lock.json",
   "examples/cdk/lesser-parity/package-lock.json",
+  "examples/cdk/media-cdn/package-lock.json",
   "examples/cdk/microvm-controller/package-lock.json",
   "examples/cdk/multilang/package-lock.json",
+  "examples/cdk/path-routed-frontend/package-lock.json",
+  "examples/cdk/restv1-router/package-lock.json",
   "examples/cdk/s3-vectors-semantic-search/package-lock.json",
   "examples/cdk/sqs-queue/package-lock.json",
   "examples/cdk/ssr-only-provided-assets-site/package-lock.json",
@@ -711,6 +717,27 @@ function rubricNodeLockfiles() {
   return entries.length > 0 ? entries : null;
 }
 
+// Enumerates every tracked npm lockfile, the authority for "no lockfile may go
+// unscanned". Returns null when Git or the worktree is unavailable, which fails
+// the completeness comparison rather than silently skipping it.
+function trackedNodeLockfiles() {
+  let output;
+  try {
+    output = execFileSync("git", ["ls-files", "*package-lock.json", "*npm-shrinkwrap.json"], {
+      cwd: repositoryRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch {
+    return null;
+  }
+  const entries = output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+  return entries.length > 0 ? entries : null;
+}
+
 function runSelfTest() {
   const now = "2026-10-04T00:00:00Z";
   const canonical = "cdk/package-lock.json";
@@ -954,6 +981,14 @@ function runSelfTest() {
   cases.push({
     label: "AWS_CDK_LOCKFILES and gov-verify-rubric.sh node_lockfiles agree",
     actual: sameStringSet(rubricNodeLockfiles(), [...AWS_CDK_LOCKFILES, "ts/package-lock.json"]),
+    expected: true,
+  });
+  // Completeness is judged against the repository tree, not just against the
+  // other list: a newly tracked example lockfile that neither set names must
+  // fail the self-test instead of being silently unscanned.
+  cases.push({
+    label: "AWS_CDK_LOCKFILES covers every tracked npm lockfile except ts/package-lock.json",
+    actual: sameStringSet(trackedNodeLockfiles(), [...AWS_CDK_LOCKFILES, "ts/package-lock.json"]),
     expected: true,
   });
 
