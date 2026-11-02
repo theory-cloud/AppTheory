@@ -389,7 +389,11 @@ has a fixed `Date` for the invocation, and exposes only the documented surface:
 | `cloudfront-js-1.0` | `require('crypto')`, `require('querystring')`, `console.log`; `const`, `let`, `async` and `await` are rejected before execution |
 
 Both runtimes have no network, file system, `process`, timers, `eval`,
-`Function` constructor or environment access. A thrown error, invalid return,
+`Function` constructor or environment access. `Buffer` and the text codecs
+implement the documented methods the gateway supports; an unimplemented method
+throws a `TypeError` instead of silently behaving differently, and CloudFront's
+nonstandard string helpers (`bytesFrom`, `toBytes`, `toUTF8`, and the others)
+are not implemented. A thrown error, invalid return,
 changed `request.method`, `Set-Cookie` in a request or response header, a
 Promise return or an invalid base64 body is a 503-class failure with a clear
 log; it is never a pass-through. The executor's watchdog is 5 seconds; it does
@@ -458,7 +462,9 @@ omitted; the policy parser reports this. Host follows the policy: `AllViewer`
 and a `host` whitelist forward the viewer Host, `AllViewerExceptHostHeader` uses
 the origin domain, and a policy that forwards no Host also uses the origin
 domain (empty for an origin group, whose origin implementation chooses the
-member). `OriginPath` is applied to the origin request path, not to the viewer
+member). For an S3 or Function URL origin the topology records a local
+placeholder domain; A5b's origin implementation sets the endpoint it actually
+reaches. `OriginPath` is applied to the origin request path, not to the viewer
 URI.
 
 ### Response headers policy application
