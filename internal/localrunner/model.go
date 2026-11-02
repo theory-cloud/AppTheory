@@ -80,8 +80,13 @@ type FunctionSpec struct {
 	// UnresolvedMemorySize and UnresolvedTimeout report that the template value
 	// is a CloudFormation expression. A served function with one of these fails
 	// closed instead of silently applying the AWS default.
-	UnresolvedMemorySize bool   `json:"unresolvedMemorySize,omitempty"`
-	UnresolvedTimeout    bool   `json:"unresolvedTimeout,omitempty"`
+	UnresolvedMemorySize bool `json:"unresolvedMemorySize,omitempty"`
+	UnresolvedTimeout    bool `json:"unresolvedTimeout,omitempty"`
+	// MemorySizeExpression and TimeoutExpression name the intrinsic (Ref,
+	// Fn::If, ...) behind an unresolved limit. They are display-only; the
+	// Unresolved* flags remain the fail-closed signals.
+	MemorySizeExpression string `json:"memorySizeExpression,omitempty"`
+	TimeoutExpression    string `json:"timeoutExpression,omitempty"`
 	AssetDir             string `json:"assetDir,omitempty"`
 	InlineCode           string `json:"-"`
 	InlineFile           string `json:"inlineFile,omitempty"`

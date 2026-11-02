@@ -338,6 +338,12 @@ func parseFunction(assemblyDir string, stack assemblyStack, id string, resource 
 		UnresolvedMemorySize: !memoryResolved,
 		UnresolvedTimeout:    !timeoutResolved,
 	}
+	if !memoryResolved {
+		function.MemorySizeExpression = intExpression(props.MemorySize)
+	}
+	if !timeoutResolved {
+		function.TimeoutExpression = intExpression(props.Timeout)
+	}
 	if len(props.Architectures) > 0 {
 		function.Architecture = props.Architectures[0]
 	}
@@ -423,6 +429,22 @@ func decodeInt(raw json.RawMessage, fallback int) (int, bool) {
 		return fallback, false
 	}
 	return value, true
+}
+
+// intExpression names the CloudFormation intrinsic that kept an integer
+// property from resolving. It is display-only: decodeInt's resolved flag is
+// the fail-closed signal.
+func intExpression(raw json.RawMessage) string {
+	var expression map[string]json.RawMessage
+	if len(raw) == 0 || json.Unmarshal(raw, &expression) != nil || len(expression) != 1 {
+		return ""
+	}
+	for key := range expression {
+		if key == "Ref" || strings.HasPrefix(key, "Fn::") {
+			return key
+		}
+	}
+	return ""
 }
 
 // inlineFileName is the file an inline handler is written to, matching the

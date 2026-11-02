@@ -158,8 +158,8 @@ func (c *commandConfig) plan(ctx context.Context, runner *localrunner.Runner) in
 	fmt.Println()
 	fmt.Println("functions:")
 	for _, function := range spec.Functions {
-		fmt.Printf("  %-40s %-16s %-8s %4d MB\n",
-			function.LogicalID, function.Runtime, function.Architecture, function.MemoryMB)
+		fmt.Printf("  %-40s %-16s %-8s %s\n",
+			function.LogicalID, function.Runtime, function.Architecture, memoryCell(function))
 	}
 	fmt.Println()
 	fmt.Println("routes:")
@@ -174,6 +174,19 @@ func (c *commandConfig) plan(ctx context.Context, runner *localrunner.Runner) in
 		}
 	}
 	return 0
+}
+
+// memoryCell renders a function's memory for the plan. An unresolved intrinsic
+// is shown as such instead of the internal fallback, so plan never reports a
+// default that the runner would refuse to apply to a served function.
+func memoryCell(function localrunner.FunctionSpec) string {
+	if function.UnresolvedMemorySize {
+		if function.MemorySizeExpression != "" {
+			return "unresolved (" + function.MemorySizeExpression + ")"
+		}
+		return "unresolved"
+	}
+	return fmt.Sprintf("%4d MB", function.MemoryMB)
 }
 
 func (c *commandConfig) serve(ctx context.Context, runner *localrunner.Runner) int {

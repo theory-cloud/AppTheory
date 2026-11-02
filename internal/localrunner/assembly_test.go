@@ -401,6 +401,35 @@ func TestDeriveFailsClosedOnUnresolvedLimits(t *testing.T) {
 	}
 }
 
+func TestParseFunctionNamesUnresolvedLimitExpressions(t *testing.T) {
+	properties, err := json.Marshal(map[string]any{
+		"Runtime":    "nodejs24.x",
+		"Handler":    "index.handler",
+		"MemorySize": map[string]any{"Ref": "Memory"},
+		"Timeout":    map[string]any{"Fn::If": []any{"UseLong", 30, 3}},
+		"Code":       map[string]any{"ZipFile": "exports.handler = async () => ({});"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	function, err := parseFunction(t.TempDir(), assemblyStack{Name: "TestStack"}, "Fn", templateResource{
+		Type:       typeLambdaFunction,
+		Properties: properties,
+	})
+	if err != nil {
+		t.Fatalf("parse function: %v", err)
+	}
+	if !function.UnresolvedMemorySize || function.MemorySizeExpression != "Ref" {
+		t.Fatalf("MemorySize expression = %q, unresolved = %v", function.MemorySizeExpression, function.UnresolvedMemorySize)
+	}
+	if !function.UnresolvedTimeout || function.TimeoutExpression != "Fn::If" {
+		t.Fatalf("Timeout expression = %q, unresolved = %v", function.TimeoutExpression, function.UnresolvedTimeout)
+	}
+	if function.MemoryMB != 128 || function.Timeout != 3 {
+		t.Fatalf("internal fallbacks changed: memory=%d timeout=%d", function.MemoryMB, function.Timeout)
+	}
+}
+
 func TestDeriveUsesDefaultsOnlyForAbsentLimits(t *testing.T) {
 	function := lambdaFunction(nil)
 	properties, ok := function["Properties"].(map[string]any)
