@@ -1,7 +1,7 @@
 # AppTheory Makefile
 
 .PHONY: all build test test-unit lint fmt fmt-check rubric contract-tests contract-one verify-builds \
-	examples-local examples-local-down examples-local-selftest \
+	examples-local examples-local-down examples-local-selftest verify-cdk-synth-location-independent \
 	theorycloud-apptheory-subtree verify-theorycloud-apptheory-subtree \
 	sync-theorycloud-apptheory-subtree trigger-theorycloud-publish \
 	verify-theorycloud-apptheory-publish-config
@@ -57,6 +57,13 @@ examples-local-selftest:
 
 examples-local-down:
 	@python3 scripts/local/run_examples_local.py --down $(EXAMPLES_LOCAL_ARGS)
+
+# Re-synthesizes every pinned CDK example from a copy under $HOME and requires
+# the same template hashes. The copy is source-only, so this proves the pins do
+# not depend on the checkout's absolute path; it costs a second full synth run,
+# which is why it runs in CI's examples-local job instead of `make rubric`.
+verify-cdk-synth-location-independent:
+	@./scripts/verify-cdk-synth-location-independent.sh
 
 contract-tests:
 	@./scripts/verify-contract-tests.sh

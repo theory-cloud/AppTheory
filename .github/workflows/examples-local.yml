@@ -53,3 +53,11 @@ jobs:
       # same host port. --slot 0 pins the compose slot to that port.
       - name: Run the local examples harness
         run: make examples-local EXAMPLES_LOCAL_ARGS="--slot 0 --external"
+
+      # A pinned synth hash only proves location independence when synthesis
+      # from another absolute path reproduces it. This copies the source tree
+      # under $HOME, re-synthesizes every pinned example there, and requires the
+      # same bytes. It is a second synth run, so it lives here rather than in
+      # the 60-minute harness step.
+      - name: Verify CDK synth from a relocated copy
+        run: make verify-cdk-synth-location-independent
