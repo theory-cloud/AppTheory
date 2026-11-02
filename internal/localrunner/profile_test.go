@@ -236,6 +236,14 @@ func TestDocumentedMinimalProfileIsValid(t *testing.T) {
 			if strings.Contains(section, "validates the profile before it synthesizes") {
 				t.Fatalf("%s: Run your own app repeats the old profile-validation order", document)
 			}
+			if filepath.Base(document) == "local-runner.md" {
+				if !strings.Contains(section, "three stages") {
+					t.Fatalf("%s: Run your own app does not count the profile-validation stages", document)
+				}
+				if strings.Contains(section, "two stages") {
+					t.Fatalf("%s: Run your own app still says profile validation has two stages", document)
+				}
+			}
 
 			path := filepath.Join(t.TempDir(), "local-profile.json")
 			if err := os.WriteFile(path, []byte(documentedBlock(t, section, "#### `local-profile.json`", "json")), 0o600); err != nil {
