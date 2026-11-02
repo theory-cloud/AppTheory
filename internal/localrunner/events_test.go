@@ -61,6 +61,9 @@ func TestHTTPV2EventMatchesProviderShape(t *testing.T) {
 	if strings.Join(event.Cookies, ",") != "a=b,c=d" {
 		t.Fatalf("unexpected cookies: %+v", event.Cookies)
 	}
+	if _, exists := event.Headers["cookie"]; exists {
+		t.Fatalf("the cookie header must not duplicate the cookies array: %+v", event.Headers)
+	}
 	if event.Body != `{"a":1}` || event.IsBase64Encoded {
 		t.Fatalf("unexpected body: %+v", event)
 	}
@@ -157,8 +160,15 @@ func TestFunctionURLEventMatchesProviderShape(t *testing.T) {
 	if envelope["routeKey"] != "$default" {
 		t.Fatalf("Function URL events carry the $default route key: %v", envelope["routeKey"])
 	}
+	requestContext := mustMap(t, envelope["requestContext"])
+	if requestContext["routeKey"] != "$default" || requestContext["stage"] != "$default" {
+		t.Fatalf("Function URL request context must report the $default route and stage: %v", requestContext)
+	}
 	if _, ok := envelope["pathParameters"]; ok {
 		t.Fatalf("Function URL events carry no path parameters: %v", envelope)
+	}
+	if _, exists := event.Headers["cookie"]; exists {
+		t.Fatalf("the cookie header must not duplicate the cookies array: %+v", event.Headers)
 	}
 }
 

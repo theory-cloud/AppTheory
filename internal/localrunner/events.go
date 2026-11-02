@@ -60,7 +60,7 @@ func httpV2Event(request InvokeRequest) map[string]any {
 		"routeKey":       routeKey,
 		"rawPath":        rawPath(request),
 		"rawQueryString": request.RawQuery,
-		"headers":        singleHeaders(request.Header),
+		"headers":        v2Headers(request.Header),
 		"requestContext": map[string]any{
 			"accountId":    LocalAccountID,
 			"apiId":        apiID,
@@ -145,7 +145,7 @@ func functionURLEvent(request InvokeRequest) map[string]any {
 		"routeKey":       "$default",
 		"rawPath":        rawPath(request),
 		"rawQueryString": request.RawQuery,
-		"headers":        singleHeaders(request.Header),
+		"headers":        v2Headers(request.Header),
 		"requestContext": map[string]any{
 			"accountId":    LocalAccountID,
 			"requestId":    request.RequestID,
@@ -153,6 +153,8 @@ func functionURLEvent(request InvokeRequest) map[string]any {
 			"domainName":   urlID + FunctionURLDomainSuffix,
 			"domainPrefix": urlID,
 			"http":         httpDescription(request),
+			"routeKey":     LocalStageName,
+			"stage":        LocalStageName,
 			"time":         eventTime(request.Now),
 			"timeEpoch":    request.Now.UnixMilli(),
 		},
@@ -209,6 +211,17 @@ func singleHeaders(header http.Header) map[string]string {
 			continue
 		}
 		out[strings.ToLower(name)] = strings.Join(values, ",")
+	}
+	return out
+}
+
+// v2Headers is the headers map of a v2-shaped event. API Gateway removes the
+// Cookie header when it populates the cookies array, so a handler cannot read
+// the same cookies twice in different forms.
+func v2Headers(header http.Header) map[string]string {
+	out := singleHeaders(header)
+	if len(requestCookies(header)) > 0 {
+		delete(out, "cookie")
 	}
 	return out
 }
