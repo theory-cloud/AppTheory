@@ -32,7 +32,8 @@ type Gateway struct {
 }
 
 // NewGateway builds a gateway. A nil executor uses the default Node executor;
-// a nil origin map makes every origin an OriginNotWiredError until A5b.
+// a nil origin map leaves every origin without a local implementation, which the
+// gateway reports as a named 503.
 func NewGateway(
 	distribution *Distribution,
 	topology *Topology,
@@ -135,14 +136,14 @@ func (g *Gateway) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	originImplementation, origin, _ := g.originForTarget(targetID)
 	if originImplementation == nil {
 		g.respondError(writer, request, behavior, state.Header, http.StatusServiceUnavailable,
-			(&OriginNotWiredError{OriginID: targetID}).Error())
+			(&OriginUnavailableError{OriginID: targetID, Reason: "the assembly declares it but the runner registered no implementation"}).Error())
 		return
 	}
 	originRequest := g.originRequest(state, behavior, origin, targetID, requestID)
 	originResponse, originErr := originImplementation.Fetch(request.Context(), originRequest)
 	if originErr != nil {
-		var notWired *OriginNotWiredError
-		if errors.As(originErr, &notWired) || errors.Is(originErr, ErrOriginNotWired) {
+		var unavailable *OriginUnavailableError
+		if errors.As(originErr, &unavailable) || errors.Is(originErr, ErrOriginUnavailable) {
 			g.respondError(writer, request, behavior, state.Header, http.StatusServiceUnavailable, originErr.Error())
 			return
 		}

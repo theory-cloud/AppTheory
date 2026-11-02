@@ -403,8 +403,8 @@ func TestGatewayUnwiredOriginIsNamed(t *testing.T) {
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", recorder.Code)
 	}
-	if !strings.Contains(recorder.Body.String(), "not wired until A5b") {
-		t.Fatalf("body does not name the milestone: %q", recorder.Body.String())
+	if !strings.Contains(recorder.Body.String(), "registered no implementation") {
+		t.Fatalf("body does not name the reason: %q", recorder.Body.String())
 	}
 }
 
