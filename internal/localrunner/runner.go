@@ -90,6 +90,7 @@ type Runner struct {
 	invokers       map[string]*FunctionProcess
 	backends       map[string]backendProcess
 	resourceValues resourceValues
+	tables         map[string]tableInfo
 	servers        []*http.Server
 	listeners      []net.Listener
 	semaphore      chan struct{}
@@ -111,6 +112,7 @@ func NewRunner(options Options) (*Runner, error) {
 		runID:     shortID(),
 		invokers:  map[string]*FunctionProcess{},
 		backends:  map[string]backendProcess{},
+		tables:    map[string]tableInfo{},
 		endpoints: append([]Endpoint(nil), options.Endpoints...),
 		images:    map[string]string{},
 		semaphore: make(chan struct{}, options.MaxConcurrency),

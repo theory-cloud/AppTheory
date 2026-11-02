@@ -174,7 +174,7 @@ func (d *Docker) Running(ctx context.Context, name string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("inspect container %s: %s", name, firstNonEmpty(stderr, err.Error()))
 	}
-	return strings.TrimSpace(stdout) == "true", nil
+	return strings.TrimSpace(stdout) == boolTrue, nil
 }
 
 // PublishedPort returns the loopback host port Docker assigned to a container

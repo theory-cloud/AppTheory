@@ -9,10 +9,27 @@ import (
 // resourceValue is a local value the runner derived (or provisioned) for one
 // template resource. Empty fields mean the value is unavailable.
 type resourceValue struct {
-	Name  string
-	ARN   string
-	KeyID string
-	URL   string
+	Type      string
+	Name      string
+	ARN       string
+	KeyID     string
+	URL       string
+	StreamARN string
+}
+
+// keySchemaAttribute is one provisioned DynamoDB key attribute.
+type keySchemaAttribute struct {
+	Name string
+	Type string
+}
+
+// tableInfo is the provisioned state a session needs to read and write a table
+// and to build a DynamoDB stream record from the stored image.
+type tableInfo struct {
+	Name           string
+	KeySchema      []keySchemaAttribute
+	StreamARN      string
+	StreamViewType string
 }
 
 // resolveEnvironment replaces every supported CloudFormation expression in a
@@ -238,7 +255,7 @@ func (r *Runner) localResourceValue(resource ResourceSpec, provisioned resourceV
 func (r *Runner) queueURL(name string) string {
 	base := ClosedEndpoint
 	for _, endpoint := range r.endpoints {
-		if endpoint.Service == "sqs" {
+		if endpoint.Service == backendSQS {
 			base = strings.TrimSuffix(endpoint.URL, "/")
 			break
 		}

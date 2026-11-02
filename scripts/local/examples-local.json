@@ -25,6 +25,10 @@
           "S3PROXY_IDENTITY": "dummy",
           "S3PROXY_CREDENTIAL": "dummy"
         }
+      },
+      "sqs": {
+        "image": "softwaremill/elasticmq-native@sha256:e4580ab9ad1bd5cd37b4ba04911bc5ccc8cd2d9ab4de56ece65acee71c24e05c",
+        "containerPort": 9324
       }
     },
     "ports": {
@@ -72,6 +76,10 @@
       "s3": {
         "container": "s3proxy",
         "env": ["AWS_ENDPOINT_URL_S3", "S3_ENDPOINT"]
+      },
+      "sqs": {
+        "container": "sqs",
+        "env": ["AWS_ENDPOINT_URL_SQS", "SQS_ENDPOINT"]
       }
     }
   },

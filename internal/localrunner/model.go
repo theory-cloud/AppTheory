@@ -54,6 +54,7 @@ const (
 	// probes. backendDynamoDB is defined with the runner's backend constants.
 	backendSQS     = "sqs"
 	backendKinesis = "kinesis"
+	boolTrue       = "true"
 )
 
 // APIClass names a supported HTTP surface kind.
