@@ -14,11 +14,16 @@ permissions:
 jobs:
   examples-local:
     name: Examples (local harness)
-    runs-on: ubuntu-latest
+    # The hello-world Go function deploys an arm64 provided.al2023 bootstrap
+    # (the examples' CDK stacks build it that way). The local runner runs the
+    # official image for the function's architecture and refuses to guess at
+    # cross-architecture emulation, so the job uses an arm64 runner where the
+    # bootstrap executes natively.
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     services:
       dynamodb-local:
-        image: amazon/dynamodb-local:3.1.0
+        image: amazon/dynamodb-local@sha256:7ef4a2c45b58c2901e70a4f28e0953a422c2c631baaaf5e2c15e0805740c7752
         ports:
           - 8130:8000
     steps:

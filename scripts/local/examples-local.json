@@ -4,13 +4,43 @@
     "name": "apptheory-examples-local",
     "composeFile": "scripts/local/docker-compose.yml",
     "dynamodbLocal": {
-      "image": "amazon/dynamodb-local:3.1.0",
+      "image": "amazon/dynamodb-local@sha256:7ef4a2c45b58c2901e70a4f28e0953a422c2c631baaaf5e2c15e0805740c7752",
       "port": 8130
     },
     "ports": {
       "first": 8130,
       "last": 8199,
       "stride": 10
+    },
+    "lambda": {
+      "images": {
+        "go": {
+          "tag": "public.ecr.aws/lambda/provided:al2023",
+          "digest": "sha256:2dc0f1f26731018b369932201d1dac295edd1730d1280f194486ae093ac39798",
+          "pinned": "2026-11-01"
+        },
+        "node": {
+          "tag": "public.ecr.aws/lambda/nodejs:24",
+          "digest": "sha256:8466f17dcfbec19afcfefff53964fac7bc3f7975fa132d5fd74dce53004827d0",
+          "pinned": "2026-11-01"
+        },
+        "python": {
+          "tag": "public.ecr.aws/lambda/python:3.14",
+          "digest": "sha256:51985f11b2fb1949619bda27d121f38ef7d4db64423ca6189ab1d7e632527d27",
+          "pinned": "2026-11-01"
+        }
+      }
+    },
+    "endpoints": {
+      "dynamodb": {
+        "container": "dynamodb-local",
+        "env": [
+          "AWS_ENDPOINT_URL",
+          "AWS_ENDPOINT_URL_DYNAMODB",
+          "DYNAMODB_ENDPOINT",
+          "DDB_ENDPOINT"
+        ]
+      }
     }
   },
   "entrypoints": {
@@ -65,20 +95,24 @@
       "description": "CDK app anchor for the synth row: every CDK example in the tree is synthesized and compared with its pinned template hash (plus focused construct assertions for the six once-uncovered examples, and an official Lambda runtime image invocation of the staged TypeScript and Python assets)."
     },
     "examples/cdk/hello-world/handlers/go/main.go": {
-      "pending": "A3a",
-      "description": "hello-world Go handler; A3a runs it through the local runner with HTTP assertions."
+      "run": "local-runner-go",
+      "class": "L1",
+      "description": "hello-world Go handler: the app's synthesized CDK stack, the provided.al2023 arm64 container through the Runtime Interface Emulator, and four HTTP assertions over the derived HTTP API v2 transport (request id, root, 405, 404)."
     },
     "examples/cdk/hello-world/handlers/py/handler.py": {
-      "pending": "A3a",
-      "description": "hello-world Python handler; A3a runs it through the local runner with HTTP assertions."
+      "run": "local-runner-py",
+      "class": "L1",
+      "description": "hello-world Python handler: the app's synthesized CDK stack, the python:3.14 container through the Runtime Interface Emulator, and four HTTP assertions over the derived HTTP API v2 transport."
     },
     "examples/cdk/hello-world/handlers/ts/handler.mjs": {
-      "pending": "A3a",
-      "description": "hello-world TypeScript handler; A3a runs it through the local runner with HTTP assertions."
+      "run": "local-runner-ts",
+      "class": "L1",
+      "description": "hello-world TypeScript handler: the app's synthesized CDK stack, the nodejs:24 container through the Runtime Interface Emulator, and four HTTP assertions over the derived HTTP API v2 transport."
     },
     "examples/cdk/hello-world/handlers/ts/app.mjs": {
-      "pending": "A3a",
-      "description": "hello-world TypeScript app module imported by the handler; A3a exercises it through the same handler row."
+      "coveredBy": "examples/cdk/hello-world/handlers/ts/handler.mjs",
+      "class": "L1",
+      "description": "hello-world TypeScript app module imported by the handler; exercised through the same HTTP assertions."
     },
     "examples/cdk/import-pipeline/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",

@@ -127,10 +127,21 @@ class ManifestFailureTests(unittest.TestCase):
     def setUp(self) -> None:
         self.root = Path(tempfile.mkdtemp(prefix="apptheory-harness-test-"))
         self.addCleanup(shutil.rmtree, self.root, True)
+        self.image = f"amazon/dynamodb-local@sha256:{'a' * 64}"
         self.profile = {
             "composeFile": "scripts/local/docker-compose.yml",
-            "dynamodbLocal": {"image": "amazon/dynamodb-local:3.1.0", "port": 8130},
+            "dynamodbLocal": {"image": self.image, "port": 8130},
             "ports": {"first": 8130, "last": 8199, "stride": 10},
+            "lambda": {
+                "images": {
+                    "go": {"tag": "public.ecr.aws/lambda/provided:al2023", "digest": f"sha256:{'b' * 64}"},
+                    "node": {"tag": "public.ecr.aws/lambda/nodejs:24", "digest": f"sha256:{'c' * 64}"},
+                    "python": {"tag": "public.ecr.aws/lambda/python:3.14", "digest": f"sha256:{'d' * 64}"},
+                }
+            },
+            "endpoints": {
+                "dynamodb": {"env": ["AWS_ENDPOINT_URL", "AWS_ENDPOINT_URL_DYNAMODB"]},
+            },
         }
         write(self.root, "scripts/local/docker-compose.yml", self._compose_text(8130))
         write(self.root, "examples/demo/main.go", "package main\nfunc main() {}\n")
@@ -138,12 +149,11 @@ class ManifestFailureTests(unittest.TestCase):
         write(self.root, "examples/demo/extra.py", "print('x')\n")
         self.discovered = harness.discover(self.root)
 
-    @staticmethod
-    def _compose_text(port: int) -> str:
+    def _compose_text(self, port: int) -> str:
         return (
             "services:\n"
             "  dynamodb-local:\n"
-            "    image: amazon/dynamodb-local:3.1.0\n"
+            f"    image: {self.image}\n"
             "    ports:\n"
             f'      - "127.0.0.1:${{APPTHEORY_LOCAL_DDB_PORT:-{port}}}:8000"\n'
         )
@@ -211,6 +221,47 @@ class ManifestFailureTests(unittest.TestCase):
         }
         errors = self.validate(rows)
         self.assertTrue(any("reserved" in error for error in errors), errors)
+
+    def test_tag_only_image_fails_digest_pinning(self) -> None:
+        self.profile["dynamodbLocal"]["image"] = "amazon/dynamodb-local:3.1.0"
+        write(self.root, "scripts/local/docker-compose.yml", self._compose_text(8130).replace(self.image, "amazon/dynamodb-local:3.1.0"))
+        rows = {
+            "examples/demo/main.go": {"run": "run", "class": "L1"},
+            "examples/demo/run.mjs": {"run": "run2", "class": "L1"},
+            "examples/demo/extra.py": {"pending": "A4"},
+        }
+        errors = self.validate(rows)
+        self.assertTrue(any("DynamoDB Local image must be pinned by digest" in error for error in errors), errors)
+
+    def test_tag_only_lambda_image_fails_digest_pinning(self) -> None:
+        self.profile["lambda"]["images"]["go"]["digest"] = ""
+        rows = {
+            "examples/demo/main.go": {"run": "run", "class": "L1"},
+            "examples/demo/run.mjs": {"run": "run2", "class": "L1"},
+            "examples/demo/extra.py": {"pending": "A4"},
+        }
+        errors = self.validate(rows)
+        self.assertTrue(any("lambda.images.go must be pinned by digest" in error for error in errors), errors)
+
+    def test_lambda_image_must_match_its_runtime(self) -> None:
+        self.profile["lambda"]["images"]["go"]["tag"] = "public.ecr.aws/lambda/nodejs:24"
+        rows = {
+            "examples/demo/main.go": {"run": "run", "class": "L1"},
+            "examples/demo/run.mjs": {"run": "run2", "class": "L1"},
+            "examples/demo/extra.py": {"pending": "A4"},
+        }
+        errors = self.validate(rows)
+        self.assertTrue(any("not an official image" in error for error in errors), errors)
+
+    def test_missing_endpoint_declarations_fail(self) -> None:
+        del self.profile["endpoints"]
+        rows = {
+            "examples/demo/main.go": {"run": "run", "class": "L1"},
+            "examples/demo/run.mjs": {"run": "run2", "class": "L1"},
+            "examples/demo/extra.py": {"pending": "A4"},
+        }
+        errors = self.validate(rows)
+        self.assertTrue(any("missing endpoints" in error for error in errors), errors)
 
     def test_unknown_milestone_fails(self) -> None:
         rows = {
