@@ -24,6 +24,84 @@ the same binary because the runtime comes from the CDK stack, not from the
 caller: `provided.al2023` for Go, `nodejs:24` for Node, `python:3.14` for Python.
 `make examples-local` runs the three hello-world rows this way.
 
+## Run your own app
+
+The commands above run from this repository. An app that lives anywhere else
+uses the same command; `--app` is the app's CDK directory and `--profile` pins
+the runtime images:
+
+```bash
+# Run a released module without checking out AppTheory.
+go run github.com/theory-cloud/apptheory/v6/cmd/apptheory-local@<version> \
+  --app ~/code/my-app --profile ~/code/my-app/local-profile.json
+
+# Or install the command once.
+go install github.com/theory-cloud/apptheory/v6/cmd/apptheory-local@<version>
+apptheory-local --app ~/code/my-app --profile ~/code/my-app/local-profile.json
+```
+
+`<version>` is a release that contains the command (v6.5.0 or later);
+`go list -m -versions github.com/theory-cloud/apptheory/v6` lists released
+versions.
+
+Before that release, run the command from a sibling AppTheory checkout (the
+same model as FaceTheory Phase 3):
+
+```bash
+# Run from the checkout without installing anything.
+go run -C ~/code/AppTheory ./cmd/apptheory-local \
+  --app ~/code/my-app --profile ~/code/my-app/local-profile.json
+
+# Or build the command once and keep it outside the checkout.
+go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
+~/bin/apptheory-local --app ~/code/my-app --profile ~/code/my-app/local-profile.json
+```
+
+TypeScript and Python apps need a Go toolchain only to run `apptheory-local`;
+their handlers keep running in the official Node or Python runtime image and
+never see the Go toolchain. A Go handler is built by its CDK bundling step
+before the runner starts, as it is for a deployment.
+
+### What your app needs
+
+- `cdk.json` and a synthesized HTTP API v2, REST API v1 or Function URL. The
+  CDK definition is the only routing source.
+- A local CDK CLI in the app directory: `npm install --save-dev aws-cdk`. The
+  runner executes `node_modules/.bin/cdk`; it does not install packages.
+- A local profile passed with `--profile`. It is required for `run` (and for
+  any served function), because it pins every runtime image by digest.
+
+A minimal profile only names the images the app uses, plus the Python image for
+the in-container preflight. This one runs a Node app with no DynamoDB backend:
+
+```json
+{
+  "profile": {
+    "lambda": {
+      "images": {
+        "node": {
+          "tag": "public.ecr.aws/lambda/nodejs:24",
+          "digest": "sha256:8466f17dcfbec19afcfefff53964fac7bc3f7975fa132d5fd74dce53004827d0",
+          "pinned": "2026-11-01"
+        },
+        "python": {
+          "tag": "public.ecr.aws/lambda/python:3.14",
+          "digest": "sha256:51985f11b2fb1949619bda27d121f38ef7d4db64423ca6189ab1d7e632527d27",
+          "pinned": "2026-11-01"
+        }
+      }
+    }
+  }
+}
+```
+
+Add a `go` pin for a Go app (`provided:al2023`) or use `python` for a Python
+app. Add `dynamodbLocal` and an `endpoints.dynamodb` entry when you pass
+`--backend dynamodb`; the [configuration reference](/reference/local-runner-configuration/)
+has the full schema. The runner validates the profile before it synthesizes
+anything: a missing image class, an unpinned tag or malformed JSON fails with
+the profile path and the reason.
+
 ## What "locally" means
 
 - **No AWS credentials.** The runner sets static dummy keys and removes every
@@ -111,6 +189,8 @@ the harness records it.
 
 ## Requirements
 
+- Go 1.27+ to build or run the `apptheory-local` command. TypeScript and Python
+  handlers never need Go: they run in their own runtime images.
 - Docker (on macOS, colima) with the daemon running. The runner creates one
   private network per run and publishes the RIE port on `127.0.0.1` only.
 - The app's CDK CLI installed in the app directory

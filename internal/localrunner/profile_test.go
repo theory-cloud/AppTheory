@@ -134,3 +134,80 @@ func TestProfileImageForWithoutProfile(t *testing.T) {
 		t.Fatal("a missing profile must fail closed")
 	}
 }
+
+func TestDocumentedMinimalProfileIsValid(t *testing.T) {
+	documents := []string{
+		filepath.Join("..", "..", "docs", "examples", "local-runner.md"),
+		filepath.Join("..", "..", "docs", "reference", "local-runner-configuration.md"),
+	}
+	for _, document := range documents {
+		t.Run(filepath.Base(document), func(t *testing.T) {
+			section := documentedSection(t, document, "## Run your own app")
+			for _, fragment := range []string{
+				"github.com/theory-cloud/apptheory/v6/cmd/apptheory-local@",
+				"go install",
+				"go run -C",
+				"go build -C",
+				"--profile",
+				"cdk.json",
+				"node_modules/.bin/cdk",
+			} {
+				if !strings.Contains(section, fragment) {
+					t.Fatalf("%s: Run your own app does not mention %q", document, fragment)
+				}
+			}
+
+			path := filepath.Join(t.TempDir(), "local-profile.json")
+			if err := os.WriteFile(path, []byte(documentedJSONBlock(t, section)), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			profile, err := LoadProfile(path)
+			if err != nil {
+				t.Fatalf("%s: the documented minimal profile does not load: %v", document, err)
+			}
+			image, err := profile.ImageFor("nodejs24.x")
+			if err != nil || !strings.Contains(image, "@sha256:") {
+				t.Fatalf("%s: the documented minimal profile does not pin the Node image: %q %v", document, image, err)
+			}
+			if _, err := profile.ImageForClass(imageClassPython); err != nil {
+				t.Fatalf("%s: the documented minimal profile has no Python preflight image: %v", document, err)
+			}
+			if _, err := profile.DynamoDBImage(); err == nil {
+				t.Fatalf("%s: the minimal profile must not require DynamoDB Local", document)
+			}
+		})
+	}
+}
+
+func documentedSection(t *testing.T, path, heading string) string {
+	t.Helper()
+	raw, err := os.ReadFile(path) //nolint:gosec // checked-in documentation path
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	text := string(raw)
+	start := strings.Index(text, heading)
+	if start < 0 {
+		t.Fatalf("%s has no %q section", path, heading)
+	}
+	rest := text[start+len(heading):]
+	if end := strings.Index(rest, "\n## "); end >= 0 {
+		rest = rest[:end]
+	}
+	return rest
+}
+
+func documentedJSONBlock(t *testing.T, section string) string {
+	t.Helper()
+	const marker = "```json\n"
+	start := strings.Index(section, marker)
+	if start < 0 {
+		t.Fatal("documented section has no JSON block")
+	}
+	rest := section[start+len(marker):]
+	end := strings.Index(rest, "\n```")
+	if end < 0 {
+		t.Fatal("documented JSON block is not closed")
+	}
+	return rest[:end]
+}

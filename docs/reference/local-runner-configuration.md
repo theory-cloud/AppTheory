@@ -60,6 +60,61 @@ shutting down: removing 1 container(s) and network …
 }
 ```
 
+## Run your own app
+
+`apptheory-local` runs any CDK app, not only the examples in this repository.
+The app can come from a released module, an installed binary or a sibling
+AppTheory checkout; the flags and generated events are the same in all cases.
+
+```bash
+# From a released module; <version> must contain the command (v6.5.0 or later).
+go run github.com/theory-cloud/apptheory/v6/cmd/apptheory-local@<version> \
+  --app ~/code/my-app --profile ~/code/my-app/local-profile.json
+
+# Or install it once.
+go install github.com/theory-cloud/apptheory/v6/cmd/apptheory-local@<version>
+
+# Before a release, run or build from a sibling AppTheory checkout.
+go run -C ~/code/AppTheory ./cmd/apptheory-local \
+  --app ~/code/my-app --profile ~/code/my-app/local-profile.json
+go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
+```
+
+TypeScript and Python apps need a Go toolchain only to run the command; their
+handlers run in the official Node or Python image, not in a Go process.
+
+The app directory must contain `cdk.json` and a local CDK CLI at
+`node_modules/.bin/cdk` (`npm install --save-dev aws-cdk`). The runner does not
+install packages. `--profile` is required for `run`: it pins runtime images by
+digest and names the endpoint variables. The smallest valid profile names the
+images the app uses plus the Python image the in-container preflight needs:
+
+```json
+{
+  "profile": {
+    "lambda": {
+      "images": {
+        "node": {
+          "tag": "public.ecr.aws/lambda/nodejs:24",
+          "digest": "sha256:8466f17dcfbec19afcfefff53964fac7bc3f7975fa132d5fd74dce53004827d0",
+          "pinned": "2026-11-01"
+        },
+        "python": {
+          "tag": "public.ecr.aws/lambda/python:3.14",
+          "digest": "sha256:51985f11b2fb1949619bda27d121f38ef7d4db64423ca6189ab1d7e632527d27",
+          "pinned": "2026-11-01"
+        }
+      }
+    }
+  }
+}
+```
+
+Add a `go` pin for a Go app (`provided:al2023`) or use `python` for a Python
+app. Add `dynamodbLocal` and `endpoints.dynamodb` only when the run needs
+DynamoDB Local. The user guide walks through the same flow with a complete
+external app: [Run an app locally](/examples/local-runner/).
+
 ## Local execution profile
 
 `scripts/local/examples-local.json` is the checked-in profile. The runner reads
