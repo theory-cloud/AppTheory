@@ -311,16 +311,9 @@ func (s *localOACSigner) sign(request *signedRequest) error {
 }
 
 func (s *localOACSigner) verify(request *signedRequest) error {
-	authorization := request.Header.Get("Authorization")
-	if !strings.HasPrefix(authorization, "AWS4-HMAC-SHA256 ") {
-		return errors.New("missing AWS4-HMAC-SHA256 authorization header")
-	}
-	fields := map[string]string{}
-	for _, part := range strings.Split(strings.TrimPrefix(authorization, "AWS4-HMAC-SHA256 "), ",") {
-		name, value, found := strings.Cut(strings.TrimSpace(part), "=")
-		if found {
-			fields[name] = value
-		}
+	fields, err := parseOACAuthorization(request.Header.Get("Authorization"))
+	if err != nil {
+		return err
 	}
 	credential := fields["Credential"]
 	parts := strings.Split(credential, "/")
@@ -336,14 +329,8 @@ func (s *localOACSigner) verify(request *signedRequest) error {
 	if err != nil {
 		return fmt.Errorf("x-amz-date %q is not an ISO 8601 timestamp: %w", amzDate, err)
 	}
-	if s.maxClockSkew > 0 {
-		skew := request.Now.Sub(signedAt)
-		if skew < 0 {
-			skew = -skew
-		}
-		if skew > s.maxClockSkew {
-			return fmt.Errorf("the signature is outside the %s clock skew window", s.maxClockSkew)
-		}
+	if err := s.verifyClock(request.Now, signedAt); err != nil {
+		return err
 	}
 	payloadHash := request.Header.Get("X-Amz-Content-Sha256")
 	if payloadHash != sha256Hex(request.Body) {
@@ -353,18 +340,8 @@ func (s *localOACSigner) verify(request *signedRequest) error {
 	if signedHeaders != "host;x-amz-content-sha256;x-amz-date" {
 		return fmt.Errorf("signed headers %q are not the ones the local OAC signs", signedHeaders)
 	}
-	canonicalHeaders := "host:" + strings.ToLower(request.Host) + "\n" +
-		"x-amz-content-sha256:" + payloadHash + "\n" +
-		"x-amz-date:" + amzDate + "\n"
-	canonicalRequest := strings.Join([]string{
-		request.Method,
-		canonicalURI(request.Path),
-		canonicalQuery(request.Query),
-		canonicalHeaders,
-		signedHeaders,
-		payloadHash,
-	}, "\n")
 	scope := date + "/" + region + "/" + service + "/aws4_request"
+	canonicalRequest := canonicalOACRequest(request, payloadHash, signedHeaders, amzDate)
 	stringToSign := strings.Join([]string{
 		"AWS4-HMAC-SHA256",
 		amzDate,
@@ -376,6 +353,51 @@ func (s *localOACSigner) verify(request *signedRequest) error {
 		return errors.New("the signature does not match the request")
 	}
 	return nil
+}
+
+func parseOACAuthorization(authorization string) (map[string]string, error) {
+	if !strings.HasPrefix(authorization, "AWS4-HMAC-SHA256 ") {
+		return nil, errors.New("missing AWS4-HMAC-SHA256 authorization header")
+	}
+	fields := map[string]string{}
+	for _, part := range strings.Split(strings.TrimPrefix(authorization, "AWS4-HMAC-SHA256 "), ",") {
+		name, value, found := strings.Cut(strings.TrimSpace(part), "=")
+		if found {
+			fields[name] = value
+		}
+	}
+	if fields["Credential"] == "" || fields["SignedHeaders"] == "" || fields["Signature"] == "" {
+		return nil, errors.New("authorization header is missing its credential, signed headers or signature")
+	}
+	return fields, nil
+}
+
+func (s *localOACSigner) verifyClock(now, signedAt time.Time) error {
+	if s.maxClockSkew <= 0 {
+		return nil
+	}
+	skew := now.Sub(signedAt)
+	if skew < 0 {
+		skew = -skew
+	}
+	if skew > s.maxClockSkew {
+		return fmt.Errorf("the signature is outside the %s clock skew window", s.maxClockSkew)
+	}
+	return nil
+}
+
+func canonicalOACRequest(request *signedRequest, payloadHash, signedHeaders, amzDate string) string {
+	canonicalHeaders := "host:" + strings.ToLower(request.Host) + "\n" +
+		"x-amz-content-sha256:" + payloadHash + "\n" +
+		"x-amz-date:" + amzDate + "\n"
+	return strings.Join([]string{
+		request.Method,
+		canonicalURI(request.Path),
+		canonicalQuery(request.Query),
+		canonicalHeaders,
+		signedHeaders,
+		payloadHash,
+	}, "\n")
 }
 
 func (s *localOACSigner) signingKey(date string) []byte {

@@ -378,44 +378,34 @@ func deploymentContentType(key string, system map[string]string) string {
 	if value := system["content-type"]; value != "" {
 		return value
 	}
-	switch strings.ToLower(path.Ext(key)) {
-	case ".html", ".htm":
-		return "text/html"
-	case ".css":
-		return "text/css"
-	case ".js", ".mjs", ".cjs":
-		return "text/javascript"
-	case ".json", ".map":
-		return "application/json"
-	case ".txt":
-		return "text/plain"
-	case ".xml":
-		return "application/xml"
-	case ".svg":
-		return "image/svg+xml"
-	case ".png":
-		return "image/png"
-	case ".jpg", ".jpeg":
-		return "image/jpeg"
-	case ".gif":
-		return "image/gif"
-	case ".webp":
-		return "image/webp"
-	case ".ico":
-		return "image/x-icon"
-	case ".woff":
-		return "font/woff"
-	case ".woff2":
-		return "font/woff2"
-	case ".ttf":
-		return "font/ttf"
-	case ".pdf":
-		return "application/pdf"
-	case ".mp4":
-		return "video/mp4"
-	case ".webm":
-		return "video/webm"
-	default:
-		return "application/octet-stream"
+	if value, ok := deploymentContentTypes[strings.ToLower(path.Ext(key))]; ok {
+		return value
 	}
+	return "application/octet-stream"
+}
+
+var deploymentContentTypes = map[string]string{
+	".html":  "text/html",
+	".htm":   "text/html",
+	".css":   "text/css",
+	".js":    "text/javascript",
+	".mjs":   "text/javascript",
+	".cjs":   "text/javascript",
+	".json":  "application/json",
+	".map":   "application/json",
+	".txt":   "text/plain",
+	".xml":   "application/xml",
+	".svg":   "image/svg+xml",
+	".png":   "image/png",
+	".jpg":   "image/jpeg",
+	".jpeg":  "image/jpeg",
+	".gif":   "image/gif",
+	".webp":  "image/webp",
+	".ico":   "image/x-icon",
+	".woff":  "font/woff",
+	".woff2": "font/woff2",
+	".ttf":   "font/ttf",
+	".pdf":   "application/pdf",
+	".mp4":   "video/mp4",
+	".webm":  "video/webm",
 }

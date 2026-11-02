@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -146,7 +145,7 @@ func (o *s3Origin) headObject(
 	setS3Header(header, "Content-Disposition", output.ContentDisposition)
 	setS3Header(header, "Content-Encoding", output.ContentEncoding)
 	setS3Header(header, "Content-Language", output.ContentLanguage)
-	setS3Expires(header, output.ExpiresString, output.Expires)
+	setS3Expires(header, output.ExpiresString)
 	setS3Header(header, "Content-Range", output.ContentRange)
 	header.Set("Accept-Ranges", "bytes")
 	addS3Metadata(header, output.Metadata)
@@ -238,20 +237,16 @@ func s3GetObjectHeader(output *s3.GetObjectOutput) http.Header {
 	setS3Header(header, "Content-Disposition", output.ContentDisposition)
 	setS3Header(header, "Content-Encoding", output.ContentEncoding)
 	setS3Header(header, "Content-Language", output.ContentLanguage)
-	setS3Expires(header, output.ExpiresString, output.Expires)
+	setS3Expires(header, output.ExpiresString)
 	setS3Header(header, "Content-Range", output.ContentRange)
 	header.Set("Accept-Ranges", "bytes")
 	addS3Metadata(header, output.Metadata)
 	return header
 }
 
-func setS3Expires(header http.Header, raw *string, parsed *time.Time) {
+func setS3Expires(header http.Header, raw *string) {
 	if raw != nil && *raw != "" {
 		header.Set("Expires", *raw)
-		return
-	}
-	if parsed != nil {
-		header.Set("Expires", parsed.UTC().Format(http.TimeFormat))
 	}
 }
 

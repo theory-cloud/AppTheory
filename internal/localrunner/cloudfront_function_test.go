@@ -29,6 +29,33 @@ func (i *recordingInvoker) Invoke(_ context.Context, payload []byte) ([]byte, er
 	return i.response, nil
 }
 
+func requireEventMap(t *testing.T, value any, label string) map[string]any {
+	t.Helper()
+	typed, ok := value.(map[string]any)
+	if !ok {
+		t.Fatalf("%s = %T, want an object", label, value)
+	}
+	return typed
+}
+
+func requireEventSlice(t *testing.T, value any, label string) []any {
+	t.Helper()
+	typed, ok := value.([]any)
+	if !ok {
+		t.Fatalf("%s = %T, want an array", label, value)
+	}
+	return typed
+}
+
+func requireEventString(t *testing.T, value any, label string) string {
+	t.Helper()
+	typed, ok := value.(string)
+	if !ok {
+		t.Fatalf("%s = %T, want a string", label, value)
+	}
+	return typed
+}
+
 func functionURLRequest() localcloudfront.OriginRequest {
 	return localcloudfront.OriginRequest{
 		OriginID:   "Origin1",
@@ -82,23 +109,23 @@ func TestFunctionURLOriginBuildsTheVersionTwoEvent(t *testing.T) {
 	if event["rawPath"] != "/prod/actions/ping" || event["rawQueryString"] != "a=1&a=2&b=3" {
 		t.Fatalf("path/query = %v %v", event["rawPath"], event["rawQueryString"])
 	}
-	headers := event["headers"].(map[string]any)
+	headers := requireEventMap(t, event["headers"], "headers")
 	if headers["host"] != "url.lambda-url.us-east-1.local" {
 		t.Fatalf("host = %v", headers["host"])
 	}
 	if _, ok := headers["cookie"]; ok {
 		t.Fatal("cookies must move to the cookies array")
 	}
-	cookies := event["cookies"].([]any)
+	cookies := requireEventSlice(t, event["cookies"], "cookies")
 	if len(cookies) != 2 || cookies[0] != "a=1" || cookies[1] != "b=2" {
 		t.Fatalf("cookies = %v", cookies)
 	}
-	query := event["queryStringParameters"].(map[string]any)
+	query := requireEventMap(t, event["queryStringParameters"], "queryStringParameters")
 	if query["a"] != "1,2" || query["b"] != "3" {
 		t.Fatalf("query = %v", query)
 	}
-	context := event["requestContext"].(map[string]any)
-	httpContext := context["http"].(map[string]any)
+	context := requireEventMap(t, event["requestContext"], "requestContext")
+	httpContext := requireEventMap(t, context["http"], "requestContext.http")
 	if httpContext["method"] != "POST" || httpContext["path"] != "/prod/actions/ping" || httpContext["sourceIp"] != "203.0.113.9" {
 		t.Fatalf("http context = %v", httpContext)
 	}
@@ -152,7 +179,7 @@ func TestFunctionURLOriginBase64EncodesBinaryBodies(t *testing.T) {
 	if event["isBase64Encoded"] != true {
 		t.Fatalf("isBase64Encoded = %v", event["isBase64Encoded"])
 	}
-	decoded, err := base64.StdEncoding.DecodeString(event["body"].(string))
+	decoded, err := base64.StdEncoding.DecodeString(requireEventString(t, event["body"], "body"))
 	if err != nil || len(decoded) != 3 || decoded[0] != 0xff {
 		t.Fatalf("body = %v err = %v", event["body"], err)
 	}
@@ -174,16 +201,13 @@ func TestFunctionURLOriginSignsAndReportsTheIAMAuthorizer(t *testing.T) {
 	if err := json.Unmarshal(invoker.payload, &event); err != nil {
 		t.Fatalf("event: %v", err)
 	}
-	headers := event["headers"].(map[string]any)
+	headers := requireEventMap(t, event["headers"], "headers")
 	if _, ok := headers["authorization"]; ok {
 		t.Fatal("the OAC Authorization header must be consumed by the Function URL, not passed to the handler")
 	}
-	context := event["requestContext"].(map[string]any)
-	authorizer, ok := context["authorizer"].(map[string]any)
-	if !ok {
-		t.Fatalf("requestContext.authorizer = %v", context["authorizer"])
-	}
-	iam := authorizer["iam"].(map[string]any)
+	context := requireEventMap(t, event["requestContext"], "requestContext")
+	authorizer := requireEventMap(t, context["authorizer"], "requestContext.authorizer")
+	iam := requireEventMap(t, authorizer["iam"], "requestContext.authorizer.iam")
 	if iam["accessKey"] != localOACAccessKey {
 		t.Fatalf("iam = %v", iam)
 	}

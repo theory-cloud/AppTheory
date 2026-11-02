@@ -43,7 +43,7 @@ func TestS3OriginGetReturnsTheObjectAndHeaders(t *testing.T) {
 		writer.Header().Set("Content-Length", "6")
 		writer.Header().Set("Cache-Control", "public, max-age=60")
 		writer.Header().Set("x-amz-meta-owner", "example")
-		_, _ = writer.Write([]byte("hello\n"))
+		_, _ = writer.Write([]byte("hello\n")) //nolint:errcheck // test response fixture
 	})
 	response, err := origin.Fetch(context.Background(), localcloudfront.OriginRequest{Method: http.MethodGet, URI: "/hello.txt"})
 	if err != nil {
@@ -92,7 +92,7 @@ func TestS3OriginMissingObjectIs403UnderOACAnd404WithoutIt(t *testing.T) {
 	origin, _ := newTestS3Origin(t, func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/xml")
 		writer.WriteHeader(http.StatusNotFound)
-		_, _ = writer.Write([]byte(`<Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>`))
+		_, _ = writer.Write([]byte(`<Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>`)) //nolint:errcheck // test response fixture
 	})
 	response, err := origin.Fetch(context.Background(), localcloudfront.OriginRequest{Method: http.MethodGet, URI: "/missing.txt"})
 	if err != nil {
@@ -120,7 +120,7 @@ func TestS3OriginRangeReturns206(t *testing.T) {
 		writer.Header().Set("Content-Range", "bytes 0-4/11")
 		writer.Header().Set("Content-Length", "5")
 		writer.WriteHeader(http.StatusPartialContent)
-		_, _ = writer.Write([]byte("hello"))
+		_, _ = writer.Write([]byte("hello")) //nolint:errcheck // test response fixture
 	})
 	response, err := origin.Fetch(context.Background(), localcloudfront.OriginRequest{
 		Method: http.MethodGet,
@@ -144,7 +144,7 @@ func TestS3OriginAppliesResponseOverridesUnlessTheManagedPolicySuppressedThem(t 
 		writer.Header().Set("Content-Disposition", "attachment; filename=object.txt")
 		writer.Header().Set("Cache-Control", "public, max-age=60")
 		writer.Header().Set("Content-Length", "2")
-		_, _ = writer.Write([]byte("ok"))
+		_, _ = writer.Write([]byte("ok")) //nolint:errcheck // test response fixture
 	})
 	query := "a=1&response-content-type=text/html&response-content-disposition=inline&response-content-encoding=gzip"
 	response, err := origin.Fetch(context.Background(), localcloudfront.OriginRequest{

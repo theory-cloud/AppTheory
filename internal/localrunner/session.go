@@ -256,6 +256,20 @@ func (s *localSession) describe() (map[string]any, error) {
 	for name, value := range s.runner.localSecrets {
 		secrets[name] = value
 	}
+	endpoints := s.describeEndpoints()
+	return map[string]any{
+		"functions":    functions,
+		"apis":         apis,
+		"cloudFront":   cloudFront,
+		"eventSources": s.spec.EventSources,
+		"rules":        s.spec.Rules,
+		"resources":    resources,
+		"secrets":      secrets,
+		"endpoints":    endpoints,
+	}, nil
+}
+
+func (s *localSession) describeEndpoints() []map[string]any {
 	endpoints := make([]map[string]any, 0)
 	for _, name := range sortedKeys(s.runner.backends) {
 		backend := s.runner.backends[name]
@@ -269,16 +283,7 @@ func (s *localSession) describe() (map[string]any, error) {
 			})
 		}
 	}
-	return map[string]any{
-		"functions":    functions,
-		"apis":         apis,
-		"cloudFront":   cloudFront,
-		"eventSources": s.spec.EventSources,
-		"rules":        s.spec.Rules,
-		"resources":    resources,
-		"secrets":      secrets,
-		"endpoints":    endpoints,
-	}, nil
+	return endpoints
 }
 
 func splitResourceKey(key string) (string, string) {

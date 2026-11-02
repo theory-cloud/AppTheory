@@ -19,7 +19,7 @@ func TestCloudFrontOriginsWiresS3FunctionURLAndGroups(t *testing.T) {
 		s3Paths = append(s3Paths, request.URL.Path)
 		writer.Header().Set("Content-Type", "text/plain")
 		writer.Header().Set("Content-Length", "5")
-		_, _ = writer.Write([]byte("hello"))
+		_, _ = writer.Write([]byte("hello")) //nolint:errcheck // test response fixture
 	}))
 	defer s3Server.Close()
 
@@ -27,7 +27,7 @@ func TestCloudFrontOriginsWiresS3FunctionURLAndGroups(t *testing.T) {
 	rieServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		riePayload, _ = io.ReadAll(request.Body) //nolint:errcheck // test body
 		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"statusCode":200,"headers":{"Content-Type":"text/html"},"body":"ssr"}`))
+		_, _ = writer.Write([]byte(`{"statusCode":200,"headers":{"Content-Type":"text/html"},"body":"ssr"}`)) //nolint:errcheck // test response fixture
 	}))
 	defer rieServer.Close()
 	port, err := strconv.Atoi(strings.TrimPrefix(rieServer.URL, "http://127.0.0.1:"))
@@ -83,8 +83,8 @@ func TestCloudFrontOriginsWiresS3FunctionURLAndGroups(t *testing.T) {
 		t.Fatalf("function URL response = %+v err = %v", response, err)
 	}
 	var event map[string]any
-	if err := json.Unmarshal(riePayload, &event); err != nil {
-		t.Fatalf("event: %v", err)
+	if decodeErr := json.Unmarshal(riePayload, &event); decodeErr != nil {
+		t.Fatalf("event: %v", decodeErr)
 	}
 	if event["rawPath"] != "/x" {
 		t.Fatalf("event = %+v", event)

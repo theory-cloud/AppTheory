@@ -46,17 +46,18 @@ func newDeploymentRunner(t *testing.T, assembly string, resources []ResourceSpec
 		case request.Method == http.MethodGet && request.URL.Query().Get("list-type") == "2":
 			stub.lists++
 			writer.Header().Set("Content-Type", "application/xml")
-			_, _ = writer.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+			response := `<?xml version="1.0" encoding="UTF-8"?>
 <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
 <Name>bucket</Name><Prefix>assets</Prefix><KeyCount>2</KeyCount><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated>
 <Contents><Key>assets/stale.txt</Key><Size>1</Size><LastModified>2026-01-01T00:00:00.000Z</LastModified><ETag>"e"</ETag><StorageClass>STANDARD</StorageClass></Contents>
 <Contents><Key>assets/new.txt</Key><Size>1</Size><LastModified>2026-01-01T00:00:00.000Z</LastModified><ETag>"e"</ETag><StorageClass>STANDARD</StorageClass></Contents>
-</ListBucketResult>`))
+</ListBucketResult>`
+			_, _ = writer.Write([]byte(response)) //nolint:errcheck // test response fixture
 		case request.Method == http.MethodPost && request.URL.Query().Has("delete"):
 			body, _ := io.ReadAll(request.Body) //nolint:errcheck // test body
 			stub.deletes = append(stub.deletes, string(body))
 			writer.Header().Set("Content-Type", "application/xml")
-			_, _ = writer.Write([]byte(`<DeleteResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"></DeleteResult>`))
+			_, _ = writer.Write([]byte(`<DeleteResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"></DeleteResult>`)) //nolint:errcheck // test response fixture
 		default:
 			writer.WriteHeader(http.StatusNotFound)
 		}
@@ -88,10 +89,10 @@ func writeAssemblyAsset(t *testing.T, assembly, stack string, files map[string]s
 	assetDir := filepath.Join(assembly, "asset.abc")
 	for name, content := range files {
 		full := filepath.Join(assetDir, name)
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}
-		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
 			t.Fatalf("write asset: %v", err)
 		}
 	}
@@ -109,7 +110,7 @@ func writeAssemblyAsset(t *testing.T, assembly, stack string, files map[string]s
 	if err != nil {
 		t.Fatalf("marshal manifest: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(assembly, stack+".assets.json"), raw, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(assembly, stack+".assets.json"), raw, 0o600); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
 }
