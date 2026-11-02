@@ -77,6 +77,20 @@ GO_IGNORE_RE = re.compile(r"^//go:build\s+ignore\b", re.MULTILINE)
 DEFAULT_TIMEOUT = 900
 FAILURE_OUTPUT_LINES = 60
 RATE_LIMIT_TABLE = "rate-limits"
+LOCAL_RUNNER_APP = "examples/cdk/hello-world"
+LOCAL_RUNNER_BIN = STATE_DIR / "bin" / "apptheory-local"
+LOCAL_RUNNER_READY = "local-run: ready"
+LOCAL_RUNNER_RUNTIMES = {"go": "provided.al2023", "ts": "nodejs24.x", "py": "python3.14"}
+# The handler response each language returned, compared across languages once
+# all three rows have run. This is the parity assertion: same handler contract,
+# three real runtime images.
+LOCAL_RUNNER_RESPONSES: dict[str, dict] = {}
+DIGEST_PIN_RE = re.compile(r"@sha256:[0-9a-f]{64}$")
+LAMBDA_IMAGE_PREFIXES = {
+    "go": "public.ecr.aws/lambda/provided:",
+    "node": "public.ecr.aws/lambda/nodejs:",
+    "python": "public.ecr.aws/lambda/python:",
+}
 
 
 class HarnessFailure(Exception):
@@ -482,6 +496,11 @@ def _validate_profile(root: Path, profile: dict) -> list[str]:
         errors.append(f"profile compose file is missing: {profile.get('composeFile')}")
         return errors
 
+    if not DIGEST_PIN_RE.search(image):
+        errors.append(f"profile: DynamoDB Local image must be pinned by digest (got {image!r})")
+    errors.extend(_validate_lambda_images(profile))
+    errors.extend(_validate_endpoints(profile))
+
     compose_text = compose_path.read_text(encoding="utf-8")
     if image and f"image: {image}" not in compose_text:
         errors.append(f"{compose_path}: image pin does not match the manifest ({image})")
@@ -503,6 +522,46 @@ def _validate_profile(root: Path, profile: dict) -> list[str]:
         errors.append("profile: stride must reserve at least three ports per slot")
     if last - first + 1 < stride:
         errors.append("profile: port range cannot hold one slot")
+    return errors
+
+
+def _validate_lambda_images(profile: dict) -> list[str]:
+    """The Lambda runtime images are pinned once, here, by digest."""
+    errors: list[str] = []
+    images = profile.get("lambda", {}).get("images")
+    if not isinstance(images, dict):
+        return ["profile: missing lambda.images pins for the go, node and python runtimes"]
+    for runtime, prefix in LAMBDA_IMAGE_PREFIXES.items():
+        pin = images.get(runtime)
+        if not isinstance(pin, dict):
+            errors.append(f"profile: missing lambda.images.{runtime} pin")
+            continue
+        tag = str(pin.get("tag", ""))
+        digest = str(pin.get("digest", ""))
+        if not tag.startswith(prefix):
+            errors.append(
+                f"profile: lambda.images.{runtime} tag {tag!r} is not an official image ({prefix}...)"
+            )
+        if not DIGEST_PIN_RE.search(f"{tag}@{digest}"):
+            errors.append(f"profile: lambda.images.{runtime} must be pinned by digest (got {digest!r})")
+    return errors
+
+
+def _validate_endpoints(profile: dict) -> list[str]:
+    """Every local backend the harness owns needs its SDK env names declared."""
+    endpoints = profile.get("endpoints")
+    if not isinstance(endpoints, dict) or not endpoints:
+        return ["profile: missing endpoints (the generated AWS endpoint variables)"]
+    errors: list[str] = []
+    for service, spec in endpoints.items():
+        names = spec.get("env") if isinstance(spec, dict) else None
+        if not isinstance(names, list) or not names:
+            errors.append(f"profile: endpoints.{service} must declare at least one env name")
+            continue
+        if not any(name.startswith("AWS_ENDPOINT_URL") for name in names):
+            errors.append(f"profile: endpoints.{service} must declare an AWS_ENDPOINT_URL* name")
+    if "dynamodb" not in endpoints:
+        errors.append("profile: endpoints.dynamodb is required")
     return errors
 
 
@@ -759,7 +818,7 @@ def preflight(harness: Harness, profile: dict, compose_file: Path) -> None:
 
 
 def prepare(harness: Harness) -> None:
-    """Install the TypeScript runtime dependencies the examples and assets need.
+    """Install the dependency trees the examples and the local runner need.
 
     The TypeScript examples run on plain ``node`` against the checked-in
     ``ts/dist``; only the CDK synth the staging helper vendors into the Lambda
@@ -767,6 +826,11 @@ def prepare(harness: Harness) -> None:
     the stamp and the ``npm ci --ignore-scripts`` invocation, so the harness
     calls it instead of running npm itself.
     """
+    prepare_typescript_runtime(harness)
+    prepare_local_runner(harness)
+
+
+def prepare_typescript_runtime(harness: Harness) -> None:
     marker = ROOT / "ts" / "node_modules" / "@theory-cloud" / "tabletheory-ts" / "package.json"
     if marker.exists():
         return
@@ -781,6 +845,32 @@ def prepare(harness: Harness) -> None:
     )
     if not marker.exists():
         raise HarnessFailure(f"TypeScript runtime dependencies are still missing: {marker}")
+
+
+def prepare_local_runner(harness: Harness) -> Path:
+    """Build the local runner CLI and the CDK CLI the app synthesizes with.
+
+    The runner is a Go command (``cmd/apptheory-local``); building it once per
+    harness run keeps each example row to synthesis plus container startup. The
+    hello-world CDK app synthesizes from its own ``node_modules/.bin/cdk``, so
+    the harness installs that tree when it is missing (``npm ci`` never rewrites
+    the lockfile).
+    """
+    LOCAL_RUNNER_BIN.parent.mkdir(parents=True, exist_ok=True)
+    if not LOCAL_RUNNER_BIN.exists():
+        print("  ... building the local runner (go build ./cmd/apptheory-local)")
+    harness.run(
+        ["go", "build", "-o", str(LOCAL_RUNNER_BIN), "./cmd/apptheory-local"],
+        timeout=1800,
+    )
+    app = ROOT / LOCAL_RUNNER_APP
+    cdk_cli = app / "node_modules" / ".bin" / "cdk"
+    if not cdk_cli.exists():
+        print(f"  ... installing {LOCAL_RUNNER_APP} dependencies (npm ci)")
+        harness.run(["npm", "ci", "--ignore-scripts"], cwd=app, timeout=1800)
+    if not cdk_cli.exists():
+        raise HarnessFailure(f"the CDK CLI is still missing: {cdk_cli}")
+    return LOCAL_RUNNER_BIN
 
 
 # --- runners ----------------------------------------------------------------
@@ -1058,6 +1148,211 @@ def _stop_process(process: subprocess.Popen) -> None:
         process.wait(timeout=15)
 
 
+# --- local runner -----------------------------------------------------------
+#
+# The three hello-world rows run the app's real CDK definition through
+# `apptheory-local`: it synthesizes the stack, starts the function in the
+# official, digest-pinned Lambda runtime image, proves the container cannot
+# reach AWS, and serves the derived HTTP API v2 surface. The assertions below
+# are real HTTP requests; nothing is invoked in process.
+
+
+def run_local_runner_go(harness: Harness) -> str:
+    return run_local_runner(harness, "go")
+
+
+def run_local_runner_ts(harness: Harness) -> str:
+    return run_local_runner(harness, "ts")
+
+
+def run_local_runner_py(harness: Harness) -> str:
+    return run_local_runner(harness, "py")
+
+
+def local_runner_prefix(harness: Harness, lang: str) -> str:
+    lease = harness.lease
+    slot = f"s{lease.slot}" if lease.slot >= 0 else f"p{lease.port}"
+    return f"apptheory-local-{lease.checkout}-{slot}-{lang}"
+
+
+def run_local_runner(harness: Harness, lang: str) -> str:
+    binary = prepare_local_runner(harness)
+    prefix = local_runner_prefix(harness, lang)
+    plan = harness.run(
+        [
+            str(binary),
+            "plan",
+            "--app",
+            LOCAL_RUNNER_APP,
+            "-c",
+            f"lang={lang}",
+            "--profile",
+            str(ROOT / "scripts/local/examples-local.json"),
+            "--json",
+        ],
+        timeout=1800,
+    )
+    try:
+        spec = json.loads(plan.stdout)
+    except json.JSONDecodeError as exc:
+        raise HarnessFailure(f"apptheory-local plan did not print JSON: {exc}", _combined_output(plan)) from exc
+    _assert_derived_surface(spec, lang)
+
+    log = tempfile.NamedTemporaryFile(prefix=f"apptheory-local-{lang}-", suffix=".log", delete=False)
+    try:
+        process = subprocess.Popen(
+            [
+                str(binary),
+                "run",
+                "--app",
+                LOCAL_RUNNER_APP,
+                "-c",
+                f"lang={lang}",
+                "--profile",
+                str(ROOT / "scripts/local/examples-local.json"),
+                "--backend",
+                "dynamodb",
+                "--port-base",
+                str(harness.lease.http_port),
+                "--name-prefix",
+                prefix,
+            ],
+            cwd=str(ROOT),
+            env=harness.env,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        try:
+            urls = _wait_for_local_runner(process, log.name)
+            _exercise_hello_world(urls[0], lang)
+        finally:
+            _stop_process(process)
+            log.close()
+        output = Path(log.name).read_text(encoding="utf-8", errors="replace")
+        expect_output(output, [LOCAL_RUNNER_READY, "shutting down"], f"apptheory-local {lang} run")
+        _assert_local_runner_cleanup(harness, prefix)
+        return (
+            f"{LOCAL_RUNNER_RUNTIMES[lang]} container served HTTP API v2 "
+            "with four HTTP assertions and left no containers or network"
+        )
+    finally:
+        try:
+            os.unlink(log.name)
+        except FileNotFoundError:
+            pass
+
+
+def _assert_derived_surface(spec: dict, lang: str) -> None:
+    functions = spec.get("functions") or []
+    if len(functions) != 1:
+        raise HarnessFailure(f"apptheory-local plan derived {len(functions)} functions, want 1", json.dumps(spec))
+    function = functions[0]
+    expected_runtime = LOCAL_RUNNER_RUNTIMES[lang]
+    if function.get("runtime") != expected_runtime:
+        raise HarnessFailure(f"apptheory-local plan: runtime {function.get('runtime')!r}, want {expected_runtime!r}")
+    if function.get("architecture") != "arm64":
+        raise HarnessFailure(f"apptheory-local plan: architecture {function.get('architecture')!r}, want arm64")
+    apis = spec.get("apis") or []
+    if len(apis) != 1 or apis[0].get("class") != "httpv2":
+        raise HarnessFailure(f"apptheory-local plan: want one HTTP API v2 surface, got {apis}")
+    routes = {(route.get("method"), route.get("path")) for route in apis[0].get("routes") or []}
+    for expected in (("ANY", "/"), ("ANY", "/{proxy+}")):
+        if expected not in routes:
+            raise HarnessFailure(f"apptheory-local plan: route {expected} missing from {sorted(routes)}")
+
+
+def _wait_for_local_runner(process: subprocess.Popen, log_path: str, seconds: int = 600) -> list[str]:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise HarnessFailure(
+                f"apptheory-local exited before it was ready (code {process.returncode})",
+                Path(log_path).read_text(encoding="utf-8", errors="replace"),
+            )
+        text = Path(log_path).read_text(encoding="utf-8", errors="replace")
+        if LOCAL_RUNNER_READY in text:
+            urls = re.findall(r"^serving \S+ \S+ at (http://127\.0\.0\.1:\d+)$", text, re.MULTILINE)
+            if not urls:
+                raise HarnessFailure("apptheory-local reported ready without a listening URL", text)
+            return urls
+        time.sleep(0.25)
+    raise HarnessFailure(
+        "apptheory-local did not become ready",
+        Path(log_path).read_text(encoding="utf-8", errors="replace"),
+    )
+
+
+def _exercise_hello_world(base: str, lang: str) -> None:
+    """Assert the real handler's HTTP behaviour for one language."""
+    request_id = f"local-{lang}-probe"
+    status, body, headers = http_request(
+        "GET",
+        f"{base}/hello/AppTheory?probe=1",
+        headers={"X-Request-Id": request_id, "Cookie": "a=b; c=d"},
+    )
+    expect_status(status, 200, f"{lang} GET /hello/AppTheory", body)
+    payload = json.loads(body)
+    if payload.get("message") != "hello AppTheory":
+        raise HarnessFailure(f"{lang} GET /hello/AppTheory: unexpected message", body)
+    if payload.get("runtime") != lang:
+        raise HarnessFailure(f"{lang} GET /hello/AppTheory: handler reported {payload.get('runtime')!r}", body)
+    if payload.get("request_id") != request_id or headers.get("x-request-id") != request_id:
+        raise HarnessFailure(f"{lang} GET /hello/AppTheory: x-request-id was not carried through", body)
+    LOCAL_RUNNER_RESPONSES[lang] = payload
+
+    status, body, _ = http_request("GET", f"{base}/")
+    expect_status(status, 200, f"{lang} GET /", body)
+    if json.loads(body).get("message") != "hello world":
+        raise HarnessFailure(f"{lang} GET /: unexpected message", body)
+
+    status, body, _ = http_request(
+        "POST",
+        f"{base}/hello/AppTheory",
+        headers={"Content-Type": "application/json"},
+        body=b'{"hello":"world"}',
+    )
+    expect_status(status, 405, f"{lang} POST /hello/AppTheory", body)
+    if "app.method_not_allowed" not in body:
+        raise HarnessFailure(f"{lang} POST /hello/AppTheory: unexpected error body", body)
+
+    status, body, _ = http_request("GET", f"{base}/missing")
+    expect_status(status, 404, f"{lang} GET /missing", body)
+    if "app.not_found" not in body:
+        raise HarnessFailure(f"{lang} GET /missing: unexpected error body", body)
+
+
+def verify_local_runner_parity() -> str:
+    """Assert the three languages returned the same handler response shape."""
+    missing = sorted(set(LOCAL_RUNNER_RUNTIMES) - set(LOCAL_RUNNER_RESPONSES))
+    if missing:
+        raise HarnessFailure(f"local runner parity: no handler response from {missing}")
+    shapes = {lang: tuple(sorted(payload)) for lang, payload in LOCAL_RUNNER_RESPONSES.items()}
+    if len(set(shapes.values())) != 1:
+        raise HarnessFailure(f"local runner parity: handler response shapes differ: {shapes}")
+    return f"go, ts and py returned the same handler contract {list(next(iter(shapes.values())))}"
+
+
+def _assert_local_runner_cleanup(harness: Harness, prefix: str) -> None:
+    deadline = time.monotonic() + 60
+    containers: list[str] = []
+    networks: list[str] = []
+    while time.monotonic() < deadline:
+        containers = _docker_ids(harness, ["docker", "ps", "-aq", "--filter", f"name={prefix}"])
+        networks = _docker_ids(harness, ["docker", "network", "ls", "-q", "--filter", f"name={prefix}-net"])
+        if not containers and not networks:
+            return
+        time.sleep(0.5)
+    raise HarnessFailure(
+        f"apptheory-local left containers {containers} or networks {networks} behind"
+    )
+
+
+def _docker_ids(harness: Harness, argv: list[str]) -> list[str]:
+    result = harness.run(argv, timeout=60, check=False)
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
 RUNNERS: dict[str, Callable[[Harness], str]] = {
     "testkit-ts": run_testkit_ts,
     "testkit-ts-streaming": run_testkit_ts_streaming,
@@ -1069,6 +1364,9 @@ RUNNERS: dict[str, Callable[[Harness], str]] = {
     "mcp-go-resumable-sse": run_mcp_go_resumable_sse,
     "cdk-synth-all": run_cdk_synth_all,
     "rate-limited-http": run_rate_limited_http,
+    "local-runner-go": run_local_runner_go,
+    "local-runner-ts": run_local_runner_ts,
+    "local-runner-py": run_local_runner_py,
 }
 
 
@@ -1214,6 +1512,15 @@ def main(argv: list[str] | None = None) -> int:
             failures.append((entry, failure))
             print(f"  [{index:>2}/{total}] {entry.label:<64} {entry.class_name:<3} FAIL")
             print_failure(entry.label, failure)
+
+    print()
+    print("parity")
+    try:
+        print(f"  PASS  {verify_local_runner_parity()}")
+    except HarnessFailure as failure:
+        failures.append((Entry(key="local-runner-parity", kind="suite", data={"class": "L1"}), failure))
+        print("  FAIL")
+        print_failure("local-runner-parity", failure)
 
     for entry in entries:
         if not entry.covered_by:
