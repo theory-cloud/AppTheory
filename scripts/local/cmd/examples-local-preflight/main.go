@@ -10,10 +10,8 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
-	"net"
 	"net/url"
 	"os"
 	"strings"
@@ -91,11 +89,13 @@ func run(ctx context.Context, expectedEndpoint string, wait time.Duration) error
 	return nil
 }
 
-// waitForProfile issues a real ListTables call. A connection refusal before the
-// deadline is retried; any other failure is reported immediately, because it
-// means the endpoint resolved to something that is not the profile.
+// waitForProfile issues a real ListTables call. Any failure before the deadline
+// is retried: a container that just started can accept TCP and then reset the
+// first HTTP request, and the endpoint was already proven to be the harness's
+// before this loop. On timeout the last error is reported.
 func waitForProfile(ctx context.Context, client *dynamodb.Client, wait time.Duration) error {
 	deadline := time.Now().Add(wait)
+	var lastErr error
 	for {
 		callCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 		_, err := client.ListTables(callCtx, &dynamodb.ListTablesInput{})
@@ -103,9 +103,9 @@ func waitForProfile(ctx context.Context, client *dynamodb.Client, wait time.Dura
 		if err == nil {
 			return nil
 		}
-		var netErr *net.OpError
-		if !errors.As(err, &netErr) || time.Now().After(deadline) {
-			return fmt.Errorf("DynamoDB Local ListTables failed at the harness endpoint: %w", err)
+		lastErr = err
+		if time.Now().After(deadline) {
+			return fmt.Errorf("DynamoDB Local ListTables failed at the harness endpoint: %w", lastErr)
 		}
 		time.Sleep(time.Second)
 	}
