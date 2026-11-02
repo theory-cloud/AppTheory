@@ -129,9 +129,11 @@ type Route struct {
 	// invokes before the route handler. The transport runs it; a route with an
 	// authorizer is never served without it.
 	AuthorizerFunction string `json:"authorizerFunction,omitempty"`
-	// AuthorizerIdentitySource is the provider identity source the authorizer
-	// event carries, for example $request.header.Authorization.
-	AuthorizerIdentitySource string `json:"authorizerIdentitySource,omitempty"`
+	// AuthorizerIdentitySources lists the provider identity sources the
+	// authorizer event carries, in configured order, for example
+	// $request.header.Authorization. The transport refuses a request that does
+	// not carry every source before invoking the authorizer.
+	AuthorizerIdentitySources []string `json:"authorizerIdentitySources,omitempty"`
 	// Mock is set for a REST API MOCK integration. A mock route has no
 	// function and no invoker; the transport returns the declared response.
 	Mock      *MockResponse `json:"mock,omitempty"`

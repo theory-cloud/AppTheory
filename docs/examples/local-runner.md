@@ -466,7 +466,7 @@ the harness records it.
 | WebSocket APIs | Reported, not served | A WebSocket API is listed under `skipped` with its reason, and an app with no HTTP route, Function URL, event source or rule fails with that list. Its `$connect`/`$disconnect`/`$default` routes are not invoked. |
 | CloudFront / CloudFront Functions | Not served (A5) | The Function URL behind a distribution runs; the distribution itself is reported as not served. |
 | REST `MOCK` integrations | Supported (L1) | The transport returns the `IntegrationResponses` status and headers the template declares and invokes no function. CDK emits these for CORS preflight. |
-| HTTP API `REQUEST` authorizers with simple responses | Supported | The transport invokes the real authorizer function with the API Gateway v2 REQUEST event, returns 401 when `isAuthorized` is false, and carries the authorizer context to the handler. A malformed response fails closed. |
+| HTTP API `REQUEST` authorizers with simple responses | Supported | The transport invokes the real authorizer function with the API Gateway v2 REQUEST event, carrying every configured `$request.header.*` or `$request.querystring.*` identity source in order; a request missing one is refused with 401 before the authorizer runs. A false `isAuthorized` is a 401, the authorizer context is carried to the handler, and a malformed response fails closed. `$context`/`$stageVariables` sources fail closed at plan time. |
 | Other authorizers (REST, JWT, non-simple responses) | Not served | Fails closed; the local transport must never bypass a real authorizer. |
 | Lambda layers, container-image functions | Not served | Fail closed when a served function needs them. |
 | CloudFormation-expression environment values | Supported for `Ref`/`Fn::GetAtt`/`Fn::Join` | Tables and stream ARNs, queues, rules, buckets, KMS keys, Kinesis streams, IAM/MicroVM-image/S3 Vectors ARNs and functions resolve to deterministic local values (KMS/S3 require their backend). An unsupported expression fails with the function and variable named. |
@@ -493,8 +493,11 @@ the harness records it.
   CloudWatch Logs subscription payload or explicit record data) and invoked
   through the real handler; the stream service itself is not emulated.
 - **HTTP API authorizers** are run only for `REQUEST` authorizers with simple
-  responses. REST, JWT and IAM authorizers fail closed rather than bypassing a
-  real authorization decision.
+  responses. They carry every configured `$request.header.*` or
+  `$request.querystring.*` identity source in order, and a request missing one
+  is refused with 401 before the authorizer runs. REST, JWT and IAM authorizers,
+  and `$context`/`$stageVariables` identity sources, fail closed rather than
+  bypassing a real authorization decision.
 - **SSM Parameter Store** has no local emulator. A handler that reads a
   parameter sees the call fail and must handle it; the lambda-role custom row
   asserts that fallback and is class L3 with the named gap.

@@ -2,6 +2,7 @@ package localrunner
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -191,11 +192,46 @@ func TestDeriveHTTPAuthorizerResolvesTheFunction(t *testing.T) {
 	if routeSpec.AuthorizerFunction != "Fn" {
 		t.Fatalf("authorizer function not derived: %+v", routeSpec)
 	}
-	if routeSpec.AuthorizerIdentitySource != "$request.header.Authorization" {
-		t.Fatalf("identity source not derived: %+v", routeSpec)
+	if len(routeSpec.AuthorizerIdentitySources) != 1 ||
+		routeSpec.AuthorizerIdentitySources[0] != "$request.header.Authorization" {
+		t.Fatalf("identity sources not derived: %+v", routeSpec)
 	}
 	if len(spec.RuntimeFunctions()) != 1 {
 		t.Fatalf("the authorizer and handler are one function: %+v", spec.RuntimeFunctions())
+	}
+}
+
+func TestDeriveHTTPAuthorizerRejectsUnsupportedIdentitySource(t *testing.T) {
+	for _, source := range []string{"$context.accountId", "$stageVariables.tenant", "$request.header.", "$request.querystring."} {
+		t.Run(source, func(t *testing.T) {
+			resources := httpAPIResources("GET /hello")
+			resources["Fn"] = withAsset(lambdaFunction(nil), "asset.deadbeef")
+			resources["Authorizer"] = map[string]any{
+				"Type": typeHTTPAuthorizer,
+				"Properties": map[string]any{
+					"AuthorizerType":        "REQUEST",
+					"AuthorizerUri":         map[string]any{"Fn::GetAtt": []any{"Fn", "Arn"}},
+					"EnableSimpleResponses": true,
+					"IdentitySource":        []any{source},
+				},
+			}
+			route := mustMap(t, mustMap(t, resources["Route"])["Properties"])
+			route["AuthorizationType"] = "CUSTOM"
+			route["AuthorizerId"] = map[string]any{"Ref": "Authorizer"}
+			dir := writeAssembly(t, resources)
+			mkdirAsset(t, dir)
+			_, err := deriveAssembly(t, dir)
+			if err == nil {
+				t.Fatalf("identity source %q must fail closed", source)
+			}
+			var unsupportedErr *UnsupportedError
+			if !errors.As(err, &unsupportedErr) {
+				t.Fatalf("identity source %q must report a named unsupported error, got %T: %v", source, err, err)
+			}
+			if unsupportedErr.Construct != "TestStack/Authorizer" || !strings.Contains(unsupportedErr.Reason, source) {
+				t.Fatalf("identity source %q error does not name the construct and source: %+v", source, unsupportedErr)
+			}
+		})
 	}
 }
 

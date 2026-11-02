@@ -101,8 +101,12 @@ func httpV2Event(request InvokeRequest) map[string]any {
 
 // BuildAuthorizerEvent serializes the API Gateway v2 REQUEST authorizer event.
 // It carries the same request the route handler will receive, plus the identity
-// source the authorizer declared.
+// sources the authorizer declared, as an array in configured order.
 func BuildAuthorizerEvent(request InvokeRequest) ([]byte, error) {
+	identitySources, err := identitySourceValues(request.Header, request.RawQuery, request.Route.AuthorizerIdentitySources)
+	if err != nil {
+		return nil, err
+	}
 	event := httpV2Event(request)
 	event["type"] = "REQUEST"
 	apiID := localPhysicalID("api", request.API.LogicalID)
@@ -112,22 +116,108 @@ func BuildAuthorizerEvent(request InvokeRequest) ([]byte, error) {
 	}
 	event["routeArn"] = "arn:" + LocalPartition + ":execute-api:" + LocalRegion + ":" + LocalAccountID +
 		":" + apiID + "/" + request.API.Stage + "/" + strings.ToUpper(request.Method) + request.Path
-	event["identitySource"] = identitySourceValue(request.Header, request.Route.AuthorizerIdentitySource)
+	event["identitySource"] = identitySources
 	event["routeKey"] = routeKey
 	return json.Marshal(event)
 }
 
-// identitySourceValue resolves a provider identity source such as
-// $request.header.Authorization to the request's header value. An empty or
-// unsupported source yields an empty string; the authorizer itself decides
-// whether that is allowed.
-func identitySourceValue(header http.Header, source string) string {
-	const prefix = "$request.header."
-	source = strings.TrimSpace(source)
-	if !strings.HasPrefix(source, prefix) {
+const (
+	identitySourceHeaderPrefix      = "$request.header."
+	identitySourceQueryStringPrefix = "$request.querystring."
+)
+
+// identitySource is one parsed provider identity source expression.
+type identitySource struct {
+	raw  string
+	kind identitySourceKind
+	name string
+}
+
+type identitySourceKind int
+
+const (
+	identitySourceHeader identitySourceKind = iota
+	identitySourceQueryString
+)
+
+// parseIdentitySource accepts the request identity sources the transport can
+// resolve. API Gateway also accepts $context and $stageVariables expressions;
+// the local transport refuses them instead of passing an empty string.
+func parseIdentitySource(raw string) (identitySource, error) {
+	source := strings.TrimSpace(raw)
+	switch {
+	case strings.HasPrefix(source, identitySourceHeaderPrefix):
+		name := strings.TrimSpace(strings.TrimPrefix(source, identitySourceHeaderPrefix))
+		if name == "" {
+			return identitySource{}, fmt.Errorf("identity source %q has no header name", raw)
+		}
+		return identitySource{raw: source, kind: identitySourceHeader, name: name}, nil
+	case strings.HasPrefix(source, identitySourceQueryStringPrefix):
+		name := strings.TrimSpace(strings.TrimPrefix(source, identitySourceQueryStringPrefix))
+		if name == "" {
+			return identitySource{}, fmt.Errorf("identity source %q has no query string name", raw)
+		}
+		return identitySource{raw: source, kind: identitySourceQueryString, name: name}, nil
+	default:
+		return identitySource{}, fmt.Errorf(
+			"identity source %q is not supported locally; only %s<name> and %s<name> are run",
+			raw, identitySourceHeaderPrefix, identitySourceQueryStringPrefix,
+		)
+	}
+}
+
+// validateIdentitySource fails closed at derive/plan time for an expression the
+// transport cannot resolve.
+func validateIdentitySource(source string) error {
+	_, err := parseIdentitySource(source)
+	return err
+}
+
+// value resolves the expression against the request. A header name is
+// case-insensitive; a query string name is case-sensitive. An empty result
+// means the source is absent or empty.
+func (s identitySource) value(header http.Header, rawQuery string) string {
+	switch s.kind {
+	case identitySourceHeader:
+		return strings.TrimSpace(header.Get(s.name))
+	case identitySourceQueryString:
+		values, err := url.ParseQuery(rawQuery)
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(values.Get(s.name))
+	default:
 		return ""
 	}
-	return strings.TrimSpace(header.Get(strings.TrimPrefix(source, prefix)))
+}
+
+// identitySourceValues resolves every configured source in order, for the
+// authorizer event's identitySource array.
+func identitySourceValues(header http.Header, rawQuery string, sources []string) ([]string, error) {
+	values := make([]string, 0, len(sources))
+	for _, source := range sources {
+		parsed, err := parseIdentitySource(source)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, parsed.value(header, rawQuery))
+	}
+	return values, nil
+}
+
+// missingIdentitySource names the first configured source the request does not
+// carry. API Gateway refuses such a request without invoking the authorizer.
+func missingIdentitySource(header http.Header, rawQuery string, sources []string) (string, error) {
+	for _, source := range sources {
+		parsed, err := parseIdentitySource(source)
+		if err != nil {
+			return "", err
+		}
+		if parsed.value(header, rawQuery) == "" {
+			return parsed.raw, nil
+		}
+	}
+	return "", nil
 }
 
 func restV1Event(request InvokeRequest) map[string]any {

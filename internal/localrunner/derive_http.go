@@ -68,8 +68,8 @@ func deriveHTTPAPIs(spec *Spec, stacks []assemblyStack, stack assemblyStack) err
 
 // httpAuthorizer is one CUSTOM HTTP API REQUEST authorizer the transport runs.
 type httpAuthorizer struct {
-	Function       string
-	IdentitySource string
+	Function        string
+	IdentitySources []string
 }
 
 // deriveHTTPAuthorizers resolves the authorizer resources to the Lambda
@@ -103,11 +103,15 @@ func deriveHTTPAuthorizers(stack assemblyStack, types map[string]string) (map[st
 		if !ok {
 			return nil, unsupported(stack.Name+"/"+id, "HTTP API authorizer Uri does not reference a Lambda function")
 		}
-		identitySource := ""
-		if len(props.IdentitySource) > 0 {
-			identitySource = strings.TrimSpace(props.IdentitySource[0])
+		identitySources := make([]string, 0, len(props.IdentitySource))
+		for _, source := range props.IdentitySource {
+			trimmed := strings.TrimSpace(source)
+			if err := validateIdentitySource(trimmed); err != nil {
+				return nil, unsupported(stack.Name+"/"+id, "%v", err)
+			}
+			identitySources = append(identitySources, trimmed)
 		}
-		authorizers[id] = httpAuthorizer{Function: functionID, IdentitySource: identitySource}
+		authorizers[id] = httpAuthorizer{Function: functionID, IdentitySources: identitySources}
 	}
 	return authorizers, nil
 }
@@ -166,7 +170,7 @@ func httpRoutes(stack assemblyStack, types map[string]string, apiID string, auth
 				return nil, unsupported(stack.Name+"/"+id, "CUSTOM route references authorizer %s, which the runner did not derive", authorizerID)
 			}
 			route.AuthorizerFunction = authorizer.Function
-			route.AuthorizerIdentitySource = authorizer.IdentitySource
+			route.AuthorizerIdentitySources = authorizer.IdentitySources
 		default:
 			return nil, unsupported(
 				stack.Name+"/"+id,

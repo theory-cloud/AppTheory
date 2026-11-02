@@ -145,6 +145,15 @@ func (t *Transport) authorize(
 	if !ok {
 		return nil, fmt.Errorf("no running container for authorizer %s", route.AuthorizerFunction)
 	}
+	missing, err := missingIdentitySource(request.Header, request.URL.RawQuery, route.AuthorizerIdentitySources)
+	if err != nil {
+		return nil, fmt.Errorf("authorizer identity source: %w", err)
+	}
+	if missing != "" {
+		t.logf("%s %s -> 401 (identity source %s is missing; authorizer %s was not invoked)",
+			request.Method, path, missing, route.AuthorizerFunction)
+		return nil, nil
+	}
 	payload, err := BuildAuthorizerEvent(InvokeRequest{
 		API:        t.API,
 		Route:      route,

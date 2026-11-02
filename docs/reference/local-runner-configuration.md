@@ -452,8 +452,15 @@ entry from `headers` so a handler cannot read the same cookies twice.
 runtime uses the domain to distinguish it from HTTP API v2.
 
 **HTTP API v2 REQUEST authorizer** — the same v2 request shape plus
-`type: "REQUEST"`, `routeArn`, `identitySource` (the configured identity
-source's header value) and the route key. The transport reads
+`type: "REQUEST"`, `routeArn`, `identitySource` (an array holding every
+configured identity source's value, in the order the template declares) and the
+route key. The supported identity sources are `$request.header.<name>` (header
+names are case-insensitive) and `$request.querystring.<name>` (query string
+names are case-sensitive); any other expression, including `$context` and
+`$stageVariables`, fails closed at derive/plan time with the source named. When
+the authorizer declares identity sources and a request does not carry every one
+of them, the transport returns `401 {"message":"Unauthorized"}` without invoking
+the authorizer, as API Gateway does. The transport reads
 `{"isAuthorized":bool,"context":{…}}`; a false result is a 401, and a true
 result's context is carried to the handler as
 `requestContext.authorizer.lambda`.
