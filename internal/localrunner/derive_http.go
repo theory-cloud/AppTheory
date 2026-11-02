@@ -488,7 +488,7 @@ func deriveFunctionURLs(spec *Spec, stacks []assemblyStack, stack assemblyStack)
 // run never gives the impression that they were exercised.
 func deriveSkipped(spec *Spec) {
 	served := map[string]struct{}{}
-	for _, id := range spec.ServedFunctions() {
+	for _, id := range spec.RuntimeFunctions() {
 		served[id] = struct{}{}
 	}
 	for _, function := range spec.Functions {
@@ -498,7 +498,7 @@ func deriveSkipped(spec *Spec) {
 		spec.Skipped = append(spec.Skipped, Skipped{
 			LogicalID: function.LogicalID,
 			Kind:      typeLambdaFunction,
-			Reason:    "not targeted by an HTTP API route or Function URL; event-source invocation is not part of the local HTTP transport",
+			Reason:    "not targeted by an HTTP route, Function URL, event source mapping or EventBridge rule the local runner can invoke",
 		})
 	}
 }

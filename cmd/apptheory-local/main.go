@@ -261,6 +261,26 @@ func (c *commandConfig) plan(ctx context.Context, runner *localrunner.Runner) in
 	for _, line := range localrunner.RouteTable(spec) {
 		fmt.Printf("  %s\n", line)
 	}
+	if len(spec.EventSources) > 0 {
+		fmt.Println()
+		fmt.Println("event sources:")
+		for _, source := range spec.EventSources {
+			fmt.Printf("  %-40s %-9s <- %-28s -> %s batch=%d reportBatchItemFailures=%t enabled=%t\n",
+				source.LogicalID, source.Type, source.SourceName, source.Function, source.BatchSize,
+				source.ReportBatchItemFailures, source.Enabled)
+		}
+	}
+	if len(spec.Rules) > 0 {
+		fmt.Println()
+		fmt.Println("eventbridge rules:")
+		for _, rule := range spec.Rules {
+			description := "schedule=" + rule.Schedule
+			if len(rule.EventPattern) > 0 {
+				description = "pattern=" + string(rule.EventPattern)
+			}
+			fmt.Printf("  %-40s %s -> %s\n", rule.LogicalID, description, strings.Join(rule.Targets, ", "))
+		}
+	}
 	if len(spec.Skipped) > 0 {
 		fmt.Println()
 		fmt.Println("not served locally:")
