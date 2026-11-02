@@ -27,7 +27,9 @@ function runCase(event) {
       throw cfError('invalid-event', 'the event has no request or context.eventType');
     }
     const context = createContext(logs);
-    const script = new vm.Script(input.code, { filename: 'cloudfront-function.js' });
+    // CloudFront Functions runs in strict mode. The directive is the runtime's
+    // prologue; the FunctionCode body itself is not rewritten.
+    const script = new vm.Script('"use strict";\n' + input.code, { filename: 'cloudfront-function.js' });
     script.runInContext(context, { timeout: timeoutMs });
 
     const handler = context.handler;

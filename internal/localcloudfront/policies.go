@@ -3,6 +3,7 @@ package localcloudfront
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // managedPolicyTable is the pinned id -> definition table for the AWS managed
@@ -344,6 +345,7 @@ func parseCachePolicyConfig(raw json.RawMessage, policy *Policy) (*CachePolicy, 
 			}
 		}
 	}
+	reportCloudFrontHeaderGaps(policy, "cache policy", cache.Headers)
 	return cache, nil
 }
 
@@ -374,6 +376,7 @@ func parseOriginRequestPolicyConfig(raw json.RawMessage, policy *Policy) (*Origi
 			return nil, err
 		}
 	}
+	reportCloudFrontHeaderGaps(policy, "origin request policy", origin.Headers)
 	return origin, nil
 }
 
@@ -488,6 +491,29 @@ func parseQueryForwarding(raw json.RawMessage) (QueryForwarding, error) {
 func validMode(mode ForwardingMode) bool {
 	switch mode {
 	case ForwardNone, ForwardWhitelist, ForwardAll, ForwardAllExcept:
+		return true
+	default:
+		return false
+	}
+}
+
+func reportCloudFrontHeaderGaps(policy *Policy, context string, config HeaderForwarding) {
+	if config.CloudFrontHeaders {
+		policy.Reported = append(policy.Reported,
+			context+": CloudFront device, location and TLS headers are not generated locally")
+	}
+	for _, name := range config.Names {
+		lower := strings.ToLower(name)
+		if strings.HasPrefix(lower, "cloudfront-") && !derivableCloudFrontHeader(lower) {
+			policy.Reported = append(policy.Reported,
+				fmt.Sprintf("%s: CloudFront header %s is not generated locally", context, name))
+		}
+	}
+}
+
+func derivableCloudFrontHeader(name string) bool {
+	switch name {
+	case "cloudfront-forwarded-proto", "cloudfront-viewer-address", "cloudfront-viewer-http-version":
 		return true
 	default:
 		return false

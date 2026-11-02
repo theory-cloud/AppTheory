@@ -181,13 +181,14 @@ func TestExecutorRejectsInvalidReturns(t *testing.T) {
 
 func TestExecutorRestrictedGlobalsAndModules(t *testing.T) {
 	cases := map[string]string{
-		"fs":         `function handler(event) { require('fs'); return event.request; }`,
-		"process":    `function handler(event) { return { statusCode: 200, headers: { x: { value: String(process) } }, cookies: {} }; }`,
-		"fetch":      `function handler(event) { return { statusCode: 200, headers: { x: { value: String(fetch) } }, cookies: {} }; }`,
-		"setTimeout": `function handler(event) { setTimeout(function () {}, 1); return event.request; }`,
-		"eval":       `function handler(event) { eval('1'); return event.request; }`,
-		"function":   `function handler(event) { new Function('return 1')(); return event.request; }`,
-		"network":    `function handler(event) { var x = new XMLHttpRequest(); return event.request; }`,
+		"fs":          `function handler(event) { require('fs'); return event.request; }`,
+		"process":     `function handler(event) { return { statusCode: 200, headers: { x: { value: String(process) } }, cookies: {} }; }`,
+		"fetch":       `function handler(event) { return { statusCode: 200, headers: { x: { value: String(fetch) } }, cookies: {} }; }`,
+		"setTimeout":  `function handler(event) { setTimeout(function () {}, 1); return event.request; }`,
+		"eval":        `function handler(event) { eval('1'); return event.request; }`,
+		"function":    `function handler(event) { new Function('return 1')(); return event.request; }`,
+		"network":     `function handler(event) { var x = new XMLHttpRequest(); return event.request; }`,
+		"strict mode": `function handler(event) { accidentalGlobal = 1; return event.request; }`,
 	}
 	for name, code := range cases {
 		t.Run(name, func(t *testing.T) {

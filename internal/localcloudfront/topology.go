@@ -779,6 +779,13 @@ func parseFunctionAssociations(
 			}
 		}
 		if functionID == "" {
+			behavior.Refusals = append(behavior.Refusals,
+				fmt.Sprintf("FunctionAssociations[%d] has no resolvable FunctionARN", position))
+			continue
+		}
+		if eventType == "" {
+			behavior.Refusals = append(behavior.Refusals,
+				fmt.Sprintf("FunctionAssociations[%d] has no EventType", position))
 			continue
 		}
 		if seen[eventType] {
@@ -846,6 +853,7 @@ func parseOrigin(
 		return nil, fmt.Errorf("%s: Origins[%d]: %w", distributionID, position, err)
 	}
 	origin := &DistributionOrigin{}
+	domainSeen := false
 	for _, key := range sortedKeys(properties) {
 		value := properties[key]
 		switch key {
@@ -854,6 +862,7 @@ func parseOrigin(
 				return nil, fmt.Errorf("%s: Origins[%d].Id: %w", distributionID, position, err)
 			}
 		case "DomainName":
+			domainSeen = true
 			domain, err := resolveOriginDomain(value, stack, index)
 			if err != nil {
 				return nil, err
@@ -923,6 +932,9 @@ func parseOrigin(
 	}
 	if origin.ID == "" {
 		origin.Refusals = append(origin.Refusals, "origin has no Id")
+	}
+	if !domainSeen {
+		origin.Refusals = append(origin.Refusals, "origin has no DomainName")
 	}
 	switch {
 	case origin.Custom != nil && origin.S3 != nil:
