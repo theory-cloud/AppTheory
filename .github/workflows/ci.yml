@@ -323,6 +323,11 @@ jobs:
           go-version: "1.27.3"
           cache: true
           cache-dependency-path: go.sum
+      # The CloudFront Functions conformance tests execute the generated code
+      # in a Node vm; the repository requires Node >= 24 for that surface.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
       - name: Test and vet
         run: scripts/verify-go.sh
 
