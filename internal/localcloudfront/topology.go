@@ -129,8 +129,8 @@ type S3Origin struct {
 	OriginAccessIdentity string `json:"originAccessIdentity,omitempty"`
 }
 
-// OriginGroup is an origin group. A5a records the members and failover status
-// codes; A5b implements the failover origin.
+// OriginGroup is an origin group. The gateway implements the documented
+// failover behavior from the members and status codes.
 type OriginGroup struct {
 	ID                  string   `json:"id"`
 	Members             []string `json:"members"`
@@ -303,7 +303,8 @@ type CustomHeader struct {
 }
 
 // OriginAccessControl is an AWS::CloudFront::OriginAccessControl. The gateway
-// reports it; the A5b origin decides whether it can enforce signing.
+// reports it; an S3 origin applies its access model and a Function URL origin
+// reproduces its SigV4 signing.
 type OriginAccessControl struct {
 	LogicalID       string   `json:"logicalId"`
 	Stack           string   `json:"stack"`

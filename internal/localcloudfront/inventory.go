@@ -255,7 +255,7 @@ func reportReason(key string) string {
 	case "OriginShield":
 		return "an origin shield has no local equivalent"
 	case "HTTPPort", "HTTPSPort", "OriginKeepaliveTimeout", "OriginReadTimeout", "OriginSSLProtocols":
-		return "the local origin protocol and connection are chosen by the A5b origin implementation"
+		return "the local origin protocol and connection are chosen by the origin implementation"
 	case "OriginProtocolPolicy":
 		return "the local URL is plain HTTP; the origin protocol is reported, not enforced"
 	case "OriginAccessIdentity":

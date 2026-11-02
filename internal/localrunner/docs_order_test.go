@@ -91,6 +91,23 @@ func TestDocumentedRunStepOrderMatchesTheRunner(t *testing.T) {
 	if !strings.Contains(sessionSection, "one JSON command per line") {
 		t.Fatalf("%s: the session section must describe the line protocol", document)
 	}
+	if !strings.Contains(section, "Custom::CDKBucketDeployment") {
+		t.Fatalf("%s: the Provision resources step must describe the bucket deployments", document)
+	}
+	provisionBody := goFunctionBody(t, "provision.go", "func (r *Runner) provisionResources(ctx context.Context, spec *Spec) error {")
+	assertInOrder(t, "provision.go", provisionBody, "provisioning step", []string{
+		"r.provisionBuckets(",
+		"r.provisionDeployments(",
+		"r.provisionKeys(",
+		"r.provisionTables(",
+		"r.provisionQueues(",
+	})
+
+	startServersBody := goFunctionBody(t, "runner.go", "func (r *Runner) startServers(ctx context.Context, spec *Spec) error {")
+	assertInOrder(t, "runner.go", startServersBody, "CloudFront wiring", []string{
+		"r.cloudFrontOrigins(",
+		"localcloudfront.NewGateway(",
+	})
 }
 
 func flattenedCalls(steps []documentedRunStep) []string {

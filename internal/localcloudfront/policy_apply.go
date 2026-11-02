@@ -119,7 +119,7 @@ func combinedQueryRule(cache *CachePolicy, origin *OriginRequestPolicy) forwardi
 	return rule
 }
 
-// originRequest builds the request A5b's origin receives.
+// originRequest builds the request the origin receives.
 func (g *Gateway) originRequest(
 	state *requestState,
 	behavior *Behavior,

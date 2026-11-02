@@ -376,8 +376,8 @@ func (s *Spec) HTTPAPIs() []APISpec {
 }
 
 // ServableCloudFront returns the distributions the gateway can serve: no
-// unsupported property refused it. A servable distribution still refuses its
-// origins until A5b wires them.
+// unsupported property refused it. The runner registers an origin
+// implementation for every origin of such a distribution.
 func (s *Spec) ServableCloudFront() []*localcloudfront.Distribution {
 	var out []*localcloudfront.Distribution
 	for _, distribution := range s.CloudFront {

@@ -43,7 +43,8 @@ resolution.
 - **L3** — exercised as fully as possible locally, plus a named cloud gap that
   is never faked.
 - **PENDING-MILESTONE** — a row owned by a later milestone. It is listed in
-  the run report and never counted as pass; the current manifest has only A5b.
+  the run report and never counted as pass; the current manifest has no pending
+  row.
 
 A handler that a CDK definition would connect to a cloud event source is L3
 when the harness invokes it with a generated event, because that event source is
@@ -208,15 +209,22 @@ SQS mapping, the DynamoDB stream record built from a real local write, and both
 EventBridge rules are invoked and their responses asserted. Its remaining gap is
 WebSocket frames and managed delivery.
 
-Handler and script rows inside the remaining CDK examples are
-`PENDING-MILESTONE` (A5b) and are never counted as pass.
+Handler and script rows inside the remaining CDK examples are now classified;
+no row is `PENDING-MILESTONE`.
 
-LOCAL-A5a adds no example row. Its CloudFront gateway and generated-function
-conformance run in `go test` (and therefore in `make test`/`make rubric` and
-CI). The `ssr-site`, `ssr-only-provided-assets-site`, `path-routed-frontend` and
-`media-cdn` rows stay class I: their templates are synthesized and asserted, and
-their distributions are now served as an edge path, but the origins are not
-wired until A5b, so no row claims an end-to-end page load.
+LOCAL-A5b wires the CloudFront origins and adds no new manifest entry beyond the
+two ssr-site script rows. The gateway's generated-function conformance still runs
+in `go test` (and therefore in `make test`/`make rubric` and CI); the example
+rows below run the real production CDK apps through the gateway.
+
+| Example | Class | Verified | Named gap |
+| --- | --- | --- | --- |
+| `examples/cdk/ssr-site` | L2 | The origin group fails over from the S3 HTML primary (403 under OAC) to the real SSR handler; the viewer-response function echoes the viewer `x-request-id`; `/marketing/` proves the viewer-request rewrite and `/isr` origin path; the assets and hydration deployments are served from s3proxy with ETag/Last-Modified; HEAD, OPTIONS and a missing object (403 `AccessDenied`) are asserted. | CloudFront caching and edge network; response streaming is buffered by the RIE. |
+| `examples/cdk/ssr-only-provided-assets-site` | L2 | The real handler is reached through the `AWS_IAM` Function URL with local SigV4 OAC signing and echoes the viewer request id into the HTML; the provided bucket serves `app.js`, `site.css` and `probe.txt`; a missing object is 403 under OAC and OPTIONS is refused. | CloudFront caching and edge network; IAM policy evaluation is not emulated. |
+| `examples/cdk/path-routed-frontend` | L3 | The generated SPA function rewrites `/l/...` and `/auth/...` to each prefix's `index.html`, files with an extension are served unchanged, the external API origin is refused by name, POST is refused by `AllowedMethods`, and a missing file is 403 under OAC. | The API origin is an external custom origin and is refused locally; the example ships no SPA build output, so probe objects are written through the runner to the provisioned buckets. CloudFront caching and edge network. |
+| `examples/cdk/media-cdn` | L3 | The public distribution serves a probe object from its provisioned bucket with ETag and content type; the private trusted-key-group distribution stays refused with A5a's named reason; a missing object is 403 under OAC. | Signed-URL verification; the example ships no media, so a probe object is used. CloudFront caching and edge network. |
+| `examples/cdk/ssr-site/scripts/generate-assets-manifest.mjs` | L2 | The generator runs against the real `assets` directory, its `hello.txt` sha256 and byte count are asserted, and the served asset through the gateway matches the manifest. | CloudFront caching and edge network; the manifest is matched to the gateway response, not a deployed bucket. |
+| `examples/cdk/ssr-site/scripts/upload-assets.sh` | L3 | The real AWS CLI (the host CLI, or a pinned CLI the harness installs when the host one is unusable) runs `s3 sync` and `s3 cp` against the session's s3proxy endpoint with dummy credentials; the gateway serves the assets and the generated manifest with the script's cache-control and content type. | CloudFront invalidation is not exercised; s3proxy has no IAM, bucket policy or event notifications. CloudFront caching and edge network. |
 
 ## Preflight
 
@@ -241,6 +249,13 @@ provision the assembly's keys, buckets, tables and queues. The runner's
 in-container preflight proves every endpoint answers and that no real AWS
 hostname resolves. This keeps each runner row isolated from the host-side
 examples.
+
+`upload-assets.sh` is a real AWS CLI script. The harness uses the host `aws`
+when it starts. When the host CLI is unusable (for example a Homebrew `awscli`
+whose native library no longer loads), the harness installs a pinned
+`awscli==1.45.64` into `~/.cache/apptheory-examples-local/awscli` and prepends
+its `bin` to that row's `PATH`; the script, its flags and its AWS path are
+unchanged.
 
 ## Built Lambda assets run in the official runtime
 

@@ -302,13 +302,13 @@ TS_NODE_TRANSPILE_ONLY=1
 | `AWS::Lambda::Function` with `Code.ZipFile` | Materialized as `<module>.js` / `<module>.py` under `<scratch>/inline/<logicalId>/`. |
 | `AWS::ApiGatewayV2::Api` (`ProtocolType: HTTP`) + `Route` + `AWS_PROXY` `Integration` | Served as HTTP API v2. `$default` routes become a catch-all. |
 | `AWS::ApiGateway::RestApi` + `Resource` tree + `Method` + `AWS_PROXY` integration | Served as REST API v1 at the path reconstructed from the resource tree. `ResponseTransferMode: STREAM` and `/response-streaming-invocations` are marked streaming. |
-| `AWS::Lambda::Url` (`AuthType: NONE`) | Served as a Function URL listener. `InvokeMode: RESPONSE_STREAM` is marked streaming (buffered). A URL with another auth type is reported under `skipped` and is never served as a standalone URL. |
+| `AWS::Lambda::Url` (`AuthType: NONE`) | Served as a Function URL listener. `InvokeMode: RESPONSE_STREAM` is marked streaming (buffered). A URL with `AWS_IAM` is not served as a standalone URL; when a served CloudFront distribution targets it, the gateway invokes it through the signed local OAC origin instead. |
 | `AWS::ApiGatewayV2::Authorizer` (`REQUEST`, simple responses) | Run for the CUSTOM routes that reference it. The transport sends a v2 REQUEST authorizer event and enforces `isAuthorized`. |
 | `AWS::Lambda::EventSourceMapping` (SQS, DynamoDB Streams, Kinesis) | Reported with its function, source, batch size and `ReportBatchItemFailures`; the function is started. A session builds the provider event from real local messages or a real local write. |
 | `AWS::Events::Rule` with a Lambda target | Reported with its schedule or event pattern and target; the function is started. A session builds the event the rule would deliver. |
 | `AWS::ApiGatewayV2::Api` (`ProtocolType: WEBSOCKET`) | Reported under `skipped`, never served. An app with no other surface fails with the skipped reasons. |
 | `AWS::ApiGateway::Method` with a `MOCK` integration | Served from the first `IntegrationResponses` entry: its status and `method.response.header.*` parameters become the response. No function is invoked. |
-| `AWS::CloudFront::Distribution`, `AWS::CloudFront::Function`, `AWS::CloudFront::CachePolicy`, `AWS::CloudFront::OriginRequestPolicy`, `AWS::CloudFront::ResponseHeadersPolicy`, `AWS::CloudFront::OriginAccessControl` | Served as the distribution's edge path on a loopback listener. A property the gateway cannot faithfully apply refuses the distribution with a named reason; a caching, compression, logging or placement property is reported. |
+| `AWS::CloudFront::Distribution`, `AWS::CloudFront::Function`, `AWS::CloudFront::CachePolicy`, `AWS::CloudFront::OriginRequestPolicy`, `AWS::CloudFront::ResponseHeadersPolicy`, `AWS::CloudFront::OriginAccessControl` | Served as the distribution's edge path on a loopback listener, with S3, Function URL and origin-group origins. A property the gateway cannot faithfully apply refuses the distribution with a named reason; a caching, compression, logging or placement property is reported. |
 | `AWS::CloudFront::KeyGroup`, `AWS::CloudFront::PublicKey` | Reported only; a distribution that trusts a key group is refused because signed URLs and cookies are not verified locally. |
 
 ## CloudFront distributions
@@ -469,7 +469,7 @@ and a `host` whitelist forward the viewer Host, `AllViewerExceptHostHeader` uses
 the origin domain, and a policy that forwards no Host also uses the origin
 domain (empty for an origin group, whose origin implementation chooses the
 member). For an S3 or Function URL origin the topology records a local
-placeholder domain; A5b's origin implementation sets the endpoint it actually
+placeholder domain; the origin implementation sets the endpoint it actually
 reaches. `OriginPath` is applied to the origin request path, not to the viewer
 URI.
 
@@ -494,7 +494,7 @@ refuses the distribution instead of being ignored.
 | --- | --- | --- | --- |
 | `DistributionConfig` | `DefaultCacheBehavior`, `CacheBehaviors`, `Origins`, `OriginGroups`, `DefaultRootObject`, `Enabled` | `Aliases`, `Comment`, `HttpVersion`, `IPV6Enabled`, `Logging`, `PriceClass`, `Staging` (false), `ViewerCertificate` | `ContinuousDeploymentPolicyId`, `CustomErrorResponses`, `Restrictions`, `WebACLId`, `Staging` (true), `Enabled` (false), unknown |
 | Cache behavior | `PathPattern`, `TargetOriginId`, `AllowedMethods`, `CachePolicyId`, `OriginRequestPolicyId`, `ResponseHeadersPolicyId`, `FunctionAssociations` | `CachedMethods`, `Compress`, `DefaultTTL`, `MinTTL`, `MaxTTL`, `RealtimeLogConfigArn`, `SmoothStreaming` (false), `ViewerProtocolPolicy` | `FieldLevelEncryptionId`, `ForwardedValues`, `GrpcConfig`, `LambdaFunctionAssociations`, `TrustedKeyGroups`, `TrustedSigners`, `SmoothStreaming` (true), unknown |
-| Origin | `Id`, `DomainName` (literal, S3 bucket, Function URL), `OriginPath`, `CustomOriginConfig`, `S3OriginConfig`, `OriginAccessControlId`, `OriginCustomHeaders` | `ConnectionAttempts`, `ConnectionTimeout`, `OriginShield`, the custom origin protocol/SSL/ports/timeouts, `OriginAccessIdentity`, OAC signing | unresolved `DomainName`, missing or both origin configs, `OriginPath` without a leading slash, unknown |
+| Origin | `Id`, `DomainName` (literal, S3 bucket, Function URL), `OriginPath`, `CustomOriginConfig`, `S3OriginConfig`, `OriginAccessControlId`, `OriginCustomHeaders` | `ConnectionAttempts`, `ConnectionTimeout`, `OriginShield`, the custom origin protocol/SSL/ports/timeouts, `OriginAccessIdentity`, S3 OAC/OAI signing (the access model is applied, not the signature) | unresolved `DomainName`, missing or both origin configs, `OriginPath` without a leading slash, unknown |
 | CloudFront Function | `FunctionCode`, `FunctionConfig.Runtime` | `AutoPublish`, `Name`, `FunctionConfig.Comment` | `KeyValueStoreAssociations`, unsupported runtime, empty code, unknown |
 | Cache policy | `ParametersInCacheKeyAndForwardedToOrigin` | `Name`, `Comment`, `DefaultTTL`, `MinTTL`, `MaxTTL`, `EnableAcceptEncodingBrotli`, `EnableAcceptEncodingGzip` | unknown managed ID, malformed config, unknown property |
 | Origin request policy | `HeadersConfig`, `CookiesConfig`, `QueryStringsConfig` | `Name`, `Comment` | unknown mode, malformed config, unknown property |
@@ -522,24 +522,80 @@ type Origin interface {
 `OriginRequest` carries the behavior's `OriginID`, the viewer `Method`, the
 viewer-modified `URI` (without the origin path), `OriginPath`, the filtered
 `Query` and `Header`, `Host`, the body, the viewer IP and the request id.
-`Path()` joins `OriginPath` and `URI`. A5b implements the S3 emulator origin,
-the Function URL origin through the runner, and origin groups (members plus
-failover status codes; `OriginPath` is empty for a group so the group can apply
-each member's path and Host).
+`Path()` joins `OriginPath` and `URI`. `Range` carries the viewer `Range`
+header, which CloudFront forwards to the origin outside the policies.
+`SuppressS3ResponseOverrides` is set when the behavior uses one of the managed
+origin request policies below, so an S3 origin drops
+`response-content-type`, `response-content-disposition` and
+`response-content-encoding`. An origin group receives `OriginPath` empty and
+applies each member's own path and Host.
 
-In A5a no implementation is registered: a request that reaches an origin is
-answered 503 with `origin "<id>" is not wired until A5b`, before any origin
-logic. A viewer-request response that short-circuits the origin is fully served.
+The runner registers:
+
+- **S3 origin.** Reads the bucket `provisionBuckets` created and the objects
+  `provisionDeployments` copied from each `Custom::CDKBucketDeployment` source in
+  the cloud assembly (the asset directory or zip resolved through
+  `<Stack>.assets.json`), applying the deployment's `DestinationBucketKeyPrefix`,
+  its `SystemMetadata` (content-type, cache-control, content-disposition,
+  content-encoding, content-language, expires) and `UserMetadata`. Without a
+  declared content-type the extension decides, as the CDK deployment's AWS CLI
+  does. `Prune` deletes objects under the prefix that the deployment no longer
+  contains. `Include`/`Exclude`, `Extract=false` and non-asset sources are
+  refused with a named reason. GET and HEAD pass the object's
+  `Content-Type`, `ETag`, `Last-Modified`, `Content-Length`, `Cache-Control`,
+  `Content-Range` and user metadata through; Range returns 206. OPTIONS returns
+  403 `AccessForbidden` for a bucket without CORS and a named local gap for a
+  bucket that declares CORS rules. An OAC/OAI origin has no `s3:ListBucket`, so
+  a missing object is 403 `AccessDenied`; a public S3 origin returns 404
+  `NoSuchKey` ([S3 access control](https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-best-practices.html),
+  [why S3 hides 404 behind 403](https://repost.aws/knowledge-center/403-vs-404-error-s3)).
+  Methods other than GET/HEAD/OPTIONS are a named local refusal.
+- **Function URL origin.** Builds the
+  [Function URL payload format 2.0 event](https://docs.aws.amazon.com/lambda/latest/dg/urls-invocation.html)
+  from the origin request and invokes the real function through the same
+  runtime container `run` starts. `statusCode`, `headers`, `cookies`,
+  `isBase64Encoded` and `body` map back. `RESPONSE_STREAM` is buffered by the
+  RIE: the body is complete and chunk timing is not reproduced. A `NONE` URL is
+  invoked directly. An `AWS_IAM` URL is signed with SigV4 (method, path, query,
+  Host, body hash and date) and the local Function URL endpoint verifies the
+  signature before the handler runs; the event reports
+  `requestContext.authorizer.iam` with a loopback identity. IAM policy
+  evaluation is not emulated
+  ([Function URL auth](https://docs.aws.amazon.com/lambda/latest/dg/urls-auth.html)).
+- **Origin group.** Only GET, HEAD and OPTIONS fail over. CloudFront retries the
+  secondary member when the primary returns a status in `FailoverCriteria`,
+  fails to connect with 503 configured, or times out with 504 configured; each
+  attempt uses that member's `OriginPath` and Host
+  ([origin failover](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/high_availability_origin_failover.html)).
+  Other methods go to the primary only; if both members fail, the secondary's
+  response is returned.
+- **Refused origin.** A literal external custom origin is a named 503; the
+  gateway never makes an external network request. A viewer-request response
+  that short-circuits the origin is fully served.
+
+### Managed origin request policies and S3 response overrides
+
+AWS documents that `AllViewer`, `AllViewerAndCloudFrontHeaders-2022-06`,
+`AllViewerExceptHostHeader` and `Elemental-MediaTailor-PersonalizedManifests`
+do not forward `response-content-type`, `response-content-disposition` or
+`response-content-encoding` to an Amazon S3 origin; a custom policy forwards
+them as configured
+([managed origin request policies](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-managed-origin-request-policies.html)).
+The gateway sets `OriginRequest.SuppressS3ResponseOverrides` for those four
+managed policies and the S3 origin filters the three parameters before applying
+S3's response overrides. Every other query parameter is unchanged.
 
 ### Fidelity
 
 **Not a CloudFront emulator: no caching, no edge network, no TLS.** The gateway
 does not reproduce viewer protocol redirects, CloudFront's 1 ms CPU limit,
-incremental streaming (A5b's Function URL origin is buffered by the RIE),
+incremental streaming (the Function URL origin is buffered by the RIE),
 CloudFront-only device/location/TLS headers, custom status descriptions,
 signed-URL verification, Lambda@Edge, KeyValueStore, WAF, geo restriction,
-field-level encryption or custom error pages. It refuses a distribution that
-depends on the routing or content of those features and reports the rest.
+field-level encryption or custom error pages. S3 bucket CORS rules, S3
+IAM/bucket policies and Lambda IAM policy evaluation are not emulated. It
+refuses a distribution that depends on the routing or content of those features
+and reports the rest.
 
 The run fails, naming the construct, on:
 
@@ -589,17 +645,18 @@ Before a targeted function starts, these expressions resolve to local values:
 | `AWS::Partition`, `AWS::Region`, `AWS::AccountId`, `AWS::StackName`, `AWS::NoValue` | `aws`, `us-east-1`, `123456789012`, the stack name, and the empty string. |
 
 When a backend answers its readiness probe, the runner provisions the resources
-for it: every `AWS::S3::Bucket` in s3proxy; every `AWS::KMS::Key` in moto;
-every `AWS::DynamoDB::Table` in DynamoDB Local with its key schema, GSIs,
-streams and TTL; and every `AWS::SQS::Queue` in ElasticMQ with its visibility,
-retention, FIFO and redrive attributes. Table SSE, PITR and deletion protection,
-and SQS KMS/SSE, are not provisioned; they are not part of the local contract.
-An unresolvable expression fails before any function container starts, with the
-function and variable named.
+for it: every `AWS::S3::Bucket` in s3proxy and every
+`Custom::CDKBucketDeployment` source copied into its bucket; every
+`AWS::KMS::Key` in moto; every `AWS::DynamoDB::Table` in DynamoDB Local with its
+key schema, GSIs, streams and TTL; and every `AWS::SQS::Queue` in ElasticMQ with
+its visibility, retention, FIFO and redrive attributes. Table SSE, PITR and
+deletion protection, and SQS KMS/SSE, are not provisioned; they are not part of
+the local contract. An unresolvable expression fails before any function
+container starts, with the function and variable named.
 
-Functions that no supported route, Function URL, event source mapping or rule
-targets are listed under `skipped` with the reason; they are never silently
-dropped. A session's `--target` starts one of them explicitly.
+Functions that no supported route, Function URL, CloudFront origin, event source
+mapping or rule targets are listed under `skipped` with the reason; they are
+never silently dropped. A session's `--target` starts one of them explicitly.
 
 ## Container environment
 

@@ -34,6 +34,12 @@ func TestDocumentedCloudFrontPhaseOrder(t *testing.T) {
 	if !strings.Contains(section, "CloudFront does not document the relative order") {
 		t.Fatalf("%s: the AllowedMethods phase must state that CloudFront does not document the order", document)
 	}
+	assertDocumentedOrder(t, document, section, []string{
+		"**S3.**", "**Function URL.**", "**Origin group.**", "**Other origins.**",
+	})
+	if strings.Contains(section, "not wired until A5b") {
+		t.Fatalf("%s: the CloudFront section still claims origins are not wired", document)
+	}
 
 	gatewaySource, err := os.ReadFile("gateway.go") //nolint:gosec // checked-in source path
 	if err != nil {
@@ -67,6 +73,43 @@ func TestReferenceDocumentsEveryPinnedManagedPolicy(t *testing.T) {
 	for _, property := range []string{"WebACLId", "TrustedKeyGroups", "LambdaFunctionAssociations", "KeyValueStoreAssociations", "ForwardedValues"} {
 		if !strings.Contains(text, property) {
 			t.Fatalf("reference does not document refused property %s", property)
+		}
+	}
+}
+
+func TestReferenceDocumentsTheOriginContract(t *testing.T) {
+	raw, err := os.ReadFile("../../docs/reference/local-runner-configuration.md") //nolint:gosec // checked-in documentation path
+	if err != nil {
+		t.Fatalf("read reference: %v", err)
+	}
+	text := string(raw)
+	for _, needle := range []string{
+		"`Range`",
+		"`SuppressS3ResponseOverrides`",
+		"FailoverCriteria",
+		"GET, HEAD and OPTIONS",
+		"s3:ListBucket",
+		"AWS_IAM",
+		"buffered by the RIE",
+		"response-content-type",
+		"AllViewerExceptHostHeader",
+		"Custom::CDKBucketDeployment",
+	} {
+		if !strings.Contains(text, needle) {
+			t.Fatalf("reference does not document the origin contract item %q", needle)
+		}
+	}
+	for _, document := range []string{
+		"../../docs/examples/local-runner.md",
+		"../../docs/reference/local-runner-configuration.md",
+		"../../docs/examples/local-harness.md",
+	} {
+		raw, err := os.ReadFile(document) //nolint:gosec // checked-in documentation path
+		if err != nil {
+			t.Fatalf("read %s: %v", document, err)
+		}
+		if strings.Contains(string(raw), "not wired until A5b") {
+			t.Fatalf("%s still claims an origin is not wired", document)
 		}
 	}
 }
