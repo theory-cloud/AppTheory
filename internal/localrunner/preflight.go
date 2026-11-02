@@ -123,6 +123,11 @@ func (r *Runner) securityEnvironment() map[string]string {
 		"AWS_EC2_METADATA_DISABLED":   "true",
 		"AWS_CONFIG_FILE":             "/dev/null",
 		"AWS_SHARED_CREDENTIALS_FILE": "/dev/null",
+		// S3 emulators do not implement the SDK's default flexible-checksum
+		// trailers. The SDK still validates checksums when a service requires
+		// them; it stops adding them to every request.
+		"AWS_REQUEST_CHECKSUM_CALCULATION": "WHEN_REQUIRED",
+		"AWS_RESPONSE_CHECKSUM_VALIDATION": "WHEN_REQUIRED",
 	}
 	for _, endpoint := range r.endpoints {
 		for _, name := range r.profile.EndpointEnvNames(endpoint.Service) {

@@ -164,7 +164,11 @@ func TestTransportServesDeclaredMockWithoutInvoking(t *testing.T) {
 	if err != nil {
 		t.Fatalf("options request: %v", err)
 	}
-	defer func() { _ = response.Body.Close() }()
+	defer func() {
+		if closeErr := response.Body.Close(); closeErr != nil {
+			t.Errorf("close response body: %v", closeErr)
+		}
+	}()
 	if response.StatusCode != 200 {
 		t.Fatalf("unexpected status %d", response.StatusCode)
 	}

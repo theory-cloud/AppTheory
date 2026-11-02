@@ -65,27 +65,35 @@ type Options struct {
 	Stdout io.Writer
 	// SynthTimeout bounds `cdk synth`.
 	SynthTimeout time.Duration
+	// Handler runs one handler from a built code directory instead of reading
+	// a CDK app. It is for examples that ship a Lambda handler but no CDK
+	// definition; the invoke caller supplies every request event.
+	Handler *HandlerSpec
+	// AllowNoSurface lets an invoke read an assembly whose functions have no
+	// HTTP route. Run and plan leave it false and refuse such an assembly.
+	AllowNoSurface bool
 }
 
 // Runner owns one local run: the derived surface, the Docker network, the
 // function containers and the HTTP listeners.
 type Runner struct {
-	options    Options
-	profile    *Profile
-	docker     *Docker
-	spec       *Spec
-	runID      string
-	appHash    string
-	namePrefix string
-	scratch    string
-	images     map[string]string
-	endpoints  []Endpoint
-	invokers   map[string]*FunctionProcess
-	backends   map[string]backendProcess
-	servers    []*http.Server
-	listeners  []net.Listener
-	semaphore  chan struct{}
-	network    string
+	options        Options
+	profile        *Profile
+	docker         *Docker
+	spec           *Spec
+	runID          string
+	appHash        string
+	namePrefix     string
+	scratch        string
+	images         map[string]string
+	endpoints      []Endpoint
+	invokers       map[string]*FunctionProcess
+	backends       map[string]backendProcess
+	resourceValues resourceValues
+	servers        []*http.Server
+	listeners      []net.Listener
+	semaphore      chan struct{}
+	network        string
 }
 
 // NewRunner validates the options and prepares the run. It contacts no Docker
@@ -129,6 +137,14 @@ func NewRunner(options Options) (*Runner, error) {
 // any synthesis or container work.
 func normalizeOptions(options Options) (Options, error) {
 	options.Stdout = outputOrDefault(options.Stdout)
+	if options.Handler != nil {
+		if err := normalizeHandlerSpec(options.Handler); err != nil {
+			return Options{}, err
+		}
+		if strings.TrimSpace(options.AppDir) == "" {
+			options.AppDir = options.Handler.CodeDir
+		}
+	}
 	if strings.TrimSpace(options.AppDir) == "" {
 		return Options{}, errors.New("a CDK app directory is required (--app)")
 	}
@@ -199,18 +215,52 @@ func validateImageOverride(class, image string) error {
 
 func (r *Runner) validateBackends() error {
 	for _, backend := range r.options.Backends {
-		if backend != backendDynamoDB {
-			return fmt.Errorf("unknown backend %q (want %s)", backend, backendDynamoDB)
+		container := backendContainer(backend)
+		if _, err := r.profile.Container(container); err != nil {
+			return err
 		}
-		if _, exists := r.backendEndpoint(backend); !exists {
-			r.endpoints = append(r.endpoints, Endpoint{
-				Service: backend,
+		endpoints := r.profile.EndpointsForContainer(container)
+		if backend == backendDynamoDB && !containsEndpointService(endpoints, backendDynamoDB) {
+			endpoints = append(endpoints, Endpoint{
+				Service: backendDynamoDB,
 				URL:     "http://" + backendDynamoDBName + ":8000",
 			})
+		}
+		if len(endpoints) == 0 {
+			return fmt.Errorf(
+				"backend %q has no endpoints in local profile %s; name at least one endpoint with container %q",
+				backend,
+				r.profile.Path(),
+				container,
+			)
+		}
+		for _, endpoint := range endpoints {
+			if _, exists := r.backendEndpoint(endpoint.Service); exists {
+				continue
+			}
+			r.endpoints = append(r.endpoints, endpoint)
 		}
 	}
 	sort.Slice(r.endpoints, func(i, j int) bool { return r.endpoints[i].Service < r.endpoints[j].Service })
 	return nil
+}
+
+// backendContainer is the profile container a --backend name selects.
+// "dynamodb" keeps the historical DynamoDB Local shortcut.
+func backendContainer(backend string) string {
+	if backend == backendDynamoDB {
+		return backendDynamoDBName
+	}
+	return backend
+}
+
+func containsEndpointService(endpoints []Endpoint, service string) bool {
+	for _, endpoint := range endpoints {
+		if endpoint.Service == service {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Runner) backendEndpoint(service string) (Endpoint, bool) {
@@ -275,7 +325,12 @@ func (r *Runner) Plan(ctx context.Context) (*Spec, error) {
 	if err != nil {
 		return nil, err
 	}
-	spec, err := deriveSpec(assemblyDir, stacks)
+	var spec *Spec
+	if r.options.AllowNoSurface {
+		spec, err = deriveSpecInternal(assemblyDir, stacks)
+	} else {
+		spec, err = deriveSpec(assemblyDir, stacks)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -294,6 +349,9 @@ func (r *Runner) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	for _, skipped := range spec.Skipped {
+		r.logf("not served: %s (%s): %s", skipped.LogicalID, skipped.Kind, skipped.Reason)
+	}
 	if err = r.docker.Available(ctx); err != nil {
 		return err
 	}
@@ -301,7 +359,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err = r.resolveImages(spec, arch); err != nil {
+	if err = r.resolveImages(spec, arch, spec.ServedFunctions()); err != nil {
 		return err
 	}
 	if err = r.prepareScratch(spec); err != nil {
@@ -313,6 +371,12 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 	r.logf("network %s", r.network)
 	if err = r.startBackends(ctx); err != nil {
+		return err
+	}
+	if err = r.provisionResources(ctx, spec); err != nil {
+		return err
+	}
+	if err = r.resolveEnvironment(spec, spec.ServedFunctions()); err != nil {
 		return err
 	}
 	preflight, err := r.Preflight(ctx, r.network, r.options.AddHosts)
@@ -335,29 +399,44 @@ func (r *Runner) Run(ctx context.Context) error {
 // backendProcess is a local emulator container the run owns.
 type backendProcess struct {
 	Container string
-	Endpoint  Endpoint
+	// Alias is the network name the profile's endpoints use, for example
+	// "dynamodb-local" or "moto".
+	Alias     string
+	Endpoints []Endpoint
+	// HostURL is the loopback base URL for the runner's own provisioning
+	// calls. It is never injected into a function container.
+	HostURL string
 }
 
 // startBackends starts the local emulators configured from the profile and
 // resolves their network addresses for the function containers' closed DNS.
 func (r *Runner) startBackends(ctx context.Context) error {
 	for _, backend := range r.options.Backends {
-		image, err := r.profile.DynamoDBImage()
+		container := backendContainer(backend)
+		pin, err := r.profile.Container(container)
 		if err != nil {
 			return fmt.Errorf("backend %s: %w", backend, err)
 		}
 		name := r.backendsContainerName(backend)
+		endpoints := r.profile.EndpointsForContainer(container)
+		if backend == backendDynamoDB && !containsEndpointService(endpoints, backendDynamoDB) {
+			endpoints = append(endpoints, Endpoint{Service: backendDynamoDB, URL: "http://" + backendDynamoDBName + ":8000"})
+		}
 		// Register the container before starting it, so a signal that lands
 		// while the start or the address lookup is in flight still cleans it up.
 		r.backends[backend] = backendProcess{
 			Container: name,
-			Endpoint:  Endpoint{Service: backend, URL: "http://" + backendDynamoDBName + ":8000"},
+			Alias:     container,
+			Endpoints: endpoints,
 		}
 		options := ContainerOptions{
 			Name:    name,
 			Network: r.network,
-			Image:   image,
-			Command: []string{"-jar", "DynamoDBLocal.jar", "-sharedDb", "-inMemory"},
+			Aliases: []string{container},
+			Image:   pin.Image,
+			Command: pin.Command,
+			Env:     pin.Environment,
+			Publish: pin.ContainerPort,
 			Labels:  r.labels(),
 			Detach:  true,
 		}
@@ -368,14 +447,43 @@ func (r *Runner) startBackends(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		r.options.AddHosts = append(r.options.AddHosts, backendDynamoDBName+":"+address)
-		r.logf("backend %s (%s) ready at %s", backend, image, r.backends[backend].Endpoint.URL)
+		r.options.AddHosts = append(r.options.AddHosts, container+":"+address)
+		// An S3 SDK picks virtual-hosted addressing for a named endpoint
+		// ("bucket.s3proxy") and path addressing for an IP endpoint. s3proxy
+		// only serves the latter, so the S3 endpoint uses the container address.
+		if container == "s3proxy" {
+			for index := range r.endpoints {
+				if r.endpoints[index].Service == "s3" {
+					r.endpoints[index].URL = fmt.Sprintf("http://%s:%d", address, pin.ContainerPort)
+				}
+			}
+		}
+		process := r.backends[backend]
+		if pin.ContainerPort > 0 {
+			hostPort, portErr := r.docker.PublishedPort(ctx, name, pin.ContainerPort)
+			if portErr != nil {
+				return portErr
+			}
+			if hostPort == 0 {
+				return fmt.Errorf("backend %s published no loopback port for container port %d", backend, pin.ContainerPort)
+			}
+			process.HostURL = fmt.Sprintf("http://127.0.0.1:%d", hostPort)
+		}
+		r.backends[backend] = process
+		var urls []string
+		for _, endpoint := range endpoints {
+			urls = append(urls, endpoint.URL)
+		}
+		r.logf("backend %s (%s) ready at %s", backend, pin.Image, strings.Join(urls, ", "))
 	}
 	return nil
 }
 
 func (r *Runner) backendsContainerName(backend string) string {
-	return r.namePrefix + "-" + backend
+	if backend == backendDynamoDB {
+		return r.namePrefix + "-" + backendDynamoDB
+	}
+	return r.namePrefix + "-" + sanitizeName(backend)
 }
 
 // cleanupFunc removes everything the run created. It stops accepting requests
@@ -459,10 +567,10 @@ func cleanupOperationContext(deadline time.Time) (context.Context, context.Cance
 	return context.WithTimeout(context.Background(), remaining)
 }
 
-// resolveImages pins every served function's runtime image and checks the
+// resolveImages pins every target function's runtime image and checks the
 // architecture the handler was built for.
-func (r *Runner) resolveImages(spec *Spec, hostArch string) error {
-	for _, id := range spec.ServedFunctions() {
+func (r *Runner) resolveImages(spec *Spec, hostArch string, targets []string) error {
+	for _, id := range targets {
 		function, ok := spec.Function(id)
 		if !ok {
 			return fmt.Errorf("assembly references function %q but defines no such resource", id)
@@ -577,11 +685,11 @@ func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image
 	if len(overridden) > 0 {
 		r.logf("function %s: runner-owned environment overrides template values for %s", function.LogicalID, strings.Join(overridden, ", "))
 	}
-	if len(function.UnresolvedEnvironment) > 0 {
+	if len(function.EnvironmentExpressions) > 0 {
 		return unsupported(
 			function.LogicalID,
-			"environment variables %s are CloudFormation expressions; the local runner only injects literal values",
-			strings.Join(function.UnresolvedEnvironment, ", "),
+			"environment expressions were not resolved before the container start: %s",
+			strings.Join(sortedKeys(function.EnvironmentExpressions), ", "),
 		)
 	}
 	if limitErr := unresolvedLimitsError(function); limitErr != nil {

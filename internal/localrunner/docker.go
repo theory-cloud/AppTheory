@@ -81,8 +81,11 @@ func (d *Docker) RemoveNetwork(ctx context.Context, name string) {
 
 // ContainerOptions describes one function or probe container.
 type ContainerOptions struct {
-	Name       string
-	Network    string
+	Name    string
+	Network string
+	// Aliases are additional network names, so an emulator can answer on its
+	// service name while the container keeps the run's unique name.
+	Aliases    []string
 	Image      string
 	Command    []string
 	Entrypoint string
@@ -113,6 +116,9 @@ func ContainerArgv(options ContainerOptions) []string {
 	}
 	if options.Network != "" {
 		argv = append(argv, "--network", options.Network, "--dns", ClosedDNSServer)
+	}
+	for _, alias := range options.Aliases {
+		argv = append(argv, "--network-alias", alias)
 	}
 	for _, host := range options.AddHosts {
 		argv = append(argv, "--add-host", host)

@@ -325,20 +325,6 @@ func TestDeriveFailsClosedOnUnsupportedConstructs(t *testing.T) {
 				},
 			},
 		},
-		"unresolved environment": {
-			"Fn": withAsset(lambdaFunction(map[string]any{
-				"Environment": map[string]any{
-					"Variables": map[string]any{"TABLE": map[string]any{"Ref": "Table"}},
-				},
-			}), "asset.deadbeef"),
-			"Url": map[string]any{
-				"Type": typeFunctionURL,
-				"Properties": map[string]any{
-					"AuthType":          noneAuthorization,
-					"TargetFunctionArn": map[string]any{"Fn::GetAtt": []any{"Fn", "Arn"}},
-				},
-			},
-		},
 	}
 	for name, resources := range cases {
 		t.Run(name, func(t *testing.T) {

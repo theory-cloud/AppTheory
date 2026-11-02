@@ -346,25 +346,25 @@ func TestResolveImagesAndArchitecture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := runner.resolveImages(spec, archARM64); err != nil {
+	if err := runner.resolveImages(spec, archARM64, spec.ServedFunctions()); err != nil {
 		t.Fatalf("resolve images: %v", err)
 	}
-	if err := runner.resolveImages(spec, archAMD64); err == nil || !strings.Contains(err.Error(), "cross-architecture") {
+	if err := runner.resolveImages(spec, archAMD64, spec.ServedFunctions()); err == nil || !strings.Contains(err.Error(), "cross-architecture") {
 		t.Fatalf("architecture mismatch must fail: %v", err)
 	}
 	missing := &Spec{APIs: []APISpec{{Routes: []Route{{Function: "Missing"}}}}}
-	if err := runner.resolveImages(missing, archARM64); err == nil {
+	if err := runner.resolveImages(missing, archARM64, missing.ServedFunctions()); err == nil {
 		t.Fatal("a route to an undefined function must fail")
 	}
 	unsupportedRuntime := &Spec{
 		Functions: []FunctionSpec{{LogicalID: "Fn", Runtime: "java21", AssetDir: base}},
 		APIs:      []APISpec{{Routes: []Route{{Function: "Fn"}}}},
 	}
-	if err := runner.resolveImages(unsupportedRuntime, archARM64); err == nil {
+	if err := runner.resolveImages(unsupportedRuntime, archARM64, unsupportedRuntime.ServedFunctions()); err == nil {
 		t.Fatal("an unsupported runtime must fail")
 	}
 	noProfile := &Runner{images: map[string]string{}}
-	if err := noProfile.resolveImages(spec, archARM64); err == nil {
+	if err := noProfile.resolveImages(spec, archARM64, spec.ServedFunctions()); err == nil {
 		t.Fatal("a run without a profile must fail")
 	}
 }
@@ -461,7 +461,7 @@ func TestImageForAndLabels(t *testing.T) {
 	if err := runner.resolveImages(&Spec{
 		Functions: []FunctionSpec{{LogicalID: "Fn", Runtime: "nodejs24.x", Handler: "index.handler"}},
 		APIs:      []APISpec{{Routes: []Route{{Function: "Fn"}}}},
-	}, archARM64); err != nil {
+	}, archARM64, []string{"Fn"}); err != nil {
 		t.Fatalf("resolve node image: %v", err)
 	}
 	if _, err := runner.imageFor(FunctionSpec{LogicalID: "Fn", Runtime: "nodejs24.x"}); err != nil {

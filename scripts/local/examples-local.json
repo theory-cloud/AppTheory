@@ -7,6 +7,26 @@
       "image": "amazon/dynamodb-local@sha256:7ef4a2c45b58c2901e70a4f28e0953a422c2c631baaaf5e2c15e0805740c7752",
       "port": 8130
     },
+    "containers": {
+      "dynamodb-local": {
+        "image": "amazon/dynamodb-local@sha256:7ef4a2c45b58c2901e70a4f28e0953a422c2c631baaaf5e2c15e0805740c7752",
+        "command": ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-inMemory"],
+        "containerPort": 8000
+      },
+      "moto": {
+        "image": "motoserver/moto@sha256:59a1965d845249b04def37a0e2565f9cc6c44543cb89b68e90f28f344b3b0d1a",
+        "containerPort": 5000
+      },
+      "s3proxy": {
+        "image": "andrewgaul/s3proxy@sha256:1f8915c2b4a8af22bf1fc191500f242974a458c457391b5788f9107544273dc3",
+        "containerPort": 80,
+        "environment": {
+          "S3PROXY_AUTHORIZATION": "aws-v2-or-v4",
+          "S3PROXY_IDENTITY": "dummy",
+          "S3PROXY_CREDENTIAL": "dummy"
+        }
+      }
+    },
     "ports": {
       "first": 8130,
       "last": 8199,
@@ -40,6 +60,18 @@
           "DYNAMODB_ENDPOINT",
           "DDB_ENDPOINT"
         ]
+      },
+      "kms": {
+        "container": "moto",
+        "env": ["AWS_ENDPOINT_URL_KMS", "KMS_ENDPOINT"]
+      },
+      "sts": {
+        "container": "moto",
+        "env": ["AWS_ENDPOINT_URL_STS", "STS_ENDPOINT"]
+      },
+      "s3": {
+        "container": "s3proxy",
+        "env": ["AWS_ENDPOINT_URL_S3", "S3_ENDPOINT"]
       }
     }
   },
@@ -72,17 +104,18 @@
     "examples/mcp/tools-only/main.go": {
       "run": "mcp-go-tools-only",
       "class": "L1",
-      "description": "Go MCP tools-only server: real MCP protocol messages through the testkit transport."
+      "description": "Go MCP tools-only server: the real binary runs in a warm provided.al2023 container and is driven with explicit MCP HTTP API v2 events (initialize, tools/list, tools/call and two JSON-RPC refusals). Handler-only example: it ships no CDK definition, so no route table is synthesized."
     },
     "examples/mcp/tools-resources-prompts/main.go": {
       "run": "mcp-go-tools-resources-prompts",
       "class": "L1",
-      "description": "Go MCP server exposing tools, resources and prompts: real protocol messages through the testkit transport."
+      "description": "Go MCP server exposing tools, resources and prompts: the real binary runs in a warm provided.al2023 container and is driven with explicit MCP HTTP API v2 events (tools, resources/read, prompts/get and a refusal). Handler-only example: it ships no CDK definition."
     },
     "examples/mcp/resumable-sse/main.go": {
       "run": "mcp-go-resumable-sse",
-      "class": "L1",
-      "description": "Go MCP resumable SSE server: real streaming tool call, cursor resume and replay assertions through the testkit transport. Warm-container delivery is A3b."
+      "class": "L3",
+      "gap": "Incremental SSE delivery; the RIE buffers the complete stream. Session creation, event IDs and Last-Event-ID replay are asserted on a warm container.",
+      "description": "Go MCP resumable SSE server: a warm provided.al2023 container keeps the session, the buffered tool-call stream carries priming/progress/result IDs, and Last-Event-ID replay returns the progress events and final result."
     },
     "examples/migration/rate-limited-http/main.go": {
       "run": "rate-limited-http",
@@ -142,16 +175,21 @@
       "description": "Lambda role CDK app, synthesized and hash-checked with focused IAM/KMS assertions, including the compiled handler asset."
     },
     "examples/cdk/lambda-role/handlers/custom.ts": {
-      "pending": "A3b",
-      "description": "lambda-role custom-permission handler; A3b runs the compiled handler locally."
+      "run": "lambda-role-custom",
+      "class": "L3",
+      "gap": "SSM parameter store has no local emulator; the S3 path is emulated by s3proxy (no IAM/bucket policies or event notifications).",
+      "description": "lambda-role custom handler: the compiled asset runs in nodejs:24, writes and reads back an object on s3proxy, and the failed SSM lookup falls back to not-configured."
     },
     "examples/cdk/lambda-role/handlers/encrypted.ts": {
-      "pending": "A3b",
-      "description": "lambda-role encrypted handler; A3b runs the compiled handler locally with the local key material."
+      "run": "lambda-role-encrypted",
+      "class": "L2",
+      "gap": "KMS is emulated by moto (no HSM, key policies or grants); the encrypt/decrypt round-trip is real.",
+      "description": "lambda-role encrypted handler: the compiled asset runs in nodejs:24 and round-trips plaintext through the emulated KMS with match=true."
     },
     "examples/cdk/lambda-role/handlers/index.ts": {
-      "pending": "A3b",
-      "description": "lambda-role baseline handler; A3b runs the compiled handler locally."
+      "run": "lambda-role-index",
+      "class": "L1",
+      "description": "lambda-role baseline handler: the compiled asset serves the basic, tracing and dynamic functions and returns the expected 200 payload from each."
     },
     "examples/cdk/lesser-parity/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
@@ -159,20 +197,26 @@
       "description": "Lesser-parity CDK app, synthesized and hash-checked with focused construct assertions."
     },
     "examples/cdk/lesser-parity/handlers/api.mjs": {
-      "pending": "A3b",
-      "description": "Lesser-parity API handler; A3b runs it through the local runner with HTTP assertions."
+      "run": "lesser-parity-api",
+      "class": "L1",
+      "description": "Lesser-parity catch-all REST handler: GET and POST assertions with resolved TABLE_NAME/QUEUE_URL values."
     },
     "examples/cdk/lesser-parity/handlers/graphql.mjs": {
-      "pending": "A3b",
-      "description": "Lesser-parity GraphQL handler; A3b runs it through the local runner."
+      "run": "lesser-parity-graphql",
+      "class": "L1",
+      "description": "Lesser-parity GraphQL handler: a dedicated POST route, the resolved table name, and GET falling through to the catch-all."
     },
     "examples/cdk/lesser-parity/handlers/sse.mjs": {
-      "pending": "A3b",
-      "description": "Lesser-parity SSE handler; A3b runs it with the documented buffered-streaming gap."
+      "run": "lesser-parity-sse",
+      "class": "L3",
+      "gap": "Incremental SSE delivery; the RIE buffers the response. Status, content type and all three events are asserted.",
+      "description": "Lesser-parity SSE handler: all three buffered events plus the declared CORS preflight from the same REST API."
     },
     "examples/cdk/lesser-parity/handlers/worker.mjs": {
-      "pending": "A3b",
-      "description": "Lesser-parity worker handler; A3b invokes it with generated event payloads."
+      "run": "lesser-parity-worker",
+      "class": "L3",
+      "gap": "SQS event delivery; the worker is invoked with a generated SQS batch because this milestone has no SQS emulator.",
+      "description": "Lesser-parity queue worker: a generated two-record batch is processed and the invalid record is returned as a partial batch failure."
     },
     "examples/cdk/media-cdn/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
@@ -210,16 +254,22 @@
       "description": "Multilang CDK app, synthesized and hash-checked with focused construct assertions; the TS Lambda asset is staged self-contained (A1 asset fix)."
     },
     "examples/cdk/multilang/handlers/go/main.go": {
-      "pending": "A3b",
-      "description": "Multilang Go handler; A3b runs it through the local runner with HTTP and REST assertions."
+      "run": "multilang-go",
+      "class": "L3",
+      "gap": "WebSocket frames and event-source delivery are not served; HTTP API v2 and the Go-only REST v1 surface (including /sse) are verified.",
+      "description": "Multilang Go handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the Go REST API serves hello and all three buffered SSE events; three WebSocket APIs are reported not served."
     },
     "examples/cdk/multilang/handlers/py/handler.py": {
-      "pending": "A3b",
-      "description": "Multilang Python handler; A3b runs it through the local runner with HTTP and REST assertions."
+      "run": "multilang-py",
+      "class": "L3",
+      "gap": "WebSocket frames and event-source delivery are not served; HTTP API v2 is verified for Python, while the REST v1 surface is defined only for the Go handler in this stack.",
+      "description": "Multilang Python handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the Go-only REST surface is also asserted."
     },
     "examples/cdk/multilang/handlers/ts/handler.mjs": {
-      "pending": "A3b",
-      "description": "Multilang TypeScript handler; A3b runs it through the local runner with HTTP and REST assertions."
+      "run": "multilang-ts",
+      "class": "L3",
+      "gap": "WebSocket frames and event-source delivery are not served; HTTP API v2 is verified for TypeScript, while the REST v1 surface is defined only for the Go handler in this stack.",
+      "description": "Multilang TypeScript handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the Go-only REST surface is also asserted."
     },
     "examples/cdk/path-routed-frontend/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
@@ -232,20 +282,25 @@
       "description": "REST v1 router CDK app, synthesized and hash-checked with focused route, integration and stage assertions."
     },
     "examples/cdk/restv1-router/handlers/api.mjs": {
-      "pending": "A3b",
-      "description": "REST v1 router catch-all handler; A3b runs it through the local runner."
+      "run": "restv1-api",
+      "class": "L1",
+      "description": "REST v1 router catch-all handler: GET and POST assertions with the matched proxy path parameter."
     },
     "examples/cdk/restv1-router/handlers/graphql.mjs": {
-      "pending": "A3b",
-      "description": "REST v1 router GraphQL handler; A3b runs it through the local runner."
+      "run": "restv1-graphql",
+      "class": "L1",
+      "description": "REST v1 router GraphQL handler: POST query handling and GET falling through to the catch-all route."
     },
     "examples/cdk/restv1-router/handlers/inventory.mjs": {
-      "pending": "A3b",
-      "description": "REST v1 router inventory handler; A3b runs it through the local runner with path-parameter assertions."
+      "run": "restv1-inventory",
+      "class": "L1",
+      "description": "REST v1 router inventory handler: GET/PUT/DELETE with path parameters, 404 refusals and the declared CORS preflight."
     },
     "examples/cdk/restv1-router/handlers/sse.mjs": {
-      "pending": "A3b",
-      "description": "REST v1 router SSE handler; A3b runs it with the documented buffered-streaming gap."
+      "run": "restv1-sse",
+      "class": "L3",
+      "gap": "Incremental SSE delivery; the RIE buffers the complete response. Status, content type, all 10 events and [DONE] are asserted.",
+      "description": "REST v1 router SSE handler: the real streamifyResponse handler returns all 10 events and [DONE] as one buffered body."
     },
     "examples/cdk/s3-vectors-semantic-search/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",

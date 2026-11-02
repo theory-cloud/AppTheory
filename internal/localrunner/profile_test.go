@@ -114,6 +114,73 @@ func TestProfileRejectsUnpinnedOrMismatchedImages(t *testing.T) {
 	}
 }
 
+func TestProfileContainersAndBackendEndpoints(t *testing.T) {
+	document := validProfileDocument()
+	profileDocument, ok := document["profile"].(map[string]any)
+	if !ok {
+		t.Fatal("test profile document has no profile object")
+	}
+	profileDocument["containers"] = map[string]any{
+		"moto": map[string]any{
+			"image":         "motoserver/moto@" + testDigest,
+			"containerPort": 5000,
+		},
+		"s3proxy": map[string]any{
+			"image":         "andrewgaul/s3proxy@" + testDigest,
+			"containerPort": 80,
+			"environment":   map[string]any{"S3PROXY_AUTHORIZATION": "aws-v2-or-v4"},
+		},
+	}
+	endpointsSection, ok := profileDocument["endpoints"].(map[string]any)
+	if !ok {
+		t.Fatal("test profile document has no endpoints section")
+	}
+	endpointsSection["kms"] = map[string]any{
+		"container": "moto",
+		"env":       []any{"AWS_ENDPOINT_URL_KMS", "KMS_ENDPOINT"},
+	}
+	path := writeProfile(t, document)
+	profile, err := LoadProfile(path)
+	if err != nil {
+		t.Fatalf("load profile: %v", err)
+	}
+	pin, err := profile.Container("moto")
+	if err != nil {
+		t.Fatalf("moto container: %v", err)
+	}
+	if pin.ContainerPort != 5000 || pin.Image != "motoserver/moto@"+testDigest {
+		t.Fatalf("unexpected moto pin: %+v", pin)
+	}
+	endpoints := profile.EndpointsForContainer("moto")
+	if len(endpoints) != 1 || endpoints[0].Service != "kms" || endpoints[0].URL != "http://moto:5000" {
+		t.Fatalf("unexpected moto endpoints: %+v", endpoints)
+	}
+	containersSection, ok := profileDocument["containers"].(map[string]any)
+	if !ok {
+		t.Fatal("test profile document has no containers section")
+	}
+	containersSection["s3proxy"] = map[string]any{
+		"image":         "andrewgaul/s3proxy:master",
+		"containerPort": 80,
+	}
+	unpinned, err := LoadProfile(writeProfile(t, document))
+	if err != nil {
+		t.Fatalf("load unpinned profile: %v", err)
+	}
+	if _, err := unpinned.Container("s3proxy"); err == nil || !strings.Contains(err.Error(), "digest") {
+		t.Fatalf("an unpinned backend image must fail closed: %v", err)
+	}
+}
+
+func TestBackendContainerMapping(t *testing.T) {
+	if got := backendContainer(backendDynamoDB); got != backendDynamoDBName {
+		t.Fatalf("dynamodb backend maps to %q, want %q", got, backendDynamoDBName)
+	}
+	if got := backendContainer("moto"); got != "moto" {
+		t.Fatalf("a profile backend keeps its name: %q", got)
+	}
+}
+
 func TestRuntimeClass(t *testing.T) {
 	cases := map[string]string{
 		"provided.al2023": imageClassGo,

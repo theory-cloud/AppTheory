@@ -33,6 +33,14 @@ type ImagePin struct {
 	Pinned string `json:"pinned"`
 }
 
+// ContainerPin is one digest-pinned local emulator container.
+type ContainerPin struct {
+	Image         string            `json:"image"`
+	Command       []string          `json:"command,omitempty"`
+	ContainerPort int               `json:"containerPort"`
+	Environment   map[string]string `json:"environment,omitempty"`
+}
+
 // Profile is the checked-in local execution profile the repo's harness and the
 // local runner share. Only the sections the runner needs are read.
 type Profile struct {
@@ -40,7 +48,10 @@ type Profile struct {
 		Image string `json:"image"`
 		Port  int    `json:"port"`
 	} `json:"dynamodbLocal"`
-	Lambda struct {
+	// Containers are the digest-pinned local emulators the runner can start
+	// with --backend. dynamodbLocal remains the DynamoDB Local shortcut.
+	Containers map[string]ContainerPin `json:"containers"`
+	Lambda     struct {
 		Images map[string]ImagePin `json:"images"`
 	} `json:"lambda"`
 	Endpoints map[string]struct {
@@ -95,6 +106,60 @@ func (p *Profile) DynamoDBImage() (string, error) {
 		return "", fmt.Errorf("DynamoDB Local image %q is not pinned by digest", image)
 	}
 	return image, nil
+}
+
+// Container returns the digest-pinned emulator container a --backend name
+// selects. "dynamodb-local" falls back to the legacy dynamodbLocal section so
+// an A3a profile keeps working unchanged.
+func (p *Profile) Container(name string) (ContainerPin, error) {
+	if p == nil {
+		return ContainerPin{}, fmt.Errorf("no local profile was supplied; pass --profile to pin the %s backend", name)
+	}
+	if pin, ok := p.Containers[name]; ok && strings.TrimSpace(pin.Image) != "" {
+		_, digest, hasDigest := strings.Cut(pin.Image, "@")
+		if !hasDigest || !digestPattern.MatchString(digest) {
+			return ContainerPin{}, fmt.Errorf("backend %s image %q is not pinned by digest", name, pin.Image)
+		}
+		if pin.ContainerPort <= 0 {
+			return ContainerPin{}, fmt.Errorf("backend %s has no containerPort", name)
+		}
+		return pin, nil
+	}
+	if name == backendDynamoDBName {
+		image, err := p.DynamoDBImage()
+		if err != nil {
+			return ContainerPin{}, err
+		}
+		return ContainerPin{
+			Image:         image,
+			Command:       []string{"-jar", "DynamoDBLocal.jar", "-sharedDb", "-inMemory"},
+			ContainerPort: 8000,
+		}, nil
+	}
+	return ContainerPin{}, fmt.Errorf("local profile %s does not define the %s backend", p.path, name)
+}
+
+// EndpointsForContainer returns the endpoints the profile binds to a container.
+// The URL uses the container name, which resolves only inside the run network.
+func (p *Profile) EndpointsForContainer(name string) []Endpoint {
+	if p == nil {
+		return nil
+	}
+	pin, err := p.Container(name)
+	if err != nil {
+		return nil
+	}
+	var out []Endpoint
+	for service, endpoint := range p.Endpoints {
+		if endpoint.Container != name {
+			continue
+		}
+		out = append(out, Endpoint{
+			Service: service,
+			URL:     fmt.Sprintf("http://%s:%d", name, pin.ContainerPort),
+		})
+	}
+	return out
 }
 
 // ImageFor returns the digest-pinned image for a Lambda runtime.
