@@ -3,6 +3,8 @@ package localcloudfront
 import (
 	"context"
 	"encoding/json"
+	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -130,6 +132,185 @@ func TestExecutorViewerResponse(t *testing.T) {
 	}
 	if got := result.Response.Headers["x-added"].Value; got != "by-viewer-response" {
 		t.Fatalf("x-added = %q", got)
+	}
+}
+
+func TestExecutorAppliesValueEditToMultiValueFields(t *testing.T) {
+	event := testRequestEvent("viewer-request")
+	event.Request.Querystring.Values["q"] = HeaderValue{Value: "q1", MultiValue: []HeaderValue{{Value: "q1"}, {Value: "q2"}}}
+	event.Request.Cookies["session"] = HeaderValue{Value: "v1", MultiValue: []HeaderValue{{Value: "v1"}, {Value: "v2"}}}
+	code := `function handler(event) {
+		event.request.headers['x-multi'].value = 'edited-header';
+		event.request.cookies.session.value = 'edited-cookie';
+		event.request.querystring.q.value = 'edited-query';
+		return event.request;
+	}`
+	result, err := NewExecutor().Execute(context.Background(), testFunction(runtimeJS20, code), event)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	header := result.Request.Headers["x-multi"]
+	if header.Value != "edited-header" {
+		t.Fatalf("header value = %q, want the edited value", header.Value)
+	}
+	if got := valuesOf(header); !slices.Equal(got, []string{"edited-header", "second"}) {
+		t.Fatalf("header values = %v, want the edited first value and the unchanged second", got)
+	}
+	if got := cookieHeaderValues(result.Request.Cookies); !slices.Equal(got, []string{"session=edited-cookie", "session=v2"}) {
+		t.Fatalf("cookie values = %v, want the edited first value and the unchanged second", got)
+	}
+	query, err := url.ParseQuery(serializeQuery(result.Request.Querystring))
+	if err != nil {
+		t.Fatalf("parse query: %v", err)
+	}
+	if got := query["q"]; !slices.Equal(got, []string{"edited-query", "q2"}) {
+		t.Fatalf("query values = %v, want the edited first value and the unchanged second", got)
+	}
+}
+
+func TestExecutorAppliesMultiValueEdit(t *testing.T) {
+	event := testRequestEvent("viewer-request")
+	event.Request.Querystring.Values["q"] = HeaderValue{Value: "q1", MultiValue: []HeaderValue{{Value: "q1"}, {Value: "q2"}}}
+	event.Request.Cookies["session"] = HeaderValue{Value: "v1", MultiValue: []HeaderValue{{Value: "v1"}, {Value: "v2"}}}
+	code := `function handler(event) {
+		event.request.headers['x-multi'].value = 'ignored';
+		event.request.headers['x-multi'].multiValue = [{ value: 'm1' }, { value: 'm2' }, { value: 'm3' }];
+		event.request.cookies.session.value = 'ignored';
+		event.request.cookies.session.multiValue = [{ value: 'c1' }, { value: 'c2' }];
+		event.request.querystring.q.value = 'ignored';
+		event.request.querystring.q.multiValue = [{ value: 'qq1' }, { value: 'qq2' }];
+		return event.request;
+	}`
+	result, err := NewExecutor().Execute(context.Background(), testFunction(runtimeJS20, code), event)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	header := result.Request.Headers["x-multi"]
+	if got := valuesOf(header); !slices.Equal(got, []string{"m1", "m2", "m3"}) {
+		t.Fatalf("header values = %v, want the edited multiValue", got)
+	}
+	if header.Value != "m1" {
+		t.Fatalf("header value = %q, want the first edited multiValue entry", header.Value)
+	}
+	cookie := result.Request.Cookies["session"]
+	if got := valuesOf(cookie); !slices.Equal(got, []string{"c1", "c2"}) {
+		t.Fatalf("cookie values = %v, want the edited multiValue", got)
+	}
+	if cookie.Value != "c1" {
+		t.Fatalf("cookie value = %q, want the first edited multiValue entry", cookie.Value)
+	}
+	query, err := url.ParseQuery(serializeQuery(result.Request.Querystring))
+	if err != nil {
+		t.Fatalf("parse query: %v", err)
+	}
+	if got := query["q"]; !slices.Equal(got, []string{"qq1", "qq2"}) {
+		t.Fatalf("query values = %v, want the edited multiValue", got)
+	}
+	if got := result.Request.Querystring.Values["q"].Value; got != "qq1" {
+		t.Fatalf("query value = %q, want the first edited multiValue entry", got)
+	}
+}
+
+func TestExecutorAppliesValueEditToViewerResponseMultiValueFields(t *testing.T) {
+	event := testRequestEvent("viewer-response")
+	event.Response = &EventResponse{
+		StatusCode: 200,
+		Headers: map[string]HeaderValue{
+			"x-multi": {Value: "first", MultiValue: []HeaderValue{{Value: "first"}, {Value: "second"}}},
+		},
+		Cookies: map[string]CookieValue{
+			"session": {
+				Value:      "v1",
+				Attributes: "Path=/",
+				MultiValue: []CookieValue{
+					{Value: "v1", Attributes: "Path=/"},
+					{Value: "v2", Attributes: "Path=/cat"},
+				},
+			},
+		},
+	}
+	code := `function handler(event) {
+		event.response.headers['x-multi'].value = 'edited-header';
+		event.response.cookies.session.value = 'edited-cookie';
+		return event.response;
+	}`
+	result, err := NewExecutor().Execute(context.Background(), testFunction(runtimeJS20, code), event)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if got := valuesOf(result.Response.Headers["x-multi"]); !slices.Equal(got, []string{"edited-header", "second"}) {
+		t.Fatalf("response header values = %v, want the edited first value and the unchanged second", got)
+	}
+	cookie := result.Response.Cookies["session"]
+	if cookie.Value != "edited-cookie" || len(cookie.MultiValue) != 2 {
+		t.Fatalf("response cookie = %#v", cookie)
+	}
+	if cookie.MultiValue[0].Value != "edited-cookie" || cookie.MultiValue[0].Attributes != "Path=/" {
+		t.Fatalf("response cookie first multiValue = %#v", cookie.MultiValue[0])
+	}
+	if cookie.MultiValue[1].Value != "v2" || cookie.MultiValue[1].Attributes != "Path=/cat" {
+		t.Fatalf("response cookie second multiValue = %#v", cookie.MultiValue[1])
+	}
+	converted, err := responseFromEventResponse(result.Response, nil)
+	if err != nil {
+		t.Fatalf("convert response: %v", err)
+	}
+	want := []string{"session=edited-cookie; Path=/", "session=v2; Path=/cat"}
+	if got := converted.Header.Values("Set-Cookie"); !slices.Equal(got, want) {
+		t.Fatalf("Set-Cookie = %v, want %v", got, want)
+	}
+}
+
+func TestExecutorAppliesMultiValueEditToViewerResponseFields(t *testing.T) {
+	event := testRequestEvent("viewer-response")
+	event.Response = &EventResponse{
+		StatusCode: 200,
+		Headers: map[string]HeaderValue{
+			"x-multi": {Value: "first", MultiValue: []HeaderValue{{Value: "first"}, {Value: "second"}}},
+		},
+		Cookies: map[string]CookieValue{
+			"session": {
+				Value:      "v1",
+				Attributes: "Path=/",
+				MultiValue: []CookieValue{
+					{Value: "v1", Attributes: "Path=/"},
+					{Value: "v2", Attributes: "Path=/cat"},
+				},
+			},
+		},
+	}
+	code := `function handler(event) {
+		event.response.headers['x-multi'].value = 'ignored';
+		event.response.headers['x-multi'].multiValue = [{ value: 'm1' }, { value: 'm2' }];
+		event.response.cookies.session.value = 'ignored';
+		event.response.cookies.session.multiValue = [
+			{ value: 'c1', attributes: 'Path=/one' },
+			{ value: 'c2', attributes: 'Path=/two' }
+		];
+		return event.response;
+	}`
+	result, err := NewExecutor().Execute(context.Background(), testFunction(runtimeJS20, code), event)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	header := result.Response.Headers["x-multi"]
+	if got := valuesOf(header); !slices.Equal(got, []string{"m1", "m2"}) {
+		t.Fatalf("response header values = %v, want the edited multiValue", got)
+	}
+	if header.Value != "m1" {
+		t.Fatalf("response header value = %q, want the first edited multiValue entry", header.Value)
+	}
+	cookie := result.Response.Cookies["session"]
+	if cookie.Value != "c1" || cookie.Attributes != "Path=/one" {
+		t.Fatalf("response cookie = %#v, want the first edited multiValue entry", cookie)
+	}
+	converted, err := responseFromEventResponse(result.Response, nil)
+	if err != nil {
+		t.Fatalf("convert response: %v", err)
+	}
+	want := []string{"session=c1; Path=/one", "session=c2; Path=/two"}
+	if got := converted.Header.Values("Set-Cookie"); !slices.Equal(got, want) {
+		t.Fatalf("Set-Cookie = %v, want %v", got, want)
 	}
 }
 

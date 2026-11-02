@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -576,6 +578,56 @@ func TestGatewayBuildsTheDocumentedEventShape(t *testing.T) {
 	}
 	if distributionID, ok := shape["distributionId"].(string); !ok || !strings.HasPrefix(distributionID, "LOCAL") {
 		t.Fatalf("distributionId = %#v, want a local placeholder", shape["distributionId"])
+	}
+}
+
+func TestGatewayAppliesValueEditOnMultiValueFieldsBeforeOrigin(t *testing.T) {
+	origin := okOrigin("ok")
+	code := `function handler(event) {
+		event.request.headers['x-multi'].value = 'edited-header';
+		event.request.cookies.session.value = 'edited-cookie';
+		event.request.querystring.q.value = 'edited-query';
+		return event.request;
+	}`
+	function := testFunction(runtimeJS20, code)
+	function.LogicalID = "MultiValueFunction"
+	behavior := testBehavior("*", "origin", []string{"GET", "HEAD"})
+	behavior.ViewerRequestFunction = function.LogicalID
+	behavior.OriginRequestPolicy = testPolicy(PolicyOriginRequest, nil, &OriginRequestPolicy{
+		Headers:      HeaderForwarding{Mode: ForwardWhitelist, Names: []string{"x-multi"}},
+		Cookies:      CookieForwarding{Mode: ForwardWhitelist, Names: []string{"session"}},
+		QueryStrings: QueryForwarding{Mode: ForwardWhitelist, Names: []string{"q"}},
+	}, nil)
+	distribution := testDistribution(behavior, nil, testOrigin("origin", "origin.example"))
+	topology := &Topology{Functions: []*Function{function}, functionsByID: map[string]*Function{function.LogicalID: function}}
+	gateway := NewGateway(distribution, topology, map[string]Origin{"origin": origin}, NewExecutor(), nil)
+	request := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "http://viewer.example/x?q=q1&q=q2", nil)
+	request.Host = "viewer.example"
+	request.RemoteAddr = "203.0.113.9:12345"
+	request.Header.Add("X-Multi", "first")
+	request.Header.Add("X-Multi", "second")
+	request.Header.Add("Cookie", "session=v1; session=v2")
+	recorder := httptest.NewRecorder()
+	gateway.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body %q", recorder.Code, recorder.Body.String())
+	}
+	if len(origin.requests) != 1 {
+		t.Fatalf("origin calls = %d, want 1", len(origin.requests))
+	}
+	sent := origin.requests[0]
+	if got := sent.Header.Values("X-Multi"); !slices.Equal(got, []string{"edited-header", "second"}) {
+		t.Fatalf("origin X-Multi = %v, want the edited first value and the unchanged second", got)
+	}
+	if got := sent.Header.Get("Cookie"); got != "session=edited-cookie; session=v2" {
+		t.Fatalf("origin Cookie = %q, want the edited first value and the unchanged second", got)
+	}
+	query, err := url.ParseQuery(sent.Query)
+	if err != nil {
+		t.Fatalf("parse origin query: %v", err)
+	}
+	if got := query["q"]; !slices.Equal(got, []string{"edited-query", "q2"}) {
+		t.Fatalf("origin q = %v, want the edited first value and the unchanged second", got)
 	}
 }
 

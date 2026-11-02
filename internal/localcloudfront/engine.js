@@ -71,7 +71,7 @@ function validateReturn(event, returned) {
       throw cfError('invalid-return', 'the returned object looks like both a request and a response');
     }
     if (isResponse(returned)) {
-      return { kind: 'response', value: { response: normalizeResponse(returned) } };
+      return { kind: 'response', value: { response: normalizeResponse(returned, event) } };
     }
     if (isRequest(returned)) {
       return { kind: 'request', value: { request: normalizeRequest(returned, event) } };
@@ -85,7 +85,7 @@ function validateReturn(event, returned) {
     if (!isResponse(returned)) {
       throw cfError('invalid-return', 'viewer-response must return a response object');
     }
-    return { kind: 'response', value: { response: normalizeResponse(returned) } };
+    return { kind: 'response', value: { response: normalizeResponse(returned, event) } };
   }
   throw cfError('invalid-event', `unsupported event type ${eventType}`);
 }
@@ -115,20 +115,21 @@ function normalizeRequest(request, event) {
   if (typeof request.uri !== 'string' || !request.uri.startsWith('/')) {
     throw cfError('invalid-request', 'request.uri must be a string that begins with /');
   }
-  const headers = normalizeHeaders(request.headers, 'request');
+  const originals = event.request;
+  const headers = normalizeHeaders(request.headers, 'request', originals.headers);
   if (Object.prototype.hasOwnProperty.call(headers, 'set-cookie')) {
     throw cfError('forbidden-header', 'a viewer-request function cannot add a Set-Cookie header; use the cookies object');
   }
   return {
     method: request.method,
     uri: request.uri,
-    querystring: normalizeQuery(request.querystring),
+    querystring: normalizeQuery(request.querystring, originals.querystring),
     headers,
-    cookies: normalizeRequestCookies(request.cookies),
+    cookies: normalizeRequestCookies(request.cookies, originals.cookies),
   };
 }
 
-function normalizeResponse(response) {
+function normalizeResponse(response, event) {
   assertKeys(response, ['statusCode', 'statusDescription', 'headers', 'cookies', 'body'], 'response');
   if (!Number.isInteger(response.statusCode) || response.statusCode < 100 || response.statusCode > 599) {
     throw cfError('invalid-response', 'response.statusCode must be an integer between 100 and 599');
@@ -136,14 +137,15 @@ function normalizeResponse(response) {
   if (response.statusDescription !== undefined && typeof response.statusDescription !== 'string') {
     throw cfError('invalid-response', 'response.statusDescription must be a string');
   }
-  const headers = normalizeHeaders(response.headers, 'response');
+  const originals = event.response || {};
+  const headers = normalizeHeaders(response.headers, 'response', originals.headers);
   if (Object.prototype.hasOwnProperty.call(headers, 'set-cookie')) {
     throw cfError('forbidden-header', 'a response cannot carry Set-Cookie in headers; use the cookies object');
   }
   const normalized = {
     statusCode: response.statusCode,
     headers,
-    cookies: normalizeResponseCookies(response.cookies),
+    cookies: normalizeResponseCookies(response.cookies, originals.cookies),
   };
   if (response.statusDescription !== undefined) {
     normalized.statusDescription = response.statusDescription;
@@ -163,48 +165,69 @@ function assertKeys(value, allowed, context) {
   }
 }
 
-function normalizeHeaders(headers, context) {
+function normalizeHeaders(headers, context, originals) {
   if (headers === undefined || headers === null) {
     return {};
   }
   if (!isPlainObject(headers)) {
     throw cfError('invalid-return', `${context} headers must be an object`);
   }
+  const source = isPlainObject(originals) ? originals : {};
   const normalized = {};
   for (const name of Object.keys(headers)) {
     const lower = String(name).toLowerCase();
     if (Object.prototype.hasOwnProperty.call(normalized, lower)) {
       throw cfError('invalid-return', `header ${name} appears more than once after lower-casing`);
     }
-    normalized[lower] = normalizeValue(headers[name], `header ${name}`);
+    const value = normalizeValue(headers[name], `header ${name}`, source[lower]);
+    if (value !== undefined) {
+      normalized[lower] = value;
+    }
   }
   return normalized;
 }
 
-function normalizeValue(value, context) {
+// CloudFront documents how a modified query string, header or cookie that has a
+// multiValue array is applied: a modified multiValue array wins and value's
+// first element is ignored; otherwise a modified value wins and the remaining
+// multiValue entries are unchanged. See "Duplicate query strings, headers, and
+// cookies (multiValue array)" in the CloudFront Functions event structure:
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/functions-event-structure.html#functions-event-structure-multivalue
+// The returned field is compared with the event input so an unmodified
+// multiValue array does not mask an edit to value.
+function normalizeValue(value, context, original) {
   if (!isPlainObject(value) || typeof value.value !== 'string') {
     throw cfError('invalid-return', `${context} must be an object with a string value`);
   }
   const normalized = { value: value.value };
+  let multiValue;
   if (value.multiValue !== undefined) {
     if (!Array.isArray(value.multiValue)) {
       throw cfError('invalid-return', `${context}.multiValue must be an array`);
     }
-    normalized.multiValue = value.multiValue.map((entry, index) => {
+    multiValue = value.multiValue.map((entry, index) => {
       if (!isPlainObject(entry) || typeof entry.value !== 'string') {
         throw cfError('invalid-return', `${context}.multiValue[${index}] must have a string value`);
       }
       return { value: entry.value };
     });
-    if (normalized.multiValue.length > 0 && normalized.multiValue[0].value !== normalized.value) {
-      // CloudFront documents multiValue as authoritative when it is modified.
-      normalized.value = normalized.multiValue[0].value;
+  }
+  const originalMulti = originalMultiValue(original);
+  if (multiValue !== undefined && !sameHeaderValues(multiValue, originalMulti)) {
+    if (multiValue.length === 0) {
+      return undefined;
     }
+    normalized.multiValue = multiValue;
+    normalized.value = multiValue[0].value;
+    return normalized;
+  }
+  if (originalMulti !== undefined && originalMulti.length > 1) {
+    normalized.multiValue = [{ value: normalized.value }].concat(originalMulti.slice(1));
   }
   return normalized;
 }
 
-function normalizeQuery(query) {
+function normalizeQuery(query, original) {
   if (query === undefined || query === null) {
     return {};
   }
@@ -214,42 +237,54 @@ function normalizeQuery(query) {
   if (!isPlainObject(query)) {
     throw cfError('invalid-return', 'request.querystring must be an object or a string');
   }
+  const originals = isPlainObject(original) ? original : {};
   const normalized = {};
   for (const name of Object.keys(query)) {
-    normalized[name] = normalizeValue(query[name], `querystring ${name}`);
+    const value = normalizeValue(query[name], `querystring ${name}`, originals[name]);
+    if (value !== undefined) {
+      normalized[name] = value;
+    }
   }
   return normalized;
 }
 
-function normalizeRequestCookies(cookies) {
+function normalizeRequestCookies(cookies, original) {
   if (cookies === undefined || cookies === null) {
     return {};
   }
   if (!isPlainObject(cookies)) {
     throw cfError('invalid-return', 'request.cookies must be an object');
   }
+  const originals = isPlainObject(original) ? original : {};
   const normalized = {};
   for (const name of Object.keys(cookies)) {
-    normalized[name] = normalizeValue(cookies[name], `cookie ${name}`);
+    const value = normalizeValue(cookies[name], `cookie ${name}`, originals[name]);
+    if (value !== undefined) {
+      normalized[name] = value;
+    }
   }
   return normalized;
 }
 
-function normalizeResponseCookies(cookies) {
+function normalizeResponseCookies(cookies, original) {
   if (cookies === undefined || cookies === null) {
     return {};
   }
   if (!isPlainObject(cookies)) {
     throw cfError('invalid-return', 'response.cookies must be an object');
   }
+  const originals = isPlainObject(original) ? original : {};
   const normalized = {};
   for (const name of Object.keys(cookies)) {
-    normalized[name] = normalizeCookieValue(cookies[name], `cookie ${name}`);
+    const value = normalizeCookieValue(cookies[name], `cookie ${name}`, originals[name]);
+    if (value !== undefined) {
+      normalized[name] = value;
+    }
   }
   return normalized;
 }
 
-function normalizeCookieValue(value, context) {
+function normalizeCookieValue(value, context, original) {
   if (!isPlainObject(value) || typeof value.value !== 'string') {
     throw cfError('invalid-return', `${context} must be an object with a string value`);
   }
@@ -260,16 +295,88 @@ function normalizeCookieValue(value, context) {
     }
     normalized.attributes = value.attributes;
   }
+  let multiValue;
   if (value.multiValue !== undefined) {
     if (!Array.isArray(value.multiValue)) {
       throw cfError('invalid-return', `${context}.multiValue must be an array`);
     }
-    normalized.multiValue = value.multiValue.map((entry, index) => {
+    multiValue = value.multiValue.map((entry, index) => {
       const child = normalizeCookieValue(entry, `${context}.multiValue[${index}]`);
+      if (child === undefined) {
+        throw cfError('invalid-return', `${context}.multiValue[${index}] must have a value`);
+      }
       return child;
     });
   }
+  const originalMulti = originalMultiValue(original);
+  if (multiValue !== undefined && !sameCookieValues(multiValue, originalMulti)) {
+    if (multiValue.length === 0) {
+      return undefined;
+    }
+    normalized.multiValue = multiValue;
+    normalized.value = multiValue[0].value;
+    if (multiValue[0].attributes !== undefined) {
+      normalized.attributes = multiValue[0].attributes;
+    } else {
+      delete normalized.attributes;
+    }
+    return normalized;
+  }
+  if (originalMulti !== undefined && originalMulti.length > 1) {
+    if (normalized.attributes === undefined && isPlainObject(original) && typeof original.attributes === 'string') {
+      normalized.attributes = original.attributes;
+    }
+    const first = { value: normalized.value };
+    if (normalized.attributes !== undefined) {
+      first.attributes = normalized.attributes;
+    }
+    normalized.multiValue = [first].concat(originalMulti.slice(1).map(copyCookie));
+  }
   return normalized;
+}
+
+function originalMultiValue(original) {
+  if (!isPlainObject(original) || !Array.isArray(original.multiValue)) {
+    return undefined;
+  }
+  return original.multiValue;
+}
+
+function sameHeaderValues(left, right) {
+  if (right === undefined || left.length !== right.length) {
+    return false;
+  }
+  for (let index = 0; index < left.length; index++) {
+    if (left[index].value !== right[index].value) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function sameCookieValues(left, right) {
+  if (right === undefined || left.length !== right.length) {
+    return false;
+  }
+  for (let index = 0; index < left.length; index++) {
+    if (left[index].value !== right[index].value) {
+      return false;
+    }
+    const leftAttributes = left[index].attributes === undefined ? '' : left[index].attributes;
+    const rightAttributes = right[index].attributes === undefined ? '' : right[index].attributes;
+    if (leftAttributes !== rightAttributes) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function copyCookie(entry) {
+  const copy = { value: entry && typeof entry.value === 'string' ? entry.value : '' };
+  if (entry && typeof entry.attributes === 'string') {
+    copy.attributes = entry.attributes;
+  }
+  return copy;
 }
 
 function normalizeBody(body) {
