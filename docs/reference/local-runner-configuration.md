@@ -29,7 +29,7 @@ apps use the same command; the handler runtime comes from the CDK stack.
 | `-c`, `--context key=value` | none | Passed to `cdk synth` unchanged. Repeatable. |
 | `--assembly DIR` | none | Read an existing cloud assembly instead of synthesizing. |
 | `--scratch DIR` | `<user cache>/apptheory-local` | Synthesis output and materialized inline code. Must be under `$HOME` or the working directory. Each run's subdirectory is removed when the command exits. |
-| `--profile PATH` | none | Local execution profile with digest-pinned images and endpoint names. Required for `run`. |
+| `--profile PATH` | none | Local execution profile with digest-pinned images and endpoint names. Required for `run` and `invoke`: the in-container preflight needs the Python pin. |
 | `--image class=ref` | profile | Override a runtime image pin (`go`, `node`, `python`). The reference must be `…@sha256:<64 hex>`. |
 | `--endpoint service=url` | none | Inject a local AWS endpoint for `service` (`dynamodb`, `sqs`, …). Repeatable. |
 | `--add-host name=address` | none | Extra `/etc/hosts` entry inside function containers. Repeatable. |

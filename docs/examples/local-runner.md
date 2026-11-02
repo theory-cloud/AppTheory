@@ -82,8 +82,9 @@ during synthesis, before any function container starts.
   `aws-cdk-lib/aws-apigatewayv2-integrations`, which ships inside
   `aws-cdk-lib`; there is no separate integrations package to install. The
   runner executes `node_modules/.bin/cdk`; it does not install packages.
-- A local profile passed with `--profile`. It is required for `run` (and for
-  any served function), because it pins every runtime image by digest.
+- A local profile passed with `--profile`. It is required for `run` and
+  `invoke`, because it pins every runtime image by digest and the Python image
+  the preflight needs.
 
 The minimal profile below names only the images the app uses, plus the Python
 image for the in-container preflight. The complete example includes one.
@@ -184,7 +185,7 @@ app. Add `dynamodbLocal` and an `endpoints.dynamodb` entry only when you pass
 `--backend dynamodb`; the [configuration reference](/reference/local-runner-configuration/)
 has the full schema.
 
-Profile validation happens in two stages. Malformed JSON fails when the command
+Profile validation happens in three stages. Malformed JSON fails when the command
 starts, before it synthesizes anything. A missing image class or an unpinned tag
 is reported after synthesis, when the runner resolves the images for the served
 functions — still before any function container starts — with the profile path
@@ -279,39 +280,46 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
 3. **Resolve images.** The profile's digest-pinned image for each served
    function's runtime is selected before any container starts. A missing image
    class or a tag that is not pinned by digest fails here, after synthesis.
-4. **Resolve environment references.** A served function's `Ref`/`Fn::GetAtt`
+4. **Prepare the run workspace.** Inline `Code.ZipFile` code is materialized
+   under the run scratch directory, then the run's private Docker network is
+   created.
+5. **Start backends.** `--backend dynamodb`, `--backend moto` and
+   `--backend s3proxy` start the profile's digest-pinned emulators on the run's
+   private network.
+6. **Provision resources.** When the S3 or moto backend is running, the runner
+   creates every bucket and key the assembly declares and records the values
+   environment resolution needs.
+7. **Resolve environment references.** A served function's `Ref`/`Fn::GetAtt`
    environment values are resolved to deterministic local values: a DynamoDB
    table name, an SQS queue name or URL, an EventBridge rule name, an S3 bucket
-   name or ARN, and a KMS key id or ARN. An expression the runner cannot resolve
-   fails closed with the function and variable named.
-5. **Start backends and provision.** `--backend dynamodb`, `--backend moto` and
-   `--backend s3proxy` start the profile's digest-pinned emulators on the run's
-   private network. When the S3 or moto backend is present, the runner creates
-   the buckets and keys the assembly declares and uses those values for the
-   resolved environment.
-6. **Preflight.** A probe container on the run's private network proves the
+   name or ARN, and a KMS key id or ARN. The S3 bucket and KMS key values are
+   the ones provisioned in the previous step. An expression the runner cannot
+   resolve fails closed with the function and variable named.
+8. **Preflight.** A probe container on the run's private network proves the
    dummy credentials, every configured endpoint, the DynamoDB SDK endpoint when
    one is configured, and closed DNS.
-7. **Run.** One container per served function, from the official image for its
+9. **Run.** One container per served function, from the official image for its
    runtime, digest-pinned in the profile. Handlers run under the embedded
    Runtime Interface Emulator; the transport invokes
    `/2015-03-31/functions/function/invocations`.
-8. **Serve or invoke.** One loopback listener per API (and per Function URL)
-   builds the provider event for the matched route, invokes the handler and
-   decodes the response — including the RIE's buffered streaming frame. `invoke`
-   instead sends explicit events to one warm container.
-9. **Shut down.** `Ctrl-C` (`SIGINT`) or `SIGTERM` stops accepting requests by
-   closing the listeners, force-removes the run's containers (which aborts an
-   in-flight invocation), closes any connections still in flight, removes the
-   network and deletes the scratch directory. A `SIGKILL` cannot be caught:
-   after one, `apptheory-local down --app <dir>` removes everything that run
-   left behind.
+10. **Serve or invoke.** One loopback listener per API (and per Function URL)
+    builds the provider event for the matched route, invokes the handler and
+    decodes the response — including the RIE's buffered streaming frame.
+    `invoke` instead sends explicit events to one warm container.
+11. **Shut down.** `Ctrl-C` (`SIGINT`) or `SIGTERM` stops accepting requests by
+    closing the listeners, force-removes the run's containers (which aborts an
+    in-flight invocation), closes any connections still in flight, removes the
+    network and deletes the scratch directory. A `SIGKILL` cannot be caught:
+    after one, `apptheory-local down --app <dir>` removes everything that run
+    left behind.
 
 ## Invoking one function
 
 `plan` and `run` are about HTTP surfaces. `invoke` starts one function and
 sends it events, which is how the harness exercises event-source handlers and
-handler-only examples:
+handler-only examples. It prepares the run in the same order as `run` — images,
+scratch, network, backends, provisioning, environment resolution and preflight
+— before it starts only the requested function:
 
 ```bash
 # One CDK function with one event.
