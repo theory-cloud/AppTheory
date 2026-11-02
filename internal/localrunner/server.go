@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/theory-cloud/apptheory/v6/internal/localcloudfront"
 )
 
 const (
@@ -307,7 +309,41 @@ func RouteTable(spec *Spec) []string {
 		lines = append(lines, fmt.Sprintf("api %-8s %-28s -> %s%s",
 			APIFunctionURL, url.LogicalID, url.Function, streamingSuffix(url.Streaming)))
 	}
+	for _, distribution := range spec.CloudFront {
+		state := "servable"
+		if !distribution.Servable() {
+			state = "refused"
+		}
+		lines = append(lines, fmt.Sprintf("cloudfront %-24s %s", distribution.LogicalID, state))
+		if distribution.DefaultBehavior != nil {
+			lines = append(lines, fmt.Sprintf("  %-8s %-24s -> %s%s",
+				"DEFAULT", "*", distribution.DefaultBehavior.TargetOriginID,
+				cloudFrontFunctionsSuffix(distribution.DefaultBehavior)))
+		}
+		for _, behavior := range distribution.CacheBehaviors {
+			lines = append(lines, fmt.Sprintf("  %-8s %-24s -> %s%s",
+				"BEHAVIOR", behavior.PathPattern, behavior.TargetOriginID,
+				cloudFrontFunctionsSuffix(behavior)))
+		}
+		for _, refusal := range distribution.Refusals {
+			lines = append(lines, "  refused: "+refusal)
+		}
+	}
 	return lines
+}
+
+func cloudFrontFunctionsSuffix(behavior *localcloudfront.Behavior) string {
+	var parts []string
+	if behavior.ViewerRequestFunction != "" {
+		parts = append(parts, "viewer-request="+behavior.ViewerRequestFunction)
+	}
+	if behavior.ViewerResponseFunction != "" {
+		parts = append(parts, "viewer-response="+behavior.ViewerResponseFunction)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " (" + strings.Join(parts, " ") + ")"
 }
 
 func streamingSuffix(streaming bool) string {

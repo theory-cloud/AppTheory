@@ -352,3 +352,10 @@ func (e *Executor) nodeExecutable() (string, error) {
 	}
 	return resolved, nil
 }
+
+// Available reports whether the executor can find Node.js. The runner checks
+// it before serving a distribution that has CloudFront Functions.
+func (e *Executor) Available() error {
+	_, err := e.nodeExecutable()
+	return err
+}

@@ -224,6 +224,21 @@ func (s *localSession) describe() (map[string]any, error) {
 			apis = append(apis, map[string]any{"class": APIFunctionURL, "logicalId": url.LogicalID, "url": address})
 		}
 	}
+	cloudFront := make([]map[string]any, 0, len(s.spec.CloudFront))
+	for _, distribution := range s.spec.CloudFront {
+		entry := map[string]any{
+			"logicalId": distribution.LogicalID,
+			"servable":  distribution.Servable(),
+			"refusals":  distribution.Refusals,
+		}
+		if distribution.DefaultBehavior != nil {
+			entry["defaultOrigin"] = distribution.DefaultBehavior.TargetOriginID
+		}
+		if url, ok := s.runner.apiURLs[distribution.LogicalID]; ok {
+			entry["url"] = url
+		}
+		cloudFront = append(cloudFront, entry)
+	}
 	resources := make([]map[string]any, 0, len(s.runner.resourceValues))
 	for key, value := range s.runner.resourceValues {
 		stack, id := splitResourceKey(key)
@@ -244,6 +259,7 @@ func (s *localSession) describe() (map[string]any, error) {
 	return map[string]any{
 		"functions":    functions,
 		"apis":         apis,
+		"cloudFront":   cloudFront,
 		"eventSources": s.spec.EventSources,
 		"rules":        s.spec.Rules,
 		"resources":    resources,
