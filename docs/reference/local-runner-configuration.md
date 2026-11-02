@@ -302,13 +302,244 @@ TS_NODE_TRANSPILE_ONLY=1
 | `AWS::Lambda::Function` with `Code.ZipFile` | Materialized as `<module>.js` / `<module>.py` under `<scratch>/inline/<logicalId>/`. |
 | `AWS::ApiGatewayV2::Api` (`ProtocolType: HTTP`) + `Route` + `AWS_PROXY` `Integration` | Served as HTTP API v2. `$default` routes become a catch-all. |
 | `AWS::ApiGateway::RestApi` + `Resource` tree + `Method` + `AWS_PROXY` integration | Served as REST API v1 at the path reconstructed from the resource tree. `ResponseTransferMode: STREAM` and `/response-streaming-invocations` are marked streaming. |
-| `AWS::Lambda::Url` (`AuthType: NONE`) | Served as a Function URL listener. `InvokeMode: RESPONSE_STREAM` is marked streaming (buffered). |
+| `AWS::Lambda::Url` (`AuthType: NONE`) | Served as a Function URL listener. `InvokeMode: RESPONSE_STREAM` is marked streaming (buffered). A URL with another auth type is reported under `skipped` and is never served as a standalone URL. |
 | `AWS::ApiGatewayV2::Authorizer` (`REQUEST`, simple responses) | Run for the CUSTOM routes that reference it. The transport sends a v2 REQUEST authorizer event and enforces `isAuthorized`. |
 | `AWS::Lambda::EventSourceMapping` (SQS, DynamoDB Streams, Kinesis) | Reported with its function, source, batch size and `ReportBatchItemFailures`; the function is started. A session builds the provider event from real local messages or a real local write. |
 | `AWS::Events::Rule` with a Lambda target | Reported with its schedule or event pattern and target; the function is started. A session builds the event the rule would deliver. |
 | `AWS::ApiGatewayV2::Api` (`ProtocolType: WEBSOCKET`) | Reported under `skipped`, never served. An app with no other surface fails with the skipped reasons. |
 | `AWS::ApiGateway::Method` with a `MOCK` integration | Served from the first `IntegrationResponses` entry: its status and `method.response.header.*` parameters become the response. No function is invoked. |
-| `AWS::CloudFront::Distribution`, `AWS::CloudFront::Function` | Reported as not served. |
+| `AWS::CloudFront::Distribution`, `AWS::CloudFront::Function`, `AWS::CloudFront::CachePolicy`, `AWS::CloudFront::OriginRequestPolicy`, `AWS::CloudFront::ResponseHeadersPolicy`, `AWS::CloudFront::OriginAccessControl` | Served as the distribution's edge path on a loopback listener. A property the gateway cannot faithfully apply refuses the distribution with a named reason; a caching, compression, logging or placement property is reported. |
+| `AWS::CloudFront::KeyGroup`, `AWS::CloudFront::PublicKey` | Reported only; a distribution that trusts a key group is refused because signed URLs and cookies are not verified locally. |
+
+## CloudFront distributions
+
+A synthesized `AWS::CloudFront::Distribution` is the delivery definition. The
+gateway reads its `DistributionConfig` and the policies and functions it
+references from the same cloud assembly the Lambda surface comes from. No
+second route table exists.
+
+### Behavior selection
+
+CloudFront selects a cache behavior by the **original** viewer path, before a
+viewer-request function can rewrite it. The gateway evaluates `CacheBehaviors`
+in the order the template lists them and then `DefaultCacheBehavior`. A path
+pattern may omit its leading slash; matching is case-sensitive, `*` matches any
+run of characters (including none) and `?` matches exactly one character. A
+function that changes the URI does not change the selected behavior.
+
+`AllowedMethods` is enforced after the viewer-request function. A method the
+behavior does not allow receives a 403 with a CloudFront-style error body and
+the origin is not called. `HEAD` is allowed whenever `GET` is. CloudFront
+documents the viewer-request trigger and the 403 (Invalid method) response
+separately, but not their relative order; running the function first is the
+local gateway's choice, so a function can answer a request whose method the
+behavior does not allow.
+
+### Request phases
+
+1. viewer-request function (if the behavior declares one);
+2. `AllowedMethods`;
+3. `DefaultRootObject` for a request whose URI is `/`;
+4. cache policy + origin request policy, then the origin;
+5. viewer-response function (if declared) on the origin response;
+6. response headers policy.
+
+A viewer-request function that returns a response short-circuits steps 2–5: the
+response is sent to the viewer and the response headers policy is applied. A
+viewer-response function never sees the origin body; it may replace the body,
+change the status, or add/remove headers and cookies.
+
+### CloudFront Functions event
+
+The event is version `1.0`:
+
+```json
+{
+  "version": "1.0",
+  "context": {
+    "distributionDomainName": "<loopback host>",
+    "distributionId": "LOCAL<hash>",
+    "eventType": "viewer-request",
+    "requestId": "<request id>"
+  },
+  "viewer": {"ip": "<viewer ip>"},
+  "request": {
+    "method": "GET",
+    "uri": "/path",
+    "querystring": {"name": {"value": "value"}},
+    "headers": {"host": {"value": "..."}},
+    "cookies": {"name": {"value": "..."}}
+  }
+}
+```
+
+Header names are lower-cased and a repeated name carries `multiValue`. An
+edited `multiValue` array is applied and its first entry replaces `value`; an
+edit to `value` alone is applied and the remaining `multiValue` entries stay
+unchanged, as CloudFront documents. The `Cookie` header is not part of
+`headers`; it is split into `cookies`. A viewer-response event adds `response`
+(`statusCode`, `statusDescription`, `headers`, `cookies`; no body). `distributionId` is a stable local placeholder
+derived from the distribution's logical id, and `distributionDomainName` is the
+loopback host the viewer used.
+
+### Function executor
+
+The executor runs the exact `FunctionCode` string from the template in a fresh
+Node `vm` context per invocation. The context is strict — the runtime's
+`"use strict";` prologue is prepended and the function body is not rewritten —
+has a fixed `Date` for the invocation, and exposes only the documented surface:
+
+| Runtime | Modules and globals |
+| --- | --- |
+| `cloudfront-js-2.0` | `require('crypto')`, `require('querystring')`, `require('buffer')`, `require('cloudfront')` (its `kvs()` throws), `Buffer`, `TextEncoder`, `TextDecoder`, `console.log` (one string) |
+| `cloudfront-js-1.0` | `require('crypto')`, `require('querystring')`, `console.log`; `const`, `let`, `async` and `await` are rejected before execution |
+
+Both runtimes have no network, file system, `process`, timers, `eval`,
+`Function` constructor or environment access. `Buffer` and the text codecs
+implement the documented methods the gateway supports; an unimplemented method
+throws a `TypeError` instead of silently behaving differently, and CloudFront's
+nonstandard string helpers (`bytesFrom`, `toBytes`, `toUTF8`, and the others)
+are not implemented. A thrown error, invalid return,
+changed `request.method`, `Set-Cookie` in a request or response header, a
+Promise return or an invalid base64 body is a 503-class failure with a clear
+log; it is never a pass-through. The executor's watchdog is 5 seconds; it does
+not enforce CloudFront's 1 ms CPU budget. Node's `vm` is not a hardened
+security boundary; it runs the app developer's own generated code.
+
+### Managed policy table
+
+A behavior policy referenced by ID is accepted only from this pinned table. A
+custom policy (`Ref`) is read from the assembly. The table is checked by a test
+against every snapshot the constructs ship.
+
+Cache policies:
+
+| ID | Name | Forwarded to the origin |
+| --- | --- | --- |
+| `4135ea2d-6df8-44a3-9df3-4b5a84be39ad` | CachingDisabled | no headers, cookies or query strings |
+| `658327ea-f89d-4fab-a63d-7e88639e58f6` | CachingOptimized | no headers, cookies or query strings |
+| `b2884449-e4de-46a7-ac36-70bc7f1ddd6d` | CachingOptimizedForUncompressedObjects | no headers, cookies or query strings |
+| `2e54312d-136d-493c-8eb9-b001f22f67d2` | Amplify | `authorization`, `cloudfront-viewer-country`, `host`; all cookies and query strings |
+| `08627262-05a9-4f76-9ded-b50ca2e3a84f` | Elemental-MediaPackage | `origin`; query `aws.manifestfilter`, `start`, `end`, `m` |
+| `83da9c7e-98b4-4e11-a168-04f0df8e2c65` | UseOriginCacheControlHeaders | `host`, `origin`, `x-http-method-override`, `x-http-method`, `x-method-override`; all cookies |
+| `4cc15a8a-d715-48a4-82b8-cc0b614638fe` | UseOriginCacheControlHeaders-QueryStrings | the same headers; all cookies and query strings |
+
+A CloudFront-only header listed here (`cloudfront-viewer-country`, for example)
+is omitted when the gateway cannot derive a truthful local value; the policy
+parser reports that gap instead of fabricating a country, device or TLS value.
+
+Origin request policies:
+
+| ID | Name | Forwarded to the origin |
+| --- | --- | --- |
+| `216adef6-5c7f-47e4-b989-5492eafa07d3` | AllViewer | every viewer header (including Host), all cookies and query strings |
+| `33f36d7e-f396-46d9-90e0-52428a34d9dc` | AllViewerAndCloudFrontHeaders-2022-06 | every viewer header, all cookies/query, plus the derivable CloudFront headers |
+| `b689b0a8-53d0-40ab-baf2-68738e2966ac` | AllViewerExceptHostHeader | every viewer header except Host; Host becomes the origin domain; all cookies/query; CloudFront headers |
+| `59781a5b-3903-41f3-afcb-af62929ccde1` | CORS-CustomOrigin | `origin`; no cookies or query strings |
+| `88a5eaf4-2fd4-4709-b370-b4c650ea3fcf` | CORS-S3Origin | `origin`, `access-control-request-headers`, `access-control-request-method`; no cookies/query |
+| `775133bc-15f2-49f9-abea-afb2e0bf67d2` | Elemental-MediaTailor-PersonalizedManifests | `origin`, `access-control-request-headers`, `access-control-request-method`, `user-agent`, `x-forwarded-for`; all query |
+| `bf0718e1-ba1e-49d1-88b1-f726733018ae` | HostHeaderOnly | `host` only |
+| `acba4595-bd28-49b8-b9fe-13317c0390fa` | UserAgentRefererHeaders | `user-agent`, `referer` only |
+
+Response headers policies:
+
+| ID | Name | Applied |
+| --- | --- | --- |
+| `60669652-455b-4ae9-85a4-c4c02393f86c` | SimpleCORS | `Access-Control-Allow-Origin: *` |
+| `5cc3b908-e619-4b99-88e5-2cf7f45965bd` | CORS-With-Preflight | allow origin/methods/expose headers |
+| `67f7725c-6f97-4210-82d7-5512b31e9d03` | SecurityHeadersPolicy | Referrer-Policy, HSTS, X-Content-Type-Options, X-Frame-Options, X-XSS-Protection |
+| `e61eb60c-9c35-4d20-a928-2b84e02af89c` | CORS-and-SecurityHeadersPolicy | SimpleCORS + security headers |
+| `eaab4381-ed33-4a86-88ca-d9558dc6cd63` | CORS-with-preflight-and-SecurityHeadersPolicy | CORS-With-Preflight + security headers |
+
+### Origin request policy application
+
+The cache policy and the origin request policy are combined. Headers, cookies
+and query strings each have `none`, `whitelist`, `all` and `allExcept` modes
+(the cache policy does not use `all`/`allExcept`); a union is forwarded to the
+origin. A viewer-supplied `CloudFront-*` header is stripped and replaced only
+when the policy asks for a header the gateway can derive:
+
+- `cloudfront-forwarded-proto` is `http`;
+- `cloudfront-viewer-address` is the loopback viewer address;
+- `cloudfront-viewer-http-version` is the request's HTTP version.
+
+CloudFront device, location and TLS headers have no truthful local value and are
+omitted; the policy parser reports this. Host follows the policy: `AllViewer`
+and a `host` whitelist forward the viewer Host, `AllViewerExceptHostHeader` uses
+the origin domain, and a policy that forwards no Host also uses the origin
+domain (empty for an origin group, whose origin implementation chooses the
+member). For an S3 or Function URL origin the topology records a local
+placeholder domain; A5b's origin implementation sets the endpoint it actually
+reaches. `OriginPath` is applied to the origin request path, not to the viewer
+URI.
+
+### Response headers policy application
+
+The policy is applied after the viewer-response function. Remove headers run
+first, then CORS, security headers and custom headers. Each security/custom
+header has its own override flag: `true` replaces the origin header, `false`
+keeps the origin value and adds the policy value only when the origin did not
+send it. CORS headers are added only when the viewer sent `Origin`; with
+`OriginOverride` false, any `Access-Control-*` header in the origin response
+suppresses every CORS addition from the policy. A preflight request
+(`OPTIONS` + `Access-Control-Request-Method`) also receives allow methods,
+allow headers and max age.
+
+### Property inventory
+
+Every property the reader understands is classified; an unknown property
+refuses the distribution instead of being ignored.
+
+| Property group | Implemented | Reported (not emulated) | Refused |
+| --- | --- | --- | --- |
+| `DistributionConfig` | `DefaultCacheBehavior`, `CacheBehaviors`, `Origins`, `OriginGroups`, `DefaultRootObject`, `Enabled` | `Aliases`, `Comment`, `HttpVersion`, `IPV6Enabled`, `Logging`, `PriceClass`, `Staging` (false), `ViewerCertificate` | `ContinuousDeploymentPolicyId`, `CustomErrorResponses`, `Restrictions`, `WebACLId`, `Staging` (true), `Enabled` (false), unknown |
+| Cache behavior | `PathPattern`, `TargetOriginId`, `AllowedMethods`, `CachePolicyId`, `OriginRequestPolicyId`, `ResponseHeadersPolicyId`, `FunctionAssociations` | `CachedMethods`, `Compress`, `DefaultTTL`, `MinTTL`, `MaxTTL`, `RealtimeLogConfigArn`, `SmoothStreaming` (false), `ViewerProtocolPolicy` | `FieldLevelEncryptionId`, `ForwardedValues`, `GrpcConfig`, `LambdaFunctionAssociations`, `TrustedKeyGroups`, `TrustedSigners`, `SmoothStreaming` (true), unknown |
+| Origin | `Id`, `DomainName` (literal, S3 bucket, Function URL), `OriginPath`, `CustomOriginConfig`, `S3OriginConfig`, `OriginAccessControlId`, `OriginCustomHeaders` | `ConnectionAttempts`, `ConnectionTimeout`, `OriginShield`, the custom origin protocol/SSL/ports/timeouts, `OriginAccessIdentity`, OAC signing | unresolved `DomainName`, missing or both origin configs, `OriginPath` without a leading slash, unknown |
+| CloudFront Function | `FunctionCode`, `FunctionConfig.Runtime` | `AutoPublish`, `Name`, `FunctionConfig.Comment` | `KeyValueStoreAssociations`, unsupported runtime, empty code, unknown |
+| Cache policy | `ParametersInCacheKeyAndForwardedToOrigin` | `Name`, `Comment`, `DefaultTTL`, `MinTTL`, `MaxTTL`, `EnableAcceptEncodingBrotli`, `EnableAcceptEncodingGzip` | unknown managed ID, malformed config, unknown property |
+| Origin request policy | `HeadersConfig`, `CookiesConfig`, `QueryStringsConfig` | `Name`, `Comment` | unknown mode, malformed config, unknown property |
+| Response headers policy | `CorsConfig`, `CustomHeadersConfig`, `RemoveHeadersConfig`, `SecurityHeadersConfig` | `Name`, `Comment`, `ServerTimingHeadersConfig` | malformed config, unknown property |
+| Origin access control | resolved and reported | type, signing behavior, signing protocol, name | — |
+
+### Caching and other reported properties
+
+Caching is not emulated. Every request is forwarded to the origin as a cache
+miss; a cache policy contributes only the values it forwards to the origin.
+`Compress`, `CachedMethods`, cache TTLs, `RealtimeLogConfigArn`, aliases, the
+viewer certificate, access logging, `HttpVersion`, `IPV6Enabled`, `PriceClass`
+and the origin connection settings are reported on the distribution and never
+silently applied. `ViewerProtocolPolicy` is reported because the local URL is
+plain HTTP; an `https-only` behavior is still served locally over HTTP.
+
+### Origin interface
+
+```go
+type Origin interface {
+    Fetch(ctx context.Context, request OriginRequest) (OriginResponse, error)
+}
+```
+
+`OriginRequest` carries the behavior's `OriginID`, the viewer `Method`, the
+viewer-modified `URI` (without the origin path), `OriginPath`, the filtered
+`Query` and `Header`, `Host`, the body, the viewer IP and the request id.
+`Path()` joins `OriginPath` and `URI`. A5b implements the S3 emulator origin,
+the Function URL origin through the runner, and origin groups (members plus
+failover status codes; `OriginPath` is empty for a group so the group can apply
+each member's path and Host).
+
+In A5a no implementation is registered: a request that reaches an origin is
+answered 503 with `origin "<id>" is not wired until A5b`, before any origin
+logic. A viewer-request response that short-circuits the origin is fully served.
+
+### Fidelity
+
+**Not a CloudFront emulator: no caching, no edge network, no TLS.** The gateway
+does not reproduce viewer protocol redirects, CloudFront's 1 ms CPU limit,
+incremental streaming (A5b's Function URL origin is buffered by the RIE),
+CloudFront-only device/location/TLS headers, custom status descriptions,
+signed-URL verification, Lambda@Edge, KeyValueStore, WAF, geo restriction,
+field-level encryption or custom error pages. It refuses a distribution that
+depends on the routing or content of those features and reports the rest.
 
 The run fails, naming the construct, on:
 
@@ -319,16 +550,22 @@ The run fails, naming the construct, on:
 - a REST API authorizer, or a REST method whose authorization is not `NONE`;
 - a proxy integration that is not `AWS_PROXY`, a `MOCK` with no usable
   response, or HTTP API payload format other than `2.0`;
-- a Function URL with an auth type other than `NONE`;
+- a Function URL with an auth type other than `NONE` is not served as a
+  standalone URL; it is listed under `skipped`. If it is the only surface, the
+  run fails with that reason;
 - a targeted function with no local asset, a container image, an inline code type
   the runtime cannot load, Lambda layers, an unsupported runtime, or a
   CloudFormation-expression `MemorySize`/`Timeout` (the AWS defaults apply only
   when the property is absent);
 - a targeted function whose environment expression is not `Ref`, `Fn::GetAtt` or
   `Fn::Join`, or names a resource the runner cannot resolve;
-- an assembly with no HTTP API v2 route, REST v1 route, Function URL, event
-  source mapping or EventBridge rule target at all, unless `invoke` selected a
-  function.
+- a CloudFront distribution whose property the gateway cannot route or render
+  faithfully: the distribution is listed under `skipped` with the reason and no
+  listener is started. If it is the only surface, the run fails with that
+  reason;
+- an assembly with no HTTP API v2 route, REST v1 route, Function URL, servable
+  CloudFront distribution, event source mapping or EventBridge rule target at
+  all, unless `invoke` selected a function.
 
 ## Environment resolution and provisioning
 

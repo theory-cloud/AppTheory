@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/theory-cloud/apptheory/v6/internal/localcloudfront"
 )
 
 const (
@@ -843,7 +845,47 @@ func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 		}()
 		r.logf("serving %s %s at %s", target.Class, target.LogicalID, r.apiURLs[target.LogicalID])
 	}
+	for index, distribution := range spec.ServableCloudFront() {
+		executor := localcloudfront.NewExecutor()
+		if distributionHasFunctions(distribution) {
+			if err := executor.Available(); err != nil {
+				return fmt.Errorf("distribution %s uses CloudFront Functions: %w", distribution.LogicalID, err)
+			}
+		}
+		listener, err := r.listen(ctx, len(targets)+index)
+		if err != nil {
+			return fmt.Errorf("bind cloudfront %s listener: %w", distribution.LogicalID, err)
+		}
+		gateway := localcloudfront.NewGateway(distribution, spec.cloudFrontTopology, nil, executor, r.logf)
+		server := &http.Server{
+			Handler:           gateway,
+			ReadHeaderTimeout: 10 * time.Second,
+			IdleTimeout:       60 * time.Second,
+		}
+		r.listeners = append(r.listeners, listener)
+		r.servers = append(r.servers, server)
+		r.apiURLs[distribution.LogicalID] = "http://" + listener.Addr().String()
+		go func() {
+			if serveErr := server.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+				r.logf("cloudfront listener for %s stopped: %v", distribution.LogicalID, serveErr)
+			}
+		}()
+		r.logf("serving cloudfront %s at %s (origins are not wired until A5b)", distribution.LogicalID, r.apiURLs[distribution.LogicalID])
+	}
 	return nil
+}
+
+func distributionHasFunctions(distribution *localcloudfront.Distribution) bool {
+	if distribution.DefaultBehavior != nil &&
+		(distribution.DefaultBehavior.ViewerRequestFunction != "" || distribution.DefaultBehavior.ViewerResponseFunction != "") {
+		return true
+	}
+	for _, behavior := range distribution.CacheBehaviors {
+		if behavior.ViewerRequestFunction != "" || behavior.ViewerResponseFunction != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Runner) listen(ctx context.Context, index int) (net.Listener, error) {

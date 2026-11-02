@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/theory-cloud/apptheory/v6/internal/localcloudfront"
 )
 
 // Resource types the assembly reader understands.
@@ -240,7 +242,7 @@ func deriveSpec(dir string, stacks []assemblyStack) (*Spec, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(spec.RuntimeFunctions()) == 0 {
+	if len(spec.RuntimeFunctions()) == 0 && len(spec.ServableCloudFront()) == 0 {
 		return nil, noSurfaceError(spec, dir)
 	}
 	return spec, nil
@@ -249,7 +251,7 @@ func deriveSpec(dir string, stacks []assemblyStack) (*Spec, error) {
 // Derive turns a cloud assembly into the local runner's specification. It fails
 // closed on any construct the transport cannot serve faithfully.
 func deriveSpecInternal(dir string, stacks []assemblyStack) (*Spec, error) {
-	spec := &Spec{AssemblyDir: dir}
+	spec := &Spec{AssemblyDir: dir, functionURLTargets: map[string]string{}}
 	for _, stack := range stacks {
 		if err := deriveStack(spec, dir, stacks, stack); err != nil {
 			return nil, err
@@ -264,6 +266,23 @@ func deriveSpecInternal(dir string, stacks []assemblyStack) (*Spec, error) {
 			})
 		}
 	}
+	topology, err := localcloudfront.ParseTemplates(cloudFrontTemplates(stacks))
+	if err != nil {
+		return nil, err
+	}
+	spec.cloudFrontTopology = topology
+	spec.CloudFront = topology.Distributions
+	spec.CloudFrontFunctions = topology.Functions
+	for _, distribution := range topology.Distributions {
+		if len(distribution.Refusals) == 0 {
+			continue
+		}
+		spec.Skipped = append(spec.Skipped, Skipped{
+			LogicalID: distribution.LogicalID,
+			Kind:      "cloudfront distribution",
+			Reason:    strings.Join(distribution.Refusals, "; "),
+		})
+	}
 	deriveSkipped(spec)
 	if err := validateServedFunctions(spec); err != nil {
 		return nil, err
@@ -272,9 +291,23 @@ func deriveSpecInternal(dir string, stacks []assemblyStack) (*Spec, error) {
 	return spec, nil
 }
 
+// cloudFrontTemplates adapts the runner's assembly stacks to the CloudFront
+// topology reader. It is the same cloud assembly, not a second definition.
+func cloudFrontTemplates(stacks []assemblyStack) []localcloudfront.Template {
+	templates := make([]localcloudfront.Template, 0, len(stacks))
+	for _, stack := range stacks {
+		resources := make(map[string]localcloudfront.Resource, len(stack.Template.Resources))
+		for id, resource := range stack.Template.Resources {
+			resources[id] = localcloudfront.Resource{Type: resource.Type, Properties: resource.Properties}
+		}
+		templates = append(templates, localcloudfront.Template{Stack: stack.Name, Resources: resources})
+	}
+	return templates
+}
+
 func noSurfaceError(spec *Spec, dir string) error {
 	message := fmt.Sprintf(
-		"cloud assembly %s defines no HTTP API v2 route, REST API v1 route, Function URL, event source mapping or EventBridge rule target the local runner can serve",
+		"cloud assembly %s defines no HTTP API v2 route, REST API v1 route, Function URL, CloudFront distribution, event source mapping or EventBridge rule target the local runner can serve",
 		dir,
 	)
 	for _, skipped := range spec.Skipped {
@@ -346,6 +379,10 @@ func (s *Spec) sort() {
 		return s.Rules[i].LogicalID < s.Rules[j].LogicalID
 	})
 	sort.Slice(s.Skipped, func(i, j int) bool { return s.Skipped[i].LogicalID < s.Skipped[j].LogicalID })
+	sort.Slice(s.CloudFront, func(i, j int) bool { return s.CloudFront[i].LogicalID < s.CloudFront[j].LogicalID })
+	sort.Slice(s.CloudFrontFunctions, func(i, j int) bool {
+		return s.CloudFrontFunctions[i].LogicalID < s.CloudFrontFunctions[j].LogicalID
+	})
 }
 
 func deriveStack(spec *Spec, assemblyDir string, stacks []assemblyStack, stack assemblyStack) error {

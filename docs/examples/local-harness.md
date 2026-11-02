@@ -211,6 +211,13 @@ WebSocket frames and managed delivery.
 Handler and script rows inside the remaining CDK examples are
 `PENDING-MILESTONE` (A5b) and are never counted as pass.
 
+LOCAL-A5a adds no example row. Its CloudFront gateway and generated-function
+conformance run in `go test` (and therefore in `make test`/`make rubric` and
+CI). The `ssr-site`, `ssr-only-provided-assets-site`, `path-routed-frontend` and
+`media-cdn` rows stay class I: their templates are synthesized and asserted, and
+their distributions are now served as an edge path, but the origins are not
+wired until A5b, so no row claims an end-to-end page load.
+
 ## Preflight
 
 The run stops before any example if:

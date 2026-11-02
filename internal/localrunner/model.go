@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/theory-cloud/apptheory/v6/internal/localcloudfront"
 )
 
 const (
@@ -224,9 +226,20 @@ type Spec struct {
 	EventSources []EventSourceSpec `json:"eventSources,omitempty"`
 	Rules        []RuleSpec        `json:"rules,omitempty"`
 	Skipped      []Skipped         `json:"skipped"`
+	// CloudFront is the delivery topology read from the assembly. A refused
+	// distribution is also listed under Skipped with its reasons.
+	CloudFront          []*localcloudfront.Distribution `json:"cloudFront,omitempty"`
+	CloudFrontFunctions []*localcloudfront.Function     `json:"cloudFrontFunctions,omitempty"`
 	// Resources is the assembly index used to resolve function environment
 	// references. It is internal and not part of the plan document.
 	Resources []ResourceSpec `json:"-"`
+	// cloudFrontTopology keeps the parsed policies and function code the
+	// gateway needs. It never appears in plan output.
+	cloudFrontTopology *localcloudfront.Topology
+	// functionURLTargets maps a qualified AWS::Lambda::Url logical id to the
+	// qualified Lambda function it targets, including URLs the transport does
+	// not serve. It lets the skip report name CloudFront origin functions.
+	functionURLTargets map[string]string
 }
 
 // RuntimeClass maps a Lambda runtime name to the image class the profile pins.
@@ -329,6 +342,19 @@ func (s *Spec) HTTPAPIs() []APISpec {
 	for _, api := range s.APIs {
 		if len(api.Routes) > 0 {
 			out = append(out, api)
+		}
+	}
+	return out
+}
+
+// ServableCloudFront returns the distributions the gateway can serve: no
+// unsupported property refused it. A servable distribution still refuses its
+// origins until A5b wires them.
+func (s *Spec) ServableCloudFront() []*localcloudfront.Distribution {
+	var out []*localcloudfront.Distribution
+	for _, distribution := range s.CloudFront {
+		if distribution.Servable() {
+			out = append(out, distribution)
 		}
 	}
 	return out

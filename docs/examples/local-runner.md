@@ -7,8 +7,16 @@ title: Run an app locally
 `apptheory local` runs an AppTheory app's **real Lambda handlers** on your
 machine. The app's existing CDK definition is the only routing source: the
 command synthesizes the app, reads the cloud assembly, starts each function in
-the official AWS Lambda runtime image, and serves the HTTP API v2, REST API v1
-and Function URL surfaces it found. There is no second hand-written route table.
+the official AWS Lambda runtime image, and serves the HTTP API v2, REST API v1,
+Function URL and CloudFront distribution surfaces it found. There is no second
+hand-written route table.
+
+A CloudFront distribution is served as its edge path, not as a second copy of
+the origin: the gateway selects the cache behavior, runs the distribution's
+generated CloudFront Functions, applies the origin request and response headers
+policies, and hands origin requests to an origin implementation. A5a serves that
+edge path but does not wire the origins yet; a request that would reach an
+origin answers `origin "<id>" is not wired until A5b` instead of inventing one.
 
 ```bash
 # Serve the app in the background, then use the printed URLs.
@@ -277,7 +285,12 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
    - `AWS::ApiGatewayV2::Api` (`ProtocolType: HTTP`), routes and proxy
      integrations;
    - `AWS::ApiGateway::RestApi`, its resource tree, methods and stage;
-   - `AWS::Lambda::Url` Function URLs.
+   - `AWS::Lambda::Url` Function URLs;
+   - `AWS::CloudFront::Distribution`, its cache behaviors, origins and origin
+     groups, the `AWS::CloudFront::Function` resources it associates, and the
+     cache, origin request and response headers policies and origin access
+     controls it references. A distribution property the gateway cannot route or
+     render faithfully is reported, and the distribution is refused.
    A WebSocket API is listed under `skipped`; it does not stop an app that also
    has HTTP or REST routes. A REST `MOCK` integration is served from the
    status and headers the template declares (CDK uses it for CORS preflight).
@@ -328,9 +341,12 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
     Function URL) builds the provider event for the matched route, runs a
     CUSTOM request authorizer first when the route declares one, invokes the
     handler and decodes the response — including the RIE's buffered streaming
-    frame. `invoke` instead sends explicit events to one warm container. A
-    session keeps every target warm, serves the same HTTP surface, and answers
-    the JSON command protocol on stdin/stdout.
+    frame. One gateway listener per servable CloudFront distribution serves the
+    distribution's local URL: it selects the cache behavior, runs the generated
+    CloudFront Functions, applies the edge policies and refuses an unwired
+    origin with a named 503. `invoke` instead sends explicit events to one warm
+    container. A session keeps every target warm, serves the same HTTP surface,
+    and answers the JSON command protocol on stdin/stdout.
 11. **Shut down.** `Ctrl-C` (`SIGINT`) or `SIGTERM` stops accepting requests by
     closing the listeners, force-removes the run's containers (which aborts an
     in-flight invocation), closes any connections still in flight, removes the
@@ -339,6 +355,113 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
     networks labelled with that app; it does not delete the stale run scratch
     directory. That directory is `<scratch>/runs/<app>-<run>`, where `--scratch`
     defaults to `<user cache>/apptheory-local`; it is safe to delete by hand.
+
+## CloudFront distributions
+
+A distribution in the cloud assembly is served on its own `http://127.0.0.1:<port>`
+URL, printed on the `serving cloudfront …` line. The local gateway is the
+delivery path a FaceTheory or AppTheory site is tested through; it is **not a
+CloudFront emulator: no caching, no edge network, no TLS**.
+
+### What is read
+
+The gateway reads `AWS::CloudFront::Distribution` `DistributionConfig` from the
+same assembly the Lambda surface comes from: origins and origin groups, the
+default cache behavior and every cache behavior in listed order, and the
+`AWS::CloudFront::Function` associations. It resolves the referenced
+`AWS::CloudFront::CachePolicy`, `AWS::CloudFront::OriginRequestPolicy`,
+`AWS::CloudFront::ResponseHeadersPolicy` and `AWS::CloudFront::OriginAccessControl`
+resources. There is no second hand-written routing definition.
+
+A behavior is selected by the **original** viewer URI: cache behaviors in the
+order the template lists them, using CloudFront's path-pattern rules (an
+optional leading slash, case-sensitive matching, `*` for any run of characters
+and `?` for exactly one character), then the default behavior. A viewer-request
+function that rewrites the URI does not change the behavior the request uses,
+as CloudFront documents.
+
+### Request phases
+
+1. The **viewer-request function**, when the selected cache behavior has one,
+   runs before any origin dispatch. If it returns a response, that response is
+   sent to the viewer and the origin is not called.
+2. `AllowedMethods` is enforced on the (unchanged) request method; a method the
+   behavior does not allow is a 403, the status CloudFront documents for an
+   invalid method. CloudFront does not document the relative order of the
+   [viewer-request trigger](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/cloudfront-functions.html)
+   and the [403 invalid-method response](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/http-403-invalid-method.html).
+   The local gateway runs the viewer-request function first by choice: a
+   function can answer a request whose method the behavior does not allow (a
+   CORS preflight or an authentication rejection) instead of being pre-empted by
+   the local 403.
+3. `DefaultRootObject` replaces a request for `/` with the declared object.
+4. The cache policy and the **origin request policy** decide which headers,
+   cookies and query strings reach the origin. Managed policies are pinned by
+   ID; `AllViewer` forwards the viewer Host, `AllViewerExceptHostHeader` sets the
+   Host to the origin domain, and `AllViewerAndCloudFrontHeaders-2022-06` also
+   receives the locally derivable CloudFront headers. The **origin receives**
+   the policy-filtered request plus the origin path; the selected behavior's
+   target origin is then called.
+5. The **viewer-response function**, when the behavior has one, runs on the
+   origin's response and may change its status, headers, cookies or body. It
+   never sees the origin body.
+6. The **response headers policy** is applied last: remove headers, CORS,
+   security headers and custom headers, with each entry's override flag.
+
+### CloudFront Functions
+
+The executor runs the **exact `FunctionCode` string** from the template, never a
+re-implementation. Each invocation gets a fresh Node `vm` context with the
+documented version 1.0 event: `context` (`distributionDomainName`,
+`distributionId`, `eventType`, `requestId`), `viewer.ip`, `request` (`method`,
+`uri`, `querystring`, lower-cased `headers`, `cookies`) and, for
+viewer-response, `response`. `distributionId` is a local placeholder derived
+from the distribution's logical id; `distributionDomainName` is the loopback
+host the viewer used.
+
+`cloudfront-js-2.0` functions get `crypto`, `querystring`, `Buffer`,
+`TextEncoder`, `TextDecoder` and the `cloudfront` module. `cloudfront-js-1.0`
+functions get `crypto` and `querystring` and are rejected if they use `const`,
+`let`, `async` or `await`. Both runtimes are strict, have a fixed `Date` for the
+whole invocation, and have no network, file system, `process`, timers, `eval` or
+`Function` constructor. `require` accepts only the documented modules.
+
+A thrown error, a rejected return shape, a changed `request.method`, a
+`Set-Cookie` header in a viewer-request, a Promise return or a base64 body that
+does not decode is a **503-class failure**: the gateway logs the function and
+the reason and never passes the request through. `console.log` accepts one
+string, as CloudFront documents.
+
+### Edge policies
+
+The origin request policy is applied to the viewer request; the response headers
+policy is applied after the viewer-response function. Caching is not emulated:
+every request is forwarded to the origin as a cache miss, and a cache policy is
+used only for the values it contributes to the origin request. The
+`ViewerProtocolPolicy` is reported, not enforced, because the local URL is plain
+HTTP; the same is true for compression, access logging, aliases, the viewer
+certificate and the distribution's HTTP/IPv6/price-class settings.
+
+The pinned managed policy table and the exact property inventory are in the
+[configuration reference](/reference/local-runner-configuration/#cloudfront-distributions).
+
+### Origins and A5a
+
+The gateway defines the origin interface A5b implements for the S3 emulator, the
+Function URL origin and origin groups. In A5a no origin implementation is
+registered: a request that reaches an origin is answered with
+`origin "<id>" is not wired until A5b`, and the origin is never faked. A
+viewer-request response that short-circuits the origin is fully served, so an
+edge redirect or rewrite can be exercised today. The `ssr-site`,
+`ssr-only-provided-assets-site`, `path-routed-frontend` and `media-cdn` example
+rows remain class I in the harness until A5b wires their origins.
+
+Distributions that use Lambda@Edge, a CloudFront KeyValueStore association,
+trusted key groups or signed URLs, field-level encryption, geo restriction, a
+WAF web ACL, custom error responses, a gRPC config or a legacy `ForwardedValues`
+cache policy are refused with a named reason; they are listed under `skipped`
+and no listener is started. Real-time logs, access logging and the properties
+that only affect caching or edge placement are reported instead.
 
 ## Invoking one function
 
@@ -450,7 +573,7 @@ the harness records it.
 | --- | --- | --- |
 | HTTP API v2 (`AWS::ApiGatewayV2::Api`, HTTP) | Supported (L1) | v2.0 events with `routeKey`, `rawPath`, `requestContext.http`, cookies and path parameters. The `cookie` header is removed when `cookies` is populated, as AWS does. |
 | REST API v1 (`AWS::ApiGateway::RestApi`) | Supported (L1) | v1 events with `resource`, `multiValueHeaders`, `multiValueQueryStringParameters` and the stage. |
-| Lambda Function URL | Supported (L1) | Function URL events carry `routeKey: "$default"` (top-level and in `requestContext`, with `requestContext.stage`) and a `.lambda-url.<region>.on.aws` domain, which the runtime uses to tell them apart from HTTP API v2. |
+| Lambda Function URL | Supported (L1) | Function URL events carry `routeKey: "$default"` (top-level and in `requestContext`, with `requestContext.stage`) and a `.lambda-url.<region>.on.aws` domain, which the runtime uses to tell them apart from HTTP API v2. A URL with an auth type other than `NONE` is reported under `skipped`, not served as a standalone URL; a distribution can still reference it as an origin. |
 | Response streaming (`awslambda.streamifyResponse`, SSE) | Supported, **buffered** (L3) | The RIE buffers the whole response and returns metadata JSON + eight NUL bytes + body. The transport reproduces status, headers and complete bytes; it never reproduces chunk timing. |
 | Inline `Code.ZipFile` | Supported (Node, Python) | Materialized under the run scratch directory before the container starts. |
 | arm64 `provided.al2023` | Supported (L1) | Uses the host-arch image; a bootstrap built for the other architecture fails closed with a clear error. |
@@ -464,7 +587,7 @@ the harness records it.
 | Deploy-time Secrets Manager dynamic references | Supported | A `{{resolve:secretsmanager:…}}` environment value becomes a deterministic local secret. The session's `describe` returns it to the harness; `run` and `plan` never print it. No secret is created in a cloud. |
 | Other emulators | Endpoint injection only | Pass `--endpoint service=url` and `--add-host name=address`; the profile names the environment variables. |
 | WebSocket APIs | Reported, not served | A WebSocket API is listed under `skipped` with its reason, and an app with no HTTP route, Function URL, event source or rule fails with that list. Its `$connect`/`$disconnect`/`$default` routes are not invoked. |
-| CloudFront / CloudFront Functions | Not served (A5) | The Function URL behind a distribution runs; the distribution itself is reported as not served. |
+| CloudFront distributions and CloudFront Functions | Served (A5a edge path) | The distribution is served on its own loopback URL. Cache behaviors, allowed methods, viewer-request/viewer-response functions, origin request policies and response headers policies are applied; the generated function code runs in a restricted Node sandbox. An origin-bound request is a named 503 until A5b wires the origins. No caching, no edge network, no TLS. |
 | REST `MOCK` integrations | Supported (L1) | The transport returns the `IntegrationResponses` status and headers the template declares and invokes no function. CDK emits these for CORS preflight. |
 | HTTP API `REQUEST` authorizers with simple responses | Supported | The transport invokes the real authorizer function with the API Gateway v2 REQUEST event, carrying every configured `$request.header.*` or `$request.querystring.*` identity source in order; a request missing one is refused with 401 before the authorizer runs. A false `isAuthorized` is a 401, the authorizer context is carried to the handler, and a malformed response fails closed. `$context`/`$stageVariables` sources fail closed at plan time. |
 | Other authorizers (REST, JWT, non-simple responses) | Not served | Fails closed; the local transport must never bypass a real authorizer. |
@@ -483,7 +606,17 @@ the harness records it.
   and headers, never the timing of individual chunks.
 - **WebSocket events** are not delivered. A WebSocket API is reported as not
   served; its routes are never invoked.
-- **CloudFront** is not emulated; A5 owns the local gateway.
+- **CloudFront is an edge-path gateway, not an emulator.** The distribution's
+  cache behavior, generated CloudFront Functions and edge policies are applied,
+  but there is no cache, no edge network, no TLS and no viewer protocol
+  enforcement. A request that reaches an origin is a named 503 until A5b wires
+  the S3, Function URL and origin-group origins. Lambda@Edge, KeyValueStore,
+  signed URLs, field-level encryption, geo restriction, WAF and custom error
+  responses refuse the distribution; caching, compression, logging and
+  placement settings are reported. The Node `vm` executor matches the
+  CloudFront Functions API and globals but is not a hardened security boundary,
+  does not enforce CloudFront's 1 ms CPU budget, and cannot reproduce
+  CloudFront-only device, location or TLS headers.
 - **Managed event-source delivery is not run.** SQS, Kinesis, scheduled rules
   and DynamoDB stream mappings are derived from the CDK definition, their
   functions are started, and a session receives real messages or builds the
@@ -515,6 +648,9 @@ the harness records it.
 
 - Go 1.27+ to build or run the `apptheory-local` command. TypeScript and Python
   handlers never need Go: they run in their own runtime images.
+- Node.js 24+ when a served CloudFront distribution has CloudFront Functions.
+  The function code runs in the host Node `vm`; the runner refuses to start that
+  distribution if Node is not on `PATH`.
 - Docker (on macOS, colima) with the daemon running. The runner creates one
   private network per run and publishes the RIE port on `127.0.0.1` only.
 - The app's CDK CLI installed in the app directory
