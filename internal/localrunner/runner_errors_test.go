@@ -62,6 +62,12 @@ func TestBackendAndFunctionStartupErrors(t *testing.T) {
 		"no asset":       {LogicalID: "Fn", Runtime: "nodejs24.x", Handler: "index.handler"},
 		"no handler":     {LogicalID: "Fn", Runtime: "nodejs24.x", AssetDir: base},
 		"unresolved env": {LogicalID: "Fn", Runtime: "nodejs24.x", Handler: "index.handler", AssetDir: base, UnresolvedEnvironment: []string{"TABLE"}},
+		"unresolved memory": {
+			LogicalID: "Fn", Runtime: "nodejs24.x", Handler: "index.handler", AssetDir: base, UnresolvedMemorySize: true,
+		},
+		"unresolved timeout": {
+			LogicalID: "Fn", Runtime: "nodejs24.x", Handler: "index.handler", AssetDir: base, UnresolvedTimeout: true,
+		},
 	}
 	for name, function := range cases {
 		t.Run(name, func(t *testing.T) {

@@ -365,3 +365,74 @@ func TestDeriveEmptySurfaceFails(t *testing.T) {
 		t.Fatalf("expected a clear no-surface error, got %v", err)
 	}
 }
+
+func TestDeriveFailsClosedOnUnresolvedLimits(t *testing.T) {
+	cases := map[string]struct {
+		property string
+		value    any
+	}{
+		"memory":  {"MemorySize", map[string]any{"Ref": "FunctionMemory"}},
+		"timeout": {"Timeout", map[string]any{"Fn::If": []any{"IsProd", 30, 60}}},
+	}
+	for name, testCase := range cases {
+		t.Run(name, func(t *testing.T) {
+			resources := map[string]any{
+				"Fn": withAsset(lambdaFunction(map[string]any{testCase.property: testCase.value}), "asset.deadbeef"),
+				"Url": map[string]any{
+					"Type": typeFunctionURL,
+					"Properties": map[string]any{
+						"AuthType":          noneAuthorization,
+						"TargetFunctionArn": map[string]any{"Fn::GetAtt": []any{"Fn", "Arn"}},
+					},
+				},
+			}
+			dir := writeAssembly(t, resources)
+			mkdirAsset(t, dir)
+			_, err := deriveAssembly(t, dir)
+			if err == nil {
+				t.Fatalf("an unresolved %s must fail closed", testCase.property)
+			}
+			for _, fragment := range []string{"Fn", testCase.property, "CloudFormation expressions"} {
+				if !strings.Contains(err.Error(), fragment) {
+					t.Fatalf("error %q does not name %q", err, fragment)
+				}
+			}
+		})
+	}
+}
+
+func TestDeriveUsesDefaultsOnlyForAbsentLimits(t *testing.T) {
+	function := lambdaFunction(nil)
+	properties, ok := function["Properties"].(map[string]any)
+	if !ok {
+		t.Fatal("test function has no properties")
+	}
+	delete(properties, "MemorySize")
+	delete(properties, "Timeout")
+	resources := map[string]any{
+		"Fn": withAsset(function, "asset.deadbeef"),
+		"Url": map[string]any{
+			"Type": typeFunctionURL,
+			"Properties": map[string]any{
+				"AuthType":          noneAuthorization,
+				"TargetFunctionArn": map[string]any{"Fn::GetAtt": []any{"Fn", "Arn"}},
+			},
+		},
+	}
+	dir := writeAssembly(t, resources)
+	mkdirAsset(t, dir)
+	spec, err := deriveAssembly(t, dir)
+	if err != nil {
+		t.Fatalf("derive: %v", err)
+	}
+	derived, ok := spec.Function("Fn")
+	if !ok {
+		t.Fatal("function Fn missing")
+	}
+	if derived.MemoryMB != 128 || derived.Timeout != 3 {
+		t.Fatalf("absent limits must use the AWS defaults: %+v", derived)
+	}
+	if derived.UnresolvedMemorySize || derived.UnresolvedTimeout {
+		t.Fatalf("absent limits are not unresolved: %+v", derived)
+	}
+}

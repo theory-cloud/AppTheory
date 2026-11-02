@@ -143,8 +143,10 @@ The run fails, naming the construct, on:
   `2.0`;
 - a Function URL with an auth type other than `NONE`;
 - a served function with no local asset, a container image, an inline code type
-  the runtime cannot load, Lambda layers, an unsupported runtime, or a
-  CloudFormation-expression environment value;
+  the runtime cannot load, Lambda layers, an unsupported runtime, a
+  CloudFormation-expression environment value, or a CloudFormation-expression
+  `MemorySize`/`Timeout` (the AWS defaults apply only when the property is
+  absent);
 - an assembly with no HTTP API v2 route, REST v1 route or Function URL at all.
 
 Functions that no supported route targets are listed under `skipped` with the

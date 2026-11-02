@@ -520,6 +520,9 @@ func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image
 			strings.Join(function.UnresolvedEnvironment, ", "),
 		)
 	}
+	if err := unresolvedLimitsError(function); err != nil {
+		return err
+	}
 	name := r.containerName(function.LogicalID)
 	options := ContainerOptions{
 		Name:     name,

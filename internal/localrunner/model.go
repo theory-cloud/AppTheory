@@ -77,9 +77,14 @@ type FunctionSpec struct {
 	// CloudFormation expression. A served function with one of these fails
 	// closed instead of inventing a value.
 	UnresolvedEnvironment []string `json:"unresolvedEnvironment,omitempty"`
-	AssetDir              string   `json:"assetDir,omitempty"`
-	InlineCode            string   `json:"-"`
-	InlineFile            string   `json:"inlineFile,omitempty"`
+	// UnresolvedMemorySize and UnresolvedTimeout report that the template value
+	// is a CloudFormation expression. A served function with one of these fails
+	// closed instead of silently applying the AWS default.
+	UnresolvedMemorySize bool   `json:"unresolvedMemorySize,omitempty"`
+	UnresolvedTimeout    bool   `json:"unresolvedTimeout,omitempty"`
+	AssetDir             string `json:"assetDir,omitempty"`
+	InlineCode           string `json:"-"`
+	InlineFile           string `json:"inlineFile,omitempty"`
 	// CodeProblem is set when the function's code cannot be resolved locally.
 	// Only a served function fails the run because of it; an event-source
 	// function that the transport never invokes is reported, not blocking.

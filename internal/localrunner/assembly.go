@@ -231,8 +231,32 @@ func validateServedFunctions(spec *Spec) error {
 				strings.Join(function.UnresolvedEnvironment, ", "),
 			)
 		}
+		if err := unresolvedLimitsError(function); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// unresolvedLimitsError refuses to run a function whose MemorySize or Timeout
+// is a CloudFormation expression. Falling back to the AWS defaults would give
+// the handler less memory or a shorter timeout than the deployed function.
+func unresolvedLimitsError(function FunctionSpec) error {
+	var unresolved []string
+	if function.UnresolvedMemorySize {
+		unresolved = append(unresolved, "MemorySize")
+	}
+	if function.UnresolvedTimeout {
+		unresolved = append(unresolved, "Timeout")
+	}
+	if len(unresolved) == 0 {
+		return nil
+	}
+	return unsupported(
+		function.LogicalID,
+		"properties %s are CloudFormation expressions; the local runner only uses literal values",
+		strings.Join(unresolved, ", "),
+	)
 }
 
 func (s *Spec) sort() {
@@ -300,15 +324,19 @@ func parseFunction(assemblyDir string, stack assemblyStack, id string, resource 
 	if err := json.Unmarshal(resource.Properties, &props); err != nil {
 		return FunctionSpec{}, fmt.Errorf("%s/%s: parse function properties: %w", stack.Name, id, err)
 	}
+	memoryMB, memoryResolved := decodeInt(props.MemorySize, 128)
+	timeout, timeoutResolved := decodeInt(props.Timeout, 3)
 	function := FunctionSpec{
-		Stack:        stack.Name,
-		Runtime:      props.Runtime,
-		Handler:      props.Handler,
-		Architecture: "x86_64",
-		MemoryMB:     decodeInt(props.MemorySize, 128),
-		Timeout:      decodeInt(props.Timeout, 3),
-		LayerCount:   len(props.Layers),
-		Environment:  map[string]string{},
+		Stack:                stack.Name,
+		Runtime:              props.Runtime,
+		Handler:              props.Handler,
+		Architecture:         "x86_64",
+		MemoryMB:             memoryMB,
+		Timeout:              timeout,
+		LayerCount:           len(props.Layers),
+		Environment:          map[string]string{},
+		UnresolvedMemorySize: !memoryResolved,
+		UnresolvedTimeout:    !timeoutResolved,
 	}
 	if len(props.Architectures) > 0 {
 		function.Architecture = props.Architectures[0]
@@ -383,15 +411,18 @@ func decodeString(raw json.RawMessage) (string, error) {
 	return value, nil
 }
 
-func decodeInt(raw json.RawMessage, fallback int) int {
+// decodeInt decodes a literal integer. The fallback is used only when the
+// property is absent; a CloudFormation expression is reported as unresolved so
+// the caller can fail closed instead of applying the default silently.
+func decodeInt(raw json.RawMessage, fallback int) (int, bool) {
 	if len(raw) == 0 {
-		return fallback
+		return fallback, true
 	}
 	var value int
 	if err := json.Unmarshal(raw, &value); err != nil {
-		return fallback
+		return fallback, false
 	}
-	return value
+	return value, true
 }
 
 // inlineFileName is the file an inline handler is written to, matching the

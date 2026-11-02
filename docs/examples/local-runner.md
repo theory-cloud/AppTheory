@@ -86,6 +86,7 @@ the harness records it.
 | Authorizers (REST, HTTP API, Function URL `AWS_IAM`) | Not served | Fails closed; the local transport must never bypass a real authorizer. |
 | Lambda layers, container-image functions | Not served | Fail closed when a served function needs them. |
 | CloudFormation-expression environment values | Not resolved (A4) | A served function whose environment value is `Ref`/`GetAtt` fails with the variable names; only literal values are injected. |
+| CloudFormation-expression `MemorySize`/`Timeout` | Not resolved | A served function whose limit is `Ref`/`GetAtt`/`Fn::If` fails with the property named; the AWS defaults apply only when the property is absent. |
 | Stage-prefixed URLs (`/prod/...`) | Not honoured | The stage is reported in the event; URLs are served at the root, as API Gateway does for custom domains. |
 | Multiple APIs in one stack | Supported | Each API gets its own listener and route table, so `ANY /` surfaces never shadow each other. |
 
@@ -100,7 +101,9 @@ the harness records it.
   delivered by the HTTP transport. Those functions are listed as "not served
   locally" by `plan` and by the run log.
 - **CloudFormation intrinsics in function environment** are not resolved. Apps
-  that pass a table name or bucket name through `Ref` are A3b/A4 work.
+  that pass a table name or bucket name through `Ref` are A3b/A4 work. The same
+  applies to `MemorySize` and `Timeout`: an expression is refused rather than
+  replaced by the AWS default.
 - **One container per function.** In-flight invocations are bounded to 32 and
   queue behind the function's container; the local runner is not a load test.
 
