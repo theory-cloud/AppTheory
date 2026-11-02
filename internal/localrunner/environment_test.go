@@ -129,6 +129,71 @@ func TestResolveEnvironmentSkipsUnservedFunctions(t *testing.T) {
 	}
 }
 
+func TestResourceAttributeValues(t *testing.T) {
+	value := resourceValue{
+		Name:  "name",
+		ARN:   "arn",
+		KeyID: "key-id",
+		URL:   "http://queue",
+	}
+	cases := map[string]string{
+		"Arn":                "arn",
+		"Name":               "name",
+		"QueueName":          "name",
+		"FunctionName":       "name",
+		"KeyId":              "key-id",
+		"QueueUrl":           "http://queue",
+		"DomainName":         "name.s3.amazonaws.com",
+		"RegionalDomainName": "name.s3.us-east-1.amazonaws.com",
+	}
+	for attr, want := range cases {
+		got, ok := value.attribute(attr)
+		if !ok || got != want {
+			t.Fatalf("attribute(%q) = %q, %v; want %q", attr, got, ok, want)
+		}
+	}
+	if _, ok := value.attribute("Unknown"); ok {
+		t.Fatal("an unknown attribute must not resolve")
+	}
+	if _, ok := (resourceValue{}).attribute("Arn"); ok {
+		t.Fatal("an empty ARN must not resolve")
+	}
+}
+
+func TestParseGetAttForms(t *testing.T) {
+	if id, attr, err := parseGetAtt([]any{"Fn", "Arn"}); err != nil || id != "Fn" || attr != "Arn" {
+		t.Fatalf("array form: %q %q %v", id, attr, err)
+	}
+	if id, attr, err := parseGetAtt("Fn.Arn"); err != nil || id != "Fn" || attr != "Arn" {
+		t.Fatalf("string form: %q %q %v", id, attr, err)
+	}
+	for _, raw := range []any{[]any{"Fn"}, []any{1, "Arn"}, "Fn", 3} {
+		if _, _, err := parseGetAtt(raw); err == nil {
+			t.Fatalf("malformed GetAtt %v must fail", raw)
+		}
+	}
+}
+
+func TestResolveExpressionRejectsMalformedValues(t *testing.T) {
+	runner := &Runner{}
+	if _, err := runner.resolveExpression("not-json", "Stack", nil, nil); err == nil {
+		t.Fatal("malformed JSON must fail")
+	}
+	if _, err := runner.resolveExpression(`3`, "Stack", nil, nil); err == nil {
+		t.Fatal("a non-string scalar must fail")
+	}
+}
+
+func TestLocalPhysicalNameIsBounded(t *testing.T) {
+	long := localPhysicalName("a-very-long-stack-name-that-keeps-going", "a-very-long-logical-id-that-keeps-going-too")
+	if len(long) > 63 {
+		t.Fatalf("local name is not S3-bounded: %q (%d)", long, len(long))
+	}
+	if localPhysicalName("S", "X") == localPhysicalName("S", "Y") {
+		t.Fatal("distinct resources need distinct names")
+	}
+}
+
 func TestLiteralPhysicalNameWins(t *testing.T) {
 	name, err := resourceName(ResourceSpec{
 		Stack: "Stack", LogicalID: "Bucket", Type: typeS3Bucket,

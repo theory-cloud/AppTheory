@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -50,6 +51,32 @@ func TestNormalizeHandlerSpec(t *testing.T) {
 	}
 	if err := normalizeHandlerSpec(&HandlerSpec{CodeDir: base, Runtime: "nodejs24.x"}); err == nil {
 		t.Fatal("a missing handler must fail")
+	}
+}
+
+func TestInvokeTargetErrors(t *testing.T) {
+	runner := &Runner{options: Options{Stdout: io.Discard}}
+	spec := &Spec{Functions: []FunctionSpec{
+		{LogicalID: "Fn", Runtime: "nodejs24.x", Handler: "index.handler", AssetDir: "/tmp"},
+		{LogicalID: "BadCode", CodeProblem: "no code"},
+		{LogicalID: "Layered", LayerCount: 1},
+		{LogicalID: "Limit", UnresolvedMemorySize: true},
+	}}
+	for _, id := range []string{"", "Missing", "BadCode", "Layered", "Limit"} {
+		if _, _, err := runner.invokeTarget(spec, id); err == nil {
+			t.Fatalf("invokeTarget(%q) must fail", id)
+		}
+	}
+	if id, _, err := runner.invokeTarget(spec, "Fn"); err != nil || id != "Fn" {
+		t.Fatalf("valid target: %q %v", id, err)
+	}
+	handlerRunner := &Runner{options: Options{Handler: &HandlerSpec{CodeDir: "/tmp", Runtime: "provided.al2023", Handler: "bootstrap"}}}
+	handlerSpec := &Spec{Functions: []FunctionSpec{{LogicalID: "Handler", Runtime: "provided.al2023"}}}
+	if id, _, err := handlerRunner.invokeTarget(handlerSpec, ""); err != nil || id != "Handler" {
+		t.Fatalf("handler target: %q %v", id, err)
+	}
+	if _, _, err := handlerRunner.invokeTarget(handlerSpec, "Other"); err == nil {
+		t.Fatal("handler mode must reject an unknown target")
 	}
 }
 
