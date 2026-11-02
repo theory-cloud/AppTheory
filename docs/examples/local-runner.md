@@ -287,37 +287,50 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
 4. **Prepare the run workspace.** Inline `Code.ZipFile` code is materialized
    under the run scratch directory, then the run's private Docker network is
    created.
-5. **Start backends.** `--backend dynamodb`, `--backend moto` and
-   `--backend s3proxy` start the profile's digest-pinned emulators on the run's
-   private network. Before it reports a backend ready, the runner waits up to
-   60 seconds for every endpoint configured on that backend to answer a
-   read-only call native to the service over its published loopback port:
-   `ListTables` for DynamoDB Local, `ListKeys` and `GetCallerIdentity` for moto
-   KMS/STS, `ListBuckets` for s3proxy and `ListQueues` for SQS. A service with
-   no native probe is checked with a plain HTTP request. On timeout the run
-   fails with the backend, its image and the last error, before any resource is
-   provisioned. A backend with no published host port is reported ready without
-   this wait.
-6. **Provision resources.** When the S3 or moto backend is ready, the runner
-   creates every bucket and key the assembly declares and records the values
-   environment resolution needs.
+5. **Start backends.** `--backend dynamodb`, `--backend moto`,
+   `--backend s3proxy` and `--backend sqs` start the profile's digest-pinned
+   emulators on the run's private network. Before it reports a backend ready,
+   the runner waits up to 60 seconds for every endpoint configured on that
+   backend to answer a read-only call native to the service over its published
+   loopback port: `ListTables` for DynamoDB Local, `ListKeys` and
+   `GetCallerIdentity` for moto KMS/STS, `ListBuckets` for s3proxy and
+   `ListQueues` for ElasticMQ. A service with no native probe is checked with a
+   plain HTTP request. On timeout the run fails with the backend, its image and
+   the last error, before any resource is provisioned. A backend with no
+   published host port is reported ready without this wait.
+6. **Provision resources.** When the backend is ready, the runner creates every
+   resource the assembly declares: S3 buckets and KMS keys, DynamoDB tables
+   with their key schema, GSIs, streams and TTL, and SQS queues with their
+   visibility, retention and redrive policy. It records the provisioned values
+   environment resolution needs. Attributes the local emulator does not
+   implement (SSE, PITR, deletion protection, KMS-on-SQS) are not provisioned;
+   they are not part of the local contract.
 7. **Resolve environment references.** A served function's `Ref`/`Fn::GetAtt`
    environment values are resolved to deterministic local values: a DynamoDB
-   table name, an SQS queue name or URL, an EventBridge rule name, an S3 bucket
-   name or ARN, and a KMS key id or ARN. The S3 bucket and KMS key values are
-   the ones provisioned in the previous step. An expression the runner cannot
-   resolve fails closed with the function and variable named.
+   table name and stream ARN, an SQS queue name or URL, an EventBridge rule
+   name, an S3 bucket name or ARN, a Kinesis stream name or ARN, a KMS key id or
+   ARN, and the ARNs of IAM, MicroVM-image and S3 Vectors resources. The S3
+   bucket and KMS key values are the ones provisioned in the previous step. A
+   `{{resolve:secretsmanager:…}}` value becomes a deterministic local secret;
+   the session's `describe` returns it, and the run never prints it. An
+   expression the runner cannot resolve fails closed with the function and
+   variable named.
 8. **Preflight.** A probe container on the run's private network proves the
    dummy credentials, every configured endpoint, the DynamoDB SDK endpoint when
    one is configured, and closed DNS.
-9. **Run.** One container per served function, from the official image for its
+9. **Run.** One container per function the CDK definition targets: HTTP routes,
+   Function URLs, HTTP API authorizers, enabled event-source consumers and
+   enabled EventBridge rule targets. Each uses the official image for its
    runtime, digest-pinned in the profile. Handlers run under the embedded
    Runtime Interface Emulator; the transport invokes
    `/2015-03-31/functions/function/invocations`.
-10. **Serve, invoke or session.** One loopback listener per API (and per Function URL)
-    builds the provider event for the matched route, invokes the handler and
-    decodes the response — including the RIE's buffered streaming frame.
-    `invoke` instead sends explicit events to one warm container.
+10. **Serve, invoke or session.** One loopback listener per API (and per
+    Function URL) builds the provider event for the matched route, runs a
+    CUSTOM request authorizer first when the route declares one, invokes the
+    handler and decodes the response — including the RIE's buffered streaming
+    frame. `invoke` instead sends explicit events to one warm container. A
+    session keeps every target warm, serves the same HTTP surface, and answers
+    the JSON command protocol on stdin/stdout.
 11. **Shut down.** `Ctrl-C` (`SIGINT`) or `SIGTERM` stops accepting requests by
     closing the listeners, force-removes the run's containers (which aborts an
     in-flight invocation), closes any connections still in flight, removes the
@@ -441,18 +454,25 @@ the harness records it.
 | Response streaming (`awslambda.streamifyResponse`, SSE) | Supported, **buffered** (L3) | The RIE buffers the whole response and returns metadata JSON + eight NUL bytes + body. The transport reproduces status, headers and complete bytes; it never reproduces chunk timing. |
 | Inline `Code.ZipFile` | Supported (Node, Python) | Materialized under the run scratch directory before the container starts. |
 | arm64 `provided.al2023` | Supported (L1) | Uses the host-arch image; a bootstrap built for the other architecture fails closed with a clear error. |
-| DynamoDB Local | Supported (L2) | `--backend dynamodb` starts the profile's digest-pinned `amazon/dynamodb-local` on the run network; SDK clients resolve through `AWS_ENDPOINT_URL_DYNAMODB`. |
+| DynamoDB Local | Supported (L2) | `--backend dynamodb` starts the profile's digest-pinned `amazon/dynamodb-local` on the run network; SDK clients resolve through `AWS_ENDPOINT_URL_DYNAMODB`. Tables are created from the CDK key schema, GSIs, streams and TTL. SSE, PITR and deletion protection are not provisioned. |
+| SQS (ElasticMQ) | Supported (L2) | `--backend sqs` starts the digest-pinned `softwaremill/elasticmq-native` container, creates the CDK queues with visibility, retention and redrive policy, and resolves `QueueUrl`/`Arn` from the created queues. Managed event-source polling is not run; a session receives real messages and builds the SQS event. |
 | KMS and STS (moto) | Supported (L2) | `--backend moto` starts the profile's digest-pinned moto container and injects `AWS_ENDPOINT_URL_KMS`/`_STS` (and the profile's aliases). KMS keys declared by the assembly are created; `Ref`/`Fn::GetAtt Arn` resolve to the created key. No HSM, key policies or grants. |
 | S3 (s3proxy) | Supported (L2) | `--backend s3proxy` starts the digest-pinned s3proxy container, creates the assembly's buckets, and injects the S3 endpoint as the container address so the SDK uses path-style addressing. No bucket policies, IAM or event notifications. |
-| Other emulators (SQS, ...) | Endpoint injection only | Pass `--endpoint service=url` and `--add-host name=address`; the profile names the environment variables. SQS event delivery is A4. |
-| WebSocket APIs | Reported, not served | A WebSocket API is listed under `skipped` with its reason, and an app with no other surface fails with that list. Its `$connect`/`$disconnect`/`$default` routes are not invoked. |
+| Event source mappings (SQS, DynamoDB Streams, Kinesis) | Derived and reported; invocation is explicit | The mapping's function, source, batch size and `ReportBatchItemFailures` are read from the assembly. A session receives real queue messages or builds a stream record from a real local write and invokes the handler. Managed delivery (polling, subscription, retries) is the named L3 gap. |
+| EventBridge rules (schedule and pattern) | Derived and reported; invocation is explicit | A session builds the `Scheduled Event` envelope or the pattern's source/detail-type from the CDK rule and invokes its Lambda target. Managed rule delivery is not run. |
+| Kinesis / CloudWatch Logs subscription events | Built from local content | The session gzips a CloudWatch Logs subscription payload from local log events and wraps it in a Kinesis record, or accepts explicit base64 record data. The Kinesis stream itself is not emulated. |
+| Deploy-time Secrets Manager dynamic references | Supported | A `{{resolve:secretsmanager:…}}` environment value becomes a deterministic local secret. The session's `describe` returns it to the harness; `run` and `plan` never print it. No secret is created in a cloud. |
+| Other emulators | Endpoint injection only | Pass `--endpoint service=url` and `--add-host name=address`; the profile names the environment variables. |
+| WebSocket APIs | Reported, not served | A WebSocket API is listed under `skipped` with its reason, and an app with no HTTP route, Function URL, event source or rule fails with that list. Its `$connect`/`$disconnect`/`$default` routes are not invoked. |
 | CloudFront / CloudFront Functions | Not served (A5) | The Function URL behind a distribution runs; the distribution itself is reported as not served. |
 | REST `MOCK` integrations | Supported (L1) | The transport returns the `IntegrationResponses` status and headers the template declares and invokes no function. CDK emits these for CORS preflight. |
-| Authorizers (REST, HTTP API, Function URL `AWS_IAM`) | Not served | Fails closed; the local transport must never bypass a real authorizer. |
+| HTTP API `REQUEST` authorizers with simple responses | Supported | The transport invokes the real authorizer function with the API Gateway v2 REQUEST event, returns 401 when `isAuthorized` is false, and carries the authorizer context to the handler. A malformed response fails closed. |
+| Other authorizers (REST, JWT, non-simple responses) | Not served | Fails closed; the local transport must never bypass a real authorizer. |
 | Lambda layers, container-image functions | Not served | Fail closed when a served function needs them. |
-| CloudFormation-expression environment values | Supported for `Ref`/`Fn::GetAtt`/`Fn::Join` | Tables, queues, rules, buckets, KMS keys and functions resolve to deterministic local values (KMS/S3 require their backend). An unsupported expression fails with the function and variable named. |
+| CloudFormation-expression environment values | Supported for `Ref`/`Fn::GetAtt`/`Fn::Join` | Tables and stream ARNs, queues, rules, buckets, KMS keys, Kinesis streams, IAM/MicroVM-image/S3 Vectors ARNs and functions resolve to deterministic local values (KMS/S3 require their backend). An unsupported expression fails with the function and variable named. |
 | CloudFormation-expression `MemorySize`/`Timeout` | Not resolved | A served function whose limit is `Ref`/`GetAtt`/`Fn::If` fails with the property named; the AWS defaults apply only when the property is absent. |
 | One function, explicit events (`invoke`) | Supported | Starts one function and sends newline-delimited JSON events to a warm container; `--handler-dir` runs a handler that has no CDK definition and derives no routes. |
+| Every target, explicit commands (`session`) | Supported | Starts every CDK-targeted function, serves the HTTP surface, and answers a JSON-line command protocol for invocation, SQS, DynamoDB, S3, EventBridge and Kinesis operations. `--target` adds a function no route or event source targets. |
 | Stage-prefixed URLs (`/prod/...`) | Not honoured | The stage is reported in the event; URLs are served at the root, as API Gateway does for custom domains. |
 | Multiple APIs in one stack | Supported | Each API gets its own listener and route table, so `ANY /` surfaces never shadow each other. |
 
@@ -464,14 +484,27 @@ the harness records it.
 - **WebSocket events** are not delivered. A WebSocket API is reported as not
   served; its routes are never invoked.
 - **CloudFront** is not emulated; A5 owns the local gateway.
-- **Event sources** (SQS, Kinesis, scheduled rules, DynamoDB streams) are not
-  delivered by the HTTP transport. Those functions are listed as "not served
-  locally" by `plan` and by the run log; `invoke` can send a generated event.
+- **Managed event-source delivery is not run.** SQS, Kinesis, scheduled rules
+  and DynamoDB stream mappings are derived from the CDK definition, their
+  functions are started, and a session receives real messages or builds the
+  provider event from a real local write. The emulator does not poll, subscribe,
+  retry, or deliver the event on its own; those are the named L3 gaps.
+- **Kinesis has no stream emulator.** A Kinesis event is built locally (from a
+  CloudWatch Logs subscription payload or explicit record data) and invoked
+  through the real handler; the stream service itself is not emulated.
+- **HTTP API authorizers** are run only for `REQUEST` authorizers with simple
+  responses. REST, JWT and IAM authorizers fail closed rather than bypassing a
+  real authorization decision.
 - **SSM Parameter Store** has no local emulator. A handler that reads a
   parameter sees the call fail and must handle it; the lambda-role custom row
   asserts that fallback and is class L3 with the named gap.
-- **S3 event notifications** are absent from s3proxy; S3 event paths remain A4
-  work.
+- **S3 event notifications** are absent from s3proxy. The import-pipeline row
+  writes a real object and builds the CDK rule's EventBridge event; S3 →
+  EventBridge delivery itself is the named gap.
+- **Managed services** remain L3 gaps where the examples use them: the MicroVM
+  provider in the controller and conformance rows, and S3 Vectors/Bedrock in
+  the semantic-search row. The runner stops at those boundaries; it never fakes
+  a success.
 - **One container per function.** In-flight invocations are bounded to 32 and
   queue behind the function's container; the local runner is not a load test.
 
