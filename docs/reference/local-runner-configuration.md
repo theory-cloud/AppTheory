@@ -414,6 +414,10 @@ Cache policies:
 | `83da9c7e-98b4-4e11-a168-04f0df8e2c65` | UseOriginCacheControlHeaders | `host`, `origin`, `x-http-method-override`, `x-http-method`, `x-method-override`; all cookies |
 | `4cc15a8a-d715-48a4-82b8-cc0b614638fe` | UseOriginCacheControlHeaders-QueryStrings | the same headers; all cookies and query strings |
 
+A CloudFront-only header listed here (`cloudfront-viewer-country`, for example)
+is omitted when the gateway cannot derive a truthful local value; the policy
+parser reports that gap instead of fabricating a country, device or TLS value.
+
 Origin request policies:
 
 | ID | Name | Forwarded to the origin |
