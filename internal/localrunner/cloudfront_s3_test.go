@@ -1,0 +1,220 @@
+package localrunner
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+
+	"github.com/theory-cloud/apptheory/v6/internal/localcloudfront"
+)
+
+func newTestS3Origin(t *testing.T, handler http.HandlerFunc) (*s3Origin, *httptest.Server) {
+	t.Helper()
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	client := s3.New(s3.Options{
+		Region:       LocalRegion,
+		Credentials:  localCredentials(),
+		BaseEndpoint: aws.String(server.URL),
+		UsePathStyle: true,
+	})
+	return &s3Origin{
+		originID:     "Origin1",
+		bucket:       "bucket",
+		client:       client,
+		noListBucket: true,
+		requestID:    func() string { return "local-request-id" },
+	}, server
+}
+
+func TestS3OriginGetReturnsTheObjectAndHeaders(t *testing.T) {
+	origin, _ := newTestS3Origin(t, func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/bucket/hello.txt" {
+			t.Errorf("request = %s %s", request.Method, request.URL.Path)
+		}
+		writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		writer.Header().Set("ETag", `"abc123"`)
+		writer.Header().Set("Last-Modified", "Wed, 21 Oct 2015 07:28:00 GMT")
+		writer.Header().Set("Content-Length", "6")
+		writer.Header().Set("Cache-Control", "public, max-age=60")
+		writer.Header().Set("x-amz-meta-owner", "example")
+		_, _ = writer.Write([]byte("hello\n"))
+	})
+	response, err := origin.Fetch(context.Background(), localcloudfront.OriginRequest{Method: http.MethodGet, URI: "/hello.txt"})
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if response.StatusCode != http.StatusOK || string(response.Body) != "hello\n" {
+		t.Fatalf("response = %d %q", response.StatusCode, response.Body)
+	}
+	for name, want := range map[string]string{
+		"Content-Type":     "text/plain; charset=utf-8",
+		"ETag":             `"abc123"`,
+		"Last-Modified":    "Wed, 21 Oct 2015 07:28:00 GMT",
+		"Content-Length":   "6",
+		"Cache-Control":    "public, max-age=60",
+		"Accept-Ranges":    "bytes",
+		"x-amz-meta-owner": "example",
+	} {
+		if got := response.Header.Get(name); got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestS3OriginHeadHasNoBody(t *testing.T) {
+	origin, _ := newTestS3Origin(t, func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodHead {
+			t.Errorf("method = %s", request.Method)
+		}
+		writer.Header().Set("Content-Type", "text/html")
+		writer.Header().Set("Content-Length", "5")
+		writer.WriteHeader(http.StatusOK)
+	})
+	response, err := origin.Fetch(context.Background(), localcloudfront.OriginRequest{Method: http.MethodHead, URI: "/index.html"})
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if response.StatusCode != http.StatusOK || len(response.Body) != 0 {
+		t.Fatalf("response = %d %q", response.StatusCode, response.Body)
+	}
+	if response.Header.Get("Content-Type") != "text/html" {
+		t.Fatalf("content type = %q", response.Header.Get("Content-Type"))
+	}
+}
+
+func TestS3OriginMissingObjectIs403UnderOACAnd404WithoutIt(t *testing.T) {
+	origin, _ := newTestS3Origin(t, func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/xml")
+		writer.WriteHeader(http.StatusNotFound)
+		_, _ = writer.Write([]byte(`<Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>`))
+	})
+	response, err := origin.Fetch(context.Background(), localcloudfront.OriginRequest{Method: http.MethodGet, URI: "/missing.txt"})
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if response.StatusCode != http.StatusForbidden || !strings.Contains(string(response.Body), "AccessDenied") {
+		t.Fatalf("OAC response = %d %q", response.StatusCode, response.Body)
+	}
+	origin.noListBucket = false
+	response, err = origin.Fetch(context.Background(), localcloudfront.OriginRequest{Method: http.MethodGet, URI: "/missing.txt"})
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if response.StatusCode != http.StatusNotFound || !strings.Contains(string(response.Body), "NoSuchKey") {
+		t.Fatalf("public response = %d %q", response.StatusCode, response.Body)
+	}
+}
+
+func TestS3OriginRangeReturns206(t *testing.T) {
+	origin, _ := newTestS3Origin(t, func(writer http.ResponseWriter, request *http.Request) {
+		if got := request.Header.Get("Range"); got != "bytes=0-4" {
+			t.Errorf("range = %q", got)
+		}
+		writer.Header().Set("Content-Type", "text/plain")
+		writer.Header().Set("Content-Range", "bytes 0-4/11")
+		writer.Header().Set("Content-Length", "5")
+		writer.WriteHeader(http.StatusPartialContent)
+		_, _ = writer.Write([]byte("hello"))
+	})
+	response, err := origin.Fetch(context.Background(), localcloudfront.OriginRequest{
+		Method: http.MethodGet,
+		URI:    "/hello.txt",
+		Range:  "bytes=0-4",
+	})
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if response.StatusCode != http.StatusPartialContent || string(response.Body) != "hello" {
+		t.Fatalf("response = %d %q", response.StatusCode, response.Body)
+	}
+	if response.Header.Get("Content-Range") != "bytes 0-4/11" {
+		t.Fatalf("content range = %q", response.Header.Get("Content-Range"))
+	}
+}
+
+func TestS3OriginAppliesResponseOverridesUnlessTheManagedPolicySuppressedThem(t *testing.T) {
+	origin, _ := newTestS3Origin(t, func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "text/plain")
+		writer.Header().Set("Content-Disposition", "attachment; filename=object.txt")
+		writer.Header().Set("Cache-Control", "public, max-age=60")
+		writer.Header().Set("Content-Length", "2")
+		_, _ = writer.Write([]byte("ok"))
+	})
+	query := "a=1&response-content-type=text/html&response-content-disposition=inline&response-content-encoding=gzip"
+	response, err := origin.Fetch(context.Background(), localcloudfront.OriginRequest{
+		Method:                      http.MethodGet,
+		URI:                         "/hello.txt",
+		Query:                       query,
+		SuppressS3ResponseOverrides: true,
+	})
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if got := response.Header.Get("Content-Type"); got != "text/plain" {
+		t.Fatalf("suppressed content type = %q", got)
+	}
+	response, err = origin.Fetch(context.Background(), localcloudfront.OriginRequest{
+		Method: http.MethodGet,
+		URI:    "/hello.txt",
+		Query:  query,
+	})
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if got := response.Header.Get("Content-Type"); got != "text/html" {
+		t.Fatalf("overridden content type = %q", got)
+	}
+	if got := response.Header.Get("Content-Disposition"); got != "inline" {
+		t.Fatalf("overridden disposition = %q", got)
+	}
+}
+
+func TestS3OriginOptionsRefusesCORSInsteadOfInventingIt(t *testing.T) {
+	origin, _ := newTestS3Origin(t, func(http.ResponseWriter, *http.Request) {
+		t.Error("OPTIONS must not reach the S3 emulator")
+	})
+	response, err := origin.Fetch(context.Background(), localcloudfront.OriginRequest{Method: http.MethodOptions, URI: "/hello.txt"})
+	if err != nil || response.StatusCode != http.StatusForbidden {
+		t.Fatalf("without CORS: %d %v", response.StatusCode, err)
+	}
+	origin.hasCORS = true
+	response, err = origin.Fetch(context.Background(), localcloudfront.OriginRequest{Method: http.MethodOptions, URI: "/hello.txt"})
+	if err != nil || response.StatusCode != http.StatusNotImplemented {
+		t.Fatalf("with CORS: %d %v", response.StatusCode, err)
+	}
+}
+
+func TestS3OriginRefusesMethodsItDoesNotImplement(t *testing.T) {
+	origin, _ := newTestS3Origin(t, func(http.ResponseWriter, *http.Request) {
+		t.Error("an unsupported method must not reach S3")
+	})
+	_, err := origin.Fetch(context.Background(), localcloudfront.OriginRequest{Method: http.MethodPut, URI: "/hello.txt"})
+	if err == nil || !strings.Contains(err.Error(), "GET, HEAD and OPTIONS") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestS3OriginEmptyPathIsMissing(t *testing.T) {
+	origin, _ := newTestS3Origin(t, func(http.ResponseWriter, *http.Request) {
+		t.Error("an empty key must not reach S3")
+	})
+	response, err := origin.Fetch(context.Background(), localcloudfront.OriginRequest{Method: http.MethodGet, URI: "/"})
+	if err != nil || response.StatusCode != http.StatusForbidden {
+		t.Fatalf("response = %d err = %v", response.StatusCode, err)
+	}
+}
+
+func TestS3OriginUnreachableBackendIsAnError(t *testing.T) {
+	origin, server := newTestS3Origin(t, func(http.ResponseWriter, *http.Request) {})
+	server.Close()
+	_, err := origin.Fetch(context.Background(), localcloudfront.OriginRequest{Method: http.MethodGet, URI: "/hello.txt"})
+	if err == nil {
+		t.Fatal("an unreachable S3 backend must be an error")
+	}
+}

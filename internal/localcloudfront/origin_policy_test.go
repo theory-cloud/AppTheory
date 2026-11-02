@@ -40,11 +40,11 @@ func TestManagedOriginRequestPoliciesSuppressS3ResponseOverrides(t *testing.T) {
 }
 
 func TestFilterS3ResponseOverridesKeepsOtherParameters(t *testing.T) {
-	got := filterS3ResponseOverrides("a=1&response-content-type=text/plain&response-content-disposition=inline&response-content-encoding=gzip&b=2")
+	got := FilterS3ResponseOverrides("a=1&response-content-type=text/plain&response-content-disposition=inline&response-content-encoding=gzip&b=2")
 	if got != "a=1&b=2" {
 		t.Fatalf("filtered query = %q", got)
 	}
-	if got := filterS3ResponseOverrides(""); got != "" {
+	if got := FilterS3ResponseOverrides(""); got != "" {
 		t.Fatalf("empty query = %q", got)
 	}
 }

@@ -320,9 +320,9 @@ func managedOriginRequestSuppressesS3ResponseOverrides(behavior *Behavior) bool 
 	}
 }
 
-// filterS3ResponseOverrides removes the three response-content-* parameters
+// FilterS3ResponseOverrides removes the three response-content-* parameters
 // from a raw query string. Every other parameter is kept in order.
-func filterS3ResponseOverrides(raw string) string {
+func FilterS3ResponseOverrides(raw string) string {
 	if raw == "" {
 		return ""
 	}
