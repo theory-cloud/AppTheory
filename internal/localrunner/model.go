@@ -120,6 +120,13 @@ type Route struct {
 	Method   string   `json:"method"`
 	Path     string   `json:"path"`
 	Function string   `json:"function,omitempty"`
+	// AuthorizerFunction is the Lambda function a CUSTOM HTTP API authorizer
+	// invokes before the route handler. The transport runs it; a route with an
+	// authorizer is never served without it.
+	AuthorizerFunction string `json:"authorizerFunction,omitempty"`
+	// AuthorizerIdentitySource is the provider identity source the authorizer
+	// event carries, for example $request.header.Authorization.
+	AuthorizerIdentitySource string `json:"authorizerIdentitySource,omitempty"`
 	// Mock is set for a REST API MOCK integration. A mock route has no
 	// function and no invoker; the transport returns the declared response.
 	Mock      *MockResponse `json:"mock,omitempty"`
@@ -250,6 +257,9 @@ func (s *Spec) ServedFunctions() []string {
 				continue
 			}
 			seen[route.Function] = struct{}{}
+			if route.AuthorizerFunction != "" {
+				seen[route.AuthorizerFunction] = struct{}{}
+			}
 		}
 	}
 	for _, url := range s.FunctionURLs {

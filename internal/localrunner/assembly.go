@@ -169,6 +169,13 @@ type eventRuleProperties struct {
 	} `json:"Targets"`
 }
 
+type httpAuthorizerProperties struct {
+	AuthorizerType        string          `json:"AuthorizerType"`
+	AuthorizerURI         json.RawMessage `json:"AuthorizerUri"`
+	EnableSimpleResponses bool            `json:"EnableSimpleResponses"`
+	IdentitySource        []string        `json:"IdentitySource"`
+}
+
 // logicalRef is a CloudFormation Ref or Fn::GetAtt target.
 type logicalRef struct {
 	ID   string

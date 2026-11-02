@@ -166,6 +166,60 @@ func TestDeriveUnsupportedEventSourceIsReported(t *testing.T) {
 	}
 }
 
+func TestDeriveHTTPAuthorizerResolvesTheFunction(t *testing.T) {
+	resources := httpAPIResources("GET /hello")
+	resources["Fn"] = withAsset(lambdaFunction(nil), "asset.deadbeef")
+	resources["Authorizer"] = map[string]any{
+		"Type": typeHTTPAuthorizer,
+		"Properties": map[string]any{
+			"AuthorizerType":        "REQUEST",
+			"AuthorizerUri":         map[string]any{"Fn::GetAtt": []any{"Fn", "Arn"}},
+			"EnableSimpleResponses": true,
+			"IdentitySource":        []any{"$request.header.Authorization"},
+		},
+	}
+	route := mustMap(t, mustMap(t, resources["Route"])["Properties"])
+	route["AuthorizationType"] = "CUSTOM"
+	route["AuthorizerId"] = map[string]any{"Ref": "Authorizer"}
+	dir := writeAssembly(t, resources)
+	mkdirAsset(t, dir)
+	spec, err := deriveAssembly(t, dir)
+	if err != nil {
+		t.Fatalf("derive: %v", err)
+	}
+	routeSpec := spec.APIs[0].Routes[0]
+	if routeSpec.AuthorizerFunction != "Fn" {
+		t.Fatalf("authorizer function not derived: %+v", routeSpec)
+	}
+	if routeSpec.AuthorizerIdentitySource != "$request.header.Authorization" {
+		t.Fatalf("identity source not derived: %+v", routeSpec)
+	}
+	if len(spec.RuntimeFunctions()) != 1 {
+		t.Fatalf("the authorizer and handler are one function: %+v", spec.RuntimeFunctions())
+	}
+}
+
+func TestDeriveHTTPAuthorizerMustBeSimpleRequest(t *testing.T) {
+	resources := httpAPIResources("GET /hello")
+	resources["Fn"] = withAsset(lambdaFunction(nil), "asset.deadbeef")
+	resources["Authorizer"] = map[string]any{
+		"Type": typeHTTPAuthorizer,
+		"Properties": map[string]any{
+			"AuthorizerType":        "REQUEST",
+			"AuthorizerUri":         map[string]any{"Fn::GetAtt": []any{"Fn", "Arn"}},
+			"EnableSimpleResponses": false,
+		},
+	}
+	route := mustMap(t, mustMap(t, resources["Route"])["Properties"])
+	route["AuthorizationType"] = "CUSTOM"
+	route["AuthorizerId"] = map[string]any{"Ref": "Authorizer"}
+	dir := writeAssembly(t, resources)
+	mkdirAsset(t, dir)
+	if _, err := deriveAssembly(t, dir); err == nil || !strings.Contains(err.Error(), "simple responses") {
+		t.Fatalf("a non-simple authorizer must fail closed, got %v", err)
+	}
+}
+
 func TestDeriveEventRuleRejectsAmbiguousIdentity(t *testing.T) {
 	resources := eventSourceResources()
 	resources["Both"] = map[string]any{
