@@ -11,6 +11,7 @@
 //	apptheory-local plan   --app <cdk-app-dir> [flags]
 //	apptheory-local invoke --app <cdk-app-dir> --function <id> --event <file> [flags]
 //	apptheory-local invoke --handler-dir <dir> --runtime <runtime> --handler <name> [flags]
+//	apptheory-local session --app <cdk-app-dir> [flags]
 //	apptheory-local down   --app <cdk-app-dir> [flags]
 //
 // `run` is the default when no subcommand is given. Every flag is a command
@@ -40,6 +41,7 @@ Usage:
   apptheory-local plan   --app <cdk-app-dir> [flags]   synthesize and print the derived surface
   apptheory-local invoke --app <cdk-app-dir> --function <id> --event <file> [flags]
   apptheory-local invoke --handler-dir <dir> --runtime <runtime> --handler <name> [flags]
+  apptheory-local session --app <cdk-app-dir> [flags]   run every target with a JSON command channel on stdin/stdout
   apptheory-local down   --app <cdk-app-dir> [flags]   remove this app's leftover containers and networks
 
 Invoke sends a Lambda event to one warm function container and prints one JSON
@@ -61,7 +63,7 @@ func run(args []string) int {
 		args = args[1:]
 	}
 	switch command {
-	case "run", "plan", commandInvoke, "down":
+	case "run", "plan", commandInvoke, commandSession, "down":
 	case "help", "-h", "--help":
 		fmt.Print(usageText)
 		return 0
@@ -93,7 +95,10 @@ func run(args []string) int {
 	return config.execute(command)
 }
 
-const commandInvoke = "invoke"
+const (
+	commandInvoke  = "invoke"
+	commandSession = "session"
+)
 
 func validateInvokeConfig(config *commandConfig) error {
 	if strings.TrimSpace(config.app) == "" && strings.TrimSpace(config.handlerDir) == "" {
@@ -130,6 +135,7 @@ type commandConfig struct {
 	function       string
 	events         stringList
 	stdio          bool
+	sessionTargets stringList
 	handlerDir     string
 	runtime        string
 	handler        string
@@ -156,6 +162,7 @@ func (c *commandConfig) register(flags *flag.FlagSet) {
 	flags.StringVar(&c.function, "function", "", "invoke: function logical id from the CDK assembly")
 	flags.Var(&c.events, "event", "invoke: JSON event file (repeatable)")
 	flags.BoolVar(&c.stdio, "stdio", false, "invoke: read newline-delimited JSON events from stdin and keep the container warm")
+	flags.Var(&c.sessionTargets, "target", "session: start this CDK function too, even with no route, event source or rule (repeatable)")
 	flags.StringVar(&c.handlerDir, "handler-dir", "", "invoke: built handler code directory (no CDK app)")
 	flags.StringVar(&c.runtime, "runtime", "", "invoke --handler-dir: Lambda runtime (provided.al2023, nodejs24.x, python3.14)")
 	flags.StringVar(&c.handler, "handler", "", "invoke --handler-dir: handler name (bootstrap for a provided runtime)")
@@ -170,7 +177,7 @@ func (c *commandConfig) execute(command string) int {
 		fmt.Fprintf(os.Stderr, "apptheory-local: %v\n", err)
 		return 2
 	}
-	if c.jsonOutput || command == commandInvoke {
+	if c.jsonOutput || command == commandInvoke || command == commandSession {
 		// Machine output owns stdout; progress goes to stderr.
 		options.Stdout = os.Stderr
 	}
@@ -187,11 +194,22 @@ func (c *commandConfig) execute(command string) int {
 		return c.plan(ctx, runner)
 	case commandInvoke:
 		return c.invoke(ctx, runner)
+	case commandSession:
+		return c.session(ctx, runner)
 	case "down":
 		return c.down(ctx, runner)
 	default:
 		return c.serve(ctx, runner)
 	}
+}
+
+func (c *commandConfig) session(ctx context.Context, runner *localrunner.Runner) int {
+	fmt.Fprintf(os.Stderr, "apptheory-local: session %s\n", c.app)
+	if err := runner.RunSession(ctx, os.Stdin, os.Stdout); err != nil {
+		fmt.Fprintf(os.Stderr, "apptheory-local: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 func (c *commandConfig) invoke(ctx context.Context, runner *localrunner.Runner) int {
@@ -361,6 +379,7 @@ func (c *commandConfig) options() (localrunner.Options, error) {
 		Endpoints:      endpoints,
 		AddHosts:       c.addHosts,
 		Backends:       c.backends,
+		ExtraFunctions: append([]string(nil), c.sessionTargets...),
 		PortBase:       c.portBase,
 		NamePrefix:     c.namePrefix,
 		MaxConcurrency: c.maxConcurrency,

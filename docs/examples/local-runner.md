@@ -22,6 +22,10 @@ go run ./cmd/apptheory-local plan --app examples/cdk/hello-world -c lang=go --js
 `apptheory-local invoke` starts one function instead of an HTTP surface. It is
 for event-source handlers and for examples that ship a handler but no CDK
 definition; see [Invoking one function](#invoking-one-function).
+`apptheory-local session` starts every function the CDK definition targets and
+exposes one JSON command per line on stdin/stdout; the examples harness uses it
+to receive real messages, write real items and build the provider events the
+event-source mappings would deliver. See [Automation sessions](#automation-sessions).
 
 The command is language-neutral. A Go, TypeScript or Python handler is served by
 the same binary because the runtime comes from the CDK stack, not from the
@@ -310,7 +314,7 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
    runtime, digest-pinned in the profile. Handlers run under the embedded
    Runtime Interface Emulator; the transport invokes
    `/2015-03-31/functions/function/invocations`.
-10. **Serve or invoke.** One loopback listener per API (and per Function URL)
+10. **Serve, invoke or session.** One loopback listener per API (and per Function URL)
     builds the provider event for the matched route, invokes the handler and
     decodes the response — including the RIE's buffered streaming frame.
     `invoke` instead sends explicit events to one warm container.
@@ -361,6 +365,65 @@ Streaming over a warm container is still buffered by the RIE: a tool call's
 complete SSE body arrives after the handler finishes, and `streamed` marks the
 framed response. The MCP rows assert session creation, event ids and
 Last-Event-ID replay content; they never claim incremental delivery.
+
+## Automation sessions
+
+`session` is the machine interface behind `make examples-local`. It prepares the
+same environment as `run`, starts every function the CDK definition targets
+(HTTP routes, Function URLs, authorizers, event-source consumers and
+EventBridge rule targets), serves the HTTP listeners, prints `local-run: ready`
+on stderr, and then reads one JSON command per line on stdin. Every command
+writes one JSON response per line on stdout: `{"ok":true,"result":…}` or
+`{"ok":false,"error":"…"}`. Progress stays on stderr. The protocol is how the
+harness receives real messages, writes real items, and builds the event an
+event-source mapping would deliver; it is not a second routing definition.
+
+```bash
+apptheory-local session --app examples/cdk/sqs-queue \
+  --profile scripts/local/examples-local.json --backend sqs \
+  --target ProducerFn29855005
+{"op":"describe"}
+{"op":"invoke","function":"ProducerFn29855005","event":{…}}
+{"op":"sqs.receive","queue":"ContractQueue3874DDBD","max":1,"waitSeconds":2}
+```
+
+`--target <logical-id>` starts one additional CDK function that no route, event
+source or rule targets. It is how the harness runs a producer that the CDK
+defines but a deployment caller invokes.
+
+The operations, in the order the examples use them:
+
+- `describe` — the started functions (with resolved environment and RIE port),
+  HTTP listener URLs, event-source mappings, EventBridge rules, provisioned
+  resources (name, URL, ARN, stream ARN) and local secrets.
+- `invoke` — send one Lambda event to a started function and return the same
+  decoded result as `invoke`.
+- `sqs.send` — send one body to a provisioned ElasticMQ queue through the
+  runner's host-side SQS client.
+- `sqs.receive` — receive up to `max` messages with the requested wait and
+  visibility, optionally deleting them after receipt.
+- `sqs.event` — receive messages and build the `Records` event the SQS mapping
+  delivers, from the messages actually returned by ElasticMQ.
+- `ddb.put` — write one JSON item to a provisioned table; the previous image is
+  cached for a later stream record.
+- `ddb.get` — read one item by its key.
+- `ddb.scan` — read every item in a provisioned table.
+- `ddb.stream-event` — build a DynamoDB stream record from the stored image (and
+  the previous image when one is cached), using the table's stream ARN, view
+  type and the real key schema.
+- `s3.put` — write one object to a provisioned s3proxy bucket.
+- `eventbridge.event` — build the event an `AWS::Events::Rule` delivers,
+  deriving a scheduled envelope from `ScheduleExpression` or the source and
+  detail-type from the rule's declared `EventPattern`.
+- `kinesis.event` — build a Kinesis event from explicit base64 record data.
+- `kinesis.cloudwatch-event` — gzip a CloudWatch Logs subscription payload from
+  local log events and wrap it in the Kinesis record AWS delivers.
+- `shutdown` — stop the session and run the normal cleanup.
+
+The `ddb.*` and `sqs.*` operations use the loopback endpoints the runner
+published; function containers use the run-network aliases. Neither can reach a
+real AWS endpoint. `describe` is the only operation that returns local secrets
+or resolved environment values; `run`, `plan` and `invoke` never print them.
 
 ## Capability matrix
 

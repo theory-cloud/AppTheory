@@ -79,7 +79,7 @@ func TestBackendAndFunctionStartupErrors(t *testing.T) {
 	if err := startup.startFunctions(context.Background(), &Spec{
 		Functions: []FunctionSpec{{LogicalID: "Fn", Runtime: "java21"}},
 		APIs:      []APISpec{{Routes: []Route{{Function: "Fn"}}}},
-	}); err == nil {
+	}, []string{"Fn"}); err == nil {
 		t.Fatal("an unsupported runtime must fail startup")
 	}
 }

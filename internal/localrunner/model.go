@@ -55,6 +55,10 @@ const (
 	backendSQS     = "sqs"
 	backendKinesis = "kinesis"
 	boolTrue       = "true"
+
+	streamEventInsert = "INSERT"
+	streamEventModify = "MODIFY"
+	streamEventRemove = "REMOVE"
 )
 
 // APIClass names a supported HTTP surface kind.
