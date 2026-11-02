@@ -161,12 +161,16 @@
       "description": "Import pipeline CDK app, synthesized and hash-checked with focused construct assertions."
     },
     "examples/cdk/import-pipeline/handlers/ingest/main.go": {
-      "pending": "A4",
-      "description": "Import pipeline ingest handler; A4 runs it with generated event payloads and the SQS emulator."
+      "run": "import-ingest",
+      "class": "L3",
+      "gap": "S3 → EventBridge delivery and CodeBuild; ingest runs on the DynamoDB Local jobs table and sends to ElasticMQ from a real s3proxy object.",
+      "description": "Import pipeline ingest handler: the CDK IngestRule EventBridge event is built from a real object written to s3proxy; the handler writes the job meta and three work messages that are read back from ElasticMQ."
     },
     "examples/cdk/import-pipeline/handlers/worker/main.go": {
-      "pending": "A4",
-      "description": "Import pipeline worker handler; A4 runs it against the DynamoDB Local jobs table."
+      "run": "import-worker",
+      "class": "L3",
+      "gap": "S3 → EventBridge delivery and CodeBuild; ingest and worker run end to end on the DynamoDB Local jobs table and ElasticMQ.",
+      "description": "Import pipeline worker handler: the full ingest → worker flow runs on the CDK jobs table; the three real work messages produce SUCCEEDED/FAILED records and a sanitized error envelope."
     },
     "examples/cdk/kinesis-cloudwatch-logs/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
@@ -174,8 +178,10 @@
       "description": "Kinesis/CloudWatch Logs CDK app, synthesized and hash-checked with focused construct assertions."
     },
     "examples/cdk/kinesis-cloudwatch-logs/handlers/go/main.go": {
-      "pending": "A4",
-      "description": "Kinesis/CloudWatch Logs handler; A4 invokes it with real event payloads."
+      "run": "kinesis-handler",
+      "class": "L3",
+      "gap": "Managed Kinesis event-source delivery and the CloudWatch Logs subscription path; the gzip+base64 subscription payload is generated from local content.",
+      "description": "Kinesis/CloudWatch Logs handler: a real gzip+base64 subscription payload is invoked and accepted, and a malformed Kinesis record is returned as its sequence-number partial failure."
     },
     "examples/cdk/lambda-role/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
@@ -237,24 +243,36 @@
       "description": "MicroVM controller CDK app, synthesized and hash-checked with focused construct assertions."
     },
     "examples/cdk/microvm-controller/controller/main.go": {
-      "pending": "A4",
-      "description": "MicroVM controller; A4 runs the real routes against the TableTheory session registry on DynamoDB Local, with the provider boundary as the named gap."
+      "run": "microvm-controller",
+      "class": "L3",
+      "gap": "Managed MicroVM provider; the real CDK authorizer and controller routes run locally and every provider-backed operation stops at that boundary.",
+      "description": "MicroVM controller: the CDK authorizer refuses missing/wrong/tenant-less credentials; list/run reach the managed provider boundary; get/suspend/resume/terminate/auth-token/shell-auth-token/invoke read the TableTheory registry on DynamoDB Local and refuse a missing session."
     },
     "examples/cdk/microvm-controller/workloads/go/main.go": {
-      "pending": "A4",
-      "description": "MicroVM Go workload; A4 runs it up to the provider boundary."
+      "run": "microvm-workload-go",
+      "class": "L1",
+      "description": "MicroVM Go workload: the built server runs as a host process and answers GET and POST with its HTTP contract."
     },
     "examples/cdk/microvm-controller/workloads/py/server.py": {
-      "pending": "A4",
-      "description": "MicroVM Python workload; A4 runs it up to the provider boundary."
+      "run": "microvm-workload-py",
+      "class": "L1",
+      "description": "MicroVM Python workload: the stdlib server runs as a host process and answers GET and POST with its HTTP contract."
     },
     "examples/cdk/microvm-controller/workloads/ts/server.js": {
-      "pending": "A4",
-      "description": "MicroVM TypeScript workload (compiled server.js shipped in the image); A4 runs it up to the provider boundary."
+      "run": "microvm-workload-ts",
+      "class": "L1",
+      "description": "MicroVM TypeScript workload (the built server.js shipped in the image): it runs as a host process and answers GET and POST with its HTTP contract."
     },
     "examples/cdk/microvm-controller/workloads/ts/server.ts": {
-      "pending": "A4",
-      "description": "MicroVM TypeScript workload source; A4 runs the built workload up to the provider boundary."
+      "coveredBy": "examples/cdk/microvm-controller/workloads/ts/server.js",
+      "class": "L1",
+      "description": "MicroVM TypeScript workload source; verified through the built server.js that the image ships and the harness runs."
+    },
+    "examples/microvm-conformance/run_local.py": {
+      "run": "microvm-conformance",
+      "class": "L3",
+      "gap": "Managed MicroVM provider; dry-run and leak-scan pass, and the live conformance run stops at the provider boundary. No EqualToAI/Host live proof is claimed.",
+      "description": "MicroVM conformance harness: the real dry-run and token-leak scanner pass; live mode runs against the local microvm-controller, passes its auth refusals, and stops at the managed provider boundary."
     },
     "examples/cdk/multilang/bin/apptheory-multilang.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
@@ -264,19 +282,19 @@
     "examples/cdk/multilang/handlers/go/main.go": {
       "run": "multilang-go",
       "class": "L3",
-      "gap": "WebSocket frames and event-source delivery are not served; HTTP API v2 and the Go-only REST v1 surface (including /sse) are verified.",
-      "description": "Multilang Go handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the Go REST API serves hello and all three buffered SSE events; three WebSocket APIs are reported not served."
+      "gap": "WebSocket frames and managed event-source delivery; HTTP API v2, the Go-only REST v1 surface (including /sse), and the CDK SQS, DynamoDB stream and EventBridge events are verified.",
+      "description": "Multilang Go handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the Go REST API serves hello and all three buffered SSE events; three WebSocket APIs are reported not served; SQS, a DynamoDB stream record built from a real local write, and both EventBridge rules are invoked."
     },
     "examples/cdk/multilang/handlers/py/handler.py": {
       "run": "multilang-py",
       "class": "L3",
-      "gap": "WebSocket frames and event-source delivery are not served; HTTP API v2 is verified for Python, while the REST v1 surface is defined only for the Go handler in this stack.",
+      "gap": "WebSocket frames and managed event-source delivery are not served; HTTP API v2 is verified for Python, while the REST v1 surface is defined only for the Go handler in this stack.",
       "description": "Multilang Python handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the Go-only REST surface is also asserted."
     },
     "examples/cdk/multilang/handlers/ts/handler.mjs": {
       "run": "multilang-ts",
       "class": "L3",
-      "gap": "WebSocket frames and event-source delivery are not served; HTTP API v2 is verified for TypeScript, while the REST v1 surface is defined only for the Go handler in this stack.",
+      "gap": "WebSocket frames and managed event-source delivery are not served; HTTP API v2 is verified for TypeScript, while the REST v1 surface is defined only for the Go handler in this stack.",
       "description": "Multilang TypeScript handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the Go-only REST surface is also asserted."
     },
     "examples/cdk/path-routed-frontend/bin/app.ts": {
@@ -316,8 +334,10 @@
       "description": "S3 Vectors semantic search CDK app, synthesized and hash-checked with focused construct assertions."
     },
     "examples/cdk/s3-vectors-semantic-search/handler/main.go": {
-      "pending": "A4",
-      "description": "S3 Vectors search handler; A4 runs its HTTP and auth surface locally, with managed S3 Vectors/Bedrock as the named gap."
+      "run": "s3-vectors",
+      "class": "L3",
+      "gap": "Managed S3 Vectors and Bedrock; the HTTP and auth surface runs locally, refusals are asserted, and authorized provider calls stop at the closed Bedrock endpoint.",
+      "description": "S3 Vectors semantic search handler: health reports the CDK vector index; missing/wrong auth, missing query and invalid top_k are refused; authorized seed/search reach the Bedrock boundary with vectorstore.embedding_failed."
     },
     "examples/cdk/sqs-queue/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
@@ -325,16 +345,22 @@
       "description": "SQS queue CDK app, synthesized and hash-checked with focused queue, DLQ, redrive and event-source-mapping assertions."
     },
     "examples/cdk/sqs-queue/handlers/dlq-handler.mjs": {
-      "pending": "A4",
-      "description": "SQS DLQ handler; A4 invokes it with messages received from the local SQS emulator."
+      "run": "sqs-dlq",
+      "class": "L3",
+      "gap": "Managed SQS event-source mapping; the message is redriven by ElasticMQ after maxReceiveCount and the handler is invoked with the message actually read from the DLQ.",
+      "description": "SQS DLQ handler: events-queue redrives a failing message to events-queue-dlq after five receives; dlq-handler.mjs processes the real dead-letter message and acknowledges it."
     },
     "examples/cdk/sqs-queue/handlers/producer.mjs": {
-      "pending": "A4",
-      "description": "SQS producer handler; A4 sends to the local SQS emulator through the real handler."
+      "run": "sqs-producer",
+      "class": "L3",
+      "gap": "Managed SQS event-source mapping; the producer sends to ElasticMQ through its real handler and the message is read back.",
+      "description": "SQS producer handler: the real producer sends through the AWS SQS SDK to ElasticMQ; the received message body and messageId match."
     },
     "examples/cdk/sqs-queue/handlers/worker.mjs": {
-      "pending": "A4",
-      "description": "SQS worker handler; A4 invokes it with messages received from the local SQS emulator."
+      "run": "sqs-worker",
+      "class": "L3",
+      "gap": "Managed SQS event-source mapping (polling, visibility and deletion); two messages are received from ElasticMQ and invoked as the CDK mapping's batch.",
+      "description": "SQS worker handler: two real ElasticMQ messages are invoked as the CDK mapping's batch; worker.mjs reports only the simulated failure as a partial batch failure."
     },
     "examples/cdk/ssr-only-provided-assets-site/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",

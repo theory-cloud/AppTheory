@@ -28,7 +28,9 @@ therefore never share or recreate each other's DynamoDB.
 from __future__ import annotations
 
 import argparse
+import base64
 import fcntl
+import gzip
 import hashlib
 import json
 import os
@@ -84,6 +86,14 @@ MULTILANG_APP = "examples/cdk/multilang"
 LESSER_PARITY_APP = "examples/cdk/lesser-parity"
 RESTV1_APP = "examples/cdk/restv1-router"
 LAMBDA_ROLE_APP = "examples/cdk/lambda-role"
+SQS_APP = "examples/cdk/sqs-queue"
+IMPORT_APP = "examples/cdk/import-pipeline"
+KINESIS_APP = "examples/cdk/kinesis-cloudwatch-logs"
+MICROVM_APP = "examples/cdk/microvm-controller"
+VECTORS_APP = "examples/cdk/s3-vectors-semantic-search"
+CONFORMANCE_SCRIPT = "examples/microvm-conformance/run_local.py"
+MICROVM_DEMO_TOKEN = "local-demo-token"
+MICROVM_WORKLOAD_GO = STATE_DIR / "bin" / "microvm-workload-go"
 LOCAL_PROFILE = "scripts/local/examples-local.json"
 MCP_HANDLER_BIN_DIR = STATE_DIR / "handlers"
 MCP_EXAMPLES = {
@@ -840,6 +850,18 @@ def prepare(harness: Harness) -> None:
     """
     prepare_typescript_runtime(harness)
     prepare_local_runner(harness)
+    prepare_microvm_workload(harness)
+
+
+def prepare_microvm_workload(harness: Harness) -> None:
+    """Build the Go MicroVM workload once; the workload rows run host processes."""
+    MICROVM_WORKLOAD_GO.parent.mkdir(parents=True, exist_ok=True)
+    if not MICROVM_WORKLOAD_GO.exists():
+        print("  ... building the MicroVM Go workload")
+    harness.run(
+        ["go", "build", "-o", str(MICROVM_WORKLOAD_GO), "./examples/cdk/microvm-controller/workloads/go"],
+        timeout=1800,
+    )
 
 
 def prepare_typescript_runtime(harness: Harness) -> None:
@@ -1261,6 +1283,13 @@ def _assert_request_id(payload: dict, label: str) -> None:
 
 
 def run_multilang(harness: Harness, lang: str) -> str:
+    detail = _run_multilang_http(harness, lang)
+    if lang == "go":
+        detail += "; " + _run_multilang_go_events(harness)
+    return detail
+
+
+def _run_multilang_http(harness: Harness, lang: str) -> str:
     run = start_local_app(harness, MULTILANG_APP, name=f"multilang-{lang}")
     try:
         apis = run.spec.get("apis") or []
@@ -2103,7 +2132,7 @@ def ensure_cdk_app(harness: Harness, app: str) -> Path:
 def local_app_prefix(harness: Harness, name: str) -> str:
     lease = harness.lease
     slot = f"s{lease.slot}" if lease.slot >= 0 else f"p{lease.port}"
-    return f"a3b-{lease.checkout}-{slot}-{name}"
+    return f"a4-{lease.checkout}-{slot}-{name}"
 
 
 @dataclass
@@ -2146,7 +2175,7 @@ def start_local_app(
     ensure_cdk_app(harness, app)
     spec = plan_local_app(harness, app, context)
     prefix = local_app_prefix(harness, name)
-    log = tempfile.NamedTemporaryFile(prefix=f"a3b-{name}-", suffix=".log", delete=False)
+    log = tempfile.NamedTemporaryFile(prefix=f"a4-{name}-", suffix=".log", delete=False)
     argv = [
         str(LOCAL_RUNNER_BIN),
         "run",
@@ -2185,6 +2214,204 @@ def start_local_app(
         apis=apis,
         api_classes=classes,
     )
+
+
+@dataclass
+class LocalSession:
+    process: subprocess.Popen
+    log_path: str
+    prefix: str
+    spec: dict
+    info: dict
+
+    def request(self, op: str, **fields) -> dict:
+        payload = {"op": op}
+        payload.update(fields)
+        self.process.stdin.write(json.dumps(payload) + "\n")
+        self.process.stdin.flush()
+        line = self.process.stdout.readline()
+        if not line:
+            output = Path(self.log_path).read_text(encoding="utf-8", errors="replace")
+            raise HarnessFailure(f"session {self.prefix} ended before answering {op}", output)
+        try:
+            response = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise HarnessFailure(f"session {self.prefix} answered {op} with invalid JSON: {exc}", line) from exc
+        if not response.get("ok"):
+            raise HarnessFailure(f"session {self.prefix} {op} failed: {response.get('error')}")
+        return response.get("result")
+
+    def invoke(self, function: str, event: dict) -> dict:
+        return self.request("invoke", function=function, event=event)
+
+    def function_by_handler(self, handler: str) -> dict:
+        matches = [
+            function for function in self.spec.get("functions") or []
+            if function.get("handler") == handler and function.get("assetDir")
+        ]
+        if not matches:
+            raise HarnessFailure(f"plan has no function with handler {handler!r}")
+        return matches[0]
+
+    def function(self, logical_id: str) -> dict:
+        for function in self.info.get("functions") or []:
+            if function.get("logicalId") == logical_id:
+                return function
+        raise HarnessFailure(f"session did not start function {logical_id}")
+
+    def resource(self, *, name: str | None = None, logical_prefix: str | None = None, kind: str | None = None) -> dict:
+        matches = []
+        for resource in self.info.get("resources") or []:
+            if name is not None and resource.get("name") != name:
+                continue
+            if logical_prefix is not None and not str(resource.get("logicalId") or "").startswith(logical_prefix):
+                continue
+            if kind is not None and resource.get("type") != kind:
+                continue
+            matches.append(resource)
+        if len(matches) != 1:
+            raise HarnessFailure(
+                f"want one resource (name={name!r} prefix={logical_prefix!r} kind={kind!r}), got {matches}"
+            )
+        return matches[0]
+
+    def event_source(self, *, kind: str, function: str | None = None, source_name: str | None = None) -> dict:
+        matches = []
+        for source in self.info.get("eventSources") or []:
+            if source.get("type") != kind:
+                continue
+            if function is not None and source.get("function") != function:
+                continue
+            if source_name is not None and source.get("sourceName") != source_name:
+                continue
+            matches.append(source)
+        if len(matches) != 1:
+            raise HarnessFailure(f"want one {kind} event source, got {matches}")
+        return matches[0]
+
+    def rule(self, *, function: str, schedule: bool) -> dict:
+        matches = []
+        for rule in self.info.get("rules") or []:
+            if (schedule and not rule.get("schedule")) or (not schedule and not rule.get("eventPattern")):
+                continue
+            if function in (rule.get("targets") or []):
+                matches.append(rule)
+        if len(matches) != 1:
+            raise HarnessFailure(f"want one EventBridge rule for {function}, got {matches}")
+        return matches[0]
+
+
+def start_local_session(
+    harness: Harness,
+    app: str,
+    *,
+    name: str,
+    backends: tuple[str, ...] = (),
+    context: dict | None = None,
+    targets: tuple[str, ...] = (),
+) -> LocalSession:
+    """Start one `apptheory-local session` and wait for its machine interface."""
+    ensure_cdk_app(harness, app)
+    spec = plan_local_app(harness, app, context)
+    prefix = local_app_prefix(harness, name)
+    log = tempfile.NamedTemporaryFile(prefix=f"a4-{name}-", suffix=".log", delete=False)
+    argv = [
+        str(LOCAL_RUNNER_BIN),
+        "session",
+        "--app",
+        app,
+        "--profile",
+        str(ROOT / LOCAL_PROFILE),
+        "--port-base",
+        str(harness.lease.http_port),
+        "--name-prefix",
+        prefix,
+    ]
+    for key, value in sorted((context or {}).items()):
+        argv.extend(["-c", f"{key}={value}"])
+    for backend in backends:
+        argv.extend(["--backend", backend])
+    for target in targets:
+        argv.extend(["--target", target])
+    process = subprocess.Popen(
+        argv,
+        cwd=str(ROOT),
+        env=harness.env,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=log,
+        text=True,
+        bufsize=1,
+        start_new_session=True,
+    )
+    try:
+        _wait_for_local_session_ready(process, log.name)
+        session = LocalSession(
+            process=process, log_path=log.name, prefix=prefix, spec=spec, info={}
+        )
+        session.info = session.request("describe")
+    except Exception:
+        _terminate_process(process)
+        log.close()
+        raise
+    log.close()
+    return session
+
+
+def _wait_for_local_session_ready(process: subprocess.Popen, log_path: str, seconds: int = 900) -> None:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise HarnessFailure(
+                f"apptheory-local session exited before it was ready (code {process.returncode})",
+                Path(log_path).read_text(encoding="utf-8", errors="replace"),
+            )
+        text = Path(log_path).read_text(encoding="utf-8", errors="replace")
+        if LOCAL_RUNNER_READY in text:
+            return
+        time.sleep(0.25)
+    raise HarnessFailure(
+        "apptheory-local session did not become ready",
+        Path(log_path).read_text(encoding="utf-8", errors="replace"),
+    )
+
+
+def stop_local_session(harness: Harness, session: LocalSession, *, strict: bool = True) -> None:
+    failure: HarnessFailure | None = None
+    try:
+        if session.process.poll() is None:
+            try:
+                session.request("shutdown")
+            except HarnessFailure:
+                pass
+            try:
+                session.process.stdin.close()
+            except (OSError, ValueError):
+                pass
+            try:
+                session.process.wait(timeout=180)
+            except subprocess.TimeoutExpired:
+                _terminate_process(session.process)
+        output = Path(session.log_path).read_text(encoding="utf-8", errors="replace")
+        if session.process.returncode != 0:
+            failure = HarnessFailure(
+                f"apptheory-local session {session.prefix} exited {session.process.returncode}", output
+            )
+        elif LOCAL_RUNNER_READY not in output or "shutting down" not in output:
+            failure = HarnessFailure(
+                f"apptheory-local session {session.prefix} did not report a full lifecycle", output
+            )
+        else:
+            _assert_local_runner_cleanup(harness, session.prefix)
+    except HarnessFailure as exc:
+        failure = exc
+    finally:
+        try:
+            os.unlink(session.log_path)
+        except FileNotFoundError:
+            pass
+    if failure is not None and strict:
+        raise failure
 
 
 def stop_local_app(harness: Harness, run: LocalAppRun) -> str:
@@ -2335,6 +2562,654 @@ def _docker_ids(harness: Harness, argv: list[str]) -> list[str]:
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
+# --- A4 event-source and data runners --------------------------------------
+
+
+def _require_proxy(result: dict, label: str, status: int = 200) -> dict:
+    if not result.get("proxy"):
+        raise HarnessFailure(f"{label}: handler did not return a proxy response", json.dumps(result))
+    if result.get("statusCode") != status:
+        raise HarnessFailure(f"{label}: status {result.get('statusCode')} != {status}", json.dumps(result))
+    try:
+        return json.loads(result.get("body") or "{}")
+    except json.JSONDecodeError as exc:
+        raise HarnessFailure(f"{label}: proxy body is not JSON: {exc}", result.get("body") or "") from exc
+
+
+def _batch_failures(result: dict) -> list:
+    raw = result.get("raw")
+    if not isinstance(raw, dict):
+        raise HarnessFailure("handler did not return a batch response", json.dumps(result))
+    failures = raw.get("batchItemFailures")
+    if failures is None:
+        return []
+    if not isinstance(failures, list):
+        raise HarnessFailure("batchItemFailures is not a list", json.dumps(result))
+    return failures
+
+
+def _session_function_for_language(session: LocalSession, language: str) -> dict:
+    matches = [
+        function for function in session.info.get("functions") or []
+        if (function.get("environment") or {}).get("APPTHEORY_LANG") == language
+    ]
+    if len(matches) != 1:
+        raise HarnessFailure(f"want one {language} function in the session, got {matches}")
+    return matches[0]
+
+
+def run_sqs_producer(harness: Harness) -> str:
+    plan = plan_local_app(harness, SQS_APP)
+    producers = [function for function in plan.get("functions") or [] if function.get("handler") == "producer.handler"]
+    if len(producers) != 1:
+        raise HarnessFailure(f"plan has no single producer.handler function: {producers}")
+    producer = producers[0]
+    session = start_local_session(
+        harness, SQS_APP, name="sqs-producer", backends=("sqs",), targets=(producer["logicalId"],)
+    )
+    try:
+        queue = session.resource(name="contract-events", kind="AWS::SQS::Queue")
+        event = {
+            "version": "2.0",
+            "routeKey": "POST /",
+            "rawPath": "/",
+            "headers": {"content-type": "application/json"},
+            "body": json.dumps({"eventType": "a4-producer", "payload": {"n": 1}}),
+            "isBase64Encoded": False,
+            "requestContext": {"http": {"method": "POST", "path": "/", "protocol": "HTTP/1.1"}},
+        }
+        result = session.invoke(producer["logicalId"], event)
+        body = _require_proxy(result, "sqs producer")
+        if body.get("message") != "Message sent to queue" or not body.get("messageId"):
+            raise HarnessFailure(f"sqs producer: unexpected response {body}")
+        messages = session.request(
+            "sqs.receive", queue=queue["logicalId"], max=1, waitSeconds=5, visibilitySeconds=30
+        )["messages"]
+        if len(messages) != 1:
+            raise HarnessFailure(f"sqs producer: want one message in contract-events, got {messages}")
+        message = messages[0]
+        received = json.loads(message["body"])
+        if received.get("eventType") != "a4-producer" or received.get("payload") != {"n": 1}:
+            raise HarnessFailure(f"sqs producer: unexpected message body {received}")
+        if not received.get("timestamp"):
+            raise HarnessFailure("sqs producer: the message has no timestamp")
+        if message["messageId"] != body["messageId"]:
+            raise HarnessFailure(
+                f"sqs producer: response id {body['messageId']} != received id {message['messageId']}"
+            )
+        return (
+            "producer.mjs sent through the real SQS client to ElasticMQ; the received message body "
+            "matched eventType/payload/timestamp and the producer's messageId"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def run_sqs_worker(harness: Harness) -> str:
+    session = start_local_session(harness, SQS_APP, name="sqs-worker", backends=("sqs",))
+    try:
+        source = session.event_source(kind="sqs", source_name="events-queue")
+        if not source.get("reportBatchItemFailures"):
+            raise HarnessFailure(f"events-queue mapping lost reportBatchItemFailures: {source}")
+        queue = session.resource(name="events-queue", kind="AWS::SQS::Queue")
+        valid = session.request("sqs.send", queue=queue["logicalId"], body=json.dumps({"shouldFail": False, "n": 1}))
+        invalid = session.request("sqs.send", queue=queue["logicalId"], body=json.dumps({"shouldFail": True, "n": 2}))
+        batch = session.request(
+            "sqs.event", queue=queue["logicalId"], max=2, waitSeconds=5, visibilitySeconds=30, delete=True
+        )
+        event = batch["event"]
+        if len(event.get("Records") or []) != 2:
+            raise HarnessFailure(f"sqs worker: want a two-record batch, got {event}")
+        bodies = sorted(json.loads(record["body"])["n"] for record in event["Records"])
+        if bodies != [1, 2]:
+            raise HarnessFailure(f"sqs worker: unexpected batch bodies {bodies}")
+        result = session.invoke(source["function"], event)
+        failures = _batch_failures(result)
+        if failures != [{"itemIdentifier": invalid["messageId"]}]:
+            raise HarnessFailure(
+                f"sqs worker: expected only {invalid['messageId']} to fail, got {failures}"
+            )
+        if valid["messageId"] in json.dumps(failures):
+            raise HarnessFailure("sqs worker: the valid message was reported as a failure")
+        return (
+            "two messages were received from ElasticMQ and invoked as the CDK mapping's batch; "
+            "worker.mjs reported exactly the simulated failure as a partial batch failure"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def run_sqs_dlq(harness: Harness) -> str:
+    session = start_local_session(harness, SQS_APP, name="sqs-dlq", backends=("sqs",))
+    try:
+        dead_source = session.event_source(kind="sqs", source_name="events-queue-dlq")
+        queue = session.resource(name="events-queue", kind="AWS::SQS::Queue")
+        dead_queue = session.resource(name="events-queue-dlq", kind="AWS::SQS::Queue")
+        body = json.dumps({"shouldFail": True, "dlq": True})
+        session.request("sqs.send", queue=queue["logicalId"], body=body)
+        for _ in range(6):
+            received = session.request(
+                "sqs.receive", queue=queue["logicalId"], max=1, visibilitySeconds=1
+            )["messages"]
+            if received:
+                if json.loads(received[0]["body"]).get("dlq") is not True:
+                    raise HarnessFailure(f"sqs dlq: unexpected main-queue body {received[0]}")
+                time.sleep(1.2)
+        moved = []
+        for _ in range(6):
+            moved = session.request(
+                "sqs.receive", queue=dead_queue["logicalId"], max=1, waitSeconds=1, visibilitySeconds=30
+            )["messages"]
+            if moved:
+                break
+            time.sleep(1)
+        if not moved:
+            raise HarnessFailure("sqs dlq: the message was not redriven to events-queue-dlq after maxReceiveCount")
+        if json.loads(moved[0]["body"]).get("dlq") is not True:
+            raise HarnessFailure(f"sqs dlq: unexpected dead-letter body {moved[0]}")
+        batch = session.request(
+            "sqs.event", queue=dead_queue["logicalId"], max=1, waitSeconds=5, visibilitySeconds=30, delete=True
+        )
+        result = session.invoke(dead_source["function"], batch["event"])
+        if _batch_failures(result) != []:
+            raise HarnessFailure(f"sqs dlq: handler did not acknowledge the record: {result}")
+        return (
+            "events-queue redrove the failing message to events-queue-dlq after maxReceiveCount=5; "
+            "dlq-handler.mjs was invoked with the message actually read from the DLQ and acknowledged it"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def _import_functions(session: LocalSession) -> tuple[dict, dict]:
+    worker_source = session.event_source(kind="sqs", source_name="import-records")
+    ingest_rules = [
+        rule for rule in session.info.get("rules") or []
+        if "aws.s3" in json.dumps(rule.get("eventPattern") or {})
+    ]
+    if len(ingest_rules) != 1 or len(ingest_rules[0].get("targets") or []) != 1:
+        raise HarnessFailure(f"want one S3 EventBridge rule with one target, got {ingest_rules}")
+    ingest_id = ingest_rules[0]["targets"][0]
+    ingest = session.function(ingest_id)
+    return ingest, worker_source
+
+
+def _run_import(harness: Harness, kind: str) -> tuple[dict, str]:
+    session = start_local_session(
+        harness, IMPORT_APP, name=f"import-{kind}", backends=("dynamodb", "sqs", "s3proxy")
+    )
+    try:
+        ingest, worker_source = _import_functions(session)
+        bucket = session.resource(logical_prefix="IngestBucket", kind="AWS::S3::Bucket")
+        table = session.resource(logical_prefix="JobsTable", kind="AWS::DynamoDB::Table")
+        key = "incoming/orders/a4.json"
+        content = json.dumps({"order": 42, "source": "local"})
+        session.request("s3.put", bucket=bucket["logicalId"], objectKey=key, body=content)
+        event = session.request(
+            "eventbridge.event",
+            rule=[
+                rule for rule in session.info.get("rules") or []
+                if "aws.s3" in json.dumps(rule.get("eventPattern") or {})
+            ][0]["logicalId"],
+            detail={"bucket": {"name": bucket["name"]}, "object": {"key": key}},
+        )
+        result = session.invoke(ingest["logicalId"], event)
+        raw = result.get("raw") or {}
+        if raw.get("ok") is not True or not raw.get("job_id"):
+            raise HarnessFailure(f"import {kind}: ingest did not write a job: {result}")
+        job_id = raw["job_id"]
+        expected = hashlib.sha256((bucket["name"] + "/" + key).encode()).hexdigest()
+        if job_id != expected:
+            raise HarnessFailure(f"import {kind}: job id {job_id} != {expected}")
+        batch = session.request(
+            "sqs.event",
+            queue=worker_source["source"],
+            max=3,
+            waitSeconds=5,
+            visibilitySeconds=30,
+            delete=True,
+        )
+        messages = batch["messages"]
+        if len(messages) != 3:
+            raise HarnessFailure(f"import {kind}: want three work messages, got {messages}")
+        bodies = sorted(json.loads(message["body"])["record_id"] for message in messages)
+        if bodies != ["rec-1", "rec-2", "rec-3"]:
+            raise HarnessFailure(f"import {kind}: unexpected record ids {bodies}")
+        if any(json.loads(message["body"])["job_id"] != job_id for message in messages):
+            raise HarnessFailure(f"import {kind}: a work message lost the ingest job id")
+        if kind == "ingest":
+            items = session.request("ddb.scan", table=table["logicalId"])["items"]
+            meta = [item for item in items if item.get("pk") == f"JOB#{job_id}" and item.get("sk") == "META"]
+            if len(meta) != 1 or meta[0].get("status") != "RUNNING":
+                raise HarnessFailure(f"import ingest: job meta is not RUNNING: {meta}")
+            return (
+                ingest["logicalId"],
+                "ingest ran on DynamoDB Local and ElasticMQ: a real s3proxy object produced a job id, "
+                "the META record was RUNNING, and three work messages carried that job id",
+            )
+        result = session.invoke(worker_source["function"], batch["event"])
+        if _batch_failures(result) != []:
+            raise HarnessFailure(f"import worker: unexpected partial failure {result}")
+        items = session.request("ddb.scan", table=table["logicalId"])["items"]
+        records = {item.get("sk"): item for item in items if str(item.get("sk", "")).startswith("REC#")}
+        for record_id in ("rec-1", "rec-2"):
+            if records.get(f"REC#{record_id}", {}).get("status") != "SUCCEEDED":
+                raise HarnessFailure(f"import worker: {record_id} is not SUCCEEDED: {records.get('REC#' + record_id)}")
+        failed = records.get("REC#rec-3") or {}
+        if failed.get("status") != "FAILED" or not failed.get("error"):
+            raise HarnessFailure(f"import worker: rec-3 is not a failed record: {failed}")
+        serialized = json.dumps(failed)
+        if "4111111111111111" in serialized:
+            raise HarnessFailure("import worker: the stored error leaked the raw PAN")
+        if "******1111" not in serialized:
+            raise HarnessFailure(f"import worker: the stored error was not sanitized: {failed}")
+        meta = [item for item in items if item.get("pk") == f"JOB#{job_id}" and item.get("sk") == "META"]
+        if len(meta) != 1:
+            raise HarnessFailure(f"import worker: job meta missing: {meta}")
+        return (
+            worker_source["function"],
+            "ingest and worker ran end to end on DynamoDB Local and ElasticMQ: three real messages were "
+            "processed, rec-1/rec-2 SUCCEEDED, rec-3 FAILED with a sanitized error, and the raw PAN was absent",
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def run_import_ingest(harness: Harness) -> str:
+    return _run_import(harness, "ingest")[1]
+
+
+def run_import_worker(harness: Harness) -> str:
+    return _run_import(harness, "worker")[1]
+
+
+def run_kinesis_handler(harness: Harness) -> str:
+    session = start_local_session(harness, KINESIS_APP, name="kinesis")
+    log_path = None
+    try:
+        source = session.event_source(kind="kinesis")
+        log_path = tempfile.NamedTemporaryFile(prefix="a4-kinesis-", suffix=".log", delete=False).name
+        message = "2026-11-02T15:00:00Z INFO order processed id=42"
+        Path(log_path).write_text(message + "\n", encoding="utf-8")
+        event = session.request(
+            "kinesis.cloudwatch-event",
+            stream=source["source"],
+            logStream="local-log-stream",
+            logEvents=[{"id": "1", "timestamp": 1793634000000, "message": Path(log_path).read_text(encoding="utf-8").strip()}],
+        )
+        record_data = base64.b64decode(event["Records"][0]["kinesis"]["data"])
+        decoded = gzip.decompress(record_data).decode("utf-8")
+        if message not in decoded:
+            raise HarnessFailure(f"kinesis: generated subscription payload lost the local log content: {decoded}")
+        result = session.invoke(source["function"], event)
+        if _batch_failures(result) != []:
+            raise HarnessFailure(f"kinesis: valid CloudWatch Logs record was reported as a failure: {result}")
+        bad_data = base64.b64encode(b"not-gzip").decode()
+        bad_sequence = "49590338271490256608559692538361571095921575989136588898"
+        bad_event = session.request(
+            "kinesis.event",
+            stream=source["source"],
+            data=[bad_data],
+            sequenceNumbers=[bad_sequence],
+            partitionKeys=["p1"],
+        )
+        bad_result = session.invoke(source["function"], bad_event)
+        failures = _batch_failures(bad_result)
+        if failures != [{"itemIdentifier": bad_sequence}]:
+            raise HarnessFailure(f"kinesis: malformed record must fail its sequence number, got {failures}")
+        return (
+            "real gzip+base64 CloudWatch Logs subscription content was invoked through the handler "
+            f"({source['sourceName']}); the malformed record was returned as a partial batch failure"
+        )
+    finally:
+        if log_path:
+            try:
+                os.unlink(log_path)
+            except FileNotFoundError:
+                pass
+        stop_local_session(harness, session)
+
+
+def run_s3_vectors(harness: Harness) -> str:
+    session = start_local_session(harness, VECTORS_APP, name="s3-vectors")
+    try:
+        api = session.info.get("apis") or []
+        if len(api) != 1:
+            raise HarnessFailure(f"s3-vectors: want one HTTP API, got {api}")
+        base = api[0]["url"]
+        token = (session.info.get("secrets") or {}).get("APPTHEORY_EXAMPLE_API_TOKEN", "")
+        if not token:
+            raise HarnessFailure("s3-vectors: the local API token was not resolved")
+        status, payload, _ = _json_request("GET", f"{base}/health")
+        expect_status(status, 200, "s3-vectors GET /health", json.dumps(payload))
+        if payload.get("configured") is not True or payload.get("dimension") != 1024:
+            raise HarnessFailure(f"s3-vectors GET /health: unexpected body {payload}")
+        for label, method, path, auth in (
+            ("seed no auth", "POST", "/seed", None),
+            ("seed wrong auth", "POST", "/seed", "wrong"),
+            ("search no auth", "GET", "/search?q=middleware", None),
+            ("search wrong auth", "GET", "/search?q=middleware", "wrong"),
+        ):
+            status, text, _ = http_request(
+                method,
+                f"{base}{path}",
+                headers={"Authorization": f"Bearer {auth}"} if auth else {},
+                body=b"{}" if method == "POST" else None,
+            )
+            expect_status(status, 401, f"s3-vectors {label}", text)
+            if "app.unauthorized" not in text:
+                raise HarnessFailure(f"s3-vectors {label}: unexpected refusal {text}")
+        status, payload, _ = _json_request("GET", f"{base}/search", headers={"Authorization": f"Bearer {token}"})
+        expect_status(status, 400, "s3-vectors search missing query", json.dumps(payload))
+        if (payload.get("error") or {}).get("code") != "example.missing_query":
+            raise HarnessFailure(f"s3-vectors search missing query: unexpected body {payload}")
+        status, payload, _ = _json_request(
+            "GET", f"{base}/search?q=middleware&top_k=999", headers={"Authorization": f"Bearer {token}"}
+        )
+        expect_status(status, 400, "s3-vectors search top_k", json.dumps(payload))
+        if (payload.get("error") or {}).get("code") != "example.invalid_top_k":
+            raise HarnessFailure(f"s3-vectors search top_k: unexpected body {payload}")
+        status, payload, _ = _json_request(
+            "GET", f"{base}/search?q=middleware", headers={"Authorization": f"Bearer {token}"}
+        )
+        expect_status(status, 502, "s3-vectors search at the Bedrock boundary", json.dumps(payload))
+        if (payload.get("error") or {}).get("code") != "vectorstore.embedding_failed":
+            raise HarnessFailure(f"s3-vectors search boundary: unexpected body {payload}")
+        status, payload, _ = _json_request(
+            "POST", f"{base}/seed", headers={"Authorization": f"Bearer {token}"}, payload={}
+        )
+        expect_status(status, 502, "s3-vectors seed at the Bedrock boundary", json.dumps(payload))
+        return (
+            "health reported the CDK-declared vector index; missing/wrong auth and missing query/top_k "
+            "were refused; authorized search/seed reached the closed Bedrock boundary with the expected error"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def run_microvm_controller(harness: Harness) -> str:
+    session = start_local_session(
+        harness,
+        MICROVM_APP,
+        name="microvm-controller",
+        backends=("dynamodb",),
+        context={"microvmDemoBearerToken": MICROVM_DEMO_TOKEN},
+    )
+    try:
+        api = session.info.get("apis") or []
+        if len(api) != 1:
+            raise HarnessFailure(f"microvm-controller: want one HTTP API, got {api}")
+        base = api[0]["url"]
+        authorizers = [f for f in session.info.get("functions") or [] if "Authorizer" in f["logicalId"]]
+        if not authorizers:
+            raise HarnessFailure("microvm-controller: the CDK authorizer function was not started")
+        valid = {
+            "Authorization": f"Bearer {MICROVM_DEMO_TOKEN}",
+            "x-tenant-id": "tenant-a4",
+            "x-namespace-id": "ns-a4",
+        }
+        for label, headers in (
+            ("missing auth", {"x-tenant-id": "tenant-a4", "x-namespace-id": "ns-a4"}),
+            ("wrong auth", {"Authorization": "Bearer wrong", "x-tenant-id": "tenant-a4", "x-namespace-id": "ns-a4"}),
+            ("missing tenant", {"Authorization": f"Bearer {MICROVM_DEMO_TOKEN}"}),
+        ):
+            status, text, _ = http_request("GET", f"{base}/microvms?max_results=1", headers=headers)
+            expect_status(status, 401, f"microvm-controller {label}", text)
+            if "Unauthorized" not in text:
+                raise HarnessFailure(f"microvm-controller {label}: unexpected refusal {text}")
+        status, payload, _ = _json_request("GET", f"{base}/microvms?max_results=1", headers=valid)
+        expect_status(status, 502, "microvm-controller list at the provider boundary", json.dumps(payload))
+        if (payload.get("error") or {}).get("code") != "m16.microvm.provider_operation_failed":
+            raise HarnessFailure(f"microvm-controller list: unexpected boundary error {payload}")
+        status, payload, _ = _json_request(
+            "POST",
+            f"{base}/microvms",
+            headers=valid,
+            payload={"tenant_id": "tenant-a4", "namespace": "ns-a4", "session_spec": {}},
+        )
+        expect_status(status, 502, "microvm-controller run at the provider boundary", json.dumps(payload))
+        if (payload.get("error") or {}).get("code") != "m16.microvm.provider_operation_failed":
+            raise HarnessFailure(f"microvm-controller run: unexpected boundary error {payload}")
+        session_id = "session-404"
+        for label, method, path, body in (
+            ("get", "GET", f"/microvms/{session_id}", None),
+            ("suspend", "POST", f"/microvms/{session_id}/suspend", {}),
+            ("resume", "POST", f"/microvms/{session_id}/resume", {}),
+            ("terminate", "DELETE", f"/microvms/{session_id}", {}),
+            ("auth-token", "POST", f"/microvms/{session_id}/auth-token", {"allowed_port_scope": [{"port": 443}]}),
+            ("shell-auth-token", "POST", f"/microvms/{session_id}/shell-auth-token", {}),
+            ("invoke", "POST", f"/microvms/{session_id}/invoke/hello", {}),
+        ):
+            status, payload, _ = _json_request(method, f"{base}{path}", headers=valid, payload=body)
+            expect_status(status, 404, f"microvm-controller {label} missing session", json.dumps(payload))
+            if (payload.get("error") or {}).get("code") != "m15.microvm.session_registry_incomplete":
+                raise HarnessFailure(f"microvm-controller {label}: unexpected registry error {payload}")
+        table = session.resource(logical_prefix="MicrovmControllerSessionTable", kind="AWS::DynamoDB::Table")
+        items = session.request("ddb.scan", table=table["logicalId"])["items"]
+        if items:
+            raise HarnessFailure(f"microvm-controller: the registry table is not empty: {items}")
+        return (
+            "the CDK authorizer refused missing, wrong and tenant-less credentials; list and run reached "
+            "the managed provider boundary; get/suspend/resume/terminate/auth-token/shell-auth-token/invoke "
+            "read the TableTheory registry on DynamoDB Local and refused a missing session"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def _workload_process(language: str, port: int, log: str) -> subprocess.Popen:
+    if language == "go":
+        argv = [str(MICROVM_WORKLOAD_GO)]
+    elif language == "py":
+        argv = ["python3", "examples/cdk/microvm-controller/workloads/py/server.py"]
+    elif language == "ts":
+        argv = ["node", "examples/cdk/microvm-controller/workloads/ts/server.js"]
+    else:
+        raise HarnessFailure(f"unknown workload language {language}")
+    return subprocess.Popen(
+        argv,
+        cwd=str(ROOT),
+        env={**os.environ, "PORT": str(port)},
+        stdout=open(log, "w", encoding="utf-8"),
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+
+
+def _wait_for_workload(process: subprocess.Popen, port: int, language: str, seconds: int = 60) -> None:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise HarnessFailure(f"microvm {language} workload exited early (code {process.returncode})")
+        if port_open("127.0.0.1", port, timeout=0.25):
+            return
+        time.sleep(0.1)
+    raise HarnessFailure(f"microvm {language} workload did not listen on 127.0.0.1:{port}")
+
+
+def _run_microvm_workload(harness: Harness, language: str, expected_language: str) -> str:
+    port = harness.lease.aux_port
+    if port_open("127.0.0.1", port):
+        raise HarnessFailure(f"microvm workload port {port} is already in use")
+    log = tempfile.NamedTemporaryFile(prefix=f"a4-microvm-{language}-", suffix=".log", delete=False)
+    log.close()
+    process = _workload_process(language, port, log.name)
+    try:
+        _wait_for_workload(process, port, language)
+        base = f"http://127.0.0.1:{port}"
+        status, payload, _ = _json_request("GET", f"{base}/hello?x=1")
+        expect_status(status, 200, f"microvm {language} workload GET", json.dumps(payload))
+        if payload.get("language") != expected_language or payload.get("runtime") != "apptheory-microvm-workload":
+            raise HarnessFailure(f"microvm {language} workload GET: unexpected body {payload}")
+        if payload.get("method") != "GET" or not str(payload.get("path", "")).startswith("/hello"):
+            raise HarnessFailure(f"microvm {language} workload GET: method/path lost: {payload}")
+        if not payload.get("now"):
+            raise HarnessFailure(f"microvm {language} workload GET: no timestamp: {payload}")
+        status, payload, _ = _json_request("POST", f"{base}/anything?y=2", payload={"n": 1})
+        expect_status(status, 200, f"microvm {language} workload POST", json.dumps(payload))
+        if payload.get("method") != "POST" or not str(payload.get("path", "")).startswith("/anything"):
+            raise HarnessFailure(f"microvm {language} workload POST: method/path lost: {payload}")
+        return f"the {expected_language} workload server answered GET and POST with its HTTP contract"
+    finally:
+        _stop_process(process)
+        try:
+            os.unlink(log.name)
+        except FileNotFoundError:
+            pass
+
+
+def run_microvm_workload_go(harness: Harness) -> str:
+    return _run_microvm_workload(harness, "go", "go")
+
+
+def run_microvm_workload_py(harness: Harness) -> str:
+    return _run_microvm_workload(harness, "py", "python")
+
+
+def run_microvm_workload_ts(harness: Harness) -> str:
+    return _run_microvm_workload(harness, "ts", "typescript")
+
+
+def run_microvm_conformance(harness: Harness) -> str:
+    session = start_local_session(
+        harness,
+        MICROVM_APP,
+        name="microvm-conformance",
+        backends=("dynamodb",),
+        context={"microvmDemoBearerToken": MICROVM_DEMO_TOKEN},
+    )
+    config_path = None
+    try:
+        api = session.info.get("apis") or []
+        if len(api) != 1:
+            raise HarnessFailure(f"microvm-conformance: want one HTTP API, got {api}")
+        controller = [
+            function for function in session.info.get("functions") or []
+            if "APPTHEORY_MICROVM_IMAGE_REF" in (function.get("environment") or {})
+        ]
+        if len(controller) != 1:
+            raise HarnessFailure(f"microvm-conformance: no single controller function: {controller}")
+        environment = controller[0].get("environment") or {}
+        egress = [item for item in environment.get("APPTHEORY_MICROVM_NETWORK_CONNECTOR_REFS", "").split(",") if item]
+        ingress = [item for item in environment.get("APPTHEORY_MICROVM_INGRESS_NETWORK_CONNECTOR_REFS", "").split(",") if item]
+        egress_refs = [item for item in environment.get("APPTHEORY_MICROVM_EGRESS_NETWORK_CONNECTOR_REFS", "").split(",") if item]
+        if not environment.get("APPTHEORY_MICROVM_IMAGE_REF") or not egress:
+            raise HarnessFailure(
+                f"microvm-conformance: the controller does not expose deployment-pinned image/connector refs: {environment}"
+            )
+        config = {
+            "endpoint": api[0]["url"],
+            "auth_token_env": "APPTHEORY_MICROVM_CONFORMANCE_AUTH_TOKEN",
+            "tenant_id": "tenant-a4",
+            "namespace": "ns-a4",
+            "timeout_seconds": 30,
+            "headers": {},
+            "run": {
+                "image_ref": environment["APPTHEORY_MICROVM_IMAGE_REF"],
+                "network_connector_ref": egress[0],
+                "ingress_network_connector_refs": ingress,
+                "egress_network_connector_refs": egress_refs,
+                "session_spec": {},
+            },
+            "negative": {"tenant_id": "tenant-negative", "namespace": "ns-negative"},
+            "scanner": {},
+        }
+        with tempfile.NamedTemporaryFile(
+            prefix="a4-conformance-", suffix=".json", mode="w", encoding="utf-8", delete=False
+        ) as handle:
+            config_path = handle.name
+            json.dump(config, handle)
+        result = harness.run(
+            ["python3", CONFORMANCE_SCRIPT, "--config", config_path],
+            env={"APPTHEORY_MICROVM_CONFORMANCE_AUTH_TOKEN": MICROVM_DEMO_TOKEN},
+            timeout=600,
+            check=False,
+        )
+        output = _combined_output(result)
+        if result.returncode != 0:
+            raise HarnessFailure(
+                f"microvm-conformance wrapper exited {result.returncode}; it must pass dry-run/scan and report the provider boundary",
+                output,
+            )
+        for needle in ("microvm-conformance-local: PASS", "provider boundary"):
+            if needle not in output:
+                raise HarnessFailure(f"microvm-conformance wrapper output is missing {needle!r}", output)
+        if MICROVM_DEMO_TOKEN in output:
+            raise HarnessFailure("microvm-conformance wrapper printed the demo bearer token", output)
+        return (
+            "dry-run, leak-scan and the local live run passed; the live run stopped at the managed "
+            "MicroVM provider boundary after the auth refusals (no EqualToAI/Host proof claimed)"
+        )
+    finally:
+        if config_path:
+            try:
+                os.unlink(config_path)
+            except FileNotFoundError:
+                pass
+        stop_local_session(harness, session)
+
+
+def _run_multilang_go_events(harness: Harness) -> str:
+    session = start_local_session(
+        harness, MULTILANG_APP, name="multilang-go-events", backends=("dynamodb", "sqs")
+    )
+    try:
+        go_function = _session_function_for_language(session, "go")
+        go_id = go_function["logicalId"]
+        sqs_source = session.event_source(kind="sqs", function=go_id)
+        ddb_source = session.event_source(kind="dynamodb", function=go_id)
+        schedule_rule = session.rule(function=go_id, schedule=True)
+        pattern_rule = session.rule(function=go_id, schedule=False)
+        session.request(
+            "sqs.send", queue=sqs_source["source"], body=json.dumps({"event": "help", "payload": {"n": 1}})
+        )
+        batch = session.request(
+            "sqs.event", queue=sqs_source["source"], max=1, waitSeconds=5, visibilitySeconds=30, delete=True
+        )
+        if len(batch["event"].get("Records") or []) != 1:
+            raise HarnessFailure(f"multilang go: unexpected SQS event {batch['event']}")
+        result = session.invoke(go_id, batch["event"])
+        if _batch_failures(result) != []:
+            raise HarnessFailure(f"multilang go: SQS handler failed {result}")
+
+        session.request(
+            "ddb.put", table=ddb_source["source"], item={"pk": "a4-item", "value": "stored-value"}
+        )
+        stream_event = session.request(
+            "ddb.stream-event", table=ddb_source["source"], key={"pk": "a4-item"}, eventName="INSERT"
+        )
+        new_image = stream_event["Records"][0]["dynamodb"].get("NewImage") or {}
+        if new_image.get("value", {}).get("S") != "stored-value":
+            raise HarnessFailure(f"multilang go: stream image did not come from the local write: {stream_event}")
+        result = session.invoke(go_id, stream_event)
+        if _batch_failures(result) != []:
+            raise HarnessFailure(f"multilang go: DynamoDB stream handler failed {result}")
+
+        scheduled = session.request("eventbridge.event", rule=schedule_rule["logicalId"])
+        result = session.invoke(go_id, scheduled)
+        raw = result.get("raw") or {}
+        if raw.get("trigger") != "eventbridge" or raw.get("kind") != "schedule" or not raw.get("run_id"):
+            raise HarnessFailure(f"multilang go: schedule handler failed {result}")
+        pattern_event = session.request(
+            "eventbridge.event", rule=pattern_rule["logicalId"], detail={"item": "a4"}
+        )
+        result = session.invoke(go_id, pattern_event)
+        raw = result.get("raw") or {}
+        if (
+            raw.get("trigger") != "eventbridge"
+            or raw.get("kind") != "rule"
+            or raw.get("source") != "apptheory.example"
+            or raw.get("detail_type") != "example.item.changed"
+        ):
+            raise HarnessFailure(f"multilang go: rule handler failed {result}")
+        return (
+            "the Go handler answered SQS, a DynamoDB stream record built from a real local write, "
+            "and both the scheduled and pattern EventBridge events"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
 RUNNERS: dict[str, Callable[[Harness], str]] = {
     "testkit-ts": run_testkit_ts,
     "testkit-ts-streaming": run_testkit_ts_streaming,
@@ -2363,6 +3238,18 @@ RUNNERS: dict[str, Callable[[Harness], str]] = {
     "lambda-role-index": run_lambda_role_index,
     "lambda-role-encrypted": run_lambda_role_encrypted,
     "lambda-role-custom": run_lambda_role_custom,
+    "sqs-producer": run_sqs_producer,
+    "sqs-worker": run_sqs_worker,
+    "sqs-dlq": run_sqs_dlq,
+    "import-ingest": run_import_ingest,
+    "import-worker": run_import_worker,
+    "kinesis-handler": run_kinesis_handler,
+    "microvm-controller": run_microvm_controller,
+    "microvm-workload-go": run_microvm_workload_go,
+    "microvm-workload-py": run_microvm_workload_py,
+    "microvm-workload-ts": run_microvm_workload_ts,
+    "microvm-conformance": run_microvm_conformance,
+    "s3-vectors": run_s3_vectors,
 }
 
 
