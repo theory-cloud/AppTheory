@@ -320,7 +320,8 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
     network and deletes the scratch directory. A `SIGKILL` cannot be caught:
     after one, `apptheory-local down --app <dir>` removes the containers and
     networks labelled with that app; it does not delete the stale run scratch
-    directory.
+    directory. That directory is `<scratch>/runs/<app>-<run>`, where `--scratch`
+    defaults to `<user cache>/apptheory-local`; it is safe to delete by hand.
 
 ## Invoking one function
 

@@ -28,7 +28,7 @@ apps use the same command; the handler runtime comes from the CDK stack.
 | `--app DIR` | required | CDK app directory (contains `cdk.json`). |
 | `-c`, `--context key=value` | none | Passed to `cdk synth` unchanged. Repeatable. |
 | `--assembly DIR` | none | Read an existing cloud assembly instead of synthesizing. |
-| `--scratch DIR` | `<user cache>/apptheory-local` | Synthesis output and materialized inline code. Must be under `$HOME` or the working directory. Each run's subdirectory is removed when the command exits. |
+| `--scratch DIR` | `<user cache>/apptheory-local` | Synthesis output and materialized inline code. Must be under `$HOME` or the working directory. Each run's subdirectory is `<scratch>/runs/<app>-<run>` and is removed when the command exits. |
 | `--profile PATH` | none | Local execution profile with digest-pinned images and endpoint names. Required for `run` and `invoke`: the in-container preflight needs the Python pin. |
 | `--image class=ref` | profile | Override a runtime image pin (`go`, `node`, `python`). The reference must be `…@sha256:<64 hex>`. |
 | `--endpoint service=url` | none | Inject a local AWS endpoint for `service` (`dynamodb`, `sqs`, …). Repeatable. |
@@ -444,4 +444,7 @@ handler are dropped and recomputed by the local HTTP server.
   It never waits for a handler before removing containers, so a request that is
   still running cannot hold cleanup past its budget.
 - `SIGKILL` cannot run cleanup. `apptheory-local down --app <dir>` is the
-  recovery path: it removes containers and networks labelled with that app.
+  recovery path: it removes containers and networks labelled with that app. It
+  does not delete the stale run scratch directory, `<scratch>/runs/<app>-<run>`
+  (`--scratch` defaults to `<user cache>/apptheory-local`); it is safe to delete
+  by hand.
