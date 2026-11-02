@@ -45,6 +45,12 @@ resolution.
 - **PENDING-MILESTONE** — a row owned by a later milestone (`A3a`, `A3b`, `A4`,
   `A5a`, `A5b`). It is listed in the run report and never counted as pass.
 
+A handler that a CDK definition would connect to a cloud event source is L3
+when the harness invokes it with a generated event, because that event source is
+the named gap, while a handler-only MCP row is L1 because the handler is the
+example's entire surface: it ships no CDK definition, so there is no deployment
+surface to emulate.
+
 Every classified example is verified by a real process, real HTTP behavior or a
 real synthesized template. There are no fake apps, fake repositories or mocked
 success; unit-test fakes never count as example verification.
