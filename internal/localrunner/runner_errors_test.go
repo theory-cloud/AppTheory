@@ -53,7 +53,7 @@ func TestBackendAndFunctionStartupErrors(t *testing.T) {
 	}
 
 	startup := newTestRunner(t, base)
-	startup.docker = fakeRunnerDocker(t, 1, &[]string{})
+	startup.docker = fakeRunnerDocker(t, 1, 1, &[]string{})
 	cases := map[string]FunctionSpec{
 		"no asset":   {LogicalID: "Fn", Runtime: "nodejs24.x", Handler: "index.handler"},
 		"no handler": {LogicalID: "Fn", Runtime: "nodejs24.x", AssetDir: base},

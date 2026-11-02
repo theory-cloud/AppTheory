@@ -408,74 +408,92 @@ type backendProcess struct {
 	HostURL string
 }
 
-// startBackends starts the local emulators configured from the profile and
-// resolves their network addresses for the function containers' closed DNS.
+// startBackends starts every local emulator configured from the profile.
 func (r *Runner) startBackends(ctx context.Context) error {
 	for _, backend := range r.options.Backends {
-		container := backendContainer(backend)
-		pin, err := r.profile.Container(container)
-		if err != nil {
-			return fmt.Errorf("backend %s: %w", backend, err)
-		}
-		name := r.backendsContainerName(backend)
-		endpoints := r.profile.EndpointsForContainer(container)
-		if backend == backendDynamoDB && !containsEndpointService(endpoints, backendDynamoDB) {
-			endpoints = append(endpoints, Endpoint{Service: backendDynamoDB, URL: "http://" + backendDynamoDBName + ":8000"})
-		}
-		// Register the container before starting it, so a signal that lands
-		// while the start or the address lookup is in flight still cleans it up.
-		r.backends[backend] = backendProcess{
-			Container: name,
-			Alias:     container,
-			Endpoints: endpoints,
-		}
-		options := ContainerOptions{
-			Name:    name,
-			Network: r.network,
-			Aliases: []string{container},
-			Image:   pin.Image,
-			Command: pin.Command,
-			Env:     pin.Environment,
-			Publish: pin.ContainerPort,
-			Labels:  r.labels(),
-			Detach:  true,
-		}
-		if _, startErr := r.docker.StartContainer(ctx, options); startErr != nil {
-			return startErr
-		}
-		address, err := r.docker.ContainerIP(ctx, name, r.network)
-		if err != nil {
+		if err := r.startBackend(ctx, backend); err != nil {
 			return err
 		}
-		r.options.AddHosts = append(r.options.AddHosts, container+":"+address)
-		// An S3 SDK picks virtual-hosted addressing for a named endpoint
-		// ("bucket.s3proxy") and path addressing for an IP endpoint. s3proxy
-		// only serves the latter, so the S3 endpoint uses the container address.
-		if container == "s3proxy" {
-			for index := range r.endpoints {
-				if r.endpoints[index].Service == "s3" {
-					r.endpoints[index].URL = fmt.Sprintf("http://%s:%d", address, pin.ContainerPort)
-				}
-			}
-		}
-		process := r.backends[backend]
-		if pin.ContainerPort > 0 {
-			hostPort, portErr := r.docker.PublishedPort(ctx, name, pin.ContainerPort)
-			if portErr != nil {
-				return portErr
-			}
-			if hostPort == 0 {
-				return fmt.Errorf("backend %s published no loopback port for container port %d", backend, pin.ContainerPort)
-			}
-			process.HostURL = fmt.Sprintf("http://127.0.0.1:%d", hostPort)
-		}
-		r.backends[backend] = process
-		var urls []string
-		for _, endpoint := range endpoints {
-			urls = append(urls, endpoint.URL)
-		}
-		r.logf("backend %s (%s) ready at %s", backend, pin.Image, strings.Join(urls, ", "))
 	}
+	return nil
+}
+
+// startBackend starts one emulator, resolves its network address for the
+// function containers' closed DNS and waits until its published host port
+// answers a read-only protocol call.
+func (r *Runner) startBackend(ctx context.Context, backend string) error {
+	container := backendContainer(backend)
+	pin, err := r.profile.Container(container)
+	if err != nil {
+		return fmt.Errorf("backend %s: %w", backend, err)
+	}
+	name := r.backendsContainerName(backend)
+	endpoints := r.profile.EndpointsForContainer(container)
+	if backend == backendDynamoDB && !containsEndpointService(endpoints, backendDynamoDB) {
+		endpoints = append(endpoints, Endpoint{Service: backendDynamoDB, URL: "http://" + backendDynamoDBName + ":8000"})
+	}
+	// Register the container before starting it, so a signal that lands
+	// while the start or the address lookup is in flight still cleans it up.
+	r.backends[backend] = backendProcess{
+		Container: name,
+		Alias:     container,
+		Endpoints: endpoints,
+	}
+	options := ContainerOptions{
+		Name:    name,
+		Network: r.network,
+		Aliases: []string{container},
+		Image:   pin.Image,
+		Command: pin.Command,
+		Env:     pin.Environment,
+		Publish: pin.ContainerPort,
+		Labels:  r.labels(),
+		Detach:  true,
+	}
+	if _, startErr := r.docker.StartContainer(ctx, options); startErr != nil {
+		return startErr
+	}
+	address, err := r.docker.ContainerIP(ctx, name, r.network)
+	if err != nil {
+		return err
+	}
+	r.options.AddHosts = append(r.options.AddHosts, container+":"+address)
+	// An S3 SDK picks virtual-hosted addressing for a named endpoint
+	// ("bucket.s3proxy") and path addressing for an IP endpoint. s3proxy
+	// only serves the latter, so the S3 endpoint uses the container address.
+	if container == "s3proxy" {
+		for index := range r.endpoints {
+			if r.endpoints[index].Service == "s3" {
+				r.endpoints[index].URL = fmt.Sprintf("http://%s:%d", address, pin.ContainerPort)
+			}
+		}
+	}
+	process := r.backends[backend]
+	if pin.ContainerPort > 0 {
+		hostPort, portErr := r.docker.PublishedPort(ctx, name, pin.ContainerPort)
+		if portErr != nil {
+			return portErr
+		}
+		if hostPort == 0 {
+			return fmt.Errorf("backend %s published no loopback port for container port %d", backend, pin.ContainerPort)
+		}
+		process.HostURL = fmt.Sprintf("http://127.0.0.1:%d", hostPort)
+	}
+	r.backends[backend] = process
+	// A backend with a published host port must answer a real request before
+	// the runner provisions against it or reports it ready. The container may
+	// already accept TCP connections while its HTTP server still resets the
+	// first request.
+	if process.HostURL != "" {
+		if err := r.waitForBackendReady(ctx, backend, pin.Image, process); err != nil {
+			return err
+		}
+	}
+	var urls []string
+	for _, endpoint := range endpoints {
+		urls = append(urls, endpoint.URL)
+	}
+	r.logf("backend %s (%s) ready at %s", backend, pin.Image, strings.Join(urls, ", "))
 	return nil
 }
 

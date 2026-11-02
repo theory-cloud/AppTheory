@@ -16,24 +16,40 @@ import (
 // cleanupDocker is a Docker double that owns the resources the runner creates,
 // so a test can assert what is left after shutdown.
 type cleanupDocker struct {
-	mu         sync.Mutex
-	containers map[string]bool
-	networks   map[string]bool
-	riePort    int
-	blockName  string
-	started    chan struct{}
-	startedOne sync.Once
-	release    chan struct{}
+	mu          sync.Mutex
+	containers  map[string]bool
+	networks    map[string]bool
+	riePort     int
+	backendPort int
+	blockName   string
+	started     chan struct{}
+	startedOne  sync.Once
+	release     chan struct{}
 }
 
-func newCleanupDocker(riePort int) *cleanupDocker {
+func newCleanupDocker(riePort, backendPort int) *cleanupDocker {
 	return &cleanupDocker{
-		containers: map[string]bool{},
-		networks:   map[string]bool{},
-		riePort:    riePort,
-		started:    make(chan struct{}),
-		release:    make(chan struct{}),
+		containers:  map[string]bool{},
+		networks:    map[string]bool{},
+		riePort:     riePort,
+		backendPort: backendPort,
+		started:     make(chan struct{}),
+		release:     make(chan struct{}),
 	}
+}
+
+// newBackendStub answers the DynamoDB readiness probe, so a cleanup test
+// reaches the function containers it exercises.
+func newBackendStub(t *testing.T) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("content-type", "application/x-amz-json-1.0")
+		if _, err := writer.Write([]byte(`{"TableNames":[]}`)); err != nil {
+			t.Errorf("write backend response: %v", err)
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server
 }
 
 func (d *cleanupDocker) docker() *Docker {
@@ -57,6 +73,9 @@ func (d *cleanupDocker) exec(ctx context.Context, argv []string) (string, string
 		}
 		return "true\n", "", nil
 	case "port":
+		if len(argv) > 2 && strings.Contains(argv[2], "dynamodb") {
+			return fmt.Sprintf("127.0.0.1:%d\n", d.backendPort), "", nil
+		}
 		return fmt.Sprintf("127.0.0.1:%d\n", d.riePort), "", nil
 	case "logs":
 		return "", "", nil
@@ -200,7 +219,7 @@ func TestRunnerRemovesEveryResourceOnRepeatedTermination(t *testing.T) {
 			base := testBase(t)
 			runner := newTestRunner(t, base)
 			listener := listenLoopback(t)
-			docker := newCleanupDocker(listenerPort(t, listener))
+			docker := newCleanupDocker(listenerPort(t, listener), serverPort(t, newBackendStub(t).URL))
 			runner.docker = docker.docker()
 
 			ctx, cancel := context.WithCancel(context.Background())
@@ -219,7 +238,7 @@ func TestRunnerRemovesEveryResourceOnRepeatedTermination(t *testing.T) {
 func TestRunnerCleanupRemovesContainerStartedBeforeReady(t *testing.T) {
 	base := testBase(t)
 	runner := newTestRunner(t, base)
-	docker := newCleanupDocker(1)
+	docker := newCleanupDocker(1, serverPort(t, newBackendStub(t).URL))
 	docker.blockName = runner.containerName("Fn")
 	runner.docker = docker.docker()
 
@@ -250,7 +269,6 @@ func TestRunnerCleanupDoesNotWaitForInFlightRequest(t *testing.T) {
 	release := make(chan struct{})
 	var releaseOnce sync.Once
 	releaseRequest := func() { releaseOnce.Do(func() { close(release) }) }
-	t.Cleanup(releaseRequest)
 	started := make(chan struct{})
 	var startedOnce sync.Once
 	rie := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
@@ -260,9 +278,12 @@ func TestRunnerCleanupDoesNotWaitForInFlightRequest(t *testing.T) {
 			t.Errorf("write blocking response: %v", err)
 		}
 	}))
-	defer rie.Close()
+	// Cleanups run last-in first-out: release the handler before the server
+	// waits for it to return.
+	t.Cleanup(rie.Close)
+	t.Cleanup(releaseRequest)
 
-	docker := newCleanupDocker(serverPort(t, rie.URL))
+	docker := newCleanupDocker(serverPort(t, rie.URL), serverPort(t, newBackendStub(t).URL))
 	runner.docker = docker.docker()
 	probe := listenLoopback(t)
 	port := listenerPort(t, probe)

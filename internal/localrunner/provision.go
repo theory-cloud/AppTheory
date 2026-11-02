@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
@@ -33,12 +32,7 @@ func (r *Runner) provisionBuckets(ctx context.Context, spec *Spec) error {
 	if backend.HostURL == "" {
 		return fmt.Errorf("the s3 backend has no loopback endpoint for the runner to provision buckets")
 	}
-	client := s3.New(s3.Options{
-		Region:       LocalRegion,
-		Credentials:  aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider("dummy", "dummy", "")),
-		BaseEndpoint: aws.String(backend.HostURL),
-		UsePathStyle: true,
-	})
+	client := newS3Client(backend.HostURL)
 	for _, resource := range spec.Resources {
 		if resource.Type != typeS3Bucket {
 			continue
@@ -67,11 +61,7 @@ func (r *Runner) provisionKeys(ctx context.Context, spec *Spec) error {
 	if backend.HostURL == "" {
 		return fmt.Errorf("the kms backend has no loopback endpoint for the runner to provision keys")
 	}
-	client := kms.New(kms.Options{
-		Region:       LocalRegion,
-		Credentials:  aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider("dummy", "dummy", "")),
-		BaseEndpoint: aws.String(backend.HostURL),
-	})
+	client := newKMSClient(backend.HostURL)
 	for _, resource := range spec.Resources {
 		if resource.Type != typeKMSKey {
 			continue
