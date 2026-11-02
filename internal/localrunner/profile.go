@@ -114,7 +114,7 @@ func (p *Profile) ImageFor(runtime string) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("local profile %s pins no %s Lambda image", p.path, class)
 	}
-	return validateImagePin(class, pin)
+	return p.validateImagePin(class, pin)
 }
 
 // ImageForClass returns the digest-pinned image for an image class (go, node or
@@ -127,17 +127,18 @@ func (p *Profile) ImageForClass(class string) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("local profile %s pins no %s Lambda image", p.path, class)
 	}
-	return validateImagePin(class, pin)
+	return p.validateImagePin(class, pin)
 }
 
-func validateImagePin(class string, pin ImagePin) (string, error) {
+func (p *Profile) validateImagePin(class string, pin ImagePin) (string, error) {
 	if pin.Tag == "" {
-		return "", fmt.Errorf("local profile %s has no image tag for the %s runtime", class, class)
+		return "", fmt.Errorf("local profile %s has no image tag for the %s runtime", p.path, class)
 	}
 	prefix := imageTagPrefixes[class]
 	if prefix != "" && !strings.HasPrefix(pin.Tag, prefix) {
 		return "", fmt.Errorf(
-			"local profile pins %q for the %s runtime, which is not an official %s image",
+			"local profile %s pins %q for the %s runtime, which is not an official %s image",
+			p.path,
 			pin.Tag,
 			class,
 			prefix,
@@ -145,7 +146,8 @@ func validateImagePin(class string, pin ImagePin) (string, error) {
 	}
 	if !digestPattern.MatchString(pin.Digest) {
 		return "", fmt.Errorf(
-			"local profile image %q for the %s runtime is not pinned by digest (got %q)",
+			"local profile %s image %q for the %s runtime is not pinned by digest (got %q)",
+			p.path,
 			pin.Tag,
 			class,
 			pin.Digest,
