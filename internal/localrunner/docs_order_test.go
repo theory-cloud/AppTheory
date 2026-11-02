@@ -48,6 +48,16 @@ func TestDocumentedRunStepOrderMatchesTheRunner(t *testing.T) {
 	runBody := goFunctionBody(t, "runner.go", "func (r *Runner) Run(ctx context.Context) error {")
 	assertInOrder(t, "runner.go", runBody, "Run call", flattenedCalls(steps))
 
+	if !strings.Contains(section, "read-only call native to the service") {
+		t.Fatalf("%s: the Start backends step must describe the readiness call", document)
+	}
+	startBackendBody := goFunctionBody(t, "runner.go", "func (r *Runner) startBackend(ctx context.Context, backend string) error {")
+	assertInOrder(t, "runner.go", startBackendBody, "backend start", []string{
+		"r.docker.PublishedPort(",
+		"r.waitForBackendReady(",
+		`r.logf("backend %s (%s) ready at %s"`,
+	})
+
 	invokeBody := goFunctionBody(t, "invoke.go", "func (r *Runner) prepareInvoke(ctx context.Context, spec *Spec, functionID string) error {")
 	assertInOrder(t, "invoke.go", invokeBody, "prepareInvoke call", []string{
 		"r.resolveImages(",

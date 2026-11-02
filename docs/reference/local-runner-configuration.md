@@ -214,6 +214,15 @@ endpoints: `dynamodb` maps to the `dynamodb-local` container (the
 `s3proxy` provides `s3`. A backend with no endpoint fails before any container
 starts.
 
+After a started backend publishes its loopback port, the runner waits up to 60
+seconds for every endpoint bound to that container to answer a read-only call
+over the published port: `ListTables` (DynamoDB Local), `ListKeys` or
+`GetCallerIdentity` (moto KMS/STS), `ListBuckets` (s3proxy) and `ListQueues`
+(SQS). A service with no native probe only has to accept a plain HTTP request.
+The wait respects cancellation and fails with the backend name, image and last
+error; nothing is provisioned until it succeeds. A backend with no published
+host port is reported ready without this wait.
+
 Rules the runner enforces:
 
 - every image is `tag@sha256:<64 hex>`; a tag-only pin is refused;
@@ -301,9 +310,9 @@ Before a served function starts, these expressions resolve to local values:
 | `Fn::Join` | The joined evaluated parts. |
 | `AWS::Partition`, `AWS::Region`, `AWS::AccountId`, `AWS::StackName`, `AWS::NoValue` | `aws`, `us-east-1`, `123456789012`, the stack name, and the empty string. |
 
-When the S3 or moto backend starts, the runner creates every
-`AWS::S3::Bucket` and `AWS::KMS::Key` in the assembly. Tables and queues are
-named but not provisioned; event-source delivery is A4. An unresolvable
+When the S3 or moto backend answers its readiness probe, the runner creates
+every `AWS::S3::Bucket` and `AWS::KMS::Key` in the assembly. Tables and queues
+are named but not provisioned; event-source delivery is A4. An unresolvable
 expression fails before any function container starts, with the function and
 variable named.
 
@@ -352,7 +361,9 @@ and s3proxy does not serve the virtual-host form the SDK would otherwise pick.
 ## Preflight
 
 Before the first handler starts, a probe container from the pinned Python image
-runs on the same network with the same environment. It must report:
+runs on the same network with the same environment. Backend readiness above has
+already proven each published host port answers its service from the host; this
+probe proves the view from inside a function container. It must report:
 
 - credentials are the `dummy` static keys and no session token is present;
 - every configured endpoint host resolves and answers an HTTP request (this

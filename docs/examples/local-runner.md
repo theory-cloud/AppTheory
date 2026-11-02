@@ -285,8 +285,16 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
    created.
 5. **Start backends.** `--backend dynamodb`, `--backend moto` and
    `--backend s3proxy` start the profile's digest-pinned emulators on the run's
-   private network.
-6. **Provision resources.** When the S3 or moto backend is running, the runner
+   private network. Before it reports a backend ready, the runner waits up to
+   60 seconds for every endpoint configured on that backend to answer a
+   read-only call native to the service over its published loopback port:
+   `ListTables` for DynamoDB Local, `ListKeys` and `GetCallerIdentity` for moto
+   KMS/STS, `ListBuckets` for s3proxy and `ListQueues` for SQS. A service with
+   no native probe is checked with a plain HTTP request. On timeout the run
+   fails with the backend, its image and the last error, before any resource is
+   provisioned. A backend with no published host port is reported ready without
+   this wait.
+6. **Provision resources.** When the S3 or moto backend is ready, the runner
    creates every bucket and key the assembly declares and records the values
    environment resolution needs.
 7. **Resolve environment references.** A served function's `Ref`/`Fn::GetAtt`
