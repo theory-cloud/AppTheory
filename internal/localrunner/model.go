@@ -154,8 +154,9 @@ type EventSourceSpec struct {
 	Source string `json:"source"`
 	// SourceName is the queue name, table name or stream name.
 	SourceName string `json:"sourceName"`
-	// SourceARN is the provider-shaped ARN the generated event carries. A
-	// provisioned DynamoDB table replaces it with the local stream ARN.
+	// SourceARN is the provider-shaped ARN the derived mapping reports. A
+	// session builds DynamoDB stream events from the provisioned table's real
+	// local stream ARN instead.
 	SourceARN               string `json:"sourceArn"`
 	BatchSize               int    `json:"batchSize,omitempty"`
 	ReportBatchItemFailures bool   `json:"reportBatchItemFailures,omitempty"`
