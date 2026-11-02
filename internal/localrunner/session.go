@@ -256,6 +256,19 @@ func (s *localSession) describe() (map[string]any, error) {
 	for name, value := range s.runner.localSecrets {
 		secrets[name] = value
 	}
+	endpoints := make([]map[string]any, 0)
+	for _, name := range sortedKeys(s.runner.backends) {
+		backend := s.runner.backends[name]
+		if backend.HostURL == "" {
+			continue
+		}
+		for _, endpoint := range backend.Endpoints {
+			endpoints = append(endpoints, map[string]any{
+				"service": endpoint.Service,
+				"url":     backend.HostURL,
+			})
+		}
+	}
 	return map[string]any{
 		"functions":    functions,
 		"apis":         apis,
@@ -264,6 +277,7 @@ func (s *localSession) describe() (map[string]any, error) {
 		"rules":        s.spec.Rules,
 		"resources":    resources,
 		"secrets":      secrets,
+		"endpoints":    endpoints,
 	}, nil
 }
 

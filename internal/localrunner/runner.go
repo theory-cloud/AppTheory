@@ -852,11 +852,15 @@ func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 				return fmt.Errorf("distribution %s uses CloudFront Functions: %w", distribution.LogicalID, err)
 			}
 		}
+		origins, err := r.cloudFrontOrigins(spec, distribution)
+		if err != nil {
+			return err
+		}
 		listener, err := r.listen(ctx, len(targets)+index)
 		if err != nil {
 			return fmt.Errorf("bind cloudfront %s listener: %w", distribution.LogicalID, err)
 		}
-		gateway := localcloudfront.NewGateway(distribution, spec.cloudFrontTopology, nil, executor, r.logf)
+		gateway := localcloudfront.NewGateway(distribution, spec.cloudFrontTopology, origins, executor, r.logf)
 		server := &http.Server{
 			Handler:           gateway,
 			ReadHeaderTimeout: 10 * time.Second,
@@ -870,7 +874,7 @@ func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 				r.logf("cloudfront listener for %s stopped: %v", distribution.LogicalID, serveErr)
 			}
 		}()
-		r.logf("serving cloudfront %s at %s (origins are not wired until A5b)", distribution.LogicalID, r.apiURLs[distribution.LogicalID])
+		r.logf("serving cloudfront %s at %s", distribution.LogicalID, r.apiURLs[distribution.LogicalID])
 	}
 	return nil
 }
