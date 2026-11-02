@@ -70,7 +70,7 @@ func (r *Runner) waitForBackendReady(ctx context.Context, backend, image string,
 // an HTTP request; the runner cannot invent a protocol call for it.
 func probeBackendEndpoint(ctx context.Context, service, hostURL string) error {
 	switch strings.ToLower(strings.TrimSpace(service)) {
-	case "dynamodb":
+	case backendDynamoDB:
 		_, err := newDynamoDBClient(hostURL).ListTables(ctx, &dynamodb.ListTablesInput{})
 		return err
 	case "kms":
@@ -82,7 +82,7 @@ func probeBackendEndpoint(ctx context.Context, service, hostURL string) error {
 	case "s3":
 		_, err := newS3Client(hostURL).ListBuckets(ctx, &s3.ListBucketsInput{})
 		return err
-	case "sqs":
+	case backendSQS:
 		_, err := newSQSClient(hostURL).ListQueues(ctx, &sqs.ListQueuesInput{})
 		return err
 	default:

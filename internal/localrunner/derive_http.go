@@ -10,11 +10,13 @@ import (
 
 // deriveHTTPAPIs reads AWS::ApiGatewayV2::Api resources with ProtocolType HTTP
 // and their routes. A WebSocket API is reported as not served, so an app that
-// also has HTTP surfaces still runs; an authorizer or a non-proxy integration
-// fails closed because the local transport cannot serve it faithfully.
+// also has HTTP surfaces still runs. A CUSTOM REQUEST authorizer is resolved to
+// the Lambda function that implements it, so the transport executes the real
+// authorizer instead of bypassing it. Other authorizer types fail closed.
 func deriveHTTPAPIs(spec *Spec, stacks []assemblyStack, stack assemblyStack) error {
 	types := stack.resourceTypes()
-	if err := rejectHTTPAuthorizers(stack); err != nil {
+	authorizers, err := deriveHTTPAuthorizers(stack, types)
+	if err != nil {
 		return err
 	}
 	for _, id := range sortedKeys(stack.Template.Resources) {
@@ -48,12 +50,15 @@ func deriveHTTPAPIs(spec *Spec, stacks []assemblyStack, stack assemblyStack) err
 		if api.Name == "" {
 			api.Name = id
 		}
-		routes, err := httpRoutes(stack, types, id)
+		routes, err := httpRoutes(stack, types, id, authorizers)
 		if err != nil {
 			return err
 		}
 		for index := range routes {
 			routes[index].Function = qualify(stacks, stack.Name, routes[index].Function)
+			if routes[index].AuthorizerFunction != "" {
+				routes[index].AuthorizerFunction = qualify(stacks, stack.Name, routes[index].AuthorizerFunction)
+			}
 		}
 		api.Routes = routes
 		spec.APIs = append(spec.APIs, api)
@@ -61,16 +66,50 @@ func deriveHTTPAPIs(spec *Spec, stacks []assemblyStack, stack assemblyStack) err
 	return nil
 }
 
-func rejectHTTPAuthorizers(stack assemblyStack) error {
+// httpAuthorizer is one CUSTOM HTTP API REQUEST authorizer the transport runs.
+type httpAuthorizer struct {
+	Function       string
+	IdentitySource string
+}
+
+// deriveHTTPAuthorizers resolves the authorizer resources to the Lambda
+// functions that implement them. The local transport executes these functions;
+// it never serves a route whose authorizer it cannot run.
+func deriveHTTPAuthorizers(stack assemblyStack, types map[string]string) (map[string]httpAuthorizer, error) {
+	authorizers := map[string]httpAuthorizer{}
 	for _, id := range sortedKeys(stack.Template.Resources) {
-		if stack.Template.Resources[id].Type == typeHTTPAuthorizer {
-			return unsupported(
+		resource := stack.Template.Resources[id]
+		if resource.Type != typeHTTPAuthorizer {
+			continue
+		}
+		var props httpAuthorizerProperties
+		if err := json.Unmarshal(resource.Properties, &props); err != nil {
+			return nil, fmt.Errorf("%s/%s: parse HTTP authorizer properties: %w", stack.Name, id, err)
+		}
+		if props.AuthorizerType != "REQUEST" {
+			return nil, unsupported(
 				stack.Name+"/"+id,
-				"API Gateway authorizers are not run locally; the local transport must not bypass a real authorizer",
+				"HTTP API authorizer type %q is not run locally; only REQUEST authorizers with simple responses are supported",
+				props.AuthorizerType,
 			)
 		}
+		if !props.EnableSimpleResponses {
+			return nil, unsupported(
+				stack.Name+"/"+id,
+				"HTTP API authorizer does not enable simple responses; the local transport only runs simple-response authorizers",
+			)
+		}
+		functionID, ok := findRefByType(props.AuthorizerURI, types, typeLambdaFunction, attrArn)
+		if !ok {
+			return nil, unsupported(stack.Name+"/"+id, "HTTP API authorizer Uri does not reference a Lambda function")
+		}
+		identitySource := ""
+		if len(props.IdentitySource) > 0 {
+			identitySource = strings.TrimSpace(props.IdentitySource[0])
+		}
+		authorizers[id] = httpAuthorizer{Function: functionID, IdentitySource: identitySource}
 	}
-	return nil
+	return authorizers, nil
 }
 
 func httpStageName(stack assemblyStack, apiID string) string {
@@ -94,7 +133,7 @@ func httpStageName(stack assemblyStack, apiID string) string {
 	return stage
 }
 
-func httpRoutes(stack assemblyStack, types map[string]string, apiID string) ([]Route, error) {
+func httpRoutes(stack assemblyStack, types map[string]string, apiID string, authorizers map[string]httpAuthorizer) ([]Route, error) {
 	var routes []Route
 	for _, id := range sortedKeys(stack.Template.Resources) {
 		resource := stack.Template.Resources[id]
@@ -108,19 +147,32 @@ func httpRoutes(stack assemblyStack, types map[string]string, apiID string) ([]R
 		if target, ok := directRefID(props.APIID); !ok || target != apiID {
 			continue
 		}
-		if props.AuthorizationType != "" && props.AuthorizationType != noneAuthorization {
+		route, err := httpRoute(stack, types, id, props)
+		if err != nil {
+			return nil, err
+		}
+		switch props.AuthorizationType {
+		case "", noneAuthorization:
+			if len(props.AuthorizerID) > 0 {
+				return nil, unsupported(stack.Name+"/"+id, "route has an authorizer id but authorization type NONE")
+			}
+		case "CUSTOM":
+			authorizerID, ok := directRefID(props.AuthorizerID)
+			if !ok {
+				return nil, unsupported(stack.Name+"/"+id, "CUSTOM route does not reference an authorizer")
+			}
+			authorizer, ok := authorizers[authorizerID]
+			if !ok {
+				return nil, unsupported(stack.Name+"/"+id, "CUSTOM route references authorizer %s, which the runner did not derive", authorizerID)
+			}
+			route.AuthorizerFunction = authorizer.Function
+			route.AuthorizerIdentitySource = authorizer.IdentitySource
+		default:
 			return nil, unsupported(
 				stack.Name+"/"+id,
 				"route authorization %q is not run locally; the local transport must not bypass it",
 				props.AuthorizationType,
 			)
-		}
-		if len(props.AuthorizerID) > 0 {
-			return nil, unsupported(stack.Name+"/"+id, "route has an authorizer; the local transport must not bypass it")
-		}
-		route, err := httpRoute(stack, types, id, props)
-		if err != nil {
-			return nil, err
 		}
 		routes = append(routes, route)
 	}
@@ -488,7 +540,7 @@ func deriveFunctionURLs(spec *Spec, stacks []assemblyStack, stack assemblyStack)
 // run never gives the impression that they were exercised.
 func deriveSkipped(spec *Spec) {
 	served := map[string]struct{}{}
-	for _, id := range spec.ServedFunctions() {
+	for _, id := range spec.RuntimeFunctions() {
 		served[id] = struct{}{}
 	}
 	for _, function := range spec.Functions {
@@ -498,7 +550,7 @@ func deriveSkipped(spec *Spec) {
 		spec.Skipped = append(spec.Skipped, Skipped{
 			LogicalID: function.LogicalID,
 			Kind:      typeLambdaFunction,
-			Reason:    "not targeted by an HTTP API route or Function URL; event-source invocation is not part of the local HTTP transport",
+			Reason:    "not targeted by an HTTP route, Function URL, event source mapping or EventBridge rule the local runner can invoke",
 		})
 	}
 }

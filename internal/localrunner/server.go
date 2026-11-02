@@ -87,19 +87,30 @@ func (t *Transport) ServeHTTP(writer http.ResponseWriter, request *http.Request)
 	}
 	defer t.release()
 
+	authorizerContext, err := t.authorize(request, route, params, path, body, requestID)
+	if err != nil {
+		t.fail(writer, http.StatusBadGateway, "Internal Server Error", requestID, err)
+		return
+	}
+	if authorizerContext == nil && route.AuthorizerFunction != "" {
+		t.unauthorized(writer, request, path, requestID)
+		return
+	}
+
 	payload, err := BuildEvent(InvokeRequest{
-		API:        t.API,
-		Route:      route,
-		Params:     params,
-		Method:     request.Method,
-		Path:       path,
-		RawPath:    request.URL.EscapedPath(),
-		RawQuery:   request.URL.RawQuery,
-		Header:     request.Header,
-		Body:       body,
-		RemoteAddr: request.RemoteAddr,
-		RequestID:  requestID,
-		Now:        t.Now(),
+		API:               t.API,
+		Route:             route,
+		Params:            params,
+		Method:            request.Method,
+		Path:              path,
+		RawPath:           request.URL.EscapedPath(),
+		RawQuery:          request.URL.RawQuery,
+		Header:            request.Header,
+		Body:              body,
+		RemoteAddr:        request.RemoteAddr,
+		RequestID:         requestID,
+		Now:               t.Now(),
+		AuthorizerContext: authorizerContext,
 	})
 	if err != nil {
 		t.fail(writer, http.StatusBadGateway, "Internal Server Error", requestID, err)
@@ -117,6 +128,66 @@ func (t *Transport) ServeHTTP(writer http.ResponseWriter, request *http.Request)
 	}
 	writeResponse(writer, response)
 	t.logf("%s %s -> %d%s", request.Method, path, response.StatusCode, streamedNote(response.Streamed))
+}
+
+func (t *Transport) authorize(
+	request *http.Request,
+	route Route,
+	params map[string]string,
+	path string,
+	body []byte,
+	requestID string,
+) (map[string]any, error) {
+	if route.AuthorizerFunction == "" {
+		return nil, nil
+	}
+	invoker, ok := t.Invokers[route.AuthorizerFunction]
+	if !ok {
+		return nil, fmt.Errorf("no running container for authorizer %s", route.AuthorizerFunction)
+	}
+	payload, err := BuildAuthorizerEvent(InvokeRequest{
+		API:        t.API,
+		Route:      route,
+		Params:     params,
+		Method:     request.Method,
+		Path:       path,
+		RawPath:    request.URL.EscapedPath(),
+		RawQuery:   request.URL.RawQuery,
+		Header:     request.Header,
+		Body:       body,
+		RemoteAddr: request.RemoteAddr,
+		RequestID:  requestID,
+		Now:        t.Now(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build authorizer event: %w", err)
+	}
+	raw, err := invoker.Invoke(request.Context(), payload)
+	if err != nil {
+		return nil, fmt.Errorf("invoke authorizer %s: %w", route.AuthorizerFunction, err)
+	}
+	var result struct {
+		IsAuthorized bool           `json:"isAuthorized"`
+		Context      map[string]any `json:"context"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, fmt.Errorf("authorizer %s returned an invalid simple response: %w", route.AuthorizerFunction, err)
+	}
+	if !result.IsAuthorized {
+		t.logf("%s %s -> 401 (authorizer %s denied)", request.Method, path, route.AuthorizerFunction)
+		return nil, nil
+	}
+	if result.Context == nil {
+		result.Context = map[string]any{}
+	}
+	return result.Context, nil
+}
+
+func (t *Transport) unauthorized(writer http.ResponseWriter, request *http.Request, path, requestID string) {
+	t.logf("%s %s -> 401 (authorizer denied; request %s)", request.Method, path, requestID)
+	writer.Header().Set("Content-Type", "application/json")
+	writer.WriteHeader(http.StatusUnauthorized)
+	_, _ = writer.Write([]byte(`{"message":"Unauthorized"}`)) //nolint:errcheck // response already committed
 }
 
 func readRequestBody(request *http.Request) ([]byte, error) {

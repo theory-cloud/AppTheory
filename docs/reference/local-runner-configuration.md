@@ -16,12 +16,14 @@ apptheory-local [run]  --app <cdk-app-dir> [flags]   serve the app locally
 apptheory-local plan   --app <cdk-app-dir> [flags]   synthesize and print the derived surface
 apptheory-local invoke --app <cdk-app-dir> --function <id> [flags]
 apptheory-local invoke --handler-dir <dir> --runtime <runtime> --handler <name> [flags]
+apptheory-local session --app <cdk-app-dir> [flags]   run every target with a JSON command channel
 apptheory-local down   --app <cdk-app-dir> [flags]   remove this app's leftover containers and networks
 ```
 
 `run` is the default when no subcommand is given. TypeScript, Python and Go
 apps use the same command; the handler runtime comes from the CDK stack.
-`invoke` starts one function instead of an HTTP surface.
+`invoke` starts one function instead of an HTTP surface. `session` starts every
+function the CDK definition targets and reads one JSON command per line.
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
@@ -29,11 +31,11 @@ apps use the same command; the handler runtime comes from the CDK stack.
 | `-c`, `--context key=value` | none | Passed to `cdk synth` unchanged. Repeatable. |
 | `--assembly DIR` | none | Read an existing cloud assembly instead of synthesizing. |
 | `--scratch DIR` | `<user cache>/apptheory-local` | Synthesis output and materialized inline code. Must be under `$HOME` or the working directory. Each run's subdirectory is `<scratch>/runs/<app>-<run>` and is removed when the command exits. |
-| `--profile PATH` | none | Local execution profile with digest-pinned images and endpoint names. Required for `run` and `invoke`: the in-container preflight needs the Python pin. |
+| `--profile PATH` | none | Local execution profile with digest-pinned images and endpoint names. Required for `run`, `invoke` and `session`: the in-container preflight needs the Python pin. |
 | `--image class=ref` | profile | Override a runtime image pin (`go`, `node`, `python`). The reference must be `…@sha256:<64 hex>`. |
-| `--endpoint service=url` | none | Inject a local AWS endpoint for `service` (`dynamodb`, `sqs`, …). Repeatable. |
+| `--endpoint service=url` | none | Inject a local AWS endpoint for `service` (`dynamodb`, `sqs`, `s3`, …). Repeatable. |
 | `--add-host name=address` | none | Extra `/etc/hosts` entry inside function containers. Repeatable. |
-| `--backend NAME` | none | Start a profile emulator on the run network: `dynamodb`, or a profile container such as `moto` (KMS/STS) or `s3proxy` (S3). Repeatable. |
+| `--backend NAME` | none | Start a profile emulator on the run network: `dynamodb`, `sqs`, or a profile container such as `moto` (KMS/STS) or `s3proxy` (S3). Repeatable. |
 | `--port-base N` | ephemeral | Bind the API listeners at `N`, `N+1`, …; `0` asks the OS for free ports. |
 | `--name-prefix PREFIX` | derived from the app path | Container and network names. Must be unique per run. |
 | `--max-concurrency N` | 32 | In-flight invocations, `1..32`. Values above 32 are refused. |
@@ -41,6 +43,7 @@ apps use the same command; the handler runtime comes from the CDK stack.
 | `--function ID` | none | `invoke`: function logical id from the CDK assembly. |
 | `--event FILE` | none | `invoke`: JSON event file. Repeatable. |
 | `--stdio` | off | `invoke`: read newline-delimited JSON events from stdin and keep the container warm. |
+| `--target ID` | none | `session`: start this CDK function even though no route, event source or rule targets it. Repeatable. |
 | `--handler-dir DIR` | none | `invoke`: built handler directory for an example with no CDK definition. Derives no routes. |
 | `--runtime RUNTIME` | none | `invoke --handler-dir`: Lambda runtime (`provided.al2023`, `nodejs24.x`, `python3.14`). |
 | `--handler NAME` | none | `invoke --handler-dir`: handler name (`bootstrap` for the provided runtime). |
@@ -78,6 +81,28 @@ carries a non-JSON result, and `handlerError` names a handler that crashed.
 line, so the same function container stays warm. With no event or stdin line the
 command fails rather than reporting an empty success.
 
+`session` uses the same warm-container model for every target. It prints
+`local-run: ready` on stderr and then reads one JSON command per line on stdin,
+writing one response per line on stdout:
+
+```json
+{"op":"describe"}
+{"op":"invoke","function":"WorkerFn","event":{"Records":[]}}
+{"op":"sqs.event","queue":"EventsQueue","max":10,"waitSeconds":1,"visibilitySeconds":0,"delete":true}
+{"op":"ddb.stream-event","table":"GoTable","key":{"pk":"item-1"},"eventName":"INSERT"}
+{"op":"eventbridge.event","rule":"GoSchedule","detail":{}}
+{"op":"kinesis.cloudwatch-event","stream":"LogsStream","logStream":"local","logEvents":[{"id":"1","timestamp":0,"message":"hello"}]}
+{"op":"shutdown"}
+```
+
+The full operation set is `describe`, `invoke`, `sqs.send`, `sqs.receive`,
+`sqs.event`, `ddb.put`, `ddb.get`, `ddb.scan`, `ddb.stream-event`, `s3.put`,
+`eventbridge.event`, `kinesis.event`, `kinesis.cloudwatch-event` and `shutdown`.
+Every response is `{"ok":true,"result":…}` or `{"ok":false,"error":…}`. An
+operation that references a resource the run did not provision fails with the
+reason; it never falls back to a closed endpoint. `describe` is the only
+operation that returns local secrets or resolved environment values.
+
 `plan --json` emits:
 
 ```json
@@ -86,6 +111,8 @@ command fails rather than reporting an empty success.
   "functions": [{"logicalId": "…", "runtime": "provided.al2023", "architecture": "arm64", "memoryMb": 256, …}],
   "apis": [{"class": "httpv2", "logicalId": "…", "stage": "$default", "routes": [{"method": "ANY", "path": "/{proxy+}", "function": "…", "streaming": false}]}],
   "functionUrls": [],
+  "eventSources": [{"logicalId": "…", "function": "…", "type": "sqs", "sourceName": "events", "batchSize": 10}],
+  "rules": [{"logicalId": "…", "name": "…", "schedule": "rate(5 minutes)", "targets": ["…"]}],
   "skipped": [{"logicalId": "…", "kind": "AWS::Lambda::Function", "reason": "…"}]
 }
 ```
@@ -189,7 +216,8 @@ same values.
                          "command": ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-inMemory"]},
       "moto":    {"image": "motoserver/moto@sha256:59a1965d…", "containerPort": 5000},
       "s3proxy": {"image": "andrewgaul/s3proxy@sha256:1f8915c2…", "containerPort": 80,
-                  "environment": {"S3PROXY_AUTHORIZATION": "aws-v2-or-v4", "S3PROXY_IDENTITY": "dummy", "S3PROXY_CREDENTIAL": "dummy"}}
+                  "environment": {"S3PROXY_AUTHORIZATION": "aws-v2-or-v4", "S3PROXY_IDENTITY": "dummy", "S3PROXY_CREDENTIAL": "dummy"}},
+      "sqs":     {"image": "softwaremill/elasticmq-native@sha256:e4580ab9…", "containerPort": 9324}
     },
     "lambda": {
       "images": {
@@ -202,7 +230,8 @@ same values.
       "dynamodb": {"container": "dynamodb-local", "env": ["AWS_ENDPOINT_URL", "AWS_ENDPOINT_URL_DYNAMODB", "DYNAMODB_ENDPOINT", "DDB_ENDPOINT"]},
       "kms":      {"container": "moto",           "env": ["AWS_ENDPOINT_URL_KMS", "KMS_ENDPOINT"]},
       "sts":      {"container": "moto",           "env": ["AWS_ENDPOINT_URL_STS", "STS_ENDPOINT"]},
-      "s3":       {"container": "s3proxy",        "env": ["AWS_ENDPOINT_URL_S3", "S3_ENDPOINT"]}
+      "s3":       {"container": "s3proxy",        "env": ["AWS_ENDPOINT_URL_S3", "S3_ENDPOINT"]},
+      "sqs":      {"container": "sqs",            "env": ["AWS_ENDPOINT_URL_SQS", "SQS_ENDPOINT"]}
     }
   }
 }
@@ -210,18 +239,18 @@ same values.
 
 `--backend NAME` starts the profile container that provides the name's
 endpoints: `dynamodb` maps to the `dynamodb-local` container (the
-`dynamodbLocal` shortcut still works), `moto` provides `kms` and `sts`, and
-`s3proxy` provides `s3`. A backend with no endpoint fails before any container
-starts.
+`dynamodbLocal` shortcut still works), `moto` provides `kms` and `sts`,
+`s3proxy` provides `s3`, and `sqs` provides `sqs` (ElasticMQ). A backend with no
+endpoint fails before any container starts.
 
 After a started backend publishes its loopback port, the runner waits up to 60
 seconds for every endpoint bound to that container to answer a read-only call
 over the published port: `ListTables` (DynamoDB Local), `ListKeys` or
 `GetCallerIdentity` (moto KMS/STS), `ListBuckets` (s3proxy) and `ListQueues`
-(SQS). A service with no native probe only has to accept a plain HTTP request.
-The wait respects cancellation and fails with the backend name, image and last
-error; nothing is provisioned until it succeeds. A backend with no published
-host port is reported ready without this wait.
+(ElasticMQ). A service with no native probe only has to accept a plain HTTP
+request. The wait respects cancellation and fails with the backend name, image
+and last error; nothing is provisioned until it succeeds. A backend with no
+published host port is reported ready without this wait.
 
 Rules the runner enforces:
 
@@ -274,50 +303,66 @@ TS_NODE_TRANSPILE_ONLY=1
 | `AWS::ApiGatewayV2::Api` (`ProtocolType: HTTP`) + `Route` + `AWS_PROXY` `Integration` | Served as HTTP API v2. `$default` routes become a catch-all. |
 | `AWS::ApiGateway::RestApi` + `Resource` tree + `Method` + `AWS_PROXY` integration | Served as REST API v1 at the path reconstructed from the resource tree. `ResponseTransferMode: STREAM` and `/response-streaming-invocations` are marked streaming. |
 | `AWS::Lambda::Url` (`AuthType: NONE`) | Served as a Function URL listener. `InvokeMode: RESPONSE_STREAM` is marked streaming (buffered). |
+| `AWS::ApiGatewayV2::Authorizer` (`REQUEST`, simple responses) | Run for the CUSTOM routes that reference it. The transport sends a v2 REQUEST authorizer event and enforces `isAuthorized`. |
+| `AWS::Lambda::EventSourceMapping` (SQS, DynamoDB Streams, Kinesis) | Reported with its function, source, batch size and `ReportBatchItemFailures`; the function is started. A session builds the provider event from real local messages or a real local write. |
+| `AWS::Events::Rule` with a Lambda target | Reported with its schedule or event pattern and target; the function is started. A session builds the event the rule would deliver. |
 | `AWS::ApiGatewayV2::Api` (`ProtocolType: WEBSOCKET`) | Reported under `skipped`, never served. An app with no other surface fails with the skipped reasons. |
 | `AWS::ApiGateway::Method` with a `MOCK` integration | Served from the first `IntegrationResponses` entry: its status and `method.response.header.*` parameters become the response. No function is invoked. |
 | `AWS::CloudFront::Distribution`, `AWS::CloudFront::Function` | Reported as not served. |
 
 The run fails, naming the construct, on:
 
-- any API Gateway authorizer, or a WebSocket API that is the only surface;
-- a route or method whose authorization is not `NONE`, or that carries an
-  authorizer id;
+- a WebSocket API that is the only surface;
+- an HTTP API authorizer that is not `REQUEST` with simple responses, or a
+  route whose authorization is not `NONE` or `CUSTOM`, or a CUSTOM route with no
+  resolvable authorizer;
+- a REST API authorizer, or a REST method whose authorization is not `NONE`;
 - a proxy integration that is not `AWS_PROXY`, a `MOCK` with no usable
   response, or HTTP API payload format other than `2.0`;
 - a Function URL with an auth type other than `NONE`;
-- a served function with no local asset, a container image, an inline code type
+- a targeted function with no local asset, a container image, an inline code type
   the runtime cannot load, Lambda layers, an unsupported runtime, or a
   CloudFormation-expression `MemorySize`/`Timeout` (the AWS defaults apply only
   when the property is absent);
-- a served function whose environment expression is not `Ref`, `Fn::GetAtt` or
+- a targeted function whose environment expression is not `Ref`, `Fn::GetAtt` or
   `Fn::Join`, or names a resource the runner cannot resolve;
-- an assembly with no HTTP API v2 route, REST v1 route or Function URL at all,
-  unless `invoke` selected a function.
+- an assembly with no HTTP API v2 route, REST v1 route, Function URL, event
+  source mapping or EventBridge rule target at all, unless `invoke` selected a
+  function.
 
 ## Environment resolution and provisioning
 
-Before a served function starts, these expressions resolve to local values:
+Before a targeted function starts, these expressions resolve to local values:
 
 | Expression | Local value |
 | --- | --- |
-| `Ref`/`Fn::GetAtt` on `AWS::DynamoDB::Table` | The template's `TableName`, or `local-<stack>-<logicalId>`. |
-| `Ref` on `AWS::SQS::Queue` | A URL built from the configured SQS endpoint (or the closed local endpoint), with the local account and queue name. |
-| `Fn::GetAtt [Queue, QueueName]` | The template's `QueueName`, or the deterministic local name. |
-| `Ref`/`Fn::GetAtt Name` on `AWS::Events::Rule` | The template's `Name`, or the deterministic local name. |
+| `Ref`/`Fn::GetAtt` on `AWS::DynamoDB::Table` | The template's `TableName`, or `local-<stack>-<logicalId>`. `StreamArn` is the stream ARN the local table reported, when the table declares a stream. |
+| `Ref` on `AWS::SQS::Queue` | The queue URL the runner created in ElasticMQ, rewritten to the run-network endpoint (or the closed local endpoint when no `--backend sqs` was started). |
+| `Fn::GetAtt [Queue, QueueName]` / `Arn` | The template's `QueueName` (or the deterministic local name) and the provider-shaped queue ARN. |
+| `Ref`/`Fn::GetAtt Name`/`Arn` on `AWS::Events::Rule` | The template's `Name` (or the deterministic local name) and the provider-shaped rule ARN. |
 | `Ref`/`Fn::GetAtt` on `AWS::S3::Bucket` | The bucket the runner created in s3proxy; `Arn` is built from that name. Requires `--backend s3proxy`. |
 | `Ref`/`Fn::GetAtt` on `AWS::KMS::Key` | The key id or ARN the runner created in moto. Requires `--backend moto`. |
+| `Ref`/`Fn::GetAtt Arn` on `AWS::Kinesis::Stream` | The template's `Name` (or the deterministic local name) and the provider-shaped stream ARN. |
+| `Ref`/`Fn::GetAtt` on `AWS::SecretsManager::Secret` | A deterministic local secret ARN. A `{{resolve:secretsmanager:…}}` value becomes a deterministic local secret recorded for the session's `describe`. |
+| `Fn::GetAtt Arn` on `AWS::IAM::Role` | A provider-shaped role ARN. |
+| `Fn::GetAtt ImageArn` on `AWS::Lambda::MicrovmImage` | A provider-shaped MicroVM image ARN. |
+| `Fn::GetAtt IndexArn` on `AWS::S3Vectors::Index` | A provider-shaped S3 Vectors index ARN built from the declared vector bucket and index names. |
+| `Fn::GetAtt ApiEndpoint` on `AWS::ApiGatewayV2::Api` | The closed local endpoint; the runner does not invent a public API URL. |
 | `Fn::Join` | The joined evaluated parts. |
 | `AWS::Partition`, `AWS::Region`, `AWS::AccountId`, `AWS::StackName`, `AWS::NoValue` | `aws`, `us-east-1`, `123456789012`, the stack name, and the empty string. |
 
-When the S3 or moto backend answers its readiness probe, the runner creates
-every `AWS::S3::Bucket` and `AWS::KMS::Key` in the assembly. Tables and queues
-are named but not provisioned; event-source delivery is A4. An unresolvable
-expression fails before any function container starts, with the function and
-variable named.
+When a backend answers its readiness probe, the runner provisions the resources
+for it: every `AWS::S3::Bucket` in s3proxy; every `AWS::KMS::Key` in moto;
+every `AWS::DynamoDB::Table` in DynamoDB Local with its key schema, GSIs,
+streams and TTL; and every `AWS::SQS::Queue` in ElasticMQ with its visibility,
+retention, FIFO and redrive attributes. Table SSE, PITR and deletion protection,
+and SQS KMS/SSE, are not provisioned; they are not part of the local contract.
+An unresolvable expression fails before any function container starts, with the
+function and variable named.
 
-Functions that no supported route targets are listed under `skipped` with the
-reason; they are never silently dropped.
+Functions that no supported route, Function URL, event source mapping or rule
+targets are listed under `skipped` with the reason; they are never silently
+dropped. A session's `--target` starts one of them explicitly.
 
 ## Container environment
 
@@ -353,8 +398,10 @@ A `AWS_SESSION_TOKEN` is never injected.
 `amazon/dynamodb-local@sha256:… -jar DynamoDBLocal.jar -sharedDb -inMemory` on
 the run network and adds `dynamodb-local:<network address>` to every function
 container's `/etc/hosts`, because closed DNS cannot resolve container names.
-`--backend moto` and `--backend s3proxy` start their profile containers the same
-way. The S3 endpoint is injected as `http://<container address>:80` rather than
+`--backend moto`, `--backend s3proxy` and `--backend sqs` start their profile
+containers the same way; the SQS container answers on the `sqs` alias with
+ElasticMQ's loopback queue URLs rewritten to `http://sqs:9324/...`. The S3
+endpoint is injected as `http://<container address>:80` rather than
 `http://s3proxy:80`: the AWS SDK uses path-style addressing for an IP endpoint,
 and s3proxy does not serve the virtual-host form the SDK would otherwise pick.
 
@@ -379,7 +426,7 @@ is a public AWS domain are refused earlier, on the host.
 
 ## Generated events
 
-One event is sent per request. Fixed values: account `123456789012`, region
+For an HTTP surface, one event is sent per request. Fixed values: account `123456789012`, region
 `us-east-1`, stage from the stack (`$default` or the REST stage), and a fresh
 32-hex-character request id that also appears in `requestContext.requestId`.
 
@@ -403,6 +450,35 @@ entry from `headers` so a handler cannot read the same cookies twice.
 `requestContext.domainName` ending in
 `.lambda-url.us-east-1.on.aws`; it carries no `pathParameters`. The AppTheory
 runtime uses the domain to distinguish it from HTTP API v2.
+
+**HTTP API v2 REQUEST authorizer** — the same v2 request shape plus
+`type: "REQUEST"`, `routeArn`, `identitySource` (the configured identity
+source's header value) and the route key. The transport reads
+`{"isAuthorized":bool,"context":{…}}`; a false result is a 401, and a true
+result's context is carried to the handler as
+`requestContext.authorizer.lambda`.
+
+**SQS** — built from messages an ElasticMQ queue actually returned:
+`Records[].messageId`, `receiptHandle`, `body`, `md5OfBody`, the receive
+attributes, `messageAttributes`, `eventSource: "aws:sqs"`, `eventSourceARN` and
+`awsRegion`.
+
+**DynamoDB Streams** — built from the stored item read back from DynamoDB
+Local: `Records[].eventID`, `eventName` (`INSERT`/`MODIFY`/`REMOVE`),
+`eventVersion: "1.1"`, `eventSource: "aws:dynamodb"`, `awsRegion`, the table's
+real local stream ARN, and `dynamodb` with `Keys`, `NewImage`/`OldImage` in
+DynamoDB JSON, `SequenceNumber`, `StreamViewType` and `SizeBytes`.
+
+**EventBridge** — a schedule rule gets `source: "aws.events"`,
+`detail-type: "Scheduled Event"` and `resources: [<rule ARN>]`; a pattern rule
+gets the source and detail-type from its declared `EventPattern`. Callers may
+supply the detail; it must be valid JSON.
+
+**Kinesis / CloudWatch Logs** — a Kinesis event with
+`eventSource: "aws:kinesis"`, the stream ARN and one record per input. The
+CloudWatch Logs helper builds a `DATA_MESSAGE` subscription payload from the
+supplied log events, gzips it, and base64-encodes it into `kinesis.data`, as
+AWS does.
 
 A body that is not valid UTF-8 is base64-encoded and `isBase64Encoded` is `true`.
 
@@ -430,12 +506,13 @@ handler are dropped and recomputed by the local HTTP server.
 - One Docker network per run: `<name-prefix>-net`, labelled
   `apptheory.local.run`, `apptheory.local.app` and `apptheory.local.managed`.
 - Function containers: `<name-prefix>-<logicalId>`. Backend containers:
-  `<name-prefix>-dynamodb`, `<name-prefix>-moto` and `<name-prefix>-s3proxy`;
-  each also carries its profile container name as a network alias.
+  `<name-prefix>-dynamodb`, `<name-prefix>-moto`, `<name-prefix>-s3proxy` and
+  `<name-prefix>-sqs`; each also carries its profile container name as a
+  network alias.
 - The RIE port and each backend port are published on loopback only
   (`-p 127.0.0.1::<port>`). The runner uses the backend's loopback port to
-  provision buckets and keys; function containers reach the backend over the
-  run network.
+  provision buckets, keys, tables and queues and to serve a session's data
+  operations; function containers reach the backend over the run network.
 - On success, failure or `SIGTERM`/`SIGINT`, the runner removes exactly its own
   containers and network, then deletes `<scratch>/runs/<app>-<run>`. Shutdown
   is ordered: close the listeners (stop accepting requests), force-remove every

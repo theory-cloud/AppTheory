@@ -30,6 +30,10 @@ type InvokeRequest struct {
 	RemoteAddr  string
 	RequestID   string
 	Now         time.Time
+	// AuthorizerContext is the context a CUSTOM authorizer returned for this
+	// request. It is carried as requestContext.authorizer.lambda, the same
+	// place API Gateway v2 puts a simple-response authorizer context.
+	AuthorizerContext map[string]any
 }
 
 // BuildEvent serializes the provider payload the handler receives: an HTTP API
@@ -87,7 +91,43 @@ func httpV2Event(request InvokeRequest) map[string]any {
 	if cookies := requestCookies(request.Header); len(cookies) > 0 {
 		event["cookies"] = cookies
 	}
+	if len(request.AuthorizerContext) > 0 {
+		if context, ok := event["requestContext"].(map[string]any); ok {
+			context["authorizer"] = map[string]any{"lambda": request.AuthorizerContext}
+		}
+	}
 	return event
+}
+
+// BuildAuthorizerEvent serializes the API Gateway v2 REQUEST authorizer event.
+// It carries the same request the route handler will receive, plus the identity
+// source the authorizer declared.
+func BuildAuthorizerEvent(request InvokeRequest) ([]byte, error) {
+	event := httpV2Event(request)
+	event["type"] = "REQUEST"
+	apiID := localPhysicalID("api", request.API.LogicalID)
+	routeKey := request.Route.RouteKey
+	if routeKey == "" {
+		routeKey = request.Method + " " + request.Route.Path
+	}
+	event["routeArn"] = "arn:" + LocalPartition + ":execute-api:" + LocalRegion + ":" + LocalAccountID +
+		":" + apiID + "/" + request.API.Stage + "/" + strings.ToUpper(request.Method) + request.Path
+	event["identitySource"] = identitySourceValue(request.Header, request.Route.AuthorizerIdentitySource)
+	event["routeKey"] = routeKey
+	return json.Marshal(event)
+}
+
+// identitySourceValue resolves a provider identity source such as
+// $request.header.Authorization to the request's header value. An empty or
+// unsupported source yields an empty string; the authorizer itself decides
+// whether that is allowed.
+func identitySourceValue(header http.Header, source string) string {
+	const prefix = "$request.header."
+	source = strings.TrimSpace(source)
+	if !strings.HasPrefix(source, prefix) {
+		return ""
+	}
+	return strings.TrimSpace(header.Get(strings.TrimPrefix(source, prefix)))
 }
 
 func restV1Event(request InvokeRequest) map[string]any {

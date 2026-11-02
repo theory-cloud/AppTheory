@@ -18,6 +18,12 @@ const (
 	typeS3Bucket        = "AWS::S3::Bucket"
 	typeKMSKey          = "AWS::KMS::Key"
 	typeEventsRule      = "AWS::Events::Rule"
+	typeEventSourceMap  = "AWS::Lambda::EventSourceMapping"
+	typeKinesisStream   = "AWS::Kinesis::Stream"
+	typeSecretsSecret   = "AWS::SecretsManager::Secret" //nolint:gosec // CloudFormation resource type name, not a credential
+	typeIAMRole         = "AWS::IAM::Role"
+	typeMicrovmImage    = "AWS::Lambda::MicrovmImage"
+	typeS3VectorsIndex  = "AWS::S3Vectors::Index"
 	typeHTTPAPI         = "AWS::ApiGatewayV2::Api"
 	typeHTTPRoute       = "AWS::ApiGatewayV2::Route"
 	typeHTTPIntegration = "AWS::ApiGatewayV2::Integration"
@@ -147,6 +153,33 @@ type functionURLProperties struct {
 	TargetFunctionARN json.RawMessage `json:"TargetFunctionArn"`
 }
 
+type eventSourceMappingProperties struct {
+	BatchSize                      int             `json:"BatchSize"`
+	Enabled                        *bool           `json:"Enabled"`
+	EventSourceARN                 json.RawMessage `json:"EventSourceArn"`
+	FunctionName                   json.RawMessage `json:"FunctionName"`
+	FunctionResponseTypes          []string        `json:"FunctionResponseTypes"`
+	StartingPosition               string          `json:"StartingPosition"`
+	MaximumBatchingWindowInSeconds int             `json:"MaximumBatchingWindowInSeconds"`
+}
+
+type eventRuleProperties struct {
+	Name               string          `json:"Name"`
+	ScheduleExpression string          `json:"ScheduleExpression"`
+	EventPattern       json.RawMessage `json:"EventPattern"`
+	State              string          `json:"State"`
+	Targets            []struct {
+		ARN json.RawMessage `json:"Arn"`
+	} `json:"Targets"`
+}
+
+type httpAuthorizerProperties struct {
+	AuthorizerType        string          `json:"AuthorizerType"`
+	AuthorizerURI         json.RawMessage `json:"AuthorizerUri"`
+	EnableSimpleResponses bool            `json:"EnableSimpleResponses"`
+	IdentitySource        []string        `json:"IdentitySource"`
+}
+
 // logicalRef is a CloudFormation Ref or Fn::GetAtt target.
 type logicalRef struct {
 	ID   string
@@ -207,7 +240,7 @@ func deriveSpec(dir string, stacks []assemblyStack) (*Spec, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(spec.ServedFunctions()) == 0 {
+	if len(spec.RuntimeFunctions()) == 0 {
 		return nil, noSurfaceError(spec, dir)
 	}
 	return spec, nil
@@ -241,7 +274,7 @@ func deriveSpecInternal(dir string, stacks []assemblyStack) (*Spec, error) {
 
 func noSurfaceError(spec *Spec, dir string) error {
 	message := fmt.Sprintf(
-		"cloud assembly %s defines no HTTP API v2 route, REST API v1 route or Function URL the local runner can serve",
+		"cloud assembly %s defines no HTTP API v2 route, REST API v1 route, Function URL, event source mapping or EventBridge rule target the local runner can serve",
 		dir,
 	)
 	for _, skipped := range spec.Skipped {
@@ -253,7 +286,7 @@ func noSurfaceError(spec *Spec, dir string) error {
 // validateServedFunctions fails closed on a function the transport cannot run
 // faithfully, before any container starts.
 func validateServedFunctions(spec *Spec) error {
-	for _, id := range spec.ServedFunctions() {
+	for _, id := range spec.RuntimeFunctions() {
 		function, ok := spec.Function(id)
 		if !ok {
 			return fmt.Errorf("assembly references function %q but defines no such resource", id)
@@ -306,6 +339,12 @@ func (s *Spec) sort() {
 	sort.Slice(s.FunctionURLs, func(i, j int) bool {
 		return s.FunctionURLs[i].LogicalID < s.FunctionURLs[j].LogicalID
 	})
+	sort.Slice(s.EventSources, func(i, j int) bool {
+		return s.EventSources[i].LogicalID < s.EventSources[j].LogicalID
+	})
+	sort.Slice(s.Rules, func(i, j int) bool {
+		return s.Rules[i].LogicalID < s.Rules[j].LogicalID
+	})
 	sort.Slice(s.Skipped, func(i, j int) bool { return s.Skipped[i].LogicalID < s.Skipped[j].LogicalID })
 }
 
@@ -319,7 +358,13 @@ func deriveStack(spec *Spec, assemblyDir string, stacks []assemblyStack, stack a
 	if err := deriveRESTAPIs(spec, stacks, stack); err != nil {
 		return err
 	}
-	return deriveFunctionURLs(spec, stacks, stack)
+	if err := deriveFunctionURLs(spec, stacks, stack); err != nil {
+		return err
+	}
+	if err := deriveEventSourceMappings(spec, stacks, stack); err != nil {
+		return err
+	}
+	return deriveEventRules(spec, stacks, stack)
 }
 
 // qualify makes a logical id unique across stacks. Single-stack assemblies keep

@@ -1,0 +1,188 @@
+package localrunner
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+)
+
+// deriveEventSourceMappings reads the event source mappings the app deploys.
+// Each supported mapping names the function the runner starts and the queue,
+// table or stream a generated event must refer to. An unsupported source is
+// reported under skipped; it is never silently dropped.
+//
+//nolint:gocyclo // the switch is the explicit source-type contract the runner supports.
+func deriveEventSourceMappings(spec *Spec, stacks []assemblyStack, stack assemblyStack) error {
+	types := stack.resourceTypes()
+	for _, id := range sortedKeys(stack.Template.Resources) {
+		resource := stack.Template.Resources[id]
+		if resource.Type != typeEventSourceMap {
+			continue
+		}
+		var props eventSourceMappingProperties
+		if err := json.Unmarshal(resource.Properties, &props); err != nil {
+			return fmt.Errorf("%s/%s: parse event source mapping properties: %w", stack.Name, id, err)
+		}
+		logicalID := qualify(stacks, stack.Name, id)
+		functionID, ok := findRefByType(props.FunctionName, types, typeLambdaFunction)
+		if !ok {
+			return unsupported(logicalID, "event source mapping does not target a Lambda function")
+		}
+		refs := refsIn(props.EventSourceARN)
+		if len(refs) == 0 {
+			return unsupported(logicalID, "event source mapping has no resolvable eventSourceArn")
+		}
+		ref := refs[0]
+		sourceType := types[ref.ID]
+		var mappingType string
+		switch sourceType {
+		case typeSQSQueue:
+			if ref.Attr != "" && ref.Attr != attrArn {
+				return unsupported(logicalID, "SQS event source mapping must reference the queue Arn, got %q", ref.Attr)
+			}
+			mappingType = backendSQS
+		case typeDynamoTable:
+			if ref.Attr != "" && ref.Attr != "StreamArn" {
+				return unsupported(logicalID, "DynamoDB event source mapping must reference the table StreamArn, got %q", ref.Attr)
+			}
+			mappingType = backendDynamoDB
+		case typeKinesisStream:
+			if ref.Attr != "" && ref.Attr != attrArn {
+				return unsupported(logicalID, "Kinesis event source mapping must reference the stream Arn, got %q", ref.Attr)
+			}
+			mappingType = backendKinesis
+		default:
+			spec.Skipped = append(spec.Skipped, Skipped{
+				LogicalID: logicalID,
+				Kind:      typeEventSourceMap,
+				Reason:    fmt.Sprintf("event source type %s is not delivered locally", sourceType),
+			})
+			continue
+		}
+		source := stack.Template.Resources[ref.ID]
+		name, err := resourceName(ResourceSpec{
+			Stack:      stack.Name,
+			LogicalID:  ref.ID,
+			Type:       sourceType,
+			Properties: source.Properties,
+		})
+		if err != nil {
+			return fmt.Errorf("%s: resolve %s source name: %w", logicalID, mappingType, err)
+		}
+		enabled := props.Enabled == nil || *props.Enabled
+		spec.EventSources = append(spec.EventSources, EventSourceSpec{
+			LogicalID:               logicalID,
+			Stack:                   stack.Name,
+			Function:                qualify(stacks, stack.Name, functionID),
+			Type:                    mappingType,
+			Source:                  qualify(stacks, stack.Name, ref.ID),
+			SourceName:              name,
+			SourceARN:               localSourceARN(mappingType, name),
+			BatchSize:               eventSourceBatchSize(mappingType, props.BatchSize),
+			ReportBatchItemFailures: containsStringList(props.FunctionResponseTypes, "ReportBatchItemFailures"),
+			Enabled:                 enabled,
+			StartingPosition:        props.StartingPosition,
+		})
+	}
+	return nil
+}
+
+// deriveEventRules reads EventBridge rules with Lambda targets. A rule with any
+// other target is reported; the runner has no way to deliver that target.
+func deriveEventRules(spec *Spec, stacks []assemblyStack, stack assemblyStack) error {
+	types := stack.resourceTypes()
+	for _, id := range sortedKeys(stack.Template.Resources) {
+		resource := stack.Template.Resources[id]
+		if resource.Type != typeEventsRule {
+			continue
+		}
+		var props eventRuleProperties
+		if err := json.Unmarshal(resource.Properties, &props); err != nil {
+			return fmt.Errorf("%s/%s: parse EventBridge rule properties: %w", stack.Name, id, err)
+		}
+		logicalID := qualify(stacks, stack.Name, id)
+		if strings.TrimSpace(props.ScheduleExpression) != "" && len(props.EventPattern) > 0 {
+			return unsupported(logicalID, "EventBridge rule declares both ScheduleExpression and EventPattern")
+		}
+		if strings.TrimSpace(props.ScheduleExpression) == "" && len(props.EventPattern) == 0 {
+			return unsupported(logicalID, "EventBridge rule declares neither ScheduleExpression nor EventPattern")
+		}
+		var targets []string
+		for _, target := range props.Targets {
+			functionID, ok := findRefByType(target.ARN, types, typeLambdaFunction, attrArn)
+			if !ok {
+				continue
+			}
+			targets = append(targets, qualify(stacks, stack.Name, functionID))
+		}
+		if len(targets) == 0 {
+			spec.Skipped = append(spec.Skipped, Skipped{
+				LogicalID: logicalID,
+				Kind:      typeEventsRule,
+				Reason:    "EventBridge rule has no Lambda function target the local runner can invoke",
+			})
+			continue
+		}
+		if len(props.EventPattern) > 0 && !json.Valid(props.EventPattern) {
+			return unsupported(logicalID, "EventBridge rule EventPattern is not valid JSON")
+		}
+		name := strings.TrimSpace(props.Name)
+		if name == "" {
+			resolved, err := resourceName(ResourceSpec{
+				Stack:      stack.Name,
+				LogicalID:  id,
+				Type:       typeEventsRule,
+				Properties: resource.Properties,
+			})
+			if err != nil {
+				return err
+			}
+			name = resolved
+		}
+		spec.Rules = append(spec.Rules, RuleSpec{
+			LogicalID:    logicalID,
+			Stack:        stack.Name,
+			Name:         name,
+			ARN:          "arn:" + LocalPartition + ":events:" + LocalRegion + ":" + LocalAccountID + ":rule/" + name,
+			Schedule:     strings.TrimSpace(props.ScheduleExpression),
+			EventPattern: append(json.RawMessage(nil), props.EventPattern...),
+			Targets:      targets,
+			Enabled:      !strings.EqualFold(strings.TrimSpace(props.State), "DISABLED"),
+		})
+	}
+	return nil
+}
+
+func containsStringList(values []string, needle string) bool {
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), needle) {
+			return true
+		}
+	}
+	return false
+}
+
+// eventSourceBatchSize returns the batch size the provider uses when the
+// template omits it. AWS defaults are 10 for SQS and 100 for stream sources.
+func eventSourceBatchSize(sourceType string, declared int) int {
+	if declared > 0 {
+		return declared
+	}
+	if sourceType == backendSQS {
+		return 10
+	}
+	return 100
+}
+
+func localSourceARN(sourceType, name string) string {
+	switch sourceType {
+	case backendSQS:
+		return "arn:" + LocalPartition + ":sqs:" + LocalRegion + ":" + LocalAccountID + ":" + name
+	case backendDynamoDB:
+		return "arn:" + LocalPartition + ":dynamodb:" + LocalRegion + ":" + LocalAccountID + ":table/" + name + "/stream/local"
+	case backendKinesis:
+		return "arn:" + LocalPartition + ":kinesis:" + LocalRegion + ":" + LocalAccountID + ":stream/" + name
+	default:
+		return ""
+	}
+}

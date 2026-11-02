@@ -68,13 +68,22 @@ class RealTreeTests(unittest.TestCase):
         self.assertFalse(any(".cdk-asset-stage" in path for path in discovered))
         self.assertFalse(any("node_modules" in path for path in discovered))
 
-    def test_a3b_rows_are_wired(self) -> None:
+    def test_a4_rows_are_wired(self) -> None:
         _, entries = harness.load_manifest(harness.MANIFEST_PATH)
-        self.assertEqual([], [entry.key for entry in entries if entry.pending == "A3b"])
+        self.assertEqual([], [entry.key for entry in entries if entry.pending == "A4"])
         classified = [entry for entry in entries if not entry.pending]
-        self.assertEqual(42, len(classified))
+        self.assertEqual(55, len(classified))
         milestones = {entry.pending for entry in entries if entry.pending}
-        self.assertEqual({"A4", "A5b"}, milestones)
+        self.assertEqual({"A5b"}, milestones)
+
+    def test_l3_rows_name_a_gap(self) -> None:
+        _, entries = harness.load_manifest(harness.MANIFEST_PATH)
+        for entry in entries:
+            if entry.class_name == "L3":
+                self.assertTrue(
+                    str(entry.data.get("gap", "")).strip(),
+                    f"{entry.key}: an L3 row must name its cloud gap",
+                )
 
     def test_profile_ports_stay_off_reserved_ranges(self) -> None:
         profile, _ = harness.load_manifest(harness.MANIFEST_PATH)
