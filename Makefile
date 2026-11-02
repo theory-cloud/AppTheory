@@ -1,6 +1,7 @@
 # AppTheory Makefile
 
 .PHONY: all build test test-unit lint fmt fmt-check rubric contract-tests contract-one verify-builds \
+	examples-local examples-local-down examples-local-selftest verify-cdk-synth-location-independent \
 	theorycloud-apptheory-subtree verify-theorycloud-apptheory-subtree \
 	sync-theorycloud-apptheory-subtree trigger-theorycloud-publish \
 	verify-theorycloud-apptheory-publish-config
@@ -40,6 +41,29 @@ fmt-check:
 
 rubric:
 	@./scripts/verify-rubric.sh
+
+# Local example execution: the checked-in DynamoDB Local profile plus every
+# example entrypoint classified by scripts/local/examples-local.json.
+# EXAMPLES_LOCAL_ARGS exists only for the harness-owned slot/port flags (CI
+# pins the slot to its service container and passes --external so the harness
+# waits for it instead of starting a second container). No example reads it and
+# no operator environment variable is required.
+examples-local:
+	@python3 scripts/local/test_examples_local.py
+	@python3 scripts/local/run_examples_local.py $(EXAMPLES_LOCAL_ARGS)
+
+examples-local-selftest:
+	@python3 scripts/local/test_examples_local.py
+
+examples-local-down:
+	@python3 scripts/local/run_examples_local.py --down $(EXAMPLES_LOCAL_ARGS)
+
+# Re-synthesizes every pinned CDK example from a copy under $HOME and requires
+# the same template hashes. The copy is source-only, so this proves the pins do
+# not depend on the checkout's absolute path; it costs a second full synth run,
+# which is why it runs in CI's examples-local job instead of `make rubric`.
+verify-cdk-synth-location-independent:
+	@./scripts/verify-cdk-synth-location-independent.sh
 
 contract-tests:
 	@./scripts/verify-contract-tests.sh

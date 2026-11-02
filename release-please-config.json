@@ -82,12 +82,27 @@
         },
         {
           "type": "json",
+          "path": "examples/cdk/media-cdn/package-lock.json",
+          "jsonpath": "$.packages['../../../cdk'].version"
+        },
+        {
+          "type": "json",
           "path": "examples/cdk/microvm-controller/package-lock.json",
           "jsonpath": "$.packages['../../../cdk'].version"
         },
         {
           "type": "json",
           "path": "examples/cdk/multilang/package-lock.json",
+          "jsonpath": "$.packages['../../../cdk'].version"
+        },
+        {
+          "type": "json",
+          "path": "examples/cdk/path-routed-frontend/package-lock.json",
+          "jsonpath": "$.packages['../../../cdk'].version"
+        },
+        {
+          "type": "json",
+          "path": "examples/cdk/restv1-router/package-lock.json",
           "jsonpath": "$.packages['../../../cdk'].version"
         },
         {

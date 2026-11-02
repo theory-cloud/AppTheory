@@ -1,5 +1,5 @@
-import { execSync } from "node:child_process";
-import { copyFileSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { execFileSync, execSync } from "node:child_process";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import * as path from "node:path";
 
 import {
@@ -81,6 +81,35 @@ function stageHandlerFiles(handlersDir: string, stageDir: string, files: string[
   }
 }
 
+// The vendored AppTheory runtime imports its declared dependencies, including
+// @theory-cloud/tabletheory-ts, when the barrel entry loads. A Lambda asset
+// that carries only ts/dist therefore fails at init in a clean runtime. Stage
+// the runtime's production dependency closure next to the vendored dist so the
+// asset is self-contained.
+function stageNodeDependencies(runtimeDir: string, stageDir: string): void {
+  const runtimeNodeModules = path.join(runtimeDir, "node_modules");
+  const marker = path.join(runtimeNodeModules, "@theory-cloud", "tabletheory-ts", "package.json");
+  if (!existsSync(marker)) {
+    throw new Error(
+      `missing ${marker}; run 'cd ts && npm ci --ignore-scripts' before synthesizing the TypeScript asset`,
+    );
+  }
+  const listed = execFileSync("npm", ["ls", "--omit=dev", "--all", "--parseable"], {
+    cwd: runtimeDir,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const prefix = `${runtimeNodeModules}${path.sep}`;
+  const destination = path.join(stageDir, "node_modules");
+  for (const line of listed.split("\n")) {
+    const dependency = line.trim();
+    if (!dependency.startsWith(prefix)) {
+      continue;
+    }
+    copyDir(dependency, path.join(destination, dependency.slice(prefix.length)));
+  }
+}
+
 function cleanOutputDir(outputDir: string): void {
   rmSync(outputDir, { force: true, recursive: true });
   mkdirSync(outputDir, { recursive: true });
@@ -149,6 +178,7 @@ export class MultiLangStack extends Stack {
     const tsStageDir = resetAssetStage(path.join(__dirname, ".."), "ts");
     stageHandlerFiles(tsHandlersDir, tsStageDir, ["handler.mjs", "package.json"]);
     copyDir(path.join(repoRoot, "ts", "dist"), path.join(tsStageDir, "vendor", "apptheory"));
+    stageNodeDependencies(path.join(repoRoot, "ts"), tsStageDir);
     const tsHandler = new AppTheoryFunction(this, "TsHandler", {
       runtime: lambda.Runtime.NODEJS_24_X,
       handler: "handler.handler",
