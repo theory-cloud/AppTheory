@@ -152,9 +152,9 @@ the harness records it.
 
 | Capability | Local runner | Notes |
 | --- | --- | --- |
-| HTTP API v2 (`AWS::ApiGatewayV2::Api`, HTTP) | Supported (L1) | v2.0 events with `routeKey`, `rawPath`, `requestContext.http`, cookies and path parameters. |
+| HTTP API v2 (`AWS::ApiGatewayV2::Api`, HTTP) | Supported (L1) | v2.0 events with `routeKey`, `rawPath`, `requestContext.http`, cookies and path parameters. The `cookie` header is removed when `cookies` is populated, as AWS does. |
 | REST API v1 (`AWS::ApiGateway::RestApi`) | Supported (L1) | v1 events with `resource`, `multiValueHeaders`, `multiValueQueryStringParameters` and the stage. |
-| Lambda Function URL | Supported (L1) | Function URL events carry `routeKey: "$default"` and a `.lambda-url.<region>.on.aws` domain, which the runtime uses to tell them apart from HTTP API v2. |
+| Lambda Function URL | Supported (L1) | Function URL events carry `routeKey: "$default"` (top-level and in `requestContext`, with `requestContext.stage`) and a `.lambda-url.<region>.on.aws` domain, which the runtime uses to tell them apart from HTTP API v2. |
 | Response streaming (`awslambda.streamifyResponse`, SSE) | Supported, **buffered** (L3) | The RIE buffers the whole response and returns metadata JSON + eight NUL bytes + body. The transport reproduces status, headers and complete bytes; it never reproduces chunk timing. |
 | Inline `Code.ZipFile` | Supported (Node, Python) | Materialized under the run scratch directory before the container starts. |
 | arm64 `provided.al2023` | Supported (L1) | Uses the host-arch image; a bootstrap built for the other architecture fails closed with a clear error. |

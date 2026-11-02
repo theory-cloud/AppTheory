@@ -267,6 +267,8 @@ One event is sent per request. Fixed values: account `123456789012`, region
 `headers`, `cookies` (split on `;`), `queryStringParameters`,
 `pathParameters`, `body`, `isBase64Encoded`, and
 `requestContext.http` (`method`, `path`, `protocol`, `sourceIp`, `userAgent`).
+As API Gateway does when it populates `cookies`, the runner removes the `cookie`
+entry from `headers` so a handler cannot read the same cookies twice.
 
 **REST API v1** — `resource` (the matched template), `path`, `httpMethod`,
 `headers`, `multiValueHeaders`, `queryStringParameters`,
@@ -275,7 +277,8 @@ One event is sent per request. Fixed values: account `123456789012`, region
 `httpMethod`, `stage`, `path`, `protocol`, `requestId`, `identity.sourceIp`,
 `identity.userAgent`).
 
-**Function URL** — the v2 shape with `routeKey: "$default"` and
+**Function URL** — the v2 shape with `routeKey: "$default"`,
+`requestContext.routeKey` and `requestContext.stage` both `$default`, and
 `requestContext.domainName` ending in
 `.lambda-url.us-east-1.on.aws`; it carries no `pathParameters`. The AppTheory
 runtime uses the domain to distinguish it from HTTP API v2.
