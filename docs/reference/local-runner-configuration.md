@@ -441,6 +441,14 @@ Origin request policies:
 | `bf0718e1-ba1e-49d1-88b1-f726733018ae` | HostHeaderOnly | `host` only |
 | `acba4595-bd28-49b8-b9fe-13317c0390fa` | UserAgentRefererHeaders | `user-agent`, `referer` only |
 
+For an Amazon S3 origin, the four policies marked with a query-string setting
+above (AllViewer, AllViewerAndCloudFrontHeaders-2022-06,
+AllViewerExceptHostHeader and Elemental-MediaTailor-PersonalizedManifests)
+do not forward `response-content-type`,
+`response-content-disposition` or `response-content-encoding`; a custom policy
+forwards them as configured. The S3 origin applies this suppression through
+`OriginRequest.SuppressS3ResponseOverrides`.
+
 Response headers policies:
 
 | ID | Name | Applied |
