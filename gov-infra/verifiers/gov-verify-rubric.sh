@@ -814,13 +814,35 @@ gov_cmd_vuln() {
     "examples/cdk/kinesis-cloudwatch-logs/package-lock.json"
     "examples/cdk/lambda-role/package-lock.json"
     "examples/cdk/lesser-parity/package-lock.json"
+    "examples/cdk/media-cdn/package-lock.json"
     "examples/cdk/microvm-controller/package-lock.json"
     "examples/cdk/multilang/package-lock.json"
+    "examples/cdk/path-routed-frontend/package-lock.json"
+    "examples/cdk/restv1-router/package-lock.json"
     "examples/cdk/s3-vectors-semantic-search/package-lock.json"
     "examples/cdk/sqs-queue/package-lock.json"
     "examples/cdk/ssr-only-provided-assets-site/package-lock.json"
     "examples/cdk/ssr-site/package-lock.json"
   )
+
+  # Fail closed when a tracked npm lockfile is missing from the scan set: an
+  # unscanned lockfile is neither reported vulnerable nor reported excepted,
+  # which is the one outcome SEC-2 forbids. `git ls-files` is the authority, so
+  # adding a new example lockfile without adding it here fails the gate; the
+  # visible-finding checker's self-test runs the same comparison.
+  if ! command -v git >/dev/null 2>&1 || ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "BLOCKED: SEC-2 needs a Git worktree to enumerate every tracked npm lockfile" >&2
+    return 2
+  fi
+  local tracked_lockfile
+  while IFS= read -r tracked_lockfile; do
+    [[ -n "${tracked_lockfile}" ]] || continue
+    if ! printf '%s\n' "${node_lockfiles[@]}" | grep -Fxq -- "${tracked_lockfile}"; then
+      echo "FAIL: tracked npm lockfile is missing from the SEC-2 scan set: ${tracked_lockfile}" >&2
+      echo "      add it to node_lockfiles here and to AWS_CDK_LOCKFILES in scripts/check-visible-aws-cdk-finding.mjs" >&2
+      return 1
+    fi
+  done < <(git ls-files '*package-lock.json' '*npm-shrinkwrap.json')
 
   local lf
   for lf in "${node_lockfiles[@]}"; do

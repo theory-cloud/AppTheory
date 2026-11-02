@@ -100,10 +100,11 @@ through aws-cdk-lib's own bundled `minimatch`. AWS publishes it and only AWS can
 bundles the patched release (`brace-expansion >= 5.0.12` exists on npm but cannot be installed into the
 bundled subtree); it is build-time only and no AppTheory runtime package or Lambda ships it. Scope
 (widened 2026-10-06): every npm lockfile in this repository whose installed tree carries that bundled path
-- `cdk/package-lock.json` plus all twelve `examples/cdk/*/package-lock.json` files. Before the widening the
-scope was cdk/ plus four examples, which left eight example lockfiles carrying the identical vulnerable
-AWS path with no gate coverage and no recorded exception; the SEC-2 Node scan set is now the same full
-list, so every lockfile is either reported vulnerable or reported excepted. Owner: AppTheory steward
+- the cdk lockfile plus the `examples/cdk/*/package-lock.json` files (twelve at the widening; fifteen after
+LOCAL-A1 added media-cdn, path-routed-frontend and restv1-router). Before the widening the scope was cdk/
+plus four examples, which left eight example lockfiles carrying the identical vulnerable AWS path with no
+gate coverage and no recorded exception; the SEC-2 Node scan set is now the same full list, so every
+lockfile is either reported vulnerable or reported excepted. Owner: AppTheory steward
 (Factory dependency sweeps). **Removal condition:** the `aws-cdk-lib` version this repository pins bundles
 `brace-expansion >= 5.0.12`. **That condition was met:** the pinned aws-cdk-lib 2.275.0 tarball bundles
 the patched `brace-expansion@5.0.12`, so the exception was retired as standard maintenance and the
@@ -129,11 +130,17 @@ renewal and its evidence in `E2.renewal`.
 the patched release (`minimatch 11.0.1` exists on npm but cannot be installed into the bundled subtree);
 the latest published aws-cdk-lib (2.275.0) still declares a bundled minimatch `^10.2.6`, so no
 aws-cdk-lib release resolves it. It is build/CLI-time only and no AppTheory runtime package or Lambda
-ships it. Scope: the same full bundled-path set as E1 - `cdk/package-lock.json` plus all twelve
-`examples/cdk/*/package-lock.json` files. Owner: AppTheory steward (Factory dependency sweeps).
-**Removal condition:** the pinned `aws-cdk-lib` bundles `minimatch >= 11.0.1`. **Hard recheck by
-2026-12-01.** Operator ruling: 2026-10-03 (the bundled-dependency ruling quoted above), extended
-2026-10-04.
+ships it. Scope: the same full bundled-path set as E1 - the cdk lockfile plus all fifteen
+`examples/cdk/*/package-lock.json` files, including the three LOCAL-A1 additions. Owner: AppTheory
+steward (Factory dependency sweeps). **Removal condition:** the pinned `aws-cdk-lib` bundles
+`minimatch >= 11.0.1`. **Hard recheck by 2026-12-01.** Operator ruling: 2026-10-03 (the
+bundled-dependency ruling quoted above), extended 2026-10-04.
+
+The scan-set completeness is itself gated: `gov-verify-rubric.sh` compares `node_lockfiles` with
+`git ls-files '*package-lock.json' '*npm-shrinkwrap.json'` before scanning and fails when a tracked
+lockfile is missing, and `check-visible-aws-cdk-finding.mjs --self-test` performs the same comparison
+against `AWS_CDK_LOCKFILES`. A new example lockfile therefore cannot be added without either being
+scanned or failing SEC-2.
 
 **E4 - minimatch 10.2.6 kept for eslint-plugin-import-x (TypeScript lint tooling, dev-only).** Finding
 `GHSA-g3hv-75wg-m249` (moderate, `CVE-2026-118764`) on `minimatch@10.2.6` at

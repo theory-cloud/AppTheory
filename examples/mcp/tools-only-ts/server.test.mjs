@@ -42,3 +42,5 @@ const lambdaResponse = await handler(lambdaEvent, {});
 assert.equal(lambdaResponse.statusCode, 200);
 assert.ok(lambdaResponse.headers["mcp-session-id"]?.[0], "expected an MCP session id");
 assert.equal(JSON.parse(lambdaResponse.body).jsonrpc, "2.0");
+
+console.log("examples/mcp/tools-only-ts/server.test.mjs: PASS");

@@ -1,0 +1,295 @@
+#!/usr/bin/env node
+// Focused construct assertions for the CDK examples that were never synthesized
+// in CI. scripts/verify-cdk-synth.sh hashes every template; a hash alone would
+// also accept a template that lost the feature the example exists to show, so
+// each of these stacks is checked for the resources and properties its README
+// promises. Templates are read from the synthesis output, never from a mock.
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+
+const [stackName, templatePath] = process.argv.slice(2);
+if (!stackName || !templatePath) {
+  console.error("usage: verify-cdk-example-assertions.mjs <stack-name> <template.json>");
+  process.exit(2);
+}
+
+const template = JSON.parse(readFileSync(templatePath, "utf8"));
+const resources = template.Resources ?? {};
+const entries = Object.entries(resources);
+
+function byType(type) {
+  return entries.filter(([, resource]) => resource.Type === type);
+}
+
+function byId(id) {
+  const resource = resources[id];
+  assert.ok(resource, `missing resource ${id}`);
+  return resource;
+}
+
+function props(id) {
+  return byId(id).Properties ?? {};
+}
+
+// CloudFormation encodes generated ARNs/names as Fn::Join; flattening the
+// static parts makes an assertion readable without evaluating the template.
+function flat(value) {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map(flat).join("");
+  }
+  if (value && typeof value === "object") {
+    if (Array.isArray(value["Fn::Join"])) {
+      return flat(value["Fn::Join"][1]);
+    }
+    return Object.values(value).map(flat).join("");
+  }
+  return "";
+}
+
+function statementsOf(type) {
+  return byType(type).flatMap(([, resource]) => {
+    const document = resource.Properties?.PolicyDocument ?? resource.Properties;
+    const statements = document?.Statement ?? [];
+    return Array.isArray(statements) ? statements : [statements];
+  });
+}
+
+function actionsOf(statements) {
+  return statements.flatMap((statement) =>
+    Array.isArray(statement.Action) ? statement.Action : [statement.Action],
+  );
+}
+
+function assertHasAction(statements, action) {
+  assert.ok(actionsOf(statements).includes(action), `expected an IAM statement allowing ${action}`);
+}
+
+function assertHasActionPrefix(statements, prefix) {
+  assert.ok(
+    actionsOf(statements).some((action) => String(action).startsWith(prefix)),
+    `expected an IAM statement allowing ${prefix}*`,
+  );
+}
+
+const assertions = {
+  AppTheoryCodeBuildJobRunnerExample() {
+    const projects = byType("AWS::CodeBuild::Project");
+    assert.equal(projects.length, 1, "expected one CodeBuild project");
+    const project = projects[0][1].Properties;
+    const names = project.Environment.EnvironmentVariables.map((entry) => entry.Name);
+    for (const name of ["APPTHEORY_JOBS_TABLE_NAME", "INGEST_BUCKET", "SECRET_ARN"]) {
+      assert.ok(names.includes(name), `project is missing environment variable ${name}`);
+    }
+
+    const rules = byType("AWS::Events::Rule");
+    assert.equal(rules.length, 1, "expected one state-change rule");
+    const rule = rules[0][1].Properties;
+    assert.equal(rule.Name, "import-job-runner-state-changes");
+    assert.deepEqual(rule.EventPattern.source, ["aws.codebuild"]);
+    assert.deepEqual(rule.EventPattern["detail-type"], ["CodeBuild Build State Change"]);
+    assert.equal(flat(rule.EventPattern.detail["project-name"]), flat({ Ref: projects[0][0] }));
+
+    const policies = statementsOf("AWS::IAM::Policy");
+    assertHasAction(policies, "dynamodb:GetItem");
+    assertHasAction(policies, "dynamodb:PutItem");
+    assertHasActionPrefix(policies, "s3:GetObject");
+    assertHasAction(policies, "secretsmanager:GetSecretValue");
+  },
+
+  LambdaRoleExample() {
+    const roles = byType("AWS::IAM::Role");
+    const roleNames = roles
+      .map(([, role]) => role.Properties.RoleName)
+      .filter((name) => typeof name === "string" && name.startsWith("apptheory-"));
+    assert.deepEqual(roleNames.sort(), [
+      "apptheory-basic-lambda-role",
+      "apptheory-custom-lambda-role",
+      "apptheory-dynamic-lambda-role",
+      "apptheory-encrypted-lambda-role",
+      "apptheory-tracing-lambda-role",
+    ]);
+
+    const functions = byType("AWS::Lambda::Function").filter(
+      ([id]) => !id.includes("AutoDeleteObjects"),
+    );
+    assert.equal(functions.length, 5, "expected five example functions");
+    const tracing = functions.filter(([, fn]) => fn.Properties.TracingConfig?.Mode === "Active");
+    assert.equal(tracing.length, 3, "expected three X-Ray-traced functions");
+    const encrypted = functions.find(([, fn]) => fn.Properties.Handler === "encrypted.handler");
+    assert.ok(encrypted, "missing encrypted handler function");
+    assert.ok(encrypted[1].Properties.KmsKeyArn, "encrypted function has no KMS key");
+
+    assert.equal(byType("AWS::KMS::Key").length, 2, "expected two KMS keys");
+    assert.equal(byType("AWS::KMS::Alias").length, 2, "expected two KMS aliases");
+
+    const policies = statementsOf("AWS::IAM::Policy");
+    for (const action of [
+      "xray:PutTraceSegments",
+      "kms:Decrypt",
+      "kms:Encrypt",
+      "s3:GetObject",
+      "ssm:GetParameter",
+      "secretsmanager:GetSecretValue",
+    ]) {
+      assertHasAction(policies, action);
+    }
+    const managed = byType("AWS::IAM::Role").flatMap(
+      ([, role]) => role.Properties.ManagedPolicyArns ?? [],
+    );
+    assert.ok(
+      managed.some((arn) => flat(arn).includes("AmazonSQSReadOnlyAccess")),
+      "missing AmazonSQSReadOnlyAccess managed policy",
+    );
+  },
+
+  MediaCdnExample() {
+    const distributions = byType("AWS::CloudFront::Distribution");
+    assert.equal(distributions.length, 2, "expected public and private distributions");
+    const configs = distributions.map(([, distribution]) => distribution.Properties.DistributionConfig);
+    const publicConfig = configs.find((config) => config.Comment.startsWith("Public media"));
+    const privateConfig = configs.find((config) => config.Comment.startsWith("Private media"));
+    assert.ok(publicConfig, "missing public media distribution");
+    assert.ok(privateConfig, "missing private media distribution");
+
+    assert.equal(byType("AWS::CloudFront::KeyGroup").length, 1, "expected one key group");
+    assert.equal(byType("AWS::CloudFront::PublicKey").length, 1, "expected one public key");
+    const keyGroup = byType("AWS::CloudFront::KeyGroup")[0][0];
+    assert.deepEqual(privateConfig.DefaultCacheBehavior.TrustedKeyGroups, [{ Ref: keyGroup }]);
+    assert.equal(publicConfig.DefaultCacheBehavior.TrustedKeyGroups, undefined);
+
+    for (const config of configs) {
+      assert.equal(config.Origins.length, 1, "expected one S3 origin per distribution");
+      assert.ok(
+        config.Origins[0].OriginAccessControlId,
+        "media origin must use an origin access control",
+      );
+    }
+    const mediaBuckets = byType("AWS::S3::Bucket").filter(([id]) => id.includes("MediaBucket"));
+    assert.equal(mediaBuckets.length, 2, "expected one media bucket per distribution");
+  },
+
+  PathRoutedFrontendExample() {
+    const distributions = byType("AWS::CloudFront::Distribution");
+    assert.equal(distributions.length, 1, "expected one distribution");
+    const config = distributions[0][1].Properties.DistributionConfig;
+    const apiOrigin = config.Origins.find((origin) =>
+      String(origin.DomainName).includes("execute-api"),
+    );
+    assert.ok(apiOrigin, "missing API origin");
+    assert.equal(config.DefaultCacheBehavior.TargetOriginId, apiOrigin.Id);
+
+    const behaviors = new Map(
+      (config.CacheBehaviors ?? []).map((behavior) => [behavior.PathPattern, behavior]),
+    );
+    assert.deepEqual([...behaviors.keys()].sort(), ["/auth/*", "/auth/wallet/*", "/l/*"]);
+    assert.equal(behaviors.get("/auth/wallet/*").TargetOriginId, apiOrigin.Id);
+    for (const pattern of ["/l/*", "/auth/*"]) {
+      const behavior = behaviors.get(pattern);
+      assert.ok(behavior.TargetOriginId.startsWith("PathRoutedFrontendExampleFrontendDistributionOrigin"), pattern);
+      const events = (behavior.FunctionAssociations ?? []).map((association) => association.EventType);
+      assert.deepEqual(events, ["viewer-request"], `${pattern} must rewrite viewer requests`);
+    }
+    assert.equal(behaviors.get("/auth/wallet/*").FunctionAssociations, undefined);
+
+    const functions = byType("AWS::CloudFront::Function");
+    assert.equal(functions.length, 1, "expected one SPA rewrite function");
+    const buckets = byType("AWS::S3::Bucket").filter(([id]) => id.includes("Bucket"));
+    assert.equal(buckets.length, 3, "expected two SPA buckets and the log bucket");
+  },
+
+  RestV1RouterExample() {
+    assert.equal(byType("AWS::ApiGateway::RestApi").length, 1, "expected one REST API");
+    assert.equal(byType("AWS::Lambda::Function").length, 4, "expected four routed functions");
+
+    const methods = byType("AWS::ApiGateway::Method").map(([, method]) => method.Properties);
+    const integrations = methods.filter(
+      (method) => method.Integration?.Type === "AWS_PROXY",
+    );
+
+    const streaming = integrations.filter(
+      (integration) => integration.Integration.ResponseTransferMode === "STREAM",
+    );
+    assert.equal(streaming.length, 1, "expected exactly one streaming integration");
+    assert.equal(streaming[0].HttpMethod, "GET");
+    assert.equal(
+      integrations.filter((method) => method.Integration.ResponseTransferMode === "BUFFERED").length,
+      5,
+      "expected five buffered integrations (graphql, inventory, proxy)",
+    );
+
+    const resourceParts = byType("AWS::ApiGateway::Resource").map(
+      ([, resource]) => resource.Properties.PathPart,
+    );
+    for (const part of ["sse", "api", "graphql", "inventory", "{id}", "{proxy+}"]) {
+      assert.ok(resourceParts.includes(part), `missing REST resource part ${part}`);
+    }
+
+    const stage = byType("AWS::ApiGateway::Stage")[0][1].Properties;
+    assert.equal(stage.StageName, "prod");
+    assert.ok(stage.AccessLogSetting?.DestinationArn, "stage is missing access logging");
+    const settings = stage.MethodSettings[0];
+    assert.equal(settings.ThrottlingRateLimit, 100);
+    assert.equal(settings.ThrottlingBurstLimit, 200);
+    assert.equal(settings.MetricsEnabled, true);
+  },
+
+  SqsQueueExample() {
+    const queues = new Map(
+      byType("AWS::SQS::Queue").map(([, queue]) => [queue.Properties.QueueName, queue.Properties]),
+    );
+    for (const name of [
+      "contract-events",
+      "contract-events-dlq",
+      "events-queue",
+      "events-queue-dlq",
+      "simple-queue",
+      "simple-queue-dlq",
+    ]) {
+      assert.ok(queues.has(name), `missing queue ${name}`);
+    }
+    assert.equal(queues.get("contract-events").RedrivePolicy.maxReceiveCount, 3);
+    assert.equal(queues.get("events-queue").RedrivePolicy.maxReceiveCount, 5);
+    assert.equal(queues.get("simple-queue").RedrivePolicy.maxReceiveCount, 3);
+    assert.equal(queues.get("contract-events").VisibilityTimeout, 60);
+    assert.equal(queues.get("events-queue").VisibilityTimeout, 300);
+
+    const mappings = byType("AWS::Lambda::EventSourceMapping").map(
+      ([, mapping]) => mapping.Properties,
+    );
+    const worker = mappings.find((mapping) => mapping.BatchSize === 100);
+    assert.ok(worker, "missing the batch-100 worker mapping");
+    assert.equal(worker.MaximumBatchingWindowInSeconds, 10);
+    assert.deepEqual(worker.FunctionResponseTypes, ["ReportBatchItemFailures"]);
+    assert.ok(
+      mappings.some((mapping) => mapping.BatchSize === 1),
+      "missing the single-message DLQ mapping",
+    );
+    assert.ok(
+      mappings.some(
+        (mapping) => mapping.BatchSize === 50 && mapping.MaximumBatchingWindowInSeconds === 5,
+      ),
+      "missing the processor mapping",
+    );
+
+    const policies = statementsOf("AWS::IAM::Policy");
+    assertHasAction(policies, "sqs:SendMessage");
+    assertHasAction(policies, "sqs:ReceiveMessage");
+  },
+};
+
+const assertion = assertions[stackName];
+if (!assertion) {
+  console.error(`no focused assertions for stack ${stackName}`);
+  process.exit(2);
+}
+
+try {
+  assertion();
+} catch (error) {
+  console.error(`cdk-assertions: FAIL (${stackName}): ${error.message}`);
+  process.exit(1);
+}
+console.log(`cdk-assertions: PASS (${stackName})`);
