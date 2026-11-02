@@ -24,12 +24,14 @@ resolution.
 
 | Piece | Where it lives |
 | --- | --- |
-| DynamoDB Local profile | `scripts/local/docker-compose.yml` — `amazon/dynamodb-local:3.1.0`, loopback, in-memory |
+| DynamoDB Local profile | `scripts/local/docker-compose.yml` — `amazon/dynamodb-local@sha256:…` (3.1.0), loopback, in-memory |
 | Classification manifest | `scripts/local/examples-local.json` |
 | Harness | `scripts/local/run_examples_local.py` |
 | Endpoint-resolution preflight | `scripts/local/cmd/examples-local-preflight` |
 | Rate-limit table provisioning | `scripts/local/cmd/rate-limit-table` |
 | Built-asset runtime proof | `scripts/local/verify-lambda-assets.py` |
+| Lambda runtime image pins | `scripts/local/examples-local.json` (`lambda.images`) |
+| Local runner | `cmd/apptheory-local` with `internal/localrunner` |
 | Self-tests | `scripts/local/test_examples_local.py` |
 | CI job | `.github/workflows/examples-local.yml` |
 
@@ -140,9 +142,25 @@ these rules, so a validator that stops failing closed fails the harness.
 | `examples/migration/rate-limited-http` | L1 | A real `net/http` process against DynamoDB Local: the `rate-limits` table is created from `pkg/limited`, 60 requests are allowed with the expected headers, and the 61st is the 429 refusal. |
 | Every CDK app entrypoint | I | `scripts/verify-cdk-synth.sh` synthesizes the stack, checks its pinned template hash, and runs focused construct assertions for the six examples that were never synthesized in CI. |
 
-Handler and script rows inside those CDK examples are listed as
-`PENDING-MILESTONE` rows in the manifest (A3a, A3b, A4, A5a, A5b) and are never
-counted as pass.
+### A3a: hello-world through the local runner
+
+The three hello-world handler rows are no longer pending. Each row runs
+`apptheory-local` against the app's own CDK definition and asserts real HTTP
+behaviour; nothing is imported in process.
+
+| Row | Class | How it is verified |
+| --- | --- | --- |
+| `examples/cdk/hello-world/handlers/go/main.go` | L1 | `cdk synth` derives the HTTP API v2 route table; the `provided.al2023` arm64 container runs the real Go handler; `GET /hello/AppTheory` returns the handler's JSON with the client-supplied `x-request-id`, `GET /` answers, `POST /hello/AppTheory` is the 405 refusal and `GET /missing` is the 404 refusal. The row then asserts the run removed its containers and network. |
+| `examples/cdk/hello-world/handlers/ts/handler.mjs` | L1 | Same assertions in the `nodejs:24` container; the handler reports `runtime: "ts"`. |
+| `examples/cdk/hello-world/handlers/py/handler.py` | L1 | Same assertions in the `python:3.14` container; the handler reports `runtime: "py"`. |
+
+The TypeScript app module row is `coveredBy` the handler row. The runner is
+described in [Run an app locally](/examples/local-runner/) and its generated
+configuration in
+[Local runner configuration](/reference/local-runner-configuration/).
+
+Handler and script rows inside the other CDK examples remain
+`PENDING-MILESTONE` (A3b, A4, A5a, A5b) and are never counted as pass.
 
 ## Preflight
 
@@ -158,6 +176,12 @@ The run stops before any example if:
 
 The profile's in-memory database is recreated when the harness owns the
 container, so every run starts from an empty backend.
+
+The runner rows do not share that container. `apptheory-local --backend dynamodb`
+starts its own in-memory DynamoDB Local, from the same digest-pinned image, on
+the run's private network; the runner's in-container preflight proves the SDK
+resolves to it and that no real AWS hostname resolves. This keeps each runner
+row isolated from the host-side examples.
 
 ## Built Lambda assets run in the official runtime
 
