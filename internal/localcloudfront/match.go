@@ -13,18 +13,16 @@ func MatchPathPattern(pattern, requestPath string) bool {
 }
 
 func matchGlob(pattern, value string) bool {
-	// Iterative wildcard matching with single-star backtracking. `?` matches
-	// exactly one byte, which is correct for the ASCII paths CloudFront
-	// patterns target; multi-byte UTF-8 characters match one byte at a time,
-	// mirroring a byte-oriented wildcard.
+	patternRunes := []rune(pattern)
+	valueRunes := []rune(value)
 	var patternIndex, valueIndex int
 	starIndex, starValueIndex := -1, -1
-	for valueIndex < len(value) {
+	for valueIndex < len(valueRunes) {
 		switch {
-		case patternIndex < len(pattern) && (pattern[patternIndex] == '?' || pattern[patternIndex] == value[valueIndex]):
+		case patternIndex < len(patternRunes) && (patternRunes[patternIndex] == '?' || patternRunes[patternIndex] == valueRunes[valueIndex]):
 			patternIndex++
 			valueIndex++
-		case patternIndex < len(pattern) && pattern[patternIndex] == '*':
+		case patternIndex < len(patternRunes) && patternRunes[patternIndex] == '*':
 			starIndex = patternIndex
 			starValueIndex = valueIndex
 			patternIndex++
@@ -36,10 +34,10 @@ func matchGlob(pattern, value string) bool {
 			return false
 		}
 	}
-	for patternIndex < len(pattern) && pattern[patternIndex] == '*' {
+	for patternIndex < len(patternRunes) && patternRunes[patternIndex] == '*' {
 		patternIndex++
 	}
-	return patternIndex == len(pattern)
+	return patternIndex == len(patternRunes)
 }
 
 func lowerHeaderName(value string) string {

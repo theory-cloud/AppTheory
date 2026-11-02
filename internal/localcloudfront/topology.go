@@ -1254,6 +1254,12 @@ func parseOriginAccessControl(stack, id string, resource Resource, index *resour
 		return nil, fmt.Errorf("%s/%s: %w", stack, id, err)
 	}
 	oac := &OriginAccessControl{LogicalID: index.qualified(stack, id), Stack: stack}
+	for _, key := range sortedKeys(properties) {
+		if key != "OriginAccessControlConfig" {
+			oac.Reported = append(oac.Reported,
+				fmt.Sprintf("origin access control property %q is not understood", key))
+		}
+	}
 	configRaw, ok := properties["OriginAccessControlConfig"]
 	if !ok {
 		oac.Reported = append(oac.Reported, "origin access control has no OriginAccessControlConfig")

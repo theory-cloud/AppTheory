@@ -237,6 +237,19 @@ func ManagedPolicyIDs(kind PolicyKind) []string {
 	return ids
 }
 
+func policyConfigKey(kind PolicyKind) string {
+	switch kind {
+	case PolicyCache:
+		return "CachePolicyConfig"
+	case PolicyOriginRequest:
+		return "OriginRequestPolicyConfig"
+	case PolicyResponseHeaders:
+		return "ResponseHeadersPolicyConfig"
+	default:
+		return ""
+	}
+}
+
 func policyKindForType(resourceType string) (PolicyKind, bool) {
 	switch resourceType {
 	case typeCachePolicy:
@@ -261,9 +274,16 @@ func parsePolicy(
 		return nil, fmt.Errorf("%s/%s: %w", stack, id, err)
 	}
 	policy := &Policy{Kind: kind, ID: index.qualified(stack, id), LogicalID: index.qualified(stack, id)}
+	configKey := policyConfigKey(kind)
+	for _, key := range sortedKeys(properties) {
+		if key != configKey {
+			policy.Refusals = append(policy.Refusals,
+				fmt.Sprintf("policy property %q is not understood", key))
+		}
+	}
 	switch kind {
 	case PolicyCache:
-		config, ok := properties["CachePolicyConfig"]
+		config, ok := properties[configKey]
 		if !ok {
 			policy.Refusals = append(policy.Refusals, "CachePolicyConfig is missing")
 			return policy, nil
@@ -274,7 +294,7 @@ func parsePolicy(
 			return nil, fmt.Errorf("%s/%s: %w", stack, id, err)
 		}
 	case PolicyOriginRequest:
-		config, ok := properties["OriginRequestPolicyConfig"]
+		config, ok := properties[configKey]
 		if !ok {
 			policy.Refusals = append(policy.Refusals, "OriginRequestPolicyConfig is missing")
 			return policy, nil
@@ -285,7 +305,7 @@ func parsePolicy(
 			return nil, fmt.Errorf("%s/%s: %w", stack, id, err)
 		}
 	case PolicyResponseHeaders:
-		config, ok := properties["ResponseHeadersPolicyConfig"]
+		config, ok := properties[configKey]
 		if !ok {
 			policy.Refusals = append(policy.Refusals, "ResponseHeadersPolicyConfig is missing")
 			return policy, nil

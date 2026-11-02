@@ -190,6 +190,9 @@ func (g *Gateway) originRequest(
 func addCloudFrontHeaders(header http.Header, rule forwardingRule, state *requestState) {
 	names := []string{"cloudfront-forwarded-proto", "cloudfront-viewer-address", "cloudfront-viewer-http-version"}
 	for _, name := range names {
+		if rule.Except[name] {
+			continue
+		}
 		if !rule.CloudFrontHeaders && !rule.Whitelist[name] {
 			continue
 		}
@@ -374,10 +377,13 @@ func corsOriginMatches(pattern, origin string) bool {
 	if scheme, rest, found := strings.Cut(origin, "://"); found && (scheme == "http" || scheme == "https") {
 		trimmed = rest
 	}
-	if host, _, found := strings.Cut(trimmed, ":"); found {
-		trimmed = host
+	if strings.Contains(pattern, ":") {
+		return matchGlob(pattern, trimmed)
 	}
-	return matchGlob(pattern, trimmed) || matchGlob(pattern, origin)
+	if strings.Contains(trimmed, ":") {
+		return false
+	}
+	return matchGlob(pattern, trimmed)
 }
 
 func applySecurityHeaders(config *SecurityHeaders, header http.Header) {

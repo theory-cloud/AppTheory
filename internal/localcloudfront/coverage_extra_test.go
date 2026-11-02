@@ -242,6 +242,12 @@ func TestGatewayCORSSuppressionAndMatching(t *testing.T) {
 	if corsOriginMatches("https://app.example", "https://app.example:8443") {
 		t.Fatal("an exact CORS origin must not match a different port")
 	}
+	if corsOriginMatches("example.org", "http://example.org:123") {
+		t.Fatal("a bare CORS origin pattern must not match a different port")
+	}
+	if !corsOriginMatches("example.org", "http://example.org") || !corsOriginMatches("http://example.org:*", "http://example.org:123") {
+		t.Fatal("documented CORS origin matches failed")
+	}
 }
 
 func TestGatewayLogsAndBodyLimit(t *testing.T) {
