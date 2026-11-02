@@ -31,6 +31,9 @@ func TestDocumentedCloudFrontPhaseOrder(t *testing.T) {
 		!strings.Contains(section, "not a CloudFront emulator: no caching, no edge network, no TLS") {
 		t.Fatalf("%s: the CloudFront section must carry the fidelity statement", document)
 	}
+	if !strings.Contains(section, "CloudFront does not document the relative order") {
+		t.Fatalf("%s: the AllowedMethods phase must state that CloudFront does not document the order", document)
+	}
 
 	gatewaySource, err := os.ReadFile("gateway.go") //nolint:gosec // checked-in source path
 	if err != nil {

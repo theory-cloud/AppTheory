@@ -90,6 +90,10 @@ func (g *Gateway) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		domainName = strings.ToLower(g.Distribution.LogicalID) + ".cloudfront.local"
 	}
 
+	// AWS documents the viewer-request trigger and the 403 (Invalid method)
+	// response separately, but not their relative order. The local gateway runs
+	// the function first by choice, so a function can answer a request whose
+	// method the behavior does not allow; see docs/examples/local-runner.md.
 	if behavior.ViewerRequestFunction != "" {
 		function, ok := g.function(behavior.ViewerRequestFunction)
 		if !ok {

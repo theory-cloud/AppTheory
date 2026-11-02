@@ -386,7 +386,14 @@ as CloudFront documents.
    runs before any origin dispatch. If it returns a response, that response is
    sent to the viewer and the origin is not called.
 2. `AllowedMethods` is enforced on the (unchanged) request method; a method the
-   behavior does not allow is a 403, as CloudFront returns.
+   behavior does not allow is a 403, the status CloudFront documents for an
+   invalid method. CloudFront does not document the relative order of the
+   [viewer-request trigger](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/cloudfront-functions.html)
+   and the [403 invalid-method response](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/http-403-invalid-method.html).
+   The local gateway runs the viewer-request function first by choice: a
+   function can answer a request whose method the behavior does not allow (a
+   CORS preflight or an authentication rejection) instead of being pre-empted by
+   the local 403.
 3. `DefaultRootObject` replaces a request for `/` with the declared object.
 4. The cache policy and the **origin request policy** decide which headers,
    cookies and query strings reach the origin. Managed policies are pinned by

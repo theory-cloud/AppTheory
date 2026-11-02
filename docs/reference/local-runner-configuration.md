@@ -329,7 +329,11 @@ function that changes the URI does not change the selected behavior.
 
 `AllowedMethods` is enforced after the viewer-request function. A method the
 behavior does not allow receives a 403 with a CloudFront-style error body and
-the origin is not called. `HEAD` is allowed whenever `GET` is.
+the origin is not called. `HEAD` is allowed whenever `GET` is. CloudFront
+documents the viewer-request trigger and the 403 (Invalid method) response
+separately, but not their relative order; running the function first is the
+local gateway's choice, so a function can answer a request whose method the
+behavior does not allow.
 
 ### Request phases
 
@@ -369,10 +373,12 @@ The event is version `1.0`:
 }
 ```
 
-Header names are lower-cased and a repeated name carries `multiValue`. The
-`Cookie` header is not part of `headers`; it is split into `cookies`. A
-viewer-response event adds `response` (`statusCode`, `statusDescription`,
-`headers`, `cookies`; no body). `distributionId` is a stable local placeholder
+Header names are lower-cased and a repeated name carries `multiValue`. An
+edited `multiValue` array is applied and its first entry replaces `value`; an
+edit to `value` alone is applied and the remaining `multiValue` entries stay
+unchanged, as CloudFront documents. The `Cookie` header is not part of
+`headers`; it is split into `cookies`. A viewer-response event adds `response`
+(`statusCode`, `statusDescription`, `headers`, `cookies`; no body). `distributionId` is a stable local placeholder
 derived from the distribution's logical id, and `distributionDomainName` is the
 loopback host the viewer used.
 

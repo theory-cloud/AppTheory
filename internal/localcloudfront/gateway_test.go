@@ -115,6 +115,27 @@ func TestGatewayRefusesDisallowedMethod(t *testing.T) {
 	}
 }
 
+func TestGatewayViewerRequestRunsBeforeAllowedMethods(t *testing.T) {
+	origin := okOrigin("origin")
+	code := `function handler(event) {
+		return { statusCode: 204, headers: {}, cookies: {} };
+	}`
+	function := testFunction(runtimeJS20, code)
+	function.LogicalID = "PreflightFunction"
+	behavior := testBehavior("*", "origin", []string{"GET", "HEAD"})
+	behavior.ViewerRequestFunction = function.LogicalID
+	distribution := testDistribution(behavior, nil, testOrigin("origin", "origin.example"))
+	topology := &Topology{Functions: []*Function{function}, functionsByID: map[string]*Function{function.LogicalID: function}}
+	gateway := NewGateway(distribution, topology, map[string]Origin{"origin": origin}, NewExecutor(), nil)
+	recorder := serveGateway(gateway, http.MethodOptions, "http://viewer.example/x", "", nil)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want the function's 204: the local gateway runs viewer-request before AllowedMethods", recorder.Code)
+	}
+	if len(origin.requests) != 0 {
+		t.Fatal("the short-circuit must not reach the origin")
+	}
+}
+
 func TestGatewayViewerRequestShortCircuitsTheOrigin(t *testing.T) {
 	origin := okOrigin("origin")
 	code := `function handler(event) {
