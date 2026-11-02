@@ -222,3 +222,8 @@ supplies dummy credentials and `--external` keeps it from starting a second
 container. The job does not need an AWS account, role or region. It also runs
 `make verify-cdk-synth-location-independent`, which re-synthesizes the examples
 from a copy under `$HOME` and requires every pinned hash to match again.
+
+The job runs on `ubuntu-24.04-arm`: the hello-world Go function deploys an arm64
+`provided.al2023` bootstrap, and the local runner runs the official image for
+the function's declared architecture. On an amd64 host the same function fails
+closed with a clear architecture error rather than silently emulating it.
