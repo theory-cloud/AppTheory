@@ -109,9 +109,9 @@ MCP_EXAMPLES = {
 }
 LOCAL_RUNNER_READY = "local-run: ready"
 LOCAL_RUNNER_CLOCK_START = "2026-01-01T00:00:00Z"
-# The delivery engine registers every derived source and reports its task until
-# the per-source deliverer lands. E1a ships the engine only, so every kind must
-# be visible and not-delivered; the assertion below is the real-path proof.
+# The delivery engine registers every derived source. E1b ships the SQS
+# deliverer, so a plan reports an SQS source as registered and a live session
+# polls it; every other kind still reports the task that will implement it.
 DELIVERY_TASKS = {
     "sqs": "E1b",
     "dynamodb": "E2",
@@ -120,6 +120,7 @@ DELIVERY_TASKS = {
     "eventbridge-rule": "E3",
     "cloudwatch-logs": "E5",
 }
+DELIVERED_KINDS = {"sqs"}
 DELIVERY_CONCURRENCY = 4
 LOCAL_RUNNER_RUNTIMES = {"go": "provided.al2023", "ts": "nodejs24.x", "py": "python3.14"}
 # The handler response each language returned, compared across languages once
@@ -1309,20 +1310,26 @@ def run_multilang(harness: Harness, lang: str) -> str:
 
 
 def _run_multilang_http(harness: Harness, lang: str) -> str:
-    run = start_local_app(harness, MULTILANG_APP, name=f"multilang-{lang}")
+    session = start_local_session(
+        harness,
+        MULTILANG_APP,
+        name=f"multilang-{lang}",
+        backends=("dynamodb", "sqs"),
+        clock=f"test={LOCAL_RUNNER_CLOCK_START}",
+    )
     try:
-        apis = run.spec.get("apis") or []
+        apis = session.spec.get("apis") or []
         http_apis = [api for api in apis if api.get("class") == "httpv2"]
         rest_apis = [api for api in apis if api.get("class") == "restv1"]
         if len(http_apis) != 3 or len(rest_apis) != 1:
             raise HarnessFailure(
                 f"multilang plan: want 3 HTTP APIs and 1 REST API, got {len(http_apis)}/{len(rest_apis)}"
             )
-        websocket = [item for item in run.spec.get("skipped") or [] if "WebSocket" in str(item.get("reason"))]
+        websocket = [item for item in session.spec.get("skipped") or [] if "WebSocket" in str(item.get("reason"))]
         if len(websocket) != 3:
             raise HarnessFailure(f"multilang plan: want 3 reported WebSocket APIs, got {websocket}")
 
-        http_base = api_url(run.spec, run, f"-{lang}")
+        http_base = session_api_url(session.spec, session, f"-{lang}")
         status, payload, _ = _json_request("GET", f"{http_base}/")
         expect_status(status, 200, f"multilang {lang} GET /", json.dumps(payload))
         if payload.get("lang") != lang or payload.get("ok") is not True or payload.get("tier") != "p2":
@@ -1346,7 +1353,7 @@ def _run_multilang_http(harness: Harness, lang: str) -> str:
         if "app.not_found" not in text:
             raise HarnessFailure(f"multilang {lang} GET /missing: unexpected refusal {text}")
 
-        rest_base = one_rest_url(run.spec, run)
+        rest_base = session_rest_url(session.spec, session)
         status, payload, _ = _json_request("GET", f"{rest_base}/hello/AppTheory")
         expect_status(status, 200, "multilang REST GET /hello/AppTheory", json.dumps(payload))
         if payload.get("message") != "hello AppTheory" or payload.get("lang") != "go":
@@ -1361,12 +1368,24 @@ def _run_multilang_http(harness: Harness, lang: str) -> str:
             raise HarnessFailure(f"multilang REST GET /sse: unexpected event ids {event_ids}")
         if '"seq":3' not in text:
             raise HarnessFailure("multilang REST GET /sse: the final sequence was not emitted", text)
+
+        function = _session_function_for_language(session, lang)
+        source = session.event_source(kind="sqs", function=function["logicalId"])
+        queue = session.resource(name=source["sourceName"], kind="AWS::SQS::Queue")
+        session.request(
+            "sqs.send", queue=queue["logicalId"], body=json.dumps({"event": "help", "payload": {"n": 1}})
+        )
+        state = _wait_for_delivery(session, source["logicalId"], delivered=1)
+        if state.get("failed"):
+            raise HarnessFailure(f"multilang {lang}: the SQS mapping failed: {state}")
+        _wait_for_queue_depth(session, queue["logicalId"], visible=0, not_visible=0)
         return (
             f"{lang} HTTP API served four assertions (200 root, 200 hello, 405 method, 404 missing); "
-            f"REST API served hello and all 3 buffered SSE events; 3 WebSocket APIs reported not served"
+            f"REST API served hello and all 3 buffered SSE events; 3 WebSocket APIs reported not served; "
+            f"the CDK SQS mapping delivered one real ElasticMQ message to the {lang} handler and deleted it"
         )
     finally:
-        stop_local_app(harness, run)
+        stop_local_session(harness, session)
 
 
 def one_rest_url(spec: dict, run: LocalAppRun) -> str:
@@ -1437,56 +1456,41 @@ def run_lesser_parity(harness: Harness, kind: str) -> str:
 
 
 def _run_lesser_parity_worker(harness: Harness) -> str:
-    event = {
-        "Records": [
-            {
-                "messageId": "a3b-valid",
-                "receiptHandle": "a3b-receipt-1",
-                "body": json.dumps({"ok": True}),
-                "attributes": {
-                    "ApproximateReceiveCount": "1",
-                    "SentTimestamp": "1793610000000",
-                    "SenderId": "dummy",
-                    "ApproximateFirstReceiveTimestamp": "1793610000000",
-                },
-                "messageAttributes": {},
-                "md5OfBody": "0",
-                "eventSource": "aws:sqs",
-                "eventSourceARN": "arn:aws:sqs:us-east-1:123456789012:lesser-parity-events",
-                "awsRegion": "us-east-1",
-            },
-            {
-                "messageId": "a3b-invalid",
-                "receiptHandle": "a3b-receipt-2",
-                "body": "not-json",
-                "attributes": {
-                    "ApproximateReceiveCount": "1",
-                    "SentTimestamp": "1793610000000",
-                    "SenderId": "dummy",
-                    "ApproximateFirstReceiveTimestamp": "1793610000000",
-                },
-                "messageAttributes": {},
-                "md5OfBody": "0",
-                "eventSource": "aws:sqs",
-                "eventSourceARN": "arn:aws:sqs:us-east-1:123456789012:lesser-parity-events",
-                "awsRegion": "us-east-1",
-            },
-        ]
-    }
-    decoded, _ = invoke_local_function(
+    session = start_local_session(
         harness,
-        app=LESSER_PARITY_APP,
-        function="WorkerFn847949AF",
-        event=event,
+        LESSER_PARITY_APP,
         name="lesser-worker",
+        backends=("dynamodb", "sqs"),
+        clock=f"test={LOCAL_RUNNER_CLOCK_START}",
     )
-    if decoded.get("proxy"):
-        raise HarnessFailure(f"lesser-parity worker: unexpected proxy response {decoded}")
-    raw = decoded.get("raw") or {}
-    failures = raw.get("batchItemFailures") or []
-    if failures != [{"itemIdentifier": "a3b-invalid"}]:
-        raise HarnessFailure(f"lesser-parity worker: unexpected partial failures {failures}")
-    return "generated SQS batch processed; the invalid record was returned as a partial batch failure"
+    try:
+        source = session.event_source(kind="sqs", source_name="lesser-parity-events")
+        if not source.get("reportBatchItemFailures"):
+            raise HarnessFailure(f"lesser-parity worker: mapping lost reportBatchItemFailures: {source}")
+        queue = session.resource(name="lesser-parity-events", kind="AWS::SQS::Queue")
+        session.request(
+            "sqs.send", queue=queue["logicalId"], body=json.dumps({"ok": True, "kind": "valid"})
+        )
+        invalid = session.request("sqs.send", queue=queue["logicalId"], body="not-json")
+        _advance_until(
+            session,
+            lambda delivery: _source_count(delivery, source["logicalId"], "delivered") >= 1,
+            step="5s",
+            label="lesser-parity worker batching window",
+        )
+        # The handler reports only the unparseable record, so exactly one
+        # message is left undeleted: the invalid one.
+        _wait_for_queue_depth(session, queue["logicalId"], visible=0, not_visible=1)
+        state = _delivery_source_state(session, source["logicalId"])
+        if state and int(state.get("failed", 0)) != 0:
+            raise HarnessFailure(f"lesser-parity worker: a partial batch response counted as a failure: {state}")
+        return (
+            "two real ElasticMQ messages were delivered as the CDK mapping's batch; the handler returned "
+            f"{invalid['messageId']} as its only partial failure, so exactly the invalid message stayed in "
+            "the queue and the valid one was deleted"
+        )
+    finally:
+        stop_local_session(harness, session)
 
 
 def run_restv1(harness: Harness, kind: str) -> str:
@@ -2165,6 +2169,7 @@ class LocalAppRun:
 
 
 def plan_local_app(harness: Harness, app: str, context: dict | None = None) -> dict:
+    ensure_cdk_app(harness, app)
     argv = [
         str(LOCAL_RUNNER_BIN),
         "plan",
@@ -2230,26 +2235,62 @@ def _assert_plan_delivery(plan: dict, app: str) -> None:
         entry = by_id[logical_id]
         if entry.get("kind") != kind:
             raise HarnessFailure(f"{app}: {logical_id} delivery kind {entry.get('kind')!r} != {kind!r}")
-        if entry.get("state") != "not-delivered":
-            raise HarnessFailure(f"{app}: {logical_id} is {entry.get('state')!r}, want not-delivered")
-        if entry.get("task") != DELIVERY_TASKS[kind]:
-            raise HarnessFailure(
-                f"{app}: {logical_id} delivery task {entry.get('task')!r} != {DELIVERY_TASKS[kind]!r}"
-            )
-        reason = str(entry.get("reason") or "")
-        if not reason.startswith("engine present; "):
-            raise HarnessFailure(f"{app}: {logical_id} has no engine reason: {reason!r}")
+        if kind in DELIVERED_KINDS:
+            if entry.get("state") != "registered":
+                raise HarnessFailure(f"{app}: {logical_id} is {entry.get('state')!r}, want registered")
+            if entry.get("task") or entry.get("reason"):
+                raise HarnessFailure(f"{app}: {logical_id} is registered but still names a task: {entry!r}")
+        else:
+            if entry.get("state") != "not-delivered":
+                raise HarnessFailure(f"{app}: {logical_id} is {entry.get('state')!r}, want not-delivered")
+            if entry.get("task") != DELIVERY_TASKS[kind]:
+                raise HarnessFailure(
+                    f"{app}: {logical_id} delivery task {entry.get('task')!r} != {DELIVERY_TASKS[kind]!r}"
+                )
+            reason = str(entry.get("reason") or "")
+            if not reason.startswith("engine present; "):
+                raise HarnessFailure(f"{app}: {logical_id} has no engine reason: {reason!r}")
         if function and entry.get("function") != function:
             raise HarnessFailure(
                 f"{app}: {logical_id} delivery function {entry.get('function')!r} != {function!r}"
             )
 
 
-def _assert_session_delivery(session: "LocalSession") -> None:
-    """A live session must report the engine state for every derived source."""
-    delivery = session.info.get("delivery") or {}
+def _describe_delivery(session: "LocalSession") -> dict:
+    described = session.request("describe")
+    session.info = described
+    delivery = described.get("delivery") or {}
     if not isinstance(delivery, dict):
         raise HarnessFailure(f"session {session.prefix}: describe has no delivery object: {delivery!r}")
+    return delivery
+
+
+def _assert_session_delivery(session: "LocalSession") -> None:
+    """A live session must report the engine state for every derived source.
+
+    An SQS source with its backend running must reach ``polling``; without the
+    backend it reports ``failed`` with the closed-backend reason. Every other
+    kind stays ``not-delivered`` and names its task.
+    """
+    expected = _expected_delivery_entries(session.spec)
+    expected_by_id = {logical_id: (kind, function) for logical_id, kind, function in expected}
+    sqs_backend = "sqs" in session.backends
+    deadline = time.monotonic() + 60
+    while True:
+        delivery = _describe_delivery(session)
+        states = {source.get("id"): source for source in delivery.get("sources") or []}
+        settled = True
+        for logical_id, (kind, _) in expected_by_id.items():
+            if kind != "sqs":
+                continue
+            state = str((states.get(logical_id) or {}).get("state") or "")
+            if state == "registered" or (sqs_backend and state not in ("polling", "paused")):
+                settled = False
+            if not sqs_backend and state not in ("failed", "paused"):
+                settled = False
+        if settled or time.monotonic() >= deadline:
+            break
+        time.sleep(0.1)
     if delivery.get("running") is not True:
         raise HarnessFailure(f"session {session.prefix}: the delivery engine is not running")
     if delivery.get("concurrency") != DELIVERY_CONCURRENCY:
@@ -2261,21 +2302,37 @@ def _assert_session_delivery(session: "LocalSession") -> None:
         raise HarnessFailure(
             f"session {session.prefix}: delivery clock mode {clock.get('mode')!r} != {session.clock_mode!r}"
         )
-    expected = {logical_id for logical_id, _, _ in _expected_delivery_entries(session.spec)}
     sources = delivery.get("sources") or []
-    if {source.get("id") for source in sources} != expected:
+    if {source.get("id") for source in sources} != set(expected_by_id):
         raise HarnessFailure(
             f"session {session.prefix}: delivery sources {[source.get('id') for source in sources]} "
-            f"do not match the plan's derived sources {sorted(expected)}"
+            f"do not match the plan's derived sources {sorted(expected_by_id)}"
         )
     for source in sources:
+        logical_id = str(source.get("id"))
+        kind, _ = expected_by_id[logical_id]
+        if kind in DELIVERED_KINDS:
+            state = str(source.get("state") or "")
+            if sqs_backend and state not in ("polling", "paused", "failed"):
+                raise HarnessFailure(
+                    f"session {session.prefix}: {logical_id} never started polling (state {state!r})"
+                )
+            if not sqs_backend and state not in ("failed", "paused"):
+                raise HarnessFailure(
+                    f"session {session.prefix}: {logical_id} without its backend must report failed, got {state!r}"
+                )
+            if source.get("task") or source.get("reason"):
+                raise HarnessFailure(f"session {session.prefix}: {logical_id} still names a task: {source}")
+            if "inflight" not in source or "peakInflight" not in source:
+                raise HarnessFailure(f"session {session.prefix}: {logical_id} has no live in-flight count: {source}")
+            continue
         if source.get("state") != "not-delivered":
             raise HarnessFailure(
-                f"session {session.prefix}: {source.get('id')} is {source.get('state')!r}, want not-delivered"
+                f"session {session.prefix}: {logical_id} is {source.get('state')!r}, want not-delivered"
             )
         if not source.get("task") or not str(source.get("reason") or "").startswith("engine present; "):
             raise HarnessFailure(
-                f"session {session.prefix}: {source.get('id')} does not name its delivery task: {source}"
+                f"session {session.prefix}: {logical_id} does not name its delivery task: {source}"
             )
     now = session.clock_now()
     if now.get("mode") != session.clock_mode:
@@ -2363,6 +2420,7 @@ class LocalSession:
     info: dict
     clock_mode: str = "real"
     clock_start: str | None = None
+    backends: tuple[str, ...] = ()
 
     def clock_now(self) -> dict:
         return self.request("clock.now")
@@ -2505,6 +2563,7 @@ def start_local_session(
             info={},
             clock_mode=clock_mode,
             clock_start=clock_start,
+            backends=tuple(backends),
         )
         session.info = session.request("describe")
         _assert_session_delivery(session)
@@ -2596,6 +2655,123 @@ def stop_local_app(harness: Harness, run: LocalAppRun) -> str:
     return output
 
 
+def _delivery_source_state(session: LocalSession, logical_id: str) -> dict | None:
+    for source in (_describe_delivery(session).get("sources") or []):
+        if source.get("id") == logical_id:
+            return source
+    return None
+
+
+def _source_count(delivery: dict, logical_id: str, field: str) -> int:
+    for source in delivery.get("sources") or []:
+        if source.get("id") == logical_id:
+            return int(source.get(field, 0))
+    return 0
+
+
+def _wait_for_delivery(
+    session: LocalSession,
+    logical_id: str,
+    *,
+    delivered: int | None = None,
+    failed: int | None = None,
+    timeout: float = 180,
+) -> dict:
+    """Wait until one source's delivered/failed counters reach a floor."""
+    deadline = time.monotonic() + timeout
+    last: dict | None = None
+    while time.monotonic() < deadline:
+        last = _delivery_source_state(session, logical_id)
+        if last is not None:
+            if (delivered is None or last.get("delivered", 0) >= delivered) and (
+                failed is None or last.get("failed", 0) >= failed
+            ):
+                return last
+        time.sleep(0.1)
+    raise HarnessFailure(
+        f"{logical_id} never reached delivered={delivered} failed={failed}; last state {last}"
+    )
+
+
+def _queue_depth(session: LocalSession, logical_id: str) -> tuple[int, int]:
+    """Return (visible, notVisible) for one provisioned queue."""
+    attributes = session.request("sqs.attributes", queue=logical_id)
+    return int(attributes.get("visible", 0)), int(attributes.get("notVisible", 0))
+
+
+def _wait_for_queue_depth(
+    session: LocalSession,
+    logical_id: str,
+    *,
+    visible: int,
+    not_visible: int,
+    timeout: float = 120,
+) -> None:
+    deadline = time.monotonic() + timeout
+    last: tuple[int, int] | None = None
+    while time.monotonic() < deadline:
+        last = _queue_depth(session, logical_id)
+        if last == (visible, not_visible):
+            return
+        time.sleep(0.1)
+    raise HarnessFailure(
+        f"queue {logical_id} never reached visible={visible} notVisible={not_visible}; last {last}"
+    )
+
+
+def _wait_for_queue_total(
+    session: LocalSession, logical_id: str, *, total: int, timeout: float = 120
+) -> tuple[int, int]:
+    deadline = time.monotonic() + timeout
+    last: tuple[int, int] | None = None
+    while time.monotonic() < deadline:
+        last = _queue_depth(session, logical_id)
+        if last[0] + last[1] == total:
+            return last
+        time.sleep(0.1)
+    raise HarnessFailure(f"queue {logical_id} never held {total} message(s); last {last}")
+
+
+def _advance_until(
+    session: LocalSession,
+    predicate: Callable[[dict], bool],
+    *,
+    step: str,
+    label: str,
+    attempts: int = 12,
+) -> dict:
+    """Advance a test clock until a delivery predicate holds.
+
+    A batching window or a visibility deadline is a timer on the run clock, so
+    a test session must move the clock to close it. Repeating the advance also
+    covers the receive/handler race: the deliverer may register a timer just
+    after an earlier advance.
+    """
+    last: dict | None = None
+    for _ in range(attempts):
+        session.clock_advance(step)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            last = _describe_delivery(session)
+            if predicate(last):
+                return last
+            time.sleep(0.1)
+    raise HarnessFailure(f"{label}: the clock did not reach the expected delivery state; last {last}")
+
+
+def _wait_for_peak_inflight(
+    session: LocalSession, logical_id: str, *, at_least: int, timeout: float = 120
+) -> dict:
+    deadline = time.monotonic() + timeout
+    last: dict | None = None
+    while time.monotonic() < deadline:
+        last = _delivery_source_state(session, logical_id)
+        if last is not None and last.get("peakInflight", 0) >= at_least:
+            return last
+        time.sleep(0.05)
+    raise HarnessFailure(f"{logical_id} never reached peakInflight>={at_least}; last {last}")
+
+
 def _terminate_process(process: subprocess.Popen, seconds: int = 180) -> str:
     if process.poll() is None:
         process.terminate()
@@ -2646,6 +2822,39 @@ def api_url(spec: dict, run: LocalAppRun, name_suffix: str) -> str:
     raise HarnessFailure(
         f"plan has no {name_suffix!r} API; apis={[api.get('name') for api in spec.get('apis') or []]}"
     )
+
+
+def _session_served_apis(session: "LocalSession") -> dict[str, str]:
+    return {
+        str(entry.get("logicalId")): str(entry.get("url"))
+        for entry in session.info.get("apis") or []
+        if entry.get("url")
+    }
+
+
+def session_api_url(spec: dict, session: "LocalSession", name_suffix: str) -> str:
+    """Find a session listener by the API's template name suffix."""
+    served = _session_served_apis(session)
+    for api in spec.get("apis") or []:
+        name = str(api.get("name") or "")
+        if name.endswith(name_suffix):
+            logical_id = str(api.get("logicalId"))
+            if logical_id in served:
+                return served[logical_id]
+    raise HarnessFailure(
+        f"plan has no {name_suffix!r} API; apis={[api.get('name') for api in spec.get('apis') or []]}"
+    )
+
+
+def session_rest_url(spec: dict, session: "LocalSession") -> str:
+    served = _session_served_apis(session)
+    rest = [api for api in spec.get("apis") or [] if api.get("class") == "restv1"]
+    if len(rest) != 1:
+        raise HarnessFailure(f"want exactly one REST API, plan has {len(rest)}")
+    logical_id = str(rest[0].get("logicalId"))
+    if logical_id not in served:
+        raise HarnessFailure(f"the runner did not serve {logical_id}: {served}")
+    return served[logical_id]
 
 
 def one_api_url(spec: dict, run: LocalAppRun) -> str:
@@ -2864,6 +3073,7 @@ def run_sqs_producer(harness: Harness) -> str:
     )
     try:
         queue = session.resource(name="contract-events", kind="AWS::SQS::Queue")
+        source = session.event_source(kind="sqs", source_name="contract-events")
         event = {
             "version": "2.0",
             "routeKey": "POST /",
@@ -2877,24 +3087,13 @@ def run_sqs_producer(harness: Harness) -> str:
         body = _require_proxy(result, "sqs producer")
         if body.get("message") != "Message sent to queue" or not body.get("messageId"):
             raise HarnessFailure(f"sqs producer: unexpected response {body}")
-        messages = session.request(
-            "sqs.receive", queue=queue["logicalId"], max=1, waitSeconds=5, visibilitySeconds=30
-        )["messages"]
-        if len(messages) != 1:
-            raise HarnessFailure(f"sqs producer: want one message in contract-events, got {messages}")
-        message = messages[0]
-        received = json.loads(message["body"])
-        if received.get("eventType") != "a4-producer" or received.get("payload") != {"n": 1}:
-            raise HarnessFailure(f"sqs producer: unexpected message body {received}")
-        if not received.get("timestamp"):
-            raise HarnessFailure("sqs producer: the message has no timestamp")
-        if message["messageId"] != body["messageId"]:
-            raise HarnessFailure(
-                f"sqs producer: response id {body['messageId']} != received id {message['messageId']}"
-            )
+        state = _wait_for_delivery(session, source["logicalId"], delivered=1)
+        if state.get("failed"):
+            raise HarnessFailure(f"sqs producer: the mapping failed: {state}")
+        _wait_for_queue_depth(session, queue["logicalId"], visible=0, not_visible=0)
         return (
-            "producer.mjs sent through the real SQS client to ElasticMQ; the received message body "
-            "matched eventType/payload/timestamp and the producer's messageId"
+            "producer.mjs sent through the real SQS client to ElasticMQ; the CDK ContractConsumer "
+            "mapping delivered the message to worker.handler and deleted it (delivered=1, queue empty)"
         )
     finally:
         stop_local_session(harness, session)
@@ -2932,72 +3131,146 @@ def run_sqs_worker(harness: Harness) -> str:
         source = session.event_source(kind="sqs", source_name="events-queue")
         if not source.get("reportBatchItemFailures"):
             raise HarnessFailure(f"events-queue mapping lost reportBatchItemFailures: {source}")
+        if source.get("batchSize") != 100 or source.get("maximumBatchingWindowInSeconds") != 10:
+            raise HarnessFailure(f"events-queue mapping lost its batch options: {source}")
+        if source.get("maximumConcurrency") != 50:
+            raise HarnessFailure(f"events-queue mapping lost ScalingConfig: {source}")
         queue = session.resource(name="events-queue", kind="AWS::SQS::Queue")
         valid = session.request("sqs.send", queue=queue["logicalId"], body=json.dumps({"shouldFail": False, "n": 1}))
         invalid = session.request("sqs.send", queue=queue["logicalId"], body=json.dumps({"shouldFail": True, "n": 2}))
-        batch = session.request(
-            "sqs.event", queue=queue["logicalId"], max=2, waitSeconds=5, visibilitySeconds=30, delete=True
+        _advance_until(
+            session,
+            lambda delivery: _source_count(delivery, source["logicalId"], "delivered") >= 1,
+            step="10s",
+            label="events-queue batching window",
         )
-        event = batch["event"]
-        if len(event.get("Records") or []) != 2:
-            raise HarnessFailure(f"sqs worker: want a two-record batch, got {event}")
-        bodies = sorted(json.loads(record["body"])["n"] for record in event["Records"])
-        if bodies != [1, 2]:
-            raise HarnessFailure(f"sqs worker: unexpected batch bodies {bodies}")
-        result = session.invoke(source["function"], event)
-        failures = _batch_failures(result)
-        if failures != [{"itemIdentifier": invalid["messageId"]}]:
-            raise HarnessFailure(
-                f"sqs worker: expected only {invalid['messageId']} to fail, got {failures}"
+        if valid["messageId"] == invalid["messageId"]:
+            raise HarnessFailure("sqs worker: SendMessage returned the same id twice")
+        # The successful record is deleted; the failed one is hidden for the
+        # queue's five-minute visibility timeout.
+        _wait_for_queue_depth(session, queue["logicalId"], visible=0, not_visible=1)
+        state = _advance_until(
+            session,
+            lambda delivery: _source_count(delivery, source["logicalId"], "delivered") >= 2,
+            step="300s",
+            label="events-queue visibility redelivery",
+        )
+        if int(state.get("failed", 0)) != 0:
+            raise HarnessFailure(f"sqs worker: a partial batch response was counted as a failed invocation: {state}")
+        _wait_for_queue_depth(session, queue["logicalId"], visible=0, not_visible=1)
+
+        filtered = session.event_source(kind="sqs", source_name="filtered-events")
+        filtered_queue = session.resource(name="filtered-events", kind="AWS::SQS::Queue")
+        session.request("sqs.send", queue=filtered_queue["logicalId"], body=json.dumps({"kind": "keep"}))
+        session.request("sqs.send", queue=filtered_queue["logicalId"], body=json.dumps({"kind": "drop"}))
+        _wait_for_delivery(session, filtered["logicalId"], delivered=1)
+        _wait_for_queue_depth(session, filtered_queue["logicalId"], visible=0, not_visible=0)
+
+        fifo = session.event_source(kind="sqs", source_name="fifo-events.fifo")
+        fifo_queue = session.resource(name="fifo-events.fifo", kind="AWS::SQS::Queue")
+        session.request(
+            "sqs.send",
+            queue=fifo_queue["logicalId"],
+            body=json.dumps({"shouldFail": True, "n": 1}),
+            messageGroupId="gA",
+            messageDeduplicationId="fifo-1",
+        )
+        session.request(
+            "sqs.send",
+            queue=fifo_queue["logicalId"],
+            body=json.dumps({"shouldFail": False, "n": 2}),
+            messageGroupId="gA",
+            messageDeduplicationId="fifo-2",
+        )
+        session.request(
+            "sqs.send",
+            queue=fifo_queue["logicalId"],
+            body=json.dumps({"shouldFail": False, "n": 3}),
+            messageGroupId="gB",
+            messageDeduplicationId="fifo-3",
+        )
+        # The first record's failure blocks its group: the failed record and
+        # the record behind it stay (one may still be visible behind the
+        # blocked group), while the independent group is deleted. The split
+        # between batches is timing, the invariant is the two-message group.
+        state = _wait_for_delivery(session, fifo["logicalId"], delivered=1)
+        _wait_for_queue_total(session, fifo_queue["logicalId"], total=2)
+        before = int(state.get("delivered", 0))
+        state = _advance_until(
+            session,
+            lambda delivery: _source_count(delivery, fifo["logicalId"], "delivered") > before,
+            step="300s",
+            label="fifo group visibility redelivery",
+        )
+        _wait_for_queue_total(session, fifo_queue["logicalId"], total=2)
+
+        concurrency = session.event_source(kind="sqs", source_name="concurrency-events")
+        concurrency_queue = session.resource(name="concurrency-events", kind="AWS::SQS::Queue")
+        for index in range(4):
+            session.request(
+                "sqs.send",
+                queue=concurrency_queue["logicalId"],
+                body=json.dumps({"delayMs": 400, "n": index}),
             )
-        if valid["messageId"] in json.dumps(failures):
-            raise HarnessFailure("sqs worker: the valid message was reported as a failure")
+        state = _wait_for_peak_inflight(session, concurrency["logicalId"], at_least=2)
+        if state.get("peakInflight", 0) > 2:
+            raise HarnessFailure(f"sqs worker: MaximumConcurrency=2 was exceeded: {state}")
+        _wait_for_delivery(session, concurrency["logicalId"], delivered=4)
+        _wait_for_queue_depth(session, concurrency_queue["logicalId"], visible=0, not_visible=0)
+
         return (
-            "two messages were received from ElasticMQ and invoked as the CDK mapping's batch; "
-            "worker.mjs reported exactly the simulated failure as a partial batch failure; "
-            "the test clock advanced 90m and the delivery engine reported the new instant"
+            "events-queue: a two-record batch closed on the 10s window, the valid record was deleted, "
+            "the failed record stayed hidden and was redelivered on the 300s test-clock timeout; "
+            "filtered-events deleted the non-matching record without invocation; "
+            "fifo-events kept the failed group's records and deleted the other group; "
+            "concurrency-events peaked at 2 in-flight batches under MaximumConcurrency=2"
         )
     finally:
         stop_local_session(harness, session)
 
 
 def run_sqs_dlq(harness: Harness) -> str:
-    session = start_local_session(harness, SQS_APP, name="sqs-dlq", backends=("sqs",))
+    session = start_local_session(
+        harness,
+        SQS_APP,
+        name="sqs-dlq",
+        backends=("sqs",),
+        clock=f"test={LOCAL_RUNNER_CLOCK_START}",
+    )
     try:
+        source = session.event_source(kind="sqs", source_name="events-queue")
         dead_source = session.event_source(kind="sqs", source_name="events-queue-dlq")
         queue = session.resource(name="events-queue", kind="AWS::SQS::Queue")
         dead_queue = session.resource(name="events-queue-dlq", kind="AWS::SQS::Queue")
         body = json.dumps({"shouldFail": True, "dlq": True})
         session.request("sqs.send", queue=queue["logicalId"], body=body)
-        for _ in range(6):
-            received = session.request(
-                "sqs.receive", queue=queue["logicalId"], max=1, visibilitySeconds=1
-            )["messages"]
-            if received:
-                if json.loads(received[0]["body"]).get("dlq") is not True:
-                    raise HarnessFailure(f"sqs dlq: unexpected main-queue body {received[0]}")
-                time.sleep(1.2)
-        moved = []
-        for _ in range(6):
-            moved = session.request(
-                "sqs.receive", queue=dead_queue["logicalId"], max=1, waitSeconds=1, visibilitySeconds=30
-            )["messages"]
-            if moved:
-                break
-            time.sleep(1)
-        if not moved:
-            raise HarnessFailure("sqs dlq: the message was not redriven to events-queue-dlq after maxReceiveCount")
-        if json.loads(moved[0]["body"]).get("dlq") is not True:
-            raise HarnessFailure(f"sqs dlq: unexpected dead-letter body {moved[0]}")
-        batch = session.request(
-            "sqs.event", queue=dead_queue["logicalId"], max=1, waitSeconds=5, visibilitySeconds=30, delete=True
+        _advance_until(
+            session,
+            lambda delivery: _source_count(delivery, source["logicalId"], "left") >= 1,
+            step="10s",
+            label="events-queue first failing delivery",
         )
-        result = session.invoke(dead_source["function"], batch["event"])
-        if _batch_failures(result) != []:
-            raise HarnessFailure(f"sqs dlq: handler did not acknowledge the record: {result}")
+        for receive in range(2, 6):
+            _advance_until(
+                session,
+                lambda delivery, receive=receive: _source_count(delivery, source["logicalId"], "left") >= receive,
+                step="300s",
+                label=f"events-queue receive {receive}",
+            )
+        _advance_until(
+            session,
+            lambda delivery: _source_count(delivery, dead_source["logicalId"], "delivered") >= 1,
+            step="300s",
+            label="dead-letter mapping delivery after maxReceiveCount",
+        )
+        _wait_for_queue_depth(session, queue["logicalId"], visible=0, not_visible=0)
+        _wait_for_queue_depth(session, dead_queue["logicalId"], visible=0, not_visible=0)
+        state = _delivery_source_state(session, source["logicalId"])
+        if not state or int(state.get("left", 0)) != 5:
+            raise HarnessFailure(f"sqs dlq: want five records left before redrive, got {state}")
         return (
-            "events-queue redrove the failing message to events-queue-dlq after maxReceiveCount=5; "
-            "dlq-handler.mjs was invoked with the message actually read from the DLQ and acknowledged it"
+            "events-queue failed the real message five times on the test clock; ElasticMQ redrove it to "
+            "events-queue-dlq and the DLQ mapping delivered it to dlq-handler.mjs, which deleted it"
         )
     finally:
         stop_local_session(harness, session)
@@ -3024,6 +3297,7 @@ def _run_import(harness: Harness, kind: str) -> tuple[dict, str]:
         ingest, worker_source = _import_functions(session)
         bucket = session.resource(logical_prefix="IngestBucket", kind="AWS::S3::Bucket")
         table = session.resource(logical_prefix="JobsTable", kind="AWS::DynamoDB::Table")
+        worker_queue = session.resource(name="import-records", kind="AWS::SQS::Queue")
         key = "incoming/orders/a4.json"
         content = json.dumps({"order": 42, "source": "local"})
         session.request("s3.put", bucket=bucket["logicalId"], objectKey=key, body=content)
@@ -3043,22 +3317,13 @@ def _run_import(harness: Harness, kind: str) -> tuple[dict, str]:
         expected = hashlib.sha256((bucket["name"] + "/" + key).encode()).hexdigest()
         if job_id != expected:
             raise HarnessFailure(f"import {kind}: job id {job_id} != {expected}")
-        batch = session.request(
-            "sqs.event",
-            queue=worker_source["source"],
-            max=3,
-            waitSeconds=5,
-            visibilitySeconds=30,
-            delete=True,
-        )
-        messages = batch["messages"]
-        if len(messages) != 3:
-            raise HarnessFailure(f"import {kind}: want three work messages, got {messages}")
-        bodies = sorted(json.loads(message["body"])["record_id"] for message in messages)
-        if bodies != ["rec-1", "rec-2", "rec-3"]:
-            raise HarnessFailure(f"import {kind}: unexpected record ids {bodies}")
-        if any(json.loads(message["body"])["job_id"] != job_id for message in messages):
-            raise HarnessFailure(f"import {kind}: a work message lost the ingest job id")
+        # The WorkConsumer mapping delivers the three real messages to the
+        # worker automatically. Wait until they are all deleted, which only
+        # happens after a successful handler invocation.
+        state = _wait_for_delivery(session, worker_source["logicalId"], delivered=1)
+        if state.get("failed"):
+            raise HarnessFailure(f"import {kind}: the worker mapping failed: {state}")
+        _wait_for_queue_depth(session, worker_queue["logicalId"], visible=0, not_visible=0)
         if kind == "ingest":
             items = session.request("ddb.scan", table=table["logicalId"])["items"]
             meta = [item for item in items if item.get("pk") == f"JOB#{job_id}" and item.get("sk") == "META"]
@@ -3067,11 +3332,9 @@ def _run_import(harness: Harness, kind: str) -> tuple[dict, str]:
             return (
                 ingest["logicalId"],
                 "ingest ran on DynamoDB Local and ElasticMQ: a real s3proxy object produced a job id, "
-                "the META record was RUNNING, and three work messages carried that job id",
+                "the META record was RUNNING, and the WorkConsumer mapping delivered and deleted the "
+                "three real work messages",
             )
-        result = session.invoke(worker_source["function"], batch["event"])
-        if _batch_failures(result) != []:
-            raise HarnessFailure(f"import worker: unexpected partial failure {result}")
         items = session.request("ddb.scan", table=table["logicalId"])["items"]
         records = {item.get("sk"): item for item in items if str(item.get("sk", "")).startswith("REC#")}
         for record_id in ("rec-1", "rec-2"):
@@ -3090,8 +3353,9 @@ def _run_import(harness: Harness, kind: str) -> tuple[dict, str]:
             raise HarnessFailure(f"import worker: job meta missing: {meta}")
         return (
             worker_source["function"],
-            "ingest and worker ran end to end on DynamoDB Local and ElasticMQ: three real messages were "
-            "processed, rec-1/rec-2 SUCCEEDED, rec-3 FAILED with a sanitized error, and the raw PAN was absent",
+            "ingest and worker ran end to end on DynamoDB Local and ElasticMQ: the WorkConsumer mapping "
+            "delivered three real messages, rec-1/rec-2 SUCCEEDED, rec-3 FAILED with a sanitized error, "
+            "and the raw PAN was absent",
         )
     finally:
         stop_local_session(harness, session)
@@ -3433,27 +3697,14 @@ def run_microvm_conformance(harness: Harness) -> str:
 
 def _run_multilang_go_events(harness: Harness) -> str:
     session = start_local_session(
-        harness, MULTILANG_APP, name="multilang-go-events", backends=("dynamodb", "sqs")
+        harness, MULTILANG_APP, name="multilang-go-events", backends=("dynamodb",)
     )
     try:
         go_function = _session_function_for_language(session, "go")
         go_id = go_function["logicalId"]
-        sqs_source = session.event_source(kind="sqs", function=go_id)
         ddb_source = session.event_source(kind="dynamodb", function=go_id)
         schedule_rule = session.rule(function=go_id, schedule=True)
         pattern_rule = session.rule(function=go_id, schedule=False)
-        session.request(
-            "sqs.send", queue=sqs_source["source"], body=json.dumps({"event": "help", "payload": {"n": 1}})
-        )
-        batch = session.request(
-            "sqs.event", queue=sqs_source["source"], max=1, waitSeconds=5, visibilitySeconds=30, delete=True
-        )
-        if len(batch["event"].get("Records") or []) != 1:
-            raise HarnessFailure(f"multilang go: unexpected SQS event {batch['event']}")
-        result = session.invoke(go_id, batch["event"])
-        if _batch_failures(result) != []:
-            raise HarnessFailure(f"multilang go: SQS handler failed {result}")
-
         session.request(
             "ddb.put", table=ddb_source["source"], item={"pk": "a4-item", "value": "stored-value"}
         )
@@ -3485,8 +3736,8 @@ def _run_multilang_go_events(harness: Harness) -> str:
         ):
             raise HarnessFailure(f"multilang go: rule handler failed {result}")
         return (
-            "the Go handler answered SQS, a DynamoDB stream record built from a real local write, "
-            "and both the scheduled and pattern EventBridge events"
+            "the Go handler answered a DynamoDB stream record built from a real local write and both "
+            "the scheduled and pattern EventBridge events"
         )
     finally:
         stop_local_session(harness, session)
