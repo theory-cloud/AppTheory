@@ -507,8 +507,24 @@ func eventPatternMatches(pattern, value any) bool {
 // read here, because EventBridge reads one only from an object inside a rule
 // list; see matchFilterRule.
 //
+// When the value is an array, event-ruler crushes the array structure out and
+// applies the pattern object to each element, so the pattern matches when any
+// element matches. The object is applied to one element at a time, so a
+// multi-key pattern object never matches across elements: values from different
+// elements are never combined. An empty array, an array of scalars, and a
+// scalar match nothing. Recursing here also crushes out nested arrays.
+// https://github.com/aws/event-ruler#json-array-matching
+//
 // https://docs.aws.amazon.com/lambda/latest/dg/invocation-eventfiltering.html
 func matchPatternObject(pattern map[string]any, value any) bool {
+	if elements, ok := value.([]any); ok {
+		for _, element := range elements {
+			if matchPatternObject(pattern, element) {
+				return true
+			}
+		}
+		return false
+	}
 	target, ok := value.(map[string]any)
 	if !ok {
 		return false

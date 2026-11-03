@@ -1160,6 +1160,114 @@ func TestSQSFilterPatternObjectKeysAreFieldNames(t *testing.T) {
 	}
 }
 
+// TestSQSFilterPatternObjectMatchesEachElementOfAnArrayOfObjects pins F6 on the
+// production path: normalizeEventFilterCriteria (derive-time validation) then
+// sqsRecordMatchesFilters (the per-record evaluator classifyBatch calls). A
+// nested pattern object applied to an array of objects is applied to each
+// element, so it matches when any element matches, and a multi-key pattern
+// object never matches across elements. An empty array, an array of scalars and
+// a scalar match nothing; nested arrays are crushed out at every level.
+//
+// https://github.com/aws/event-ruler#json-array-matching
+// https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-event-patterns-arrays.html
+func TestSQSFilterPatternObjectMatchesEachElementOfAnArrayOfObjects(t *testing.T) {
+	cases := []struct {
+		name    string
+		pattern string
+		body    string
+		want    bool
+	}{
+		{
+			name:    "event-ruler employees example",
+			pattern: `{"body":{"employees":{"firstName":["Anna"]}}}`,
+			body:    `{"employees":[{"firstName":"John","lastName":"Doe"},{"firstName":"Anna","lastName":"Smith"}]}`,
+			want:    true,
+		},
+		{
+			name:    "one element carries both fields of a two-key pattern object",
+			pattern: `{"body":{"employees":{"firstName":["Anna"],"lastName":["Smith"]}}}`,
+			body:    `{"employees":[{"firstName":"Anna","lastName":"Smith"}]}`,
+			want:    true,
+		},
+		{
+			name:    "a two-key pattern object does not match across elements",
+			pattern: `{"body":{"employees":{"firstName":["Anna"],"lastName":["Jones"]}}}`,
+			body:    `{"employees":[{"firstName":"Anna","lastName":"Smith"},{"firstName":"Peter","lastName":"Jones"}]}`,
+			want:    false,
+		},
+		{
+			name:    "nested object at depth two",
+			pattern: `{"body":{"team":{"employees":{"firstName":["Anna"]}}}}`,
+			body:    `{"team":{"employees":[{"firstName":"John"},{"firstName":"Anna"}]}}`,
+			want:    true,
+		},
+		{
+			name:    "array of objects inside an array of objects",
+			pattern: `{"body":{"groups":{"members":{"name":["x"]}}}}`,
+			body:    `{"groups":[{"members":[{"name":"y"}]},{"members":[{"name":"x"}]}]}`,
+			want:    true,
+		},
+		{
+			name:    "array nested inside an array of objects",
+			pattern: `{"body":{"items":{"sku":["A-1"]}}}`,
+			body:    `{"items":[[{"sku":"A-2"}],[{"sku":"A-1"}]]}`,
+			want:    true,
+		},
+		{
+			name:    "empty array",
+			pattern: `{"body":{"employees":{"firstName":["Anna"]}}}`,
+			body:    `{"employees":[]}`,
+			want:    false,
+		},
+		{
+			name:    "array of scalars",
+			pattern: `{"body":{"tags":{"name":["x"]}}}`,
+			body:    `{"tags":["x","y"]}`,
+			want:    false,
+		},
+		{
+			name:    "nested pattern object against a scalar",
+			pattern: `{"body":{"employee":{"firstName":["Anna"]}}}`,
+			body:    `{"employee":"Anna"}`,
+			want:    false,
+		},
+		{
+			name:    "operator rule list on one element",
+			pattern: `{"body":{"items":{"price":[{"numeric":[">",10]}]}}}`,
+			body:    `{"items":[{"price":5},{"price":11}]}`,
+			want:    true,
+		},
+		{
+			name:    "$or inside the per-element application",
+			pattern: `{"body":{"items":{"$or":[{"kind":["keep"]},{"flag":[true]}]}}}`,
+			body:    `{"items":[{"kind":"drop"},{"flag":true}]}`,
+			want:    true,
+		},
+		{
+			name:    "$or does not match across elements",
+			pattern: `{"body":{"items":{"$or":[{"kind":["keep"],"flag":[true]}]}}}`,
+			body:    `{"items":[{"kind":"keep"},{"flag":true}]}`,
+			want:    false,
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			criteria := mustFilterCriteria(t, testCase.pattern)
+			if _, err := normalizeEventFilterCriteria(criteria, "Mapping"); err != nil {
+				t.Fatalf("derive-time validation refused a valid pattern %s: %v", testCase.pattern, err)
+			}
+			record := sqsRecordMap("arn:aws:sqs:us-east-1:123456789012:q", sqsMessageForTest("msg-1", testCase.body, nil))
+			matched, err := sqsRecordMatchesFilters(criteria, record, testCase.body)
+			if err != nil {
+				t.Fatalf("pattern %s must evaluate without error: %v", testCase.pattern, err)
+			}
+			if matched != testCase.want {
+				t.Fatalf("pattern %s on body %s: matched=%t want %t", testCase.pattern, testCase.body, matched, testCase.want)
+			}
+		})
+	}
+}
+
 func TestEventPatternExistsMatchesLeafNodesOnly(t *testing.T) {
 	cases := []struct {
 		name    string
