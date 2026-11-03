@@ -570,11 +570,12 @@ The runner registers:
   [GetObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html)).
   The pinned s3proxy backend ignores `Range` on HEAD (200, full length, no
   `Content-Range`), so the local origin requests the full metadata and derives
-  the ranged answer from it. An unsatisfiable single range is 416 with
-  `Content-Range: bytes */<total>` as HeadObject documents; a multi-range or
-  unparseable `Range` is ignored and the full object metadata is returned,
-  because S3 does not support multiple ranges per request and RFC 9110 permits
-  ignoring a `Range`
+  the ranged answer from it. An unsatisfiable single range on a HEAD is 416 with
+  `Content-Range: bytes */<total>` as HeadObject documents, while a ranged GET's
+  416 comes from the backend and carries no `Content-Range`; a multi-range or
+  unparseable `Range` is ignored and the full object is returned, because S3
+  does not support multiple ranges per request and RFC 9110 permits ignoring a
+  `Range`
   ([RFC 9110 §14.2](https://www.rfc-editor.org/rfc/rfc9110#section-14.2)).
   CloudFront forwards `If-Match`, `If-None-Match`, `If-Modified-Since` and
   `If-Unmodified-Since` to the origin, which evaluates them
@@ -584,9 +585,10 @@ The runner registers:
   request policy's header whitelist, so a conditional GET or HEAD passes a 304
   Not Modified (or a 412 Precondition Failed for
   `If-Match`/`If-Unmodified-Since`) through with the validators the origin
-  attached and no body. The pinned s3proxy attaches `ETag` but not
-  `Last-Modified` to those answers; the local response carries exactly what the
-  origin supplied. OPTIONS returns 403 `AccessForbidden` for a
+  attached and no body; the local response carries exactly what the origin
+  supplied. The pinned s3proxy attaches `ETag` to a `GET` 304 and to the 412 of
+  either method, attaches no validator to a `HEAD` 304, and attaches
+  `Last-Modified` to none of them. OPTIONS returns 403 `AccessForbidden` for a
   bucket without CORS and a named local gap for a bucket that declares CORS
   rules. An OAC/OAI origin has no `s3:ListBucket`, so a missing object is 403
   `AccessDenied`; a public S3 origin returns 404 `NoSuchKey`
@@ -637,9 +639,11 @@ incremental streaming (the Function URL origin is buffered by the RIE),
 CloudFront-only device/location/TLS headers, custom status descriptions,
 signed-URL verification, Lambda@Edge, KeyValueStore, WAF, geo restriction,
 field-level encryption or custom error pages. S3 bucket CORS rules, S3
-IAM/bucket policies and Lambda IAM policy evaluation are not emulated. It
-refuses a distribution that depends on the routing or content of those features
-and reports the rest.
+IAM/bucket policies and Lambda IAM policy evaluation are not emulated. A viewer
+`If-Range` is not carried to the S3 origin (CloudFront forwards it by default),
+so a conditional range is served as an unconditional range. It refuses a
+distribution that depends on the routing or content of those features and
+reports the rest.
 
 The run fails, naming the construct, on:
 

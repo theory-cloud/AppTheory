@@ -474,10 +474,11 @@ same assembly:
   The pinned s3proxy backend ignores `Range` on HEAD (it answers 200 with the
   full length and no `Content-Range`), so the local origin requests the full
   metadata and derives the ranged answer from it. An unsatisfiable single range
-  is 416 with `Content-Range: bytes */<total>`, as HeadObject documents; a
-  multi-range or unparseable `Range` is ignored and the full object metadata is
-  returned, because S3 does not support multiple ranges per request and
-  RFC 9110 permits ignoring a `Range`
+  on a HEAD is 416 with `Content-Range: bytes */<total>`, as HeadObject
+  documents, while a ranged GET's 416 comes from the backend and carries no
+  `Content-Range`; a multi-range or unparseable `Range` is ignored and the full
+  object is returned, because S3 does not support multiple ranges per request
+  and RFC 9110 permits ignoring a `Range`
   ([RFC 9110 §14.2](https://www.rfc-editor.org/rfc/rfc9110#section-14.2)).
   CloudFront forwards `If-Match`, `If-None-Match`, `If-Modified-Since` and
   `If-Unmodified-Since` to the origin, and the origin evaluates them
@@ -487,9 +488,10 @@ same assembly:
   request policy does not list them, so a conditional GET or HEAD passes S3's
   304 Not Modified (or 412 Precondition Failed for
   `If-Match`/`If-Unmodified-Since`) through with the validators the origin
-  attached and no body. The pinned s3proxy attaches `ETag` but not
-  `Last-Modified` to those answers; the local response carries exactly what the
-  origin supplied. OPTIONS follows S3's CORS
+  attached and no body; the local response carries exactly what the origin
+  supplied. The pinned s3proxy attaches `ETag` to a `GET` 304 and to the 412 of
+  either method, attaches no validator to a `HEAD` 304, and attaches
+  `Last-Modified` to none of them. OPTIONS follows S3's CORS
   behavior: a bucket with no CORS configuration returns 403 `AccessForbidden`,
   and a bucket that declares CORS rules is refused with a named local gap
   because bucket CORS is not provisioned. An OAC/OAI origin has no
@@ -678,7 +680,9 @@ the harness records it.
   applied, but there is no cache, no edge network, no TLS and no viewer protocol
   enforcement. S3-origin bucket CORS rules and IAM/bucket policies are not
   emulated; the local S3 origin returns the S3 status the OAC/OAI access model
-  produces. A Function URL `RESPONSE_STREAM` body is buffered. An `AWS_IAM`
+  produces. `If-Range` is not forwarded to the S3 origin (CloudFront forwards
+  it by default), so a conditional range is served as an unconditional
+  range. A Function URL `RESPONSE_STREAM` body is buffered. An `AWS_IAM`
   Function URL's SigV4 signing and the gateway's in-process check of that
   locally signed request are reproduced, but IAM policy evaluation is not.
   A literal external custom origin is refused rather than reached. Lambda@Edge,
