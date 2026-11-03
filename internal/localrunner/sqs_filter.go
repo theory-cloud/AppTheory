@@ -16,6 +16,10 @@ import (
 // as nested data. Multiple filters are ORed; a message that matches none is
 // deleted from the queue without invoking the function.
 //
+// A pattern-object key is always a field name, so a field named `numeric`,
+// `prefix`, `exists` or any other operator name is matched as ordinary data. An
+// operator is read only from an object inside a rule list.
+//
 // A mapping's FilterCriteria is validated against the operator grammar when the
 // mapping is derived, as Lambda validates it when CreateEventSourceMapping is
 // called. A pattern this evaluator cannot apply exactly is refused at plan time
@@ -488,102 +492,116 @@ func decodePatternValue(raw []byte) (any, error) {
 	return value, nil
 }
 
-// eventPatternMatches applies one EventBridge pattern to a value. An object
-// pattern matches when every key matches; "$or" matches when any nested pattern
-// matches.
+// eventPatternMatches applies one EventBridge pattern object to a record. "$or"
+// is the only keyword at object level; every other key is a field name.
 func eventPatternMatches(pattern, value any) bool {
-	switch typed := pattern.(type) {
-	case map[string]any:
-		target, ok := value.(map[string]any)
-		if !ok {
-			// A pattern consisting of an operator on a scalar is evaluated by
-			// matchPatternValue.
-			return matchPatternValue(typed, value, true)
-		}
-		for key, expected := range typed {
-			if key == eventPatternOrKey {
-				alternatives, ok := expected.([]any)
-				if !ok {
-					return false
-				}
-				matched := false
-				for _, alternative := range alternatives {
-					if eventPatternMatches(alternative, value) {
-						matched = true
-						break
-					}
-				}
-				if !matched {
-					return false
-				}
-				continue
-			}
-			actual, present := target[key]
-			if !matchPatternValue(expected, actual, present) {
-				return false
-			}
-		}
-		return true
-	case []any:
-		return matchPatternValue(typed, value, true)
-	default:
-		return matchPatternValue(typed, value, true)
+	object, ok := pattern.(map[string]any)
+	if !ok {
+		return false
 	}
+	return matchPatternObject(object, value)
 }
 
-// matchPatternValue applies a pattern node to one field. present reports
-// whether the field exists in its parent object.
+// matchPatternObject applies a pattern object to a value: every key is a field
+// name and every nested map is a nested pattern object. An operator is never
+// read here, because EventBridge reads one only from an object inside a rule
+// list; see matchFilterRule.
 //
-//nolint:gocognit,gocyclo // the nested switch is EventBridge's documented operator grammar.
+// https://docs.aws.amazon.com/lambda/latest/dg/invocation-eventfiltering.html
+func matchPatternObject(pattern map[string]any, value any) bool {
+	target, ok := value.(map[string]any)
+	if !ok {
+		return false
+	}
+	for key, expected := range pattern {
+		if key == eventPatternOrKey {
+			alternatives, ok := expected.([]any)
+			if !ok {
+				return false
+			}
+			matched := false
+			for _, alternative := range alternatives {
+				if eventPatternMatches(alternative, value) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return false
+			}
+			continue
+		}
+		actual, present := target[key]
+		if !matchPatternValue(expected, actual, present) {
+			return false
+		}
+	}
+	return true
+}
+
+// matchPatternValue applies a pattern field value to one field. present reports
+// whether the field exists in its parent object. A map reached through a key
+// lookup is always a nested pattern object, never an operator.
 func matchPatternValue(pattern, value any, present bool) bool {
 	switch typed := pattern.(type) {
 	case nil:
 		return !present || value == nil
 	case []any:
-		// An array of pattern values is an OR. An empty array matches nothing.
-		for _, candidate := range typed {
-			if matchPatternValue(candidate, value, present) {
+		return matchRuleList(typed, value, present)
+	case map[string]any:
+		return matchPatternObject(typed, value)
+	default:
+		return present && scalarPatternEqual(typed, value)
+	}
+}
+
+// matchRuleList applies one field's rule list. The rules are ORed. When the
+// event value is an array, EventBridge matches if the intersection of the
+// pattern array and the event array is non-empty, which is the same as one
+// event element matching one rule:
+// https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-event-patterns-arrays.html
+func matchRuleList(rules []any, value any, present bool) bool {
+	if elements, ok := value.([]any); ok && present {
+		for _, element := range elements {
+			if anyRuleMatches(rules, element, true) {
 				return true
 			}
 		}
 		return false
-	case map[string]any:
-		if operator, ok := filterOperator(typed); ok {
-			return matchFilterOperator(operator, typed, value, present)
+	}
+	return anyRuleMatches(rules, value, present)
+}
+
+func anyRuleMatches(rules []any, value any, present bool) bool {
+	for _, rule := range rules {
+		if matchFilterRule(rule, value, present) {
+			return true
 		}
-		target, ok := value.(map[string]any)
+	}
+	return false
+}
+
+// matchFilterRule applies one rule: a scalar, or a single-key operator object.
+// This is the only place an operator is recognized, because an operator object
+// is only ever an element of a rule list. A single-key map that is not a
+// documented operator cannot reach here through a validated pattern (the
+// validator refuses it), so it does not match.
+//
+// https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-event-patterns-content-based-filtering.html
+func matchFilterRule(rule any, value any, present bool) bool {
+	switch typed := rule.(type) {
+	case map[string]any:
+		operator, ok := filterOperator(typed)
 		if !ok {
 			return false
 		}
-		for key, expected := range typed {
-			if key == eventPatternOrKey {
-				alternatives, ok := expected.([]any)
-				if !ok {
-					return false
-				}
-				matched := false
-				for _, alternative := range alternatives {
-					if eventPatternMatches(alternative, value) {
-						matched = true
-						break
-					}
-				}
-				if !matched {
-					return false
-				}
-				continue
-			}
-			actual, exists := target[key]
-			if !matchPatternValue(expected, actual, exists) {
-				return false
-			}
-		}
-		return true
+		return matchFilterOperator(operator, typed, value, present)
+	case []any:
+		// The validator refuses a list inside a rule list; keep the documented
+		// OR reading for a pattern that bypassed validation.
+		return matchRuleList(typed, value, present)
 	default:
-		if !present {
-			return false
-		}
-		return scalarPatternEqual(pattern, value)
+		return matchPatternValue(typed, value, present)
 	}
 }
 
@@ -596,7 +614,8 @@ const (
 	filterOperatorExists           = "exists"
 )
 
-// filterOperator recognizes the single-key operator objects AWS documents.
+// filterOperator recognizes the single-key operator objects AWS documents. It
+// is called only by matchFilterRule, for an object inside a rule list.
 func filterOperator(pattern map[string]any) (string, bool) {
 	if len(pattern) != 1 {
 		return "", false

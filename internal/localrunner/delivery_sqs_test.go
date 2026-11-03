@@ -995,8 +995,12 @@ func TestNormalizeEventFilterCriteriaAcceptsDocumentedOperators(t *testing.T) {
 		`{"kind":["keep"]}`,
 		`{"kind":[null]}`,
 		// "numeric" here is a field name, not an operator: EventBridge only
-		// reads an operator when it is an object inside a rule array.
+		// reads an operator when it is an object inside a rule array. The same
+		// holds at every depth, so the field-name form is accepted at the root,
+		// at depth one and at depth two.
 		`{"numeric":[">"]}`,
+		`{"body":{"numeric":[">"]}}`,
+		`{"body":{"outer":{"numeric":[">"]}}}`,
 		`{"body":{"kind":["keep"]}}`,
 		`{"kind":[{"prefix":"ke"}]}`,
 		`{"kind":[{"suffix":"ep"}]}`,
@@ -1069,6 +1073,20 @@ func TestEventPatternMatching(t *testing.T) {
 		{name: "metadata attributes", pattern: `{"attributes":{"SentTimestamp":["123"]}}`, target: `{"attributes":{"SentTimestamp":"123"}}`, want: true},
 		{name: "or", pattern: `{"$or":[{"a":["x"]},{"b":["y"]}]}`, target: `{"b":"y"}`, want: true},
 		{name: "nested", pattern: `{"body":{"kind":["keep"]}}`, target: `{"body":{"kind":"keep"}}`, want: true},
+		// EventBridge reads a pattern-object key as a field name, so a field
+		// named after an operator is ordinary data at every depth.
+		{name: "root numeric field", pattern: `{"numeric":[">"]}`, target: `{"numeric":">"}`, want: true},
+		{name: "depth one numeric field", pattern: `{"body":{"numeric":[">"]}}`, target: `{"body":{"numeric":">"}}`, want: true},
+		{name: "depth two numeric field", pattern: `{"body":{"outer":{"numeric":[">"]}}}`, target: `{"body":{"outer":{"numeric":">"}}}`, want: true},
+		{name: "anything-but field is a literal rule", pattern: `{"body":{"anything-but":["drop"]}}`, target: `{"body":{"anything-but":"drop"}}`, want: true},
+		{name: "anything-but field miss", pattern: `{"body":{"anything-but":["drop"]}}`, target: `{"body":{"anything-but":"keep"}}`, want: false},
+		{name: "anything-but operator excludes the value", pattern: `{"body":{"anything-but":[{"anything-but":"drop"}]}}`, target: `{"body":{"anything-but":"drop"}}`, want: false},
+		// An event array matches when the intersection with the pattern array
+		// is non-empty; one element satisfying one rule is enough.
+		// https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-event-patterns-arrays.html
+		{name: "event array intersection", pattern: `{"kind":["keep"]}`, target: `{"kind":["drop","keep"]}`, want: true},
+		{name: "event array intersection miss", pattern: `{"kind":["keep"]}`, target: `{"kind":["drop","hold"]}`, want: false},
+		{name: "operator on event array element", pattern: `{"kind":[{"prefix":"ke"}]}`, target: `{"kind":["drop","keep"]}`, want: true},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -1082,6 +1100,61 @@ func TestEventPatternMatching(t *testing.T) {
 			}
 			if got := eventPatternMatches(pattern, target); got != testCase.want {
 				t.Fatalf("matched=%t want %t", got, testCase.want)
+			}
+		})
+	}
+}
+
+// TestSQSFilterPatternObjectKeysAreFieldNames pins F5 on the production path:
+// normalizeEventFilterCriteria (derive-time validation) then
+// sqsRecordMatchesFilters (the per-record evaluator classifyBatch calls). A
+// pattern-object key is a field name, so a body field named after an operator is
+// ordinary data at every depth; an operator is read only from an object inside a
+// rule list, so the same operator keeps working at the same depth. Equality is
+// exact character-by-character matching, which is why the equals-ignore-case
+// field cases are case-sensitive literals.
+//
+// https://docs.aws.amazon.com/lambda/latest/dg/invocation-eventfiltering.html
+func TestSQSFilterPatternObjectKeysAreFieldNames(t *testing.T) {
+	message := sqsMessageForTest("msg-1", `{}`, nil)
+	record := sqsRecordMap("arn:aws:sqs:us-east-1:123456789012:q", message)
+	cases := []struct {
+		name    string
+		pattern string
+		body    string
+		want    bool
+	}{
+		{name: "numeric field", pattern: `{"body":{"numeric":[">"]}}`, body: `{"numeric":">"}`, want: true},
+		{name: "prefix field", pattern: `{"body":{"prefix":["us-"]}}`, body: `{"prefix":"us-"}`, want: true},
+		{name: "suffix field", pattern: `{"body":{"suffix":[".log"]}}`, body: `{"suffix":".log"}`, want: true},
+		{name: "exists field holding an array", pattern: `{"body":{"exists":[true]}}`, body: `{"exists":[true]}`, want: true},
+		{name: "equals-ignore-case field is an exact rule", pattern: `{"body":{"equals-ignore-case":["KEEP"]}}`, body: `{"equals-ignore-case":"KEEP"}`, want: true},
+		{name: "equals-ignore-case field does not fold case", pattern: `{"body":{"equals-ignore-case":["KEEP"]}}`, body: `{"equals-ignore-case":"keep"}`, want: false},
+		{name: "anything-but field matches the literal value", pattern: `{"body":{"anything-but":["drop"]}}`, body: `{"anything-but":"drop"}`, want: true},
+		{name: "anything-but field does not match another value", pattern: `{"body":{"anything-but":["drop"]}}`, body: `{"anything-but":"keep"}`, want: false},
+		{name: "depth two numeric field", pattern: `{"body":{"outer":{"numeric":[">"]}}}`, body: `{"outer":{"numeric":">"}}`, want: true},
+		// The same operator inside a rule list still works at the same depth.
+		{name: "numeric operator rule", pattern: `{"body":{"numeric":[{"numeric":[">",1]}]}}`, body: `{"numeric":2}`, want: true},
+		{name: "prefix operator rule", pattern: `{"body":{"prefix":[{"prefix":"us-"}]}}`, body: `{"prefix":"us-east-1"}`, want: true},
+		{name: "suffix operator rule", pattern: `{"body":{"suffix":[{"suffix":".log"}]}}`, body: `{"suffix":"app.log"}`, want: true},
+		{name: "exists operator rule", pattern: `{"body":{"exists":[{"exists":true}]}}`, body: `{"exists":true}`, want: true},
+		{name: "equals-ignore-case operator rule", pattern: `{"body":{"equals-ignore-case":[{"equals-ignore-case":"KEEP"}]}}`, body: `{"equals-ignore-case":"keep"}`, want: true},
+		{name: "anything-but operator rule", pattern: `{"body":{"anything-but":[{"anything-but":"drop"}]}}`, body: `{"anything-but":"keep"}`, want: true},
+		{name: "anything-but operator excludes the value", pattern: `{"body":{"anything-but":[{"anything-but":"drop"}]}}`, body: `{"anything-but":"drop"}`, want: false},
+		{name: "depth two operator rule", pattern: `{"body":{"outer":{"numeric":[{"numeric":[">",1]}]}}}`, body: `{"outer":{"numeric":2}}`, want: true},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			criteria := mustFilterCriteria(t, testCase.pattern)
+			if _, err := normalizeEventFilterCriteria(criteria, "Mapping"); err != nil {
+				t.Fatalf("derive-time validation refused a documented pattern %s: %v", testCase.pattern, err)
+			}
+			matched, err := sqsRecordMatchesFilters(criteria, record, testCase.body)
+			if err != nil {
+				t.Fatalf("pattern %s must evaluate without error: %v", testCase.pattern, err)
+			}
+			if matched != testCase.want {
+				t.Fatalf("pattern %s on body %s: matched=%t want %t", testCase.pattern, testCase.body, matched, testCase.want)
 			}
 		})
 	}
