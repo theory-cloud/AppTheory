@@ -288,6 +288,9 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
      integrations;
    - `AWS::ApiGateway::RestApi`, its resource tree, methods and stage;
    - `AWS::Lambda::Url` Function URLs;
+   - `AWS::Logs::SubscriptionFilter`, its log group and its destination (a
+     Lambda function, or an `AWS::Logs::Destination` followed to its Kinesis
+     stream);
    - `AWS::CloudFront::Distribution`, its cache behaviors, origins and origin
      groups, the `AWS::CloudFront::Function` resources it associates, and the
      cache, origin request and response headers policies and origin access
@@ -336,10 +339,10 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
    dummy credentials, every configured endpoint, the DynamoDB SDK endpoint when
    one is configured, and closed DNS.
 9. **Run.** One container per function the CDK definition targets: HTTP routes,
-   Function URLs, HTTP API authorizers, enabled event-source consumers and
-   enabled EventBridge rule targets. Each uses the official image for its
-   runtime, digest-pinned in the profile. Handlers run under the embedded
-   Runtime Interface Emulator; the transport invokes
+   Function URLs, HTTP API authorizers, enabled event-source consumers, enabled
+   EventBridge rule targets and Lambda log-subscription destinations. Each uses
+   the official image for its runtime, digest-pinned in the profile. Handlers
+   run under the embedded Runtime Interface Emulator; the transport invokes
    `/2015-03-31/functions/function/invocations`.
 10. **Serve, invoke or session.** One loopback listener per API (and per
     Function URL) builds the provider event for the matched route, runs a
@@ -351,14 +354,21 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
     origin with a named 503. `invoke` instead sends explicit events to one warm
     container. A session keeps every target warm, serves the same HTTP surface,
     and answers the JSON command protocol on stdin/stdout.
-11. **Shut down.** `Ctrl-C` (`SIGINT`) or `SIGTERM` stops accepting requests by
-    closing the listeners, force-removes the run's containers (which aborts an
-    in-flight invocation), closes any connections still in flight, removes the
-    network and deletes the scratch directory. A `SIGKILL` cannot be caught:
-    after one, `apptheory-local down --app <dir>` removes the containers and
-    networks labelled with that app; it does not delete the stale run scratch
-    directory. That directory is `<scratch>/runs/<app>-<run>`, where `--scratch`
-    defaults to `<user cache>/apptheory-local`; it is safe to delete by hand.
+11. **Start event delivery.** The delivery engine registers every derived
+    event-source mapping, EventBridge rule and CloudWatch Logs subscription
+    filter, starts one deliverer per source kind that has one, and records the
+    others as `not-delivered` with the task that will implement them. The engine
+    takes the run's clock and the delivery concurrency bound; see
+    [Event delivery](#event-delivery).
+12. **Shut down.** `Ctrl-C` (`SIGINT`) or `SIGTERM` drains and stops the
+    delivery engine, then stops accepting requests by closing the listeners,
+    force-removes the run's containers (which aborts an in-flight invocation),
+    closes any connections still in flight, removes the network and deletes the
+    scratch directory. A `SIGKILL` cannot be caught: after one,
+    `apptheory-local down --app <dir>` removes the containers and networks
+    labelled with that app; it does not delete the stale run scratch directory.
+    That directory is `<scratch>/runs/<app>-<run>`, where `--scratch` defaults to
+    `<user cache>/apptheory-local`; it is safe to delete by hand.
 
 ## CloudFront distributions
 
@@ -599,8 +609,12 @@ defines but a deployment caller invokes.
 The operations, in the order the examples use them:
 
 - `describe` — the started functions (with resolved environment and RIE port),
-  HTTP listener URLs, event-source mappings, EventBridge rules, provisioned
-  resources (name, URL, ARN, stream ARN) and local secrets.
+  HTTP listener URLs, event-source mappings, EventBridge rules, subscriptions,
+  provisioned resources (name, URL, ARN, stream ARN), local secrets and the live
+  delivery-engine state.
+- `clock.now` — the run's clock mode and current instant.
+- `clock.advance` — move a test clock forward by a Go duration; the real clock
+  refuses.
 - `invoke` — send one Lambda event to a started function and return the same
   decoded result as `invoke`.
 - `sqs.send` — send one body to a provisioned ElasticMQ queue through the
@@ -630,6 +644,98 @@ published; function containers use the run-network aliases. Neither can reach a
 real AWS endpoint. `describe` is the only operation that returns local secrets
 or resolved environment values; `run`, `plan` and `invoke` never print them.
 
+## Event delivery
+
+`run` and `session` start a delivery engine. Every event-source mapping,
+EventBridge rule and CloudWatch Logs subscription filter the assembly derives is
+registered with it before the run reports ready. The engine owns:
+
+- the registry of deliverers, one per source kind;
+- the lifecycle: start, drain and stop on `Ctrl-C`/`SIGTERM` or the `shutdown`
+  session command;
+- a bounded concurrency for the handler invocations it performs;
+- the per-source delivery state that `plan` and `session describe` report.
+
+The engine is present in full; the per-source deliverers land in the wave-2
+tasks. Until a kind's deliverer ships, its source is registered and reported as
+`not-delivered` with the task that will implement it. Nothing is silent: `plan`
+prints the state next to every derived source, and a session reports the same
+source list live.
+
+| Source kind | Delivery task |
+| --- | --- |
+| SQS event source mapping | E1b |
+| DynamoDB Streams event source mapping | E2 |
+| EventBridge schedule and pattern rule | E3 |
+| CloudWatch Logs subscription filter | E5 |
+| Kinesis event source mapping | E5 |
+
+### Delivery state
+
+The vocabulary follows the Lambda event source mapping API. AWS reports a
+mapping's lifecycle in `State` (`Creating`, `Enabling`, `Enabled`, `Disabling`,
+`Disabled`, `Updating`, `Deleting`) and its processing outcome in
+`LastProcessingResult`, with `StateTransitionReason` naming the last change; see
+[EventSourceMappingConfiguration](https://docs.aws.amazon.com/lambda/latest/dg/API_EventSourceMappingConfiguration.html)
+and [How Lambda processes records from stream and queue-based event sources](https://docs.aws.amazon.com/lambda/latest/dg/invocation-eventsourcemapping.html).
+The runner keeps the same shape in a smaller vocabulary:
+
+| Local state | AWS equivalent | Meaning |
+| --- | --- | --- |
+| `registered` | `Creating` | The kind has a deliverer; the source is registered and the deliverer is starting. |
+| `polling` | `Enabled` | A queue or stream deliverer is polling the backend. |
+| `armed` | `Enabled` | A schedule or rule deliverer is waiting for the clock. |
+| `paused` | `Disabled` | Registered, not delivering. |
+| `stopped` | `Deleting` | The deliverer stopped at shutdown. |
+| `failed` | `LastProcessingResult` reports a problem | The deliverer could not start or deliver; `lastError` carries the cause. |
+| `not-delivered` | no mapping exists | The source kind has no deliverer yet; `task` and `reason` name the task that will implement it. |
+
+Every entry reports its `delivered` and `failed` counts, `lastError` and
+`paused`. The engine also reports its clock mode and current instant and its
+concurrency bound.
+
+`plan` prints the state the engine would register without starting a container;
+`plan --json` carries the same list under `delivery`. `session describe` returns
+the live engine state under `delivery`:
+
+```json
+{"running":true,"clock":{"mode":"real","now":"2026-11-03T09:30:00Z"},"concurrency":4,"sources":[{"id":"WorkerFnEventSourceMapping","kind":"sqs","state":"not-delivered","task":"E1b","reason":"engine present; SQS event-source delivery lands in E1b"}]}
+```
+
+### Deterministic test clock
+
+`--clock real` is the default. `--clock test[=<RFC3339 start>]` replaces the
+wall clock with a deterministic one that starts at the given instant, or at
+`2026-01-01T00:00:00Z` when no instant is given. The delivery engine, every
+future schedule, TTL expiry and visibility timeout take their time from this
+clock, never from `time.Now()`; the events a session builds carry it too. Real
+time stays the default, so every existing command keeps its behaviour.
+
+A `session` exposes the clock with two commands:
+
+- `clock.now` — `{"mode":"real"|"test","now":"<RFC3339Nano>"}`.
+- `clock.advance` — move a test clock forward by a Go duration:
+  `{"op":"clock.advance","duration":"90m"}` returns the new `now`, the accepted
+  `advanced` duration and `timersFired`. The real clock is never advanced; the
+  command fails with a named reason instead.
+
+### Delivery concurrency
+
+`--delivery-concurrency` bounds the concurrent handler invocations the engine
+performs: `1..32`, default `4`. The default is sized for the documented Colima
+host — four CPUs and about 6 GB shared by the runtime images, the emulator
+containers and the HTTP transport. One in-flight delivery per CPU leaves a core
+for everything else; a larger bound only queues inside the one container per
+function. See [Requirements](#requirements).
+
+### Lifecycle
+
+The engine drains in-flight deliveries for up to five seconds, then cancels the
+deliverers and stops them. `Ctrl-C`/`SIGTERM` take that path, as does the
+`shutdown` session command. `apptheory-local down` removes containers and
+networks left by a killed process; it cannot drain a process that is already
+gone.
+
 ## Capability matrix
 
 Classes follow the repository's local-execution convention: **L1** runs fully
@@ -647,12 +753,13 @@ the harness records it.
 | Inline `Code.ZipFile` | Supported (Node, Python) | Materialized under the run scratch directory before the container starts. |
 | arm64 `provided.al2023` | Supported (L1) | Uses the host-arch image; a bootstrap built for the other architecture fails closed with a clear error. |
 | DynamoDB Local | Supported (L2) | `--backend dynamodb` starts the profile's digest-pinned `amazon/dynamodb-local` on the run network; SDK clients resolve through `AWS_ENDPOINT_URL_DYNAMODB`. Tables are created from the CDK key schema, GSIs, streams and TTL. SSE, PITR and deletion protection are not provisioned. |
-| SQS (ElasticMQ) | Supported (L2) | `--backend sqs` starts the digest-pinned `softwaremill/elasticmq-native` container, creates the CDK queues with visibility, retention and redrive policy, and resolves `QueueUrl`/`Arn` from the created queues. Managed event-source polling is not run; a session receives real messages and builds the SQS event. |
+| SQS (ElasticMQ) | Supported (L2) | `--backend sqs` starts the digest-pinned `softwaremill/elasticmq-native` container, creates the CDK queues with visibility, retention and redrive policy, and resolves `QueueUrl`/`Arn` from the created queues. The delivery engine registers every SQS mapping; polling, visibility and deletion land in E1b. A session can still receive real messages and build the SQS event. |
 | KMS and STS (moto) | Supported (L2) | `--backend moto` starts the profile's digest-pinned moto container and injects `AWS_ENDPOINT_URL_KMS`/`_STS` (and the profile's aliases). KMS keys declared by the assembly are created; `Ref`/`Fn::GetAtt Arn` resolve to the created key. No HSM, key policies or grants. |
 | S3 (s3proxy) | Supported (L2) | `--backend s3proxy` starts the digest-pinned s3proxy container, creates the assembly's buckets, and injects the S3 endpoint as the container address so the SDK uses path-style addressing. No bucket policies, IAM or event notifications. |
-| Event source mappings (SQS, DynamoDB Streams, Kinesis) | Derived and reported; invocation is explicit | The mapping's function, source, batch size and `ReportBatchItemFailures` are read from the assembly. A session receives real queue messages or builds a stream record from a real local write and invokes the handler. Managed delivery (polling, subscription, retries) is the named L3 gap. |
-| EventBridge rules (schedule and pattern) | Derived and reported; invocation is explicit | A session builds the `Scheduled Event` envelope or the pattern's source/detail-type from the CDK rule and invokes its Lambda target. Managed rule delivery is not run. |
-| Kinesis / CloudWatch Logs subscription events | Built from local content | The session gzips a CloudWatch Logs subscription payload from local log events and wraps it in a Kinesis record, or accepts explicit base64 record data. The Kinesis stream itself is not emulated. |
+| Event source mappings (SQS, DynamoDB Streams, Kinesis) | Engine present; per-source delivery lands in E1b–E6 | The mapping's function, source, batch size and `ReportBatchItemFailures` are read from the assembly, and the delivery engine registers every mapping at start. The engine is present; per-source delivery lands in E1b (SQS), E2 (DynamoDB Streams) and E5 (Kinesis), and every unimplemented kind reports `not-delivered` with its task in `plan` and `session describe`. A session can still receive real queue messages or build a stream record from a real local write and invoke the handler. |
+| EventBridge rules (schedule and pattern) | Engine present; per-source delivery lands in E3 | A rule is registered per kind (schedule or pattern) and reported with its delivery state. A session builds the `Scheduled Event` envelope or the pattern's source/detail-type from the CDK rule and invokes its Lambda target. Managed rule delivery and the clock-driven scheduler land in E3. |
+| Kinesis / CloudWatch Logs subscription events | Engine present; per-source delivery lands in E5 | A `AWS::Logs::SubscriptionFilter` is derived with its log group and destination (a Lambda function, or a CloudWatch Logs destination followed to its Kinesis stream) and registered with the delivery engine. The session can build a CloudWatch Logs subscription payload from local log events and wrap it in a Kinesis record, or accept explicit base64 record data. The Kinesis stream itself and log-group capture land in E5. |
+| Delivery engine and test clock | Supported | `run` and `session` start the engine; `plan` and `session describe` report per-source state. `--clock test[=<RFC3339>]` plus the `clock.now`/`clock.advance` session commands make schedules, TTL expiry and visibility timeouts deterministic. `--delivery-concurrency` bounds concurrent deliveries (default 4). |
 | Deploy-time Secrets Manager dynamic references | Supported | A `{{resolve:secretsmanager:…}}` environment value becomes a deterministic local secret. The session's `describe` returns it to the harness; `run` and `plan` never print it. No secret is created in a cloud. |
 | Other emulators | Endpoint injection only | Pass `--endpoint service=url` and `--add-host name=address`; the profile names the environment variables. |
 | WebSocket APIs | Reported, not served | A WebSocket API is listed under `skipped` with its reason, and an app with no HTTP route, Function URL, event source or rule fails with that list. Its `$connect`/`$disconnect`/`$default` routes are not invoked. |
@@ -692,14 +799,18 @@ the harness records it.
   CloudFront Functions API and globals but is not a hardened security boundary,
   does not enforce CloudFront's 1 ms CPU budget, and cannot reproduce
   CloudFront-only device, location or TLS headers.
-- **Managed event-source delivery is not run.** SQS, Kinesis, scheduled rules
-  and DynamoDB stream mappings are derived from the CDK definition, their
-  functions are started, and a session receives real messages or builds the
-  provider event from a real local write. The emulator does not poll, subscribe,
-  retry, or deliver the event on its own; those are the named L3 gaps.
-- **Kinesis has no stream emulator.** A Kinesis event is built locally (from a
-  CloudWatch Logs subscription payload or explicit record data) and invoked
-  through the real handler; the stream service itself is not emulated.
+- **Managed event-source delivery is not wired per source yet.** The delivery
+  engine is present: every SQS, DynamoDB Streams and Kinesis mapping, every
+  EventBridge rule and every CloudWatch Logs subscription filter is registered,
+  its function is started, and its state is reported. Per-source delivery lands
+  in E1b (SQS), E2 (DynamoDB Streams), E3 (EventBridge) and E5
+  (Kinesis/CloudWatch Logs); until then `plan` and `session describe` report
+  `not-delivered` with the task id. A session can still receive real messages
+  or build the provider event from a real local write and invoke the handler.
+- **Kinesis has no stream emulator yet.** A Kinesis event is built locally (from
+  a CloudWatch Logs subscription payload or explicit record data) and invoked
+  through the real handler; the Kinesis event-source deliverer and a moto-backed
+  stream land in E5.
 - **HTTP API authorizers** are run only for `REQUEST` authorizers with simple
   responses. They carry every configured `$request.header.*` or
   `$request.querystring.*` identity source in order, and a request missing one
@@ -734,6 +845,13 @@ the harness records it.
 - Bind-mounted code must live under `$HOME` or the working directory (the
   checkout): colima does not share `/private/tmp`. The runner refuses a mount
   outside those roots.
+- **Delivery sizing.** The reference host is colima with 4 CPUs and about 6 GB,
+  shared by the runtime images, the emulator containers and the HTTP transport.
+  `--delivery-concurrency` defaults to `4`: one in-flight delivery per CPU
+  leaves a core for the emulators and the transport, and a larger bound only
+  queues behind the one container per function. Raise it only on a larger host;
+  values above 32 are refused because the runtime interface emulator and
+  Docker's port allocation become unreliable.
 
 ## Where to next
 

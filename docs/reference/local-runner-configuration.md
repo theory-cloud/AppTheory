@@ -39,6 +39,8 @@ function the CDK definition targets and reads one JSON command per line.
 | `--port-base N` | ephemeral | Bind the API listeners at `N`, `N+1`, …; `0` asks the OS for free ports. |
 | `--name-prefix PREFIX` | derived from the app path | Container and network names. Must be unique per run. |
 | `--max-concurrency N` | 32 | In-flight invocations, `1..32`. Values above 32 are refused. |
+| `--delivery-concurrency N` | 4 | Concurrent handler invocations the delivery engine performs, `1..32`. The default is sized for the documented 4 CPU / ~6 GB Colima host. |
+| `--clock SPEC` | `real` | `run`/`session` time source: `real`, `test`, or `test=<RFC3339 start>`. A test clock starts at the given instant, or `2026-01-01T00:00:00Z` when omitted. |
 | `--json` | off | `plan`: print the derived surface as JSON on stdout; progress goes to stderr. |
 | `--function ID` | none | `invoke`: function logical id from the CDK assembly. |
 | `--event FILE` | none | `invoke`: JSON event file. Repeatable. |
@@ -87,6 +89,8 @@ writing one response per line on stdout:
 
 ```json
 {"op":"describe"}
+{"op":"clock.now"}
+{"op":"clock.advance","duration":"90m"}
 {"op":"invoke","function":"WorkerFn","event":{"Records":[]}}
 {"op":"sqs.event","queue":"EventsQueue","max":10,"waitSeconds":1,"visibilitySeconds":0,"delete":true}
 {"op":"ddb.stream-event","table":"GoTable","key":{"pk":"item-1"},"eventName":"INSERT"}
@@ -95,13 +99,16 @@ writing one response per line on stdout:
 {"op":"shutdown"}
 ```
 
-The full operation set is `describe`, `invoke`, `sqs.send`, `sqs.receive`,
-`sqs.event`, `ddb.put`, `ddb.get`, `ddb.scan`, `ddb.stream-event`, `s3.put`,
-`eventbridge.event`, `kinesis.event`, `kinesis.cloudwatch-event` and `shutdown`.
-Every response is `{"ok":true,"result":…}` or `{"ok":false,"error":…}`. An
-operation that references a resource the run did not provision fails with the
-reason; it never falls back to a closed endpoint. `describe` is the only
-operation that returns local secrets or resolved environment values.
+The full operation set is `describe`, `clock.now`, `clock.advance`, `invoke`,
+`sqs.send`, `sqs.receive`, `sqs.event`, `ddb.put`, `ddb.get`, `ddb.scan`,
+`ddb.stream-event`, `s3.put`, `eventbridge.event`, `kinesis.event`,
+`kinesis.cloudwatch-event` and `shutdown`. Every response is
+`{"ok":true,"result":…}` or `{"ok":false,"error":…}`. An operation that
+references a resource the run did not provision fails with the reason; it never
+falls back to a closed endpoint. `describe` is the only operation that returns
+local secrets or resolved environment values, and it carries the live
+delivery-engine state under `delivery`. `clock.advance` is accepted only on a
+`--clock test` run; the real clock is never advanced.
 
 `plan --json` emits:
 
@@ -304,12 +311,59 @@ TS_NODE_TRANSPILE_ONLY=1
 | `AWS::ApiGateway::RestApi` + `Resource` tree + `Method` + `AWS_PROXY` integration | Served as REST API v1 at the path reconstructed from the resource tree. `ResponseTransferMode: STREAM` and `/response-streaming-invocations` are marked streaming. |
 | `AWS::Lambda::Url` (`AuthType: NONE`) | Served as a Function URL listener. `InvokeMode: RESPONSE_STREAM` is marked streaming (buffered). A URL with `AWS_IAM` is not served as a standalone URL; when a served CloudFront distribution targets it, the gateway invokes it through the signed local OAC origin instead. |
 | `AWS::ApiGatewayV2::Authorizer` (`REQUEST`, simple responses) | Run for the CUSTOM routes that reference it. The transport sends a v2 REQUEST authorizer event and enforces `isAuthorized`. |
-| `AWS::Lambda::EventSourceMapping` (SQS, DynamoDB Streams, Kinesis) | Reported with its function, source, batch size and `ReportBatchItemFailures`; the function is started. A session builds the provider event from real local messages or a real local write. |
-| `AWS::Events::Rule` with a Lambda target | Reported with its schedule or event pattern and target; the function is started. A session builds the event the rule would deliver. |
+| `AWS::Lambda::EventSourceMapping` (SQS, DynamoDB Streams, Kinesis) | Reported with its function, source, batch size and `ReportBatchItemFailures`; the function is started and the mapping is registered with the delivery engine. A session builds the provider event from real local messages or a real local write. Per-source delivery lands in E1b (SQS), E2 (DynamoDB Streams) and E5 (Kinesis). |
+| `AWS::Events::Rule` with a Lambda target | Reported with its schedule or event pattern and target; the function is started and the rule is registered with the delivery engine as a schedule or pattern kind. A session builds the event the rule would deliver; delivery lands in E3. |
+| `AWS::Logs::SubscriptionFilter` | Reported with its log group, filter and destination; the destination is a Lambda function, or an `AWS::Logs::Destination` followed to its Kinesis `TargetArn`. A Lambda destination is started and the filter is registered with the delivery engine. Delivery lands in E5; a destination the runner cannot deliver is reported under `skipped`. |
 | `AWS::ApiGatewayV2::Api` (`ProtocolType: WEBSOCKET`) | Reported under `skipped`, never served. An app with no other surface fails with the skipped reasons. |
 | `AWS::ApiGateway::Method` with a `MOCK` integration | Served from the first `IntegrationResponses` entry: its status and `method.response.header.*` parameters become the response. No function is invoked. |
 | `AWS::CloudFront::Distribution`, `AWS::CloudFront::Function`, `AWS::CloudFront::CachePolicy`, `AWS::CloudFront::OriginRequestPolicy`, `AWS::CloudFront::ResponseHeadersPolicy`, `AWS::CloudFront::OriginAccessControl` | Served as the distribution's edge path on a loopback listener, with S3, Function URL and origin-group origins. A property the gateway cannot faithfully apply refuses the distribution with a named reason; a caching, compression, logging or placement property is reported. |
 | `AWS::CloudFront::KeyGroup`, `AWS::CloudFront::PublicKey` | Reported only; a distribution that trusts a key group is refused because signed URLs and cookies are not verified locally. |
+
+## Delivery engine
+
+`run` and `session` start one delivery engine per run. It registers every
+derived event-source mapping, EventBridge rule and CloudWatch Logs subscription
+filter at start and reports each source's state. The engine is present in full;
+the per-source deliverers land in E1b–E6, so every kind currently reports
+`not-delivered` with the task that will implement it.
+
+The state vocabulary follows the Lambda event source mapping API, which reports
+a mapping's lifecycle in `State` and its processing outcome in
+`LastProcessingResult` ([EventSourceMappingConfiguration](https://docs.aws.amazon.com/lambda/latest/dg/API_EventSourceMappingConfiguration.html)):
+
+| State | Meaning |
+| --- | --- |
+| `registered` | The kind has a deliverer and the source is registered. |
+| `polling` | A queue or stream deliverer is polling the backend. |
+| `armed` | A schedule or rule deliverer is waiting for the clock. |
+| `paused` | Registered, not delivering. |
+| `stopped` | The deliverer stopped at shutdown. |
+| `failed` | The deliverer could not start or deliver; `lastError` carries the cause. |
+| `not-delivered` | The source kind has no deliverer yet; `task` and `reason` name the implementing task. |
+
+Each entry also reports `delivered` and `failed` counts, `lastError` and
+`paused`. `plan` prints the state the engine would register (and carries it
+under `delivery` in `plan --json`); `session describe` reports the live state:
+
+```json
+"delivery": {
+  "running": true,
+  "clock": {"mode": "test", "now": "2026-01-01T00:00:00Z"},
+  "concurrency": 4,
+  "sources": [
+    {"id": "WorkerFnEventSourceMapping", "kind": "sqs", "function": "WorkerFn",
+     "state": "not-delivered", "delivered": 0, "failed": 0, "paused": false,
+     "task": "E1b", "reason": "engine present; SQS event-source delivery lands in E1b"}
+  ]
+}
+```
+
+`--delivery-concurrency` bounds concurrent handler invocations the engine
+performs (`1..32`, default 4). `--clock real` is the default; `--clock
+test[=<RFC3339 start>]` makes the engine, future schedules, TTL expiry and
+visibility timeouts deterministic, and the `clock.now`/`clock.advance` session
+operations read and move it. Shutdown drains in-flight deliveries for up to five
+seconds, then cancels and stops the deliverers.
 
 ## CloudFront distributions
 
