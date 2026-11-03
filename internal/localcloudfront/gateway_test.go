@@ -701,4 +701,47 @@ func TestGatewayAppliesValueEditOnMultiValueFieldsBeforeOrigin(t *testing.T) {
 	}
 }
 
+// TestGatewayForwardsConditionalHeadersToTheOrigin pins the AWS behavior the
+// S3 origin relies on: CloudFront forwards If-Match, If-None-Match,
+// If-Modified-Since and If-Unmodified-Since to the origin, which evaluates
+// them; a header whitelist that does not name them must not drop them.
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/RequestAndResponseBehaviorCustomOrigin.html
+func TestGatewayForwardsConditionalHeadersToTheOrigin(t *testing.T) {
+	origin := okOrigin("ok")
+	behavior := testBehavior("*", "origin", []string{"GET", "HEAD"})
+	behavior.OriginRequestPolicy = testPolicy(PolicyOriginRequest, nil, &OriginRequestPolicy{
+		Headers: HeaderForwarding{Mode: ForwardWhitelist, Names: []string{"origin"}},
+	}, nil)
+	distribution := testDistribution(behavior, nil, testOrigin("origin", "origin.example"))
+	gateway := NewGateway(distribution, &Topology{}, map[string]Origin{"origin": origin}, nil, nil)
+	header := map[string]string{
+		"If-Match":            `"abc123"`,
+		"If-None-Match":       `"abc123"`,
+		"If-Modified-Since":   "Wed, 21 Oct 2015 07:28:00 GMT",
+		"If-Unmodified-Since": "Wed, 21 Oct 2015 07:28:00 GMT",
+		"X-Not-Forwarded":     "dropped",
+	}
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		t.Run(method, func(t *testing.T) {
+			origin.requests = nil
+			serveGateway(gateway, method, "http://viewer.example/hello.txt", "", header)
+			if len(origin.requests) != 1 {
+				t.Fatalf("origin calls = %d, want 1", len(origin.requests))
+			}
+			sent := origin.requests[0].Header
+			for name, want := range header {
+				if name == "X-Not-Forwarded" {
+					if got := sent.Get(name); got != "" {
+						t.Fatalf("%s = %q, want the policy to drop it", name, got)
+					}
+					continue
+				}
+				if got := sent.Get(name); got != want {
+					t.Fatalf("%s = %q, want %q", name, got, want)
+				}
+			}
+		})
+	}
+}
+
 func intPointer(value int) *int { return &value }

@@ -146,6 +146,7 @@ func (g *Gateway) originRequest(
 			header.Add(lower, value)
 		}
 	}
+	copyConditionalHeaders(header, state.Header)
 	addCloudFrontHeaders(header, headerRule, state)
 	addForwardedCookies(header, cookieRule, state)
 	removeHopByHop(header)
@@ -190,6 +191,22 @@ func (g *Gateway) originRequest(
 		ViewerIP:                    state.ViewerIP,
 		RequestID:                   requestID,
 		DistributionID:              localDistributionID(g.Distribution),
+	}
+}
+
+// copyConditionalHeaders forwards the viewer's conditional headers to the
+// origin, which evaluates them. AWS lists them as forwarded even when the
+// viewer does not configure caching on them, so the local gateway copies them
+// after policy filtering rather than dropping a viewer If-None-Match /
+// If-Modified-Since with the policy's header whitelist. The origin's 304/412
+// answer must reach the viewer.
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/RequestAndResponseBehaviorCustomOrigin.html
+func copyConditionalHeaders(header, viewer http.Header) {
+	for _, name := range []string{"If-Match", "If-None-Match", "If-Modified-Since", "If-Unmodified-Since"} {
+		header.Del(name)
+		for _, value := range viewer.Values(name) {
+			header.Add(name, value)
+		}
 	}
 }
 
