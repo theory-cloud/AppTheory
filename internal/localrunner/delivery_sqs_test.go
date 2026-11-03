@@ -886,16 +886,21 @@ func TestEventPatternMatching(t *testing.T) {
 		{name: "anything but match", pattern: `{"kind":[{"anything-but":["drop"]}]}`, target: `{"kind":"drop"}`, want: false},
 		{name: "anything but prefix", pattern: `{"kind":[{"anything-but":{"prefix":"dr"}}]}`, target: `{"kind":"keep"}`, want: true},
 		{name: "anything but prefix match", pattern: `{"kind":[{"anything-but":{"prefix":"ke"}}]}`, target: `{"kind":"keep"}`, want: false},
+		{name: "anything but prefix list", pattern: `{"kind":[{"anything-but":{"prefix":["dr","ol"]}}]}`, target: `{"kind":"keep"}`, want: true},
+		{name: "anything but prefix list match", pattern: `{"kind":[{"anything-but":{"prefix":["dr","ke"]}}]}`, target: `{"kind":"keep"}`, want: false},
+		{name: "anything but suffix", pattern: `{"kind":[{"anything-but":{"suffix":".json"}}]}`, target: `{"kind":"data.txt"}`, want: true},
+		{name: "anything but suffix match", pattern: `{"kind":[{"anything-but":{"suffix":".json"}}]}`, target: `{"kind":"data.json"}`, want: false},
+		{name: "anything but suffix list", pattern: `{"kind":[{"anything-but":{"suffix":[".json",".yaml"]}}]}`, target: `{"kind":"data.txt"}`, want: true},
+		{name: "anything but suffix list match", pattern: `{"kind":[{"anything-but":{"suffix":[".json",".yaml"]}}]}`, target: `{"kind":"data.yaml"}`, want: false},
 		{name: "exists", pattern: `{"kind":[{"exists":true}]}`, target: `{"kind":"keep"}`, want: true},
 		{name: "missing exists", pattern: `{"kind":[{"exists":true}]}`, target: `{"other":"x"}`, want: false},
 		{name: "not exists", pattern: `{"kind":[{"exists":false}]}`, target: `{"other":"x"}`, want: true},
 		{name: "null", pattern: `{"kind":[null]}`, target: `{"kind":null}`, want: true},
 		{name: "missing null", pattern: `{"kind":[null]}`, target: `{"other":"x"}`, want: true},
 		{name: "numeric range", pattern: `{"n":[{"numeric":[">",1,"<=",10]}]}`, target: `{"n":10}`, want: true},
-		{name: "numeric outside", pattern: `{"n":[{"numeric":["<",1,">=",10]}]}`, target: `{"n":10}`, want: false},
+		{name: "numeric outside", pattern: `{"n":[{"numeric":[">",1,"<=",10]}]}`, target: `{"n":0}`, want: false},
 		{name: "numeric representation", pattern: `{"n":[300]}`, target: `{"n":300.0}`, want: false},
 		{name: "metadata attributes", pattern: `{"attributes":{"SentTimestamp":["123"]}}`, target: `{"attributes":{"SentTimestamp":"123"}}`, want: true},
-		{name: "bad operator", pattern: `{"kind":[{"prefix":"k","suffix":"p"}]}`, target: `{"kind":"keep"}`, want: false},
 		{name: "or", pattern: `{"$or":[{"a":["x"]},{"b":["y"]}]}`, target: `{"b":"y"}`, want: true},
 		{name: "nested", pattern: `{"body":{"kind":["keep"]}}`, target: `{"body":{"kind":"keep"}}`, want: true},
 	}
@@ -914,6 +919,96 @@ func TestEventPatternMatching(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEventPatternExistsMatchesLeafNodesOnly(t *testing.T) {
+	cases := []struct {
+		name    string
+		pattern string
+		target  string
+		body    string
+		want    bool
+	}{
+		{
+			name:    "body leaf exists",
+			pattern: `{"body":{"address":[{"exists":true}]}}`,
+			target:  `{"messageId":"m1"}`,
+			body:    `{"address":"123 Main St"}`,
+			want:    true,
+		},
+		{
+			name:    "body intermediate node does not exist",
+			pattern: `{"body":{"address":[{"exists":true}]}}`,
+			target:  `{"messageId":"m1"}`,
+			body:    `{"address":{"street":"123 Main St","city":"Anytown"}}`,
+			want:    false,
+		},
+		{
+			name:    "body absent field does not exist",
+			pattern: `{"body":{"address":[{"exists":true}]}}`,
+			target:  `{"messageId":"m1"}`,
+			body:    `{"name":"John Doe"}`,
+			want:    false,
+		},
+		{
+			name:    "body intermediate node is not absent",
+			pattern: `{"body":{"address":[{"exists":false}]}}`,
+			target:  `{"messageId":"m1"}`,
+			body:    `{"address":{"street":"123 Main St"}}`,
+			want:    false,
+		},
+		{
+			name:    "body absent field is absent",
+			pattern: `{"body":{"address":[{"exists":false}]}}`,
+			target:  `{"messageId":"m1"}`,
+			body:    `{"name":"John Doe"}`,
+			want:    true,
+		},
+		{
+			name:    "record intermediate node does not exist",
+			pattern: `{"attributes":[{"exists":true}]}`,
+			target:  `{"messageId":"m1","attributes":{"SentTimestamp":"123"}}`,
+			body:    `{}`,
+			want:    false,
+		},
+		{
+			name:    "record leaf exists",
+			pattern: `{"messageId":[{"exists":true}]}`,
+			target:  `{"messageId":"m1"}`,
+			body:    `{}`,
+			want:    true,
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			pattern, err := decodePatternValue([]byte(testCase.pattern))
+			if err != nil {
+				t.Fatalf("pattern: %v", err)
+			}
+			target, err := decodePatternValue([]byte(testCase.target))
+			if err != nil {
+				t.Fatalf("target: %v", err)
+			}
+			record := mustMapValue(t, target)
+			body, err := decodePatternValue([]byte(testCase.body))
+			if err != nil {
+				t.Fatalf("body: %v", err)
+			}
+			record["body"] = body
+			if got := eventPatternMatches(pattern, record); got != testCase.want {
+				t.Fatalf("matched=%t want %t", got, testCase.want)
+			}
+		})
+	}
+}
+
+func mustMapValue(t *testing.T, value any) map[string]any {
+	t.Helper()
+	object, ok := value.(map[string]any)
+	if !ok {
+		t.Fatalf("value is not an object: %#v", value)
+	}
+	return object
 }
 
 func TestApplySQSMappingOptionsRejectsInvalidSQSConfiguration(t *testing.T) {

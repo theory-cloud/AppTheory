@@ -253,7 +253,17 @@ func matchFilterOperator(operator string, pattern map[string]any, value any, pre
 		if !ok {
 			return false
 		}
-		return want == present
+		if !present {
+			return !want
+		}
+		// "Exists matching only works on leaf nodes. It does not work on
+		// intermediate nodes" — an object with children is not a leaf, so
+		// neither exists:true nor exists:false matches it.
+		// https://docs.aws.amazon.com/lambda/latest/dg/invocation-eventfiltering.html
+		if _, intermediate := value.(map[string]any); intermediate {
+			return false
+		}
+		return want
 	case filterOperatorPrefix, filterOperatorSuffix, filterOperatorEqualsIgnoreCase:
 		text, ok := pattern[operator].(string)
 		if !ok || !present {
@@ -290,14 +300,45 @@ func matchAnythingBut(pattern, value any, present bool) bool {
 		}
 		return false
 	case map[string]any:
-		if prefix, ok := typed[filterOperatorPrefix].(string); ok && present {
-			actual, isString := value.(string)
-			return isString && strings.HasPrefix(actual, prefix)
+		if len(typed) != 1 {
+			return false
+		}
+		for operator, raw := range typed {
+			switch operator {
+			case filterOperatorPrefix:
+				return matchAnythingButString(raw, value, present, strings.HasPrefix)
+			case filterOperatorSuffix:
+				return matchAnythingButString(raw, value, present, strings.HasSuffix)
+			}
 		}
 		return false
 	default:
 		return present && scalarPatternEqual(typed, value)
 	}
+}
+
+// matchAnythingButString applies an anything-but prefix or suffix exclusion.
+// The exclusion is a string or a list of strings; a field that is absent or not
+// a string cannot carry the excluded value, so it does not match the exclusion.
+func matchAnythingButString(pattern, value any, present bool, predicate func(string, string) bool) bool {
+	if !present {
+		return false
+	}
+	actual, ok := value.(string)
+	if !ok {
+		return false
+	}
+	switch typed := pattern.(type) {
+	case string:
+		return predicate(actual, typed)
+	case []any:
+		for _, candidate := range typed {
+			if text, ok := candidate.(string); ok && predicate(actual, text) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // matchNumeric applies the documented numeric operator list: alternating
