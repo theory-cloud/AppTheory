@@ -757,6 +757,10 @@ object with children, even though the field is present. When a field's value is
 an array, the pattern matches if the intersection of the pattern array and the
 event array is non-empty, as AWS documents:
 https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-event-patterns-arrays.html.
+A nested pattern object applied to an array of objects is applied to each
+element and matches when any element matches, and a pattern never matches
+across elements, as AWS's event-ruler documents in
+[JSON Array Matching](https://github.com/aws/event-ruler#json-array-matching).
 
 **Maximum concurrency.** `ScalingConfig.MaximumConcurrency` (2–1000) bounds the
 number of batches the mapping starts concurrently, within
