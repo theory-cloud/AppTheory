@@ -439,9 +439,13 @@ string, as CloudFront documents.
 ### Edge policies
 
 The origin request policy is applied to the viewer request; the response headers
-policy is applied after the viewer-response function. Caching is not emulated:
-every request is forwarded to the origin as a cache miss, and a cache policy is
-used only for the values it contributes to the origin request. The
+policy is applied after the viewer-response function. The four conditional
+request headers (`If-Match`, `If-None-Match`, `If-Modified-Since` and
+`If-Unmodified-Since`) are always forwarded to the origin for it to evaluate,
+as CloudFront forwards them, so a policy that does not list them does not drop
+them. Caching is not emulated: every request is forwarded to the origin as a
+cache miss, and a cache policy is used only for the values it contributes to the
+origin request. The
 `ViewerProtocolPolicy` is reported, not enforced, because the local URL is plain
 HTTP; the same is true for compression, access logging, aliases, the viewer
 certificate and the distribution's HTTP/IPv6/price-class settings.
@@ -460,12 +464,32 @@ same assembly:
   destination prefix and declared content-type/cache-control metadata; the
   content-type is inferred from the extension otherwise). GET and HEAD pass
   `Content-Type`, `ETag`, `Last-Modified`, `Content-Length`, `Cache-Control`,
-  `Content-Range` and user metadata through. A Range returns 206, and a HEAD
-  whose Range is satisfiable returns 206 with `Content-Range` and no body, as S3
-  [HeadObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html)
-  documents. A conditional GET or HEAD passes S3's 304 Not Modified (or 412
-  Precondition Failed for `If-Match`/`If-Unmodified-Since`) through with the
-  object's `ETag` and `Last-Modified` and no body. OPTIONS follows S3's CORS
+  `Content-Range` and user metadata through. A ranged GET returns 206. A HEAD
+  with a single satisfiable byte `Range` returns 206 with
+  `Content-Range: bytes <first>-<last>/<total>`, the ranged `Content-Length`
+  and no body: AWS documents HeadObject as the GetObject response without a
+  body and a satisfiable GetObject range as 206
+  ([HeadObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html),
+  [GetObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html)).
+  The pinned s3proxy backend ignores `Range` on HEAD (it answers 200 with the
+  full length and no `Content-Range`), so the local origin requests the full
+  metadata and derives the ranged answer from it. An unsatisfiable single range
+  is 416 with `Content-Range: bytes */<total>`, as HeadObject documents; a
+  multi-range or unparseable `Range` is ignored and the full object metadata is
+  returned, because S3 does not support multiple ranges per request and
+  RFC 9110 permits ignoring a `Range`
+  ([RFC 9110 §14.2](https://www.rfc-editor.org/rfc/rfc9110#section-14.2)).
+  CloudFront forwards `If-Match`, `If-None-Match`, `If-Modified-Since` and
+  `If-Unmodified-Since` to the origin, and the origin evaluates them
+  ([request headers](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/RequestAndResponseBehaviorCustomOrigin.html),
+  [S3 conditional GET](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/RequestAndResponseBehaviorS3Origin.html)).
+  The local gateway forwards those four headers even when the behavior's origin
+  request policy does not list them, so a conditional GET or HEAD passes S3's
+  304 Not Modified (or 412 Precondition Failed for
+  `If-Match`/`If-Unmodified-Since`) through with the validators the origin
+  attached and no body. The pinned s3proxy attaches `ETag` but not
+  `Last-Modified` to those answers; the local response carries exactly what the
+  origin supplied. OPTIONS follows S3's CORS
   behavior: a bucket with no CORS configuration returns 403 `AccessForbidden`,
   and a bucket that declares CORS rules is refused with a named local gap
   because bucket CORS is not provisioned. An OAC/OAI origin has no

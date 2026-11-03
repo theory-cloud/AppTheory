@@ -537,7 +537,11 @@ type Origin interface {
 viewer-modified `URI` (without the origin path), `OriginPath`, the filtered
 `Query` and `Header`, `Host`, the body, the viewer IP and the request id.
 `Path()` joins `OriginPath` and `URI`. `Range` carries the viewer `Range`
-header, which CloudFront forwards to the origin outside the policies.
+header, which CloudFront forwards to the origin outside the policies. `Header`
+also always carries `If-Match`, `If-None-Match`, `If-Modified-Since` and
+`If-Unmodified-Since` from the viewer: CloudFront forwards those to the origin
+for the origin to evaluate, so a cache or origin request policy that does not
+name them does not drop them.
 `SuppressS3ResponseOverrides` is set when the behavior uses one of the managed
 origin request policies below, so an S3 origin drops
 `response-content-type`, `response-content-disposition` and
@@ -557,12 +561,32 @@ The runner registers:
   contains. `Include`/`Exclude`, `Extract=false` and non-asset sources are
   refused with a named reason. GET and HEAD pass the object's
   `Content-Type`, `ETag`, `Last-Modified`, `Content-Length`, `Cache-Control`,
-  `Content-Range` and user metadata through. A Range returns 206, and a HEAD
-  whose Range is satisfiable returns 206 with `Content-Range` and no body
-  ([HeadObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html)).
-  A conditional GET or HEAD passes a 304 Not Modified (or a 412 Precondition
-  Failed for `If-Match`/`If-Unmodified-Since`) through with the object's `ETag`
-  and `Last-Modified` and no body. OPTIONS returns 403 `AccessForbidden` for a
+  `Content-Range` and user metadata through. A ranged GET returns 206. A HEAD
+  with a single satisfiable byte `Range` returns 206 with
+  `Content-Range: bytes <first>-<last>/<total>`, the ranged `Content-Length`
+  and no body, because AWS documents HeadObject as the GetObject response
+  without a body and a satisfiable GetObject range as 206
+  ([HeadObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html),
+  [GetObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html)).
+  The pinned s3proxy backend ignores `Range` on HEAD (200, full length, no
+  `Content-Range`), so the local origin requests the full metadata and derives
+  the ranged answer from it. An unsatisfiable single range is 416 with
+  `Content-Range: bytes */<total>` as HeadObject documents; a multi-range or
+  unparseable `Range` is ignored and the full object metadata is returned,
+  because S3 does not support multiple ranges per request and RFC 9110 permits
+  ignoring a `Range`
+  ([RFC 9110 §14.2](https://www.rfc-editor.org/rfc/rfc9110#section-14.2)).
+  CloudFront forwards `If-Match`, `If-None-Match`, `If-Modified-Since` and
+  `If-Unmodified-Since` to the origin, which evaluates them
+  ([request headers](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/RequestAndResponseBehaviorCustomOrigin.html),
+  [S3 conditional GET](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/RequestAndResponseBehaviorS3Origin.html)).
+  The local gateway forwards those four headers regardless of the origin
+  request policy's header whitelist, so a conditional GET or HEAD passes a 304
+  Not Modified (or a 412 Precondition Failed for
+  `If-Match`/`If-Unmodified-Since`) through with the validators the origin
+  attached and no body. The pinned s3proxy attaches `ETag` but not
+  `Last-Modified` to those answers; the local response carries exactly what the
+  origin supplied. OPTIONS returns 403 `AccessForbidden` for a
   bucket without CORS and a named local gap for a bucket that declares CORS
   rules. An OAC/OAI origin has no `s3:ListBucket`, so a missing object is 403
   `AccessDenied`; a public S3 origin returns 404 `NoSuchKey`
