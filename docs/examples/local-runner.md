@@ -314,14 +314,14 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
    the last error, before any resource is provisioned. A backend with no
    published host port is reported ready without this wait.
 6. **Provision resources.** When the backend is ready, the runner creates every
-   resource the assembly declares: S3 buckets and KMS keys, DynamoDB tables
-   with their key schema, GSIs, streams and TTL, and SQS queues with their
-   visibility, retention and redrive policy. Each `Custom::CDKBucketDeployment`
-   source in the assembly is then copied into its bucket with the declared
-   destination prefix and metadata. It records the provisioned values
-   environment resolution needs. Attributes the local emulator does not
-   implement (SSE, PITR, deletion protection, KMS-on-SQS) are not provisioned;
-   they are not part of the local contract.
+   resource the assembly declares, in this order: S3 buckets; each
+   `Custom::CDKBucketDeployment` source copied into its bucket with the declared
+   destination prefix and metadata; KMS keys; DynamoDB tables with their key
+   schema, GSIs, streams and TTL; and SQS queues with their visibility,
+   retention and redrive policy. It records the provisioned values environment
+   resolution needs. Attributes the local emulator does not implement (SSE,
+   PITR, deletion protection, KMS-on-SQS) are not provisioned; they are not part
+   of the local contract.
 7. **Resolve environment references.** A served function's `Ref`/`Fn::GetAtt`
    environment values are resolved to deterministic local values: a DynamoDB
    table name and stream ARN, an SQS queue name or URL, an EventBridge rule
@@ -460,11 +460,16 @@ same assembly:
   destination prefix and declared content-type/cache-control metadata; the
   content-type is inferred from the extension otherwise). GET and HEAD pass
   `Content-Type`, `ETag`, `Last-Modified`, `Content-Length`, `Cache-Control`,
-  `Content-Range` and user metadata through; Range returns 206. OPTIONS follows
-  S3's CORS behavior: a bucket with no CORS configuration returns 403
-  `AccessForbidden`, and a bucket that declares CORS rules is refused with a
-  named local gap because bucket CORS is not provisioned. An OAC/OAI origin has
-  no `s3:ListBucket`, so a missing object is **403 `AccessDenied`**; a public S3
+  `Content-Range` and user metadata through. A Range returns 206, and a HEAD
+  whose Range is satisfiable returns 206 with `Content-Range` and no body, as S3
+  [HeadObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html)
+  documents. A conditional GET or HEAD passes S3's 304 Not Modified (or 412
+  Precondition Failed for `If-Match`/`If-Unmodified-Since`) through with the
+  object's `ETag` and `Last-Modified` and no body. OPTIONS follows S3's CORS
+  behavior: a bucket with no CORS configuration returns 403 `AccessForbidden`,
+  and a bucket that declares CORS rules is refused with a named local gap
+  because bucket CORS is not provisioned. An OAC/OAI origin has no
+  `s3:ListBucket`, so a missing object is **403 `AccessDenied`**; a public S3
   origin returns 404 `NoSuchKey`. A method other than GET/HEAD/OPTIONS is a
   named error.
 - **Function URL.** The origin builds the Lambda Function URL payload format
@@ -474,16 +479,19 @@ same assembly:
   `cookies`, `isBase64Encoded` and `body` back. A `RESPONSE_STREAM` function is
   **buffered by the RIE**: the body is complete and its chunk timing is never
   reproduced. A `NONE` URL is invoked directly. An `AWS_IAM` URL is signed with
-  SigV4 over the method, path, query, Host, body hash and date, verified by the
-  local Function URL endpoint before the handler runs, and reported through
-  `requestContext.authorizer.iam`; the identity is a loopback placeholder and
-  IAM policy evaluation is not emulated.
-- **Origin group.** Only GET, HEAD and OPTIONS fail over. CloudFront retries the
-  secondary member when the primary returns a status in `FailoverCriteria`,
-  when it fails to connect and 503 is configured, or when it times out and 504
-  is configured; each attempt uses that member's `OriginPath` and Host. Other
-  methods go to the primary only. If both members fail, the secondary's response
-  is returned.
+  SigV4 over the method, path, query, Host, body hash and date; the gateway's
+  in-process verifier checks that locally signed request before it invokes the
+  handler, and the event reports `requestContext.authorizer.iam` with a loopback
+  identity. IAM policy evaluation is not emulated.
+- **Origin group.** GET and HEAD always fail over. OPTIONS fails over only when
+  the behavior's `CachedMethods` includes OPTIONS; otherwise CloudFront tries the
+  primary only
+  ([origin failover](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/high_availability_origin_failover.html)).
+  CloudFront retries the secondary member when the primary returns a status in
+  `FailoverCriteria`, when it fails to connect and 503 is configured, or when it
+  times out and 504 is configured; each attempt uses that member's `OriginPath`
+  and Host. Other methods go to the primary only. If both members fail, the
+  secondary's response is returned.
 - **Other origins.** A literal external custom origin is refused with a named
   503; the gateway never makes an external network request.
 
@@ -647,7 +655,8 @@ the harness records it.
   enforcement. S3-origin bucket CORS rules and IAM/bucket policies are not
   emulated; the local S3 origin returns the S3 status the OAC/OAI access model
   produces. A Function URL `RESPONSE_STREAM` body is buffered. An `AWS_IAM`
-  Function URL's SigV4 signing is reproduced, but IAM policy evaluation is not.
+  Function URL's SigV4 signing and the gateway's in-process check of that
+  locally signed request are reproduced, but IAM policy evaluation is not.
   A literal external custom origin is refused rather than reached. Lambda@Edge,
   KeyValueStore, signed URLs, field-level encryption, geo restriction, WAF and
   custom error responses refuse the distribution; caching, compression, logging

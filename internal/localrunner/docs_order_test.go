@@ -102,6 +102,18 @@ func TestDocumentedRunStepOrderMatchesTheRunner(t *testing.T) {
 		"r.provisionTables(",
 		"r.provisionQueues(",
 	})
+	provisionStart := strings.Index(section, "**Provision resources.**")
+	provisionEnd := strings.Index(section, "**Resolve environment references.**")
+	if provisionStart < 0 || provisionEnd <= provisionStart {
+		t.Fatalf("%s: cannot isolate the Provision resources step", document)
+	}
+	assertInOrder(t, document, section[provisionStart:provisionEnd], "provisioning step", []string{
+		"S3 buckets",
+		"Custom::CDKBucketDeployment",
+		"KMS keys",
+		"DynamoDB tables",
+		"SQS queues",
+	})
 
 	startServersBody := goFunctionBody(t, "runner.go", "func (r *Runner) startServers(ctx context.Context, spec *Spec) error {")
 	assertInOrder(t, "runner.go", startServersBody, "CloudFront wiring", []string{

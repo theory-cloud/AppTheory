@@ -335,6 +335,10 @@ separately, but not their relative order; running the function first is the
 local gateway's choice, so a function can answer a request whose method the
 behavior does not allow.
 
+`CachedMethods` does not admit or refuse a method; it decides whether an OPTIONS
+request may fail over to an origin group's secondary member. GET and HEAD always
+fail over; OPTIONS does so only when the behavior lists it in `CachedMethods`.
+
 ### Request phases
 
 1. viewer-request function (if the behavior declares one);
@@ -501,7 +505,7 @@ refuses the distribution instead of being ignored.
 | Property group | Implemented | Reported (not emulated) | Refused |
 | --- | --- | --- | --- |
 | `DistributionConfig` | `DefaultCacheBehavior`, `CacheBehaviors`, `Origins`, `OriginGroups`, `DefaultRootObject`, `Enabled` | `Aliases`, `Comment`, `HttpVersion`, `IPV6Enabled`, `Logging`, `PriceClass`, `Staging` (false), `ViewerCertificate` | `ContinuousDeploymentPolicyId`, `CustomErrorResponses`, `Restrictions`, `WebACLId`, `Staging` (true), `Enabled` (false), unknown |
-| Cache behavior | `PathPattern`, `TargetOriginId`, `AllowedMethods`, `CachePolicyId`, `OriginRequestPolicyId`, `ResponseHeadersPolicyId`, `FunctionAssociations` | `CachedMethods`, `Compress`, `DefaultTTL`, `MinTTL`, `MaxTTL`, `RealtimeLogConfigArn`, `SmoothStreaming` (false), `ViewerProtocolPolicy` | `FieldLevelEncryptionId`, `ForwardedValues`, `GrpcConfig`, `LambdaFunctionAssociations`, `TrustedKeyGroups`, `TrustedSigners`, `SmoothStreaming` (true), unknown |
+| Cache behavior | `PathPattern`, `TargetOriginId`, `AllowedMethods`, `CachedMethods` (OPTIONS failover), `CachePolicyId`, `OriginRequestPolicyId`, `ResponseHeadersPolicyId`, `FunctionAssociations` | `Compress`, `DefaultTTL`, `MinTTL`, `MaxTTL`, `RealtimeLogConfigArn`, `SmoothStreaming` (false), `ViewerProtocolPolicy` | `FieldLevelEncryptionId`, `ForwardedValues`, `GrpcConfig`, `LambdaFunctionAssociations`, `TrustedKeyGroups`, `TrustedSigners`, `SmoothStreaming` (true), unknown |
 | Origin | `Id`, `DomainName` (literal, S3 bucket, Function URL), `OriginPath`, `CustomOriginConfig`, `S3OriginConfig`, `OriginAccessControlId`, `OriginCustomHeaders` | `ConnectionAttempts`, `ConnectionTimeout`, `OriginShield`, the custom origin protocol/SSL/ports/timeouts, `OriginAccessIdentity`, S3 OAC/OAI signing (the access model is applied, not the signature) | unresolved `DomainName`, missing or both origin configs, `OriginPath` without a leading slash, unknown |
 | CloudFront Function | `FunctionCode`, `FunctionConfig.Runtime` | `AutoPublish`, `Name`, `FunctionConfig.Comment` | `KeyValueStoreAssociations`, unsupported runtime, empty code, unknown |
 | Cache policy | `ParametersInCacheKeyAndForwardedToOrigin` | `Name`, `Comment`, `DefaultTTL`, `MinTTL`, `MaxTTL`, `EnableAcceptEncodingBrotli`, `EnableAcceptEncodingGzip` | unknown managed ID, malformed config, unknown property |
@@ -513,11 +517,13 @@ refuses the distribution instead of being ignored.
 
 Caching is not emulated. Every request is forwarded to the origin as a cache
 miss; a cache policy contributes only the values it forwards to the origin.
-`Compress`, `CachedMethods`, cache TTLs, `RealtimeLogConfigArn`, aliases, the
-viewer certificate, access logging, `HttpVersion`, `IPV6Enabled`, `PriceClass`
-and the origin connection settings are reported on the distribution and never
-silently applied. `ViewerProtocolPolicy` is reported because the local URL is
-plain HTTP; an `https-only` behavior is still served locally over HTTP.
+`CachedMethods` is parsed even though nothing is cached: it decides whether an
+OPTIONS request may fail over to an origin group's secondary member. `Compress`,
+cache TTLs, `RealtimeLogConfigArn`, aliases, the viewer certificate, access
+logging, `HttpVersion`, `IPV6Enabled`, `PriceClass` and the origin connection
+settings are reported on the distribution and never silently applied.
+`ViewerProtocolPolicy` is reported because the local URL is plain HTTP; an
+`https-only` behavior is still served locally over HTTP.
 
 ### Origin interface
 
@@ -551,11 +557,16 @@ The runner registers:
   contains. `Include`/`Exclude`, `Extract=false` and non-asset sources are
   refused with a named reason. GET and HEAD pass the object's
   `Content-Type`, `ETag`, `Last-Modified`, `Content-Length`, `Cache-Control`,
-  `Content-Range` and user metadata through; Range returns 206. OPTIONS returns
-  403 `AccessForbidden` for a bucket without CORS and a named local gap for a
-  bucket that declares CORS rules. An OAC/OAI origin has no `s3:ListBucket`, so
-  a missing object is 403 `AccessDenied`; a public S3 origin returns 404
-  `NoSuchKey` ([S3 access control](https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-best-practices.html),
+  `Content-Range` and user metadata through. A Range returns 206, and a HEAD
+  whose Range is satisfiable returns 206 with `Content-Range` and no body
+  ([HeadObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html)).
+  A conditional GET or HEAD passes a 304 Not Modified (or a 412 Precondition
+  Failed for `If-Match`/`If-Unmodified-Since`) through with the object's `ETag`
+  and `Last-Modified` and no body. OPTIONS returns 403 `AccessForbidden` for a
+  bucket without CORS and a named local gap for a bucket that declares CORS
+  rules. An OAC/OAI origin has no `s3:ListBucket`, so a missing object is 403
+  `AccessDenied`; a public S3 origin returns 404 `NoSuchKey`
+  ([S3 access control](https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-best-practices.html),
   [why S3 hides 404 behind 403](https://repost.aws/knowledge-center/403-vs-404-error-s3)).
   Methods other than GET/HEAD/OPTIONS are a named local refusal.
 - **Function URL origin.** Builds the
@@ -565,17 +576,18 @@ The runner registers:
   `isBase64Encoded` and `body` map back. `RESPONSE_STREAM` is buffered by the
   RIE: the body is complete and chunk timing is not reproduced. A `NONE` URL is
   invoked directly. An `AWS_IAM` URL is signed with SigV4 (method, path, query,
-  Host, body hash and date) and the local Function URL endpoint verifies the
-  signature before the handler runs; the event reports
+  Host, body hash and date); the gateway's in-process verifier checks that
+  locally signed request before it invokes the handler, and the event reports
   `requestContext.authorizer.iam` with a loopback identity. IAM policy
   evaluation is not emulated
   ([Function URL auth](https://docs.aws.amazon.com/lambda/latest/dg/urls-auth.html)).
-- **Origin group.** Only GET, HEAD and OPTIONS fail over. CloudFront retries the
-  secondary member when the primary returns a status in `FailoverCriteria`,
-  fails to connect with 503 configured, or times out with 504 configured; each
-  attempt uses that member's `OriginPath` and Host
+- **Origin group.** GET and HEAD always fail over. OPTIONS fails over only when
+  the behavior's `CachedMethods` lists OPTIONS
   ([origin failover](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/high_availability_origin_failover.html)).
-  Other methods go to the primary only; if both members fail, the secondary's
+  CloudFront retries the secondary member when the primary returns a status in
+  `FailoverCriteria`, fails to connect with 503 configured, or times out with
+  504 configured; each attempt uses that member's `OriginPath` and Host. Other
+  methods go to the primary only; if both members fail, the secondary's
   response is returned.
 - **Refused origin.** A literal external custom origin is a named 503; the
   gateway never makes an external network request. A viewer-request response
