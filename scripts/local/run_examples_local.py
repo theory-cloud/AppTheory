@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import datetime
 import fcntl
 import gzip
 import hashlib
@@ -107,6 +108,19 @@ MCP_EXAMPLES = {
     "resumable-sse": "examples/mcp/resumable-sse",
 }
 LOCAL_RUNNER_READY = "local-run: ready"
+LOCAL_RUNNER_CLOCK_START = "2026-01-01T00:00:00Z"
+# The delivery engine registers every derived source and reports its task until
+# the per-source deliverer lands. E1a ships the engine only, so every kind must
+# be visible and not-delivered; the assertion below is the real-path proof.
+DELIVERY_TASKS = {
+    "sqs": "E1b",
+    "dynamodb": "E2",
+    "kinesis": "E5",
+    "eventbridge-schedule": "E3",
+    "eventbridge-rule": "E3",
+    "cloudwatch-logs": "E5",
+}
+DELIVERY_CONCURRENCY = 4
 LOCAL_RUNNER_RUNTIMES = {"go": "provided.al2023", "ts": "nodejs24.x", "py": "python3.14"}
 # The handler response each language returned, compared across languages once
 # all three rows have run. This is the parity assertion: same handler contract,
@@ -2164,9 +2178,128 @@ def plan_local_app(harness: Harness, app: str, context: dict | None = None) -> d
         argv.extend(["-c", f"{key}={value}"])
     result = harness.run(argv, timeout=1800)
     try:
-        return json.loads(result.stdout)
+        plan = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
         raise HarnessFailure(f"apptheory-local plan for {app} did not print JSON: {exc}", result.stdout) from exc
+    _assert_plan_delivery(plan, app)
+    return plan
+
+
+def _expected_delivery_entries(plan: dict) -> list[tuple[str, str, str | None]]:
+    """Every derived mapping, rule and subscription, with its delivery kind."""
+    entries: list[tuple[str, str, str | None]] = []
+    for source in plan.get("eventSources") or []:
+        entries.append((source["logicalId"], source["type"], source.get("function")))
+    for rule in plan.get("rules") or []:
+        kind = "eventbridge-schedule" if rule.get("schedule") else "eventbridge-rule"
+        entries.append((rule["logicalId"], kind, None))
+    for subscription in plan.get("subscriptions") or []:
+        kind = subscription.get("kind") or "cloudwatch-logs"
+        entries.append((subscription["logicalId"], kind, subscription.get("function")))
+    return entries
+
+
+def _assert_plan_delivery(plan: dict, app: str) -> None:
+    """Plan must report the state the engine would register for every source.
+
+    E1a ships no per-service deliverer, so every derived source must be visible
+    as ``not-delivered`` with the task that will implement it. A missing or
+    silently registered source fails the row.
+    """
+    delivery = plan.get("delivery")
+    if delivery is None:
+        # An assembly with no mapping, rule or subscription has no delivery
+        # entries; the id comparison below still catches a plan that drops them
+        # for an app that has sources.
+        delivery = []
+    if not isinstance(delivery, list):
+        raise HarnessFailure(f"{app}: plan has no delivery state: {delivery!r}")
+    expected = _expected_delivery_entries(plan)
+    by_id: dict[str, dict] = {}
+    for entry in delivery:
+        logical_id = entry.get("id")
+        if logical_id in by_id:
+            raise HarnessFailure(f"{app}: plan reports delivery for {logical_id} twice")
+        by_id[logical_id] = entry
+    expected_ids = {logical_id for logical_id, _, _ in expected}
+    if set(by_id) != expected_ids:
+        raise HarnessFailure(
+            f"{app}: delivery ids {sorted(by_id)} do not match the derived sources {sorted(expected_ids)}"
+        )
+    for logical_id, kind, function in expected:
+        entry = by_id[logical_id]
+        if entry.get("kind") != kind:
+            raise HarnessFailure(f"{app}: {logical_id} delivery kind {entry.get('kind')!r} != {kind!r}")
+        if entry.get("state") != "not-delivered":
+            raise HarnessFailure(f"{app}: {logical_id} is {entry.get('state')!r}, want not-delivered")
+        if entry.get("task") != DELIVERY_TASKS[kind]:
+            raise HarnessFailure(
+                f"{app}: {logical_id} delivery task {entry.get('task')!r} != {DELIVERY_TASKS[kind]!r}"
+            )
+        reason = str(entry.get("reason") or "")
+        if not reason.startswith("engine present; "):
+            raise HarnessFailure(f"{app}: {logical_id} has no engine reason: {reason!r}")
+        if function and entry.get("function") != function:
+            raise HarnessFailure(
+                f"{app}: {logical_id} delivery function {entry.get('function')!r} != {function!r}"
+            )
+
+
+def _assert_session_delivery(session: "LocalSession") -> None:
+    """A live session must report the engine state for every derived source."""
+    delivery = session.info.get("delivery") or {}
+    if not isinstance(delivery, dict):
+        raise HarnessFailure(f"session {session.prefix}: describe has no delivery object: {delivery!r}")
+    if delivery.get("running") is not True:
+        raise HarnessFailure(f"session {session.prefix}: the delivery engine is not running")
+    if delivery.get("concurrency") != DELIVERY_CONCURRENCY:
+        raise HarnessFailure(
+            f"session {session.prefix}: delivery concurrency {delivery.get('concurrency')!r} != {DELIVERY_CONCURRENCY}"
+        )
+    clock = delivery.get("clock") or {}
+    if clock.get("mode") != session.clock_mode:
+        raise HarnessFailure(
+            f"session {session.prefix}: delivery clock mode {clock.get('mode')!r} != {session.clock_mode!r}"
+        )
+    expected = {logical_id for logical_id, _, _ in _expected_delivery_entries(session.spec)}
+    sources = delivery.get("sources") or []
+    if {source.get("id") for source in sources} != expected:
+        raise HarnessFailure(
+            f"session {session.prefix}: delivery sources {[source.get('id') for source in sources]} "
+            f"do not match the plan's derived sources {sorted(expected)}"
+        )
+    for source in sources:
+        if source.get("state") != "not-delivered":
+            raise HarnessFailure(
+                f"session {session.prefix}: {source.get('id')} is {source.get('state')!r}, want not-delivered"
+            )
+        if not source.get("task") or not str(source.get("reason") or "").startswith("engine present; "):
+            raise HarnessFailure(
+                f"session {session.prefix}: {source.get('id')} does not name its delivery task: {source}"
+            )
+    now = session.clock_now()
+    if now.get("mode") != session.clock_mode:
+        raise HarnessFailure(f"session {session.prefix}: clock.now mode {now.get('mode')!r} != {session.clock_mode!r}")
+    instant = str(now.get("now") or "")
+    # Go's RFC3339Nano emits up to nine fractional digits; Python's
+    # fromisoformat accepts at most six.
+    normalized = re.sub(r"(\.\d{6})\d+", r"\1", instant)
+    try:
+        parsed = datetime.datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HarnessFailure(f"session {session.prefix}: clock.now is not RFC3339: {instant!r}") from exc
+    if session.clock_mode == "test":
+        expected_start = datetime.datetime.fromisoformat(
+            (session.clock_start or LOCAL_RUNNER_CLOCK_START).replace("Z", "+00:00")
+        )
+        if parsed != expected_start:
+            raise HarnessFailure(
+                f"session {session.prefix}: test clock started at {instant!r}, want {session.clock_start!r}"
+            )
+    else:
+        drift = abs((datetime.datetime.now(datetime.timezone.utc) - parsed).total_seconds())
+        if drift > 300:
+            raise HarnessFailure(f"session {session.prefix}: real clock.now drifted {drift:.0f}s from wall time")
 
 
 def start_local_app(
@@ -2228,6 +2361,14 @@ class LocalSession:
     prefix: str
     spec: dict
     info: dict
+    clock_mode: str = "real"
+    clock_start: str | None = None
+
+    def clock_now(self) -> dict:
+        return self.request("clock.now")
+
+    def clock_advance(self, duration: str) -> dict:
+        return self.request("clock.advance", duration=duration)
 
     def request(self, op: str, **fields) -> dict:
         payload = {"op": op}
@@ -2314,6 +2455,7 @@ def start_local_session(
     backends: tuple[str, ...] = (),
     context: dict | None = None,
     targets: tuple[str, ...] = (),
+    clock: str | None = None,
 ) -> LocalSession:
     """Start one `apptheory-local session` and wait for its machine interface."""
     ensure_cdk_app(harness, app)
@@ -2338,6 +2480,8 @@ def start_local_session(
         argv.extend(["--backend", backend])
     for target in targets:
         argv.extend(["--target", target])
+    if clock:
+        argv.extend(["--clock", clock])
     process = subprocess.Popen(
         argv,
         cwd=str(ROOT),
@@ -2351,10 +2495,19 @@ def start_local_session(
     )
     try:
         _wait_for_local_session_ready(process, log.name)
+        clock_mode = "test" if clock and clock.startswith("test") else "real"
+        clock_start = clock.split("=", 1)[1] if clock and "=" in clock else None
         session = LocalSession(
-            process=process, log_path=log.name, prefix=prefix, spec=spec, info={}
+            process=process,
+            log_path=log.name,
+            prefix=prefix,
+            spec=spec,
+            info={},
+            clock_mode=clock_mode,
+            clock_start=clock_start,
         )
         session.info = session.request("describe")
+        _assert_session_delivery(session)
     except Exception:
         _terminate_process(process)
         log.close()
@@ -2402,7 +2555,11 @@ def stop_local_session(harness: Harness, session: LocalSession, *, strict: bool 
             failure = HarnessFailure(
                 f"apptheory-local session {session.prefix} exited {session.process.returncode}", output
             )
-        elif LOCAL_RUNNER_READY not in output or "shutting down" not in output:
+        elif (
+            LOCAL_RUNNER_READY not in output
+            or "shutting down" not in output
+            or "delivery engine stopped" not in output
+        ):
             failure = HarnessFailure(
                 f"apptheory-local session {session.prefix} did not report a full lifecycle", output
             )
@@ -2430,7 +2587,11 @@ def stop_local_app(harness: Harness, run: LocalAppRun) -> str:
         raise HarnessFailure(
             f"apptheory-local {run.prefix} exited {run.process.returncode} after SIGTERM", output
         )
-    expect_output(output, [LOCAL_RUNNER_READY, "shutting down"], f"apptheory-local {run.prefix} run")
+    expect_output(
+        output,
+        [LOCAL_RUNNER_READY, "shutting down", "delivery engine stopped"],
+        f"apptheory-local {run.prefix} run",
+    )
     _assert_local_runner_cleanup(harness, run.prefix)
     return output
 
@@ -2739,9 +2900,35 @@ def run_sqs_producer(harness: Harness) -> str:
         stop_local_session(harness, session)
 
 
+def _exercise_test_clock(session: LocalSession) -> None:
+    """Prove the deterministic clock through the live session protocol."""
+    before = session.clock_now()
+    if before.get("now") != LOCAL_RUNNER_CLOCK_START:
+        raise HarnessFailure(f"test clock did not start at {LOCAL_RUNNER_CLOCK_START}: {before}")
+    advanced = session.clock_advance("90m")
+    if advanced.get("advanced") != "1h30m0s" or advanced.get("now") != "2026-01-01T01:30:00Z":
+        raise HarnessFailure(f"clock.advance did not move the clock by 90m: {advanced}")
+    after = session.clock_now()
+    if after.get("now") != advanced.get("now"):
+        raise HarnessFailure(f"clock.now {after.get('now')!r} != clock.advance {advanced.get('now')!r}")
+    described = session.request("describe")
+    clock = (described.get("delivery") or {}).get("clock") or {}
+    if clock.get("now") != advanced.get("now"):
+        raise HarnessFailure(f"the delivery engine clock did not advance: {clock}")
+    if clock.get("mode") != "test":
+        raise HarnessFailure(f"the delivery engine clock is not in test mode: {clock}")
+
+
 def run_sqs_worker(harness: Harness) -> str:
-    session = start_local_session(harness, SQS_APP, name="sqs-worker", backends=("sqs",))
+    session = start_local_session(
+        harness,
+        SQS_APP,
+        name="sqs-worker",
+        backends=("sqs",),
+        clock=f"test={LOCAL_RUNNER_CLOCK_START}",
+    )
     try:
+        _exercise_test_clock(session)
         source = session.event_source(kind="sqs", source_name="events-queue")
         if not source.get("reportBatchItemFailures"):
             raise HarnessFailure(f"events-queue mapping lost reportBatchItemFailures: {source}")
@@ -2767,7 +2954,8 @@ def run_sqs_worker(harness: Harness) -> str:
             raise HarnessFailure("sqs worker: the valid message was reported as a failure")
         return (
             "two messages were received from ElasticMQ and invoked as the CDK mapping's batch; "
-            "worker.mjs reported exactly the simulated failure as a partial batch failure"
+            "worker.mjs reported exactly the simulated failure as a partial batch failure; "
+            "the test clock advanced 90m and the delivery engine reported the new instant"
         )
     finally:
         stop_local_session(harness, session)
