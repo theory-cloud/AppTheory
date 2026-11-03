@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/theory-cloud/apptheory/v6/internal/localcloudfront"
@@ -91,6 +92,11 @@ func (o *s3Origin) get(
 				input.IfModifiedSince = aws.Time(parsed)
 			}
 		}
+		if unmodified := optionalHeader(request.Header, "If-Unmodified-Since"); unmodified != nil {
+			if parsed, err := http.ParseTime(*unmodified); err == nil {
+				input.IfUnmodifiedSince = aws.Time(parsed)
+			}
+		}
 	}
 	if head {
 		return o.headObject(ctx, input, request, query)
@@ -123,13 +129,14 @@ func (o *s3Origin) headObject(
 	query string,
 ) (localcloudfront.OriginResponse, error) {
 	output, err := o.client.HeadObject(ctx, &s3.HeadObjectInput{
-		Bucket:          input.Bucket,
-		Key:             input.Key,
-		VersionId:       input.VersionId,
-		Range:           input.Range,
-		IfMatch:         input.IfMatch,
-		IfNoneMatch:     input.IfNoneMatch,
-		IfModifiedSince: input.IfModifiedSince,
+		Bucket:            input.Bucket,
+		Key:               input.Key,
+		VersionId:         input.VersionId,
+		Range:             input.Range,
+		IfMatch:           input.IfMatch,
+		IfNoneMatch:       input.IfNoneMatch,
+		IfModifiedSince:   input.IfModifiedSince,
+		IfUnmodifiedSince: input.IfUnmodifiedSince,
 	})
 	if err != nil {
 		return o.mapError(err, request)
@@ -150,7 +157,15 @@ func (o *s3Origin) headObject(
 	header.Set("Accept-Ranges", "bytes")
 	addS3Metadata(header, output.Metadata)
 	applyS3ResponseOverrides(header, query)
-	return localcloudfront.OriginResponse{StatusCode: http.StatusOK, Header: header}, nil
+	// S3 HeadObject answers a satisfiable Range with the same headers as a
+	// ranged GET: 206 Partial Content, a Content-Range for the returned range,
+	// the ranged Content-Length and no body.
+	// https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html
+	status := http.StatusOK
+	if input.Range != nil && aws.ToString(output.ContentRange) != "" {
+		status = http.StatusPartialContent
+	}
+	return localcloudfront.OriginResponse{StatusCode: status, Header: header}, nil
 }
 
 func (o *s3Origin) options(request localcloudfront.OriginRequest) localcloudfront.OriginResponse {
@@ -182,6 +197,19 @@ func (o *s3Origin) mapError(err error, request localcloudfront.OriginRequest) (l
 		case "InvalidRange":
 			return s3ErrorResponse(http.StatusRequestedRangeNotSatisfiable, "InvalidRange",
 				"The requested range is not satisfiable", o.newRequestID(), request), nil
+		}
+	}
+	// A conditional GET or HEAD that S3 answers with 304 Not Modified or 412
+	// Precondition Failed reaches the SDK as an error. CloudFront passes the
+	// origin's status and validators through; it does not turn either into a
+	// gateway error. A 304 has no body; the local 412 likewise carries only the
+	// origin's validators.
+	// https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html
+	var responseErr *awshttp.ResponseError
+	if errors.As(err, &responseErr) {
+		switch status := responseErr.HTTPStatusCode(); status {
+		case http.StatusNotModified, http.StatusPreconditionFailed:
+			return s3ConditionalResponse(status, responseErr.HTTPResponse().Header), nil
 		}
 	}
 	var statusErr interface{ HTTPStatusCode() int }
@@ -289,6 +317,22 @@ func applyS3ResponseOverrides(header http.Header, query string) {
 		if value := values.Get(parameter); value != "" {
 			header.Set(name, value)
 		}
+	}
+}
+
+// s3ConditionalResponse passes a 304 Not Modified or 412 Precondition Failed
+// through with the validators S3 attached to it and no body.
+func s3ConditionalResponse(status int, origin http.Header) localcloudfront.OriginResponse {
+	header := http.Header{}
+	for _, name := range []string{"ETag", "Last-Modified"} {
+		for _, value := range origin.Values(name) {
+			header.Add(name, value)
+		}
+	}
+	return localcloudfront.OriginResponse{
+		StatusCode:        status,
+		StatusDescription: http.StatusText(status),
+		Header:            header,
 	}
 }
 

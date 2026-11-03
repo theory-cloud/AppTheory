@@ -88,6 +88,45 @@ func TestS3OriginHeadHasNoBody(t *testing.T) {
 	}
 }
 
+func TestS3OriginHeadRangeReturns206WithContentRange(t *testing.T) {
+	origin, _ := newTestS3Origin(t, func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodHead {
+			t.Errorf("method = %s", request.Method)
+		}
+		if got := request.Header.Get("Range"); got != "bytes=0-4" {
+			t.Errorf("range = %q", got)
+		}
+		// S3 documents the 206 response, Content-Range and ranged Content-Length
+		// for a satisfiable HeadObject Range. A backend that reports the ranged
+		// metadata with a plain 200 must still map to 206 locally.
+		writer.Header().Set("Content-Type", "text/plain")
+		writer.Header().Set("Content-Range", "bytes 0-4/11")
+		writer.Header().Set("Content-Length", "5")
+		writer.Header().Set("ETag", `"abc123"`)
+		writer.WriteHeader(http.StatusOK)
+	})
+	response, err := origin.Fetch(context.Background(), localcloudfront.OriginRequest{
+		Method: http.MethodHead,
+		URI:    "/hello.txt",
+		Range:  "bytes=0-4",
+	})
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if response.StatusCode != http.StatusPartialContent {
+		t.Fatalf("status = %d, want 206 for a satisfiable HEAD Range", response.StatusCode)
+	}
+	if got := response.Header.Get("Content-Range"); got != "bytes 0-4/11" {
+		t.Fatalf("content range = %q", got)
+	}
+	if got := response.Header.Get("Content-Length"); got != "5" {
+		t.Fatalf("content length = %q, want the ranged length", got)
+	}
+	if len(response.Body) != 0 {
+		t.Fatalf("HEAD body = %q, want no body", response.Body)
+	}
+}
+
 func TestS3OriginMissingObjectIs403UnderOACAnd404WithoutIt(t *testing.T) {
 	origin, _ := newTestS3Origin(t, func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/xml")
@@ -242,6 +281,59 @@ func TestS3OriginPassesVersionAndConditionalHeaders(t *testing.T) {
 	})
 	if err != nil || response.StatusCode != 200 {
 		t.Fatalf("response = %d err = %v", response.StatusCode, err)
+	}
+}
+
+func TestS3OriginPassesConditionalStatusesThroughWithValidators(t *testing.T) {
+	cases := []struct {
+		name     string
+		status   int
+		header   string
+		value    string
+		want     int
+		wantDate bool
+	}{
+		{name: "not modified", status: http.StatusNotModified, header: "If-None-Match", value: `"abc123"`, want: http.StatusNotModified},
+		{name: "precondition failed if-match", status: http.StatusPreconditionFailed, header: "If-Match", value: `"abc123"`, want: http.StatusPreconditionFailed, wantDate: true},
+		{name: "precondition failed if-unmodified-since", status: http.StatusPreconditionFailed, header: "If-Unmodified-Since", value: "Wed, 21 Oct 2015 07:28:00 GMT", want: http.StatusPreconditionFailed, wantDate: true},
+	}
+	for _, testCase := range cases {
+		for _, method := range []string{http.MethodGet, http.MethodHead} {
+			t.Run(testCase.name+"/"+method, func(t *testing.T) {
+				origin, _ := newTestS3Origin(t, func(writer http.ResponseWriter, request *http.Request) {
+					if testCase.wantDate && request.Header.Get("If-Unmodified-Since") == "" {
+						t.Errorf("If-Unmodified-Since was not forwarded: %v", request.Header)
+					}
+					writer.Header().Set("ETag", `"abc123"`)
+					writer.Header().Set("Last-Modified", "Wed, 21 Oct 2015 07:28:00 GMT")
+					writer.WriteHeader(testCase.status)
+				})
+				headers := http.Header{testCase.header: {testCase.value}}
+				if testCase.header != "If-Unmodified-Since" {
+					headers.Set("If-Unmodified-Since", "Wed, 21 Oct 2015 07:28:00 GMT")
+				}
+				response, err := origin.Fetch(context.Background(), localcloudfront.OriginRequest{
+					Method: method,
+					URI:    "/hello.txt",
+					Header: headers,
+				})
+				if err != nil {
+					t.Fatalf("fetch: %v", err)
+				}
+				if response.StatusCode != testCase.want {
+					t.Fatalf("status = %d, want %d", response.StatusCode, testCase.want)
+				}
+				if got := response.Header.Get("ETag"); got != `"abc123"` {
+					t.Fatalf("etag = %q", got)
+				}
+				if got := response.Header.Get("Last-Modified"); got != "Wed, 21 Oct 2015 07:28:00 GMT" {
+					t.Fatalf("last-modified = %q", got)
+				}
+				if len(response.Body) != 0 {
+					t.Fatalf("body = %q, want no body", response.Body)
+				}
+			})
+		}
 	}
 }
 
