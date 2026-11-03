@@ -99,7 +99,7 @@ func TestCloudFrontOriginsWiresS3FunctionURLAndGroups(t *testing.T) {
 	}
 }
 
-func TestCloudFrontOriginWiringFailsClosed(t *testing.T) {
+func TestCloudFrontOriginWiringRefusesUnavailableOriginsInsteadOfFailingTheRun(t *testing.T) {
 	distribution := &localcloudfront.Distribution{
 		LogicalID: "Distribution",
 		Origins: []*localcloudfront.DistributionOrigin{{
@@ -107,16 +107,20 @@ func TestCloudFrontOriginWiringFailsClosed(t *testing.T) {
 		}},
 	}
 	runner := &Runner{options: Options{Stdout: io.Discard}, resourceValues: resourceValues{}}
-	if _, err := runner.cloudFrontOrigins(&Spec{}, distribution); err == nil || !strings.Contains(err.Error(), "s3proxy backend") {
-		t.Fatalf("missing backend err = %v", err)
+	origins, err := runner.cloudFrontOrigins(&Spec{}, distribution)
+	if err != nil {
+		t.Fatalf("missing backend must be a refused origin, not a run failure: %v", err)
+	}
+	if _, fetchErr := origins["Html"].Fetch(context.Background(), localcloudfront.OriginRequest{Method: http.MethodGet, URI: "/x"}); fetchErr == nil || !strings.Contains(fetchErr.Error(), "s3proxy backend") {
+		t.Fatalf("missing backend fetch err = %v", fetchErr)
 	}
 	runner.backends = map[string]backendProcess{"s3proxy": {HostURL: "http://127.0.0.1:1", Endpoints: []Endpoint{{Service: "s3"}}}}
-	if _, err := runner.cloudFrontOrigins(&Spec{}, distribution); err == nil || !strings.Contains(err.Error(), "not provisioned") {
-		t.Fatalf("missing bucket err = %v", err)
+	origins, err = runner.cloudFrontOrigins(&Spec{}, distribution)
+	if err != nil {
+		t.Fatalf("missing bucket must be a refused origin, not a run failure: %v", err)
 	}
-	runner.resourceValues = resourceValues{"Stack/Bucket": {Type: typeS3Bucket, Name: "bucket"}}
-	if _, err := runner.cloudFrontOrigins(&Spec{}, distribution); err != nil {
-		t.Fatalf("wired origin: %v", err)
+	if _, fetchErr := origins["Html"].Fetch(context.Background(), localcloudfront.OriginRequest{Method: http.MethodGet, URI: "/x"}); fetchErr == nil || !strings.Contains(fetchErr.Error(), "not provisioned") {
+		t.Fatalf("missing bucket fetch err = %v", fetchErr)
 	}
 }
 
@@ -169,7 +173,8 @@ func TestCloudFrontOriginWiringReportsEachMissingPiece(t *testing.T) {
 		name         string
 		distribution *localcloudfront.Distribution
 		spec         *Spec
-		want         string
+		wantErr      string
+		wantFetch    string
 	}{
 		{
 			name: "group member missing",
@@ -180,8 +185,8 @@ func TestCloudFrontOriginWiringReportsEachMissingPiece(t *testing.T) {
 				}},
 				OriginGroups: []*localcloudfront.OriginGroup{{ID: "Group", Members: []string{"Bucket", "Nope"}}},
 			},
-			spec: &Spec{},
-			want: "not an origin",
+			spec:    &Spec{},
+			wantErr: "not an origin",
 		},
 		{
 			name: "unknown kind",
@@ -189,8 +194,8 @@ func TestCloudFrontOriginWiringReportsEachMissingPiece(t *testing.T) {
 				LogicalID: "D",
 				Origins:   []*localcloudfront.DistributionOrigin{{ID: "Odd", DomainName: "odd.example"}},
 			},
-			spec: &Spec{},
-			want: "not implemented locally",
+			spec:    &Spec{},
+			wantErr: "not implemented locally",
 		},
 		{
 			name: "function URL target missing",
@@ -200,8 +205,8 @@ func TestCloudFrontOriginWiringReportsEachMissingPiece(t *testing.T) {
 					ID: "Fn", DomainName: "url.lambda-url.local", Kind: localcloudfront.OriginCustom, FunctionURL: "Missing",
 				}},
 			},
-			spec: &Spec{},
-			want: "does not target a Lambda function",
+			spec:      &Spec{},
+			wantFetch: "does not target a Lambda function",
 		},
 		{
 			name: "function URL invoker missing",
@@ -211,15 +216,25 @@ func TestCloudFrontOriginWiringReportsEachMissingPiece(t *testing.T) {
 					ID: "Fn", DomainName: "url.lambda-url.local", Kind: localcloudfront.OriginCustom, FunctionURL: "Url1",
 				}},
 			},
-			spec: &Spec{functionURLTargets: map[string]string{"Url1": "Function1"}},
-			want: "is not running",
+			spec:      &Spec{functionURLTargets: map[string]string{"Url1": "Function1"}},
+			wantFetch: "is not running",
 		},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			_, err := base.cloudFrontOrigins(testCase.spec, testCase.distribution)
-			if err == nil || !strings.Contains(err.Error(), testCase.want) {
-				t.Fatalf("err = %v, want %q", err, testCase.want)
+			origins, err := base.cloudFrontOrigins(testCase.spec, testCase.distribution)
+			if testCase.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), testCase.wantErr) {
+					t.Fatalf("err = %v, want %q", err, testCase.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("wiring error = %v", err)
+			}
+			origin := origins[testCase.distribution.Origins[0].ID]
+			if _, fetchErr := origin.Fetch(context.Background(), localcloudfront.OriginRequest{Method: http.MethodGet, URI: "/x"}); fetchErr == nil || !strings.Contains(fetchErr.Error(), testCase.wantFetch) {
+				t.Fatalf("fetch err = %v, want %q", fetchErr, testCase.wantFetch)
 			}
 		})
 	}

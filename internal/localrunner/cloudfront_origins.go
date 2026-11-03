@@ -82,11 +82,17 @@ func (r *Runner) cloudFrontOrigin(spec *Spec, origin *localcloudfront.Distributi
 func (r *Runner) s3OriginFor(spec *Spec, origin *localcloudfront.DistributionOrigin) (localcloudfront.Origin, error) {
 	backend, ok := r.backendForService("s3")
 	if !ok || backend.HostURL == "" {
-		return nil, fmt.Errorf("an S3 origin needs the s3proxy backend; start the run with --backend s3proxy")
+		return &refusedOrigin{
+			originID: origin.ID,
+			reason:   "the S3 origin needs the s3proxy backend; start the run with --backend s3proxy",
+		}, nil
 	}
 	bucketName, ok := r.bucketName(origin.Bucket)
 	if !ok {
-		return nil, fmt.Errorf("bucket %s was not provisioned", origin.Bucket)
+		return &refusedOrigin{
+			originID: origin.ID,
+			reason:   fmt.Sprintf("bucket %s was not provisioned", origin.Bucket),
+		}, nil
 	}
 	noListBucket := origin.OriginAccessControl != "" || (origin.S3 != nil && origin.S3.OriginAccessIdentity != "")
 	return &s3Origin{
@@ -102,15 +108,21 @@ func (r *Runner) s3OriginFor(spec *Spec, origin *localcloudfront.DistributionOri
 func (r *Runner) functionURLOrigin(spec *Spec, origin *localcloudfront.DistributionOrigin) (localcloudfront.Origin, error) {
 	functionID, ok := spec.functionURLTargets[origin.FunctionURL]
 	if !ok {
-		return nil, fmt.Errorf("Function URL %s does not target a Lambda function", origin.FunctionURL)
+		return &refusedOrigin{
+			originID: origin.ID,
+			reason:   fmt.Sprintf("Function URL %s does not target a Lambda function", origin.FunctionURL),
+		}, nil
 	}
 	invoker, ok := r.invokers[functionID]
 	if !ok {
-		return nil, fmt.Errorf("function %s behind Function URL %s is not running", functionID, origin.FunctionURL)
+		return &refusedOrigin{
+			originID: origin.ID,
+			reason:   fmt.Sprintf("function %s behind Function URL %s is not running", functionID, origin.FunctionURL),
+		}, nil
 	}
 	authType, err := functionURLAuthType(spec, origin.FunctionURL)
 	if err != nil {
-		return nil, err
+		return &refusedOrigin{originID: origin.ID, reason: err.Error()}, nil
 	}
 	implementation := &functionURLOrigin{
 		originID:   origin.ID,
