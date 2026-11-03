@@ -295,3 +295,141 @@ func TestPlanJSONCarriesEventSourcesAndRules(t *testing.T) {
 		t.Fatalf("rules missing from plan document: %+v", decoded["rules"])
 	}
 }
+
+func TestDeriveSubscriptionFilters(t *testing.T) {
+	resources := map[string]any{
+		"Fn": withAsset(lambdaFunction(nil), "asset.deadbeef"),
+		"Stream": map[string]any{
+			"Type":       typeKinesisStream,
+			"Properties": map[string]any{"Name": "logs"},
+		},
+		"LogGroup": map[string]any{
+			"Type":       typeLogGroup,
+			"Properties": map[string]any{"LogGroupName": "/aws/example/source"},
+		},
+		"Destination": map[string]any{
+			"Type": typeLogsDestination,
+			"Properties": map[string]any{
+				"DestinationName": "example-destination",
+				"TargetArn":       map[string]any{"Fn::GetAtt": []any{"Stream", "Arn"}},
+			},
+		},
+		"StreamFilter": map[string]any{
+			"Type": typeLogsSubscription,
+			"Properties": map[string]any{
+				"LogGroupName":  map[string]any{"Ref": "LogGroup"},
+				"FilterName":    "all-events",
+				"FilterPattern": "",
+				"Distribution":  "ByLogStream",
+				"DestinationArn": map[string]any{"Fn::Join": []any{"", []any{
+					"arn:",
+					map[string]any{"Ref": "AWS::Partition"},
+					":logs:us-east-1:123456789012:destination:example-destination",
+				}}},
+			},
+		},
+		"FunctionFilter": map[string]any{
+			"Type": typeLogsSubscription,
+			"Properties": map[string]any{
+				"LogGroupName":   "/aws/example/function",
+				"FilterName":     "function-events",
+				"DestinationArn": map[string]any{"Fn::GetAtt": []any{"Fn", "Arn"}},
+			},
+		},
+	}
+	dir := writeAssembly(t, resources)
+	mkdirAsset(t, dir)
+	spec, err := deriveAssembly(t, dir)
+	if err != nil {
+		t.Fatalf("derive: %v", err)
+	}
+	if len(spec.Subscriptions) != 2 {
+		t.Fatalf("want two subscriptions, got %+v", spec.Subscriptions)
+	}
+	byID := map[string]SubscriptionSpec{}
+	for _, subscription := range spec.Subscriptions {
+		byID[subscription.LogicalID] = subscription
+	}
+	streamFilter := byID["StreamFilter"]
+	if streamFilter.DestinationType != "stream" || streamFilter.Stream != "Stream" || streamFilter.Destination != "Destination" {
+		t.Fatalf("logs destination was not followed to its stream: %+v", streamFilter)
+	}
+	if streamFilter.LogGroup != "/aws/example/source" || streamFilter.FilterName != "all-events" {
+		t.Fatalf("subscription filter lost its declared fields: %+v", streamFilter)
+	}
+	functionFilter := byID["FunctionFilter"]
+	if functionFilter.DestinationType != "function" || functionFilter.Function != "Fn" {
+		t.Fatalf("lambda destination was not resolved: %+v", functionFilter)
+	}
+	started := map[string]bool{}
+	for _, id := range spec.RuntimeFunctions() {
+		started[id] = true
+	}
+	if !started["Fn"] {
+		t.Fatalf("a log-subscription function must be started: %+v", spec.RuntimeFunctions())
+	}
+}
+
+func TestDeriveSubscriptionFilterFailsClosed(t *testing.T) {
+	base := func() map[string]any {
+		return map[string]any{
+			"Fn": withAsset(lambdaFunction(nil), "asset.deadbeef"),
+			"Filter": map[string]any{
+				"Type": typeLogsSubscription,
+				"Properties": map[string]any{
+					"LogGroupName":   "/aws/example/source",
+					"DestinationArn": map[string]any{"Fn::GetAtt": []any{"Fn", "Name"}},
+				},
+			},
+		}
+	}
+	dir := writeAssembly(t, base())
+	mkdirAsset(t, dir)
+	if _, err := deriveAssembly(t, dir); err == nil || !strings.Contains(err.Error(), "must reference the function Arn") {
+		t.Fatalf("a wrong destination attribute must fail closed, got %v", err)
+	}
+
+	resources := base()
+	filter := mustMap(t, resources["Filter"])
+	filter["Properties"] = "not-an-object"
+	dir = writeAssembly(t, resources)
+	mkdirAsset(t, dir)
+	if _, err := deriveAssembly(t, dir); err == nil || !strings.Contains(err.Error(), "parse subscription filter properties") {
+		t.Fatalf("an unparseable filter must fail closed, got %v", err)
+	}
+}
+
+func TestDeriveSubscriptionFilterReportsAnUnknownDestination(t *testing.T) {
+	resources := map[string]any{
+		"Fn": withAsset(lambdaFunction(nil), "asset.deadbeef"),
+		"Filter": map[string]any{
+			"Type": typeLogsSubscription,
+			"Properties": map[string]any{
+				"LogGroupName":   "/aws/example/source",
+				"DestinationArn": "arn:aws:logs:us-east-1:123456789012:destination:missing",
+			},
+		},
+	}
+	dir := writeAssembly(t, resources)
+	mkdirAsset(t, dir)
+	stacks, err := loadAssembly(dir)
+	if err != nil {
+		t.Fatalf("load assembly: %v", err)
+	}
+	spec, err := deriveSpecInternal(dir, stacks)
+	if err != nil {
+		t.Fatalf("derive: %v", err)
+	}
+	if len(spec.Subscriptions) != 0 {
+		t.Fatalf("an unknown destination must not register a subscription: %+v", spec.Subscriptions)
+	}
+	reported := false
+	for _, skipped := range spec.Skipped {
+		if skipped.LogicalID == "Filter" && strings.Contains(skipped.Reason, "not a local Lambda function or Kinesis stream") {
+			reported = true
+		}
+	}
+	if !reported {
+		t.Fatalf("an unknown destination must be reported: %+v", spec.Skipped)
+	}
+}

@@ -14,32 +14,35 @@ import (
 
 // Resource types the assembly reader understands.
 const (
-	typeLambdaFunction  = "AWS::Lambda::Function"
-	typeDynamoTable     = "AWS::DynamoDB::Table"
-	typeSQSQueue        = "AWS::SQS::Queue"
-	typeS3Bucket        = "AWS::S3::Bucket"
-	typeKMSKey          = "AWS::KMS::Key"
-	typeEventsRule      = "AWS::Events::Rule"
-	typeEventSourceMap  = "AWS::Lambda::EventSourceMapping"
-	typeKinesisStream   = "AWS::Kinesis::Stream"
-	typeSecretsSecret   = "AWS::SecretsManager::Secret" //nolint:gosec // CloudFormation resource type name, not a credential
-	typeIAMRole         = "AWS::IAM::Role"
-	typeMicrovmImage    = "AWS::Lambda::MicrovmImage"
-	typeS3VectorsIndex  = "AWS::S3Vectors::Index"
-	typeHTTPAPI         = "AWS::ApiGatewayV2::Api"
-	typeHTTPRoute       = "AWS::ApiGatewayV2::Route"
-	typeHTTPIntegration = "AWS::ApiGatewayV2::Integration"
-	typeHTTPStage       = "AWS::ApiGatewayV2::Stage"
-	typeHTTPAuthorizer  = "AWS::ApiGatewayV2::Authorizer"
-	typeRESTAPI         = "AWS::ApiGateway::RestApi"
-	typeRESTResource    = "AWS::ApiGateway::Resource"
-	typeRESTMethod      = "AWS::ApiGateway::Method"
-	typeRESTStage       = "AWS::ApiGateway::Stage"
-	typeRESTAuthorizer  = "AWS::ApiGateway::Authorizer"
-	typeFunctionURL     = "AWS::Lambda::Url"
-	typeBucketDeploy    = "Custom::CDKBucketDeployment"
-	typeCloudFront      = "AWS::CloudFront::Distribution"
-	typeCloudFrontFn    = "AWS::CloudFront::Function"
+	typeLambdaFunction   = "AWS::Lambda::Function"
+	typeDynamoTable      = "AWS::DynamoDB::Table"
+	typeSQSQueue         = "AWS::SQS::Queue"
+	typeS3Bucket         = "AWS::S3::Bucket"
+	typeKMSKey           = "AWS::KMS::Key"
+	typeEventsRule       = "AWS::Events::Rule"
+	typeEventSourceMap   = "AWS::Lambda::EventSourceMapping"
+	typeKinesisStream    = "AWS::Kinesis::Stream"
+	typeLogsSubscription = "AWS::Logs::SubscriptionFilter"
+	typeLogGroup         = "AWS::Logs::LogGroup"
+	typeLogsDestination  = "AWS::Logs::Destination"
+	typeSecretsSecret    = "AWS::SecretsManager::Secret" //nolint:gosec // CloudFormation resource type name, not a credential
+	typeIAMRole          = "AWS::IAM::Role"
+	typeMicrovmImage     = "AWS::Lambda::MicrovmImage"
+	typeS3VectorsIndex   = "AWS::S3Vectors::Index"
+	typeHTTPAPI          = "AWS::ApiGatewayV2::Api"
+	typeHTTPRoute        = "AWS::ApiGatewayV2::Route"
+	typeHTTPIntegration  = "AWS::ApiGatewayV2::Integration"
+	typeHTTPStage        = "AWS::ApiGatewayV2::Stage"
+	typeHTTPAuthorizer   = "AWS::ApiGatewayV2::Authorizer"
+	typeRESTAPI          = "AWS::ApiGateway::RestApi"
+	typeRESTResource     = "AWS::ApiGateway::Resource"
+	typeRESTMethod       = "AWS::ApiGateway::Method"
+	typeRESTStage        = "AWS::ApiGateway::Stage"
+	typeRESTAuthorizer   = "AWS::ApiGateway::Authorizer"
+	typeFunctionURL      = "AWS::Lambda::Url"
+	typeBucketDeploy     = "Custom::CDKBucketDeployment"
+	typeCloudFront       = "AWS::CloudFront::Distribution"
+	typeCloudFrontFn     = "AWS::CloudFront::Function"
 
 	assetPathMetadataKey = "aws:asset:path"
 	streamingURIMarker   = "/response-streaming-invocations"
@@ -379,6 +382,9 @@ func (s *Spec) sort() {
 	sort.Slice(s.Rules, func(i, j int) bool {
 		return s.Rules[i].LogicalID < s.Rules[j].LogicalID
 	})
+	sort.Slice(s.Subscriptions, func(i, j int) bool {
+		return s.Subscriptions[i].LogicalID < s.Subscriptions[j].LogicalID
+	})
 	sort.Slice(s.Skipped, func(i, j int) bool { return s.Skipped[i].LogicalID < s.Skipped[j].LogicalID })
 	sort.Slice(s.CloudFront, func(i, j int) bool { return s.CloudFront[i].LogicalID < s.CloudFront[j].LogicalID })
 	sort.Slice(s.CloudFrontFunctions, func(i, j int) bool {
@@ -402,7 +408,10 @@ func deriveStack(spec *Spec, assemblyDir string, stacks []assemblyStack, stack a
 	if err := deriveEventSourceMappings(spec, stacks, stack); err != nil {
 		return err
 	}
-	return deriveEventRules(spec, stacks, stack)
+	if err := deriveEventRules(spec, stacks, stack); err != nil {
+		return err
+	}
+	return deriveSubscriptions(spec, stacks, stack)
 }
 
 // qualify makes a logical id unique across stacks. Single-stack assemblies keep

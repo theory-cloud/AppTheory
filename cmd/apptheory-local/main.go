@@ -119,29 +119,31 @@ func validateInvokeConfig(config *commandConfig) error {
 }
 
 type commandConfig struct {
-	app            string
-	assemblyDir    string
-	scratchDir     string
-	profilePath    string
-	portBase       int
-	namePrefix     string
-	maxConcurrency int
-	jsonOutput     bool
-	contexts       stringList
-	images         stringList
-	endpoints      stringList
-	addHosts       stringList
-	backends       stringList
-	function       string
-	events         stringList
-	stdio          bool
-	sessionTargets stringList
-	handlerDir     string
-	runtime        string
-	handler        string
-	architecture   string
-	memoryMB       int
-	timeoutSeconds int
+	app                 string
+	assemblyDir         string
+	scratchDir          string
+	profilePath         string
+	portBase            int
+	namePrefix          string
+	maxConcurrency      int
+	deliveryConcurrency int
+	clock               string
+	jsonOutput          bool
+	contexts            stringList
+	images              stringList
+	endpoints           stringList
+	addHosts            stringList
+	backends            stringList
+	function            string
+	events              stringList
+	stdio               bool
+	sessionTargets      stringList
+	handlerDir          string
+	runtime             string
+	handler             string
+	architecture        string
+	memoryMB            int
+	timeoutSeconds      int
 }
 
 func (c *commandConfig) register(flags *flag.FlagSet) {
@@ -152,6 +154,8 @@ func (c *commandConfig) register(flags *flag.FlagSet) {
 	flags.IntVar(&c.portBase, "port-base", 0, "bind API listeners at this port; 0 asks the OS for free ports")
 	flags.StringVar(&c.namePrefix, "name-prefix", "", "container and network name prefix (default: derived from the app path)")
 	flags.IntVar(&c.maxConcurrency, "max-concurrency", 32, "maximum in-flight invocations (1-32)")
+	flags.IntVar(&c.deliveryConcurrency, "delivery-concurrency", 0, "maximum concurrent delivery-engine invocations (default 4, max 32)")
+	flags.StringVar(&c.clock, "clock", "real", "time source for run and session: real, test, or test=<RFC3339 start>")
 	flags.BoolVar(&c.jsonOutput, "json", false, "plan: print the derived surface as JSON")
 	flags.Var(&c.contexts, "c", "CDK context key=value (repeatable)")
 	flags.Var(&c.contexts, "context", "CDK context key=value (repeatable)")
@@ -279,13 +283,31 @@ func (c *commandConfig) plan(ctx context.Context, runner *localrunner.Runner) in
 	for _, line := range localrunner.RouteTable(spec) {
 		fmt.Printf("  %s\n", line)
 	}
+	printDerivedEvents(spec)
+	if len(spec.Skipped) > 0 {
+		fmt.Println()
+		fmt.Println("not served locally:")
+		for _, skipped := range spec.Skipped {
+			fmt.Printf("  %-40s %s\n", skipped.LogicalID, skipped.Reason)
+		}
+	}
+	return 0
+}
+
+// printDerivedEvents prints every derived mapping, rule and subscription with
+// the delivery state the engine would register.
+func printDerivedEvents(spec *localrunner.Spec) {
+	delivery := map[string]localrunner.DeliveryState{}
+	for _, state := range spec.Delivery {
+		delivery[state.ID] = state
+	}
 	if len(spec.EventSources) > 0 {
 		fmt.Println()
 		fmt.Println("event sources:")
 		for _, source := range spec.EventSources {
-			fmt.Printf("  %-40s %-9s <- %-28s -> %s batch=%d reportBatchItemFailures=%t enabled=%t\n",
+			fmt.Printf("  %-40s %-9s <- %-28s -> %s batch=%d reportBatchItemFailures=%t enabled=%t delivery=%s\n",
 				source.LogicalID, source.Type, source.SourceName, source.Function, source.BatchSize,
-				source.ReportBatchItemFailures, source.Enabled)
+				source.ReportBatchItemFailures, source.Enabled, localrunner.DeliveryCell(delivery[source.LogicalID]))
 		}
 	}
 	if len(spec.Rules) > 0 {
@@ -296,17 +318,21 @@ func (c *commandConfig) plan(ctx context.Context, runner *localrunner.Runner) in
 			if len(rule.EventPattern) > 0 {
 				description = "pattern=" + string(rule.EventPattern)
 			}
-			fmt.Printf("  %-40s %s -> %s\n", rule.LogicalID, description, strings.Join(rule.Targets, ", "))
+			fmt.Printf("  %-40s %s -> %s delivery=%s\n",
+				rule.LogicalID, description, strings.Join(rule.Targets, ", "),
+				localrunner.DeliveryCell(delivery[rule.LogicalID]))
 		}
 	}
-	if len(spec.Skipped) > 0 {
+	if len(spec.Subscriptions) > 0 {
 		fmt.Println()
-		fmt.Println("not served locally:")
-		for _, skipped := range spec.Skipped {
-			fmt.Printf("  %-40s %s\n", skipped.LogicalID, skipped.Reason)
+		fmt.Println("subscriptions:")
+		for _, subscription := range spec.Subscriptions {
+			fmt.Printf("  %-40s %-16s <- %s filter=%s -> %s delivery=%s\n",
+				subscription.LogicalID, subscription.Kind, subscription.LogGroup,
+				subscription.FilterName, subscription.Destination,
+				localrunner.DeliveryCell(delivery[subscription.LogicalID]))
 		}
 	}
-	return 0
 }
 
 // memoryCell renders a function's memory for the plan. An unresolved intrinsic
@@ -369,21 +395,23 @@ func (c *commandConfig) options() (localrunner.Options, error) {
 		}
 	}
 	return localrunner.Options{
-		AppDir:         c.app,
-		Handler:        handler,
-		Context:        contexts,
-		AssemblyDir:    c.assemblyDir,
-		ScratchDir:     c.scratchDir,
-		ProfilePath:    c.profilePath,
-		Images:         images,
-		Endpoints:      endpoints,
-		AddHosts:       c.addHosts,
-		Backends:       c.backends,
-		ExtraFunctions: append([]string(nil), c.sessionTargets...),
-		PortBase:       c.portBase,
-		NamePrefix:     c.namePrefix,
-		MaxConcurrency: c.maxConcurrency,
-		Stdout:         os.Stdout,
+		AppDir:              c.app,
+		Handler:             handler,
+		Context:             contexts,
+		AssemblyDir:         c.assemblyDir,
+		ScratchDir:          c.scratchDir,
+		ProfilePath:         c.profilePath,
+		Images:              images,
+		Endpoints:           endpoints,
+		AddHosts:            c.addHosts,
+		Backends:            c.backends,
+		ExtraFunctions:      append([]string(nil), c.sessionTargets...),
+		PortBase:            c.portBase,
+		NamePrefix:          c.namePrefix,
+		MaxConcurrency:      c.maxConcurrency,
+		DeliveryConcurrency: c.deliveryConcurrency,
+		Clock:               c.clock,
+		Stdout:              os.Stdout,
 	}, nil
 }
 

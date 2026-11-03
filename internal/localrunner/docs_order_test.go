@@ -30,6 +30,7 @@ func TestDocumentedRunStepOrderMatchesTheRunner(t *testing.T) {
 		{doc: "**Preflight.**", calls: []string{"r.Preflight("}},
 		{doc: "**Run.**", calls: []string{"r.startFunctions("}},
 		{doc: "**Serve, invoke or session.**", calls: []string{"r.startServers("}},
+		{doc: "**Start event delivery.**", calls: []string{"r.startDelivery("}},
 	}
 
 	document := filepath.Join("..", "..", "docs", "examples", "local-runner.md")
@@ -84,7 +85,7 @@ func TestDocumentedRunStepOrderMatchesTheRunner(t *testing.T) {
 	})
 	sessionSection := documentedSection(t, document, "## Automation sessions")
 	assertInOrder(t, document, sessionSection, "documented session operation", []string{
-		"`describe`", "`invoke`", "`sqs.send`", "`sqs.receive`", "`sqs.event`",
+		"`describe`", "`clock.now`", "`clock.advance`", "`invoke`", "`sqs.send`", "`sqs.receive`", "`sqs.event`",
 		"`ddb.put`", "`ddb.get`", "`ddb.scan`", "`ddb.stream-event`",
 		"`s3.put`", "`eventbridge.event`", "`kinesis.event`", "`kinesis.cloudwatch-event`", "`shutdown`",
 	})

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -67,6 +68,8 @@ type sessionRequest struct {
 	Data                []string             `json:"data,omitempty"`
 	PartitionKeys       []string             `json:"partitionKeys,omitempty"`
 	SequenceNumbers     []string             `json:"sequenceNumbers,omitempty"`
+	// Duration is a Go duration for clock.advance, for example "90m".
+	Duration string `json:"duration,omitempty"`
 }
 
 type sessionResponse struct {
@@ -157,12 +160,17 @@ func (s *localSession) handle(ctx context.Context, line string) sessionResponse 
 	return sessionResponse{OK: true, Result: result}
 }
 
+//nolint:gocyclo // the switch is the session's explicit operation contract.
 func (s *localSession) execute(ctx context.Context, request sessionRequest) (any, error) {
 	switch request.Op {
 	case "shutdown":
 		return map[string]any{"shutdown": true}, nil
 	case "describe":
 		return s.describe()
+	case "clock.now":
+		return s.clockNow(), nil
+	case "clock.advance":
+		return s.clockAdvance(request)
 	case "invoke":
 		return s.invoke(ctx, request)
 	case "sqs.send":
@@ -257,15 +265,59 @@ func (s *localSession) describe() (map[string]any, error) {
 		secrets[name] = value
 	}
 	endpoints := s.describeEndpoints()
+	delivery := EngineState{}
+	if s.runner.delivery != nil {
+		delivery = s.runner.delivery.State()
+	}
 	return map[string]any{
-		"functions":    functions,
-		"apis":         apis,
-		"cloudFront":   cloudFront,
-		"eventSources": s.spec.EventSources,
-		"rules":        s.spec.Rules,
-		"resources":    resources,
-		"secrets":      secrets,
-		"endpoints":    endpoints,
+		"functions":     functions,
+		"apis":          apis,
+		"cloudFront":    cloudFront,
+		"eventSources":  s.spec.EventSources,
+		"rules":         s.spec.Rules,
+		"subscriptions": s.spec.Subscriptions,
+		"resources":     resources,
+		"secrets":       secrets,
+		"endpoints":     endpoints,
+		"delivery":      delivery,
+	}, nil
+}
+
+// clockNow reports the run's clock mode and current instant.
+func (s *localSession) clockNow() map[string]any {
+	clock := s.runner.clock
+	if clock == nil {
+		clock = RealClock{}
+	}
+	return map[string]any{
+		"mode": string(ClockModeOf(clock)),
+		"now":  clock.Now().UTC().Format(time.RFC3339Nano),
+	}
+}
+
+// clockAdvance moves a test clock forward by a Go duration. The real clock
+// cannot be advanced: every existing session keeps its default behavior.
+func (s *localSession) clockAdvance(request sessionRequest) (any, error) {
+	testClock, ok := s.runner.clock.(*TestClock)
+	if !ok {
+		return nil, errors.New("clock.advance needs a test clock; start the session with --clock test[=<RFC3339 start>]")
+	}
+	duration, err := time.ParseDuration(strings.TrimSpace(request.Duration))
+	if err != nil {
+		return nil, fmt.Errorf("clock.advance needs a Go duration such as 90m: %w", err)
+	}
+	if duration <= 0 {
+		return nil, fmt.Errorf("clock.advance needs a positive duration (got %s)", duration)
+	}
+	fired, err := testClock.Advance(duration)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"mode":        string(ClockModeTest),
+		"advanced":    duration.String(),
+		"timersFired": fired,
+		"now":         testClock.Now().UTC().Format(time.RFC3339Nano),
 	}, nil
 }
 
@@ -610,7 +662,7 @@ func (s *localSession) ddbStreamEvent(ctx context.Context, request sessionReques
 		Keys:           key,
 		StreamViewType: info.StreamViewType,
 		SequenceNumber: fmt.Sprintf("%d", 1000000000000000000+s.sequence),
-		Now:            time.Now().UTC(),
+		Now:            s.runner.now(),
 	}
 	if eventName != streamEventRemove {
 		input.NewImage = current.Item
@@ -668,7 +720,7 @@ func (s *localSession) eventBridgeEvent(request sessionRequest) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	event, err := BuildEventBridgeEvent(rule, request.Detail, request.Source, request.DetailType, time.Now().UTC())
+	event, err := BuildEventBridgeEvent(rule, request.Detail, request.Source, request.DetailType, s.runner.now())
 	if err != nil {
 		return nil, err
 	}
@@ -704,7 +756,7 @@ func (s *localSession) kinesisEvent(request sessionRequest) (any, error) {
 		}
 		records = append(records, record)
 	}
-	event, err := BuildKinesisEvent(value.ARN, records, time.Now().UTC())
+	event, err := BuildKinesisEvent(value.ARN, records, s.runner.now())
 	if err != nil {
 		return nil, err
 	}
@@ -731,7 +783,7 @@ func (s *localSession) kinesisCloudWatchEvent(request sessionRequest) (any, erro
 	if logStream == "" {
 		logStream = "local-log-stream"
 	}
-	event, err := BuildCloudWatchLogsKinesisEvent(value.ARN, logGroup, logStream, filters, request.LogEvents, time.Now().UTC())
+	event, err := BuildCloudWatchLogsKinesisEvent(value.ARN, logGroup, logStream, filters, request.LogEvents, s.runner.now())
 	if err != nil {
 		return nil, err
 	}
