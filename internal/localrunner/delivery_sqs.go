@@ -478,6 +478,9 @@ func (d *SQSDeliverer) batchFailures(result InvokeResult, batch []sqstypes.Messa
 	if err := decoder.Decode(&value); err != nil {
 		return nil, true, fmt.Errorf("invalid batch response JSON: %w", err)
 	}
+	if decoder.More() {
+		return nil, true, errors.New("the batch response has content after the JSON value")
+	}
 	response, ok := value.(map[string]any)
 	if !ok {
 		return nil, true, errors.New("the batch response is not a JSON object")

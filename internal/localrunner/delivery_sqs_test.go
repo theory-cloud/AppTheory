@@ -1051,6 +1051,8 @@ func TestBatchFailuresInterpretsAWSDocumentedResponses(t *testing.T) {
 		{name: "bad key", report: true, raw: `{"batchItemFailures":[{"messageId":"msg-2"}]}`, whole: true, expectError: true},
 		{name: "invalid list", report: true, raw: `{"batchItemFailures":"msg-2"}`, whole: true, expectError: true},
 		{name: "invalid json", report: true, raw: `{`, whole: true, expectError: true},
+		{name: "trailing data", report: true, raw: `{"batchItemFailures":[]} trailing`, whole: true, expectError: true},
+		{name: "second value", report: true, raw: `{"batchItemFailures":[]}{"batchItemFailures":[]}`, whole: true, expectError: true},
 		{name: "proxy response", report: true, proxy: true, whole: true, expectError: true},
 	}
 	for _, testCase := range cases {
