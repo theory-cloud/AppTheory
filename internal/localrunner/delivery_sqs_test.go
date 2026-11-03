@@ -5,6 +5,7 @@ import (
 	"crypto/md5" //nolint:gosec // SQS's MD5OfBody is not a security hash
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -825,17 +826,65 @@ func TestSQSRecordMatchesFiltersMetadataAndBody(t *testing.T) {
 	message := sqsMessageForTest("msg-1", `{"kind":"keep"}`, map[string]string{"SentTimestamp": "123"})
 	record := sqsRecordMap("arn:aws:sqs:us-east-1:123456789012:q", message)
 	metadata := json.RawMessage(`{"Filters":[{"Pattern":"{\"attributes\":{\"SentTimestamp\":[\"123\"]}}"}]}`)
-	if !sqsRecordMatchesFilters(metadata, record, `{"kind":"keep"}`) {
-		t.Fatal("a metadata filter must match the record attributes")
+	if matched, err := sqsRecordMatchesFilters(metadata, record, `{"kind":"keep"}`); err != nil || !matched {
+		t.Fatalf("a metadata filter must match the record attributes: matched=%t err=%v", matched, err)
 	}
 	body := json.RawMessage(`{"Filters":[{"Pattern":"{\"body\":{\"kind\":[\"keep\"]}}"}]}`)
-	if !sqsRecordMatchesFilters(body, record, `{"kind":"keep"}`) {
-		t.Fatal("a body filter must match the parsed body")
+	if matched, err := sqsRecordMatchesFilters(body, record, `{"kind":"keep"}`); err != nil || !matched {
+		t.Fatalf("a body filter must match the parsed body: matched=%t err=%v", matched, err)
 	}
-	if sqsRecordMatchesFilters(body, record, `not-json`) {
-		t.Fatal("a body filter must not match an unparseable body")
+	if matched, err := sqsRecordMatchesFilters(body, record, `not-json`); err != nil || matched {
+		t.Fatalf("a body filter must not match an unparseable body: matched=%t err=%v", matched, err)
+	}
+	malformed := json.RawMessage(`{"Filters":[{"Pattern":"{\"body\":{\"kind\":\"keep\"}}"}]}`)
+	if _, err := sqsRecordMatchesFilters(malformed, record, `{"kind":"keep"}`); err == nil {
+		t.Fatal("an unvalidated malformed pattern must be reported, never treated as a non-match")
 	}
 }
+
+func TestSQSDelivererFilterEvaluationFailureLeavesTheWholeBatch(t *testing.T) {
+	deliverer := &SQSDeliverer{
+		source: DeliverySource{ID: "Mapping"},
+		mapping: EventSourceSpec{
+			FilterCriteria: json.RawMessage(`{"Filters":[{"Pattern":"{\"kind\":\"keep\"}"}]}`),
+		},
+	}
+	reporter := &recordingDeliveryReporter{}
+	batch := []sqstypes.Message{
+		sqsMessageForTest("msg-1", `{"kind":"keep"}`, nil),
+		sqsMessageForTest("msg-2", `{"kind":"drop"}`, nil),
+	}
+	matching, filtered, ok := deliverer.classifyBatch(DelivererEnv{State: reporter}, batch, "arn:aws:sqs:us-east-1:123456789012:q")
+	if ok || matching != nil || filtered != nil {
+		t.Fatalf("an invalid pattern must fail the batch: ok=%t matching=%v filtered=%v", ok, matching, filtered)
+	}
+	if reporter.failed != 1 || reporter.left != len(batch) || reporter.phase != DeliveryPhaseFailed {
+		t.Fatalf("the failure must be reported and the batch left: %+v", reporter)
+	}
+	if !strings.Contains(reporter.lastError, "not a valid Lambda event filter pattern") {
+		t.Fatalf("the failure must be reported loudly: %q", reporter.lastError)
+	}
+}
+
+type recordingDeliveryReporter struct {
+	phase     DeliveryPhase
+	delivered int
+	failed    int
+	left      int
+	lastError string
+}
+
+func (r *recordingDeliveryReporter) SetPhase(phase DeliveryPhase) { r.phase = phase }
+func (r *recordingDeliveryReporter) Delivered()                   { r.delivered++ }
+func (r *recordingDeliveryReporter) Failed(err error) {
+	r.failed++
+	if err != nil {
+		r.lastError = err.Error()
+	}
+}
+func (r *recordingDeliveryReporter) SetPaused(bool)  {}
+func (r *recordingDeliveryReporter) SetInflight(int) {}
+func (r *recordingDeliveryReporter) Left(count int)  { r.left += count }
 
 func TestSQSMaxReceiveCountAcceptsBothRedriveForms(t *testing.T) {
 	cases := map[string]int{
@@ -868,6 +917,123 @@ func TestNormalizeEventFilterCriteria(t *testing.T) {
 	if _, err := normalizeEventFilterCriteria(json.RawMessage(six), "Mapping"); err == nil {
 		t.Fatal("more than five filters must be refused")
 	}
+}
+
+func TestNormalizeEventFilterCriteriaRejectsMalformedPatterns(t *testing.T) {
+	longPattern, err := json.Marshal(map[string]any{"kind": []any{strings.Repeat("x", eventFilterPatternMaximumLength)}})
+	if err != nil {
+		t.Fatalf("build long pattern: %v", err)
+	}
+	cases := []struct {
+		name string
+		// key and value are asserted in the refusal so the operator
+		// validator is proved to name the offending key and value.
+		pattern string
+		key     string
+		value   string
+	}{
+		{name: "scalar where a list is required", pattern: `{"kind":"keep"}`, key: "kind", value: `"keep"`},
+		{name: "scalar in the report", pattern: `{"exists":"yes"}`, key: "exists", value: `"yes"`},
+		{name: "unknown operator", pattern: `{"kind":[{"anyting-but":["x"]}]}`, key: "kind[0].anyting-but", value: `["x"]`},
+		{name: "multi-key operator", pattern: `{"kind":[{"prefix":"k","suffix":"p"}]}`, key: "kind[0]", value: `{"prefix":"k","suffix":"p"}`},
+		{name: "numeric without a number", pattern: `{"n":[{"numeric":[">"]}]}`, key: "n[0].numeric", value: `[">"]`},
+		{name: "numeric not a list", pattern: `{"n":[{"numeric":">"}]}`, key: "n[0].numeric", value: `">"`},
+		{name: "numeric odd length", pattern: `{"n":[{"numeric":[">",1,"<"]}]}`, key: "n[0].numeric", value: `[">",1,"<"]`},
+		{name: "numeric unknown operator", pattern: `{"n":[{"numeric":["!=",1]}]}`, key: "n[0].numeric[0]", value: `"!="`},
+		{name: "numeric string bound", pattern: `{"n":[{"numeric":[">","1"]}]}`, key: "n[0].numeric[1]", value: `"1"`},
+		{name: "numeric lower-only upper operator", pattern: `{"n":[{"numeric":[">=",1,">=",10]}]}`, key: "n[0].numeric[2]", value: `">="`},
+		{name: "exists not a boolean", pattern: `{"kind":[{"exists":"yes"}]}`, key: "kind[0].exists", value: `"yes"`},
+		{name: "prefix not a string", pattern: `{"kind":[{"prefix":1}]}`, key: "kind[0].prefix", value: `1`},
+		{name: "suffix object form", pattern: `{"kind":[{"suffix":{"equals-ignore-case":"ep"}}]}`, key: "kind[0].suffix", value: `{"equals-ignore-case":"ep"}`},
+		{name: "equals-ignore-case not a string", pattern: `{"kind":[{"equals-ignore-case":true}]}`, key: "kind[0].equals-ignore-case", value: `true`},
+		{name: "anything-but empty list", pattern: `{"kind":[{"anything-but":[]}]}`, key: "kind[0].anything-but", value: `[]`},
+		{name: "anything-but mixed list", pattern: `{"kind":[{"anything-but":["drop",2]}]}`, key: "kind[0].anything-but", value: `["drop",2]`},
+		{name: "anything-but object item", pattern: `{"kind":[{"anything-but":[{"prefix":"dr"}]}]}`, key: "kind[0].anything-but[0]", value: `{"prefix":"dr"}`},
+		{name: "anything-but equals-ignore-case", pattern: `{"kind":[{"anything-but":{"equals-ignore-case":"drop"}}]}`, key: "kind[0].anything-but.equals-ignore-case", value: `"drop"`},
+		{name: "anything-but unknown operator", pattern: `{"kind":[{"anything-but":{"wildcard":"*"}}]}`, key: "kind[0].anything-but.wildcard", value: `"*"`},
+		{name: "anything-but suffix value", pattern: `{"kind":[{"anything-but":{"suffix":2}}]}`, key: "kind[0].anything-but.suffix", value: `2`},
+		{name: "anything-but empty prefix list", pattern: `{"kind":[{"anything-but":{"prefix":[]}}]}`, key: "kind[0].anything-but.prefix", value: `[]`},
+		{name: "or not a list", pattern: `{"$or":{}}`, key: "$or", value: `{}`},
+		{name: "or empty list", pattern: `{"$or":[]}`, key: "$or", value: `[]`},
+		{name: "or non-object", pattern: `{"$or":["x"]}`, key: "$or[0]", value: `"x"`},
+		{name: "empty leaf list", pattern: `{"kind":[]}`, key: "kind", value: `[]`},
+		{name: "nested list", pattern: `{"kind":[["keep"]]}`, key: "kind[0]", value: `["keep"]`},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			criteria := mustFilterCriteria(t, testCase.pattern)
+			_, err := normalizeEventFilterCriteria(criteria, "Mapping")
+			if err == nil {
+				t.Fatalf("pattern %s must be refused", testCase.pattern)
+			}
+			var unsupportedErr *UnsupportedError
+			if !errors.As(err, &unsupportedErr) {
+				t.Fatalf("pattern %s must report a named unsupported error, got %T: %v", testCase.pattern, err, err)
+			}
+			if unsupportedErr.Construct != "Mapping" {
+				t.Fatalf("the refusal must name the mapping: %+v", unsupportedErr)
+			}
+			for _, want := range []string{"filter 1", testCase.key, testCase.value} {
+				if !strings.Contains(unsupportedErr.Reason, want) {
+					t.Fatalf("refusal %q does not name %q", unsupportedErr.Reason, want)
+				}
+			}
+		})
+	}
+
+	t.Run("pattern over the documented maximum", func(t *testing.T) {
+		criteria := mustFilterCriteria(t, string(longPattern))
+		_, err := normalizeEventFilterCriteria(criteria, "Mapping")
+		if err == nil || !strings.Contains(err.Error(), "4096") {
+			t.Fatalf("a pattern over 4096 characters must be refused, got %v", err)
+		}
+	})
+}
+
+func TestNormalizeEventFilterCriteriaAcceptsDocumentedOperators(t *testing.T) {
+	patterns := []string{
+		`{"kind":["keep"]}`,
+		`{"kind":[null]}`,
+		// "numeric" here is a field name, not an operator: EventBridge only
+		// reads an operator when it is an object inside a rule array.
+		`{"numeric":[">"]}`,
+		`{"body":{"kind":["keep"]}}`,
+		`{"kind":[{"prefix":"ke"}]}`,
+		`{"kind":[{"suffix":"ep"}]}`,
+		`{"kind":[{"equals-ignore-case":"KEEP"}]}`,
+		`{"kind":[{"anything-but":"drop"}]}`,
+		`{"kind":[{"anything-but":["drop","skip"]}]}`,
+		`{"kind":[{"anything-but":[1,2,3]}]}`,
+		`{"kind":[{"anything-but":{"prefix":"dr"}}]}`,
+		`{"kind":[{"anything-but":{"prefix":["dr","ol"]}}]}`,
+		`{"kind":[{"anything-but":{"suffix":".json"}}]}`,
+		`{"kind":[{"anything-but":{"suffix":[".json",".yaml"]}}]}`,
+		`{"n":[{"numeric":["=",1]}]}`,
+		`{"n":[{"numeric":["<",10]}]}`,
+		`{"n":[{"numeric":[">",1]}]}`,
+		`{"n":[{"numeric":[">=",1,"<",10]}]}`,
+		`{"n":[{"numeric":[">",1,"<=",10]}]}`,
+		`{"kind":[{"exists":true}]}`,
+		`{"kind":[{"exists":false}]}`,
+		`{"$or":[{"a":["x"]},{"b":["y"]}]}`,
+		`{"body":{"$or":[{"a":["x"]},{"b":[{"prefix":"y"}]}]}}`,
+	}
+	for _, pattern := range patterns {
+		t.Run(pattern, func(t *testing.T) {
+			if _, err := normalizeEventFilterCriteria(mustFilterCriteria(t, pattern), "Mapping"); err != nil {
+				t.Fatalf("pattern %s must be accepted: %v", pattern, err)
+			}
+		})
+	}
+}
+
+func mustFilterCriteria(t *testing.T, pattern string) json.RawMessage {
+	t.Helper()
+	encoded, err := json.Marshal(eventFilterCriteria{Filters: []eventFilter{{Pattern: pattern}}})
+	if err != nil {
+		t.Fatalf("encode filter criteria: %v", err)
+	}
+	return encoded
 }
 
 func TestEventPatternMatching(t *testing.T) {
@@ -984,6 +1150,9 @@ func TestEventPatternExistsMatchesLeafNodesOnly(t *testing.T) {
 			pattern, err := decodePatternValue([]byte(testCase.pattern))
 			if err != nil {
 				t.Fatalf("pattern: %v", err)
+			}
+			if validateErr := validateEventFilterPattern(mustMapValue(t, pattern)); validateErr != nil {
+				t.Fatalf("pattern must be accepted: %v", validateErr)
 			}
 			target, err := decodePatternValue([]byte(testCase.target))
 			if err != nil {

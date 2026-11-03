@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // Lambda event filtering for an SQS event source evaluates Amazon EventBridge
@@ -15,7 +16,15 @@ import (
 // as nested data. Multiple filters are ORed; a message that matches none is
 // deleted from the queue without invoking the function.
 //
-// See https://docs.aws.amazon.com/lambda/latest/dg/invocation-eventfiltering.html
+// A mapping's FilterCriteria is validated against the operator grammar when the
+// mapping is derived, as Lambda validates it when CreateEventSourceMapping is
+// called. A pattern this evaluator cannot apply exactly is refused at plan time
+// instead of being accepted and silently matching nothing.
+//
+// See
+// https://docs.aws.amazon.com/lambda/latest/dg/invocation-eventfiltering.html,
+// the EventBridge pattern reference
+// https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-event-patterns-content-based-filtering.html,
 // and
 // https://docs.aws.amazon.com/lambda/latest/dg/services-sqs-filtering.html.
 
@@ -27,10 +36,21 @@ type eventFilter struct {
 	Pattern string `json:"Pattern"`
 }
 
+const (
+	eventFilterMaximumFilters = 5
+	// Filter.Pattern in AWS::Lambda::EventSourceMapping has a documented
+	// maximum of 4096 characters:
+	// https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-properties-lambda-eventsourcemapping-filter.html
+	eventFilterPatternMaximumLength = 4096
+	// eventPatternOrKey is EventBridge's multiple-fields-or keyword.
+	eventPatternOrKey = "$or"
+)
+
 // normalizeEventFilterCriteria validates a mapping's FilterCriteria and returns
 // it in compact form, or nil when the mapping has no filters. AWS allows up to
 // five filters per mapping and requires each Pattern to be a JSON object in
-// EventBridge pattern syntax.
+// EventBridge pattern syntax; the operator grammar is validated here so a
+// malformed pattern cannot start a mapping that silently matches nothing.
 func normalizeEventFilterCriteria(raw json.RawMessage, logicalID string) (json.RawMessage, error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return nil, nil
@@ -42,20 +62,39 @@ func normalizeEventFilterCriteria(raw json.RawMessage, logicalID string) (json.R
 	if len(criteria.Filters) == 0 {
 		return nil, nil
 	}
-	if len(criteria.Filters) > 5 {
+	if len(criteria.Filters) > eventFilterMaximumFilters {
 		return nil, unsupported(logicalID, "FilterCriteria declares %d filters; AWS allows up to five per event source mapping", len(criteria.Filters))
 	}
 	for index, filter := range criteria.Filters {
+		position := index + 1
 		pattern := strings.TrimSpace(filter.Pattern)
 		if pattern == "" {
-			return nil, unsupported(logicalID, "FilterCriteria filter %d has an empty Pattern", index+1)
+			return nil, unsupported(logicalID, "FilterCriteria filter %d has an empty Pattern", position)
+		}
+		if length := utf8.RuneCountInString(pattern); length > eventFilterPatternMaximumLength {
+			return nil, unsupported(
+				logicalID,
+				"FilterCriteria filter %d Pattern is %d characters; AWS allows at most %d (https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-properties-lambda-eventsourcemapping-filter.html)",
+				position,
+				length,
+				eventFilterPatternMaximumLength,
+			)
 		}
 		value, err := decodePatternValue([]byte(pattern))
 		if err != nil {
-			return nil, unsupported(logicalID, "FilterCriteria filter %d Pattern is not valid JSON: %v", index+1, err)
+			return nil, unsupported(logicalID, "FilterCriteria filter %d Pattern is not valid JSON: %v", position, err)
 		}
-		if _, ok := value.(map[string]any); !ok {
-			return nil, unsupported(logicalID, "FilterCriteria filter %d Pattern must be a JSON object", index+1)
+		object, ok := value.(map[string]any)
+		if !ok {
+			return nil, unsupported(logicalID, "FilterCriteria filter %d Pattern must be a JSON object", position)
+		}
+		if err := validateEventFilterPattern(object); err != nil {
+			return nil, unsupported(
+				logicalID,
+				"FilterCriteria filter %d Pattern is not a valid Lambda event filter pattern: %v",
+				position,
+				err,
+			)
 		}
 	}
 	encoded, err := json.Marshal(criteria)
@@ -65,46 +104,372 @@ func normalizeEventFilterCriteria(raw json.RawMessage, logicalID string) (json.R
 	return encoded, nil
 }
 
-// sqsRecordMatchesFilters reports whether one SQS record satisfies at least one
-// filter. An empty FilterCriteria matches every record.
-func sqsRecordMatchesFilters(criteria json.RawMessage, record map[string]any, body string) bool {
-	if len(bytes.TrimSpace(criteria)) == 0 {
+// validateEventFilterPattern checks one EventBridge pattern against the
+// comparison-operator grammar Lambda documents. It is deliberately strict: a
+// construct this evaluator does not implement exactly is refused here, so a
+// derived mapping can never silently match nothing.
+//
+// A field value must be an array of rules or a nested pattern object; an
+// operator is a single-key object inside a rule array. Values in rule arrays
+// are scalars or operator objects. The operator set, the `numeric` comparison
+// forms, `$or`, and the leaf-only `exists` rule are documented at
+// https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-event-patterns-content-based-filtering.html
+// and
+// https://docs.aws.amazon.com/lambda/latest/dg/invocation-eventfiltering.html.
+// The 4096-character pattern maximum is documented for Filter.Pattern at
+// https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-properties-lambda-eventsourcemapping-filter.html.
+func validateEventFilterPattern(pattern map[string]any) error {
+	return validateFilterPatternObject(pattern, "")
+}
+
+func validateFilterPatternObject(pattern map[string]any, path string) error {
+	for _, key := range sortedKeys(pattern) {
+		value := pattern[key]
+		child := joinFilterPath(path, key)
+		if key == eventPatternOrKey {
+			if err := validateFilterPatternOr(value, child); err != nil {
+				return err
+			}
+			continue
+		}
+		switch typed := value.(type) {
+		case []any:
+			if err := validateFilterRuleList(typed, child); err != nil {
+				return err
+			}
+		case map[string]any:
+			if err := validateFilterPatternObject(typed, child); err != nil {
+				return err
+			}
+		default:
+			return eventPatternValidationError(
+				child,
+				value,
+				"a field must hold a list of rules or a nested pattern object, not a scalar",
+			)
+		}
+	}
+	return nil
+}
+
+func validateFilterPatternOr(value any, path string) error {
+	alternatives, ok := value.([]any)
+	if !ok {
+		return eventPatternValidationError(path, value, "$or value must be a list of objects")
+	}
+	if len(alternatives) == 0 {
+		return eventPatternValidationError(path, value, "$or value must not be an empty list")
+	}
+	for index, alternative := range alternatives {
+		alternativePath := fmt.Sprintf("%s[%d]", path, index)
+		object, ok := alternative.(map[string]any)
+		if !ok {
+			return eventPatternValidationError(alternativePath, alternative, "$or values must be objects")
+		}
+		if err := validateFilterPatternObject(object, alternativePath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateFilterRuleList(rules []any, path string) error {
+	if len(rules) == 0 {
+		return eventPatternValidationError(path, rules, "a rule list must not be empty")
+	}
+	for index, rule := range rules {
+		rulePath := fmt.Sprintf("%s[%d]", path, index)
+		switch typed := rule.(type) {
+		case map[string]any:
+			if err := validateFilterOperator(typed, rulePath); err != nil {
+				return err
+			}
+		case []any:
+			return eventPatternValidationError(rulePath, typed, "a rule must be a scalar or an operator object, not a list")
+		case nil, string, json.Number, bool:
+			// A scalar rule matches one literal value.
+		default:
+			return eventPatternValidationError(rulePath, typed, "a rule must be a scalar or an operator object")
+		}
+	}
+	return nil
+}
+
+func validateFilterOperator(rule map[string]any, path string) error {
+	if len(rule) != 1 {
+		return eventPatternValidationError(path, rule, "an operator object must have exactly one key")
+	}
+	var operator string
+	var value any
+	for key, raw := range rule {
+		operator, value = key, raw
+	}
+	operatorPath := joinFilterPath(path, operator)
+	switch operator {
+	case filterOperatorPrefix, filterOperatorSuffix, filterOperatorEqualsIgnoreCase:
+		if _, ok := value.(string); !ok {
+			return eventPatternValidationError(operatorPath, value, "%q value must be a string", operator)
+		}
+	case filterOperatorExists:
+		if _, ok := value.(bool); !ok {
+			return eventPatternValidationError(operatorPath, value, "exists value must be true or false")
+		}
+	case filterOperatorNumeric:
+		return validateFilterNumeric(value, operatorPath)
+	case filterOperatorAnythingBut:
+		return validateFilterAnythingBut(value, operatorPath)
+	default:
+		return eventPatternValidationError(
+			operatorPath,
+			value,
+			"unknown operator %q; the local evaluator supports prefix, suffix, equals-ignore-case, anything-but, numeric and exists",
+			operator,
+		)
+	}
+	return nil
+}
+
+func validateFilterNumeric(value any, path string) error {
+	parts, ok := value.([]any)
+	if !ok {
+		return eventPatternValidationError(path, value, "numeric value must be a list of comparison operators and numbers")
+	}
+	if len(parts) == 0 {
+		return eventPatternValidationError(path, value, "numeric value must not be an empty list")
+	}
+	// Lambda documents one comparison, or a two-sided range with a lower bound
+	// (">" or ">=") followed by an upper bound ("<" or "<=").
+	operator, ok := parts[0].(string)
+	if !ok || !isNumericOperator(operator) {
+		return eventPatternValidationError(fmt.Sprintf("%s[0]", path), parts[0], "numeric comparison must be one of <, <=, =, >=, >")
+	}
+	if err := validateNumericArity(operator, parts, path); err != nil {
+		return err
+	}
+	for index := 1; index < len(parts); index += 2 {
+		if err := validateNumericBound(parts[index], fmt.Sprintf("%s[%d]", path, index)); err != nil {
+			return err
+		}
+	}
+	if len(parts) == 4 {
+		upper, ok := parts[2].(string)
+		if !ok || (upper != "<" && upper != "<=") {
+			return eventPatternValidationError(
+				fmt.Sprintf("%s[2]", path),
+				parts[2],
+				"a two-sided numeric range must end with < or <=",
+			)
+		}
+	}
+	return nil
+}
+
+func validateNumericArity(operator string, parts []any, path string) error {
+	if operator == ">" || operator == ">=" {
+		if len(parts) != 2 && len(parts) != 4 {
+			return eventPatternValidationError(
+				path,
+				parts,
+				"numeric comparison %q takes one operator and one number, or a lower bound followed by an upper bound",
+				operator,
+			)
+		}
+		return nil
+	}
+	if len(parts) != 2 {
+		return eventPatternValidationError(
+			path,
+			parts,
+			"numeric comparison %q takes one operator and one number",
+			operator,
+		)
+	}
+	return nil
+}
+
+func validateNumericBound(value any, path string) error {
+	number, ok := value.(json.Number)
+	if !ok {
+		return eventPatternValidationError(path, value, "numeric comparison needs a number")
+	}
+	if _, err := number.Float64(); err != nil {
+		return eventPatternValidationError(path, value, "numeric comparison value is not representable as a 64-bit float")
+	}
+	return nil
+}
+
+func validateFilterAnythingBut(value any, path string) error {
+	switch typed := value.(type) {
+	case map[string]any:
+		if len(typed) != 1 {
+			return eventPatternValidationError(path, typed, "anything-but object must have exactly one of prefix or suffix")
+		}
+		for key, raw := range typed {
+			child := joinFilterPath(path, key)
+			switch key {
+			case filterOperatorPrefix, filterOperatorSuffix:
+				if err := validateFilterStringOrStringList(raw, child); err != nil {
+					return err
+				}
+			case filterOperatorEqualsIgnoreCase:
+				return eventPatternValidationError(
+					child,
+					raw,
+					"anything-but with equals-ignore-case is not implemented locally; use a list of scalar values instead",
+				)
+			default:
+				return eventPatternValidationError(
+					child,
+					raw,
+					"unknown anything-but operator %q; the local evaluator supports prefix and suffix",
+					key,
+				)
+			}
+		}
+	case []any:
+		if len(typed) == 0 {
+			return eventPatternValidationError(path, typed, "anything-but list must not be empty")
+		}
+		hasString, hasNumber := false, false
+		for index, item := range typed {
+			switch item.(type) {
+			case string:
+				hasString = true
+			case json.Number:
+				hasNumber = true
+			default:
+				return eventPatternValidationError(
+					fmt.Sprintf("%s[%d]", path, index),
+					item,
+					"anything-but list values must be strings or numbers",
+				)
+			}
+		}
+		if hasString && hasNumber {
+			return eventPatternValidationError(path, typed, "anything-but list values must be all strings or all numbers")
+		}
+	case string, json.Number:
+		// The documented scalar form.
+	default:
+		return eventPatternValidationError(
+			path,
+			value,
+			"anything-but value must be a string, a number, a non-empty list of strings or numbers, a prefix object or a suffix object",
+		)
+	}
+	return nil
+}
+
+func validateFilterStringOrStringList(value any, path string) error {
+	switch typed := value.(type) {
+	case string:
+		return nil
+	case []any:
+		if len(typed) == 0 {
+			return eventPatternValidationError(path, typed, "a prefix/suffix list must not be empty")
+		}
+		for index, item := range typed {
+			if _, ok := item.(string); !ok {
+				return eventPatternValidationError(
+					fmt.Sprintf("%s[%d]", path, index),
+					item,
+					"prefix/suffix values must be strings",
+				)
+			}
+		}
+		return nil
+	default:
+		return eventPatternValidationError(path, value, "prefix/suffix value must be a string or a non-empty list of strings")
+	}
+}
+
+func isNumericOperator(operator string) bool {
+	switch operator {
+	case "<", "<=", "=", ">=", ">":
 		return true
+	default:
+		return false
+	}
+}
+
+func joinFilterPath(path, key string) string {
+	if path == "" {
+		return key
+	}
+	return path + "." + key
+}
+
+func eventPatternValidationError(path string, value any, format string, args ...any) error {
+	reason := fmt.Sprintf(format, args...)
+	if path == "" {
+		return fmt.Errorf("%s (value %s)", reason, filterPatternValue(value))
+	}
+	return fmt.Errorf("key %q has value %s: %s", path, filterPatternValue(value), reason)
+}
+
+func filterPatternValue(value any) string {
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		return fmt.Sprintf("%v", value)
+	}
+	return strings.TrimSuffix(buffer.String(), "\n")
+}
+
+// sqsRecordMatchesFilters reports whether one SQS record satisfies at least one
+// filter. An empty FilterCriteria matches every record. The criteria and every
+// pattern are re-validated here so a pattern that somehow bypassed derive-time
+// validation is reported instead of being treated as a non-match and deleted.
+func sqsRecordMatchesFilters(criteria json.RawMessage, record map[string]any, body string) (bool, error) {
+	if len(bytes.TrimSpace(criteria)) == 0 {
+		return true, nil
 	}
 	var parsed eventFilterCriteria
 	if err := json.Unmarshal(criteria, &parsed); err != nil {
-		return false
+		return false, fmt.Errorf("decode FilterCriteria: %w", err)
 	}
 	if len(parsed.Filters) == 0 {
-		return true
+		return true, nil
+	}
+	patterns := make([]map[string]any, 0, len(parsed.Filters))
+	for index, filter := range parsed.Filters {
+		pattern, err := decodePatternValue([]byte(filter.Pattern))
+		if err != nil {
+			return false, fmt.Errorf("filter %d Pattern is not valid JSON: %w", index+1, err)
+		}
+		object, ok := pattern.(map[string]any)
+		if !ok {
+			return false, fmt.Errorf("filter %d Pattern is not a JSON object", index+1)
+		}
+		if err := validateEventFilterPattern(object); err != nil {
+			return false, fmt.Errorf("filter %d Pattern is not a valid Lambda event filter pattern: %w", index+1, err)
+		}
+		patterns = append(patterns, object)
 	}
 	encoded, err := json.Marshal(record)
 	if err != nil {
-		return false
+		return false, fmt.Errorf("encode SQS record: %w", err)
 	}
 	decoded, err := decodePatternValue(encoded)
 	if err != nil {
-		return false
+		return false, fmt.Errorf("decode SQS record: %w", err)
 	}
 	target, ok := decoded.(map[string]any)
 	if !ok {
-		return false
+		return false, fmt.Errorf("the SQS record is not a JSON object")
 	}
 	if parsedBody, err := decodePatternValue([]byte(body)); err == nil {
 		target["body"] = parsedBody
 	} else {
 		target["body"] = body
 	}
-	for _, filter := range parsed.Filters {
-		pattern, err := decodePatternValue([]byte(filter.Pattern))
-		if err != nil {
-			continue
-		}
+	for _, pattern := range patterns {
 		if eventPatternMatches(pattern, target) {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // decodePatternValue decodes JSON with json.Number so numbers keep their
@@ -136,7 +501,7 @@ func eventPatternMatches(pattern, value any) bool {
 			return matchPatternValue(typed, value, true)
 		}
 		for key, expected := range typed {
-			if key == "$or" {
+			if key == eventPatternOrKey {
 				alternatives, ok := expected.([]any)
 				if !ok {
 					return false
@@ -191,7 +556,7 @@ func matchPatternValue(pattern, value any, present bool) bool {
 			return false
 		}
 		for key, expected := range typed {
-			if key == "$or" {
+			if key == eventPatternOrKey {
 				alternatives, ok := expected.([]any)
 				if !ok {
 					return false

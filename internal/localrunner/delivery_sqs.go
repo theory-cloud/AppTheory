@@ -330,6 +330,41 @@ func (d *SQSDeliverer) clockNow() time.Time {
 	return d.clock.Now()
 }
 
+// classifyBatch applies the mapping's FilterCriteria and splits a batch into the
+// records the function receives and the records Lambda deletes. An evaluation
+// error is an invariant violation (derive-time validation accepted the
+// pattern): it is reported and the whole batch is left for redelivery, never
+// deleted as a non-match.
+func (d *SQSDeliverer) classifyBatch(env DelivererEnv, batch []sqstypes.Message, queueARN string) ([]sqstypes.Message, []sqstypes.Message, bool) {
+	if len(d.mapping.FilterCriteria) == 0 {
+		return batch, nil, true
+	}
+	matching := make([]sqstypes.Message, 0, len(batch))
+	var filtered []sqstypes.Message
+	for _, message := range batch {
+		record := sqsRecordMap(queueARN, message)
+		matched, err := sqsRecordMatchesFilters(d.mapping.FilterCriteria, record, aws.ToString(message.Body))
+		if err != nil {
+			env.State.Failed(err)
+			env.State.SetPhase(DeliveryPhaseFailed)
+			env.State.Left(len(batch))
+			d.logf(
+				"SQS mapping %s: FilterCriteria could not be evaluated; leaving all %d record(s) for redelivery: %v",
+				d.source.ID,
+				len(batch),
+				err,
+			)
+			return nil, nil, false
+		}
+		if matched {
+			matching = append(matching, message)
+		} else {
+			filtered = append(filtered, message)
+		}
+	}
+	return matching, filtered, true
+}
+
 // processBatch applies filter criteria, invokes the function and deletes exactly
 // the records AWS would delete.
 //
@@ -340,19 +375,9 @@ func (d *SQSDeliverer) processBatch(ctx context.Context, env DelivererEnv, clien
 		queueARN = d.queue.ARN
 	}
 
-	matching := make([]sqstypes.Message, 0, len(batch))
-	var filtered []sqstypes.Message
-	if len(d.mapping.FilterCriteria) > 0 {
-		for _, message := range batch {
-			record := sqsRecordMap(queueARN, message)
-			if sqsRecordMatchesFilters(d.mapping.FilterCriteria, record, aws.ToString(message.Body)) {
-				matching = append(matching, message)
-			} else {
-				filtered = append(filtered, message)
-			}
-		}
-	} else {
-		matching = batch
+	matching, filtered, ok := d.classifyBatch(env, batch, queueARN)
+	if !ok {
+		return
 	}
 	if len(filtered) > 0 {
 		// AWS removes messages that do not satisfy the filter criteria and does
