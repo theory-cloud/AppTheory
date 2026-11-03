@@ -248,23 +248,51 @@ func (r *Runner) deployZip(
 		return 0, fmt.Errorf("open asset zip %s: %w", source, err)
 	}
 	defer func() { _ = reader.Close() }() //nolint:errcheck // the archive is only read
-	count := 0
+	type zipEntry struct {
+		file *zip.File
+		key  string
+	}
+	entries := make([]zipEntry, 0, len(reader.File))
 	for _, file := range reader.File {
 		if file.FileInfo().IsDir() {
 			continue
 		}
-		body, err := readZipFile(file)
+		key, err := deploymentObjectKey(prefix, file.Name)
+		if err != nil {
+			return 0, fmt.Errorf("asset zip %s: %w", source, err)
+		}
+		entries = append(entries, zipEntry{file: file, key: key})
+	}
+	count := 0
+	for _, entry := range entries {
+		body, err := readZipFile(entry.file)
 		if err != nil {
 			return count, err
 		}
-		key := path.Join(prefix, filepath.ToSlash(file.Name))
-		if err := r.putDeploymentObject(ctx, client, bucket, key, body, props); err != nil {
+		if err := r.putDeploymentObject(ctx, client, bucket, entry.key, body, props); err != nil {
 			return count, err
 		}
-		deployed[key] = struct{}{}
+		deployed[entry.key] = struct{}{}
 		count++
 	}
 	return count, nil
+}
+
+// deploymentObjectKey joins a deployment prefix and a zip entry path. It refuses
+// an entry that would leave the deployment's destination: an absolute path or a
+// cleaned path with a ".." segment. Every entry is checked before the first
+// PutObject so a crafted archive cannot partially deploy first.
+func deploymentObjectKey(prefix, name string) (string, error) {
+	cleaned := path.Clean(filepath.ToSlash(strings.ReplaceAll(name, "\\", "/")))
+	if path.IsAbs(cleaned) {
+		return "", fmt.Errorf("entry %q has an absolute path; the deployment refuses to write outside the destination prefix", name)
+	}
+	for _, segment := range strings.Split(cleaned, "/") {
+		if segment == ".." {
+			return "", fmt.Errorf("entry %q escapes the destination prefix; the deployment refuses a zip-slip path", name)
+		}
+	}
+	return path.Join(prefix, cleaned), nil
 }
 
 func readZipFile(file *zip.File) ([]byte, error) {

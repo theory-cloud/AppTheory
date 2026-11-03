@@ -30,6 +30,15 @@ type deploymentPut struct {
 
 func newDeploymentRunner(t *testing.T, assembly string, resources []ResourceSpec) (*Runner, *deploymentStub) {
 	t.Helper()
+	runner, stub, spec := newDeploymentRunnerFor(t, assembly, resources)
+	if err := runner.provisionDeployments(context.Background(), spec); err != nil {
+		t.Fatalf("provision deployments: %v", err)
+	}
+	return runner, stub
+}
+
+func newDeploymentRunnerFor(t *testing.T, assembly string, resources []ResourceSpec) (*Runner, *deploymentStub, *Spec) {
+	t.Helper()
 	stub := &deploymentStub{puts: map[string]deploymentPut{}}
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		stub.mu.Lock()
@@ -79,10 +88,7 @@ func newDeploymentRunner(t *testing.T, assembly string, resources []ResourceSpec
 	}
 	spec := &Spec{AssemblyDir: assembly, Resources: resources}
 	spec.Resources = append([]ResourceSpec{{Stack: "Stack", LogicalID: "Bucket", Type: typeS3Bucket}}, resources...)
-	if err := runner.provisionDeployments(context.Background(), spec); err != nil {
-		t.Fatalf("provision deployments: %v", err)
-	}
-	return runner, stub
+	return runner, stub, spec
 }
 
 func writeAssemblyAsset(t *testing.T, assembly, stack string, files map[string]string) {
@@ -113,6 +119,81 @@ func writeAssemblyAsset(t *testing.T, assembly, stack string, files map[string]s
 	}
 	if err := os.WriteFile(filepath.Join(assembly, stack+".assets.json"), raw, 0o600); err != nil {
 		t.Fatalf("write manifest: %v", err)
+	}
+}
+
+func writeAssemblyZip(t *testing.T, assembly, stack string, entries [][2]string) {
+	t.Helper()
+	zipPath := filepath.Join(assembly, "asset.zip")
+	zipFile, err := os.Create(zipPath) //nolint:gosec // test fixture path under t.TempDir
+	if err != nil {
+		t.Fatalf("create zip: %v", err)
+	}
+	archive := zip.NewWriter(zipFile)
+	for _, entry := range entries {
+		writer, createErr := archive.Create(entry[0])
+		if createErr != nil {
+			t.Fatalf("create zip entry %s: %v", entry[0], createErr)
+		}
+		if _, writeErr := writer.Write([]byte(entry[1])); writeErr != nil {
+			t.Fatalf("write zip entry %s: %v", entry[0], writeErr)
+		}
+	}
+	if closeErr := archive.Close(); closeErr != nil {
+		t.Fatalf("close zip: %v", closeErr)
+	}
+	if closeErr := zipFile.Close(); closeErr != nil {
+		t.Fatalf("close zip file: %v", closeErr)
+	}
+	manifest := map[string]any{
+		"files": map[string]any{
+			"hash": map[string]any{
+				"source": map[string]any{"path": "asset.zip", "packaging": "zip"},
+				"destinations": map[string]any{
+					"current_account-current_region": map[string]any{"objectKey": "hash.zip"},
+				},
+			},
+		},
+	}
+	raw, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(assembly, stack+".assets.json"), raw, 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+}
+
+func TestProvisionDeploymentsRefusesZipSlipBeforeAnyPut(t *testing.T) {
+	cases := []struct {
+		name  string
+		entry string
+		want  string
+	}{
+		{name: "relative escape", entry: "../evil.txt", want: "escapes the destination prefix"},
+		{name: "nested escape", entry: "assets/../../evil.txt", want: "escapes the destination prefix"},
+		{name: "absolute path", entry: "/evil.txt", want: "absolute path"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			assembly := t.TempDir()
+			writeAssemblyZip(t, assembly, "Stack", [][2]string{
+				{"ok.txt", "ok"},
+				{testCase.entry, "evil"},
+			})
+			resource := ResourceSpec{
+				Stack: "Stack", LogicalID: "Deployment", Type: typeBucketDeploy,
+				Properties: json.RawMessage(`{"SourceObjectKeys":["hash.zip"],"DestinationBucketName":{"Ref":"Bucket"}}`),
+			}
+			runner, stub, spec := newDeploymentRunnerFor(t, assembly, []ResourceSpec{resource})
+			err := runner.provisionDeployments(context.Background(), spec)
+			if err == nil || !strings.Contains(err.Error(), testCase.want) || !strings.Contains(err.Error(), "evil.txt") {
+				t.Fatalf("err = %v, want %q naming evil.txt", err, testCase.want)
+			}
+			if len(stub.puts) != 0 {
+				t.Fatalf("a refused archive wrote %d object(s) before validation: %+v", len(stub.puts), stub.puts)
+			}
+		})
 	}
 }
 
