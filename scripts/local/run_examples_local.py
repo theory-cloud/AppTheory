@@ -3332,6 +3332,31 @@ def run_ssr_site_gateway(harness: Harness) -> str:
         for name in ("etag", "last-modified"):
             if not headers.get(name):
                 raise HarnessFailure(f"ssr-site /assets/hello.txt has no {name}: {headers}", body)
+        asset_etag = headers["etag"]
+        # A viewer conditional must reach the S3 origin and its 304 must come
+        # back with the validator the origin attached; a non-match must serve
+        # the object normally. Neither depends on the origin request policy
+        # naming If-None-Match, which the pinned managed policy does not.
+        status, body, headers = http_request(
+            "GET", base + "/assets/hello.txt", headers={"If-None-Match": asset_etag}
+        )
+        if status != 304 or body:
+            raise HarnessFailure(
+                f"ssr-site conditional GET: status={status} body={body!r} "
+                f"etag={headers.get('etag')!r} (sent If-None-Match {asset_etag!r})",
+                body,
+            )
+        if headers.get("etag") and headers["etag"] != asset_etag:
+            raise HarnessFailure(
+                f"ssr-site conditional GET: origin ETag {headers['etag']!r} does not match {asset_etag!r}",
+                body,
+            )
+        status, body, _ = http_request(
+            "GET", base + "/assets/hello.txt", headers={"If-None-Match": '"a5b-does-not-match"'}
+        )
+        expect_status(status, 200, "ssr-site non-matching If-None-Match", body)
+        if body != "hello\n\n":
+            raise HarnessFailure(f"ssr-site non-matching If-None-Match body = {body!r}", body)
         status, body, headers = http_request("GET", base + "/marketing/")
         assert_html(status, body, headers, "ssr-site /marketing/", "<h1>Marketing from AppTheory S3</h1>")
         status, body, headers = http_request("GET", base + "/_facetheory/data/home.json")
@@ -3346,13 +3371,33 @@ def run_ssr_site_gateway(harness: Harness) -> str:
         expect_status(status, 200, "ssr-site HEAD /assets/hello.txt", body)
         if headers.get("content-length") != "7" or body:
             raise HarnessFailure(f"ssr-site HEAD = {headers.get('content-length')!r} {body!r}", body)
+        status, body, headers = http_request(
+            "HEAD", base + "/assets/hello.txt", headers={"Range": "bytes=0-2"}
+        )
+        if status != 206 or body:
+            raise HarnessFailure(
+                f"ssr-site ranged HEAD: status={status} body={body!r} "
+                f"content-range={headers.get('content-range')!r}",
+                body,
+            )
+        if headers.get("content-range") != "bytes 0-2/7":
+            raise HarnessFailure(
+                f"ssr-site ranged HEAD: Content-Range {headers.get('content-range')!r}, want 'bytes 0-2/7'",
+                body,
+            )
+        if headers.get("content-length") != "3":
+            raise HarnessFailure(
+                f"ssr-site ranged HEAD: Content-Length {headers.get('content-length')!r}, want '3'",
+                body,
+            )
         status, body, _ = http_request("OPTIONS", base + "/assets/hello.txt")
         expect_status(status, 403, "ssr-site OPTIONS /assets/hello.txt", body)
         if "AccessForbidden" not in body:
             raise HarnessFailure(f"ssr-site OPTIONS is not AccessForbidden: {body}", body)
         return (
             "SSR HTML through the origin group after the S3 primary returned 403, request-id echo, "
-            "static/hydration objects from the deployment, 403 for a missing OAC object, HEAD and OPTIONS"
+            "static/hydration objects from the deployment, 403 for a missing OAC object, full and "
+            "ranged HEAD, matching and non-matching If-None-Match, and OPTIONS"
         )
     finally:
         stop_local_app(harness, run)

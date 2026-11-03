@@ -374,7 +374,7 @@
       "run": "ssr-site-gateway",
       "class": "L2",
       "gap": "CloudFront caching and edge network; response streaming is buffered by the RIE.",
-      "description": "SSR site: the origin group fails over from the S3 HTML primary (403 under OAC) to the real SSR handler; viewer-request/viewer-response effects, the assets and hydrate deployments, HEAD, OPTIONS and the missing-object 403 are asserted through the gateway."
+      "description": "SSR site: the origin group fails over from the S3 HTML primary (403 under OAC) to the real SSR handler; viewer-request/viewer-response effects, the assets and hydrate deployments, full and ranged HEAD, conditional If-None-Match GETs, OPTIONS and the missing-object 403 are asserted through the gateway."
     },
     "examples/cdk/ssr-site/scripts/generate-assets-manifest.mjs": {
       "run": "ssr-assets-manifest",
