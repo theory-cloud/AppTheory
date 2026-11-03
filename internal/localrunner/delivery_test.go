@@ -768,13 +768,13 @@ func TestSessionClockOperations(t *testing.T) {
 	}
 
 	realSession := &localSession{runner: &Runner{clock: RealClock{}}}
-	if _, err := realSession.execute(context.Background(), sessionRequest{Op: "clock.advance", Duration: "1m"}); err == nil {
+	if _, advanceErr := realSession.execute(context.Background(), sessionRequest{Op: "clock.advance", Duration: "1m"}); advanceErr == nil {
 		t.Fatal("the real clock must not be advanced")
 	}
-	if _, err := session.execute(context.Background(), sessionRequest{Op: "clock.advance", Duration: "-1m"}); err == nil {
+	if _, advanceErr := session.execute(context.Background(), sessionRequest{Op: "clock.advance", Duration: "-1m"}); advanceErr == nil {
 		t.Fatal("a negative advance must fail")
 	}
-	if _, err := session.execute(context.Background(), sessionRequest{Op: "clock.advance", Duration: "later"}); err == nil {
+	if _, advanceErr := session.execute(context.Background(), sessionRequest{Op: "clock.advance", Duration: "later"}); advanceErr == nil {
 		t.Fatal("an invalid duration must fail")
 	}
 	bare := &localSession{runner: &Runner{}}
