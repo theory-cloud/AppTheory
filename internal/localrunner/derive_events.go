@@ -11,7 +11,7 @@ import (
 // table or stream a generated event must refer to. An unsupported source is
 // reported under skipped; it is never silently dropped.
 //
-//nolint:gocyclo // the switch is the explicit source-type contract the runner supports.
+//nolint:gocyclo,gocognit // the switch is the explicit source-type contract the runner supports.
 func deriveEventSourceMappings(spec *Spec, stacks []assemblyStack, stack assemblyStack) error {
 	types := stack.resourceTypes()
 	for _, id := range sortedKeys(stack.Template.Resources) {
@@ -70,7 +70,7 @@ func deriveEventSourceMappings(spec *Spec, stacks []assemblyStack, stack assembl
 			return fmt.Errorf("%s: resolve %s source name: %w", logicalID, mappingType, err)
 		}
 		enabled := props.Enabled == nil || *props.Enabled
-		spec.EventSources = append(spec.EventSources, EventSourceSpec{
+		eventSource := EventSourceSpec{
 			LogicalID:               logicalID,
 			Stack:                   stack.Name,
 			Function:                qualify(stacks, stack.Name, functionID),
@@ -82,7 +82,13 @@ func deriveEventSourceMappings(spec *Spec, stacks []assemblyStack, stack assembl
 			ReportBatchItemFailures: containsStringList(props.FunctionResponseTypes, "ReportBatchItemFailures"),
 			Enabled:                 enabled,
 			StartingPosition:        props.StartingPosition,
-		})
+		}
+		if mappingType == backendSQS {
+			if err := applySQSMappingOptions(&eventSource, props, source.Properties); err != nil {
+				return err
+			}
+		}
+		spec.EventSources = append(spec.EventSources, eventSource)
 	}
 	return nil
 }
@@ -392,6 +398,106 @@ func qualifyWhenSet(stacks []assemblyStack, stack, logicalID string) string {
 		return ""
 	}
 	return qualify(stacks, stack, logicalID)
+}
+
+// applySQSMappingOptions validates the SQS mapping configuration AWS rejects
+// and records the queue settings plan and describe report.
+//
+// The rules are the EventSourceMappingConfiguration API
+// (https://docs.aws.amazon.com/lambda/latest/dg/API_EventSourceMappingConfiguration.html)
+// and "Creating and configuring an Amazon SQS event source mapping"
+// (https://docs.aws.amazon.com/lambda/latest/dg/services-sqs-configure.html):
+// BatchSize is 1..10,000 and above 10 requires a batching window of at least
+// one second; MaximumBatchingWindowInSeconds is 0..300 and applies only to
+// standard queues; a FIFO queue's maximum batch size is 10 and it has no
+// batching window; ScalingConfig.MaximumConcurrency is 2..1000.
+func applySQSMappingOptions(eventSource *EventSourceSpec, props eventSourceMappingProperties, sourceProperties json.RawMessage) error {
+	var queue sqsQueueProperties
+	if len(sourceProperties) > 0 {
+		if err := json.Unmarshal(sourceProperties, &queue); err != nil {
+			return fmt.Errorf("%s: parse SQS queue properties: %w", eventSource.LogicalID, err)
+		}
+	}
+	eventSource.FIFO = queue.FifoQueue
+	eventSource.VisibilityTimeout = queue.VisibilityTimeout
+	if eventSource.VisibilityTimeout <= 0 {
+		// The SQS default visibility timeout is 30 seconds.
+		eventSource.VisibilityTimeout = 30
+	}
+	eventSource.MaxReceiveCount = sqsMaxReceiveCount(queue.RedrivePolicy)
+	eventSource.MaximumBatchingWindowInSeconds = props.MaximumBatchingWindowInSeconds
+	if props.ScalingConfig != nil {
+		eventSource.MaximumConcurrency = props.ScalingConfig.MaximumConcurrency
+	}
+
+	if err := validateSQSMappingOptions(eventSource); err != nil {
+		return err
+	}
+	filters, err := normalizeEventFilterCriteria(props.FilterCriteria, eventSource.LogicalID)
+	if err != nil {
+		return err
+	}
+	eventSource.FilterCriteria = filters
+	return nil
+}
+
+// validateSQSMappingOptions applies the ranges and related-setting rules from
+// the EventSourceMappingConfiguration API and the SQS configuration page.
+func validateSQSMappingOptions(eventSource *EventSourceSpec) error {
+	batchSize := eventSource.BatchSize
+	window := eventSource.MaximumBatchingWindowInSeconds
+	maxConcurrency := eventSource.MaximumConcurrency
+	switch {
+	case batchSize < 1 || batchSize > 10000:
+		return unsupported(eventSource.LogicalID, "SQS BatchSize must be between 1 and 10000 (got %d)", batchSize)
+	case window < 0 || window > 300:
+		return unsupported(eventSource.LogicalID, "SQS MaximumBatchingWindowInSeconds must be between 0 and 300 (got %d)", window)
+	case eventSource.FIFO && window > 0:
+		return unsupported(
+			eventSource.LogicalID,
+			"SQS FIFO queue %s does not support MaximumBatchingWindowInSeconds; AWS documents the batching window for standard queues only (https://docs.aws.amazon.com/lambda/latest/dg/services-sqs-configure.html)",
+			eventSource.SourceName,
+		)
+	case eventSource.FIFO && batchSize > 10:
+		return unsupported(eventSource.LogicalID, "SQS FIFO queue %s supports a maximum BatchSize of 10 (got %d)", eventSource.SourceName, batchSize)
+	case !eventSource.FIFO && batchSize > 10 && window < 1:
+		return unsupported(
+			eventSource.LogicalID,
+			"SQS BatchSize %d is greater than 10, so MaximumBatchingWindowInSeconds must be at least 1 (https://docs.aws.amazon.com/lambda/latest/dg/API_EventSourceMappingConfiguration.html)",
+			batchSize,
+		)
+	case maxConcurrency != 0 && (maxConcurrency < 2 || maxConcurrency > 1000):
+		return unsupported(eventSource.LogicalID, "SQS ScalingConfig.MaximumConcurrency must be between 2 and 1000 (got %d)", maxConcurrency)
+	}
+	return nil
+}
+
+// sqsMaxReceiveCount reads maxReceiveCount from a queue's RedrivePolicy. The
+// policy is an object in a CloudFormation template and a JSON string in the SQS
+// API, so both forms are accepted.
+func sqsMaxReceiveCount(raw json.RawMessage) int {
+	if len(raw) == 0 {
+		return 0
+	}
+	trimmed := strings.TrimSpace(string(raw))
+	var text string
+	if strings.HasPrefix(trimmed, `"`) {
+		if err := json.Unmarshal(raw, &text); err != nil {
+			return 0
+		}
+		trimmed = text
+	}
+	var policy struct {
+		MaxReceiveCount json.RawMessage `json:"maxReceiveCount"`
+	}
+	if err := json.Unmarshal([]byte(trimmed), &policy); err != nil {
+		return 0
+	}
+	count, err := parseIntJSON(policy.MaxReceiveCount)
+	if err != nil {
+		return 0
+	}
+	return count
 }
 
 // eventSourceBatchSize returns the batch size the provider uses when the

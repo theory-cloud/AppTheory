@@ -162,6 +162,10 @@ func NewRunner(options Options) (*Runner, error) {
 		runner.invokeDelivery,
 		runner.logf,
 	)
+	// E1b: an SQS mapping has a deliverer, so plan reports it as registered and
+	// a live session polls its ElasticMQ queue. Other kinds keep reporting
+	// not-delivered with their task until E2-E6 land.
+	runner.delivery.RegisterDeliverer(DeliveryKindSQS, NewSQSDeliverer)
 	return runner, nil
 }
 

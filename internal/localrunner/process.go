@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -31,6 +32,13 @@ type FunctionProcess struct {
 	Container string
 	Image     string
 	Port      int
+
+	// mu serializes invocations to this container. The official runtime images
+	// embed one Runtime Interface Emulator, which reserves a single invocation
+	// at a time; a concurrent POST answers "AlreadyReserved" and crashes it.
+	// The local runner runs one container per function, so delivery batches and
+	// HTTP requests for the same function queue here.
+	mu sync.Mutex
 }
 
 // URL is the RIE invocation endpoint for this container.
@@ -40,6 +48,8 @@ func (p *FunctionProcess) URL() string {
 
 // Invoke posts one event to the RIE and returns the raw response body.
 func (p *FunctionProcess) Invoke(ctx context.Context, payload []byte) ([]byte, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, p.URL(), bytes.NewReader(payload)) //nolint:gosec // URL is a loopback RIE port the runner published
 	if err != nil {
 		return nil, fmt.Errorf("build invocation request for %s: %w", p.Container, err)

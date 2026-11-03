@@ -167,6 +167,10 @@ type eventSourceMappingProperties struct {
 	FunctionResponseTypes          []string        `json:"FunctionResponseTypes"`
 	StartingPosition               string          `json:"StartingPosition"`
 	MaximumBatchingWindowInSeconds int             `json:"MaximumBatchingWindowInSeconds"`
+	FilterCriteria                 json.RawMessage `json:"FilterCriteria"`
+	ScalingConfig                  *struct {
+		MaximumConcurrency int `json:"MaximumConcurrency"`
+	} `json:"ScalingConfig"`
 }
 
 type eventRuleProperties struct {

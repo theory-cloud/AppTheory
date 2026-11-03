@@ -18,28 +18,36 @@ import (
 func BuildSQSEvent(queueARN string, messages []sqstypes.Message) ([]byte, error) {
 	records := make([]map[string]any, 0, len(messages))
 	for _, message := range messages {
-		attributes := map[string]string{}
-		for name, value := range message.Attributes {
-			attributes[name] = value
-		}
-		record := map[string]any{
-			"messageId":      stringValue(message.MessageId),
-			"receiptHandle":  stringValue(message.ReceiptHandle),
-			"body":           stringValue(message.Body),
-			"attributes":     attributes,
-			"eventSource":    "aws:sqs",
-			"eventSourceARN": queueARN,
-			"awsRegion":      LocalRegion,
-		}
-		if message.MD5OfBody != nil {
-			record["md5OfBody"] = *message.MD5OfBody
-		}
-		if len(message.MessageAttributes) > 0 {
-			record["messageAttributes"] = sqsMessageAttributes(message.MessageAttributes)
-		}
-		records = append(records, record)
+		records = append(records, sqsRecordMap(queueARN, message))
 	}
 	return json.Marshal(map[string]any{"Records": records})
+}
+
+// sqsRecordMap builds one SQS record. The shape is the documented standard and
+// FIFO event record, including the empty messageAttributes object:
+// https://docs.aws.amazon.com/lambda/latest/dg/with-sqs.html#example-standard-queue-message-event
+func sqsRecordMap(queueARN string, message sqstypes.Message) map[string]any {
+	attributes := map[string]string{}
+	for name, value := range message.Attributes {
+		attributes[name] = value
+	}
+	record := map[string]any{
+		"messageId":         stringValue(message.MessageId),
+		"receiptHandle":     stringValue(message.ReceiptHandle),
+		"body":              stringValue(message.Body),
+		"attributes":        attributes,
+		"messageAttributes": sqsMessageAttributes(message.MessageAttributes),
+		"eventSource":       "aws:sqs",
+		"eventSourceARN":    queueARN,
+		"awsRegion":         LocalRegion,
+	}
+	if message.MD5OfBody != nil {
+		record["md5OfBody"] = *message.MD5OfBody
+	}
+	if message.MD5OfMessageAttributes != nil {
+		record["md5OfMessageAttributes"] = *message.MD5OfMessageAttributes
+	}
+	return record
 }
 
 func sqsMessageAttributes(attributes map[string]sqstypes.MessageAttributeValue) map[string]any {
