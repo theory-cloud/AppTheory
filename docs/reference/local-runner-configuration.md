@@ -371,6 +371,26 @@ makes the batching window and visibility deadlines deterministic, and the
 not slow ElasticMQ's own wall-clock timers or the runtime images; the exact
 boundary is documented in
 [What the test clock controls](/examples/local-runner/#what-the-test-clock-controls).
+
+An SQS mapping's `FilterCriteria` is validated when the mapping is derived
+against the EventBridge pattern grammar Lambda documents
+([Lambda event filtering](https://docs.aws.amazon.com/lambda/latest/dg/invocation-eventfiltering.html),
+[EventBridge comparison operators](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-event-patterns-content-based-filtering.html)).
+A scalar where a rule list is required, an unknown operator, a `numeric` list
+that is not the documented operator/number form, a non-boolean `exists`, a
+non-string `prefix`/`suffix`/`equals-ignore-case`, a malformed `anything-but`, a
+non-object `$or` entry, an empty list and a pattern over the documented
+4096-character maximum each refuse the plan with the mapping, the filter index
+and the offending key and value named. `exists` matches leaf nodes only, and
+`anything-but` supports the `prefix` and `suffix` object forms. If an accepted
+pattern still cannot be evaluated at delivery time, the deliverer reports the
+failure, leaves the whole batch for redelivery and deletes nothing.
+
+A FIFO mapping runs one receive loop locally: one batch per queue is in flight
+and message groups are not processed in parallel. AWS preserves per-group order
+while processing different groups concurrently; the local one-loop form
+preserves order at the cost of that parallelism.
+
 Shutdown drains in-flight deliveries for up to five seconds, then cancels and
 stops the deliverers.
 

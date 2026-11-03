@@ -2207,8 +2207,9 @@ def _expected_delivery_entries(plan: dict) -> list[tuple[str, str, str | None]]:
 def _assert_plan_delivery(plan: dict, app: str) -> None:
     """Plan must report the state the engine would register for every source.
 
-    E1a ships no per-service deliverer, so every derived source must be visible
-    as ``not-delivered`` with the task that will implement it. A missing or
+    A kind with a deliverer (``DELIVERED_KINDS``) must be visible as
+    ``registered`` with no task or reason; every other derived source must be
+    ``not-delivered`` with the task that will implement it. A missing or
     silently registered source fails the row.
     """
     delivery = plan.get("delivery")

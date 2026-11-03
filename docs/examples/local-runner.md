@@ -685,14 +685,17 @@ source mapping. The rules are those in
 [EventSourceMappingConfiguration](https://docs.aws.amazon.com/lambda/latest/dg/API_EventSourceMappingConfiguration.html)
 and [Lambda event filtering](https://docs.aws.amazon.com/lambda/latest/dg/invocation-eventfiltering.html).
 
-**Batching.** `BatchSize` defaults to 10. A batch window
-(`MaximumBatchingWindowInSeconds`, 0–300 seconds, default 0) is closed when the
-run clock reaches it, the batch reaches `BatchSize`, or no more messages are
-available. A standard queue may declare a batch size above 10 only with a
-window of at least one second. A FIFO queue's maximum batch size is 10 and AWS
-does not support a batch window on FIFO queues; a mapping that violates either
-rule is refused at plan time with the mapping named, rather than being passed
-to ElasticMQ.
+**Batching.** `BatchSize` defaults to 10. With no batch window (the default, and
+the only form FIFO supports), one receive call closes the batch: the function is
+invoked with whatever that receive returned, up to `BatchSize`, without waiting
+for more messages. With a batch window (`MaximumBatchingWindowInSeconds`, 0–300
+seconds), the batch is closed when the run clock reaches the window or the batch
+reaches `BatchSize`; the deliverer keeps receiving within the window while
+messages are available and stops waiting when the window closes. A standard
+queue may declare a batch size above 10 only with a window of at least one
+second. A FIFO queue's maximum batch size is 10 and AWS does not support a batch
+window on FIFO queues; a mapping that violates either rule is refused at plan
+time with the mapping named, rather than being passed to ElasticMQ.
 
 **Visibility.** Messages are received with the queue's own visibility timeout.
 The deliverer never lengthens a visibility timeout while a batch is in flight.
@@ -714,7 +717,10 @@ and every later record of the same message group stay in the queue, even when
 the handler reports only the first one, so a later record cannot overtake its
 failure. ElasticMQ enforces the per-group receive order;
 `MessageGroupId`, `MessageDeduplicationId` and `SequenceNumber` are passed
-through on the record's `attributes`.
+through on the record's `attributes`. A FIFO mapping runs one receive loop
+locally, so one batch per queue is in flight and message groups are not
+processed in parallel; AWS preserves per-group order while processing different
+groups concurrently.
 
 **Redrive.** The queue's redrive policy is read from ElasticMQ. When a message
 has been received `maxReceiveCount` times, the next receive attempt moves it to
@@ -724,8 +730,27 @@ deliverer never deletes a message it did not successfully process.
 **Filter criteria.** `FilterCriteria` is evaluated with Amazon EventBridge
 event-pattern syntax against the record's metadata fields and its parsed
 `body`. Multiple filters are ORed. A message that matches no filter is deleted
-from the queue without invoking the function, as Lambda does. A malformed
-pattern fails at plan time instead of silently matching nothing.
+from the queue without invoking the function, as Lambda does.
+
+The pattern is validated when the mapping is derived, as AWS validates it when
+the event source mapping is created, so a malformed pattern fails at plan time
+with the mapping, the filter index and the offending key and value named
+instead of silently matching nothing. The accepted set is the documented
+EventBridge grammar: a field holds a non-empty list of rules or a nested
+pattern object, and a rule is a scalar or one single-key operator object. The
+operators are `prefix`, `suffix` and `equals-ignore-case` with a string value;
+`numeric` with `=`, `<` or `<=` and one number, or `>`/`>=` and one number or a
+second `<`/`<=` bound; `exists` with `true` or `false`; and `anything-but` with
+a string, a number, a non-empty all-string or all-number list, or a
+`prefix`/`suffix` object whose value is a string or a non-empty list of strings.
+`$or` takes a non-empty list of objects. Empty lists, unknown operators, a
+scalar where a list is required, `anything-but` with `equals-ignore-case`, and a
+pattern longer than the documented 4096-character maximum are refused at plan
+time.
+
+`exists` works only on leaf nodes, as AWS documents:
+`{"body":{"address":[{"exists":true}]}}` does not match when `address` is an
+object with children, even though the field is present.
 
 **Maximum concurrency.** `ScalingConfig.MaximumConcurrency` (2–1000) bounds the
 number of batches the mapping starts concurrently, within
