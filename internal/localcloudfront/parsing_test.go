@@ -100,6 +100,27 @@ func TestDistributionPropertyDispositions(t *testing.T) {
 	}
 }
 
+func TestBehaviorCachedMethodsDefaultsToGetHeadAndIsParsed(t *testing.T) {
+	config := baseDistributionConfig()
+	distribution := parseDistributionConfig(t, config)
+	if got := strings.Join(distribution.DefaultBehavior.CachedMethods, ","); got != "GET,HEAD" {
+		t.Fatalf("default CachedMethods = %q, want GET,HEAD", got)
+	}
+	if refusals := strings.Join(distribution.DefaultBehavior.Refusals, "\n"); strings.Contains(refusals, "CachedMethods") {
+		t.Fatalf("the default CachedMethods must not be refused: %s", refusals)
+	}
+
+	behavior := mustMap(t, config["DefaultCacheBehavior"], "DefaultCacheBehavior")
+	behavior["CachedMethods"] = []any{"GET", "HEAD", "OPTIONS"}
+	distribution = parseDistributionConfig(t, config)
+	if got := strings.Join(distribution.DefaultBehavior.CachedMethods, ","); got != "GET,HEAD,OPTIONS" {
+		t.Fatalf("parsed CachedMethods = %q, want GET,HEAD,OPTIONS", got)
+	}
+	if refusals := strings.Join(distribution.DefaultBehavior.Refusals, "\n"); strings.Contains(refusals, "CachedMethods") {
+		t.Fatalf("CachedMethods must be parsed, not refused: %s", refusals)
+	}
+}
+
 func TestBehaviorPropertyDispositions(t *testing.T) {
 	cases := []struct {
 		name       string

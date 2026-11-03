@@ -14,9 +14,11 @@ hand-written route table.
 A CloudFront distribution is served as its edge path, not as a second copy of
 the origin: the gateway selects the cache behavior, runs the distribution's
 generated CloudFront Functions, applies the origin request and response headers
-policies, and hands origin requests to an origin implementation. A5a serves that
-edge path but does not wire the origins yet; a request that would reach an
-origin answers `origin "<id>" is not wired until A5b` instead of inventing one.
+policies, and hands origin requests to an origin implementation. The S3 origin
+reads the app's own bucket deployments from the local s3proxy backend, the
+Function URL origin invokes the real handler through the runner's runtime
+container, and an origin group applies CloudFront's failover rules. It is not a
+CloudFront emulator: there is no caching, no edge network and no TLS.
 
 ```bash
 # Serve the app in the background, then use the printed URLs.
@@ -312,12 +314,14 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
    the last error, before any resource is provisioned. A backend with no
    published host port is reported ready without this wait.
 6. **Provision resources.** When the backend is ready, the runner creates every
-   resource the assembly declares: S3 buckets and KMS keys, DynamoDB tables
-   with their key schema, GSIs, streams and TTL, and SQS queues with their
-   visibility, retention and redrive policy. It records the provisioned values
-   environment resolution needs. Attributes the local emulator does not
-   implement (SSE, PITR, deletion protection, KMS-on-SQS) are not provisioned;
-   they are not part of the local contract.
+   resource the assembly declares, in this order: S3 buckets; each
+   `Custom::CDKBucketDeployment` source copied into its bucket with the declared
+   destination prefix and metadata; KMS keys; DynamoDB tables with their key
+   schema, GSIs, streams and TTL; and SQS queues with their visibility,
+   retention and redrive policy. It records the provisioned values environment
+   resolution needs. Attributes the local emulator does not implement (SSE,
+   PITR, deletion protection, KMS-on-SQS) are not provisioned; they are not part
+   of the local contract.
 7. **Resolve environment references.** A served function's `Ref`/`Fn::GetAtt`
    environment values are resolved to deterministic local values: a DynamoDB
    table name and stream ARN, an SQS queue name or URL, an EventBridge rule
@@ -435,9 +439,13 @@ string, as CloudFront documents.
 ### Edge policies
 
 The origin request policy is applied to the viewer request; the response headers
-policy is applied after the viewer-response function. Caching is not emulated:
-every request is forwarded to the origin as a cache miss, and a cache policy is
-used only for the values it contributes to the origin request. The
+policy is applied after the viewer-response function. The four conditional
+request headers (`If-Match`, `If-None-Match`, `If-Modified-Since` and
+`If-Unmodified-Since`) are always forwarded to the origin for it to evaluate,
+as CloudFront forwards them, so a policy that does not list them does not drop
+them. Caching is not emulated: every request is forwarded to the origin as a
+cache miss, and a cache policy is used only for the values it contributes to the
+origin request. The
 `ViewerProtocolPolicy` is reported, not enforced, because the local URL is plain
 HTTP; the same is true for compression, access logging, aliases, the viewer
 certificate and the distribution's HTTP/IPv6/price-class settings.
@@ -445,16 +453,77 @@ certificate and the distribution's HTTP/IPv6/price-class settings.
 The pinned managed policy table and the exact property inventory are in the
 [configuration reference](/reference/local-runner-configuration/#cloudfront-distributions).
 
-### Origins and A5a
+### Origins
 
-The gateway defines the origin interface A5b implements for the S3 emulator, the
-Function URL origin and origin groups. In A5a no origin implementation is
-registered: a request that reaches an origin is answered with
-`origin "<id>" is not wired until A5b`, and the origin is never faked. A
-viewer-request response that short-circuits the origin is fully served, so an
-edge redirect or rewrite can be exercised today. The `ssr-site`,
-`ssr-only-provided-assets-site`, `path-routed-frontend` and `media-cdn` example
-rows remain class I in the harness until A5b wires their origins.
+The gateway builds one origin implementation per servable distribution from the
+same assembly:
+
+- **S3.** The origin reaches the bucket `provisionBuckets` created and the
+  objects `provisionDeployments` copied from every `Custom::CDKBucketDeployment`
+  source (the assembly's asset directories and zips, with the deployment's
+  destination prefix and declared content-type/cache-control metadata; the
+  content-type is inferred from the extension otherwise). GET and HEAD pass
+  `Content-Type`, `ETag`, `Last-Modified`, `Content-Length`, `Cache-Control`,
+  `Content-Range` and user metadata through. A ranged GET returns 206. A HEAD
+  with a single satisfiable byte `Range` returns 206 with
+  `Content-Range: bytes <first>-<last>/<total>`, the ranged `Content-Length`
+  and no body: AWS documents HeadObject as the GetObject response without a
+  body and a satisfiable GetObject range as 206
+  ([HeadObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html),
+  [GetObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html)).
+  The pinned s3proxy backend ignores `Range` on HEAD (it answers 200 with the
+  full length and no `Content-Range`), so the local origin requests the full
+  metadata and derives the ranged answer from it. An unsatisfiable single range
+  on a HEAD is 416 with `Content-Range: bytes */<total>`, as HeadObject
+  documents, while a ranged GET's 416 comes from the backend and carries no
+  `Content-Range`; a multi-range or unparseable `Range` is ignored and the full
+  object is returned, because S3 does not support multiple ranges per request
+  and RFC 9110 permits ignoring a `Range`
+  ([RFC 9110 §14.2](https://www.rfc-editor.org/rfc/rfc9110#section-14.2)).
+  CloudFront forwards `If-Match`, `If-None-Match`, `If-Modified-Since` and
+  `If-Unmodified-Since` to the origin, and the origin evaluates them
+  ([request headers](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/RequestAndResponseBehaviorCustomOrigin.html),
+  [S3 conditional GET](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/RequestAndResponseBehaviorS3Origin.html)).
+  The local gateway forwards those four headers even when the behavior's origin
+  request policy does not list them, so a conditional GET or HEAD passes S3's
+  304 Not Modified (or 412 Precondition Failed for
+  `If-Match`/`If-Unmodified-Since`) through with the validators the origin
+  attached and no body; the local response carries exactly what the origin
+  supplied. The pinned s3proxy attaches `ETag` to a `GET` 304 and to the 412 of
+  either method, attaches no validator to a `HEAD` 304, and attaches
+  `Last-Modified` to none of them. OPTIONS follows S3's CORS
+  behavior: a bucket with no CORS configuration returns 403 `AccessForbidden`,
+  and a bucket that declares CORS rules is refused with a named local gap
+  because bucket CORS is not provisioned. An OAC/OAI origin has no
+  `s3:ListBucket`, so a missing object is **403 `AccessDenied`**; a public S3
+  origin returns 404 `NoSuchKey`. A method other than GET/HEAD/OPTIONS is a
+  named error.
+- **Function URL.** The origin builds the Lambda Function URL payload format
+  2.0 event from the origin request (method, origin path, raw path, query,
+  cookies, headers, viewer IP and request id), invokes the real function through
+  the same runtime container `run` starts, and maps `statusCode`, `headers`,
+  `cookies`, `isBase64Encoded` and `body` back. A `RESPONSE_STREAM` function is
+  **buffered by the RIE**: the body is complete and its chunk timing is never
+  reproduced. A `NONE` URL is invoked directly. An `AWS_IAM` URL is signed with
+  SigV4 over the method, path, query, Host, body hash and date; the gateway's
+  in-process verifier checks that locally signed request before it invokes the
+  handler, and the event reports `requestContext.authorizer.iam` with a loopback
+  identity. IAM policy evaluation is not emulated.
+- **Origin group.** GET and HEAD always fail over. OPTIONS fails over only when
+  the behavior's `CachedMethods` includes OPTIONS; otherwise CloudFront tries the
+  primary only
+  ([origin failover](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/high_availability_origin_failover.html)).
+  CloudFront retries the secondary member when the primary returns a status in
+  `FailoverCriteria`, when it fails to connect and 503 is configured, or when it
+  times out and 504 is configured; each attempt uses that member's `OriginPath`
+  and Host. Other methods go to the primary only. If both members fail, the
+  secondary's response is returned.
+- **Other origins.** A literal external custom origin is refused with a named
+  503; the gateway never makes an external network request.
+
+The `ssr-site`, `ssr-only-provided-assets-site`, `path-routed-frontend` and
+`media-cdn` example rows run through these origins in the harness; the private
+media distribution stays refused with the named signed-URL reason.
 
 Distributions that use Lambda@Edge, a CloudFront KeyValueStore association,
 trusted key groups or signed URLs, field-level encryption, geo restriction, a
@@ -587,7 +656,7 @@ the harness records it.
 | Deploy-time Secrets Manager dynamic references | Supported | A `{{resolve:secretsmanager:…}}` environment value becomes a deterministic local secret. The session's `describe` returns it to the harness; `run` and `plan` never print it. No secret is created in a cloud. |
 | Other emulators | Endpoint injection only | Pass `--endpoint service=url` and `--add-host name=address`; the profile names the environment variables. |
 | WebSocket APIs | Reported, not served | A WebSocket API is listed under `skipped` with its reason, and an app with no HTTP route, Function URL, event source or rule fails with that list. Its `$connect`/`$disconnect`/`$default` routes are not invoked. |
-| CloudFront distributions and CloudFront Functions | Served (A5a edge path) | The distribution is served on its own loopback URL. Cache behaviors, allowed methods, viewer-request/viewer-response functions, origin request policies and response headers policies are applied; the generated function code runs in a restricted Node sandbox. An origin-bound request is a named 503 until A5b wires the origins. No caching, no edge network, no TLS. |
+| CloudFront distributions and CloudFront Functions | Served (L2) | The distribution is served on its own loopback URL. Cache behaviors, allowed methods, viewer-request/viewer-response functions, origin request policies and response headers policies are applied; the generated function code runs in a restricted Node sandbox. S3 origins read the app's deployments from s3proxy, Function URL origins invoke the real handler container, and origin groups fail over with CloudFront's rules. No caching, no edge network, no TLS. |
 | REST `MOCK` integrations | Supported (L1) | The transport returns the `IntegrationResponses` status and headers the template declares and invokes no function. CDK emits these for CORS preflight. |
 | HTTP API `REQUEST` authorizers with simple responses | Supported | The transport invokes the real authorizer function with the API Gateway v2 REQUEST event, carrying every configured `$request.header.*` or `$request.querystring.*` identity source in order; a request missing one is refused with 401 before the authorizer runs. A false `isAuthorized` is a 401, the authorizer context is carried to the handler, and a malformed response fails closed. `$context`/`$stageVariables` sources fail closed at plan time. |
 | Other authorizers (REST, JWT, non-simple responses) | Not served | Fails closed; the local transport must never bypass a real authorizer. |
@@ -607,13 +676,19 @@ the harness records it.
 - **WebSocket events** are not delivered. A WebSocket API is reported as not
   served; its routes are never invoked.
 - **CloudFront is an edge-path gateway, not an emulator.** The distribution's
-  cache behavior, generated CloudFront Functions and edge policies are applied,
-  but there is no cache, no edge network, no TLS and no viewer protocol
-  enforcement. A request that reaches an origin is a named 503 until A5b wires
-  the S3, Function URL and origin-group origins. Lambda@Edge, KeyValueStore,
-  signed URLs, field-level encryption, geo restriction, WAF and custom error
-  responses refuse the distribution; caching, compression, logging and
-  placement settings are reported. The Node `vm` executor matches the
+  cache behavior, generated CloudFront Functions, edge policies and origins are
+  applied, but there is no cache, no edge network, no TLS and no viewer protocol
+  enforcement. S3-origin bucket CORS rules and IAM/bucket policies are not
+  emulated; the local S3 origin returns the S3 status the OAC/OAI access model
+  produces. `If-Range` is not forwarded to the S3 origin (CloudFront forwards
+  it by default), so a conditional range is served as an unconditional
+  range. A Function URL `RESPONSE_STREAM` body is buffered. An `AWS_IAM`
+  Function URL's SigV4 signing and the gateway's in-process check of that
+  locally signed request are reproduced, but IAM policy evaluation is not.
+  A literal external custom origin is refused rather than reached. Lambda@Edge,
+  KeyValueStore, signed URLs, field-level encryption, geo restriction, WAF and
+  custom error responses refuse the distribution; caching, compression, logging
+  and placement settings are reported. The Node `vm` executor matches the
   CloudFront Functions API and globals but is not a hardened security boundary,
   does not enforce CloudFront's 1 ms CPU budget, and cannot reproduce
   CloudFront-only device, location or TLS headers.

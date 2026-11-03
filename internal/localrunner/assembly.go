@@ -37,6 +37,7 @@ const (
 	typeRESTStage       = "AWS::ApiGateway::Stage"
 	typeRESTAuthorizer  = "AWS::ApiGateway::Authorizer"
 	typeFunctionURL     = "AWS::Lambda::Url"
+	typeBucketDeploy    = "Custom::CDKBucketDeployment"
 	typeCloudFront      = "AWS::CloudFront::Distribution"
 	typeCloudFrontFn    = "AWS::CloudFront::Function"
 

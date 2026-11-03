@@ -119,7 +119,7 @@ func combinedQueryRule(cache *CachePolicy, origin *OriginRequestPolicy) forwardi
 	return rule
 }
 
-// originRequest builds the request A5b's origin receives.
+// originRequest builds the request the origin receives.
 func (g *Gateway) originRequest(
 	state *requestState,
 	behavior *Behavior,
@@ -146,6 +146,7 @@ func (g *Gateway) originRequest(
 			header.Add(lower, value)
 		}
 	}
+	copyConditionalHeaders(header, state.Header)
 	addCloudFrontHeaders(header, headerRule, state)
 	addForwardedCookies(header, cookieRule, state)
 	removeHopByHop(header)
@@ -173,17 +174,39 @@ func (g *Gateway) originRequest(
 		originPath = origin.OriginPath
 	}
 	return OriginRequest{
-		OriginID:       targetID,
-		Method:         state.Method,
-		URI:            state.URI,
-		OriginPath:     originPath,
-		Query:          filterRawQuery(state.RawQuery, queryRule),
-		Host:           host,
-		Header:         header,
-		Body:           state.Body,
-		ViewerIP:       state.ViewerIP,
-		RequestID:      requestID,
-		DistributionID: localDistributionID(g.Distribution),
+		OriginID:      targetID,
+		Method:        state.Method,
+		URI:           state.URI,
+		OriginPath:    originPath,
+		Query:         filterRawQuery(state.RawQuery, queryRule),
+		Host:          host,
+		Header:        header,
+		Body:          state.Body,
+		Range:         state.Header.Get("Range"),
+		CachedMethods: behavior.CachedMethods,
+		// CloudFront strips these parameters for an S3 origin only when the
+		// behavior uses one of the managed origin request policies listed by
+		// AWS; see managedOriginRequestSuppressesS3ResponseOverrides.
+		SuppressS3ResponseOverrides: managedOriginRequestSuppressesS3ResponseOverrides(behavior),
+		ViewerIP:                    state.ViewerIP,
+		RequestID:                   requestID,
+		DistributionID:              localDistributionID(g.Distribution),
+	}
+}
+
+// copyConditionalHeaders forwards the viewer's conditional headers to the
+// origin, which evaluates them. AWS lists them as forwarded even when the
+// viewer does not configure caching on them, so the local gateway copies them
+// after policy filtering rather than dropping a viewer If-None-Match /
+// If-Modified-Since with the policy's header whitelist. The origin's 304/412
+// answer must reach the viewer.
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/RequestAndResponseBehaviorCustomOrigin.html
+func copyConditionalHeaders(header, viewer http.Header) {
+	for _, name := range []string{"If-Match", "If-None-Match", "If-Modified-Since", "If-Unmodified-Since"} {
+		header.Del(name)
+		for _, value := range viewer.Values(name) {
+			header.Add(name, value)
+		}
 	}
 }
 
@@ -279,6 +302,56 @@ func policyOriginRequest(behavior *Behavior) *OriginRequestPolicy {
 		return nil
 	}
 	return behavior.OriginRequestPolicy.OriginRequest
+}
+
+// s3ResponseOverrideQueryNames are the three query string parameters AWS
+// documents as removed from an S3 origin request by the four managed origin
+// request policies below.
+//
+// AWS: "When you use the AllViewer, AllViewerAndCloudFrontHeaders-2022-06,
+// AllViewerExceptHostHeader, or Elemental-MediaTailor-PersonalizedManifests
+// managed origin request policy with an Amazon S3 origin, CloudFront doesn't
+// forward the following query string parameters to the origin:
+// response-content-type, response-content-disposition,
+// response-content-encoding." This applies only to managed origin request
+// policies; a custom policy forwards them as configured.
+//
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-managed-origin-request-policies.html
+var s3ResponseOverrideQueryNames = map[string]bool{
+	"response-content-type":        true,
+	"response-content-disposition": true,
+	"response-content-encoding":    true,
+}
+
+func managedOriginRequestSuppressesS3ResponseOverrides(behavior *Behavior) bool {
+	if behavior == nil || behavior.OriginRequestPolicy == nil || !behavior.OriginRequestPolicy.Managed {
+		return false
+	}
+	switch behavior.OriginRequestPolicy.ID {
+	case "216adef6-5c7f-47e4-b989-5492eafa07d3", // AllViewer
+		"33f36d7e-f396-46d9-90e0-52428a34d9dc", // AllViewerAndCloudFrontHeaders-2022-06
+		"b689b0a8-53d0-40ab-baf2-68738e2966ac", // AllViewerExceptHostHeader
+		"775133bc-15f2-49f9-abea-afb2e0bf67d2": // Elemental-MediaTailor-PersonalizedManifests
+		return true
+	default:
+		return false
+	}
+}
+
+// FilterS3ResponseOverrides removes the three response-content-* parameters
+// from a raw query string. Every other parameter is kept in order.
+func FilterS3ResponseOverrides(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	var kept []string
+	for _, segment := range splitRawQuery(raw) {
+		if s3ResponseOverrideQueryNames[segment.name] {
+			continue
+		}
+		kept = append(kept, segment.raw)
+	}
+	return strings.Join(kept, "&")
 }
 
 func removeHopByHop(header http.Header) {

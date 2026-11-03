@@ -232,8 +232,8 @@ func TestStartServersServesCloudFrontAndRefusesOrigins(t *testing.T) {
 	if response.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", response.StatusCode)
 	}
-	if !strings.Contains(string(body), "not wired until A5b") {
-		t.Fatalf("body does not name the milestone: %q", body)
+	if !strings.Contains(string(body), "outside this machine") {
+		t.Fatalf("body does not name the reason: %q", body)
 	}
 }
 
@@ -258,6 +258,24 @@ func TestSessionDescribeIncludesCloudFront(t *testing.T) {
 	}
 	if entries[0]["url"] != "http://127.0.0.1:1234" || entries[0]["servable"] != true {
 		t.Fatalf("unexpected describe entry: %+v", entries[0])
+	}
+}
+
+func TestSessionDescribeIncludesBackendEndpoints(t *testing.T) {
+	runner := &Runner{
+		apiURLs: map[string]string{},
+		backends: map[string]backendProcess{
+			"s3proxy": {HostURL: "http://127.0.0.1:9000", Endpoints: []Endpoint{{Service: "s3"}}},
+		},
+	}
+	session := &localSession{runner: runner, spec: &Spec{}}
+	described, err := session.describe()
+	if err != nil {
+		t.Fatalf("describe: %v", err)
+	}
+	endpoints, ok := described["endpoints"].([]map[string]any)
+	if !ok || len(endpoints) != 1 || endpoints[0]["service"] != "s3" || endpoints[0]["url"] != "http://127.0.0.1:9000" {
+		t.Fatalf("endpoints = %+v", described["endpoints"])
 	}
 }
 

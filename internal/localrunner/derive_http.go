@@ -531,7 +531,7 @@ func deriveFunctionURLs(spec *Spec, stacks []assemblyStack, stack assemblyStack)
 				LogicalID: qualifiedURL,
 				Kind:      typeFunctionURL,
 				Reason: fmt.Sprintf(
-					"Function URL auth type %q is not run locally as a standalone URL; the local transport must not bypass it",
+					"Function URL auth type %q is not served as a standalone URL; a CloudFront origin that targets it is invoked through the signed local OAC path",
 					props.AuthType,
 				),
 			})
@@ -571,7 +571,7 @@ func deriveSkipped(spec *Spec) {
 		}
 		reason := "not targeted by an HTTP route, Function URL, event source mapping or EventBridge rule the local runner can invoke"
 		if _, isOrigin := originFunctions[function.LogicalID]; isOrigin {
-			reason = "CloudFront origin function; the local gateway does not start it until A5b wires origins"
+			reason = "CloudFront origin function of a distribution the local gateway refused; it is not started"
 		}
 		spec.Skipped = append(spec.Skipped, Skipped{
 			LogicalID: function.LogicalID,

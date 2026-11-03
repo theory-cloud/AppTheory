@@ -31,6 +31,9 @@ func (r *Runner) provisionResources(ctx context.Context, spec *Spec) error {
 	if err := r.provisionBuckets(ctx, spec); err != nil {
 		return err
 	}
+	if err := r.provisionDeployments(ctx, spec); err != nil {
+		return err
+	}
 	if err := r.provisionKeys(ctx, spec); err != nil {
 		return err
 	}

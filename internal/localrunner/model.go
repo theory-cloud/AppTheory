@@ -302,6 +302,9 @@ func (s *Spec) RuntimeFunctions() []string {
 	for _, id := range s.ServedFunctions() {
 		seen[id] = struct{}{}
 	}
+	for _, id := range s.CloudFrontOriginFunctions() {
+		seen[id] = struct{}{}
+	}
 	for _, source := range s.EventSources {
 		if source.Enabled && source.Function != "" {
 			seen[source.Function] = struct{}{}
@@ -314,6 +317,31 @@ func (s *Spec) RuntimeFunctions() []string {
 		for _, target := range rule.Targets {
 			if target != "" {
 				seen[target] = struct{}{}
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for id := range seen {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// CloudFrontOriginFunctions returns the functions the served distributions
+// invoke as origins: every Function URL an origin or origin-group member
+// targets. The gateway invokes the same container the runner starts for a
+// standalone Function URL; an AWS_IAM URL is only reachable through the signed
+// CloudFront origin path.
+func (s *Spec) CloudFrontOriginFunctions() []string {
+	seen := map[string]struct{}{}
+	for _, distribution := range s.ServableCloudFront() {
+		for _, origin := range distribution.Origins {
+			if origin.FunctionURL == "" {
+				continue
+			}
+			if functionID, ok := s.functionURLTargets[origin.FunctionURL]; ok {
+				seen[functionID] = struct{}{}
 			}
 		}
 	}
@@ -348,8 +376,8 @@ func (s *Spec) HTTPAPIs() []APISpec {
 }
 
 // ServableCloudFront returns the distributions the gateway can serve: no
-// unsupported property refused it. A servable distribution still refuses its
-// origins until A5b wires them.
+// unsupported property refused it. The runner registers an origin
+// implementation for every origin of such a distribution.
 func (s *Spec) ServableCloudFront() []*localcloudfront.Distribution {
 	var out []*localcloudfront.Distribution
 	for _, distribution := range s.CloudFront {

@@ -115,6 +115,55 @@ func TestGatewayRefusesDisallowedMethod(t *testing.T) {
 	}
 }
 
+func TestGatewayPassesCachedMethodsToOriginFailover(t *testing.T) {
+	cases := []struct {
+		name       string
+		cached     []string
+		wantStatus int
+		wantBody   string
+	}{
+		{name: "options not cached", cached: []string{"GET", "HEAD"}, wantStatus: http.StatusNotFound, wantBody: "primary"},
+		{name: "options cached", cached: []string{"GET", "HEAD", "OPTIONS"}, wantStatus: http.StatusOK, wantBody: "secondary"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			primary := &recordingOrigin{response: OriginResponse{StatusCode: http.StatusNotFound, Body: []byte("primary")}}
+			secondary := &recordingOrigin{response: OriginResponse{StatusCode: http.StatusOK, Body: []byte("secondary")}}
+			group := NewOriginGroupOrigin("group", []OriginGroupMember{
+				{OriginID: "primary", Origin: primary},
+				{OriginID: "secondary", Origin: secondary},
+			}, []int{http.StatusNotFound})
+			behavior := testBehavior("*", "group", []string{"GET", "HEAD", "OPTIONS"})
+			behavior.CachedMethods = testCase.cached
+			distribution := &Distribution{
+				LogicalID:       "TestDistribution",
+				Enabled:         true,
+				DefaultBehavior: behavior,
+				Origins: []*DistributionOrigin{
+					testOrigin("primary", "primary.example"),
+					testOrigin("secondary", "secondary.example"),
+				},
+				OriginGroups: []*OriginGroup{{ID: "group", Members: []string{"primary", "secondary"}}},
+			}
+			gateway := NewGateway(distribution, &Topology{}, map[string]Origin{"group": group}, nil, nil)
+			recorder := serveGateway(gateway, http.MethodOptions, "http://viewer.example/x", "", nil)
+			if recorder.Code != testCase.wantStatus || recorder.Body.String() != testCase.wantBody {
+				t.Fatalf("status = %d body = %q, want %d %q", recorder.Code, recorder.Body.String(), testCase.wantStatus, testCase.wantBody)
+			}
+			wantSecondary := 0
+			if testCase.wantBody == "secondary" {
+				wantSecondary = 1
+			}
+			if len(secondary.requests) != wantSecondary {
+				t.Fatalf("secondary called %d times, want %d", len(secondary.requests), wantSecondary)
+			}
+			if len(primary.requests) != 1 {
+				t.Fatalf("primary called %d times, want 1", len(primary.requests))
+			}
+		})
+	}
+}
+
 func TestGatewayViewerRequestRunsBeforeAllowedMethods(t *testing.T) {
 	origin := okOrigin("origin")
 	code := `function handler(event) {
@@ -403,8 +452,8 @@ func TestGatewayUnwiredOriginIsNamed(t *testing.T) {
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", recorder.Code)
 	}
-	if !strings.Contains(recorder.Body.String(), "not wired until A5b") {
-		t.Fatalf("body does not name the milestone: %q", recorder.Body.String())
+	if !strings.Contains(recorder.Body.String(), "registered no implementation") {
+		t.Fatalf("body does not name the reason: %q", recorder.Body.String())
 	}
 }
 
@@ -649,6 +698,49 @@ func TestGatewayAppliesValueEditOnMultiValueFieldsBeforeOrigin(t *testing.T) {
 	}
 	if got := query["q"]; !slices.Equal(got, []string{"edited-query", "q2"}) {
 		t.Fatalf("origin q = %v, want the edited first value and the unchanged second", got)
+	}
+}
+
+// TestGatewayForwardsConditionalHeadersToTheOrigin pins the AWS behavior the
+// S3 origin relies on: CloudFront forwards If-Match, If-None-Match,
+// If-Modified-Since and If-Unmodified-Since to the origin, which evaluates
+// them; a header whitelist that does not name them must not drop them.
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/RequestAndResponseBehaviorCustomOrigin.html
+func TestGatewayForwardsConditionalHeadersToTheOrigin(t *testing.T) {
+	origin := okOrigin("ok")
+	behavior := testBehavior("*", "origin", []string{"GET", "HEAD"})
+	behavior.OriginRequestPolicy = testPolicy(PolicyOriginRequest, nil, &OriginRequestPolicy{
+		Headers: HeaderForwarding{Mode: ForwardWhitelist, Names: []string{"origin"}},
+	}, nil)
+	distribution := testDistribution(behavior, nil, testOrigin("origin", "origin.example"))
+	gateway := NewGateway(distribution, &Topology{}, map[string]Origin{"origin": origin}, nil, nil)
+	header := map[string]string{
+		"If-Match":            `"abc123"`,
+		"If-None-Match":       `"abc123"`,
+		"If-Modified-Since":   "Wed, 21 Oct 2015 07:28:00 GMT",
+		"If-Unmodified-Since": "Wed, 21 Oct 2015 07:28:00 GMT",
+		"X-Not-Forwarded":     "dropped",
+	}
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		t.Run(method, func(t *testing.T) {
+			origin.requests = nil
+			serveGateway(gateway, method, "http://viewer.example/hello.txt", "", header)
+			if len(origin.requests) != 1 {
+				t.Fatalf("origin calls = %d, want 1", len(origin.requests))
+			}
+			sent := origin.requests[0].Header
+			for name, want := range header {
+				if name == "X-Not-Forwarded" {
+					if got := sent.Get(name); got != "" {
+						t.Fatalf("%s = %q, want the policy to drop it", name, got)
+					}
+					continue
+				}
+				if got := sent.Get(name); got != want {
+					t.Fatalf("%s = %q, want %q", name, got, want)
+				}
+			}
+		})
 	}
 }
 

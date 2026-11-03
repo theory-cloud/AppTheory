@@ -18,6 +18,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -68,13 +69,23 @@ class RealTreeTests(unittest.TestCase):
         self.assertFalse(any(".cdk-asset-stage" in path for path in discovered))
         self.assertFalse(any("node_modules" in path for path in discovered))
 
-    def test_a4_rows_are_wired(self) -> None:
+    def test_a5b_rows_are_wired(self) -> None:
         _, entries = harness.load_manifest(harness.MANIFEST_PATH)
-        self.assertEqual([], [entry.key for entry in entries if entry.pending == "A4"])
+        self.assertEqual([], [entry.key for entry in entries if entry.pending])
         classified = [entry for entry in entries if not entry.pending]
-        self.assertEqual(55, len(classified))
-        milestones = {entry.pending for entry in entries if entry.pending}
-        self.assertEqual({"A5b"}, milestones)
+        self.assertEqual(57, len(classified))
+        by_key = {entry.key: entry for entry in entries}
+        expected = {
+            "examples/cdk/ssr-site/bin/apptheory-ssr-site.ts": "ssr-site-gateway",
+            "examples/cdk/ssr-only-provided-assets-site/bin/app.ts": "ssr-only-gateway",
+            "examples/cdk/path-routed-frontend/bin/app.ts": "path-routed-gateway",
+            "examples/cdk/media-cdn/bin/app.ts": "media-cdn-gateway",
+            "examples/cdk/ssr-site/scripts/generate-assets-manifest.mjs": "ssr-assets-manifest",
+            "examples/cdk/ssr-site/scripts/upload-assets.sh": "ssr-assets-upload",
+        }
+        for key, runner in expected.items():
+            self.assertEqual(runner, by_key[key].runner, key)
+            self.assertIn(by_key[key].class_name, harness.CLASSES, key)
 
     def test_l3_rows_name_a_gap(self) -> None:
         _, entries = harness.load_manifest(harness.MANIFEST_PATH)
@@ -337,6 +348,37 @@ class LocalRunnerHelperTests(unittest.TestCase):
         harness._assert_request_id({"request_id": "7f08dd02-7030-4ecc-9c60-0cd609076abf"}, "uuid")
         with self.assertRaises(harness.HarnessFailure):
             harness._assert_request_id({"request_id": ""}, "empty")
+
+
+class AwsCLIRequirementTests(unittest.TestCase):
+    """The upload row requires a working host AWS CLI; it never installs one."""
+
+    def test_missing_cli_fails_with_the_requirement(self) -> None:
+        with mock.patch.object(harness.shutil, "which", return_value=None):
+            with self.assertRaises(harness.HarnessFailure) as raised:
+                harness.require_aws_cli()
+        self.assertIn("requires an AWS CLI on PATH", str(raised.exception))
+
+    def test_unstartable_cli_fails_with_the_requirement(self) -> None:
+        failed = mock.Mock(returncode=127, stdout="", stderr="dyld: Library not loaded")
+        with mock.patch.object(harness.shutil, "which", return_value="/opt/homebrew/bin/aws"):
+            with mock.patch.object(harness.subprocess, "run", return_value=failed):
+                with self.assertRaises(harness.HarnessFailure) as raised:
+                    harness.require_aws_cli()
+        self.assertIn("requires an AWS CLI on PATH that starts", str(raised.exception))
+
+    def test_unrunnable_cli_fails_with_the_requirement(self) -> None:
+        with mock.patch.object(harness.shutil, "which", return_value="/opt/homebrew/bin/aws"):
+            with mock.patch.object(harness.subprocess, "run", side_effect=OSError("cannot execute")):
+                with self.assertRaises(harness.HarnessFailure) as raised:
+                    harness.require_aws_cli()
+        self.assertIn("requires an AWS CLI on PATH that starts", str(raised.exception))
+
+    def test_working_cli_returns_its_path(self) -> None:
+        working = mock.Mock(returncode=0, stdout="aws-cli/2.39.3", stderr="")
+        with mock.patch.object(harness.shutil, "which", return_value="/opt/homebrew/bin/aws"):
+            with mock.patch.object(harness.subprocess, "run", return_value=working):
+                self.assertEqual("/opt/homebrew/bin/aws", harness.require_aws_cli())
 
 
 if __name__ == "__main__":

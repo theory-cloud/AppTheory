@@ -233,9 +233,10 @@
       "description": "Lesser-parity queue worker: a generated two-record batch is processed and the invalid record is returned as a partial batch failure."
     },
     "examples/cdk/media-cdn/bin/app.ts": {
-      "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
-      "class": "I",
-      "description": "Media CDN CDK app, synthesized and hash-checked with focused CloudFront/key-group assertions. Signed-URL behavior is A5b or I."
+      "run": "media-cdn-gateway",
+      "class": "L3",
+      "gap": "Signed-URL verification: the private distribution is refused with A5a's named reason; the example ships no media, so a probe object is written to the provisioned public bucket. CloudFront caching and edge network.",
+      "description": "Media CDN: the public distribution serves a probe object from the local S3 emulator with its metadata; the private trusted-key-group distribution stays refused with the named signed-URL reason; missing objects return 403 under OAC."
     },
     "examples/cdk/microvm-controller/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
@@ -298,9 +299,10 @@
       "description": "Multilang TypeScript handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the Go-only REST surface is also asserted."
     },
     "examples/cdk/path-routed-frontend/bin/app.ts": {
-      "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
-      "class": "I",
-      "description": "Path-routed frontend CDK app, synthesized and hash-checked with focused cache-behavior and generated-function assertions. A5b adds gateway execution of the generated CloudFront Functions."
+      "run": "path-routed-gateway",
+      "class": "L3",
+      "gap": "The API origin is an external custom origin and is refused locally by name; the example ships no SPA build output, so probe objects are written through the runner to the provisioned buckets. CloudFront caching and edge network.",
+      "description": "Path-routed frontend: the generated SPA function rewrites /l and /auth to index.html, files are served unchanged, the external API origin is refused by name, POST is refused by AllowedMethods and a missing object is 403 under OAC."
     },
     "examples/cdk/restv1-router/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
@@ -363,22 +365,28 @@
       "description": "SQS worker handler: two real ElasticMQ messages are invoked as the CDK mapping's batch; worker.mjs reports only the simulated failure as a partial batch failure."
     },
     "examples/cdk/ssr-only-provided-assets-site/bin/app.ts": {
-      "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
-      "class": "I",
-      "description": "SSR site with provided assets CDK app, synthesized and hash-checked with focused construct assertions."
+      "run": "ssr-only-gateway",
+      "class": "L2",
+      "gap": "CloudFront caching and edge network; the AWS_IAM Function URL is reached through local SigV4 OAC signing, but IAM policy evaluation is not emulated.",
+      "description": "SSR_ONLY provided assets: the real handler runs behind an AWS_IAM Function URL origin with local OAC signing and echoes the viewer request id; the provided bucket serves app.js, site.css and probe.txt; a missing object is 403 under OAC and OPTIONS is refused."
     },
     "examples/cdk/ssr-site/bin/apptheory-ssr-site.ts": {
-      "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
-      "class": "I",
-      "description": "SSR site CDK app, synthesized and hash-checked with focused CloudFront/origin assertions; A5b runs it through the local gateway."
+      "run": "ssr-site-gateway",
+      "class": "L2",
+      "gap": "CloudFront caching and edge network; response streaming is buffered by the RIE.",
+      "description": "SSR site: the origin group fails over from the S3 HTML primary (403 under OAC) to the real SSR handler; viewer-request/viewer-response effects, the assets and hydrate deployments, full and ranged HEAD, conditional If-None-Match GETs, OPTIONS and the missing-object 403 are asserted through the gateway."
     },
     "examples/cdk/ssr-site/scripts/generate-assets-manifest.mjs": {
-      "pending": "A5b",
-      "description": "SSR site asset manifest generator; A5b runs it as part of the local gateway flow."
+      "run": "ssr-assets-manifest",
+      "class": "L2",
+      "gap": "CloudFront caching and edge network; the manifest is matched against the gateway response, not a deployed bucket.",
+      "description": "SSR site asset manifest generator: runs against the real assets directory, asserts hello.txt's sha256 and byte count, then matches the served asset through the gateway to the manifest."
     },
     "examples/cdk/ssr-site/scripts/upload-assets.sh": {
-      "pending": "A5b",
-      "description": "Deployed-AWS asset upload script; A5b owns its local replacement through the gateway origin."
+      "run": "ssr-assets-upload",
+      "class": "L3",
+      "gap": "CloudFront invalidation is not exercised; s3proxy has no IAM, bucket policy or event notifications. CloudFront caching and edge network.",
+      "description": "SSR site asset uploader: the real AWS CLI syncs the assets and copies the generated manifest to the local s3proxy endpoint with dummy credentials; the gateway serves both with the script's cache-control and the uploaded manifest."
     },
     "examples/cdk/codebuild-job-runner/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",

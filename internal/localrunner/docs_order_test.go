@@ -91,6 +91,35 @@ func TestDocumentedRunStepOrderMatchesTheRunner(t *testing.T) {
 	if !strings.Contains(sessionSection, "one JSON command per line") {
 		t.Fatalf("%s: the session section must describe the line protocol", document)
 	}
+	if !strings.Contains(section, "Custom::CDKBucketDeployment") {
+		t.Fatalf("%s: the Provision resources step must describe the bucket deployments", document)
+	}
+	provisionBody := goFunctionBody(t, "provision.go", "func (r *Runner) provisionResources(ctx context.Context, spec *Spec) error {")
+	assertInOrder(t, "provision.go", provisionBody, "provisioning step", []string{
+		"r.provisionBuckets(",
+		"r.provisionDeployments(",
+		"r.provisionKeys(",
+		"r.provisionTables(",
+		"r.provisionQueues(",
+	})
+	provisionStart := strings.Index(section, "**Provision resources.**")
+	provisionEnd := strings.Index(section, "**Resolve environment references.**")
+	if provisionStart < 0 || provisionEnd <= provisionStart {
+		t.Fatalf("%s: cannot isolate the Provision resources step", document)
+	}
+	assertInOrder(t, document, section[provisionStart:provisionEnd], "provisioning step", []string{
+		"S3 buckets",
+		"Custom::CDKBucketDeployment",
+		"KMS keys",
+		"DynamoDB tables",
+		"SQS queues",
+	})
+
+	startServersBody := goFunctionBody(t, "runner.go", "func (r *Runner) startServers(ctx context.Context, spec *Spec) error {")
+	assertInOrder(t, "runner.go", startServersBody, "CloudFront wiring", []string{
+		"r.cloudFrontOrigins(",
+		"localcloudfront.NewGateway(",
+	})
 }
 
 func flattenedCalls(steps []documentedRunStep) []string {

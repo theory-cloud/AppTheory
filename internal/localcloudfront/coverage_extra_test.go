@@ -52,9 +52,9 @@ func TestOriginHelpers(t *testing.T) {
 	if _, err := origin.Fetch(context.Background(), OriginRequest{URI: "/x"}); err != nil || !called {
 		t.Fatalf("OriginFunc did not run: %v %v", called, err)
 	}
-	notWired := &OriginNotWiredError{OriginID: "O"}
-	if !strings.Contains(notWired.Error(), "A5b") || !errors.Is(notWired, ErrOriginNotWired) {
-		t.Fatalf("origin error = %v", notWired)
+	unavailable := &OriginUnavailableError{OriginID: "O", Reason: "no local bucket"}
+	if !strings.Contains(unavailable.Error(), "no local bucket") || !errors.Is(unavailable, ErrOriginUnavailable) {
+		t.Fatalf("origin error = %v", unavailable)
 	}
 }
 

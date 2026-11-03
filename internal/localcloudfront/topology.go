@@ -78,6 +78,7 @@ type Behavior struct {
 	PathPattern            string   `json:"pathPattern"`
 	TargetOriginID         string   `json:"targetOriginId"`
 	AllowedMethods         []string `json:"allowedMethods"`
+	CachedMethods          []string `json:"cachedMethods,omitempty"`
 	ViewerProtocolPolicy   string   `json:"viewerProtocolPolicy,omitempty"`
 	CachePolicy            *Policy  `json:"cachePolicy,omitempty"`
 	OriginRequestPolicy    *Policy  `json:"originRequestPolicy,omitempty"`
@@ -129,8 +130,8 @@ type S3Origin struct {
 	OriginAccessIdentity string `json:"originAccessIdentity,omitempty"`
 }
 
-// OriginGroup is an origin group. A5a records the members and failover status
-// codes; A5b implements the failover origin.
+// OriginGroup is an origin group. The gateway implements the documented
+// failover behavior from the members and status codes.
 type OriginGroup struct {
 	ID                  string   `json:"id"`
 	Members             []string `json:"members"`
@@ -303,7 +304,8 @@ type CustomHeader struct {
 }
 
 // OriginAccessControl is an AWS::CloudFront::OriginAccessControl. The gateway
-// reports it; the A5b origin decides whether it can enforce signing.
+// reports it; an S3 origin applies its access model and a Function URL origin
+// reproduces its SigV4 signing.
 type OriginAccessControl struct {
 	LogicalID       string   `json:"logicalId"`
 	Stack           string   `json:"stack"`
@@ -611,7 +613,13 @@ func parseBehavior(
 	if err != nil {
 		return nil, fmt.Errorf("%s: cache behavior: %w", distributionID, err)
 	}
-	behavior := &Behavior{PathPattern: defaultPattern, AllowedMethods: []string{"GET", "HEAD"}}
+	behavior := &Behavior{
+		PathPattern:    defaultPattern,
+		AllowedMethods: []string{"GET", "HEAD"},
+		// CloudFront caches GET and HEAD unless the behavior declares
+		// CachedMethods; OPTIONS fails over only when it is cached.
+		CachedMethods: []string{"GET", "HEAD"},
+	}
 	for _, key := range sortedKeys(properties) {
 		value := properties[key]
 		switch key {
@@ -629,6 +637,13 @@ func parseBehavior(
 				return nil, fmt.Errorf("%s: AllowedMethods: %w", distributionID, err)
 			}
 			behavior.AllowedMethods = normalizeMethods(methods)
+		case "CachedMethods":
+			var methods []string
+			if err := json.Unmarshal(value, &methods); err != nil {
+				return nil, fmt.Errorf("%s: CachedMethods: %w", distributionID, err)
+			}
+			behavior.CachedMethods = normalizeMethods(methods)
+			behavior.Reported = append(behavior.Reported, reportProperty("behavior", key))
 		case "ViewerProtocolPolicy":
 			if err := json.Unmarshal(value, &behavior.ViewerProtocolPolicy); err != nil {
 				return nil, fmt.Errorf("%s: ViewerProtocolPolicy: %w", distributionID, err)
@@ -666,7 +681,7 @@ func parseBehavior(
 				return nil, fmt.Errorf("%s: Compress: %w", distributionID, err)
 			}
 			behavior.Reported = append(behavior.Reported, reportProperty("behavior", key))
-		case "CachedMethods", propertyDefaultTTL, propertyMaxTTL, propertyMinTTL, "RealtimeLogConfigArn":
+		case propertyDefaultTTL, propertyMaxTTL, propertyMinTTL, "RealtimeLogConfigArn":
 			behavior.Reported = append(behavior.Reported, reportProperty("behavior", key))
 		case "LambdaFunctionAssociations":
 			if !isEmptyArray(value) {
