@@ -115,6 +115,55 @@ func TestGatewayRefusesDisallowedMethod(t *testing.T) {
 	}
 }
 
+func TestGatewayPassesCachedMethodsToOriginFailover(t *testing.T) {
+	cases := []struct {
+		name       string
+		cached     []string
+		wantStatus int
+		wantBody   string
+	}{
+		{name: "options not cached", cached: []string{"GET", "HEAD"}, wantStatus: http.StatusNotFound, wantBody: "primary"},
+		{name: "options cached", cached: []string{"GET", "HEAD", "OPTIONS"}, wantStatus: http.StatusOK, wantBody: "secondary"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			primary := &recordingOrigin{response: OriginResponse{StatusCode: http.StatusNotFound, Body: []byte("primary")}}
+			secondary := &recordingOrigin{response: OriginResponse{StatusCode: http.StatusOK, Body: []byte("secondary")}}
+			group := NewOriginGroupOrigin("group", []OriginGroupMember{
+				{OriginID: "primary", Origin: primary},
+				{OriginID: "secondary", Origin: secondary},
+			}, []int{http.StatusNotFound})
+			behavior := testBehavior("*", "group", []string{"GET", "HEAD", "OPTIONS"})
+			behavior.CachedMethods = testCase.cached
+			distribution := &Distribution{
+				LogicalID:       "TestDistribution",
+				Enabled:         true,
+				DefaultBehavior: behavior,
+				Origins: []*DistributionOrigin{
+					testOrigin("primary", "primary.example"),
+					testOrigin("secondary", "secondary.example"),
+				},
+				OriginGroups: []*OriginGroup{{ID: "group", Members: []string{"primary", "secondary"}}},
+			}
+			gateway := NewGateway(distribution, &Topology{}, map[string]Origin{"group": group}, nil, nil)
+			recorder := serveGateway(gateway, http.MethodOptions, "http://viewer.example/x", "", nil)
+			if recorder.Code != testCase.wantStatus || recorder.Body.String() != testCase.wantBody {
+				t.Fatalf("status = %d body = %q, want %d %q", recorder.Code, recorder.Body.String(), testCase.wantStatus, testCase.wantBody)
+			}
+			wantSecondary := 0
+			if testCase.wantBody == "secondary" {
+				wantSecondary = 1
+			}
+			if len(secondary.requests) != wantSecondary {
+				t.Fatalf("secondary called %d times, want %d", len(secondary.requests), wantSecondary)
+			}
+			if len(primary.requests) != 1 {
+				t.Fatalf("primary called %d times, want 1", len(primary.requests))
+			}
+		})
+	}
+}
+
 func TestGatewayViewerRequestRunsBeforeAllowedMethods(t *testing.T) {
 	origin := okOrigin("origin")
 	code := `function handler(event) {

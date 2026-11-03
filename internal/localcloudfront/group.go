@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 )
 
 // OriginGroupMember is one member of an origin group. OriginPath and Host are
@@ -24,8 +25,9 @@ type OriginGroupMember struct {
 // member; when the primary returns a status code configured in
 // FailoverCriteria, or CloudFront fails to connect (when 503 is configured) or
 // the primary times out (when 504 is configured), it retries the secondary
-// member with that member's origin path and Host. CloudFront fails over only for
-// GET, HEAD and OPTIONS; other methods go to the primary only.
+// member with that member's origin path and Host. GET and HEAD always fail
+// over; OPTIONS fails over only when the behavior caches OPTIONS in
+// CachedMethods, and other methods go to the primary only.
 //
 // https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/high_availability_origin_failover.html
 type OriginGroupOrigin struct {
@@ -52,7 +54,7 @@ func (g *OriginGroupOrigin) Fetch(ctx context.Context, request OriginRequest) (O
 	secondary := g.Members[1]
 	primaryRequest := memberRequest(request, primary)
 	response, err := primary.Origin.Fetch(ctx, primaryRequest)
-	if !failoverMethod(request.Method) {
+	if !failoverMethod(request) {
 		return response, err
 	}
 	if err != nil {
@@ -78,13 +80,24 @@ func memberRequest(request OriginRequest, member OriginGroupMember) OriginReques
 	return request
 }
 
-func failoverMethod(method string) bool {
-	switch method {
-	case http.MethodGet, http.MethodHead, http.MethodOptions:
+func failoverMethod(request OriginRequest) bool {
+	switch request.Method {
+	case http.MethodGet, http.MethodHead:
 		return true
+	case http.MethodOptions:
+		return methodListed(request.CachedMethods, http.MethodOptions)
 	default:
 		return false
 	}
+}
+
+func methodListed(methods []string, want string) bool {
+	for _, method := range methods {
+		if strings.EqualFold(method, want) {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *OriginGroupOrigin) failsOverOn(status int) bool {

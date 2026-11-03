@@ -56,6 +56,10 @@ type OriginRequest struct {
 	// origin without putting it in a cache or origin request policy; the S3
 	// origin applies it and other origins ignore it.
 	Range string
+	// CachedMethods is the selected behavior's CachedMethods. An origin group
+	// fails over an OPTIONS request only when OPTIONS is listed:
+	// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/high_availability_origin_failover.html
+	CachedMethods []string
 	// SuppressS3ResponseOverrides is set when the behavior's managed origin
 	// request policy makes CloudFront drop response-content-type,
 	// response-content-disposition and response-content-encoding from an S3

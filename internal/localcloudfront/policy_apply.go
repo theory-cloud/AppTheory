@@ -173,15 +173,16 @@ func (g *Gateway) originRequest(
 		originPath = origin.OriginPath
 	}
 	return OriginRequest{
-		OriginID:   targetID,
-		Method:     state.Method,
-		URI:        state.URI,
-		OriginPath: originPath,
-		Query:      filterRawQuery(state.RawQuery, queryRule),
-		Host:       host,
-		Header:     header,
-		Body:       state.Body,
-		Range:      state.Header.Get("Range"),
+		OriginID:      targetID,
+		Method:        state.Method,
+		URI:           state.URI,
+		OriginPath:    originPath,
+		Query:         filterRawQuery(state.RawQuery, queryRule),
+		Host:          host,
+		Header:        header,
+		Body:          state.Body,
+		Range:         state.Header.Get("Range"),
+		CachedMethods: behavior.CachedMethods,
 		// CloudFront strips these parameters for an S3 origin only when the
 		// behavior uses one of the managed origin request policies listed by
 		// AWS; see managedOriginRequestSuppressesS3ResponseOverrides.

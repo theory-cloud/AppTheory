@@ -58,7 +58,7 @@ var distributionPropertyInventory = map[string]Disposition{
 var behaviorPropertyInventory = map[string]Disposition{
 	"AllowedMethods":             Implemented,
 	"CachePolicyId":              Implemented,
-	"CachedMethods":              Reported,
+	"CachedMethods":              Implemented,
 	"Compress":                   Reported,
 	propertyDefaultTTL:           Reported,
 	"FieldLevelEncryptionId":     Refused,
@@ -237,7 +237,7 @@ func reportReason(key string) string {
 	case "Compress":
 		return "response compression is not emulated; origin bytes are served as received"
 	case "CachedMethods":
-		return "caching is not emulated"
+		return "caching is not emulated; the list decides whether OPTIONS can fail over to an origin group secondary"
 	case propertyDefaultTTL, propertyMinTTL, propertyMaxTTL:
 		return "caching is not emulated"
 	case "HttpVersion":

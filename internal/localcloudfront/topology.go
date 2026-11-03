@@ -78,6 +78,7 @@ type Behavior struct {
 	PathPattern            string   `json:"pathPattern"`
 	TargetOriginID         string   `json:"targetOriginId"`
 	AllowedMethods         []string `json:"allowedMethods"`
+	CachedMethods          []string `json:"cachedMethods,omitempty"`
 	ViewerProtocolPolicy   string   `json:"viewerProtocolPolicy,omitempty"`
 	CachePolicy            *Policy  `json:"cachePolicy,omitempty"`
 	OriginRequestPolicy    *Policy  `json:"originRequestPolicy,omitempty"`
@@ -612,7 +613,13 @@ func parseBehavior(
 	if err != nil {
 		return nil, fmt.Errorf("%s: cache behavior: %w", distributionID, err)
 	}
-	behavior := &Behavior{PathPattern: defaultPattern, AllowedMethods: []string{"GET", "HEAD"}}
+	behavior := &Behavior{
+		PathPattern:    defaultPattern,
+		AllowedMethods: []string{"GET", "HEAD"},
+		// CloudFront caches GET and HEAD unless the behavior declares
+		// CachedMethods; OPTIONS fails over only when it is cached.
+		CachedMethods: []string{"GET", "HEAD"},
+	}
 	for _, key := range sortedKeys(properties) {
 		value := properties[key]
 		switch key {
@@ -630,6 +637,13 @@ func parseBehavior(
 				return nil, fmt.Errorf("%s: AllowedMethods: %w", distributionID, err)
 			}
 			behavior.AllowedMethods = normalizeMethods(methods)
+		case "CachedMethods":
+			var methods []string
+			if err := json.Unmarshal(value, &methods); err != nil {
+				return nil, fmt.Errorf("%s: CachedMethods: %w", distributionID, err)
+			}
+			behavior.CachedMethods = normalizeMethods(methods)
+			behavior.Reported = append(behavior.Reported, reportProperty("behavior", key))
 		case "ViewerProtocolPolicy":
 			if err := json.Unmarshal(value, &behavior.ViewerProtocolPolicy); err != nil {
 				return nil, fmt.Errorf("%s: ViewerProtocolPolicy: %w", distributionID, err)
@@ -667,7 +681,7 @@ func parseBehavior(
 				return nil, fmt.Errorf("%s: Compress: %w", distributionID, err)
 			}
 			behavior.Reported = append(behavior.Reported, reportProperty("behavior", key))
-		case "CachedMethods", propertyDefaultTTL, propertyMaxTTL, propertyMinTTL, "RealtimeLogConfigArn":
+		case propertyDefaultTTL, propertyMaxTTL, propertyMinTTL, "RealtimeLogConfigArn":
 			behavior.Reported = append(behavior.Reported, reportProperty("behavior", key))
 		case "LambdaFunctionAssociations":
 			if !isEmptyArray(value) {

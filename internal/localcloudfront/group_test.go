@@ -76,20 +76,58 @@ func TestOriginGroupDoesNotFailOverNonRetryableMethods(t *testing.T) {
 	}
 }
 
-func TestOriginGroupFailsOverForHeadAndOptions(t *testing.T) {
-	for _, method := range []string{http.MethodHead, http.MethodOptions} {
-		primary := &recordingOrigin{response: OriginResponse{StatusCode: 404}}
-		secondary := &recordingOrigin{response: OriginResponse{StatusCode: 200}}
-		group := NewOriginGroupOrigin("Group", []OriginGroupMember{
-			{OriginID: "Primary", Origin: primary},
-			{OriginID: "Secondary", Origin: secondary},
-		}, []int{404})
-		if _, err := group.Fetch(context.Background(), OriginRequest{Method: method}); err != nil {
-			t.Fatalf("%s: %v", method, err)
-		}
-		if len(secondary.requests) != 1 {
-			t.Fatalf("%s: secondary called %d times", method, len(secondary.requests))
-		}
+func TestOriginGroupFailsOverForHead(t *testing.T) {
+	primary := &recordingOrigin{response: OriginResponse{StatusCode: 404}}
+	secondary := &recordingOrigin{response: OriginResponse{StatusCode: 200}}
+	group := NewOriginGroupOrigin("Group", []OriginGroupMember{
+		{OriginID: "Primary", Origin: primary},
+		{OriginID: "Secondary", Origin: secondary},
+	}, []int{404})
+	if _, err := group.Fetch(context.Background(), OriginRequest{Method: http.MethodHead}); err != nil {
+		t.Fatalf("HEAD: %v", err)
+	}
+	if len(secondary.requests) != 1 {
+		t.Fatalf("HEAD: secondary called %d times", len(secondary.requests))
+	}
+}
+
+func TestOriginGroupFailsOverOptionsOnlyWhenCachedMethodsIncludesIt(t *testing.T) {
+	cases := []struct {
+		name          string
+		cachedMethods []string
+		wantSecondary int
+	}{
+		{name: "omitted", cachedMethods: nil, wantSecondary: 0},
+		{name: "get and head only", cachedMethods: []string{"GET", "HEAD"}, wantSecondary: 0},
+		{name: "options cached", cachedMethods: []string{"GET", "HEAD", "OPTIONS"}, wantSecondary: 1},
+		{name: "options cached lowercase", cachedMethods: []string{"options"}, wantSecondary: 1},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			primary := &recordingOrigin{response: OriginResponse{StatusCode: 404}}
+			secondary := &recordingOrigin{response: OriginResponse{StatusCode: 200}}
+			group := NewOriginGroupOrigin("Group", []OriginGroupMember{
+				{OriginID: "Primary", Origin: primary},
+				{OriginID: "Secondary", Origin: secondary},
+			}, []int{404})
+			response, err := group.Fetch(context.Background(), OriginRequest{
+				Method:        http.MethodOptions,
+				CachedMethods: testCase.cachedMethods,
+			})
+			if err != nil {
+				t.Fatalf("OPTIONS: %v", err)
+			}
+			if testCase.wantSecondary == 0 {
+				if response.StatusCode != 404 {
+					t.Fatalf("status = %d, want the primary's 404", response.StatusCode)
+				}
+			} else if response.StatusCode != 200 {
+				t.Fatalf("status = %d, want the secondary's 200", response.StatusCode)
+			}
+			if len(secondary.requests) != testCase.wantSecondary {
+				t.Fatalf("secondary called %d times, want %d", len(secondary.requests), testCase.wantSecondary)
+			}
+		})
 	}
 }
 
