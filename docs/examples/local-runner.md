@@ -618,11 +618,16 @@ The operations, in the order the examples use them:
 - `invoke` — send one Lambda event to a started function and return the same
   decoded result as `invoke`.
 - `sqs.send` — send one body to a provisioned ElasticMQ queue through the
-  runner's host-side SQS client.
+  runner's host-side SQS client. `messageGroupId` and `messageDeduplicationId`
+  are passed through for a FIFO queue.
 - `sqs.receive` — receive up to `max` messages with the requested wait and
   visibility, optionally deleting them after receipt.
 - `sqs.event` — receive messages and build the `Records` event the SQS mapping
   delivers, from the messages actually returned by ElasticMQ.
+- `sqs.attributes` — read a queue's counts and attributes: `visible`,
+  `notVisible`, `delayed` and the raw `attributes` map. The pinned ElasticMQ
+  answers a named attribute subset with an empty map, so the operation asks for
+  `All`.
 - `ddb.put` — write one JSON item to a provisioned table; the previous image is
   cached for a later stream record.
 - `ddb.get` — read one item by its key.
@@ -656,19 +661,109 @@ registered with it before the run reports ready. The engine owns:
 - a bounded concurrency for the handler invocations it performs;
 - the per-source delivery state that `plan` and `session describe` report.
 
-The engine is present in full; the per-source deliverers land in the wave-2
-tasks. Until a kind's deliverer ships, its source is registered and reported as
-`not-delivered` with the task that will implement it. Nothing is silent: `plan`
-prints the state next to every derived source, and a session reports the same
-source list live.
+An SQS mapping has a deliverer: it polls ElasticMQ, invokes the function and
+deletes or leaves each message exactly as Lambda documents. Every other kind is
+registered and reported as `not-delivered` with the task that will implement
+it. Nothing is silent: `plan` prints the state next to every derived source,
+and a session reports the same source list live.
 
-| Source kind | Delivery task |
+| Source kind | Local delivery |
 | --- | --- |
-| SQS event source mapping | E1b |
-| DynamoDB Streams event source mapping | E2 |
-| EventBridge schedule and pattern rule | E3 |
-| CloudWatch Logs subscription filter | E5 |
-| Kinesis event source mapping | E5 |
+| SQS event source mapping | Delivered (E1b); see [SQS event-source delivery](#sqs-event-source-delivery) |
+| DynamoDB Streams event source mapping | Task E2 |
+| EventBridge schedule and pattern rule | Task E3 |
+| CloudWatch Logs subscription filter | Task E5 |
+| Kinesis event source mapping | Task E5 |
+
+### SQS event-source delivery
+
+The SQS deliverer reproduces the documented Lambda poller for an SQS event
+source mapping. The rules are those in
+[Using Lambda with Amazon SQS](https://docs.aws.amazon.com/lambda/latest/dg/with-sqs.html),
+[Creating and configuring an Amazon SQS event source mapping](https://docs.aws.amazon.com/lambda/latest/dg/services-sqs-configure.html),
+[Handling errors for an SQS event source](https://docs.aws.amazon.com/lambda/latest/dg/services-sqs-errorhandling.html),
+[EventSourceMappingConfiguration](https://docs.aws.amazon.com/lambda/latest/dg/API_EventSourceMappingConfiguration.html)
+and [Lambda event filtering](https://docs.aws.amazon.com/lambda/latest/dg/invocation-eventfiltering.html).
+
+**Batching.** `BatchSize` defaults to 10. A batch window
+(`MaximumBatchingWindowInSeconds`, 0–300 seconds, default 0) is closed when the
+run clock reaches it, the batch reaches `BatchSize`, or no more messages are
+available. A standard queue may declare a batch size above 10 only with a
+window of at least one second. A FIFO queue's maximum batch size is 10 and AWS
+does not support a batch window on FIFO queues; a mapping that violates either
+rule is refused at plan time with the mapping named, rather than being passed
+to ElasticMQ.
+
+**Visibility.** Messages are received with the queue's own visibility timeout.
+The deliverer never lengthens a visibility timeout while a batch is in flight.
+A batch that has not been deleted when the run clock reaches the timeout is
+AWS's redelivery case: the deliverer makes those messages visible again with
+`ChangeMessageVisibility(0)` and they can be received again. A successful
+invocation deletes every record; a failed invocation deletes none, so the
+messages return after the visibility timeout.
+
+**Partial batch failure.** With `ReportBatchItemFailures`, only the records
+named in `batchItemFailures` stay in the queue. An empty list, a null list, an
+empty response and a null response are complete success. Invalid JSON, a bad
+key name, an empty or null `itemIdentifier`, and an identifier that is not in
+the batch are complete failure, as AWS documents. The `left` counter in
+`session describe` records how many records the deliverer left for redelivery.
+
+**FIFO ordering.** One batch is in flight per message group. A failed record
+and every later record of the same message group stay in the queue, even when
+the handler reports only the first one, so a later record cannot overtake its
+failure. ElasticMQ enforces the per-group receive order;
+`MessageGroupId`, `MessageDeduplicationId` and `SequenceNumber` are passed
+through on the record's `attributes`.
+
+**Redrive.** The queue's redrive policy is read from ElasticMQ. When a message
+has been received `maxReceiveCount` times, the next receive attempt moves it to
+the dead-letter queue. The DLQ's own mapping then delivers it normally; the
+deliverer never deletes a message it did not successfully process.
+
+**Filter criteria.** `FilterCriteria` is evaluated with Amazon EventBridge
+event-pattern syntax against the record's metadata fields and its parsed
+`body`. Multiple filters are ORed. A message that matches no filter is deleted
+from the queue without invoking the function, as Lambda does. A malformed
+pattern fails at plan time instead of silently matching nothing.
+
+**Maximum concurrency.** `ScalingConfig.MaximumConcurrency` (2–1000) bounds the
+number of batches the mapping starts concurrently, within
+`--delivery-concurrency`. `session describe` reports the current `inflight`
+batch count and its observed `peakInflight`, which is how the local rows prove
+the bound. The runner starts one container per function, so invocations to the
+same function serialize at the container even when two batches are in flight;
+that is the documented local one-container limit, not an AWS semantic.
+
+#### What the test clock controls
+
+`--clock test` governs the deliverer's batching window and its visibility
+deadlines. When the clock reaches a message's visibility deadline, the
+deliverer calls `ChangeMessageVisibility(0)` so the redelivery happens at that
+deterministic instant. The clock does **not** slow or replace ElasticMQ's own
+wall-clock timers: ElasticMQ's visibility sweep, `ReceiveMessage`
+`WaitTimeSeconds` long polling, handler execution time inside the runtime
+image, and container startup all remain real-time. A test that advances the
+clock therefore redelivers immediately; a test that leaves a queue's
+visibility timeout shorter than its wall-clock runtime can still see
+ElasticMQ return a message early. The local rows use five-minute queue
+timeouts and advance the clock explicitly, so wall-clock expiry does not race
+them.
+
+#### ElasticMQ behaviour the deliverer normalizes
+
+Observed against `softwaremill/elasticmq-native@sha256:e4580ab9` (ElasticMQ
+1.7.1):
+
+| Observed ElasticMQ behaviour | How the runner implements AWS's behaviour |
+| --- | --- |
+| `CreateQueue`/`GetQueueUrl` answer with `http://localhost:9324/...` | The queue URL is rewritten to the published loopback endpoint (and to the run-network alias inside function containers). |
+| Queue ARNs use region `elasticmq` and account `000000000000` | The record's `eventSourceARN` is the CDK-resolved local ARN, so a handler comparing it with `Ref`/`Fn::GetAtt` sees the same value. |
+| A named `GetQueueAttributes` subset returns an empty map | The deliverer asks for `All`, the request ElasticMQ answers. |
+| FIFO `SequenceNumber` values are small decimals starting at `"0"` | The value is passed through as an opaque string, as AWS's attribute is documented to be. |
+| A receipt handle rotates on every receive; the previous handle is rejected | The deliverer deletes with the handle of that receipt and forgets it on success; it never deletes with a stale handle. |
+| Redrive happens when the next receive would exceed `maxReceiveCount`; the DLQ copy carries `DeadLetterQueueSourceArn` and a higher `ApproximateReceiveCount` | The deliverer reads the queue's redrive policy and treats a receive that ElasticMQ redrives as a message that is no longer in the source queue. |
+| A FIFO group is blocked while an earlier message of the group is in flight | Per-group ordering is preserved; the deliverer additionally protects every later record of a failed group within a batch. |
 
 ### Delivery state
 
@@ -691,15 +786,18 @@ The runner keeps the same shape in a smaller vocabulary:
 | `not-delivered` | no mapping exists | The source kind has no deliverer yet; `task` and `reason` name the task that will implement it. |
 
 Every entry reports its `delivered` and `failed` counts, `lastError` and
-`paused`. The engine also reports its clock mode and current instant and its
-concurrency bound.
+`paused`; an SQS source also reports `left` (records left for redelivery),
+`inflight` and `peakInflight`. The engine also reports its clock mode and
+current instant and its concurrency bound.
 
 `plan` prints the state the engine would register without starting a container;
-`plan --json` carries the same list under `delivery`. `session describe` returns
-the live engine state under `delivery`:
+`plan --json` carries the same list under `delivery`. An SQS source is
+`registered` because the kind has a deliverer; every other kind is
+`not-delivered` with its task. `session describe` returns the live engine state
+under `delivery`:
 
 ```json
-{"running":true,"clock":{"mode":"real","now":"2026-11-03T09:30:00Z"},"concurrency":4,"sources":[{"id":"WorkerFnEventSourceMapping","kind":"sqs","state":"not-delivered","task":"E1b","reason":"engine present; SQS event-source delivery lands in E1b"}]}
+{"running":true,"clock":{"mode":"test","now":"2026-01-01T00:00:00Z"},"concurrency":4,"sources":[{"id":"WorkerFnEventSourceMapping","kind":"sqs","state":"polling","delivered":12,"failed":0,"inflight":0,"peakInflight":2,"left":0,"paused":false}]}
 ```
 
 ### Deterministic test clock
@@ -707,9 +805,12 @@ the live engine state under `delivery`:
 `--clock real` is the default. `--clock test[=<RFC3339 start>]` replaces the
 wall clock with a deterministic one that starts at the given instant, or at
 `2026-01-01T00:00:00Z` when no instant is given. The delivery engine, every
-future schedule, TTL expiry and visibility timeout take their time from this
+future schedule, TTL expiry and visibility deadline take their time from this
 clock, never from `time.Now()`; the events a session builds carry it too. Real
-time stays the default, so every existing command keeps its behaviour.
+time stays the default, so every existing command keeps its behaviour. The
+clock does not slow the emulators' own wall-clock timers or the runtime
+images; [What the test clock controls](#what-the-test-clock-controls) states
+the exact boundary for SQS delivery.
 
 A `session` exposes the clock with two commands:
 
@@ -753,13 +854,13 @@ the harness records it.
 | Inline `Code.ZipFile` | Supported (Node, Python) | Materialized under the run scratch directory before the container starts. |
 | arm64 `provided.al2023` | Supported (L1) | Uses the host-arch image; a bootstrap built for the other architecture fails closed with a clear error. |
 | DynamoDB Local | Supported (L2) | `--backend dynamodb` starts the profile's digest-pinned `amazon/dynamodb-local` on the run network; SDK clients resolve through `AWS_ENDPOINT_URL_DYNAMODB`. Tables are created from the CDK key schema, GSIs, streams and TTL. SSE, PITR and deletion protection are not provisioned. |
-| SQS (ElasticMQ) | Supported (L2) | `--backend sqs` starts the digest-pinned `softwaremill/elasticmq-native` container, creates the CDK queues with visibility, retention and redrive policy, and resolves `QueueUrl`/`Arn` from the created queues. The delivery engine registers every SQS mapping; polling, visibility and deletion land in E1b. A session can still receive real messages and build the SQS event. |
+| SQS (ElasticMQ) | Supported (L2) | `--backend sqs` starts the digest-pinned `softwaremill/elasticmq-native` container, creates the CDK queues with visibility, retention and redrive policy, and resolves `QueueUrl`/`Arn` from the created queues. Every SQS event-source mapping polls automatically with batching, visibility, delete-on-success, partial batch failure, FIFO group ordering, redrive, filter criteria and maximum concurrency; see [SQS event-source delivery](#sqs-event-source-delivery). A session also exposes `sqs.send`, `sqs.receive`, `sqs.event` and `sqs.attributes` for explicit work. |
 | KMS and STS (moto) | Supported (L2) | `--backend moto` starts the profile's digest-pinned moto container and injects `AWS_ENDPOINT_URL_KMS`/`_STS` (and the profile's aliases). KMS keys declared by the assembly are created; `Ref`/`Fn::GetAtt Arn` resolve to the created key. No HSM, key policies or grants. |
 | S3 (s3proxy) | Supported (L2) | `--backend s3proxy` starts the digest-pinned s3proxy container, creates the assembly's buckets, and injects the S3 endpoint as the container address so the SDK uses path-style addressing. No bucket policies, IAM or event notifications. |
-| Event source mappings (SQS, DynamoDB Streams, Kinesis) | Engine present; per-source delivery lands in E1b–E6 | The mapping's function, source, batch size and `ReportBatchItemFailures` are read from the assembly, and the delivery engine registers every mapping at start. The engine is present; per-source delivery lands in E1b (SQS), E2 (DynamoDB Streams) and E5 (Kinesis), and every unimplemented kind reports `not-delivered` with its task in `plan` and `session describe`. A session can still receive real queue messages or build a stream record from a real local write and invoke the handler. |
+| Event source mappings (SQS delivered; DynamoDB Streams and Kinesis pending) | SQS delivered; stream delivery lands in E2/E5 | The mapping's function, source, batch options, filter criteria and scaling configuration are read from the assembly. An SQS mapping is delivered automatically; a DynamoDB Streams or Kinesis mapping reports `not-delivered` with its task. A session can still build a stream record from a real local write and invoke the handler. |
 | EventBridge rules (schedule and pattern) | Engine present; per-source delivery lands in E3 | A rule is registered per kind (schedule or pattern) and reported with its delivery state. A session builds the `Scheduled Event` envelope or the pattern's source/detail-type from the CDK rule and invokes its Lambda target. Managed rule delivery and the clock-driven scheduler land in E3. |
 | Kinesis / CloudWatch Logs subscription events | Engine present; per-source delivery lands in E5 | A `AWS::Logs::SubscriptionFilter` is derived with its log group and destination (a Lambda function, or a CloudWatch Logs destination followed to its Kinesis stream) and registered with the delivery engine. The session can build a CloudWatch Logs subscription payload from local log events and wrap it in a Kinesis record, or accept explicit base64 record data. The Kinesis stream itself and log-group capture land in E5. |
-| Delivery engine and test clock | Supported | `run` and `session` start the engine; `plan` and `session describe` report per-source state. `--clock test[=<RFC3339>]` plus the `clock.now`/`clock.advance` session commands make schedules, TTL expiry and visibility timeouts deterministic. `--delivery-concurrency` bounds concurrent deliveries (default 4). |
+| Delivery engine and test clock | Supported | `run` and `session` start the engine; `plan` and `session describe` report per-source state. SQS batching windows and visibility deadlines, schedules and TTL expiry take their time from `--clock test[=<RFC3339>]`; the `clock.now`/`clock.advance` session commands read and move it. ElasticMQ's own wall-clock timers and the runtime images are not slowed. `--delivery-concurrency` bounds concurrent deliveries (default 4); an SQS mapping's `MaximumConcurrency` bounds its batches within that. |
 | Deploy-time Secrets Manager dynamic references | Supported | A `{{resolve:secretsmanager:…}}` environment value becomes a deterministic local secret. The session's `describe` returns it to the harness; `run` and `plan` never print it. No secret is created in a cloud. |
 | Other emulators | Endpoint injection only | Pass `--endpoint service=url` and `--add-host name=address`; the profile names the environment variables. |
 | WebSocket APIs | Reported, not served | A WebSocket API is listed under `skipped` with its reason, and an app with no HTTP route, Function URL, event source or rule fails with that list. Its `$connect`/`$disconnect`/`$default` routes are not invoked. |
@@ -799,14 +900,12 @@ the harness records it.
   CloudFront Functions API and globals but is not a hardened security boundary,
   does not enforce CloudFront's 1 ms CPU budget, and cannot reproduce
   CloudFront-only device, location or TLS headers.
-- **Managed event-source delivery is not wired per source yet.** The delivery
-  engine is present: every SQS, DynamoDB Streams and Kinesis mapping, every
-  EventBridge rule and every CloudWatch Logs subscription filter is registered,
-  its function is started, and its state is reported. Per-source delivery lands
-  in E1b (SQS), E2 (DynamoDB Streams), E3 (EventBridge) and E5
-  (Kinesis/CloudWatch Logs); until then `plan` and `session describe` report
-  `not-delivered` with the task id. A session can still receive real messages
-  or build the provider event from a real local write and invoke the handler.
+- **Stream, rule and subscription delivery is not wired per source yet.** SQS
+  mapping delivery is present. Every DynamoDB Streams and Kinesis mapping,
+  EventBridge rule and CloudWatch Logs subscription filter is registered, its
+  function is started, and its state is reported as `not-delivered` with the
+  E2, E3 or E5 task. A session can still build the provider event from a real
+  local write and invoke the handler.
 - **Kinesis has no stream emulator yet.** A Kinesis event is built locally (from
   a CloudWatch Logs subscription payload or explicit record data) and invoked
   through the real handler; the Kinesis event-source deliverer and a moto-backed
@@ -828,7 +927,9 @@ the harness records it.
   the semantic-search row. The runner stops at those boundaries; it never fakes
   a success.
 - **One container per function.** In-flight invocations are bounded to 32 and
-  queue behind the function's container; the local runner is not a load test.
+  queue behind the function's container; delivery batches for the same
+  function also serialize there, even when a mapping's `MaximumConcurrency`
+  allows two batches to be in flight. The local runner is not a load test.
 
 ## Requirements
 
