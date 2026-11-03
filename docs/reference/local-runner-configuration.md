@@ -376,7 +376,8 @@ An SQS mapping's `FilterCriteria` is validated when the mapping is derived
 against the EventBridge pattern grammar Lambda documents
 ([Lambda event filtering](https://docs.aws.amazon.com/lambda/latest/dg/invocation-eventfiltering.html),
 [EventBridge comparison operators](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-event-patterns-content-based-filtering.html)).
-A scalar where a rule list is required, an unknown operator, a `numeric` list
+A scalar where a rule list is required, an unknown operator (`wildcard` and
+`cidr` among them), a `numeric` list
 that is not the documented operator/number form, a non-boolean `exists`, a
 non-string `prefix`/`suffix`/`equals-ignore-case`, a malformed `anything-but`, a
 non-object `$or` entry, an empty list and a pattern over the documented

@@ -736,21 +736,27 @@ The pattern is validated when the mapping is derived, as AWS validates it when
 the event source mapping is created, so a malformed pattern fails at plan time
 with the mapping, the filter index and the offending key and value named
 instead of silently matching nothing. The accepted set is the documented
-EventBridge grammar: a field holds a non-empty list of rules or a nested
-pattern object, and a rule is a scalar or one single-key operator object. The
-operators are `prefix`, `suffix` and `equals-ignore-case` with a string value;
-`numeric` with `=`, `<` or `<=` and one number, or `>`/`>=` and one number or a
-second `<`/`<=` bound; `exists` with `true` or `false`; and `anything-but` with
-a string, a number, a non-empty all-string or all-number list, or a
-`prefix`/`suffix` object whose value is a string or a non-empty list of strings.
-`$or` takes a non-empty list of objects. Empty lists, unknown operators, a
-scalar where a list is required, `anything-but` with `equals-ignore-case`, and a
-pattern longer than the documented 4096-character maximum are refused at plan
-time.
+EventBridge grammar: a pattern-object key is always a field name, so a field
+named `numeric`, `prefix` or `exists` is matched as ordinary data, and an
+operator is read only from an object inside a rule list; a field holds a
+non-empty list of rules or a nested pattern object, and a rule is a scalar or
+one single-key operator object. The operators are `prefix`, `suffix` and
+`equals-ignore-case` with a string value; `numeric` with `=`, `<` or `<=` and
+one number, or `>`/`>=` and one number or a second `<`/`<=` bound; `exists`
+with `true` or `false`; and `anything-but` with a string, a number, a non-empty
+all-string or all-number list, or a `prefix`/`suffix` object whose value is a
+string or a non-empty list of strings. `$or` takes a non-empty list of objects.
+Empty lists, unknown operators (including `wildcard` and `cidr`, which Lambda
+event filtering does not document), a scalar where a list is required,
+`anything-but` with `equals-ignore-case`, and a pattern longer than the
+documented 4096-character maximum are refused at plan time.
 
 `exists` works only on leaf nodes, as AWS documents:
 `{"body":{"address":[{"exists":true}]}}` does not match when `address` is an
-object with children, even though the field is present.
+object with children, even though the field is present. When a field's value is
+an array, the pattern matches if the intersection of the pattern array and the
+event array is non-empty, as AWS documents:
+https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-event-patterns-arrays.html.
 
 **Maximum concurrency.** `ScalingConfig.MaximumConcurrency` (2–1000) bounds the
 number of batches the mapping starts concurrently, within
