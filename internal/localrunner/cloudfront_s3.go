@@ -128,11 +128,14 @@ func (o *s3Origin) headObject(
 	request localcloudfront.OriginRequest,
 	query string,
 ) (localcloudfront.OriginResponse, error) {
+	// Ask for the object's full metadata. The pinned s3proxy backend ignores
+	// Range on HEAD (it answers 200 with the full Content-Length and no
+	// Content-Range), so the ranged response is derived below from that length
+	// instead of trusting the backend to apply the range.
 	output, err := o.client.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket:            input.Bucket,
 		Key:               input.Key,
 		VersionId:         input.VersionId,
-		Range:             input.Range,
 		IfMatch:           input.IfMatch,
 		IfNoneMatch:       input.IfNoneMatch,
 		IfModifiedSince:   input.IfModifiedSince,
@@ -157,15 +160,117 @@ func (o *s3Origin) headObject(
 	header.Set("Accept-Ranges", "bytes")
 	addS3Metadata(header, output.Metadata)
 	applyS3ResponseOverrides(header, query)
-	// S3 HeadObject answers a satisfiable Range with the same headers as a
-	// ranged GET: 206 Partial Content, a Content-Range for the returned range,
-	// the ranged Content-Length and no body.
+	// S3 documents HeadObject as returning the same response as GetObject
+	// except with no body, and a satisfiable GetObject Range as 206 Partial
+	// Content with Content-Range; an unsatisfiable range is 416.
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html
+	// https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html
 	status := http.StatusOK
-	if input.Range != nil && aws.ToString(output.ContentRange) != "" {
-		status = http.StatusPartialContent
+	if request.Range != "" && output.ContentLength != nil {
+		switch applyHeadRange(header, request.Range, *output.ContentLength) {
+		case headRangePartial:
+			status = http.StatusPartialContent
+		case headRangeUnsatisfiable:
+			response := s3ErrorResponse(http.StatusRequestedRangeNotSatisfiable, "InvalidRange",
+				"The requested range is not satisfiable", o.newRequestID(), request)
+			response.Header.Set("Content-Range", fmt.Sprintf("bytes */%d", *output.ContentLength))
+			return response, nil
+		}
 	}
 	return localcloudfront.OriginResponse{StatusCode: status, Header: header}, nil
+}
+
+type headRangeResult int
+
+const (
+	// headRangeFull keeps the full-object metadata: no usable single byte
+	// range was requested.
+	headRangeFull headRangeResult = iota
+	// headRangePartial sets Content-Range and the ranged Content-Length.
+	headRangePartial
+	// headRangeUnsatisfiable is the 416 case with "bytes */total".
+	headRangeUnsatisfiable
+)
+
+// applyHeadRange turns full-object HEAD metadata into the response a Range
+// produces. Only one byte range is applied: S3 does not support multiple
+// ranges per request, so a multi-range (or otherwise unparseable) value is
+// ignored and the full object's metadata is returned, as RFC 9110 permits.
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html
+// https://www.rfc-editor.org/rfc/rfc9110#section-14.2
+func applyHeadRange(header http.Header, raw string, total int64) headRangeResult {
+	start, end, result := parseHeadRange(raw, total)
+	if result != headRangePartial {
+		return result
+	}
+	header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, total))
+	header.Set("Content-Length", strconv.FormatInt(end-start+1, 10))
+	return headRangePartial
+}
+
+// parseHeadRange parses one bytes range. first-byte-pos, open-ended and
+// suffix-byte-range-spec forms follow RFC 9110; the last-byte-pos is clamped
+// to the object size. A syntactically invalid spec, a non-bytes unit or a
+// multi-range spec is ignored (headRangeFull); a syntactically valid range
+// that cannot overlap the object is headRangeUnsatisfiable.
+func parseHeadRange(raw string, total int64) (int64, int64, headRangeResult) {
+	unit, spec, found := strings.Cut(strings.TrimSpace(raw), "=")
+	if !found || !strings.EqualFold(strings.TrimSpace(unit), "bytes") {
+		return 0, 0, headRangeFull
+	}
+	spec = strings.TrimSpace(spec)
+	if strings.Contains(spec, ",") {
+		return 0, 0, headRangeFull
+	}
+	first, last, found := strings.Cut(spec, "-")
+	if !found {
+		return 0, 0, headRangeFull
+	}
+	first = strings.TrimSpace(first)
+	last = strings.TrimSpace(last)
+	if first == "" {
+		return parseSuffixHeadRange(last, total)
+	}
+	return parseClosedHeadRange(first, last, total)
+}
+
+// parseSuffixHeadRange parses the "-length" form: the last length bytes,
+// clamped to the object size.
+func parseSuffixHeadRange(last string, total int64) (int64, int64, headRangeResult) {
+	length, err := strconv.ParseInt(last, 10, 64)
+	if err != nil {
+		return 0, 0, headRangeFull
+	}
+	if length == 0 || total == 0 {
+		return 0, 0, headRangeUnsatisfiable
+	}
+	if length > total {
+		length = total
+	}
+	return total - length, total - 1, headRangePartial
+}
+
+// parseClosedHeadRange parses the "first-" and "first-last" forms; last is
+// clamped to the object size.
+func parseClosedHeadRange(first, last string, total int64) (int64, int64, headRangeResult) {
+	start, err := strconv.ParseInt(first, 10, 64)
+	if err != nil {
+		return 0, 0, headRangeFull
+	}
+	if start >= total {
+		return 0, 0, headRangeUnsatisfiable
+	}
+	end := total - 1
+	if last != "" {
+		end, err = strconv.ParseInt(last, 10, 64)
+		if err != nil || end < start {
+			return 0, 0, headRangeFull
+		}
+		if end >= total {
+			end = total - 1
+		}
+	}
+	return start, end, headRangePartial
 }
 
 func (o *s3Origin) options(request localcloudfront.OriginRequest) localcloudfront.OriginResponse {

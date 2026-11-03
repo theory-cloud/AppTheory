@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -88,27 +89,28 @@ func TestS3OriginHeadHasNoBody(t *testing.T) {
 	}
 }
 
-func TestS3OriginHeadRangeReturns206WithContentRange(t *testing.T) {
+// TestS3OriginHeadRangeComputes206FromFullMetadata models the pinned s3proxy
+// backend: it ignores Range on HEAD and answers 200 with the full
+// Content-Length and no Content-Range. The origin must derive the ranged
+// response from that full-object metadata.
+func TestS3OriginHeadRangeComputes206FromFullMetadata(t *testing.T) {
 	origin, _ := newTestS3Origin(t, func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodHead {
 			t.Errorf("method = %s", request.Method)
 		}
-		if got := request.Header.Get("Range"); got != "bytes=0-4" {
-			t.Errorf("range = %q", got)
+		if got := request.Header.Get("Range"); got != "" {
+			t.Errorf("the origin must not rely on Range reaching the backend, got %q", got)
 		}
-		// S3 documents the 206 response, Content-Range and ranged Content-Length
-		// for a satisfiable HeadObject Range. A backend that reports the ranged
-		// metadata with a plain 200 must still map to 206 locally.
 		writer.Header().Set("Content-Type", "text/plain")
-		writer.Header().Set("Content-Range", "bytes 0-4/11")
-		writer.Header().Set("Content-Length", "5")
+		writer.Header().Set("Content-Length", "11")
 		writer.Header().Set("ETag", `"abc123"`)
+		writer.Header().Set("Last-Modified", "Wed, 21 Oct 2015 07:28:00 GMT")
 		writer.WriteHeader(http.StatusOK)
 	})
 	response, err := origin.Fetch(context.Background(), localcloudfront.OriginRequest{
 		Method: http.MethodHead,
 		URI:    "/hello.txt",
-		Range:  "bytes=0-4",
+		Range:  "bytes=0-2",
 	})
 	if err != nil {
 		t.Fatalf("fetch: %v", err)
@@ -116,14 +118,82 @@ func TestS3OriginHeadRangeReturns206WithContentRange(t *testing.T) {
 	if response.StatusCode != http.StatusPartialContent {
 		t.Fatalf("status = %d, want 206 for a satisfiable HEAD Range", response.StatusCode)
 	}
-	if got := response.Header.Get("Content-Range"); got != "bytes 0-4/11" {
+	if got := response.Header.Get("Content-Range"); got != "bytes 0-2/11" {
 		t.Fatalf("content range = %q", got)
 	}
-	if got := response.Header.Get("Content-Length"); got != "5" {
+	if got := response.Header.Get("Content-Length"); got != "3" {
 		t.Fatalf("content length = %q, want the ranged length", got)
+	}
+	if got := response.Header.Get("ETag"); got != `"abc123"` {
+		t.Fatalf("etag = %q", got)
+	}
+	if got := response.Header.Get("Last-Modified"); got != "Wed, 21 Oct 2015 07:28:00 GMT" {
+		t.Fatalf("last-modified = %q", got)
 	}
 	if len(response.Body) != 0 {
 		t.Fatalf("HEAD body = %q, want no body", response.Body)
+	}
+}
+
+func TestS3OriginHeadRangeRules(t *testing.T) {
+	cases := []struct {
+		name        string
+		raw         string
+		total       int64
+		wantStatus  int
+		wantRange   string
+		wantLength  string
+		wantNoRange bool
+	}{
+		{name: "closed", raw: "bytes=0-4", total: 11, wantStatus: 206, wantRange: "bytes 0-4/11", wantLength: "5"},
+		{name: "open ended", raw: "bytes=6-", total: 11, wantStatus: 206, wantRange: "bytes 6-10/11", wantLength: "5"},
+		{name: "suffix", raw: "bytes=-4", total: 11, wantStatus: 206, wantRange: "bytes 7-10/11", wantLength: "4"},
+		{name: "suffix longer than object", raw: "bytes=-40", total: 11, wantStatus: 206, wantRange: "bytes 0-10/11", wantLength: "11"},
+		{name: "last byte clamped", raw: "bytes=0-99", total: 11, wantStatus: 206, wantRange: "bytes 0-10/11", wantLength: "11"},
+		{name: "start past the end", raw: "bytes=11-12", total: 11, wantStatus: 416, wantRange: "bytes */11"},
+		{name: "empty object", raw: "bytes=0-0", total: 0, wantStatus: 416, wantRange: "bytes */0"},
+		{name: "zero suffix", raw: "bytes=-0", total: 11, wantStatus: 416, wantRange: "bytes */11"},
+		{name: "multi range ignored", raw: "bytes=0-1,3-4", total: 11, wantStatus: 200, wantLength: "11", wantNoRange: true},
+		{name: "other unit ignored", raw: "items=0-1", total: 11, wantStatus: 200, wantLength: "11", wantNoRange: true},
+		{name: "reversed range ignored", raw: "bytes=5-2", total: 11, wantStatus: 200, wantLength: "11", wantNoRange: true},
+		{name: "unparseable ignored", raw: "bytes=abc", total: 11, wantStatus: 200, wantLength: "11", wantNoRange: true},
+		{name: "unparseable first ignored", raw: "bytes=abc-2", total: 11, wantStatus: 200, wantLength: "11", wantNoRange: true},
+		{name: "unparseable suffix ignored", raw: "bytes=-abc", total: 11, wantStatus: 200, wantLength: "11", wantNoRange: true},
+		{name: "unparseable last ignored", raw: "bytes=1-abc", total: 11, wantStatus: 200, wantLength: "11", wantNoRange: true},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			origin, _ := newTestS3Origin(t, func(writer http.ResponseWriter, _ *http.Request) {
+				writer.Header().Set("Content-Type", "text/plain")
+				writer.Header().Set("Content-Length", strconv.FormatInt(testCase.total, 10))
+				writer.WriteHeader(http.StatusOK)
+			})
+			response, err := origin.Fetch(context.Background(), localcloudfront.OriginRequest{
+				Method: http.MethodHead,
+				URI:    "/hello.txt",
+				Range:  testCase.raw,
+			})
+			if err != nil {
+				t.Fatalf("fetch: %v", err)
+			}
+			if response.StatusCode != testCase.wantStatus {
+				t.Fatalf("status = %d, want %d (headers %v)", response.StatusCode, testCase.wantStatus, response.Header)
+			}
+			if got := response.Header.Get("Content-Range"); got != testCase.wantRange {
+				t.Fatalf("content range = %q, want %q", got, testCase.wantRange)
+			}
+			if testCase.wantLength != "" {
+				if got := response.Header.Get("Content-Length"); got != testCase.wantLength {
+					t.Fatalf("content length = %q, want %q", got, testCase.wantLength)
+				}
+			}
+			if testCase.wantNoRange && response.Header.Get("Content-Range") != "" {
+				t.Fatalf("content range = %q, want none", response.Header.Get("Content-Range"))
+			}
+			if len(response.Body) != 0 {
+				t.Fatalf("HEAD body = %q, want no body", response.Body)
+			}
+		})
 	}
 }
 
@@ -284,50 +354,55 @@ func TestS3OriginPassesVersionAndConditionalHeaders(t *testing.T) {
 	}
 }
 
-func TestS3OriginPassesConditionalStatusesThroughWithValidators(t *testing.T) {
+// TestS3OriginPassesConditionalStatusesThroughWithOriginValidators models the
+// pinned s3proxy answer for a conditional GET/HEAD: 304 or 412 with the ETag
+// the origin attached and no Last-Modified. The origin passes through exactly
+// the validators it received, never inventing one.
+func TestS3OriginPassesConditionalStatusesThroughWithOriginValidators(t *testing.T) {
 	cases := []struct {
-		name     string
-		status   int
-		header   string
-		value    string
-		want     int
-		wantDate bool
+		name      string
+		status    int
+		header    string
+		value     string
+		extraDate bool
 	}{
-		{name: "not modified", status: http.StatusNotModified, header: "If-None-Match", value: `"abc123"`, want: http.StatusNotModified},
-		{name: "precondition failed if-match", status: http.StatusPreconditionFailed, header: "If-Match", value: `"abc123"`, want: http.StatusPreconditionFailed, wantDate: true},
-		{name: "precondition failed if-unmodified-since", status: http.StatusPreconditionFailed, header: "If-Unmodified-Since", value: "Wed, 21 Oct 2015 07:28:00 GMT", want: http.StatusPreconditionFailed, wantDate: true},
+		{name: "not modified", status: http.StatusNotModified, header: "If-None-Match", value: `"abc123"`},
+		{name: "precondition failed if-match", status: http.StatusPreconditionFailed, header: "If-Match", value: `"abc123"`},
+		{name: "precondition failed if-unmodified-since", status: http.StatusPreconditionFailed, header: "If-Unmodified-Since", value: "Wed, 21 Oct 2015 07:28:00 GMT", extraDate: true},
 	}
 	for _, testCase := range cases {
 		for _, method := range []string{http.MethodGet, http.MethodHead} {
 			t.Run(testCase.name+"/"+method, func(t *testing.T) {
 				origin, _ := newTestS3Origin(t, func(writer http.ResponseWriter, request *http.Request) {
-					if testCase.wantDate && request.Header.Get("If-Unmodified-Since") == "" {
-						t.Errorf("If-Unmodified-Since was not forwarded: %v", request.Header)
+					if got := request.Header.Get(testCase.header); got != testCase.value {
+						t.Errorf("%s = %q, want %q", testCase.header, got, testCase.value)
 					}
 					writer.Header().Set("ETag", `"abc123"`)
-					writer.Header().Set("Last-Modified", "Wed, 21 Oct 2015 07:28:00 GMT")
+					if testCase.extraDate {
+						writer.Header().Set("Last-Modified", "Wed, 21 Oct 2015 07:28:00 GMT")
+					}
 					writer.WriteHeader(testCase.status)
 				})
-				headers := http.Header{testCase.header: {testCase.value}}
-				if testCase.header != "If-Unmodified-Since" {
-					headers.Set("If-Unmodified-Since", "Wed, 21 Oct 2015 07:28:00 GMT")
-				}
 				response, err := origin.Fetch(context.Background(), localcloudfront.OriginRequest{
 					Method: method,
 					URI:    "/hello.txt",
-					Header: headers,
+					Header: http.Header{testCase.header: {testCase.value}},
 				})
 				if err != nil {
 					t.Fatalf("fetch: %v", err)
 				}
-				if response.StatusCode != testCase.want {
-					t.Fatalf("status = %d, want %d", response.StatusCode, testCase.want)
+				if response.StatusCode != testCase.status {
+					t.Fatalf("status = %d, want %d", response.StatusCode, testCase.status)
 				}
 				if got := response.Header.Get("ETag"); got != `"abc123"` {
 					t.Fatalf("etag = %q", got)
 				}
-				if got := response.Header.Get("Last-Modified"); got != "Wed, 21 Oct 2015 07:28:00 GMT" {
-					t.Fatalf("last-modified = %q", got)
+				wantDate := ""
+				if testCase.extraDate {
+					wantDate = "Wed, 21 Oct 2015 07:28:00 GMT"
+				}
+				if got := response.Header.Get("Last-Modified"); got != wantDate {
+					t.Fatalf("last-modified = %q, want %q", got, wantDate)
 				}
 				if len(response.Body) != 0 {
 					t.Fatalf("body = %q, want no body", response.Body)
