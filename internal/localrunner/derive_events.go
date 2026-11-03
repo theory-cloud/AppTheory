@@ -162,6 +162,238 @@ func containsStringList(values []string, needle string) bool {
 	return false
 }
 
+// subscriptionFilterProperties is one AWS::Logs::SubscriptionFilter. The runner
+// registers the filter with the delivery engine; the CloudWatch Logs backend
+// and the Kinesis or Lambda destination delivery land in E5.
+type subscriptionFilterProperties struct {
+	LogGroupName   json.RawMessage `json:"LogGroupName"`
+	FilterName     string          `json:"FilterName"`
+	FilterPattern  string          `json:"FilterPattern"`
+	DestinationARN json.RawMessage `json:"DestinationArn"`
+	Distribution   string          `json:"Distribution"`
+}
+
+// subscriptionDestination is the resolved target of a CloudWatch Logs
+// subscription filter.
+type subscriptionDestination struct {
+	// LogicalID is the qualified resource the filter names.
+	LogicalID string
+	// Type is function or stream.
+	Type string
+	// Function or Stream is the qualified destination, whichever applies.
+	Function string
+	Stream   string
+}
+
+// deriveSubscriptions reads CloudWatch Logs subscription filters and resolves
+// the destination the runner will deliver to. A destination the runner cannot
+// deliver is reported, never dropped.
+//
+// The filter shape is the CloudWatch Logs SubscriptionFilter resource
+// (https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_SubscriptionFilter.html);
+// a cross-account destination is an AWS::Logs::Destination whose TargetArn names
+// the stream (https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_Destination.html).
+func deriveSubscriptions(spec *Spec, stacks []assemblyStack, stack assemblyStack) error {
+	types := stack.resourceTypes()
+	for _, id := range sortedKeys(stack.Template.Resources) {
+		resource := stack.Template.Resources[id]
+		if resource.Type != typeLogsSubscription {
+			continue
+		}
+		var props subscriptionFilterProperties
+		if err := json.Unmarshal(resource.Properties, &props); err != nil {
+			return fmt.Errorf("%s/%s: parse subscription filter properties: %w", stack.Name, id, err)
+		}
+		logicalID := qualify(stacks, stack.Name, id)
+		destination, ok, err := resolveSubscriptionDestination(stack, types, props.DestinationARN)
+		if err != nil {
+			return unsupported(logicalID, "%s", err.Error())
+		}
+		if !ok {
+			spec.Skipped = append(spec.Skipped, Skipped{
+				LogicalID: logicalID,
+				Kind:      typeLogsSubscription,
+				Reason:    "subscription destination is not a local Lambda function or Kinesis stream",
+			})
+			continue
+		}
+		spec.Subscriptions = append(spec.Subscriptions, SubscriptionSpec{
+			LogicalID:       logicalID,
+			Stack:           stack.Name,
+			Kind:            string(DeliveryKindCloudWatchLogs),
+			LogGroup:        subscriptionLogGroup(stack, props.LogGroupName),
+			FilterName:      strings.TrimSpace(props.FilterName),
+			FilterPattern:   strings.TrimSpace(props.FilterPattern),
+			Distribution:    strings.TrimSpace(props.Distribution),
+			Destination:     qualify(stacks, stack.Name, destination.LogicalID),
+			DestinationType: destination.Type,
+			Function:        qualifyWhenSet(stacks, stack.Name, destination.Function),
+			Stream:          qualifyWhenSet(stacks, stack.Name, destination.Stream),
+		})
+	}
+	return nil
+}
+
+// resolveSubscriptionDestination maps a filter's DestinationArn to the local
+// Lambda function or Kinesis stream. A CloudWatch Logs destination
+// (AWS::Logs::Destination) is followed to its TargetArn.
+func resolveSubscriptionDestination(stack assemblyStack, types map[string]string, raw json.RawMessage) (subscriptionDestination, bool, error) {
+	for _, ref := range refsIn(raw) {
+		switch types[ref.ID] {
+		case typeLambdaFunction:
+			if ref.Attr != "" && ref.Attr != attrArn {
+				return subscriptionDestination{}, false, fmt.Errorf("subscription destination must reference the function Arn, got %q", ref.Attr)
+			}
+			return subscriptionDestination{LogicalID: ref.ID, Type: "function", Function: ref.ID}, true, nil
+		case typeKinesisStream:
+			if ref.Attr != "" && ref.Attr != attrArn {
+				return subscriptionDestination{}, false, fmt.Errorf("subscription destination must reference the stream Arn, got %q", ref.Attr)
+			}
+			return subscriptionDestination{LogicalID: ref.ID, Type: "stream", Stream: ref.ID}, true, nil
+		case typeLogsDestination:
+			target, found := logDestinationStream(stack, types, ref.ID)
+			if !found {
+				return subscriptionDestination{}, false, nil
+			}
+			return subscriptionDestination{LogicalID: ref.ID, Type: "stream", Stream: target}, true, nil
+		}
+	}
+	// A destination ARN that is not a Ref (CDK emits Fn::Join for an
+	// account-scoped destination) still names the destination in its literal
+	// tail.
+	if arn := resolvedString(raw); arn != "" {
+		for _, id := range sortedKeys(stack.Template.Resources) {
+			resource := stack.Template.Resources[id]
+			if resource.Type != typeLogsDestination {
+				continue
+			}
+			if logDestinationName(resource) == arnName(arn) {
+				target, found := logDestinationStream(stack, types, id)
+				if !found {
+					return subscriptionDestination{}, false, nil
+				}
+				return subscriptionDestination{LogicalID: id, Type: "stream", Stream: target}, true, nil
+			}
+		}
+	}
+	return subscriptionDestination{}, false, nil
+}
+
+// logDestinationStream follows an AWS::Logs::Destination's TargetArn to the
+// Kinesis stream it delivers to.
+func logDestinationStream(stack assemblyStack, types map[string]string, id string) (string, bool) {
+	resource, ok := stack.Template.Resources[id]
+	if !ok {
+		return "", false
+	}
+	var props struct {
+		TargetARN json.RawMessage `json:"TargetArn"`
+	}
+	if err := json.Unmarshal(resource.Properties, &props); err != nil {
+		return "", false
+	}
+	for _, ref := range refsIn(props.TargetARN) {
+		if types[ref.ID] == typeKinesisStream {
+			return ref.ID, true
+		}
+	}
+	return "", false
+}
+
+func logDestinationName(resource templateResource) string {
+	var props struct {
+		DestinationName string `json:"DestinationName"`
+	}
+	if err := json.Unmarshal(resource.Properties, &props); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(props.DestinationName)
+}
+
+// resolvedString flattens a literal string or an Fn::Join whose parts are
+// strings. A part the template computes (Ref, Fn::GetAtt) becomes empty, so
+// only a literal tail in the joined value is usable for name matching.
+func resolvedString(raw json.RawMessage) string {
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return ""
+	}
+	return flattenString(value)
+}
+
+func flattenString(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case map[string]any:
+		join, ok := typed["Fn::Join"].([]any)
+		if !ok || len(join) != 2 {
+			return ""
+		}
+		delimiter, ok := join[0].(string)
+		if !ok {
+			return ""
+		}
+		parts, ok := join[1].([]any)
+		if !ok {
+			return ""
+		}
+		var builder strings.Builder
+		for _, part := range parts {
+			builder.WriteString(flattenString(part))
+			builder.WriteString(delimiter)
+		}
+		if len(parts) > 0 {
+			return strings.TrimSuffix(builder.String(), delimiter)
+		}
+		return ""
+	default:
+		return ""
+	}
+}
+
+// arnName returns the last segment of an ARN, which is the resource name.
+func arnName(arn string) string {
+	if index := strings.LastIndex(arn, ":"); index >= 0 {
+		return arn[index+1:]
+	}
+	return ""
+}
+
+// subscriptionLogGroup resolves a filter's LogGroupName: a literal name, or the
+// physical name of the log group the template references.
+func subscriptionLogGroup(stack assemblyStack, raw json.RawMessage) string {
+	if id, ok := directRefID(raw); ok {
+		resource, exists := stack.Template.Resources[id]
+		if !exists || resource.Type != typeLogGroup {
+			return ""
+		}
+		name, err := resourceName(ResourceSpec{
+			Stack:      stack.Name,
+			LogicalID:  id,
+			Type:       typeLogGroup,
+			Properties: resource.Properties,
+		})
+		if err != nil {
+			return ""
+		}
+		return name
+	}
+	var literal string
+	if err := json.Unmarshal(raw, &literal); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(literal)
+}
+
+// qualifyWhenSet qualifies a logical id only when the destination set it.
+func qualifyWhenSet(stacks []assemblyStack, stack, logicalID string) string {
+	if logicalID == "" {
+		return ""
+	}
+	return qualify(stacks, stack, logicalID)
+}
+
 // eventSourceBatchSize returns the batch size the provider uses when the
 // template omits it. AWS defaults are 10 for SQS and 100 for stream sources.
 func eventSourceBatchSize(sourceType string, declared int) int {

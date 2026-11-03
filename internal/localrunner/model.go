@@ -168,6 +168,31 @@ type EventSourceSpec struct {
 	StartingPosition        string `json:"startingPosition,omitempty"`
 }
 
+// SubscriptionSpec is one CloudWatch Logs subscription filter. It is registered
+// with the delivery engine and reported by plan and session describe; delivery
+// lands in E5.
+type SubscriptionSpec struct {
+	LogicalID string `json:"logicalId"`
+	Stack     string `json:"stack"`
+	// Kind is cloudwatch-logs.
+	Kind string `json:"kind"`
+	// LogGroup is the log group the filter reads.
+	LogGroup string `json:"logGroup"`
+	// FilterName and FilterPattern are the declared filter.
+	FilterName    string `json:"filterName"`
+	FilterPattern string `json:"filterPattern,omitempty"`
+	// Distribution is the CloudWatch Logs distribution, when declared.
+	Distribution string `json:"distribution,omitempty"`
+	// Destination is the qualified logical id of the subscription target.
+	Destination string `json:"destination"`
+	// DestinationType is function or stream.
+	DestinationType string `json:"destinationType"`
+	// Function is set when the destination is a Lambda function.
+	Function string `json:"function,omitempty"`
+	// Stream is set when the destination is a Kinesis stream.
+	Stream string `json:"stream,omitempty"`
+}
+
 // RuleSpec is one AWS::Events::Rule with a Lambda target. It is reported so a
 // local session can build the event the rule would deliver.
 type RuleSpec struct {
@@ -219,13 +244,17 @@ type ResourceSpec struct {
 
 // Spec is everything the local runner derived from the cloud assembly.
 type Spec struct {
-	AssemblyDir  string            `json:"assemblyDir"`
-	Functions    []FunctionSpec    `json:"functions"`
-	APIs         []APISpec         `json:"apis"`
-	FunctionURLs []FunctionURLSpec `json:"functionUrls"`
-	EventSources []EventSourceSpec `json:"eventSources,omitempty"`
-	Rules        []RuleSpec        `json:"rules,omitempty"`
-	Skipped      []Skipped         `json:"skipped"`
+	AssemblyDir   string             `json:"assemblyDir"`
+	Functions     []FunctionSpec     `json:"functions"`
+	APIs          []APISpec          `json:"apis"`
+	FunctionURLs  []FunctionURLSpec  `json:"functionUrls"`
+	EventSources  []EventSourceSpec  `json:"eventSources,omitempty"`
+	Rules         []RuleSpec         `json:"rules,omitempty"`
+	Subscriptions []SubscriptionSpec `json:"subscriptions,omitempty"`
+	Skipped       []Skipped          `json:"skipped"`
+	// Delivery is the state the engine would register for every source. Plan
+	// fills it; a live session reports the engine's own state instead.
+	Delivery []DeliveryState `json:"delivery,omitempty"`
 	// CloudFront is the delivery topology read from the assembly. A refused
 	// distribution is also listed under Skipped with its reasons.
 	CloudFront          []*localcloudfront.Distribution `json:"cloudFront,omitempty"`
@@ -295,8 +324,9 @@ func (s *Spec) ServedFunctions() []string {
 }
 
 // RuntimeFunctions returns every function the runner must start: HTTP route and
-// Function URL targets, HTTP API authorizers, enabled event-source consumers
-// and enabled EventBridge rule targets. It is the local run's function set.
+// Function URL targets, HTTP API authorizers, enabled event-source consumers,
+// enabled EventBridge rule targets and Lambda log-subscription destinations. It
+// is the local run's function set.
 func (s *Spec) RuntimeFunctions() []string {
 	seen := map[string]struct{}{}
 	for _, id := range s.ServedFunctions() {
@@ -318,6 +348,11 @@ func (s *Spec) RuntimeFunctions() []string {
 			if target != "" {
 				seen[target] = struct{}{}
 			}
+		}
+	}
+	for _, subscription := range s.Subscriptions {
+		if subscription.Function != "" {
+			seen[subscription.Function] = struct{}{}
 		}
 	}
 	out := make([]string, 0, len(seen))

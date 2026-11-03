@@ -63,6 +63,12 @@ type Options struct {
 	NamePrefix string
 	// MaxConcurrency bounds in-flight invocations; never above 32.
 	MaxConcurrency int
+	// DeliveryConcurrency bounds concurrent handler invocations the delivery
+	// engine performs. Zero uses the documented default.
+	DeliveryConcurrency int
+	// Clock selects the run's time source: "real" (the default) or
+	// "test[=<RFC3339 start>]".
+	Clock string
 	// Stdout receives the runner's progress log.
 	Stdout io.Writer
 	// SynthTimeout bounds `cdk synth`.
@@ -103,12 +109,18 @@ type Runner struct {
 	listeners      []net.Listener
 	semaphore      chan struct{}
 	network        string
+	clock          Clock
+	delivery       *DeliveryEngine
 }
 
 // NewRunner validates the options and prepares the run. It contacts no Docker
 // and synthesizes nothing yet.
 func NewRunner(options Options) (*Runner, error) {
 	options, err := normalizeOptions(options)
+	if err != nil {
+		return nil, err
+	}
+	clock, err := ParseClockSpec(options.Clock)
 	if err != nil {
 		return nil, err
 	}
@@ -126,6 +138,7 @@ func NewRunner(options Options) (*Runner, error) {
 		endpoints:    append([]Endpoint(nil), options.Endpoints...),
 		images:       map[string]string{},
 		semaphore:    make(chan struct{}, options.MaxConcurrency),
+		clock:        clock,
 	}
 	runner.namePrefix = sanitizeNamePrefix(options.NamePrefix, "apptheory-local-"+runner.appHash)
 	runner.network = runner.namePrefix + "-net"
@@ -142,6 +155,13 @@ func NewRunner(options Options) (*Runner, error) {
 	if err := runner.validateBackends(); err != nil {
 		return nil, err
 	}
+	runner.delivery = NewDeliveryEngine(
+		runner.clock,
+		options.DeliveryConcurrency,
+		runner.ResolveDeliveryBackend,
+		runner.invokeDelivery,
+		runner.logf,
+	)
 	return runner, nil
 }
 
@@ -175,6 +195,22 @@ func normalizeOptions(options Options) (Options, error) {
 		}
 		options.ScratchDir = filepath.Join(cache, "apptheory-local")
 	}
+	options, err = normalizeConcurrency(options)
+	if err != nil {
+		return Options{}, err
+	}
+	if options.PortBase < 0 {
+		return Options{}, fmt.Errorf("--port-base must not be negative")
+	}
+	if options.SynthTimeout <= 0 {
+		options.SynthTimeout = 30 * time.Minute
+	}
+	return options, nil
+}
+
+// normalizeConcurrency applies the HTTP and delivery-engine defaults and
+// rejects values the documented host cannot run reliably.
+func normalizeConcurrency(options Options) (Options, error) {
 	if options.MaxConcurrency == 0 {
 		options.MaxConcurrency = defaultMaxConcurrent
 	}
@@ -185,11 +221,15 @@ func normalizeOptions(options Options) (Options, error) {
 			options.MaxConcurrency,
 		)
 	}
-	if options.PortBase < 0 {
-		return Options{}, fmt.Errorf("--port-base must not be negative")
+	if options.DeliveryConcurrency == 0 {
+		options.DeliveryConcurrency = defaultDeliveryConcurrency
 	}
-	if options.SynthTimeout <= 0 {
-		options.SynthTimeout = 30 * time.Minute
+	if options.DeliveryConcurrency < 1 || options.DeliveryConcurrency > maxDeliveryConcurrency {
+		return Options{}, fmt.Errorf(
+			"--delivery-concurrency must be between 1 and %d (got %d): the delivery engine shares the host with the runtime images and the emulators",
+			maxDeliveryConcurrency,
+			options.DeliveryConcurrency,
+		)
 	}
 	return options, nil
 }
@@ -346,6 +386,9 @@ func (r *Runner) Plan(ctx context.Context) (*Spec, error) {
 	if err != nil {
 		return nil, err
 	}
+	if r.delivery != nil {
+		spec.Delivery = r.delivery.Planned(spec)
+	}
 	r.spec = spec
 	return spec, nil
 }
@@ -420,6 +463,9 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 		return nil, err
 	}
 	if err := r.startServers(ctx, spec); err != nil {
+		return nil, err
+	}
+	if err := r.startDelivery(ctx, spec); err != nil {
 		return nil, err
 	}
 	return spec, nil
@@ -559,14 +605,23 @@ func (r *Runner) backendsContainerName(backend string) string {
 	return r.namePrefix + "-" + sanitizeName(backend)
 }
 
-// cleanupFunc removes everything the run created. It stops accepting requests
-// first, then force-removes the containers (which also aborts an in-flight RIE
-// invocation), then closes any transport connections that are still open. The
-// order matters: waiting for a graceful HTTP shutdown before touching Docker
-// can consume the whole cleanup budget and leave containers and the network
-// behind when a handler is still running.
+// cleanupFunc removes everything the run created. It drains and stops the
+// delivery engine first, while the containers can still accept a delivery that
+// is in flight; then it stops accepting requests, then force-removes the
+// containers (which also aborts an in-flight RIE invocation), then closes any
+// transport connections that are still open. The order matters: waiting for a
+// graceful HTTP shutdown before touching Docker can consume the whole cleanup
+// budget and leave containers and the network behind when a handler is still
+// running.
 func (r *Runner) cleanupFunc() func() {
 	return func() {
+		if r.delivery != nil {
+			stopCtx, cancel := context.WithTimeout(context.Background(), cleanupStepTimeout)
+			if err := r.delivery.Stop(stopCtx); err != nil {
+				r.logf("delivery engine shutdown: %v", err)
+			}
+			cancel()
+		}
 		for _, listener := range r.listeners {
 			_ = listener.Close() //nolint:errcheck // shutting down the run's own listeners
 		}
@@ -948,6 +1003,14 @@ func (r *Runner) containerName(logicalID string) string {
 
 func (r *Runner) logf(format string, args ...any) {
 	_, _ = fmt.Fprintf(r.options.Stdout, format+"\n", args...) //nolint:errcheck // progress logging
+}
+
+// now returns the run's current instant from its clock.
+func (r *Runner) now() time.Time {
+	if r.clock == nil {
+		return RealClock{}.Now()
+	}
+	return r.clock.Now()
 }
 
 func outputOrDefault(writer io.Writer) io.Writer {

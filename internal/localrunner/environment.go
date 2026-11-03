@@ -359,6 +359,7 @@ func literalPhysicalName(resource ResourceSpec) string {
 		BucketName   string `json:"BucketName"`
 		Name         string `json:"Name"`
 		FunctionName string `json:"FunctionName"`
+		LogGroupName string `json:"LogGroupName"`
 	}
 	if len(resource.Properties) == 0 {
 		return ""
@@ -366,7 +367,7 @@ func literalPhysicalName(resource ResourceSpec) string {
 	if err := json.Unmarshal(resource.Properties, &props); err != nil {
 		return ""
 	}
-	for _, candidate := range []string{props.TableName, props.QueueName, props.BucketName, props.Name, props.FunctionName} {
+	for _, candidate := range []string{props.TableName, props.QueueName, props.BucketName, props.Name, props.FunctionName, props.LogGroupName} {
 		if strings.TrimSpace(candidate) != "" {
 			return candidate
 		}
