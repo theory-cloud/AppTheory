@@ -101,12 +101,6 @@ MICROVM_DEMO_TOKEN = "local-demo-token"
 MICROVM_WORKLOAD_GO = STATE_DIR / "bin" / "microvm-workload-go"
 LOCAL_PROFILE = "scripts/local/examples-local.json"
 MCP_HANDLER_BIN_DIR = STATE_DIR / "handlers"
-# The upload-assets.sh row uses the host AWS CLI when it runs; when the host
-# CLI is unusable (a broken Homebrew awscli, for example) the harness installs
-# this pinned v1 CLI into its own state directory. Both are the real CLI; the
-# script and its AWS path are unchanged.
-AWS_CLI_VERSION = "1.45.64"
-AWS_CLI_DIR = STATE_DIR / "awscli"
 MCP_EXAMPLES = {
     "tools-only": "examples/mcp/tools-only",
     "tools-resources-prompts": "examples/mcp/tools-resources-prompts",
@@ -2545,50 +2539,33 @@ def s3_put(session: LocalSession, bucket: str, key: str, body: str, content_type
     )
 
 
-def usable_aws_cli() -> str | None:
+def require_aws_cli() -> str:
+    """Return the host AWS CLI, or fail the upload-assets.sh row by name.
+
+    upload-assets.sh is a real AWS CLI script, so the host CLI must be on PATH
+    and start. The harness never installs or substitutes a CLI: a missing or
+    unusable one is a named requirement failure, not a skip.
+    """
     executable = shutil.which("aws")
     if not executable:
-        return None
+        raise HarnessFailure(
+            "upload-assets.sh requires an AWS CLI on PATH; the harness does not install one"
+        )
     try:
         result = subprocess.run(  # noqa: S603 - the host CLI is the subject
             [executable, "--version"], capture_output=True, text=True, timeout=30, check=False
         )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    return executable if result.returncode == 0 else None
-
-
-def ensure_aws_cli(harness: Harness) -> str | None:
-    """Return a PATH entry for a working AWS CLI, or None when the host CLI runs.
-
-    upload-assets.sh is a real AWS CLI script. The host CLI is used whenever it
-    starts; a broken host CLI gets a pinned v1 CLI installed under the harness
-    state directory, so the script still runs the real CLI rather than a stub.
-    """
-    if usable_aws_cli():
-        return None
-    aws = AWS_CLI_DIR / "bin" / "aws"
-    if not aws.exists():
-        print("  ... installing a pinned AWS CLI for upload-assets.sh (the host aws is unusable)")
-        harness.run([sys.executable, "-m", "venv", str(AWS_CLI_DIR)], timeout=300)
-        harness.run(
-            [
-                str(AWS_CLI_DIR / "bin" / "pip"),
-                "install",
-                "--disable-pip-version-check",
-                "-q",
-                f"awscli=={AWS_CLI_VERSION}",
-            ],
-            timeout=900,
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise HarnessFailure(
+            "upload-assets.sh requires an AWS CLI on PATH that starts; the host aws could not be run",
+            str(exc),
+        ) from exc
+    if result.returncode != 0:
+        raise HarnessFailure(
+            "upload-assets.sh requires an AWS CLI on PATH that starts; the host aws failed its version check",
+            _combined_output(result),
         )
-    if not aws.exists():
-        raise HarnessFailure(f"the pinned AWS CLI was not installed: {aws}")
-    probe = subprocess.run(  # noqa: S603 - the harness owns this executable
-        [str(aws), "--version"], capture_output=True, text=True, timeout=30, check=False
-    )
-    if probe.returncode != 0:
-        raise HarnessFailure(f"the pinned AWS CLI does not start: {aws}", _combined_output(probe))
-    return str(AWS_CLI_DIR / "bin")
+    return executable
 
 
 def assert_html(status: int, body: str, headers: dict, label: str, needle: str) -> None:
@@ -3530,7 +3507,7 @@ def run_ssr_assets_manifest(harness: Harness) -> str:
 
 
 def run_ssr_assets_upload(harness: Harness) -> str:
-    aws_bin = ensure_aws_cli(harness)
+    require_aws_cli()
     staging = Path(tempfile.mkdtemp(prefix="a5b-upload-", dir=str(STATE_DIR)))
     try:
         assets = staging / "assets"
@@ -3572,8 +3549,6 @@ def run_ssr_assets_upload(harness: Harness) -> str:
                 "AWS_CONFIG_FILE": os.devnull,
                 "AWS_SHARED_CREDENTIALS_FILE": os.devnull,
             }
-            if aws_bin:
-                env["PATH"] = aws_bin + os.pathsep + harness.env.get("PATH", "")
             result = harness.run(
                 ["bash", "examples/cdk/ssr-site/scripts/upload-assets.sh"],
                 env=env,

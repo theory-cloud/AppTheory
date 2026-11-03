@@ -18,6 +18,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -347,6 +348,37 @@ class LocalRunnerHelperTests(unittest.TestCase):
         harness._assert_request_id({"request_id": "7f08dd02-7030-4ecc-9c60-0cd609076abf"}, "uuid")
         with self.assertRaises(harness.HarnessFailure):
             harness._assert_request_id({"request_id": ""}, "empty")
+
+
+class AwsCLIRequirementTests(unittest.TestCase):
+    """The upload row requires a working host AWS CLI; it never installs one."""
+
+    def test_missing_cli_fails_with_the_requirement(self) -> None:
+        with mock.patch.object(harness.shutil, "which", return_value=None):
+            with self.assertRaises(harness.HarnessFailure) as raised:
+                harness.require_aws_cli()
+        self.assertIn("requires an AWS CLI on PATH", str(raised.exception))
+
+    def test_unstartable_cli_fails_with_the_requirement(self) -> None:
+        failed = mock.Mock(returncode=127, stdout="", stderr="dyld: Library not loaded")
+        with mock.patch.object(harness.shutil, "which", return_value="/opt/homebrew/bin/aws"):
+            with mock.patch.object(harness.subprocess, "run", return_value=failed):
+                with self.assertRaises(harness.HarnessFailure) as raised:
+                    harness.require_aws_cli()
+        self.assertIn("requires an AWS CLI on PATH that starts", str(raised.exception))
+
+    def test_unrunnable_cli_fails_with_the_requirement(self) -> None:
+        with mock.patch.object(harness.shutil, "which", return_value="/opt/homebrew/bin/aws"):
+            with mock.patch.object(harness.subprocess, "run", side_effect=OSError("cannot execute")):
+                with self.assertRaises(harness.HarnessFailure) as raised:
+                    harness.require_aws_cli()
+        self.assertIn("requires an AWS CLI on PATH that starts", str(raised.exception))
+
+    def test_working_cli_returns_its_path(self) -> None:
+        working = mock.Mock(returncode=0, stdout="aws-cli/2.39.3", stderr="")
+        with mock.patch.object(harness.shutil, "which", return_value="/opt/homebrew/bin/aws"):
+            with mock.patch.object(harness.subprocess, "run", return_value=working):
+                self.assertEqual("/opt/homebrew/bin/aws", harness.require_aws_cli())
 
 
 if __name__ == "__main__":

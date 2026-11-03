@@ -36,6 +36,17 @@ resolution.
 | Self-tests | `scripts/local/test_examples_local.py` |
 | CI job | `.github/workflows/examples-local.yml` |
 
+## Requirements
+
+- Docker (on macOS, colima) with the daemon running, for DynamoDB Local, the
+  runner's emulator containers and the official Lambda runtime images.
+- Node.js 24+ and npm, for the TypeScript examples and each example's CDK CLI.
+- An AWS CLI on `PATH` that starts. `upload-assets.sh` runs the real host CLI;
+  the harness does not install a fallback, and a missing or unusable CLI fails
+  that row with a named requirement error.
+- Python 3.14 to run the harness and the repo's Go toolchain for the runner
+  rows.
+
 ## Classes
 
 - **L1** — runs fully locally; no cloud dependency.
@@ -224,7 +235,7 @@ rows below run the real production CDK apps through the gateway.
 | `examples/cdk/path-routed-frontend` | L3 | The generated SPA function rewrites `/l/...` and `/auth/...` to each prefix's `index.html`, files with an extension are served unchanged, the external API origin is refused by name, POST is refused by `AllowedMethods`, and a missing file is 403 under OAC. | The API origin is an external custom origin and is refused locally; the example ships no SPA build output, so probe objects are written through the runner to the provisioned buckets. CloudFront caching and edge network. |
 | `examples/cdk/media-cdn` | L3 | The public distribution serves a probe object from its provisioned bucket with ETag and content type; the private trusted-key-group distribution stays refused with A5a's named reason; a missing object is 403 under OAC. | Signed-URL verification; the example ships no media, so a probe object is used. CloudFront caching and edge network. |
 | `examples/cdk/ssr-site/scripts/generate-assets-manifest.mjs` | L2 | The generator runs against the real `assets` directory, its `hello.txt` sha256 and byte count are asserted, and the served asset through the gateway matches the manifest. | CloudFront caching and edge network; the manifest is matched to the gateway response, not a deployed bucket. |
-| `examples/cdk/ssr-site/scripts/upload-assets.sh` | L3 | The real AWS CLI (the host CLI, or a pinned CLI the harness installs when the host one is unusable) runs `s3 sync` and `s3 cp` against the session's s3proxy endpoint with dummy credentials; the gateway serves the assets and the generated manifest with the script's cache-control and content type. | CloudFront invalidation is not exercised; s3proxy has no IAM, bucket policy or event notifications. CloudFront caching and edge network. |
+| `examples/cdk/ssr-site/scripts/upload-assets.sh` | L3 | The host AWS CLI on `PATH` runs `s3 sync` and `s3 cp` against the session's s3proxy endpoint with dummy credentials; the gateway serves the assets and the generated manifest with the script's cache-control and content type. A CLI that is missing or cannot start fails the row with a named requirement error, never a skip. | CloudFront invalidation is not exercised; s3proxy has no IAM, bucket policy or event notifications. CloudFront caching and edge network. |
 
 ## Preflight
 
@@ -250,11 +261,11 @@ in-container preflight proves every endpoint answers and that no real AWS
 hostname resolves. This keeps each runner row isolated from the host-side
 examples.
 
-`upload-assets.sh` is a real AWS CLI script. The harness uses the host `aws`
-when it starts. When the host CLI is unusable (for example a Homebrew `awscli`
-whose native library no longer loads), the harness installs a pinned
-`awscli==1.45.64` into `~/.cache/apptheory-examples-local/awscli` and prepends
-its `bin` to that row's `PATH`; the script, its flags and its AWS path are
+`upload-assets.sh` is a real AWS CLI script and requires an AWS CLI on `PATH`.
+The harness runs the host `aws`; it never installs or substitutes one. If `aws`
+is missing or cannot start (for example a Homebrew `awscli` whose native library
+no longer loads), the row **fails** with a named requirement error instead of
+being skipped or reported as passing. The script, its flags and its AWS path are
 unchanged.
 
 ## Built Lambda assets run in the official runtime
