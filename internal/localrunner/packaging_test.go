@@ -262,6 +262,17 @@ func TestBuildImageArgvIsDeterministic(t *testing.T) {
 }
 
 func TestBuildFunctionImageRunsDockerBuild(t *testing.T) {
+	// The build context must be under $HOME or the checkout so Docker shares it;
+	// a t.TempDir() lives outside both on macOS.
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("home: %v", err)
+	}
+	assetDir, err := os.MkdirTemp(home, ".apptheory-image-test-")
+	if err != nil {
+		t.Fatalf("temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(assetDir) })
 	var called [][]string
 	runner := &Runner{
 		options:     Options{Stdout: os.Stderr},
@@ -277,7 +288,7 @@ func TestBuildFunctionImageRunsDockerBuild(t *testing.T) {
 	function := FunctionSpec{
 		LogicalID: "ImageFn",
 		ImageAsset: &DockerImageAssetSpec{
-			Directory:  "/asset",
+			Directory:  assetDir,
 			DockerFile: "Dockerfile",
 			BuildArgs:  map[string]string{"IMAGE_VALUE": "value"},
 		},
