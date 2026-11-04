@@ -250,6 +250,7 @@
       "class": "L1",
       "description": "lambda-role baseline handler: the compiled asset serves the basic, tracing and dynamic functions and returns the expected 200 payload from each."
     },
+    "examples/cdk/lambda-role/handlers/policy-authorizer.ts": {"coveredBy":"examples/cdk/lambda-role/handlers/authorizer.ts","class":"L2","description":"IAM-policy authorizer function for the REST TOKEN, REST REQUEST and HTTP API authorizers; it counts its own invocations and returns the count in the authorizer context, which is how the row proves a cached decision."},
     "examples/cdk/lesser-parity/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
       "class": "I",
