@@ -306,7 +306,7 @@ func TestInvalidationAPICreateGetList(t *testing.T) {
 		t.Fatalf("build create request: %v", err)
 	}
 	request.Header.Set("Content-Type", "text/xml")
-	response, err := http.DefaultClient.Do(request) //nolint:bodyclose // readAll closes it
+	response, err := http.DefaultClient.Do(request) //nolint:bodyclose,noctx // readAll closes it; a test client needs no context
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -328,7 +328,7 @@ func TestInvalidationAPICreateGetList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build get request: %v", err)
 	}
-	getResponse, err := http.DefaultClient.Do(getRequest) //nolint:bodyclose // readAll closes it
+	getResponse, err := http.DefaultClient.Do(getRequest) //nolint:bodyclose,noctx // readAll closes it; a test client needs no context
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -343,7 +343,7 @@ func TestInvalidationAPICreateGetList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build list request: %v", err)
 	}
-	listResponse, err := http.DefaultClient.Do(listRequest) //nolint:bodyclose // readAll closes it
+	listResponse, err := http.DefaultClient.Do(listRequest) //nolint:bodyclose,noctx // readAll closes it; a test client needs no context
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -364,7 +364,7 @@ func TestInvalidationAPIRejectsAnInvalidPath(t *testing.T) {
 		t.Fatalf("build create request: %v", err)
 	}
 	request.Header.Set("Content-Type", "text/xml")
-	response, err := http.DefaultClient.Do(request) //nolint:bodyclose // readAll closes it
+	response, err := http.DefaultClient.Do(request) //nolint:bodyclose,noctx // readAll closes it; a test client needs no context
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}

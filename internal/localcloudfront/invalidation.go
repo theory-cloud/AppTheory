@@ -202,8 +202,9 @@ func (api *InvalidationAPI) createInvalidation(writer http.ResponseWriter, reque
 		return
 	}
 	paths := batch.Paths.Items.Path
-	if batch.Paths.Quantity > 0 && len(paths) == 0 {
-		api.writeError(writer, request, http.StatusBadRequest, "InvalidArgument", "the invalidation batch declares paths but lists none")
+	if batch.Paths.Quantity != len(paths) {
+		api.writeError(writer, request, http.StatusBadRequest, "InvalidArgument", fmt.Sprintf(
+			"the invalidation batch declares Quantity %d but lists %d paths", batch.Paths.Quantity, len(paths)))
 		return
 	}
 	if err := ValidateInvalidationPaths(paths); err != nil {

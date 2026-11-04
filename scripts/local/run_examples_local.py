@@ -5666,8 +5666,9 @@ def run_ssr_site_gateway(harness: Harness) -> str:
         expect_status(status, 200, "ssr-site assets after the TTL", "")
         if headers.get("x-cache") != "Miss from cloudfront":
             raise HarnessFailure("the asset was served from cache after its TTL")
+        described = session.request("describe")
         cache = next(
-            entry for entry in session.info["cloudFront"]
+            entry for entry in described["cloudFront"]
             if str(entry.get("logicalId", "")).startswith("SiteDistribution")
         ).get("cache") or {}
         if not any(int(stats.get("hits", 0)) > 0 for stats in cache.values()):
