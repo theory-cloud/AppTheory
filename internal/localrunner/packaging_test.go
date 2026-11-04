@@ -587,3 +587,19 @@ func TestRemoveRunImagesRemovesTrackedAndLabelledImages(t *testing.T) {
 		t.Fatalf("built images were not cleared: %+v", runner.builtImages)
 	}
 }
+
+func TestBuildFunctionImageRequiresASharedContext(t *testing.T) {
+	runner := &Runner{
+		options:     Options{Stdout: os.Stderr},
+		builtImages: map[string]string{},
+		namePrefix:  "test",
+		docker:      &Docker{exec: func(context.Context, []string) (string, string, error) { return "", "", nil }},
+	}
+	_, err := runner.imageFor(context.Background(), FunctionSpec{
+		LogicalID:  "ImageFn",
+		ImageAsset: &DockerImageAssetSpec{Directory: "/asset", DockerFile: "Dockerfile"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "Docker") {
+		t.Fatalf("a build context outside the shared paths must fail: %v", err)
+	}
+}
