@@ -316,17 +316,6 @@ func TestSessionDescribeProviderFields(t *testing.T) {
 	}
 }
 
-func TestCronDayConstraint(t *testing.T) {
-	spec := &cronSpec{dayOfMonth: fieldSet{values: allValues(1, 31)}, dayOfWeek: fieldSet{values: allValues(1, 7)}}
-	if spec.hasDayConstraint() {
-		t.Fatal("a full day set is not constrained")
-	}
-	spec.dayOfMonth = fieldSet{values: allValues(1, 30)}
-	if !spec.hasDayConstraint() {
-		t.Fatal("a reduced day set is constrained")
-	}
-}
-
 func TestSNSQueueLookupAndDeliveryClient(t *testing.T) {
 	runner, _ := sessionResources()
 	if _, ok := runner.snsQueueLookup("Missing"); ok {

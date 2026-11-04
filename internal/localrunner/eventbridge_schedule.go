@@ -15,8 +15,10 @@ import (
 // https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-create-rule-schedule.html
 //
 // The runner implements the documented wildcards * ? , - / and month/day names.
-// The L, W and # forms are refused at plan time with the rule named rather than
-// accepted and fired at the wrong minute.
+// ? marks a day field with no specific value, so the other day field carries
+// the only constraint; * is refused when it appears in both day fields. The L, W
+// and # forms are refused at plan time with the rule named rather than accepted
+// and fired at the wrong minute.
 
 // scheduleSpec is one parsed scheduled rule.
 type scheduleSpec struct {
@@ -99,7 +101,11 @@ type cronSpec struct {
 	month      fieldSet
 	dayOfWeek  fieldSet
 	year       fieldSet
-	anyDay     bool
+	// dayOfMonthAny and dayOfWeekAny record a ? day field. ? is not a
+	// wildcard: AWS uses it for a day field with no specific value, so the
+	// other day field carries the only constraint and is evaluated alone.
+	dayOfMonthAny bool
+	dayOfWeekAny  bool
 }
 
 // fieldSet is one cron field's allowed values.
@@ -118,7 +124,7 @@ var (
 		"JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12,
 	}
 	cronDayNames = map[string]int{
-		"SUN": 0, "MON": 1, "TUE": 2, "WED": 3, "THU": 4, "FRI": 5, "SAT": 6,
+		"SUN": 1, "MON": 2, "TUE": 3, "WED": 4, "THU": 5, "FRI": 6, "SAT": 7,
 	}
 )
 
@@ -155,15 +161,18 @@ func parseCronExpression(expression string) (*cronSpec, error) {
 	if strings.Contains(fields[4], "#") {
 		return nil, fmt.Errorf("cron day-of-week # is not implemented locally")
 	}
-	anyDay := fields[2] == "?" || fields[4] == "?"
+	if strings.Contains(fields[2], "*") && strings.Contains(fields[4], "*") {
+		return nil, fmt.Errorf("cron day-of-month and day-of-week: * in both fields is not allowed; use ? in one of them")
+	}
 	return &cronSpec{
-		minute:     minute,
-		hour:       hour,
-		dayOfMonth: dayOfMonth,
-		month:      month,
-		dayOfWeek:  dayOfWeek,
-		year:       year,
-		anyDay:     anyDay,
+		minute:        minute,
+		hour:          hour,
+		dayOfMonth:    dayOfMonth,
+		month:         month,
+		dayOfWeek:     dayOfWeek,
+		year:          year,
+		dayOfMonthAny: fields[2] == "?",
+		dayOfWeekAny:  fields[4] == "?",
 	}, nil
 }
 
@@ -266,16 +275,16 @@ func (c *cronSpec) matches(instant time.Time) bool {
 		!c.year.contains(instant.Year()) {
 		return false
 	}
-	if c.anyDay {
-		// AWS rejects * in both day fields; one is ? and the other is matched.
-		if c.dayOfMonth.contains(instant.Day()) || c.dayOfWeek.contains(int(instant.Weekday())+1) {
-			return true
-		}
-		return !c.hasDayConstraint()
+	dayOfMonth := c.dayOfMonth.contains(instant.Day())
+	dayOfWeek := c.dayOfWeek.contains(int(instant.Weekday()) + 1)
+	switch {
+	case c.dayOfMonthAny && c.dayOfWeekAny:
+		return true
+	case c.dayOfMonthAny:
+		return dayOfWeek
+	case c.dayOfWeekAny:
+		return dayOfMonth
+	default:
+		return dayOfMonth && dayOfWeek
 	}
-	return c.dayOfMonth.contains(instant.Day()) && c.dayOfWeek.contains(int(instant.Weekday())+1)
-}
-
-func (c *cronSpec) hasDayConstraint() bool {
-	return len(c.dayOfMonth.values) != 31 || len(c.dayOfWeek.values) != 7
 }

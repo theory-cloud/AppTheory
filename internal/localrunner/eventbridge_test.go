@@ -308,3 +308,64 @@ func TestEventBridgeMessageGroupResolution(t *testing.T) {
 		t.Fatalf("missing group %q", got)
 	}
 }
+
+// AWS defines ? as a day field with no specific value that delegates to the
+// other day field, so cron(0 12 ? * MON-FRI *) fires Monday through Friday
+// only. After Friday 2026-01-02 12:00 the next firing is Monday, not Saturday.
+// https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-scheduled-rule-pattern.html
+func TestCronQuestionDelegatesToTheOtherDayField(t *testing.T) {
+	spec, err := parseScheduleExpression("cron(0 12 ? * MON-FRI *)")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	got, err := spec.next(time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC)) // Friday
+	if err != nil {
+		t.Fatalf("next: %v", err)
+	}
+	want := time.Date(2026, 1, 5, 12, 0, 0, 0, time.UTC) // Monday
+	if !got.Equal(want) {
+		t.Fatalf("next after Friday = %s, want Monday %s", got, want)
+	}
+}
+
+// EventBridge numbers day-of-week 1-7 with SUN=1, so a name must equal its
+// numeric value: cron(0 12 4 * SUN *) fires on Sunday 2026-01-04, and MON fires
+// on a Monday rather than a Sunday.
+// https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-scheduled-rule-pattern.html
+func TestCronDayOfWeekNamesUseAWSNumbering(t *testing.T) {
+	sunday, err := parseScheduleExpression("cron(0 12 4 * SUN *)")
+	if err != nil {
+		t.Fatalf("parse SUN: %v", err)
+	}
+	got, err := sunday.next(time.Date(2026, 1, 3, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("SUN next: %v", err)
+	}
+	if want := time.Date(2026, 1, 4, 12, 0, 0, 0, time.UTC); !got.Equal(want) {
+		t.Fatalf("cron(0 12 4 * SUN *) next = %s, want Sunday %s", got, want)
+	}
+	monday, err := parseScheduleExpression("cron(0 12 ? * MON *)")
+	if err != nil {
+		t.Fatalf("parse MON: %v", err)
+	}
+	got, err = monday.next(time.Date(2026, 1, 4, 0, 0, 0, 0, time.UTC)) // Sunday
+	if err != nil {
+		t.Fatalf("MON next: %v", err)
+	}
+	if want := time.Date(2026, 1, 5, 12, 0, 0, 0, time.UTC); !got.Equal(want) {
+		t.Fatalf("cron(0 12 ? * MON *) next after Sunday = %s, want Monday %s", got, want)
+	}
+}
+
+// The Day-of-month and Day-of-week fields are mutually exclusive: AWS refuses
+// * in both and requires ? in one, so the refusal names both fields.
+// https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-scheduled-rule-pattern.html
+func TestCronRefusesAsteriskInBothDayFields(t *testing.T) {
+	_, err := parseScheduleExpression("cron(0 12 * * * *)")
+	if err == nil {
+		t.Fatal("cron with * in both day fields must be refused")
+	}
+	if !strings.Contains(err.Error(), "day-of-month") || !strings.Contains(err.Error(), "day-of-week") {
+		t.Fatalf("the refusal must name both day fields: %v", err)
+	}
+}
