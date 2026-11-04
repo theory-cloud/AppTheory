@@ -128,6 +128,12 @@ func (s *WebSocketServer) ServeHTTP(writer http.ResponseWriter, request *http.Re
 		}
 	}
 
+	// Register the idle and lifetime timers before the upgrade response reaches
+	// the client. A deterministic clock advanced as soon as the handshake is
+	// observed must not be able to outrun the timer registration.
+	idle := s.clock().After(webSocketIdleTimeout)
+	lifetime := s.clock().After(webSocketMaxConnectionDuration)
+
 	conn, buffered, err := hijackUpgrade(writer, request, accept)
 	if err != nil {
 		s.logf("websocket %s: upgrade failed: %v", s.API.LogicalID, err)
@@ -144,7 +150,7 @@ func (s *WebSocketServer) ServeHTTP(writer http.ResponseWriter, request *http.Re
 	}()
 	s.logf("websocket %s: connection %s established", s.API.LogicalID, connection.id)
 
-	reason, code := s.serveConnection(request.Context(), connection)
+	reason, code := s.serveConnection(request.Context(), connection, idle, lifetime)
 	if err := connection.conn.closeWithCode(code, reason); err != nil {
 		_ = err // the peer may already have closed the transport
 	}
@@ -159,8 +165,10 @@ func (s *WebSocketServer) ServeHTTP(writer http.ResponseWriter, request *http.Re
 
 // serveConnection reads frames until the client closes, the idle or lifetime
 // timer fires, or the management API deletes the connection. It returns the
-// documented disconnectReason.
-func (s *WebSocketServer) serveConnection(ctx context.Context, connection *webSocketConnection) (string, int) {
+// documented disconnectReason. The callers register both timers before the
+// upgrade completes so a client can never act on the handshake before they
+// exist.
+func (s *WebSocketServer) serveConnection(ctx context.Context, connection *webSocketConnection, idle, lifetime <-chan time.Time) (string, int) {
 	type frameResult struct {
 		opcode  byte
 		payload []byte
@@ -181,8 +189,6 @@ func (s *WebSocketServer) serveConnection(ctx context.Context, connection *webSo
 		}
 	}()
 
-	idle := s.Clock.After(webSocketIdleTimeout)
-	lifetime := s.Clock.After(webSocketMaxConnectionDuration)
 	for {
 		select {
 		case <-ctx.Done():
@@ -210,7 +216,7 @@ func (s *WebSocketServer) serveConnection(ctx context.Context, connection *webSo
 				return webSocketDisconnectInternal, wsCloseUnsupportedData
 			}
 			connection.lastActiveAt = s.now()
-			idle = s.Clock.After(webSocketIdleTimeout)
+			idle = s.clock().After(webSocketIdleTimeout)
 			s.routeMessage(ctx, connection, string(frame.payload))
 		}
 	}
@@ -563,6 +569,15 @@ func (s *WebSocketServer) invokeRaw(ctx context.Context, function string, event 
 		defer func() { <-s.Semaphore }()
 	}
 	return invoker.Invoke(ctx, event)
+}
+
+// clock returns the run clock, defaulting to the wall clock when a server was
+// built without one (unit tests that never serve a connection).
+func (s *WebSocketServer) clock() Clock {
+	if s.Clock != nil {
+		return s.Clock
+	}
+	return RealClock{}
 }
 
 func (s *WebSocketServer) now() time.Time {
