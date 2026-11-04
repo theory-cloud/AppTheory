@@ -2743,7 +2743,12 @@ def run_lambda_role_authorizers(harness: Harness) -> str:
             "access token reached the REST Cognito-protected route with its claims and the documented "
             "scope; no token, a bad signature, a wrong audience, a wrong issuer and a Basic scheme were "
             "refused with 401, a missing scope with 403, and after advancing the run clock two hours the "
-            "same tokens were refused as expired"
+            "same tokens were refused as expired; a REST TOKEN, a REST REQUEST and an HTTP API IAM-policy "
+            "authorizer ran the real policy function and carried its stringified context to the "
+            "integration, Allow invoked the method, Deny was 403, the documented Unauthorized error was "
+            "401, an invalid policy was 500, a missing identity source was 401 without invoking, and a "
+            "cached decision did not invoke the function again until the run clock passed "
+            "AuthorizerResultTtlInSeconds"
         )
     finally:
         stop_local_session(harness, session)
