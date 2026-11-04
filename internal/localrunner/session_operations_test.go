@@ -65,6 +65,8 @@ func (s *fakeSQSServer) handler(t *testing.T) http.Handler {
 			writeTestResponse(t, writer, string(encoded))
 		case strings.Contains(target, "DeleteMessage"):
 			writeTestResponse(t, writer, `{}`)
+		case strings.Contains(target, "GetQueueAttributes"):
+			writeTestResponse(t, writer, `{"Attributes":{"ApproximateNumberOfMessages":"1","ApproximateNumberOfMessagesNotVisible":"2","ApproximateNumberOfMessagesDelayed":"0","VisibilityTimeout":"30"}}`)
 		default:
 			writer.WriteHeader(http.StatusBadRequest)
 		}
@@ -243,6 +245,25 @@ func newSessionFixture(t *testing.T) *sessionFixture {
 		session: &localSession{
 			runner: runner, spec: spec, previous: map[string]map[string]types.AttributeValue{},
 		},
+	}
+}
+
+func TestSessionSQSAttributes(t *testing.T) {
+	fixture := newSessionFixture(t)
+	result, err := fixture.session.sqsAttributes(context.Background(), sessionRequest{Queue: "Queue"})
+	if err != nil {
+		t.Fatalf("sqs.attributes: %v", err)
+	}
+	fields := mustMap(t, result)
+	if fields["visible"] != 1 || fields["notVisible"] != 2 || fields["delayed"] != 0 {
+		t.Fatalf("unexpected queue counts: %+v", fields)
+	}
+	attributes, ok := fields["attributes"].(map[string]string)
+	if !ok || attributes["VisibilityTimeout"] != "30" {
+		t.Fatalf("unexpected queue attributes: %+v", fields["attributes"])
+	}
+	if _, err := fixture.session.sqsAttributes(context.Background(), sessionRequest{Queue: "Missing"}); err == nil {
+		t.Fatal("a queue that is not provisioned must fail closed")
 	}
 }
 

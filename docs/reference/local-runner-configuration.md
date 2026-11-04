@@ -92,6 +92,8 @@ writing one response per line on stdout:
 {"op":"clock.now"}
 {"op":"clock.advance","duration":"90m"}
 {"op":"invoke","function":"WorkerFn","event":{"Records":[]}}
+{"op":"sqs.send","queue":"EventsQueue","body":"{\"kind\":\"keep\"}","messageGroupId":"gA","messageDeduplicationId":"1"}
+{"op":"sqs.attributes","queue":"EventsQueue"}
 {"op":"sqs.event","queue":"EventsQueue","max":10,"waitSeconds":1,"visibilitySeconds":0,"delete":true}
 {"op":"ddb.stream-event","table":"GoTable","key":{"pk":"item-1"},"eventName":"INSERT"}
 {"op":"eventbridge.event","rule":"GoSchedule","detail":{}}
@@ -100,7 +102,7 @@ writing one response per line on stdout:
 ```
 
 The full operation set is `describe`, `clock.now`, `clock.advance`, `invoke`,
-`sqs.send`, `sqs.receive`, `sqs.event`, `ddb.put`, `ddb.get`, `ddb.scan`,
+`sqs.send`, `sqs.receive`, `sqs.event`, `sqs.attributes`, `ddb.put`, `ddb.get`, `ddb.scan`,
 `ddb.stream-event`, `s3.put`, `eventbridge.event`, `kinesis.event`,
 `kinesis.cloudwatch-event` and `shutdown`. Every response is
 `{"ok":true,"result":…}` or `{"ok":false,"error":…}`. An operation that
@@ -118,7 +120,7 @@ delivery-engine state under `delivery`. `clock.advance` is accepted only on a
   "functions": [{"logicalId": "…", "runtime": "provided.al2023", "architecture": "arm64", "memoryMb": 256, …}],
   "apis": [{"class": "httpv2", "logicalId": "…", "stage": "$default", "routes": [{"method": "ANY", "path": "/{proxy+}", "function": "…", "streaming": false}]}],
   "functionUrls": [],
-  "eventSources": [{"logicalId": "…", "function": "…", "type": "sqs", "sourceName": "events", "batchSize": 10}],
+  "eventSources": [{"logicalId": "…", "function": "…", "type": "sqs", "sourceName": "events", "batchSize": 100, "reportBatchItemFailures": true, "maximumBatchingWindowInSeconds": 10, "maximumConcurrency": 50, "visibilityTimeout": 300}],
   "rules": [{"logicalId": "…", "name": "…", "schedule": "rate(5 minutes)", "targets": ["…"]}],
   "skipped": [{"logicalId": "…", "kind": "AWS::Lambda::Function", "reason": "…"}]
 }
@@ -311,7 +313,7 @@ TS_NODE_TRANSPILE_ONLY=1
 | `AWS::ApiGateway::RestApi` + `Resource` tree + `Method` + `AWS_PROXY` integration | Served as REST API v1 at the path reconstructed from the resource tree. `ResponseTransferMode: STREAM` and `/response-streaming-invocations` are marked streaming. |
 | `AWS::Lambda::Url` (`AuthType: NONE`) | Served as a Function URL listener. `InvokeMode: RESPONSE_STREAM` is marked streaming (buffered). A URL with `AWS_IAM` is not served as a standalone URL; when a served CloudFront distribution targets it, the gateway invokes it through the signed local OAC origin instead. |
 | `AWS::ApiGatewayV2::Authorizer` (`REQUEST`, simple responses) | Run for the CUSTOM routes that reference it. The transport sends a v2 REQUEST authorizer event and enforces `isAuthorized`. |
-| `AWS::Lambda::EventSourceMapping` (SQS, DynamoDB Streams, Kinesis) | Reported with its function, source, batch size and `ReportBatchItemFailures`; the function is started and the mapping is registered with the delivery engine. A session builds the provider event from real local messages or a real local write. Per-source delivery lands in E1b (SQS), E2 (DynamoDB Streams) and E5 (Kinesis). |
+| `AWS::Lambda::EventSourceMapping` (SQS, DynamoDB Streams, Kinesis) | Reported with its function, source, batch options, filter criteria and scaling configuration; the function is started and the mapping is registered with the delivery engine. An SQS mapping is delivered automatically (see [SQS event-source delivery](/examples/local-runner/#sqs-event-source-delivery)); stream delivery lands in E2 (DynamoDB Streams) and E5 (Kinesis). A session can still build the provider event from real local messages or a real local write. |
 | `AWS::Events::Rule` with a Lambda target | Reported with its schedule or event pattern and target; the function is started and the rule is registered with the delivery engine as a schedule or pattern kind. A session builds the event the rule would deliver; delivery lands in E3. |
 | `AWS::Logs::SubscriptionFilter` | Reported with its log group, filter and destination; the destination is a Lambda function, or an `AWS::Logs::Destination` followed to its Kinesis `TargetArn`. A Lambda destination is started and the filter is registered with the delivery engine. Delivery lands in E5; a destination the runner cannot deliver is reported under `skipped`. |
 | `AWS::ApiGatewayV2::Api` (`ProtocolType: WEBSOCKET`) | Reported under `skipped`, never served. An app with no other surface fails with the skipped reasons. |
@@ -323,9 +325,9 @@ TS_NODE_TRANSPILE_ONLY=1
 
 `run` and `session` start one delivery engine per run. It registers every
 derived event-source mapping, EventBridge rule and CloudWatch Logs subscription
-filter at start and reports each source's state. The engine is present in full;
-the per-source deliverers land in E1b–E6, so every kind currently reports
-`not-delivered` with the task that will implement it.
+filter at start and reports each source's state. An SQS mapping has a deliverer
+and polls automatically; every other kind reports `not-delivered` with the task
+that will implement it (E2, E3 and E5).
 
 The state vocabulary follows the Lambda event source mapping API, which reports
 a mapping's lifecycle in `State` and its processing outcome in
@@ -342,8 +344,10 @@ a mapping's lifecycle in `State` and its processing outcome in
 | `not-delivered` | The source kind has no deliverer yet; `task` and `reason` name the implementing task. |
 
 Each entry also reports `delivered` and `failed` counts, `lastError` and
-`paused`. `plan` prints the state the engine would register (and carries it
-under `delivery` in `plan --json`); `session describe` reports the live state:
+`paused`; an SQS source reports `left` (records left for redelivery), `inflight`
+and `peakInflight`. `plan` prints the state the engine would register (and
+carries it under `delivery` in `plan --json`); an SQS source is `registered`
+because the kind has a deliverer. `session describe` reports the live state:
 
 ```json
 "delivery": {
@@ -352,18 +356,44 @@ under `delivery` in `plan --json`); `session describe` reports the live state:
   "concurrency": 4,
   "sources": [
     {"id": "WorkerFnEventSourceMapping", "kind": "sqs", "function": "WorkerFn",
-     "state": "not-delivered", "delivered": 0, "failed": 0, "paused": false,
-     "task": "E1b", "reason": "engine present; SQS event-source delivery lands in E1b"}
+     "state": "polling", "delivered": 12, "failed": 0, "inflight": 0,
+     "peakInflight": 2, "left": 0, "paused": false}
   ]
 }
 ```
 
 `--delivery-concurrency` bounds concurrent handler invocations the engine
-performs (`1..32`, default 4). `--clock real` is the default; `--clock
-test[=<RFC3339 start>]` makes the engine, future schedules, TTL expiry and
-visibility timeouts deterministic, and the `clock.now`/`clock.advance` session
-operations read and move it. Shutdown drains in-flight deliveries for up to five
-seconds, then cancels and stops the deliverers.
+performs (`1..32`, default 4). An SQS mapping's
+`ScalingConfig.MaximumConcurrency` (2–1000) bounds its batches within that
+global bound. `--clock real` is the default; `--clock test[=<RFC3339 start>]`
+makes the batching window and visibility deadlines deterministic, and the
+`clock.now`/`clock.advance` session operations read and move it. The clock does
+not slow ElasticMQ's own wall-clock timers or the runtime images; the exact
+boundary is documented in
+[What the test clock controls](/examples/local-runner/#what-the-test-clock-controls).
+
+An SQS mapping's `FilterCriteria` is validated when the mapping is derived
+against the EventBridge pattern grammar Lambda documents
+([Lambda event filtering](https://docs.aws.amazon.com/lambda/latest/dg/invocation-eventfiltering.html),
+[EventBridge comparison operators](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-event-patterns-content-based-filtering.html)).
+A scalar where a rule list is required, an unknown operator (`wildcard` and
+`cidr` among them), a `numeric` list
+that is not the documented operator/number form, a non-boolean `exists`, a
+non-string `prefix`/`suffix`/`equals-ignore-case`, a malformed `anything-but`, a
+non-object `$or` entry, an empty list and a pattern over the documented
+4096-character maximum each refuse the plan with the mapping, the filter index
+and the offending key and value named. `exists` matches leaf nodes only, and
+`anything-but` supports the `prefix` and `suffix` object forms. If an accepted
+pattern still cannot be evaluated at delivery time, the deliverer reports the
+failure, leaves the whole batch for redelivery and deletes nothing.
+
+A FIFO mapping runs one receive loop locally: one batch per queue is in flight
+and message groups are not processed in parallel. AWS preserves per-group order
+while processing different groups concurrently; the local one-loop form
+preserves order at the cost of that parallelism.
+
+Shutdown drains in-flight deliveries for up to five seconds, then cancels and
+stops the deliverers.
 
 ## CloudFront distributions
 
@@ -863,8 +893,13 @@ result's context is carried to the handler as
 
 **SQS** — built from messages an ElasticMQ queue actually returned:
 `Records[].messageId`, `receiptHandle`, `body`, `md5OfBody`, the receive
-attributes, `messageAttributes`, `eventSource: "aws:sqs"`, `eventSourceARN` and
-`awsRegion`.
+attributes (including a FIFO record's `MessageGroupId`,
+`MessageDeduplicationId` and `SequenceNumber`), `messageAttributes` (always an
+object, empty when the message has none), an optional
+`md5OfMessageAttributes`, `eventSource: "aws:sqs"`, `eventSourceARN` (the
+CDK-resolved local queue ARN) and `awsRegion`. The shape is the standard and
+FIFO example in
+[Using Lambda with Amazon SQS](https://docs.aws.amazon.com/lambda/latest/dg/with-sqs.html#example-standard-queue-message-event).
 
 **DynamoDB Streams** — built from the stored item read back from DynamoDB
 Local: `Records[].eventID`, `eventName` (`INSERT`/`MODIFY`/`REMOVE`),

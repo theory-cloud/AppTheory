@@ -163,14 +163,14 @@
     "examples/cdk/import-pipeline/handlers/ingest/main.go": {
       "run": "import-ingest",
       "class": "L3",
-      "gap": "S3 → EventBridge delivery and CodeBuild; ingest runs on the DynamoDB Local jobs table and sends to ElasticMQ from a real s3proxy object.",
-      "description": "Import pipeline ingest handler: the CDK IngestRule EventBridge event is built from a real object written to s3proxy; the handler writes the job meta and three work messages that are read back from ElasticMQ."
+      "gap": "S3 → EventBridge delivery and CodeBuild; the WorkConsumer SQS mapping delivers automatically on ElasticMQ.",
+      "description": "Import pipeline ingest handler: the CDK IngestRule EventBridge event is built from a real object written to s3proxy; the handler writes the job meta and three work messages that the WorkConsumer mapping delivers to the worker and deletes."
     },
     "examples/cdk/import-pipeline/handlers/worker/main.go": {
       "run": "import-worker",
       "class": "L3",
-      "gap": "S3 → EventBridge delivery and CodeBuild; ingest and worker run end to end on the DynamoDB Local jobs table and ElasticMQ.",
-      "description": "Import pipeline worker handler: the full ingest → worker flow runs on the CDK jobs table; the three real work messages produce SUCCEEDED/FAILED records and a sanitized error envelope."
+      "gap": "S3 → EventBridge delivery and CodeBuild; the WorkConsumer SQS mapping delivers automatically on ElasticMQ.",
+      "description": "Import pipeline worker handler: the full ingest → worker flow runs on the CDK jobs table; the WorkConsumer mapping delivers the three real work messages automatically and they produce SUCCEEDED/FAILED records and a sanitized error envelope."
     },
     "examples/cdk/kinesis-cloudwatch-logs/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
@@ -228,9 +228,9 @@
     },
     "examples/cdk/lesser-parity/handlers/worker.mjs": {
       "run": "lesser-parity-worker",
-      "class": "L3",
-      "gap": "SQS event delivery; the worker is invoked with a generated SQS batch because this milestone has no SQS emulator.",
-      "description": "Lesser-parity queue worker: a generated two-record batch is processed and the invalid record is returned as a partial batch failure."
+      "class": "L2",
+      "gap": "ElasticMQ emulates SQS; IAM, KMS encryption and AWS-managed scaling are not emulated.",
+      "description": "Lesser-parity queue worker: two real ElasticMQ messages were delivered as the CDK mapping's batch; the handler returned the invalid record as its only partial failure, so exactly that message remained in the queue."
     },
     "examples/cdk/media-cdn/bin/app.ts": {
       "run": "media-cdn-gateway",
@@ -283,20 +283,20 @@
     "examples/cdk/multilang/handlers/go/main.go": {
       "run": "multilang-go",
       "class": "L3",
-      "gap": "WebSocket frames and managed event-source delivery; HTTP API v2, the Go-only REST v1 surface (including /sse), and the CDK SQS, DynamoDB stream and EventBridge events are verified.",
-      "description": "Multilang Go handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the Go REST API serves hello and all three buffered SSE events; three WebSocket APIs are reported not served; SQS, a DynamoDB stream record built from a real local write, and both EventBridge rules are invoked."
+      "gap": "WebSocket frames and DynamoDB Streams/EventBridge delivery; HTTP API v2, the Go-only REST v1 surface (including /sse), and automatic SQS delivery are verified.",
+      "description": "Multilang Go handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the Go REST API serves hello and all three buffered SSE events; three WebSocket APIs are reported not served; the CDK SQS mapping delivered a real message to the Go handler and deleted it; a DynamoDB stream record built from a real local write and both EventBridge rules are invoked."
     },
     "examples/cdk/multilang/handlers/py/handler.py": {
       "run": "multilang-py",
       "class": "L3",
-      "gap": "WebSocket frames and managed event-source delivery are not served; HTTP API v2 is verified for Python, while the REST v1 surface is defined only for the Go handler in this stack.",
-      "description": "Multilang Python handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the Go-only REST surface is also asserted."
+      "gap": "WebSocket frames and DynamoDB Streams/EventBridge delivery; HTTP API v2 and automatic SQS delivery are verified for Python, while the REST v1 surface is defined only for the Go handler in this stack.",
+      "description": "Multilang Python handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the CDK SQS mapping delivered a real message to the Python handler and deleted it; the Go-only REST surface is also asserted."
     },
     "examples/cdk/multilang/handlers/ts/handler.mjs": {
       "run": "multilang-ts",
       "class": "L3",
-      "gap": "WebSocket frames and managed event-source delivery are not served; HTTP API v2 is verified for TypeScript, while the REST v1 surface is defined only for the Go handler in this stack.",
-      "description": "Multilang TypeScript handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the Go-only REST surface is also asserted."
+      "gap": "WebSocket frames and DynamoDB Streams/EventBridge delivery; HTTP API v2 and automatic SQS delivery are verified for TypeScript, while the REST v1 surface is defined only for the Go handler in this stack.",
+      "description": "Multilang TypeScript handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the CDK SQS mapping delivered a real message to the TypeScript handler and deleted it; the Go-only REST surface is also asserted."
     },
     "examples/cdk/path-routed-frontend/bin/app.ts": {
       "run": "path-routed-gateway",
@@ -348,21 +348,21 @@
     },
     "examples/cdk/sqs-queue/handlers/dlq-handler.mjs": {
       "run": "sqs-dlq",
-      "class": "L3",
-      "gap": "Managed SQS event-source mapping; the message is redriven by ElasticMQ after maxReceiveCount and the handler is invoked with the message actually read from the DLQ.",
-      "description": "SQS DLQ handler: events-queue redrives a failing message to events-queue-dlq after five receives; dlq-handler.mjs processes the real dead-letter message and acknowledges it."
+      "class": "L2",
+      "gap": "ElasticMQ emulates SQS; IAM, KMS encryption and AWS-managed scaling are not emulated.",
+      "description": "SQS DLQ handler: the EventsConsumer mapping failed the real message five times on the test clock; ElasticMQ redrove it to events-queue-dlq after maxReceiveCount=5 and the DlqConsumer mapping delivered and deleted it."
     },
     "examples/cdk/sqs-queue/handlers/producer.mjs": {
       "run": "sqs-producer",
-      "class": "L3",
-      "gap": "Managed SQS event-source mapping; the producer sends to ElasticMQ through its real handler and the message is read back.",
-      "description": "SQS producer handler: the real producer sends through the AWS SQS SDK to ElasticMQ; the received message body and messageId match."
+      "class": "L2",
+      "gap": "ElasticMQ emulates SQS; IAM, KMS encryption and AWS-managed scaling are not emulated.",
+      "description": "SQS producer handler: the real producer sends through the AWS SQS SDK to ElasticMQ; the ContractConsumer mapping delivered the message to worker.handler and deleted it, with no manual receive or invoke."
     },
     "examples/cdk/sqs-queue/handlers/worker.mjs": {
       "run": "sqs-worker",
-      "class": "L3",
-      "gap": "Managed SQS event-source mapping (polling, visibility and deletion); two messages are received from ElasticMQ and invoked as the CDK mapping's batch.",
-      "description": "SQS worker handler: two real ElasticMQ messages are invoked as the CDK mapping's batch; worker.mjs reports only the simulated failure as a partial batch failure."
+      "class": "L2",
+      "gap": "ElasticMQ emulates SQS; IAM, KMS encryption and AWS-managed scaling are not emulated.",
+      "description": "SQS worker handler: the EventsConsumer mapping batched two real ElasticMQ messages on the 10s window and left only the reported failure; FilteredConsumer deleted a non-matching message without invocation; FifoConsumer kept a failed group's records in order; ConcurrencyConsumer's live peak stayed at MaximumConcurrency=2."
     },
     "examples/cdk/ssr-only-provided-assets-site/bin/app.ts": {
       "run": "ssr-only-gateway",

@@ -166,6 +166,23 @@ type EventSourceSpec struct {
 	ReportBatchItemFailures bool   `json:"reportBatchItemFailures,omitempty"`
 	Enabled                 bool   `json:"enabled"`
 	StartingPosition        string `json:"startingPosition,omitempty"`
+	// MaximumBatchingWindowInSeconds is how long the SQS poller gathers a batch
+	// before invoking the function. AWS documents 0 as the SQS default and 300
+	// as the maximum; a FIFO queue does not support a batching window.
+	MaximumBatchingWindowInSeconds int `json:"maximumBatchingWindowInSeconds,omitempty"`
+	// FilterCriteria is the mapping's FilterCriteria object, verbatim. AWS
+	// applies the patterns to the SQS record and its parsed body; a record that
+	// matches no filter is deleted without invoking the function.
+	FilterCriteria json.RawMessage `json:"filterCriteria,omitempty"`
+	// MaximumConcurrency is ScalingConfig.MaximumConcurrency for an SQS
+	// mapping: the per-mapping bound on concurrent batches (2..1000).
+	MaximumConcurrency int `json:"maximumConcurrency,omitempty"`
+	// FIFO, VisibilityTimeout and MaxReceiveCount describe the source queue. The
+	// deliverer reads the provisioned queue's attributes at start; these fields
+	// let plan and describe report the same configuration without a backend.
+	FIFO              bool `json:"fifo,omitempty"`
+	VisibilityTimeout int  `json:"visibilityTimeout,omitempty"`
+	MaxReceiveCount   int  `json:"maxReceiveCount,omitempty"`
 }
 
 // SubscriptionSpec is one CloudWatch Logs subscription filter. It is registered

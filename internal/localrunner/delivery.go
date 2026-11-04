@@ -148,6 +148,14 @@ type DeliveryState struct {
 	// Delivered and Failed count handler invocations the deliverer completed.
 	Delivered int64 `json:"delivered"`
 	Failed    int64 `json:"failed"`
+	// Inflight is the number of batches the deliverer is invoking right now;
+	// PeakInflight is the highest observed value. They make a mapping's
+	// MaximumConcurrency observable from session describe.
+	Inflight     int `json:"inflight"`
+	PeakInflight int `json:"peakInflight"`
+	// Left counts the records the deliverer left undeleted for redelivery, in
+	// total. A partial batch response or a failed invocation adds to it.
+	Left int64 `json:"left"`
 	// LastError is the last delivery error, empty after a success.
 	LastError string `json:"lastError,omitempty"`
 	Paused    bool   `json:"paused"`
@@ -194,6 +202,11 @@ type DeliveryReporter interface {
 	Failed(err error)
 	// SetPaused records whether delivery is paused.
 	SetPaused(paused bool)
+	// SetInflight records how many batches the deliverer is invoking now. The
+	// engine keeps the observed peak.
+	SetInflight(inflight int)
+	// Left records how many records the deliverer left for redelivery.
+	Left(count int)
 }
 
 // DelivererEnv is everything a deliverer receives from the engine.
@@ -212,6 +225,11 @@ type DelivererEnv struct {
 	InvokeTarget DeliverFunc
 	// State is the engine-owned reporting surface for this source.
 	State DeliveryReporter
+	// Concurrency is the engine's global invocation bound. A deliverer with
+	// its own per-mapping bound never exceeds it.
+	Concurrency int
+	// Logf writes one line to the run log.
+	Logf func(format string, args ...any)
 }
 
 // Deliverer is one source kind's delivery loop. E1b–E6 implement it. Start
@@ -437,6 +455,8 @@ func (e *DeliveryEngine) runSource(factory DelivererFactory, source DeliverySour
 		},
 		InvokeTarget: e.invoke,
 		State:        &sourceReporter{engine: e, id: source.ID},
+		Concurrency:  e.concurrency,
+		Logf:         e.logf,
 	}
 	if startErr := deliverer.Start(e.ctx, env); startErr != nil && !errors.Is(startErr, context.Canceled) {
 		e.fail(source.ID, startErr)
@@ -639,6 +659,28 @@ func (r *sourceReporter) SetPaused(paused bool) {
 		state.Paused = paused
 		if paused {
 			state.State = DeliveryPhasePaused
+		}
+	}
+}
+
+func (r *sourceReporter) Left(count int) {
+	if count <= 0 {
+		return
+	}
+	r.engine.mu.Lock()
+	defer r.engine.mu.Unlock()
+	if state := r.engine.states[r.id]; state != nil {
+		state.Left += int64(count)
+	}
+}
+
+func (r *sourceReporter) SetInflight(inflight int) {
+	r.engine.mu.Lock()
+	defer r.engine.mu.Unlock()
+	if state := r.engine.states[r.id]; state != nil {
+		state.Inflight = inflight
+		if inflight > state.PeakInflight {
+			state.PeakInflight = inflight
 		}
 	}
 }

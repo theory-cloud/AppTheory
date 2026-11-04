@@ -132,6 +132,62 @@ func TestDeriveEventSourceMappingsAndRules(t *testing.T) {
 	}
 }
 
+func TestDeriveEventSourceMappingRejectsMalformedFilterPattern(t *testing.T) {
+	cases := []struct {
+		name    string
+		pattern string
+		key     string
+		value   string
+	}{
+		{
+			name:    "numeric operator without a number",
+			pattern: `{"body":{"amount":[{"numeric":[">"]}]}}`,
+			key:     "body.amount[0].numeric",
+			value:   `[">"]`,
+		},
+		{
+			name:    "scalar where a rule list is required",
+			pattern: `{"exists":"yes"}`,
+			key:     "exists",
+			value:   `"yes"`,
+		},
+		{
+			name:    "unknown operator",
+			pattern: `{"body":{"kind":[{"anyting-but":["x"]}]}}`,
+			key:     "body.kind[0].anyting-but",
+			value:   `["x"]`,
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			resources := eventSourceResources()
+			mapping := mustMap(t, resources["SqsMap"])
+			properties := mustMap(t, mapping["Properties"])
+			properties["FilterCriteria"] = map[string]any{
+				"Filters": []any{map[string]any{"Pattern": testCase.pattern}},
+			}
+			dir := writeAssembly(t, resources)
+			mkdirAsset(t, dir)
+			_, err := deriveAssembly(t, dir)
+			if err == nil {
+				t.Fatalf("pattern %s must be refused at derive time", testCase.pattern)
+			}
+			var unsupportedErr *UnsupportedError
+			if !errors.As(err, &unsupportedErr) {
+				t.Fatalf("pattern %s must report a named unsupported error, got %T: %v", testCase.pattern, err, err)
+			}
+			if unsupportedErr.Construct != "SqsMap" {
+				t.Fatalf("the refusal must name the mapping: %+v", unsupportedErr)
+			}
+			for _, want := range []string{"filter 1", testCase.key, testCase.value} {
+				if !strings.Contains(unsupportedErr.Reason, want) {
+					t.Fatalf("refusal %q does not name %q", unsupportedErr.Reason, want)
+				}
+			}
+		})
+	}
+}
+
 func TestDeriveUnsupportedEventSourceIsReported(t *testing.T) {
 	resources := eventSourceResources()
 	resources["Topic"] = map[string]any{"Type": "AWS::SNS::Topic", "Properties": map[string]any{}}

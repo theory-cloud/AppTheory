@@ -7,6 +7,7 @@ import {
 import * as cdk from "aws-cdk-lib";
 import type { StackProps } from "aws-cdk-lib";
 import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as lambdaEventSources from "aws-cdk-lib/aws-lambda-event-sources";
 import type { Construct } from "constructs";
 
 /**
@@ -46,6 +47,23 @@ export class SqsQueueStack extends cdk.Stack {
 
         // Grant producer permission to send messages
         contractQueue.grantSendMessages(producerFn);
+
+        // A consumer makes the producer's real send observable end to end:
+        // the harness invokes producer.handler and asserts that the mapping
+        // delivered and deleted the message it sent (no manual receive).
+        const producerWorkerFn = new lambda.Function(this, "ProducerWorkerFn", {
+            runtime: lambda.Runtime.NODEJS_24_X,
+            handler: "worker.handler",
+            code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers")),
+            timeout: cdk.Duration.seconds(30),
+            description: "Consumer for the contract queue the producer writes to",
+        });
+        new AppTheoryQueueConsumer(this, "ContractConsumer", {
+            queue: contractQueue.queue,
+            consumer: producerWorkerFn,
+            batchSize: 10,
+            reportBatchItemFailures: true,
+        });
 
         // ========================================================================
         // Pattern 2: Queue + Consumer (Composable)
@@ -94,6 +112,49 @@ export class SqsQueueStack extends cdk.Stack {
                 batchSize: 1, // Process one at a time for investigation
             });
         }
+
+        // ========================================================================
+        // Filter criteria and FIFO: the local runner evaluates FilterCriteria
+        // as Lambda does (non-matching messages are deleted without invoking
+        // the function) and processes one in-flight batch per FIFO group.
+        // ========================================================================
+
+        const filteredQueue = new AppTheoryQueue(this, "FilteredQueue", {
+            queueName: "filtered-events",
+            enableDlq: false,
+            visibilityTimeout: cdk.Duration.minutes(5),
+        });
+        workerFn.addEventSource(new lambdaEventSources.SqsEventSource(filteredQueue.queue, {
+            batchSize: 10,
+            reportBatchItemFailures: true,
+            filters: [{ pattern: JSON.stringify({ body: { kind: ["keep"] } }) }],
+        }));
+
+        const fifoQueue = new AppTheoryQueue(this, "FifoQueue", {
+            queueName: "fifo-events",
+            fifo: true,
+            enableDlq: false,
+            visibilityTimeout: cdk.Duration.minutes(5),
+        });
+        workerFn.addEventSource(new lambdaEventSources.SqsEventSource(fifoQueue.queue, {
+            batchSize: 10,
+            reportBatchItemFailures: true,
+        }));
+
+        // ========================================================================
+        // Maximum concurrency: one message per batch and two concurrent
+        // batches, observed through the delivery engine's live in-flight count.
+        // ========================================================================
+
+        const concurrencyQueue = new AppTheoryQueue(this, "ConcurrencyQueue", {
+            queueName: "concurrency-events",
+            enableDlq: false,
+        });
+        workerFn.addEventSource(new lambdaEventSources.SqsEventSource(concurrencyQueue.queue, {
+            batchSize: 1,
+            maxConcurrency: 2,
+            reportBatchItemFailures: true,
+        }));
 
         // ========================================================================
         // Pattern 3: Processor (Combined)

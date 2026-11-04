@@ -39,35 +39,37 @@ func (r *Runner) RunSession(ctx context.Context, in io.Reader, out io.Writer) er
 }
 
 type sessionRequest struct {
-	Op                  string               `json:"op"`
-	Function            string               `json:"function,omitempty"`
-	Event               json.RawMessage      `json:"event,omitempty"`
-	Queue               string               `json:"queue,omitempty"`
-	Body                string               `json:"body,omitempty"`
-	MessageAttributes   map[string]string    `json:"messageAttributes,omitempty"`
-	Max                 int                  `json:"max,omitempty"`
-	WaitSeconds         int                  `json:"waitSeconds,omitempty"`
-	VisibilitySeconds   int                  `json:"visibilitySeconds,omitempty"`
-	Delete              bool                 `json:"delete,omitempty"`
-	Table               string               `json:"table,omitempty"`
-	Item                map[string]any       `json:"item,omitempty"`
-	Key                 map[string]any       `json:"key,omitempty"`
-	EventName           string               `json:"eventName,omitempty"`
-	Bucket              string               `json:"bucket,omitempty"`
-	ObjectKey           string               `json:"objectKey,omitempty"`
-	ContentType         string               `json:"contentType,omitempty"`
-	Rule                string               `json:"rule,omitempty"`
-	Detail              json.RawMessage      `json:"detail,omitempty"`
-	Source              string               `json:"source,omitempty"`
-	DetailType          string               `json:"detailType,omitempty"`
-	Stream              string               `json:"stream,omitempty"`
-	LogGroup            string               `json:"logGroup,omitempty"`
-	LogStream           string               `json:"logStream,omitempty"`
-	SubscriptionFilters []string             `json:"subscriptionFilters,omitempty"`
-	LogEvents           []CloudWatchLogEvent `json:"logEvents,omitempty"`
-	Data                []string             `json:"data,omitempty"`
-	PartitionKeys       []string             `json:"partitionKeys,omitempty"`
-	SequenceNumbers     []string             `json:"sequenceNumbers,omitempty"`
+	Op                     string               `json:"op"`
+	Function               string               `json:"function,omitempty"`
+	Event                  json.RawMessage      `json:"event,omitempty"`
+	Queue                  string               `json:"queue,omitempty"`
+	Body                   string               `json:"body,omitempty"`
+	MessageAttributes      map[string]string    `json:"messageAttributes,omitempty"`
+	MessageGroupID         string               `json:"messageGroupId,omitempty"`
+	MessageDeduplicationID string               `json:"messageDeduplicationId,omitempty"`
+	Max                    int                  `json:"max,omitempty"`
+	WaitSeconds            int                  `json:"waitSeconds,omitempty"`
+	VisibilitySeconds      int                  `json:"visibilitySeconds,omitempty"`
+	Delete                 bool                 `json:"delete,omitempty"`
+	Table                  string               `json:"table,omitempty"`
+	Item                   map[string]any       `json:"item,omitempty"`
+	Key                    map[string]any       `json:"key,omitempty"`
+	EventName              string               `json:"eventName,omitempty"`
+	Bucket                 string               `json:"bucket,omitempty"`
+	ObjectKey              string               `json:"objectKey,omitempty"`
+	ContentType            string               `json:"contentType,omitempty"`
+	Rule                   string               `json:"rule,omitempty"`
+	Detail                 json.RawMessage      `json:"detail,omitempty"`
+	Source                 string               `json:"source,omitempty"`
+	DetailType             string               `json:"detailType,omitempty"`
+	Stream                 string               `json:"stream,omitempty"`
+	LogGroup               string               `json:"logGroup,omitempty"`
+	LogStream              string               `json:"logStream,omitempty"`
+	SubscriptionFilters    []string             `json:"subscriptionFilters,omitempty"`
+	LogEvents              []CloudWatchLogEvent `json:"logEvents,omitempty"`
+	Data                   []string             `json:"data,omitempty"`
+	PartitionKeys          []string             `json:"partitionKeys,omitempty"`
+	SequenceNumbers        []string             `json:"sequenceNumbers,omitempty"`
 	// Duration is a Go duration for clock.advance, for example "90m".
 	Duration string `json:"duration,omitempty"`
 }
@@ -179,6 +181,8 @@ func (s *localSession) execute(ctx context.Context, request sessionRequest) (any
 		return s.sqsReceive(ctx, request, false)
 	case "sqs.event":
 		return s.sqsReceive(ctx, request, true)
+	case "sqs.attributes":
+		return s.sqsAttributes(ctx, request)
 	case "ddb.put":
 		return s.ddbPut(ctx, request)
 	case "ddb.get":
@@ -417,6 +421,12 @@ func (s *localSession) sqsSend(ctx context.Context, request sessionRequest) (any
 		QueueUrl:    aws.String(queueURL),
 		MessageBody: aws.String(request.Body),
 	}
+	if request.MessageGroupID != "" {
+		input.MessageGroupId = aws.String(request.MessageGroupID)
+	}
+	if request.MessageDeduplicationID != "" {
+		input.MessageDeduplicationId = aws.String(request.MessageDeduplicationID)
+	}
 	if len(request.MessageAttributes) > 0 {
 		attributes := map[string]sqstypes.MessageAttributeValue{}
 		for name, value := range request.MessageAttributes {
@@ -430,6 +440,40 @@ func (s *localSession) sqsSend(ctx context.Context, request sessionRequest) (any
 		return nil, err
 	}
 	return map[string]any{"messageId": aws.ToString(sent.MessageId)}, nil
+}
+
+// sqsAttributes reads one queue's counts and attributes. It asks for All
+// because the pinned ElasticMQ returns an empty map for a named subset.
+// ApproximateNumberOfMessagesNotVisible is how the harness observes a message
+// that a deliverer received and has not deleted.
+func (s *localSession) sqsAttributes(ctx context.Context, request sessionRequest) (any, error) {
+	client, queueURL, name, arn, err := s.queue(request.Queue)
+	if err != nil {
+		return nil, err
+	}
+	output, err := client.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
+		QueueUrl:       aws.String(queueURL),
+		AttributeNames: []sqstypes.QueueAttributeName{sqstypes.QueueAttributeNameAll},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"name":       name,
+		"arn":        arn,
+		"visible":    queueAttributeCount(output.Attributes, string(sqstypes.QueueAttributeNameApproximateNumberOfMessages)),
+		"notVisible": queueAttributeCount(output.Attributes, string(sqstypes.QueueAttributeNameApproximateNumberOfMessagesNotVisible)),
+		"delayed":    queueAttributeCount(output.Attributes, string(sqstypes.QueueAttributeNameApproximateNumberOfMessagesDelayed)),
+		"attributes": output.Attributes,
+	}, nil
+}
+
+func queueAttributeCount(attributes map[string]string, name string) int {
+	count, err := strconv.Atoi(strings.TrimSpace(attributes[name]))
+	if err != nil {
+		return 0
+	}
+	return count
 }
 
 func receiveSQSMessages(ctx context.Context, client *sqs.Client, queueURL string, limit, waitSeconds, visibilitySeconds int) ([]sqstypes.Message, error) {
