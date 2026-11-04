@@ -135,6 +135,9 @@ type Runner struct {
 	// s3Notifications watches the buckets that declare notification
 	// configurations and dispatches the observed changes.
 	s3Notifications *s3NotificationSupervisor
+	// webSocketManagement serves the @connections API for every WebSocket API
+	// the run serves; it is nil when the assembly declares none.
+	webSocketManagement *webSocketManagement
 }
 
 // NewRunner validates the options and prepares the run. It contacts no Docker
@@ -590,6 +593,9 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 	if err = r.startCognitoIssuer(ctx, spec); err != nil {
 		return nil, err
 	}
+	if err = r.startWebSocketManagement(ctx, spec); err != nil {
+		return nil, err
+	}
 	if err = r.resolveEnvironment(spec, targets); err != nil {
 		return nil, err
 	}
@@ -611,6 +617,44 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 		return nil, err
 	}
 	return spec, nil
+}
+
+// startWebSocketManagement starts the @connections management API when the
+// assembly declares a WebSocket API. Every function then receives its endpoint
+// as the API Gateway Management API endpoint and the CA it must trust.
+func (r *Runner) startWebSocketManagement(ctx context.Context, spec *Spec) error {
+	if len(spec.WebSockets) == 0 {
+		return nil
+	}
+	management, err := newWebSocketManagement(r.scratch, r.logf)
+	if err != nil {
+		return err
+	}
+	if err := management.start(ctx); err != nil {
+		return err
+	}
+	r.webSocketManagement = management
+	return nil
+}
+
+// webSocketDomainName is the host:port a WebSocket event reports in
+// requestContext.domainName. It is the management endpoint's container-facing
+// address, so a handler that builds the management client from the request
+// context reaches the local endpoint without any other configuration.
+func (r *Runner) webSocketDomainName() string {
+	if r.webSocketManagement == nil {
+		return ""
+	}
+	return strings.TrimPrefix(r.webSocketManagement.ContainerURL, "https://")
+}
+
+// webSocketCertificateMounts mounts the management CA into a function container
+// so its SDK client trusts the loopback TLS endpoint.
+func (r *Runner) webSocketCertificateMounts() []string {
+	if r.webSocketManagement == nil {
+		return nil
+	}
+	return []string{r.webSocketManagement.certificatePath + ":" + webSocketManagementCACertPath + ":ro"}
 }
 
 // startEventBridgeBus serves the EventBridge PutEvents JSON protocol for the
@@ -803,6 +847,9 @@ func (r *Runner) cleanupFunc() func() {
 				r.logf("delivery engine shutdown: %v", err)
 			}
 			cancel()
+		}
+		if r.webSocketManagement != nil {
+			r.webSocketManagement.close()
 		}
 		for _, listener := range r.listeners {
 			_ = listener.Close() //nolint:errcheck // shutting down the run's own listeners
@@ -1014,7 +1061,7 @@ func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image
 		Env:      env,
 		AddHosts: r.options.AddHosts,
 		MemoryMB: function.MemoryMB,
-		Mounts:   []string{codeDir + ":/var/task:ro"},
+		Mounts:   append([]string{codeDir + ":/var/task:ro"}, r.webSocketCertificateMounts()...),
 		Publish:  riePort,
 		Labels:   r.labels(),
 		Detach:   true,
@@ -1041,6 +1088,7 @@ func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image
 	return nil
 }
 
+//nolint:gocyclo // one explicit branch per supported provider value.
 func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 	targets := append([]APISpec(nil), spec.HTTPAPIs()...)
 	for _, url := range spec.FunctionURLs {
@@ -1062,8 +1110,10 @@ func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 	for id, process := range r.invokers {
 		invokers[id] = process
 	}
-	for index, target := range targets {
-		listener, err := r.listen(ctx, index)
+	listenerIndex := 0
+	for _, target := range targets {
+		listener, err := r.listen(ctx, listenerIndex)
+		listenerIndex++
 		if err != nil {
 			return fmt.Errorf("bind %s listener: %w", target.LogicalID, err)
 		}
@@ -1083,7 +1133,37 @@ func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 		}()
 		r.logf("serving %s %s at %s", target.Class, target.LogicalID, r.apiURLs[target.LogicalID])
 	}
-	for index, distribution := range spec.ServableCloudFront() {
+	for _, api := range spec.WebSockets {
+		listener, err := r.listen(ctx, listenerIndex)
+		listenerIndex++
+		if err != nil {
+			return fmt.Errorf("bind websocket %s listener: %w", api.LogicalID, err)
+		}
+		server := &http.Server{
+			Handler: &WebSocketServer{
+				API:        api,
+				Invokers:   invokers,
+				Clock:      r.clock,
+				Semaphore:  r.semaphore,
+				Management: r.webSocketManagement,
+				Logf:       r.logf,
+				Now:        r.now,
+				DomainName: r.webSocketDomainName(),
+			},
+			ReadHeaderTimeout: 10 * time.Second,
+			IdleTimeout:       60 * time.Second,
+		}
+		r.listeners = append(r.listeners, listener)
+		r.servers = append(r.servers, server)
+		r.apiURLs[api.LogicalID] = "ws://" + listener.Addr().String() + "/" + api.Stage
+		go func(apiID string, server *http.Server, listener net.Listener) {
+			if serveErr := server.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+				r.logf("websocket listener for %s stopped: %v", apiID, serveErr)
+			}
+		}(api.LogicalID, server, listener)
+		r.logf("serving %s %s at %s", api.Class, api.LogicalID, r.apiURLs[api.LogicalID])
+	}
+	for _, distribution := range spec.ServableCloudFront() {
 		executor := localcloudfront.NewExecutor()
 		if distributionHasFunctions(distribution) {
 			if err := executor.Available(); err != nil {
@@ -1094,7 +1174,8 @@ func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 		if err != nil {
 			return err
 		}
-		listener, err := r.listen(ctx, len(targets)+index)
+		listener, err := r.listen(ctx, listenerIndex)
+		listenerIndex++
 		if err != nil {
 			return fmt.Errorf("bind cloudfront %s listener: %w", distribution.LogicalID, err)
 		}

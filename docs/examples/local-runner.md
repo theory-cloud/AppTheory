@@ -286,6 +286,9 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
      and the CDK asset directory (or inline `Code.ZipFile`);
    - `AWS::ApiGatewayV2::Api` (`ProtocolType: HTTP`), routes and proxy
      integrations;
+   - `AWS::ApiGatewayV2::Api` (`ProtocolType: WEBSOCKET`), its route selection
+     expression, its `$connect`/`$disconnect`/`$default` and custom routes, and
+     a `$connect` REQUEST authorizer;
    - `AWS::ApiGateway::RestApi`, its resource tree, methods and stage;
    - `AWS::Lambda::Url` Function URLs;
    - `AWS::Logs::SubscriptionFilter`, its log group and its destination (a
@@ -306,9 +309,8 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
      cache, origin request and response headers policies and origin access
      controls it references. A distribution property the gateway cannot route or
      render faithfully is reported, and the distribution is refused.
-   A WebSocket API is listed under `skipped`; it does not stop an app that also
-   has HTTP or REST routes. A REST `MOCK` integration is served from the
-   status and headers the template declares (CDK uses it for CORS preflight).
+   A REST `MOCK` integration is served from the status and headers the template
+   declares (CDK uses it for CORS preflight).
 3. **Resolve images.** The profile's digest-pinned image for each served
    function's runtime is selected before any container starts. A missing image
    class or a tag that is not pinned by digest fails here, after synthesis.
@@ -532,6 +534,71 @@ provisioned secret the wave-1 deterministic placeholder is kept unchanged.
   record/HTTP shapes itself; the envelope encoding, the `UnsubscribeURL`
   placeholder and the FIFO ids are documented under
   [SNS subscription delivery](#sns-subscription-delivery).
+
+## WebSocket APIs
+
+An `AWS::ApiGatewayV2::Api` with `ProtocolType: WEBSOCKET` is served as a real
+WebSocket listener on its own loopback URL. The listener speaks RFC 6455: the
+handshake, masked client frames, fragmented messages, ping/pong and the close
+handshake. Its URL is `ws://127.0.0.1:<port>/<stage>`.
+
+**Routes.** `plan` prints the API's route table: `$connect`, `$disconnect`,
+`$default` and every custom route key the template declares. A text message is
+routed by the API's `RouteSelectionExpression` (default
+`$request.body.action`): the expression's field is read from the JSON body and
+matched against the route keys. A message that is not JSON, has no such field,
+or selects no declared route goes to `$default`; an API with no `$default` route
+drops it. `$connect` and `$disconnect` are one-way; `$default` and custom routes
+are two-way, so a 2xx integration response body is sent back to the client.
+
+**The event.** Each invocation receives the documented WebSocket proxy event:
+`requestContext.routeKey`, `eventType` (`CONNECT`/`DISCONNECT`/`MESSAGE`),
+`messageId` (messages), `connectionId`, `connectedAt`, `requestId`,
+`extendedRequestId`, `requestTime`, `requestTimeEpoch`, `messageDirection`,
+`identity.sourceIp`/`identity.userAgent`, `stage`, `domainName` and `apiId`,
+plus `body` and `isBase64Encoded`. A `$disconnect` event also carries
+`requestContext.disconnectReason`: `CLIENT_INITIATED_DISCONNECT` when the client
+closed, `INTERNAL_ERROR` when the server closed the connection.
+
+**The `$connect` authorizer.** A `REQUEST` Lambda authorizer on `$connect` runs
+during the handshake, before the `$connect` integration. It receives the
+documented authorizer event (`type: "REQUEST"`, `methodArn` ending in
+`/<stage>/$connect`, headers, multi-value headers, query parameters and
+`requestContext`) and returns an IAM policy. The runner applies the narrow
+Allow/Deny match docs/125 permits: each statement's `Action` must be
+`execute-api:Invoke` (or `*`) and its `Resource` must match the `$connect`
+method ARN with IAM-style `*`/`?` wildcards; an explicit Deny wins, and no
+matching Allow refuses the connection with 401. This is an authorizer-policy
+match, never IAM evaluation, which stays a docs/125 true limit. A request that
+does not carry every configured identity source is refused before the authorizer
+runs. Only `$connect` can be authorized; an authorizer on another route fails
+closed at plan time. Lambda authorizers that return a policy for REST or HTTP
+API routes are R2b.
+
+**The `@connections` management API.** The runner serves
+`PostToConnection`, `GetConnection` and `DeleteConnection` on a loopback TLS
+listener (`POST`/`GET`/`DELETE /{connectionId}`). The endpoint is injected into
+every function as the API Gateway Management API endpoint override
+(`AWS_ENDPOINT_URL_APIGATEWAYMANAGEMENTAPI`), and the event's
+`requestContext.domainName` is the container-facing host of that listener, so a
+handler that builds the client from the request context reaches it unchanged.
+The listener uses a self-signed certificate generated per run; its PEM is
+mounted at `/var/task/.apptheory-local-ca.pem` and exported as `AWS_CA_BUNDLE`,
+`NODE_EXTRA_CA_CERTS` and `SSL_CERT_FILE` for the Go, Node and Python SDKs. A
+closed or unknown connection answers the documented `410 {"message":"Gone"}`.
+`session describe` reports the loopback `managementEndpoint`, the CA path and
+the live connection count.
+
+**Lifecycle.** API Gateway closes an idle connection after 10 minutes and a
+connection at the 2-hour maximum lifetime, with close code 1001; the runner
+takes both from the run clock, so `--clock test` plus `clock.advance` closes
+them deterministically. A binary frame is refused with 1003 (API Gateway does
+not support binary media types) and a message over 128 KB with 1009. When the
+runner closes a connection it invokes `$disconnect` with `INTERNAL_ERROR`; a
+client close invokes it with `CLIENT_INITIATED_DISCONNECT`.
+
+Custom domains, IAM authorization and a REST-style Lambda authorizer on a
+WebSocket route are not served; they fail closed.
 
 ## CloudFront distributions
 
@@ -1588,11 +1655,11 @@ the harness records it.
 | Delivery engine and test clock | Supported | `run` and `session` start the engine; `plan` and `session describe` report per-source state, including an SNS subscription's `filtered` count. SQS batching windows, visibility deadlines, schedules, TTL expiry and the SNS FIFO deduplication window take their time from `--clock test[=<RFC3339>]`; the `clock.now`/`clock.advance` session commands read and move it. ElasticMQ's and moto's own wall-clock timers and the runtime images are not slowed. `--delivery-concurrency` bounds concurrent deliveries (default 4); an SQS mapping's `MaximumConcurrency` bounds its batches within that. |
 | Deploy-time Secrets Manager dynamic references | Supported | A `{{resolve:secretsmanager:…}}` environment value resolves to the provisioned secret's value (the same JSON key) when the assembly declares that secret, and otherwise keeps the wave-1 deterministic local placeholder. The session's `describe` returns it to the harness; `run` and `plan` never print it. No secret is created in a cloud. |
 | Other emulators | Endpoint injection only | Pass `--endpoint service=url` and `--add-host name=address`; the profile names the environment variables. The checked-in profile binds `ssm`, `secretsmanager`, `sns`, `kinesis` and `cognito-idp` to moto, and `kms`/`sts` as before. |
-| WebSocket APIs | Reported, not served | A WebSocket API is listed under `skipped` with its reason, and an app with no HTTP route, Function URL, event source or rule fails with that list. Its `$connect`/`$disconnect`/`$default` routes are not invoked. |
+| WebSocket APIs (`AWS::ApiGatewayV2::Api`, WEBSOCKET) | Served (L2) | A real RFC 6455 listener serves `$connect`, `$disconnect`, `$default` and custom routes selected by the route selection expression, with the documented proxy event, two-way route responses, the `$connect` policy authorizer, the `@connections` management API and the documented idle/lifetime close; see [WebSocket APIs](#websocket-apis). No custom domains and no IAM authorization. |
 | CloudFront distributions and CloudFront Functions | Served (L2) | The distribution is served on its own loopback URL. Cache behaviors, allowed methods, viewer-request/viewer-response functions, origin request policies and response headers policies are applied; the generated function code runs in a restricted Node sandbox. S3 origins read the app's deployments from s3proxy, Function URL origins invoke the real handler container, and origin groups fail over with CloudFront's rules. No caching, no edge network, no TLS. |
 | REST `MOCK` integrations | Supported (L1) | The transport returns the `IntegrationResponses` status and headers the template declares and invokes no function. CDK emits these for CORS preflight. |
 | HTTP API `REQUEST` authorizers with simple responses | Supported | The transport invokes the real authorizer function with the API Gateway v2 REQUEST event, carrying every configured `$request.header.*` or `$request.querystring.*` identity source in order; a request missing one is refused with 401 before the authorizer runs. A false `isAuthorized` is a 401, the authorizer context is carried to the handler, and a malformed response fails closed. `$context`/`$stageVariables` sources fail closed at plan time. |
-| Other authorizers (REST, JWT, non-simple responses) | Not served | Fails closed; the local transport must never bypass a real authorizer. |
+| Other authorizers (REST, JWT, non-simple responses) | Not served | Fails closed; the local transport must never bypass a real authorizer. A WebSocket `$connect` authorizer's policy is matched narrowly against the `$connect` method ARN (see [WebSocket APIs](#websocket-apis)). |
 | Lambda layers, container-image functions | Not served | Fail closed when a served function needs them. |
 | CloudFormation-expression environment values | Supported for `Ref`/`Fn::GetAtt`/`Fn::Join` | Tables and stream ARNs, queues, rules, buckets, KMS keys and aliases, SSM parameters, Secrets Manager ARNs, SNS topics, Kinesis streams, Cognito pool/client values, IAM/MicroVM-image/S3 Vectors ARNs and functions resolve to local values (moto/S3 require their backend). An unsupported expression fails with the function and variable named. |
 | CloudFormation-expression `MemorySize`/`Timeout` | Not resolved | A served function whose limit is `Ref`/`GetAtt`/`Fn::If` fails with the property named; the AWS defaults apply only when the property is absent. |
@@ -1606,8 +1673,14 @@ the harness records it.
 - **Streaming is buffered.** A handler that streams is not incremental under the
   Runtime Interface Emulator. Tests can assert the complete bytes and the status
   and headers, never the timing of individual chunks.
-- **WebSocket events** are not delivered. A WebSocket API is reported as not
-  served; its routes are never invoked.
+- **WebSocket domains and IAM authorization** are out of scope. The API is
+  served on a loopback `ws://` URL, so a custom domain name and its certificate
+  are not modelled; `AWS_IAM` route authorization and REST-style Lambda
+  authorizers on WebSocket routes fail closed. The `@connections` management
+  endpoint is TLS with a per-run self-signed certificate, which the runner
+  mounts into the function containers; a client outside those containers must
+  trust that certificate to call it. Binary media types are refused with 1003,
+  as API Gateway documents.
 - **CloudFront is an edge-path gateway, not an emulator.** The distribution's
   cache behavior, generated CloudFront Functions, edge policies and origins are
   applied, but there is no cache, no edge network, no TLS and no viewer protocol
@@ -1638,7 +1711,10 @@ the harness records it.
   `$request.querystring.*` identity source in order, and a request missing one
   is refused with 401 before the authorizer runs. REST, JWT and IAM authorizers,
   and `$context`/`$stageVariables` identity sources, fail closed rather than
-  bypassing a real authorization decision.
+  bypassing a real authorization decision. A WebSocket `$connect` authorizer's
+  returned policy is matched narrowly against the `$connect` method ARN (see
+  [WebSocket APIs](#websocket-apis)); Lambda authorizers that return a policy
+  for HTTP or REST routes are R2b.
 - **IAM policy evaluation** remains a docs/125 true limit. SSM parameters,
   Secrets Manager secrets and their resource policies, SNS topic policies,
   Cognito user pools and KMS keys are provisioned, but a policy attached to

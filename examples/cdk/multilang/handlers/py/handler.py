@@ -1,3 +1,4 @@
+import json as jsonlib
 import os
 
 from apptheory import (
@@ -216,8 +217,16 @@ def build_app():
             },
         )
 
+    ws_disconnects = []
+
     def ws_disconnect(ctx):
         ws = ctx.as_websocket()
+        ws_disconnects.append(
+            {
+                "connection_id": ws.connection_id if ws else "",
+                "route_key": ws.route_key if ws else "",
+            }
+        )
         return json(
             200,
             {
@@ -227,28 +236,72 @@ def build_app():
                 "route_key": ws.route_key if ws else "",
                 "connection_id": ws.connection_id if ws else "",
                 "request_id": ws.request_id if ws else ctx.request_id,
+            },
+        )
+
+    def ws_disconnects_view(ctx):  # noqa: ARG001
+        return json(200, {"events": list(ws_disconnects)})
+
+    def ws_chat(ctx):
+        ws = ctx.as_websocket()
+        message = {}
+        if ctx.request.body:
+            try:
+                message = jsonlib.loads(ctx.request.body.decode("utf-8"))
+            except ValueError:
+                message = {}
+        return json(
+            200,
+            {
+                "ok": True,
+                "lang": lang,
+                "name": name,
+                "route_key": ws.route_key if ws else "",
+                "connection_id": ws.connection_id if ws else "",
+                "echo": str(message.get("message", "")),
             },
         )
 
     def ws_default(ctx):
         ws = ctx.as_websocket()
+        command = {}
+        if ctx.request.body:
+            try:
+                command = jsonlib.loads(ctx.request.body.decode("utf-8"))
+            except ValueError:
+                command = {}
+        response = {
+            "ok": True,
+            "lang": lang,
+            "name": name,
+            "route_key": ws.route_key if ws else "",
+            "connection_id": ws.connection_id if ws else "",
+            "management_endpoint": ws.management_endpoint if ws else "",
+            "request_id": ws.request_id if ws else ctx.request_id,
+        }
+        if command.get("cmd") == "get" and ws:
+            # boto3 is imported lazily: the Lambda Python image provides it, and
+            # a host-side handler test imports this module without it. boto3
+            # resolves the endpoint from the request context, so a handler that
+            # never reads the environment still reaches the local @connections
+            # API.
+            import boto3  # noqa: PLC0415
+
+            client = boto3.client("apigatewaymanagementapi", endpoint_url=ws.management_endpoint)
+            connection = client.get_connection(ConnectionId=ws.connection_id)
+            response["connection"] = {
+                "connected_at": int(connection.get("ConnectedAt").timestamp() * 1000),
+                "last_active_at": int(connection.get("LastActiveAt").timestamp() * 1000),
+            }
+            return json(200, response)
         if ws:
             ws.send_json_message({"ok": True, "lang": lang, "name": name})
-        return json(
-            200,
-            {
-                "ok": True,
-                "lang": lang,
-                "name": name,
-                "route_key": ws.route_key if ws else "",
-                "connection_id": ws.connection_id if ws else "",
-                "management_endpoint": ws.management_endpoint if ws else "",
-                "request_id": ws.request_id if ws else ctx.request_id,
-            },
-        )
+        return json(200, response)
 
     app.websocket("$connect", ws_connect)
     app.websocket("$disconnect", ws_disconnect)
+    app.get("/ws-disconnects", ws_disconnects_view)
+    app.websocket("chat", ws_chat)
     app.websocket("$default", ws_default)
 
     return app

@@ -109,11 +109,12 @@ type httpAPIProperties struct {
 }
 
 type httpRouteProperties struct {
-	APIID             json.RawMessage `json:"ApiId"`
-	RouteKey          string          `json:"RouteKey"`
-	AuthorizationType string          `json:"AuthorizationType"`
-	AuthorizerID      json.RawMessage `json:"AuthorizerId"`
-	Target            json.RawMessage `json:"Target"`
+	APIID               json.RawMessage `json:"ApiId"`
+	RouteKey            string          `json:"RouteKey"`
+	AuthorizationType   string          `json:"AuthorizationType"`
+	AuthorizerID        json.RawMessage `json:"AuthorizerId"`
+	AuthorizationScopes []string        `json:"AuthorizationScopes"`
+	Target              json.RawMessage `json:"Target"`
 }
 
 type httpIntegrationProperties struct {
@@ -138,12 +139,13 @@ type restResourceProperties struct {
 }
 
 type restMethodProperties struct {
-	RestAPIID         json.RawMessage `json:"RestApiId"`
-	ResourceID        json.RawMessage `json:"ResourceId"`
-	HTTPMethod        string          `json:"HttpMethod"`
-	AuthorizationType string          `json:"AuthorizationType"`
-	AuthorizerID      json.RawMessage `json:"AuthorizerId"`
-	Integration       struct {
+	RestAPIID           json.RawMessage `json:"RestApiId"`
+	ResourceID          json.RawMessage `json:"ResourceId"`
+	HTTPMethod          string          `json:"HttpMethod"`
+	AuthorizationType   string          `json:"AuthorizationType"`
+	AuthorizerID        json.RawMessage `json:"AuthorizerId"`
+	AuthorizationScopes []string        `json:"AuthorizationScopes"`
+	Integration         struct {
 		Type                 string                    `json:"Type"`
 		URI                  json.RawMessage           `json:"Uri"`
 		ResponseTransferMode string                    `json:"ResponseTransferMode"`
@@ -220,13 +222,6 @@ type eventRuleProperties struct {
 			MessageGroupID string `json:"MessageGroupId"`
 		} `json:"SqsParameters"`
 	} `json:"Targets"`
-}
-
-type httpAuthorizerProperties struct {
-	AuthorizerType        string          `json:"AuthorizerType"`
-	AuthorizerURI         json.RawMessage `json:"AuthorizerUri"`
-	EnableSimpleResponses bool            `json:"EnableSimpleResponses"`
-	IdentitySource        []string        `json:"IdentitySource"`
 }
 
 // logicalRef is a CloudFormation Ref or Fn::GetAtt target.
@@ -432,7 +427,7 @@ func cloudFrontTemplates(stacks []assemblyStack) []localcloudfront.Template {
 
 func noSurfaceError(spec *Spec, dir string) error {
 	message := fmt.Sprintf(
-		"cloud assembly %s defines no HTTP API v2 route, REST API v1 route, Function URL, CloudFront distribution, event source mapping or EventBridge rule target the local runner can serve",
+		"cloud assembly %s defines no HTTP API v2 route, WebSocket route, REST API v1 route, Function URL, CloudFront distribution, event source mapping or EventBridge rule target the local runner can serve",
 		dir,
 	)
 	for _, skipped := range spec.Skipped {
@@ -497,6 +492,7 @@ func (s *Spec) sort() {
 	sort.Slice(s.FunctionURLs, func(i, j int) bool {
 		return s.FunctionURLs[i].LogicalID < s.FunctionURLs[j].LogicalID
 	})
+	sort.Slice(s.WebSockets, func(i, j int) bool { return s.WebSockets[i].LogicalID < s.WebSockets[j].LogicalID })
 	sort.Slice(s.EventSources, func(i, j int) bool {
 		return s.EventSources[i].LogicalID < s.EventSources[j].LogicalID
 	})
@@ -519,6 +515,9 @@ func deriveStack(spec *Spec, assemblyDir string, stacks []assemblyStack, stack a
 		return err
 	}
 	if err := deriveHTTPAPIs(spec, stacks, stack); err != nil {
+		return err
+	}
+	if err := deriveWebSocketAPIs(spec, stacks, stack); err != nil {
 		return err
 	}
 	if err := deriveRESTAPIs(spec, stacks, stack); err != nil {

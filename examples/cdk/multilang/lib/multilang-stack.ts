@@ -15,6 +15,7 @@ import {
 import * as cdk from "aws-cdk-lib";
 import { Stack } from "aws-cdk-lib";
 import type { StackProps } from "aws-cdk-lib";
+import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as events from "aws-cdk-lib/aws-events";
 import * as iam from "aws-cdk-lib/aws-iam";
@@ -391,6 +392,61 @@ export class MultiLangStack extends Stack {
       handler: pyHandler.fn,
       stageName: "dev",
     });
+
+    // A custom route is selected by the API's route selection expression
+    // ($request.body.action). AppTheoryWebSocketApi declares the three
+    // predefined routes and does not expose its integration, so the row uses
+    // the L1 escape hatch: reuse the $default route's integration target.
+    // The construct and this stack can resolve different aws-cdk-lib copies, so
+    // the route is found structurally (CfnResource, resource type) rather than
+    // with instanceof.
+    function cfnRouteOf(api: apigwv2.WebSocketApi, routeKey: string): apigwv2.CfnRoute {
+      for (const child of api.node.findAll()) {
+        if (!cdk.CfnResource.isCfnResource(child)) continue;
+        if (child.cfnResourceType !== "AWS::ApiGatewayV2::Route") continue;
+        const route = child as apigwv2.CfnRoute;
+        if (route.routeKey === routeKey) {
+          return route;
+        }
+      }
+      throw new Error(`the WebSocket API has no ${routeKey} route`);
+    }
+    function addCustomRoute(api: apigwv2.WebSocketApi, routeKey: string): void {
+      const defaultRoute = cfnRouteOf(api, "$default");
+      new apigwv2.CfnRoute(api, `CustomRoute${routeKey}`, {
+        apiId: api.apiId,
+        routeKey,
+        authorizationType: "NONE",
+        target: defaultRoute.target,
+      });
+    }
+    addCustomRoute(goWs.api, "chat");
+    addCustomRoute(tsWs.api, "chat");
+    addCustomRoute(pyWs.api, "chat");
+
+    // One API declares a $connect authorizer: a REQUEST Lambda authorizer that
+    // returns an IAM policy. The local runner runs it and matches the policy
+    // against the $connect method ARN. The L1 resources are deliberate:
+    // AppTheoryWebSocketApi has no authorizer property.
+    const wsAuthorizerFn = new lambda.Function(this, "WsAuthorizerFn", {
+      runtime: lambda.Runtime.NODEJS_24_X,
+      handler: "ws-authorizer.handler",
+      code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers")),
+      timeout: cdk.Duration.seconds(10),
+      description: "WebSocket $connect REQUEST authorizer; returns an IAM policy",
+    });
+    const wsAuthorizer = new apigwv2.CfnAuthorizer(this, "GoWsConnectAuthorizer", {
+      apiId: goWs.api.apiId,
+      authorizerType: "REQUEST",
+      name: `${name}-go-connect`,
+      identitySource: ["$request.header.Authorization"],
+      authorizerUri:
+        `arn:aws:apigateway:${cdk.Stack.of(this).region}:lambda:path/2015-03-31/functions/` +
+        `${wsAuthorizerFn.functionArn}/invocations`,
+    });
+    const goConnectRoute = cfnRouteOf(goWs.api, "$connect");
+    goConnectRoute.authorizationType = "CUSTOM";
+    goConnectRoute.authorizerId = wsAuthorizer.ref;
 
     new cdk.CfnOutput(this, "GoWebSocketUrl", { value: goWs.stage.url });
     new cdk.CfnOutput(this, "TsWebSocketUrl", { value: tsWs.stage.url });

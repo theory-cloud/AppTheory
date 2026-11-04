@@ -41,6 +41,8 @@ import select
 import shutil
 import signal
 import socket
+import ssl
+import struct
 import subprocess
 import sys
 import tempfile
@@ -1411,6 +1413,247 @@ def _run_multilang_sns(
     return f"(message id, topic ARN, subject, timestamp, UnsubscribeUrl and String attribute)"
 
 
+class WebSocketHandshakeRefused(Exception):
+    def __init__(self, status: str) -> None:
+        super().__init__(status)
+        self.status = status
+
+
+class WebSocketClient:
+    """A minimal RFC 6455 client: handshake, masked frames, close frames.
+
+    The rows use it against the real listener; no WebSocket library is
+    involved, so the client speaks exactly the protocol the runner serves.
+    """
+
+    def __init__(self, url: str, headers: dict[str, str] | None = None, timeout: float = 30) -> None:
+        parsed = urllib.parse.urlsplit(url)
+        self.sock = socket.create_connection((parsed.hostname, parsed.port), timeout=timeout)
+        self.sock.settimeout(timeout)
+        key = base64.b64encode(os.urandom(16)).decode("ascii")
+        path = parsed.path or "/"
+        request = (
+            f"GET {path} HTTP/1.1\r\n"
+            f"Host: {parsed.netloc}\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Key: {key}\r\n"
+            "Sec-WebSocket-Version: 13\r\n"
+        )
+        for name, value in (headers or {}).items():
+            request += f"{name}: {value}\r\n"
+        request += "\r\n"
+        self.sock.sendall(request.encode("utf-8"))
+        self.reader = self.sock.makefile("rb")
+        status = self.reader.readline().decode("utf-8", errors="replace").strip()
+        while True:
+            line = self.reader.readline()
+            if line in (b"\r\n", b""):
+                break
+        if " 101 " not in status:
+            self.sock.close()
+            raise WebSocketHandshakeRefused(status)
+
+    def send_text(self, text: str) -> None:
+        self._send_frame(0x1, text.encode("utf-8"))
+
+    def _send_frame(self, opcode: int, payload: bytes) -> None:
+        mask = os.urandom(4)
+        header = bytes([0x80 | opcode])
+        length = len(payload)
+        if length < 126:
+            header += bytes([0x80 | length])
+        elif length <= 0xFFFF:
+            header += bytes([0x80 | 126]) + struct.pack(">H", length)
+        else:
+            header += bytes([0x80 | 127]) + struct.pack(">Q", length)
+        masked = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
+        self.sock.sendall(header + mask + masked)
+
+    def _read_exact(self, count: int) -> bytes:
+        data = self.reader.read(count)
+        if data is None or len(data) != count:
+            raise HarnessFailure(f"websocket: the server closed the connection while {count} bytes were expected")
+        return data
+
+    def receive(self, timeout: float = 30) -> tuple[int, bytes]:
+        self.sock.settimeout(timeout)
+        header = self._read_exact(2)
+        opcode = header[0] & 0x0F
+        length = header[1] & 0x7F
+        if length == 126:
+            length = struct.unpack(">H", self._read_exact(2))[0]
+        elif length == 127:
+            length = struct.unpack(">Q", self._read_exact(8))[0]
+        payload = self._read_exact(length)
+        if opcode == 0x9:  # ping
+            self._send_frame(0xA, payload)
+            return self.receive(timeout)
+        return opcode, payload
+
+    def close(self) -> None:
+        try:
+            self._send_frame(0x8, struct.pack(">H", 1000))
+        except OSError:
+            pass
+        self.sock.close()
+
+
+def _web_socket_api(session: LocalSession, lang: str) -> dict:
+    plan_apis = [
+        api for api in session.spec.get("webSockets") or []
+        if str(api.get("name") or "").endswith(f"-{lang}-ws")
+    ]
+    if len(plan_apis) != 1:
+        raise HarnessFailure(f"multilang {lang}: want one WebSocket API, got {plan_apis}")
+    logical_id = plan_apis[0]["logicalId"]
+    for api in session.info.get("apis") or []:
+        if api.get("class") == "websocket" and api.get("logicalId") == logical_id:
+            return api
+    raise HarnessFailure(f"multilang {lang}: session describe has no WebSocket API {logical_id}")
+
+
+def _management_request(api: dict, method: str, connection_id: str) -> tuple[int, bytes]:
+    context = ssl.create_default_context(cafile=api["managementCa"])
+    request = urllib.request.Request(
+        f"{api['managementEndpoint']}/@connections/{connection_id}", method=method
+    )
+    try:
+        with urllib.request.urlopen(request, context=context, timeout=30) as response:
+            return response.status, response.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read()
+
+
+def _wait_for_ws_disconnect(base: str, connection_id: str, timeout: float = 60) -> dict:
+    deadline = time.monotonic() + timeout
+    last: list = []
+    while time.monotonic() < deadline:
+        status, payload, _ = _json_request("GET", f"{base}/ws-disconnects")
+        if status == 200:
+            last = payload.get("events") or []
+            for event in last:
+                if event.get("connection_id") == connection_id:
+                    return event
+        time.sleep(0.2)
+    raise HarnessFailure(f"websocket: no $disconnect for {connection_id}; last {last}")
+
+
+def _wait_for_log_line(path: str, needle: str, timeout: float = 30) -> None:
+    """Wait until the runner log carries a line the row asserts."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+        if needle in text:
+            return
+        time.sleep(0.1)
+    raise HarnessFailure(f"the run log never reported {needle!r}")
+
+
+def _run_multilang_websocket(harness: Harness, session: LocalSession, lang: str, http_base: str) -> str:
+    """Exchange real frames through the API's listener and prove the lifecycle."""
+    api = _web_socket_api(session, lang)
+    url = api.get("url")
+    if not url or not str(url).startswith("ws://"):
+        raise HarnessFailure(f"multilang {lang}: the WebSocket API has no ws:// URL: {api}")
+    headers = {"Authorization": "Bearer local-allow"} if lang == "go" else {}
+
+    if lang == "go":
+        try:
+            WebSocketClient(url, {"Authorization": "Bearer wrong"})
+            raise HarnessFailure("multilang go: a $connect authorizer denial must refuse the handshake")
+        except WebSocketHandshakeRefused as exc:
+            if "401" not in exc.status:
+                raise HarnessFailure(f"multilang go: the authorizer refusal was {exc.status!r}, want 401")
+        if api.get("authorizer") is None:
+            raise HarnessFailure("multilang go: the plan has no $connect authorizer")
+
+    connection = WebSocketClient(url, headers)
+    try:
+        # A custom route selected by $request.body.action, answered two-way.
+        connection.send_text(json.dumps({"action": "chat", "message": "hello"}))
+        opcode, payload = connection.receive()
+        if opcode != 0x1:
+            raise HarnessFailure(f"multilang {lang}: chat response opcode {opcode}")
+        chat = json.loads(payload)
+        if chat.get("echo") != "hello" or chat.get("lang") != lang or chat.get("route_key") != "chat":
+            raise HarnessFailure(f"multilang {lang}: chat response {chat}")
+        connection_id = chat.get("connection_id")
+        if not connection_id:
+            raise HarnessFailure(f"multilang {lang}: the chat response carries no connection id: {chat}")
+
+        # A message that selects no route goes to $default, which pushes through
+        # the @connections API and also answers two-way.
+        connection.send_text(json.dumps({"message": "no-action"}))
+        received: list[dict] = []
+        deadline = time.monotonic() + 60
+        while len(received) < 2 and time.monotonic() < deadline:
+            opcode, payload = connection.receive()
+            if opcode == 0x1:
+                received.append(json.loads(payload))
+        push = [item for item in received if item.get("ok") is True and "route_key" not in item]
+        response = [item for item in received if item.get("route_key") == "$default"]
+        if len(push) != 1 or len(response) != 1:
+            raise HarnessFailure(f"multilang {lang}: $default push/response {received}")
+        if push[0].get("lang") != lang:
+            raise HarnessFailure(f"multilang {lang}: the push body {push[0]}")
+        if response[0].get("connection_id") != connection_id:
+            raise HarnessFailure(f"multilang {lang}: the $default response {response[0]}")
+
+        # GetConnection through the management endpoint the handler resolved.
+        connection.send_text(json.dumps({"cmd": "get"}))
+        opcode, payload = connection.receive()
+        if opcode != 0x1:
+            raise HarnessFailure(f"multilang {lang}: get response opcode {opcode}")
+        get_body = json.loads(payload)
+        connection_info = get_body.get("connection") or {}
+        if connection_info.get("connected_at", 0) <= 0:
+            raise HarnessFailure(f"multilang {lang}: GetConnection returned {get_body}")
+
+        # The harness's own management client: GET, DELETE, then GONE.
+        status, _ = _management_request(api, "GET", connection_id)
+        if status != 200:
+            raise HarnessFailure(f"multilang {lang}: management GET answered {status}")
+        status, _ = _management_request(api, "DELETE", connection_id)
+        if status != 204:
+            raise HarnessFailure(f"multilang {lang}: management DELETE answered {status}")
+        status, _ = _management_request(api, "GET", connection_id)
+        if status != 410:
+            raise HarnessFailure(f"multilang {lang}: a closed connection answered {status}, want 410")
+        opcode, payload = connection.receive()
+        if opcode != 0x8:
+            raise HarnessFailure(f"multilang {lang}: DeleteConnection did not close the socket (opcode {opcode})")
+    finally:
+        connection.close()
+
+    # Idle timeout on the test clock: a second connection closes with 1001 and
+    # $disconnect runs.
+    idle = WebSocketClient(url, headers)
+    try:
+        idle.send_text(json.dumps({"action": "chat", "message": "idle"}))
+        opcode, payload = idle.receive()
+        if opcode != 0x1:
+            raise HarnessFailure(f"multilang {lang}: idle connection chat opcode {opcode}")
+        idle_id = json.loads(payload).get("connection_id")
+        session.clock_advance("11m")
+        opcode, payload = idle.receive()
+        if opcode != 0x8 or len(payload) < 2:
+            raise HarnessFailure(f"multilang {lang}: the idle connection did not close (opcode {opcode})")
+        if struct.unpack(">H", payload[:2])[0] != 1001:
+            raise HarnessFailure(f"multilang {lang}: idle close code {struct.unpack('>H', payload[:2])[0]}, want 1001")
+    finally:
+        idle.close()
+
+    _wait_for_ws_disconnect(http_base, idle_id)
+    _wait_for_log_line(session.log_path, f"connection {idle_id} closed (INTERNAL_ERROR)")
+    return (
+        "the WebSocket listener accepted the upgrade, routed a frame to the custom chat route and back, "
+        "routed an unmatched frame to $default (a PostToConnection push plus the two-way response), "
+        "GetConnection answered from the handler, the harness's management client deleted the connection "
+        "and then saw 410 GONE, and the idle timeout closed a second connection with 1001 and ran $disconnect"
+    )
+
+
 def run_multilang(harness: Harness, lang: str) -> str:
     return _run_multilang_http(harness, lang)
 
@@ -1431,9 +1674,9 @@ def _run_multilang_http(harness: Harness, lang: str) -> str:
             raise HarnessFailure(
                 f"multilang plan: want 3 HTTP APIs and 1 REST API, got {len(http_apis)}/{len(rest_apis)}"
             )
-        websocket = [item for item in session.spec.get("skipped") or [] if "WebSocket" in str(item.get("reason"))]
+        websocket = session.spec.get("webSockets") or []
         if len(websocket) != 3:
-            raise HarnessFailure(f"multilang plan: want 3 reported WebSocket APIs, got {websocket}")
+            raise HarnessFailure(f"multilang plan: want 3 WebSocket APIs, got {websocket}")
 
         http_base = session_api_url(session.spec, session, f"-{lang}")
         status, payload, _ = _json_request("GET", f"{http_base}/")
@@ -1490,9 +1733,10 @@ def _run_multilang_http(harness: Harness, lang: str) -> str:
         stream_detail = _run_multilang_stream(harness, session, lang, http_base, function)
         if lang == "go":
             stream_detail += "; " + _run_multilang_stream_failure(harness, session, lang, http_base, function)
+        websocket_detail = _run_multilang_websocket(harness, session, lang, http_base)
         return (
             f"{lang} HTTP API served four assertions (200 root, 200 hello, 405 method, 404 missing); "
-            f"REST API served hello and all 3 buffered SSE events; 3 WebSocket APIs reported not served; "
+            f"REST API served hello and all 3 buffered SSE events; {websocket_detail}; "
             f"the CDK SQS mapping delivered one real ElasticMQ message to the {lang} handler and deleted it; "
             f"the SNS Lambda subscription delivered the documented record {sns_record}; {eventbridge_detail}; {stream_detail}"
         )

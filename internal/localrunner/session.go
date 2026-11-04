@@ -207,7 +207,8 @@ func (s *localSession) execute(ctx context.Context, request sessionRequest) (any
 }
 
 //nolint:gocyclo // one reported section per derived resource family.
-func (s *localSession) describe() (map[string]any, error) {
+//nolint:gocognit // one explicit branch per supported provider value.
+func (s *localSession) describe() (map[string]any, error) { //nolint:gocognit // one reported section per derived resource family.
 	functions := make([]map[string]any, 0)
 	targets, err := s.runner.runtimeFunctions(s.spec)
 	if err != nil {
@@ -238,6 +239,28 @@ func (s *localSession) describe() (map[string]any, error) {
 		if address, ok := s.runner.apiURLs[url.LogicalID]; ok {
 			apis = append(apis, map[string]any{"class": APIFunctionURL, "logicalId": url.LogicalID, "url": address})
 		}
+	}
+	for _, api := range s.spec.WebSockets {
+		entry := map[string]any{
+			"class":                    api.Class,
+			"logicalId":                api.LogicalID,
+			"stage":                    api.Stage,
+			"routeSelectionExpression": api.RouteSelectionExpression,
+			"routes":                   api.Routes,
+		}
+		if address, ok := s.runner.apiURLs[api.LogicalID]; ok {
+			entry["url"] = address
+		}
+		if api.Authorizer != nil {
+			entry["authorizer"] = api.Authorizer.Function
+			entry["authorizerMethodArn"] = api.Authorizer.MethodARN
+		}
+		if s.runner.webSocketManagement != nil {
+			entry["managementEndpoint"] = s.runner.webSocketManagement.URL
+			entry["managementCa"] = s.runner.webSocketManagement.certificatePath
+			entry["connections"] = s.runner.webSocketManagement.connectionCount()
+		}
+		apis = append(apis, entry)
 	}
 	cloudFront := make([]map[string]any, 0, len(s.spec.CloudFront))
 	for _, distribution := range s.spec.CloudFront {

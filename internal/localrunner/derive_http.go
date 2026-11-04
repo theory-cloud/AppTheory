@@ -9,13 +9,13 @@ import (
 )
 
 // deriveHTTPAPIs reads AWS::ApiGatewayV2::Api resources with ProtocolType HTTP
-// and their routes. A WebSocket API is reported as not served, so an app that
-// also has HTTP surfaces still runs. A CUSTOM REQUEST authorizer is resolved to
-// the Lambda function that implements it, so the transport executes the real
-// authorizer instead of bypassing it. Other authorizer types fail closed.
+// and their routes. A WebSocket API is served separately by deriveWebSocketAPIs
+// on its own listener. A CUSTOM REQUEST authorizer is resolved to the Lambda
+// function that implements it, so the transport executes the real authorizer
+// instead of bypassing it. Other authorizer types fail closed.
 func deriveHTTPAPIs(spec *Spec, stacks []assemblyStack, stack assemblyStack) error {
 	types := stack.resourceTypes()
-	authorizers, err := deriveHTTPAuthorizers(stack, types)
+	authorizers, err := deriveAPIAuthorizers(stacks, stack, types)
 	if err != nil {
 		return err
 	}
@@ -30,11 +30,7 @@ func deriveHTTPAPIs(spec *Spec, stacks []assemblyStack, stack assemblyStack) err
 		}
 		switch props.ProtocolType {
 		case websocketProtocol:
-			spec.Skipped = append(spec.Skipped, Skipped{
-				LogicalID: qualify(stacks, stack.Name, id),
-				Kind:      typeHTTPAPI,
-				Reason:    "WebSocket API; the local HTTP transport does not deliver WebSocket frames, so its $connect/$disconnect/$default routes are not invoked",
-			})
+			// deriveWebSocketAPIs serves this API on its own listener.
 			continue
 		case httpProtocol, "":
 		default:
@@ -66,56 +62,6 @@ func deriveHTTPAPIs(spec *Spec, stacks []assemblyStack, stack assemblyStack) err
 	return nil
 }
 
-// httpAuthorizer is one CUSTOM HTTP API REQUEST authorizer the transport runs.
-type httpAuthorizer struct {
-	Function        string
-	IdentitySources []string
-}
-
-// deriveHTTPAuthorizers resolves the authorizer resources to the Lambda
-// functions that implement them. The local transport executes these functions;
-// it never serves a route whose authorizer it cannot run.
-func deriveHTTPAuthorizers(stack assemblyStack, types map[string]string) (map[string]httpAuthorizer, error) {
-	authorizers := map[string]httpAuthorizer{}
-	for _, id := range sortedKeys(stack.Template.Resources) {
-		resource := stack.Template.Resources[id]
-		if resource.Type != typeHTTPAuthorizer {
-			continue
-		}
-		var props httpAuthorizerProperties
-		if err := json.Unmarshal(resource.Properties, &props); err != nil {
-			return nil, fmt.Errorf("%s/%s: parse HTTP authorizer properties: %w", stack.Name, id, err)
-		}
-		if props.AuthorizerType != "REQUEST" {
-			return nil, unsupported(
-				stack.Name+"/"+id,
-				"HTTP API authorizer type %q is not run locally; only REQUEST authorizers with simple responses are supported",
-				props.AuthorizerType,
-			)
-		}
-		if !props.EnableSimpleResponses {
-			return nil, unsupported(
-				stack.Name+"/"+id,
-				"HTTP API authorizer does not enable simple responses; the local transport only runs simple-response authorizers",
-			)
-		}
-		functionID, ok := findRefByType(props.AuthorizerURI, types, typeLambdaFunction, attrArn)
-		if !ok {
-			return nil, unsupported(stack.Name+"/"+id, "HTTP API authorizer Uri does not reference a Lambda function")
-		}
-		identitySources := make([]string, 0, len(props.IdentitySource))
-		for _, source := range props.IdentitySource {
-			trimmed := strings.TrimSpace(source)
-			if err := validateIdentitySource(trimmed); err != nil {
-				return nil, unsupported(stack.Name+"/"+id, "%v", err)
-			}
-			identitySources = append(identitySources, trimmed)
-		}
-		authorizers[id] = httpAuthorizer{Function: functionID, IdentitySources: identitySources}
-	}
-	return authorizers, nil
-}
-
 func httpStageName(stack assemblyStack, apiID string) string {
 	stage := LocalStageName
 	for _, id := range sortedKeys(stack.Template.Resources) {
@@ -137,7 +83,7 @@ func httpStageName(stack assemblyStack, apiID string) string {
 	return stage
 }
 
-func httpRoutes(stack assemblyStack, types map[string]string, apiID string, authorizers map[string]httpAuthorizer) ([]Route, error) {
+func httpRoutes(stack assemblyStack, types map[string]string, apiID string, authorizers map[string]apiAuthorizer) ([]Route, error) {
 	var routes []Route
 	for _, id := range sortedKeys(stack.Template.Resources) {
 		resource := stack.Template.Resources[id]
@@ -168,6 +114,13 @@ func httpRoutes(stack assemblyStack, types map[string]string, apiID string, auth
 			authorizer, ok := authorizers[authorizerID]
 			if !ok {
 				return nil, unsupported(stack.Name+"/"+id, "CUSTOM route references authorizer %s, which the runner did not derive", authorizerID)
+			}
+			if authorizer.Kind != AuthorizerKindSimpleRequest {
+				return nil, unsupported(
+					stack.Name+"/"+id,
+					"CUSTOM route uses a %s authorizer; the local HTTP transport runs only REQUEST authorizers with simple responses",
+					authorizer.Kind,
+				)
 			}
 			route.AuthorizerFunction = authorizer.Function
 			route.AuthorizerIdentitySources = authorizer.IdentitySources

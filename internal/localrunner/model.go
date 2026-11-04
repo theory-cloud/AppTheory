@@ -83,6 +83,8 @@ const (
 	APIRESTV1 APIClass = "restv1"
 	// APIFunctionURL is AWS::Lambda::Url.
 	APIFunctionURL APIClass = "fnurl"
+	// APIWebSocket is AWS::ApiGatewayV2::Api with ProtocolType WEBSOCKET.
+	APIWebSocket APIClass = "websocket"
 )
 
 // FunctionSpec is one Lambda function the assembly defines.
@@ -393,6 +395,7 @@ type Spec struct {
 	AssemblyDir   string             `json:"assemblyDir"`
 	Functions     []FunctionSpec     `json:"functions"`
 	APIs          []APISpec          `json:"apis"`
+	WebSockets    []WebSocketAPISpec `json:"webSockets,omitempty"`
 	FunctionURLs  []FunctionURLSpec  `json:"functionUrls"`
 	EventSources  []EventSourceSpec  `json:"eventSources,omitempty"`
 	Rules         []RuleSpec         `json:"rules,omitempty"`
@@ -480,7 +483,7 @@ func (s *Spec) ServedFunctions() []string {
 // Function URL targets, HTTP API authorizers, enabled event-source consumers,
 // enabled EventBridge rule targets and Lambda log-subscription destinations. It
 // is the local run's function set.
-func (s *Spec) RuntimeFunctions() []string {
+func (s *Spec) RuntimeFunctions() []string { //nolint:gocyclo // one explicit loop per derived source kind.
 	seen := map[string]struct{}{}
 	for _, id := range s.ServedFunctions() {
 		seen[id] = struct{}{}
@@ -507,6 +510,9 @@ func (s *Spec) RuntimeFunctions() []string {
 		if subscription.Function != "" {
 			seen[subscription.Function] = struct{}{}
 		}
+	}
+	for id := range webSocketRouteFunctionSet(s) {
+		seen[id] = struct{}{}
 	}
 	for _, notification := range s.Notifications {
 		if notification.DestinationType == notificationDestinationFunction && notification.Destination != "" {

@@ -301,13 +301,26 @@ func RouteTable(spec *Spec) []string {
 					route.Method, route.Path, route.Mock.StatusCode))
 				continue
 			}
-			lines = append(lines, fmt.Sprintf("  %-6s %-24s -> %s%s",
-				route.Method, route.Path, route.Function, streamingSuffix(route.Streaming)))
+			lines = append(lines, fmt.Sprintf("  %-6s %-24s -> %s%s%s",
+				route.Method, route.Path, route.Function, streamingSuffix(route.Streaming),
+				simpleAuthorizerSuffix(route)))
 		}
 	}
 	for _, url := range spec.FunctionURLs {
 		lines = append(lines, fmt.Sprintf("api %-8s %-28s -> %s%s",
 			APIFunctionURL, url.LogicalID, url.Function, streamingSuffix(url.Streaming)))
+	}
+	for _, api := range spec.WebSockets {
+		lines = append(lines, fmt.Sprintf("api %-8s %-28s stage=%s selection=%s",
+			api.Class, api.LogicalID, api.Stage, api.RouteSelectionExpression))
+		for _, route := range api.Routes {
+			lines = append(lines, fmt.Sprintf("  %-10s %-24s -> %s",
+				route.RouteKey, twoWayLabel(route.TwoWay), route.Function))
+		}
+		if api.Authorizer != nil {
+			lines = append(lines, fmt.Sprintf("  %-10s %-24s -> %s",
+				"$connect", "authorizer", api.Authorizer.Function))
+		}
 	}
 	for _, distribution := range spec.CloudFront {
 		state := "servable"
@@ -330,6 +343,22 @@ func RouteTable(spec *Spec) []string {
 		}
 	}
 	return lines
+}
+
+// simpleAuthorizerSuffix names the simple REQUEST authorizer a route runs.
+func simpleAuthorizerSuffix(route Route) string {
+	if route.AuthorizerFunction != "" {
+		return " authorizer=" + route.AuthorizerFunction
+	}
+	return ""
+}
+
+// twoWayLabel names the response direction of a WebSocket route.
+func twoWayLabel(twoWay bool) string {
+	if twoWay {
+		return "two-way"
+	}
+	return "one-way"
 }
 
 func cloudFrontFunctionsSuffix(behavior *localcloudfront.Behavior) string {

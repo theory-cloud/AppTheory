@@ -1,4 +1,9 @@
 import {
+  ApiGatewayManagementApiClient,
+  GetConnectionCommand,
+} from "@aws-sdk/client-apigatewaymanagementapi";
+
+import {
   createApp,
   json,
   normalizeDynamoDBStreamRecord,
@@ -18,6 +23,8 @@ const tableName = process.env.APPTHEORY_DEMO_TABLE_NAME ?? "";
 const snsTopicName = process.env.APPTHEORY_DEMO_SNS_NAME ?? "";
 
 const app = createApp({ tier });
+
+const wsDisconnects = [];
 
 let lastSNSRecord = null;
 const streamRecords = [];
@@ -171,6 +178,7 @@ app.webSocket("$connect", (ctx) => {
 
 app.webSocket("$disconnect", (ctx) => {
   const ws = ctx.asWebSocket();
+  wsDisconnects.push({ connection_id: ws?.connectionId ?? "", route_key: ws?.routeKey ?? "" });
   return json(200, {
     ok: true,
     lang,
@@ -181,12 +189,35 @@ app.webSocket("$disconnect", (ctx) => {
   });
 });
 
+function messageBody(ctx) {
+  try {
+    const raw = ctx?.request?.body;
+    if (!raw || raw.length === 0) return {};
+    return JSON.parse(Buffer.from(raw).toString("utf8"));
+  } catch {
+    return {};
+  }
+}
+
+app.get("/ws-disconnects", () => json(200, { events: wsDisconnects.slice() }));
+
+app.webSocket("chat", (ctx) => {
+  const ws = ctx.asWebSocket();
+  const message = messageBody(ctx);
+  return json(200, {
+    ok: true,
+    lang,
+    name,
+    route_key: ws?.routeKey ?? "",
+    connection_id: ws?.connectionId ?? "",
+    echo: String(message.message ?? ""),
+  });
+});
+
 app.webSocket("$default", async (ctx) => {
   const ws = ctx.asWebSocket();
-  if (ws) {
-    await ws.sendJSONMessage({ ok: true, lang, name });
-  }
-  return json(200, {
+  const command = messageBody(ctx);
+  const response = {
     ok: true,
     lang,
     name,
@@ -194,7 +225,23 @@ app.webSocket("$default", async (ctx) => {
     connection_id: ws?.connectionId ?? "",
     management_endpoint: ws?.managementEndpoint ?? "",
     request_id: ws?.requestId ?? ctx.requestId,
-  });
+  };
+  if (command.cmd === "get" && ws) {
+    // The client is built from the endpoint the request context reports, so a
+    // handler that never reads the environment still reaches the local
+    // @connections API.
+    const client = new ApiGatewayManagementApiClient({ endpoint: ws.managementEndpoint });
+    const connection = await client.send(new GetConnectionCommand({ ConnectionId: ws.connectionId }));
+    response.connection = {
+      connected_at: Number(connection.ConnectedAt ?? 0),
+      last_active_at: Number(connection.LastActiveAt ?? 0),
+    };
+    return json(200, response);
+  }
+  if (ws) {
+    await ws.sendJSONMessage({ ok: true, lang, name });
+  }
+  return json(200, response);
 });
 
 export const handler = async (event, context) => app.handleLambda(event, context);
