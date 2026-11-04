@@ -273,8 +273,8 @@ func TestBuildFunctionImageRunsDockerBuild(t *testing.T) {
 		t.Fatalf("temp dir: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := os.RemoveAll(assetDir); err != nil {
-			t.Logf("remove %s: %v", assetDir, err)
+		if removeErr := os.RemoveAll(assetDir); removeErr != nil {
+			t.Logf("remove %s: %v", assetDir, removeErr)
 		}
 	})
 	var called [][]string
