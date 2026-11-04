@@ -2556,10 +2556,12 @@ def _api_by_prefix(session: LocalSession, prefix: str, api_class: str) -> dict:
 def run_lambda_role_authorizers(harness: Harness) -> str:
     """HTTP API JWT and REST Cognito authorizers, with real cognito tokens.
 
-    The clock starts at wall time so a freshly minted token is valid; advancing
-    it two hours proves the expiry is checked against the run clock.
+    The clock starts ten minutes ahead of wall time so a token minted after the
+    session starts has an iat before the run clock (the documented future-issue
+    check); advancing it two hours proves the expiry is checked against the run
+    clock.
     """
-    now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+    now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0) + datetime.timedelta(minutes=10)
     session = start_local_session(
         harness,
         LAMBDA_ROLE_APP,

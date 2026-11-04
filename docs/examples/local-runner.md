@@ -664,9 +664,11 @@ missing or invalid token is 401; a token carrying none of the route's scopes is
 **The run clock.** `exp`, `nbf` and `iat` are compared with the run clock, so
 `--clock test` changes what "expired", "not yet valid" and "issued in the
 future" mean. A token minted by the moto pool uses wall-clock times; start a
-test clock at the wall clock (`--clock test=<now>`) to use a freshly minted
-token, and `clock.advance` past its expiry to prove the check. A test clock that
-starts before the token's `iat` refuses it, which is the documented behaviour.
+test clock a few minutes ahead of wall time so a token minted after the session
+starts has `iat` before the run clock (the `lambda-role-authorizers` row starts
+ten minutes ahead), and `clock.advance` past its expiry to prove the check. A
+test clock that starts before the token's `iat` refuses it, which is the
+documented behaviour.
 
 **Still refused.** Lambda authorizers that return an IAM policy for HTTP or REST
 routes (R2b), IAM authorization, and `$context`/`$stageVariables` identity

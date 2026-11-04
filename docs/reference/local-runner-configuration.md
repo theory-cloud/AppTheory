@@ -948,9 +948,10 @@ the route and the value named.
 **Tokens and the clock.** Only RSA-based signature algorithms are supported:
 RS256, RS384 and RS512. `alg: none`, HS* and ES256/ES384 are refused. `exp` is
 required; `nbf` and `iat` are checked when present, and `exp`, `nbf` and `iat`
-all use the run clock, so `--clock test=<wall time>` is the way to use a freshly
-minted moto token, `clock.advance` past its expiry tests the expired path, and
-a clock that starts before the token's `iat` refuses it.
+all use the run clock, so start a test clock slightly ahead of wall time (or
+advance it past the token's `iat`) to use a freshly minted moto token,
+`clock.advance` past its expiry tests the expired path, and a clock that starts
+before the token's `iat` refuses it.
 
 ## Container environment
 
