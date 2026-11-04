@@ -812,6 +812,7 @@ gov_cmd_vuln() {
     "examples/cdk/hello-world/package-lock.json"
     "examples/cdk/import-pipeline/package-lock.json"
     "examples/cdk/kinesis-cloudwatch-logs/package-lock.json"
+    "examples/cdk/lambda-packaging/package-lock.json"
     "examples/cdk/lambda-role/package-lock.json"
     "examples/cdk/lesser-parity/package-lock.json"
     "examples/cdk/media-cdn/package-lock.json"
