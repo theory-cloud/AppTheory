@@ -2,7 +2,6 @@ package localrunner
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -185,6 +184,17 @@ func (d *KinesisDeliverer) pollerOptions(env DelivererEnv) streamPollerOptions {
 				env.State.Failed(err)
 				env.Logf("Kinesis stream %s: FilterCriteria could not be evaluated: %v", d.source.ID, err)
 				return false
+			}
+			if _, decoded := target["data"]; !decoded {
+				touches, touchesErr := filterCriteriaTouchesKey(d.mapping.FilterCriteria, "data")
+				if touchesErr != nil {
+					env.State.Failed(touchesErr)
+					env.Logf("Kinesis stream %s: FilterCriteria could not be evaluated: %v", d.source.ID, touchesErr)
+					return false
+				}
+				if touches {
+					return false
+				}
 			}
 			matched, err := recordMatchesEventFilters(d.mapping.FilterCriteria, target)
 			if err != nil {
@@ -382,27 +392,68 @@ func (r *kinesisShardReader) Reconnect(ctx context.Context, afterSequence string
 
 func (r *kinesisShardReader) Done() bool { return r.done }
 
-// kinesisRecordMap builds the object FilterCriteria is evaluated against. For
-// Kinesis the filter data key is `data`, whose value is the base64-encoded
-// record payload as the Lambda event carries it:
-// https://docs.aws.amazon.com/lambda/latest/dg/invocation-eventfiltering.html
+// kinesisRecordMap builds the object FilterCriteria is evaluated against. A
+// Kinesis mapping filters on the top-level `data` key, whose value is the
+// base64-DECODED record payload when that payload is valid JSON; the other
+// keys are the event metadata. A payload that is not valid JSON leaves `data`
+// absent, which drops the record when the filter has a data pattern while a
+// metadata-only pattern still matches.
+// https://docs.aws.amazon.com/lambda/latest/dg/with-kinesis-filtering.html
 func kinesisRecordMap(record streamRecord, streamARN string) (map[string]any, error) {
 	value, ok := record.Value.(KinesisRecordInput)
 	if !ok {
 		return nil, errors.New("the Kinesis record has an unexpected shape")
 	}
-	return map[string]any{
-		"eventSource":    "aws:kinesis",
-		"eventSourceARN": streamARN,
-		"awsRegion":      LocalRegion,
+	sequence := value.SequenceNumber
+	if sequence == "" {
+		sequence = record.Sequence
+	}
+	arrival := value.Arrival
+	if arrival.IsZero() {
+		arrival = record.Arrival
+	}
+	arrivalSeconds := float64(0)
+	if !arrival.IsZero() {
+		arrivalSeconds = float64(arrival.UnixNano()) / float64(time.Second)
+	}
+	target := map[string]any{
+		"eventSource":       "aws:kinesis",
+		"eventSourceARN":    streamARN,
+		"eventVersion":      "1.0",
+		"eventID":           record.Shard + ":" + sequence,
+		"eventName":         "aws:kinesis:record",
+		"invokeIdentityArn": "arn:" + LocalPartition + ":iam::" + LocalAccountID + ":role/local-kinesis",
+		"awsRegion":         LocalRegion,
 		"kinesis": map[string]any{
-			"partitionKey":   value.PartitionKey,
-			"sequenceNumber": value.SequenceNumber,
-			"data":           base64Encode(value.Data),
+			"kinesisSchemaVersion":        "1.0",
+			"partitionKey":                value.PartitionKey,
+			"sequenceNumber":              sequence,
+			"approximateArrivalTimestamp": arrivalSeconds,
 		},
-	}, nil
+	}
+	decoded, err := decodePatternValue(value.Data)
+	if err != nil {
+		return target, nil
+	}
+	target["data"] = decoded
+	return target, nil
 }
 
-func base64Encode(data []byte) string {
-	return base64.StdEncoding.EncodeToString(data)
+// filterCriteriaTouchesKey reports whether any filter pattern addresses the
+// given top-level key. Kinesis drops a record whose data payload is not valid
+// JSON when the filter pattern has data properties; checking the key before
+// evaluation also covers patterns such as {"data":[{"exists":false}]}, which
+// the record map alone would otherwise satisfy.
+// https://docs.aws.amazon.com/lambda/latest/dg/with-kinesis-filtering.html
+func filterCriteriaTouchesKey(criteria json.RawMessage, key string) (bool, error) {
+	patterns, err := decodeEventFilterPatterns(criteria)
+	if err != nil {
+		return false, err
+	}
+	for _, pattern := range patterns {
+		if _, ok := pattern[key]; ok {
+			return true, nil
+		}
+	}
+	return false, nil
 }

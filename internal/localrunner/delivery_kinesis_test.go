@@ -229,3 +229,182 @@ func TestSubscriptionKinesisDestinationPutsGzip(t *testing.T) {
 		t.Fatalf("payload: %+v", payload)
 	}
 }
+
+// Kinesis event filtering evaluates the top-level data key against the
+// base64-DECODED payload when that payload is valid JSON.
+// https://docs.aws.amazon.com/lambda/latest/dg/with-kinesis-filtering.html
+func TestKinesisFilterUsesDecodedData(t *testing.T) {
+	record := streamRecord{
+		Sequence: "7",
+		Shard:    "shardId-000000000000",
+		Value: KinesisRecordInput{
+			Data:           []byte(`{"level":"ERROR","message":"boom"}`),
+			PartitionKey:   "p1",
+			SequenceNumber: "7",
+		},
+	}
+	target, err := kinesisRecordMap(record, "arn:aws:kinesis:us-east-1:123456789012:stream/probe")
+	if err != nil {
+		t.Fatalf("record map: %v", err)
+	}
+	cases := []struct {
+		name    string
+		pattern string
+		want    bool
+	}{
+		{"documented data pattern", `{"Filters":[{"Pattern":"{\"data\":{\"level\":[\"ERROR\"]}}"}]}`, true},
+		{"non-matching data pattern", `{"Filters":[{"Pattern":"{\"data\":{\"level\":[\"INFO\"]}}"}]}`, false},
+		{"metadata eventSource", `{"Filters":[{"Pattern":"{\"eventSource\":[\"aws:kinesis\"]}"}]}`, true},
+		{"metadata partitionKey", `{"Filters":[{"Pattern":"{\"kinesis\":{\"partitionKey\":[\"p1\"]}}"}]}`, true},
+	}
+	for _, testCase := range cases {
+		matched, matchErr := recordMatchesEventFilters(json.RawMessage(testCase.pattern), target)
+		if matchErr != nil || matched != testCase.want {
+			t.Fatalf("%s: matched=%v err=%v want %v", testCase.name, matched, matchErr, testCase.want)
+		}
+	}
+}
+
+// A non-JSON payload cannot satisfy a data pattern (Lambda drops the record),
+// while a metadata-only pattern still matches.
+// https://docs.aws.amazon.com/lambda/latest/dg/with-kinesis-filtering.html
+func TestKinesisFilterDropsNonJSONData(t *testing.T) {
+	record := streamRecord{
+		Sequence: "8",
+		Shard:    "shardId-000000000000",
+		Value: KinesisRecordInput{
+			Data:           []byte("not-json"),
+			PartitionKey:   "p1",
+			SequenceNumber: "8",
+		},
+	}
+	target, err := kinesisRecordMap(record, "arn:aws:kinesis:us-east-1:123456789012:stream/probe")
+	if err != nil {
+		t.Fatalf("record map: %v", err)
+	}
+	if _, ok := target["data"]; ok {
+		t.Fatalf("non-JSON data must not populate the data key: %v", target)
+	}
+	matched, err := recordMatchesEventFilters(
+		json.RawMessage(`{"Filters":[{"Pattern":"{\"eventSource\":[\"aws:kinesis\"]}"}]}`), target)
+	if err != nil || !matched {
+		t.Fatalf("a metadata-only pattern must still match: %v %v", matched, err)
+	}
+}
+
+// The delivery path must hand Lambda only the records the decoded-data filter
+// accepts and count the rest as filtered.
+// https://docs.aws.amazon.com/lambda/latest/dg/with-kinesis-filtering.html
+func TestKinesisDelivererFiltersOnDecodedData(t *testing.T) {
+	var mu sync.Mutex
+	reads := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/x-amz-json-1.1")
+		target := strings.TrimPrefix(request.Header.Get("X-Amz-Target"), "Kinesis_20131202.")
+		switch target {
+		case "DescribeStreamSummary":
+			writeTestJSON(t, writer, `{"StreamDescriptionSummary":{"StreamName":"probe","StreamARN":"arn:aws:kinesis:us-east-1:123456789012:stream/probe","StreamStatus":"ACTIVE","OpenShardCount":1,"RetentionPeriodHours":24}}`)
+		case "ListShards":
+			writeTestJSON(t, writer, `{"Shards":[{"ShardId":"shardId-000000000000","SequenceNumberRange":{"StartingSequenceNumber":"1"}}]}`)
+		case "GetShardIterator":
+			writeTestJSON(t, writer, `{"ShardIterator":"it-1"}`)
+		case "GetRecords":
+			mu.Lock()
+			reads++
+			first := reads == 1
+			mu.Unlock()
+			if !first {
+				writeTestJSON(t, writer, `{"Records":[],"NextShardIterator":"it-2"}`)
+				return
+			}
+			payloads := []string{
+				base64.StdEncoding.EncodeToString([]byte(`{"level":"ERROR","message":"boom"}`)),
+				base64.StdEncoding.EncodeToString([]byte(`{"level":"INFO","message":"ok"}`)),
+				base64.StdEncoding.EncodeToString([]byte("not-json")),
+			}
+			records := make([]map[string]any, 0, len(payloads))
+			for index, data := range payloads {
+				records = append(records, map[string]any{
+					"SequenceNumber":     fmt.Sprintf("%d", index+1),
+					"PartitionKey":       "p1",
+					"Data":               data,
+					"ApproximateArrival": float64(1.7937789e9 + index),
+				})
+			}
+			encoded, err := json.Marshal(map[string]any{"Records": records, "NextShardIterator": "it-2"})
+			if err != nil {
+				t.Errorf("marshal records: %v", err)
+				return
+			}
+			writer.Write(encoded) //nolint:errcheck // the test writer never fails
+		default:
+			writeTestJSON(t, writer, `{}`)
+		}
+	}))
+	defer server.Close()
+
+	mapping := EventSourceSpec{
+		LogicalID:             "Kinesis",
+		Stack:                 "S",
+		Function:              "Fn",
+		Type:                  backendKinesis,
+		Source:                "Stream",
+		SourceName:            "probe",
+		SourceARN:             "arn:aws:kinesis:us-east-1:123456789012:stream/probe",
+		BatchSize:             10,
+		Enabled:               true,
+		StartingPosition:      dynamoStreamIteratorTrimHorizon,
+		ParallelizationFactor: 1,
+		MaximumRetryAttempts:  -1,
+		FilterCriteria:        json.RawMessage(`{"Filters":[{"Pattern":"{\"data\":{\"level\":[\"ERROR\"]}}"}]}`),
+	}
+	source := DeliverySource{ID: "Kinesis", Kind: DeliveryKindKinesis, Mapping: &mapping}
+	deliverer, err := NewKinesisDeliverer(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reporter := &recordingDeliveryReporter{}
+	invoked := make(chan []byte, 4)
+	env := DelivererEnv{
+		Source:  source,
+		Clock:   NewTestClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)),
+		Backend: DeliveryBackend{Service: backendKinesis, Client: newKinesisClient(server.URL)},
+		Invoke: func(_ context.Context, event []byte) (InvokeResult, error) {
+			invoked <- event
+			return InvokeResult{}, nil
+		},
+		State: reporter,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = deliverer.Start(ctx, env); close(done) }() //nolint:errcheck // the test cancels the deliverer
+	select {
+	case event := <-invoked:
+		var decoded struct {
+			Records []struct {
+				Kinesis struct {
+					Data string `json:"data"`
+				} `json:"kinesis"`
+			} `json:"Records"`
+		}
+		if err := json.Unmarshal(event, &decoded); err != nil {
+			t.Fatalf("decode event: %v (%s)", err, event)
+		}
+		if len(decoded.Records) != 1 {
+			t.Fatalf("delivered %d records, want only the ERROR record: %s", len(decoded.Records), event)
+		}
+		data, err := base64.StdEncoding.DecodeString(decoded.Records[0].Kinesis.Data)
+		if err != nil || string(data) != `{"level":"ERROR","message":"boom"}` {
+			t.Fatalf("delivered data %q %v", data, err)
+		}
+	case <-time.After(10 * time.Second):
+		cancel()
+		<-done
+		t.Fatal("the decoded-data filter never let the ERROR record through")
+	}
+	cancel()
+	<-done
+	if reporter.filtered != 2 {
+		t.Fatalf("filtered %d records, want 2", reporter.filtered)
+	}
+}
