@@ -49,9 +49,9 @@ func handler() proxyResponse {
 		value = []byte("missing")
 	}
 	payload, _ := json.Marshal(map[string]string{
-		"runtime":   "go-provided-image",
+		"runtime":    "go-provided-image",
 		"imageValue": string(value),
-		"taskRoot":  os.Getenv("LAMBDA_TASK_ROOT"),
+		"taskRoot":   os.Getenv("LAMBDA_TASK_ROOT"),
 	})
 	return proxyResponse{
 		StatusCode: 200,
