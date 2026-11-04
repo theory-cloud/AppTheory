@@ -6,8 +6,10 @@ import {
 } from "@theory-cloud/apptheory-cdk";
 import * as cdk from "aws-cdk-lib";
 import type { StackProps } from "aws-cdk-lib";
+import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as lambdaEventSources from "aws-cdk-lib/aws-lambda-event-sources";
+import * as sns from "aws-cdk-lib/aws-sns";
 import type { Construct } from "constructs";
 
 /**
@@ -139,6 +141,223 @@ export class SqsQueueStack extends cdk.Stack {
         workerFn.addEventSource(new lambdaEventSources.SqsEventSource(fifoQueue.queue, {
             batchSize: 10,
             reportBatchItemFailures: true,
+        }));
+
+        // ========================================================================
+        // SNS: a standard topic with an inline Lambda subscription, a FIFO
+        // topic with an inline SQS subscription, and the fan-out targets the
+        // local runner proves. The local runner provisions both topics from
+        // these L1 resources, observes publishes on moto and delivers every
+        // subscription itself: a Lambda record, an SQS envelope or raw body,
+        // an HTTP loopback POST and a FIFO queue with group/deduplication ids.
+        // The L1 resources are deliberate: Ref returns the topic ARN and GetAtt
+        // TopicName/TopicArn are the documented return values, while an L2
+        // topic hides the generated logical id those attributes name.
+        // ========================================================================
+
+        const snsReceiptsQueue = new AppTheoryQueue(this, "SnsReceiptsQueue", {
+            queueName: "sns-receipts",
+            enableDlq: false,
+            visibilityTimeout: cdk.Duration.minutes(5),
+        });
+
+        const snsEventConsumerFn = new lambda.Function(this, "SnsEventConsumerFn", {
+            runtime: lambda.Runtime.NODEJS_24_X,
+            handler: "sns-consumer.handler",
+            code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers")),
+            timeout: cdk.Duration.seconds(30),
+            description: "Records the SNS Lambda record the local runner delivers",
+            environment: {
+                RECEIPT_QUEUE_URL: snsReceiptsQueue.queueUrl,
+                RECEIPT_KIND: "event",
+            },
+        });
+        snsReceiptsQueue.grantSendMessages(snsEventConsumerFn);
+
+        const eventsTopic = new sns.CfnTopic(this, "EventsTopic", {
+            topicName: "apptheory-local-events",
+            // The inline Subscription property is the second supported form.
+            subscription: [{
+                protocol: "lambda",
+                endpoint: snsEventConsumerFn.functionArn,
+            }],
+        });
+        snsEventConsumerFn.addPermission("SNSInvoke", {
+            principal: new iam.ServicePrincipal("sns.amazonaws.com"),
+            sourceArn: eventsTopic.ref,
+        });
+        new sns.CfnTopicPolicy(this, "EventsTopicPolicy", {
+            topics: [eventsTopic.ref],
+            policyDocument: { Version: "2012-10-17", Statement: [] },
+        });
+
+        const snsAttributeConsumerFn = new lambda.Function(this, "SnsAttributeConsumerFn", {
+            runtime: lambda.Runtime.NODEJS_24_X,
+            handler: "sns-consumer.handler",
+            code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers")),
+            timeout: cdk.Duration.seconds(30),
+            description: "Records SNS messages that satisfy an attribute-scope filter policy",
+            environment: {
+                RECEIPT_QUEUE_URL: snsReceiptsQueue.queueUrl,
+                RECEIPT_KIND: "attribute",
+            },
+        });
+        snsReceiptsQueue.grantSendMessages(snsAttributeConsumerFn);
+
+        const snsBodyConsumerFn = new lambda.Function(this, "SnsBodyConsumerFn", {
+            runtime: lambda.Runtime.NODEJS_24_X,
+            handler: "sns-consumer.handler",
+            code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers")),
+            timeout: cdk.Duration.seconds(30),
+            description: "Records SNS messages that satisfy a body-scope filter policy",
+            environment: {
+                RECEIPT_QUEUE_URL: snsReceiptsQueue.queueUrl,
+                RECEIPT_KIND: "body",
+            },
+        });
+        snsReceiptsQueue.grantSendMessages(snsBodyConsumerFn);
+
+        const filteredAttributesTopic = new sns.CfnTopic(this, "FilteredAttributesTopic", {
+            topicName: "apptheory-local-attributes",
+        });
+        new sns.CfnSubscription(this, "AttributeFilteredSubscription", {
+            topicArn: filteredAttributesTopic.ref,
+            protocol: "lambda",
+            endpoint: snsAttributeConsumerFn.functionArn,
+            filterPolicy: {
+                eventType: ["keep"],
+                // AWS's standard "$or" form: the sibling key is ANDed with the
+                // OR of the branch objects. SNS recognizes "$or" only when its
+                // value is an array of at least two objects and no branch uses
+                // a reserved keyword as a field name:
+                // https://docs.aws.amazon.com/sns/latest/dg/and-or-logic.html
+                $or: [
+                    { priority: [{ numeric: [">=", 10] }] },
+                    { region: ["us-east-1"] },
+                ],
+            },
+            filterPolicyScope: "MessageAttributes",
+        });
+        snsAttributeConsumerFn.addPermission("SNSAttributeInvoke", {
+            principal: new iam.ServicePrincipal("sns.amazonaws.com"),
+            sourceArn: filteredAttributesTopic.ref,
+        });
+
+        const filteredBodyTopic = new sns.CfnTopic(this, "FilteredBodyTopic", {
+            topicName: "apptheory-local-body",
+        });
+        new sns.CfnSubscription(this, "BodyFilteredSubscription", {
+            topicArn: filteredBodyTopic.ref,
+            protocol: "lambda",
+            endpoint: snsBodyConsumerFn.functionArn,
+            filterPolicy: {
+                kind: ["order"],
+                amount: [{ numeric: [">=", 100] }],
+                customer: { tier: ["premium"] },
+            },
+            filterPolicyScope: "MessageBody",
+        });
+        snsBodyConsumerFn.addPermission("SNSBodyInvoke", {
+            principal: new iam.ServicePrincipal("sns.amazonaws.com"),
+            sourceArn: filteredBodyTopic.ref,
+        });
+
+        const snsRawQueue = new AppTheoryQueue(this, "SnsRawQueue", {
+            queueName: "sns-raw",
+            enableDlq: false,
+        });
+        const snsEnvelopeQueue = new AppTheoryQueue(this, "SnsEnvelopeQueue", {
+            queueName: "sns-envelope",
+            enableDlq: false,
+        });
+        const rawTopic = new sns.CfnTopic(this, "RawTopic", {
+            topicName: "apptheory-local-raw",
+        });
+        new sns.CfnSubscription(this, "RawSubscription", {
+            topicArn: rawTopic.ref,
+            protocol: "sqs",
+            endpoint: snsRawQueue.queueArn,
+            rawMessageDelivery: true,
+        });
+        new sns.CfnSubscription(this, "EnvelopeSubscription", {
+            topicArn: rawTopic.ref,
+            protocol: "sqs",
+            endpoint: snsEnvelopeQueue.queueArn,
+            rawMessageDelivery: false,
+        });
+
+        const httpTopic = new sns.CfnTopic(this, "HttpTopic", {
+            topicName: "apptheory-local-http",
+        });
+        new sns.CfnSubscription(this, "HttpSubscription", {
+            topicArn: httpTopic.ref,
+            protocol: "http",
+            // A fixed loopback port the harness serves for this row. The
+            // runner refuses any non-loopback HTTP endpoint at plan time.
+            endpoint: "http://127.0.0.1:18120/",
+        });
+
+        const fifoTopic = new sns.CfnTopic(this, "FifoTopic", {
+            topicName: "apptheory-local-events.fifo",
+            fifoTopic: true,
+            contentBasedDeduplication: true,
+        });
+        new sns.CfnSubscription(this, "FifoTopicQueue", {
+            topicArn: fifoTopic.ref,
+            protocol: "sqs",
+            endpoint: fifoQueue.queueArn,
+            rawMessageDelivery: true,
+        });
+        // A second FIFO queue with no event-source mapping, so the proving row
+        // reads the SNS fan-out itself instead of a consumer draining it.
+        const snsFifoQueue = new AppTheoryQueue(this, "SnsFifoQueue", {
+            queueName: "sns-fifo-events",
+            fifo: true,
+            enableDlq: false,
+            visibilityTimeout: cdk.Duration.minutes(5),
+        });
+        new sns.CfnSubscription(this, "SnsFifoTopicQueue", {
+            topicArn: fifoTopic.ref,
+            protocol: "sqs",
+            endpoint: snsFifoQueue.queueArn,
+            rawMessageDelivery: true,
+        });
+
+        const snsPublisherFn = new lambda.Function(this, "SnsPublisherFn", {
+            runtime: lambda.Runtime.NODEJS_24_X,
+            handler: "sns-publisher.handler",
+            code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers")),
+            timeout: cdk.Duration.seconds(30),
+            description: "Publishes to the standard and FIFO SNS topics through the AWS SDK",
+            environment: {
+                TOPIC_ARN: eventsTopic.ref,
+                TOPIC_NAME: cdk.Fn.getAtt("EventsTopic", "TopicName").toString(),
+                FIFO_TOPIC_ARN: fifoTopic.ref,
+                FIFO_TOPIC_NAME: cdk.Fn.getAtt("FifoTopic", "TopicName").toString(),
+                FIFO_QUEUE_ARN: fifoQueue.queueArn,
+            },
+        });
+        snsPublisherFn.addToRolePolicy(new iam.PolicyStatement({
+            actions: ["sns:Publish", "sns:GetTopicAttributes"],
+            resources: [eventsTopic.ref, fifoTopic.ref, filteredAttributesTopic.ref, filteredBodyTopic.ref, rawTopic.ref, httpTopic.ref],
+        }));
+
+        const snsScenarioPublisherFn = new lambda.Function(this, "SnsScenarioPublisherFn", {
+            runtime: lambda.Runtime.NODEJS_24_X,
+            handler: "sns-scenario-publisher.handler",
+            code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers")),
+            timeout: cdk.Duration.seconds(30),
+            description: "Publishes a scenario's messages through the real SNS SDK",
+            environment: {
+                ATTRIBUTES_TOPIC_ARN: filteredAttributesTopic.ref,
+                BODY_TOPIC_ARN: filteredBodyTopic.ref,
+                RAW_TOPIC_ARN: rawTopic.ref,
+                HTTP_TOPIC_ARN: httpTopic.ref,
+            },
+        });
+        snsScenarioPublisherFn.addToRolePolicy(new iam.PolicyStatement({
+            actions: ["sns:Publish"],
+            resources: [eventsTopic.ref, fifoTopic.ref, filteredAttributesTopic.ref, filteredBodyTopic.ref, rawTopic.ref, httpTopic.ref],
         }));
 
         // ========================================================================

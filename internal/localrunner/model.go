@@ -54,9 +54,14 @@ const (
 
 	// Local service names shared by the profile, event sources and readiness
 	// probes. backendDynamoDB is defined with the runner's backend constants.
-	backendSQS     = "sqs"
-	backendKinesis = "kinesis"
-	boolTrue       = "true"
+	backendSQS            = "sqs"
+	backendKinesis        = "kinesis"
+	backendSSM            = "ssm"
+	backendSecretsManager = "secretsmanager"
+	backendSNS            = "sns"
+	backendCognito        = "cognito-idp"
+	boolTrue              = "true"
+	jsonNull              = "null"
 
 	streamEventInsert = "INSERT"
 	streamEventModify = "MODIFY"
@@ -185,29 +190,51 @@ type EventSourceSpec struct {
 	MaxReceiveCount   int  `json:"maxReceiveCount,omitempty"`
 }
 
-// SubscriptionSpec is one CloudWatch Logs subscription filter. It is registered
-// with the delivery engine and reported by plan and session describe; delivery
-// lands in E5.
+// SubscriptionSpec is one CloudWatch Logs subscription filter or SNS topic
+// subscription. It is registered with the delivery engine and reported by plan
+// and session describe. CloudWatch Logs delivery lands in E5; SNS delivery
+// lands in E6.
 type SubscriptionSpec struct {
 	LogicalID string `json:"logicalId"`
 	Stack     string `json:"stack"`
-	// Kind is cloudwatch-logs.
+	// Kind is cloudwatch-logs or sns.
 	Kind string `json:"kind"`
 	// LogGroup is the log group the filter reads.
-	LogGroup string `json:"logGroup"`
+	LogGroup string `json:"logGroup,omitempty"`
 	// FilterName and FilterPattern are the declared filter.
-	FilterName    string `json:"filterName"`
+	FilterName    string `json:"filterName,omitempty"`
 	FilterPattern string `json:"filterPattern,omitempty"`
 	// Distribution is the CloudWatch Logs distribution, when declared.
 	Distribution string `json:"distribution,omitempty"`
 	// Destination is the qualified logical id of the subscription target.
-	Destination string `json:"destination"`
+	Destination string `json:"destination,omitempty"`
 	// DestinationType is function or stream.
-	DestinationType string `json:"destinationType"`
+	DestinationType string `json:"destinationType,omitempty"`
 	// Function is set when the destination is a Lambda function.
 	Function string `json:"function,omitempty"`
 	// Stream is set when the destination is a Kinesis stream.
 	Stream string `json:"stream,omitempty"`
+
+	// Topic is the qualified logical id of the SNS topic the subscription
+	// targets. TopicARN is the provider ARN when it is literal or resolved from
+	// the assembly. ARN is the local subscription ARN the runner reports in
+	// the Lambda record, the HTTP headers and the UnsubscribeUrl.
+	Topic    string `json:"topic,omitempty"`
+	TopicARN string `json:"topicArn,omitempty"`
+	ARN      string `json:"arn,omitempty"`
+	// Protocol is lambda, sqs, http or https.
+	Protocol string `json:"protocol,omitempty"`
+	// Endpoint is the qualified Lambda function or SQS queue logical id, or the
+	// loopback URL of an HTTP(S) subscription.
+	Endpoint string `json:"endpoint,omitempty"`
+	// Queue is the qualified SQS queue for an sqs subscription.
+	Queue string `json:"queue,omitempty"`
+	// RawMessageDelivery is the subscription's raw message delivery setting.
+	RawMessageDelivery bool `json:"rawMessageDelivery,omitempty"`
+	// FilterPolicy is the declared subscription filter policy, verbatim.
+	FilterPolicy json.RawMessage `json:"filterPolicy,omitempty"`
+	// FilterPolicyScope is MessageAttributes (the default) or MessageBody.
+	FilterPolicyScope string `json:"filterPolicyScope,omitempty"`
 }
 
 // RuleSpec is one AWS::Events::Rule with a Lambda target. It is reported so a
@@ -259,6 +286,18 @@ type ResourceSpec struct {
 	Properties json.RawMessage `json:"-"`
 }
 
+// PlannedResource is one resource the run provisions, with the local identifier
+// the CDK definition determines before any backend starts.
+type PlannedResource struct {
+	LogicalID string `json:"logicalId"`
+	Stack     string `json:"stack"`
+	Type      string `json:"type"`
+	LocalID   string `json:"localId"`
+	// Generated is true when the provider creates the identifier at run time
+	// (a KMS key id, a secret ARN suffix, a Cognito client id).
+	Generated bool `json:"generated,omitempty"`
+}
+
 // Spec is everything the local runner derived from the cloud assembly.
 type Spec struct {
 	AssemblyDir   string             `json:"assemblyDir"`
@@ -272,6 +311,9 @@ type Spec struct {
 	// Delivery is the state the engine would register for every source. Plan
 	// fills it; a live session reports the engine's own state instead.
 	Delivery []DeliveryState `json:"delivery,omitempty"`
+	// PlannedResources lists every resource the run provisions with the local
+	// identifier the CDK definition fixes before a backend starts.
+	PlannedResources []PlannedResource `json:"resources,omitempty"`
 	// CloudFront is the delivery topology read from the assembly. A refused
 	// distribution is also listed under Skipped with its reasons.
 	CloudFront          []*localcloudfront.Distribution `json:"cloudFront,omitempty"`

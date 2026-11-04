@@ -7,9 +7,12 @@ import {
 } from "@theory-cloud/apptheory-cdk";
 import * as cdk from "aws-cdk-lib";
 import type { StackProps } from "aws-cdk-lib";
+import * as cognito from "aws-cdk-lib/aws-cognito";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as s3 from "aws-cdk-lib/aws-s3";
+import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
+import * as ssm from "aws-cdk-lib/aws-ssm";
 import type { Construct } from "constructs";
 
 /**
@@ -148,7 +151,69 @@ export class LambdaRoleStack extends cdk.Stack {
                     actions: ["secretsmanager:GetSecretValue"],
                     resources: [`arn:aws:secretsmanager:${this.region}:${this.account}:secret:app/*`],
                 }),
+                // Cognito user pool access
+                new iam.PolicyStatement({
+                    actions: ["cognito-idp:DescribeUserPool", "cognito-idp:DescribeUserPoolClient"],
+                    resources: ["*"],
+                }),
             ],
+        });
+
+        // The local runner provisions SSM parameters, Secrets Manager secrets
+        // and a Cognito user pool from these resources. The L1 resources are
+        // used deliberately: Ref and GetAtt (SSM Type/Value, Cognito
+        // Arn/ProviderName/ProviderURL) are the values the runner resolves, and
+        // an L2 construct hides the generated logical ids those attributes name.
+        const plainParameter = new ssm.CfnParameter(this, "PlainParameter", {
+            name: "/app/demo-parameter",
+            type: "String",
+            value: "local-ssm-value",
+            description: "Plain SSM parameter read by the custom handler",
+        });
+        const secureParameter = new ssm.CfnParameter(this, "SecureParameter", {
+            name: "/app/demo-secure",
+            type: "SecureString",
+            value: "local-secure-value",
+            description: "SecureString parameter read with decryption by the custom handler",
+        });
+        const listParameter = new ssm.CfnParameter(this, "ListParameter", {
+            name: "/app/demo-list",
+            type: "StringList",
+            value: "alpha,beta,gamma",
+            description: "StringList parameter read by the custom handler",
+        });
+
+        const literalSecret = new secretsmanager.CfnSecret(this, "LiteralSecret", {
+            name: "apptheory/local/literal",
+            description: "Literal SecretString read by the custom handler",
+            secretString: JSON.stringify({ username: "local-user", password: "local-pass" }),
+        });
+        const generatedSecret = new secretsmanager.CfnSecret(this, "GeneratedSecret", {
+            name: "apptheory/local/generated",
+            description: "GenerateSecretString secret read by the custom handler",
+            generateSecretString: {
+                secretStringTemplate: JSON.stringify({ username: "generated-user" }),
+                generateStringKey: "password",
+                passwordLength: 24,
+                excludePunctuation: true,
+            },
+        });
+        new secretsmanager.CfnResourcePolicy(this, "SecretResourcePolicy", {
+            secretId: literalSecret.ref,
+            resourcePolicy: { Version: "2012-10-17", Statement: [] },
+        });
+
+        const cognitoPool = new cognito.CfnUserPool(this, "CognitoPool", {
+            userPoolName: "apptheory-local-pool",
+        });
+        const cognitoClient = new cognito.CfnUserPoolClient(this, "CognitoClient", {
+            userPoolId: cognitoPool.ref,
+            clientName: "apptheory-local-client",
+            generateSecret: false,
+        });
+        new cognito.CfnUserPoolDomain(this, "CognitoDomain", {
+            domain: "apptheory-local-domain",
+            userPoolId: cognitoPool.ref,
         });
 
         new lambda.Function(this, "CustomFn", {
@@ -158,9 +223,21 @@ export class LambdaRoleStack extends cdk.Stack {
             role: customRole.role,
             environment: {
                 BUCKET_NAME: dataBucket.bucketName,
+                SSM_PLAIN_NAME: plainParameter.ref,
+                SSM_PLAIN_VALUE: cdk.Fn.getAtt("PlainParameter", "Value").toString(),
+                SSM_PLAIN_TYPE: cdk.Fn.getAtt("PlainParameter", "Type").toString(),
+                SSM_SECURE_NAME: secureParameter.ref,
+                SSM_LIST_NAME: listParameter.ref,
+                SECRET_ARN: literalSecret.ref,
+                GENERATED_SECRET_ARN: generatedSecret.ref,
+                COGNITO_POOL_ID: cognitoPool.ref,
+                COGNITO_CLIENT_ID: cognitoClient.ref,
+                COGNITO_POOL_ARN: cdk.Fn.getAtt("CognitoPool", "Arn").toString(),
+                COGNITO_PROVIDER_NAME: cdk.Fn.getAtt("CognitoPool", "ProviderName").toString(),
+                COGNITO_PROVIDER_URL: cdk.Fn.getAtt("CognitoPool", "ProviderURL").toString(),
             },
             tracing: lambda.Tracing.ACTIVE,
-            description: "Lambda with custom S3, SSM, and Secrets Manager permissions",
+            description: "Lambda with custom S3, SSM, Secrets Manager, and Cognito permissions",
         });
 
         // ========================================================================

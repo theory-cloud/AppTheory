@@ -3,10 +3,15 @@ package localrunner
 import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/kinesis"
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
+	"github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
 
@@ -53,6 +58,46 @@ func newSQSClient(hostURL string) *sqs.Client {
 
 func newSTSClient(hostURL string) *sts.Client {
 	return sts.New(sts.Options{
+		Region:       LocalRegion,
+		Credentials:  localCredentials(),
+		BaseEndpoint: aws.String(hostURL),
+	})
+}
+
+func newSSMClient(hostURL string) *ssm.Client {
+	return ssm.New(ssm.Options{
+		Region:       LocalRegion,
+		Credentials:  localCredentials(),
+		BaseEndpoint: aws.String(hostURL),
+	})
+}
+
+func newSecretsManagerClient(hostURL string) *secretsmanager.Client {
+	return secretsmanager.New(secretsmanager.Options{
+		Region:       LocalRegion,
+		Credentials:  localCredentials(),
+		BaseEndpoint: aws.String(hostURL),
+	})
+}
+
+func newSNSClient(hostURL string) *sns.Client {
+	return sns.New(sns.Options{
+		Region:       LocalRegion,
+		Credentials:  localCredentials(),
+		BaseEndpoint: aws.String(hostURL),
+	})
+}
+
+func newKinesisClient(hostURL string) *kinesis.Client {
+	return kinesis.New(kinesis.Options{
+		Region:       LocalRegion,
+		Credentials:  localCredentials(),
+		BaseEndpoint: aws.String(hostURL),
+	})
+}
+
+func newCognitoClient(hostURL string) *cognitoidentityprovider.Client {
+	return cognitoidentityprovider.New(cognitoidentityprovider.Options{
 		Region:       LocalRegion,
 		Credentials:  localCredentials(),
 		BaseEndpoint: aws.String(hostURL),

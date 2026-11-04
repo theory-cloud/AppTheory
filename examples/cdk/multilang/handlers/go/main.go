@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-lambda-go/events"
@@ -12,6 +13,41 @@ import (
 
 	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
 )
+
+var (
+	snsRecordMu   sync.Mutex
+	lastSNSRecord map[string]any
+)
+
+// recordSNSEvent stores the documented Lambda SNS record fields the harness
+// asserts for every language.
+func recordSNSEvent(lang string, record events.SNSEventRecord) map[string]any {
+	sns := record.SNS
+	attributes := make(map[string]any, len(sns.MessageAttributes))
+	for name, raw := range sns.MessageAttributes {
+		attribute, _ := raw.(map[string]any)
+		attributes[name] = map[string]any{"Type": attribute["Type"], "Value": attribute["Value"]}
+	}
+	entry := map[string]any{
+		"lang":                 lang,
+		"eventSource":          record.EventSource,
+		"eventVersion":         record.EventVersion,
+		"eventSubscriptionArn": record.EventSubscriptionArn,
+		"type":                 sns.Type,
+		"messageId":            sns.MessageID,
+		"topicArn":             sns.TopicArn,
+		"subject":              sns.Subject,
+		"message":              sns.Message,
+		"timestamp":            sns.Timestamp.UTC().Format(time.RFC3339Nano),
+		"signatureVersion":     sns.SignatureVersion,
+		"unsubscribeUrl":       sns.UnsubscribeURL,
+		"messageAttributes":    attributes,
+	}
+	entry["shapeOk"] = sns.Type == "Notification" &&
+		sns.MessageID != "" && sns.TopicArn != "" && !sns.Timestamp.IsZero() &&
+		sns.SignatureVersion != "" && sns.UnsubscribeURL != ""
+	return entry
+}
 
 func envOr(name string, fallback string) string {
 	if value := os.Getenv(name); value != "" {
@@ -162,6 +198,20 @@ func buildApp() *apptheory.App {
 		summary := apptheory.NormalizeDynamoDBStreamRecord(record)
 		_ = summary.SafeLog
 		return nil
+	})
+
+	snsTopicName := os.Getenv("APPTHEORY_DEMO_SNS_NAME")
+	app.SNS(snsTopicName, func(_ *apptheory.EventContext, record events.SNSEventRecord) (any, error) {
+		entry := recordSNSEvent(lang, record)
+		snsRecordMu.Lock()
+		lastSNSRecord = entry
+		snsRecordMu.Unlock()
+		return entry, nil
+	})
+	app.Get("/sns-record", func(_ *apptheory.Context) (*apptheory.Response, error) {
+		snsRecordMu.Lock()
+		defer snsRecordMu.Unlock()
+		return apptheory.MustJSON(200, map[string]any{"record": lastSNSRecord}), nil
 	})
 
 	return app

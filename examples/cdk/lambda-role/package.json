@@ -17,6 +17,7 @@
     "@aws-cdk/cloud-assembly-schema": "54.26.0",
     "@aws-sdk/client-kms": "^3.1156.0",
     "@aws-sdk/client-s3": "^3.1156.0",
+    "@aws-sdk/client-secrets-manager": "^3.1156.0",
     "@aws-sdk/client-ssm": "^3.1156.0",
     "@types/node": "25.5.0",
     "aws-cdk": "2.1147.0",

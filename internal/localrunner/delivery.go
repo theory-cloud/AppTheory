@@ -59,6 +59,8 @@ const (
 	DeliveryKindEventBridgeRule DeliveryKind = "eventbridge-rule"
 	// DeliveryKindCloudWatchLogs is a CloudWatch Logs subscription filter.
 	DeliveryKindCloudWatchLogs DeliveryKind = "cloudwatch-logs"
+	// DeliveryKindSNS is an SNS topic subscription.
+	DeliveryKindSNS DeliveryKind = "sns"
 )
 
 // deliveryTask names the wave-2 task that implements a kind's deliverer.
@@ -69,6 +71,7 @@ var deliveryTask = map[DeliveryKind]string{
 	DeliveryKindEventBridgeSchedule: "E3",
 	DeliveryKindEventBridgeRule:     "E3",
 	DeliveryKindCloudWatchLogs:      "E5",
+	DeliveryKindSNS:                 "E6",
 }
 
 // deliveryKindLabel describes a kind in the delivery state reason.
@@ -79,6 +82,7 @@ var deliveryKindLabel = map[DeliveryKind]string{
 	DeliveryKindEventBridgeSchedule: "EventBridge schedule delivery",
 	DeliveryKindEventBridgeRule:     "EventBridge rule delivery",
 	DeliveryKindCloudWatchLogs:      "CloudWatch Logs subscription delivery",
+	DeliveryKindSNS:                 "SNS subscription delivery",
 }
 
 // DeliveryPhase is one source's delivery state, the local counterpart of the
@@ -148,6 +152,8 @@ type DeliveryState struct {
 	// Delivered and Failed count handler invocations the deliverer completed.
 	Delivered int64 `json:"delivered"`
 	Failed    int64 `json:"failed"`
+	// Filtered counts messages a subscription filter policy did not match.
+	Filtered int64 `json:"filtered,omitempty"`
 	// Inflight is the number of batches the deliverer is invoking right now;
 	// PeakInflight is the highest observed value. They make a mapping's
 	// MaximumConcurrency observable from session describe.
@@ -200,6 +206,8 @@ type DeliveryReporter interface {
 	Delivered()
 	// Failed records a failed handler invocation.
 	Failed(err error)
+	// Filtered records a message a subscription filter did not match.
+	Filtered()
 	// SetPaused records whether delivery is paused.
 	SetPaused(paused bool)
 	// SetInflight records how many batches the deliverer is invoking now. The
@@ -649,6 +657,14 @@ func (r *sourceReporter) Failed(err error) {
 		if err != nil {
 			state.LastError = err.Error()
 		}
+	}
+}
+
+func (r *sourceReporter) Filtered() {
+	r.engine.mu.Lock()
+	defer r.engine.mu.Unlock()
+	if state := r.engine.states[r.id]; state != nil {
+		state.Filtered++
 	}
 }
 

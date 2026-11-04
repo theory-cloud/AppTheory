@@ -135,6 +135,9 @@ func (r *Runner) prepareInvoke(ctx context.Context, spec *Spec, functionID strin
 	if err = r.provisionResources(ctx, spec); err != nil {
 		return err
 	}
+	if err = r.startCognitoIssuer(ctx, spec); err != nil {
+		return err
+	}
 	if err = r.resolveEnvironment(spec, []string{functionID}); err != nil {
 		return err
 	}

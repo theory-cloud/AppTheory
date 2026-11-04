@@ -9,10 +9,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/kinesis"
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
+	"github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
 
@@ -84,6 +90,23 @@ func probeBackendEndpoint(ctx context.Context, service, hostURL string) error {
 		return err
 	case backendSQS:
 		_, err := newSQSClient(hostURL).ListQueues(ctx, &sqs.ListQueuesInput{})
+		return err
+	case backendSSM:
+		_, err := newSSMClient(hostURL).DescribeParameters(ctx, &ssm.DescribeParametersInput{})
+		return err
+	case backendSecretsManager:
+		_, err := newSecretsManagerClient(hostURL).ListSecrets(ctx, &secretsmanager.ListSecretsInput{})
+		return err
+	case backendSNS:
+		_, err := newSNSClient(hostURL).ListTopics(ctx, &sns.ListTopicsInput{})
+		return err
+	case backendKinesis:
+		_, err := newKinesisClient(hostURL).ListStreams(ctx, &kinesis.ListStreamsInput{})
+		return err
+	case backendCognito:
+		_, err := newCognitoClient(hostURL).ListUserPools(ctx, &cognitoidentityprovider.ListUserPoolsInput{
+			MaxResults: aws.Int32(1),
+		})
 		return err
 	default:
 		return probeEndpointHTTP(ctx, hostURL)

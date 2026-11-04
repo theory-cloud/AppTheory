@@ -494,7 +494,7 @@ func (d *SQSDeliverer) batchFailures(result InvokeResult, batch []sqstypes.Messa
 		return nil, true, errors.New("the handler returned a proxy response where a batchItemFailures response is required")
 	}
 	raw := strings.TrimSpace(string(result.Raw))
-	if raw == "" || raw == "null" {
+	if raw == "" || raw == jsonNull {
 		return map[string]bool{}, false, nil
 	}
 	decoder := json.NewDecoder(strings.NewReader(raw))

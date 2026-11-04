@@ -18,6 +18,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
+
 	"github.com/theory-cloud/apptheory/v6/internal/localcloudfront"
 )
 
@@ -104,13 +106,20 @@ type Runner struct {
 	resourceValues resourceValues
 	tables         map[string]tableInfo
 	localSecrets   map[string]string
-	apiURLs        map[string]string
-	servers        []*http.Server
-	listeners      []net.Listener
-	semaphore      chan struct{}
-	network        string
-	clock          Clock
-	delivery       *DeliveryEngine
+	// secretValues holds the provisioned secret strings, keyed by ARN and
+	// friendly name. A deploy-time dynamic reference to the same secret resolves
+	// to this value instead of the wave-1 deterministic placeholder.
+	secretValues map[string]string
+	apiURLs      map[string]string
+	servers      []*http.Server
+	listeners    []net.Listener
+	semaphore    chan struct{}
+	network      string
+	clock        Clock
+	delivery     *DeliveryEngine
+	// sns is the per-topic hub registry the SNS deliverer attaches to and
+	// PublishLocal publishes through.
+	sns *snsHubRegistry
 }
 
 // NewRunner validates the options and prepares the run. It contacts no Docker
@@ -163,10 +172,36 @@ func NewRunner(options Options) (*Runner, error) {
 		runner.logf,
 	)
 	// E1b: an SQS mapping has a deliverer, so plan reports it as registered and
-	// a live session polls its ElasticMQ queue. Other kinds keep reporting
-	// not-delivered with their task until E2-E6 land.
+	// a live session polls its ElasticMQ queue. E6: an SNS subscription has a
+	// deliverer whose shared topic hub observes publishes through moto and
+	// fans them out. Other kinds keep reporting not-delivered with their task
+	// until E2-E5 land.
 	runner.delivery.RegisterDeliverer(DeliveryKindSQS, NewSQSDeliverer)
+	runner.sns = newSNSHubRegistry(runner.clock, runner.logf, runner.snsQueueLookup, runner.deliverySQSClient)
+	runner.delivery.RegisterDeliverer(DeliveryKindSNS, func(source DeliverySource) (Deliverer, error) {
+		return NewSNSDeliverer(source, runner.sns)
+	})
 	return runner, nil
+}
+
+// snsQueueLookup resolves an SQS subscription target from the queues
+// provisioning created.
+func (r *Runner) snsQueueLookup(logicalID string) (snsQueueTarget, bool) {
+	value, ok := r.resourceValues[logicalID]
+	if !ok || value.Type != typeSQSQueue || value.Name == "" {
+		return snsQueueTarget{}, false
+	}
+	return snsQueueTarget{Name: value.Name, ARN: value.ARN}, true
+}
+
+// deliverySQSClient builds a host-side ElasticMQ client for SNS subscriptions
+// that target an SQS queue.
+func (r *Runner) deliverySQSClient() (*sqs.Client, error) {
+	backend, ok := r.backendForService(backendSQS)
+	if !ok || backend.HostURL == "" {
+		return nil, errors.New("the sqs backend is not running")
+	}
+	return newSQSClient(backend.HostURL), nil
 }
 
 // normalizeOptions applies defaults and rejects unusable combinations before
@@ -451,6 +486,9 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 		return nil, err
 	}
 	if err = r.provisionResources(ctx, spec); err != nil {
+		return nil, err
+	}
+	if err = r.startCognitoIssuer(ctx, spec); err != nil {
 		return nil, err
 	}
 	if err = r.resolveEnvironment(spec, targets); err != nil {

@@ -100,8 +100,14 @@ func TestDocumentedRunStepOrderMatchesTheRunner(t *testing.T) {
 		"r.provisionBuckets(",
 		"r.provisionDeployments(",
 		"r.provisionKeys(",
+		"r.provisionAliases(",
 		"r.provisionTables(",
 		"r.provisionQueues(",
+		"r.provisionSSMParameters(",
+		"r.provisionSecrets(",
+		"r.provisionTopics(",
+		"r.provisionStreams(",
+		"r.provisionCognito(",
 	})
 	provisionStart := strings.Index(section, "**Provision resources.**")
 	provisionEnd := strings.Index(section, "**Resolve environment references.**")
@@ -111,9 +117,14 @@ func TestDocumentedRunStepOrderMatchesTheRunner(t *testing.T) {
 	assertInOrder(t, document, section[provisionStart:provisionEnd], "provisioning step", []string{
 		"S3 buckets",
 		"Custom::CDKBucketDeployment",
-		"KMS keys",
+		"KMS keys (symmetric and asymmetric)",
 		"DynamoDB tables",
 		"SQS queues",
+		"SSM",
+		"Secrets Manager secrets",
+		"SNS",
+		"Kinesis streams",
+		"Cognito user pools",
 	})
 
 	startServersBody := goFunctionBody(t, "runner.go", "func (r *Runner) startServers(ctx context.Context, spec *Spec) error {")

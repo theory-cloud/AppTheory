@@ -80,6 +80,30 @@
       "sqs": {
         "container": "sqs",
         "env": ["AWS_ENDPOINT_URL_SQS", "SQS_ENDPOINT"]
+      },
+      "ssm": {
+        "container": "moto",
+        "env": ["AWS_ENDPOINT_URL_SSM", "SSM_ENDPOINT"]
+      },
+      "secretsmanager": {
+        "container": "moto",
+        "env": ["AWS_ENDPOINT_URL_SECRETS_MANAGER", "SECRETS_MANAGER_ENDPOINT"]
+      },
+      "sns": {
+        "container": "moto",
+        "env": ["AWS_ENDPOINT_URL_SNS", "SNS_ENDPOINT"]
+      },
+      "kinesis": {
+        "container": "moto",
+        "env": ["AWS_ENDPOINT_URL_KINESIS", "KINESIS_ENDPOINT"]
+      },
+      "cognito-idp": {
+        "container": "moto",
+        "env": [
+          "AWS_ENDPOINT_URL_COGNITO_IDENTITY_PROVIDER",
+          "AWS_ENDPOINT_URL_COGNITO_IDP",
+          "COGNITO_ENDPOINT"
+        ]
       }
     }
   },
@@ -180,8 +204,14 @@
     "examples/cdk/kinesis-cloudwatch-logs/handlers/go/main.go": {
       "run": "kinesis-handler",
       "class": "L3",
-      "gap": "Managed Kinesis event-source delivery and the CloudWatch Logs subscription path; the gzip+base64 subscription payload is generated from local content.",
-      "description": "Kinesis/CloudWatch Logs handler: a real gzip+base64 subscription payload is invoked and accepted, and a malformed Kinesis record is returned as its sequence-number partial failure."
+      "gap": "Managed Kinesis event-source delivery and the CloudWatch Logs subscription path (E5); the CDK stream is provisioned on moto and its Ref/GetAtt Arn resolve.",
+      "description": "Kinesis/CloudWatch Logs handler: the CDK Kinesis stream is created on moto and its Ref/GetAtt Arn match the provisioned stream; a real gzip+base64 subscription payload is invoked and accepted, and a malformed Kinesis record is returned as its sequence-number partial failure."
+    },
+    "examples/cdk/kinesis-cloudwatch-logs/handlers/signing/main.go": {
+      "run": "kinesis-signing",
+      "class": "L2",
+      "gap": "KMS is emulated by moto (no HSM, key policies or grants); Sign, Verify and GetPublicKey are real.",
+      "description": "Kinesis signing handler: the CDK RSA_2048 SIGN_VERIFY key and alias are provisioned on moto; the handler signs and verifies with the alias (usable as KeyId) and the key ARN and reads the public key."
     },
     "examples/cdk/lambda-role/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
@@ -190,9 +220,9 @@
     },
     "examples/cdk/lambda-role/handlers/custom.ts": {
       "run": "lambda-role-custom",
-      "class": "L3",
-      "gap": "SSM parameter store has no local emulator; the S3 path is emulated by s3proxy (no IAM/bucket policies or event notifications).",
-      "description": "lambda-role custom handler: the compiled asset runs in nodejs:24, writes and reads back an object on s3proxy, and the failed SSM lookup falls back to not-configured."
+      "class": "L2",
+      "gap": "IAM policy evaluation is a docs/125 true limit; S3 is emulated by s3proxy (no bucket policies or event notifications). SSM parameters, Secrets Manager secrets and the Cognito user pool are real on moto.",
+      "description": "lambda-role custom handler: the compiled asset runs in nodejs:24 and reads String/SecureString/StringList SSM parameters through Ref and GetAtt, both Secrets Manager secrets through GetSecretValue, and the provisioned Cognito pool/client; the runner's local issuer serves the pool JWKS and discovery document; the S3 object round-trip stays real on s3proxy."
     },
     "examples/cdk/lambda-role/handlers/encrypted.ts": {
       "run": "lambda-role-encrypted",
@@ -357,6 +387,23 @@
       "class": "L2",
       "gap": "ElasticMQ emulates SQS; IAM, KMS encryption and AWS-managed scaling are not emulated.",
       "description": "SQS producer handler: the real producer sends through the AWS SQS SDK to ElasticMQ; the ContractConsumer mapping delivered the message to worker.handler and deleted it, with no manual receive or invoke."
+    },
+    "examples/cdk/sqs-queue/handlers/sns-publisher.mjs": {
+      "run": "sqs-sns-publisher",
+      "class": "L2",
+      "gap": "moto emulates SNS (no managed delivery infrastructure); IAM policy evaluation is a docs/125 true limit. The topics, the publish call and the runner's fan-out are real.",
+      "description": "SQS queue SNS publisher: the standard and FIFO topics are provisioned on moto from the CDK definition; the handler publishes through the real SDK; the inline Lambda subscription receives the documented SNS record (message id, subject, timestamp, UnsubscribeUrl, String attributes); the FIFO topic delivers three ordered messages and collapses two identical content-based publishes to one; the FIFO queue carries MessageGroupId and the explicit or content SHA-256 MessageDeduplicationId."
+    },
+    "examples/cdk/sqs-queue/handlers/sns-scenario-publisher.mjs": {
+      "run": "sqs-sns-targets",
+      "class": "L2",
+      "gap": "moto emulates SNS (no managed delivery infrastructure) and ElasticMQ emulates SQS; IAM policy evaluation is a docs/125 true limit. The publishes, the runner's filter evaluation and every target delivery are real.",
+      "description": "SNS fan-out targets: an attribute-scope policy (AND across keys, OR within a key) and a body-scope policy (nested keys) each admit one message and filter two; an SQS raw subscription receives the body and native attributes while the envelope subscription receives the documented JSON notification; a loopback HTTP subscription receives the documented body and x-amz-sns-* headers."
+    },
+    "examples/cdk/sqs-queue/handlers/sns-consumer.mjs": {
+      "coveredBy": "examples/cdk/sqs-queue/handlers/sns-publisher.mjs",
+      "class": "L2",
+      "description": "SNS consumer handler used by the standard, attribute-filtered and body-filtered Lambda subscriptions; it writes a real SQS receipt with the documented Lambda SNS record."
     },
     "examples/cdk/sqs-queue/handlers/worker.mjs": {
       "run": "sqs-worker",

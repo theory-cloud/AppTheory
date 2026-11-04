@@ -170,7 +170,7 @@ func bucketDeclaresCORS(spec *Spec, qualifiedID string) bool {
 			return false
 		}
 		raw, ok := properties["CorsConfiguration"]
-		return ok && len(raw) > 0 && string(raw) != "null"
+		return ok && len(raw) > 0 && string(raw) != jsonNull
 	}
 	return false
 }

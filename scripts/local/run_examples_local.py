@@ -33,6 +33,7 @@ import datetime
 import fcntl
 import gzip
 import hashlib
+import http.server
 import json
 import os
 import re
@@ -43,6 +44,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import traceback
 import urllib.error
@@ -89,6 +91,7 @@ LESSER_PARITY_APP = "examples/cdk/lesser-parity"
 RESTV1_APP = "examples/cdk/restv1-router"
 LAMBDA_ROLE_APP = "examples/cdk/lambda-role"
 SQS_APP = "examples/cdk/sqs-queue"
+SNS_HTTP_PORT = 18120
 IMPORT_APP = "examples/cdk/import-pipeline"
 KINESIS_APP = "examples/cdk/kinesis-cloudwatch-logs"
 MICROVM_APP = "examples/cdk/microvm-controller"
@@ -119,8 +122,9 @@ DELIVERY_TASKS = {
     "eventbridge-schedule": "E3",
     "eventbridge-rule": "E3",
     "cloudwatch-logs": "E5",
+    "sns": "E6",
 }
-DELIVERED_KINDS = {"sqs"}
+DELIVERED_KINDS = {"sqs", "sns"}
 DELIVERY_CONCURRENCY = 4
 LOCAL_RUNNER_RUNTIMES = {"go": "provided.al2023", "ts": "nodejs24.x", "py": "python3.14"}
 # The handler response each language returned, compared across languages once
@@ -1302,6 +1306,84 @@ def _assert_request_id(payload: dict, label: str) -> None:
         raise HarnessFailure(f"{label}: request id is missing or malformed: {request_id!r}")
 
 
+def _run_multilang_sns(
+    harness: Harness, session: LocalSession, lang: str, http_base: str, function: dict
+) -> str:
+    topic = _sns_resource(session, f"apptheory-multilang-{lang}-events", "AWS::SNS::Topic")
+    endpoints = session.info.get("endpoints") or []
+    sns_endpoints = [endpoint["url"] for endpoint in endpoints if endpoint.get("service") == "sns"]
+    if not sns_endpoints:
+        raise HarnessFailure(f"multilang {lang}: the session has no SNS endpoint")
+    message = json.dumps({"eventType": "language-sns", "lang": lang, "n": 1})
+    subject = f"{lang} sns parity"
+    result = harness.run(
+        [
+            "aws",
+            "--endpoint-url",
+            sns_endpoints[0],
+            "sns",
+            "publish",
+            "--topic-arn",
+            str(topic["arn"]),
+            "--message",
+            message,
+            "--subject",
+            subject,
+            "--message-attributes",
+            json.dumps({"eventType": {"DataType": "String", "StringValue": "language-sns"}}),
+            "--query",
+            "MessageId",
+            "--output",
+            "text",
+        ],
+        timeout=120,
+    )
+    published = result.stdout.strip()
+    if not published:
+        raise HarnessFailure(f"multilang {lang}: the SNS publish returned no message id", result.stdout)
+    deadline = time.monotonic() + 120
+    record = None
+    while time.monotonic() < deadline:
+        status, payload, _ = _json_request("GET", f"{http_base}/sns-record")
+        if status == 200:
+            record = (payload or {}).get("record") or {}
+            if record.get("messageId") == published:
+                break
+        record = None
+        time.sleep(0.2)
+    if record is None:
+        raise HarnessFailure(f"multilang {lang}: the SNS record never reached the handler")
+    if (
+        record.get("shapeOk") is not True
+        or record.get("lang") != lang
+        or record.get("eventSource") != "aws:sns"
+        or record.get("type") != "Notification"
+        or record.get("messageId") != published
+        or record.get("topicArn") != topic["arn"]
+        or record.get("subject") != subject
+        or record.get("message") != message
+        or record.get("signatureVersion") != "1"
+        or not record.get("timestamp")
+        or "SubscriptionArn=" not in str(record.get("unsubscribeUrl") or "")
+        or not str(record.get("eventSubscriptionArn") or "").startswith(str(topic["arn"]) + ":")
+        or (record.get("messageAttributes") or {}).get("eventType", {}).get("Type") != "String"
+        or (record.get("messageAttributes") or {}).get("eventType", {}).get("Value") != "language-sns"
+    ):
+        raise HarnessFailure(f"multilang {lang}: unexpected SNS record: {record}")
+    subscription = next(
+        (
+            candidate
+            for candidate in session.spec.get("subscriptions") or []
+            if candidate.get("function") == function["logicalId"] and candidate.get("kind") == "sns"
+        ),
+        None,
+    )
+    if subscription is None:
+        raise HarnessFailure(f"multilang {lang}: the plan has no SNS subscription for the handler")
+    _wait_for_delivery(session, subscription["logicalId"], delivered=1)
+    return f"(message id, topic ARN, subject, timestamp, UnsubscribeUrl and String attribute)"
+
+
 def run_multilang(harness: Harness, lang: str) -> str:
     detail = _run_multilang_http(harness, lang)
     if lang == "go":
@@ -1314,7 +1396,7 @@ def _run_multilang_http(harness: Harness, lang: str) -> str:
         harness,
         MULTILANG_APP,
         name=f"multilang-{lang}",
-        backends=("dynamodb", "sqs"),
+        backends=("dynamodb", "sqs", "moto"),
         clock=f"test={LOCAL_RUNNER_CLOCK_START}",
     )
     try:
@@ -1379,10 +1461,12 @@ def _run_multilang_http(harness: Harness, lang: str) -> str:
         if state.get("failed"):
             raise HarnessFailure(f"multilang {lang}: the SQS mapping failed: {state}")
         _wait_for_queue_depth(session, queue["logicalId"], visible=0, not_visible=0)
+        sns_record = _run_multilang_sns(harness, session, lang, http_base, function)
         return (
             f"{lang} HTTP API served four assertions (200 root, 200 hello, 405 method, 404 missing); "
             f"REST API served hello and all 3 buffered SSE events; 3 WebSocket APIs reported not served; "
-            f"the CDK SQS mapping delivered one real ElasticMQ message to the {lang} handler and deleted it"
+            f"the CDK SQS mapping delivered one real ElasticMQ message to the {lang} handler and deleted it; "
+            f"the SNS Lambda subscription delivered the documented record {sns_record}"
         )
     finally:
         stop_local_session(harness, session)
@@ -1601,25 +1685,84 @@ def run_lambda_role(harness: Harness, kind: str) -> str:
             raise HarnessFailure(f"lambda-role encrypted: unexpected response {decoded}")
         return "encrypted.handler round-tripped plaintext through the emulated KMS and reported match=true"
     if kind == "custom":
-        decoded, _ = invoke_local_function(
+        spec = plan_local_app(harness, LAMBDA_ROLE_APP, allow_no_surface=True)
+        function = None
+        for candidate in spec.get("functions") or []:
+            if candidate.get("handler") == "custom.handler":
+                function = candidate
+                break
+        if function is None:
+            raise HarnessFailure("lambda-role custom: plan has no custom.handler function")
+        session = start_local_session(
             harness,
-            app=LAMBDA_ROLE_APP,
-            function="CustomFnFE03B841",
-            event={},
+            LAMBDA_ROLE_APP,
             name="lambda-role-custom",
             backends=("moto", "s3proxy"),
+            targets=(function["logicalId"],),
+            allow_no_surface=True,
         )
-        body = _proxy_body(decoded, "lambda-role custom")
-        s3_object = body.get("s3Object") or {}
-        if (
-            decoded.get("statusCode") != 200
-            or body.get("message") != "S3 and SSM operations successful"
-            or not str(s3_object.get("bucket", "")).startswith("local-")
-            or not str(s3_object.get("content", "")).startswith("{")
-            or body.get("ssmParameter") != "not-configured"
-        ):
-            raise HarnessFailure(f"lambda-role custom: unexpected response {decoded}")
-        return "custom.handler wrote and read back an object on s3proxy; the SSM lookup failed closed to not-configured"
+        try:
+            result = session.invoke(function["logicalId"], {})
+            body = _proxy_body(result, "lambda-role custom")
+            s3_object = body.get("s3Object") or {}
+            ssm = body.get("ssm") or {}
+            secrets = body.get("secrets") or {}
+            cognito = body.get("cognito") or {}
+            if (
+                result.get("statusCode") != 200
+                or body.get("message") != "S3, SSM, Secrets Manager and Cognito operations successful"
+                or not str(s3_object.get("bucket", "")).startswith("local-")
+                or not str(s3_object.get("content", "")).startswith("{")
+            ):
+                raise HarnessFailure(f"lambda-role custom: unexpected response {result}")
+            if (
+                ssm.get("plain") != "local-ssm-value"
+                or ssm.get("expectedValue") != "local-ssm-value"
+                or ssm.get("plainType") != "String"
+                or ssm.get("expectedType") != "String"
+                or ssm.get("secure") != "local-secure-value"
+                or ssm.get("list") != "alpha,beta,gamma"
+            ):
+                raise HarnessFailure(f"lambda-role custom: SSM resolution failed: {ssm}")
+            if (
+                secrets.get("literalUsername") != "local-user"
+                or secrets.get("literalPassword") != "local-pass"
+                or secrets.get("generatedUsername") != "generated-user"
+                or secrets.get("generatedPasswordLength") != 24
+                or secrets.get("generatedPunctuation") is not False
+            ):
+                raise HarnessFailure(f"lambda-role custom: Secrets Manager resolution failed: {secrets}")
+            pool_id = str(cognito.get("poolId") or "")
+            client_id = str(cognito.get("clientId") or "")
+            if not pool_id.startswith("us-east-1_") or not client_id:
+                raise HarnessFailure(f"lambda-role custom: Cognito Ref values were not resolved: {cognito}")
+            expected_provider = f"cognito-idp.us-east-1.amazonaws.com/{pool_id}"
+            if (
+                cognito.get("providerName") != expected_provider
+                or cognito.get("providerUrl") != f"https://{expected_provider}"
+                or not str(cognito.get("poolArn") or "").endswith(f"userpool/{pool_id}")
+            ):
+                raise HarnessFailure(f"lambda-role custom: Cognito GetAtt values were not resolved: {cognito}")
+            pool = session.resource(kind="AWS::Cognito::UserPool")
+            issuer = str(pool.get("localIssuer") or "")
+            if not issuer.startswith("http://127.0.0.1:"):
+                raise HarnessFailure(f"lambda-role custom: the pool has no local issuer: {pool}")
+            status, text, _ = http_request("GET", f"{issuer}/.well-known/jwks.json")
+            expect_status(status, 200, "lambda-role custom JWKS", text)
+            if not json.loads(text).get("keys"):
+                raise HarnessFailure(f"lambda-role custom: the issuer returned no keys: {text}")
+            status, text, _ = http_request("GET", f"{issuer}/.well-known/openid-configuration")
+            expect_status(status, 200, "lambda-role custom discovery", text)
+            discovery = json.loads(text)
+            if discovery.get("issuer") != issuer or discovery.get("jwks_uri") != f"{issuer}/.well-known/jwks.json":
+                raise HarnessFailure(f"lambda-role custom: the discovery document is inconsistent: {discovery}")
+            return (
+                "custom.handler read String/SecureString/StringList SSM parameters (Ref, GetAtt Type/Value), "
+                "both Secrets Manager secrets through GetSecretValue, and the Cognito pool/client; "
+                f"the local issuer {issuer} served the pool JWKS and discovery document; S3 round-trip passed"
+            )
+        finally:
+            stop_local_session(harness, session)
     raise HarnessFailure(f"unknown lambda-role row {kind}")
 
 
@@ -2168,7 +2311,9 @@ class LocalAppRun:
     api_classes: dict[str, str]
 
 
-def plan_local_app(harness: Harness, app: str, context: dict | None = None) -> dict:
+def plan_local_app(
+    harness: Harness, app: str, context: dict | None = None, *, allow_no_surface: bool = False
+) -> dict:
     ensure_cdk_app(harness, app)
     argv = [
         str(LOCAL_RUNNER_BIN),
@@ -2179,6 +2324,8 @@ def plan_local_app(harness: Harness, app: str, context: dict | None = None) -> d
         str(ROOT / LOCAL_PROFILE),
         "--json",
     ]
+    if allow_no_surface:
+        argv.append("--allow-no-surface")
     for key, value in sorted((context or {}).items()):
         argv.extend(["-c", f"{key}={value}"])
     result = harness.run(argv, timeout=1800)
@@ -2269,26 +2416,36 @@ def _describe_delivery(session: "LocalSession") -> dict:
 def _assert_session_delivery(session: "LocalSession") -> None:
     """A live session must report the engine state for every derived source.
 
-    An SQS source with its backend running must reach ``polling``; without the
-    backend it reports ``failed`` with the closed-backend reason. Every other
-    kind stays ``not-delivered`` and names its task.
+    An SQS source with its backend running must reach ``polling``; an SNS
+    subscription on a running moto backend is ``armed`` on its topic hub.
+    Without the backend either kind reports ``failed`` with the closed-backend
+    reason. Every other kind stays ``not-delivered`` and names its task.
     """
     expected = _expected_delivery_entries(session.spec)
     expected_by_id = {logical_id: (kind, function) for logical_id, kind, function in expected}
     sqs_backend = "sqs" in session.backends
+    moto_backend = "moto" in session.backends
     deadline = time.monotonic() + 60
     while True:
         delivery = _describe_delivery(session)
         states = {source.get("id"): source for source in delivery.get("sources") or []}
         settled = True
         for logical_id, (kind, _) in expected_by_id.items():
-            if kind != "sqs":
+            if kind not in DELIVERED_KINDS:
                 continue
             state = str((states.get(logical_id) or {}).get("state") or "")
-            if state == "registered" or (sqs_backend and state not in ("polling", "paused")):
-                settled = False
-            if not sqs_backend and state not in ("failed", "paused"):
-                settled = False
+            if kind == "sqs":
+                if state == "registered" or (sqs_backend and state not in ("polling", "paused")):
+                    settled = False
+                if not sqs_backend and state not in ("failed", "paused"):
+                    settled = False
+            else:
+                # An SNS subscription is armed on its topic hub; a failure in
+                # its last target delivery reports failed.
+                if state == "registered" or (moto_backend and state not in ("armed", "failed")):
+                    settled = False
+                if not moto_backend and state not in ("failed", "paused"):
+                    settled = False
         if settled or time.monotonic() >= deadline:
             break
         time.sleep(0.1)
@@ -2314,13 +2471,13 @@ def _assert_session_delivery(session: "LocalSession") -> None:
         kind, _ = expected_by_id[logical_id]
         if kind in DELIVERED_KINDS:
             state = str(source.get("state") or "")
-            if sqs_backend and state not in ("polling", "paused", "failed"):
+            if kind == "sns":
+                allowed = ("armed", "failed") if moto_backend else ("failed", "paused")
+            else:
+                allowed = ("polling", "paused", "failed") if sqs_backend else ("failed", "paused")
+            if state not in allowed:
                 raise HarnessFailure(
-                    f"session {session.prefix}: {logical_id} never started polling (state {state!r})"
-                )
-            if not sqs_backend and state not in ("failed", "paused"):
-                raise HarnessFailure(
-                    f"session {session.prefix}: {logical_id} without its backend must report failed, got {state!r}"
+                    f"session {session.prefix}: {logical_id} is {state!r}, want one of {allowed}"
                 )
             if source.get("task") or source.get("reason"):
                 raise HarnessFailure(f"session {session.prefix}: {logical_id} still names a task: {source}")
@@ -2515,10 +2672,11 @@ def start_local_session(
     context: dict | None = None,
     targets: tuple[str, ...] = (),
     clock: str | None = None,
+    allow_no_surface: bool = False,
 ) -> LocalSession:
     """Start one `apptheory-local session` and wait for its machine interface."""
     ensure_cdk_app(harness, app)
-    spec = plan_local_app(harness, app, context)
+    spec = plan_local_app(harness, app, context, allow_no_surface=allow_no_surface)
     prefix = local_app_prefix(harness, name)
     log = tempfile.NamedTemporaryFile(prefix=f"a4-{name}-", suffix=".log", delete=False)
     argv = [
@@ -2533,6 +2691,8 @@ def start_local_session(
         "--name-prefix",
         prefix,
     ]
+    if allow_no_surface:
+        argv.append("--allow-no-surface")
     for key, value in sorted((context or {}).items()):
         argv.extend(["-c", f"{key}={value}"])
     for backend in backends:
@@ -2676,21 +2836,25 @@ def _wait_for_delivery(
     *,
     delivered: int | None = None,
     failed: int | None = None,
+    filtered: int | None = None,
     timeout: float = 180,
 ) -> dict:
-    """Wait until one source's delivered/failed counters reach a floor."""
+    """Wait until one source's delivered/failed/filtered counters reach a floor."""
     deadline = time.monotonic() + timeout
     last: dict | None = None
     while time.monotonic() < deadline:
         last = _delivery_source_state(session, logical_id)
         if last is not None:
-            if (delivered is None or last.get("delivered", 0) >= delivered) and (
-                failed is None or last.get("failed", 0) >= failed
+            if (
+                (delivered is None or last.get("delivered", 0) >= delivered)
+                and (failed is None or last.get("failed", 0) >= failed)
+                and (filtered is None or last.get("filtered", 0) >= filtered)
             ):
                 return last
         time.sleep(0.1)
     raise HarnessFailure(
-        f"{logical_id} never reached delivered={delivered} failed={failed}; last state {last}"
+        f"{logical_id} never reached delivered={delivered} failed={failed} filtered={filtered}; "
+        f"last state {last}"
     )
 
 
@@ -3371,10 +3535,26 @@ def run_import_worker(harness: Harness) -> str:
 
 
 def run_kinesis_handler(harness: Harness) -> str:
-    session = start_local_session(harness, KINESIS_APP, name="kinesis")
+    session = start_local_session(harness, KINESIS_APP, name="kinesis", backends=("moto",))
     log_path = None
     try:
         source = session.event_source(kind="kinesis")
+        stream = session.resource(name=source["sourceName"], kind="AWS::Kinesis::Stream")
+        if not str(stream.get("arn") or "").endswith(f"stream/{source['sourceName']}"):
+            raise HarnessFailure(f"kinesis: the stream was not provisioned: {stream}")
+        plan_resources = session.spec.get("resources") or []
+        if not any(
+            resource.get("type") == "AWS::Kinesis::Stream"
+            and resource.get("localId") == source["sourceName"]
+            for resource in plan_resources
+        ):
+            raise HarnessFailure(f"kinesis: plan did not list the stream: {plan_resources}")
+        function = session.function(source["function"])
+        environment = function.get("environment") or {}
+        if environment.get("APPTHEORY_KINESIS_STREAM_ARN") != stream.get("arn"):
+            raise HarnessFailure(
+                f"kinesis: GetAtt Arn did not resolve to the provisioned stream: {environment} vs {stream}"
+            )
         log_path = tempfile.NamedTemporaryFile(prefix="a4-kinesis-", suffix=".log", delete=False).name
         message = "2026-11-02T15:00:00Z INFO order processed id=42"
         Path(log_path).write_text(message + "\n", encoding="utf-8")
@@ -3405,8 +3585,9 @@ def run_kinesis_handler(harness: Harness) -> str:
         if failures != [{"itemIdentifier": bad_sequence}]:
             raise HarnessFailure(f"kinesis: malformed record must fail its sequence number, got {failures}")
         return (
-            "real gzip+base64 CloudWatch Logs subscription content was invoked through the handler "
-            f"({source['sourceName']}); the malformed record was returned as a partial batch failure"
+            f"the CDK Kinesis stream {source['sourceName']} was provisioned on moto and its Ref/GetAtt Arn "
+            f"resolved ({stream.get('arn')}); real gzip+base64 CloudWatch Logs subscription content was "
+            "invoked through the handler; the malformed record was returned as a partial batch failure"
         )
     finally:
         if log_path:
@@ -3415,6 +3596,455 @@ def run_kinesis_handler(harness: Harness) -> str:
             except FileNotFoundError:
                 pass
         stop_local_session(harness, session)
+
+
+def run_kinesis_signing(harness: Harness) -> str:
+    plan = plan_local_app(harness, KINESIS_APP)
+    matches = [
+        function for function in plan.get("functions") or []
+        if (function.get("environment") or {}).get("SIGNING_KEY_ALIAS")
+    ]
+    if len(matches) != 1:
+        raise HarnessFailure(f"kinesis signing: want one signing function, got {matches}")
+    function = matches[0]
+    decoded, _ = invoke_local_function(
+        harness,
+        app=KINESIS_APP,
+        function=function["logicalId"],
+        event={},
+        name="kinesis-signing",
+        backends=("moto",),
+    )
+    raw = decoded.get("raw")
+    if not isinstance(raw, dict):
+        raise HarnessFailure(f"kinesis signing: the handler did not return JSON: {decoded}")
+    if (
+        raw.get("aliasVerified") is not True
+        or raw.get("arnVerified") is not True
+        or raw.get("aliasSignatureLength", 0) <= 0
+        or raw.get("arnSignatureLength", 0) <= 0
+        or raw.get("publicKeyBytes", 0) <= 0
+        or not str(raw.get("alias") or "").startswith("alias/")
+        or ":key/" not in str(raw.get("keyArn") or "")
+    ):
+        raise HarnessFailure(f"kinesis signing: unexpected result: {raw}")
+    return (
+        "the RSA_2048 SIGN_VERIFY key and its alias were provisioned on moto; the handler signed and "
+        "verified with the alias (usable as KeyId) and the key ARN, and read the public key"
+    )
+
+
+def _plan_function(plan: dict, handler: str) -> dict:
+    matches = [function for function in plan.get("functions") or [] if function.get("handler") == handler]
+    if len(matches) != 1:
+        raise HarnessFailure(f"want one function with handler {handler!r}, got {matches}")
+    return matches[0]
+
+
+def _sns_subscription_id(
+    plan: dict,
+    *,
+    topic: str,
+    protocol: str,
+    function: str | None = None,
+    queue: str | None = None,
+) -> str:
+    matches = []
+    for subscription in plan.get("subscriptions") or []:
+        if subscription.get("topic") != topic or subscription.get("protocol") != protocol:
+            continue
+        if function is not None and subscription.get("function") != function:
+            continue
+        if queue is not None and subscription.get("queue") != queue:
+            continue
+        matches.append(subscription)
+    if len(matches) != 1:
+        raise HarnessFailure(f"want one {protocol} subscription on {topic}, got {matches}")
+    return matches[0]["logicalId"]
+
+
+def _sns_resource(session: LocalSession, name: str, kind: str) -> dict:
+    return session.resource(name=name, kind=kind)
+
+
+def _drain_sqs(session: LocalSession, queue_logical_id: str, *, expected: int, timeout: float = 180) -> list[dict]:
+    messages: list[dict] = []
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        result = session.request("sqs.receive", queue=queue_logical_id, max=10, delete=True)
+        messages.extend(result.get("messages") or [])
+        if len(messages) >= expected:
+            break
+        time.sleep(0.15)
+    if len(messages) != expected:
+        raise HarnessFailure(
+            f"queue {queue_logical_id}: read {len(messages)} message(s), want {expected}"
+        )
+    return messages
+
+
+def run_sqs_sns_publisher(harness: Harness) -> str:
+    plan = plan_local_app(harness, SQS_APP)
+    publisher = _plan_function(plan, "sns-publisher.handler")
+    session = start_local_session(
+        harness,
+        SQS_APP,
+        name="sqs-sns-publisher",
+        backends=("moto", "sqs"),
+        targets=(publisher["logicalId"],),
+    )
+    try:
+        receipts_id = _sns_resource(session, "sns-receipts", "AWS::SQS::Queue")["logicalId"]
+        fifo_queue = _sns_resource(session, "sns-fifo-events.fifo", "AWS::SQS::Queue")
+        decoded = session.invoke(publisher["logicalId"], {})
+        body = _proxy_body(decoded, "sqs sns publisher")
+        standard = body.get("standard") or {}
+        fifo = body.get("fifo") or {}
+        if (
+            decoded.get("statusCode") != 200
+            or standard.get("topicArn") != standard.get("expectedArn")
+            or standard.get("fifoTopic") is not False
+            or not standard.get("messageId")
+            or fifo.get("topicArn") != fifo.get("expectedArn")
+            or fifo.get("fifoTopic") is not True
+            or fifo.get("contentBasedDeduplication") is not True
+            or len(fifo.get("orderedMessageIds") or []) != 3
+            or not fifo.get("expectedName", "").endswith(".fifo")
+            or not str(fifo.get("queueArn") or "").endswith(":fifo-events.fifo")
+        ):
+            raise HarnessFailure(f"sqs sns publisher: unexpected response: {body}")
+
+        # The standard topic's inline Lambda subscription delivered the
+        # documented record to the consumer, which wrote a real SQS receipt.
+        standard_subscription = _sns_subscription_id(plan, topic="EventsTopic", protocol="lambda")
+        _wait_for_delivery(session, standard_subscription, delivered=1)
+        receipts = _drain_sqs(session, receipts_id, expected=1)
+        receipt = json.loads(receipts[0]["body"])
+        if (
+            receipt.get("kind") != "event"
+            or receipt.get("eventSource") != "aws:sns"
+            or receipt.get("type") != "Notification"
+            or receipt.get("messageId") != standard.get("messageId")
+            or receipt.get("topicArn") != standard.get("expectedArn")
+            or receipt.get("subject") != "local standard publish"
+            or receipt.get("message") != '{"eventType":"local-sns-publish","n":1}'
+            or receipt.get("signatureVersion") != "1"
+            or not receipt.get("timestamp")
+            or "SubscriptionArn=" not in str(receipt.get("unsubscribeUrl") or "")
+            or (receipt.get("messageAttributes") or {}).get("eventType", {}).get("Type") != "String"
+            or (receipt.get("messageAttributes") or {}).get("eventType", {}).get("Value") != "local-sns-publish"
+        ):
+            raise HarnessFailure(f"sqs sns publisher: unexpected Lambda receipt: {receipt}")
+
+        # The FIFO topic delivered four messages to the unmapped FIFO queue:
+        # three ordered messages and one of the two identical content-based
+        # publishes. The queue preserves order and carries group/dedup ids.
+        _wait_for_queue_total(session, fifo_queue["logicalId"], total=4)
+        delivered = _drain_sqs(session, fifo_queue["logicalId"], expected=4)
+        # FIFO order is guaranteed per message group, not across groups.
+        groups: dict[str, list[dict]] = {}
+        for message in delivered:
+            attributes = message.get("attributes") or {}
+            group = str(attributes.get("MessageGroupId") or "")
+            groups.setdefault(group, []).append(message)
+        ordered = groups.get("local-group") or []
+        if [json.loads(message["body"]).get("n") for message in ordered] != [1, 2, 3]:
+            raise HarnessFailure(f"sqs sns publisher: FIFO local-group = {[m['body'] for m in ordered]}")
+        for index, message in enumerate(ordered, start=1):
+            attributes = message.get("attributes") or {}
+            if attributes.get("MessageDeduplicationId") != f"local-dedup-{index}":
+                raise HarnessFailure(f"sqs sns publisher: ordered FIFO attributes = {attributes}")
+        content_group = groups.get("cbd-group") or []
+        if len(content_group) != 1:
+            raise HarnessFailure(f"sqs sns publisher: content-based group = {content_group}")
+        content = content_group[0]
+        if json.loads(content["body"]) != {"eventType": "local-sns-fifo", "contentBased": True}:
+            raise HarnessFailure(f"sqs sns publisher: FIFO content body = {content['body']}")
+        content_attributes = content.get("attributes") or {}
+        want_content_dedup = hashlib.sha256(fifo["contentBody"].encode("utf-8")).hexdigest()
+        if content_attributes.get("MessageDeduplicationId") != want_content_dedup:
+            raise HarnessFailure(f"sqs sns publisher: content-based FIFO attributes = {content_attributes}")
+        fifo_subscription = _sns_subscription_id(plan, topic="FifoTopic", protocol="sqs", queue=fifo_queue["logicalId"])
+        _wait_for_delivery(session, fifo_subscription, delivered=4)
+        plan_resources = plan.get("resources") or []
+        topics = {
+            resource.get("localId")
+            for resource in plan_resources
+            if resource.get("type") == "AWS::SNS::Topic"
+        }
+        if "apptheory-local-events" not in topics or "apptheory-local-events.fifo" not in topics:
+            raise HarnessFailure(f"sqs sns publisher: plan did not list both topics: {plan_resources}")
+        return (
+            "the standard and FIFO SNS topics were provisioned on moto; the handler published through the "
+            "real SDK; the inline Lambda subscription delivered the documented record (message id, subject, "
+            "timestamp, UnsubscribeUrl and String attributes); the FIFO topic delivered three ordered "
+            "messages in one message group and collapsed the two identical content-based publishes to one "
+            "in another; the FIFO queue carried MessageGroupId and the explicit or content SHA-256 "
+            "MessageDeduplicationId"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+class _SNSHTTPCapture:
+    """A real loopback HTTP endpoint the runner POSTs an SNS notification to."""
+
+    def __init__(self) -> None:
+        self.receipts: list[dict] = []
+        self.ready = threading.Event()
+        self.server: http.server.ThreadingHTTPServer | None = None
+
+    def start(self) -> "_SNSHTTPCapture":
+        capture = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+                length = int(self.headers.get("Content-Length") or 0)
+                body = self.rfile.read(length).decode("utf-8", errors="replace")
+                capture.receipts.append(
+                    {"path": self.path, "headers": dict(self.headers), "body": body}
+                )
+                capture.ready.set()
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"ok")
+
+            def log_message(self, *_args) -> None:
+                pass
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", SNS_HTTP_PORT), Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        return self
+
+    def stop(self) -> None:
+        if self.server is not None:
+            self.server.shutdown()
+            self.server.server_close()
+
+    def wait(self, timeout: float = 120) -> dict:
+        if not self.ready.wait(timeout):
+            raise HarnessFailure(f"the SNS HTTP endpoint was not reached in {timeout:g}s")
+        return self.receipts[0]
+
+
+def run_sqs_sns_targets(harness: Harness) -> str:
+    plan = plan_local_app(harness, SQS_APP)
+    publisher = _plan_function(plan, "sns-scenario-publisher.handler")
+    try:
+        capture = _SNSHTTPCapture().start()
+    except OSError as exc:
+        raise HarnessFailure(f"start the SNS HTTP capture on 127.0.0.1:{SNS_HTTP_PORT}: {exc}") from exc
+    session = start_local_session(
+        harness,
+        SQS_APP,
+        name="sqs-sns-targets",
+        backends=("moto", "sqs"),
+        targets=(publisher["logicalId"],),
+    )
+    try:
+        receipts_id = _sns_resource(session, "sns-receipts", "AWS::SQS::Queue")["logicalId"]
+        raw_queue = _sns_resource(session, "sns-raw", "AWS::SQS::Queue")
+        envelope_queue = _sns_resource(session, "sns-envelope", "AWS::SQS::Queue")
+        attributes_topic = _sns_resource(session, "apptheory-local-attributes", "AWS::SNS::Topic")
+        body_topic = _sns_resource(session, "apptheory-local-body", "AWS::SNS::Topic")
+        raw_topic = _sns_resource(session, "apptheory-local-raw", "AWS::SNS::Topic")
+        http_topic = _sns_resource(session, "apptheory-local-http", "AWS::SNS::Topic")
+
+        def publish(topic_env: str, messages: list[dict], label: str) -> dict:
+            result = session.invoke(publisher["logicalId"], {"topicEnv": topic_env, "messages": messages})
+            body = _proxy_body(result, label)
+            if result.get("statusCode") != 200 or len(body.get("messageIds") or []) != len(messages):
+                raise HarnessFailure(f"{label}: unexpected publish result: {body}")
+            return body
+
+        # Attribute-scope filter in the AWS standard "$or" form: the sibling
+        # eventType key is ANDed with the OR of the branch objects. One message
+        # matches each branch and one matches neither.
+        attribute_priority = '{"kind":"attribute-priority"}'
+        attribute_region = '{"kind":"attribute-region"}'
+        publish(
+            "ATTRIBUTES_TOPIC_ARN",
+            [
+                {
+                    "message": attribute_priority,
+                    "messageAttributes": {
+                        "eventType": {"DataType": "String", "StringValue": "keep"},
+                        "priority": {"DataType": "Number", "StringValue": "10"},
+                    },
+                },
+                {
+                    "message": attribute_region,
+                    "messageAttributes": {
+                        "eventType": {"DataType": "String", "StringValue": "keep"},
+                        "region": {"DataType": "String", "StringValue": "us-east-1"},
+                    },
+                },
+                {
+                    "message": '{"kind":"attribute-neither"}',
+                    "messageAttributes": {
+                        "eventType": {"DataType": "String", "StringValue": "keep"},
+                        "priority": {"DataType": "Number", "StringValue": "5"},
+                        "region": {"DataType": "String", "StringValue": "eu-west-1"},
+                    },
+                },
+            ],
+            "sqs sns targets attribute filter",
+        )
+        # Body-scope filter: one matching JSON body, one below the numeric
+        # range, and one non-JSON body (which matches nothing).
+        body_match = json.dumps({"kind": "order", "amount": 150, "customer": {"tier": "premium"}})
+        publish(
+            "BODY_TOPIC_ARN",
+            [
+                {"message": body_match},
+                {"message": json.dumps({"kind": "order", "amount": 50, "customer": {"tier": "premium"}})},
+                {"message": "not json"},
+            ],
+            "sqs sns targets body filter",
+        )
+        attribute_state = _wait_for_delivery(
+            session,
+            _sns_subscription_id(plan, topic="FilteredAttributesTopic", protocol="lambda"),
+            delivered=2,
+            filtered=1,
+        )
+        body_state = _wait_for_delivery(
+            session,
+            _sns_subscription_id(plan, topic="FilteredBodyTopic", protocol="lambda"),
+            delivered=1,
+            filtered=2,
+        )
+        receipts = _drain_sqs(session, receipts_id, expected=3)
+        by_message = {}
+        for message in receipts:
+            receipt = json.loads(message["body"])
+            by_message[receipt.get("message")] = receipt
+        if set(by_message) != {attribute_priority, attribute_region, body_match}:
+            raise HarnessFailure(f"sqs sns targets: receipts = {[json.loads(m['body']) for m in receipts]}")
+        priority_receipt = by_message[attribute_priority]
+        region_receipt = by_message[attribute_region]
+        if (
+            (priority_receipt.get("messageAttributes") or {}).get("priority", {}).get("Value") != "10"
+            or (region_receipt.get("messageAttributes") or {}).get("region", {}).get("Value") != "us-east-1"
+            or by_message[body_match].get("kind") != "body"
+        ):
+            raise HarnessFailure(
+                f"sqs sns targets: filtered receipts = {[json.loads(m['body']) for m in receipts]}"
+            )
+        if attribute_state.get("filtered") != 1 or attribute_state.get("failed") != 0:
+            raise HarnessFailure(f"sqs sns targets: attribute state = {attribute_state}")
+        if body_state.get("filtered") != 2 or body_state.get("failed") != 0:
+            raise HarnessFailure(f"sqs sns targets: body state = {body_state}")
+
+        # Raw and envelope SQS subscriptions on the same standard topic.
+        raw_message = '{"kind":"raw","n":1}'
+        publish(
+            "RAW_TOPIC_ARN",
+            [
+                {
+                    "message": raw_message,
+                    "subject": "raw subject",
+                    "messageAttributes": {
+                        "eventType": {"DataType": "String", "StringValue": "keep"},
+                        "count": {"DataType": "Number", "StringValue": "42"},
+                        "tags": {"DataType": "String.Array", "StringValue": json.dumps(["a", "b"])},
+                    },
+                }
+            ],
+            "sqs sns targets raw",
+        )
+        _wait_for_delivery(
+            session,
+            _sns_subscription_id(plan, topic="RawTopic", protocol="sqs", queue=raw_queue["logicalId"]),
+            delivered=1,
+        )
+        _wait_for_delivery(
+            session,
+            _sns_subscription_id(plan, topic="RawTopic", protocol="sqs", queue=envelope_queue["logicalId"]),
+            delivered=1,
+        )
+        raw_receipt = _drain_sqs(session, raw_queue["logicalId"], expected=1)[0]
+        if raw_receipt.get("body") != raw_message:
+            raise HarnessFailure(f"sqs sns targets: raw body = {raw_receipt.get('body')!r}")
+        raw_attributes = raw_receipt.get("messageAttributes") or {}
+        if (
+            (raw_attributes.get("eventType") or {}).get("DataType") != "String"
+            or (raw_attributes.get("eventType") or {}).get("StringValue") != "keep"
+            or (raw_attributes.get("count") or {}).get("DataType") != "Number"
+            or (raw_attributes.get("count") or {}).get("StringValue") != "42"
+            or (raw_attributes.get("tags") or {}).get("StringValue") != json.dumps(["a", "b"])
+        ):
+            raise HarnessFailure(f"sqs sns targets: raw message attributes = {raw_attributes}")
+        if (raw_receipt.get("attributes") or {}).get("MessageGroupId"):
+            raise HarnessFailure(f"sqs sns targets: raw standard delivery carried a group: {raw_receipt}")
+        envelope_receipt = _drain_sqs(session, envelope_queue["logicalId"], expected=1)[0]
+        envelope = json.loads(envelope_receipt["body"])
+        if (
+            envelope.get("Type") != "Notification"
+            or envelope.get("Message") != raw_message
+            or envelope.get("Subject") != "raw subject"
+            or envelope.get("TopicArn") != raw_topic.get("arn")
+            or (envelope.get("MessageAttributes") or {}).get("eventType", {}).get("Type") != "String"
+            or (envelope.get("MessageAttributes") or {}).get("eventType", {}).get("Value") != "keep"
+            or not envelope.get("MessageId")
+            or not envelope.get("Timestamp")
+        ):
+            raise HarnessFailure(f"sqs sns targets: envelope = {envelope}")
+
+        # HTTP loopback subscription served by this harness.
+        http_message = '{"kind":"http","n":1}'
+        publish(
+            "HTTP_TOPIC_ARN",
+            [
+                {
+                    "message": http_message,
+                    "subject": "http subject",
+                    "messageAttributes": {
+                        "eventType": {"DataType": "String", "StringValue": "http"},
+                    },
+                }
+            ],
+            "sqs sns targets http",
+        )
+        receipt = capture.wait(120)
+        headers = {name.lower(): value for name, value in receipt["headers"].items()}
+        if receipt["path"] != "/":
+            raise HarnessFailure(f"sqs sns targets: HTTP path = {receipt['path']!r}")
+        if not str(headers.get("content-type", "")).startswith("text/plain"):
+            raise HarnessFailure(f"sqs sns targets: HTTP content-type = {headers.get('content-type')!r}")
+        if headers.get("x-amz-sns-message-type") != "Notification":
+            raise HarnessFailure(f"sqs sns targets: HTTP message type = {headers.get('x-amz-sns-message-type')!r}")
+        if headers.get("x-amz-sns-topic-arn") != http_topic.get("arn"):
+            raise HarnessFailure(f"sqs sns targets: HTTP topic ARN = {headers.get('x-amz-sns-topic-arn')!r}")
+        if not str(headers.get("x-amz-sns-subscription-arn") or "").startswith(str(http_topic.get("arn")) + ":"):
+            raise HarnessFailure(f"sqs sns targets: HTTP subscription ARN = {headers.get('x-amz-sns-subscription-arn')!r}")
+        http_body = json.loads(receipt["body"])
+        if (
+            http_body.get("Type") != "Notification"
+            or http_body.get("Message") != http_message
+            or http_body.get("Subject") != "http subject"
+            or http_body.get("TopicArn") != http_topic.get("arn")
+            or http_body.get("SignatureVersion") != "1"
+            or http_body.get("MessageId") != headers.get("x-amz-sns-message-id")
+            or (http_body.get("MessageAttributes") or {}).get("eventType", {}).get("Value") != "http"
+        ):
+            raise HarnessFailure(f"sqs sns targets: HTTP body = {http_body}")
+        _wait_for_delivery(
+            session,
+            _sns_subscription_id(plan, topic="HttpTopic", protocol="http"),
+            delivered=1,
+        )
+        return (
+            "the runner evaluated an attribute-scope policy in the AWS standard $or form (eventType ANDed "
+            "with priority OR region) and a body-scope policy (nested keys), delivering two messages that "
+            "matched one $or branch each and reporting one filtered message on the attribute subscription "
+            "and two on the body subscription; an SQS raw subscription received the body and native "
+            "attributes while the envelope subscription received the documented JSON notification; a "
+            "loopback HTTP subscription received the body and the x-amz-sns-* headers"
+        )
+    finally:
+        stop_local_session(harness, session)
+        capture.stop()
 
 
 def run_s3_vectors(harness: Harness) -> str:
@@ -4101,11 +4731,14 @@ RUNNERS: dict[str, Callable[[Harness], str]] = {
     "lambda-role-encrypted": run_lambda_role_encrypted,
     "lambda-role-custom": run_lambda_role_custom,
     "sqs-producer": run_sqs_producer,
+    "sqs-sns-publisher": run_sqs_sns_publisher,
+    "sqs-sns-targets": run_sqs_sns_targets,
     "sqs-worker": run_sqs_worker,
     "sqs-dlq": run_sqs_dlq,
     "import-ingest": run_import_ingest,
     "import-worker": run_import_worker,
     "kinesis-handler": run_kinesis_handler,
+    "kinesis-signing": run_kinesis_signing,
     "microvm-controller": run_microvm_controller,
     "microvm-workload-go": run_microvm_workload_go,
     "microvm-workload-py": run_microvm_workload_py,

@@ -14,35 +14,44 @@ import (
 
 // Resource types the assembly reader understands.
 const (
-	typeLambdaFunction   = "AWS::Lambda::Function"
-	typeDynamoTable      = "AWS::DynamoDB::Table"
-	typeSQSQueue         = "AWS::SQS::Queue"
-	typeS3Bucket         = "AWS::S3::Bucket"
-	typeKMSKey           = "AWS::KMS::Key"
-	typeEventsRule       = "AWS::Events::Rule"
-	typeEventSourceMap   = "AWS::Lambda::EventSourceMapping"
-	typeKinesisStream    = "AWS::Kinesis::Stream"
-	typeLogsSubscription = "AWS::Logs::SubscriptionFilter"
-	typeLogGroup         = "AWS::Logs::LogGroup"
-	typeLogsDestination  = "AWS::Logs::Destination"
-	typeSecretsSecret    = "AWS::SecretsManager::Secret" //nolint:gosec // CloudFormation resource type name, not a credential
-	typeIAMRole          = "AWS::IAM::Role"
-	typeMicrovmImage     = "AWS::Lambda::MicrovmImage"
-	typeS3VectorsIndex   = "AWS::S3Vectors::Index"
-	typeHTTPAPI          = "AWS::ApiGatewayV2::Api"
-	typeHTTPRoute        = "AWS::ApiGatewayV2::Route"
-	typeHTTPIntegration  = "AWS::ApiGatewayV2::Integration"
-	typeHTTPStage        = "AWS::ApiGatewayV2::Stage"
-	typeHTTPAuthorizer   = "AWS::ApiGatewayV2::Authorizer"
-	typeRESTAPI          = "AWS::ApiGateway::RestApi"
-	typeRESTResource     = "AWS::ApiGateway::Resource"
-	typeRESTMethod       = "AWS::ApiGateway::Method"
-	typeRESTStage        = "AWS::ApiGateway::Stage"
-	typeRESTAuthorizer   = "AWS::ApiGateway::Authorizer"
-	typeFunctionURL      = "AWS::Lambda::Url"
-	typeBucketDeploy     = "Custom::CDKBucketDeployment"
-	typeCloudFront       = "AWS::CloudFront::Distribution"
-	typeCloudFrontFn     = "AWS::CloudFront::Function"
+	typeLambdaFunction      = "AWS::Lambda::Function"
+	typeDynamoTable         = "AWS::DynamoDB::Table"
+	typeSQSQueue            = "AWS::SQS::Queue"
+	typeS3Bucket            = "AWS::S3::Bucket"
+	typeKMSKey              = "AWS::KMS::Key"
+	typeKMSAlias            = "AWS::KMS::Alias"
+	typeEventsRule          = "AWS::Events::Rule"
+	typeEventSourceMap      = "AWS::Lambda::EventSourceMapping"
+	typeKinesisStream       = "AWS::Kinesis::Stream"
+	typeLogsSubscription    = "AWS::Logs::SubscriptionFilter"
+	typeLogGroup            = "AWS::Logs::LogGroup"
+	typeLogsDestination     = "AWS::Logs::Destination"
+	typeSecretsSecret       = "AWS::SecretsManager::Secret"         //nolint:gosec // CloudFormation resource type name, not a credential
+	typeSecretsResourceRule = "AWS::SecretsManager::ResourcePolicy" //nolint:gosec // CloudFormation resource type name, not a credential
+	typeSSMParameter        = "AWS::SSM::Parameter"
+	typeSNSTopic            = "AWS::SNS::Topic"
+	typeSNSSubscription     = "AWS::SNS::Subscription"
+	typeSNSTopicPolicy      = "AWS::SNS::TopicPolicy"
+	typeCognitoUserPool     = "AWS::Cognito::UserPool"
+	typeCognitoClient       = "AWS::Cognito::UserPoolClient"
+	typeCognitoDomain       = "AWS::Cognito::UserPoolDomain"
+	typeIAMRole             = "AWS::IAM::Role"
+	typeMicrovmImage        = "AWS::Lambda::MicrovmImage"
+	typeS3VectorsIndex      = "AWS::S3Vectors::Index"
+	typeHTTPAPI             = "AWS::ApiGatewayV2::Api"
+	typeHTTPRoute           = "AWS::ApiGatewayV2::Route"
+	typeHTTPIntegration     = "AWS::ApiGatewayV2::Integration"
+	typeHTTPStage           = "AWS::ApiGatewayV2::Stage"
+	typeHTTPAuthorizer      = "AWS::ApiGatewayV2::Authorizer"
+	typeRESTAPI             = "AWS::ApiGateway::RestApi"
+	typeRESTResource        = "AWS::ApiGateway::Resource"
+	typeRESTMethod          = "AWS::ApiGateway::Method"
+	typeRESTStage           = "AWS::ApiGateway::Stage"
+	typeRESTAuthorizer      = "AWS::ApiGateway::Authorizer"
+	typeFunctionURL         = "AWS::Lambda::Url"
+	typeBucketDeploy        = "Custom::CDKBucketDeployment"
+	typeCloudFront          = "AWS::CloudFront::Distribution"
+	typeCloudFrontFn        = "AWS::CloudFront::Function"
 
 	assetPathMetadataKey = "aws:asset:path"
 	streamingURIMarker   = "/response-streaming-invocations"
@@ -292,11 +301,89 @@ func deriveSpecInternal(dir string, stacks []assemblyStack) (*Spec, error) {
 		})
 	}
 	deriveSkipped(spec)
+	deriveProvisioningSkips(spec, stacks)
+	spec.PlannedResources = plannedProvisionedResources(spec)
 	if err := validateServedFunctions(spec); err != nil {
 		return nil, err
 	}
 	spec.sort()
 	return spec, nil
+}
+
+// deriveProvisioningSkips records the resource policies and hosted UI a local
+// run deliberately does not evaluate. The resources they attach to are still
+// provisioned; only the policy surface is absent.
+func deriveProvisioningSkips(spec *Spec, stacks []assemblyStack) {
+	for _, resource := range spec.Resources {
+		logicalID := qualify(stacks, resource.Stack, resource.LogicalID)
+		switch resource.Type {
+		case typeSecretsResourceRule:
+			spec.Skipped = append(spec.Skipped, Skipped{
+				LogicalID: logicalID,
+				Kind:      typeSecretsResourceRule,
+				Reason: "IAM resource-policy evaluation is a docs/125 true limit; " +
+					"the secret itself is provisioned and GetSecretValue works at runtime",
+			})
+		case typeSNSTopicPolicy:
+			spec.Skipped = append(spec.Skipped, Skipped{
+				LogicalID: logicalID,
+				Kind:      typeSNSTopicPolicy,
+				Reason: "IAM topic-policy evaluation is a docs/125 true limit; " +
+					"the topic itself is provisioned and publish works at runtime",
+			})
+		case typeCognitoDomain:
+			spec.Skipped = append(spec.Skipped, Skipped{
+				LogicalID: logicalID,
+				Kind:      typeCognitoDomain,
+				Reason: "the local runner serves the user pool issuer and JWKS for token validation " +
+					"but does not serve the Cognito hosted UI/OAuth domain",
+			})
+		}
+	}
+}
+
+// plannedProvisionedResources lists the resources a run creates from the
+// assembly, with the local identifier the definition fixes. A generated
+// identifier is marked so plan never presents it as a known value.
+func plannedProvisionedResources(spec *Spec) []PlannedResource {
+	var planned []PlannedResource
+	for _, resource := range spec.Resources {
+		localID, generated, ok := plannedLocalID(resource)
+		if !ok {
+			continue
+		}
+		planned = append(planned, PlannedResource{
+			LogicalID: resource.LogicalID,
+			Stack:     resource.Stack,
+			Type:      resource.Type,
+			LocalID:   localID,
+			Generated: generated,
+		})
+	}
+	return planned
+}
+
+func plannedLocalID(resource ResourceSpec) (string, bool, bool) {
+	switch resource.Type {
+	case typeS3Bucket, typeDynamoTable, typeSQSQueue, typeSSMParameter, typeSNSTopic,
+		typeKinesisStream, typeCognitoUserPool, typeCognitoClient, typeKMSAlias:
+		name, err := resourceName(resource)
+		if err != nil {
+			return "", false, false
+		}
+		if resource.Type == typeSSMParameter {
+			name = ssmParameterName(resource)
+		}
+		return name, false, true
+	case typeSecretsSecret:
+		return secretLocalName(resource), true, true
+	case typeKMSKey:
+		return "key-id-created-at-run", true, true
+	case typeSecretsResourceRule, typeSNSTopicPolicy, typeCognitoDomain:
+		return "", false, false
+	default:
+		return "", false, false
+	}
 }
 
 // cloudFrontTemplates adapts the runner's assembly stacks to the CloudFront
@@ -413,6 +500,9 @@ func deriveStack(spec *Spec, assemblyDir string, stacks []assemblyStack, stack a
 		return err
 	}
 	if err := deriveEventRules(spec, stacks, stack); err != nil {
+		return err
+	}
+	if err := deriveSNSSubscriptions(spec, stacks, stack); err != nil {
 		return err
 	}
 	return deriveSubscriptions(spec, stacks, stack)

@@ -83,6 +83,46 @@ def build_app():
     )
     app.dynamodb(table_name, dynamodb_handler)
 
+    sns_topic_name = os.getenv("APPTHEORY_DEMO_SNS_NAME", "")
+    sns_state = {"record": None}
+
+    def record_sns_event(record):
+        sns = record.get("Sns") or {}
+        entry = {
+            "lang": lang,
+            "eventSource": record.get("EventSource", ""),
+            "eventVersion": record.get("EventVersion", ""),
+            "eventSubscriptionArn": record.get("EventSubscriptionArn", ""),
+            "type": sns.get("Type", ""),
+            "messageId": sns.get("MessageId", ""),
+            "topicArn": sns.get("TopicArn", ""),
+            "subject": sns.get("Subject", ""),
+            "message": sns.get("Message", ""),
+            "timestamp": sns.get("Timestamp", ""),
+            "signatureVersion": sns.get("SignatureVersion", ""),
+            "unsubscribeUrl": sns.get("UnsubscribeUrl", ""),
+            "messageAttributes": sns.get("MessageAttributes") or {},
+        }
+        entry["shapeOk"] = (
+            entry["type"] == "Notification"
+            and bool(entry["messageId"])
+            and bool(entry["topicArn"])
+            and bool(entry["timestamp"])
+            and bool(entry["signatureVersion"])
+            and bool(entry["unsubscribeUrl"])
+        )
+        return entry
+
+    def sns_handler(_ctx, record):
+        sns_state["record"] = record_sns_event(record)
+        return sns_state["record"]
+
+    def sns_record(_ctx):
+        return json(200, {"record": sns_state["record"]})
+
+    app.sns(sns_topic_name, sns_handler)
+    app.get("/sns-record", sns_record)
+
     def hello(ctx):
         return json(
             200,

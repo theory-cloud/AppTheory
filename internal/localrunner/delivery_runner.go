@@ -73,6 +73,8 @@ func deliveryBackendService(kind DeliveryKind) string {
 		return "events"
 	case DeliveryKindCloudWatchLogs:
 		return "logs"
+	case DeliveryKindSNS:
+		return backendSNS
 	default:
 		return ""
 	}
@@ -84,6 +86,10 @@ func deliveryClient(service, endpoint string) any {
 		return newSQSClient(endpoint)
 	case backendDynamoDB:
 		return newDynamoDBClient(endpoint)
+	case backendSNS:
+		// The SNS deliverer needs both services: moto serves the publish side
+		// and the per-topic drain queue on the same endpoint.
+		return &snsLocalBackend{sns: newSNSClient(endpoint), sqs: newSQSClient(endpoint)}
 	default:
 		return nil
 	}

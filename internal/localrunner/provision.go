@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/kms"
+	kmsTypes "github.com/aws/aws-sdk-go-v2/service/kms/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	sqstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
@@ -28,6 +29,7 @@ import (
 func (r *Runner) provisionResources(ctx context.Context, spec *Spec) error {
 	r.resourceValues = resourceValues{}
 	r.tables = map[string]tableInfo{}
+	r.secretValues = map[string]string{}
 	if err := r.provisionBuckets(ctx, spec); err != nil {
 		return err
 	}
@@ -37,10 +39,28 @@ func (r *Runner) provisionResources(ctx context.Context, spec *Spec) error {
 	if err := r.provisionKeys(ctx, spec); err != nil {
 		return err
 	}
+	if err := r.provisionAliases(ctx, spec); err != nil {
+		return err
+	}
 	if err := r.provisionTables(ctx, spec); err != nil {
 		return err
 	}
-	return r.provisionQueues(ctx, spec)
+	if err := r.provisionQueues(ctx, spec); err != nil {
+		return err
+	}
+	if err := r.provisionSSMParameters(ctx, spec); err != nil {
+		return err
+	}
+	if err := r.provisionSecrets(ctx, spec); err != nil {
+		return err
+	}
+	if err := r.provisionTopics(ctx, spec); err != nil {
+		return err
+	}
+	if err := r.provisionStreams(ctx, spec); err != nil {
+		return err
+	}
+	return r.provisionCognito(ctx, spec)
 }
 
 func (r *Runner) provisionBuckets(ctx context.Context, spec *Spec) error {
@@ -90,7 +110,23 @@ func (r *Runner) provisionKeys(ctx context.Context, spec *Spec) error {
 		if err != nil {
 			return err
 		}
-		created, err := client.CreateKey(ctx, &kms.CreateKeyInput{Description: aws.String(description)})
+		input := &kms.CreateKeyInput{Description: aws.String(description)}
+		var props struct {
+			KeySpec  string `json:"KeySpec"`
+			KeyUsage string `json:"KeyUsage"`
+		}
+		if len(resource.Properties) > 0 {
+			if parseErr := json.Unmarshal(resource.Properties, &props); parseErr != nil {
+				return fmt.Errorf("parse KMS key %s properties: %w", resource.LogicalID, parseErr)
+			}
+		}
+		if spec := strings.TrimSpace(props.KeySpec); spec != "" {
+			input.KeySpec = kmsTypes.KeySpec(spec)
+		}
+		if usage := strings.TrimSpace(props.KeyUsage); usage != "" {
+			input.KeyUsage = kmsTypes.KeyUsageType(usage)
+		}
+		created, err := client.CreateKey(ctx, input)
 		if err != nil {
 			return fmt.Errorf("create local KMS key for %s: %w", resource.LogicalID, err)
 		}
