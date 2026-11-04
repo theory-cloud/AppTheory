@@ -506,6 +506,7 @@ func (s *Spec) sort() {
 	sort.Slice(s.Subscriptions, func(i, j int) bool {
 		return s.Subscriptions[i].LogicalID < s.Subscriptions[j].LogicalID
 	})
+	SortNotifications(s.Notifications)
 	sort.Slice(s.Skipped, func(i, j int) bool { return s.Skipped[i].LogicalID < s.Skipped[j].LogicalID })
 	sort.Slice(s.CloudFront, func(i, j int) bool { return s.CloudFront[i].LogicalID < s.CloudFront[j].LogicalID })
 	sort.Slice(s.CloudFrontFunctions, func(i, j int) bool {
@@ -533,6 +534,9 @@ func deriveStack(spec *Spec, assemblyDir string, stacks []assemblyStack, stack a
 		return err
 	}
 	if err := deriveSNSSubscriptions(spec, stacks, stack); err != nil {
+		return err
+	}
+	if err := deriveS3Notifications(spec, stacks, stack); err != nil {
 		return err
 	}
 	return deriveSubscriptions(spec, stacks, stack)

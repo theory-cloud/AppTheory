@@ -344,6 +344,25 @@ func printDerivedEvents(spec *localrunner.Spec) {
 				localrunner.DeliveryCell(delivery[rule.LogicalID]))
 		}
 	}
+	if len(spec.Notifications) > 0 {
+		fmt.Println()
+		fmt.Println("s3 notifications:")
+		for _, notification := range spec.Notifications {
+			events := strings.Join(notification.Events, ",")
+			filters := "none"
+			if len(notification.FilterRules) > 0 {
+				parts := make([]string, 0, len(notification.FilterRules))
+				for _, rule := range notification.FilterRules {
+					parts = append(parts, rule.Name+"="+rule.Value)
+				}
+				filters = strings.Join(parts, ",")
+			}
+			fmt.Printf("  %-40s %-12s <- %s[%s] events=%s filter=%s -> %s delivery=%s\n",
+				notification.LogicalID, notification.DestinationType, notification.BucketName,
+				notification.Bucket, events, filters, notification.Destination,
+				localrunner.DeliveryCell(delivery[notification.LogicalID]))
+		}
+	}
 	if len(spec.Subscriptions) > 0 {
 		fmt.Println()
 		fmt.Println("subscriptions:")

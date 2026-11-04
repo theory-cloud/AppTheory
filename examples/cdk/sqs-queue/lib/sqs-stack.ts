@@ -11,6 +11,8 @@ import * as targets from "aws-cdk-lib/aws-events-targets";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as lambdaEventSources from "aws-cdk-lib/aws-lambda-event-sources";
+import * as s3 from "aws-cdk-lib/aws-s3";
+import * as s3n from "aws-cdk-lib/aws-s3-notifications";
 import * as sns from "aws-cdk-lib/aws-sns";
 import * as snsSubscriptions from "aws-cdk-lib/aws-sns-subscriptions";
 import type { Construct } from "constructs";
@@ -465,6 +467,69 @@ export class SqsQueueStack extends cdk.Stack {
                 resourceName: "default",
             })],
         }));
+
+        // ========================================================================
+        // S3 event notifications: one bucket with the three destination kinds
+        // and the documented filter rules. S3 sends the s3:TestEvent message to
+        // the SQS and SNS destinations when the configuration is applied, then
+        // a record for every matching object change:
+        // https://docs.aws.amazon.com/AmazonS3/latest/userguide/EventNotifications.html
+        // ========================================================================
+
+        const notificationBucket = new s3.Bucket(this, "NotificationBucket", {
+            removalPolicy: cdk.RemovalPolicy.DESTROY,
+        });
+        const s3RecordQueue = new AppTheoryQueue(this, "S3RecordQueue", {
+            queueName: "s3-events",
+            enableDlq: false,
+            visibilityTimeout: cdk.Duration.minutes(5),
+        });
+        const s3Topic = new sns.Topic(this, "S3Topic", {
+            topicName: "apptheory-local-s3",
+        });
+        const s3RawQueue = new AppTheoryQueue(this, "S3RawQueue", {
+            queueName: "s3-raw",
+            enableDlq: false,
+            visibilityTimeout: cdk.Duration.minutes(5),
+        });
+        s3Topic.addSubscription(new snsSubscriptions.SqsSubscription(s3RawQueue.queue, {
+            rawMessageDelivery: true,
+        }));
+        const s3Receipts = new AppTheoryQueue(this, "S3Receipts", {
+            queueName: "s3-lambda-receipts",
+            enableDlq: false,
+            visibilityTimeout: cdk.Duration.minutes(5),
+        });
+        const s3ConsumerFn = new lambda.Function(this, "S3ConsumerFn", {
+            runtime: lambda.Runtime.NODEJS_24_X,
+            handler: "s3-consumer.handler",
+            code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers")),
+            timeout: cdk.Duration.seconds(30),
+            description: "Records the S3 notification record the local runner delivers",
+            environment: {
+                RECEIPT_QUEUE_URL: s3Receipts.queueUrl,
+            },
+        });
+        s3Receipts.grantSendMessages(s3ConsumerFn);
+
+        // The Lambda destination carries both filter rules; the SQS destination
+        // proves the event-name filter (creates and deletes on separate
+        // configurations); the SNS destination carries the prefix rule only.
+        notificationBucket.addEventNotification(
+            s3.EventType.OBJECT_CREATED,
+            new s3n.LambdaDestination(s3ConsumerFn),
+            { prefix: "incoming/", suffix: ".json" },
+        );
+        notificationBucket.addEventNotification(
+            s3.EventType.OBJECT_REMOVED,
+            new s3n.SqsDestination(s3RecordQueue.queue),
+            { prefix: "incoming/" },
+        );
+        notificationBucket.addEventNotification(
+            s3.EventType.OBJECT_CREATED,
+            new s3n.SnsDestination(s3Topic),
+            { prefix: "incoming/" },
+        );
 
         // ========================================================================
         // Maximum concurrency: one message per batch and two concurrent

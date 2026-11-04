@@ -191,14 +191,14 @@
     "examples/cdk/import-pipeline/handlers/ingest/main.go": {
       "run": "import-ingest",
       "class": "L3",
-      "gap": "S3 → EventBridge emission (E4) and CodeBuild; IngestRule is reached by a real PutEvents of the S3 event shape and the WorkConsumer SQS mapping delivers automatically on ElasticMQ.",
-      "description": "Import pipeline ingest handler: a real object is written to s3proxy and a real SDK PutEvents of the S3 event shape reaches IngestRule; the handler writes the job meta and three work messages that the WorkConsumer mapping delivers to the worker and deletes."
+      "gap": "CodeBuild; the bucket's EventBridge notification is delivered by the runner from a real object PUT, and the WorkConsumer SQS mapping delivers automatically on ElasticMQ.",
+      "description": "Import pipeline ingest handler: a real object is written to s3proxy, the runner's S3 notification watcher publishes the documented aws.s3 Object Created event to the local bus, and IngestRule invokes the handler with no harness PutEvents; the handler writes the job meta and three work messages that the WorkConsumer mapping delivers to the worker and deletes."
     },
     "examples/cdk/import-pipeline/handlers/worker/main.go": {
       "run": "import-worker",
       "class": "L3",
-      "gap": "S3 → EventBridge emission (E4) and CodeBuild; IngestRule is reached by a real PutEvents of the S3 event shape and the WorkConsumer SQS mapping delivers automatically on ElasticMQ.",
-      "description": "Import pipeline worker handler: the full ingest → worker flow runs on the CDK jobs table after the real PutEvents ingest; the WorkConsumer mapping delivers the three real work messages automatically and they produce SUCCEEDED/FAILED records and a sanitized error envelope."
+      "gap": "CodeBuild; the bucket's EventBridge notification is delivered by the runner from a real object PUT, and the WorkConsumer SQS mapping delivers automatically on ElasticMQ.",
+      "description": "Import pipeline worker handler: the full ingest → worker flow runs on the CDK jobs table after the runner delivered the bucket's EventBridge notification; the WorkConsumer mapping delivers the three real work messages automatically and they produce SUCCEEDED/FAILED records and a sanitized error envelope."
     },
     "examples/cdk/kinesis-cloudwatch-logs/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
@@ -230,7 +230,7 @@
     "examples/cdk/lambda-role/handlers/custom.ts": {
       "run": "lambda-role-custom",
       "class": "L2",
-      "gap": "IAM policy evaluation is a docs/125 true limit; S3 is emulated by s3proxy (no bucket policies or event notifications). SSM parameters, Secrets Manager secrets and the Cognito user pool are real on moto.",
+      "gap": "IAM policy evaluation is a docs/125 true limit; S3 is emulated by s3proxy (no bucket policies and no server-side notification hook; the runner delivers bucket notification configurations from observed object state). SSM parameters, Secrets Manager secrets and the Cognito user pool are real on moto.",
       "description": "lambda-role custom handler: the compiled asset runs in nodejs:24 and reads String/SecureString/StringList SSM parameters through Ref and GetAtt, both Secrets Manager secrets through GetSecretValue, and the provisioned Cognito pool/client; the runner's local issuer serves the pool JWKS and discovery document; the S3 object round-trip stays real on s3proxy."
     },
     "examples/cdk/lambda-role/handlers/encrypted.ts": {
@@ -414,6 +414,12 @@
       "class": "L2",
       "description": "SNS consumer handler used by the standard, attribute-filtered and body-filtered Lambda subscriptions; it writes a real SQS receipt with the documented Lambda SNS record."
     },
+    "examples/cdk/sqs-queue/handlers/s3-consumer.mjs": {
+      "run": "sqs-s3-notifications",
+      "class": "L2",
+      "gap": "s3proxy emulates S3 object storage and has no server-side event hook: the runner observes every object change with ListObjectsV2 and therefore reports an observed create as ObjectCreated:Put and an observed delete as ObjectRemoved:Delete; CloudFront caching and the edge network are not involved.",
+      "description": "S3 event notifications: the CDK bucket's Lambda, SQS and SNS configurations delivered the documented s3:TestEvent on configuration; a real SDK PUT of incoming/a.json delivered ObjectCreated:Put to the Lambda function (which wrote a real SQS receipt) and the SNS topic, while the queue configuration filtered it; a non-matching key was filtered by every prefix/suffix rule; a real SDK DELETE delivered ObjectRemoved:Delete to the queue; describe reported per-destination delivered/filtered counts."
+    },
     "examples/cdk/sqs-queue/handlers/rule-publisher.mjs": {
       "run": "sqs-event-targets",
       "class": "L2",
@@ -457,8 +463,8 @@
     "examples/cdk/ssr-site/scripts/upload-assets.sh": {
       "run": "ssr-assets-upload",
       "class": "L3",
-      "gap": "CloudFront invalidation is not exercised; s3proxy has no IAM, bucket policy or event notifications. CloudFront caching and edge network.",
-      "description": "SSR site asset uploader: the real AWS CLI syncs the assets and copies the generated manifest to the local s3proxy endpoint with dummy credentials; the gateway serves both with the script's cache-control and the uploaded manifest."
+      "gap": "CloudFront invalidation is not exercised; s3proxy has no IAM or bucket policy. CloudFront caching and edge network.",
+      "description": "SSR site asset uploader: the real AWS CLI syncs the assets and copies the generated manifest to the local s3proxy endpoint with dummy credentials; the gateway serves both with the script's cache-control and the uploaded manifest. The site's bucket declares no event notification; the notification destinations are proven by the sqs-queue row."
     },
     "examples/cdk/codebuild-job-runner/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",

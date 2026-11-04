@@ -397,6 +397,10 @@ type Spec struct {
 	EventSources  []EventSourceSpec  `json:"eventSources,omitempty"`
 	Rules         []RuleSpec         `json:"rules,omitempty"`
 	Subscriptions []SubscriptionSpec `json:"subscriptions,omitempty"`
+	// Notifications are the S3 bucket notification configurations. Each entry is
+	// one destination (function, queue, topic) or the bucket's EventBridge
+	// configuration, so plan and describe report them one by one.
+	Notifications []NotificationSpec `json:"notifications,omitempty"`
 	Skipped       []Skipped          `json:"skipped"`
 	// Delivery is the state the engine would register for every source. Plan
 	// fills it; a live session reports the engine's own state instead.
@@ -502,6 +506,11 @@ func (s *Spec) RuntimeFunctions() []string {
 	for _, subscription := range s.Subscriptions {
 		if subscription.Function != "" {
 			seen[subscription.Function] = struct{}{}
+		}
+	}
+	for _, notification := range s.Notifications {
+		if notification.DestinationType == notificationDestinationFunction && notification.Destination != "" {
+			seen[notification.Destination] = struct{}{}
 		}
 	}
 	out := make([]string, 0, len(seen))

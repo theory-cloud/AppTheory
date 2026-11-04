@@ -341,13 +341,14 @@ TS_NODE_TRANSPILE_ONLY=1
 
 `run` and `session` start one delivery engine per run. It registers every
 derived event-source mapping, EventBridge rule, CloudWatch Logs subscription
-filter and SNS subscription at start and reports each source's state. An SQS
-mapping polls ElasticMQ automatically; a DynamoDB Streams mapping polls the
-table's stream on DynamoDB Local; a Kinesis mapping polls moto's stream; an
-EventBridge schedule fires on the run clock and a pattern rule is armed on the
-runner's own bus; a CloudWatch Logs subscription filter polls its group; an SNS
-subscription is armed on its topic hub and delivers every observed publish.
-Every derived kind has a deliverer.
+filter, SNS subscription and S3 bucket notification at start and reports each
+source's state. An SQS mapping polls ElasticMQ automatically; a DynamoDB Streams
+mapping polls the table's stream on DynamoDB Local; a Kinesis mapping polls
+moto's stream; an EventBridge schedule fires on the run clock and a pattern rule
+is armed on the runner's own bus; a CloudWatch Logs subscription filter polls its
+group; an SNS subscription is armed on its topic hub and delivers every observed
+publish; an S3 notification watcher lists its bucket and delivers each observed
+object change to the destination. Every derived kind has a deliverer.
 
 The state vocabulary follows the Lambda event source mapping API, which reports
 a mapping's lifecycle in `State` and its processing outcome in
@@ -363,8 +364,9 @@ a mapping's lifecycle in `State` and its processing outcome in
 | `failed` | The deliverer could not start or deliver; `lastError` carries the cause. |
 | `not-delivered` | The source kind has no deliverer yet; `task` and `reason` name the implementing task. |
 
-Each entry also reports `delivered`, `failed` and (for an SNS subscription)
-`filtered` counts, `lastError` and `paused`; an SQS source reports `left`
+Each entry also reports `delivered`, `failed` and (for an SNS subscription or an
+S3 notification destination) `filtered` counts, `lastError` and `paused`; an SQS
+source reports `left`
 (records left for redelivery), `inflight` and `peakInflight`; a DynamoDB Streams
 mapping reports `discarded` (records sent to its on-failure destination); an
 EventBridge rule reports `fired`, `delivered`, `failed` and `deadLettered`; a
@@ -1044,6 +1046,29 @@ DynamoDB JSON, `SequenceNumber`, `StreamViewType` and `SizeBytes`.
 `detail-type: "Scheduled Event"` and `resources: [<rule ARN>]`; a pattern rule
 gets the source and detail-type from its declared `EventPattern`. Callers may
 supply the detail; it must be valid JSON.
+
+**S3 event notification** — the record envelope is
+`{"Records":[{…}]}` with `eventVersion: "2.6"`, `eventSource: "aws:s3"`,
+`awsRegion`, `eventTime` (ISO-8601 with milliseconds), `eventName`
+(`ObjectCreated:Put`, `ObjectRemoved:Delete`), `userIdentity`,
+`requestParameters.sourceIPAddress`, `responseElements` (`x-amz-request-id`,
+`x-amz-id-2`) and `s3` with `s3SchemaVersion: "1.0"`, the configuration's
+`configurationId`, `bucket.name`/`bucket.arn`/`bucket.ownerIdentity` and
+`object.key` (URL-encoded; space becomes `+`, `/` is kept),
+`object.size`/`object.eTag`/`object.sequencer`. The SQS and SNS destinations
+receive that JSON; an SNS delivery wraps it in the SNS envelope. The
+`s3:TestEvent` message S3 sends on configuration has the simplified shape
+`{"Service":"Amazon S3","Event":"s3:TestEvent","Time",…,"Bucket",…}`.
+
+**S3 → EventBridge** — a bucket with `EventBridgeConfiguration` publishes the
+envelope the runner's bus builds from one entry: `source: "aws.s3"`,
+`detail-type: "Object Created"` or `"Object Deleted"`, `resources:
+["arn:aws:s3:::<bucket>"]`, and `detail` with `version: "0"`,
+`event-version: "1.2"`, `bucket.name`, `object.key`/`object.etag`/`object.size`
+(created events), `object.sequencer`, `request-id`, `requester`,
+`source-ip-address` and `reason` (`PutObject`/`DeleteObject`). The bus adds the
+`id`, `account` (`123456789012`), `time` and `region` fields, as it does for
+every `PutEvents` entry.
 
 **Kinesis / CloudWatch Logs** — a Kinesis event with
 `eventSource: "aws:kinesis"`, the stream ARN and one record per input. The

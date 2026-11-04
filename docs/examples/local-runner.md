@@ -832,19 +832,25 @@ An SQS mapping has a deliverer: it polls ElasticMQ, invokes the function and
 deletes or leaves each message exactly as Lambda documents. A DynamoDB Streams
 mapping reads the table's stream on DynamoDB Local and invokes the function with
 the documented records. An EventBridge schedule fires on the run clock and a
-pattern rule receives every matching `PutEvents` call on the runner's own bus.
-A Kinesis mapping polls moto's stream, and a CloudWatch Logs subscription filter
-delivers the log events written through the real Logs API. An SNS subscription
-has a deliverer: the runner observes every publish on moto and performs the
-fan-out to the subscription's target. A kind without a deliverer is registered
-and reported as `not-delivered` with the task that will implement it. Nothing is silent: `plan` prints the state next to every
-derived source, and a session reports the same source list live.
+pattern rule receives every matching `PutEvents` call on the runner's own bus,
+including the S3 events the runner publishes itself. A Kinesis mapping polls
+moto's stream, and a CloudWatch Logs subscription filter delivers the log events
+written through the real Logs API. An SNS subscription has a deliverer: the
+runner observes every publish on moto and performs the fan-out to the
+subscription's target. A bucket notification configuration has a deliverer: the
+runner watches the real bucket and delivers the documented record to its Lambda,
+SQS and SNS destinations, and publishes the `aws.s3` EventBridge event for a
+bucket that enables EventBridge notifications. A kind without a deliverer is
+registered and reported as `not-delivered` with the task that will implement it.
+Nothing is silent: `plan` prints the state next to every derived source, and a
+session reports the same source list live.
 
 | Source kind | Local delivery |
 | --- | --- |
 | SQS event source mapping | Delivered (E1b); see [SQS event-source delivery](#sqs-event-source-delivery) |
 | DynamoDB Streams event source mapping | Delivered (E2); see [DynamoDB Streams delivery](#dynamodb-streams-delivery) |
 | SNS subscription | Delivered (E6); see [SNS subscription delivery](#sns-subscription-delivery) |
+| S3 bucket notification | Delivered (E4); see [S3 event notification delivery](#s3-event-notification-delivery) |
 | EventBridge schedule and pattern rule | Delivered (E3); see [EventBridge delivery](#eventbridge-delivery) |
 | CloudWatch Logs subscription filter | Delivered (E5); see [CloudWatch Logs subscription delivery](#cloudwatch-logs-subscription-delivery) |
 | Kinesis event source mapping | Delivered (E5); see [Kinesis event-source delivery](#kinesis-event-source-delivery) |
@@ -1399,6 +1405,80 @@ target path as an observed SDK publish.
 | Moto's HTTP fan-out drops `MessageGroupId`/`MessageDeduplicationId` and SNS forbids HTTP targets on FIFO topics | The runner does not use an HTTP observer; the drain queue carries the FIFO ids. |
 | Moto accepts a FIFO queue subscription only on a FIFO topic | The runner registers subscriptions itself and follows AWS: a FIFO queue is accepted on either topic; the SNS FIFO restriction applies to Lambda and HTTP targets. |
 
+| s3proxy deviation | How the runner normalizes it |
+| --- | --- |
+| s3proxy has no server-side notification hook | The runner observes the bucket with the real `ListObjectsV2` API and derives the documented record from the observed object state. |
+| The observation cannot tell which S3 API made the change | An observed create is reported as `ObjectCreated:Put` (multipart complete and copy included) and an observed delete as `ObjectRemoved:Delete`. |
+| An object created and deleted inside one 250 ms poll is invisible | The poll interval is documented; a row that needs both changes separates them in time. |
+| The listing carries no request id or source IP | The runner generates the request id and reports its own loopback source address, the way S3 generates them for its own record. |
+
+### S3 event notification delivery
+
+Two template shapes declare a bucket's notification configuration, and the
+runner reads both:
+
+- `AWS::S3::Bucket.NotificationConfiguration`, the CloudFormation property, with
+  one `Event` per entry (`s3:ObjectCreated:*`, `s3:ObjectRemoved:Delete`, …) and
+  an optional `Filter.S3Key` prefix/suffix rule list;
+- `Custom::S3BucketNotifications.NotificationConfiguration`, the shape
+  `Bucket.addEventNotification` emits. That custom resource calls
+  `PutBucketNotificationConfiguration` at deploy time, so the configuration
+  never appears on the bucket resource itself; the runner reads the custom
+  resource's properties, which are the bucket API's shape.
+
+The destinations are Lambda functions, SQS queues, SNS topics and the bucket's
+EventBridge configuration (`EventBridgeConfiguration: {}`), as
+[Event notifications](https://docs.aws.amazon.com/AmazonS3/latest/userguide/EventNotifications.html)
+documents. Event names in the configuration carry AWS's `s3:` prefix; the record
+`eventName` does not (`ObjectCreated:Put`), exactly as
+[Event message structure](https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-content-structure.html)
+shows.
+
+**Observing the object change.** s3proxy, the profile's S3 backend, has no
+server-side event hook. The runner therefore watches each bucket that declares a
+notification with the real `ListObjectsV2` API and compares each listing with
+the previous one. A new key, an overwrite (ETag, size or `LastModified`
+changed) and a removed key each become the documented record. The first listing
+after the run starts is the baseline, so objects that existed before the run
+never produce an event. The watcher polls every 250 ms.
+
+**What the destinations receive.**
+
+- A Lambda, SQS or SNS destination receives `{"Records":[…]}` with
+  `eventVersion: "2.6"`, `eventSource: "aws:s3"`, `eventName`, the response
+  elements, and `s3.bucket`/`s3.object` including the URL-encoded key
+  (space becomes `+`, `/` is kept), `size`, `eTag`, `sequencer` and the
+  configuration's `configurationId`.
+- An SNS destination is published through the runner's own SNS fan-out, so a
+  subscriber sees the documented SNS envelope whose `Message` is that JSON
+  (or the JSON itself under raw message delivery).
+- A bucket with EventBridge notifications publishes the
+  [S3 → EventBridge](https://docs.aws.amazon.com/AmazonS3/latest/userguide/EventBridge.html)
+  event: `source: "aws.s3"`, `detail-type: "Object Created"` or
+  `"Object Deleted"`, and a `detail` with the bucket, the object, the request id
+  and the `reason` (`PutObject`/`DeleteObject`). It is published on the runner's
+  own bus, so a matching rule reaches its targets with no `PutEvents` call from
+  the test.
+
+**The test message.** When the configuration is applied S3 sends the
+`s3:TestEvent` message to every SQS and SNS destination (never to a Lambda
+destination). The runner sends it once, after the baseline listing, so a row can
+use it as the signal that the watcher is ready. The message has the simplified
+shape the content-structure page shows (`Service`, `Event`, `Time`, `Bucket`,
+`RequestId`, `HostId`), not the `Records` envelope.
+
+**What the record reports.** The watcher cannot see which S3 API made the
+change, so an observed create is reported as `ObjectCreated:Put` and an observed
+delete as `ObjectRemoved:Delete`; a multipart upload and a copy are likewise
+reported as `Put`. A create and a delete of the same key inside one 250 ms poll
+is not observed. The `size` and `eTag` come from the listing; the `sequencer` is
+the observation instant.
+
+`plan` prints one line per destination with `delivery=registered`; `session
+describe` returns a `notifications` array with each destination's
+`configurationId`, `state`, `delivered`, `filtered` and `failed` counts, and the
+same counters appear in the delivery engine's per-source state.
+
 ### Delivery state
 
 The vocabulary follows the Lambda event source mapping API. AWS reports a
@@ -1420,8 +1500,9 @@ The runner keeps the same shape in a smaller vocabulary:
 | `not-delivered` | no mapping exists | The source kind has no deliverer yet; `task` and `reason` name the task that will implement it. |
 
 Every entry reports its `delivered` and `failed` counts, `lastError` and
-`paused`; an SNS subscription also reports `filtered` (messages its policy did
-not match); an SQS source reports `left` (records left for redelivery),
+`paused`; an SNS subscription and an S3 notification destination also report
+`filtered` (messages its policy or key filter did not match); an SQS source
+reports `left` (records left for redelivery),
 `inflight` and `peakInflight`; a DynamoDB Streams mapping reports `discarded`
 (records sent to its on-failure destination); an EventBridge rule reports
 `fired`, `delivered`, `failed` and `deadLettered`; a Kinesis mapping also
@@ -1500,7 +1581,7 @@ the harness records it.
 | SNS topics and subscriptions (moto) | Supported (L2) | Standard and FIFO `AWS::SNS::Topic` are created with `FifoTopic`/`ContentBasedDeduplication`; `Ref` is the ARN and `GetAtt TopicName`/`TopicArn` resolve. `AWS::SNS::Subscription` and inline `Subscription` entries are delivered automatically to Lambda, SQS and loopback HTTP targets, with filter policies, raw message delivery and FIFO ordering/deduplication; see [SNS subscription delivery](#sns-subscription-delivery). `TopicPolicy` is reported skipped (IAM is a docs/125 true limit). |
 | Kinesis streams (moto) | Provisioned (L2); mapping delivered (E5) | `AWS::Kinesis::Stream` is created with `ShardCount` or `StreamModeDetails`, and `RetentionPeriodHours`; `Ref` is the name and `GetAtt Arn` the stream ARN. `AWS_ENDPOINT_URL_KINESIS` is injected. A mapping on the stream is delivered automatically; see [Kinesis event-source delivery](#kinesis-event-source-delivery). |
 | Cognito user pools (moto) | Supported (L2) | `AWS::Cognito::UserPool` and `UserPoolClient` are created; `Ref` returns the pool/client id and `GetAtt Arn`/`ProviderName`/`ProviderURL` the pool provider values. The runner serves the pool's JWKS and an OIDC discovery document at `http://127.0.0.1:<port>/cognito-idp/<region>/<poolId>`. A `UserPoolDomain` is reported skipped (no hosted UI). |
-| S3 (s3proxy) | Supported (L2) | `--backend s3proxy` starts the digest-pinned s3proxy container, creates the assembly's buckets, and injects the S3 endpoint as the container address so the SDK uses path-style addressing. No bucket policies, IAM or event notifications. |
+| S3 (s3proxy) | Supported (L2) | `--backend s3proxy` starts the digest-pinned s3proxy container, creates the assembly's buckets, and injects the S3 endpoint as the container address so the SDK uses path-style addressing. No bucket policies or IAM. A bucket notification configuration is delivered from the real object state; see [S3 event notification delivery](#s3-event-notification-delivery). |
 | Event source mappings (SQS, DynamoDB Streams and Kinesis delivered) | SQS delivered (E1b), DynamoDB Streams delivered (E2), Kinesis delivered (E5) | The mapping's function, source, batch options, filter criteria and scaling configuration are read from the assembly. Every supported mapping is delivered automatically: an SQS queue, a DynamoDB stream or a Kinesis stream; see [SQS event-source delivery](#sqs-event-source-delivery), [DynamoDB Streams delivery](#dynamodb-streams-delivery) and [Kinesis event-source delivery](#kinesis-event-source-delivery). A session can still build a stream record from a real local write and invoke the handler. |
 | EventBridge rules (schedule and pattern) | Delivered (E3) | A rule is registered per kind (schedule or pattern) and delivered: a schedule fires on the run clock and a pattern rule receives every matching `PutEvents` entry; see [EventBridge delivery](#eventbridge-delivery). A session can still build the `Scheduled Event` envelope or the pattern's source/detail-type from the CDK rule and invoke its Lambda target. EventBridge Scheduler (`AWS::Scheduler::Schedule`) is not served because no example declares one. |
 | Kinesis / CloudWatch Logs subscription events | Delivered (E5) | A `AWS::Logs::SubscriptionFilter` is derived with its log group and destination (a Lambda function, or a CloudWatch Logs destination followed to its Kinesis stream) and delivered: function log capture writes the real `PutLogEvents` output, and a stream destination puts the same gzip bytes as the Kinesis record data, which the mapping delivers; see [CloudWatch Logs subscription delivery](#cloudwatch-logs-subscription-delivery) and [Kinesis event-source delivery](#kinesis-event-source-delivery). A session can still build a CloudWatch Logs subscription payload from local log events and wrap it in a Kinesis record, or accept explicit base64 record data. |
@@ -1574,9 +1655,13 @@ the harness records it.
   itself does not support it. A subscription filter policy is evaluated when
   the publish is observed, so the local runner does not model SNS's eventual
   consistency for a policy changed while messages are in flight.
-- **S3 event notifications** are absent from s3proxy. The import-pipeline row
-  writes a real object and puts the S3 event shape through the real bus;
-  S3 → EventBridge emission itself is the named gap (E4).
+- **S3 event notifications are observed, not emitted by the store.** s3proxy
+  has no server-side event hook, so the runner watches the bucket with
+  `ListObjectsV2` and derives the record from the observed object state. An
+  observed create is reported as `ObjectCreated:Put` and an observed delete as
+  `ObjectRemoved:Delete`; a create and a delete inside one 250 ms poll is not
+  observed. S3 → EventBridge emission is delivered by the runner and proven by
+  the import-pipeline row.
 - **Managed services** remain L3 gaps where the examples use them: the MicroVM
   provider in the controller and conformance rows, and S3 Vectors/Bedrock in
   the semantic-search row. The runner stops at those boundaries; it never fakes

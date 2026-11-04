@@ -274,6 +274,20 @@ const assertions = {
       "missing the processor mapping",
     );
 
+    // The S3 notification destinations are declared through CDK's
+    // Bucket.addEventNotification, whose custom resource carries the bucket API
+    // shape the runner reads. Losing it would silently drop the row's proof.
+    const notifications = byType("Custom::S3BucketNotifications");
+    assert.equal(notifications.length, 1, "missing the bucket notification configuration");
+    const configuration = notifications[0][1].Properties.NotificationConfiguration;
+    assert.equal(configuration.LambdaFunctionConfigurations.length, 1);
+    assert.deepEqual(configuration.LambdaFunctionConfigurations[0].Events, ["s3:ObjectCreated:*"]);
+    const rules = configuration.LambdaFunctionConfigurations[0].Filter.Key.FilterRules;
+    assert.ok(rules.some((rule) => rule.Name === "prefix" && rule.Value === "incoming/"));
+    assert.ok(rules.some((rule) => rule.Name === "suffix" && rule.Value === ".json"));
+    assert.deepEqual(configuration.QueueConfigurations[0].Events, ["s3:ObjectRemoved:*"]);
+    assert.deepEqual(configuration.TopicConfigurations[0].Events, ["s3:ObjectCreated:*"]);
+
     const policies = statementsOf("AWS::IAM::Policy");
     assertHasAction(policies, "sqs:SendMessage");
     assertHasAction(policies, "sqs:ReceiveMessage");

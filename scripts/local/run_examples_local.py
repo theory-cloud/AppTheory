@@ -123,10 +123,11 @@ DELIVERY_TASKS = {
     "eventbridge-rule": "E3",
     "cloudwatch-logs": "E5",
     "sns": "E6",
+    "s3-notification": "E4",
 }
 DELIVERED_KINDS = {
     "sqs", "sns", "dynamodb", "kinesis", "cloudwatch-logs",
-    "eventbridge-schedule", "eventbridge-rule",
+    "eventbridge-schedule", "eventbridge-rule", "s3-notification",
 }
 # The local backend a kind needs to deliver. A rule needs none: the runner
 # serves the bus itself.
@@ -138,6 +139,7 @@ DELIVERY_BACKEND = {
     "cloudwatch-logs": "moto",
     "eventbridge-schedule": None,
     "eventbridge-rule": None,
+    "s3-notification": "s3proxy",
 }
 # The live state a kind reaches when its backend is present.
 DELIVERY_LIVE_STATE = {
@@ -148,6 +150,7 @@ DELIVERY_LIVE_STATE = {
     "cloudwatch-logs": ("polling", "paused", "failed"),
     "eventbridge-schedule": ("armed", "failed"),
     "eventbridge-rule": ("armed", "failed"),
+    "s3-notification": ("polling", "failed"),
 }
 DELIVERY_CONCURRENCY = 4
 LOCAL_RUNNER_RUNTIMES = {"go": "provided.al2023", "ts": "nodejs24.x", "py": "python3.14"}
@@ -2373,6 +2376,13 @@ def _expected_delivery_entries(plan: dict) -> list[tuple[str, str, str | None]]:
     for subscription in plan.get("subscriptions") or []:
         kind = subscription.get("kind") or "cloudwatch-logs"
         entries.append((subscription["logicalId"], kind, subscription.get("function")))
+    for notification in plan.get("notifications") or []:
+        function = (
+            notification.get("destination")
+            if notification.get("destinationType") == "function"
+            else None
+        )
+        entries.append((notification["logicalId"], "s3-notification", function))
     return entries
 
 
@@ -2636,6 +2646,25 @@ class LocalSession:
             if function.get("logicalId") == logical_id:
                 return function
         raise HarnessFailure(f"session did not start function {logical_id}")
+
+    def notifications_for(self, bucket: str, destination_type: str) -> list[dict]:
+        """Return the derived S3 notification configurations for a bucket."""
+        return [
+            notification for notification in self.info.get("notifications") or []
+            if notification.get("destinationType") == destination_type
+            and (
+                notification.get("bucket") == bucket
+                or str(notification.get("bucket") or "").endswith("/" + bucket)
+            )
+        ]
+
+    def notification_for(self, bucket: str, destination_type: str) -> dict:
+        matches = self.notifications_for(bucket, destination_type)
+        if len(matches) != 1:
+            raise HarnessFailure(
+                f"want one {destination_type} notification for bucket {bucket}, got {matches}"
+            )
+        return matches[0]
 
     def resource(self, *, name: str | None = None, logical_prefix: str | None = None, kind: str | None = None) -> dict:
         matches = []
@@ -3729,22 +3758,12 @@ def _run_import(harness: Harness, kind: str) -> tuple[dict, str]:
         worker_queue = session.resource(name="import-records", kind="AWS::SQS::Queue")
         key = "incoming/orders/a4.json"
         content = json.dumps({"order": 42, "source": "local"})
+        # A real object PUT into the provisioned bucket. The runner observes it
+        # at the S3 protocol boundary and publishes the documented S3
+        # EventBridge event itself: the row sends no PutEvents.
         session.request("s3.put", bucket=bucket["logicalId"], objectKey=key, body=content)
-        endpoint = session_endpoint(session, "events")
-        harness.run(
-            [
-                "aws", "--endpoint-url", endpoint, "events", "put-events",
-                "--entries", json.dumps([
-                    {
-                        "Source": "aws.s3",
-                        "DetailType": "Object Created",
-                        "Detail": json.dumps({"bucket": {"name": bucket["name"]}, "object": {"key": key}}),
-                        "EventBusName": "default",
-                    }
-                ]),
-            ],
-            timeout=120,
-        )
+        notification = session.notification_for(bucket["logicalId"], "eventbridge")
+        _wait_for_delivery(session, notification["logicalId"], delivered=1)
         job_id = hashlib.sha256((bucket["name"] + "/" + key).encode()).hexdigest()
         meta = _wait_for_job_meta(session, table["logicalId"], job_id)
         # The WorkConsumer mapping delivers the three real messages to the
@@ -3759,9 +3778,11 @@ def _run_import(harness: Harness, kind: str) -> tuple[dict, str]:
                 raise HarnessFailure(f"import ingest: job meta is not RUNNING: {meta}")
             return (
                 ingest["logicalId"],
-                "a real s3proxy object and a real SDK PutEvents of the S3 event shape reached IngestRule; "
-                "the ingest handler wrote the RUNNING META record on DynamoDB Local and the WorkConsumer "
-                "mapping delivered and deleted the three real work messages",
+                "a real object PUT into the ingest bucket was observed by the runner's S3 notification "
+                "watcher and published to the local EventBridge bus as the documented aws.s3 Object Created "
+                "event, reaching IngestRule with no PutEvents by the harness; the ingest handler wrote the "
+                "RUNNING META record on DynamoDB Local and the WorkConsumer mapping delivered and deleted "
+                "the three real work messages",
             )
         items = session.request("ddb.scan", table=table["logicalId"])["items"]
         records = {item.get("sk"): item for item in items if str(item.get("sk", "")).startswith("REC#")}
@@ -4461,6 +4482,118 @@ def run_sqs_sns_targets(harness: Harness) -> str:
     finally:
         stop_local_session(harness, session)
         capture.stop()
+
+
+def run_sqs_s3_notifications(harness: Harness) -> str:
+    """The three S3 notification destinations and the documented test event.
+
+    The row writes and deletes real objects through the S3 SDK. The runner
+    observes the bucket at the S3 protocol boundary and delivers the documented
+    record to a Lambda function, an SQS queue and an SNS topic (raw SQS
+    subscription), and it never builds an event from harness input.
+    """
+    session = start_local_session(
+        harness,
+        SQS_APP,
+        name="sqs-s3",
+        backends=("sqs", "moto", "s3proxy"),
+        clock=f"test={LOCAL_RUNNER_CLOCK_START}",
+    )
+    try:
+        bucket = session.resource(logical_prefix="NotificationBucket", kind="AWS::S3::Bucket")
+        records = session.resource(name="s3-events", kind="AWS::SQS::Queue")
+        raw = session.resource(name="s3-raw", kind="AWS::SQS::Queue")
+        receipts = session.resource(name="s3-lambda-receipts", kind="AWS::SQS::Queue")
+
+        lambda_config = session.notification_for(bucket["logicalId"], "function")
+        queue_configs = session.notifications_for(bucket["logicalId"], "queue")
+        topic_config = session.notification_for(bucket["logicalId"], "topic")
+        if len(queue_configs) != 1:
+            raise HarnessFailure(f"s3 notifications: want one queue configuration, got {queue_configs}")
+        if not lambda_config.get("filterRules") or len(lambda_config["filterRules"]) != 2:
+            raise HarnessFailure(f"s3 notifications: the Lambda filter rules are {lambda_config.get('filterRules')}")
+
+        # The configuration was applied: S3 sends the documented test message to
+        # every SQS and SNS destination, and never to a Lambda destination.
+        test_event = _wait_for_receipt(
+            session,
+            records["logicalId"],
+            lambda message: message.get("Event") == "s3:TestEvent",
+            label="s3 notifications: test event on the SQS destination",
+        )
+        if test_event.get("Service") != "Amazon S3" or test_event.get("Bucket") != bucket["name"]:
+            raise HarnessFailure(f"s3 notifications: unexpected test event {test_event}")
+        raw_test = _wait_for_receipt(
+            session,
+            raw["logicalId"],
+            lambda message: message.get("Event") == "s3:TestEvent",
+            label="s3 notifications: test event on the SNS destination",
+        )
+        if raw_test.get("Service") != "Amazon S3":
+            raise HarnessFailure(f"s3 notifications: unexpected SNS test event {raw_test}")
+
+        content = json.dumps({"ok": True})
+        session.request("s3.put", bucket=bucket["logicalId"], objectKey="incoming/a.json", body=content)
+        receipt = _wait_for_receipt(
+            session,
+            receipts["logicalId"],
+            lambda message: message.get("eventName") == "ObjectCreated:Put",
+            label="s3 notifications: Lambda destination record",
+        )
+        if receipt.get("key") != "incoming/a.json" or receipt.get("bucket") != bucket["name"]:
+            raise HarnessFailure(f"s3 notifications: Lambda record {receipt}")
+        if receipt.get("configurationId") != lambda_config.get("configurationId"):
+            raise HarnessFailure(
+                f"s3 notifications: configurationId {receipt.get('configurationId')!r} "
+                f"!= {lambda_config.get('configurationId')!r}"
+            )
+        if receipt.get("eventVersion") != "2.6" or receipt.get("eventSource") != "aws:s3":
+            raise HarnessFailure(f"s3 notifications: record envelope {receipt}")
+
+        sns_record = _wait_for_receipt(
+            session,
+            raw["logicalId"],
+            lambda message: message.get("Records", [{}])[0].get("eventName") == "ObjectCreated:Put",
+            label="s3 notifications: SNS destination record",
+        )
+        if sns_record["Records"][0]["s3"]["object"]["key"] != "incoming/a.json":
+            raise HarnessFailure(f"s3 notifications: SNS record {sns_record}")
+
+        # A key that fails the prefix and suffix filters is counted, not delivered.
+        session.request("s3.put", bucket=bucket["logicalId"], objectKey="ignored/a.txt", body=content)
+        _wait_for_delivery(session, lambda_config["logicalId"], filtered=1)
+        _wait_for_delivery(session, queue_configs[0]["logicalId"], filtered=1)
+
+        # A delete on the SQS destination delivers ObjectRemoved:Delete.
+        session.request("s3.delete", bucket=bucket["logicalId"], objectKey="incoming/a.json")
+        removed = _wait_for_receipt(
+            session,
+            records["logicalId"],
+            lambda message: message.get("Records", [{}])[0].get("eventName") == "ObjectRemoved:Delete",
+            label="s3 notifications: SQS destination delete record",
+        )
+        if removed["Records"][0]["s3"]["object"]["key"] != "incoming/a.json":
+            raise HarnessFailure(f"s3 notifications: delete record {removed}")
+
+        lambda_state = _wait_for_delivery(session, lambda_config["logicalId"], delivered=1, filtered=2)
+        queue_state = _wait_for_delivery(session, queue_configs[0]["logicalId"], delivered=2, filtered=2)
+        topic_state = _wait_for_delivery(session, topic_config["logicalId"], delivered=2, filtered=2)
+        for state, label in (
+            (lambda_state, "lambda"),
+            (queue_state, "queue"),
+            (topic_state, "topic"),
+        ):
+            if state.get("failed"):
+                raise HarnessFailure(f"s3 notifications: the {label} destination failed: {state}")
+        return (
+            "the CDK bucket configuration delivered the s3:TestEvent to its SQS and SNS destinations on "
+            "configuration; a real SDK PUT of incoming/a.json delivered ObjectCreated:Put to the Lambda "
+            "destination and the SNS topic and was filtered by the queue destination; ignored/a.txt was "
+            "filtered by every prefix/suffix rule; a real SDK DELETE delivered ObjectRemoved:Delete to the "
+            "queue destination; describe reported per-destination delivered/filtered counts"
+        )
+    finally:
+        stop_local_session(harness, session)
 
 
 def _receive_messages(session: LocalSession, queue_id: str, *, expected: int = 1, timeout: float = 180) -> list[dict]:
@@ -5200,6 +5333,7 @@ RUNNERS: dict[str, Callable[[Harness], str]] = {
     "sqs-sns-publisher": run_sqs_sns_publisher,
     "sqs-sns-targets": run_sqs_sns_targets,
     "sqs-event-targets": run_sqs_event_targets,
+    "sqs-s3-notifications": run_sqs_s3_notifications,
     "sqs-worker": run_sqs_worker,
     "sqs-dlq": run_sqs_dlq,
     "import-ingest": run_import_ingest,

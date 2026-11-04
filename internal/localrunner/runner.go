@@ -18,6 +18,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 
 	"github.com/theory-cloud/apptheory/v6/internal/localcloudfront"
@@ -130,6 +132,9 @@ type Runner struct {
 	eventBus          *eventBridgeBus
 	eventBusURL       string
 	eventBusContainer string
+	// s3Notifications watches the buckets that declare notification
+	// configurations and dispatches the observed changes.
+	s3Notifications *s3NotificationSupervisor
 }
 
 // NewRunner validates the options and prepares the run. It contacts no Docker
@@ -211,7 +216,68 @@ func NewRunner(options Options) (*Runner, error) {
 	runner.delivery.RegisterDeliverer(DeliveryKindSNS, func(source DeliverySource) (Deliverer, error) {
 		return NewSNSDeliverer(source, runner.sns)
 	})
+	// E4: every bucket notification configuration is delivered from an observed
+	// change of the real bucket. The supervisor is built here and starts one
+	// watcher per bucket when the first configuration registers.
+	runner.s3Notifications = newS3NotificationSupervisor(
+		runner.clock,
+		runner.logf,
+		runner.deliveryS3Client,
+		runner.provisionedResourceValue,
+		runner.invokeDelivery,
+		runner.sendLocalSQS,
+		runner.PublishLocalMessage,
+		func(ctx context.Context, entries []eventBridgeEntry) ([]eventBridgeResult, int) {
+			return runner.eventBus.putEvents(ctx, entries)
+		},
+	)
+	runner.delivery.RegisterDeliverer(DeliveryKindS3Notification, func(source DeliverySource) (Deliverer, error) {
+		return NewS3NotificationDeliverer(source, runner.s3Notifications)
+	})
 	return runner, nil
+}
+
+// deliveryS3Client builds the host-side S3 client the notification watcher
+// reads buckets with.
+func (r *Runner) deliveryS3Client() (*s3.Client, error) {
+	backend, ok := r.backendForService("s3")
+	if !ok || backend.HostURL == "" {
+		return nil, errors.New("the s3 backend is not running")
+	}
+	return newS3Client(backend.HostURL), nil
+}
+
+// provisionedResourceValue resolves a qualified or bare logical id against the
+// values provisioning created.
+func (r *Runner) provisionedResourceValue(logicalID string) (resourceValue, bool) {
+	if value, ok := r.resourceValues[logicalID]; ok {
+		return value, true
+	}
+	for key, value := range r.resourceValues {
+		if strings.HasSuffix(key, "/"+logicalID) {
+			return value, true
+		}
+	}
+	return resourceValue{}, false
+}
+
+// sendLocalSQS sends one message to an ElasticMQ queue. The queue URL
+// provisioning recorded names the container network address; the host-side
+// client needs the published loopback port instead.
+func (r *Runner) sendLocalSQS(ctx context.Context, queueURL string, body []byte) error {
+	backend, ok := r.backendForService(backendSQS)
+	if !ok || backend.HostURL == "" {
+		return errors.New("the sqs backend is not running")
+	}
+	hostURL, err := hostQueueURL(queueURL, backend.HostURL)
+	if err != nil {
+		return err
+	}
+	_, err = newSQSClient(backend.HostURL).SendMessage(ctx, &sqs.SendMessageInput{
+		QueueUrl:    aws.String(hostURL),
+		MessageBody: aws.String(string(body)),
+	})
+	return err
 }
 
 // snsQueueLookup resolves an SQS subscription target from the queues

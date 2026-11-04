@@ -110,6 +110,8 @@ func deliveryBackendService(kind DeliveryKind) string {
 		return "logs"
 	case DeliveryKindSNS:
 		return backendSNS
+	case DeliveryKindS3Notification:
+		return "s3"
 	default:
 		return ""
 	}
