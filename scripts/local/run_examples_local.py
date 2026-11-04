@@ -4930,6 +4930,10 @@ def run_sqs_s3_notifications(harness: Harness) -> str:
         if raw_test.get("Service") != "Amazon S3":
             raise HarnessFailure(f"s3 notifications: unexpected SNS test event {raw_test}")
 
+        # The Lambda and SNS configurations share the incoming/ prefix for
+        # ObjectCreated, so their suffixes split the keys: .json reaches only
+        # the Lambda destination and .csv reaches only the SNS topic.
+        # https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-how-to-filtering.html
         content = json.dumps({"ok": True})
         session.request("s3.put", bucket=bucket["logicalId"], objectKey="incoming/a.json", body=content)
         receipt = _wait_for_receipt(
@@ -4948,19 +4952,28 @@ def run_sqs_s3_notifications(harness: Harness) -> str:
         if receipt.get("eventVersion") != "2.6" or receipt.get("eventSource") != "aws:s3":
             raise HarnessFailure(f"s3 notifications: record envelope {receipt}")
 
+        # The .json PUT was observed by every destination before the .csv PUT:
+        # the SNS .csv suffix and the queue's ObjectRemoved event type filtered
+        # it, so only the Lambda destination delivered it.
+        _wait_for_delivery(session, topic_config["logicalId"], delivered=1, filtered=1)
+        _wait_for_delivery(session, queue_configs[0]["logicalId"], delivered=1, filtered=1)
+
+        session.request("s3.put", bucket=bucket["logicalId"], objectKey="incoming/b.csv", body=content)
         sns_record = _wait_for_receipt(
             session,
             raw["logicalId"],
             lambda message: message.get("Records", [{}])[0].get("eventName") == "ObjectCreated:Put",
             label="s3 notifications: SNS destination record",
         )
-        if sns_record["Records"][0]["s3"]["object"]["key"] != "incoming/a.json":
+        if sns_record["Records"][0]["s3"]["object"]["key"] != "incoming/b.csv":
             raise HarnessFailure(f"s3 notifications: SNS record {sns_record}")
+        _wait_for_delivery(session, lambda_config["logicalId"], delivered=1, filtered=1)
 
-        # A key that fails the prefix and suffix filters is counted, not delivered.
+        # A key that fails every prefix/suffix rule is counted, not delivered.
         session.request("s3.put", bucket=bucket["logicalId"], objectKey="ignored/a.txt", body=content)
-        _wait_for_delivery(session, lambda_config["logicalId"], filtered=1)
-        _wait_for_delivery(session, queue_configs[0]["logicalId"], filtered=1)
+        _wait_for_delivery(session, lambda_config["logicalId"], filtered=2)
+        _wait_for_delivery(session, queue_configs[0]["logicalId"], filtered=3)
+        _wait_for_delivery(session, topic_config["logicalId"], filtered=2)
 
         # A delete on the SQS destination delivers ObjectRemoved:Delete.
         session.request("s3.delete", bucket=bucket["logicalId"], objectKey="incoming/a.json")
@@ -4973,22 +4986,29 @@ def run_sqs_s3_notifications(harness: Harness) -> str:
         if removed["Records"][0]["s3"]["object"]["key"] != "incoming/a.json":
             raise HarnessFailure(f"s3 notifications: delete record {removed}")
 
-        lambda_state = _wait_for_delivery(session, lambda_config["logicalId"], delivered=1, filtered=2)
-        queue_state = _wait_for_delivery(session, queue_configs[0]["logicalId"], delivered=2, filtered=2)
-        topic_state = _wait_for_delivery(session, topic_config["logicalId"], delivered=2, filtered=2)
-        for state, label in (
-            (lambda_state, "lambda"),
-            (queue_state, "queue"),
-            (topic_state, "topic"),
+        lambda_state = _wait_for_delivery(session, lambda_config["logicalId"], delivered=1, filtered=3)
+        queue_state = _wait_for_delivery(session, queue_configs[0]["logicalId"], delivered=2, filtered=3)
+        topic_state = _wait_for_delivery(session, topic_config["logicalId"], delivered=2, filtered=3)
+        for state, label, delivered, filtered in (
+            (lambda_state, "lambda", 1, 3),
+            (queue_state, "queue", 2, 3),
+            (topic_state, "topic", 2, 3),
         ):
             if state.get("failed"):
                 raise HarnessFailure(f"s3 notifications: the {label} destination failed: {state}")
+            if state.get("delivered") != delivered or state.get("filtered") != filtered:
+                raise HarnessFailure(
+                    f"s3 notifications: the {label} destination reported {state}, "
+                    f"want delivered={delivered} filtered={filtered}"
+                )
         return (
             "the CDK bucket configuration delivered the s3:TestEvent to its SQS and SNS destinations on "
             "configuration; a real SDK PUT of incoming/a.json delivered ObjectCreated:Put to the Lambda "
-            "destination and the SNS topic and was filtered by the queue destination; ignored/a.txt was "
+            "destination only (the SNS .csv suffix and the queue's event type filtered it); a real SDK PUT "
+            "of incoming/b.csv delivered ObjectCreated:Put to the SNS destination only; ignored/a.txt was "
             "filtered by every prefix/suffix rule; a real SDK DELETE delivered ObjectRemoved:Delete to the "
-            "queue destination; describe reported per-destination delivered/filtered counts"
+            "queue destination; describe reported exact per-destination delivered/filtered counts "
+            "(lambda 1/3, queue 2/3, topic 2/3)"
         )
     finally:
         stop_local_session(harness, session)

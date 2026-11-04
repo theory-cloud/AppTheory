@@ -311,7 +311,15 @@ const assertions = {
     assert.ok(rules.some((rule) => rule.Name === "prefix" && rule.Value === "incoming/"));
     assert.ok(rules.some((rule) => rule.Name === "suffix" && rule.Value === ".json"));
     assert.deepEqual(configuration.QueueConfigurations[0].Events, ["s3:ObjectRemoved:*"]);
+    const queueRules = configuration.QueueConfigurations[0].Filter.Key.FilterRules;
+    assert.ok(queueRules.some((rule) => rule.Name === "prefix" && rule.Value === "incoming/"));
     assert.deepEqual(configuration.TopicConfigurations[0].Events, ["s3:ObjectCreated:*"]);
+    // The Lambda and SNS configurations share the incoming/ prefix for the same
+    // event type, so their suffixes must not overlap.
+    // https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-how-to-filtering.html
+    const topicRules = configuration.TopicConfigurations[0].Filter.Key.FilterRules;
+    assert.ok(topicRules.some((rule) => rule.Name === "prefix" && rule.Value === "incoming/"));
+    assert.ok(topicRules.some((rule) => rule.Name === "suffix" && rule.Value === ".csv"));
 
     const policies = statementsOf("AWS::IAM::Policy");
     assertHasAction(policies, "sqs:SendMessage");

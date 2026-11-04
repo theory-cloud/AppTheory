@@ -429,7 +429,7 @@
       "run": "sqs-s3-notifications",
       "class": "L2",
       "gap": "s3proxy emulates S3 object storage and has no server-side event hook: the runner observes every object change with ListObjectsV2 and therefore reports an observed create as ObjectCreated:Put and an observed delete as ObjectRemoved:Delete; CloudFront caching and the edge network are not involved.",
-      "description": "S3 event notifications: the CDK bucket's Lambda, SQS and SNS configurations delivered the documented s3:TestEvent on configuration; a real SDK PUT of incoming/a.json delivered ObjectCreated:Put to the Lambda function (which wrote a real SQS receipt) and the SNS topic, while the queue configuration filtered it; a non-matching key was filtered by every prefix/suffix rule; a real SDK DELETE delivered ObjectRemoved:Delete to the queue; describe reported per-destination delivered/filtered counts."
+      "description": "S3 event notifications: the CDK bucket's Lambda, SQS and SNS configurations delivered the documented s3:TestEvent on configuration; the two ObjectCreated configurations share the incoming/ prefix with non-overlapping suffixes, and a real SDK PUT of incoming/a.json delivered ObjectCreated:Put to the Lambda function only (which wrote a real SQS receipt) while the SNS .csv suffix and the queue's event type filtered it; a real SDK PUT of incoming/b.csv delivered ObjectCreated:Put to the SNS topic only; ignored/a.txt was filtered by every prefix/suffix rule; a real SDK DELETE delivered ObjectRemoved:Delete to the queue; describe reported exact per-destination delivered/filtered counts (lambda 1/3, queue 2/3, topic 2/3)."
     },
     "examples/cdk/sqs-queue/handlers/rule-publisher.mjs": {
       "run": "sqs-event-targets",

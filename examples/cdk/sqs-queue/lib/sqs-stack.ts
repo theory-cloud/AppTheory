@@ -512,9 +512,11 @@ export class SqsQueueStack extends cdk.Stack {
         });
         s3Receipts.grantSendMessages(s3ConsumerFn);
 
-        // The Lambda destination carries both filter rules; the SQS destination
-        // proves the event-name filter (creates and deletes on separate
-        // configurations); the SNS destination carries the prefix rule only.
+        // The two ObjectCreated configurations share the incoming/ prefix, so
+        // their suffixes must not overlap: .json goes to Lambda and .csv goes
+        // to SNS. The ObjectRemoved configuration may reuse the prefix because
+        // its event type is different.
+        // https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-how-to-filtering.html
         notificationBucket.addEventNotification(
             s3.EventType.OBJECT_CREATED,
             new s3n.LambdaDestination(s3ConsumerFn),
@@ -528,7 +530,7 @@ export class SqsQueueStack extends cdk.Stack {
         notificationBucket.addEventNotification(
             s3.EventType.OBJECT_CREATED,
             new s3n.SnsDestination(s3Topic),
-            { prefix: "incoming/" },
+            { prefix: "incoming/", suffix: ".csv" },
         );
 
         // ========================================================================
