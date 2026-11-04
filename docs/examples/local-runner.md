@@ -291,6 +291,16 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
    - `AWS::Logs::SubscriptionFilter`, its log group and its destination (a
      Lambda function, or an `AWS::Logs::Destination` followed to its Kinesis
      stream);
+   - `AWS::SSM::Parameter`, `AWS::SecretsManager::Secret`, `AWS::SNS::Topic`
+     (including its inline `Subscription`), `AWS::SNS::Subscription`,
+     `AWS::Kinesis::Stream`, `AWS::Cognito::UserPool`/`UserPoolClient` and
+     `AWS::KMS::Alias`. A `AWS::SecretsManager::ResourcePolicy`,
+     `AWS::SNS::TopicPolicy` or `AWS::Cognito::UserPoolDomain` is reported
+     under `skipped`: the resource it attaches to is still provisioned, but IAM
+     policy evaluation and the Cognito hosted UI are outside the local runner;
+   - every provisioned resource is listed by `plan` with the local identifier
+     the CDK definition fixes (a KMS key id and a secret ARN suffix are marked
+     as assigned at run);
    - `AWS::CloudFront::Distribution`, its cache behaviors, origins and origin
      groups, the `AWS::CloudFront::Function` resources it associates, and the
      cache, origin request and response headers policies and origin access
@@ -311,7 +321,9 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
    the runner waits up to 60 seconds for every endpoint configured on that
    backend to answer a read-only call native to the service over its published
    loopback port: `ListTables` for DynamoDB Local, `ListKeys` and
-   `GetCallerIdentity` for moto KMS/STS, `ListBuckets` for s3proxy and
+   `GetCallerIdentity` for moto KMS/STS, `DescribeParameters` for SSM,
+   `ListSecrets` for Secrets Manager, `ListTopics` for SNS, `ListStreams` for
+   Kinesis, `ListUserPools` for Cognito, `ListBuckets` for s3proxy and
    `ListQueues` for ElasticMQ. A service with no native probe is checked with a
    plain HTTP request. On timeout the run fails with the backend, its image and
    the last error, before any resource is provisioned. A backend with no
@@ -319,22 +331,30 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
 6. **Provision resources.** When the backend is ready, the runner creates every
    resource the assembly declares, in this order: S3 buckets; each
    `Custom::CDKBucketDeployment` source copied into its bucket with the declared
-   destination prefix and metadata; KMS keys; DynamoDB tables with their key
-   schema, GSIs, streams and TTL; and SQS queues with their visibility,
-   retention and redrive policy. It records the provisioned values environment
-   resolution needs. Attributes the local emulator does not implement (SSE,
-   PITR, deletion protection, KMS-on-SQS) are not provisioned; they are not part
-   of the local contract.
+   destination prefix and metadata; KMS keys (symmetric and asymmetric) and
+   their aliases; DynamoDB tables with their key schema, GSIs, streams and TTL;
+   SQS queues with their visibility, retention and redrive policy; SSM
+   parameters (String, StringList and SecureString); Secrets Manager secrets
+   (`SecretString`, and a deterministic local `GenerateSecretString`); SNS
+   topics (standard and FIFO); Kinesis streams (provisioned or on-demand, with
+   retention); and Cognito user pools and clients. It records the provisioned
+   values environment resolution needs. Attributes the local emulator does not
+   implement (SSE, PITR, deletion protection, KMS-on-SQS, IAM resource
+   policies) are not provisioned; they are not part of the local contract.
 7. **Resolve environment references.** A served function's `Ref`/`Fn::GetAtt`
    environment values are resolved to deterministic local values: a DynamoDB
    table name and stream ARN, an SQS queue name or URL, an EventBridge rule
-   name, an S3 bucket name or ARN, a Kinesis stream name or ARN, a KMS key id or
-   ARN, and the ARNs of IAM, MicroVM-image and S3 Vectors resources. The S3
-   bucket and KMS key values are the ones provisioned in the previous step. A
-   `{{resolve:secretsmanager:…}}` value becomes a deterministic local secret;
-   the session's `describe` returns it, and the run never prints it. An
-   expression the runner cannot resolve fails closed with the function and
-   variable named.
+   name, an S3 bucket name or ARN, a Kinesis stream name or ARN, an SSM
+   parameter name, Type and Value, a Secrets Manager secret ARN, an SNS topic
+   ARN or TopicName, a Cognito pool id or client id with its Arn, ProviderName
+   and ProviderURL, a KMS key id or ARN, a KMS alias name, and the ARNs of IAM,
+   MicroVM-image and S3 Vectors resources. The values for provisioned resources
+   are the ones the previous step created. A `{{resolve:secretsmanager:…}}`
+   value resolves to the provisioned secret's value when that secret exists in
+   the assembly (the same JSON key), and otherwise keeps the wave-1
+   deterministic local placeholder; the session's `describe` returns it, and
+   the run never prints it. An expression the runner cannot resolve fails
+   closed with the function and variable named.
 8. **Preflight.** A probe container on the run's private network proves the
    dummy credentials, every configured endpoint, the DynamoDB SDK endpoint when
    one is configured, and closed DNS.
@@ -355,9 +375,12 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
     container. A session keeps every target warm, serves the same HTTP surface,
     and answers the JSON command protocol on stdin/stdout.
 11. **Start event delivery.** The delivery engine registers every derived
-    event-source mapping, EventBridge rule and CloudWatch Logs subscription
-    filter, starts one deliverer per source kind that has one, and records the
-    others as `not-delivered` with the task that will implement them. The engine
+    event-source mapping, EventBridge rule, CloudWatch Logs subscription filter
+    and SNS subscription, starts one deliverer per source kind that has one, and
+    records the others as `not-delivered` with the task that will implement
+    them. SNS subscriptions are registered from `AWS::SNS::Subscription` and
+    from the inline `Subscription` property of a topic; their deliverer lands in
+    E6. The engine
     takes the run's clock and the delivery concurrency bound; see
     [Event delivery](#event-delivery).
 12. **Shut down.** `Ctrl-C` (`SIGINT`) or `SIGTERM` drains and stops the
@@ -369,6 +392,133 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
     labelled with that app; it does not delete the stale run scratch directory.
     That directory is `<scratch>/runs/<app>-<run>`, where `--scratch` defaults to
     `<user cache>/apptheory-local`; it is safe to delete by hand.
+
+## moto-backed services: SSM, Secrets Manager, SNS, Kinesis, Cognito and KMS signing
+
+The profile's pinned moto container (`motoserver/moto@sha256:59a1965d…`, 5.2.5)
+provides these services. The runner creates each resource from the cloud
+assembly before any function starts and injects the service endpoint:
+
+| Service | Endpoint variable | Resources created |
+| --- | --- | --- |
+| SSM | `AWS_ENDPOINT_URL_SSM` | `AWS::SSM::Parameter`, `Type` `String`, `StringList` or `SecureString` |
+| Secrets Manager | `AWS_ENDPOINT_URL_SECRETS_MANAGER` | `AWS::SecretsManager::Secret` with `SecretString` or `GenerateSecretString` |
+| SNS | `AWS_ENDPOINT_URL_SNS` | `AWS::SNS::Topic` (standard and FIFO) |
+| Kinesis | `AWS_ENDPOINT_URL_KINESIS` | `AWS::Kinesis::Stream` (provisioned or on-demand) |
+| Cognito Identity Provider | `AWS_ENDPOINT_URL_COGNITO_IDP` (and the SDK's `AWS_ENDPOINT_URL_COGNITO_IDENTITY_PROVIDER`) | `AWS::Cognito::UserPool` and `UserPoolClient` |
+| KMS | `AWS_ENDPOINT_URL_KMS` | `AWS::KMS::Key` (symmetric, RSA or ECC) and `AWS::KMS::Alias` |
+
+### Return values the templates resolve
+
+The values follow the CloudFormation reference for each resource:
+
+- **SSM** (`AWS::SSM::Parameter`): `Ref` is the parameter name; `Fn::GetAtt
+  Type` and `Fn::GetAtt Value` are the declared type and value
+  ([reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-ssm-parameter.html)).
+  A parameter name without a leading `/` is prefixed with one; a name that is
+  not a literal gets a deterministic local name.
+- **Secrets Manager** (`AWS::SecretsManager::Secret`): `Ref` is the secret ARN
+  ([reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-secretsmanager-secret.html)).
+  AWS appends a six-character suffix to the ARN; moto does the same, so the ARN
+  is not byte-identical across runs even though the friendly name is. A runtime
+  `GetSecretValue` reads the secret the runner created.
+- **SNS** (`AWS::SNS::Topic`): `Ref` is the topic ARN; `Fn::GetAtt TopicName`
+  and `TopicArn` are the name and ARN
+  ([reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-sns-topic.html)).
+  `AWS::SNS::Subscription` and a topic's inline `Subscription` are registered
+  with the delivery engine; the runner does not create application
+  subscriptions in moto, because moto cannot reach the Runtime Interface
+  Emulator or ElasticMQ and the engine performs the fan-out itself.
+- **Kinesis** (`AWS::Kinesis::Stream`): `Ref` is the stream name; `Fn::GetAtt
+  Arn` is the stream ARN
+  ([reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-kinesis-stream.html)).
+  `StreamModeDetails` `PROVISIONED` uses `ShardCount`; `ON_DEMAND` sends the
+  stream mode instead. `RetentionPeriodHours` is applied with
+  `IncreaseStreamRetentionPeriod` or `DecreaseStreamRetentionPeriod`
+  ([API](https://docs.aws.amazon.com/kinesis/latest/APIReference/API_IncreaseStreamRetentionPeriod.html)).
+- **Cognito user pool** (`AWS::Cognito::UserPool`): `Ref` is the pool id;
+  `Fn::GetAtt Arn`, `ProviderName` and `ProviderURL` are the pool ARN and its
+  provider values
+  ([reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-cognito-userpool.html)).
+  `AWS::Cognito::UserPoolClient` Ref is the client id
+  ([reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-cognito-userpoolclient.html)).
+- **KMS** (`AWS::KMS::Alias`): `Ref` is the alias name, and the alias is usable
+  as a `KeyId`
+  ([reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-kms-alias.html),
+  [alias use](https://docs.aws.amazon.com/kms/latest/developerguide/alias-using.html)).
+  `KeySpec` RSA_2048/3072/4096 and ECC_NIST_P256/P384/P521 with
+  `KeyUsage SIGN_VERIFY` support `Sign`, `Verify` and `GetPublicKey`; the wave-1
+  symmetric path is unchanged.
+
+### The local Cognito issuer
+
+Moto serves a pool's JWKS only at the path-style
+`/{poolId}/.well-known/jwks.json`. A Cognito token names its issuer as
+`https://cognito-idp.{region}.amazonaws.com/{poolId}` (["Verifying a JSON Web
+Token"](https://docs.aws.amazon.com/cognito/latest/developerguide/amazon-cognito-user-pools-using-tokens-verifying-a-jwt.html)).
+The runner therefore starts a loopback issuer listener for every provisioned
+pool and serves both documents at the ordinary OIDC paths:
+
+```
+http://127.0.0.1:<port>/cognito-idp/us-east-1/<poolId>/.well-known/jwks.json
+http://127.0.0.1:<port>/cognito-idp/us-east-1/<poolId>/.well-known/openid-configuration
+```
+
+`jwks.json` proxies the pool's JWKS from moto. `openid-configuration` names the
+local issuer and the local `jwks_uri`, so R2a can validate a token against a
+normal issuer instead of special-casing moto's path. The issuer URL is recorded
+on the pool resource in `session describe` (`localIssuer`); `plan` lists the
+pool and its GetAtt values but cannot know the listener port. Tokens minted by
+moto carry the AWS issuer string above; R2a maps that issuer to the local one.
+An `AWS::Cognito::UserPoolDomain` is reported under `skipped`: the hosted UI and
+OAuth domain are not served.
+
+### GenerateSecretString
+
+AWS does not publish its password-generation algorithm. The runner generates a
+deterministic local value from the CDK definition and documents the difference:
+
+- `PasswordLength` defaults to 32 and must be 1..4096.
+- The character classes are uppercase, lowercase, numbers and the ASCII
+  punctuation set, each omitted by its `Exclude*` flag; `ExcludeCharacters`
+  removes individual characters and `IncludeSpace` adds a space.
+- `RequireEachIncludedType` defaults to true and guarantees at least one
+  character from each remaining class.
+- The value is seeded from the stack and logical id, so the same definition
+  always produces the same secret. Moto keeps only the current run's state
+  (docs/125's memory-only limit); a restart re-provisions the same value.
+- `SecretStringTemplate` must be a JSON object; the generated string is stored
+  under `GenerateStringKey` and the resulting JSON is the secret string.
+
+A deploy-time `{{resolve:secretsmanager:…}}` reference to a secret the run
+provisioned resolves to that secret's value (the referenced JSON key), so the
+deploy-time value and the runtime `GetSecretValue` value agree. With no
+provisioned secret the wave-1 deterministic placeholder is kept unchanged.
+
+### Observed moto deviations the runner normalizes
+
+- **SNS subscriptions are not created in moto.** Moto cannot reach the Runtime
+  Interface Emulator or ElasticMQ. The runner registers the application's
+  subscriptions with the delivery engine and, in E6, performs the fan-out. Moto
+  is used for topics and for the publish path, not for application delivery.
+- **Cognito JWKS path.** Only `/{poolId}/.well-known/jwks.json` is served; the
+  runner's issuer listener is the path R2a uses.
+- **Kinesis on-demand describe.** Moto omits `StreamModeDetails` from
+  `DescribeStream`; the runner records the requested mode and does not read it
+  back. `DescribeStream` still reports the ARN, shards and retention.
+- **SecureString.** Moto accepts `SecureString`, reports `KeyId
+  alias/aws/ssm`, returns a `kms:alias/aws/ssm:<value>` marker without
+  `WithDecryption` and the plaintext with it. It does not perform envelope
+  encryption; the value lives only in moto's memory and is never written to a
+  file or a log.
+- **Secret ARN suffix.** moto appends a random six-character suffix as AWS
+  does; the friendly name and the dynamic-reference resolution are stable.
+- **SNS FIFO.** The pinned moto accepts `FifoTopic` and
+  `ContentBasedDeduplication` and reports both from `GetTopicAttributes`; E6's
+  FIFO delivery rules are the runner's, not moto's.
+- **SNS message attributes and `x-amz-sns-*` headers.** E6 observes publishes
+  through a moto-SQS drain queue and emits the documented SNS record/HTTP
+  shapes itself; the observed encoding is documented with E6.
 
 ## CloudFront distributions
 
@@ -890,21 +1040,26 @@ the harness records it.
 | arm64 `provided.al2023` | Supported (L1) | Uses the host-arch image; a bootstrap built for the other architecture fails closed with a clear error. |
 | DynamoDB Local | Supported (L2) | `--backend dynamodb` starts the profile's digest-pinned `amazon/dynamodb-local` on the run network; SDK clients resolve through `AWS_ENDPOINT_URL_DYNAMODB`. Tables are created from the CDK key schema, GSIs, streams and TTL. SSE, PITR and deletion protection are not provisioned. |
 | SQS (ElasticMQ) | Supported (L2) | `--backend sqs` starts the digest-pinned `softwaremill/elasticmq-native` container, creates the CDK queues with visibility, retention and redrive policy, and resolves `QueueUrl`/`Arn` from the created queues. Every SQS event-source mapping polls automatically with batching, visibility, delete-on-success, partial batch failure, FIFO group ordering, redrive, filter criteria and maximum concurrency; see [SQS event-source delivery](#sqs-event-source-delivery). A session also exposes `sqs.send`, `sqs.receive`, `sqs.event` and `sqs.attributes` for explicit work. |
-| KMS and STS (moto) | Supported (L2) | `--backend moto` starts the profile's digest-pinned moto container and injects `AWS_ENDPOINT_URL_KMS`/`_STS` (and the profile's aliases). KMS keys declared by the assembly are created; `Ref`/`Fn::GetAtt Arn` resolve to the created key. No HSM, key policies or grants. |
+| KMS and STS (moto) | Supported (L2) | `--backend moto` starts the profile's digest-pinned moto container and injects `AWS_ENDPOINT_URL_KMS`/`_STS` (and the profile's aliases). Symmetric, RSA (2048/3072/4096) and ECC (P256/P384/P521) `SIGN_VERIFY` keys declared by the assembly are created, with aliases; `Ref`/`Fn::GetAtt Arn` resolve to the created key and alias. No HSM, key policies or grants. |
+| SSM Parameter Store (moto) | Supported (L2) | `AWS::SSM::Parameter` String, StringList and SecureString are created; `Ref` returns the name and `Fn::GetAtt Type`/`Value` the declared type and value. `AWS_ENDPOINT_URL_SSM` is injected. SecureString is stored in moto's memory without envelope encryption. |
+| Secrets Manager (moto) | Supported (L2) | `AWS::SecretsManager::Secret` with `SecretString` or `GenerateSecretString` is created; `Ref` is the ARN and runtime `GetSecretValue` works. A `ResourcePolicy` is reported skipped (IAM is a docs/125 true limit). `AWS_ENDPOINT_URL_SECRETS_MANAGER` is injected. |
+| SNS topics (moto) | Supported (L2) | Standard and FIFO `AWS::SNS::Topic` are created with `FifoTopic`/`ContentBasedDeduplication`; `Ref` is the ARN and `GetAtt TopicName`/`TopicArn` resolve. `AWS::SNS::Subscription` and inline `Subscription` entries are registered with the delivery engine; delivery lands in E6. `TopicPolicy` is reported skipped. |
+| Kinesis streams (moto) | Provisioned (L2); delivery in E5 | `AWS::Kinesis::Stream` is created with `ShardCount` or `StreamModeDetails`, and `RetentionPeriodHours`; `Ref` is the name and `GetAtt Arn` the stream ARN. `AWS_ENDPOINT_URL_KINESIS` is injected. Event-source delivery lands in E5. |
+| Cognito user pools (moto) | Supported (L2) | `AWS::Cognito::UserPool` and `UserPoolClient` are created; `Ref` returns the pool/client id and `GetAtt Arn`/`ProviderName`/`ProviderURL` the pool provider values. The runner serves the pool's JWKS and an OIDC discovery document at `http://127.0.0.1:<port>/cognito-idp/<region>/<poolId>`. A `UserPoolDomain` is reported skipped (no hosted UI). |
 | S3 (s3proxy) | Supported (L2) | `--backend s3proxy` starts the digest-pinned s3proxy container, creates the assembly's buckets, and injects the S3 endpoint as the container address so the SDK uses path-style addressing. No bucket policies, IAM or event notifications. |
 | Event source mappings (SQS delivered; DynamoDB Streams and Kinesis pending) | SQS delivered; stream delivery lands in E2/E5 | The mapping's function, source, batch options, filter criteria and scaling configuration are read from the assembly. An SQS mapping is delivered automatically; a DynamoDB Streams or Kinesis mapping reports `not-delivered` with its task. A session can still build a stream record from a real local write and invoke the handler. |
 | EventBridge rules (schedule and pattern) | Engine present; per-source delivery lands in E3 | A rule is registered per kind (schedule or pattern) and reported with its delivery state. A session builds the `Scheduled Event` envelope or the pattern's source/detail-type from the CDK rule and invokes its Lambda target. Managed rule delivery and the clock-driven scheduler land in E3. |
 | Kinesis / CloudWatch Logs subscription events | Engine present; per-source delivery lands in E5 | A `AWS::Logs::SubscriptionFilter` is derived with its log group and destination (a Lambda function, or a CloudWatch Logs destination followed to its Kinesis stream) and registered with the delivery engine. The session can build a CloudWatch Logs subscription payload from local log events and wrap it in a Kinesis record, or accept explicit base64 record data. The Kinesis stream itself and log-group capture land in E5. |
 | Delivery engine and test clock | Supported | `run` and `session` start the engine; `plan` and `session describe` report per-source state. SQS batching windows and visibility deadlines, schedules and TTL expiry take their time from `--clock test[=<RFC3339>]`; the `clock.now`/`clock.advance` session commands read and move it. ElasticMQ's own wall-clock timers and the runtime images are not slowed. `--delivery-concurrency` bounds concurrent deliveries (default 4); an SQS mapping's `MaximumConcurrency` bounds its batches within that. |
-| Deploy-time Secrets Manager dynamic references | Supported | A `{{resolve:secretsmanager:…}}` environment value becomes a deterministic local secret. The session's `describe` returns it to the harness; `run` and `plan` never print it. No secret is created in a cloud. |
-| Other emulators | Endpoint injection only | Pass `--endpoint service=url` and `--add-host name=address`; the profile names the environment variables. |
+| Deploy-time Secrets Manager dynamic references | Supported | A `{{resolve:secretsmanager:…}}` environment value resolves to the provisioned secret's value (the same JSON key) when the assembly declares that secret, and otherwise keeps the wave-1 deterministic local placeholder. The session's `describe` returns it to the harness; `run` and `plan` never print it. No secret is created in a cloud. |
+| Other emulators | Endpoint injection only | Pass `--endpoint service=url` and `--add-host name=address`; the profile names the environment variables. The checked-in profile binds `ssm`, `secretsmanager`, `sns`, `kinesis` and `cognito-idp` to moto, and `kms`/`sts` as before. |
 | WebSocket APIs | Reported, not served | A WebSocket API is listed under `skipped` with its reason, and an app with no HTTP route, Function URL, event source or rule fails with that list. Its `$connect`/`$disconnect`/`$default` routes are not invoked. |
 | CloudFront distributions and CloudFront Functions | Served (L2) | The distribution is served on its own loopback URL. Cache behaviors, allowed methods, viewer-request/viewer-response functions, origin request policies and response headers policies are applied; the generated function code runs in a restricted Node sandbox. S3 origins read the app's deployments from s3proxy, Function URL origins invoke the real handler container, and origin groups fail over with CloudFront's rules. No caching, no edge network, no TLS. |
 | REST `MOCK` integrations | Supported (L1) | The transport returns the `IntegrationResponses` status and headers the template declares and invokes no function. CDK emits these for CORS preflight. |
 | HTTP API `REQUEST` authorizers with simple responses | Supported | The transport invokes the real authorizer function with the API Gateway v2 REQUEST event, carrying every configured `$request.header.*` or `$request.querystring.*` identity source in order; a request missing one is refused with 401 before the authorizer runs. A false `isAuthorized` is a 401, the authorizer context is carried to the handler, and a malformed response fails closed. `$context`/`$stageVariables` sources fail closed at plan time. |
 | Other authorizers (REST, JWT, non-simple responses) | Not served | Fails closed; the local transport must never bypass a real authorizer. |
 | Lambda layers, container-image functions | Not served | Fail closed when a served function needs them. |
-| CloudFormation-expression environment values | Supported for `Ref`/`Fn::GetAtt`/`Fn::Join` | Tables and stream ARNs, queues, rules, buckets, KMS keys, Kinesis streams, IAM/MicroVM-image/S3 Vectors ARNs and functions resolve to deterministic local values (KMS/S3 require their backend). An unsupported expression fails with the function and variable named. |
+| CloudFormation-expression environment values | Supported for `Ref`/`Fn::GetAtt`/`Fn::Join` | Tables and stream ARNs, queues, rules, buckets, KMS keys and aliases, SSM parameters, Secrets Manager ARNs, SNS topics, Kinesis streams, Cognito pool/client values, IAM/MicroVM-image/S3 Vectors ARNs and functions resolve to local values (moto/S3 require their backend). An unsupported expression fails with the function and variable named. |
 | CloudFormation-expression `MemorySize`/`Timeout` | Not resolved | A served function whose limit is `Ref`/`GetAtt`/`Fn::If` fails with the property named; the AWS defaults apply only when the property is absent. |
 | One function, explicit events (`invoke`) | Supported | Starts one function and sends newline-delimited JSON events to a warm container; `--handler-dir` runs a handler that has no CDK definition and derives no routes. |
 | Every target, explicit commands (`session`) | Supported | Starts every CDK-targeted function, serves the HTTP surface, and answers a JSON-line command protocol for invocation, SQS, DynamoDB, S3, EventBridge and Kinesis operations. `--target` adds a function no route or event source targets. |
@@ -935,25 +1090,35 @@ the harness records it.
   CloudFront Functions API and globals but is not a hardened security boundary,
   does not enforce CloudFront's 1 ms CPU budget, and cannot reproduce
   CloudFront-only device, location or TLS headers.
-- **Stream, rule and subscription delivery is not wired per source yet.** SQS
-  mapping delivery is present. Every DynamoDB Streams and Kinesis mapping,
-  EventBridge rule and CloudWatch Logs subscription filter is registered, its
-  function is started, and its state is reported as `not-delivered` with the
-  E2, E3 or E5 task. A session can still build the provider event from a real
-  local write and invoke the handler.
-- **Kinesis has no stream emulator yet.** A Kinesis event is built locally (from
-  a CloudWatch Logs subscription payload or explicit record data) and invoked
-  through the real handler; the Kinesis event-source deliverer and a moto-backed
-  stream land in E5.
+- **Stream, rule and SNS delivery is not wired per source yet.** SQS mapping
+  delivery is present. Every DynamoDB Streams and Kinesis mapping, EventBridge
+  rule, CloudWatch Logs subscription filter and SNS subscription is registered,
+  its function is started where it has one, and its state is reported as
+  `not-delivered` with the E2, E3, E5 or E6 task. A session can still build the
+  provider event from a real local write and invoke the handler.
+- **Kinesis event-source delivery is pending.** The stream itself is created on
+  moto from `AWS::Kinesis::Stream`, and `Ref`/`GetAtt Arn` resolve to it. A
+  Kinesis event is still built locally (from a CloudWatch Logs subscription
+  payload or explicit record data) and invoked through the real handler; the
+  event-source deliverer lands in E5.
 - **HTTP API authorizers** are run only for `REQUEST` authorizers with simple
   responses. They carry every configured `$request.header.*` or
   `$request.querystring.*` identity source in order, and a request missing one
   is refused with 401 before the authorizer runs. REST, JWT and IAM authorizers,
   and `$context`/`$stageVariables` identity sources, fail closed rather than
   bypassing a real authorization decision.
-- **SSM Parameter Store** has no local emulator. A handler that reads a
-  parameter sees the call fail and must handle it; the lambda-role custom row
-  asserts that fallback and is class L3 with the named gap.
+- **IAM policy evaluation** remains a docs/125 true limit. SSM parameters,
+  Secrets Manager secrets and their resource policies, SNS topic policies,
+  Cognito user pools and KMS keys are provisioned, but a policy attached to
+  them is not evaluated. A `ResourcePolicy` or `TopicPolicy` is reported under
+  `skipped`.
+- **Cognito hosted UI/OAuth domain** is not served. The runner serves the user
+  pool issuer and JWKS (for JWT validation) but a `UserPoolDomain` is reported
+  under `skipped`.
+- **SNS subscription delivery lands in E6.** The topics, their Ref/GetAtt values
+  and the subscription registry are real; a publish does not yet fan out to a
+  Lambda function, SQS queue or loopback HTTP endpoint. SMS, email and mobile
+  push are out of scope.
 - **S3 event notifications** are absent from s3proxy. The import-pipeline row
   writes a real object and builds the CDK rule's EventBridge event; S3 →
   EventBridge delivery itself is the named gap.

@@ -73,6 +73,8 @@ func deliveryBackendService(kind DeliveryKind) string {
 		return "events"
 	case DeliveryKindCloudWatchLogs:
 		return "logs"
+	case DeliveryKindSNS:
+		return backendSNS
 	default:
 		return ""
 	}
@@ -84,6 +86,8 @@ func deliveryClient(service, endpoint string) any {
 		return newSQSClient(endpoint)
 	case backendDynamoDB:
 		return newDynamoDBClient(endpoint)
+	case backendSNS:
+		return newSNSClient(endpoint)
 	default:
 		return nil
 	}

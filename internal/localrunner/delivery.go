@@ -59,6 +59,8 @@ const (
 	DeliveryKindEventBridgeRule DeliveryKind = "eventbridge-rule"
 	// DeliveryKindCloudWatchLogs is a CloudWatch Logs subscription filter.
 	DeliveryKindCloudWatchLogs DeliveryKind = "cloudwatch-logs"
+	// DeliveryKindSNS is an SNS topic subscription.
+	DeliveryKindSNS DeliveryKind = "sns"
 )
 
 // deliveryTask names the wave-2 task that implements a kind's deliverer.
@@ -69,6 +71,7 @@ var deliveryTask = map[DeliveryKind]string{
 	DeliveryKindEventBridgeSchedule: "E3",
 	DeliveryKindEventBridgeRule:     "E3",
 	DeliveryKindCloudWatchLogs:      "E5",
+	DeliveryKindSNS:                 "E6",
 }
 
 // deliveryKindLabel describes a kind in the delivery state reason.
@@ -79,6 +82,7 @@ var deliveryKindLabel = map[DeliveryKind]string{
 	DeliveryKindEventBridgeSchedule: "EventBridge schedule delivery",
 	DeliveryKindEventBridgeRule:     "EventBridge rule delivery",
 	DeliveryKindCloudWatchLogs:      "CloudWatch Logs subscription delivery",
+	DeliveryKindSNS:                 "SNS subscription delivery",
 }
 
 // DeliveryPhase is one source's delivery state, the local counterpart of the

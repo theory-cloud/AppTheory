@@ -129,6 +129,7 @@ type commandConfig struct {
 	deliveryConcurrency int
 	clock               string
 	jsonOutput          bool
+	allowNoSurface      bool
 	contexts            stringList
 	images              stringList
 	endpoints           stringList
@@ -157,6 +158,7 @@ func (c *commandConfig) register(flags *flag.FlagSet) {
 	flags.IntVar(&c.deliveryConcurrency, "delivery-concurrency", 0, "maximum concurrent delivery-engine invocations (default 4, max 32)")
 	flags.StringVar(&c.clock, "clock", "real", "time source for run and session: real, test, or test=<RFC3339 start>")
 	flags.BoolVar(&c.jsonOutput, "json", false, "plan: print the derived surface as JSON")
+	flags.BoolVar(&c.allowNoSurface, "allow-no-surface", false, "plan/session: allow an app whose functions have no served HTTP, event or rule surface")
 	flags.Var(&c.contexts, "c", "CDK context key=value (repeatable)")
 	flags.Var(&c.contexts, "context", "CDK context key=value (repeatable)")
 	flags.Var(&c.images, "image", "runtime image override class=tag@sha256:... (repeatable)")
@@ -283,6 +285,7 @@ func (c *commandConfig) plan(ctx context.Context, runner *localrunner.Runner) in
 	for _, line := range localrunner.RouteTable(spec) {
 		fmt.Printf("  %s\n", line)
 	}
+	printProvisionedResources(spec)
 	printDerivedEvents(spec)
 	if len(spec.Skipped) > 0 {
 		fmt.Println()
@@ -292,6 +295,24 @@ func (c *commandConfig) plan(ctx context.Context, runner *localrunner.Runner) in
 		}
 	}
 	return 0
+}
+
+// printProvisionedResources prints every resource the run creates from the CDK
+// definition, with the local identifier the definition fixes before a backend
+// starts. A generated identifier is marked because the provider assigns it.
+func printProvisionedResources(spec *localrunner.Spec) {
+	if len(spec.PlannedResources) == 0 {
+		return
+	}
+	fmt.Println()
+	fmt.Println("provisioned resources:")
+	for _, resource := range spec.PlannedResources {
+		localID := resource.LocalID
+		if resource.Generated {
+			localID += " (assigned at run)"
+		}
+		fmt.Printf("  %-40s %-40s %s\n", resource.LogicalID, resource.Type, localID)
+	}
 }
 
 // printDerivedEvents prints every derived mapping, rule and subscription with
@@ -327,6 +348,18 @@ func printDerivedEvents(spec *localrunner.Spec) {
 		fmt.Println()
 		fmt.Println("subscriptions:")
 		for _, subscription := range spec.Subscriptions {
+			if subscription.Kind == "sns" {
+				filter := subscription.FilterPolicyScope
+				if len(subscription.FilterPolicy) == 0 {
+					filter = "none"
+				}
+				fmt.Printf("  %-40s %-16s <- %s -> %s %s filter=%s raw=%t delivery=%s\n",
+					subscription.LogicalID, subscription.Kind, subscription.Topic,
+					subscription.Protocol, subscription.Endpoint, filter,
+					subscription.RawMessageDelivery,
+					localrunner.DeliveryCell(delivery[subscription.LogicalID]))
+				continue
+			}
 			fmt.Printf("  %-40s %-16s <- %s filter=%s -> %s delivery=%s\n",
 				subscription.LogicalID, subscription.Kind, subscription.LogGroup,
 				subscription.FilterName, subscription.Destination,
@@ -411,6 +444,7 @@ func (c *commandConfig) options() (localrunner.Options, error) {
 		MaxConcurrency:      c.maxConcurrency,
 		DeliveryConcurrency: c.deliveryConcurrency,
 		Clock:               c.clock,
+		AllowNoSurface:      c.allowNoSurface,
 		Stdout:              os.Stdout,
 	}, nil
 }

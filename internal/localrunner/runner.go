@@ -104,13 +104,17 @@ type Runner struct {
 	resourceValues resourceValues
 	tables         map[string]tableInfo
 	localSecrets   map[string]string
-	apiURLs        map[string]string
-	servers        []*http.Server
-	listeners      []net.Listener
-	semaphore      chan struct{}
-	network        string
-	clock          Clock
-	delivery       *DeliveryEngine
+	// secretValues holds the provisioned secret strings, keyed by ARN and
+	// friendly name. A deploy-time dynamic reference to the same secret resolves
+	// to this value instead of the wave-1 deterministic placeholder.
+	secretValues map[string]string
+	apiURLs      map[string]string
+	servers      []*http.Server
+	listeners    []net.Listener
+	semaphore    chan struct{}
+	network      string
+	clock        Clock
+	delivery     *DeliveryEngine
 }
 
 // NewRunner validates the options and prepares the run. It contacts no Docker
@@ -451,6 +455,9 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 		return nil, err
 	}
 	if err = r.provisionResources(ctx, spec); err != nil {
+		return nil, err
+	}
+	if err = r.startCognitoIssuer(ctx, spec); err != nil {
 		return nil, err
 	}
 	if err = r.resolveEnvironment(spec, targets); err != nil {

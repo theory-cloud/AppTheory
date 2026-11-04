@@ -230,7 +230,29 @@ func (p *Profile) EndpointEnvNames(service string) []string {
 			return append([]string(nil), endpoint.Env...)
 		}
 	}
-	return []string{"AWS_ENDPOINT_URL_" + strings.ToUpper(service)}
+	return defaultEndpointEnvNames(service)
+}
+
+// defaultEndpointEnvNames maps an AWS service name to the SDK's
+// service-specific endpoint override. Most services use the upper-cased service
+// name; Secrets Manager and Cognito Identity Provider use their documented
+// environment variable names:
+// https://docs.aws.amazon.com/sdkref/latest/guide/feature-ss-endpoints.html
+func defaultEndpointEnvNames(service string) []string {
+	switch strings.ToLower(strings.TrimSpace(service)) {
+	case backendSecretsManager:
+		return []string{"AWS_ENDPOINT_URL_SECRETS_MANAGER"}
+	case backendCognito:
+		return []string{
+			// The AWS SDK for JavaScript, Go and Python resolve the Cognito
+			// Identity Provider override under the service's long name; the
+			// short form is accepted too so a handler can use either spelling.
+			"AWS_ENDPOINT_URL_COGNITO_IDENTITY_PROVIDER",
+			"AWS_ENDPOINT_URL_COGNITO_IDP",
+		}
+	default:
+		return []string{"AWS_ENDPOINT_URL_" + strings.ToUpper(service)}
+	}
 }
 
 // handlerArgument is the command the runtime image entrypoint receives. The

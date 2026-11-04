@@ -35,13 +35,14 @@ function the CDK definition targets and reads one JSON command per line.
 | `--image class=ref` | profile | Override a runtime image pin (`go`, `node`, `python`). The reference must be `…@sha256:<64 hex>`. |
 | `--endpoint service=url` | none | Inject a local AWS endpoint for `service` (`dynamodb`, `sqs`, `s3`, …). Repeatable. |
 | `--add-host name=address` | none | Extra `/etc/hosts` entry inside function containers. Repeatable. |
-| `--backend NAME` | none | Start a profile emulator on the run network: `dynamodb`, `sqs`, or a profile container such as `moto` (KMS/STS) or `s3proxy` (S3). Repeatable. |
+| `--backend NAME` | none | Start a profile emulator on the run network: `dynamodb`, `sqs`, or a profile container such as `moto` (KMS, STS, SSM, Secrets Manager, SNS, Kinesis, Cognito) or `s3proxy` (S3). Repeatable. |
 | `--port-base N` | ephemeral | Bind the API listeners at `N`, `N+1`, …; `0` asks the OS for free ports. |
 | `--name-prefix PREFIX` | derived from the app path | Container and network names. Must be unique per run. |
 | `--max-concurrency N` | 32 | In-flight invocations, `1..32`. Values above 32 are refused. |
 | `--delivery-concurrency N` | 4 | Concurrent handler invocations the delivery engine performs, `1..32`. The default is sized for the documented 4 CPU / ~6 GB Colima host. |
 | `--clock SPEC` | `real` | `run`/`session` time source: `real`, `test`, or `test=<RFC3339 start>`. A test clock starts at the given instant, or `2026-01-01T00:00:00Z` when omitted. |
 | `--json` | off | `plan`: print the derived surface as JSON on stdout; progress goes to stderr. |
+| `--allow-no-surface` | off | `plan`/`session`: allow an app whose functions have no served HTTP, event or rule surface. A session still needs `--target` to start a function. |
 | `--function ID` | none | `invoke`: function logical id from the CDK assembly. |
 | `--event FILE` | none | `invoke`: JSON event file. Repeatable. |
 | `--stdio` | off | `invoke`: read newline-delimited JSON events from stdin and keep the container warm. |
@@ -240,7 +241,12 @@ same values.
       "kms":      {"container": "moto",           "env": ["AWS_ENDPOINT_URL_KMS", "KMS_ENDPOINT"]},
       "sts":      {"container": "moto",           "env": ["AWS_ENDPOINT_URL_STS", "STS_ENDPOINT"]},
       "s3":       {"container": "s3proxy",        "env": ["AWS_ENDPOINT_URL_S3", "S3_ENDPOINT"]},
-      "sqs":      {"container": "sqs",            "env": ["AWS_ENDPOINT_URL_SQS", "SQS_ENDPOINT"]}
+      "sqs":      {"container": "sqs",            "env": ["AWS_ENDPOINT_URL_SQS", "SQS_ENDPOINT"]},
+      "ssm":      {"container": "moto",           "env": ["AWS_ENDPOINT_URL_SSM", "SSM_ENDPOINT"]},
+      "secretsmanager": {"container": "moto",     "env": ["AWS_ENDPOINT_URL_SECRETS_MANAGER", "SECRETS_MANAGER_ENDPOINT"]},
+      "sns":      {"container": "moto",           "env": ["AWS_ENDPOINT_URL_SNS", "SNS_ENDPOINT"]},
+      "kinesis":  {"container": "moto",           "env": ["AWS_ENDPOINT_URL_KINESIS", "KINESIS_ENDPOINT"]},
+      "cognito-idp": {"container": "moto",        "env": ["AWS_ENDPOINT_URL_COGNITO_IDENTITY_PROVIDER", "AWS_ENDPOINT_URL_COGNITO_IDP", "COGNITO_ENDPOINT"]}
     }
   }
 }
@@ -248,16 +254,18 @@ same values.
 
 `--backend NAME` starts the profile container that provides the name's
 endpoints: `dynamodb` maps to the `dynamodb-local` container (the
-`dynamodbLocal` shortcut still works), `moto` provides `kms` and `sts`,
-`s3proxy` provides `s3`, and `sqs` provides `sqs` (ElasticMQ). A backend with no
-endpoint fails before any container starts.
+`dynamodbLocal` shortcut still works), `moto` provides `kms`, `sts`, `ssm`,
+`secretsmanager`, `sns`, `kinesis` and `cognito-idp`, `s3proxy` provides `s3`,
+and `sqs` provides `sqs` (ElasticMQ). A backend with no endpoint fails before
+any container starts.
 
 After a started backend publishes its loopback port, the runner waits up to 60
 seconds for every endpoint bound to that container to answer a read-only call
 over the published port: `ListTables` (DynamoDB Local), `ListKeys` or
-`GetCallerIdentity` (moto KMS/STS), `ListBuckets` (s3proxy) and `ListQueues`
-(ElasticMQ). A service with no native probe only has to accept a plain HTTP
-request. The wait respects cancellation and fails with the backend name, image
+`GetCallerIdentity` (moto KMS/STS), `DescribeParameters` (SSM), `ListSecrets`
+(Secrets Manager), `ListTopics` (SNS), `ListStreams` (Kinesis), `ListUserPools`
+(Cognito), `ListBuckets` (s3proxy) and `ListQueues` (ElasticMQ). A service with
+no native probe only has to accept a plain HTTP request. The wait respects cancellation and fails with the backend name, image
 and last error; nothing is provisioned until it succeeds. A backend with no
 published host port is reported ready without this wait.
 
@@ -324,10 +332,10 @@ TS_NODE_TRANSPILE_ONLY=1
 ## Delivery engine
 
 `run` and `session` start one delivery engine per run. It registers every
-derived event-source mapping, EventBridge rule and CloudWatch Logs subscription
-filter at start and reports each source's state. An SQS mapping has a deliverer
-and polls automatically; every other kind reports `not-delivered` with the task
-that will implement it (E2, E3 and E5).
+derived event-source mapping, EventBridge rule, CloudWatch Logs subscription
+filter and SNS subscription at start and reports each source's state. An SQS
+mapping has a deliverer and polls automatically; every other kind reports
+`not-delivered` with the task that will implement it (E2, E3, E5 and E6).
 
 The state vocabulary follows the Lambda event source mapping API, which reports
 a mapping's lifecycle in `State` and its processing outcome in
@@ -767,8 +775,13 @@ Before a targeted function starts, these expressions resolve to local values:
 | `Ref`/`Fn::GetAtt Name`/`Arn` on `AWS::Events::Rule` | The template's `Name` (or the deterministic local name) and the provider-shaped rule ARN. |
 | `Ref`/`Fn::GetAtt` on `AWS::S3::Bucket` | The bucket the runner created in s3proxy; `Arn` is built from that name. Requires `--backend s3proxy`. |
 | `Ref`/`Fn::GetAtt` on `AWS::KMS::Key` | The key id or ARN the runner created in moto. Requires `--backend moto`. |
-| `Ref`/`Fn::GetAtt Arn` on `AWS::Kinesis::Stream` | The template's `Name` (or the deterministic local name) and the provider-shaped stream ARN. |
-| `Ref`/`Fn::GetAtt` on `AWS::SecretsManager::Secret` | A deterministic local secret ARN. A `{{resolve:secretsmanager:…}}` value becomes a deterministic local secret recorded for the session's `describe`. |
+| `Ref`/`Fn::GetAtt Arn` on `AWS::Kinesis::Stream` | The stream name and ARN the runner created in moto (the template's `Name`, or the deterministic local name). Requires `--backend moto`. |
+| `Ref`/`Fn::GetAtt Type`/`Value` on `AWS::SSM::Parameter` | The parameter name, declared type and declared value the runner created in moto. Requires `--backend moto`. |
+| `Ref`/`Fn::GetAtt` on `AWS::SecretsManager::Secret` | The ARN of the secret the runner created in moto (AWS appends a six-character suffix). A `{{resolve:secretsmanager:…}}` value resolves to the provisioned secret's value and JSON key, or keeps the deterministic placeholder when no provisioned secret matches; the session's `describe` returns it. Requires `--backend moto`. |
+| `Ref`/`Fn::GetAtt TopicName`/`TopicArn` on `AWS::SNS::Topic` | The topic ARN, or its name. Requires `--backend moto`. |
+| `Ref`/`Fn::GetAtt` on `AWS::Cognito::UserPool` | The pool id, plus `Arn`, `ProviderName` and `ProviderURL`. Requires `--backend moto`. |
+| `Ref` on `AWS::Cognito::UserPoolClient` | The client id. Requires `--backend moto`. |
+| `Ref` on `AWS::KMS::Alias` | The alias name; the alias is usable as a `KeyId`. Requires `--backend moto`. |
 | `Fn::GetAtt Arn` on `AWS::IAM::Role` | A provider-shaped role ARN. |
 | `Fn::GetAtt ImageArn` on `AWS::Lambda::MicrovmImage` | A provider-shaped MicroVM image ARN. |
 | `Fn::GetAtt IndexArn` on `AWS::S3Vectors::Index` | A provider-shaped S3 Vectors index ARN built from the declared vector bucket and index names. |
@@ -779,12 +792,25 @@ Before a targeted function starts, these expressions resolve to local values:
 When a backend answers its readiness probe, the runner provisions the resources
 for it: every `AWS::S3::Bucket` in s3proxy and every
 `Custom::CDKBucketDeployment` source copied into its bucket; every
-`AWS::KMS::Key` in moto; every `AWS::DynamoDB::Table` in DynamoDB Local with its
+`AWS::KMS::Key` and `AWS::KMS::Alias` in moto; every `AWS::DynamoDB::Table` in
+DynamoDB Local with its
 key schema, GSIs, streams and TTL; and every `AWS::SQS::Queue` in ElasticMQ with
-its visibility, retention, FIFO and redrive attributes. Table SSE, PITR and
-deletion protection, and SQS KMS/SSE, are not provisioned; they are not part of
-the local contract. An unresolvable expression fails before any function
-container starts, with the function and variable named.
+its visibility, retention, FIFO and redrive attributes; every
+`AWS::SSM::Parameter` (String, StringList, SecureString),
+`AWS::SecretsManager::Secret` (`SecretString` or a deterministic
+`GenerateSecretString`), `AWS::SNS::Topic` (standard and FIFO),
+`AWS::Kinesis::Stream` and `AWS::Cognito::UserPool`/`UserPoolClient` in moto.
+Table SSE, PITR and deletion protection, SQS KMS/SSE, IAM resource policies and
+the Cognito hosted UI are not provisioned; they are not part of the local
+contract. An unresolvable expression fails before any function container
+starts, with the function and variable named.
+
+A provisioned Cognito pool gets a loopback issuer at
+`http://127.0.0.1:<port>/cognito-idp/<region>/<poolId>`; both
+`/.well-known/jwks.json` and `/.well-known/openid-configuration` are served
+there. `session describe` reports it as `localIssuer` on the pool resource. The
+full service semantics and the observed moto deviations are in
+[moto-backed services](/examples/local-runner/#moto-backed-services-ssm-secrets-manager-sns-kinesis-cognito-and-kms-signing).
 
 Functions that no supported route, Function URL, CloudFront origin, event source
 mapping or rule targets are listed under `skipped` with the reason; they are
@@ -813,7 +839,7 @@ Environment, in order (later wins):
 | `AWS_EC2_METADATA_DISABLED` | `true` |
 | `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE` | `/dev/null` |
 | `AWS_REQUEST_CHECKSUM_CALCULATION`, `AWS_RESPONSE_CHECKSUM_VALIDATION` | `WHEN_REQUIRED` (s3proxy does not implement the SDK's default flexible-checksum trailers) |
-| `AWS_ENDPOINT_URL_<SERVICE>` (and the profile's alias names) | the configured endpoint |
+| `AWS_ENDPOINT_URL_<SERVICE>` (and the profile's alias names) | the configured endpoint. Secrets Manager and Cognito use `AWS_ENDPOINT_URL_SECRETS_MANAGER` and `AWS_ENDPOINT_URL_COGNITO_IDENTITY_PROVIDER`; the short `AWS_ENDPOINT_URL_COGNITO_IDP` alias is also injected. |
 | `AWS_ENDPOINT_URL` | the single endpoint, or `http://127.0.0.1:1` when zero or several are configured |
 
 When a template variable is replaced, the run prints

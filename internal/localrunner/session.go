@@ -204,6 +204,7 @@ func (s *localSession) execute(ctx context.Context, request sessionRequest) (any
 	}
 }
 
+//nolint:gocyclo // one reported section per derived resource family.
 func (s *localSession) describe() (map[string]any, error) {
 	functions := make([]map[string]any, 0)
 	targets, err := s.runner.runtimeFunctions(s.spec)
@@ -254,7 +255,7 @@ func (s *localSession) describe() (map[string]any, error) {
 	resources := make([]map[string]any, 0, len(s.runner.resourceValues))
 	for key, value := range s.runner.resourceValues {
 		stack, id := splitResourceKey(key)
-		resources = append(resources, map[string]any{
+		entry := map[string]any{
 			"logicalId": id,
 			"stack":     stack,
 			"type":      value.Type,
@@ -262,7 +263,23 @@ func (s *localSession) describe() (map[string]any, error) {
 			"url":       value.URL,
 			"arn":       value.ARN,
 			"streamArn": value.StreamARN,
-		})
+		}
+		if value.ProviderName != "" {
+			entry["providerName"] = value.ProviderName
+		}
+		if value.ProviderURL != "" {
+			entry["providerUrl"] = value.ProviderURL
+		}
+		if value.LocalIssuer != "" {
+			entry["localIssuer"] = value.LocalIssuer
+		}
+		if value.SSMType != "" {
+			entry["ssmType"] = value.SSMType
+		}
+		if value.KeyID != "" {
+			entry["keyId"] = value.KeyID
+		}
+		resources = append(resources, entry)
 	}
 	secrets := map[string]string{}
 	for name, value := range s.runner.localSecrets {

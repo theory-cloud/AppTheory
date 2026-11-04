@@ -17,6 +17,17 @@ type resourceValue struct {
 	KeyID     string
 	URL       string
 	StreamARN string
+	// ProviderName and ProviderURL are the Cognito user pool GetAtt values.
+	// LocalIssuer is the loopback issuer the runner serves for the same pool.
+	ProviderName string
+	ProviderURL  string
+	LocalIssuer  string
+	// SSMType and SSMValue are the AWS::SSM::Parameter GetAtt values.
+	SSMType  string
+	SSMValue string
+	// ClientSecret is the Cognito user pool client GetAtt value when the client
+	// has a generated secret.
+	ClientSecret string
 }
 
 // keySchemaAttribute is one provisioned DynamoDB key attribute.
@@ -177,11 +188,14 @@ func (r *Runner) resolveRef(id, stack string, resources map[string]map[string]Re
 	switch resource.Type {
 	case typeKMSKey:
 		return value.KeyID, nil
+	case typeKMSAlias:
+		return value.Name, nil
 	case typeSQSQueue:
 		return value.URL, nil
-	case typeSecretsSecret:
+	case typeSecretsSecret, typeSNSTopic:
 		return value.ARN, nil
-	case typeS3Bucket, typeDynamoTable, typeEventsRule, typeLambdaFunction, typeKinesisStream:
+	case typeSSMParameter, typeCognitoUserPool, typeCognitoClient,
+		typeS3Bucket, typeDynamoTable, typeEventsRule, typeLambdaFunction, typeKinesisStream:
 		return value.Name, nil
 	default:
 		return "", fmt.Errorf("ref to %s (%s) is not resolvable locally", id, resource.Type)
@@ -208,9 +222,9 @@ const attrArn = "Arn"
 // attribute returns the GetAtt attributes the local resource value supports.
 func (v resourceValue) attribute(attr string) (string, bool) {
 	switch attr {
-	case attrArn, "ImageArn", "IndexArn":
+	case attrArn, "ImageArn", "IndexArn", "TopicArn":
 		return v.ARN, v.ARN != ""
-	case "Name", "QueueName", "FunctionName", "RoleName":
+	case "Name", "QueueName", "FunctionName", "RoleName", "TopicName":
 		return v.Name, v.Name != ""
 	case "KeyId":
 		return v.KeyID, v.KeyID != ""
@@ -224,6 +238,16 @@ func (v resourceValue) attribute(attr string) (string, bool) {
 		return v.Name + ".s3.amazonaws.com", v.Name != ""
 	case "RegionalDomainName":
 		return v.Name + ".s3." + LocalRegion + ".amazonaws.com", v.Name != ""
+	case "ProviderName":
+		return v.ProviderName, v.ProviderName != ""
+	case "ProviderURL":
+		return v.ProviderURL, v.ProviderURL != ""
+	case "Type":
+		return v.SSMType, v.SSMType != ""
+	case "Value":
+		return v.SSMValue, v.SSMValue != ""
+	case "ClientSecret":
+		return v.ClientSecret, v.ClientSecret != ""
 	default:
 		return "", false
 	}
@@ -250,6 +274,24 @@ func (r *Runner) localResourceValue(resource ResourceSpec, provisioned resourceV
 			"%s is a KMS key; start the moto backend (--backend moto) so the runner can create the key",
 			resource.LogicalID,
 		)
+	case typeKMSAlias:
+		return resourceValue{}, fmt.Errorf(
+			"%s is a KMS alias; start the moto backend (--backend moto) so the runner can create the key and alias",
+			resource.LogicalID,
+		)
+	case typeSSMParameter:
+		value.Name = ssmParameterName(resource)
+		value.SSMType, value.SSMValue = ssmParameterProperties(resource)
+		value.ARN = "arn:" + LocalPartition + ":ssm:" + LocalRegion + ":" + LocalAccountID + ":parameter/" +
+			strings.TrimPrefix(value.Name, "/")
+	case typeCognitoUserPool, typeCognitoClient:
+		return resourceValue{}, fmt.Errorf(
+			"%s is %s; start the moto backend (--backend moto) so the runner can create the user pool",
+			resource.LogicalID,
+			resource.Type,
+		)
+	case typeSNSTopic:
+		value.ARN = "arn:" + LocalPartition + ":sns:" + LocalRegion + ":" + LocalAccountID + ":" + value.Name
 	case typeS3Bucket:
 		return resourceValue{}, fmt.Errorf(
 			"%s is an S3 bucket; start the s3proxy backend (--backend s3proxy) so the runner can create the bucket",
@@ -303,6 +345,38 @@ func s3VectorsIndexARN(resource ResourceSpec) (string, error) {
 		":bucket/" + props.VectorBucketName + "/index/" + props.IndexName, nil
 }
 
+// ssmParameterName returns the parameter name a template declares, or a
+// deterministic local name. Parameter names must start with a slash:
+// https://docs.aws.amazon.com/systems-manager/latest/userguide/sysman-paramstore-su-create.html
+func ssmParameterName(resource ResourceSpec) string {
+	name, err := resourceName(resource)
+	if err != nil || name == "" {
+		name = localPhysicalName(resource.Stack, resource.LogicalID)
+	}
+	if strings.HasPrefix(name, "/") {
+		return name
+	}
+	return "/" + name
+}
+
+// ssmParameterProperties reads the literal Type and Value of an
+// AWS::SSM::Parameter. A Value that is a CloudFormation expression is resolved
+// during provisioning, where the rest of the assembly is available.
+func ssmParameterProperties(resource ResourceSpec) (string, string) {
+	var props struct {
+		Type  string `json:"Type"`
+		Value string `json:"Value"`
+	}
+	if len(resource.Properties) > 0 {
+		_ = json.Unmarshal(resource.Properties, &props) //nolint:errcheck // an unparseable property is reported by provisioning
+	}
+	parameterType := strings.TrimSpace(props.Type)
+	if parameterType == "" {
+		parameterType = "String"
+	}
+	return parameterType, props.Value
+}
+
 func stableHash(value string, length int) string {
 	sum := sha256.Sum256([]byte(value))
 	encoded := hex.EncodeToString(sum[:])
@@ -323,6 +397,14 @@ func (r *Runner) resolveDynamicSecret(functionID, name, value string) (string, e
 	if !strings.HasPrefix(trimmed, "{{resolve:secretsmanager:") || !strings.HasSuffix(trimmed, "}}") {
 		return "", fmt.Errorf("dynamic reference %q is not a Secrets Manager secret the runner can resolve locally", trimmed)
 	}
+	if resolved, ok := r.provisionedDynamicSecret(trimmed); ok {
+		if r.localSecrets == nil {
+			r.localSecrets = map[string]string{}
+		}
+		r.localSecrets[name] = resolved
+		r.logf("function %s: resolved deploy-time secret %s from the provisioned secret", functionID, name)
+		return resolved, nil
+	}
 	secret := "local-secret-" + stableHash(trimmed, 24)
 	if r.localSecrets == nil {
 		r.localSecrets = map[string]string{}
@@ -330,6 +412,51 @@ func (r *Runner) resolveDynamicSecret(functionID, name, value string) (string, e
 	r.localSecrets[name] = secret
 	r.logf("function %s: resolved deploy-time secret %s locally", functionID, name)
 	return secret, nil
+}
+
+// provisionedDynamicSecret resolves a {{resolve:secretsmanager:...}} reference
+// against a secret this run provisioned. The reference form is
+// {{resolve:secretsmanager:secret-id:secret-string:json-key:version-stage:version-id}}:
+// https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/dynamic-references.html
+// The wave-1 placeholder is kept for a reference with no provisioned secret, so
+// an existing caller sees no change.
+func (r *Runner) provisionedDynamicSecret(reference string) (string, bool) {
+	body := strings.TrimSuffix(strings.TrimPrefix(reference, "{{resolve:secretsmanager:"), "}}")
+	// The secret id is an ARN and contains colons; the four segments after it
+	// are secret-string, json-key, version-stage and version-id.
+	parts := strings.Split(body, ":")
+	if len(parts) < 5 {
+		return "", false
+	}
+	secretID := strings.TrimSpace(strings.Join(parts[:len(parts)-4], ":"))
+	value, ok := r.secretValues[secretID]
+	if !ok {
+		for key, candidate := range r.secretValues {
+			if key == secretID || strings.HasSuffix(key, ":"+secretID) {
+				value, ok = candidate, true
+				break
+			}
+		}
+	}
+	if !ok {
+		return "", false
+	}
+	jsonKey := strings.TrimSpace(parts[len(parts)-3])
+	if jsonKey == "" {
+		return value, true
+	}
+	var object map[string]any
+	if err := json.Unmarshal([]byte(value), &object); err != nil {
+		return "", false
+	}
+	switch typed := object[jsonKey].(type) {
+	case string:
+		return typed, true
+	case float64, bool:
+		return fmt.Sprint(typed), true
+	default:
+		return "", false
+	}
 }
 
 func (r *Runner) queueURL(name string) string {
@@ -360,6 +487,10 @@ func literalPhysicalName(resource ResourceSpec) string {
 		Name         string `json:"Name"`
 		FunctionName string `json:"FunctionName"`
 		LogGroupName string `json:"LogGroupName"`
+		TopicName    string `json:"TopicName"`
+		UserPoolName string `json:"UserPoolName"`
+		ClientName   string `json:"ClientName"`
+		AliasName    string `json:"AliasName"`
 	}
 	if len(resource.Properties) == 0 {
 		return ""
@@ -367,7 +498,18 @@ func literalPhysicalName(resource ResourceSpec) string {
 	if err := json.Unmarshal(resource.Properties, &props); err != nil {
 		return ""
 	}
-	for _, candidate := range []string{props.TableName, props.QueueName, props.BucketName, props.Name, props.FunctionName, props.LogGroupName} {
+	for _, candidate := range []string{
+		props.TableName,
+		props.QueueName,
+		props.BucketName,
+		props.Name,
+		props.FunctionName,
+		props.LogGroupName,
+		props.TopicName,
+		props.UserPoolName,
+		props.ClientName,
+		props.AliasName,
+	} {
 		if strings.TrimSpace(candidate) != "" {
 			return candidate
 		}
