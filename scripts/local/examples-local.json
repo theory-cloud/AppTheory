@@ -294,8 +294,8 @@
     "examples/cdk/media-cdn/bin/app.ts": {
       "run": "media-cdn-gateway",
       "class": "L3",
-      "gap": "Signed-URL verification: the private distribution is refused with A5a's named reason; the example ships no media, so a probe object is written to the provisioned public bucket. CloudFront caching and edge network.",
-      "description": "Media CDN: the public distribution serves a probe object from the local S3 emulator with its metadata; the private trusted-key-group distribution stays refused with the named signed-URL reason; missing objects return 403 under OAC."
+      "gap": "Signed-URL verification (R5c): the private distribution is refused with A5a's named reason; the example ships no media, so a probe object is written to the provisioned public bucket. CloudFront edge network (docs/125 true limit); Lambda@Edge and KeyValueStore (R5b).",
+      "description": "Media CDN: the public distribution serves a probe object from the local S3 emulator with its metadata; the private trusted-key-group distribution stays refused with the named signed-URL reason; missing objects return 403 under OAC. A 403 custom error response served the configured page with status 200, cached it for ErrorCachingMinTTL on the run clock, and returned the origin status when the page itself was unavailable."
     },
     "examples/cdk/microvm-controller/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
@@ -365,8 +365,8 @@
     "examples/cdk/path-routed-frontend/bin/app.ts": {
       "run": "path-routed-gateway",
       "class": "L3",
-      "gap": "The API origin is an external custom origin and is refused locally by name; the example ships no SPA build output, so probe objects are written through the runner to the provisioned buckets. CloudFront caching and edge network.",
-      "description": "Path-routed frontend: the generated SPA function rewrites /l and /auth to index.html, files are served unchanged, the external API origin is refused by name, POST is refused by AllowedMethods and a missing object is 403 under OAC."
+      "gap": "The example ships no SPA build output, so probe objects are written through the runner to the provisioned buckets. CloudFront edge network (docs/125 true limit); Lambda@Edge and KeyValueStore (R5b).",
+      "description": "Path-routed frontend: the generated SPA function rewrites /l and /auth to index.html, files are served unchanged, the external API origin is refused by name, POST is refused by AllowedMethods and a missing object is 403 under OAC. The external API origin is mapped with --origin to a loopback listener the row starts; the gateway sent the documented origin-request shape (origin path /prod, origin Host, method) and the CACHING_DISABLED behavior reported x-cache miss."
     },
     "examples/cdk/restv1-router/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
@@ -470,25 +470,25 @@
     "examples/cdk/ssr-only-provided-assets-site/bin/app.ts": {
       "run": "ssr-only-gateway",
       "class": "L2",
-      "gap": "CloudFront caching and edge network; the AWS_IAM Function URL is reached through local SigV4 OAC signing, but IAM policy evaluation is not emulated.",
+      "gap": "CloudFront edge network (docs/125 true limit); the AWS_IAM Function URL is reached through local SigV4 OAC signing, but IAM policy evaluation is not emulated. Lambda@Edge and KeyValueStore (R5b); signed URLs/cookies and geo restriction (R5c).",
       "description": "SSR_ONLY provided assets: the real handler runs behind an AWS_IAM Function URL origin with local OAC signing and echoes the viewer request id; the provided bucket serves app.js, site.css and probe.txt; a missing object is 403 under OAC and OPTIONS is refused."
     },
     "examples/cdk/ssr-site/bin/apptheory-ssr-site.ts": {
       "run": "ssr-site-gateway",
       "class": "L2",
-      "gap": "CloudFront caching and edge network; response streaming is buffered by the RIE.",
-      "description": "SSR site: the origin group fails over from the S3 HTML primary (403 under OAC) to the real SSR handler; viewer-request/viewer-response effects, the assets and hydrate deployments, full and ranged HEAD, conditional If-None-Match GETs, OPTIONS and the missing-object 403 are asserted through the gateway."
+      "gap": "CloudFront edge network (docs/125 true limit); response streaming is buffered by the RIE. Lambda@Edge and KeyValueStore (R5b); signed URLs/cookies and geo restriction (R5c).",
+      "description": "SSR site: the origin group fails over from the S3 HTML primary (403 under OAC) to the real SSR handler; viewer-request/viewer-response effects, the assets and hydrate deployments, full and ranged HEAD, conditional If-None-Match GETs, OPTIONS and the missing-object 403 are asserted through the gateway. Caching is real: the static-assets behavior answered a miss then a hit with x-cache and age, the CACHING_DISABLED SSR behavior never cached, an invalidation through the local API and through the aws CLI removed the object, and clock.advance past the TTL was a miss again."
     },
     "examples/cdk/ssr-site/scripts/generate-assets-manifest.mjs": {
       "run": "ssr-assets-manifest",
       "class": "L2",
-      "gap": "CloudFront caching and edge network; the manifest is matched against the gateway response, not a deployed bucket.",
+      "gap": "CloudFront edge network (docs/125 true limit); the manifest is matched against the gateway response, not a deployed bucket.",
       "description": "SSR site asset manifest generator: runs against the real assets directory, asserts hello.txt's sha256 and byte count, then matches the served asset through the gateway to the manifest."
     },
     "examples/cdk/ssr-site/scripts/upload-assets.sh": {
       "run": "ssr-assets-upload",
       "class": "L3",
-      "gap": "CloudFront caching and invalidation are R5a; the edge network and IAM policy evaluation are docs/125 true limits. s3proxy has no bucket policy.",
+      "gap": "The edge network and IAM policy evaluation are docs/125 true limits. s3proxy has no bucket policy.",
       "description": "SSR site asset uploader: the real AWS CLI syncs the assets and copies the generated manifest to the local s3proxy endpoint with dummy credentials; the gateway serves both with the script's cache-control and the uploaded manifest. The site's bucket declares no event notification; the notification destinations are proven by the sqs-queue row."
     },
     "examples/cdk/codebuild-job-runner/bin/app.ts": {

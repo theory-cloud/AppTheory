@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -29,6 +30,46 @@ type Gateway struct {
 	RequestID    func() string
 	Logf         func(format string, args ...any)
 	MaxBody      int64
+	// Cache stores origin responses for this distribution.
+	Cache *Cache
+	// stats counts hits and misses per behavior path pattern.
+	statsMu sync.Mutex
+	stats   map[string]*BehaviorStats
+}
+
+// BehaviorStats is one behavior's cache hit and miss counts.
+type BehaviorStats struct {
+	Hits   int `json:"hits"`
+	Misses int `json:"misses"`
+}
+
+// Stats returns a copy of the gateway's per-behavior hit and miss counts.
+func (g *Gateway) Stats() map[string]BehaviorStats {
+	g.statsMu.Lock()
+	defer g.statsMu.Unlock()
+	out := make(map[string]BehaviorStats, len(g.stats))
+	for pattern, stats := range g.stats {
+		out[pattern] = *stats
+	}
+	return out
+}
+
+func (g *Gateway) recordStats(pattern string, hit bool) {
+	g.statsMu.Lock()
+	defer g.statsMu.Unlock()
+	if g.stats == nil {
+		g.stats = map[string]*BehaviorStats{}
+	}
+	stats, ok := g.stats[pattern]
+	if !ok {
+		stats = &BehaviorStats{}
+		g.stats[pattern] = stats
+	}
+	if hit {
+		stats.Hits++
+		return
+	}
+	stats.Misses++
 }
 
 // NewGateway builds a gateway. A nil executor uses the default Node executor;
@@ -56,6 +97,8 @@ func NewGateway(
 		RequestID:    newGatewayRequestID,
 		Logf:         logf,
 		MaxBody:      maxGatewayBody,
+		Cache:        NewCache(),
+		stats:        map[string]*BehaviorStats{},
 	}
 }
 
@@ -140,8 +183,34 @@ func (g *Gateway) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	originRequest := g.originRequest(state, behavior, origin, targetID, requestID)
+	now := g.now()
+	// A viewer Range request bypasses the local cache: CloudFront can serve a
+	// range from the cached object, which this gateway does not slice. The
+	// deviation is documented in the reference.
+	cacheable := g.cacheable(behavior, state.Method) && state.Header.Get("Range") == ""
+	cacheKey := ""
+	if cacheable {
+		cacheKey = CacheKey(domainName, state.Method, state.URI, state.RawQuery, state.Header, policyCache(behavior))
+		if entry, ok := g.Cache.Get(cacheKey); ok && entry.Fresh(now) {
+			g.recordStats(behavior.PathPattern, true)
+			g.respondFromCache(writer, request, behavior, state, requestID, domainName, entry, now, "")
+			return
+		} else if ok && entry.ServeStaleWhileRevalidate(now) {
+			g.recordStats(behavior.PathPattern, true)
+			g.refreshInBackground(originImplementation, originRequest, behavior, cacheKey)
+			g.respondFromCache(writer, request, behavior, state, requestID, domainName, entry, now, "served stale while revalidating")
+			return
+		}
+	}
+	g.recordStats(behavior.PathPattern, false)
 	originResponse, originErr := originImplementation.Fetch(request.Context(), originRequest)
 	if originErr != nil {
+		if cacheable {
+			if entry, ok := g.Cache.Get(cacheKey); ok && entry.ServeStaleIfError(now) {
+				g.respondFromCache(writer, request, behavior, state, requestID, domainName, entry, now, "served stale after the origin failed")
+				return
+			}
+		}
 		var unavailable *OriginUnavailableError
 		if errors.As(originErr, &unavailable) || errors.Is(originErr, ErrOriginUnavailable) {
 			g.respondError(writer, request, behavior, state.Header, http.StatusServiceUnavailable, originErr.Error())
@@ -151,8 +220,38 @@ func (g *Gateway) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			fmt.Sprintf("origin %q failed: %v", targetID, originErr))
 		return
 	}
+	response, errorCachingTTL := g.applyCustomErrorResponse(request.Context(), originImplementation, originRequest, originResponse)
+	if cacheable {
+		ttl, control := g.responseTTL(response, behavior, errorCachingTTL)
+		if ttl > 0 {
+			g.Cache.Set(cacheKey, CacheEntry{
+				Response:             cloneOriginResponse(response),
+				Path:                 state.URI,
+				StoredAt:             now,
+				ExpiresAt:            now.Add(ttl),
+				StaleWhileRevalidate: control.StaleWhileRevalidate,
+				StaleIfError:         control.StaleIfError,
+			})
+		}
+	}
 
-	final := originResponse
+	g.finishResponse(writer, request, behavior, state, requestID, domainName, response, cacheMissHeader, 0)
+}
+
+// finishResponse runs the viewer-response function and the response headers
+// policy on a response (fresh from the origin or from the cache), stamps the
+// documented x-cache and age headers and writes it to the viewer.
+func (g *Gateway) finishResponse(
+	writer http.ResponseWriter,
+	request *http.Request,
+	behavior *Behavior,
+	state *requestState,
+	requestID, domainName string,
+	response OriginResponse,
+	cacheValue string,
+	age int,
+) {
+	final := cloneOriginResponse(response)
 	if behavior.ViewerResponseFunction != "" {
 		function, ok := g.function(behavior.ViewerResponseFunction)
 		if !ok {
@@ -160,18 +259,19 @@ func (g *Gateway) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 				fmt.Sprintf("CloudFront Function %q is referenced but cannot run locally", behavior.ViewerResponseFunction))
 			return
 		}
-		responseEvent := eventResponseFromOrigin(originResponse)
+		responseEvent := eventResponseFromOrigin(response)
 		event := buildViewerResponseEvent(state, g.Distribution, requestID, domainName, responseEvent)
 		result, executeErr := g.Executor.Execute(request.Context(), function, event)
 		if executeErr != nil {
 			g.functionFailure(writer, request, behavior, state.Header, "viewer-response", function, executeErr)
 			return
 		}
-		final, err = responseFromEventResponse(result.Response, originResponse.Body)
+		updated, err := responseFromEventResponse(result.Response, response.Body)
 		if err != nil {
 			g.functionFailure(writer, request, behavior, state.Header, "viewer-response", function, err)
 			return
 		}
+		final = updated
 	}
 	if final.Header == nil {
 		final.Header = http.Header{}
@@ -179,6 +279,7 @@ func (g *Gateway) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		final.Header = final.Header.Clone()
 	}
 	applyResponseHeadersPolicy(behavior.ResponseHeadersPolicy, request.Method, state.Header, &final)
+	setCacheHeaders(&final, cacheValue, age)
 	g.log(request, behavior, final.StatusCode, "")
 	g.write(writer, request, final)
 }

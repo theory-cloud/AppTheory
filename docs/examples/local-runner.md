@@ -18,7 +18,7 @@ policies, and hands origin requests to an origin implementation. The S3 origin
 reads the app's own bucket deployments from the local s3proxy backend, the
 Function URL origin invokes the real handler through the runner's runtime
 container, and an origin group applies CloudFront's failover rules. It is not a
-CloudFront emulator: there is no caching, no edge network and no TLS.
+CloudFront emulator: there is no edge network and no TLS.
 
 ```bash
 # Serve the app in the background, then use the printed URLs.
@@ -731,7 +731,7 @@ runner does not name above fail closed at plan time with the kind named.
 A distribution in the cloud assembly is served on its own `http://127.0.0.1:<port>`
 URL, printed on the `serving cloudfront …` line. The local gateway is the
 delivery path a FaceTheory or AppTheory site is tested through; it is **not a
-CloudFront emulator: no caching, no edge network, no TLS**.
+CloudFront emulator: no edge network, no TLS**.
 
 ### What is read
 
@@ -809,15 +809,46 @@ policy is applied after the viewer-response function. The four conditional
 request headers (`If-Match`, `If-None-Match`, `If-Modified-Since` and
 `If-Unmodified-Since`) are always forwarded to the origin for it to evaluate,
 as CloudFront forwards them, so a policy that does not list them does not drop
-them. Caching is not emulated: every request is forwarded to the origin as a
-cache miss, and a cache policy is used only for the values it contributes to the
-origin request. The
+them. The
+[Expiration page](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/Expiration.html)
+TTL rules are applied to the origin response; see
+[Caching and invalidation](#caching-and-invalidation). The
 `ViewerProtocolPolicy` is reported, not enforced, because the local URL is plain
 HTTP; the same is true for compression, access logging, aliases, the viewer
 certificate and the distribution's HTTP/IPv6/price-class settings.
 
 The pinned managed policy table and the exact property inventory are in the
 [configuration reference](/reference/local-runner-configuration/#cloudfront-distributions).
+
+### Caching and invalidation
+
+A behavior with a cache policy caches the methods its `CachedMethods` lists
+(GET and HEAD by default), and a CachingDisabled policy always reaches the
+origin. The cache key is the distribution domain plus the URL path, extended by
+the query strings, headers and cookies the policy names; the method is part of
+the key, so OPTIONS is cached separately. `s-maxage` wins over `max-age` and
+`max-age` wins over `Expires`; `no-cache`/`no-store`/`private` are not cached
+unless `MinTTL` is above zero, and `MinTTL`/`MaxTTL` bound the result. Viewer
+`Cache-Control` and `Pragma` are ignored. `stale-while-revalidate` serves the
+stale object while the gateway refreshes it, and `stale-if-error` serves it when
+the origin fails. A 4xx/5xx origin response is cached for the custom error
+response's `ErrorCachingMinTTL`, or 10 seconds when none matches.
+
+A hit answers `x-cache: Hit from cloudfront` with an `age` in seconds; a miss
+answers `x-cache: Miss from cloudfront`. `session describe` reports each
+behavior's hit and miss counts and every invalidation.
+
+**Custom error responses.** `CustomErrorResponses` is served:
+`ResponsePagePath` is fetched from the same origin and returned with
+`ResponseCode`; if the page is unavailable, the origin's status is returned as
+the custom-error page documents.
+
+**Invalidation.** The run serves `CreateInvalidation`, `GetInvalidation` and
+`ListInvalidations` on a loopback control endpoint, injected into every function
+as `AWS_ENDPOINT_URL_CLOUDFRONT` and printed by `run` and `session describe`. A
+batch may list at most 3000 paths, every path begins with `/`, the `*` wildcard
+is supported and a path is URL-decoded before matching. An invalidation removes
+the matching objects, so the next request is a miss.
 
 ### Origins
 
@@ -1852,7 +1883,11 @@ the harness records it.
 | Deploy-time Secrets Manager dynamic references | Supported | A `{{resolve:secretsmanager:…}}` environment value resolves to the provisioned secret's value (the same JSON key) when the assembly declares that secret, and otherwise keeps the wave-1 deterministic local placeholder. The session's `describe` returns it to the harness; `run` and `plan` never print it. No secret is created in a cloud. |
 | Other emulators | Endpoint injection only | Pass `--endpoint service=url` and `--add-host name=address`; the profile names the environment variables. The checked-in profile binds `ssm`, `secretsmanager`, `sns`, `kinesis` and `cognito-idp` to moto, and `kms`/`sts` as before. |
 | WebSocket APIs (`AWS::ApiGatewayV2::Api`, WEBSOCKET) | Served (L2) | A real RFC 6455 listener serves `$connect`, `$disconnect`, `$default` and custom routes selected by the route selection expression, with the documented proxy event, two-way route responses, the `$connect` policy authorizer, the `@connections` management API and the documented idle/lifetime close; see [WebSocket APIs](#websocket-apis). No custom domains and no IAM authorization. |
-| CloudFront distributions and CloudFront Functions | Served (L2) | The distribution is served on its own loopback URL. Cache behaviors, allowed methods, viewer-request/viewer-response functions, origin request policies and response headers policies are applied; the generated function code runs in a restricted Node sandbox. S3 origins read the app's deployments from s3proxy, Function URL origins invoke the real handler container, and origin groups fail over with CloudFront's rules. No caching, no edge network, no TLS. |
+| CloudFront distributions and CloudFront Functions | Served (L2) | The distribution is served on its own loopback URL. Cache behaviors, allowed methods, viewer-request/viewer-response functions, origin request policies and response headers policies are applied; the generated function code runs in a restricted Node sandbox. S3 origins read the app's deployments from s3proxy, Function URL origins invoke the real handler container, and origin groups fail over with CloudFront's rules. No edge network and no TLS. |
+| CloudFront caching | Supported (L2) | The cache key, `CachedMethods`, `CACHING_DISABLED`, the Expiration-page TTL rules, stale-while-revalidate/stale-if-error and origin error caching are applied; hits answer `x-cache`/`age`; `session describe` reports per-behavior hit/miss counts. A viewer Range request bypasses the local cache (documented deviation); a conditional request is answered 304 from the cached validators. See [Caching and invalidation](#caching-and-invalidation). |
+| CloudFront invalidation | Supported (L2) | `CreateInvalidation`, `GetInvalidation` and `ListInvalidations` are served on a loopback control endpoint injected as `AWS_ENDPOINT_URL_CLOUDFRONT`; the aws CLI and the SDK share it. See [Caching and invalidation](#caching-and-invalidation). |
+| CloudFront custom error responses | Supported (L2) | `CustomErrorResponses` is served from the same origin, with the configured status and `ErrorCachingMinTTL`; an unavailable page returns the origin's status. |
+| CloudFront external custom origins | Supported with `--origin` (L2) | An external custom origin is refused at plan time unless `--origin domain=loopback-url` maps it; a non-loopback mapping is refused. The mapped origin receives the documented origin-request shape. |
 | REST `MOCK` integrations | Supported (L1) | The transport returns the `IntegrationResponses` status and headers the template declares and invokes no function. CDK emits these for CORS preflight. |
 | HTTP API `REQUEST` authorizers with simple responses | Supported | The transport invokes the real authorizer function with the API Gateway v2 REQUEST event, carrying every configured `$request.header.*` or `$request.querystring.*` identity source in order; a request missing one is refused with 401 before the authorizer runs. A false `isAuthorized` is a 401, the authorizer context is carried to the handler, and a malformed response fails closed. `$context`/`$stageVariables` sources fail closed at plan time. |
 | HTTP API JWT authorizers | Supported (L2) | RSA-based algorithms only (`RS256`, `RS384`, `RS512`); the signature is verified with the `kid` key from the issuer's JWKS, and `iss`, `aud` (or `client_id` only when `aud` is absent), `exp`, `nbf` and `iat` are checked against the run clock. `AuthorizationScopes` is an any-of match; the claims reach the integration in `requestContext.authorizer.jwt`; see [Authorizers](#authorizers). |

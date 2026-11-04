@@ -224,6 +224,34 @@ func TestDeriveS3NotificationRefusesBadFilter(t *testing.T) {
 	}
 }
 
+func TestDeriveS3NotificationRefusesAWildcardFilterValue(t *testing.T) {
+	resources := s3NotificationAssembly(map[string]any{
+		"BucketName": "ingest-bucket",
+		"NotificationConfiguration": map[string]any{
+			"QueueConfigurations": []any{
+				map[string]any{
+					"Event": "s3:ObjectCreated:*",
+					"Queue": map[string]any{"Fn::GetAtt": []any{"Queue", "Arn"}},
+					"Filter": map[string]any{
+						"S3Key": map[string]any{
+							"Rules": []any{
+								map[string]any{"Name": "suffix", "Value": "*.jpg"},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	dir := writeAssembly(t, resources)
+	mkdirAsset(t, dir)
+	_, err := deriveAssembly(t, dir)
+	if err == nil || !strings.Contains(err.Error(), "cannot contain a wildcard") ||
+		!strings.Contains(err.Error(), "notification-how-to-filtering") {
+		t.Fatalf("a wildcard filter value must fail closed with the page cited, got %v", err)
+	}
+}
+
 func TestDeriveS3NotificationRefusesUnproducibleEvent(t *testing.T) {
 	resources := s3NotificationAssembly(map[string]any{
 		"BucketName": "ingest-bucket",

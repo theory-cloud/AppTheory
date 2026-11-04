@@ -88,6 +88,10 @@ type Options struct {
 	// AllowNoSurface lets an invoke read an assembly whose functions have no
 	// HTTP route. Run and plan leave it false and refuse such an assembly.
 	AllowNoSurface bool
+	// Origins maps an external custom origin's domain to a loopback URL the
+	// local gateway may reach. An unmapped external origin is refused at plan
+	// time.
+	Origins map[string]string
 }
 
 // Runner owns one local run: the derived surface, the Docker network, the
@@ -144,6 +148,14 @@ type Runner struct {
 	// webSocketManagement serves the @connections API for every WebSocket API
 	// the run serves; it is nil when the assembly declares none.
 	webSocketManagement *webSocketManagement
+	// cloudFrontAPI serves CreateInvalidation/GetInvalidation for every served
+	// distribution; cloudFrontAPIURL is the loopback endpoint injected into
+	// functions as AWS_ENDPOINT_URL_CLOUDFRONT.
+	cloudFrontAPI    *localcloudfront.InvalidationAPI
+	cloudFrontAPIURL string
+	// cloudFrontGateways and cloudFrontIDs track each served distribution.
+	cloudFrontGateways map[string]*localcloudfront.Gateway
+	cloudFrontIDs      map[string]string
 }
 
 // NewRunner validates the options and prepares the run. It contacts no Docker
@@ -159,24 +171,26 @@ func NewRunner(options Options) (*Runner, error) {
 	}
 
 	runner := &Runner{
-		options:      options,
-		docker:       NewDocker(),
-		appHash:      hashOf(options.AppDir),
-		runID:        shortID(),
-		invokers:     map[string]*FunctionProcess{},
-		backends:     map[string]backendProcess{},
-		tables:       map[string]tableInfo{},
-		localSecrets: map[string]string{},
-		apiURLs:      map[string]string{},
-		endpoints:    append([]Endpoint(nil), options.Endpoints...),
-		images:       map[string]string{},
-		imageEnvs:    map[string]map[string]string{},
-		builtImages:  map[string]string{},
-		semaphore:    make(chan struct{}, options.MaxConcurrency),
-		clock:        clock,
-		ttl:          newTTLTracker(),
-		ttlTables:    map[string]ttlTable{},
-		eventBus:     newEventBridgeBus(clock),
+		options:            options,
+		docker:             NewDocker(),
+		appHash:            hashOf(options.AppDir),
+		runID:              shortID(),
+		invokers:           map[string]*FunctionProcess{},
+		backends:           map[string]backendProcess{},
+		tables:             map[string]tableInfo{},
+		localSecrets:       map[string]string{},
+		apiURLs:            map[string]string{},
+		endpoints:          append([]Endpoint(nil), options.Endpoints...),
+		images:             map[string]string{},
+		imageEnvs:          map[string]map[string]string{},
+		builtImages:        map[string]string{},
+		cloudFrontGateways: map[string]*localcloudfront.Gateway{},
+		cloudFrontIDs:      map[string]string{},
+		semaphore:          make(chan struct{}, options.MaxConcurrency),
+		clock:              clock,
+		ttl:                newTTLTracker(),
+		ttlTables:          map[string]ttlTable{},
+		eventBus:           newEventBridgeBus(clock),
 	}
 	runner.namePrefix = sanitizeNamePrefix(options.NamePrefix, "apptheory-local-"+runner.appHash)
 	runner.network = runner.namePrefix + "-net"
@@ -223,6 +237,7 @@ func NewRunner(options Options) (*Runner, error) {
 	runner.delivery.RegisterDeliverer(DeliveryKindEventBridgeRule, func(source DeliverySource) (Deliverer, error) {
 		return NewEventBridgeDeliverer(source, runner.eventBus)
 	})
+	runner.cloudFrontAPI = localcloudfront.NewInvalidationAPI(clock.Now, runner.logf)
 	runner.sns = newSNSHubRegistry(runner.clock, runner.logf, runner.snsQueueLookup, runner.deliverySQSClient)
 	runner.delivery.RegisterDeliverer(DeliveryKindSNS, func(source DeliverySource) (Deliverer, error) {
 		return NewSNSDeliverer(source, runner.sns)
@@ -350,6 +365,9 @@ func normalizeOptions(options Options) (Options, error) {
 	}
 	if options.SynthTimeout <= 0 {
 		options.SynthTimeout = 30 * time.Minute
+	}
+	if err := validateOriginOverrides(options.Origins); err != nil {
+		return Options{}, err
 	}
 	return options, nil
 }
@@ -532,6 +550,9 @@ func (r *Runner) Plan(ctx context.Context) (*Spec, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := r.applyOriginOverrides(spec); err != nil {
+		return nil, err
+	}
 	if r.delivery != nil {
 		spec.Delivery = r.delivery.Planned(spec)
 	}
@@ -605,6 +626,9 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 		return nil, err
 	}
 	if err = r.resolveRouteAuthorizers(spec); err != nil {
+		return nil, err
+	}
+	if err = r.startCloudFrontControl(ctx, spec); err != nil {
 		return nil, err
 	}
 	if err = r.resolveEnvironment(spec, targets); err != nil {
@@ -1358,7 +1382,7 @@ func (r *Runner) runtimeImageEnv(ctx context.Context, image string) (map[string]
 	return env, nil
 }
 
-//nolint:gocyclo // one explicit branch per supported provider value.
+//nolint:gocyclo,gocognit // one explicit branch per supported provider and API kind.
 func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 	targets := append([]APISpec(nil), spec.HTTPAPIs()...)
 	for _, url := range spec.FunctionURLs {
@@ -1451,6 +1475,11 @@ func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 			return fmt.Errorf("bind cloudfront %s listener: %w", distribution.LogicalID, err)
 		}
 		gateway := localcloudfront.NewGateway(distribution, spec.cloudFrontTopology, origins, executor, r.logf)
+		gateway.Now = r.clock.Now
+		r.cloudFrontGateways[distribution.LogicalID] = gateway
+		if r.cloudFrontAPI != nil {
+			r.cloudFrontIDs[distribution.LogicalID] = r.cloudFrontAPI.Register(distribution.LogicalID, gateway.Cache)
+		}
 		server := &http.Server{
 			Handler:           gateway,
 			ReadHeaderTimeout: 10 * time.Second,

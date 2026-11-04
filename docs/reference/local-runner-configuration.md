@@ -34,6 +34,7 @@ function the CDK definition targets and reads one JSON command per line.
 | `--profile PATH` | none | Local execution profile with digest-pinned images and endpoint names. Required for `run`, `invoke` and `session`: the in-container preflight needs the Python pin. |
 | `--image class=ref` | profile | Override a runtime image pin (`go`, `node`, `python`). The reference must be `…@sha256:<64 hex>`. |
 | `--endpoint service=url` | none | Inject a local AWS endpoint for `service` (`dynamodb`, `sqs`, `s3`, …). Repeatable. |
+| `--origin domain=url` | none | Map a CloudFront external custom origin's domain to a loopback URL. An unmapped external origin refuses the distribution at plan time; a non-loopback URL is refused. Repeatable. |
 | `--add-host name=address` | none | Extra `/etc/hosts` entry inside function containers. Repeatable. |
 | `--backend NAME` | none | Start a profile emulator on the run network: `dynamodb`, `sqs`, or a profile container such as `moto` (KMS, STS, SSM, Secrets Manager, SNS, Kinesis, Cognito) or `s3proxy` (S3). Repeatable. |
 | `--port-base N` | ephemeral | Bind the API listeners at `N`, `N+1`, …; `0` asks the OS for free ports. |
@@ -327,7 +328,7 @@ TS_NODE_TRANSPILE_ONLY=1
 | `AWS::ApiGatewayV2::Api` (`ProtocolType: HTTP`) + `Route` + `AWS_PROXY` `Integration` | Served as HTTP API v2. `$default` routes become a catch-all. |
 | `AWS::ApiGateway::RestApi` + `Resource` tree + `Method` + `AWS_PROXY` integration | Served as REST API v1 at the path reconstructed from the resource tree. `ResponseTransferMode: STREAM` and `/response-streaming-invocations` are marked streaming. |
 | `AWS::Lambda::Url` (`AuthType: NONE`) | Served as a Function URL listener. `InvokeMode: RESPONSE_STREAM` is marked streaming (buffered). A URL with `AWS_IAM` is not served as a standalone URL; when a served CloudFront distribution targets it, the gateway invokes it through the signed local OAC origin instead. |
-| `AWS::ApiGatewayV2::Authorizer` (`REQUEST`) | For an HTTP API route with simple responses, the transport sends a v2 REQUEST authorizer event and enforces `isAuthorized`. For a WebSocket `$connect` route, the transport sends the documented WebSocket authorizer event and matches the returned IAM policy against the `$connect` method ARN. A type the transport cannot run fails the route that references it closed. |
+| `AWS::ApiGatewayV2::Authorizer` (`REQUEST`) | For an HTTP API route with simple responses, the transport sends a v2 REQUEST authorizer event and enforces `isAuthorized`. With `EnableSimpleResponses: false` it sends payload format 1.0 or 2.0 and matches the returned IAM policy against the route ARN. For a WebSocket `$connect` route, the transport sends the documented WebSocket authorizer event and matches the returned IAM policy against the `$connect` method ARN. A type the transport cannot run fails the route that references it closed. |
 | `AWS::ApiGateway::Authorizer` | Parsed; a `COGNITO_USER_POOLS` authorizer is run for the REST methods that reference it (R2a). A Lambda authorizer is R2b and fails closed. |
 | `AWS::Lambda::EventSourceMapping` (SQS, DynamoDB Streams, Kinesis) | Reported with its function, source, batch options, filter criteria and scaling configuration; the function is started and the mapping is delivered automatically: an SQS queue (see [SQS event-source delivery](/examples/local-runner/#sqs-event-source-delivery)), a DynamoDB stream (see [DynamoDB Streams delivery](/examples/local-runner/#dynamodb-streams-delivery)) or a Kinesis stream (see [Kinesis event-source delivery](/examples/local-runner/#kinesis-event-source-delivery)). A session can still build the provider event from real local messages or a real local write. |
 | `AWS::SNS::Topic`, `AWS::SNS::Subscription` and a topic's inline `Subscription` | Topics (standard and FIFO) are provisioned on moto. Every supported subscription is registered with the delivery engine and delivered automatically: a Lambda record, an SQS envelope or raw body, or a loopback HTTP POST. See [SNS subscription delivery](/examples/local-runner/#sns-subscription-delivery). SNS does not support Lambda or HTTP(S) targets on a FIFO topic; a Lambda or HTTP(S) subscription to one, a non-loopback HTTP endpoint and SMS/email/mobile push are reported under `skipped` with a named reason. |
@@ -715,13 +716,61 @@ refuses the distribution instead of being ignored.
 | Response headers policy | `CorsConfig`, `CustomHeadersConfig`, `RemoveHeadersConfig`, `SecurityHeadersConfig` | `Name`, `Comment`, `ServerTimingHeadersConfig` | malformed config, unknown property |
 | Origin access control | resolved and reported | type, signing behavior, signing protocol, name | — |
 
-### Caching and other reported properties
+### Caching and invalidation
 
-Caching is not emulated. Every request is forwarded to the origin as a cache
-miss; a cache policy contributes only the values it forwards to the origin.
-`CachedMethods` is parsed even though nothing is cached: it decides whether an
-OPTIONS request may fail over to an origin group's secondary member. `Compress`,
-cache TTLs, `RealtimeLogConfigArn`, aliases, the viewer certificate, access
+A behavior's cache policy is applied in full. The cache key is the distribution
+domain plus the URL path, extended by the query strings, headers and cookies the
+policy names; the method is part of the key, so OPTIONS is cached separately
+from GET and HEAD. Only the behavior's `CachedMethods` are cached, and a
+CachingDisabled policy (or no policy) bypasses the cache.
+
+The TTL follows the Expiration page's table: `s-maxage` wins over `max-age`,
+`max-age` wins over `Expires`, `no-cache`/`no-store`/`private` are not cached
+unless `MinTTL` is above zero, and `MinTTL`/`MaxTTL` bound the result. Viewer
+`Cache-Control` and `Pragma` are never read. `stale-while-revalidate` serves the
+stale object while the gateway refreshes it, and `stale-if-error` serves it when
+the origin fails. A 4xx/5xx origin response is cached for the custom error
+response's `ErrorCachingMinTTL`, or 10 seconds when no custom error response
+matches.
+
+A hit answers `x-cache: Hit from cloudfront` and an `age` in seconds; a miss
+answers `x-cache: Miss from cloudfront`. `session describe` reports per-behavior
+hit and miss counts, each distribution's local id, the control-plane endpoint and
+every invalidation.
+
+**Custom error responses.** `CustomErrorResponses` is served: when the origin
+answers a configured `ErrorCode`, the gateway fetches `ResponsePagePath` from the
+same origin and serves it with `ResponseCode`. When the page itself is
+unavailable the gateway returns the status code the origin sent, as the
+custom-error page documents.
+
+**Invalidation.** The runner serves `CreateInvalidation`, `GetInvalidation` and
+`ListInvalidations` on a loopback control endpoint and injects it into every
+function as `AWS_ENDPOINT_URL_CLOUDFRONT`; the endpoint is printed by `run` and
+`session describe`. Paths must start with `/`, may use the `*` wildcard, are
+URL-decoded before matching, and a request may list at most 3000 paths. An
+invalidation removes the matching cached objects, so the next request is a miss.
+
+**Deviations from CloudFront, and what the runner does instead:**
+
+- A viewer request with a `Range` header bypasses the cache and reaches the
+  origin; CloudFront can serve a byte range from the cached object, which this
+  gateway does not slice. A conditional request (`If-None-Match` /
+  `If-Modified-Since`) is answered 304 from the cached validators without
+  reaching the origin.
+- Concurrent misses for one key each reach the origin; CloudFront collapses
+  them into one request.
+- The control endpoint is unauthenticated and binds every interface so a
+  function container reaches it through `host.docker.internal`, like the
+  `@connections` management listener. An invalidation is recorded `Completed`
+  as soon as it removes the cached objects; CloudFront reports `InProgress`
+  first.
+- A custom error page is fetched with the origin request's policy-filtered
+  headers, minus the conditional headers. CloudFront fetches the page from the
+  same origin the same way and returns the origin's status when the page is
+  unavailable.
+
+`Compress`, `RealtimeLogConfigArn`, aliases, the viewer certificate, access
 logging, `HttpVersion`, `IPV6Enabled`, `PriceClass` and the origin connection
 settings are reported on the distribution and never silently applied.
 `ViewerProtocolPolicy` is reported because the local URL is plain HTTP; an
@@ -835,12 +884,12 @@ S3's response overrides. Every other query parameter is unchanged.
 
 ### Fidelity
 
-**Not a CloudFront emulator: no caching, no edge network, no TLS.** The gateway
+**Not a CloudFront emulator: no edge network, no TLS.** The gateway
 does not reproduce viewer protocol redirects, CloudFront's 1 ms CPU limit,
 incremental streaming (the Function URL origin is buffered by the RIE),
 CloudFront-only device/location/TLS headers, custom status descriptions,
-signed-URL verification, Lambda@Edge, KeyValueStore, WAF, geo restriction,
-field-level encryption or custom error pages. S3 bucket CORS rules, S3
+signed-URL verification, Lambda@Edge, KeyValueStore, WAF, geo restriction or
+field-level encryption. S3 bucket CORS rules, S3
 IAM/bucket policies and Lambda IAM policy evaluation are not emulated. A viewer
 `If-Range` is not carried to the S3 origin (CloudFront forwards it by default),
 so a conditional range is served as an unconditional range. It refuses a
@@ -850,19 +899,21 @@ reports the rest.
 The run fails, naming the construct, on:
 
 - a WebSocket API that is the only surface;
-- an HTTP API authorizer that is not `REQUEST` with simple responses, or a
-  route whose authorization is not `NONE` or `CUSTOM`, or a CUSTOM route with no
-  resolvable authorizer;
-- a REST API authorizer, or a REST method whose authorization is not `NONE`;
+- an HTTP API route whose authorization is not `NONE` or `CUSTOM`, or a CUSTOM
+  route whose authorizer is not a REQUEST Lambda authorizer;
+- a REST method whose authorization is not `NONE`, `COGNITO_USER_POOLS` or
+  `CUSTOM`, or a CUSTOM method whose authorizer is not a TOKEN/REQUEST Lambda
+  authorizer;
 - a proxy integration that is not `AWS_PROXY`, a `MOCK` with no usable
   response, or HTTP API payload format other than `2.0`;
 - a Function URL with an auth type other than `NONE` is not served as a
   standalone URL; it is listed under `skipped`. If it is the only surface, the
   run fails with that reason;
-- a targeted function with no local asset, a container image, an inline code type
-  the runtime cannot load, Lambda layers, an unsupported runtime, or a
-  CloudFormation-expression `MemorySize`/`Timeout` (the AWS defaults apply only
-  when the property is absent);
+- a targeted function with no local asset (and no Docker asset), an inline code
+  type the runtime cannot load, more than five layers or a layer the assembly
+  cannot resolve, an image function that declares layers, an unsupported
+  runtime, or a CloudFormation-expression `MemorySize`/`Timeout` (the AWS
+  defaults apply only when the property is absent);
 - a targeted function whose environment expression is not `Ref`, `Fn::GetAtt` or
   `Fn::Join`, or names a resource the runner cannot resolve;
 - a CloudFront distribution whose property the gateway cannot route or render

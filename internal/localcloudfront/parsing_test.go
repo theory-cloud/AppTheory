@@ -75,8 +75,6 @@ func TestDistributionPropertyDispositions(t *testing.T) {
 		{name: "staging true", mutate: func(c map[string]any) { c["Staging"] = true }, wantRefuse: "Staging"},
 		{name: "web acl", mutate: func(c map[string]any) { c["WebACLId"] = "arn:aws:wafv2:::global/webacl/x" }, wantRefuse: "WebACLId"},
 		{name: "web acl empty", mutate: func(c map[string]any) { c["WebACLId"] = "" }, wantReport: "WebACLId"},
-		{name: "custom errors", mutate: func(c map[string]any) { c["CustomErrorResponses"] = []any{map[string]any{"ErrorCode": 404}} }, wantRefuse: "CustomErrorResponses"},
-		{name: "custom errors empty", mutate: func(c map[string]any) { c["CustomErrorResponses"] = []any{} }, wantReport: "CustomErrorResponses"},
 		{name: "continuous deployment", mutate: func(c map[string]any) { c["ContinuousDeploymentPolicyId"] = "p" }, wantRefuse: "ContinuousDeploymentPolicyId"},
 		{name: "continuous deployment empty", mutate: func(c map[string]any) { c["ContinuousDeploymentPolicyId"] = "" }, wantReport: "ContinuousDeploymentPolicyId"},
 		{name: "restrictions", mutate: func(c map[string]any) { c["Restrictions"] = map[string]any{"GeoRestriction": map[string]any{}} }, wantRefuse: "Restrictions"},

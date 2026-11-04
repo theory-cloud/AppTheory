@@ -522,7 +522,7 @@ func TestGatewayHEADHasNoBody(t *testing.T) {
 	}
 }
 
-func TestGatewayDoesNotCache(t *testing.T) {
+func TestGatewayDoesNotCacheWithoutACachePolicy(t *testing.T) {
 	origin := okOrigin("ok")
 	behavior := testBehavior("*", "origin", []string{"GET", "HEAD"})
 	distribution := testDistribution(behavior, nil, testOrigin("origin", "origin.example"))
@@ -530,7 +530,7 @@ func TestGatewayDoesNotCache(t *testing.T) {
 	serveGateway(gateway, http.MethodGet, "http://viewer.example/x", "", nil)
 	serveGateway(gateway, http.MethodGet, "http://viewer.example/x", "", nil)
 	if len(origin.requests) != 2 {
-		t.Fatalf("origin calls = %d, want 2 (no caching)", len(origin.requests))
+		t.Fatalf("origin calls = %d, want 2 (a behavior with no cache policy must not cache)", len(origin.requests))
 	}
 }
 

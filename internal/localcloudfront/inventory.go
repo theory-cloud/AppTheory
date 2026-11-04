@@ -29,6 +29,9 @@ const (
 	propertyOverride                  = "Override"
 	propertyItems                     = "Items"
 	propertyQuantity                  = "Quantity"
+	headerCookie                      = "cookie"
+	headerHost                        = "host"
+	propertyCustomErrorResponses      = "CustomErrorResponses"
 )
 
 // distributionPropertyInventory classifies every DistributionConfig property the
@@ -39,7 +42,7 @@ var distributionPropertyInventory = map[string]Disposition{
 	"CacheBehaviors":               Implemented,
 	propertyComment:                Reported,
 	"ContinuousDeploymentPolicyId": Refused,
-	"CustomErrorResponses":         Refused,
+	propertyCustomErrorResponses:   Implemented,
 	"DefaultCacheBehavior":         Implemented,
 	"DefaultRootObject":            Implemented,
 	"Enabled":                      Implemented,
@@ -236,10 +239,8 @@ func reportReason(key string) string {
 		return "metadata only"
 	case "Compress":
 		return "response compression is not emulated; origin bytes are served as received"
-	case "CachedMethods":
-		return "caching is not emulated; the list decides whether OPTIONS can fail over to an origin group secondary"
 	case propertyDefaultTTL, propertyMinTTL, propertyMaxTTL:
-		return "caching is not emulated"
+		return "behavior-level TTLs apply only with ForwardedValues, which the local gateway refuses; a cache policy's TTLs are applied"
 	case "HttpVersion":
 		return "the local gateway serves HTTP/1.1"
 	case "IPV6Enabled", "PriceClass":
@@ -279,8 +280,6 @@ func refusalReason(key string) string {
 	switch key {
 	case "ContinuousDeploymentPolicyId":
 		return "continuous deployment policies are not supported locally"
-	case "CustomErrorResponses":
-		return "custom error responses change response content and are not emulated"
 	case "Restrictions":
 		return "geo restriction decides which requests are served and is not emulated"
 	case "WebACLId":

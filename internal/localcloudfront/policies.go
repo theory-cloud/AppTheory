@@ -19,6 +19,7 @@ var managedPolicyTable = map[PolicyKind]map[string]*Policy{
 				Headers:      HeaderForwarding{Mode: ForwardNone},
 				Cookies:      CookieForwarding{Mode: ForwardNone},
 				QueryStrings: QueryForwarding{Mode: ForwardNone},
+				MinTTL:       1, DefaultTTL: 86400, MaxTTL: 31536000,
 			},
 		},
 		// CachingDisabled.
@@ -28,6 +29,8 @@ var managedPolicyTable = map[PolicyKind]map[string]*Policy{
 				Headers:      HeaderForwarding{Mode: ForwardNone},
 				Cookies:      CookieForwarding{Mode: ForwardNone},
 				QueryStrings: QueryForwarding{Mode: ForwardNone},
+				MinTTL:       0, DefaultTTL: 86400, MaxTTL: 31536000,
+				CachingDisabled: true,
 			},
 		},
 		// CachingOptimizedForUncompressedObjects.
@@ -37,6 +40,7 @@ var managedPolicyTable = map[PolicyKind]map[string]*Policy{
 				Headers:      HeaderForwarding{Mode: ForwardNone},
 				Cookies:      CookieForwarding{Mode: ForwardNone},
 				QueryStrings: QueryForwarding{Mode: ForwardNone},
+				MinTTL:       1, DefaultTTL: 86400, MaxTTL: 31536000,
 			},
 		},
 		// Amplify.
@@ -46,6 +50,7 @@ var managedPolicyTable = map[PolicyKind]map[string]*Policy{
 				Headers:      HeaderForwarding{Mode: ForwardWhitelist, Names: []string{"authorization", "cloudfront-viewer-country", "host"}},
 				Cookies:      CookieForwarding{Mode: ForwardAll},
 				QueryStrings: QueryForwarding{Mode: ForwardAll},
+				MinTTL:       0, DefaultTTL: 0, MaxTTL: 31536000,
 			},
 		},
 		// Elemental-MediaPackage.
@@ -55,6 +60,7 @@ var managedPolicyTable = map[PolicyKind]map[string]*Policy{
 				Headers:      HeaderForwarding{Mode: ForwardWhitelist, Names: []string{"origin"}},
 				Cookies:      CookieForwarding{Mode: ForwardNone},
 				QueryStrings: QueryForwarding{Mode: ForwardWhitelist, Names: []string{"aws.manifestfilter", "start", "end", "m"}},
+				MinTTL:       0, DefaultTTL: 300, MaxTTL: 31536000,
 			},
 		},
 		// UseOriginCacheControlHeaders.
@@ -64,6 +70,7 @@ var managedPolicyTable = map[PolicyKind]map[string]*Policy{
 				Headers:      HeaderForwarding{Mode: ForwardWhitelist, Names: []string{"host", "origin", "x-http-method-override", "x-http-method", "x-method-override"}},
 				Cookies:      CookieForwarding{Mode: ForwardAll},
 				QueryStrings: QueryForwarding{Mode: ForwardNone},
+				MinTTL:       0, DefaultTTL: 86400, MaxTTL: 31536000,
 			},
 		},
 		// UseOriginCacheControlHeaders-QueryStrings.
@@ -73,6 +80,7 @@ var managedPolicyTable = map[PolicyKind]map[string]*Policy{
 				Headers:      HeaderForwarding{Mode: ForwardWhitelist, Names: []string{"host", "origin", "x-http-method-override", "x-http-method", "x-method-override"}},
 				Cookies:      CookieForwarding{Mode: ForwardAll},
 				QueryStrings: QueryForwarding{Mode: ForwardAll},
+				MinTTL:       0, DefaultTTL: 86400, MaxTTL: 31536000,
 			},
 		},
 	},
@@ -330,33 +338,27 @@ func parseCachePolicyConfig(raw json.RawMessage, policy *Policy) (*CachePolicy, 
 		switch key {
 		case propertyName, propertyComment:
 			policy.Reported = append(policy.Reported, reportProperty("cache policy", key))
-		case propertyDefaultTTL, propertyMaxTTL, propertyMinTTL:
-			policy.Reported = append(policy.Reported, reportProperty("cache policy", key))
-		case "ParametersInCacheKeyAndForwardedToOrigin":
-			parameters, err := decodeObject(value)
+		case propertyMinTTL:
+			seconds, err := decodeIntPointer(value)
 			if err != nil {
-				return nil, fmt.Errorf("ParametersInCacheKeyAndForwardedToOrigin: %w", err)
+				return nil, fmt.Errorf("MinTTL: %w", err)
 			}
-			for _, parameterKey := range sortedKeys(parameters) {
-				parameterValue := parameters[parameterKey]
-				switch parameterKey {
-				case "HeadersConfig":
-					cache.Headers, err = parseHeaderForwarding(parameterValue, false)
-				case "CookiesConfig":
-					cache.Cookies, err = parseCookieForwarding(parameterValue)
-				case "QueryStringsConfig":
-					cache.QueryStrings, err = parseQueryForwarding(parameterValue)
-				case "EnableAcceptEncodingBrotli", "EnableAcceptEncodingGzip":
-					policy.Reported = append(policy.Reported, reportProperty("cache policy", parameterKey))
-				default:
-					if _, known := cacheParametersPropertyInventory[parameterKey]; !known {
-						policy.Refusals = append(policy.Refusals,
-							fmt.Sprintf("ParametersInCacheKeyAndForwardedToOrigin property %q is not understood", parameterKey))
-					}
-				}
-				if err != nil {
-					return nil, err
-				}
+			cache.MinTTL = *seconds
+		case propertyDefaultTTL:
+			seconds, err := decodeIntPointer(value)
+			if err != nil {
+				return nil, fmt.Errorf("DefaultTTL: %w", err)
+			}
+			cache.DefaultTTL = *seconds
+		case propertyMaxTTL:
+			seconds, err := decodeIntPointer(value)
+			if err != nil {
+				return nil, fmt.Errorf("MaxTTL: %w", err)
+			}
+			cache.MaxTTL = *seconds
+		case "ParametersInCacheKeyAndForwardedToOrigin":
+			if err := parseCacheParameters(value, policy, cache); err != nil {
+				return nil, err
 			}
 		default:
 			if _, known := cachePolicyPropertyInventory[key]; !known {
@@ -367,6 +369,35 @@ func parseCachePolicyConfig(raw json.RawMessage, policy *Policy) (*CachePolicy, 
 	}
 	reportCloudFrontHeaderGaps(policy, "cache policy", cache.Headers)
 	return cache, nil
+}
+
+func parseCacheParameters(raw json.RawMessage, policy *Policy, cache *CachePolicy) error {
+	parameters, err := decodeObject(raw)
+	if err != nil {
+		return fmt.Errorf("ParametersInCacheKeyAndForwardedToOrigin: %w", err)
+	}
+	for _, key := range sortedKeys(parameters) {
+		value := parameters[key]
+		switch key {
+		case "HeadersConfig":
+			cache.Headers, err = parseHeaderForwarding(value, false)
+		case "CookiesConfig":
+			cache.Cookies, err = parseCookieForwarding(value)
+		case "QueryStringsConfig":
+			cache.QueryStrings, err = parseQueryForwarding(value)
+		case "EnableAcceptEncodingBrotli", "EnableAcceptEncodingGzip":
+			policy.Reported = append(policy.Reported, reportProperty("cache policy", key))
+		default:
+			if _, known := cacheParametersPropertyInventory[key]; !known {
+				policy.Refusals = append(policy.Refusals,
+					fmt.Sprintf("ParametersInCacheKeyAndForwardedToOrigin property %q is not understood", key))
+			}
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func parseOriginRequestPolicyConfig(raw json.RawMessage, policy *Policy) (*OriginRequestPolicy, error) {

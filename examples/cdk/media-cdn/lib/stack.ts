@@ -36,6 +36,20 @@ export class MediaCdnStack extends cdk.Stack {
             // Auto-cleanup for development (use RETAIN for production)
             removalPolicy: cdk.RemovalPolicy.DESTROY,
             autoDeleteObjects: true,
+
+            // A missing object answers with the ObjectNotFound error page. The
+            // local gateway fetches the page from the same origin and serves it
+            // with the configured status; the error response is cached for
+            // ErrorCachingMinTTL. The page object is written by the harness (or
+            // by a deployment) at errors/not-found.html.
+            errorResponses: [
+                {
+                    httpStatus: 403,
+                    responseHttpStatus: 200,
+                    responsePagePath: '/errors/not-found.html',
+                    ttl: cdk.Duration.seconds(60),
+                },
+            ],
         });
 
         // =====================================================================

@@ -35,6 +35,9 @@ const (
 	// resolve, so an SDK cannot reach a real AWS endpoint.
 	ClosedDNSServer = "127.0.0.2"
 
+	schemeHTTP  = "http"
+	schemeHTTPS = "https"
+
 	// ClosedEndpoint is the global endpoint used when no local backend is
 	// configured. A connection to it is refused locally, which keeps a handler
 	// that calls AWS from reaching real AWS.
