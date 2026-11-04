@@ -621,16 +621,22 @@ kind named.
 
 **HTTP API JWT authorizers.** An `AWS::ApiGatewayV2::Authorizer` with
 `AuthorizerType: JWT` validates the token from its identity source (default
-`$request.header.Authorization`, `Bearer` scheme) exactly as
+`$request.header.Authorization`, `Bearer` scheme) as
 [Controlling access to HTTP APIs with JWT authorizers](https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-jwt-authorizer.html)
-describes: the signature is verified against the issuer's
-`/.well-known/jwks.json`, and the `iss`, `aud`, `exp` and `nbf` claims are
-checked. An access token's `client_id` claim satisfies the audience check, as the
-page documents for Cognito access tokens. A route's `AuthorizationScopes` must
-all be present in the token's `scope` claim. The validated claims and scopes
-reach the integration as `requestContext.authorizer.jwt.claims` and
-`requestContext.authorizer.jwt.scopes`. A missing or malformed token is 401; a
-missing scope is 403.
+describes. Only RSA-based algorithms are supported: the header's `alg` must be
+`RS256`, `RS384` or `RS512`; `none`, `HS*` and the ECDSA algorithms are refused.
+The signature is verified against the issuer's `/.well-known/jwks.json` with the
+key the header's `kid` names — a token without `kid`, or whose `kid` matches no
+key after one refresh, is refused. The checked claims are `iss` (must match the
+configured issuer), `aud` (or `client_id` only when `aud` is absent; `aud` wins
+when both are present), `exp`, `nbf` and `iat` (all compared with the run
+clock), and `scope`/`scp`: a route's `AuthorizationScopes` is an any-of match, so
+at least one of the route's scopes must be present in the token. The validated
+claims and scopes reach the integration as
+`requestContext.authorizer.jwt.claims` and `requestContext.authorizer.jwt.scopes`.
+A missing or malformed token, a bad signature, a wrong issuer or audience, an
+unknown `kid` and a non-RSA algorithm are 401; a token carrying none of the
+route's scopes is 403.
 
 The issuer can be a literal OIDC URL or a CloudFormation expression that names a
 provisioned Cognito pool. For a pool the runner serves the issuer at
@@ -643,17 +649,24 @@ resolve to a provisioned pool fails closed.
 with `Type: COGNITO_USER_POOLS` validates the token in its identity-source
 header against the named pool's JWKS, as
 [Using Amazon Cognito user pools as authorizer](https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-integrate-with-cognito.html)
-describes. A route's `AuthorizationScopes` are checked against an access
-token's `scope` claim, and the claims reach the integration as
-`requestContext.authorizer.claims`. A missing or invalid token is 401; a missing
-scope is 403.
+describes, with the same claim and algorithm checks as the HTTP API JWT
+authorizer: RSA-based algorithms only, a `kid` that names the signing key,
+`iss`, `aud` (with `client_id` only when `aud` is absent), `exp`, `nbf` and
+`iat`. A route's `AuthorizationScopes` is the any-of match the REST method API
+documents — the invocation is authorized if any method scope matches a claimed
+scope — so at least one of the route's scopes must be present in the access
+token's `scope`/`scp`
+([PutMethod](https://docs.aws.amazon.com/apigateway/latest/api/API_PutMethod.html)).
+The claims reach the integration as `requestContext.authorizer.claims`. A
+missing or invalid token is 401; a token carrying none of the route's scopes is
+403.
 
-**The run clock.** `exp` and `nbf` are compared with the run clock, so
-`--clock test` changes what "expired" means. A token minted by the moto pool uses
-wall-clock times; start a test clock at the wall clock (`--clock test=<now>`) to
-use a freshly minted token, and `clock.advance` past its expiry to prove the
-check. A test clock that starts before the token's `iat` refuses it, which is the
-documented behaviour.
+**The run clock.** `exp`, `nbf` and `iat` are compared with the run clock, so
+`--clock test` changes what "expired", "not yet valid" and "issued in the
+future" mean. A token minted by the moto pool uses wall-clock times; start a
+test clock at the wall clock (`--clock test=<now>`) to use a freshly minted
+token, and `clock.advance` past its expiry to prove the check. A test clock that
+starts before the token's `iat` refuses it, which is the documented behaviour.
 
 **Still refused.** Lambda authorizers that return an IAM policy for HTTP or REST
 routes (R2b), IAM authorization, and `$context`/`$stageVariables` identity

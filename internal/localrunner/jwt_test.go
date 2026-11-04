@@ -50,11 +50,18 @@ func (k *jwtTestKey) jwks(t *testing.T) []byte {
 
 func (k *jwtTestKey) token(t *testing.T, claims map[string]any) string {
 	t.Helper()
-	header, err := json.Marshal(map[string]any{"alg": "RS256", "kid": k.kid, "typ": "JWT"})
+	return k.tokenWithHeader(t, map[string]any{"alg": "RS256", "kid": k.kid, "typ": "JWT"}, claims)
+}
+
+// tokenWithHeader signs claims with a caller-supplied header, so a test can
+// mint a token without a kid or with a non-RSA algorithm.
+func (k *jwtTestKey) tokenWithHeader(t *testing.T, header map[string]any, claims map[string]any) string {
+	t.Helper()
+	encodedHeader, err := json.Marshal(header)
 	require.NoError(t, err)
 	payload, err := json.Marshal(claims)
 	require.NoError(t, err)
-	signingInput := base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(payload)
+	signingInput := base64.RawURLEncoding.EncodeToString(encodedHeader) + "." + base64.RawURLEncoding.EncodeToString(payload)
 	digest := sha256.Sum256([]byte(signingInput))
 	signature, err := rsa.SignPKCS1v15(rand.Reader, k.private, crypto.SHA256, digest[:])
 	if err != nil {
@@ -129,6 +136,11 @@ func TestJWTVerifierRefusals(t *testing.T) {
 			claims["nbf"] = now.Add(time.Hour).Unix()
 			return key.token(t, claims), issuer
 		},
+		"issued in the future": func() (string, jwtIssuer) {
+			claims := base()
+			claims["iat"] = now.Add(time.Hour).Unix()
+			return key.token(t, claims), issuer
+		},
 		"wrong issuer": func() (string, jwtIssuer) {
 			claims := base()
 			claims["iss"] = "https://issuer.invalid"
@@ -193,6 +205,97 @@ func TestJWTVerifierAcceptsACognitoAccessTokenClientID(t *testing.T) {
 	if missingScope(claims, []string{"api/admin"}) != "api/admin" {
 		t.Fatalf("missing scope was not reported: %v", claims)
 	}
+}
+
+func TestJWTVerifierRequiresKid(t *testing.T) {
+	key := newJWTTestKey(t)
+	issuer, closeServer := jwtTestIssuer(t, key)
+	defer closeServer()
+	clock := NewTestClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	verifier := newJWTVerifier(clock, issuer)
+	claims := map[string]any{
+		"iss": issuer.Accepted[0],
+		"aud": "client-a",
+		"exp": clock.Now().Add(time.Hour).Unix(),
+	}
+
+	// A token without a kid is refused: the header must name the signing key.
+	noKid := key.tokenWithHeader(t, map[string]any{"alg": "RS256", "typ": "JWT"}, claims)
+	_, err := verifier.verifyToken(context.Background(), noKid)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "kid")
+
+	// A kid that matches no key is refused after one refresh.
+	unknownKid := key.tokenWithHeader(t, map[string]any{"alg": "RS256", "kid": "rotated-out", "typ": "JWT"}, claims)
+	_, err = verifier.verifyToken(context.Background(), unknownKid)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no signing key matches kid")
+}
+
+func TestJWTVerifierRefusesNonRSAAlgorithms(t *testing.T) {
+	key := newJWTTestKey(t)
+	issuer, closeServer := jwtTestIssuer(t, key)
+	defer closeServer()
+	clock := NewTestClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	verifier := newJWTVerifier(clock, issuer)
+	claims := map[string]any{
+		"iss": issuer.Accepted[0],
+		"aud": "client-a",
+		"exp": clock.Now().Add(time.Hour).Unix(),
+	}
+	for _, alg := range []string{"ES256", "ES384", "HS256", "none"} {
+		t.Run(alg, func(t *testing.T) {
+			token := key.tokenWithHeader(t, map[string]any{"alg": alg, "kid": key.kid}, claims)
+			_, err := verifier.verifyToken(context.Background(), token)
+			require.Error(t, err)
+			if alg == "none" {
+				require.Contains(t, err.Error(), "not accepted")
+				return
+			}
+			require.Contains(t, err.Error(), "RSA-based")
+		})
+	}
+}
+
+func TestJWTVerifierPrefersAudienceOverClientID(t *testing.T) {
+	key := newJWTTestKey(t)
+	issuer, closeServer := jwtTestIssuer(t, key)
+	defer closeServer()
+	clock := NewTestClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	verifier := newJWTVerifier(clock, issuer)
+
+	// aud is present and does not match; a matching client_id must not rescue it.
+	mismatchedAud := key.token(t, map[string]any{
+		"iss": issuer.Accepted[0], "aud": "client-other", "client_id": "client-a",
+		"exp": clock.Now().Add(time.Hour).Unix(),
+	})
+	_, err := verifier.verifyToken(context.Background(), mismatchedAud)
+	require.Error(t, err)
+
+	// aud matches; a different client_id is ignored.
+	matchedAud := key.token(t, map[string]any{
+		"iss": issuer.Accepted[0], "aud": "client-a", "client_id": "client-other",
+		"exp": clock.Now().Add(time.Hour).Unix(),
+	})
+	_, err = verifier.verifyToken(context.Background(), matchedAud)
+	require.NoError(t, err)
+
+	// An empty but present aud is still evaluated, so client_id is not a fallback.
+	emptyAud := key.token(t, map[string]any{
+		"iss": issuer.Accepted[0], "aud": "", "client_id": "client-a",
+		"exp": clock.Now().Add(time.Hour).Unix(),
+	})
+	_, err = verifier.verifyToken(context.Background(), emptyAud)
+	require.Error(t, err)
+}
+
+func TestMissingScopeIsAnyOf(t *testing.T) {
+	claims := map[string]any{"scope": "read"}
+	require.Empty(t, missingScope(claims, []string{"read", "write"}))
+	require.Empty(t, missingScope(claims, []string{"write", "read"}))
+	require.Equal(t, "write or admin", missingScope(claims, []string{"write", "admin"}))
+	require.Empty(t, missingScope(map[string]any{"scp": []any{"read"}}, []string{"read", "write"}))
+	require.Empty(t, missingScope(claims, nil))
 }
 
 func TestBearerTokenParsing(t *testing.T) {

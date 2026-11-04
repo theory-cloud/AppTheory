@@ -3,8 +3,6 @@ package localrunner
 import (
 	"context"
 	"crypto"
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/sha512"
@@ -22,15 +20,24 @@ import (
 // JWT validation for API Gateway authorizers.
 //
 // An HTTP API JWT authorizer validates the token's signature against the
-// issuer's JWKS and checks the issuer, the audience, the expiry and the
-// not-before instant:
+// issuer's JWKS and checks the kid, issuer, audience (or client_id), expiry,
+// not-before and issued-at claims, plus the route's authorization scopes:
 // https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-jwt-authorizer.html
+//
+// Only RSA-based algorithms are accepted (RS256, RS384, RS512), as the page
+// states; none, HS* and the ECDSA algorithms are refused by name. The kid
+// header must name the key that signed the token, aud is evaluated when it is
+// present and client_id only when aud is absent, iat must be before the run
+// clock, and at least one of a route's scopes must be present in scope or scp.
 //
 // A Cognito user-pool authorizer validates the same token against the pool's
 // JWKS; a Cognito token's issuer is the pool's canonical URL and an access
-// token carries its scopes in the scope claim:
+// token carries its scopes in the scope claim. A REST method's scopes are also
+// an any-of match: the method invocation is authorized if any method scope
+// matches a claimed scope in the access token:
 // https://docs.aws.amazon.com/cognito/latest/developerguide/amazon-cognito-user-pools-using-tokens-verifying-a-jwt.html
 // https://docs.aws.amazon.com/cognito/latest/developerguide/amazon-cognito-user-pools-using-the-access-token.html
+// https://docs.aws.amazon.com/apigateway/latest/api/API_PutMethod.html
 //
 // The runner serves the pool at a loopback issuer, so it accepts both the local
 // issuer and the canonical Cognito issuer the token names.
@@ -61,7 +68,6 @@ type jwtKey struct {
 	kid string
 	alg string
 	rsa *rsa.PublicKey
-	ec  *ecdsa.PublicKey
 }
 
 func newJWTVerifier(clock Clock, issuer jwtIssuer) *jwtVerifier {
@@ -124,8 +130,8 @@ func (v *jwtVerifier) verifyToken(ctx context.Context, token string) (map[string
 	return claims, nil
 }
 
-// checkClaims validates the issuer, audience, expiry and not-before values
-// against the run clock.
+// checkClaims validates the issuer, audience, expiry, not-before and issued-at
+// values against the run clock.
 func (v *jwtVerifier) checkClaims(claims map[string]any) error {
 	now := v.clock.Now()
 	tokenIssuer := stringClaim(claims, "iss")
@@ -150,35 +156,38 @@ func (v *jwtVerifier) checkClaims(claims map[string]any) error {
 	if nbf, ok := numericClaim(claims, "nbf"); ok && now.Before(time.Unix(nbf, 0)) {
 		return fmt.Errorf("the token is not valid before %s", time.Unix(nbf, 0).UTC().Format(time.RFC3339))
 	}
+	if iat, ok := numericClaim(claims, "iat"); ok && now.Before(time.Unix(iat, 0)) {
+		return fmt.Errorf("the token was issued in the future (%s); iat must be before the current time", time.Unix(iat, 0).UTC().Format(time.RFC3339))
+	}
 	return nil
 }
 
-// checkSignature verifies the JWS signature with the issuer's keys.
+// checkSignature verifies the JWS signature with the issuer's keys. A token
+// must name an RSA-based algorithm and a kid that matches a key in the JWKS;
+// API Gateway documents both as validated claims.
 func (v *jwtVerifier) checkSignature(ctx context.Context, alg, kid, signingInput string, signature []byte) error {
+	if !rsaAlgorithm(alg) {
+		return fmt.Errorf(
+			"token algorithm %q is not accepted; the API Gateway JWT authorizer supports only RSA-based algorithms (RS256, RS384, RS512)",
+			alg,
+		)
+	}
+	kid = strings.TrimSpace(kid)
+	if kid == "" {
+		return errors.New("the token header has no kid claim; the signing key must be named by kid")
+	}
 	keys, err := v.keys(ctx)
 	if err != nil {
 		return err
 	}
-	candidates := keys
-	if kid != "" {
-		candidates = nil
-		for _, key := range keys {
-			if key.kid == kid {
-				candidates = append(candidates, key)
-			}
-		}
-	}
+	candidates := keysWithKid(keys, kid)
 	if len(candidates) == 0 {
 		// The key may have rotated since the cache was filled.
 		keys, err = v.refresh(ctx)
 		if err != nil {
 			return err
 		}
-		for _, key := range keys {
-			if kid == "" || key.kid == kid {
-				candidates = append(candidates, key)
-			}
-		}
+		candidates = keysWithKid(keys, kid)
 	}
 	if len(candidates) == 0 {
 		return fmt.Errorf("no signing key matches kid %q", kid)
@@ -194,6 +203,27 @@ func (v *jwtVerifier) checkSignature(ctx context.Context, alg, kid, signingInput
 	return lastErr
 }
 
+// rsaAlgorithm reports whether the token algorithm is one API Gateway accepts.
+// https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-jwt-authorizer.html
+func rsaAlgorithm(alg string) bool {
+	switch strings.ToUpper(strings.TrimSpace(alg)) {
+	case "RS256", "RS384", "RS512":
+		return true
+	default:
+		return false
+	}
+}
+
+func keysWithKid(keys []jwtKey, kid string) []jwtKey {
+	var candidates []jwtKey
+	for _, key := range keys {
+		if key.kid == kid {
+			candidates = append(candidates, key)
+		}
+	}
+	return candidates
+}
+
 func (k jwtKey) verify(alg, signingInput string, signature []byte) error {
 	switch strings.ToUpper(alg) {
 	case "RS256":
@@ -202,12 +232,8 @@ func (k jwtKey) verify(alg, signingInput string, signature []byte) error {
 		return verifyRSA(k, crypto.SHA384, signingInput, signature)
 	case "RS512":
 		return verifyRSA(k, crypto.SHA512, signingInput, signature)
-	case "ES256":
-		return verifyECDSA(k, crypto.SHA256, elliptic.P256(), signingInput, signature)
-	case "ES384":
-		return verifyECDSA(k, crypto.SHA384, elliptic.P384(), signingInput, signature)
 	default:
-		return fmt.Errorf("algorithm %q is not supported", alg)
+		return fmt.Errorf("algorithm %q is not supported; only RSA-based algorithms are", alg)
 	}
 }
 
@@ -217,23 +243,6 @@ func verifyRSA(key jwtKey, hash crypto.Hash, signingInput string, signature []by
 	}
 	digest := hashInput(hash, signingInput)
 	return rsa.VerifyPKCS1v15(key.rsa, hash, digest, signature)
-}
-
-func verifyECDSA(key jwtKey, hash crypto.Hash, curve elliptic.Curve, signingInput string, signature []byte) error {
-	if key.ec == nil || key.ec.Curve != curve {
-		return errors.New("the token algorithm does not match the key curve")
-	}
-	size := (curve.Params().BitSize + 7) / 8
-	if len(signature) != 2*size {
-		return errors.New("the ECDSA signature has the wrong length")
-	}
-	digest := hashInput(hash, signingInput)
-	r := new(big.Int).SetBytes(signature[:size])
-	s := new(big.Int).SetBytes(signature[size:])
-	if !ecdsa.Verify(key.ec, digest, r, s) {
-		return errors.New("the ECDSA signature is invalid")
-	}
-	return nil
 }
 
 func hashInput(hash crypto.Hash, signingInput string) []byte {
@@ -314,7 +323,7 @@ func (v *jwtVerifier) refresh(ctx context.Context) ([]jwtKey, error) {
 	return keys, nil
 }
 
-func parseJWK(kty, kid, alg, n, e, crv, x, y string) (jwtKey, error) {
+func parseJWK(kty, kid, alg, n, e, _, _, _ string) (jwtKey, error) {
 	switch strings.ToUpper(kty) {
 	case "RSA":
 		modulus, err := base64.RawURLEncoding.DecodeString(n)
@@ -333,47 +342,8 @@ func parseJWK(kty, kid, alg, n, e, crv, x, y string) (jwtKey, error) {
 				E: int(new(big.Int).SetBytes(exponent).Int64()),
 			},
 		}, nil
-	case "EC":
-		curve, err := curveForName(crv)
-		if err != nil {
-			return jwtKey{}, err
-		}
-		xBytes, err := base64.RawURLEncoding.DecodeString(x)
-		if err != nil {
-			return jwtKey{}, err
-		}
-		yBytes, err := base64.RawURLEncoding.DecodeString(y)
-		if err != nil {
-			return jwtKey{}, err
-		}
-		size := (curve.Params().BitSize + 7) / 8
-		if len(xBytes) > size || len(yBytes) > size {
-			return jwtKey{}, errors.New("the EC key coordinates are too large for the curve")
-		}
-		point := make([]byte, 1+2*size)
-		point[0] = 0x04
-		copy(point[1+size-len(xBytes):1+size], xBytes)
-		copy(point[1+2*size-len(yBytes):], yBytes)
-		publicKey, err := ecdsa.ParseUncompressedPublicKey(curve, point)
-		if err != nil {
-			return jwtKey{}, err
-		}
-		return jwtKey{kid: kid, alg: alg, ec: publicKey}, nil
 	default:
 		return jwtKey{}, fmt.Errorf("key type %q is not supported", kty)
-	}
-}
-
-func curveForName(name string) (elliptic.Curve, error) {
-	switch name {
-	case "P-256":
-		return elliptic.P256(), nil
-	case "P-384":
-		return elliptic.P384(), nil
-	case "P-521":
-		return elliptic.P521(), nil
-	default:
-		return nil, fmt.Errorf("curve %q is not supported", name)
 	}
 }
 
@@ -389,22 +359,32 @@ func audienceMatches(claims map[string]any, audience []string) bool {
 	return false
 }
 
+// audienceValues returns the audience values the token presents. API Gateway
+// validates client_id only when aud is absent; when both are present, aud is
+// evaluated and client_id is ignored.
 func audienceValues(claims map[string]any) []string {
-	var values []string
-	switch typed := claims["aud"].(type) {
-	case string:
-		values = append(values, typed)
-	case []any:
-		for _, item := range typed {
-			if text, ok := item.(string); ok {
-				values = append(values, text)
+	aud, present := claims["aud"]
+	if present {
+		switch typed := aud.(type) {
+		case string:
+			if value := strings.TrimSpace(typed); value != "" {
+				return []string{value}
 			}
+		case []any:
+			values := make([]string, 0, len(typed))
+			for _, item := range typed {
+				if text, ok := item.(string); ok && strings.TrimSpace(text) != "" {
+					values = append(values, strings.TrimSpace(text))
+				}
+			}
+			return values
 		}
+		return nil
 	}
 	if clientID := stringClaim(claims, "client_id"); clientID != "" {
-		values = append(values, clientID)
+		return []string{clientID}
 	}
-	return values
+	return nil
 }
 
 // tokenScopes returns the scopes an access token carries.
@@ -423,18 +403,24 @@ func tokenScopes(claims map[string]any) []string {
 	return scopes
 }
 
-// missingScope names the first required scope the token does not carry.
+// missingScope reports the route scopes a token must carry at least one of. It
+// returns "" when the token carries one of them, and a human-readable list
+// otherwise; the transport turns that into the documented 403. The any-of rule
+// is the HTTP API JWT page's "at least one of the route's scopes" and the REST
+// Method API's "authorized if any method scopes matches a claimed scope".
+// https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-jwt-authorizer.html
+// https://docs.aws.amazon.com/apigateway/latest/api/API_PutMethod.html
 func missingScope(claims map[string]any, required []string) string {
 	if len(required) == 0 {
 		return ""
 	}
 	scopes := tokenScopes(claims)
 	for _, scope := range required {
-		if !containsStringList(scopes, scope) {
-			return scope
+		if containsStringList(scopes, scope) {
+			return ""
 		}
 	}
-	return ""
+	return strings.Join(required, " or ")
 }
 
 func stringClaim(claims map[string]any, name string) string {

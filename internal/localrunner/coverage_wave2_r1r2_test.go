@@ -3,11 +3,6 @@ package localrunner
 import (
 	"context"
 	"crypto"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -275,37 +270,24 @@ func TestResolveRouteAuthorizers(t *testing.T) {
 	require.Error(t, runner.resolveRouteAuthorizers(noPool))
 }
 
-func TestJWTVersusES256AndKeyParsing(t *testing.T) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-	size := 32
-	point := make([]byte, 1+2*size)
-	point[0] = 0x04
-	key.X.FillBytes(point[1 : 1+size])
-	key.Y.FillBytes(point[1+size:])
-	jwk, err := parseJWK("EC", "kid", "ES256", "", "", "P-256",
-		base64.RawURLEncoding.EncodeToString(key.X.Bytes()),
-		base64.RawURLEncoding.EncodeToString(key.Y.Bytes()))
-	require.NoError(t, err)
-	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"ES256","kid":"kid"}`))
-	claims := base64.RawURLEncoding.EncodeToString([]byte(`{"iss":"https://issuer","exp":1}`))
-	digest := sha256.Sum256([]byte(header + "." + claims))
-	signingInput := header + "." + claims
-	r, s, err := ecdsa.Sign(rand.Reader, key, digest[:])
-	require.NoError(t, err)
-	signature := make([]byte, 2*size)
-	r.FillBytes(signature[:size])
-	s.FillBytes(signature[size:])
-	require.NoError(t, jwk.verify("ES256", signingInput, signature))
-	require.Error(t, jwk.verify("RS256", signingInput, signature))
-	require.Error(t, jwk.verify("ES384", signingInput, signature))
-	require.Error(t, jwk.verify("ES256", signingInput, signature[:10]))
+func TestJWTVerifierRefusesECDSAAndKeyParsing(t *testing.T) {
+	key := newJWTTestKey(t)
+	issuer, closeServer := jwtTestIssuer(t, key)
+	defer closeServer()
+	clock := NewTestClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	verifier := newJWTVerifier(clock, issuer)
+	// An ES256 token is refused by name: only RSA-based algorithms are supported.
+	token := key.tokenWithHeader(t, map[string]any{"alg": "ES256", "kid": key.kid}, map[string]any{
+		"iss": issuer.Accepted[0], "aud": "client-a", "exp": clock.Now().Add(time.Hour).Unix(),
+	})
+	_, err := verifier.verifyToken(context.Background(), token)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "RSA-based")
 
-	_, err = parseJWK("EC", "kid", "ES256", "", "", "P-999", "AA", "AA")
+	// A JWK that is not an RSA key is not usable.
+	_, err = parseJWK("EC", "kid", "ES256", "", "", "P-256", "AA", "AA")
 	require.Error(t, err)
 	_, err = parseJWK("oct", "kid", "", "", "", "", "", "")
-	require.Error(t, err)
-	_, err = curveForName("P-999")
 	require.Error(t, err)
 	require.Len(t, hashInput(crypto.SHA384, "x"), 48)
 	require.Len(t, hashInput(crypto.SHA512, "x"), 64)

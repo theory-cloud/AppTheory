@@ -95,6 +95,38 @@ func TestTransportAuthorizeJWT(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestTransportAuthorizeJWTScopesAreAnyOf(t *testing.T) {
+	key := newJWTTestKey(t)
+	issuer, closeServer := jwtTestIssuer(t, key)
+	defer closeServer()
+	clock := NewTestClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	transport := jwtTransport(t, key, issuer, []string{"read", "write"})
+	transport.Clock = clock
+	route := transport.API.Routes[0]
+
+	// A route declaring read and write accepts a token carrying only read.
+	token := key.token(t, map[string]any{
+		"iss": issuer.Accepted[0], "aud": "client-a", "scope": "read",
+		"exp": clock.Now().Add(time.Hour).Unix(),
+	})
+	request := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/protected", nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	result, err := transport.authorize(request, route, nil, "/protected", nil, "req")
+	require.NoError(t, err)
+	require.Zero(t, result.Status)
+
+	// A token carrying neither scope is refused with 403.
+	noScope := key.token(t, map[string]any{
+		"iss": issuer.Accepted[0], "aud": "client-a",
+		"exp": clock.Now().Add(time.Hour).Unix(),
+	})
+	request = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/protected", nil)
+	request.Header.Set("Authorization", "Bearer "+noScope)
+	result, err = transport.authorize(request, route, nil, "/protected", nil, "req")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusForbidden, result.Status)
+}
+
 func TestTransportAuthorizeCognito(t *testing.T) {
 	key := newJWTTestKey(t)
 	issuer, closeServer := jwtTestIssuer(t, key)
@@ -121,6 +153,18 @@ func TestTransportAuthorizeCognito(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, result.Status)
 	require.Equal(t, "access", result.Claims["token_use"])
+
+	// A REST method's scopes are an any-of match too: read or write accepts read.
+	route.AuthorizationScopes = []string{"api/read", "api/write"}
+	scoped := key.token(t, map[string]any{
+		"iss": issuer.Accepted[0], "client_id": "client-a", "token_use": "access",
+		"exp": clock.Now().Add(time.Hour).Unix(), "scope": "api/read",
+	})
+	request = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/protected", nil)
+	request.Header.Set("Authorization", "Bearer "+scoped)
+	result, err = transport.authorize(request, route, nil, "/protected", nil, "req")
+	require.NoError(t, err)
+	require.Zero(t, result.Status)
 
 	request = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/protected", nil)
 	result, err = transport.authorize(request, route, nil, "/protected", nil, "req")
@@ -203,12 +247,13 @@ func TestJWTClaimHelpers(t *testing.T) {
 	require.Empty(t, tokenScopes(map[string]any{}))
 
 	require.Equal(t, []string{"aud-1"}, audienceValues(map[string]any{"aud": "aud-1"}))
-	require.Equal(t, []string{"aud-1", "aud-2", "client"}, audienceValues(map[string]any{
+	require.Equal(t, []string{"aud-1", "aud-2"}, audienceValues(map[string]any{
 		"aud": []any{"aud-1", "aud-2", 5}, "client_id": "client",
 	}))
+	require.Equal(t, []string{"client"}, audienceValues(map[string]any{"client_id": "client"}))
 	require.Empty(t, stringClaim(map[string]any{"iss": 5}, "iss"))
 	require.Empty(t, missingScope(map[string]any{}, nil))
-	require.Equal(t, "s", missingScope(map[string]any{"scope": "a"}, []string{"a", "s"}))
+	require.Equal(t, "a or s", missingScope(map[string]any{"scope": "other"}, []string{"a", "s"}))
 	require.Empty(t, missingScope(map[string]any{"scope": "a"}, []string{"a"}))
 }
 

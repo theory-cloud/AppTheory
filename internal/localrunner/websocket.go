@@ -204,14 +204,7 @@ func (s *WebSocketServer) serveConnection(ctx context.Context, connection *webSo
 			return webSocketDisconnectInternal, wsCloseGoingAway
 		case frame := <-frames:
 			if frame.err != nil {
-				if frame.opcode == wsOpcodeClose {
-					return webSocketDisconnectClient, wsCloseNormal
-				}
-				if errors.Is(frame.err, errWebSocketTooBig) {
-					s.logf("websocket %s: connection %s sent a frame or message over the documented limit", s.API.LogicalID, connection.id)
-					return webSocketDisconnectInternal, wsCloseTooBig
-				}
-				return webSocketDisconnectInternal, wsCloseInternalError
+				return s.frameErrorResult(connection, frame.opcode, frame.err)
 			}
 			if frame.opcode == wsOpcodeClose {
 				return webSocketDisconnectClient, wsCloseNormal
@@ -225,6 +218,20 @@ func (s *WebSocketServer) serveConnection(ctx context.Context, connection *webSo
 			s.routeMessage(ctx, connection, string(frame.payload))
 		}
 	}
+}
+
+// frameErrorResult maps a read error to the documented disconnectReason and
+// close code. A close frame is a client close; an oversize frame or message is
+// 1009; every other read failure is an internal error (1011).
+func (s *WebSocketServer) frameErrorResult(connection *webSocketConnection, opcode byte, err error) (string, int) {
+	if opcode == wsOpcodeClose {
+		return webSocketDisconnectClient, wsCloseNormal
+	}
+	if errors.Is(err, errWebSocketTooBig) {
+		s.logf("websocket %s: connection %s sent a frame or message over the documented limit", s.API.LogicalID, connection.id)
+		return webSocketDisconnectInternal, wsCloseTooBig
+	}
+	return webSocketDisconnectInternal, wsCloseInternalError
 }
 
 // routeMessage selects a route for one text message and invokes it.

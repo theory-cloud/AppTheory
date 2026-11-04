@@ -32,7 +32,7 @@ type Transport struct {
 	Invokers  map[string]Invoker
 	Semaphore chan struct{}
 	Now       func() time.Time
-	// Clock is the run clock; a JWT's exp and nbf are checked against it.
+	// Clock is the run clock; a JWT's exp, nbf and iat are checked against it.
 	Clock Clock
 	Logf  func(format string, args ...any)
 
@@ -271,8 +271,8 @@ func (t *Transport) authorizeJWT(request *http.Request, route Route) (authorizer
 		t.logf("%s %s -> 401 (JWT refused: %v)", request.Method, request.URL.Path, err)
 		return authorizerResult{Status: http.StatusUnauthorized}, nil
 	}
-	if scope := missingScope(claims, route.AuthorizationScopes); scope != "" {
-		t.logf("%s %s -> 403 (the token does not carry scope %s)", request.Method, request.URL.Path, scope)
+	if refusal := missingScope(claims, route.AuthorizationScopes); refusal != "" {
+		t.logf("%s %s -> 403 (the token carries none of the route's scopes: %s)", request.Method, request.URL.Path, refusal)
 		return authorizerResult{Status: http.StatusForbidden}, nil
 	}
 	return authorizerResult{JWT: claims, Scopes: tokenScopes(claims)}, nil
@@ -309,8 +309,8 @@ func (t *Transport) authorizeCognito(request *http.Request, route Route) (author
 		t.logf("%s %s -> 401 (Cognito token refused: %v)", request.Method, request.URL.Path, err)
 		return authorizerResult{Status: http.StatusUnauthorized}, nil
 	}
-	if scope := missingScope(claims, route.AuthorizationScopes); scope != "" {
-		t.logf("%s %s -> 403 (the token does not carry scope %s)", request.Method, request.URL.Path, scope)
+	if refusal := missingScope(claims, route.AuthorizationScopes); refusal != "" {
+		t.logf("%s %s -> 403 (the token carries none of the route's scopes: %s)", request.Method, request.URL.Path, refusal)
 		return authorizerResult{Status: http.StatusForbidden}, nil
 	}
 	return authorizerResult{Claims: claims, Scopes: tokenScopes(claims)}, nil

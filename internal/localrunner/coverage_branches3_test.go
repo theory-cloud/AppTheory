@@ -101,7 +101,7 @@ func TestDeriveWebSocketRouteSelectionForms(t *testing.T) {
 			properties["RouteSelectionExpression"] = expression
 		}
 		return map[string]any{
-			"Fn": withAsset(lambdaFunction(nil), "asset.deadbeef"),
+			"Fn":  withAsset(lambdaFunction(nil), "asset.deadbeef"),
 			"Api": map[string]any{"Type": typeHTTPAPI, "Properties": properties},
 			"Stage": map[string]any{"Type": typeHTTPStage, "Properties": map[string]any{
 				"ApiId": map[string]any{"Ref": "Api"}, "StageName": "dev"}},

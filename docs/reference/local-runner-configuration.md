@@ -931,8 +931,8 @@ never silently dropped. A session's `--target` starts one of them explicitly.
 | Kind | Template | What the transport does |
 | --- | --- | --- |
 | HTTP simple REQUEST | `AWS::ApiGatewayV2::Authorizer`, `AuthorizerType: REQUEST`, `EnableSimpleResponses` | Invokes the function with the v2 REQUEST event; `isAuthorized: false` is 401 and a true result's `context` becomes `requestContext.authorizer.lambda`. |
-| HTTP JWT | `AWS::ApiGatewayV2::Authorizer`, `AuthorizerType: JWT`, `JwtConfiguration` | Reads the identity source (default `$request.header.Authorization`), requires the `Bearer` scheme, verifies the signature against the issuer's `/.well-known/jwks.json`, and checks `iss`, `aud` (or a Cognito access token's `client_id`), `exp` and `nbf` against the run clock. Each `AuthorizationScopes` entry must be in the token's `scope`; a missing scope is 403. Claims and scopes become `requestContext.authorizer.jwt.claims` and `.scopes`. |
-| REST Cognito | `AWS::ApiGateway::Authorizer`, `Type: COGNITO_USER_POOLS`, `ProviderARNs` | Reads the identity-source header (a `Bearer ` prefix is accepted), validates the token against the pool's JWKS through the runner's local issuer, checks `AuthorizationScopes` against the access token's `scope`, and exposes the claims as `requestContext.authorizer.claims`. |
+| HTTP JWT | `AWS::ApiGatewayV2::Authorizer`, `AuthorizerType: JWT`, `JwtConfiguration` | Reads the identity source (default `$request.header.Authorization`), requires the `Bearer` scheme, accepts only RSA-based algorithms (`RS256`, `RS384`, `RS512`; `none`, `HS*` and ECDSA are refused), and verifies the signature against the issuer's `/.well-known/jwks.json` with the key the header's `kid` names (a token without `kid`, or with no matching key after one refresh, is refused). Checks `iss`, `aud` (or `client_id` only when `aud` is absent; `aud` wins when both are present), `exp`, `nbf` and `iat` against the run clock. `AuthorizationScopes` is an any-of match: at least one of the route's scopes must be in the token's `scope`/`scp`, otherwise 403. Claims and scopes become `requestContext.authorizer.jwt.claims` and `.scopes`. |
+| REST Cognito | `AWS::ApiGateway::Authorizer`, `Type: COGNITO_USER_POOLS`, `ProviderARNs` | Reads the identity-source header (a `Bearer ` prefix is accepted), validates the token against the pool's JWKS through the runner's local issuer with the same algorithm and claim checks as the HTTP JWT authorizer, treats `AuthorizationScopes` as an any-of match against the access token's `scope`/`scp` (the REST method API authorizes the invocation if any method scope matches a claimed scope), and exposes the claims as `requestContext.authorizer.claims`. |
 | WebSocket `$connect` | `AWS::ApiGatewayV2::Authorizer`, `AuthorizerType: REQUEST`, referenced by the `$connect` route | Runs during the handshake with the documented WebSocket authorizer event and matches the returned IAM policy against `/<stage>/$connect`. See [WebSocket APIs](/examples/local-runner/#websocket-apis). |
 | Lambda policy (REST/HTTP, R2b) | `AWS::ApiGateway::Authorizer` `TOKEN`/`REQUEST`, HTTP non-simple REQUEST | Not run: the route fails closed at plan time with the kind named. |
 
@@ -945,11 +945,12 @@ issuer is accepted as an alias because it is the `iss` the pool's tokens carry.
 Another `http(s)` OIDC URL is fetched directly. Anything else fails the run with
 the route and the value named.
 
-**Tokens and the clock.** Signature algorithms RS256/384/512 and ES256/384 are
-supported; `alg: none` is refused. `exp` is required; `nbf` is checked when
-present; both use the run clock, so `--clock test=<wall time>` is the way to use
-a freshly minted moto token and `clock.advance` past its expiry tests the
-expired path.
+**Tokens and the clock.** Only RSA-based signature algorithms are supported:
+RS256, RS384 and RS512. `alg: none`, HS* and ES256/ES384 are refused. `exp` is
+required; `nbf` and `iat` are checked when present, and `exp`, `nbf` and `iat`
+all use the run clock, so `--clock test=<wall time>` is the way to use a freshly
+minted moto token, `clock.advance` past its expiry tests the expired path, and
+a clock that starts before the token's `iat` refuses it.
 
 ## Container environment
 
@@ -1077,7 +1078,7 @@ against the method ARN. A Deny wins; no Allow refuses with 401.
 `requestContext.authorizer.jwt = {"claims": {…}, "scopes": ["…"]}`; a REST
 Cognito authorizer adds `requestContext.authorizer = {"claims": {…}}`. The
 claims are the token's validated payload (for example `iss`, `aud`/`client_id`,
-`sub`, `token_use`, `scope`, `exp`).
+`sub`, `token_use`, `scope`, `exp`, `nbf`, `iat`).
 
 **SQS** — built from messages an ElasticMQ queue actually returned:
 `Records[].messageId`, `receiptHandle`, `body`, `md5OfBody`, the receive
