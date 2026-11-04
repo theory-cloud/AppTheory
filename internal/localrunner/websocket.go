@@ -3,6 +3,7 @@ package localrunner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -206,6 +207,10 @@ func (s *WebSocketServer) serveConnection(ctx context.Context, connection *webSo
 				if frame.opcode == wsOpcodeClose {
 					return webSocketDisconnectClient, wsCloseNormal
 				}
+				if errors.Is(frame.err, errWebSocketTooBig) {
+					s.logf("websocket %s: connection %s sent a frame or message over the documented limit", s.API.LogicalID, connection.id)
+					return webSocketDisconnectInternal, wsCloseTooBig
+				}
 				return webSocketDisconnectInternal, wsCloseInternalError
 			}
 			if frame.opcode == wsOpcodeClose {
@@ -250,20 +255,17 @@ func (s *WebSocketServer) routeMessage(ctx context.Context, connection *webSocke
 }
 
 // selectRoute evaluates the API's route selection expression against the
-// message. Only the documented $request.body.<field> form is supported; anything
-// else, a non-JSON message and a missing field all select $default.
+// message. The single-field $request.body.<field> form and its wrapped
+// ${request.body.<field>} equivalent are supported; a form the runner does not
+// implement was refused at derive time, and here it, a non-JSON message and a
+// missing field all select $default.
 func (s *WebSocketServer) selectRoute(body string) string {
 	expression := strings.TrimSpace(s.API.RouteSelectionExpression)
 	if expression == "" {
 		expression = defaultWebSocketRouteSelectionExpression
 	}
-	const prefix = "$request.body."
-	if !strings.HasPrefix(expression, prefix) {
-		return webSocketDefault
-	}
-	field := strings.TrimSpace(strings.TrimPrefix(expression, prefix))
-	field = strings.TrimPrefix(field, ".")
-	if field == "" || strings.Contains(field, ".") {
+	field, ok := webSocketRouteSelectionField(expression)
+	if !ok {
 		return webSocketDefault
 	}
 	var document map[string]any

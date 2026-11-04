@@ -227,9 +227,20 @@ func TestWebSocketSelectRoute(t *testing.T) {
 			t.Fatalf("%s selected %q, want %q", body, got, want)
 		}
 	}
+	wrapped := &WebSocketServer{API: testWebSocketAPI()}
+	wrapped.API.RouteSelectionExpression = "${request.body.action}"
+	if got := wrapped.selectRoute(`{"action":"chat"}`); got != "chat" {
+		t.Fatalf("the wrapped expression selected %q, want chat", got)
+	}
 	undefined := &WebSocketServer{API: WebSocketAPISpec{RouteSelectionExpression: "$context.foo"}}
 	if got := undefined.selectRoute(`{"action":"chat"}`); got != webSocketDefault {
 		t.Fatalf("an unsupported expression selected %q", got)
+	}
+	multi := &WebSocketServer{API: WebSocketAPISpec{
+		RouteSelectionExpression: "${request.body.service}/${request.body.action}",
+	}}
+	if got := multi.selectRoute(`{"service":"chat","action":"join"}`); got != webSocketDefault {
+		t.Fatalf("a multi-variable expression selected %q", got)
 	}
 }
 
@@ -426,6 +437,30 @@ func TestWebSocketIdleTimeoutOnTheTestClock(t *testing.T) {
 	}
 	if code := closeCodeOf(payload); code != wsCloseGoingAway {
 		t.Fatalf("close code = %d, want 1001", code)
+	}
+}
+
+func TestWebSocketOversizeFrameClosesWith1009(t *testing.T) {
+	invoker := &recordingWebSocketInvoker{}
+	server := &WebSocketServer{
+		API:      testWebSocketAPI(),
+		Invokers: map[string]Invoker{"Fn": invoker},
+		Clock:    RealClock{},
+	}
+	httpServer := httptest.NewServer(server)
+	defer httpServer.Close()
+	conn, reader := dialTestWebSocket(t, httpServer.URL, nil, "")
+	defer func() { require.NoError(t, conn.Close()) }()
+
+	// One byte over API Gateway's 32 KB frame quota returns the documented 1009,
+	// not 1011.
+	writeClientFrame(t, conn, wsOpcodeText, make([]byte, maxWebSocketFrameBytes+1))
+	opcode, payload := readServerFrame(t, reader)
+	if opcode != wsOpcodeClose {
+		t.Fatalf("opcode = %d, want close", opcode)
+	}
+	if code := closeCodeOf(payload); code != wsCloseTooBig {
+		t.Fatalf("close code = %d, want 1009", code)
 	}
 }
 

@@ -652,7 +652,7 @@ func (r *Runner) webSocketDomainName() string {
 }
 
 // webSocketCertificateMounts mounts the management CA into a function container
-// so its SDK client trusts the loopback TLS endpoint.
+// so its SDK client trusts the `@connections` TLS endpoint.
 func (r *Runner) webSocketCertificateMounts() []string {
 	if r.webSocketManagement == nil {
 		return nil

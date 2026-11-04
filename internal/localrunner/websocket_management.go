@@ -28,10 +28,13 @@ import (
 // https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-how-to-call-websocket-api-connections.html
 //
 // The runner serves PostToConnection, GetConnection and DeleteConnection on a
-// loopback TLS listener and injects it as the API Gateway Management API
-// endpoint. The listener is TLS because every SDK builds the endpoint from the
-// event's requestContext.domainName as https://<domainName>, and because the
-// documented deployed management endpoint is HTTPS.
+// TLS listener that binds every interface so a function container can reach it
+// through host.docker.internal; the session reports and the harness use the
+// loopback URL. It is injected as the API Gateway Management API endpoint. The
+// listener is TLS because every SDK builds the endpoint from the event's
+// requestContext.domainName as https://<domainName>, and because the documented
+// deployed management endpoint is HTTPS. It is unauthenticated and reachable
+// from any interface on the host while a session runs.
 //
 // A connection that has closed is reported with the documented 410 GONE.
 
@@ -61,7 +64,7 @@ type webSocketManagement struct {
 }
 
 // newWebSocketManagement builds the registry and a self-signed certificate for
-// the loopback endpoint.
+// the management endpoint.
 func newWebSocketManagement(scratch string, logf func(format string, args ...any)) (*webSocketManagement, error) {
 	if logf == nil {
 		logf = func(string, ...any) {}

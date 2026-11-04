@@ -546,10 +546,17 @@ handshake. Its URL is `ws://127.0.0.1:<port>/<stage>`.
 `$default` and every custom route key the template declares. A text message is
 routed by the API's `RouteSelectionExpression` (default
 `$request.body.action`): the expression's field is read from the JSON body and
-matched against the route keys. A message that is not JSON, has no such field,
-or selects no declared route goes to `$default`; an API with no `$default` route
-drops it. `$connect` and `$disconnect` are one-way; `$default` and custom routes
-are two-way, so a 2xx integration response body is sent back to the client.
+matched against the route keys. The runner implements the single-field
+`$request.body.<field>` form and its wrapped `${request.body.<field>}`
+equivalent; every other documented form — multiple variables such as
+`${request.body.service}/${request.body.action}`, a static value such as
+`action`, or a nested path such as `$request.body.data.room` — is refused at
+plan time with the expression named, because serving it as `$default` would
+silently leave every custom route unmatched. A message that is not JSON, has no
+such field, or selects no declared route goes to `$default`; an API with no
+`$default` route drops it. `$connect` and `$disconnect` are one-way; `$default`
+and custom routes are two-way, so a 2xx integration response body is sent back
+to the client.
 
 **The event.** Each invocation receives the documented WebSocket proxy event:
 `requestContext.routeKey`, `eventType` (`CONNECT`/`DISCONNECT`/`MESSAGE`),
@@ -576,14 +583,19 @@ closed at plan time. Lambda authorizers that return a policy for REST or HTTP
 API routes are R2b.
 
 **The `@connections` management API.** The runner serves
-`PostToConnection`, `GetConnection` and `DeleteConnection` on a loopback TLS
-listener (`POST`/`GET`/`DELETE /{connectionId}`). The endpoint is injected into
-every function as the API Gateway Management API endpoint override
+`PostToConnection`, `GetConnection` and `DeleteConnection` on a TLS listener
+(`POST`/`GET`/`DELETE /{connectionId}`) that binds every interface
+(`0.0.0.0:0`) so a function container reaches it through `host.docker.internal`;
+the session reports the loopback URL (`https://127.0.0.1:<port>`) and the
+harness uses that, while the container-facing URL is
+`https://host.docker.internal:<port>`. The listener is unauthenticated and
+reachable from any interface on the host while a session runs. The endpoint is
+injected into every function as the API Gateway Management API endpoint override
 (`AWS_ENDPOINT_URL_APIGATEWAYMANAGEMENTAPI`), and the event's
 `requestContext.domainName` is the container-facing host of that listener, so a
 handler that builds the client from the request context reaches it unchanged.
 The listener uses a self-signed certificate generated per run; its PEM is
-mounted at `/var/task/.apptheory-local-ca.pem` and exported as `AWS_CA_BUNDLE`,
+mounted at `/etc/apptheory-local/ca.pem` and exported as `AWS_CA_BUNDLE`,
 `NODE_EXTRA_CA_CERTS` and `SSL_CERT_FILE` for the Go, Node and Python SDKs. A
 closed or unknown connection answers the documented `410 {"message":"Gone"}`.
 `session describe` reports the loopback `managementEndpoint`, the CA path and
@@ -593,9 +605,10 @@ the live connection count.
 connection at the 2-hour maximum lifetime, with close code 1001; the runner
 takes both from the run clock, so `--clock test` plus `clock.advance` closes
 them deterministically. A binary frame is refused with 1003 (API Gateway does
-not support binary media types) and a message over 128 KB with 1009. When the
-runner closes a connection it invokes `$disconnect` with `INTERNAL_ERROR`; a
-client close invokes it with `CLIENT_INITIATED_DISCONNECT`.
+not support binary media types), and a frame over 32 KB or a message over
+128 KB is refused with 1009. When the runner closes a connection it invokes
+`$disconnect` with `INTERNAL_ERROR`; a client close invokes it with
+`CLIENT_INITIATED_DISCONNECT`.
 
 Custom domains, IAM authorization and a REST-style Lambda authorizer on a
 WebSocket route are not served; they fail closed.
@@ -1190,9 +1203,9 @@ the `host-gateway` entry the runner adds. The listener binds every interface so
 that entry works on Linux, where it resolves to the bridge address; the session
 reports and the harness uses `http://127.0.0.1:<port>`. The endpoint is
 unauthenticated and reachable from any interface on the host while a session
-runs; it is the runner's only non-loopback listener, and the backends publish on
-`127.0.0.1`. A handler's real SDK client and the harness's AWS CLI reach the
-same endpoint. A rule's
+runs; it and the WebSocket `@connections` management listener are the runner's
+non-loopback listeners, and the backends publish on `127.0.0.1`. A handler's
+real SDK client and the harness's AWS CLI reach the same endpoint. A rule's
 pattern is matched by the validated EventBridge evaluator E1b uses, and the
 runner performs input shaping, target delivery, retry and dead-letter handling.
 

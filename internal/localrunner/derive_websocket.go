@@ -71,6 +71,52 @@ type WebSocketAuthorizerSpec struct {
 	MethodARN string `json:"methodArn"`
 }
 
+// webSocketRouteSelectionField parses the single request-body field an accepted
+// route selection expression selects. The runner implements the unwrapped
+// $request.body.<field> form and its wrapped ${request.body.<field>}
+// equivalent. Every other documented form (multiple variables, a static value,
+// a nested path) is refused at derive time rather than silently routed to
+// $default.
+// https://docs.aws.amazon.com/apigateway/latest/developerguide/websocket-api-develop-routes.html
+func webSocketRouteSelectionField(expression string) (string, bool) {
+	trimmed := strings.TrimSpace(expression)
+	const (
+		unwrappedPrefix = "$request.body."
+		wrappedPrefix   = "${request.body."
+	)
+	switch {
+	case strings.HasPrefix(trimmed, wrappedPrefix):
+		field := strings.TrimSuffix(strings.TrimPrefix(trimmed, wrappedPrefix), "}")
+		if field == strings.TrimPrefix(trimmed, wrappedPrefix) {
+			// The wrapped form must close.
+			return "", false
+		}
+		return routeSelectionField(field)
+	case strings.HasPrefix(trimmed, unwrappedPrefix):
+		return routeSelectionField(strings.TrimPrefix(trimmed, unwrappedPrefix))
+	default:
+		return "", false
+	}
+}
+
+// routeSelectionField accepts one JSON property name. A nested path, an
+// expression fragment or a delimiter is a form the runner does not implement.
+func routeSelectionField(field string) (string, bool) {
+	field = strings.TrimSpace(field)
+	if field == "" {
+		return "", false
+	}
+	for _, char := range field {
+		switch {
+		case char >= 'a' && char <= 'z', char >= 'A' && char <= 'Z',
+			char >= '0' && char <= '9', char == '_', char == '-':
+		default:
+			return "", false
+		}
+	}
+	return field, true
+}
+
 // Route returns the declared route for a key.
 func (api WebSocketAPISpec) Route(routeKey string) (WebSocketRouteSpec, bool) {
 	for _, route := range api.Routes {
@@ -132,6 +178,13 @@ func deriveWebSocketAPIs(spec *Spec, stacks []assemblyStack, stack assemblyStack
 		}
 		if api.RouteSelectionExpression == "" {
 			api.RouteSelectionExpression = defaultWebSocketRouteSelectionExpression
+		}
+		if _, ok := webSocketRouteSelectionField(api.RouteSelectionExpression); !ok {
+			return unsupported(
+				stack.Name+"/"+id,
+				"route selection expression %q is not supported locally; the runner implements the single-field $request.body.<field> form and its wrapped ${request.body.<field>} form",
+				api.RouteSelectionExpression,
+			)
 		}
 		routes, authorizer, err := webSocketRoutes(stacks, stack, types, authorizers, id, api)
 		if err != nil {

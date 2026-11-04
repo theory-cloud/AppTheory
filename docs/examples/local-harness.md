@@ -187,7 +187,7 @@ events; no route table is synthesized for them.
 
 | Row | Class | How it is verified |
 | --- | --- | --- |
-| `examples/cdk/multilang/handlers/{go,py,ts}` | L3 | Each language's own HTTP API v2 listener serves root, hello, a 405 and a 404. The Go REST API serves hello and three buffered SSE events. Three WebSocket APIs are reported not served. The Go row also invokes the CDK SQS, DynamoDB stream and EventBridge handlers. Gap: WebSocket frames and managed event-source delivery. |
+| `examples/cdk/multilang/handlers/{go,py,ts}` | L3 | Each language's own HTTP API v2 listener serves root, hello, a 405 and a 404. The Go REST API serves hello and three buffered SSE events. Each language's WebSocket APIs serve real frames through the `$connect` authorizer, the custom `chat` route, `$default` and the `@connections` management API. The Go row also invokes the CDK SQS, DynamoDB stream and EventBridge handlers. Gap: managed event-source delivery. |
 | `examples/cdk/lesser-parity/handlers/{api,graphql,sse}` | L1/L3 | The REST API serves the catch-all, the dedicated GraphQL route, the buffered SSE route and the declared CORS preflight. `TABLE_NAME` and `QUEUE_URL` are resolved local values. The SSE row is L3 for buffered delivery. |
 | `examples/cdk/lesser-parity/handlers/worker.mjs` | L3 | A generated two-record SQS batch is processed by the real handler; the invalid record is returned as a partial batch failure. Gap: SQS event delivery. |
 | `examples/cdk/restv1-router/handlers/{api,graphql,inventory}` | L1 | Catch-all GET/POST, the GraphQL route with GET falling through, and inventory GET/PUT/DELETE with path parameters, a 404 refusal and CORS preflight. |

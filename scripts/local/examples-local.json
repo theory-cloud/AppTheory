@@ -329,7 +329,7 @@
       "run": "multilang-go",
       "class": "L3",
       "gap": "Response streaming is buffered by the RIE (R3b); the backends are emulated (DynamoDB Local, ElasticMQ, moto) and IAM policy evaluation is a docs/125 true limit. HTTP API v2, the Go-only REST v1 surface, real WebSocket frames, automatic SQS delivery, DynamoDB Streams and the EventBridge rules are verified.",
-      "description": "Multilang Go handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the Go REST API serves hello and all three buffered SSE events; three WebSocket APIs are reported not served; the CDK SQS mapping delivered a real message to the Go handler and deleted it; a real SDK-written table item reached the handler through the DynamoDB Streams mapping with the CDK stream ARN, the test clock expired a TTL item into the documented REMOVE record, and a poison record was bisected and discarded to the on-failure queue; both EventBridge rules are invoked."
+      "description": "Multilang Go handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the Go REST API serves hello and all three buffered SSE events; three WebSocket APIs serve real frames through the $connect authorizer, the custom chat route, $default and the @connections management API; the CDK SQS mapping delivered a real message to the Go handler and deleted it; a real SDK-written table item reached the handler through the DynamoDB Streams mapping with the CDK stream ARN, the test clock expired a TTL item into the documented REMOVE record, and a poison record was bisected and discarded to the on-failure queue; both EventBridge rules are invoked."
     },
     "examples/cdk/multilang/handlers/ws-authorizer.mjs": {
       "coveredBy": "examples/cdk/multilang/handlers/go/main.go",

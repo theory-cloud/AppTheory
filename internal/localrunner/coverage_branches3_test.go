@@ -94,6 +94,52 @@ func TestDeriveWebSocketRefusals(t *testing.T) {
 	require.Equal(t, "$request.body.action", api.RouteSelectionExpression)
 }
 
+func TestDeriveWebSocketRouteSelectionForms(t *testing.T) {
+	base := func(expression string) map[string]any {
+		properties := map[string]any{"Name": "ws", "ProtocolType": "WEBSOCKET"}
+		if expression != "" {
+			properties["RouteSelectionExpression"] = expression
+		}
+		return map[string]any{
+			"Fn": withAsset(lambdaFunction(nil), "asset.deadbeef"),
+			"Api": map[string]any{"Type": typeHTTPAPI, "Properties": properties},
+			"Stage": map[string]any{"Type": typeHTTPStage, "Properties": map[string]any{
+				"ApiId": map[string]any{"Ref": "Api"}, "StageName": "dev"}},
+			"Integ": map[string]any{"Type": typeHTTPIntegration, "Properties": map[string]any{
+				"IntegrationType": "AWS_PROXY", "IntegrationUri": map[string]any{"Fn::GetAtt": []any{"Fn", "Arn"}}}},
+			"Route": map[string]any{"Type": typeHTTPRoute, "Properties": map[string]any{
+				"ApiId": map[string]any{"Ref": "Api"}, "RouteKey": "$connect",
+				"AuthorizationType": "NONE", "Target": map[string]any{"Ref": "Integ"}}},
+		}
+	}
+	for _, expression := range []string{"$request.body.action", "${request.body.action}"} {
+		t.Run("accepts "+expression, func(t *testing.T) {
+			dir := writeAssembly(t, base(expression))
+			mkdirAsset(t, dir)
+			spec, err := deriveAssembly(t, dir)
+			require.NoError(t, err)
+			require.Len(t, spec.WebSockets, 1)
+			require.Equal(t, expression, spec.WebSockets[0].RouteSelectionExpression)
+			require.Equal(t, "chat", (&WebSocketServer{API: spec.WebSockets[0]}).selectRoute(`{"action":"chat"}`))
+		})
+	}
+	for _, expression := range []string{
+		"action",
+		"${request.body.service}/${request.body.action}",
+		"${request.body.action}-${request.body.invalidPath}",
+		"$request.body.data.room",
+	} {
+		t.Run("refuses "+expression, func(t *testing.T) {
+			dir := writeAssembly(t, base(expression))
+			mkdirAsset(t, dir)
+			_, err := deriveAssembly(t, dir)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), expression)
+			require.Contains(t, err.Error(), "route selection expression")
+		})
+	}
+}
+
 func TestDeriveAuthorizerRefusals(t *testing.T) {
 	base := func(authorizer map[string]any) map[string]any {
 		return map[string]any{

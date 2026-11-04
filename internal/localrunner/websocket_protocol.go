@@ -22,7 +22,9 @@ import (
 //
 // API Gateway closes a connection with 1001 when the client is idle for ten
 // minutes or reaches the two-hour connection lifetime, with 1003 for a binary
-// media type and with 1009 for a message that is too big:
+// media type and with 1009 when an endpoint receives a message that is too big
+// for it to process:
+// https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-websocket-api-overview.html
 // https://docs.aws.amazon.com/apigateway/latest/developerguide/limits.html
 const (
 	webSocketGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
