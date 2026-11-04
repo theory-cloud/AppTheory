@@ -41,6 +41,11 @@ type fakeSQS struct {
 	// sent captures every SendMessage request body, so a test can assert the
 	// exact target shape (raw versus envelope, FIFO ids, attributes).
 	sent []map[string]any
+	// failSend and failGetAttributes inject the service errors the SNS
+	// deliverer must report.
+	failSend          bool
+	failGetAttributes bool
+	emptyCreateURL    bool
 }
 
 type fakeSQSQueue struct {
@@ -139,6 +144,26 @@ func (f *fakeSQS) handle(writer http.ResponseWriter, request *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	switch target {
+	case "CreateQueue":
+		name := stringField(body, "QueueName")
+		if name == "" {
+			fail(writer, "InvalidRequest", "QueueName is required")
+			return
+		}
+		if _, ok := f.queues[name]; !ok {
+			queue := &fakeSQSQueue{name: name, visibility: 30 * time.Second}
+			if attributes, ok := body["Attributes"].(map[string]any); ok {
+				if value, ok := attributes["FifoQueue"].(string); ok && strings.EqualFold(value, "true") {
+					queue.fifo = true
+				}
+			}
+			f.queues[name] = queue
+		}
+		queueURL := "http://localhost:9324/000000000000/" + name
+		if f.emptyCreateURL {
+			queueURL = ""
+		}
+		writeJSON(writer, map[string]any{"QueueUrl": queueURL})
 	case "GetQueueUrl":
 		name := stringField(body, "QueueName")
 		if _, ok := f.queues[name]; !ok {
@@ -147,6 +172,10 @@ func (f *fakeSQS) handle(writer http.ResponseWriter, request *http.Request) {
 		}
 		writeJSON(writer, map[string]any{"QueueUrl": "http://localhost:9324/000000000000/" + name})
 	case "GetQueueAttributes":
+		if f.failGetAttributes {
+			fail(writer, "InternalError", "attribute read failed")
+			return
+		}
 		queue := f.queueForURL(stringField(body, "QueueUrl"))
 		if queue == nil {
 			fail(writer, "QueueDoesNotExist", "queue does not exist")
@@ -184,6 +213,10 @@ func (f *fakeSQS) handle(writer http.ResponseWriter, request *http.Request) {
 		message.visibleAt = time.Now().Add(time.Duration(intField(body, "VisibilityTimeout")) * time.Second)
 		writeJSON(writer, map[string]any{})
 	case "SendMessage":
+		if f.failSend {
+			fail(writer, "InternalError", "send failed")
+			return
+		}
 		queue := f.queueForURL(stringField(body, "QueueUrl"))
 		if queue == nil {
 			fail(writer, "QueueDoesNotExist", "queue does not exist")

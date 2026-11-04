@@ -627,6 +627,9 @@ func parseLoopbackEndpoint(endpoint string) (*url.URL, error) {
 	if err != nil {
 		return nil, fmt.Errorf("SNS HTTP subscription endpoint %q is not an absolute URL: %w", endpoint, err)
 	}
+	if parsed.Scheme == "" || parsed.Hostname() == "" {
+		return nil, fmt.Errorf("SNS HTTP subscription endpoint %q is not an absolute URL", endpoint)
+	}
 	if !loopbackHost(parsed.Hostname()) {
 		return nil, fmt.Errorf(
 			"SNS HTTP subscription endpoint %q is not a loopback URL; the local runner never contacts the network",
