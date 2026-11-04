@@ -409,7 +409,14 @@ preserves order at the cost of that parallelism.
 An SNS subscription runs on a per-topic hub. At provisioning the runner creates
 one drain queue on moto's own SQS and subscribes it to the topic without raw
 message delivery, so moto writes the documented notification envelope and the
-runner observes every publish on the same path for every subscription. A FIFO
+runner observes every publish on the same path for every subscription. A
+`FilterPolicy` is evaluated for both scopes; `$or` is recognized only when its
+value is an array of at least two objects and none of those objects has a
+reserved keyword as a field name, otherwise `$or` is an ordinary attribute or
+property name
+([OR logic](https://docs.aws.amazon.com/sns/latest/dg/and-or-logic.html)).
+An exact-value rule compares a `Number` attribute's textual form; use `numeric`
+for numeric comparison, because AWS does not pin the exact-value form. A FIFO
 topic uses a FIFO drain queue with content-based deduplication, so the drain
 message also carries `MessageGroupId` and `MessageDeduplicationId`. The runner
 does not create the application's subscriptions in moto; it performs the
@@ -799,7 +806,7 @@ Before a targeted function starts, these expressions resolve to local values:
 | `Ref`/`Fn::GetAtt` on `AWS::S3::Bucket` | The bucket the runner created in s3proxy; `Arn` is built from that name. Requires `--backend s3proxy`. |
 | `Ref`/`Fn::GetAtt` on `AWS::KMS::Key` | The key id or ARN the runner created in moto. Requires `--backend moto`. |
 | `Ref`/`Fn::GetAtt Arn` on `AWS::Kinesis::Stream` | The stream name and ARN the runner created in moto (the template's `Name`, or the deterministic local name). Requires `--backend moto`. |
-| `Ref`/`Fn::GetAtt Type`/`Value` on `AWS::SSM::Parameter` | The parameter name, declared type and declared value the runner created in moto. Requires `--backend moto`. |
+| `Ref`/`Fn::GetAtt Type`/`Value` on `AWS::SSM::Parameter` | The parameter name (provisioned with a leading `/`; AWS allows a bare name), declared type and declared value the runner created in moto. Requires `--backend moto`. |
 | `Ref`/`Fn::GetAtt` on `AWS::SecretsManager::Secret` | The ARN of the secret the runner created in moto (AWS appends a six-character suffix). A `{{resolve:secretsmanager:…}}` value resolves to the provisioned secret's value and JSON key, or keeps the deterministic placeholder when no provisioned secret matches; the session's `describe` returns it. Requires `--backend moto`. |
 | `Ref`/`Fn::GetAtt TopicName`/`TopicArn` on `AWS::SNS::Topic` | The topic ARN, or its name. Requires `--backend moto`. |
 | `Ref`/`Fn::GetAtt` on `AWS::Cognito::UserPool` | The pool id, plus `Arn`, `ProviderName` and `ProviderURL`. Requires `--backend moto`. |

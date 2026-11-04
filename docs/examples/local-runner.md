@@ -417,8 +417,9 @@ The values follow the CloudFormation reference for each resource:
 - **SSM** (`AWS::SSM::Parameter`): `Ref` is the parameter name; `Fn::GetAtt
   Type` and `Fn::GetAtt Value` are the declared type and value
   ([reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-ssm-parameter.html)).
-  A parameter name without a leading `/` is prefixed with one; a name that is
-  not a literal gets a deterministic local name.
+  A parameter name is provisioned with a leading `/`: a name without one is
+  prefixed (AWS allows a bare name; CDK generates path names), and a name that
+  is not a literal gets a deterministic local name.
 - **Secrets Manager** (`AWS::SecretsManager::Secret`): `Ref` is the secret ARN
   ([reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-secretsmanager-secret.html)).
   AWS appends a six-character suffix to the ARN; moto does the same, so the ARN
@@ -1040,19 +1041,30 @@ endpoints
 documented rule is "AND across keys, OR within a key"
 ([subscription filter policies](https://docs.aws.amazon.com/sns/latest/dg/sns-subscription-filter-policies.html),
 [message filtering](https://docs.aws.amazon.com/sns/latest/dg/sns-message-filtering.html)).
+The `$or` operator is supported in both scopes exactly as AWS documents it: SNS
+recognizes `$or` only when its value is an array of at least two objects and
+none of those objects has a reserved keyword (`numeric`, `prefix` and the other
+operators) as a field name; otherwise `$or` is an ordinary attribute or
+property name matched like any other string in the policy
+([OR logic](https://docs.aws.amazon.com/sns/latest/dg/and-or-logic.html)).
+`$or` nests inside a branch and inside a nested body key, and its combination
+count is the sum of its branches; the documented 150-combination and 256 KB
+limits are enforced at plan time
+([filter policy constraints](https://docs.aws.amazon.com/sns/latest/dg/subscription-filter-policy-constraints.html)).
 Attribute-scope policies match only top-level attributes and honour the
 `String`, `String.Array` (each element is a candidate) and `Number` data types;
-a `Binary` attribute matches only `exists`. Body-scope policies require a JSON
+a `Binary` attribute matches only `exists`. An exact-value rule compares a
+`Number` attribute's textual form; use `numeric` for numeric comparison, because
+AWS does not pin the exact-value form. Body-scope policies require a JSON
 object body, and a non-JSON body matches nothing. The supported rules are exact
 string, `prefix`, `suffix`, `anything-but` (scalar, list and prefix forms),
 `numeric` (one comparison or a two-sided range), `exists` and
 `equals-ignore-case`. The syntax coincides with the EventBridge pattern
 evaluator E1b uses for `FilterCriteria`, so the validators and single-value
 operator primitives are shared; the SNS walker adds presence-based `exists`,
-array element matching and the array form of `anything-but`. `$or` is not SNS
-filter-policy syntax, and the `cidr` operator is not implemented locally: both
-are refused at plan time with the subscription and the offending key named,
-never accepted and silently matched against nothing.
+array element matching and the array form of `anything-but`. The `cidr` operator
+is not implemented locally: it is refused at plan time with the subscription and
+the offending key named, never accepted and silently matched against nothing.
 
 **Delivery state and the local publish path.** Each subscription reports
 `delivered`, `filtered` and `failed` counts plus `lastError` in
