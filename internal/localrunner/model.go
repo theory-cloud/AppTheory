@@ -83,6 +83,8 @@ const (
 	APIRESTV1 APIClass = "restv1"
 	// APIFunctionURL is AWS::Lambda::Url.
 	APIFunctionURL APIClass = "fnurl"
+	// APIWebSocket is AWS::ApiGatewayV2::Api with ProtocolType WEBSOCKET.
+	APIWebSocket APIClass = "websocket"
 )
 
 // FunctionSpec is one Lambda function the assembly defines.
@@ -146,6 +148,25 @@ type Route struct {
 	// $request.header.Authorization. The transport refuses a request that does
 	// not carry every source before invoking the authorizer.
 	AuthorizerIdentitySources []string `json:"authorizerIdentitySources,omitempty"`
+	// AuthorizerKind is empty for a route with no authorizer, or one of the
+	// AuthorizerKind values: http-request-simple, http-jwt, rest-cognito-user-pools.
+	AuthorizerKind AuthorizerKind `json:"authorizerKind,omitempty"`
+	// JWTIssuer, JWTIssuerExpression and JWTAudience describe an HTTP API JWT
+	// authorizer. The expression is the raw template value until the run
+	// resolves it against the provisioned Cognito pool.
+	JWTIssuer              string   `json:"jwtIssuer,omitempty"`
+	JWTIssuerExpression    string   `json:"jwtIssuerExpression,omitempty"`
+	JWTJWTests             []string `json:"-"`
+	JWTAudience            []string `json:"jwtAudience,omitempty"`
+	JWTAudienceExpressions []string `json:"-"`
+	// JWKSURL and AcceptedIssuers are filled at run time, after the local
+	// issuer is known.
+	JWKSURL         string   `json:"jwksUrl,omitempty"`
+	AcceptedIssuers []string `json:"acceptedIssuers,omitempty"`
+	// CognitoPoolARNs are the pools a REST COGNITO_USER_POOLS authorizer names.
+	CognitoPoolARNs []string `json:"cognitoPoolArns,omitempty"`
+	// AuthorizationScopes are the scopes the route requires.
+	AuthorizationScopes []string `json:"authorizationScopes,omitempty"`
 	// Mock is set for a REST API MOCK integration. A mock route has no
 	// function and no invoker; the transport returns the declared response.
 	Mock      *MockResponse `json:"mock,omitempty"`
@@ -393,10 +414,15 @@ type Spec struct {
 	AssemblyDir   string             `json:"assemblyDir"`
 	Functions     []FunctionSpec     `json:"functions"`
 	APIs          []APISpec          `json:"apis"`
+	WebSockets    []WebSocketAPISpec `json:"webSockets,omitempty"`
 	FunctionURLs  []FunctionURLSpec  `json:"functionUrls"`
 	EventSources  []EventSourceSpec  `json:"eventSources,omitempty"`
 	Rules         []RuleSpec         `json:"rules,omitempty"`
 	Subscriptions []SubscriptionSpec `json:"subscriptions,omitempty"`
+	// Notifications are the S3 bucket notification configurations. Each entry is
+	// one destination (function, queue, topic) or the bucket's EventBridge
+	// configuration, so plan and describe report them one by one.
+	Notifications []NotificationSpec `json:"notifications,omitempty"`
 	Skipped       []Skipped          `json:"skipped"`
 	// Delivery is the state the engine would register for every source. Plan
 	// fills it; a live session reports the engine's own state instead.
@@ -476,7 +502,9 @@ func (s *Spec) ServedFunctions() []string {
 // Function URL targets, HTTP API authorizers, enabled event-source consumers,
 // enabled EventBridge rule targets and Lambda log-subscription destinations. It
 // is the local run's function set.
-func (s *Spec) RuntimeFunctions() []string {
+//
+//nolint:gocyclo // one explicit branch per supported provider value.
+func (s *Spec) RuntimeFunctions() []string { //nolint:gocyclo // one explicit loop per derived source kind.
 	seen := map[string]struct{}{}
 	for _, id := range s.ServedFunctions() {
 		seen[id] = struct{}{}
@@ -503,6 +531,14 @@ func (s *Spec) RuntimeFunctions() []string {
 		if subscription.Function != "" {
 			seen[subscription.Function] = struct{}{}
 		}
+	}
+	for _, notification := range s.Notifications {
+		if notification.DestinationType == notificationDestinationFunction && notification.Destination != "" {
+			seen[notification.Destination] = struct{}{}
+		}
+	}
+	for id := range webSocketRouteFunctionSet(s) {
+		seen[id] = struct{}{}
 	}
 	out := make([]string, 0, len(seen))
 	for id := range seen {

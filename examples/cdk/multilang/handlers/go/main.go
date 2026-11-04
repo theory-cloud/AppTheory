@@ -10,6 +10,8 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/apigatewaymanagementapi"
 
 	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
 )
@@ -21,6 +23,8 @@ var (
 	streamRecords      []map[string]any
 	eventBridgeMu      sync.Mutex
 	eventBridgeRecords []map[string]any
+	wsDisconnectMu     sync.Mutex
+	wsDisconnects      []map[string]any
 )
 
 const streamRecordHistory = 50
@@ -112,6 +116,23 @@ func recordSNSEvent(lang string, record events.SNSEventRecord) map[string]any {
 	return entry
 }
 
+// managementClient builds the API Gateway Management API client. An empty
+// endpoint means the SDK resolves it from the function environment, which the
+// local runner sets to the @connections endpoint; a non-empty endpoint is the
+// one the request context reported.
+func managementClient(ctx context.Context, endpoint string) (*apigatewaymanagementapi.Client, error) {
+	cfg, err := awsconfig.LoadDefaultConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if endpoint == "" {
+		return apigatewaymanagementapi.NewFromConfig(cfg), nil
+	}
+	return apigatewaymanagementapi.NewFromConfig(cfg, func(options *apigatewaymanagementapi.Options) {
+		options.BaseEndpoint = &endpoint
+	}), nil
+}
+
 func envOr(name string, fallback string) string {
 	if value := os.Getenv(name); value != "" {
 		return value
@@ -192,6 +213,12 @@ func buildApp() *apptheory.App {
 
 	app.WebSocket("$disconnect", func(ctx *apptheory.Context) (*apptheory.Response, error) {
 		ws := ctx.AsWebSocket()
+		wsDisconnectMu.Lock()
+		wsDisconnects = append(wsDisconnects, map[string]any{
+			"connection_id": ws.ConnectionID,
+			"route_key":     ws.RouteKey,
+		})
+		wsDisconnectMu.Unlock()
 		return apptheory.MustJSON(200, map[string]any{
 			"ok":            true,
 			"lang":          lang,
@@ -202,8 +229,64 @@ func buildApp() *apptheory.App {
 		}), nil
 	})
 
+	app.Get("/ws-disconnects", func(_ *apptheory.Context) (*apptheory.Response, error) {
+		wsDisconnectMu.Lock()
+		events := append([]map[string]any(nil), wsDisconnects...)
+		wsDisconnectMu.Unlock()
+		return apptheory.MustJSON(200, map[string]any{"events": events}), nil
+	})
+
+	app.WebSocket("chat", func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		ws := ctx.AsWebSocket()
+		var message struct {
+			Message string `json:"message"`
+		}
+		_ = json.Unmarshal(ctx.Request.Body, &message)
+		return apptheory.MustJSON(200, map[string]any{
+			"ok":            true,
+			"lang":          lang,
+			"name":          name,
+			"route_key":     ws.RouteKey,
+			"connection_id": ws.ConnectionID,
+			"echo":          message.Message,
+		}), nil
+	})
+
 	app.WebSocket("$default", func(ctx *apptheory.Context) (*apptheory.Response, error) {
 		ws := ctx.AsWebSocket()
+		var command struct {
+			Cmd string `json:"cmd"`
+		}
+		_ = json.Unmarshal(ctx.Request.Body, &command)
+		response := map[string]any{
+			"ok":                  true,
+			"lang":                lang,
+			"name":                name,
+			"route_key":           ws.RouteKey,
+			"connection_id":       ws.ConnectionID,
+			"management_endpoint": ws.ManagementEndpoint,
+			"request_id":          ws.RequestID,
+		}
+		if command.Cmd == "get" {
+			// The client is built from the function environment alone: the
+			// runner injects the @connections endpoint as the API Gateway
+			// Management API endpoint override, so no explicit endpoint is set.
+			client, err := managementClient(ctx.Context(), "")
+			if err != nil {
+				return nil, err
+			}
+			connection, err := client.GetConnection(ctx.Context(), &apigatewaymanagementapi.GetConnectionInput{
+				ConnectionId: &ws.ConnectionID,
+			})
+			if err != nil {
+				return nil, err
+			}
+			response["connection"] = map[string]any{
+				"connected_at":   connection.ConnectedAt.UnixMilli(),
+				"last_active_at": connection.LastActiveAt.UnixMilli(),
+			}
+			return apptheory.MustJSON(200, response), nil
+		}
 		if ws != nil {
 			if err := ws.SendJSONMessage(map[string]any{
 				"ok":   true,
@@ -213,15 +296,7 @@ func buildApp() *apptheory.App {
 				return nil, err
 			}
 		}
-		return apptheory.MustJSON(200, map[string]any{
-			"ok":                  true,
-			"lang":                lang,
-			"name":                name,
-			"route_key":           ws.RouteKey,
-			"connection_id":       ws.ConnectionID,
-			"management_endpoint": ws.ManagementEndpoint,
-			"request_id":          ws.RequestID,
-		}), nil
+		return apptheory.MustJSON(200, response), nil
 	})
 
 	queueName := os.Getenv("APPTHEORY_DEMO_QUEUE_NAME")

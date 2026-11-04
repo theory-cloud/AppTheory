@@ -74,9 +74,10 @@ class RealTreeTests(unittest.TestCase):
         self.assertEqual([], [entry.key for entry in entries if entry.pending])
         classified = [entry for entry in entries if not entry.pending]
         # 59 wave-1/P1 rows, the E6 SNS targets row and consumer, the E3
-        # sqs-event-targets row with its publisher, and the covered Kinesis log
-        # tap and rule target handlers.
-        self.assertEqual(65, len(classified))
+        # sqs-event-targets row with its publisher, the covered Kinesis log tap
+        # and rule target handlers, and the wave-2 E4 S3 consumer, R1 WebSocket
+        # authorizer and R2a authorizer echo rows.
+        self.assertEqual(68, len(classified))
         by_key = {entry.key: entry for entry in entries}
         expected = {
             "examples/cdk/ssr-site/bin/apptheory-ssr-site.ts": "ssr-site-gateway",

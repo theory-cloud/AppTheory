@@ -63,6 +63,10 @@ const (
 	DeliveryKindCloudWatchLogs DeliveryKind = "cloudwatch-logs"
 	// DeliveryKindSNS is an SNS topic subscription.
 	DeliveryKindSNS DeliveryKind = "sns"
+	// DeliveryKindS3Notification is one S3 bucket notification configuration
+	// entry: a Lambda, SQS or SNS destination, or the bucket's EventBridge
+	// configuration.
+	DeliveryKindS3Notification DeliveryKind = "s3-notification"
 )
 
 // deliveryTask names the wave-2 task that implements a kind's deliverer.
@@ -74,6 +78,7 @@ var deliveryTask = map[DeliveryKind]string{
 	DeliveryKindEventBridgeRule:     "E3",
 	DeliveryKindCloudWatchLogs:      "E5",
 	DeliveryKindSNS:                 "E6",
+	DeliveryKindS3Notification:      "E4",
 }
 
 // deliveryKindLabel describes a kind in the delivery state reason.
@@ -85,6 +90,7 @@ var deliveryKindLabel = map[DeliveryKind]string{
 	DeliveryKindEventBridgeRule:     "EventBridge rule delivery",
 	DeliveryKindCloudWatchLogs:      "CloudWatch Logs subscription delivery",
 	DeliveryKindSNS:                 "SNS subscription delivery",
+	DeliveryKindS3Notification:      "S3 event notification delivery",
 }
 
 // DeliveryPhase is one source's delivery state, the local counterpart of the
@@ -147,6 +153,7 @@ type DeliverySource struct {
 	Mapping      *EventSourceSpec  `json:"mapping,omitempty"`
 	Rule         *RuleSpec         `json:"rule,omitempty"`
 	Subscription *SubscriptionSpec `json:"subscription,omitempty"`
+	Notification *NotificationSpec `json:"notification,omitempty"`
 }
 
 // DeliveryState is one source's reported delivery state.
@@ -369,6 +376,21 @@ func DeliverySources(spec *Spec) []DeliverySource {
 			LogicalID:    subscription.LogicalID,
 			Function:     subscription.Function,
 			Subscription: &subscription,
+		})
+	}
+	for index := range spec.Notifications {
+		notification := spec.Notifications[index]
+		function := ""
+		if notification.DestinationType == notificationDestinationFunction {
+			function = notification.Destination
+		}
+		sources = append(sources, DeliverySource{
+			ID:           notification.LogicalID,
+			Kind:         DeliveryKindS3Notification,
+			Stack:        notification.Stack,
+			LogicalID:    notification.LogicalID,
+			Function:     function,
+			Notification: &notification,
 		})
 	}
 	sort.Slice(sources, func(i, j int) bool {

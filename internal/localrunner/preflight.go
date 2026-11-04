@@ -137,6 +137,18 @@ func (r *Runner) securityEnvironment() map[string]string {
 			env[name] = endpoint.URL
 		}
 	}
+	// A WebSocket API's @connections management API is a runner-owned TLS
+	// endpoint. Its SDK endpoint override and the CA every container trusts are
+	// added here, so a handler's client reaches it with no extra configuration.
+	// The documented service-specific name is the one the SDKs derive from the
+	// service id ApiGatewayManagementApi.
+	// https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-how-to-call-websocket-api-connections.html
+	if r.webSocketManagement != nil {
+		env[webSocketManagementEndpointEnv] = r.webSocketManagement.ContainerURL
+		env["AWS_CA_BUNDLE"] = webSocketManagementCACertPath
+		env["NODE_EXTRA_CA_CERTS"] = webSocketManagementCACertPath
+		env["SSL_CERT_FILE"] = webSocketManagementCACertPath
+	}
 	// The global override is the single local backend when there is exactly
 	// one, so SDK clients for other services also stay local; otherwise it
 	// points at a closed local port and fails closed. Service-specific

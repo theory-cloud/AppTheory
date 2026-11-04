@@ -193,6 +193,8 @@ func (s *localSession) execute(ctx context.Context, request sessionRequest) (any
 		return s.ddbStreamEvent(ctx, request)
 	case "s3.put":
 		return s.s3Put(ctx, request)
+	case "s3.delete":
+		return s.s3Delete(ctx, request)
 	case "eventbridge.event":
 		return s.eventBridgeEvent(request)
 	case "kinesis.event":
@@ -205,7 +207,8 @@ func (s *localSession) execute(ctx context.Context, request sessionRequest) (any
 }
 
 //nolint:gocyclo // one reported section per derived resource family.
-func (s *localSession) describe() (map[string]any, error) {
+//nolint:gocognit // one explicit branch per supported provider value.
+func (s *localSession) describe() (map[string]any, error) { //nolint:gocognit // one reported section per derived resource family.
 	functions := make([]map[string]any, 0)
 	targets, err := s.runner.runtimeFunctions(s.spec)
 	if err != nil {
@@ -236,6 +239,28 @@ func (s *localSession) describe() (map[string]any, error) {
 		if address, ok := s.runner.apiURLs[url.LogicalID]; ok {
 			apis = append(apis, map[string]any{"class": APIFunctionURL, "logicalId": url.LogicalID, "url": address})
 		}
+	}
+	for _, api := range s.spec.WebSockets {
+		entry := map[string]any{
+			"class":                    api.Class,
+			"logicalId":                api.LogicalID,
+			"stage":                    api.Stage,
+			"routeSelectionExpression": api.RouteSelectionExpression,
+			"routes":                   api.Routes,
+		}
+		if address, ok := s.runner.apiURLs[api.LogicalID]; ok {
+			entry["url"] = address
+		}
+		if api.Authorizer != nil {
+			entry["authorizer"] = api.Authorizer.Function
+			entry["authorizerMethodArn"] = api.Authorizer.MethodARN
+		}
+		if s.runner.webSocketManagement != nil {
+			entry["managementEndpoint"] = s.runner.webSocketManagement.URL
+			entry["managementCa"] = s.runner.webSocketManagement.certificatePath
+			entry["connections"] = s.runner.webSocketManagement.connectionCount()
+		}
+		apis = append(apis, entry)
 	}
 	cloudFront := make([]map[string]any, 0, len(s.spec.CloudFront))
 	for _, distribution := range s.spec.CloudFront {
@@ -297,11 +322,46 @@ func (s *localSession) describe() (map[string]any, error) {
 		"eventSources":  s.spec.EventSources,
 		"rules":         s.spec.Rules,
 		"subscriptions": s.spec.Subscriptions,
+		"notifications": s.describeNotifications(delivery),
 		"resources":     resources,
 		"secrets":       secrets,
 		"endpoints":     endpoints,
 		"delivery":      delivery,
 	}, nil
+}
+
+// describeNotifications reports each S3 notification destination with the
+// delivered, filtered and failed counts the engine recorded. A count is per
+// destination, so a bucket with two configurations reports them separately.
+func (s *localSession) describeNotifications(delivery EngineState) []map[string]any {
+	if len(s.spec.Notifications) == 0 {
+		return nil
+	}
+	states := map[string]DeliveryState{}
+	for _, state := range delivery.Sources {
+		states[state.ID] = state
+	}
+	out := make([]map[string]any, 0, len(s.spec.Notifications))
+	for _, notification := range s.spec.Notifications {
+		entry := map[string]any{
+			"logicalId":       notification.LogicalID,
+			"bucket":          notification.Bucket,
+			"bucketName":      notification.BucketName,
+			"destinationType": notification.DestinationType,
+			"destination":     notification.Destination,
+			"events":          notification.Events,
+			"filterRules":     notification.FilterRules,
+			"configurationId": notification.ConfigurationID,
+		}
+		if state, ok := states[notification.LogicalID]; ok {
+			entry["state"] = state.State
+			entry["delivered"] = state.Delivered
+			entry["filtered"] = state.Filtered
+			entry["failed"] = state.Failed
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 // clockNow reports the run's clock mode and current instant.
@@ -783,6 +843,36 @@ func (s *localSession) s3Put(ctx context.Context, request sessionRequest) (any, 
 		return nil, err
 	}
 	return map[string]any{"bucket": value.Name, "key": request.ObjectKey, "etag": aws.ToString(put.ETag)}, nil
+}
+
+// s3Delete removes one object through the real SDK so a notification watcher
+// observes the documented ObjectRemoved event.
+func (s *localSession) s3Delete(ctx context.Context, request sessionRequest) (any, error) {
+	resource, key, err := s.findResource(request.Bucket)
+	if err != nil {
+		return nil, err
+	}
+	if resource.Type != typeS3Bucket {
+		return nil, fmt.Errorf("%s is %s, not an S3 bucket", request.Bucket, resource.Type)
+	}
+	value, ok := s.runner.resourceValues[key]
+	if !ok {
+		return nil, fmt.Errorf("S3 bucket %s is not provisioned; start the run with --backend s3proxy", request.Bucket)
+	}
+	backend, ok := s.runner.backendForService("s3")
+	if !ok || backend.HostURL == "" {
+		return nil, fmt.Errorf("the s3 backend is not running")
+	}
+	if strings.TrimSpace(request.ObjectKey) == "" {
+		return nil, fmt.Errorf("s3.delete needs objectKey")
+	}
+	if _, err := newS3Client(backend.HostURL).DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(value.Name),
+		Key:    aws.String(request.ObjectKey),
+	}); err != nil {
+		return nil, err
+	}
+	return map[string]any{"bucket": value.Name, "key": request.ObjectKey, "deleted": true}, nil
 }
 
 func (s *localSession) eventBridgeEvent(request sessionRequest) (any, error) {

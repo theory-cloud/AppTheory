@@ -286,6 +286,9 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
      and the CDK asset directory (or inline `Code.ZipFile`);
    - `AWS::ApiGatewayV2::Api` (`ProtocolType: HTTP`), routes and proxy
      integrations;
+   - `AWS::ApiGatewayV2::Api` (`ProtocolType: WEBSOCKET`), its route selection
+     expression, its `$connect`/`$disconnect`/`$default` and custom routes, and
+     a `$connect` REQUEST authorizer;
    - `AWS::ApiGateway::RestApi`, its resource tree, methods and stage;
    - `AWS::Lambda::Url` Function URLs;
    - `AWS::Logs::SubscriptionFilter`, its log group and its destination (a
@@ -306,9 +309,8 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
      cache, origin request and response headers policies and origin access
      controls it references. A distribution property the gateway cannot route or
      render faithfully is reported, and the distribution is refused.
-   A WebSocket API is listed under `skipped`; it does not stop an app that also
-   has HTTP or REST routes. A REST `MOCK` integration is served from the
-   status and headers the template declares (CDK uses it for CORS preflight).
+   A REST `MOCK` integration is served from the status and headers the template
+   declares (CDK uses it for CORS preflight).
 3. **Resolve images.** The profile's digest-pinned image for each served
    function's runtime is selected before any container starts. A missing image
    class or a tag that is not pinned by digest fails here, after synthesis.
@@ -532,6 +534,145 @@ provisioned secret the wave-1 deterministic placeholder is kept unchanged.
   record/HTTP shapes itself; the envelope encoding, the `UnsubscribeURL`
   placeholder and the FIFO ids are documented under
   [SNS subscription delivery](#sns-subscription-delivery).
+
+## WebSocket APIs
+
+An `AWS::ApiGatewayV2::Api` with `ProtocolType: WEBSOCKET` is served as a real
+WebSocket listener on its own loopback URL. The listener speaks RFC 6455: the
+handshake, masked client frames, fragmented messages, ping/pong and the close
+handshake. Its URL is `ws://127.0.0.1:<port>/<stage>`.
+
+**Routes.** `plan` prints the API's route table: `$connect`, `$disconnect`,
+`$default` and every custom route key the template declares. A text message is
+routed by the API's `RouteSelectionExpression` (default
+`$request.body.action`): the expression's field is read from the JSON body and
+matched against the route keys. The runner implements the single-field
+`$request.body.<field>` form and its wrapped `${request.body.<field>}`
+equivalent; every other documented form — multiple variables such as
+`${request.body.service}/${request.body.action}`, a static value such as
+`action`, or a nested path such as `$request.body.data.room` — is refused at
+plan time with the expression named, because serving it as `$default` would
+silently leave every custom route unmatched. A message that is not JSON, has no
+such field, or selects no declared route goes to `$default`; an API with no
+`$default` route drops it. `$connect` and `$disconnect` are one-way; `$default`
+and custom routes are two-way, so a 2xx integration response body is sent back
+to the client.
+
+**The event.** Each invocation receives the documented WebSocket proxy event:
+`requestContext.routeKey`, `eventType` (`CONNECT`/`DISCONNECT`/`MESSAGE`),
+`messageId` (messages), `connectionId`, `connectedAt`, `requestId`,
+`extendedRequestId`, `requestTime`, `requestTimeEpoch`, `messageDirection`,
+`identity.sourceIp`/`identity.userAgent`, `stage`, `domainName` and `apiId`,
+plus `body` and `isBase64Encoded`. A `$disconnect` event also carries
+`requestContext.disconnectReason`: `CLIENT_INITIATED_DISCONNECT` when the client
+closed, `INTERNAL_ERROR` when the server closed the connection.
+
+**The `$connect` authorizer.** A `REQUEST` Lambda authorizer on `$connect` runs
+during the handshake, before the `$connect` integration. It receives the
+documented authorizer event (`type: "REQUEST"`, `methodArn` ending in
+`/<stage>/$connect`, headers, multi-value headers, query parameters and
+`requestContext`) and returns an IAM policy. The runner applies the narrow
+Allow/Deny match docs/125 permits: each statement's `Action` must be
+`execute-api:Invoke` (or `*`) and its `Resource` must match the `$connect`
+method ARN with IAM-style `*`/`?` wildcards; an explicit Deny wins, and no
+matching Allow refuses the connection with 401. This is an authorizer-policy
+match, never IAM evaluation, which stays a docs/125 true limit. A request that
+does not carry every configured identity source is refused before the authorizer
+runs. Only `$connect` can be authorized; an authorizer on another route fails
+closed at plan time. Lambda authorizers that return a policy for REST or HTTP
+API routes are R2b.
+
+**The `@connections` management API.** The runner serves
+`PostToConnection`, `GetConnection` and `DeleteConnection` on a TLS listener
+(`POST`/`GET`/`DELETE /{connectionId}`) that binds every interface
+(`0.0.0.0:0`) so a function container reaches it through `host.docker.internal`;
+the session reports the loopback URL (`https://127.0.0.1:<port>`) and the
+harness uses that, while the container-facing URL is
+`https://host.docker.internal:<port>`. The listener is unauthenticated and
+reachable from any interface on the host while a session runs. The endpoint is
+injected into every function as the API Gateway Management API endpoint override
+(`AWS_ENDPOINT_URL_APIGATEWAYMANAGEMENTAPI`), and the event's
+`requestContext.domainName` is the container-facing host of that listener, so a
+handler that builds the client from the request context reaches it unchanged.
+The listener uses a self-signed certificate generated per run; its PEM is
+mounted at `/etc/apptheory-local/ca.pem` and exported as `AWS_CA_BUNDLE`,
+`NODE_EXTRA_CA_CERTS` and `SSL_CERT_FILE` for the Go, Node and Python SDKs. A
+closed or unknown connection answers the documented `410 {"message":"Gone"}`.
+`session describe` reports the loopback `managementEndpoint`, the CA path and
+the live connection count.
+
+**Lifecycle.** API Gateway closes an idle connection after 10 minutes and a
+connection at the 2-hour maximum lifetime, with close code 1001; the runner
+takes both from the run clock, so `--clock test` plus `clock.advance` closes
+them deterministically. A binary frame is refused with 1003 (API Gateway does
+not support binary media types), and a frame over 32 KB or a message over
+128 KB is refused with 1009. When the runner closes a connection it invokes
+`$disconnect` with `INTERNAL_ERROR`; a client close invokes it with
+`CLIENT_INITIATED_DISCONNECT`.
+
+Custom domains, IAM authorization and a REST-style Lambda authorizer on a
+WebSocket route are not served; they fail closed.
+
+## Authorizers
+
+The transport runs the authorizer a route declares before the integration. It
+never bypasses one: a kind it cannot run refuses the route at plan time with the
+kind named.
+
+**HTTP API JWT authorizers.** An `AWS::ApiGatewayV2::Authorizer` with
+`AuthorizerType: JWT` validates the token from its identity source (default
+`$request.header.Authorization`, `Bearer` scheme) as
+[Controlling access to HTTP APIs with JWT authorizers](https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-jwt-authorizer.html)
+describes. Only RSA-based algorithms are supported: the header's `alg` must be
+`RS256`, `RS384` or `RS512`; `none`, `HS*` and the ECDSA algorithms are refused.
+The signature is verified against the issuer's `/.well-known/jwks.json` with the
+key the header's `kid` names — a token without `kid`, or whose `kid` matches no
+key after one refresh, is refused. The checked claims are `iss` (must match the
+configured issuer), `aud` (or `client_id` only when `aud` is absent; `aud` wins
+when both are present), `exp`, `nbf` and `iat` (all compared with the run
+clock), and `scope`/`scp`: a route's `AuthorizationScopes` is an any-of match, so
+at least one of the route's scopes must be present in the token. The validated
+claims and scopes reach the integration as
+`requestContext.authorizer.jwt.claims` and `requestContext.authorizer.jwt.scopes`.
+A missing or malformed token, a bad signature, a wrong issuer or audience, an
+unknown `kid` and a non-RSA algorithm are 401; a token carrying none of the
+route's scopes is 403.
+
+The issuer can be a literal OIDC URL or a CloudFormation expression that names a
+provisioned Cognito pool. For a pool the runner serves the issuer at
+`http://127.0.0.1:<port>/cognito-idp/<region>/<poolId>`; the template's canonical
+issuer (`https://cognito-idp.<region>.amazonaws.com/<poolId>`) is accepted too,
+because that is the `iss` a real pool's tokens carry. An issuer the run cannot
+resolve to a provisioned pool fails closed.
+
+**REST API Cognito user-pool authorizers.** An `AWS::ApiGateway::Authorizer`
+with `Type: COGNITO_USER_POOLS` validates the token in its identity-source
+header against the named pool's JWKS, as
+[Using Amazon Cognito user pools as authorizer](https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-integrate-with-cognito.html)
+describes, with the same claim and algorithm checks as the HTTP API JWT
+authorizer: RSA-based algorithms only, a `kid` that names the signing key,
+`iss`, `aud` (with `client_id` only when `aud` is absent), `exp`, `nbf` and
+`iat`. A route's `AuthorizationScopes` is the any-of match the REST method API
+documents — the invocation is authorized if any method scope matches a claimed
+scope — so at least one of the route's scopes must be present in the access
+token's `scope`/`scp`
+([PutMethod](https://docs.aws.amazon.com/apigateway/latest/api/API_PutMethod.html)).
+The claims reach the integration as `requestContext.authorizer.claims`. A
+missing or invalid token is 401; a token carrying none of the route's scopes is
+403.
+
+**The run clock.** `exp`, `nbf` and `iat` are compared with the run clock, so
+`--clock test` changes what "expired", "not yet valid" and "issued in the
+future" mean. A token minted by the moto pool uses wall-clock times; start a
+test clock a few minutes ahead of wall time so a token minted after the session
+starts has `iat` before the run clock (the `lambda-role-authorizers` row starts
+ten minutes ahead), and `clock.advance` past its expiry to prove the check. A
+test clock that starts before the token's `iat` refuses it, which is the
+documented behaviour.
+
+**Still refused.** Lambda authorizers that return an IAM policy for HTTP or REST
+routes (R2b), IAM authorization, and `$context`/`$stageVariables` identity
+sources fail closed at plan time.
 
 ## CloudFront distributions
 
@@ -832,19 +973,25 @@ An SQS mapping has a deliverer: it polls ElasticMQ, invokes the function and
 deletes or leaves each message exactly as Lambda documents. A DynamoDB Streams
 mapping reads the table's stream on DynamoDB Local and invokes the function with
 the documented records. An EventBridge schedule fires on the run clock and a
-pattern rule receives every matching `PutEvents` call on the runner's own bus.
-A Kinesis mapping polls moto's stream, and a CloudWatch Logs subscription filter
-delivers the log events written through the real Logs API. An SNS subscription
-has a deliverer: the runner observes every publish on moto and performs the
-fan-out to the subscription's target. A kind without a deliverer is registered
-and reported as `not-delivered` with the task that will implement it. Nothing is silent: `plan` prints the state next to every
-derived source, and a session reports the same source list live.
+pattern rule receives every matching `PutEvents` call on the runner's own bus,
+including the S3 events the runner publishes itself. A Kinesis mapping polls
+moto's stream, and a CloudWatch Logs subscription filter delivers the log events
+written through the real Logs API. An SNS subscription has a deliverer: the
+runner observes every publish on moto and performs the fan-out to the
+subscription's target. A bucket notification configuration has a deliverer: the
+runner watches the real bucket and delivers the documented record to its Lambda,
+SQS and SNS destinations, and publishes the `aws.s3` EventBridge event for a
+bucket that enables EventBridge notifications. A kind without a deliverer is
+registered and reported as `not-delivered` with the task that will implement it.
+Nothing is silent: `plan` prints the state next to every derived source, and a
+session reports the same source list live.
 
 | Source kind | Local delivery |
 | --- | --- |
 | SQS event source mapping | Delivered (E1b); see [SQS event-source delivery](#sqs-event-source-delivery) |
 | DynamoDB Streams event source mapping | Delivered (E2); see [DynamoDB Streams delivery](#dynamodb-streams-delivery) |
 | SNS subscription | Delivered (E6); see [SNS subscription delivery](#sns-subscription-delivery) |
+| S3 bucket notification | Delivered (E4); see [S3 event notification delivery](#s3-event-notification-delivery) |
 | EventBridge schedule and pattern rule | Delivered (E3); see [EventBridge delivery](#eventbridge-delivery) |
 | CloudWatch Logs subscription filter | Delivered (E5); see [CloudWatch Logs subscription delivery](#cloudwatch-logs-subscription-delivery) |
 | Kinesis event source mapping | Delivered (E5); see [Kinesis event-source delivery](#kinesis-event-source-delivery) |
@@ -1071,9 +1218,9 @@ the `host-gateway` entry the runner adds. The listener binds every interface so
 that entry works on Linux, where it resolves to the bridge address; the session
 reports and the harness uses `http://127.0.0.1:<port>`. The endpoint is
 unauthenticated and reachable from any interface on the host while a session
-runs; it is the runner's only non-loopback listener, and the backends publish on
-`127.0.0.1`. A handler's real SDK client and the harness's AWS CLI reach the
-same endpoint. A rule's
+runs; it and the WebSocket `@connections` management listener are the runner's
+non-loopback listeners, and the backends publish on `127.0.0.1`. A handler's
+real SDK client and the harness's AWS CLI reach the same endpoint. A rule's
 pattern is matched by the validated EventBridge evaluator E1b uses, and the
 runner performs input shaping, target delivery, retry and dead-letter handling.
 
@@ -1399,6 +1546,108 @@ target path as an observed SDK publish.
 | Moto's HTTP fan-out drops `MessageGroupId`/`MessageDeduplicationId` and SNS forbids HTTP targets on FIFO topics | The runner does not use an HTTP observer; the drain queue carries the FIFO ids. |
 | Moto accepts a FIFO queue subscription only on a FIFO topic | The runner registers subscriptions itself and follows AWS: a FIFO queue is accepted on either topic; the SNS FIFO restriction applies to Lambda and HTTP targets. |
 
+| s3proxy deviation | How the runner normalizes it |
+| --- | --- |
+| s3proxy has no server-side notification hook | The runner observes the bucket with the real `ListObjectsV2` API and derives the documented record from the observed object state. |
+| The observation cannot tell which S3 API made the change | An observed create is reported as `ObjectCreated:Put` (multipart complete and copy included) and an observed delete as `ObjectRemoved:Delete`. |
+| An object created and deleted inside one 250 ms poll is invisible | The poll interval is documented; a row that needs both changes separates them in time. |
+| The listing carries no request id or source IP | The runner generates the request id and reports its own loopback source address, the way S3 generates them for its own record. |
+
+### S3 event notification delivery
+
+Two template shapes declare a bucket's notification configuration, and the
+runner reads both:
+
+- `AWS::S3::Bucket.NotificationConfiguration`, the CloudFormation property, with
+  one `Event` per entry (`s3:ObjectCreated:*`, `s3:ObjectRemoved:Delete`, …) and
+  an optional `Filter.S3Key` prefix/suffix rule list;
+- `Custom::S3BucketNotifications.NotificationConfiguration`, the shape
+  `Bucket.addEventNotification` emits. That custom resource calls
+  `PutBucketNotificationConfiguration` at deploy time, so the configuration
+  never appears on the bucket resource itself; the runner reads the custom
+  resource's properties, which are the bucket API's shape.
+
+The destinations are Lambda functions, SQS queues, SNS topics and the bucket's
+EventBridge configuration (`EventBridgeConfiguration: {}`), as
+[Event notifications](https://docs.aws.amazon.com/AmazonS3/latest/userguide/EventNotifications.html)
+documents. Event names in the configuration carry AWS's `s3:` prefix; the record
+`eventName` does not (`ObjectCreated:Put`), exactly as
+[Event message structure](https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-content-structure.html)
+shows.
+
+**Observing the object change.** s3proxy, the profile's S3 backend, has no
+server-side event hook. The runner therefore watches each bucket that declares a
+notification with the real `ListObjectsV2` API and compares each listing with
+the previous one. A new key, an overwrite (ETag, size or `LastModified`
+changed) and a removed key each become the documented record. The first listing
+after the run starts is the baseline, so objects that existed before the run
+never produce an event. The watcher polls every 250 ms.
+
+**What the destinations receive.**
+
+- A Lambda, SQS or SNS destination receives `{"Records":[…]}` with
+  `eventVersion: "2.6"`, `eventSource: "aws:s3"`, `eventName`, the response
+  elements, and `s3.bucket`/`s3.object` including the URL-encoded key
+  (space becomes `+`, `/` is kept), `size`, `eTag`, `sequencer` and the
+  configuration's `configurationId`.
+- An SNS destination is published through the runner's own SNS fan-out, so a
+  subscriber sees the documented SNS envelope whose `Message` is that JSON
+  (or the JSON itself under raw message delivery).
+- A bucket with EventBridge notifications publishes the
+  [S3 → EventBridge](https://docs.aws.amazon.com/AmazonS3/latest/userguide/EventBridge.html)
+  event: `source: "aws.s3"`, `detail-type: "Object Created"` or
+  `"Object Deleted"`, and a `detail` with the bucket, the object, the request id
+  and the `reason` (`PutObject`/`DeleteObject`). It is published on the runner's
+  own bus, so a matching rule reaches its targets with no `PutEvents` call from
+  the test.
+
+**The test message.** When the configuration is applied S3 sends the
+`s3:TestEvent` message to every SQS and SNS destination (never to a Lambda
+destination). The runner sends it once, after the baseline listing, so a row can
+use it as the signal that the watcher is ready. The message has the simplified
+shape the content-structure page shows (`Service`, `Event`, `Time`, `Bucket`,
+`RequestId`, `HostId`), not the `Records` envelope.
+
+**What the record reports.** The watcher cannot see which S3 API made the
+change, so an observed create is reported as `ObjectCreated:Put` and an observed
+delete as `ObjectRemoved:Delete`; a multipart upload and a copy are likewise
+reported as `Put`. A create and a delete of the same key inside one 250 ms poll
+is not observed. The `size` and `eTag` come from the listing; the `sequencer` is
+the observation instant.
+
+**The producible event set.** The watcher observes creates and deletes only, so
+a configuration may name only `s3:ObjectCreated:*`, `s3:ObjectCreated:Put`,
+`s3:ObjectRemoved:*` or `s3:ObjectRemoved:Delete`. `plan` refuses every other
+`s3:` event name by name — including `s3:ObjectCreated:Copy`,
+`s3:ObjectCreated:CompleteMultipartUpload`, `s3:ObjectCreated:Post`,
+`s3:ObjectRemoved:DeleteMarkerCreated`, `s3:ObjectRestore:*`,
+`s3:ObjectTagging:*`, `s3:ObjectAcl:Put`, `s3:LifecycleExpiration:*`,
+`s3:LifecycleTransition`, `s3:IntelligentTiering`, `s3:Replication:*` and
+`s3:ReducedRedundancyLostObject` — with the reason "the local watcher observes
+creates and deletes only"; a configuration that mixes a producible and an
+unproducible name is refused the same way, never silently narrowed. These four
+names are the part of the
+[S3 event notification types](https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-how-to-event-types-and-destinations.html)
+list the observation can reproduce.
+
+**Overlapping filters are refused like AWS.** AWS's
+`PutBucketNotificationConfiguration` rejects two configurations on one bucket
+that have overlapping prefixes for the same event types unless the suffixes
+don't overlap, as
+[object key name filtering](https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-how-to-filtering.html)
+documents. `plan` applies the same rule before anything starts: two
+configurations whose event types intersect may not have both overlapping
+prefixes (one is a prefix of the other, or either configuration has no prefix
+rule) and overlapping suffixes (one is a suffix of the other, or either
+configuration has no suffix rule). The refusal names both configurations and the
+event type. Pairs with disjoint event types, or with non-overlapping suffixes,
+are registered, exactly as the page's valid examples show.
+
+`plan` prints one line per destination with `delivery=registered`; `session
+describe` returns a `notifications` array with each destination's
+`configurationId`, `state`, `delivered`, `filtered` and `failed` counts, and the
+same counters appear in the delivery engine's per-source state.
+
 ### Delivery state
 
 The vocabulary follows the Lambda event source mapping API. AWS reports a
@@ -1420,8 +1669,9 @@ The runner keeps the same shape in a smaller vocabulary:
 | `not-delivered` | no mapping exists | The source kind has no deliverer yet; `task` and `reason` name the task that will implement it. |
 
 Every entry reports its `delivered` and `failed` counts, `lastError` and
-`paused`; an SNS subscription also reports `filtered` (messages its policy did
-not match); an SQS source reports `left` (records left for redelivery),
+`paused`; an SNS subscription and an S3 notification destination also report
+`filtered` (messages its policy or key filter did not match); an SQS source
+reports `left` (records left for redelivery),
 `inflight` and `peakInflight`; a DynamoDB Streams mapping reports `discarded`
 (records sent to its on-failure destination); an EventBridge rule reports
 `fired`, `delivered`, `failed` and `deadLettered`; a Kinesis mapping also
@@ -1500,18 +1750,20 @@ the harness records it.
 | SNS topics and subscriptions (moto) | Supported (L2) | Standard and FIFO `AWS::SNS::Topic` are created with `FifoTopic`/`ContentBasedDeduplication`; `Ref` is the ARN and `GetAtt TopicName`/`TopicArn` resolve. `AWS::SNS::Subscription` and inline `Subscription` entries are delivered automatically to Lambda, SQS and loopback HTTP targets, with filter policies, raw message delivery and FIFO ordering/deduplication; see [SNS subscription delivery](#sns-subscription-delivery). `TopicPolicy` is reported skipped (IAM is a docs/125 true limit). |
 | Kinesis streams (moto) | Provisioned (L2); mapping delivered (E5) | `AWS::Kinesis::Stream` is created with `ShardCount` or `StreamModeDetails`, and `RetentionPeriodHours`; `Ref` is the name and `GetAtt Arn` the stream ARN. `AWS_ENDPOINT_URL_KINESIS` is injected. A mapping on the stream is delivered automatically; see [Kinesis event-source delivery](#kinesis-event-source-delivery). |
 | Cognito user pools (moto) | Supported (L2) | `AWS::Cognito::UserPool` and `UserPoolClient` are created; `Ref` returns the pool/client id and `GetAtt Arn`/`ProviderName`/`ProviderURL` the pool provider values. The runner serves the pool's JWKS and an OIDC discovery document at `http://127.0.0.1:<port>/cognito-idp/<region>/<poolId>`. A `UserPoolDomain` is reported skipped (no hosted UI). |
-| S3 (s3proxy) | Supported (L2) | `--backend s3proxy` starts the digest-pinned s3proxy container, creates the assembly's buckets, and injects the S3 endpoint as the container address so the SDK uses path-style addressing. No bucket policies, IAM or event notifications. |
+| S3 (s3proxy) | Supported (L2) | `--backend s3proxy` starts the digest-pinned s3proxy container, creates the assembly's buckets, and injects the S3 endpoint as the container address so the SDK uses path-style addressing. No bucket policies or IAM. A bucket notification configuration is delivered from the real object state; see [S3 event notification delivery](#s3-event-notification-delivery). |
 | Event source mappings (SQS, DynamoDB Streams and Kinesis delivered) | SQS delivered (E1b), DynamoDB Streams delivered (E2), Kinesis delivered (E5) | The mapping's function, source, batch options, filter criteria and scaling configuration are read from the assembly. Every supported mapping is delivered automatically: an SQS queue, a DynamoDB stream or a Kinesis stream; see [SQS event-source delivery](#sqs-event-source-delivery), [DynamoDB Streams delivery](#dynamodb-streams-delivery) and [Kinesis event-source delivery](#kinesis-event-source-delivery). A session can still build a stream record from a real local write and invoke the handler. |
 | EventBridge rules (schedule and pattern) | Delivered (E3) | A rule is registered per kind (schedule or pattern) and delivered: a schedule fires on the run clock and a pattern rule receives every matching `PutEvents` entry; see [EventBridge delivery](#eventbridge-delivery). A session can still build the `Scheduled Event` envelope or the pattern's source/detail-type from the CDK rule and invoke its Lambda target. EventBridge Scheduler (`AWS::Scheduler::Schedule`) is not served because no example declares one. |
 | Kinesis / CloudWatch Logs subscription events | Delivered (E5) | A `AWS::Logs::SubscriptionFilter` is derived with its log group and destination (a Lambda function, or a CloudWatch Logs destination followed to its Kinesis stream) and delivered: function log capture writes the real `PutLogEvents` output, and a stream destination puts the same gzip bytes as the Kinesis record data, which the mapping delivers; see [CloudWatch Logs subscription delivery](#cloudwatch-logs-subscription-delivery) and [Kinesis event-source delivery](#kinesis-event-source-delivery). A session can still build a CloudWatch Logs subscription payload from local log events and wrap it in a Kinesis record, or accept explicit base64 record data. |
 | Delivery engine and test clock | Supported | `run` and `session` start the engine; `plan` and `session describe` report per-source state, including an SNS subscription's `filtered` count. SQS batching windows, visibility deadlines, schedules, TTL expiry and the SNS FIFO deduplication window take their time from `--clock test[=<RFC3339>]`; the `clock.now`/`clock.advance` session commands read and move it. ElasticMQ's and moto's own wall-clock timers and the runtime images are not slowed. `--delivery-concurrency` bounds concurrent deliveries (default 4); an SQS mapping's `MaximumConcurrency` bounds its batches within that. |
 | Deploy-time Secrets Manager dynamic references | Supported | A `{{resolve:secretsmanager:…}}` environment value resolves to the provisioned secret's value (the same JSON key) when the assembly declares that secret, and otherwise keeps the wave-1 deterministic local placeholder. The session's `describe` returns it to the harness; `run` and `plan` never print it. No secret is created in a cloud. |
 | Other emulators | Endpoint injection only | Pass `--endpoint service=url` and `--add-host name=address`; the profile names the environment variables. The checked-in profile binds `ssm`, `secretsmanager`, `sns`, `kinesis` and `cognito-idp` to moto, and `kms`/`sts` as before. |
-| WebSocket APIs | Reported, not served | A WebSocket API is listed under `skipped` with its reason, and an app with no HTTP route, Function URL, event source or rule fails with that list. Its `$connect`/`$disconnect`/`$default` routes are not invoked. |
+| WebSocket APIs (`AWS::ApiGatewayV2::Api`, WEBSOCKET) | Served (L2) | A real RFC 6455 listener serves `$connect`, `$disconnect`, `$default` and custom routes selected by the route selection expression, with the documented proxy event, two-way route responses, the `$connect` policy authorizer, the `@connections` management API and the documented idle/lifetime close; see [WebSocket APIs](#websocket-apis). No custom domains and no IAM authorization. |
 | CloudFront distributions and CloudFront Functions | Served (L2) | The distribution is served on its own loopback URL. Cache behaviors, allowed methods, viewer-request/viewer-response functions, origin request policies and response headers policies are applied; the generated function code runs in a restricted Node sandbox. S3 origins read the app's deployments from s3proxy, Function URL origins invoke the real handler container, and origin groups fail over with CloudFront's rules. No caching, no edge network, no TLS. |
 | REST `MOCK` integrations | Supported (L1) | The transport returns the `IntegrationResponses` status and headers the template declares and invokes no function. CDK emits these for CORS preflight. |
 | HTTP API `REQUEST` authorizers with simple responses | Supported | The transport invokes the real authorizer function with the API Gateway v2 REQUEST event, carrying every configured `$request.header.*` or `$request.querystring.*` identity source in order; a request missing one is refused with 401 before the authorizer runs. A false `isAuthorized` is a 401, the authorizer context is carried to the handler, and a malformed response fails closed. `$context`/`$stageVariables` sources fail closed at plan time. |
-| Other authorizers (REST, JWT, non-simple responses) | Not served | Fails closed; the local transport must never bypass a real authorizer. |
+| HTTP API JWT authorizers | Supported (L2) | RSA-based algorithms only (`RS256`, `RS384`, `RS512`); the signature is verified with the `kid` key from the issuer's JWKS, and `iss`, `aud` (or `client_id` only when `aud` is absent), `exp`, `nbf` and `iat` are checked against the run clock. `AuthorizationScopes` is an any-of match; the claims reach the integration in `requestContext.authorizer.jwt`; see [Authorizers](#authorizers). |
+| REST API Cognito user-pool authorizers | Supported (L2) | The token is validated against the pool's JWKS through the local issuer with the same RSA-only algorithm and claim checks as the HTTP JWT authorizer; `AuthorizationScopes` is an any-of match and the claims reach the integration in `requestContext.authorizer.claims`; see [Authorizers](#authorizers). |
+| REST/HTTP Lambda authorizers with IAM-policy responses (R2b) | Not served | Fails closed; the local transport must never bypass a real authorizer. A WebSocket `$connect` authorizer's policy is matched narrowly against the `$connect` method ARN (see [WebSocket APIs](#websocket-apis)). |
 | Lambda layers, container-image functions | Not served | Fail closed when a served function needs them. |
 | CloudFormation-expression environment values | Supported for `Ref`/`Fn::GetAtt`/`Fn::Join` | Tables and stream ARNs, queues, rules, buckets, KMS keys and aliases, SSM parameters, Secrets Manager ARNs, SNS topics, Kinesis streams, Cognito pool/client values, IAM/MicroVM-image/S3 Vectors ARNs and functions resolve to local values (moto/S3 require their backend). An unsupported expression fails with the function and variable named. |
 | CloudFormation-expression `MemorySize`/`Timeout` | Not resolved | A served function whose limit is `Ref`/`GetAtt`/`Fn::If` fails with the property named; the AWS defaults apply only when the property is absent. |
@@ -1525,8 +1777,14 @@ the harness records it.
 - **Streaming is buffered.** A handler that streams is not incremental under the
   Runtime Interface Emulator. Tests can assert the complete bytes and the status
   and headers, never the timing of individual chunks.
-- **WebSocket events** are not delivered. A WebSocket API is reported as not
-  served; its routes are never invoked.
+- **WebSocket domains and IAM authorization** are out of scope. The API is
+  served on a loopback `ws://` URL, so a custom domain name and its certificate
+  are not modelled; `AWS_IAM` route authorization and REST-style Lambda
+  authorizers on WebSocket routes fail closed. The `@connections` management
+  endpoint is TLS with a per-run self-signed certificate, which the runner
+  mounts into the function containers; a client outside those containers must
+  trust that certificate to call it. Binary media types are refused with 1003,
+  as API Gateway documents.
 - **CloudFront is an edge-path gateway, not an emulator.** The distribution's
   cache behavior, generated CloudFront Functions, edge policies and origins are
   applied, but there is no cache, no edge network, no TLS and no viewer protocol
@@ -1552,12 +1810,16 @@ the harness records it.
 - **Kinesis shard topology is fixed.** The stream is created on moto from
   `AWS::Kinesis::Stream`, and `Ref`/`GetAtt Arn` resolve to it; the runner reads
   its shards and delivers each, but moto does not reshard.
-- **HTTP API authorizers** are run only for `REQUEST` authorizers with simple
-  responses. They carry every configured `$request.header.*` or
-  `$request.querystring.*` identity source in order, and a request missing one
-  is refused with 401 before the authorizer runs. REST, JWT and IAM authorizers,
-  and `$context`/`$stageVariables` identity sources, fail closed rather than
-  bypassing a real authorization decision.
+- **Authorizers cover three kinds.** An HTTP API `REQUEST` authorizer with
+  simple responses runs the real function and carries every configured
+  `$request.header.*` or `$request.querystring.*` identity source in order; an
+  HTTP API JWT authorizer and a REST Cognito user-pool authorizer validate the
+  token against the issuer's JWKS. Lambda authorizers that return an IAM policy
+  for HTTP or REST routes (R2b), IAM authorization, and
+  `$context`/`$stageVariables` identity sources fail closed rather than
+  bypassing a real authorization decision. Cognito's hosted UI/OAuth flows are
+  not served, so a token must come from the pool's API (`InitiateAuth`) or a
+  local test issuer.
 - **IAM policy evaluation** remains a docs/125 true limit. SSM parameters,
   Secrets Manager secrets and their resource policies, SNS topic policies,
   Cognito user pools and KMS keys are provisioned, but a policy attached to
@@ -1574,9 +1836,13 @@ the harness records it.
   itself does not support it. A subscription filter policy is evaluated when
   the publish is observed, so the local runner does not model SNS's eventual
   consistency for a policy changed while messages are in flight.
-- **S3 event notifications** are absent from s3proxy. The import-pipeline row
-  writes a real object and puts the S3 event shape through the real bus;
-  S3 → EventBridge emission itself is the named gap (E4).
+- **S3 event notifications are observed, not emitted by the store.** s3proxy
+  has no server-side event hook, so the runner watches the bucket with
+  `ListObjectsV2` and derives the record from the observed object state. An
+  observed create is reported as `ObjectCreated:Put` and an observed delete as
+  `ObjectRemoved:Delete`; a create and a delete inside one 250 ms poll is not
+  observed. S3 → EventBridge emission is delivered by the runner and proven by
+  the import-pipeline row.
 - **Managed services** remain L3 gaps where the examples use them: the MicroVM
   provider in the controller and conformance rows, and S3 Vectors/Bedrock in
   the semantic-search row. The runner stops at those boundaries; it never fakes

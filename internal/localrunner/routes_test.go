@@ -80,7 +80,7 @@ func TestMatchPathGreedyProxyNeedsASegment(t *testing.T) {
 	}
 }
 
-func TestWebSocketAPIIsReportedNotServed(t *testing.T) {
+func TestWebSocketAPIIsServedSeparately(t *testing.T) {
 	stack := assemblyStack{Name: "Stack", Template: template{Resources: map[string]templateResource{
 		"WsApi": {
 			Type: typeHTTPAPI,
@@ -90,16 +90,47 @@ func TestWebSocketAPIIsReportedNotServed(t *testing.T) {
 				"RouteSelectionExpression": "$request.body.action"
 			}`),
 		},
+		"ConnectIntegration": {
+			Type: typeHTTPIntegration,
+			Properties: json.RawMessage(`{
+				"IntegrationType": "AWS_PROXY",
+				"IntegrationUri": {"Fn::GetAtt": ["ConnectFn", "Arn"]}
+			}`),
+		},
+		"ConnectRoute": {
+			Type: typeHTTPRoute,
+			Properties: json.RawMessage(`{
+				"ApiId": {"Ref": "WsApi"},
+				"RouteKey": "$connect",
+				"AuthorizationType": "NONE",
+				"Target": {"Ref": "ConnectIntegration"}
+			}`),
+		},
+		"ConnectFn": {Type: typeLambdaFunction},
 	}}}
-	spec := &Spec{}
+	spec := &Spec{functionURLTargets: map[string]string{}}
 	if err := deriveHTTPAPIs(spec, []assemblyStack{stack}, stack); err != nil {
-		t.Fatalf("a WebSocket API must be reported, not fatal: %v", err)
-	}
-	if len(spec.Skipped) != 1 || spec.Skipped[0].LogicalID != "WsApi" {
-		t.Fatalf("unexpected skipped surfaces: %+v", spec.Skipped)
+		t.Fatalf("derive HTTP APIs: %v", err)
 	}
 	if len(spec.APIs) != 0 {
 		t.Fatalf("a WebSocket API must not be served as HTTP: %+v", spec.APIs)
+	}
+	if err := deriveWebSocketAPIs(spec, []assemblyStack{stack}, stack); err != nil {
+		t.Fatalf("derive WebSocket APIs: %v", err)
+	}
+	if len(spec.WebSockets) != 1 {
+		t.Fatalf("web sockets = %+v", spec.WebSockets)
+	}
+	api := spec.WebSockets[0]
+	if api.LogicalID != "WsApi" || api.Stage != LocalStageName || api.RouteSelectionExpression != "$request.body.action" {
+		t.Fatalf("api = %+v", api)
+	}
+	route, ok := api.Route(webSocketConnect)
+	if !ok || route.Function != "ConnectFn" || route.TwoWay {
+		t.Fatalf("$connect route = %+v (%t)", route, ok)
+	}
+	if len(spec.Skipped) != 0 {
+		t.Fatalf("a WebSocket API must not be reported as skipped: %+v", spec.Skipped)
 	}
 }
 

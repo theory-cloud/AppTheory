@@ -191,14 +191,14 @@
     "examples/cdk/import-pipeline/handlers/ingest/main.go": {
       "run": "import-ingest",
       "class": "L3",
-      "gap": "S3 → EventBridge emission (E4) and CodeBuild; IngestRule is reached by a real PutEvents of the S3 event shape and the WorkConsumer SQS mapping delivers automatically on ElasticMQ.",
-      "description": "Import pipeline ingest handler: a real object is written to s3proxy and a real SDK PutEvents of the S3 event shape reaches IngestRule; the handler writes the job meta and three work messages that the WorkConsumer mapping delivers to the worker and deletes."
+      "gap": "CodeBuild (R8); the bucket's EventBridge notification is delivered by the runner from a real object PUT, and the WorkConsumer SQS mapping delivers automatically on ElasticMQ.",
+      "description": "Import pipeline ingest handler: a real object is written to s3proxy, the runner's S3 notification watcher publishes the documented aws.s3 Object Created event to the local bus, and IngestRule invokes the handler with no harness PutEvents; the handler writes the job meta and three work messages that the WorkConsumer mapping delivers to the worker and deletes."
     },
     "examples/cdk/import-pipeline/handlers/worker/main.go": {
       "run": "import-worker",
       "class": "L3",
-      "gap": "S3 → EventBridge emission (E4) and CodeBuild; IngestRule is reached by a real PutEvents of the S3 event shape and the WorkConsumer SQS mapping delivers automatically on ElasticMQ.",
-      "description": "Import pipeline worker handler: the full ingest → worker flow runs on the CDK jobs table after the real PutEvents ingest; the WorkConsumer mapping delivers the three real work messages automatically and they produce SUCCEEDED/FAILED records and a sanitized error envelope."
+      "gap": "CodeBuild (R8); the bucket's EventBridge notification is delivered by the runner from a real object PUT, and the WorkConsumer SQS mapping delivers automatically on ElasticMQ.",
+      "description": "Import pipeline worker handler: the full ingest → worker flow runs on the CDK jobs table after the runner delivered the bucket's EventBridge notification; the WorkConsumer mapping delivers the three real work messages automatically and they produce SUCCEEDED/FAILED records and a sanitized error envelope."
     },
     "examples/cdk/kinesis-cloudwatch-logs/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
@@ -230,8 +230,14 @@
     "examples/cdk/lambda-role/handlers/custom.ts": {
       "run": "lambda-role-custom",
       "class": "L2",
-      "gap": "IAM policy evaluation is a docs/125 true limit; S3 is emulated by s3proxy (no bucket policies or event notifications). SSM parameters, Secrets Manager secrets and the Cognito user pool are real on moto.",
+      "gap": "IAM policy evaluation is a docs/125 true limit; S3 is emulated by s3proxy (no bucket policies and no server-side notification hook; the runner delivers bucket notification configurations from observed object state). SSM parameters, Secrets Manager secrets and the Cognito user pool are real on moto.",
       "description": "lambda-role custom handler: the compiled asset runs in nodejs:24 and reads String/SecureString/StringList SSM parameters through Ref and GetAtt, both Secrets Manager secrets through GetSecretValue, and the provisioned Cognito pool/client; the runner's local issuer serves the pool JWKS and discovery document; the S3 object round-trip stays real on s3proxy."
+    },
+    "examples/cdk/lambda-role/handlers/authorizer.ts": {
+      "run": "lambda-role-authorizers",
+      "class": "L2",
+      "gap": "moto signs the user pool's tokens and serves the pool JWKS; the runner serves the local OIDC issuer the template's issuer resolves to. Token validation, audience and issuer matching, expiry on the run clock, scopes and the documented claims are real. IAM policy evaluation is a docs/125 true limit.",
+      "description": "HTTP API JWT and REST Cognito authorizers: a real user was created in the moto pool and real id/access tokens were minted through the Cognito API; the JWT-protected route received requestContext.authorizer.jwt.claims (iss, aud, token_use, sub) and the Cognito-protected route received requestContext.authorizer.claims with the access token's scope; no token, a bad signature, a wrong audience, a wrong issuer and a Basic scheme were refused with 401, a missing scope with 403, and after advancing the run clock two hours the same tokens were refused as expired."
     },
     "examples/cdk/lambda-role/handlers/encrypted.ts": {
       "run": "lambda-role-encrypted",
@@ -322,19 +328,24 @@
     "examples/cdk/multilang/handlers/go/main.go": {
       "run": "multilang-go",
       "class": "L3",
-      "gap": "WebSocket frames (R1); HTTP API v2, the Go-only REST v1 surface (including /sse), automatic SQS delivery, the DynamoDB Streams mapping (INSERT, TTL REMOVE, and the bisect/partial-failure on-failure queue), and the scheduled and pattern EventBridge rules are verified.",
-      "description": "Multilang Go handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the Go REST API serves hello and all three buffered SSE events; three WebSocket APIs are reported not served; the CDK SQS mapping delivered a real message to the Go handler and deleted it; a real SDK-written table item reached the handler through the DynamoDB Streams mapping with the CDK stream ARN, the test clock expired a TTL item into the documented REMOVE record, and a poison record was bisected and discarded to the on-failure queue; both EventBridge rules are invoked."
+      "gap": "Response streaming is buffered by the RIE (R3b); the backends are emulated (DynamoDB Local, ElasticMQ, moto) and IAM policy evaluation is a docs/125 true limit. HTTP API v2, the Go-only REST v1 surface, real WebSocket frames, automatic SQS delivery, DynamoDB Streams and the EventBridge rules are verified.",
+      "description": "Multilang Go handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the Go REST API serves hello and all three buffered SSE events; three WebSocket APIs serve real frames through the $connect authorizer, the custom chat route, $default and the @connections management API; the CDK SQS mapping delivered a real message to the Go handler and deleted it; a real SDK-written table item reached the handler through the DynamoDB Streams mapping with the CDK stream ARN, the test clock expired a TTL item into the documented REMOVE record, and a poison record was bisected and discarded to the on-failure queue; both EventBridge rules are invoked."
+    },
+    "examples/cdk/multilang/handlers/ws-authorizer.mjs": {
+      "coveredBy": "examples/cdk/multilang/handlers/go/main.go",
+      "class": "L1",
+      "description": "WebSocket $connect REQUEST authorizer: the runner invokes it during the handshake and matches its returned policy against the $connect method ARN; a wrong token is refused with 401 and the correct one connects."
     },
     "examples/cdk/multilang/handlers/py/handler.py": {
       "run": "multilang-py",
       "class": "L3",
-      "gap": "WebSocket frames (R1); HTTP API v2, automatic SQS delivery, the DynamoDB Streams mapping (INSERT and TTL REMOVE), and the scheduled and pattern EventBridge rules are verified for Python, while the REST v1 surface is defined only for the Go handler in this stack.",
+      "gap": "Response streaming is buffered by the RIE (R3b); the backends are emulated (DynamoDB Local, ElasticMQ, moto) and IAM policy evaluation is a docs/125 true limit. HTTP API v2, real WebSocket frames, automatic SQS delivery, DynamoDB Streams and the EventBridge rules are verified for Python; the REST v1 surface is defined only for the Go handler in this stack.",
       "description": "Multilang Python handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the CDK SQS mapping delivered a real message to the Python handler and deleted it; a real SDK-written table item reached the handler through the DynamoDB Streams mapping with the CDK stream ARN, and the test clock expired a TTL item into the documented REMOVE record; the rate schedule fired and a real SDK PutEvents reached the pattern rule; the Go-only REST surface is also asserted."
     },
     "examples/cdk/multilang/handlers/ts/handler.mjs": {
       "run": "multilang-ts",
       "class": "L3",
-      "gap": "WebSocket frames (R1); HTTP API v2, automatic SQS delivery, the DynamoDB Streams mapping (INSERT and TTL REMOVE), and the scheduled and pattern EventBridge rules are verified for TypeScript, while the REST v1 surface is defined only for the Go handler in this stack.",
+      "gap": "Response streaming is buffered by the RIE (R3b); the backends are emulated (DynamoDB Local, ElasticMQ, moto) and IAM policy evaluation is a docs/125 true limit. HTTP API v2, real WebSocket frames, automatic SQS delivery, DynamoDB Streams and the EventBridge rules are verified for TypeScript; the REST v1 surface is defined only for the Go handler in this stack.",
       "description": "Multilang TypeScript handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the CDK SQS mapping delivered a real message to the TypeScript handler and deleted it; a real SDK-written table item reached the handler through the DynamoDB Streams mapping with the CDK stream ARN, and the test clock expired a TTL item into the documented REMOVE record; the rate schedule fired and a real SDK PutEvents reached the pattern rule; the Go-only REST surface is also asserted."
     },
     "examples/cdk/path-routed-frontend/bin/app.ts": {
@@ -414,6 +425,12 @@
       "class": "L2",
       "description": "SNS consumer handler used by the standard, attribute-filtered and body-filtered Lambda subscriptions; it writes a real SQS receipt with the documented Lambda SNS record."
     },
+    "examples/cdk/sqs-queue/handlers/s3-consumer.mjs": {
+      "run": "sqs-s3-notifications",
+      "class": "L2",
+      "gap": "s3proxy emulates S3 object storage and has no server-side event hook: the runner observes every object change with ListObjectsV2 and therefore reports an observed create as ObjectCreated:Put and an observed delete as ObjectRemoved:Delete; CloudFront caching and the edge network are not involved.",
+      "description": "S3 event notifications: the CDK bucket's Lambda, SQS and SNS configurations delivered the documented s3:TestEvent on configuration; the two ObjectCreated configurations share the incoming/ prefix with non-overlapping suffixes, and a real SDK PUT of incoming/a.json delivered ObjectCreated:Put to the Lambda function only (which wrote a real SQS receipt) while the SNS .csv suffix and the queue's event type filtered it; a real SDK PUT of incoming/b.csv delivered ObjectCreated:Put to the SNS topic only; ignored/a.txt was filtered by every prefix/suffix rule; a real SDK DELETE delivered ObjectRemoved:Delete to the queue; describe reported exact per-destination delivered/filtered counts (lambda 1/3, queue 2/3, topic 2/3)."
+    },
     "examples/cdk/sqs-queue/handlers/rule-publisher.mjs": {
       "run": "sqs-event-targets",
       "class": "L2",
@@ -457,8 +474,8 @@
     "examples/cdk/ssr-site/scripts/upload-assets.sh": {
       "run": "ssr-assets-upload",
       "class": "L3",
-      "gap": "CloudFront invalidation is not exercised; s3proxy has no IAM, bucket policy or event notifications. CloudFront caching and edge network.",
-      "description": "SSR site asset uploader: the real AWS CLI syncs the assets and copies the generated manifest to the local s3proxy endpoint with dummy credentials; the gateway serves both with the script's cache-control and the uploaded manifest."
+      "gap": "CloudFront caching and invalidation are R5a; the edge network and IAM policy evaluation are docs/125 true limits. s3proxy has no bucket policy.",
+      "description": "SSR site asset uploader: the real AWS CLI syncs the assets and copies the generated manifest to the local s3proxy endpoint with dummy credentials; the gateway serves both with the script's cache-control and the uploaded manifest. The site's bucket declares no event notification; the notification destinations are proven by the sqs-queue row."
     },
     "examples/cdk/codebuild-job-runner/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",

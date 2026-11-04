@@ -41,6 +41,8 @@ import select
 import shutil
 import signal
 import socket
+import ssl
+import struct
 import subprocess
 import sys
 import tempfile
@@ -123,10 +125,11 @@ DELIVERY_TASKS = {
     "eventbridge-rule": "E3",
     "cloudwatch-logs": "E5",
     "sns": "E6",
+    "s3-notification": "E4",
 }
 DELIVERED_KINDS = {
     "sqs", "sns", "dynamodb", "kinesis", "cloudwatch-logs",
-    "eventbridge-schedule", "eventbridge-rule",
+    "eventbridge-schedule", "eventbridge-rule", "s3-notification",
 }
 # The local backend a kind needs to deliver. A rule needs none: the runner
 # serves the bus itself.
@@ -138,6 +141,7 @@ DELIVERY_BACKEND = {
     "cloudwatch-logs": "moto",
     "eventbridge-schedule": None,
     "eventbridge-rule": None,
+    "s3-notification": "s3proxy",
 }
 # The live state a kind reaches when its backend is present.
 DELIVERY_LIVE_STATE = {
@@ -148,6 +152,7 @@ DELIVERY_LIVE_STATE = {
     "cloudwatch-logs": ("polling", "paused", "failed"),
     "eventbridge-schedule": ("armed", "failed"),
     "eventbridge-rule": ("armed", "failed"),
+    "s3-notification": ("polling", "failed"),
 }
 DELIVERY_CONCURRENCY = 4
 LOCAL_RUNNER_RUNTIMES = {"go": "provided.al2023", "ts": "nodejs24.x", "py": "python3.14"}
@@ -1408,6 +1413,247 @@ def _run_multilang_sns(
     return f"(message id, topic ARN, subject, timestamp, UnsubscribeUrl and String attribute)"
 
 
+class WebSocketHandshakeRefused(Exception):
+    def __init__(self, status: str) -> None:
+        super().__init__(status)
+        self.status = status
+
+
+class WebSocketClient:
+    """A minimal RFC 6455 client: handshake, masked frames, close frames.
+
+    The rows use it against the real listener; no WebSocket library is
+    involved, so the client speaks exactly the protocol the runner serves.
+    """
+
+    def __init__(self, url: str, headers: dict[str, str] | None = None, timeout: float = 30) -> None:
+        parsed = urllib.parse.urlsplit(url)
+        self.sock = socket.create_connection((parsed.hostname, parsed.port), timeout=timeout)
+        self.sock.settimeout(timeout)
+        key = base64.b64encode(os.urandom(16)).decode("ascii")
+        path = parsed.path or "/"
+        request = (
+            f"GET {path} HTTP/1.1\r\n"
+            f"Host: {parsed.netloc}\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Key: {key}\r\n"
+            "Sec-WebSocket-Version: 13\r\n"
+        )
+        for name, value in (headers or {}).items():
+            request += f"{name}: {value}\r\n"
+        request += "\r\n"
+        self.sock.sendall(request.encode("utf-8"))
+        self.reader = self.sock.makefile("rb")
+        status = self.reader.readline().decode("utf-8", errors="replace").strip()
+        while True:
+            line = self.reader.readline()
+            if line in (b"\r\n", b""):
+                break
+        if " 101 " not in status:
+            self.sock.close()
+            raise WebSocketHandshakeRefused(status)
+
+    def send_text(self, text: str) -> None:
+        self._send_frame(0x1, text.encode("utf-8"))
+
+    def _send_frame(self, opcode: int, payload: bytes) -> None:
+        mask = os.urandom(4)
+        header = bytes([0x80 | opcode])
+        length = len(payload)
+        if length < 126:
+            header += bytes([0x80 | length])
+        elif length <= 0xFFFF:
+            header += bytes([0x80 | 126]) + struct.pack(">H", length)
+        else:
+            header += bytes([0x80 | 127]) + struct.pack(">Q", length)
+        masked = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
+        self.sock.sendall(header + mask + masked)
+
+    def _read_exact(self, count: int) -> bytes:
+        data = self.reader.read(count)
+        if data is None or len(data) != count:
+            raise HarnessFailure(f"websocket: the server closed the connection while {count} bytes were expected")
+        return data
+
+    def receive(self, timeout: float = 30) -> tuple[int, bytes]:
+        self.sock.settimeout(timeout)
+        header = self._read_exact(2)
+        opcode = header[0] & 0x0F
+        length = header[1] & 0x7F
+        if length == 126:
+            length = struct.unpack(">H", self._read_exact(2))[0]
+        elif length == 127:
+            length = struct.unpack(">Q", self._read_exact(8))[0]
+        payload = self._read_exact(length)
+        if opcode == 0x9:  # ping
+            self._send_frame(0xA, payload)
+            return self.receive(timeout)
+        return opcode, payload
+
+    def close(self) -> None:
+        try:
+            self._send_frame(0x8, struct.pack(">H", 1000))
+        except OSError:
+            pass
+        self.sock.close()
+
+
+def _web_socket_api(session: LocalSession, lang: str) -> dict:
+    plan_apis = [
+        api for api in session.spec.get("webSockets") or []
+        if str(api.get("name") or "").endswith(f"-{lang}-ws")
+    ]
+    if len(plan_apis) != 1:
+        raise HarnessFailure(f"multilang {lang}: want one WebSocket API, got {plan_apis}")
+    logical_id = plan_apis[0]["logicalId"]
+    for api in session.info.get("apis") or []:
+        if api.get("class") == "websocket" and api.get("logicalId") == logical_id:
+            return api
+    raise HarnessFailure(f"multilang {lang}: session describe has no WebSocket API {logical_id}")
+
+
+def _management_request(api: dict, method: str, connection_id: str) -> tuple[int, bytes]:
+    context = ssl.create_default_context(cafile=api["managementCa"])
+    request = urllib.request.Request(
+        f"{api['managementEndpoint']}/@connections/{connection_id}", method=method
+    )
+    try:
+        with urllib.request.urlopen(request, context=context, timeout=30) as response:
+            return response.status, response.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read()
+
+
+def _wait_for_ws_disconnect(base: str, connection_id: str, timeout: float = 60) -> dict:
+    deadline = time.monotonic() + timeout
+    last: list = []
+    while time.monotonic() < deadline:
+        status, payload, _ = _json_request("GET", f"{base}/ws-disconnects")
+        if status == 200:
+            last = payload.get("events") or []
+            for event in last:
+                if event.get("connection_id") == connection_id:
+                    return event
+        time.sleep(0.2)
+    raise HarnessFailure(f"websocket: no $disconnect for {connection_id}; last {last}")
+
+
+def _wait_for_log_line(path: str, needle: str, timeout: float = 30) -> None:
+    """Wait until the runner log carries a line the row asserts."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+        if needle in text:
+            return
+        time.sleep(0.1)
+    raise HarnessFailure(f"the run log never reported {needle!r}")
+
+
+def _run_multilang_websocket(harness: Harness, session: LocalSession, lang: str, http_base: str) -> str:
+    """Exchange real frames through the API's listener and prove the lifecycle."""
+    api = _web_socket_api(session, lang)
+    url = api.get("url")
+    if not url or not str(url).startswith("ws://"):
+        raise HarnessFailure(f"multilang {lang}: the WebSocket API has no ws:// URL: {api}")
+    headers = {"Authorization": "Bearer local-allow"} if lang == "go" else {}
+
+    if lang == "go":
+        try:
+            WebSocketClient(url, {"Authorization": "Bearer wrong"})
+            raise HarnessFailure("multilang go: a $connect authorizer denial must refuse the handshake")
+        except WebSocketHandshakeRefused as exc:
+            if "401" not in exc.status:
+                raise HarnessFailure(f"multilang go: the authorizer refusal was {exc.status!r}, want 401")
+        if api.get("authorizer") is None:
+            raise HarnessFailure("multilang go: the plan has no $connect authorizer")
+
+    connection = WebSocketClient(url, headers)
+    try:
+        # A custom route selected by $request.body.action, answered two-way.
+        connection.send_text(json.dumps({"action": "chat", "message": "hello"}))
+        opcode, payload = connection.receive()
+        if opcode != 0x1:
+            raise HarnessFailure(f"multilang {lang}: chat response opcode {opcode}")
+        chat = json.loads(payload)
+        if chat.get("echo") != "hello" or chat.get("lang") != lang or chat.get("route_key") != "chat":
+            raise HarnessFailure(f"multilang {lang}: chat response {chat}")
+        connection_id = chat.get("connection_id")
+        if not connection_id:
+            raise HarnessFailure(f"multilang {lang}: the chat response carries no connection id: {chat}")
+
+        # A message that selects no route goes to $default, which pushes through
+        # the @connections API and also answers two-way.
+        connection.send_text(json.dumps({"message": "no-action"}))
+        received: list[dict] = []
+        deadline = time.monotonic() + 60
+        while len(received) < 2 and time.monotonic() < deadline:
+            opcode, payload = connection.receive()
+            if opcode == 0x1:
+                received.append(json.loads(payload))
+        push = [item for item in received if item.get("ok") is True and "route_key" not in item]
+        response = [item for item in received if item.get("route_key") == "$default"]
+        if len(push) != 1 or len(response) != 1:
+            raise HarnessFailure(f"multilang {lang}: $default push/response {received}")
+        if push[0].get("lang") != lang:
+            raise HarnessFailure(f"multilang {lang}: the push body {push[0]}")
+        if response[0].get("connection_id") != connection_id:
+            raise HarnessFailure(f"multilang {lang}: the $default response {response[0]}")
+
+        # GetConnection through the management endpoint the handler resolved.
+        connection.send_text(json.dumps({"cmd": "get"}))
+        opcode, payload = connection.receive()
+        if opcode != 0x1:
+            raise HarnessFailure(f"multilang {lang}: get response opcode {opcode}")
+        get_body = json.loads(payload)
+        connection_info = get_body.get("connection") or {}
+        if connection_info.get("connected_at", 0) <= 0:
+            raise HarnessFailure(f"multilang {lang}: GetConnection returned {get_body}")
+
+        # The harness's own management client: GET, DELETE, then GONE.
+        status, _ = _management_request(api, "GET", connection_id)
+        if status != 200:
+            raise HarnessFailure(f"multilang {lang}: management GET answered {status}")
+        status, _ = _management_request(api, "DELETE", connection_id)
+        if status != 204:
+            raise HarnessFailure(f"multilang {lang}: management DELETE answered {status}")
+        status, _ = _management_request(api, "GET", connection_id)
+        if status != 410:
+            raise HarnessFailure(f"multilang {lang}: a closed connection answered {status}, want 410")
+        opcode, payload = connection.receive()
+        if opcode != 0x8:
+            raise HarnessFailure(f"multilang {lang}: DeleteConnection did not close the socket (opcode {opcode})")
+    finally:
+        connection.close()
+
+    # Idle timeout on the test clock: a second connection closes with 1001 and
+    # $disconnect runs.
+    idle = WebSocketClient(url, headers)
+    try:
+        idle.send_text(json.dumps({"action": "chat", "message": "idle"}))
+        opcode, payload = idle.receive()
+        if opcode != 0x1:
+            raise HarnessFailure(f"multilang {lang}: idle connection chat opcode {opcode}")
+        idle_id = json.loads(payload).get("connection_id")
+        session.clock_advance("11m")
+        opcode, payload = idle.receive()
+        if opcode != 0x8 or len(payload) < 2:
+            raise HarnessFailure(f"multilang {lang}: the idle connection did not close (opcode {opcode})")
+        if struct.unpack(">H", payload[:2])[0] != 1001:
+            raise HarnessFailure(f"multilang {lang}: idle close code {struct.unpack('>H', payload[:2])[0]}, want 1001")
+    finally:
+        idle.close()
+
+    _wait_for_ws_disconnect(http_base, idle_id)
+    _wait_for_log_line(session.log_path, f"connection {idle_id} closed (INTERNAL_ERROR)")
+    return (
+        "the WebSocket listener accepted the upgrade, routed a frame to the custom chat route and back, "
+        "routed an unmatched frame to $default (a PostToConnection push plus the two-way response), "
+        "GetConnection answered from the handler, the harness's management client deleted the connection "
+        "and then saw 410 GONE, and the idle timeout closed a second connection with 1001 and ran $disconnect"
+    )
+
+
 def run_multilang(harness: Harness, lang: str) -> str:
     return _run_multilang_http(harness, lang)
 
@@ -1428,9 +1674,9 @@ def _run_multilang_http(harness: Harness, lang: str) -> str:
             raise HarnessFailure(
                 f"multilang plan: want 3 HTTP APIs and 1 REST API, got {len(http_apis)}/{len(rest_apis)}"
             )
-        websocket = [item for item in session.spec.get("skipped") or [] if "WebSocket" in str(item.get("reason"))]
+        websocket = session.spec.get("webSockets") or []
         if len(websocket) != 3:
-            raise HarnessFailure(f"multilang plan: want 3 reported WebSocket APIs, got {websocket}")
+            raise HarnessFailure(f"multilang plan: want 3 WebSocket APIs, got {websocket}")
 
         http_base = session_api_url(session.spec, session, f"-{lang}")
         status, payload, _ = _json_request("GET", f"{http_base}/")
@@ -1487,9 +1733,10 @@ def _run_multilang_http(harness: Harness, lang: str) -> str:
         stream_detail = _run_multilang_stream(harness, session, lang, http_base, function)
         if lang == "go":
             stream_detail += "; " + _run_multilang_stream_failure(harness, session, lang, http_base, function)
+        websocket_detail = _run_multilang_websocket(harness, session, lang, http_base)
         return (
             f"{lang} HTTP API served four assertions (200 root, 200 hello, 405 method, 404 missing); "
-            f"REST API served hello and all 3 buffered SSE events; 3 WebSocket APIs reported not served; "
+            f"REST API served hello and all 3 buffered SSE events; {websocket_detail}; "
             f"the CDK SQS mapping delivered one real ElasticMQ message to the {lang} handler and deleted it; "
             f"the SNS Lambda subscription delivered the documented record {sns_record}; {eventbridge_detail}; {stream_detail}"
         )
@@ -1768,7 +2015,7 @@ def run_lambda_role(harness: Harness, kind: str) -> str:
                 or not str(cognito.get("poolArn") or "").endswith(f"userpool/{pool_id}")
             ):
                 raise HarnessFailure(f"lambda-role custom: Cognito GetAtt values were not resolved: {cognito}")
-            pool = session.resource(kind="AWS::Cognito::UserPool")
+            pool = session.resource(logical_prefix="CognitoPool", kind="AWS::Cognito::UserPool")
             issuer = str(pool.get("localIssuer") or "")
             if not issuer.startswith("http://127.0.0.1:"):
                 raise HarnessFailure(f"lambda-role custom: the pool has no local issuer: {pool}")
@@ -2256,6 +2503,160 @@ def run_restv1_sse(harness: Harness) -> str:
     return run_restv1(harness, "sse")
 
 
+def _cognito(harness: Harness, endpoint: str, *arguments: str) -> subprocess.CompletedProcess:
+    return harness.run(
+        ["aws", "--endpoint-url", endpoint, "cognito-idp", *arguments],
+        timeout=180,
+    )
+
+
+def _cognito_tokens(harness: Harness, endpoint: str, pool: dict, client: dict, username: str) -> dict:
+    """Create a real user and mint real id/access tokens through the Cognito API."""
+    pool_id = pool["name"]
+    client_id = client["name"]
+    _cognito(
+        harness, endpoint,
+        "admin-create-user",
+        "--user-pool-id", pool_id,
+        "--username", username,
+        "--message-action", "SUPPRESS",
+    )
+    _cognito(
+        harness, endpoint,
+        "admin-set-user-password",
+        "--user-pool-id", pool_id,
+        "--username", username,
+        "--password", "Passw0rd!23",
+        "--permanent",
+    )
+    result = _cognito(
+        harness, endpoint,
+        "admin-initiate-auth",
+        "--user-pool-id", pool_id,
+        "--client-id", client_id,
+        "--auth-flow", "ADMIN_USER_PASSWORD_AUTH",
+        "--auth-parameters", f"USERNAME={username},PASSWORD=Passw0rd!23",
+    )
+    try:
+        return json.loads(result.stdout)["AuthenticationResult"]
+    except (json.JSONDecodeError, KeyError) as exc:
+        raise HarnessFailure(f"cognito: no AuthenticationResult for {username}: {exc}", result.stdout) from exc
+
+
+def _api_by_prefix(session: LocalSession, prefix: str, api_class: str) -> dict:
+    matches = [
+        api for api in session.info.get("apis") or []
+        if api.get("class") == api_class and str(api.get("logicalId") or "").startswith(prefix)
+    ]
+    if len(matches) != 1:
+        raise HarnessFailure(f"want one {api_class} API with prefix {prefix}, got {matches}")
+    return matches[0]
+
+
+def run_lambda_role_authorizers(harness: Harness) -> str:
+    """HTTP API JWT and REST Cognito authorizers, with real cognito tokens.
+
+    The clock starts ten minutes ahead of wall time so a token minted after the
+    session starts has an iat before the run clock (the documented future-issue
+    check); advancing it two hours proves the expiry is checked against the run
+    clock.
+    """
+    now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0) + datetime.timedelta(minutes=10)
+    session = start_local_session(
+        harness,
+        LAMBDA_ROLE_APP,
+        name="lambda-role-auth",
+        backends=("moto", "s3proxy"),
+        clock="test=" + now.isoformat().replace("+00:00", "Z"),
+    )
+    try:
+        pool = session.resource(logical_prefix="CognitoPool", kind="AWS::Cognito::UserPool")
+        client = session.resource(logical_prefix="CognitoClient", kind="AWS::Cognito::UserPoolClient")
+        other_client = session.resource(logical_prefix="OtherCognitoClient", kind="AWS::Cognito::UserPoolClient")
+        foreign_pool = session.resource(logical_prefix="ForeignCognitoPool", kind="AWS::Cognito::UserPool")
+        foreign_client = session.resource(logical_prefix="ForeignCognitoClient", kind="AWS::Cognito::UserPoolClient")
+        endpoint = session_endpoint(session, "cognito-idp")
+
+        valid = _cognito_tokens(harness, endpoint, pool, client, "alice")
+        other = _cognito_tokens(harness, endpoint, pool, other_client, "bob")
+        foreign = _cognito_tokens(harness, endpoint, foreign_pool, foreign_client, "carol")
+
+        http_api = _api_by_prefix(session, "AuthorizedHttpApi", "httpv2")
+        rest_api = _api_by_prefix(session, "AuthorizedRestApi", "restv1")
+        http_base = http_api["url"]
+        rest_base = rest_api["url"]
+
+        # The valid ID token reaches the integration with the documented claims.
+        status, payload, _ = _json_request(
+            "GET", f"{http_base}/protected", headers={"Authorization": f"Bearer {valid['IdToken']}"}
+        )
+        expect_status(status, 200, "jwt authorizer GET /protected", json.dumps(payload))
+        claims = payload.get("claims") or {}
+        if claims.get("token_use") != "id" or claims.get("aud") != client["name"]:
+            raise HarnessFailure(f"jwt authorizer: unexpected claims {claims}")
+        if pool["name"] not in str(claims.get("iss")):
+            raise HarnessFailure(f"jwt authorizer: the issuer claim {claims.get('iss')!r} does not name the pool")
+        if (payload.get("authorizer") or {}).get("jwt") is None:
+            raise HarnessFailure(f"jwt authorizer: requestContext.authorizer.jwt is missing: {payload}")
+
+        tampered = valid["IdToken"][:-4] + ("AAAA" if not valid["IdToken"].endswith("AAAA") else "BBBB")
+        cases = [
+            ("no token", None, 401),
+            ("bad signature", f"Bearer {tampered}", 401),
+            ("wrong audience", f"Bearer {other['IdToken']}", 401),
+            ("wrong issuer", f"Bearer {foreign['IdToken']}", 401),
+            ("wrong scheme", f"Basic {valid['IdToken']}", 401),
+        ]
+        for label, header, want in cases:
+            headers = {"Authorization": header} if header else {}
+            status, text, _ = http_request("GET", f"{http_base}/protected", headers=headers)
+            expect_status(status, want, f"jwt authorizer {label}", text)
+
+        # The REST Cognito authorizer accepts the access token and exposes its
+        # claims; a route whose scope the token lacks is refused with 403.
+        status, payload, _ = _json_request(
+            "GET", f"{rest_base}/protected", headers={"Authorization": f"Bearer {valid['AccessToken']}"}
+        )
+        expect_status(status, 200, "cognito authorizer GET /protected", json.dumps(payload))
+        claims = payload.get("claims") or {}
+        if claims.get("token_use") != "access" or claims.get("username") != "alice":
+            raise HarnessFailure(f"cognito authorizer: unexpected claims {claims}")
+        if "aws.cognito.signin.user.admin" not in str(claims.get("scope")):
+            raise HarnessFailure(f"cognito authorizer: the scope claim {claims.get('scope')!r} is wrong")
+        status, text, _ = http_request(
+            "GET", f"{rest_base}/admin", headers={"Authorization": f"Bearer {valid['AccessToken']}"}
+        )
+        expect_status(status, 403, "cognito authorizer GET /admin (missing scope)", text)
+        status, text, _ = http_request(
+            "GET", f"{rest_base}/admin", headers={"Authorization": f"Bearer {foreign['AccessToken']}"}
+        )
+        expect_status(status, 401, "cognito authorizer GET /admin (wrong issuer)", text)
+        status, text, _ = http_request("GET", f"{rest_base}/protected")
+        expect_status(status, 401, "cognito authorizer GET /protected (no token)", text)
+
+        # The expiry is checked against the run clock: two hours later the same
+        # token is expired.
+        session.clock_advance("2h")
+        status, text, _ = http_request(
+            "GET", f"{http_base}/protected", headers={"Authorization": f"Bearer {valid['IdToken']}"}
+        )
+        expect_status(status, 401, "jwt authorizer expired token", text)
+        status, text, _ = http_request(
+            "GET", f"{rest_base}/protected", headers={"Authorization": f"Bearer {valid['AccessToken']}"}
+        )
+        expect_status(status, 401, "cognito authorizer expired token", text)
+        return (
+            "a real ID token minted by the moto Cognito pool reached the HTTP API JWT-protected route and "
+            "the integration received requestContext.authorizer.jwt.claims (iss, aud, token_use); a real "
+            "access token reached the REST Cognito-protected route with its claims and the documented "
+            "scope; no token, a bad signature, a wrong audience, a wrong issuer and a Basic scheme were "
+            "refused with 401, a missing scope with 403, and after advancing the run clock two hours the "
+            "same tokens were refused as expired"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
 def run_lambda_role_index(harness: Harness) -> str:
     return run_lambda_role(harness, "index")
 
@@ -2373,6 +2774,13 @@ def _expected_delivery_entries(plan: dict) -> list[tuple[str, str, str | None]]:
     for subscription in plan.get("subscriptions") or []:
         kind = subscription.get("kind") or "cloudwatch-logs"
         entries.append((subscription["logicalId"], kind, subscription.get("function")))
+    for notification in plan.get("notifications") or []:
+        function = (
+            notification.get("destination")
+            if notification.get("destinationType") == "function"
+            else None
+        )
+        entries.append((notification["logicalId"], "s3-notification", function))
     return entries
 
 
@@ -2636,6 +3044,25 @@ class LocalSession:
             if function.get("logicalId") == logical_id:
                 return function
         raise HarnessFailure(f"session did not start function {logical_id}")
+
+    def notifications_for(self, bucket: str, destination_type: str) -> list[dict]:
+        """Return the derived S3 notification configurations for a bucket."""
+        return [
+            notification for notification in self.info.get("notifications") or []
+            if notification.get("destinationType") == destination_type
+            and (
+                notification.get("bucket") == bucket
+                or str(notification.get("bucket") or "").endswith("/" + bucket)
+            )
+        ]
+
+    def notification_for(self, bucket: str, destination_type: str) -> dict:
+        matches = self.notifications_for(bucket, destination_type)
+        if len(matches) != 1:
+            raise HarnessFailure(
+                f"want one {destination_type} notification for bucket {bucket}, got {matches}"
+            )
+        return matches[0]
 
     def resource(self, *, name: str | None = None, logical_prefix: str | None = None, kind: str | None = None) -> dict:
         matches = []
@@ -3729,22 +4156,12 @@ def _run_import(harness: Harness, kind: str) -> tuple[dict, str]:
         worker_queue = session.resource(name="import-records", kind="AWS::SQS::Queue")
         key = "incoming/orders/a4.json"
         content = json.dumps({"order": 42, "source": "local"})
+        # A real object PUT into the provisioned bucket. The runner observes it
+        # at the S3 protocol boundary and publishes the documented S3
+        # EventBridge event itself: the row sends no PutEvents.
         session.request("s3.put", bucket=bucket["logicalId"], objectKey=key, body=content)
-        endpoint = session_endpoint(session, "events")
-        harness.run(
-            [
-                "aws", "--endpoint-url", endpoint, "events", "put-events",
-                "--entries", json.dumps([
-                    {
-                        "Source": "aws.s3",
-                        "DetailType": "Object Created",
-                        "Detail": json.dumps({"bucket": {"name": bucket["name"]}, "object": {"key": key}}),
-                        "EventBusName": "default",
-                    }
-                ]),
-            ],
-            timeout=120,
-        )
+        notification = session.notification_for(bucket["logicalId"], "eventbridge")
+        _wait_for_delivery(session, notification["logicalId"], delivered=1)
         job_id = hashlib.sha256((bucket["name"] + "/" + key).encode()).hexdigest()
         meta = _wait_for_job_meta(session, table["logicalId"], job_id)
         # The WorkConsumer mapping delivers the three real messages to the
@@ -3759,9 +4176,11 @@ def _run_import(harness: Harness, kind: str) -> tuple[dict, str]:
                 raise HarnessFailure(f"import ingest: job meta is not RUNNING: {meta}")
             return (
                 ingest["logicalId"],
-                "a real s3proxy object and a real SDK PutEvents of the S3 event shape reached IngestRule; "
-                "the ingest handler wrote the RUNNING META record on DynamoDB Local and the WorkConsumer "
-                "mapping delivered and deleted the three real work messages",
+                "a real object PUT into the ingest bucket was observed by the runner's S3 notification "
+                "watcher and published to the local EventBridge bus as the documented aws.s3 Object Created "
+                "event, reaching IngestRule with no PutEvents by the harness; the ingest handler wrote the "
+                "RUNNING META record on DynamoDB Local and the WorkConsumer mapping delivered and deleted "
+                "the three real work messages",
             )
         items = session.request("ddb.scan", table=table["logicalId"])["items"]
         records = {item.get("sk"): item for item in items if str(item.get("sk", "")).startswith("REC#")}
@@ -4461,6 +4880,138 @@ def run_sqs_sns_targets(harness: Harness) -> str:
     finally:
         stop_local_session(harness, session)
         capture.stop()
+
+
+def run_sqs_s3_notifications(harness: Harness) -> str:
+    """The three S3 notification destinations and the documented test event.
+
+    The row writes and deletes real objects through the S3 SDK. The runner
+    observes the bucket at the S3 protocol boundary and delivers the documented
+    record to a Lambda function, an SQS queue and an SNS topic (raw SQS
+    subscription), and it never builds an event from harness input.
+    """
+    session = start_local_session(
+        harness,
+        SQS_APP,
+        name="sqs-s3",
+        backends=("sqs", "moto", "s3proxy"),
+        clock=f"test={LOCAL_RUNNER_CLOCK_START}",
+    )
+    try:
+        bucket = session.resource(logical_prefix="NotificationBucket", kind="AWS::S3::Bucket")
+        records = session.resource(name="s3-events", kind="AWS::SQS::Queue")
+        raw = session.resource(name="s3-raw", kind="AWS::SQS::Queue")
+        receipts = session.resource(name="s3-lambda-receipts", kind="AWS::SQS::Queue")
+
+        lambda_config = session.notification_for(bucket["logicalId"], "function")
+        queue_configs = session.notifications_for(bucket["logicalId"], "queue")
+        topic_config = session.notification_for(bucket["logicalId"], "topic")
+        if len(queue_configs) != 1:
+            raise HarnessFailure(f"s3 notifications: want one queue configuration, got {queue_configs}")
+        if not lambda_config.get("filterRules") or len(lambda_config["filterRules"]) != 2:
+            raise HarnessFailure(f"s3 notifications: the Lambda filter rules are {lambda_config.get('filterRules')}")
+
+        # The configuration was applied: S3 sends the documented test message to
+        # every SQS and SNS destination, and never to a Lambda destination.
+        test_event = _wait_for_receipt(
+            session,
+            records["logicalId"],
+            lambda message: message.get("Event") == "s3:TestEvent",
+            label="s3 notifications: test event on the SQS destination",
+        )
+        if test_event.get("Service") != "Amazon S3" or test_event.get("Bucket") != bucket["name"]:
+            raise HarnessFailure(f"s3 notifications: unexpected test event {test_event}")
+        raw_test = _wait_for_receipt(
+            session,
+            raw["logicalId"],
+            lambda message: message.get("Event") == "s3:TestEvent",
+            label="s3 notifications: test event on the SNS destination",
+        )
+        if raw_test.get("Service") != "Amazon S3":
+            raise HarnessFailure(f"s3 notifications: unexpected SNS test event {raw_test}")
+
+        # The Lambda and SNS configurations share the incoming/ prefix for
+        # ObjectCreated, so their suffixes split the keys: .json reaches only
+        # the Lambda destination and .csv reaches only the SNS topic.
+        # https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-how-to-filtering.html
+        content = json.dumps({"ok": True})
+        session.request("s3.put", bucket=bucket["logicalId"], objectKey="incoming/a.json", body=content)
+        receipt = _wait_for_receipt(
+            session,
+            receipts["logicalId"],
+            lambda message: message.get("eventName") == "ObjectCreated:Put",
+            label="s3 notifications: Lambda destination record",
+        )
+        if receipt.get("key") != "incoming/a.json" or receipt.get("bucket") != bucket["name"]:
+            raise HarnessFailure(f"s3 notifications: Lambda record {receipt}")
+        if receipt.get("configurationId") != lambda_config.get("configurationId"):
+            raise HarnessFailure(
+                f"s3 notifications: configurationId {receipt.get('configurationId')!r} "
+                f"!= {lambda_config.get('configurationId')!r}"
+            )
+        if receipt.get("eventVersion") != "2.6" or receipt.get("eventSource") != "aws:s3":
+            raise HarnessFailure(f"s3 notifications: record envelope {receipt}")
+
+        # The .json PUT was observed by every destination before the .csv PUT:
+        # the SNS .csv suffix and the queue's ObjectRemoved event type filtered
+        # it, so only the Lambda destination delivered it.
+        _wait_for_delivery(session, topic_config["logicalId"], delivered=1, filtered=1)
+        _wait_for_delivery(session, queue_configs[0]["logicalId"], delivered=1, filtered=1)
+
+        session.request("s3.put", bucket=bucket["logicalId"], objectKey="incoming/b.csv", body=content)
+        sns_record = _wait_for_receipt(
+            session,
+            raw["logicalId"],
+            lambda message: message.get("Records", [{}])[0].get("eventName") == "ObjectCreated:Put",
+            label="s3 notifications: SNS destination record",
+        )
+        if sns_record["Records"][0]["s3"]["object"]["key"] != "incoming/b.csv":
+            raise HarnessFailure(f"s3 notifications: SNS record {sns_record}")
+        _wait_for_delivery(session, lambda_config["logicalId"], delivered=1, filtered=1)
+
+        # A key that fails every prefix/suffix rule is counted, not delivered.
+        session.request("s3.put", bucket=bucket["logicalId"], objectKey="ignored/a.txt", body=content)
+        _wait_for_delivery(session, lambda_config["logicalId"], filtered=2)
+        _wait_for_delivery(session, queue_configs[0]["logicalId"], filtered=3)
+        _wait_for_delivery(session, topic_config["logicalId"], filtered=2)
+
+        # A delete on the SQS destination delivers ObjectRemoved:Delete.
+        session.request("s3.delete", bucket=bucket["logicalId"], objectKey="incoming/a.json")
+        removed = _wait_for_receipt(
+            session,
+            records["logicalId"],
+            lambda message: message.get("Records", [{}])[0].get("eventName") == "ObjectRemoved:Delete",
+            label="s3 notifications: SQS destination delete record",
+        )
+        if removed["Records"][0]["s3"]["object"]["key"] != "incoming/a.json":
+            raise HarnessFailure(f"s3 notifications: delete record {removed}")
+
+        lambda_state = _wait_for_delivery(session, lambda_config["logicalId"], delivered=1, filtered=3)
+        queue_state = _wait_for_delivery(session, queue_configs[0]["logicalId"], delivered=2, filtered=3)
+        topic_state = _wait_for_delivery(session, topic_config["logicalId"], delivered=2, filtered=3)
+        for state, label, delivered, filtered in (
+            (lambda_state, "lambda", 1, 3),
+            (queue_state, "queue", 2, 3),
+            (topic_state, "topic", 2, 3),
+        ):
+            if state.get("failed"):
+                raise HarnessFailure(f"s3 notifications: the {label} destination failed: {state}")
+            if state.get("delivered") != delivered or state.get("filtered") != filtered:
+                raise HarnessFailure(
+                    f"s3 notifications: the {label} destination reported {state}, "
+                    f"want delivered={delivered} filtered={filtered}"
+                )
+        return (
+            "the CDK bucket configuration delivered the s3:TestEvent to its SQS and SNS destinations on "
+            "configuration; a real SDK PUT of incoming/a.json delivered ObjectCreated:Put to the Lambda "
+            "destination only (the SNS .csv suffix and the queue's event type filtered it); a real SDK PUT "
+            "of incoming/b.csv delivered ObjectCreated:Put to the SNS destination only; ignored/a.txt was "
+            "filtered by every prefix/suffix rule; a real SDK DELETE delivered ObjectRemoved:Delete to the "
+            "queue destination; describe reported exact per-destination delivered/filtered counts "
+            "(lambda 1/3, queue 2/3, topic 2/3)"
+        )
+    finally:
+        stop_local_session(harness, session)
 
 
 def _receive_messages(session: LocalSession, queue_id: str, *, expected: int = 1, timeout: float = 180) -> list[dict]:
@@ -5196,10 +5747,12 @@ RUNNERS: dict[str, Callable[[Harness], str]] = {
     "lambda-role-index": run_lambda_role_index,
     "lambda-role-encrypted": run_lambda_role_encrypted,
     "lambda-role-custom": run_lambda_role_custom,
+    "lambda-role-authorizers": run_lambda_role_authorizers,
     "sqs-producer": run_sqs_producer,
     "sqs-sns-publisher": run_sqs_sns_publisher,
     "sqs-sns-targets": run_sqs_sns_targets,
     "sqs-event-targets": run_sqs_event_targets,
+    "sqs-s3-notifications": run_sqs_s3_notifications,
     "sqs-worker": run_sqs_worker,
     "sqs-dlq": run_sqs_dlq,
     "import-ingest": run_import_ingest,

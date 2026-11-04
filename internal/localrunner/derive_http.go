@@ -15,7 +15,7 @@ import (
 // authorizer instead of bypassing it. Other authorizer types fail closed.
 func deriveHTTPAPIs(spec *Spec, stacks []assemblyStack, stack assemblyStack) error {
 	types := stack.resourceTypes()
-	authorizers, err := deriveHTTPAuthorizers(stack, types)
+	authorizers, err := deriveAPIAuthorizers(stacks, stack, types)
 	if err != nil {
 		return err
 	}
@@ -30,11 +30,7 @@ func deriveHTTPAPIs(spec *Spec, stacks []assemblyStack, stack assemblyStack) err
 		}
 		switch props.ProtocolType {
 		case websocketProtocol:
-			spec.Skipped = append(spec.Skipped, Skipped{
-				LogicalID: qualify(stacks, stack.Name, id),
-				Kind:      typeHTTPAPI,
-				Reason:    "WebSocket API; the local HTTP transport does not deliver WebSocket frames, so its $connect/$disconnect/$default routes are not invoked",
-			})
+			// deriveWebSocketAPIs serves this API on its own listener.
 			continue
 		case httpProtocol, "":
 		default:
@@ -66,56 +62,6 @@ func deriveHTTPAPIs(spec *Spec, stacks []assemblyStack, stack assemblyStack) err
 	return nil
 }
 
-// httpAuthorizer is one CUSTOM HTTP API REQUEST authorizer the transport runs.
-type httpAuthorizer struct {
-	Function        string
-	IdentitySources []string
-}
-
-// deriveHTTPAuthorizers resolves the authorizer resources to the Lambda
-// functions that implement them. The local transport executes these functions;
-// it never serves a route whose authorizer it cannot run.
-func deriveHTTPAuthorizers(stack assemblyStack, types map[string]string) (map[string]httpAuthorizer, error) {
-	authorizers := map[string]httpAuthorizer{}
-	for _, id := range sortedKeys(stack.Template.Resources) {
-		resource := stack.Template.Resources[id]
-		if resource.Type != typeHTTPAuthorizer {
-			continue
-		}
-		var props httpAuthorizerProperties
-		if err := json.Unmarshal(resource.Properties, &props); err != nil {
-			return nil, fmt.Errorf("%s/%s: parse HTTP authorizer properties: %w", stack.Name, id, err)
-		}
-		if props.AuthorizerType != "REQUEST" {
-			return nil, unsupported(
-				stack.Name+"/"+id,
-				"HTTP API authorizer type %q is not run locally; only REQUEST authorizers with simple responses are supported",
-				props.AuthorizerType,
-			)
-		}
-		if !props.EnableSimpleResponses {
-			return nil, unsupported(
-				stack.Name+"/"+id,
-				"HTTP API authorizer does not enable simple responses; the local transport only runs simple-response authorizers",
-			)
-		}
-		functionID, ok := findRefByType(props.AuthorizerURI, types, typeLambdaFunction, attrArn)
-		if !ok {
-			return nil, unsupported(stack.Name+"/"+id, "HTTP API authorizer Uri does not reference a Lambda function")
-		}
-		identitySources := make([]string, 0, len(props.IdentitySource))
-		for _, source := range props.IdentitySource {
-			trimmed := strings.TrimSpace(source)
-			if err := validateIdentitySource(trimmed); err != nil {
-				return nil, unsupported(stack.Name+"/"+id, "%v", err)
-			}
-			identitySources = append(identitySources, trimmed)
-		}
-		authorizers[id] = httpAuthorizer{Function: functionID, IdentitySources: identitySources}
-	}
-	return authorizers, nil
-}
-
 func httpStageName(stack assemblyStack, apiID string) string {
 	stage := LocalStageName
 	for _, id := range sortedKeys(stack.Template.Resources) {
@@ -137,7 +83,8 @@ func httpStageName(stack assemblyStack, apiID string) string {
 	return stage
 }
 
-func httpRoutes(stack assemblyStack, types map[string]string, apiID string, authorizers map[string]httpAuthorizer) ([]Route, error) {
+//nolint:gocognit // one explicit branch per supported provider value.
+func httpRoutes(stack assemblyStack, types map[string]string, apiID string, authorizers map[string]apiAuthorizer) ([]Route, error) { //nolint:gocyclo // one explicit branch per route authorization kind.
 	var routes []Route
 	for _, id := range sortedKeys(stack.Template.Resources) {
 		resource := stack.Template.Resources[id]
@@ -169,8 +116,46 @@ func httpRoutes(stack assemblyStack, types map[string]string, apiID string, auth
 			if !ok {
 				return nil, unsupported(stack.Name+"/"+id, "CUSTOM route references authorizer %s, which the runner did not derive", authorizerID)
 			}
+			if authorizer.Kind != AuthorizerKindSimpleRequest {
+				return nil, unsupported(
+					stack.Name+"/"+id,
+					"CUSTOM route uses a %s authorizer; the local HTTP transport runs only REQUEST authorizers with simple responses",
+					authorizer.Kind,
+				)
+			}
+			route.AuthorizerKind = authorizer.Kind
 			route.AuthorizerFunction = authorizer.Function
 			route.AuthorizerIdentitySources = authorizer.IdentitySources
+		case "JWT":
+			authorizerID, ok := directRefID(props.AuthorizerID)
+			if !ok {
+				return nil, unsupported(stack.Name+"/"+id, "JWT route does not reference an authorizer")
+			}
+			authorizer, ok := authorizers[authorizerID]
+			if !ok {
+				return nil, unsupported(stack.Name+"/"+id, "JWT route references authorizer %s, which the runner did not derive", authorizerID)
+			}
+			if authorizer.Kind != AuthorizerKindJWT {
+				return nil, unsupported(
+					stack.Name+"/"+id,
+					"JWT route uses a %s authorizer instead of a JWT authorizer",
+					authorizer.Kind,
+				)
+			}
+			route.AuthorizerKind = AuthorizerKindJWT
+			route.JWTIssuer = authorizer.JWT.Issuer
+			route.JWTIssuerExpression = string(authorizer.JWT.IssuerExpression)
+			route.JWTAudienceExpressions = make([]string, 0, len(authorizer.JWT.Audience))
+			for _, audience := range authorizer.JWT.Audience {
+				route.JWTAudienceExpressions = append(route.JWTAudienceExpressions, string(audience))
+			}
+			route.AuthorizerIdentitySources = authorizer.IdentitySources
+			if len(route.AuthorizerIdentitySources) == 0 {
+				// API Gateway defaults a JWT authorizer's identity source to the
+				// Authorization header.
+				route.AuthorizerIdentitySources = []string{"$request.header.Authorization"}
+			}
+			route.AuthorizationScopes = props.AuthorizationScopes
 		default:
 			return nil, unsupported(
 				stack.Name+"/"+id,
@@ -252,7 +237,8 @@ func parseHTTPRouteKey(key string) (string, string, error) {
 // methods and the stage the event reports.
 func deriveRESTAPIs(spec *Spec, stacks []assemblyStack, stack assemblyStack) error {
 	types := stack.resourceTypes()
-	if err := rejectRESTAuthorizers(stack); err != nil {
+	authorizers, err := deriveAPIAuthorizers(stacks, stack, types)
+	if err != nil {
 		return err
 	}
 	for _, id := range sortedKeys(stack.Template.Resources) {
@@ -274,7 +260,7 @@ func deriveRESTAPIs(spec *Spec, stacks []assemblyStack, stack assemblyStack) err
 		if api.Name == "" {
 			api.Name = id
 		}
-		routes, err := restRoutes(stack, types, id)
+		routes, err := restRoutes(stack, types, authorizers, id)
 		if err != nil {
 			return err
 		}
@@ -283,18 +269,6 @@ func deriveRESTAPIs(spec *Spec, stacks []assemblyStack, stack assemblyStack) err
 		}
 		api.Routes = routes
 		spec.APIs = append(spec.APIs, api)
-	}
-	return nil
-}
-
-func rejectRESTAuthorizers(stack assemblyStack) error {
-	for _, id := range sortedKeys(stack.Template.Resources) {
-		if stack.Template.Resources[id].Type == typeRESTAuthorizer {
-			return unsupported(
-				stack.Name+"/"+id,
-				"REST API authorizers are not run locally; the local transport must not bypass a real authorizer",
-			)
-		}
 	}
 	return nil
 }
@@ -325,7 +299,7 @@ func restStageName(stack assemblyStack, apiID string) string {
 	return stage
 }
 
-func restRoutes(stack assemblyStack, types map[string]string, apiID string) ([]Route, error) {
+func restRoutes(stack assemblyStack, types map[string]string, authorizers map[string]apiAuthorizer, apiID string) ([]Route, error) {
 	paths, err := restResourcePaths(stack, apiID)
 	if err != nil {
 		return nil, err
@@ -343,7 +317,7 @@ func restRoutes(stack assemblyStack, types map[string]string, apiID string) ([]R
 		if target, ok := directRefID(props.RestAPIID); !ok || target != apiID {
 			continue
 		}
-		route, err := restRoute(stack, types, paths, id, props)
+		route, err := restRoute(stack, types, authorizers, paths, id, props)
 		if err != nil {
 			return nil, err
 		}
@@ -352,16 +326,43 @@ func restRoutes(stack assemblyStack, types map[string]string, apiID string) ([]R
 	return routes, nil
 }
 
-func restRoute(stack assemblyStack, types map[string]string, paths map[string]string, id string, props restMethodProperties) (Route, error) {
-	if props.AuthorizationType != "" && props.AuthorizationType != noneAuthorization {
+//nolint:gocyclo // one case per authorization type the template can declare.
+func restRoute(
+	stack assemblyStack,
+	types map[string]string,
+	authorizers map[string]apiAuthorizer,
+	paths map[string]string,
+	id string,
+	props restMethodProperties,
+) (Route, error) {
+	authorization := strings.TrimSpace(props.AuthorizationType)
+	switch authorization {
+	case "", noneAuthorization:
+		if len(props.AuthorizerID) > 0 {
+			return Route{}, unsupported(stack.Name+"/"+id, "method has an authorizer id but authorization type NONE")
+		}
+	case authorizerTypeCognitoUserPools:
+		authorizerID, ok := directRefID(props.AuthorizerID)
+		if !ok {
+			return Route{}, unsupported(stack.Name+"/"+id, "COGNITO_USER_POOLS method does not reference an authorizer")
+		}
+		authorizer, ok := authorizers[authorizerID]
+		if !ok {
+			return Route{}, unsupported(stack.Name+"/"+id, "method references authorizer %s, which the runner did not derive", authorizerID)
+		}
+		if authorizer.Kind != AuthorizerKindCognito {
+			return Route{}, unsupported(
+				stack.Name+"/"+id,
+				"method uses a %s authorizer, not a Cognito user-pool authorizer",
+				authorizer.Kind,
+			)
+		}
+	default:
 		return Route{}, unsupported(
 			stack.Name+"/"+id,
 			"method authorization %q is not run locally; the local transport must not bypass it",
 			props.AuthorizationType,
 		)
-	}
-	if len(props.AuthorizerID) > 0 {
-		return Route{}, unsupported(stack.Name+"/"+id, "method has an authorizer; the local transport must not bypass it")
 	}
 	if props.Integration.Type == mockIntegration {
 		return restMockRoute(stack, paths, id, props)
@@ -383,13 +384,51 @@ func restRoute(stack assemblyStack, types map[string]string, paths map[string]st
 	}
 	streaming := props.Integration.ResponseTransferMode == responseStreamMode ||
 		containsString(props.Integration.URI, streamingURIMarker)
-	return Route{
+	route := Route{
 		Class:     APIRESTV1,
 		Method:    strings.ToUpper(props.HTTPMethod),
 		Path:      path,
 		Function:  functionID,
 		Streaming: streaming,
-	}, nil
+	}
+	if authorization == authorizerTypeCognitoUserPools {
+		route.AuthorizerKind = AuthorizerKindCognito
+		route.AuthorizerIdentitySources = authorizerIdentitySources(authorizers, props.AuthorizerID)
+		route.AuthorizationScopes = props.AuthorizationScopes
+		authorizerID, _ := directRefID(props.AuthorizerID)
+		route.CognitoPoolARNs = cognitoPoolARNExpressions(authorizers[authorizerID])
+	}
+	return route, nil
+}
+
+// authorizerIdentitySources returns the configured identity sources of one
+// authorizer, or the REST default.
+func authorizerIdentitySources(authorizers map[string]apiAuthorizer, raw json.RawMessage) []string {
+	authorizerID, ok := directRefID(raw)
+	if !ok {
+		return nil
+	}
+	authorizer := authorizers[authorizerID]
+	sources := make([]string, 0, len(authorizer.IdentitySources))
+	for _, source := range authorizer.IdentitySources {
+		if strings.TrimSpace(source) != "" {
+			sources = append(sources, strings.TrimSpace(source))
+		}
+	}
+	return sources
+}
+
+// cognitoPoolARNExpressions keeps the raw ProviderARNs so the run can resolve an
+// expression to the provisioned pool.
+func cognitoPoolARNExpressions(authorizer apiAuthorizer) []string {
+	if authorizer.Cognito == nil {
+		return nil
+	}
+	expressions := make([]string, 0, len(authorizer.Cognito.ProviderARNs))
+	for _, raw := range authorizer.Cognito.ProviderARNs {
+		expressions = append(expressions, string(raw))
+	}
+	return expressions
 }
 
 // restMockRoute serves a REST API MOCK integration from the response the
