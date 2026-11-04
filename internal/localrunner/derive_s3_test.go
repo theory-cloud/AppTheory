@@ -214,6 +214,91 @@ func TestDeriveS3NotificationRefusesBadFilter(t *testing.T) {
 	}
 }
 
+func TestDeriveS3NotificationRefusesUnproducibleEvent(t *testing.T) {
+	resources := s3NotificationAssembly(map[string]any{
+		"BucketName": "ingest-bucket",
+		"NotificationConfiguration": map[string]any{
+			"QueueConfigurations": []any{
+				map[string]any{
+					"Event": "s3:ObjectCreated:Copy",
+					"Queue": map[string]any{"Fn::GetAtt": []any{"Queue", "Arn"}},
+				},
+			},
+		},
+	})
+	dir := writeAssembly(t, resources)
+	mkdirAsset(t, dir)
+	_, err := deriveAssembly(t, dir)
+	if err == nil {
+		t.Fatal("a Copy-only configuration must be refused at derive time")
+	}
+	for _, want := range []string{"s3:ObjectCreated:Copy", "observes creates and deletes only"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("derive error %q does not name %q", err, want)
+		}
+	}
+}
+
+func TestDeriveS3NotificationRefusesMixedProducibleAndUnproducibleEvents(t *testing.T) {
+	resources := map[string]any{
+		"Fn":     withAsset(lambdaFunction(nil), "asset.deadbeef"),
+		"Bucket": map[string]any{"Type": typeS3Bucket},
+		"Notifications": map[string]any{
+			"Type": typeBucketNotifications,
+			"Properties": map[string]any{ //nolint:gosec // a test fixture, not a credential
+				"ServiceToken": "arn:aws:lambda:us-east-1:123456789012:function:cdk-handler",
+				"BucketName":   map[string]any{"Ref": "Bucket"},
+				"NotificationConfiguration": map[string]any{
+					"QueueConfigurations": []any{
+						map[string]any{
+							"Events": []any{"s3:ObjectCreated:*", "s3:ObjectRemoved:DeleteMarkerCreated"},
+							"QueueArn": map[string]any{
+								"Fn::GetAtt": []any{"Queue", "Arn"},
+							},
+						},
+					},
+				},
+			},
+		},
+		"Queue": map[string]any{"Type": typeSQSQueue, "Properties": map[string]any{"QueueName": "ingest"}},
+	}
+	dir := writeAssembly(t, resources)
+	mkdirAsset(t, dir)
+	_, err := deriveAssembly(t, dir)
+	if err == nil {
+		t.Fatal("a configuration mixing producible and unproducible events must be refused")
+	}
+	for _, want := range []string{"s3:ObjectRemoved:DeleteMarkerCreated", "observes creates and deletes only"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("derive error %q does not name %q", err, want)
+		}
+	}
+}
+
+func TestDeriveS3NotificationRegistersProducibleWildcard(t *testing.T) {
+	resources := s3NotificationAssembly(map[string]any{
+		"BucketName": "ingest-bucket",
+		"NotificationConfiguration": map[string]any{
+			"LambdaConfigurations": []any{
+				map[string]any{
+					"Event":    "s3:ObjectCreated:*",
+					"Function": map[string]any{"Fn::GetAtt": []any{"Fn", "Arn"}},
+				},
+			},
+		},
+	})
+	dir := writeAssembly(t, resources)
+	mkdirAsset(t, dir)
+	spec, err := deriveAssembly(t, dir)
+	if err != nil {
+		t.Fatalf("derive: %v", err)
+	}
+	if len(spec.Notifications) != 1 || len(spec.Notifications[0].Events) != 1 ||
+		spec.Notifications[0].Events[0] != "s3:ObjectCreated:*" {
+		t.Fatalf("notifications = %+v", spec.Notifications)
+	}
+}
+
 func TestS3EventNameMatching(t *testing.T) {
 	cases := []struct {
 		declared string

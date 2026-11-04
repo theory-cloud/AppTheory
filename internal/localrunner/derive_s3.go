@@ -17,6 +17,9 @@ import (
 // EventBridgeConfiguration object) EventBridge. The configuration's Event
 // values carry AWS's s3: prefix (for example s3:ObjectCreated:*); the record the
 // destination receives names the event without the prefix (ObjectCreated:Put).
+// The local watcher observes creates and deletes only, so an event name it
+// cannot produce is refused at plan time instead of being accepted and never
+// firing.
 //
 // Two template shapes carry the configuration:
 //
@@ -41,6 +44,21 @@ const (
 	// Bucket.addEventNotification.
 	typeBucketNotifications = "Custom::S3BucketNotifications"
 )
+
+// s3ProducibleEvents is the set of notification event names the local watcher
+// can produce: an observed create is reported as ObjectCreated:Put and an
+// observed delete as ObjectRemoved:Delete. Every other event type S3 defines
+// (Copy, CompleteMultipartUpload, Post, DeleteMarkerCreated, ObjectRestore,
+// ObjectTagging, ObjectAcl, LifecycleExpiration, LifecycleTransition,
+// IntelligentTiering, Replication and ReducedRedundancyLostObject) would be
+// accepted and silently never fire, so it is refused at derive time.
+// https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-how-to-event-types-and-destinations.html
+var s3ProducibleEvents = []string{
+	"s3:ObjectCreated:*",
+	"s3:ObjectCreated:Put",
+	"s3:ObjectRemoved:*",
+	"s3:ObjectRemoved:Delete",
+}
 
 // NotificationFilterRule is one prefix or suffix rule of a notification's key
 // filter.
@@ -459,6 +477,12 @@ func validateNotificationSpec(notification NotificationSpec) error {
 			return fmt.Errorf(
 				"%s event %q must carry the s3: prefix the notification configuration uses",
 				notification.LogicalID, event,
+			)
+		}
+		if !containsStringList(s3ProducibleEvents, event) {
+			return fmt.Errorf(
+				"%s event %q is not supported locally: the local watcher observes creates and deletes only (producible events: %s)",
+				notification.LogicalID, event, strings.Join(s3ProducibleEvents, ", "),
 			)
 		}
 	}

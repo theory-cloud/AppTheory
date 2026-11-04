@@ -1113,6 +1113,26 @@ receive that JSON; an SNS delivery wraps it in the SNS envelope. The
 `s3:TestEvent` message S3 sends on configuration has the simplified shape
 `{"Service":"Amazon S3","Event":"s3:TestEvent","Time",…,"Bucket",…}`.
 
+**S3 notification event names.** The watcher observes creates and deletes only.
+A configuration may name `s3:ObjectCreated:*`, `s3:ObjectCreated:Put`,
+`s3:ObjectRemoved:*` or `s3:ObjectRemoved:Delete`; plan refuses every other
+`s3:` event name by name (for example `s3:ObjectCreated:Copy` or
+`s3:ObjectRestore:*`) with the reason "the local watcher observes creates and
+deletes only". A configuration mixing a producible and an unproducible name is
+refused the same way, never silently narrowed. The four names are the part of
+the
+[S3 event notification types](https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-how-to-event-types-and-destinations.html)
+list the observation can reproduce.
+
+**Overlapping key filters are accepted locally.** AWS's
+`PutBucketNotificationConfiguration` rejects configurations on one bucket whose
+prefix/suffix filters overlap for the same event type
+([object key name filtering](https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-how-to-filtering.html)).
+The runner does not reproduce that validation: it accepts overlapping
+configurations and delivers a matching observed event to every matching
+destination. This is a documented local acceptance; a template the runner
+accepts may still be rejected at deploy time.
+
 **S3 → EventBridge** — a bucket with `EventBridgeConfiguration` publishes the
 envelope the runner's bus builds from one entry: `source: "aws.s3"`,
 `detail-type: "Object Created"` or `"Object Deleted"`, `resources:

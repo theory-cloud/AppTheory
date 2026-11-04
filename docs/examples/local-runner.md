@@ -1587,6 +1587,31 @@ reported as `Put`. A create and a delete of the same key inside one 250 ms poll
 is not observed. The `size` and `eTag` come from the listing; the `sequencer` is
 the observation instant.
 
+**The producible event set.** The watcher observes creates and deletes only, so
+a configuration may name only `s3:ObjectCreated:*`, `s3:ObjectCreated:Put`,
+`s3:ObjectRemoved:*` or `s3:ObjectRemoved:Delete`. `plan` refuses every other
+`s3:` event name by name — including `s3:ObjectCreated:Copy`,
+`s3:ObjectCreated:CompleteMultipartUpload`, `s3:ObjectCreated:Post`,
+`s3:ObjectRemoved:DeleteMarkerCreated`, `s3:ObjectRestore:*`,
+`s3:ObjectTagging:*`, `s3:ObjectAcl:Put`, `s3:LifecycleExpiration:*`,
+`s3:LifecycleTransition`, `s3:IntelligentTiering`, `s3:Replication:*` and
+`s3:ReducedRedundancyLostObject` — with the reason "the local watcher observes
+creates and deletes only"; a configuration that mixes a producible and an
+unproducible name is refused the same way, never silently narrowed. These four
+names are the part of the
+[S3 event notification types](https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-how-to-event-types-and-destinations.html)
+list the observation can reproduce.
+
+**Overlapping filters are accepted locally.** AWS's
+`PutBucketNotificationConfiguration` rejects two configurations on one bucket
+whose prefix/suffix filters overlap for the same event type, as
+[object key name filtering](https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-how-to-filtering.html)
+documents. The local runner does not reproduce that validation: it accepts
+overlapping configurations and delivers a matching observed event to every
+matching destination. This is a documented local acceptance, not a claim about
+AWS — a template the runner accepts may still be rejected by
+`PutBucketNotificationConfiguration` at deploy time.
+
 `plan` prints one line per destination with `delivery=registered`; `session
 describe` returns a `notifications` array with each destination's
 `configurationId`, `state`, `delivered`, `filtered` and `failed` counts, and the
