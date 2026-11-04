@@ -8,8 +8,13 @@ const sns = new SNSClient({});
 
 /**
  * Publishes to the stack's standard and FIFO SNS topics through the real AWS
- * SDK. The local runner provisions the topics on moto; the subscriptions are
- * registered with the delivery engine (E6 supplies the deliverer).
+ * SDK. The local runner provisions the topics on moto, observes each publish
+ * and performs the subscription fan-out itself.
+ *
+ * The FIFO publish set proves ordering and deduplication:
+ *   - three messages in one message group with explicit deduplication ids;
+ *   - two identical bodies with no deduplication id, which the topic's
+ *     ContentBasedDeduplication setting must collapse to one delivery.
  */
 export const handler = async () => {
     const standardTopicArn = process.env.TOPIC_ARN;
@@ -25,17 +30,38 @@ export const handler = async () => {
         new PublishCommand({
             TopicArn: standardTopicArn,
             Message: JSON.stringify({ eventType: "local-sns-publish", n: 1 }),
+            Subject: "local standard publish",
             MessageAttributes: {
                 eventType: { DataType: "String", StringValue: "local-sns-publish" },
             },
         }),
     );
-    const fifoPublish = await sns.send(
+
+    const ordered = [];
+    for (let n = 1; n <= 3; n += 1) {
+        const published = await sns.send(
+            new PublishCommand({
+                TopicArn: fifoTopicArn,
+                Message: JSON.stringify({ eventType: "local-sns-fifo", n }),
+                MessageGroupId: "local-group",
+                MessageDeduplicationId: `local-dedup-${n}`,
+            }),
+        );
+        ordered.push(published.MessageId);
+    }
+    const contentBody = JSON.stringify({ eventType: "local-sns-fifo", contentBased: true });
+    const contentFirst = await sns.send(
         new PublishCommand({
             TopicArn: fifoTopicArn,
-            Message: JSON.stringify({ eventType: "local-sns-fifo", n: 1 }),
-            MessageGroupId: "local-group",
-            MessageDeduplicationId: "local-dedup-1",
+            Message: contentBody,
+            MessageGroupId: "cbd-group",
+        }),
+    );
+    const contentSecond = await sns.send(
+        new PublishCommand({
+            TopicArn: fifoTopicArn,
+            Message: contentBody,
+            MessageGroupId: "cbd-group",
         }),
     );
 
@@ -59,7 +85,9 @@ export const handler = async () => {
                 expectedName: process.env.FIFO_TOPIC_NAME,
                 fifoTopic: fifo.Attributes?.FifoTopic === "true",
                 contentBasedDeduplication: fifo.Attributes?.ContentBasedDeduplication === "true",
-                messageId: fifoPublish.MessageId,
+                orderedMessageIds: ordered,
+                contentBasedMessageIds: [contentFirst.MessageId, contentSecond.MessageId],
+                contentBody,
                 queueArn: process.env.FIFO_QUEUE_ARN,
             },
         }),

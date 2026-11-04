@@ -15,8 +15,40 @@ const scheduleRuleName = process.env.APPTHEORY_DEMO_SCHEDULE_RULE_NAME ?? proces
 const eventSource = process.env.APPTHEORY_DEMO_EVENT_SOURCE ?? "apptheory.example";
 const eventDetailType = process.env.APPTHEORY_DEMO_EVENT_DETAIL_TYPE ?? "example.item.changed";
 const tableName = process.env.APPTHEORY_DEMO_TABLE_NAME ?? "";
+const snsTopicName = process.env.APPTHEORY_DEMO_SNS_NAME ?? "";
 
 const app = createApp({ tier });
+
+let lastSNSRecord = null;
+
+// recordSNSEvent stores the documented Lambda SNS record fields the harness
+// asserts for every language.
+function recordSNSEvent(record) {
+  const sns = record?.Sns ?? {};
+  const entry = {
+    lang,
+    eventSource: record?.EventSource ?? "",
+    eventVersion: record?.EventVersion ?? "",
+    eventSubscriptionArn: record?.EventSubscriptionArn ?? "",
+    type: sns.Type ?? "",
+    messageId: sns.MessageId ?? "",
+    topicArn: sns.TopicArn ?? "",
+    subject: sns.Subject ?? "",
+    message: sns.Message ?? "",
+    timestamp: sns.Timestamp ?? "",
+    signatureVersion: sns.SignatureVersion ?? "",
+    unsubscribeUrl: sns.UnsubscribeUrl ?? "",
+    messageAttributes: sns.MessageAttributes ?? {},
+  };
+  entry.shapeOk =
+    entry.type === "Notification" &&
+    entry.messageId !== "" &&
+    entry.topicArn !== "" &&
+    entry.timestamp !== "" &&
+    entry.signatureVersion !== "" &&
+    entry.unsubscribeUrl !== "";
+  return entry;
+}
 
 app.get("/", (ctx) =>
   json(200, {
@@ -58,6 +90,13 @@ app.dynamoDB(tableName, async (_ctx, record) => {
   const summary = normalizeDynamoDBStreamRecord(record);
   if (!summary.event_id) throw new Error("missing dynamodb event id");
 });
+
+app.sns(snsTopicName, (_ctx, record) => {
+  lastSNSRecord = recordSNSEvent(record);
+  return lastSNSRecord;
+});
+
+app.get("/sns-record", () => json(200, { record: lastSNSRecord }));
 
 app.get("/hello/{name}", (ctx) =>
   json(200, {

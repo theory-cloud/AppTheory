@@ -391,8 +391,19 @@
     "examples/cdk/sqs-queue/handlers/sns-publisher.mjs": {
       "run": "sqs-sns-publisher",
       "class": "L2",
-      "gap": "IAM policy evaluation is a docs/125 true limit; moto emulates SNS (no managed delivery infrastructure). The topics and the publish call are real.",
-      "description": "SQS queue SNS publisher: the standard and FIFO topics are provisioned on moto from the CDK definition; the handler publishes through the real SDK (MessageGroupId/DeduplicationId on the FIFO topic) and GetTopicAttributes returns both Ref ARNs and the FIFO ContentBasedDeduplication attribute; the inline Lambda subscription and the standalone SQS subscription are registered with the delivery engine (task E6)."
+      "gap": "moto emulates SNS (no managed delivery infrastructure); IAM policy evaluation is a docs/125 true limit. The topics, the publish call and the runner's fan-out are real.",
+      "description": "SQS queue SNS publisher: the standard and FIFO topics are provisioned on moto from the CDK definition; the handler publishes through the real SDK; the inline Lambda subscription receives the documented SNS record (message id, subject, timestamp, UnsubscribeUrl, String attributes); the FIFO topic delivers three ordered messages and collapses two identical content-based publishes to one; the FIFO queue carries MessageGroupId and the explicit or content SHA-256 MessageDeduplicationId."
+    },
+    "examples/cdk/sqs-queue/handlers/sns-scenario-publisher.mjs": {
+      "run": "sqs-sns-targets",
+      "class": "L2",
+      "gap": "moto emulates SNS (no managed delivery infrastructure) and ElasticMQ emulates SQS; IAM policy evaluation is a docs/125 true limit. The publishes, the runner's filter evaluation and every target delivery are real.",
+      "description": "SNS fan-out targets: an attribute-scope policy (AND across keys, OR within a key) and a body-scope policy (nested keys) each admit one message and filter two; an SQS raw subscription receives the body and native attributes while the envelope subscription receives the documented JSON notification; a loopback HTTP subscription receives the documented body and x-amz-sns-* headers."
+    },
+    "examples/cdk/sqs-queue/handlers/sns-consumer.mjs": {
+      "coveredBy": "examples/cdk/sqs-queue/handlers/sns-publisher.mjs",
+      "class": "L2",
+      "description": "SNS consumer handler used by the standard, attribute-filtered and body-filtered Lambda subscriptions; it writes a real SQS receipt with the documented Lambda SNS record."
     },
     "examples/cdk/sqs-queue/handlers/worker.mjs": {
       "run": "sqs-worker",

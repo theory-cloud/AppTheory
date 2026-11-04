@@ -17,7 +17,9 @@ import { Stack } from "aws-cdk-lib";
 import type { StackProps } from "aws-cdk-lib";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as events from "aws-cdk-lib/aws-events";
+import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as sns from "aws-cdk-lib/aws-sns";
 import * as lambdaEventSources from "aws-cdk-lib/aws-lambda-event-sources";
 import * as sqs from "aws-cdk-lib/aws-sqs";
 import type { Construct } from "constructs";
@@ -222,6 +224,29 @@ export class MultiLangStack extends Stack {
       }),
       environment: { ...commonEnv, APPTHEORY_LANG: "py" },
     });
+
+    // One standard SNS topic and Lambda subscription per language. SNS does
+    // not support Lambda subscriptions on FIFO topics, so these are standard
+    // topics; the local runner delivers the documented Lambda SNS record to
+    // each handler, which records it for the parity row.
+    const snsTopics: Record<string, sns.CfnTopic> = {};
+    for (const [lang, handler] of [["go", goHandler], ["ts", tsHandler], ["py", pyHandler]] as const) {
+      const topic = new sns.CfnTopic(this, `${lang.toUpperCase()}SnsTopic`, {
+        topicName: `${name}-${lang}-events`,
+      });
+      new sns.CfnSubscription(this, `${lang.toUpperCase()}SnsSubscription`, {
+        topicArn: topic.ref,
+        protocol: "lambda",
+        endpoint: handler.fn.functionArn,
+      });
+      handler.fn.addPermission(`${lang.toUpperCase()}SnsInvoke`, {
+        principal: new iam.ServicePrincipal("sns.amazonaws.com"),
+        sourceArn: topic.ref,
+      });
+      handler.fn.addEnvironment("APPTHEORY_DEMO_TOPIC_ARN", topic.ref);
+      handler.fn.addEnvironment("APPTHEORY_DEMO_SNS_NAME", topic.getAtt("TopicName").toString());
+      snsTopics[lang] = topic;
+    }
 
     const goQueue = new sqs.Queue(this, "GoQueue");
     goHandler.fn.addEnvironment("APPTHEORY_DEMO_QUEUE_NAME", goQueue.queueName);
