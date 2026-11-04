@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/aws/aws-sdk-go-v2/service/kinesis"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 )
 
@@ -61,6 +62,19 @@ func (r *Runner) ResolveDeliveryBackend(kind DeliveryKind) (DeliveryBackend, err
 	if resolved, ok := r.backendForService(service); ok && resolved.HostURL != "" {
 		backend.Endpoint = resolved.HostURL
 		backend.Client = deliveryClient(service, resolved.HostURL)
+		if service == logsService {
+			// A subscription whose destination is a Kinesis stream puts the
+			// gzip payload into moto's stream, so the Logs backend also carries
+			// the Kinesis client when that backend runs on the same moto host.
+			var kinesisClient *kinesis.Client
+			if kin, ok := r.backendForService(backendKinesis); ok && kin.HostURL != "" {
+				kinesisClient = newKinesisClient(kin.HostURL)
+			}
+			backend.Client = &logsLocalBackend{
+				logs:    newCloudWatchLogsClient(resolved.HostURL),
+				kinesis: kinesisClient,
+			}
+		}
 		return backend, nil
 	}
 	if kind == DeliveryKindEventBridgeSchedule || kind == DeliveryKindEventBridgeRule {
@@ -107,6 +121,8 @@ func deliveryClient(service, endpoint string) any {
 		return newSQSClient(endpoint)
 	case backendDynamoDB:
 		return &dynamoDBLocalBackend{data: newDynamoDBClient(endpoint), streams: newDynamoStreamsClient(endpoint)}
+	case backendKinesis:
+		return newKinesisClient(endpoint)
 	case backendSNS:
 		// The SNS deliverer needs both services: moto serves the publish side
 		// and the per-topic drain queue on the same endpoint.

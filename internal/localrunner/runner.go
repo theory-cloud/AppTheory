@@ -193,6 +193,11 @@ func NewRunner(options Options) (*Runner, error) {
 	runner.delivery.RegisterDeliverer(DeliveryKindDynamoDBStream, func(source DeliverySource) (Deliverer, error) {
 		return NewDynamoDBStreamDeliverer(source, runner.ttl)
 	})
+	// E5: a Kinesis mapping polls moto's stream, and a CloudWatch Logs
+	// subscription filter polls its log group and delivers the gzip payload to
+	// its Lambda or Kinesis destination.
+	runner.delivery.RegisterDeliverer(DeliveryKindKinesis, NewKinesisDeliverer)
+	runner.delivery.RegisterDeliverer(DeliveryKindCloudWatchLogs, NewCloudWatchLogsDeliverer)
 	runner.sns = newSNSHubRegistry(runner.clock, runner.logf, runner.snsQueueLookup, runner.deliverySQSClient)
 	runner.delivery.RegisterDeliverer(DeliveryKindSNS, func(source DeliverySource) (Deliverer, error) {
 		return NewSNSDeliverer(source, runner.sns)
@@ -520,6 +525,7 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 	if err := r.startFunctions(ctx, spec, targets); err != nil {
 		return nil, err
 	}
+	r.startFunctionLogs(ctx, spec, targets)
 	if err := r.startServers(ctx, spec); err != nil {
 		return nil, err
 	}
