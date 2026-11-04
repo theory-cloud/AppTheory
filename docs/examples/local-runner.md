@@ -1766,7 +1766,9 @@ prefixes (one is a prefix of the other, or either configuration has no prefix
 rule) and overlapping suffixes (one is a suffix of the other, or either
 configuration has no suffix rule). The refusal names both configurations and the
 event type. Pairs with disjoint event types, or with non-overlapping suffixes,
-are registered, exactly as the page's valid examples show.
+are registered, exactly as the page's valid examples show. A filter rule value
+that contains a wildcard (`*.jpg`) is refused at plan time with the page cited:
+S3 does not allow a wildcard in a notification filter prefix or suffix.
 
 `plan` prints one line per destination with `delivery=registered`; `session
 describe` returns a `notifications` array with each destination's
