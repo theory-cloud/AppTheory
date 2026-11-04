@@ -1,12 +1,16 @@
 package localrunner
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 // Docker talks to the Docker CLI. The local runner never uses the SDK: every
@@ -272,4 +276,40 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// FollowLogs streams a container's stdout and stderr until the context ends.
+// Docker prefixes each line with an RFC3339 timestamp because the runner asks
+// for --timestamps; the caller parses it. The command is killed with the
+// context, so a stopped run leaves no follower behind.
+func (d *Docker) FollowLogs(ctx context.Context, name string, since time.Time, onLine func(string)) error {
+	command := exec.CommandContext(ctx, "docker", "logs", "--follow", "--timestamps", "--since", since.UTC().Format(time.RFC3339Nano), name) //nolint:gosec // name is a runner-owned container
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("follow logs of %s: %w", name, err)
+	}
+	stderr, err := command.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("follow logs of %s: %w", name, err)
+	}
+	if err := command.Start(); err != nil {
+		return fmt.Errorf("start log follower for %s: %w", name, err)
+	}
+	var wait sync.WaitGroup
+	scan := func(reader io.Reader) {
+		defer wait.Done()
+		scanner := bufio.NewScanner(reader)
+		scanner.Buffer(make([]byte, 64*1024), 1<<20)
+		for scanner.Scan() {
+			onLine(scanner.Text())
+		}
+	}
+	wait.Add(2)
+	go scan(stdout)
+	go scan(stderr)
+	wait.Wait()
+	if ctx.Err() != nil {
+		return nil
+	}
+	return command.Wait()
 }

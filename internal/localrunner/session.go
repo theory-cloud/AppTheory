@@ -344,6 +344,12 @@ func (s *localSession) clockAdvance(request sessionRequest) (any, error) {
 
 func (s *localSession) describeEndpoints() []map[string]any {
 	endpoints := make([]map[string]any, 0)
+	if s.runner.eventBusURL != "" {
+		endpoints = append(endpoints, map[string]any{
+			"service": "events",
+			"url":     s.runner.eventBusURL,
+		})
+	}
 	for _, name := range sortedKeys(s.runner.backends) {
 		backend := s.runner.backends[name]
 		if backend.HostURL == "" {

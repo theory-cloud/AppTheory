@@ -934,12 +934,15 @@ func TestSQSDelivererFilterEvaluationFailureLeavesTheWholeBatch(t *testing.T) {
 }
 
 type recordingDeliveryReporter struct {
-	phase     DeliveryPhase
-	delivered int
-	failed    int
-	filtered  int
-	left      int
-	lastError string
+	phase        DeliveryPhase
+	delivered    int
+	failed       int
+	filtered     int
+	left         int
+	discarded    int
+	fired        int
+	deadLettered int
+	lastError    string
 }
 
 func (r *recordingDeliveryReporter) SetPhase(phase DeliveryPhase) { r.phase = phase }
@@ -950,10 +953,13 @@ func (r *recordingDeliveryReporter) Failed(err error) {
 		r.lastError = err.Error()
 	}
 }
-func (r *recordingDeliveryReporter) Filtered()       { r.filtered++ }
-func (r *recordingDeliveryReporter) SetPaused(bool)  {}
-func (r *recordingDeliveryReporter) SetInflight(int) {}
-func (r *recordingDeliveryReporter) Left(count int)  { r.left += count }
+func (r *recordingDeliveryReporter) Filtered()           { r.filtered++ }
+func (r *recordingDeliveryReporter) SetPaused(bool)      {}
+func (r *recordingDeliveryReporter) SetInflight(int)     {}
+func (r *recordingDeliveryReporter) Left(count int)      { r.left += count }
+func (r *recordingDeliveryReporter) Discarded(count int) { r.discarded += count }
+func (r *recordingDeliveryReporter) Fired()              { r.fired++ }
+func (r *recordingDeliveryReporter) DeadLettered()       { r.deadLettered++ }
 
 func TestSQSMaxReceiveCountAcceptsBothRedriveForms(t *testing.T) {
 	cases := map[string]int{

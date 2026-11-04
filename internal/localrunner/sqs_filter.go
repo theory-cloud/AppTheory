@@ -429,28 +429,6 @@ func sqsRecordMatchesFilters(criteria json.RawMessage, record map[string]any, bo
 	if len(bytes.TrimSpace(criteria)) == 0 {
 		return true, nil
 	}
-	var parsed eventFilterCriteria
-	if err := json.Unmarshal(criteria, &parsed); err != nil {
-		return false, fmt.Errorf("decode FilterCriteria: %w", err)
-	}
-	if len(parsed.Filters) == 0 {
-		return true, nil
-	}
-	patterns := make([]map[string]any, 0, len(parsed.Filters))
-	for index, filter := range parsed.Filters {
-		pattern, err := decodePatternValue([]byte(filter.Pattern))
-		if err != nil {
-			return false, fmt.Errorf("filter %d Pattern is not valid JSON: %w", index+1, err)
-		}
-		object, ok := pattern.(map[string]any)
-		if !ok {
-			return false, fmt.Errorf("filter %d Pattern is not a JSON object", index+1)
-		}
-		if err := validateEventFilterPattern(object); err != nil {
-			return false, fmt.Errorf("filter %d Pattern is not a valid Lambda event filter pattern: %w", index+1, err)
-		}
-		patterns = append(patterns, object)
-	}
 	encoded, err := json.Marshal(record)
 	if err != nil {
 		return false, fmt.Errorf("encode SQS record: %w", err)
@@ -468,12 +446,59 @@ func sqsRecordMatchesFilters(criteria json.RawMessage, record map[string]any, bo
 	} else {
 		target["body"] = body
 	}
+	return recordMatchesEventFilters(criteria, target)
+}
+
+// recordMatchesEventFilters applies a mapping's FilterCriteria to one service
+// record. Multiple filters are ORed. It is the shared evaluator the SQS,
+// DynamoDB Streams and Kinesis deliverers use; the record is the exact JSON
+// object the service event carries.
+//
+// https://docs.aws.amazon.com/lambda/latest/dg/invocation-eventfiltering.html
+func recordMatchesEventFilters(criteria json.RawMessage, target map[string]any) (bool, error) {
+	if len(bytes.TrimSpace(criteria)) == 0 {
+		return true, nil
+	}
+	patterns, err := decodeEventFilterPatterns(criteria)
+	if err != nil {
+		return false, err
+	}
 	for _, pattern := range patterns {
 		if eventPatternMatches(pattern, target) {
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+// decodeEventFilterPatterns decodes and re-validates a FilterCriteria object.
+func decodeEventFilterPatterns(criteria json.RawMessage) ([]map[string]any, error) {
+	if len(bytes.TrimSpace(criteria)) == 0 {
+		return nil, nil
+	}
+	var parsed eventFilterCriteria
+	if err := json.Unmarshal(criteria, &parsed); err != nil {
+		return nil, fmt.Errorf("decode FilterCriteria: %w", err)
+	}
+	if len(parsed.Filters) == 0 {
+		return nil, nil
+	}
+	patterns := make([]map[string]any, 0, len(parsed.Filters))
+	for index, filter := range parsed.Filters {
+		pattern, err := decodePatternValue([]byte(filter.Pattern))
+		if err != nil {
+			return nil, fmt.Errorf("filter %d Pattern is not valid JSON: %w", index+1, err)
+		}
+		object, ok := pattern.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("filter %d Pattern is not a JSON object", index+1)
+		}
+		if err := validateEventFilterPattern(object); err != nil {
+			return nil, fmt.Errorf("filter %d Pattern is not a valid Lambda event filter pattern: %w", index+1, err)
+		}
+		patterns = append(patterns, object)
+	}
+	return patterns, nil
 }
 
 // decodePatternValue decodes JSON with json.Number so numbers keep their

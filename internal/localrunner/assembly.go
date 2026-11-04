@@ -21,6 +21,7 @@ const (
 	typeKMSKey              = "AWS::KMS::Key"
 	typeKMSAlias            = "AWS::KMS::Alias"
 	typeEventsRule          = "AWS::Events::Rule"
+	typeEventsBus           = "AWS::Events::EventBus"
 	typeEventSourceMap      = "AWS::Lambda::EventSourceMapping"
 	typeKinesisStream       = "AWS::Kinesis::Stream"
 	typeLogsSubscription    = "AWS::Logs::SubscriptionFilter"
@@ -175,9 +176,20 @@ type eventSourceMappingProperties struct {
 	FunctionName                   json.RawMessage `json:"FunctionName"`
 	FunctionResponseTypes          []string        `json:"FunctionResponseTypes"`
 	StartingPosition               string          `json:"StartingPosition"`
+	StartingPositionTimestamp      *float64        `json:"StartingPositionTimestamp"`
 	MaximumBatchingWindowInSeconds int             `json:"MaximumBatchingWindowInSeconds"`
 	FilterCriteria                 json.RawMessage `json:"FilterCriteria"`
-	ScalingConfig                  *struct {
+	BisectBatchOnFunctionError     *bool           `json:"BisectBatchOnFunctionError"`
+	MaximumRetryAttempts           *int            `json:"MaximumRetryAttempts"`
+	MaximumRecordAgeInSeconds      *int            `json:"MaximumRecordAgeInSeconds"`
+	ParallelizationFactor          *int            `json:"ParallelizationFactor"`
+	TumblingWindowInSeconds        *int            `json:"TumblingWindowInSeconds"`
+	DestinationConfig              *struct {
+		OnFailure *struct {
+			Destination json.RawMessage `json:"Destination"`
+		} `json:"OnFailure"`
+	} `json:"DestinationConfig"`
+	ScalingConfig *struct {
 		MaximumConcurrency int `json:"MaximumConcurrency"`
 	} `json:"ScalingConfig"`
 }
@@ -187,8 +199,26 @@ type eventRuleProperties struct {
 	ScheduleExpression string          `json:"ScheduleExpression"`
 	EventPattern       json.RawMessage `json:"EventPattern"`
 	State              string          `json:"State"`
+	EventBusName       json.RawMessage `json:"EventBusName"`
 	Targets            []struct {
-		ARN json.RawMessage `json:"Arn"`
+		ID               string          `json:"Id"`
+		ARN              json.RawMessage `json:"Arn"`
+		Input            string          `json:"Input"`
+		InputPath        string          `json:"InputPath"`
+		InputTransformer *struct {
+			InputPathsMap map[string]string `json:"InputPathsMap"`
+			InputTemplate string            `json:"InputTemplate"`
+		} `json:"InputTransformer"`
+		RetryPolicy *struct {
+			MaximumRetryAttempts     int `json:"MaximumRetryAttempts"`
+			MaximumEventAgeInSeconds int `json:"MaximumEventAgeInSeconds"`
+		} `json:"RetryPolicy"`
+		DeadLetterConfig *struct {
+			ARN json.RawMessage `json:"Arn"`
+		} `json:"DeadLetterConfig"`
+		SqsParameters *struct {
+			MessageGroupID string `json:"MessageGroupId"`
+		} `json:"SqsParameters"`
 	} `json:"Targets"`
 }
 

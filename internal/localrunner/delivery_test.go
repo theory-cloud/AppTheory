@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/kinesis"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 )
 
@@ -549,8 +550,11 @@ func TestResolveDeliveryBackend(t *testing.T) {
 		Endpoints: []Endpoint{{Service: backendKinesis, URL: "http://kinesis:4566"}},
 	}
 	backend, err = runner.ResolveDeliveryBackend(DeliveryKindKinesis)
-	if err != nil || backend.Client != nil || backend.Endpoint == "" {
+	if err != nil || backend.Endpoint == "" {
 		t.Fatalf("kinesis backend: %+v %v", backend, err)
+	}
+	if _, ok := backend.Client.(*kinesis.Client); !ok {
+		t.Fatalf("kinesis backend has no client: %T", backend.Client)
 	}
 	if _, err := (&Runner{}).ResolveDeliveryBackend(DeliveryKindCloudWatchLogs); err == nil {
 		t.Fatal("a missing logs backend must fail closed")

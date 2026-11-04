@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/http"
 	"testing"
 )
 
@@ -75,4 +76,13 @@ func mustString(t *testing.T, value any) string {
 		t.Fatalf("unexpected value type %T", value)
 	}
 	return text
+}
+
+// writeTestJSON writes one fake service response and fails the test when the
+// write fails.
+func writeTestJSON(t *testing.T, writer http.ResponseWriter, body string) {
+	t.Helper()
+	if _, err := writer.Write([]byte(body)); err != nil {
+		t.Errorf("write fake response: %v", err)
+	}
 }

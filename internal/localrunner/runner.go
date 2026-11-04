@@ -120,6 +120,16 @@ type Runner struct {
 	// sns is the per-topic hub registry the SNS deliverer attaches to and
 	// PublishLocal publishes through.
 	sns *snsHubRegistry
+	// ttl performs DynamoDB Time to Live on the run clock; ttlTables are the
+	// provisioned tables that enabled it.
+	ttl       *ttlTracker
+	ttlTables map[string]ttlTable
+	// eventBus is the runner-owned EventBridge bus; eventBusURL is the loopback
+	// URL the harness and a developer use, and the container URL is injected
+	// into functions as AWS_ENDPOINT_URL_EVENTS.
+	eventBus          *eventBridgeBus
+	eventBusURL       string
+	eventBusContainer string
 }
 
 // NewRunner validates the options and prepares the run. It contacts no Docker
@@ -148,6 +158,9 @@ func NewRunner(options Options) (*Runner, error) {
 		images:       map[string]string{},
 		semaphore:    make(chan struct{}, options.MaxConcurrency),
 		clock:        clock,
+		ttl:          newTTLTracker(),
+		ttlTables:    map[string]ttlTable{},
+		eventBus:     newEventBridgeBus(clock),
 	}
 	runner.namePrefix = sanitizeNamePrefix(options.NamePrefix, "apptheory-local-"+runner.appHash)
 	runner.network = runner.namePrefix + "-net"
@@ -172,11 +185,28 @@ func NewRunner(options Options) (*Runner, error) {
 		runner.logf,
 	)
 	// E1b: an SQS mapping has a deliverer, so plan reports it as registered and
-	// a live session polls its ElasticMQ queue. E6: an SNS subscription has a
-	// deliverer whose shared topic hub observes publishes through moto and
-	// fans them out. Other kinds keep reporting not-delivered with their task
-	// until E2-E5 land.
+	// a live session polls its ElasticMQ queue. E2: a DynamoDB Streams mapping
+	// polls the table's stream on DynamoDB Local. E6: an SNS subscription has a
+	// deliverer whose shared topic hub observes publishes through moto and fans
+	// them out. Other kinds keep reporting not-delivered with their task until
+	// E3 and E5 land.
 	runner.delivery.RegisterDeliverer(DeliveryKindSQS, NewSQSDeliverer)
+	runner.delivery.RegisterDeliverer(DeliveryKindDynamoDBStream, func(source DeliverySource) (Deliverer, error) {
+		return NewDynamoDBStreamDeliverer(source, runner.ttl)
+	})
+	// E5: a Kinesis mapping polls moto's stream, and a CloudWatch Logs
+	// subscription filter polls its log group and delivers the gzip payload to
+	// its Lambda or Kinesis destination.
+	runner.delivery.RegisterDeliverer(DeliveryKindKinesis, NewKinesisDeliverer)
+	runner.delivery.RegisterDeliverer(DeliveryKindCloudWatchLogs, NewCloudWatchLogsDeliverer)
+	// E3: schedules fire on the clock and pattern rules register on the
+	// runner-owned bus.
+	runner.delivery.RegisterDeliverer(DeliveryKindEventBridgeSchedule, func(source DeliverySource) (Deliverer, error) {
+		return NewEventBridgeDeliverer(source, runner.eventBus)
+	})
+	runner.delivery.RegisterDeliverer(DeliveryKindEventBridgeRule, func(source DeliverySource) (Deliverer, error) {
+		return NewEventBridgeDeliverer(source, runner.eventBus)
+	})
 	runner.sns = newSNSHubRegistry(runner.clock, runner.logf, runner.snsQueueLookup, runner.deliverySQSClient)
 	runner.delivery.RegisterDeliverer(DeliveryKindSNS, func(source DeliverySource) (Deliverer, error) {
 		return NewSNSDeliverer(source, runner.sns)
@@ -485,6 +515,9 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 	if err = r.startBackends(ctx); err != nil {
 		return nil, err
 	}
+	if err = r.startEventBridgeBus(ctx); err != nil {
+		return nil, err
+	}
 	if err = r.provisionResources(ctx, spec); err != nil {
 		return nil, err
 	}
@@ -504,6 +537,7 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 	if err := r.startFunctions(ctx, spec, targets); err != nil {
 		return nil, err
 	}
+	r.startFunctionLogs(ctx, spec, targets)
 	if err := r.startServers(ctx, spec); err != nil {
 		return nil, err
 	}
@@ -511,6 +545,46 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 		return nil, err
 	}
 	return spec, nil
+}
+
+// startEventBridgeBus serves the EventBridge PutEvents JSON protocol for the
+// functions and the harness. Containers reach it through host.docker.internal,
+// which is added as a host entry before the preflight. Docker Desktop forwards
+// that name to the host loopback, but on Linux the host-gateway address is the
+// bridge interface, where a loopback-only listener is unreachable; the bus
+// therefore binds every interface while the URL the session reports stays
+// loopback-only.
+func (r *Runner) startEventBridgeBus(ctx context.Context) error {
+	var listenConfig net.ListenConfig
+	listener, err := listenConfig.Listen(ctx, "tcp", "0.0.0.0:0")
+	if err != nil {
+		return fmt.Errorf("bind the local EventBridge bus: %w", err)
+	}
+	r.listeners = append(r.listeners, listener)
+	server := &http.Server{
+		Handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			r.eventBus.serveEventBridgeHTTP(ctx, writer, request)
+		}),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	r.servers = append(r.servers, server)
+	go func() {
+		if serveErr := server.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) && !errors.Is(serveErr, net.ErrClosed) {
+			r.logf("local EventBridge bus stopped: %v", serveErr)
+		}
+	}()
+	tcpAddr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		return fmt.Errorf("the local EventBridge bus has no TCP address")
+	}
+	port := tcpAddr.Port
+	r.eventBusURL = fmt.Sprintf("http://127.0.0.1:%d", port)
+	r.eventBusContainer = fmt.Sprintf("http://host.docker.internal:%d", port)
+	r.endpoints = append(r.endpoints, Endpoint{Service: "events", URL: r.eventBusContainer})
+	r.options.AddHosts = append(r.options.AddHosts, "host.docker.internal:host-gateway")
+	r.logf("local EventBridge bus at %s (containers: %s)", r.eventBusURL, r.eventBusContainer)
+	return nil
 }
 
 // runtimeFunctions returns the CDK-targeted function set plus any explicit
@@ -886,6 +960,7 @@ func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image
 		Function:  function,
 		Container: name,
 		Image:     image,
+		Started:   time.Now().UTC(),
 	}
 	r.invokers[function.LogicalID] = process
 	if _, startErr := r.docker.StartContainer(ctx, options); startErr != nil {
@@ -1044,6 +1119,9 @@ func (r *Runner) containerName(logicalID string) string {
 }
 
 func (r *Runner) logf(format string, args ...any) {
+	if r.options.Stdout == nil {
+		return
+	}
 	_, _ = fmt.Fprintf(r.options.Stdout, format+"\n", args...) //nolint:errcheck // progress logging
 }
 
@@ -1088,7 +1166,7 @@ func sanitizeName(value string) string {
 	}
 	name := strings.Trim(builder.String(), "-_.")
 	if name == "" {
-		return "function"
+		return ruleTargetFunction
 	}
 	if len(name) > 40 {
 		return name[:31] + "-" + hashOf(name)

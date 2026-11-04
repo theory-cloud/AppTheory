@@ -30,6 +30,9 @@ func (r *Runner) provisionResources(ctx context.Context, spec *Spec) error {
 	r.resourceValues = resourceValues{}
 	r.tables = map[string]tableInfo{}
 	r.secretValues = map[string]string{}
+	if err := r.provisionLogGroups(ctx, spec); err != nil {
+		return err
+	}
 	if err := r.provisionBuckets(ctx, spec); err != nil {
 		return err
 	}
@@ -61,6 +64,113 @@ func (r *Runner) provisionResources(ctx context.Context, spec *Spec) error {
 		return err
 	}
 	return r.provisionCognito(ctx, spec)
+}
+
+// provisionLogGroups creates one log group per AWS::Logs::LogGroup so a
+// declared group exists for the application and a subscription filter can read
+// it. Streams are created on demand by the writer.
+func (r *Runner) provisionLogGroups(ctx context.Context, spec *Spec) error {
+	backend, ok := r.backendForService(logsService)
+	if !ok {
+		return nil
+	}
+	if backend.HostURL == "" {
+		return fmt.Errorf("the logs backend has no loopback endpoint for the runner to provision log groups")
+	}
+	client := newCloudWatchLogsClient(backend.HostURL)
+	for _, resource := range spec.Resources {
+		if resource.Type != typeLogGroup {
+			continue
+		}
+		name := logGroupResourceName(spec, resource)
+		if err := client.CreateLogGroup(ctx, name); err != nil {
+			return fmt.Errorf("create local log group %s for %s: %w", name, resource.LogicalID, err)
+		}
+		r.resourceValues[resource.Stack+"/"+resource.LogicalID] = resourceValue{
+			Type: typeLogGroup,
+			Name: name,
+			ARN:  "arn:" + LocalPartition + ":logs:" + LocalRegion + ":" + LocalAccountID + ":log-group:" + name + ":*",
+		}
+		r.logf("provisioned log group %s for %s", name, resource.LogicalID)
+	}
+	return nil
+}
+
+// logGroupResourceName resolves a log group's LogGroupName. CDK expresses a
+// function's default group as {"Fn::Join":["",["/aws/lambda/",{"Ref":"Fn"}]]},
+// so the physical function name must be resolved first.
+func logGroupResourceName(spec *Spec, resource ResourceSpec) string {
+	var props struct {
+		LogGroupName json.RawMessage `json:"LogGroupName"`
+	}
+	if len(resource.Properties) > 0 {
+		if err := json.Unmarshal(resource.Properties, &props); err != nil {
+			return fallbackLogGroupName(spec, resource)
+		}
+	}
+	var value any
+	if err := json.Unmarshal(props.LogGroupName, &value); err != nil {
+		return fallbackLogGroupName(spec, resource)
+	}
+	if name := flattenLogGroupValueInSpec(spec, resource.Stack, value); name != "" {
+		return name
+	}
+	return fallbackLogGroupName(spec, resource)
+}
+
+func fallbackLogGroupName(_ *Spec, resource ResourceSpec) string {
+	name, err := resourceName(resource)
+	if err != nil {
+		return localPhysicalName(resource.Stack, resource.LogicalID)
+	}
+	return name
+}
+
+func flattenLogGroupValueInSpec(spec *Spec, stack string, value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case map[string]any:
+		if id, ok := typed["Ref"].(string); ok {
+			for _, resource := range spec.Resources {
+				if resource.Stack != stack || resource.LogicalID != id {
+					continue
+				}
+				switch resource.Type {
+				case typeLambdaFunction:
+					// The Join already supplies the /aws/lambda/ prefix.
+					return fallbackLogGroupName(spec, resource)
+				case typeLogGroup:
+					return logGroupResourceName(spec, resource)
+				}
+			}
+			return ""
+		}
+		join, ok := typed["Fn::Join"].([]any)
+		if !ok || len(join) != 2 {
+			return ""
+		}
+		delimiter, ok := join[0].(string)
+		if !ok {
+			return ""
+		}
+		parts, ok := join[1].([]any)
+		if !ok {
+			return ""
+		}
+		var builder strings.Builder
+		for _, part := range parts {
+			resolved := flattenLogGroupValueInSpec(spec, stack, part)
+			if resolved == "" {
+				return ""
+			}
+			builder.WriteString(resolved)
+			builder.WriteString(delimiter)
+		}
+		return strings.TrimSuffix(builder.String(), delimiter)
+	default:
+		return ""
+	}
 }
 
 func (r *Runner) provisionBuckets(ctx context.Context, spec *Spec) error {
@@ -192,7 +302,7 @@ type dynamoTableProperties struct {
 	TableName               string                       `json:"TableName"`
 }
 
-//nolint:gocyclo // one provisioning step per table resource, with explicit error handling.
+//nolint:gocyclo,gocognit // one provisioning step per table resource.
 func (r *Runner) provisionTables(ctx context.Context, spec *Spec) error {
 	backend, ok := r.backendForService("dynamodb")
 	if !ok {
@@ -236,7 +346,7 @@ func (r *Runner) provisionTables(ctx context.Context, spec *Spec) error {
 			Type:      typeDynamoTable,
 			Name:      name,
 			ARN:       aws.ToString(description.TableArn),
-			StreamARN: aws.ToString(description.LatestStreamArn),
+			StreamARN: normalizeDynamoStreamARN(aws.ToString(description.LatestStreamArn), name),
 		}
 		r.resourceValues[resource.Stack+"/"+resource.LogicalID] = value
 		r.tables[resource.Stack+"/"+resource.LogicalID] = tableInfo{
@@ -254,6 +364,14 @@ func (r *Runner) provisionTables(ctx context.Context, spec *Spec) error {
 				},
 			}); err != nil && !ttlAlreadyEnabled(err) {
 				return fmt.Errorf("enable local TTL on DynamoDB table %s: %w", name, err)
+			}
+			if r.ttlTables == nil {
+				r.ttlTables = map[string]ttlTable{}
+			}
+			r.ttlTables[resource.Stack+"/"+resource.LogicalID] = ttlTable{
+				Name:      name,
+				Attribute: props.TimeToLiveSpecification.AttributeName,
+				KeySchema: keySchema,
 			}
 		}
 		r.logf("provisioned DynamoDB table %s for %s", name, resource.LogicalID)

@@ -829,21 +829,25 @@ owns:
 - the per-source delivery state that `plan` and `session describe` report.
 
 An SQS mapping has a deliverer: it polls ElasticMQ, invokes the function and
-deletes or leaves each message exactly as Lambda documents. An SNS subscription
+deletes or leaves each message exactly as Lambda documents. A DynamoDB Streams
+mapping reads the table's stream on DynamoDB Local and invokes the function with
+the documented records. An EventBridge schedule fires on the run clock and a
+pattern rule receives every matching `PutEvents` call on the runner's own bus.
+A Kinesis mapping polls moto's stream, and a CloudWatch Logs subscription filter
+delivers the log events written through the real Logs API. An SNS subscription
 has a deliverer: the runner observes every publish on moto and performs the
-fan-out to the subscription's target. Every other kind is registered and
-reported as `not-delivered` with the task that will implement it. Nothing is
-silent: `plan` prints the state next to every derived source, and a session
-reports the same source list live.
+fan-out to the subscription's target. A kind without a deliverer is registered
+and reported as `not-delivered` with the task that will implement it. Nothing is silent: `plan` prints the state next to every
+derived source, and a session reports the same source list live.
 
 | Source kind | Local delivery |
 | --- | --- |
 | SQS event source mapping | Delivered (E1b); see [SQS event-source delivery](#sqs-event-source-delivery) |
+| DynamoDB Streams event source mapping | Delivered (E2); see [DynamoDB Streams delivery](#dynamodb-streams-delivery) |
 | SNS subscription | Delivered (E6); see [SNS subscription delivery](#sns-subscription-delivery) |
-| DynamoDB Streams event source mapping | Task E2 |
-| EventBridge schedule and pattern rule | Task E3 |
-| CloudWatch Logs subscription filter | Task E5 |
-| Kinesis event source mapping | Task E5 |
+| EventBridge schedule and pattern rule | Delivered (E3); see [EventBridge delivery](#eventbridge-delivery) |
+| CloudWatch Logs subscription filter | Delivered (E5); see [CloudWatch Logs subscription delivery](#cloudwatch-logs-subscription-delivery) |
+| Kinesis event source mapping | Delivered (E5); see [Kinesis event-source delivery](#kinesis-event-source-delivery) |
 
 ### SQS event-source delivery
 
@@ -969,6 +973,313 @@ Observed against `softwaremill/elasticmq-native@sha256:e4580ab9` (ElasticMQ
 | A receipt handle rotates on every receive; the previous handle is rejected | The deliverer deletes with the handle of that receipt and forgets it on success; it never deletes with a stale handle. |
 | Redrive happens when the next receive would exceed `maxReceiveCount`; the DLQ copy carries `DeadLetterQueueSourceArn` and a higher `ApproximateReceiveCount` | The deliverer reads the queue's redrive policy and treats a receive that ElasticMQ redrives as a message that is no longer in the source queue. |
 | A FIFO group is blocked while an earlier message of the group is in flight | Per-group ordering is preserved; the deliverer additionally protects every later record of a failed group within a batch. |
+
+### DynamoDB Streams delivery
+
+The DynamoDB Streams deliverer reads the table's stream on DynamoDB Local and
+invokes the mapping's function with the documented record. The rules are those
+in [Using AWS Lambda with Amazon DynamoDB](https://docs.aws.amazon.com/lambda/latest/dg/with-ddb.html),
+[Configuring partial batch response with DynamoDB and Lambda](https://docs.aws.amazon.com/lambda/latest/dg/services-ddb-batchfailurereporting.html),
+[Lambda event filtering](https://docs.aws.amazon.com/lambda/latest/dg/invocation-eventfiltering.html)
+and [DynamoDB Streams and Time to Live](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/time-to-live-ttl-streams.html).
+
+**Polling and batching.** The deliverer describes the stream, takes a shard
+iterator per shard and reads records with `GetRecords`. `BatchSize` defaults to
+100. A positive `MaximumBatchingWindowInSeconds` (0–300) closes the batch when
+the run clock reaches the window or the batch is full; with the default window
+of zero a single read closes the batch. A closed batch is invoked once; the
+handler receives `{"Records":[...]}` with the documented `eventID`, `eventName`,
+`eventVersion`, `eventSourceARN`, `awsRegion` and `dynamodb` fields (`Keys`,
+`NewImage`, `OldImage`, `SequenceNumber`, `SizeBytes`, `StreamViewType`, and
+`ApproximateCreationDateTime` as epoch seconds). A record that matches no
+`FilterCriteria` is dropped and the iterator advances past it; Lambda does not
+invoke the function for it.
+
+**Starting positions.** `StartingPosition` is `TRIM_HORIZON` or `LATEST`.
+`AT_TIMESTAMP` is a Kinesis starting position; DynamoDB Streams returns an
+internal failure for it on the pinned image, so a mapping that declares it is
+refused at plan time with the mapping named.
+
+**Partial failure and retries.** With `ReportBatchItemFailures`, the handler
+returns `{"batchItemFailures":[{"itemIdentifier":"<sequence number>"}]}`. Lambda
+checkpoints at the lowest failed sequence number and retries from there, so the
+prefix before that checkpoint is not re-delivered. `BisectBatchOnFunctionError`
+splits a failed batch in half and retries each half; with a partial batch
+response the batch is bisected at the returned sequence number. Invalid
+responses (malformed JSON, a bad key name, an empty or null identifier) are a
+complete failure. `MaximumRetryAttempts` (`-1` unlimited, the AWS default) and
+`MaximumRecordAgeInSeconds` (`-1` unlimited, otherwise 60–604800) are evaluated
+on the run clock; the local retry backoff is a clock timer, so a test clock
+drives retries deterministically. When a batch is discarded, the runner sends
+the documented invocation record to `DestinationConfig.OnFailure`: an SQS
+message or an SNS message carrying `requestContext` (`requestId`,
+`functionArn`, `condition`, `approximateInvokeCount`), `responseContext`,
+`version`, `timestamp` and `DDBStreamBatchInfo` (shard id, start and end
+sequence numbers, arrival times, batch size and stream ARN). The destination is
+the local ElasticMQ queue or the local SNS fan-out; no AWS call is made.
+
+**Parallelization.** `ParallelizationFactor` (1–10) runs several pollers per
+shard; records are assigned to a lane by the table's partition key, so records
+that share a key stay in one lane and keep their order. Each lane reads the
+shard from the same starting position and processes only its own keys.
+
+**Shard lifecycle.** An expired shard iterator is re-seeked after the last
+consumed sequence number (`AFTER_SEQUENCE_NUMBER`). A closed shard stops once
+its records are exhausted, and the deliverer re-reads the stream description to
+pick up child shards and start their pollers.
+
+**Time to Live.** DynamoDB Local accepts `TimeToLiveSpecification` but never
+expires an item. The runner performs the expiry on the run clock: it scans every
+provisioned table that enabled TTL, deletes an item whose TTL attribute is at or
+before the clock's current instant through DynamoDB Local (which produces the
+real stream record), and attaches the documented service identity to that
+record:
+
+```json
+"userIdentity": {"type": "Service", "principalId": "dynamodb.amazonaws.com"}
+```
+
+On the real clock the sweep runs about once a second, so an item expires within
+a second of its due time; the wall-clock timing of AWS's background TTL process
+is a docs/125 true limit and is not reproduced. A scan that has not yet seen a
+newly written item is retried on the next sweep.
+
+**DynamoDB Local behaviour the deliverer normalizes.** Observed against
+`amazon/dynamodb-local@sha256:7ef4a2c4` (3.1.0):
+
+| Observed DynamoDB Local behaviour | How the runner implements AWS's behaviour |
+| --- | --- |
+| `ListStreams` returns `Streams`; AWS returns `StreamDescriptions` | The client accepts both and exposes only the AWS field. |
+| Stream ARNs and `awsRegion` use region `ddblocal` and account `000000000000` | The event carries the CDK-resolved stream ARN (`GetAtt StreamArn`, normalized to the local region and account) and `awsRegion` `us-east-1`. |
+| `ApproximateCreationDateTime` is an ISO string; AWS returns epoch seconds | The record carries epoch seconds, as the Lambda event documents. |
+| `GetShardIterator` with `AT_TIMESTAMP` returns an internal failure | `AT_TIMESTAMP` is refused at plan time for DynamoDB with a named reason. |
+| TTL never expires an item | The runner deletes the expired item through DynamoDB Local on the run clock and attaches the service `userIdentity`. |
+| A shard ID has the form `shardId-<digits>-<hex>` | The value is passed through as an opaque string, as the stream record does. |
+
+The `session` operations that build a stream record by hand
+(`ddb.stream-event`) keep working unchanged; they are a convenience, not the
+delivery path.
+
+### EventBridge delivery
+
+The runner serves the EventBridge `PutEvents` JSON protocol itself on an
+ephemeral port injected into every function as `AWS_ENDPOINT_URL_EVENTS` and
+`AWS_ENDPOINT_URL_EVENTBRIDGE` (the SDKs and Tools reference names the override
+from EventBridge's API-model serviceId; both spellings point at the same
+endpoint). Function containers reach it as `host.docker.internal:<port>` with
+the `host-gateway` entry the runner adds. The listener binds every interface so
+that entry works on Linux, where it resolves to the bridge address; the session
+reports and the harness uses `http://127.0.0.1:<port>`. The endpoint is
+unauthenticated and reachable from any interface on the host while a session
+runs; it is the runner's only non-loopback listener, and the backends publish on
+`127.0.0.1`. A handler's real SDK client and the harness's AWS CLI reach the
+same endpoint. A rule's
+pattern is matched by the validated EventBridge evaluator E1b uses, and the
+runner performs input shaping, target delivery, retry and dead-letter handling.
+
+The own bus was chosen over the pinned moto events service after probing
+`motoserver/moto@sha256:59a1965d` (5.2.5):
+
+| Probe | moto 5.2.5 | Runner |
+| --- | --- | --- |
+| `PutEvents` on a custom bus matches a simple pattern rule to a moto SQS target | Yes | Yes |
+| `InputPath` on an SQS target | Accepted and ignored; the full event is delivered | Implemented |
+| `Input` on a target | Accepted and ignored | Implemented |
+| `InputTransformer` | Not applied | Implemented |
+| Retry policy and `DeadLetterConfig` | Accepted, no retry or DLQ behavior | Implemented on the run clock |
+| Lambda target delivery to the RIE | Cannot reach the local function containers | Invokes the real container |
+| ElasticMQ target | moto's SQS is a different queue service | Sends to the application's ElasticMQ queue |
+| Schedules | Never fire | Fire on the run clock |
+
+**Schedules.** A `ScheduleExpression` of the form `rate(value unit)` or
+`cron(minutes hours day-of-month month day-of-week year)` fires on `env.Clock`.
+The test clock fires exactly the due occurrences: advancing 15 minutes over a
+`rate(5 minutes)` rule fires it three times. On the real clock a rule fires at
+its due minute. The rate units are `minute(s)`, `hour(s)` and `day(s)` with the
+documented singular/plural rule. The cron parser supports `*`, `?`, lists,
+ranges, steps, month and weekday names, and a year range; the `L`, `W` and `#`
+forms are refused at plan time with the rule named. A scheduled rule is only
+valid on the default bus, as AWS documents. The target receives:
+
+```json
+{
+  "version": "0",
+  "id": "<uuid>",
+  "detail-type": "Scheduled Event",
+  "source": "aws.events",
+  "account": "123456789012",
+  "time": "<scheduled instant>",
+  "region": "us-east-1",
+  "resources": ["<the CDK rule ARN>"],
+  "detail": {}
+}
+```
+
+**Buses and rules.** Every `AWS::Events::Rule` with an `EventPattern` registers
+on its bus: the `default` bus when `EventBusName` is omitted, or the
+`AWS::Events::EventBus` the rule references. `PutEvents` accepts up to ten
+entries; each entry becomes the documented envelope (`version`, `id`,
+`detail-type`, `source`, `account`, `time`, `region`, `resources`, `detail`) and
+is matched against every enabled rule on its bus. Matching is the documented
+EventBridge pattern grammar over top-level fields and `detail`, including
+`prefix`, `suffix`, `anything-but`, `numeric`, `exists`,
+`equals-ignore-case` and `$or`. A `State: DISABLED` rule registers paused and
+never fires. A malformed entry is reported in the PutEvents response with
+`ErrorCode` `MalformedDetail` and does not reach a rule.
+
+**Targets and input shaping.** A rule target may be a Lambda function, an SQS
+queue or an SNS topic:
+
+- Lambda receives the shaped input as its invocation payload.
+- SQS receives it as the message body; a FIFO queue receives
+  `SqsParameters.MessageGroupId`, which may be a literal or a JSON path such as
+  `$.detail.group`.
+- SNS is published through the same local fan-out an SDK publish uses, so the
+  subscription policies and targets documented in
+  [SNS subscription delivery](#sns-subscription-delivery) apply.
+
+`Input` must be valid JSON, `InputPath` must start with `$.`, and an
+`InputTransformer` needs an `InputTemplate`; the three are mutually exclusive.
+The template supports the configured `InputPathsMap` variables and the
+predefined variables `aws.events.rule-arn`, `aws.events.rule-name`,
+`aws.events.event.ingestion-time`, `aws.events.event` and
+`aws.events.event.json`. A path that has no value removes its variable, and a
+variable used inside a JSON string is inserted as the string's content.
+
+**Retry and dead-letter queue.** A failed target is retried on the run clock:
+the first retry is after ten seconds, the delay doubles and is capped at five
+minutes. `RetryPolicy.MaximumRetryAttempts` (`-1` through 185; `-1` disables
+retries) and `MaximumEventAgeInSeconds` (60–86400) bound the attempts and the
+event age. When the budget is exhausted, the shaped input goes to the target's
+standard SQS dead-letter queue with the documented message attributes
+`RULE_ARN`, `TARGET_ARN`, `ERROR_CODE`, `ERROR_MESSAGE`,
+`EXHAUSTED_RETRY_CONDITION` (`MaximumRetryAttempts` or
+`MaximumEventAgeInSeconds`) and `RETRY_ATTEMPTS`. A target without a DLQ records
+the failure and drops the event. AWS invokes a Lambda target asynchronously, so
+the Lambda service accepts the call before the handler runs; the local runner
+counts a handler error as the target's failure so the EventBridge retry and DLQ
+path is observable on a real row.
+
+**EventBridge Scheduler.** No example in this repository synthesizes an
+`AWS::Scheduler::Schedule` (`grep -R AWS::Scheduler examples` is empty), so the
+runner does not serve Scheduler schedules. A scheduled rule is the legacy
+EventBridge form the examples declare.
+
+**Proving rows.** The multilang example proves a `rate(5 minutes)` schedule and
+a pattern rule for Go, TypeScript and Python. The `import-pipeline` row puts the
+S3 event shape through the real bus and asserts the ingest handler's effect. The
+`sqs-queue` row proves four rule target shapes on a custom bus and the default
+bus: an SQS target with `InputPath`, an SNS target with an `InputTransformer`
+(an L1 `CfnRule`, because this CDK version does not expose the transformer on
+the L2 SNS target), a Lambda target with static `Input`, and a failing Lambda
+target with a retry policy and an SQS DLQ.
+
+**Delivery state.** `plan` reports every schedule and pattern rule `registered`
+with its bus name. `session describe` reports per-rule `fired`, `delivered`,
+`failed`, `deadLettered` and `lastError`. The existing `eventbridge.event`
+session operation still builds the envelope for a rule by hand; it is a
+convenience, not the delivery path.
+
+### Kinesis event-source delivery
+
+The Kinesis deliverer reads moto's stream and invokes the mapping's function
+with the documented record. It shares the stream poller core with DynamoDB
+Streams: batching, the batching window on the run clock, filter criteria,
+partial failures, bisect on error, retry attempts, record age, the on-failure
+invocation record and iterator re-seek. The differences are the Kinesis record
+shape, the three starting positions and the partition-key lane rule.
+Sources: [Using Lambda to process records from Amazon Kinesis Data Streams](https://docs.aws.amazon.com/lambda/latest/dg/with-kinesis.html)
+and [Configuring partial batch response with Kinesis Data Streams and Lambda](https://docs.aws.amazon.com/lambda/latest/dg/services-kinesis-batchfailurereporting.html).
+
+**Polling.** `BatchSize` defaults to 100; a positive
+`MaximumBatchingWindowInSeconds` (0–300) closes the batch on the run clock.
+`StartingPosition` is `TRIM_HORIZON`, `LATEST` or `AT_TIMESTAMP` with a
+`StartingPositionTimestamp` in Unix seconds. A record carries the base64 `data`,
+`partitionKey`, `sequenceNumber`, `approximateArrivalTimestamp`,
+`eventSourceARN` (the CDK stream ARN), `eventSource` `aws:kinesis`,
+`eventName` `aws:kinesis:record` and the local invocation identity ARN.
+`FilterCriteria` is evaluated against the record's metadata and the top-level
+`data` key, whose value is the base64-decoded payload when that payload is valid
+JSON; a record that matches no filter advances the iterator without an
+invocation. A non-JSON payload leaves `data` absent, so a filter with a data
+property drops the record while a metadata-only filter still matches
+([Using event filtering with a Kinesis event source](https://docs.aws.amazon.com/lambda/latest/dg/with-kinesis-filtering.html)).
+
+**Partial failure and retries.** The response is
+`{"batchItemFailures":[{"itemIdentifier":"<sequence number>"}]}`; the lowest
+reported sequence number is the checkpoint. `BisectBatchOnFunctionError`,
+`MaximumRetryAttempts`, `MaximumRecordAgeInSeconds` and
+`DestinationConfig.OnFailure` follow the same rules as
+[DynamoDB Streams delivery](#dynamodb-streams-delivery); the on-failure record
+carries `KinesisBatchInfo` instead of `DDBStreamBatchInfo`.
+
+**Parallelization.** `ParallelizationFactor` (1–10) assigns a partition key to a
+lane; records with the same key stay in one lane and keep their order. Each lane
+reads the shard from the same starting position and processes only its keys.
+
+**Shard lifecycle.** An expired iterator is re-seeked after the last consumed
+sequence number. A closed shard stops once drained, and the deliverer re-reads
+the shard list to start new shards.
+
+**moto behaviour the deliverer normalizes.** Observed against
+`motoserver/moto@sha256:59a1965d` (5.2.5):
+
+| Observed moto behaviour | How the runner implements AWS's behaviour |
+| --- | --- |
+| Sequence numbers are small decimals starting at `"1"` | The value is passed through as an opaque string, as the event documents. |
+| A stream never splits or merges | The shard list is re-read; the local stream keeps its provisioned shards. |
+| `NextShardIterator` may carry a trailing newline | The iterator is passed back verbatim; it is never exposed to a handler. |
+| The stream ARN is already `arn:aws:kinesis:<region>:<account>:stream/<name>` | The event uses the CDK-resolved ARN, which matches it. |
+
+### CloudWatch Logs subscription delivery
+
+**Function log capture.** Every started function's stdout and stderr are
+followed from its container and written to the CloudWatch Logs group
+`/aws/lambda/<function name>` through the real `PutLogEvents` API on moto, one
+log stream per container (`<yyyy>/<mm>/<dd>/<container>`). A subscription filter
+on that group therefore carries real invocation output. Captured: every line the
+runtime process writes to standard out or standard error, including handler
+logging, runtime initialisation output and the platform-style lines the
+official runtime image prints itself (`START`, `END`, `REPORT` and the
+rapid-runtime `INIT`/`INVOKE` lines). Not captured: anything the AWS Lambda
+service records outside the container; there is no separate service-side
+request log locally.
+Timestamps are the wall-clock ingestion times moto accepts (it rejects an event
+older than its retention window) and are monotonic per stream; the test clock
+does not move log ingestion. The group is created before the function is
+invoked; a function without the Logs backend simply has no capture.
+
+**Subscription filters.** An `AWS::Logs::SubscriptionFilter` on a log group is
+registered with the delivery engine. The runner polls the group with
+`FilterLogEvents`, honours the filter pattern and delivers the documented
+payload: gzip-compressed JSON with `messageType` `DATA_MESSAGE`, `owner`,
+`logGroup`, `logStream`, `subscriptionFilters` and `logEvents` (each with `id`,
+`timestamp` and `message`). A Lambda destination receives it base64-encoded in
+`awslogs.data`; a CloudWatch Logs destination is followed to its Kinesis stream,
+and the runner puts the same gzip bytes as the Kinesis record data (partition
+key from `Distribution`: `ByLogStream` uses the log stream name, `Random` uses a
+generated key), so the Kinesis mapping delivers the record through the normal
+stream path. `Distribution` is validated when the filter is derived.
+
+**Filter patterns.** The runner implements the forms a local application uses:
+the blank pattern matches every event; a term pattern ANDs bare terms, matches a
+`"quoted phrase"`, ORs `?alternative` terms and excludes `-term` terms; a JSON
+pattern supports `$.path = value`, `$.path != value`, `&&`, `||` and
+parentheses with string, number and boolean values. Regex patterns (`%...%`),
+array and wildcard selectors, space-delimited field selectors and the `L`/`W`/`#`
+cron-style forms are refused at plan time with the filter and the construct
+named, never accepted and silently matched against nothing.
+
+**Delivery state.** `plan` reports a subscription `registered`; `session
+describe` reports `delivered`, `filtered` and `failed` for it. The existing
+`kinesis.cloudwatch-event` and `kinesis.event` session operations still build an
+event by hand; they are a convenience, not the delivery path.
+
+**moto behaviour the deliverer normalizes.** Observed against
+`motoserver/moto@sha256:59a1965d` (5.2.5): moto stores and serves log events but
+does not run subscription filters; the runner polls the group and performs the
+delivery. `FilterLogEvents` returns `eventId`, `logStreamName`, `timestamp`,
+`message` and `ingestionTime`; the payload uses them directly.
 
 ### SNS subscription delivery
 
@@ -1111,12 +1422,16 @@ The runner keeps the same shape in a smaller vocabulary:
 Every entry reports its `delivered` and `failed` counts, `lastError` and
 `paused`; an SNS subscription also reports `filtered` (messages its policy did
 not match); an SQS source reports `left` (records left for redelivery),
-`inflight` and `peakInflight`. The engine also reports its clock mode and
-current instant and its concurrency bound.
+`inflight` and `peakInflight`; a DynamoDB Streams mapping reports `discarded`
+(records sent to its on-failure destination); an EventBridge rule reports
+`fired`, `delivered`, `failed` and `deadLettered`; a Kinesis mapping also
+reports `discarded`; a CloudWatch Logs subscription reports `filtered`. The engine also reports its
+clock mode and current instant and its concurrency bound.
 
 `plan` prints the state the engine would register without starting a container;
-`plan --json` carries the same list under `delivery`. An SQS or SNS source is
-`registered` because the kind has a deliverer; every other kind is
+`plan --json` carries the same list under `delivery`. Every derived SQS,
+DynamoDB Streams, Kinesis, EventBridge, CloudWatch Logs or SNS source is
+`registered` because the kind has a deliverer; a kind without one is
 `not-delivered` with its task. `session describe` returns the live engine state
 under `delivery`:
 
@@ -1183,12 +1498,12 @@ the harness records it.
 | SSM Parameter Store (moto) | Supported (L2) | `AWS::SSM::Parameter` String, StringList and SecureString are created; `Ref` returns the name and `Fn::GetAtt Type`/`Value` the declared type and value. `AWS_ENDPOINT_URL_SSM` is injected. SecureString is stored in moto's memory without envelope encryption. |
 | Secrets Manager (moto) | Supported (L2) | `AWS::SecretsManager::Secret` with `SecretString` or `GenerateSecretString` is created; `Ref` is the ARN and runtime `GetSecretValue` works. A `ResourcePolicy` is reported skipped (IAM is a docs/125 true limit). `AWS_ENDPOINT_URL_SECRETS_MANAGER` is injected. |
 | SNS topics and subscriptions (moto) | Supported (L2) | Standard and FIFO `AWS::SNS::Topic` are created with `FifoTopic`/`ContentBasedDeduplication`; `Ref` is the ARN and `GetAtt TopicName`/`TopicArn` resolve. `AWS::SNS::Subscription` and inline `Subscription` entries are delivered automatically to Lambda, SQS and loopback HTTP targets, with filter policies, raw message delivery and FIFO ordering/deduplication; see [SNS subscription delivery](#sns-subscription-delivery). `TopicPolicy` is reported skipped (IAM is a docs/125 true limit). |
-| Kinesis streams (moto) | Provisioned (L2); delivery in E5 | `AWS::Kinesis::Stream` is created with `ShardCount` or `StreamModeDetails`, and `RetentionPeriodHours`; `Ref` is the name and `GetAtt Arn` the stream ARN. `AWS_ENDPOINT_URL_KINESIS` is injected. Event-source delivery lands in E5. |
+| Kinesis streams (moto) | Provisioned (L2); mapping delivered (E5) | `AWS::Kinesis::Stream` is created with `ShardCount` or `StreamModeDetails`, and `RetentionPeriodHours`; `Ref` is the name and `GetAtt Arn` the stream ARN. `AWS_ENDPOINT_URL_KINESIS` is injected. A mapping on the stream is delivered automatically; see [Kinesis event-source delivery](#kinesis-event-source-delivery). |
 | Cognito user pools (moto) | Supported (L2) | `AWS::Cognito::UserPool` and `UserPoolClient` are created; `Ref` returns the pool/client id and `GetAtt Arn`/`ProviderName`/`ProviderURL` the pool provider values. The runner serves the pool's JWKS and an OIDC discovery document at `http://127.0.0.1:<port>/cognito-idp/<region>/<poolId>`. A `UserPoolDomain` is reported skipped (no hosted UI). |
 | S3 (s3proxy) | Supported (L2) | `--backend s3proxy` starts the digest-pinned s3proxy container, creates the assembly's buckets, and injects the S3 endpoint as the container address so the SDK uses path-style addressing. No bucket policies, IAM or event notifications. |
-| Event source mappings (SQS delivered; DynamoDB Streams and Kinesis pending) | SQS delivered; stream delivery lands in E2/E5 | The mapping's function, source, batch options, filter criteria and scaling configuration are read from the assembly. An SQS mapping is delivered automatically; a DynamoDB Streams or Kinesis mapping reports `not-delivered` with its task. A session can still build a stream record from a real local write and invoke the handler. |
-| EventBridge rules (schedule and pattern) | Engine present; per-source delivery lands in E3 | A rule is registered per kind (schedule or pattern) and reported with its delivery state. A session builds the `Scheduled Event` envelope or the pattern's source/detail-type from the CDK rule and invokes its Lambda target. Managed rule delivery and the clock-driven scheduler land in E3. |
-| Kinesis / CloudWatch Logs subscription events | Engine present; per-source delivery lands in E5 | A `AWS::Logs::SubscriptionFilter` is derived with its log group and destination (a Lambda function, or a CloudWatch Logs destination followed to its Kinesis stream) and registered with the delivery engine. The session can build a CloudWatch Logs subscription payload from local log events and wrap it in a Kinesis record, or accept explicit base64 record data. The Kinesis stream itself and log-group capture land in E5. |
+| Event source mappings (SQS, DynamoDB Streams and Kinesis delivered) | SQS delivered (E1b), DynamoDB Streams delivered (E2), Kinesis delivered (E5) | The mapping's function, source, batch options, filter criteria and scaling configuration are read from the assembly. Every supported mapping is delivered automatically: an SQS queue, a DynamoDB stream or a Kinesis stream; see [SQS event-source delivery](#sqs-event-source-delivery), [DynamoDB Streams delivery](#dynamodb-streams-delivery) and [Kinesis event-source delivery](#kinesis-event-source-delivery). A session can still build a stream record from a real local write and invoke the handler. |
+| EventBridge rules (schedule and pattern) | Delivered (E3) | A rule is registered per kind (schedule or pattern) and delivered: a schedule fires on the run clock and a pattern rule receives every matching `PutEvents` entry; see [EventBridge delivery](#eventbridge-delivery). A session can still build the `Scheduled Event` envelope or the pattern's source/detail-type from the CDK rule and invoke its Lambda target. EventBridge Scheduler (`AWS::Scheduler::Schedule`) is not served because no example declares one. |
+| Kinesis / CloudWatch Logs subscription events | Delivered (E5) | A `AWS::Logs::SubscriptionFilter` is derived with its log group and destination (a Lambda function, or a CloudWatch Logs destination followed to its Kinesis stream) and delivered: function log capture writes the real `PutLogEvents` output, and a stream destination puts the same gzip bytes as the Kinesis record data, which the mapping delivers; see [CloudWatch Logs subscription delivery](#cloudwatch-logs-subscription-delivery) and [Kinesis event-source delivery](#kinesis-event-source-delivery). A session can still build a CloudWatch Logs subscription payload from local log events and wrap it in a Kinesis record, or accept explicit base64 record data. |
 | Delivery engine and test clock | Supported | `run` and `session` start the engine; `plan` and `session describe` report per-source state, including an SNS subscription's `filtered` count. SQS batching windows, visibility deadlines, schedules, TTL expiry and the SNS FIFO deduplication window take their time from `--clock test[=<RFC3339>]`; the `clock.now`/`clock.advance` session commands read and move it. ElasticMQ's and moto's own wall-clock timers and the runtime images are not slowed. `--delivery-concurrency` bounds concurrent deliveries (default 4); an SQS mapping's `MaximumConcurrency` bounds its batches within that. |
 | Deploy-time Secrets Manager dynamic references | Supported | A `{{resolve:secretsmanager:…}}` environment value resolves to the provisioned secret's value (the same JSON key) when the assembly declares that secret, and otherwise keeps the wave-1 deterministic local placeholder. The session's `describe` returns it to the harness; `run` and `plan` never print it. No secret is created in a cloud. |
 | Other emulators | Endpoint injection only | Pass `--endpoint service=url` and `--add-host name=address`; the profile names the environment variables. The checked-in profile binds `ssm`, `secretsmanager`, `sns`, `kinesis` and `cognito-idp` to moto, and `kms`/`sts` as before. |
@@ -1229,17 +1544,14 @@ the harness records it.
   CloudFront Functions API and globals but is not a hardened security boundary,
   does not enforce CloudFront's 1 ms CPU budget, and cannot reproduce
   CloudFront-only device, location or TLS headers.
-- **Stream and rule delivery is not wired per source yet.** SQS mapping and SNS
-  subscription delivery are present. Every DynamoDB Streams and Kinesis
-  mapping, EventBridge rule and CloudWatch Logs subscription filter is
-  registered, its function is started where it has one, and its state is
-  reported as `not-delivered` with the E2, E3 or E5 task. A session can still
-  build the provider event from a real local write and invoke the handler.
-- **Kinesis event-source delivery is pending.** The stream itself is created on
-  moto from `AWS::Kinesis::Stream`, and `Ref`/`GetAtt Arn` resolve to it. A
-  Kinesis event is still built locally (from a CloudWatch Logs subscription
-  payload or explicit record data) and invoked through the real handler; the
-  event-source deliverer lands in E5.
+- **Kinesis and CloudWatch Logs are emulated by moto.** The stream mapping,
+  the subscription filter, partial failure and the function-log capture are
+  real, but a moto stream never splits or merges and its sequence numbers are
+  opaque. Log ingestion uses wall-clock timestamps because moto rejects an
+  event outside its retention window.
+- **Kinesis shard topology is fixed.** The stream is created on moto from
+  `AWS::Kinesis::Stream`, and `Ref`/`GetAtt Arn` resolve to it; the runner reads
+  its shards and delivers each, but moto does not reshard.
 - **HTTP API authorizers** are run only for `REQUEST` authorizers with simple
   responses. They carry every configured `$request.header.*` or
   `$request.querystring.*` identity source in order, and a request missing one
@@ -1263,8 +1575,8 @@ the harness records it.
   the publish is observed, so the local runner does not model SNS's eventual
   consistency for a policy changed while messages are in flight.
 - **S3 event notifications** are absent from s3proxy. The import-pipeline row
-  writes a real object and builds the CDK rule's EventBridge event; S3 →
-  EventBridge delivery itself is the named gap.
+  writes a real object and puts the S3 event shape through the real bus;
+  S3 → EventBridge emission itself is the named gap (E4).
 - **Managed services** remain L3 gaps where the examples use them: the MicroVM
   provider in the controller and conformance rows, and S3 Vectors/Bedrock in
   the semantic-search row. The runner stops at those boundaries; it never fakes

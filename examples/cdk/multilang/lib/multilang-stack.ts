@@ -256,9 +256,25 @@ export class MultiLangStack extends Stack {
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
       stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
+      timeToLiveAttribute: "expiresAt",
     });
     goHandler.fn.addEnvironment("APPTHEORY_DEMO_TABLE_NAME", goTable.tableName);
-    new AppTheoryDynamoDBStreamMapping(this, "GoStream", { consumer: goHandler.fn, table: goTable });
+    // The Go mapping proves the failure path: a poison record exhausts two
+    // retries, the batch is bisected at the reported sequence number, and the
+    // discarded batch pointer reaches the on-failure SQS queue.
+    const goStreamDlq = new sqs.Queue(this, "GoStreamDlq", {
+      queueName: `${name}-go-stream-dlq`,
+    });
+    new AppTheoryDynamoDBStreamMapping(this, "GoStream", {
+      consumer: goHandler.fn,
+      table: goTable,
+      startingPosition: lambda.StartingPosition.TRIM_HORIZON,
+      batchSize: 10,
+      retryAttempts: 2,
+      bisectBatchOnError: true,
+      reportBatchItemFailures: true,
+      onFailure: new lambdaEventSources.SqsDlq(goStreamDlq),
+    });
 
     const goSchedule = new AppTheoryEventBridgeHandler(this, "GoSchedule", {
       handler: goHandler.fn,
@@ -283,9 +299,14 @@ export class MultiLangStack extends Stack {
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
       stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
+      timeToLiveAttribute: "expiresAt",
     });
     tsHandler.fn.addEnvironment("APPTHEORY_DEMO_TABLE_NAME", tsTable.tableName);
-    new AppTheoryDynamoDBStreamMapping(this, "TsStream", { consumer: tsHandler.fn, table: tsTable });
+    new AppTheoryDynamoDBStreamMapping(this, "TsStream", {
+      consumer: tsHandler.fn,
+      table: tsTable,
+      startingPosition: lambda.StartingPosition.TRIM_HORIZON,
+    });
 
     const tsSchedule = new AppTheoryEventBridgeHandler(this, "TsSchedule", {
       handler: tsHandler.fn,
@@ -310,9 +331,14 @@ export class MultiLangStack extends Stack {
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
       stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
+      timeToLiveAttribute: "expiresAt",
     });
     pyHandler.fn.addEnvironment("APPTHEORY_DEMO_TABLE_NAME", pyTable.tableName);
-    new AppTheoryDynamoDBStreamMapping(this, "PyStream", { consumer: pyHandler.fn, table: pyTable });
+    new AppTheoryDynamoDBStreamMapping(this, "PyStream", {
+      consumer: pyHandler.fn,
+      table: pyTable,
+      startingPosition: lambda.StartingPosition.TRIM_HORIZON,
+    });
 
     const pySchedule = new AppTheoryEventBridgeHandler(this, "PySchedule", {
       handler: pyHandler.fn,

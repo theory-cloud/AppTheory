@@ -195,7 +195,7 @@ func (r *Runner) resolveRef(id, stack string, resources map[string]map[string]Re
 	case typeSecretsSecret, typeSNSTopic:
 		return value.ARN, nil
 	case typeSSMParameter, typeCognitoUserPool, typeCognitoClient,
-		typeS3Bucket, typeDynamoTable, typeEventsRule, typeLambdaFunction, typeKinesisStream:
+		typeS3Bucket, typeDynamoTable, typeEventsRule, typeEventsBus, typeLambdaFunction, typeKinesisStream:
 		return value.Name, nil
 	default:
 		return "", fmt.Errorf("ref to %s (%s) is not resolvable locally", id, resource.Type)
@@ -303,6 +303,8 @@ func (r *Runner) localResourceValue(resource ResourceSpec, provisioned resourceV
 	case typeDynamoTable:
 		value.ARN = "arn:" + LocalPartition + ":dynamodb:" + LocalRegion + ":" + LocalAccountID + ":table/" + name
 		value.StreamARN = value.ARN + "/stream/local"
+	case typeLogGroup:
+		value.ARN = "arn:" + LocalPartition + ":logs:" + LocalRegion + ":" + LocalAccountID + ":log-group:" + name + ":*"
 	case typeEventsRule:
 		value.ARN = "arn:" + LocalPartition + ":events:" + LocalRegion + ":" + LocalAccountID + ":rule/" + name
 	case typeKinesisStream:

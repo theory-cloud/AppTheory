@@ -103,6 +103,8 @@ func probeBackendEndpoint(ctx context.Context, service, hostURL string) error {
 	case backendKinesis:
 		_, err := newKinesisClient(hostURL).ListStreams(ctx, &kinesis.ListStreamsInput{})
 		return err
+	case logsService:
+		return newCloudWatchLogsClient(hostURL).Ping(ctx)
 	case backendCognito:
 		_, err := newCognitoClient(hostURL).ListUserPools(ctx, &cognitoidentityprovider.ListUserPoolsInput{
 			MaxResults: aws.Int32(1),

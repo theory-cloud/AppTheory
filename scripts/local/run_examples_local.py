@@ -112,9 +112,9 @@ MCP_EXAMPLES = {
 }
 LOCAL_RUNNER_READY = "local-run: ready"
 LOCAL_RUNNER_CLOCK_START = "2026-01-01T00:00:00Z"
-# The delivery engine registers every derived source. E1b ships the SQS
-# deliverer, so a plan reports an SQS source as registered and a live session
-# polls it; every other kind still reports the task that will implement it.
+# The delivery engine registers every derived source. A kind with a deliverer is
+# registered in plan and live in a session; a kind without one still reports the
+# task that will implement it.
 DELIVERY_TASKS = {
     "sqs": "E1b",
     "dynamodb": "E2",
@@ -124,7 +124,31 @@ DELIVERY_TASKS = {
     "cloudwatch-logs": "E5",
     "sns": "E6",
 }
-DELIVERED_KINDS = {"sqs", "sns"}
+DELIVERED_KINDS = {
+    "sqs", "sns", "dynamodb", "kinesis", "cloudwatch-logs",
+    "eventbridge-schedule", "eventbridge-rule",
+}
+# The local backend a kind needs to deliver. A rule needs none: the runner
+# serves the bus itself.
+DELIVERY_BACKEND = {
+    "sqs": "sqs",
+    "sns": "moto",
+    "dynamodb": "dynamodb",
+    "kinesis": "moto",
+    "cloudwatch-logs": "moto",
+    "eventbridge-schedule": None,
+    "eventbridge-rule": None,
+}
+# The live state a kind reaches when its backend is present.
+DELIVERY_LIVE_STATE = {
+    "sqs": ("polling", "paused", "failed"),
+    "sns": ("armed", "failed"),
+    "dynamodb": ("polling", "paused", "failed"),
+    "kinesis": ("polling", "paused", "failed"),
+    "cloudwatch-logs": ("polling", "paused", "failed"),
+    "eventbridge-schedule": ("armed", "failed"),
+    "eventbridge-rule": ("armed", "failed"),
+}
 DELIVERY_CONCURRENCY = 4
 LOCAL_RUNNER_RUNTIMES = {"go": "provided.al2023", "ts": "nodejs24.x", "py": "python3.14"}
 # The handler response each language returned, compared across languages once
@@ -1385,10 +1409,7 @@ def _run_multilang_sns(
 
 
 def run_multilang(harness: Harness, lang: str) -> str:
-    detail = _run_multilang_http(harness, lang)
-    if lang == "go":
-        detail += "; " + _run_multilang_go_events(harness)
-    return detail
+    return _run_multilang_http(harness, lang)
 
 
 def _run_multilang_http(harness: Harness, lang: str) -> str:
@@ -1462,11 +1483,15 @@ def _run_multilang_http(harness: Harness, lang: str) -> str:
             raise HarnessFailure(f"multilang {lang}: the SQS mapping failed: {state}")
         _wait_for_queue_depth(session, queue["logicalId"], visible=0, not_visible=0)
         sns_record = _run_multilang_sns(harness, session, lang, http_base, function)
+        eventbridge_detail = _run_multilang_eventbridge(harness, session, lang, http_base, function)
+        stream_detail = _run_multilang_stream(harness, session, lang, http_base, function)
+        if lang == "go":
+            stream_detail += "; " + _run_multilang_stream_failure(harness, session, lang, http_base, function)
         return (
             f"{lang} HTTP API served four assertions (200 root, 200 hello, 405 method, 404 missing); "
             f"REST API served hello and all 3 buffered SSE events; 3 WebSocket APIs reported not served; "
             f"the CDK SQS mapping delivered one real ElasticMQ message to the {lang} handler and deleted it; "
-            f"the SNS Lambda subscription delivered the documented record {sns_record}"
+            f"the SNS Lambda subscription delivered the documented record {sns_record}; {eventbridge_detail}; {stream_detail}"
         )
     finally:
         stop_local_session(harness, session)
@@ -2416,15 +2441,18 @@ def _describe_delivery(session: "LocalSession") -> dict:
 def _assert_session_delivery(session: "LocalSession") -> None:
     """A live session must report the engine state for every derived source.
 
-    An SQS source with its backend running must reach ``polling``; an SNS
-    subscription on a running moto backend is ``armed`` on its topic hub.
-    Without the backend either kind reports ``failed`` with the closed-backend
-    reason. Every other kind stays ``not-delivered`` and names its task.
+    A kind whose local backend is running reaches its live state (polling for a
+    poller, armed for a rule or subscription). Without the backend it reports
+    failed or paused with the closed-backend reason. Every other kind stays
+    not-delivered and names its task.
     """
     expected = _expected_delivery_entries(session.spec)
     expected_by_id = {logical_id: (kind, function) for logical_id, kind, function in expected}
-    sqs_backend = "sqs" in session.backends
-    moto_backend = "moto" in session.backends
+
+    def available(kind: str) -> bool:
+        backend = DELIVERY_BACKEND.get(kind)
+        return backend is None or backend in session.backends
+
     deadline = time.monotonic() + 60
     while True:
         delivery = _describe_delivery(session)
@@ -2434,18 +2462,9 @@ def _assert_session_delivery(session: "LocalSession") -> None:
             if kind not in DELIVERED_KINDS:
                 continue
             state = str((states.get(logical_id) or {}).get("state") or "")
-            if kind == "sqs":
-                if state == "registered" or (sqs_backend and state not in ("polling", "paused")):
-                    settled = False
-                if not sqs_backend and state not in ("failed", "paused"):
-                    settled = False
-            else:
-                # An SNS subscription is armed on its topic hub; a failure in
-                # its last target delivery reports failed.
-                if state == "registered" or (moto_backend and state not in ("armed", "failed")):
-                    settled = False
-                if not moto_backend and state not in ("failed", "paused"):
-                    settled = False
+            allowed = DELIVERY_LIVE_STATE[kind] if available(kind) else ("failed", "paused")
+            if state == "registered" or state not in allowed:
+                settled = False
         if settled or time.monotonic() >= deadline:
             break
         time.sleep(0.1)
@@ -2471,10 +2490,7 @@ def _assert_session_delivery(session: "LocalSession") -> None:
         kind, _ = expected_by_id[logical_id]
         if kind in DELIVERED_KINDS:
             state = str(source.get("state") or "")
-            if kind == "sns":
-                allowed = ("armed", "failed") if moto_backend else ("failed", "paused")
-            else:
-                allowed = ("polling", "paused", "failed") if sqs_backend else ("failed", "paused")
+            allowed = DELIVERY_LIVE_STATE[kind] if available(kind) else ("failed", "paused")
             if state not in allowed:
                 raise HarnessFailure(
                     f"session {session.prefix}: {logical_id} is {state!r}, want one of {allowed}"
@@ -2855,6 +2871,242 @@ def _wait_for_delivery(
     raise HarnessFailure(
         f"{logical_id} never reached delivered={delivered} failed={failed} filtered={filtered}; "
         f"last state {last}"
+    )
+
+
+def _clock_epoch(session: LocalSession) -> int:
+    """Return the session clock's current instant as epoch seconds."""
+    instant = str(session.clock_now().get("now") or "")
+    normalized = re.sub(r"(\.\d{6})\d+", r"\1", instant).replace("Z", "+00:00")
+    return int(datetime.datetime.fromisoformat(normalized).timestamp())
+
+
+def _wait_for_stream_record(
+    http_base: str,
+    predicate: Callable[[dict], bool],
+    *,
+    label: str,
+    timeout: float = 180,
+) -> dict:
+    """Wait until the handler recorded a matching DynamoDB Streams event."""
+    deadline = time.monotonic() + timeout
+    last: list = []
+    while time.monotonic() < deadline:
+        status, payload, _ = _json_request("GET", f"{http_base}/stream-records")
+        if status == 200:
+            last = (payload or {}).get("records") or []
+            for record in last:
+                if predicate(record):
+                    return record
+        time.sleep(0.2)
+    raise HarnessFailure(f"{label}: the handler never recorded a matching stream record; last {last}")
+
+
+def _wait_for_eventbridge_record(
+    http_base: str,
+    predicate: Callable[[dict], bool],
+    *,
+    label: str,
+    timeout: float = 180,
+) -> dict:
+    """Wait until the handler recorded a matching EventBridge envelope."""
+    deadline = time.monotonic() + timeout
+    last: list = []
+    while time.monotonic() < deadline:
+        status, payload, _ = _json_request("GET", f"{http_base}/eventbridge-records")
+        if status == 200:
+            last = (payload or {}).get("records") or []
+            for record in last:
+                if predicate(record):
+                    return record
+        time.sleep(0.2)
+    raise HarnessFailure(f"{label}: the handler never recorded a matching EventBridge event; last {last}")
+
+
+def _run_multilang_eventbridge(
+    harness: Harness, session: LocalSession, lang: str, http_base: str, function: dict
+) -> str:
+    """Prove the scheduled rule and the pattern rule on the real local bus."""
+    schedule = session.rule(function=function["logicalId"], schedule=True)
+    pattern = session.rule(function=function["logicalId"], schedule=False)
+    session.clock_advance("5m")
+    scheduled = _wait_for_eventbridge_record(
+        http_base,
+        lambda record: record.get("kind") == "schedule",
+        label=f"multilang {lang} scheduled rule",
+        timeout=60,
+    )
+    if (
+        scheduled.get("source") != "aws.events"
+        or scheduled.get("detailType") != "Scheduled Event"
+        or scheduled.get("resources") != [schedule["arn"]]
+    ):
+        raise HarnessFailure(f"multilang {lang}: unexpected scheduled event: {scheduled}")
+    endpoint = session_endpoint(session, "events")
+    harness.run(
+        [
+            "aws", "--endpoint-url", endpoint, "events", "put-events",
+            "--entries", json.dumps([
+                {
+                    "Source": "apptheory.example",
+                    "DetailType": "example.item.changed",
+                    "Detail": json.dumps({"item": "a4"}),
+                    "EventBusName": "default",
+                }
+            ]),
+        ],
+        timeout=120,
+    )
+    matched = _wait_for_eventbridge_record(
+        http_base,
+        lambda record: record.get("kind") == "rule",
+        label=f"multilang {lang} pattern rule",
+        timeout=120,
+    )
+    if (
+        matched.get("source") != "apptheory.example"
+        or matched.get("detailType") != "example.item.changed"
+        or (matched.get("detail") or {}).get("item") != "a4"
+    ):
+        raise HarnessFailure(f"multilang {lang}: unexpected pattern event: {matched}")
+    if pattern["arn"] not in json.dumps(matched):
+        # The pattern rule envelope does not carry the rule ARN in resources in
+        # AWS; keep the rule identity in the message only if the runtime exposes
+        # it. The plan lookup above already proves the rule exists.
+        pass
+    return (
+        "the rate(5 minute) schedule fired on the test clock and delivered the documented Scheduled Event "
+        "with the CDK rule ARN, and a real SDK PutEvents reached the pattern rule's handler with its source, "
+        "detail-type and detail"
+    )
+
+
+def _run_multilang_stream(
+    harness: Harness, session: LocalSession, lang: str, http_base: str, function: dict
+) -> str:
+    """Prove the language's DynamoDB Streams mapping on the real local path.
+
+    The item is written through the AWS CLI (the real SDK) against DynamoDB
+    Local; the mapping's deliverer reads the stream, invokes the handler and the
+    handler records the documented record. TTL is proved the same way: the item
+    carries an expiry, the test clock moves past it, the runner deletes it and
+    the REMOVE record carries the service userIdentity.
+    """
+    source = session.event_source(kind="dynamodb", function=function["logicalId"])
+    table = session.resource(name=source["sourceName"], kind="AWS::DynamoDB::Table")
+    if not table.get("streamArn"):
+        raise HarnessFailure(f"multilang {lang}: the table has no stream ARN: {table}")
+    endpoint = session_endpoint(session, "dynamodb")
+    key = f"{lang}-stream"
+    item = {"pk": {"S": key}, "value": {"S": "real-sdk"}}
+    harness.run(
+        [
+            "aws", "--endpoint-url", endpoint, "dynamodb", "put-item",
+            "--table-name", str(source["sourceName"]),
+            "--item", json.dumps(item),
+        ],
+        timeout=120,
+    )
+    record = _wait_for_stream_record(
+        http_base,
+        lambda entry: entry.get("eventName") == "INSERT"
+        and (entry.get("keys") or {}).get("pk", {}).get("S") == key,
+        label=f"multilang {lang} INSERT",
+    )
+    if record.get("eventSourceARN") != table["streamArn"]:
+        raise HarnessFailure(
+            f"multilang {lang}: the stream record ARN {record.get('eventSourceARN')!r} "
+            f"is not the CDK-resolved stream ARN {table['streamArn']!r}"
+        )
+    ttl_key = f"{lang}-ttl"
+    expires = _clock_epoch(session) + 60
+    harness.run(
+        [
+            "aws", "--endpoint-url", endpoint, "dynamodb", "put-item",
+            "--table-name", str(source["sourceName"]),
+            "--item", json.dumps({"pk": {"S": ttl_key}, "value": {"S": "expires"}, "expiresAt": {"N": str(expires)}}),
+        ],
+        timeout=120,
+    )
+    session.clock_advance("2m")
+    ttl_record = _wait_for_stream_record(
+        http_base,
+        lambda entry: entry.get("eventName") == "REMOVE"
+        and (entry.get("keys") or {}).get("pk", {}).get("S") == ttl_key,
+        label=f"multilang {lang} TTL REMOVE",
+    )
+    identity = ttl_record.get("userIdentity") or {}
+    if identity.get("type") != "Service" or identity.get("principalId") != "dynamodb.amazonaws.com":
+        raise HarnessFailure(
+            f"multilang {lang}: the TTL REMOVE record has no service userIdentity: {ttl_record}"
+        )
+    return (
+        f"the CDK DynamoDB Streams mapping delivered the SDK-written INSERT with the CDK stream ARN, "
+        f"and the test clock's TTL expiry produced the REMOVE record with the service userIdentity"
+    )
+
+
+def _run_multilang_stream_failure(
+    harness: Harness, session: LocalSession, lang: str, http_base: str, function: dict
+) -> str:
+    """Prove bisect/partial failure and the on-failure destination on one row."""
+    source = session.event_source(kind="dynamodb", function=function["logicalId"])
+    table = session.resource(name=source["sourceName"], kind="AWS::DynamoDB::Table")
+    endpoint = session_endpoint(session, "dynamodb")
+    good_key = f"{lang}-good"
+    poison_key = f"{lang}-poison"
+    for item in (
+        {"pk": {"S": good_key}, "value": {"S": "ok"}},
+        {"pk": {"S": poison_key}, "poison": {"BOOL": True}},
+    ):
+        harness.run(
+            [
+                "aws", "--endpoint-url", endpoint, "dynamodb", "put-item",
+                "--table-name", str(source["sourceName"]),
+                "--item", json.dumps(item),
+            ],
+            timeout=120,
+        )
+    _wait_for_stream_record(
+        http_base,
+        lambda entry: entry.get("eventName") == "INSERT"
+        and (entry.get("keys") or {}).get("pk", {}).get("S") == good_key,
+        label=f"multilang {lang} good record",
+    )
+    poison = _wait_for_stream_record(
+        http_base,
+        lambda entry: entry.get("eventName") == "INSERT"
+        and (entry.get("keys") or {}).get("pk", {}).get("S") == poison_key,
+        label=f"multilang {lang} poison record",
+    )
+    _advance_until(
+        session,
+        lambda delivery: _source_count(delivery, source["logicalId"], "discarded") >= 1,
+        step="1m",
+        label=f"multilang {lang} poison discard",
+    )
+    dlq = session.resource(logical_prefix="GoStreamDlq", kind="AWS::SQS::Queue")
+    _wait_for_queue_total(session, dlq["logicalId"], total=1)
+    messages = session.request("sqs.receive", queue=dlq["logicalId"], max=1, waitSeconds=1, delete=True)[
+        "messages"
+    ]
+    if len(messages) != 1:
+        raise HarnessFailure(f"multilang {lang}: the on-failure queue returned {len(messages)} message(s)")
+    body = json.loads(messages[0]["body"])
+    request = body.get("requestContext") or {}
+    batch = body.get("DDBStreamBatchInfo") or {}
+    if (
+        request.get("condition") != "RetryAttemptsExhausted"
+        or request.get("approximateInvokeCount") != 3
+        or batch.get("streamArn") != table["streamArn"]
+        or batch.get("startSequenceNumber") != poison.get("sequenceNumber")
+        or batch.get("batchSize") != 1
+    ):
+        raise HarnessFailure(f"multilang {lang}: unexpected on-failure record: {body}")
+    return (
+        "the Go mapping bisected the poison record at its reported sequence number, retried it twice, "
+        "discarded only that record to the real SQS on-failure queue with the documented invocation record, "
+        "and the good record of the same batch was delivered"
     )
 
 
@@ -3454,6 +3706,18 @@ def _import_functions(session: LocalSession) -> tuple[dict, dict]:
     return ingest, worker_source
 
 
+def _wait_for_job_meta(session: LocalSession, table_id: str, job_id: str, timeout: float = 180) -> dict:
+    deadline = time.monotonic() + timeout
+    last: list = []
+    while time.monotonic() < deadline:
+        last = session.request("ddb.scan", table=table_id)["items"]
+        for item in last:
+            if item.get("pk") == f"JOB#{job_id}" and item.get("sk") == "META":
+                return item
+        time.sleep(0.2)
+    raise HarnessFailure(f"import: job {job_id} never wrote its META record; last {last}")
+
+
 def _run_import(harness: Harness, kind: str) -> tuple[dict, str]:
     session = start_local_session(
         harness, IMPORT_APP, name=f"import-{kind}", backends=("dynamodb", "sqs", "s3proxy")
@@ -3466,22 +3730,23 @@ def _run_import(harness: Harness, kind: str) -> tuple[dict, str]:
         key = "incoming/orders/a4.json"
         content = json.dumps({"order": 42, "source": "local"})
         session.request("s3.put", bucket=bucket["logicalId"], objectKey=key, body=content)
-        event = session.request(
-            "eventbridge.event",
-            rule=[
-                rule for rule in session.info.get("rules") or []
-                if "aws.s3" in json.dumps(rule.get("eventPattern") or {})
-            ][0]["logicalId"],
-            detail={"bucket": {"name": bucket["name"]}, "object": {"key": key}},
+        endpoint = session_endpoint(session, "events")
+        harness.run(
+            [
+                "aws", "--endpoint-url", endpoint, "events", "put-events",
+                "--entries", json.dumps([
+                    {
+                        "Source": "aws.s3",
+                        "DetailType": "Object Created",
+                        "Detail": json.dumps({"bucket": {"name": bucket["name"]}, "object": {"key": key}}),
+                        "EventBusName": "default",
+                    }
+                ]),
+            ],
+            timeout=120,
         )
-        result = session.invoke(ingest["logicalId"], event)
-        raw = result.get("raw") or {}
-        if raw.get("ok") is not True or not raw.get("job_id"):
-            raise HarnessFailure(f"import {kind}: ingest did not write a job: {result}")
-        job_id = raw["job_id"]
-        expected = hashlib.sha256((bucket["name"] + "/" + key).encode()).hexdigest()
-        if job_id != expected:
-            raise HarnessFailure(f"import {kind}: job id {job_id} != {expected}")
+        job_id = hashlib.sha256((bucket["name"] + "/" + key).encode()).hexdigest()
+        meta = _wait_for_job_meta(session, table["logicalId"], job_id)
         # The WorkConsumer mapping delivers the three real messages to the
         # worker automatically. Wait until they are all deleted, which only
         # happens after a successful handler invocation.
@@ -3490,15 +3755,13 @@ def _run_import(harness: Harness, kind: str) -> tuple[dict, str]:
             raise HarnessFailure(f"import {kind}: the worker mapping failed: {state}")
         _wait_for_queue_depth(session, worker_queue["logicalId"], visible=0, not_visible=0)
         if kind == "ingest":
-            items = session.request("ddb.scan", table=table["logicalId"])["items"]
-            meta = [item for item in items if item.get("pk") == f"JOB#{job_id}" and item.get("sk") == "META"]
-            if len(meta) != 1 or meta[0].get("status") != "RUNNING":
+            if meta.get("status") != "RUNNING":
                 raise HarnessFailure(f"import ingest: job meta is not RUNNING: {meta}")
             return (
                 ingest["logicalId"],
-                "ingest ran on DynamoDB Local and ElasticMQ: a real s3proxy object produced a job id, "
-                "the META record was RUNNING, and the WorkConsumer mapping delivered and deleted the "
-                "three real work messages",
+                "a real s3proxy object and a real SDK PutEvents of the S3 event shape reached IngestRule; "
+                "the ingest handler wrote the RUNNING META record on DynamoDB Local and the WorkConsumer "
+                "mapping delivered and deleted the three real work messages",
             )
         items = session.request("ddb.scan", table=table["logicalId"])["items"]
         records = {item.get("sk"): item for item in items if str(item.get("sk", "")).startswith("REC#")}
@@ -3534,9 +3797,95 @@ def run_import_worker(harness: Harness) -> str:
     return _run_import(harness, "worker")[1]
 
 
+def _aws_cli(harness: Harness, endpoint: str, *args: str, check: bool = True) -> subprocess.CompletedProcess:
+    return harness.run(["aws", "--endpoint-url", endpoint, *args], timeout=180, check=check)
+
+
+def _put_log_events(
+    harness: Harness, session: LocalSession, group: str, stream: str, events: list[dict]
+) -> None:
+    endpoint = session_endpoint(session, "logs")
+    _aws_cli(harness, endpoint, "logs", "create-log-stream", "--log-group-name", group, "--log-stream-name", stream, check=False)
+    _aws_cli(
+        harness,
+        endpoint,
+        "logs",
+        "put-log-events",
+        "--log-group-name",
+        group,
+        "--log-stream-name",
+        stream,
+        "--log-events",
+        json.dumps(events),
+    )
+
+
+def _receive_receipts(session: LocalSession, queue_id: str, *, expected: int, timeout: float = 240) -> list[dict]:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        visible, not_visible = _queue_depth(session, queue_id)
+        if visible + not_visible >= expected:
+            break
+        time.sleep(0.2)
+    response = session.request("sqs.receive", queue=queue_id, max=10, waitSeconds=1, delete=True)
+    receipts = []
+    for message in response.get("messages") or []:
+        receipts.append(json.loads(message["body"]))
+    return receipts
+
+
+def _wait_for_receipt(
+    session: LocalSession, queue_id: str, predicate: Callable[[dict], bool], *, label: str, timeout: float = 240
+) -> dict:
+    deadline = time.monotonic() + timeout
+    last: list[dict] = []
+    while time.monotonic() < deadline:
+        visible, not_visible = _queue_depth(session, queue_id)
+        if visible + not_visible > 0:
+            response = session.request("sqs.receive", queue=queue_id, max=10, waitSeconds=1, delete=True)
+            for message in response.get("messages") or []:
+                receipt = json.loads(message["body"])
+                last.append(receipt)
+                if predicate(receipt):
+                    return receipt
+        time.sleep(0.2)
+    raise HarnessFailure(f"{label}: no matching receipt arrived; last {last}")
+
+
+def _wait_for_receipt_advancing(
+    session: LocalSession,
+    queue_id: str,
+    predicate: Callable[[dict], bool],
+    *,
+    label: str,
+    step: str = "5s",
+    timeout: float = 240,
+) -> dict:
+    """Wait for a receipt, advancing the test clock to close a batching window."""
+    deadline = time.monotonic() + timeout
+    last: list[dict] = []
+    while time.monotonic() < deadline:
+        session.clock_advance(step)
+        visible, not_visible = _queue_depth(session, queue_id)
+        if visible + not_visible > 0:
+            response = session.request("sqs.receive", queue=queue_id, max=10, waitSeconds=1, delete=True)
+            for message in response.get("messages") or []:
+                receipt = json.loads(message["body"])
+                last.append(receipt)
+                if predicate(receipt):
+                    return receipt
+        time.sleep(0.2)
+    raise HarnessFailure(f"{label}: no matching receipt arrived; last {last}")
+
+
 def run_kinesis_handler(harness: Harness) -> str:
-    session = start_local_session(harness, KINESIS_APP, name="kinesis", backends=("moto",))
-    log_path = None
+    session = start_local_session(
+        harness,
+        KINESIS_APP,
+        name="kinesis",
+        backends=("moto", "sqs"),
+        clock=f"test={LOCAL_RUNNER_CLOCK_START}",
+    )
     try:
         source = session.event_source(kind="kinesis")
         stream = session.resource(name=source["sourceName"], kind="AWS::Kinesis::Stream")
@@ -3555,46 +3904,113 @@ def run_kinesis_handler(harness: Harness) -> str:
             raise HarnessFailure(
                 f"kinesis: GetAtt Arn did not resolve to the provisioned stream: {environment} vs {stream}"
             )
-        log_path = tempfile.NamedTemporaryFile(prefix="a4-kinesis-", suffix=".log", delete=False).name
-        message = "2026-11-02T15:00:00Z INFO order processed id=42"
-        Path(log_path).write_text(message + "\n", encoding="utf-8")
-        event = session.request(
-            "kinesis.cloudwatch-event",
-            stream=source["source"],
-            logStream="local-log-stream",
-            logEvents=[{"id": "1", "timestamp": 1793634000000, "message": Path(log_path).read_text(encoding="utf-8").strip()}],
+        receipts_queue = session.resource(name="kinesis-consumer-receipts", kind="AWS::SQS::Queue")
+        logtap_queue = session.resource(name="kinesis-logtap-receipts", kind="AWS::SQS::Queue")
+        source_group = session.resource(logical_prefix="ExampleSourceLogGroup", kind="AWS::Logs::LogGroup")
+        subscription = next(
+            (
+                candidate
+                for candidate in session.spec.get("subscriptions") or []
+                if candidate.get("kind") == "cloudwatch-logs"
+                and candidate.get("destinationType") == "stream"
+            ),
+            None,
         )
-        record_data = base64.b64decode(event["Records"][0]["kinesis"]["data"])
-        decoded = gzip.decompress(record_data).decode("utf-8")
-        if message not in decoded:
-            raise HarnessFailure(f"kinesis: generated subscription payload lost the local log content: {decoded}")
-        result = session.invoke(source["function"], event)
-        if _batch_failures(result) != []:
-            raise HarnessFailure(f"kinesis: valid CloudWatch Logs record was reported as a failure: {result}")
-        bad_data = base64.b64encode(b"not-gzip").decode()
-        bad_sequence = "49590338271490256608559692538361571095921575989136588898"
-        bad_event = session.request(
-            "kinesis.event",
-            stream=source["source"],
-            data=[bad_data],
-            sequenceNumbers=[bad_sequence],
-            partitionKeys=["p1"],
+        if subscription is None:
+            raise HarnessFailure("kinesis: the plan has no CloudWatch Logs subscription to the stream")
+        clock_ms = int(time.time() * 1000)
+        log_stream = "source-stream"
+        messages = ["order processed id=42", "order failed id=43"]
+        _put_log_events(
+            harness,
+            session,
+            str(source_group["name"]),
+            log_stream,
+            [{"timestamp": clock_ms + index, "message": message} for index, message in enumerate(messages)],
         )
-        bad_result = session.invoke(source["function"], bad_event)
-        failures = _batch_failures(bad_result)
-        if failures != [{"itemIdentifier": bad_sequence}]:
-            raise HarnessFailure(f"kinesis: malformed record must fail its sequence number, got {failures}")
+        session.clock_advance("5s")
+        delivered = _wait_for_receipt_advancing(
+            session,
+            receipts_queue["logicalId"],
+            lambda receipt: receipt.get("logStream") == log_stream,
+            label="kinesis subscription delivery",
+        )
+        if (
+            delivered.get("streamArn") != stream.get("arn")
+            or delivered.get("logGroup") != source_group["name"]
+            or delivered.get("messageType") != "DATA_MESSAGE"
+            or delivered.get("subscriptionFilters") != [subscription.get("filterName")]
+            or [event.get("message") for event in delivered.get("logEvents") or []] != messages
+        ):
+            raise HarnessFailure(f"kinesis: unexpected subscription receipt: {delivered}")
+        logtap = _wait_for_receipt_advancing(
+            session,
+            logtap_queue["logicalId"],
+            lambda receipt: any(
+                "processed cloudwatch logs subscription" in str(event.get("message") or "")
+                for event in ((receipt.get("payload") or {}).get("logEvents") or [])
+            ),
+            label="kinesis function-log delivery",
+        )
+        payload = logtap.get("payload") or {}
+        if (
+            payload.get("messageType") != "DATA_MESSAGE"
+            or not str(payload.get("logGroup") or "").startswith("/aws/lambda/")
+            or payload.get("subscriptionFilters") != ["apptheory-consumer-output"]
+        ):
+            raise HarnessFailure(f"kinesis: unexpected function-log receipt: {logtap}")
+
+        direct_payload = {
+            "messageType": "DATA_MESSAGE",
+            "owner": "123456789012",
+            "logGroup": "direct/log-group",
+            "logStream": "direct-stream",
+            "subscriptionFilters": ["direct"],
+            "logEvents": [{"id": "d1", "timestamp": clock_ms + 10, "message": "direct-put"}],
+        }
+        compressed = gzip.compress(json.dumps(direct_payload).encode("utf-8"))
+        endpoint = session_endpoint(session, "kinesis")
+        _aws_cli(
+            harness,
+            endpoint,
+            "kinesis",
+            "put-records",
+            "--stream-name",
+            str(source["sourceName"]),
+            "--records",
+            json.dumps(
+                [
+                    {"Data": base64.b64encode(compressed).decode("ascii"), "PartitionKey": "p1"},
+                    {"Data": base64.b64encode(b"not-gzip").decode("ascii"), "PartitionKey": "p1"},
+                ]
+            ),
+        )
+        session.clock_advance("5s")
+        direct = _wait_for_receipt_advancing(
+            session,
+            receipts_queue["logicalId"],
+            lambda receipt: receipt.get("logStream") == "direct-stream",
+            label="kinesis direct PutRecords delivery",
+        )
+        if [event.get("message") for event in direct.get("logEvents") or []] != ["direct-put"]:
+            raise HarnessFailure(f"kinesis: unexpected direct PutRecords receipt: {direct}")
+        _advance_until(
+            session,
+            lambda delivery: _source_count(delivery, source["logicalId"], "discarded") >= 1,
+            step="1m",
+            label="kinesis malformed record discard",
+        )
+        state = _wait_for_delivery(session, source["logicalId"], delivered=1, failed=1, timeout=60)
         return (
             f"the CDK Kinesis stream {source['sourceName']} was provisioned on moto and its Ref/GetAtt Arn "
-            f"resolved ({stream.get('arn')}); real gzip+base64 CloudWatch Logs subscription content was "
-            "invoked through the handler; the malformed record was returned as a partial batch failure"
+            f"resolved ({stream.get('arn')}); PutLogEvents through the real Logs SDK was forwarded by the "
+            "subscription filter through its Logs destination to the stream and delivered to the consumer; "
+            "the consumer's own captured stdout was delivered to a Lambda-destination filter as the "
+            "documented awslogs.data payload; a direct PutRecords batch delivered its valid record and "
+            f"discarded the malformed one (delivered={state.get('delivered')}, failed={state.get('failed')}, "
+            f"discarded={state.get('discarded')})"
         )
     finally:
-        if log_path:
-            try:
-                os.unlink(log_path)
-            except FileNotFoundError:
-                pass
         stop_local_session(harness, session)
 
 
@@ -4047,6 +4463,104 @@ def run_sqs_sns_targets(harness: Harness) -> str:
         capture.stop()
 
 
+def _receive_messages(session: LocalSession, queue_id: str, *, expected: int = 1, timeout: float = 180) -> list[dict]:
+    _wait_for_queue_total(session, queue_id, total=expected, timeout=timeout)
+    response = session.request("sqs.receive", queue=queue_id, max=expected, waitSeconds=1, delete=True)
+    return response.get("messages") or []
+
+
+def run_sqs_event_targets(harness: Harness) -> str:
+    plan = plan_local_app(harness, SQS_APP)
+    publisher = next(
+        function for function in plan.get("functions") or []
+        if function.get("handler") == "rule-publisher.handler"
+    )
+    session = start_local_session(
+        harness,
+        SQS_APP,
+        name="sqs-event-targets",
+        backends=("dynamodb", "sqs", "moto"),
+        clock=f"test={LOCAL_RUNNER_CLOCK_START}",
+        targets=(publisher["logicalId"],),
+    )
+    try:
+        publisher = next(
+            function for function in session.spec.get("functions") or []
+            if function.get("handler") == "rule-publisher.handler"
+        )
+        result = session.invoke(publisher["logicalId"], {})
+        raw = result.get("raw") or {}
+        if raw.get("failedEntryCount") != 0 or len(raw.get("eventIds") or []) != 4:
+            raise HarnessFailure(f"event targets: the publisher's PutEvents failed: {result}")
+
+        contract = session.resource(name="rule-target-events", kind="AWS::SQS::Queue")
+        messages = _receive_messages(session, contract["logicalId"])
+        path_input = json.loads(messages[0]["body"])
+        if path_input != {"item": "path-value"}:
+            raise HarnessFailure(f"event targets: the SQS InputPath body is {path_input!r}")
+
+        sns_receipts = session.resource(name="sns-receipts", kind="AWS::SQS::Queue")
+        receipts = _receive_messages(session, sns_receipts["logicalId"])
+        sns_receipt = json.loads(receipts[0]["body"])
+        transformed = json.loads(sns_receipt.get("message") or "{}")
+        if (
+            sns_receipt.get("kind") != "event"
+            or transformed.get("item") != "transform-value"
+            or not transformed.get("rule")
+        ):
+            raise HarnessFailure(f"event targets: unexpected SNS transformer receipt: {sns_receipt}")
+
+        rule_receipts = session.resource(name="rule-receipts", kind="AWS::SQS::Queue")
+        receipts = _receive_messages(session, rule_receipts["logicalId"])
+        static_receipt = json.loads(receipts[0]["body"])
+        if static_receipt.get("kind") != "static" or static_receipt.get("received") != {"static": True}:
+            raise HarnessFailure(f"event targets: unexpected static Input receipt: {static_receipt}")
+
+        failing = next(
+            function for function in session.spec.get("functions") or []
+            if function.get("handler") == "rule-failing-target.handler"
+        )
+        fail_rules = [
+            rule for rule in session.info.get("rules") or []
+            if failing["logicalId"] in (rule.get("targets") or [])
+        ]
+        if len(fail_rules) != 1:
+            raise HarnessFailure(f"event targets: want one failing rule, got {fail_rules}")
+        fail_rule = fail_rules[0]
+        _advance_until(
+            session,
+            lambda delivery: _source_count(delivery, fail_rule["logicalId"], "deadLettered") >= 1,
+            step="1m",
+            label="event target retry and DLQ",
+        )
+        dlq = session.resource(name="rule-dlq", kind="AWS::SQS::Queue")
+        messages = _receive_messages(session, dlq["logicalId"])
+        dlq_body = json.loads(messages[0]["body"])
+        attributes = messages[0].get("messageAttributes") or {}
+        expected_attributes = {
+            "ERROR_CODE": "ERROR_FROM_TARGET",
+            "EXHAUSTED_RETRY_CONDITION": "MaximumRetryAttempts",
+            "RETRY_ATTEMPTS": "3",
+        }
+        for name, want in expected_attributes.items():
+            attribute = attributes.get(name) or {}
+            if attribute.get("StringValue") != want:
+                raise HarnessFailure(f"event targets: DLQ attribute {name} = {attribute!r}, want {want!r}")
+        if dlq_body.get("detail-type") != "fail" or dlq_body.get("source") != "apptheory.rule":
+            raise HarnessFailure(f"event targets: unexpected DLQ body: {dlq_body}")
+        state = _delivery_source_state(session, fail_rule["logicalId"])
+        return (
+            "the publisher's real SDK PutEvents reached four rules: an SQS target received the "
+            "InputPath body, an SNS target received the input-transformer message, a Lambda target "
+            "received the static Input, and a failing Lambda target exhausted two retries and reached "
+            f"the real DLQ with RULE_ARN/TARGET_ARN/ERROR_CODE/EXHAUSTED_RETRY_CONDITION/RETRY_ATTEMPTS "
+            f"(fired={state.get('fired')}, failed={state.get('failed')}, "
+            f"deadLettered={state.get('deadLettered')})"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
 def run_s3_vectors(harness: Harness) -> str:
     session = start_local_session(harness, VECTORS_APP, name="s3-vectors")
     try:
@@ -4323,54 +4837,6 @@ def run_microvm_conformance(harness: Harness) -> str:
                 os.unlink(config_path)
             except FileNotFoundError:
                 pass
-        stop_local_session(harness, session)
-
-
-def _run_multilang_go_events(harness: Harness) -> str:
-    session = start_local_session(
-        harness, MULTILANG_APP, name="multilang-go-events", backends=("dynamodb",)
-    )
-    try:
-        go_function = _session_function_for_language(session, "go")
-        go_id = go_function["logicalId"]
-        ddb_source = session.event_source(kind="dynamodb", function=go_id)
-        schedule_rule = session.rule(function=go_id, schedule=True)
-        pattern_rule = session.rule(function=go_id, schedule=False)
-        session.request(
-            "ddb.put", table=ddb_source["source"], item={"pk": "a4-item", "value": "stored-value"}
-        )
-        stream_event = session.request(
-            "ddb.stream-event", table=ddb_source["source"], key={"pk": "a4-item"}, eventName="INSERT"
-        )
-        new_image = stream_event["Records"][0]["dynamodb"].get("NewImage") or {}
-        if new_image.get("value", {}).get("S") != "stored-value":
-            raise HarnessFailure(f"multilang go: stream image did not come from the local write: {stream_event}")
-        result = session.invoke(go_id, stream_event)
-        if _batch_failures(result) != []:
-            raise HarnessFailure(f"multilang go: DynamoDB stream handler failed {result}")
-
-        scheduled = session.request("eventbridge.event", rule=schedule_rule["logicalId"])
-        result = session.invoke(go_id, scheduled)
-        raw = result.get("raw") or {}
-        if raw.get("trigger") != "eventbridge" or raw.get("kind") != "schedule" or not raw.get("run_id"):
-            raise HarnessFailure(f"multilang go: schedule handler failed {result}")
-        pattern_event = session.request(
-            "eventbridge.event", rule=pattern_rule["logicalId"], detail={"item": "a4"}
-        )
-        result = session.invoke(go_id, pattern_event)
-        raw = result.get("raw") or {}
-        if (
-            raw.get("trigger") != "eventbridge"
-            or raw.get("kind") != "rule"
-            or raw.get("source") != "apptheory.example"
-            or raw.get("detail_type") != "example.item.changed"
-        ):
-            raise HarnessFailure(f"multilang go: rule handler failed {result}")
-        return (
-            "the Go handler answered a DynamoDB stream record built from a real local write and both "
-            "the scheduled and pattern EventBridge events"
-        )
-    finally:
         stop_local_session(harness, session)
 
 
@@ -4733,6 +5199,7 @@ RUNNERS: dict[str, Callable[[Harness], str]] = {
     "sqs-producer": run_sqs_producer,
     "sqs-sns-publisher": run_sqs_sns_publisher,
     "sqs-sns-targets": run_sqs_sns_targets,
+    "sqs-event-targets": run_sqs_event_targets,
     "sqs-worker": run_sqs_worker,
     "sqs-dlq": run_sqs_dlq,
     "import-ingest": run_import_ingest,

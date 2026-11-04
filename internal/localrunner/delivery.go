@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
 )
 
 // The delivery engine is the local counterpart of the Lambda service that owns
@@ -110,11 +112,16 @@ const (
 
 // DeliveryBackend is the resolved local backend a deliverer talks to: the
 // service name, its loopback endpoint and the host-side SDK client, when the
-// service has one.
+// service has one. SQS and PublishSNS are the auxiliary clients an event
+// deliverer needs for its targets and on-failure destinations.
 type DeliveryBackend struct {
 	Service  string `json:"service"`
 	Endpoint string `json:"endpoint,omitempty"`
 	Client   any    `json:"-"`
+	// SQS is the host-side ElasticMQ client when the SQS backend is running.
+	SQS *sqs.Client `json:"-"`
+	// PublishSNS runs one message through the local SNS fan-out.
+	PublishSNS func(ctx context.Context, topicARN string, message LocalSNSMessage) error `json:"-"`
 }
 
 // DeliveryResolver resolves the backend for one source kind. The runner
@@ -154,6 +161,12 @@ type DeliveryState struct {
 	Failed    int64 `json:"failed"`
 	// Filtered counts messages a subscription filter policy did not match.
 	Filtered int64 `json:"filtered,omitempty"`
+	// Fired counts the rule evaluations or schedule ticks a rule produced.
+	Fired int64 `json:"fired,omitempty"`
+	// Discarded counts stream records sent to an on-failure destination, and
+	// DeadLettered counts EventBridge events sent to a target DLQ.
+	Discarded    int64 `json:"discarded,omitempty"`
+	DeadLettered int64 `json:"deadLettered,omitempty"`
 	// Inflight is the number of batches the deliverer is invoking right now;
 	// PeakInflight is the highest observed value. They make a mapping's
 	// MaximumConcurrency observable from session describe.
@@ -215,6 +228,13 @@ type DeliveryReporter interface {
 	SetInflight(inflight int)
 	// Left records how many records the deliverer left for redelivery.
 	Left(count int)
+	// Discarded records how many stream records were sent to an on-failure
+	// destination.
+	Discarded(count int)
+	// Fired records one rule evaluation or schedule tick.
+	Fired()
+	// DeadLettered records one EventBridge event sent to a target DLQ.
+	DeadLettered()
 }
 
 // DelivererEnv is everything a deliverer receives from the engine.
@@ -443,6 +463,7 @@ func (e *DeliveryEngine) runSource(factory DelivererFactory, source DeliverySour
 	defer e.wg.Done()
 	deliverer, err := factory(source)
 	if err != nil {
+		e.logf("delivery %s: build deliverer failed: %v", source.ID, err)
 		e.fail(source.ID, err)
 		return
 	}
@@ -450,6 +471,7 @@ func (e *DeliveryEngine) runSource(factory DelivererFactory, source DeliverySour
 	if e.resolver != nil {
 		backend, err = e.resolver(source.Kind)
 		if err != nil {
+			e.logf("delivery %s: resolve backend failed: %v", source.ID, err)
 			e.fail(source.ID, err)
 			return
 		}
@@ -467,6 +489,7 @@ func (e *DeliveryEngine) runSource(factory DelivererFactory, source DeliverySour
 		Logf:         e.logf,
 	}
 	if startErr := deliverer.Start(e.ctx, env); startErr != nil && !errors.Is(startErr, context.Canceled) {
+		e.logf("delivery %s: deliverer failed: %v", source.ID, startErr)
 		e.fail(source.ID, startErr)
 		return
 	}
@@ -687,6 +710,33 @@ func (r *sourceReporter) Left(count int) {
 	defer r.engine.mu.Unlock()
 	if state := r.engine.states[r.id]; state != nil {
 		state.Left += int64(count)
+	}
+}
+
+func (r *sourceReporter) Discarded(count int) {
+	if count <= 0 {
+		return
+	}
+	r.engine.mu.Lock()
+	defer r.engine.mu.Unlock()
+	if state := r.engine.states[r.id]; state != nil {
+		state.Discarded += int64(count)
+	}
+}
+
+func (r *sourceReporter) Fired() {
+	r.engine.mu.Lock()
+	defer r.engine.mu.Unlock()
+	if state := r.engine.states[r.id]; state != nil {
+		state.Fired++
+	}
+}
+
+func (r *sourceReporter) DeadLettered() {
+	r.engine.mu.Lock()
+	defer r.engine.mu.Unlock()
+	if state := r.engine.states[r.id]; state != nil {
+		state.DeadLettered++
 	}
 }
 

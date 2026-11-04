@@ -6,10 +6,13 @@ import {
 } from "@theory-cloud/apptheory-cdk";
 import * as cdk from "aws-cdk-lib";
 import type { StackProps } from "aws-cdk-lib";
+import * as events from "aws-cdk-lib/aws-events";
+import * as targets from "aws-cdk-lib/aws-events-targets";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as lambdaEventSources from "aws-cdk-lib/aws-lambda-event-sources";
 import * as sns from "aws-cdk-lib/aws-sns";
+import * as snsSubscriptions from "aws-cdk-lib/aws-sns-subscriptions";
 import type { Construct } from "constructs";
 
 /**
@@ -358,6 +361,109 @@ export class SqsQueueStack extends cdk.Stack {
         snsScenarioPublisherFn.addToRolePolicy(new iam.PolicyStatement({
             actions: ["sns:Publish"],
             resources: [eventsTopic.ref, fifoTopic.ref, filteredAttributesTopic.ref, filteredBodyTopic.ref, rawTopic.ref, httpTopic.ref],
+        }));
+
+        // ========================================================================
+        // EventBridge targets, input shaping, retry and DLQ. The publisher calls
+        // PutEvents through the real SDK; the local runner serves the bus,
+        // matches each rule and performs the documented target delivery.
+        // ========================================================================
+
+        const ruleTargetQueue = new AppTheoryQueue(this, "RuleTargetQueue", {
+            queueName: "rule-target-events",
+            enableDlq: false,
+        });
+        const ruleReceipts = new AppTheoryQueue(this, "RuleReceipts", {
+            queueName: "rule-receipts",
+            enableDlq: false,
+        });
+        const ruleTargetFn = new lambda.Function(this, "RuleTargetFn", {
+            runtime: lambda.Runtime.NODEJS_24_X,
+            handler: "rule-target.handler",
+            code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers")),
+            timeout: cdk.Duration.seconds(30),
+            environment: {
+                RECEIPT_QUEUE_URL: ruleReceipts.queueUrl,
+                RECEIPT_KIND: "static",
+            },
+        });
+        ruleReceipts.grantSendMessages(ruleTargetFn);
+
+        const ruleFailingFn = new lambda.Function(this, "RuleFailingFn", {
+            runtime: lambda.Runtime.NODEJS_24_X,
+            handler: "rule-failing-target.handler",
+            code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers")),
+            timeout: cdk.Duration.seconds(30),
+        });
+
+        const ruleDlq = new AppTheoryQueue(this, "RuleDlq", {
+            queueName: "rule-dlq",
+            enableDlq: false,
+        });
+
+        const customRuleBus = new events.EventBus(this, "CustomRuleBus", {
+            eventBusName: "apptheory-local-rules",
+        });
+
+        const ruleTopic = new sns.Topic(this, "RuleTopic", {
+            topicName: "apptheory-local-rule-transform",
+        });
+        ruleTopic.addSubscription(new snsSubscriptions.LambdaSubscription(snsEventConsumerFn));
+
+        new events.Rule(this, "SqsPathRule", {
+            eventBus: customRuleBus,
+            eventPattern: { source: ["apptheory.rule"], detailType: ["path"] },
+            targets: [new targets.SqsQueue(ruleTargetQueue.queue, {
+                message: events.RuleTargetInput.fromEventPath("$.detail"),
+            })],
+        });
+        // InputTransformer is not exposed by the L2 SNS target in this CDK
+        // version, so the row uses the L1 escape hatch it documents.
+        new events.CfnRule(this, "SnsTransformRule", {
+            eventBusName: customRuleBus.eventBusName,
+            eventPattern: { source: ["apptheory.rule"], detailType: ["transform"] },
+            targets: [{
+                id: "transform",
+                arn: ruleTopic.topicArn,
+                inputTransformer: {
+                    inputPathsMap: { item: "$.detail.item" },
+                    inputTemplate: '{"item":"<item>","rule":"<aws.events.rule-name>"}',
+                },
+            }],
+        });
+        new events.Rule(this, "LambdaInputRule", {
+            eventPattern: { source: ["apptheory.rule"], detailType: ["static"] },
+            targets: [new targets.LambdaFunction(ruleTargetFn, {
+                event: events.RuleTargetInput.fromObject({ static: true }),
+            })],
+        });
+        new events.Rule(this, "FailRule", {
+            eventBus: customRuleBus,
+            eventPattern: { source: ["apptheory.rule"], detailType: ["fail"] },
+            targets: [new targets.LambdaFunction(ruleFailingFn, {
+                retryAttempts: 2,
+                maxEventAge: cdk.Duration.hours(1),
+                deadLetterQueue: ruleDlq.queue,
+            })],
+        });
+
+        const rulePublisherFn = new lambda.Function(this, "RulePublisherFn", {
+            runtime: lambda.Runtime.NODEJS_24_X,
+            handler: "rule-publisher.handler",
+            code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers")),
+            timeout: cdk.Duration.seconds(30),
+            environment: {
+                BUS_NAME: customRuleBus.eventBusName,
+            },
+        });
+        customRuleBus.grantPutEventsTo(rulePublisherFn);
+        rulePublisherFn.addToRolePolicy(new iam.PolicyStatement({
+            actions: ["events:PutEvents"],
+            resources: [cdk.Stack.of(this).formatArn({
+                service: "events",
+                resource: "event-bus",
+                resourceName: "default",
+            })],
         }));
 
         // ========================================================================
