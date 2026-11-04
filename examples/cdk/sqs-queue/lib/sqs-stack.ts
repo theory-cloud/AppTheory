@@ -226,7 +226,15 @@ export class SqsQueueStack extends cdk.Stack {
             endpoint: snsAttributeConsumerFn.functionArn,
             filterPolicy: {
                 eventType: ["keep"],
-                priority: [{ numeric: [">=", 10] }],
+                // AWS's standard "$or" form: the sibling key is ANDed with the
+                // OR of the branch objects. SNS recognizes "$or" only when its
+                // value is an array of at least two objects and no branch uses
+                // a reserved keyword as a field name:
+                // https://docs.aws.amazon.com/sns/latest/dg/and-or-logic.html
+                $or: [
+                    { priority: [{ numeric: [">=", 10] }] },
+                    { region: ["us-east-1"] },
+                ],
             },
             filterPolicyScope: "MessageAttributes",
         });

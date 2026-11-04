@@ -3857,30 +3857,34 @@ def run_sqs_sns_targets(harness: Harness) -> str:
                 raise HarnessFailure(f"{label}: unexpected publish result: {body}")
             return body
 
-        # Attribute-scope filter: one matching message and two that must be
-        # filtered (wrong value, missing numeric attribute).
-        attribute_match = '{"kind":"attribute-match"}'
+        # Attribute-scope filter in the AWS standard "$or" form: the sibling
+        # eventType key is ANDed with the OR of the branch objects. One message
+        # matches each branch and one matches neither.
+        attribute_priority = '{"kind":"attribute-priority"}'
+        attribute_region = '{"kind":"attribute-region"}'
         publish(
             "ATTRIBUTES_TOPIC_ARN",
             [
                 {
-                    "message": attribute_match,
+                    "message": attribute_priority,
                     "messageAttributes": {
                         "eventType": {"DataType": "String", "StringValue": "keep"},
                         "priority": {"DataType": "Number", "StringValue": "10"},
                     },
                 },
                 {
-                    "message": '{"kind":"attribute-wrong-value"}',
+                    "message": attribute_region,
                     "messageAttributes": {
-                        "eventType": {"DataType": "String", "StringValue": "drop"},
-                        "priority": {"DataType": "Number", "StringValue": "10"},
+                        "eventType": {"DataType": "String", "StringValue": "keep"},
+                        "region": {"DataType": "String", "StringValue": "us-east-1"},
                     },
                 },
                 {
-                    "message": '{"kind":"attribute-missing"}',
+                    "message": '{"kind":"attribute-neither"}',
                     "messageAttributes": {
                         "eventType": {"DataType": "String", "StringValue": "keep"},
+                        "priority": {"DataType": "Number", "StringValue": "5"},
+                        "region": {"DataType": "String", "StringValue": "eu-west-1"},
                     },
                 },
             ],
@@ -3901,8 +3905,8 @@ def run_sqs_sns_targets(harness: Harness) -> str:
         attribute_state = _wait_for_delivery(
             session,
             _sns_subscription_id(plan, topic="FilteredAttributesTopic", protocol="lambda"),
-            delivered=1,
-            filtered=2,
+            delivered=2,
+            filtered=1,
         )
         body_state = _wait_for_delivery(
             session,
@@ -3910,20 +3914,24 @@ def run_sqs_sns_targets(harness: Harness) -> str:
             delivered=1,
             filtered=2,
         )
-        receipts = _drain_sqs(session, receipts_id, expected=2)
-        by_kind = {}
+        receipts = _drain_sqs(session, receipts_id, expected=3)
+        by_message = {}
         for message in receipts:
             receipt = json.loads(message["body"])
-            by_kind[receipt.get("kind")] = receipt
-        if set(by_kind) != {"attribute", "body"}:
+            by_message[receipt.get("message")] = receipt
+        if set(by_message) != {attribute_priority, attribute_region, body_match}:
             raise HarnessFailure(f"sqs sns targets: receipts = {[json.loads(m['body']) for m in receipts]}")
+        priority_receipt = by_message[attribute_priority]
+        region_receipt = by_message[attribute_region]
         if (
-            by_kind["attribute"].get("message") != attribute_match
-            or (by_kind["attribute"].get("messageAttributes") or {}).get("eventType", {}).get("Value") != "keep"
-            or by_kind["body"].get("message") != body_match
+            (priority_receipt.get("messageAttributes") or {}).get("priority", {}).get("Value") != "10"
+            or (region_receipt.get("messageAttributes") or {}).get("region", {}).get("Value") != "us-east-1"
+            or by_message[body_match].get("kind") != "body"
         ):
-            raise HarnessFailure(f"sqs sns targets: filtered receipts = {by_kind}")
-        if attribute_state.get("filtered") != 2 or attribute_state.get("failed") != 0:
+            raise HarnessFailure(
+                f"sqs sns targets: filtered receipts = {[json.loads(m['body']) for m in receipts]}"
+            )
+        if attribute_state.get("filtered") != 1 or attribute_state.get("failed") != 0:
             raise HarnessFailure(f"sqs sns targets: attribute state = {attribute_state}")
         if body_state.get("filtered") != 2 or body_state.get("failed") != 0:
             raise HarnessFailure(f"sqs sns targets: body state = {body_state}")
@@ -4027,11 +4035,12 @@ def run_sqs_sns_targets(harness: Harness) -> str:
             delivered=1,
         )
         return (
-            "the runner evaluated an attribute-scope policy (AND across keys, OR within a key) and a "
-            "body-scope policy (nested keys) and reported two filtered messages per subscription; an SQS "
-            "raw subscription received the body and native attributes while the envelope subscription "
-            "received the documented JSON notification; a loopback HTTP subscription received the body "
-            "and the x-amz-sns-* headers"
+            "the runner evaluated an attribute-scope policy in the AWS standard $or form (eventType ANDed "
+            "with priority OR region) and a body-scope policy (nested keys), delivering two messages that "
+            "matched one $or branch each and reporting one filtered message on the attribute subscription "
+            "and two on the body subscription; an SQS raw subscription received the body and native "
+            "attributes while the envelope subscription received the documented JSON notification; a "
+            "loopback HTTP subscription received the body and the x-amz-sns-* headers"
         )
     finally:
         stop_local_session(harness, session)
