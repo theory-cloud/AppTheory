@@ -160,6 +160,7 @@ func NewRunner(options Options) (*Runner, error) {
 		clock:        clock,
 		ttl:          newTTLTracker(),
 		ttlTables:    map[string]ttlTable{},
+		eventBus:     newEventBridgeBus(clock),
 	}
 	runner.namePrefix = sanitizeNamePrefix(options.NamePrefix, "apptheory-local-"+runner.appHash)
 	runner.network = runner.namePrefix + "-net"
@@ -198,6 +199,14 @@ func NewRunner(options Options) (*Runner, error) {
 	// its Lambda or Kinesis destination.
 	runner.delivery.RegisterDeliverer(DeliveryKindKinesis, NewKinesisDeliverer)
 	runner.delivery.RegisterDeliverer(DeliveryKindCloudWatchLogs, NewCloudWatchLogsDeliverer)
+	// E3: schedules fire on the clock and pattern rules register on the
+	// runner-owned bus.
+	runner.delivery.RegisterDeliverer(DeliveryKindEventBridgeSchedule, func(source DeliverySource) (Deliverer, error) {
+		return NewEventBridgeDeliverer(source, runner.eventBus)
+	})
+	runner.delivery.RegisterDeliverer(DeliveryKindEventBridgeRule, func(source DeliverySource) (Deliverer, error) {
+		return NewEventBridgeDeliverer(source, runner.eventBus)
+	})
 	runner.sns = newSNSHubRegistry(runner.clock, runner.logf, runner.snsQueueLookup, runner.deliverySQSClient)
 	runner.delivery.RegisterDeliverer(DeliveryKindSNS, func(source DeliverySource) (Deliverer, error) {
 		return NewSNSDeliverer(source, runner.sns)
@@ -506,6 +515,9 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 	if err = r.startBackends(ctx); err != nil {
 		return nil, err
 	}
+	if err = r.startEventBridgeBus(ctx); err != nil {
+		return nil, err
+	}
 	if err = r.provisionResources(ctx, spec); err != nil {
 		return nil, err
 	}
@@ -533,6 +545,43 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 		return nil, err
 	}
 	return spec, nil
+}
+
+// startEventBridgeBus serves the EventBridge PutEvents JSON protocol on a
+// loopback endpoint. Containers reach it through host.docker.internal, which is
+// added as a host entry before the preflight; the harness and a developer use
+// the loopback URL the session reports.
+func (r *Runner) startEventBridgeBus(ctx context.Context) error {
+	var listenConfig net.ListenConfig
+	listener, err := listenConfig.Listen(ctx, "tcp", "127.0.0.1:0")
+	if err != nil {
+		return fmt.Errorf("bind the local EventBridge bus: %w", err)
+	}
+	r.listeners = append(r.listeners, listener)
+	server := &http.Server{
+		Handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			r.eventBus.serveEventBridgeHTTP(ctx, writer, request)
+		}),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	r.servers = append(r.servers, server)
+	go func() {
+		if serveErr := server.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) && !errors.Is(serveErr, net.ErrClosed) {
+			r.logf("local EventBridge bus stopped: %v", serveErr)
+		}
+	}()
+	tcpAddr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		return fmt.Errorf("the local EventBridge bus has no TCP address")
+	}
+	port := tcpAddr.Port
+	r.eventBusURL = "http://" + listener.Addr().String()
+	r.eventBusContainer = fmt.Sprintf("http://host.docker.internal:%d", port)
+	r.endpoints = append(r.endpoints, Endpoint{Service: "events", URL: r.eventBusContainer})
+	r.options.AddHosts = append(r.options.AddHosts, "host.docker.internal:host-gateway")
+	r.logf("local EventBridge bus at %s (containers: %s)", r.eventBusURL, r.eventBusContainer)
+	return nil
 }
 
 // runtimeFunctions returns the CDK-targeted function set plus any explicit
