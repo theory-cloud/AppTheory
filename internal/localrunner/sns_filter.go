@@ -28,8 +28,11 @@ import (
 // implements, so the validators and the single-value operator primitives are
 // reused from sqs_filter.go. Two SNS differences are handled here:
 //
-//   - `$or` is not SNS filter-policy syntax. A policy that uses it is refused
-//     at plan time instead of being accepted and silently matching nothing.
+//   - `$or` is recognized only under the three conditions AWS documents: its
+//     value is an array with at least two objects and none of those objects
+//     has a reserved keyword as a field name. Otherwise `$or` is an ordinary
+//     attribute or property name, matched like any other string in the policy.
+//     https://docs.aws.amazon.com/sns/latest/dg/and-or-logic.html
 //   - `exists` matches key presence, not only a leaf value, and an
 //     anything-but rule against a String.Array matches only when no element is
 //     excluded.
@@ -42,6 +45,19 @@ const (
 	snsFilterScopeAttributes = "MessageAttributes"
 	// snsFilterScopeBody matches the JSON message body.
 	snsFilterScopeBody = "MessageBody"
+	// snsFilterOrKey is SNS's multiple-properties-or keyword. It is an operator
+	// only when the three documented conditions hold; otherwise it is an
+	// ordinary property name.
+	// https://docs.aws.amazon.com/sns/latest/dg/and-or-logic.html
+	snsFilterOrKey = "$or"
+	// A filter policy's total combination of values may not exceed 150; nested
+	// body keys count their nesting level, and an `$or` contributes the sum of
+	// its branches' combinations.
+	// https://docs.aws.amazon.com/sns/latest/dg/subscription-filter-policy-constraints.html
+	snsFilterPolicyMaximumCombinations = 150
+	// The maximum size of a filter policy is 256 KB.
+	// https://docs.aws.amazon.com/sns/latest/dg/subscription-filter-policy-constraints.html
+	snsFilterPolicyMaximumBytes = 256 * 1024
 )
 
 // normalizeSNSFilterPolicy validates a subscription filter policy against the
@@ -64,6 +80,14 @@ func normalizeSNSFilterPolicy(raw json.RawMessage, scope, logicalID string) (jso
 	if err := validateSNSFilterObject(pattern, scope, ""); err != nil {
 		return nil, unsupported(logicalID, "SNS FilterPolicy is not valid for scope %s: %v", scope, err)
 	}
+	if combinations := snsFilterCombinations(pattern, 1); combinations > snsFilterPolicyMaximumCombinations {
+		return nil, unsupported(
+			logicalID,
+			"SNS FilterPolicy has %d value combinations; AWS allows at most %d, and an $or contributes the sum of its branches (https://docs.aws.amazon.com/sns/latest/dg/subscription-filter-policy-constraints.html)",
+			combinations,
+			snsFilterPolicyMaximumCombinations,
+		)
+	}
 	var buffer bytes.Buffer
 	encoder := json.NewEncoder(&buffer)
 	// Keep operators such as ">=" readable in plan output and docs; the
@@ -72,39 +96,171 @@ func normalizeSNSFilterPolicy(raw json.RawMessage, scope, logicalID string) (jso
 	if err := encoder.Encode(pattern); err != nil {
 		return nil, fmt.Errorf("%s: encode SNS FilterPolicy: %w", logicalID, err)
 	}
-	return bytes.TrimSpace(buffer.Bytes()), nil
+	encoded := bytes.TrimSpace(buffer.Bytes())
+	if len(encoded) > snsFilterPolicyMaximumBytes {
+		return nil, unsupported(
+			logicalID,
+			"SNS FilterPolicy is %d bytes; AWS allows at most %d (https://docs.aws.amazon.com/sns/latest/dg/subscription-filter-policy-constraints.html)",
+			len(encoded),
+			snsFilterPolicyMaximumBytes,
+		)
+	}
+	return encoded, nil
 }
 
 func validateSNSFilterObject(pattern map[string]any, scope, path string) error {
 	for _, key := range sortedKeys(pattern) {
 		value := pattern[key]
 		child := joinFilterPath(path, key)
-		if strings.HasPrefix(key, "$") {
-			return fmt.Errorf("key %q: SNS filter policies have no %q operator; AND across keys and OR within a key are the only combinators", child, key)
+		if key == snsFilterOrKey {
+			if branches, ok := snsFilterOrBranches(value); ok {
+				if err := validateSNSFilterOrBranches(branches, scope, child); err != nil {
+					return err
+				}
+				continue
+			}
 		}
-		switch typed := value.(type) {
-		case []any:
-			if err := rejectSNSUnsupportedOperator(typed, child); err != nil {
-				return err
-			}
-			if err := validateFilterRuleList(typed, child); err != nil {
-				return err
-			}
-		case map[string]any:
-			if scope != snsFilterScopeBody {
-				return fmt.Errorf(
-					"key %q: a MessageAttributes policy key must hold a rule list, not a nested object",
-					child,
-				)
-			}
-			if err := validateSNSFilterObject(typed, scope, child); err != nil {
-				return err
-			}
-		default:
-			return fmt.Errorf("key %q: a property must hold a list of rules", child)
+		if err := validateSNSFilterProperty(value, scope, child); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func validateSNSFilterOrBranches(branches []map[string]any, scope, path string) error {
+	for index, branch := range branches {
+		alternativePath := fmt.Sprintf("%s[%d]", path, index)
+		if err := validateSNSFilterObject(branch, scope, alternativePath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateSNSFilterProperty(value any, scope, path string) error {
+	switch typed := value.(type) {
+	case []any:
+		if err := rejectSNSUnsupportedOperator(typed, path); err != nil {
+			return err
+		}
+		return validateFilterRuleList(typed, path)
+	case map[string]any:
+		if scope != snsFilterScopeBody {
+			return fmt.Errorf(
+				"key %q: a MessageAttributes policy key must hold a rule list, not a nested object",
+				path,
+			)
+		}
+		return validateSNSFilterObject(typed, scope, path)
+	default:
+		return fmt.Errorf("key %q: a property must hold a list of rules", path)
+	}
+}
+
+// snsFilterReservedKeywords are the field names SNS reads as filter-policy
+// keywords. An `$or` array whose branch objects use any of them is not an OR
+// relationship; `$or` becomes an ordinary property name instead.
+// https://docs.aws.amazon.com/sns/latest/dg/and-or-logic.html
+var snsFilterReservedKeywords = map[string]struct{}{
+	filterOperatorPrefix:           {},
+	filterOperatorSuffix:           {},
+	filterOperatorEqualsIgnoreCase: {},
+	filterOperatorAnythingBut:      {},
+	filterOperatorNumeric:          {},
+	filterOperatorExists:           {},
+	"cidr":                         {},
+	"wildcard":                     {},
+}
+
+// snsFilterOrBranches reports whether a policy value is the documented `$or`
+// operator and returns its branch objects. SNS recognizes `$or` only when its
+// value is an array of at least two objects and none of those objects has a
+// reserved keyword as a field name; every other shape is an ordinary property
+// name, which is why this is a predicate and not a refusal.
+// https://docs.aws.amazon.com/sns/latest/dg/and-or-logic.html
+func snsFilterOrBranches(value any) ([]map[string]any, bool) {
+	alternatives, ok := value.([]any)
+	if !ok || len(alternatives) < 2 {
+		return nil, false
+	}
+	branches := make([]map[string]any, 0, len(alternatives))
+	for _, alternative := range alternatives {
+		object, ok := alternative.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		for key := range object {
+			if _, reserved := snsFilterReservedKeywords[key]; reserved {
+				return nil, false
+			}
+		}
+		branches = append(branches, object)
+	}
+	return branches, true
+}
+
+// snsFilterCombinations computes the documented combination count: the product
+// of the value counts of the ANDed keys, with a nested body key multiplied by
+// its nesting level, and an `$or` contributing the sum of its branches. The
+// count saturates above the limit so a pathological policy cannot overflow.
+// https://docs.aws.amazon.com/sns/latest/dg/and-or-logic.html
+func snsFilterCombinations(pattern map[string]any, level int) int {
+	product := 1
+	orSum := 0
+	hasOr := false
+	for key, value := range pattern {
+		if key == snsFilterOrKey {
+			if branches, ok := snsFilterOrBranches(value); ok {
+				hasOr = true
+				for _, branch := range branches {
+					orSum = snsFilterAdd(orSum, snsFilterCombinations(branch, level))
+				}
+				continue
+			}
+		}
+		product = snsFilterMultiply(product, snsFilterValueCombinations(value, level))
+	}
+	if hasOr {
+		return snsFilterMultiply(product, orSum)
+	}
+	return product
+}
+
+func snsFilterValueCombinations(value any, level int) int {
+	switch typed := value.(type) {
+	case []any:
+		return snsFilterMultiply(len(typed), level)
+	case map[string]any:
+		if level >= snsFilterPolicyMaximumCombinations {
+			return snsFilterPolicyMaximumCombinations + 1
+		}
+		return snsFilterCombinations(typed, level+1)
+	default:
+		return level
+	}
+}
+
+func snsFilterMultiply(left, right int) int {
+	if left <= 0 || right <= 0 {
+		return 0
+	}
+	if left > snsFilterPolicyMaximumCombinations || right > snsFilterPolicyMaximumCombinations {
+		return snsFilterPolicyMaximumCombinations + 1
+	}
+	if product := left * right; product <= snsFilterPolicyMaximumCombinations {
+		return product
+	}
+	return snsFilterPolicyMaximumCombinations + 1
+}
+
+func snsFilterAdd(left, right int) int {
+	if left > snsFilterPolicyMaximumCombinations || right > snsFilterPolicyMaximumCombinations {
+		return snsFilterPolicyMaximumCombinations + 1
+	}
+	if sum := left + right; sum <= snsFilterPolicyMaximumCombinations {
+		return sum
+	}
+	return snsFilterPolicyMaximumCombinations + 1
 }
 
 // rejectSNSUnsupportedOperator names an operator this evaluator does not
@@ -208,10 +364,14 @@ type snsOpaqueAttribute struct {
 	dataType string
 }
 
-// snsMatchObject applies a policy object to a document. Unlike EventBridge,
-// SNS has no `$or` keyword: every key is a property name. When the document
-// value is an array, the object is applied to each element and matches when
-// one element matches, which is how SNS reads a policy against an array.
+// snsMatchObject applies a policy object to a document. `$or` is the only
+// object-level keyword; a qualifying `$or` matches when any of its branch
+// objects matches the same document, ANDed with the sibling keys, and every
+// other key (including an `$or` that does not meet the three AWS conditions) is
+// a property name. When the document value is an array, the object is applied
+// to each element and matches when one element matches, which is how SNS reads
+// a policy against an array; a branch never combines values from two elements.
+// https://docs.aws.amazon.com/sns/latest/dg/and-or-logic.html
 func snsMatchObject(pattern map[string]any, value any) bool {
 	if elements, ok := value.([]any); ok {
 		for _, element := range elements {
@@ -226,6 +386,21 @@ func snsMatchObject(pattern map[string]any, value any) bool {
 		return false
 	}
 	for key, expected := range pattern {
+		if key == snsFilterOrKey {
+			if branches, ok := snsFilterOrBranches(expected); ok {
+				matched := false
+				for _, branch := range branches {
+					if snsMatchObject(branch, target) {
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					return false
+				}
+				continue
+			}
+		}
 		actual, present := target[key]
 		if !snsMatchValue(expected, actual, present) {
 			return false
