@@ -72,16 +72,16 @@ func (d *KinesisDeliverer) Start(ctx context.Context, env DelivererEnv) error {
 	if d.stream == "" {
 		d.stream = localSourceARN(backendKinesis, d.mapping.SourceName)
 	}
-	if _, err := client.DescribeStreamSummary(ctx, &kinesis.DescribeStreamSummaryInput{
-		StreamName: aws.String(d.mapping.SourceName),
-	}); err != nil {
-		return fmt.Errorf("describe local Kinesis stream %s: %w", d.mapping.SourceName, err)
-	}
 	if !d.mapping.Enabled {
 		env.State.SetPaused(true)
 		env.State.SetPhase(DeliveryPhasePaused)
 		<-ctx.Done()
 		return nil
+	}
+	if _, err := client.DescribeStreamSummary(ctx, &kinesis.DescribeStreamSummaryInput{
+		StreamName: aws.String(d.mapping.SourceName),
+	}); err != nil {
+		return fmt.Errorf("describe local Kinesis stream %s: %w", d.mapping.SourceName, err)
 	}
 	env.State.SetPaused(false)
 	env.State.SetPhase(DeliveryPhasePolling)

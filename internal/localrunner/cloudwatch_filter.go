@@ -82,6 +82,9 @@ func parseCloudWatchTermPattern(pattern string) (cloudWatchTermPattern, error) {
 	}
 	var parsed cloudWatchTermPattern
 	for _, token := range tokens {
+		if token == "?" || token == "-" {
+			return cloudWatchTermPattern{}, fmt.Errorf("filter term %q has no value", token)
+		}
 		switch {
 		case strings.HasPrefix(token, "%") && strings.HasSuffix(token, "%"):
 			return cloudWatchTermPattern{}, fmt.Errorf("regex filter pattern %q is not implemented locally", token)
@@ -313,7 +316,7 @@ func parseCloudWatchJSONPath(path string) ([]string, error) {
 	}
 	trimmed := strings.TrimPrefix(path, "$")
 	if trimmed == "" {
-		return nil, nil
+		return nil, fmt.Errorf("filter path %q has no field", path)
 	}
 	if !strings.HasPrefix(trimmed, ".") {
 		return nil, fmt.Errorf("filter path %q uses a syntax this runner does not implement", path)

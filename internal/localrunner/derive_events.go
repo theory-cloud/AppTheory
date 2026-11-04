@@ -508,6 +508,9 @@ func resolveRuleTarget(stack assemblyStack, types map[string]string, logicalID s
 		default:
 			continue
 		}
+		if declared.SqsParameters != nil && spec.Type != backendSQS {
+			return RuleTargetSpec{}, false, unsupported(logicalID, "SqsParameters is only valid on an SQS target")
+		}
 		if err := applyRuleTargetSettings(&spec, declared.Input, declared.InputPath, declared.InputTransformer, declared.RetryPolicy, declared.DeadLetterConfig, stack, types, logicalID); err != nil {
 			return RuleTargetSpec{}, false, err
 		}
