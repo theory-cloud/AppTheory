@@ -1167,6 +1167,9 @@ func (r *Runner) buildFunctionImage(ctx context.Context, function FunctionSpec) 
 		return tag, nil
 	}
 	asset := function.ImageAsset
+	if err := ensureSharedPath(asset.Directory); err != nil {
+		return "", fmt.Errorf("function %s: %w", function.LogicalID, err)
+	}
 	tag := r.functionImageTag(function)
 	options := ImageBuildOptions{
 		Tag:        tag,
