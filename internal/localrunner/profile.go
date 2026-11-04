@@ -240,6 +240,13 @@ func (p *Profile) EndpointEnvNames(service string) []string {
 // https://docs.aws.amazon.com/sdkref/latest/guide/feature-ss-endpoints.html
 func defaultEndpointEnvNames(service string) []string {
 	switch strings.ToLower(strings.TrimSpace(service)) {
+	case eventsService:
+		// EventBridge's API-model serviceId is EventBridge. The AWS SDKs and
+		// Tools reference names the service-specific override from that id
+		// (AWS_ENDPOINT_URL_EVENTBRIDGE); the runner also sets the shorter
+		// AWS_ENDPOINT_URL_EVENTS name the wave-2 packet names, so either
+		// spelling reaches the local bus.
+		return []string{"AWS_ENDPOINT_URL_EVENTS", "AWS_ENDPOINT_URL_EVENTBRIDGE", "EVENTS_ENDPOINT"}
 	case backendSecretsManager:
 		return []string{"AWS_ENDPOINT_URL_SECRETS_MANAGER"}
 	case backendCognito:

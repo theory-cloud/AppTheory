@@ -60,6 +60,11 @@ const (
 	backendSecretsManager = "secretsmanager"
 	backendSNS            = "sns"
 	backendCognito        = "cognito-idp"
+	eventsService         = "events"
+	defaultEventBus       = "default"
+	ruleTargetFunction    = "function"
+	ruleTargetSNS         = "sns"
+	iteratorAtTimestamp   = "AT_TIMESTAMP"
 	boolTrue              = "true"
 	jsonNull              = "null"
 
@@ -188,6 +193,37 @@ type EventSourceSpec struct {
 	FIFO              bool `json:"fifo,omitempty"`
 	VisibilityTimeout int  `json:"visibilityTimeout,omitempty"`
 	MaxReceiveCount   int  `json:"maxReceiveCount,omitempty"`
+
+	// Stream mapping settings shared by DynamoDB Streams and Kinesis.
+	//
+	// https://docs.aws.amazon.com/lambda/latest/dg/API_EventSourceMappingConfiguration.html
+	BisectBatchOnFunctionError bool `json:"bisectBatchOnFunctionError,omitempty"`
+	// MaximumRetryAttempts is -1 for unlimited, which is the AWS default. The
+	// RetryAttemptsSet flag distinguishes an explicit 0 (no retries) from an
+	// omitted property.
+	MaximumRetryAttempts int  `json:"maximumRetryAttempts,omitempty"`
+	RetryAttemptsSet     bool `json:"-"`
+	// MaximumRecordAgeInSeconds is -1 or omitted for unlimited.
+	MaximumRecordAgeInSeconds int `json:"maximumRecordAgeInSeconds,omitempty"`
+	// ParallelizationFactor is 1..10.
+	ParallelizationFactor int `json:"parallelizationFactor,omitempty"`
+	// TumblingWindowInSeconds is refused: no example uses it.
+	TumblingWindowInSeconds int `json:"tumblingWindowInSeconds,omitempty"`
+	// StartingPositionTimestamp is the Kinesis AT_TIMESTAMP value, in epoch
+	// seconds.
+	StartingPositionTimestamp float64 `json:"startingPositionTimestamp,omitempty"`
+	// DestinationType, DestinationName and DestinationARN describe
+	// DestinationConfig.OnFailure: an SQS queue or an SNS topic.
+	DestinationType string `json:"destinationType,omitempty"`
+	DestinationName string `json:"destinationName,omitempty"`
+	DestinationARN  string `json:"destinationArn,omitempty"`
+	// StreamViewType, PartitionKey and TTLAttribute describe the source table.
+	StreamViewType string `json:"streamViewType,omitempty"`
+	PartitionKey   string `json:"partitionKey,omitempty"`
+	TTLAttribute   string `json:"ttlAttribute,omitempty"`
+	// FunctionName is the target function's physical name, used in the
+	// on-failure invocation record.
+	FunctionName string `json:"functionName,omitempty"`
 }
 
 // SubscriptionSpec is one CloudWatch Logs subscription filter or SNS topic
@@ -212,8 +248,10 @@ type SubscriptionSpec struct {
 	DestinationType string `json:"destinationType,omitempty"`
 	// Function is set when the destination is a Lambda function.
 	Function string `json:"function,omitempty"`
-	// Stream is set when the destination is a Kinesis stream.
-	Stream string `json:"stream,omitempty"`
+	// Stream and StreamName identify the Kinesis stream a CloudWatch Logs
+	// destination forwards to.
+	Stream     string `json:"stream,omitempty"`
+	StreamName string `json:"streamName,omitempty"`
 
 	// Topic is the qualified logical id of the SNS topic the subscription
 	// targets. TopicARN is the provider ARN when it is literal or resolved from
@@ -237,18 +275,70 @@ type SubscriptionSpec struct {
 	FilterPolicyScope string `json:"filterPolicyScope,omitempty"`
 }
 
-// RuleSpec is one AWS::Events::Rule with a Lambda target. It is reported so a
-// local session can build the event the rule would deliver.
+// RuleSpec is one AWS::Events::Rule. It is reported so a local session can
+// build the event the rule would deliver, and it carries every target the
+// runner can deliver.
 type RuleSpec struct {
 	LogicalID string `json:"logicalId"`
 	Stack     string `json:"stack"`
 	Name      string `json:"name"`
-	ARN       string `json:"arn"`
-	Schedule  string `json:"schedule,omitempty"`
+	// BusName is the event bus the rule belongs to; "default" when omitted.
+	BusName  string `json:"busName,omitempty"`
+	ARN      string `json:"arn"`
+	Schedule string `json:"schedule,omitempty"`
 	// EventPattern is the rule's declared pattern, kept verbatim.
 	EventPattern json.RawMessage `json:"eventPattern,omitempty"`
-	Targets      []string        `json:"targets,omitempty"`
-	Enabled      bool            `json:"enabled"`
+	// Targets lists the Lambda function targets, in declared order. It stays a
+	// function-only list so existing callers and the plan output keep their
+	// contract.
+	Targets []string `json:"targets,omitempty"`
+	// TargetSpecs is every deliverable target with its input shaping, retry
+	// policy and dead-letter configuration.
+	TargetSpecs []RuleTargetSpec `json:"targetSpecs,omitempty"`
+	Enabled     bool             `json:"enabled"`
+}
+
+// RuleTargetSpec is one EventBridge rule target.
+type RuleTargetSpec struct {
+	ID   string `json:"id,omitempty"`
+	Type string `json:"type"`
+	// Function, Queue and Topic are the qualified logical ids of the target.
+	Function string `json:"function,omitempty"`
+	Queue    string `json:"queue,omitempty"`
+	Topic    string `json:"topic,omitempty"`
+	// FunctionName, QueueName and TopicARN are the physical values delivery
+	// needs.
+	FunctionName string `json:"functionName,omitempty"`
+	QueueName    string `json:"queueName,omitempty"`
+	TopicARN     string `json:"topicArn,omitempty"`
+	// ARN is the target's provider ARN, used in the dead-letter attributes.
+	ARN string `json:"arn,omitempty"`
+	// Input, InputPath and InputTransformer are mutually exclusive shaping
+	// settings.
+	Input            string                `json:"input,omitempty"`
+	InputPath        string                `json:"inputPath,omitempty"`
+	InputTransformer *RuleInputTransformer `json:"inputTransformer,omitempty"`
+	// RetryPolicy governs the target attempts; a nil policy uses the AWS
+	// defaults (185 attempts, 86400 seconds).
+	RetryPolicy *RuleRetryPolicy `json:"retryPolicy,omitempty"`
+	// DeadLetterQueue and DeadLetterQueueName describe the target DLQ.
+	DeadLetterQueue     string `json:"deadLetterQueue,omitempty"`
+	DeadLetterQueueName string `json:"deadLetterQueueName,omitempty"`
+	// SQSMessageGroupID is SqsParameters.MessageGroupId: a literal or a JSON
+	// path such as $.detail.group.
+	SQSMessageGroupID string `json:"sqsMessageGroupId,omitempty"`
+}
+
+// RuleInputTransformer is a target's InputTransformer.
+type RuleInputTransformer struct {
+	InputPathsMap map[string]string `json:"inputPathsMap,omitempty"`
+	InputTemplate string            `json:"inputTemplate"`
+}
+
+// RuleRetryPolicy is a target's RetryPolicy.
+type RuleRetryPolicy struct {
+	MaximumRetryAttempts     int `json:"maximumRetryAttempts"`
+	MaximumEventAgeInSeconds int `json:"maximumEventAgeInSeconds"`
 }
 
 // APISpec is one supported HTTP surface.

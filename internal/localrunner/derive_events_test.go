@@ -218,7 +218,7 @@ func TestDeriveUnsupportedEventSourceIsReported(t *testing.T) {
 	if !strings.Contains(reasons["TopicMap"], "not delivered locally") {
 		t.Fatalf("unsupported event source was not reported: %+v", reasons)
 	}
-	if !strings.Contains(reasons["ForeignRule"], "no Lambda function target") {
+	if !strings.Contains(reasons["ForeignRule"], "no Lambda, SQS or SNS target") {
 		t.Fatalf("non-Lambda rule target was not reported: %+v", reasons)
 	}
 }

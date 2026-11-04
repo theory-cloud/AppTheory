@@ -120,6 +120,16 @@ type Runner struct {
 	// sns is the per-topic hub registry the SNS deliverer attaches to and
 	// PublishLocal publishes through.
 	sns *snsHubRegistry
+	// ttl performs DynamoDB Time to Live on the run clock; ttlTables are the
+	// provisioned tables that enabled it.
+	ttl       *ttlTracker
+	ttlTables map[string]ttlTable
+	// eventBus is the runner-owned EventBridge bus; eventBusURL is the loopback
+	// URL the harness and a developer use, and the container URL is injected
+	// into functions as AWS_ENDPOINT_URL_EVENTS.
+	eventBus          *eventBridgeBus
+	eventBusURL       string
+	eventBusContainer string
 }
 
 // NewRunner validates the options and prepares the run. It contacts no Docker
@@ -148,6 +158,8 @@ func NewRunner(options Options) (*Runner, error) {
 		images:       map[string]string{},
 		semaphore:    make(chan struct{}, options.MaxConcurrency),
 		clock:        clock,
+		ttl:          newTTLTracker(),
+		ttlTables:    map[string]ttlTable{},
 	}
 	runner.namePrefix = sanitizeNamePrefix(options.NamePrefix, "apptheory-local-"+runner.appHash)
 	runner.network = runner.namePrefix + "-net"
@@ -172,11 +184,15 @@ func NewRunner(options Options) (*Runner, error) {
 		runner.logf,
 	)
 	// E1b: an SQS mapping has a deliverer, so plan reports it as registered and
-	// a live session polls its ElasticMQ queue. E6: an SNS subscription has a
-	// deliverer whose shared topic hub observes publishes through moto and
-	// fans them out. Other kinds keep reporting not-delivered with their task
-	// until E2-E5 land.
+	// a live session polls its ElasticMQ queue. E2: a DynamoDB Streams mapping
+	// polls the table's stream on DynamoDB Local. E6: an SNS subscription has a
+	// deliverer whose shared topic hub observes publishes through moto and fans
+	// them out. Other kinds keep reporting not-delivered with their task until
+	// E3 and E5 land.
 	runner.delivery.RegisterDeliverer(DeliveryKindSQS, NewSQSDeliverer)
+	runner.delivery.RegisterDeliverer(DeliveryKindDynamoDBStream, func(source DeliverySource) (Deliverer, error) {
+		return NewDynamoDBStreamDeliverer(source, runner.ttl)
+	})
 	runner.sns = newSNSHubRegistry(runner.clock, runner.logf, runner.snsQueueLookup, runner.deliverySQSClient)
 	runner.delivery.RegisterDeliverer(DeliveryKindSNS, func(source DeliverySource) (Deliverer, error) {
 		return NewSNSDeliverer(source, runner.sns)
@@ -886,6 +902,7 @@ func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image
 		Function:  function,
 		Container: name,
 		Image:     image,
+		Started:   time.Now().UTC(),
 	}
 	r.invokers[function.LogicalID] = process
 	if _, startErr := r.docker.StartContainer(ctx, options); startErr != nil {
@@ -1044,6 +1061,9 @@ func (r *Runner) containerName(logicalID string) string {
 }
 
 func (r *Runner) logf(format string, args ...any) {
+	if r.options.Stdout == nil {
+		return
+	}
 	_, _ = fmt.Fprintf(r.options.Stdout, format+"\n", args...) //nolint:errcheck // progress logging
 }
 
@@ -1088,7 +1108,7 @@ func sanitizeName(value string) string {
 	}
 	name := strings.Trim(builder.String(), "-_.")
 	if name == "" {
-		return "function"
+		return ruleTargetFunction
 	}
 	if len(name) > 40 {
 		return name[:31] + "-" + hashOf(name)

@@ -15,9 +15,72 @@ import (
 )
 
 var (
-	snsRecordMu   sync.Mutex
-	lastSNSRecord map[string]any
+	snsRecordMu        sync.Mutex
+	lastSNSRecord      map[string]any
+	streamMu           sync.Mutex
+	streamRecords      []map[string]any
+	eventBridgeMu      sync.Mutex
+	eventBridgeRecords []map[string]any
 )
+
+const streamRecordHistory = 50
+
+// recordEventBridgeEvent stores the documented rule envelope fields the harness
+// asserts for every language.
+func recordEventBridgeEvent(kind string, event events.EventBridgeEvent) map[string]any {
+	return map[string]any{
+		"kind":       kind,
+		"id":         event.ID,
+		"source":     event.Source,
+		"detailType": event.DetailType,
+		"resources":  event.Resources,
+		"detail":     json.RawMessage(event.Detail),
+		"time":       event.Time.UTC().Format(time.RFC3339Nano),
+		"region":     event.Region,
+		"account":    event.AccountID,
+	}
+}
+
+func appendEventBridgeRecord(entry map[string]any) {
+	eventBridgeMu.Lock()
+	defer eventBridgeMu.Unlock()
+	eventBridgeRecords = append(eventBridgeRecords, entry)
+	if len(eventBridgeRecords) > streamRecordHistory {
+		eventBridgeRecords = eventBridgeRecords[len(eventBridgeRecords)-streamRecordHistory:]
+	}
+}
+
+// recordStreamEvent stores the documented stream record fields the harness
+// asserts for every language, including a TTL REMOVE's service userIdentity.
+func recordStreamEvent(record events.DynamoDBEventRecord) map[string]any {
+	entry := map[string]any{
+		"eventID":        record.EventID,
+		"eventName":      record.EventName,
+		"eventSource":    record.EventSource,
+		"eventSourceARN": record.EventSourceArn,
+		"awsRegion":      record.AWSRegion,
+		"keys":           record.Change.Keys,
+		"newImage":       record.Change.NewImage,
+		"oldImage":       record.Change.OldImage,
+		"sequenceNumber": record.Change.SequenceNumber,
+	}
+	if record.UserIdentity != nil {
+		entry["userIdentity"] = map[string]any{
+			"type":        record.UserIdentity.Type,
+			"principalId": record.UserIdentity.PrincipalID,
+		}
+	}
+	return entry
+}
+
+func appendStreamRecord(entry map[string]any) {
+	streamMu.Lock()
+	defer streamMu.Unlock()
+	streamRecords = append(streamRecords, entry)
+	if len(streamRecords) > streamRecordHistory {
+		streamRecords = streamRecords[len(streamRecords)-streamRecordHistory:]
+	}
+}
 
 // recordSNSEvent stores the documented Lambda SNS record fields the harness
 // asserts for every language.
@@ -172,6 +235,7 @@ func buildApp() *apptheory.App {
 	})
 	app.EventBridge(apptheory.EventBridgePattern(eventSource, eventDetailType), func(ctx *apptheory.EventContext, event events.EventBridgeEvent) (any, error) {
 		envelope := apptheory.NormalizeEventBridgeWorkloadEnvelope(ctx, event)
+		appendEventBridgeRecord(recordEventBridgeEvent("rule", event))
 		return map[string]any{
 			"ok":             true,
 			"trigger":        "eventbridge",
@@ -184,6 +248,7 @@ func buildApp() *apptheory.App {
 	})
 	app.EventBridge(apptheory.EventBridgeRule(scheduleRuleName), func(ctx *apptheory.EventContext, event events.EventBridgeEvent) (any, error) {
 		summary := apptheory.NormalizeEventBridgeScheduledWorkload(ctx, event)
+		appendEventBridgeRecord(recordEventBridgeEvent("schedule", event))
 		return map[string]any{
 			"ok":             true,
 			"trigger":        "eventbridge",
@@ -197,7 +262,21 @@ func buildApp() *apptheory.App {
 	app.DynamoDB(tableName, func(_ *apptheory.EventContext, record events.DynamoDBEventRecord) error {
 		summary := apptheory.NormalizeDynamoDBStreamRecord(record)
 		_ = summary.SafeLog
+		appendStreamRecord(recordStreamEvent(record))
+		if poison, ok := record.Change.NewImage["poison"]; ok && poison.Boolean() {
+			return fmt.Errorf("poison record %s", record.Change.SequenceNumber)
+		}
 		return nil
+	})
+	app.Get("/stream-records", func(_ *apptheory.Context) (*apptheory.Response, error) {
+		streamMu.Lock()
+		defer streamMu.Unlock()
+		return apptheory.MustJSON(200, map[string]any{"records": append([]map[string]any(nil), streamRecords...)}), nil
+	})
+	app.Get("/eventbridge-records", func(_ *apptheory.Context) (*apptheory.Response, error) {
+		eventBridgeMu.Lock()
+		defer eventBridgeMu.Unlock()
+		return apptheory.MustJSON(200, map[string]any{"records": append([]map[string]any(nil), eventBridgeRecords...)}), nil
 	})
 
 	snsTopicName := os.Getenv("APPTHEORY_DEMO_SNS_NAME")

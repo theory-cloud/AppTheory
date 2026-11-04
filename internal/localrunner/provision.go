@@ -192,7 +192,7 @@ type dynamoTableProperties struct {
 	TableName               string                       `json:"TableName"`
 }
 
-//nolint:gocyclo // one provisioning step per table resource, with explicit error handling.
+//nolint:gocyclo,gocognit // one provisioning step per table resource.
 func (r *Runner) provisionTables(ctx context.Context, spec *Spec) error {
 	backend, ok := r.backendForService("dynamodb")
 	if !ok {
@@ -236,7 +236,7 @@ func (r *Runner) provisionTables(ctx context.Context, spec *Spec) error {
 			Type:      typeDynamoTable,
 			Name:      name,
 			ARN:       aws.ToString(description.TableArn),
-			StreamARN: aws.ToString(description.LatestStreamArn),
+			StreamARN: normalizeDynamoStreamARN(aws.ToString(description.LatestStreamArn), name),
 		}
 		r.resourceValues[resource.Stack+"/"+resource.LogicalID] = value
 		r.tables[resource.Stack+"/"+resource.LogicalID] = tableInfo{
@@ -254,6 +254,14 @@ func (r *Runner) provisionTables(ctx context.Context, spec *Spec) error {
 				},
 			}); err != nil && !ttlAlreadyEnabled(err) {
 				return fmt.Errorf("enable local TTL on DynamoDB table %s: %w", name, err)
+			}
+			if r.ttlTables == nil {
+				r.ttlTables = map[string]ttlTable{}
+			}
+			r.ttlTables[resource.Stack+"/"+resource.LogicalID] = ttlTable{
+				Name:      name,
+				Attribute: props.TimeToLiveSpecification.AttributeName,
+				KeySchema: keySchema,
 			}
 		}
 		r.logf("provisioned DynamoDB table %s for %s", name, resource.LogicalID)

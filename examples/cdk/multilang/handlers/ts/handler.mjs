@@ -20,6 +20,28 @@ const snsTopicName = process.env.APPTHEORY_DEMO_SNS_NAME ?? "";
 const app = createApp({ tier });
 
 let lastSNSRecord = null;
+const streamRecords = [];
+const streamRecordHistory = 50;
+const eventBridgeRecords = [];
+
+function recordEventBridgeEvent(kind, event) {
+  return {
+    kind,
+    id: event?.id ?? "",
+    source: event?.source ?? "",
+    detailType: event?.["detail-type"] ?? "",
+    resources: event?.resources ?? [],
+    detail: event?.detail ?? {},
+    time: event?.time ?? "",
+    region: event?.region ?? "",
+    account: event?.account ?? "",
+  };
+}
+
+function appendEventBridgeRecord(entry) {
+  eventBridgeRecords.push(entry);
+  if (eventBridgeRecords.length > streamRecordHistory) eventBridgeRecords.shift();
+}
 
 // recordSNSEvent stores the documented Lambda SNS record fields the harness
 // asserts for every language.
@@ -64,6 +86,7 @@ app.get("/", (ctx) =>
 app.sqs(queueName, async () => {});
 app.eventBridge({ source: eventSource, detailType: eventDetailType }, async (ctx, event) => {
   const envelope = normalizeEventBridgeWorkloadEnvelope(ctx, event);
+  appendEventBridgeRecord(recordEventBridgeEvent("rule", event));
   return {
     ok: true,
     trigger: "eventbridge",
@@ -76,6 +99,7 @@ app.eventBridge({ source: eventSource, detailType: eventDetailType }, async (ctx
 });
 app.eventBridge({ ruleName: scheduleRuleName }, async (ctx, event) => {
   const summary = normalizeEventBridgeScheduledWorkload(ctx, event);
+  appendEventBridgeRecord(recordEventBridgeEvent("schedule", event));
   return {
     ok: true,
     trigger: "eventbridge",
@@ -89,7 +113,29 @@ app.eventBridge({ ruleName: scheduleRuleName }, async (ctx, event) => {
 app.dynamoDB(tableName, async (_ctx, record) => {
   const summary = normalizeDynamoDBStreamRecord(record);
   if (!summary.event_id) throw new Error("missing dynamodb event id");
+  const entry = {
+    eventID: record.EventID ?? "",
+    eventName: record.eventName ?? "",
+    eventSource: record.eventSource ?? "",
+    eventSourceARN: record.eventSourceARN ?? "",
+    awsRegion: record.awsRegion ?? "",
+    keys: record.dynamodb?.Keys ?? {},
+    newImage: record.dynamodb?.NewImage ?? {},
+    sequenceNumber: record.dynamodb?.SequenceNumber ?? "",
+  };
+  if (record.userIdentity) {
+    entry.userIdentity = {
+      type: record.userIdentity.type,
+      principalId: record.userIdentity.principalId,
+    };
+  }
+  streamRecords.push(entry);
+  if (streamRecords.length > streamRecordHistory) streamRecords.shift();
 });
+
+app.get("/stream-records", () => json(200, { records: streamRecords.slice() }));
+
+app.get("/eventbridge-records", () => json(200, { records: eventBridgeRecords.slice() }));
 
 app.sns(snsTopicName, (_ctx, record) => {
   lastSNSRecord = recordSNSEvent(record);

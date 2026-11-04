@@ -3,11 +3,15 @@ package localrunner
 import (
 	"context"
 	"fmt"
+
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
 )
 
 // startDelivery registers every derived mapping, rule and subscription and
 // starts the engine. It runs after the functions and listeners are ready, so a
-// deliverer that starts polling finds its target container running.
+// deliverer that starts polling finds its target container running. The TTL
+// sweep starts with the engine: DynamoDB Local does not expire items, so the
+// runner performs the documented TTL delete on the run clock.
 func (r *Runner) startDelivery(ctx context.Context, spec *Spec) error {
 	if r.delivery == nil {
 		return nil
@@ -15,6 +19,7 @@ func (r *Runner) startDelivery(ctx context.Context, spec *Spec) error {
 	if err := r.delivery.Start(ctx, spec); err != nil {
 		return err
 	}
+	r.startTTLSweeper(ctx)
 	for _, source := range r.delivery.State().Sources {
 		if source.State == DeliveryPhaseNotDelivered {
 			r.logf("delivery %s: %s", source.ID, DeliveryCell(source))
@@ -48,17 +53,33 @@ func (r *Runner) ResolveDeliveryBackend(kind DeliveryKind) (DeliveryBackend, err
 	if service == "" {
 		return DeliveryBackend{}, fmt.Errorf("source kind %q has no local backend", kind)
 	}
-	if backend, ok := r.backendForService(service); ok && backend.HostURL != "" {
-		return DeliveryBackend{
-			Service:  service,
-			Endpoint: backend.HostURL,
-			Client:   deliveryClient(service, backend.HostURL),
-		}, nil
+	backend := DeliveryBackend{
+		Service:    service,
+		SQS:        r.deliverySQSClientOrNil(),
+		PublishSNS: r.PublishLocalMessage,
+	}
+	if resolved, ok := r.backendForService(service); ok && resolved.HostURL != "" {
+		backend.Endpoint = resolved.HostURL
+		backend.Client = deliveryClient(service, resolved.HostURL)
+		return backend, nil
 	}
 	if kind == DeliveryKindEventBridgeSchedule || kind == DeliveryKindEventBridgeRule {
-		return DeliveryBackend{Service: "events"}, nil
+		backend.Service = eventsService
+		return backend, nil
 	}
 	return DeliveryBackend{}, fmt.Errorf("the %s backend is not running", service)
+}
+
+// deliverySQSClientOrNil builds the host-side ElasticMQ client used for SQS
+// targets and on-failure destinations. A run without the SQS backend still
+// starts rule deliverers that only target Lambda or SNS; an SQS target then
+// fails with a named error.
+func (r *Runner) deliverySQSClientOrNil() *sqs.Client {
+	backend, ok := r.backendForService(backendSQS)
+	if !ok || backend.HostURL == "" {
+		return nil
+	}
+	return newSQSClient(backend.HostURL)
 }
 
 func deliveryBackendService(kind DeliveryKind) string {
@@ -85,7 +106,7 @@ func deliveryClient(service, endpoint string) any {
 	case backendSQS:
 		return newSQSClient(endpoint)
 	case backendDynamoDB:
-		return newDynamoDBClient(endpoint)
+		return &dynamoDBLocalBackend{data: newDynamoDBClient(endpoint), streams: newDynamoStreamsClient(endpoint)}
 	case backendSNS:
 		// The SNS deliverer needs both services: moto serves the publish side
 		// and the per-topic drain queue on the same endpoint.

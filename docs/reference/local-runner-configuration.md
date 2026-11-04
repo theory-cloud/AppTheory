@@ -249,6 +249,7 @@ same values.
       "secretsmanager": {"container": "moto",     "env": ["AWS_ENDPOINT_URL_SECRETS_MANAGER", "SECRETS_MANAGER_ENDPOINT"]},
       "sns":      {"container": "moto",           "env": ["AWS_ENDPOINT_URL_SNS", "SNS_ENDPOINT"]},
       "kinesis":  {"container": "moto",           "env": ["AWS_ENDPOINT_URL_KINESIS", "KINESIS_ENDPOINT"]},
+      "logs":     {"container": "moto",           "env": ["AWS_ENDPOINT_URL_LOGS", "AWS_ENDPOINT_URL_CLOUDWATCH_LOGS", "CLOUDWATCH_LOGS_ENDPOINT"]},
       "cognito-idp": {"container": "moto",        "env": ["AWS_ENDPOINT_URL_COGNITO_IDENTITY_PROVIDER", "AWS_ENDPOINT_URL_COGNITO_IDP", "COGNITO_ENDPOINT"]}
     }
   }
@@ -258,16 +259,19 @@ same values.
 `--backend NAME` starts the profile container that provides the name's
 endpoints: `dynamodb` maps to the `dynamodb-local` container (the
 `dynamodbLocal` shortcut still works), `moto` provides `kms`, `sts`, `ssm`,
-`secretsmanager`, `sns`, `kinesis` and `cognito-idp`, `s3proxy` provides `s3`,
-and `sqs` provides `sqs` (ElasticMQ). A backend with no endpoint fails before
-any container starts.
+`secretsmanager`, `sns`, `kinesis`, `logs` and `cognito-idp`, `s3proxy`
+provides `s3`, and `sqs` provides `sqs` (ElasticMQ). The runner also binds its
+own EventBridge `PutEvents` endpoint as `events` at start; it is not a profile
+container and is injected as `AWS_ENDPOINT_URL_EVENTS`. A backend with no
+endpoint fails before any container starts.
 
 After a started backend publishes its loopback port, the runner waits up to 60
 seconds for every endpoint bound to that container to answer a read-only call
 over the published port: `ListTables` (DynamoDB Local), `ListKeys` or
 `GetCallerIdentity` (moto KMS/STS), `DescribeParameters` (SSM), `ListSecrets`
-(Secrets Manager), `ListTopics` (SNS), `ListStreams` (Kinesis), `ListUserPools`
-(Cognito), `ListBuckets` (s3proxy) and `ListQueues` (ElasticMQ). A service with
+(Secrets Manager), `ListTopics` (SNS), `ListStreams` (Kinesis),
+`DescribeLogGroups` (Logs), `ListUserPools` (Cognito), `ListBuckets` (s3proxy)
+and `ListQueues` (ElasticMQ). A service with
 no native probe only has to accept a plain HTTP request. The wait respects cancellation and fails with the backend name, image
 and last error; nothing is provisioned until it succeeds. A backend with no
 published host port is reported ready without this wait.
@@ -338,9 +342,12 @@ TS_NODE_TRANSPILE_ONLY=1
 `run` and `session` start one delivery engine per run. It registers every
 derived event-source mapping, EventBridge rule, CloudWatch Logs subscription
 filter and SNS subscription at start and reports each source's state. An SQS
-mapping polls automatically; an SNS subscription is armed on its topic hub and
-delivers every observed publish. Every other kind reports `not-delivered` with
-the task that will implement it (E2, E3 and E5).
+mapping polls ElasticMQ automatically; a DynamoDB Streams mapping polls the
+table's stream on DynamoDB Local; a Kinesis mapping polls moto's stream; an
+EventBridge schedule fires on the run clock and a pattern rule is armed on the
+runner's own bus; a CloudWatch Logs subscription filter polls its group; an SNS
+subscription is armed on its topic hub and delivers every observed publish.
+Every derived kind has a deliverer.
 
 The state vocabulary follows the Lambda event source mapping API, which reports
 a mapping's lifecycle in `State` and its processing outcome in
@@ -358,10 +365,13 @@ a mapping's lifecycle in `State` and its processing outcome in
 
 Each entry also reports `delivered`, `failed` and (for an SNS subscription)
 `filtered` counts, `lastError` and `paused`; an SQS source reports `left`
-(records left for redelivery), `inflight` and `peakInflight`. `plan` prints the
-state the engine would register (and carries it under `delivery` in
-`plan --json`); an SQS or SNS source is `registered` because the kind has a
-deliverer. `session describe` reports the live state:
+(records left for redelivery), `inflight` and `peakInflight`; a DynamoDB Streams
+mapping reports `discarded` (records sent to its on-failure destination); an
+EventBridge rule reports `fired`, `delivered`, `failed` and `deadLettered`; a
+Kinesis mapping also reports `discarded`; a CloudWatch Logs subscription
+reports `filtered`. `plan` prints the state the engine would register (and
+carries it under `delivery` in `plan --json`); every derived kind is
+`registered` because it has a deliverer. `session describe` reports the live state:
 
 ```json
 "delivery": {
@@ -405,6 +415,73 @@ A FIFO mapping runs one receive loop locally: one batch per queue is in flight
 and message groups are not processed in parallel. AWS preserves per-group order
 while processing different groups concurrently; the local one-loop form
 preserves order at the cost of that parallelism.
+
+A DynamoDB Streams mapping reads the provisioned table's stream with
+`DescribeStream`, `GetShardIterator` and `GetRecords`. `BatchSize` defaults to
+100; a positive `MaximumBatchingWindowInSeconds` closes the batch on the run
+clock. `StartingPosition` is `TRIM_HORIZON` or `LATEST` (`AT_TIMESTAMP` is
+refused for DynamoDB). `FilterCriteria` uses the same validated EventBridge
+grammar as SQS, applied to the record (`eventName`, `eventSourceARN`,
+`dynamodb.Keys` and the images); a record that matches nothing is advanced past
+without an invocation. `ReportBatchItemFailures` checkpoints at the lowest
+failed sequence number, `BisectBatchOnFunctionError` splits a failed batch,
+`MaximumRetryAttempts` and `MaximumRecordAgeInSeconds` are evaluated on the run
+clock, and a discarded batch goes to `DestinationConfig.OnFailure` as the
+documented invocation record on local SQS or SNS. `ParallelizationFactor` keeps
+records with the same partition key in order. An expired iterator is re-seeked
+after the last consumed record, and child shards of a closed shard are picked
+up. TTL is performed by the runner on the run clock because DynamoDB Local never
+expires an item; the delete goes through DynamoDB Local and the resulting REMOVE
+record carries the documented service `userIdentity`. The observed DynamoDB
+Local deviations and their normalization are listed in
+[DynamoDB Streams delivery](/examples/local-runner/#dynamodb-streams-delivery).
+
+EventBridge is served by the runner itself: the `PutEvents` JSON protocol is
+bound on a loopback port and injected into every function as
+`AWS_ENDPOINT_URL_EVENTS` and `AWS_ENDPOINT_URL_EVENTBRIDGE`, and the session
+reports the loopback URL under the `events` endpoint. The pinned moto accepted PutEvents and simple patterns but
+ignored `Input`/`InputPath`/`InputTransformer`, could not reach the RIE or
+ElasticMQ, and had no schedule or retry/DLQ behavior, so the runner owns the
+bus. A `rate(...)` or `cron(...)` rule fires on the run clock and delivers the
+documented Scheduled Event envelope with the CDK rule ARN. A pattern rule
+matches the documented EventBridge grammar over the full envelope and accepts
+Lambda, SQS (including a FIFO message group from `SqsParameters`) and SNS
+targets with `Input`, `InputPath` or `InputTransformer` (including the
+predefined `aws.events.*` variables). `RetryPolicy` and `DeadLetterConfig` use
+the run clock and deliver the failed event to the standard SQS DLQ with
+`RULE_ARN`, `TARGET_ARN`, `ERROR_CODE`, `ERROR_MESSAGE`,
+`EXHAUSTED_RETRY_CONDITION` and `RETRY_ATTEMPTS`. The cron parser supports the
+documented `*`, `?`, lists, ranges, steps and names and refuses the `L`, `W` and
+`#` forms by name. A scheduled rule is only valid on the default bus. No
+example synthesizes an EventBridge Scheduler schedule. The full behavior and
+the moto probe are in
+[EventBridge delivery](/examples/local-runner/#eventbridge-delivery).
+
+A Kinesis mapping uses the shared stream poller with DynamoDB Streams: batch
+size, batching window on the run clock, filter criteria, `ReportBatchItemFailures`,
+bisect, retry attempts, record age, the on-failure record and iterator re-seek.
+It adds the three Kinesis starting positions (`TRIM_HORIZON`, `LATEST`,
+`AT_TIMESTAMP`), the documented Kinesis record shape (base64 `data`,
+`partitionKey`, `sequenceNumber`, `approximateArrivalTimestamp`, CDK stream ARN)
+and partition-key lanes for `ParallelizationFactor`. The shard list is re-read
+so a closed shard's children are started. The observed moto deviations and their
+normalization are in
+[Kinesis event-source delivery](/examples/local-runner/#kinesis-event-source-delivery).
+
+CloudWatch Logs has two halves. Function log capture follows every started
+container's stdout/stderr with `docker logs` and writes it to the
+`/aws/lambda/<function name>` group through the real `PutLogEvents` API on
+moto, with wall-clock ingestion timestamps; the platform-style lines the
+official runtime image prints itself (`START`/`END`/`REPORT` and the
+rapid-runtime `INIT`/`INVOKE` lines) are captured with the handler's own output. A
+subscription filter polls its group with `FilterLogEvents`, applies the
+supported filter patterns (blank, terms with `?`/`-`/quotes, and JSON
+`$.path = value` with `&&`/`||`/parentheses) and delivers the documented
+gzip payload: `awslogs.data` (base64 gzip) to a Lambda target, or the same gzip
+bytes as Kinesis record data to a stream destination, with `Distribution`
+choosing the partition key. Regex patterns, array selectors and field selectors
+are refused at plan time. The full behavior is in
+[CloudWatch Logs subscription delivery](/examples/local-runner/#cloudwatch-logs-subscription-delivery).
 
 An SNS subscription runs on a per-topic hub. At provisioning the runner creates
 one drain queue on moto's own SQS and subscribes it to the topic without raw

@@ -46,8 +46,28 @@ def build_app():
 
     app.sqs(queue_name, lambda _ctx, _msg: None)
 
+    eventbridge_records = []
+
+    def record_eventbridge_event(kind, event):
+        return {
+            "kind": kind,
+            "id": event.get("id", ""),
+            "source": event.get("source", ""),
+            "detailType": event.get("detail-type", ""),
+            "resources": event.get("resources", []),
+            "detail": event.get("detail", {}),
+            "time": event.get("time", ""),
+            "region": event.get("region", ""),
+            "account": event.get("account", ""),
+        }
+
+    def append_eventbridge_record(entry):
+        eventbridge_records.append(entry)
+        del eventbridge_records[:-50]
+
     def eventbridge_rule_handler(ctx, event):
         envelope = normalize_eventbridge_workload_envelope(ctx, event)
+        append_eventbridge_record(record_eventbridge_event("rule", event))
         return {
             "ok": True,
             "trigger": "eventbridge",
@@ -60,6 +80,7 @@ def build_app():
 
     def eventbridge_schedule_handler(ctx, event):
         summary = normalize_eventbridge_scheduled_workload(ctx, event)
+        append_eventbridge_record(record_eventbridge_event("schedule", event))
         return {
             "ok": True,
             "trigger": "eventbridge",
@@ -70,10 +91,37 @@ def build_app():
             "scheduled_time": summary["scheduled_time"],
         }
 
+    stream_records = []
+
     def dynamodb_handler(_ctx, record):
         summary = normalize_dynamodb_stream_record(record)
         if not summary["event_id"]:
             raise RuntimeError("missing dynamodb event id")
+        change = record.get("dynamodb") or {}
+        entry = {
+            "eventID": record.get("eventID", ""),
+            "eventName": record.get("eventName", ""),
+            "eventSource": record.get("eventSource", ""),
+            "eventSourceARN": record.get("eventSourceARN", ""),
+            "awsRegion": record.get("awsRegion", ""),
+            "keys": change.get("Keys") or {},
+            "newImage": change.get("NewImage") or {},
+            "sequenceNumber": change.get("SequenceNumber", ""),
+        }
+        identity = record.get("userIdentity")
+        if identity:
+            entry["userIdentity"] = {
+                "type": identity.get("type", ""),
+                "principalId": identity.get("principalId", ""),
+            }
+        stream_records.append(entry)
+        del stream_records[:-50]
+
+    def stream_records_handler(_ctx):
+        return json(200, {"records": list(stream_records)})
+
+    def eventbridge_records_handler(_ctx):
+        return json(200, {"records": list(eventbridge_records)})
 
     app.event_bridge(
         event_bridge_pattern(event_source, event_detail_type), eventbridge_rule_handler
@@ -82,6 +130,8 @@ def build_app():
         event_bridge_rule(schedule_rule_name), eventbridge_schedule_handler
     )
     app.dynamodb(table_name, dynamodb_handler)
+    app.get("/stream-records", stream_records_handler)
+    app.get("/eventbridge-records", eventbridge_records_handler)
 
     sns_topic_name = os.getenv("APPTHEORY_DEMO_SNS_NAME", "")
     sns_state = {"record": None}

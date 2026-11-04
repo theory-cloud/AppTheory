@@ -284,6 +284,9 @@ type KinesisRecordInput struct {
 	Data           []byte
 	PartitionKey   string
 	SequenceNumber string
+	// Arrival is the record's approximate arrival time. A zero value uses the
+	// batch time, which is what a hand-built session event does.
+	Arrival time.Time
 }
 
 // BuildKinesisEvent builds the Kinesis event a stream mapping delivers.
@@ -304,13 +307,17 @@ func BuildKinesisEvent(streamARN string, records []KinesisRecordInput, now time.
 		if partition == "" {
 			partition = "local"
 		}
+		arrival := record.Arrival
+		if arrival.IsZero() {
+			arrival = now
+		}
 		out = append(out, map[string]any{
 			"kinesis": map[string]any{
 				"kinesisSchemaVersion":        "1.0",
 				"partitionKey":                partition,
 				"sequenceNumber":              sequence,
 				"data":                        base64.StdEncoding.EncodeToString(record.Data),
-				"approximateArrivalTimestamp": float64(now.UnixNano()) / float64(time.Second),
+				"approximateArrivalTimestamp": float64(arrival.UnixNano()) / float64(time.Second),
 			},
 			"eventSource":       "aws:kinesis",
 			"eventVersion":      "1.0",

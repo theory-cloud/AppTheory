@@ -32,6 +32,9 @@ type FunctionProcess struct {
 	Container string
 	Image     string
 	Port      int
+	// Started is when the container was started; the log follower replays from
+	// this instant.
+	Started time.Time
 
 	// mu serializes invocations to this container. The official runtime images
 	// embed one Runtime Interface Emulator, which reserves a single invocation

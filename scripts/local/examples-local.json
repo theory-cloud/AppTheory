@@ -97,6 +97,10 @@
         "container": "moto",
         "env": ["AWS_ENDPOINT_URL_KINESIS", "KINESIS_ENDPOINT"]
       },
+      "logs": {
+        "container": "moto",
+        "env": ["AWS_ENDPOINT_URL_LOGS", "AWS_ENDPOINT_URL_CLOUDWATCH_LOGS", "CLOUDWATCH_LOGS_ENDPOINT"]
+      },
       "cognito-idp": {
         "container": "moto",
         "env": [
@@ -187,14 +191,14 @@
     "examples/cdk/import-pipeline/handlers/ingest/main.go": {
       "run": "import-ingest",
       "class": "L3",
-      "gap": "S3 → EventBridge delivery and CodeBuild; the WorkConsumer SQS mapping delivers automatically on ElasticMQ.",
-      "description": "Import pipeline ingest handler: the CDK IngestRule EventBridge event is built from a real object written to s3proxy; the handler writes the job meta and three work messages that the WorkConsumer mapping delivers to the worker and deletes."
+      "gap": "S3 → EventBridge emission (E4) and CodeBuild; IngestRule is reached by a real PutEvents of the S3 event shape and the WorkConsumer SQS mapping delivers automatically on ElasticMQ.",
+      "description": "Import pipeline ingest handler: a real object is written to s3proxy and a real SDK PutEvents of the S3 event shape reaches IngestRule; the handler writes the job meta and three work messages that the WorkConsumer mapping delivers to the worker and deletes."
     },
     "examples/cdk/import-pipeline/handlers/worker/main.go": {
       "run": "import-worker",
       "class": "L3",
-      "gap": "S3 → EventBridge delivery and CodeBuild; the WorkConsumer SQS mapping delivers automatically on ElasticMQ.",
-      "description": "Import pipeline worker handler: the full ingest → worker flow runs on the CDK jobs table; the WorkConsumer mapping delivers the three real work messages automatically and they produce SUCCEEDED/FAILED records and a sanitized error envelope."
+      "gap": "S3 → EventBridge emission (E4) and CodeBuild; IngestRule is reached by a real PutEvents of the S3 event shape and the WorkConsumer SQS mapping delivers automatically on ElasticMQ.",
+      "description": "Import pipeline worker handler: the full ingest → worker flow runs on the CDK jobs table after the real PutEvents ingest; the WorkConsumer mapping delivers the three real work messages automatically and they produce SUCCEEDED/FAILED records and a sanitized error envelope."
     },
     "examples/cdk/kinesis-cloudwatch-logs/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
@@ -203,9 +207,14 @@
     },
     "examples/cdk/kinesis-cloudwatch-logs/handlers/go/main.go": {
       "run": "kinesis-handler",
-      "class": "L3",
-      "gap": "Managed Kinesis event-source delivery and the CloudWatch Logs subscription path (E5); the CDK stream is provisioned on moto and its Ref/GetAtt Arn resolve.",
-      "description": "Kinesis/CloudWatch Logs handler: the CDK Kinesis stream is created on moto and its Ref/GetAtt Arn match the provisioned stream; a real gzip+base64 subscription payload is invoked and accepted, and a malformed Kinesis record is returned as its sequence-number partial failure."
+      "class": "L2",
+      "gap": "moto emulates Kinesis and CloudWatch Logs: sequence numbers are opaque and a stream never splits or merges. The subscription filter, the Kinesis mapping, partial failure and the function-log capture are real; IAM policy evaluation is a docs/125 true limit.",
+      "description": "Kinesis/CloudWatch Logs handler: the CDK stream is provisioned on moto; PutLogEvents through the real Logs SDK is forwarded by the subscription filter through its Logs destination to the stream and delivered to the consumer; the consumer's captured stdout is delivered to a Lambda-destination filter as awslogs.data; a direct PutRecords batch delivers its valid record and discards the malformed one after its retries."
+    },
+    "examples/cdk/kinesis-cloudwatch-logs/handlers/logtap/main.go": {
+      "coveredBy": "examples/cdk/kinesis-cloudwatch-logs/handlers/go/main.go",
+      "class": "L2",
+      "description": "CloudWatch Logs Lambda subscription target: it decodes the documented awslogs.data gzip payload delivered from the consumer's captured log group and writes the decoded log events to a real SQS receipt queue."
     },
     "examples/cdk/kinesis-cloudwatch-logs/handlers/signing/main.go": {
       "run": "kinesis-signing",
@@ -313,20 +322,20 @@
     "examples/cdk/multilang/handlers/go/main.go": {
       "run": "multilang-go",
       "class": "L3",
-      "gap": "WebSocket frames and DynamoDB Streams/EventBridge delivery; HTTP API v2, the Go-only REST v1 surface (including /sse), and automatic SQS delivery are verified.",
-      "description": "Multilang Go handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the Go REST API serves hello and all three buffered SSE events; three WebSocket APIs are reported not served; the CDK SQS mapping delivered a real message to the Go handler and deleted it; a DynamoDB stream record built from a real local write and both EventBridge rules are invoked."
+      "gap": "WebSocket frames (R1); HTTP API v2, the Go-only REST v1 surface (including /sse), automatic SQS delivery, the DynamoDB Streams mapping (INSERT, TTL REMOVE, and the bisect/partial-failure on-failure queue), and the scheduled and pattern EventBridge rules are verified.",
+      "description": "Multilang Go handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the Go REST API serves hello and all three buffered SSE events; three WebSocket APIs are reported not served; the CDK SQS mapping delivered a real message to the Go handler and deleted it; a real SDK-written table item reached the handler through the DynamoDB Streams mapping with the CDK stream ARN, the test clock expired a TTL item into the documented REMOVE record, and a poison record was bisected and discarded to the on-failure queue; both EventBridge rules are invoked."
     },
     "examples/cdk/multilang/handlers/py/handler.py": {
       "run": "multilang-py",
       "class": "L3",
-      "gap": "WebSocket frames and DynamoDB Streams/EventBridge delivery; HTTP API v2 and automatic SQS delivery are verified for Python, while the REST v1 surface is defined only for the Go handler in this stack.",
-      "description": "Multilang Python handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the CDK SQS mapping delivered a real message to the Python handler and deleted it; the Go-only REST surface is also asserted."
+      "gap": "WebSocket frames (R1); HTTP API v2, automatic SQS delivery, the DynamoDB Streams mapping (INSERT and TTL REMOVE), and the scheduled and pattern EventBridge rules are verified for Python, while the REST v1 surface is defined only for the Go handler in this stack.",
+      "description": "Multilang Python handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the CDK SQS mapping delivered a real message to the Python handler and deleted it; a real SDK-written table item reached the handler through the DynamoDB Streams mapping with the CDK stream ARN, and the test clock expired a TTL item into the documented REMOVE record; the rate schedule fired and a real SDK PutEvents reached the pattern rule; the Go-only REST surface is also asserted."
     },
     "examples/cdk/multilang/handlers/ts/handler.mjs": {
       "run": "multilang-ts",
       "class": "L3",
-      "gap": "WebSocket frames and DynamoDB Streams/EventBridge delivery; HTTP API v2 and automatic SQS delivery are verified for TypeScript, while the REST v1 surface is defined only for the Go handler in this stack.",
-      "description": "Multilang TypeScript handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the CDK SQS mapping delivered a real message to the TypeScript handler and deleted it; the Go-only REST surface is also asserted."
+      "gap": "WebSocket frames (R1); HTTP API v2, automatic SQS delivery, the DynamoDB Streams mapping (INSERT and TTL REMOVE), and the scheduled and pattern EventBridge rules are verified for TypeScript, while the REST v1 surface is defined only for the Go handler in this stack.",
+      "description": "Multilang TypeScript handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the CDK SQS mapping delivered a real message to the TypeScript handler and deleted it; a real SDK-written table item reached the handler through the DynamoDB Streams mapping with the CDK stream ARN, and the test clock expired a TTL item into the documented REMOVE record; the rate schedule fired and a real SDK PutEvents reached the pattern rule; the Go-only REST surface is also asserted."
     },
     "examples/cdk/path-routed-frontend/bin/app.ts": {
       "run": "path-routed-gateway",
@@ -404,6 +413,22 @@
       "coveredBy": "examples/cdk/sqs-queue/handlers/sns-publisher.mjs",
       "class": "L2",
       "description": "SNS consumer handler used by the standard, attribute-filtered and body-filtered Lambda subscriptions; it writes a real SQS receipt with the documented Lambda SNS record."
+    },
+    "examples/cdk/sqs-queue/handlers/rule-publisher.mjs": {
+      "run": "sqs-event-targets",
+      "class": "L2",
+      "gap": "ElasticMQ emulates SQS and moto emulates SNS; the runner serves the EventBridge bus. IAM policy evaluation is a docs/125 true limit. The PutEvents calls, pattern matching, input shaping, target delivery, retries and DLQ are real.",
+      "description": "EventBridge rule targets: the publisher calls PutEvents through the real SDK for four rules on the default and a custom bus; an SQS target receives its InputPath body, an SNS target receives the input-transformer message, a Lambda target receives the static Input object, and a failing Lambda target exhausts two retries into the real DLQ with the documented error attributes."
+    },
+    "examples/cdk/sqs-queue/handlers/rule-target.mjs": {
+      "coveredBy": "examples/cdk/sqs-queue/handlers/rule-publisher.mjs",
+      "class": "L2",
+      "description": "EventBridge Lambda rule target; it writes the received Input object to a real SQS receipt queue."
+    },
+    "examples/cdk/sqs-queue/handlers/rule-failing-target.mjs": {
+      "coveredBy": "examples/cdk/sqs-queue/handlers/rule-publisher.mjs",
+      "class": "L2",
+      "description": "EventBridge failing Lambda rule target; it always throws so the retry policy and DLQ are proven on the real path."
     },
     "examples/cdk/sqs-queue/handlers/worker.mjs": {
       "run": "sqs-worker",
