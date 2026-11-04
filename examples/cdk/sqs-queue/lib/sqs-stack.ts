@@ -6,8 +6,10 @@ import {
 } from "@theory-cloud/apptheory-cdk";
 import * as cdk from "aws-cdk-lib";
 import type { StackProps } from "aws-cdk-lib";
+import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as lambdaEventSources from "aws-cdk-lib/aws-lambda-event-sources";
+import * as sns from "aws-cdk-lib/aws-sns";
 import type { Construct } from "constructs";
 
 /**
@@ -139,6 +141,64 @@ export class SqsQueueStack extends cdk.Stack {
         workerFn.addEventSource(new lambdaEventSources.SqsEventSource(fifoQueue.queue, {
             batchSize: 10,
             reportBatchItemFailures: true,
+        }));
+
+        // ========================================================================
+        // SNS: a standard topic with a Lambda subscription and a FIFO topic with
+        // an inline SQS subscription. The local runner provisions both topics
+        // from these L1 resources and registers the subscriptions with the
+        // delivery engine; E6 is the deliverer. The L1 resources are deliberate:
+        // Ref returns the topic ARN and GetAtt TopicName/TopicArn are the
+        // documented return values, while an L2 topic hides the generated
+        // logical id those attributes name.
+        // ========================================================================
+
+        const eventsTopic = new sns.CfnTopic(this, "EventsTopic", {
+            topicName: "apptheory-local-events",
+            // The inline Subscription property is the second supported form.
+            subscription: [{
+                protocol: "lambda",
+                endpoint: producerWorkerFn.functionArn,
+            }],
+        });
+        producerWorkerFn.addPermission("SNSInvoke", {
+            principal: new iam.ServicePrincipal("sns.amazonaws.com"),
+            sourceArn: eventsTopic.ref,
+        });
+        new sns.CfnTopicPolicy(this, "EventsTopicPolicy", {
+            topics: [eventsTopic.ref],
+            policyDocument: { Version: "2012-10-17", Statement: [] },
+        });
+
+        const fifoTopic = new sns.CfnTopic(this, "FifoTopic", {
+            topicName: "apptheory-local-events.fifo",
+            fifoTopic: true,
+            contentBasedDeduplication: true,
+        });
+        new sns.CfnSubscription(this, "FifoTopicQueue", {
+            topicArn: fifoTopic.ref,
+            protocol: "sqs",
+            endpoint: fifoQueue.queueArn,
+            rawMessageDelivery: true,
+        });
+
+        const snsPublisherFn = new lambda.Function(this, "SnsPublisherFn", {
+            runtime: lambda.Runtime.NODEJS_24_X,
+            handler: "sns-publisher.handler",
+            code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers")),
+            timeout: cdk.Duration.seconds(30),
+            description: "Publishes to the standard and FIFO SNS topics through the AWS SDK",
+            environment: {
+                TOPIC_ARN: eventsTopic.ref,
+                TOPIC_NAME: cdk.Fn.getAtt("EventsTopic", "TopicName").toString(),
+                FIFO_TOPIC_ARN: fifoTopic.ref,
+                FIFO_TOPIC_NAME: cdk.Fn.getAtt("FifoTopic", "TopicName").toString(),
+                FIFO_QUEUE_ARN: fifoQueue.queueArn,
+            },
+        });
+        snsPublisherFn.addToRolePolicy(new iam.PolicyStatement({
+            actions: ["sns:Publish", "sns:GetTopicAttributes"],
+            resources: [eventsTopic.ref, fifoTopic.ref],
         }));
 
         // ========================================================================

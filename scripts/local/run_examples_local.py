@@ -119,6 +119,7 @@ DELIVERY_TASKS = {
     "eventbridge-schedule": "E3",
     "eventbridge-rule": "E3",
     "cloudwatch-logs": "E5",
+    "sns": "E6",
 }
 DELIVERED_KINDS = {"sqs"}
 DELIVERY_CONCURRENCY = 4
@@ -1601,25 +1602,84 @@ def run_lambda_role(harness: Harness, kind: str) -> str:
             raise HarnessFailure(f"lambda-role encrypted: unexpected response {decoded}")
         return "encrypted.handler round-tripped plaintext through the emulated KMS and reported match=true"
     if kind == "custom":
-        decoded, _ = invoke_local_function(
+        spec = plan_local_app(harness, LAMBDA_ROLE_APP, allow_no_surface=True)
+        function = None
+        for candidate in spec.get("functions") or []:
+            if candidate.get("handler") == "custom.handler":
+                function = candidate
+                break
+        if function is None:
+            raise HarnessFailure("lambda-role custom: plan has no custom.handler function")
+        session = start_local_session(
             harness,
-            app=LAMBDA_ROLE_APP,
-            function="CustomFnFE03B841",
-            event={},
+            LAMBDA_ROLE_APP,
             name="lambda-role-custom",
             backends=("moto", "s3proxy"),
+            targets=(function["logicalId"],),
+            allow_no_surface=True,
         )
-        body = _proxy_body(decoded, "lambda-role custom")
-        s3_object = body.get("s3Object") or {}
-        if (
-            decoded.get("statusCode") != 200
-            or body.get("message") != "S3 and SSM operations successful"
-            or not str(s3_object.get("bucket", "")).startswith("local-")
-            or not str(s3_object.get("content", "")).startswith("{")
-            or body.get("ssmParameter") != "not-configured"
-        ):
-            raise HarnessFailure(f"lambda-role custom: unexpected response {decoded}")
-        return "custom.handler wrote and read back an object on s3proxy; the SSM lookup failed closed to not-configured"
+        try:
+            result = session.invoke(function["logicalId"], {})
+            body = _proxy_body(result, "lambda-role custom")
+            s3_object = body.get("s3Object") or {}
+            ssm = body.get("ssm") or {}
+            secrets = body.get("secrets") or {}
+            cognito = body.get("cognito") or {}
+            if (
+                result.get("statusCode") != 200
+                or body.get("message") != "S3, SSM, Secrets Manager and Cognito operations successful"
+                or not str(s3_object.get("bucket", "")).startswith("local-")
+                or not str(s3_object.get("content", "")).startswith("{")
+            ):
+                raise HarnessFailure(f"lambda-role custom: unexpected response {result}")
+            if (
+                ssm.get("plain") != "local-ssm-value"
+                or ssm.get("expectedValue") != "local-ssm-value"
+                or ssm.get("plainType") != "String"
+                or ssm.get("expectedType") != "String"
+                or ssm.get("secure") != "local-secure-value"
+                or ssm.get("list") != "alpha,beta,gamma"
+            ):
+                raise HarnessFailure(f"lambda-role custom: SSM resolution failed: {ssm}")
+            if (
+                secrets.get("literalUsername") != "local-user"
+                or secrets.get("literalPassword") != "local-pass"
+                or secrets.get("generatedUsername") != "generated-user"
+                or secrets.get("generatedPasswordLength") != 24
+                or secrets.get("generatedPunctuation") is not False
+            ):
+                raise HarnessFailure(f"lambda-role custom: Secrets Manager resolution failed: {secrets}")
+            pool_id = str(cognito.get("poolId") or "")
+            client_id = str(cognito.get("clientId") or "")
+            if not pool_id.startswith("us-east-1_") or not client_id:
+                raise HarnessFailure(f"lambda-role custom: Cognito Ref values were not resolved: {cognito}")
+            expected_provider = f"cognito-idp.us-east-1.amazonaws.com/{pool_id}"
+            if (
+                cognito.get("providerName") != expected_provider
+                or cognito.get("providerUrl") != f"https://{expected_provider}"
+                or not str(cognito.get("poolArn") or "").endswith(f"userpool/{pool_id}")
+            ):
+                raise HarnessFailure(f"lambda-role custom: Cognito GetAtt values were not resolved: {cognito}")
+            pool = session.resource(kind="AWS::Cognito::UserPool")
+            issuer = str(pool.get("localIssuer") or "")
+            if not issuer.startswith("http://127.0.0.1:"):
+                raise HarnessFailure(f"lambda-role custom: the pool has no local issuer: {pool}")
+            status, text, _ = http_request("GET", f"{issuer}/.well-known/jwks.json")
+            expect_status(status, 200, "lambda-role custom JWKS", text)
+            if not json.loads(text).get("keys"):
+                raise HarnessFailure(f"lambda-role custom: the issuer returned no keys: {text}")
+            status, text, _ = http_request("GET", f"{issuer}/.well-known/openid-configuration")
+            expect_status(status, 200, "lambda-role custom discovery", text)
+            discovery = json.loads(text)
+            if discovery.get("issuer") != issuer or discovery.get("jwks_uri") != f"{issuer}/.well-known/jwks.json":
+                raise HarnessFailure(f"lambda-role custom: the discovery document is inconsistent: {discovery}")
+            return (
+                "custom.handler read String/SecureString/StringList SSM parameters (Ref, GetAtt Type/Value), "
+                "both Secrets Manager secrets through GetSecretValue, and the Cognito pool/client; "
+                f"the local issuer {issuer} served the pool JWKS and discovery document; S3 round-trip passed"
+            )
+        finally:
+            stop_local_session(harness, session)
     raise HarnessFailure(f"unknown lambda-role row {kind}")
 
 
@@ -2168,7 +2228,9 @@ class LocalAppRun:
     api_classes: dict[str, str]
 
 
-def plan_local_app(harness: Harness, app: str, context: dict | None = None) -> dict:
+def plan_local_app(
+    harness: Harness, app: str, context: dict | None = None, *, allow_no_surface: bool = False
+) -> dict:
     ensure_cdk_app(harness, app)
     argv = [
         str(LOCAL_RUNNER_BIN),
@@ -2179,6 +2241,8 @@ def plan_local_app(harness: Harness, app: str, context: dict | None = None) -> d
         str(ROOT / LOCAL_PROFILE),
         "--json",
     ]
+    if allow_no_surface:
+        argv.append("--allow-no-surface")
     for key, value in sorted((context or {}).items()):
         argv.extend(["-c", f"{key}={value}"])
     result = harness.run(argv, timeout=1800)
@@ -2515,10 +2579,11 @@ def start_local_session(
     context: dict | None = None,
     targets: tuple[str, ...] = (),
     clock: str | None = None,
+    allow_no_surface: bool = False,
 ) -> LocalSession:
     """Start one `apptheory-local session` and wait for its machine interface."""
     ensure_cdk_app(harness, app)
-    spec = plan_local_app(harness, app, context)
+    spec = plan_local_app(harness, app, context, allow_no_surface=allow_no_surface)
     prefix = local_app_prefix(harness, name)
     log = tempfile.NamedTemporaryFile(prefix=f"a4-{name}-", suffix=".log", delete=False)
     argv = [
@@ -2533,6 +2598,8 @@ def start_local_session(
         "--name-prefix",
         prefix,
     ]
+    if allow_no_surface:
+        argv.append("--allow-no-surface")
     for key, value in sorted((context or {}).items()):
         argv.extend(["-c", f"{key}={value}"])
     for backend in backends:
@@ -3371,10 +3438,26 @@ def run_import_worker(harness: Harness) -> str:
 
 
 def run_kinesis_handler(harness: Harness) -> str:
-    session = start_local_session(harness, KINESIS_APP, name="kinesis")
+    session = start_local_session(harness, KINESIS_APP, name="kinesis", backends=("moto",))
     log_path = None
     try:
         source = session.event_source(kind="kinesis")
+        stream = session.resource(name=source["sourceName"], kind="AWS::Kinesis::Stream")
+        if not str(stream.get("arn") or "").endswith(f"stream/{source['sourceName']}"):
+            raise HarnessFailure(f"kinesis: the stream was not provisioned: {stream}")
+        plan_resources = session.spec.get("resources") or []
+        if not any(
+            resource.get("type") == "AWS::Kinesis::Stream"
+            and resource.get("localId") == source["sourceName"]
+            for resource in plan_resources
+        ):
+            raise HarnessFailure(f"kinesis: plan did not list the stream: {plan_resources}")
+        function = session.function(source["function"])
+        environment = function.get("environment") or {}
+        if environment.get("APPTHEORY_KINESIS_STREAM_ARN") != stream.get("arn"):
+            raise HarnessFailure(
+                f"kinesis: GetAtt Arn did not resolve to the provisioned stream: {environment} vs {stream}"
+            )
         log_path = tempfile.NamedTemporaryFile(prefix="a4-kinesis-", suffix=".log", delete=False).name
         message = "2026-11-02T15:00:00Z INFO order processed id=42"
         Path(log_path).write_text(message + "\n", encoding="utf-8")
@@ -3405,8 +3488,9 @@ def run_kinesis_handler(harness: Harness) -> str:
         if failures != [{"itemIdentifier": bad_sequence}]:
             raise HarnessFailure(f"kinesis: malformed record must fail its sequence number, got {failures}")
         return (
-            "real gzip+base64 CloudWatch Logs subscription content was invoked through the handler "
-            f"({source['sourceName']}); the malformed record was returned as a partial batch failure"
+            f"the CDK Kinesis stream {source['sourceName']} was provisioned on moto and its Ref/GetAtt Arn "
+            f"resolved ({stream.get('arn')}); real gzip+base64 CloudWatch Logs subscription content was "
+            "invoked through the handler; the malformed record was returned as a partial batch failure"
         )
     finally:
         if log_path:
@@ -3415,6 +3499,91 @@ def run_kinesis_handler(harness: Harness) -> str:
             except FileNotFoundError:
                 pass
         stop_local_session(harness, session)
+
+
+def run_kinesis_signing(harness: Harness) -> str:
+    plan = plan_local_app(harness, KINESIS_APP)
+    matches = [
+        function for function in plan.get("functions") or []
+        if (function.get("environment") or {}).get("SIGNING_KEY_ALIAS")
+    ]
+    if len(matches) != 1:
+        raise HarnessFailure(f"kinesis signing: want one signing function, got {matches}")
+    function = matches[0]
+    decoded, _ = invoke_local_function(
+        harness,
+        app=KINESIS_APP,
+        function=function["logicalId"],
+        event={},
+        name="kinesis-signing",
+        backends=("moto",),
+    )
+    raw = decoded.get("raw")
+    if not isinstance(raw, dict):
+        raise HarnessFailure(f"kinesis signing: the handler did not return JSON: {decoded}")
+    if (
+        raw.get("aliasVerified") is not True
+        or raw.get("arnVerified") is not True
+        or raw.get("aliasSignatureLength", 0) <= 0
+        or raw.get("arnSignatureLength", 0) <= 0
+        or raw.get("publicKeyBytes", 0) <= 0
+        or not str(raw.get("alias") or "").startswith("alias/")
+        or ":key/" not in str(raw.get("keyArn") or "")
+    ):
+        raise HarnessFailure(f"kinesis signing: unexpected result: {raw}")
+    return (
+        "the RSA_2048 SIGN_VERIFY key and its alias were provisioned on moto; the handler signed and "
+        "verified with the alias (usable as KeyId) and the key ARN, and read the public key"
+    )
+
+
+def run_sqs_sns_publisher(harness: Harness) -> str:
+    plan = plan_local_app(harness, SQS_APP)
+    matches = [
+        function for function in plan.get("functions") or []
+        if function.get("handler") == "sns-publisher.handler"
+    ]
+    if len(matches) != 1:
+        raise HarnessFailure(f"sqs sns publisher: want one sns-publisher.handler function, got {matches}")
+    function = matches[0]
+    decoded, _ = invoke_local_function(
+        harness,
+        app=SQS_APP,
+        function=function["logicalId"],
+        event={},
+        name="sqs-sns-publisher",
+        backends=("moto", "sqs"),
+    )
+    body = _proxy_body(decoded, "sqs sns publisher")
+    standard = body.get("standard") or {}
+    fifo = body.get("fifo") or {}
+    if (
+        decoded.get("statusCode") != 200
+        or standard.get("topicArn") != standard.get("expectedArn")
+        or standard.get("fifoTopic") is not False
+        or not standard.get("messageId")
+        or fifo.get("topicArn") != fifo.get("expectedArn")
+        or fifo.get("fifoTopic") is not True
+        or fifo.get("contentBasedDeduplication") is not True
+        or not fifo.get("messageId")
+        or not str(fifo.get("expectedName") or "").endswith(".fifo")
+        or not str(fifo.get("queueArn") or "").endswith(":fifo-events.fifo")
+    ):
+        raise HarnessFailure(f"sqs sns publisher: unexpected response: {body}")
+    plan_resources = plan.get("resources") or []
+    topics = {
+        resource.get("localId")
+        for resource in plan_resources
+        if resource.get("type") == "AWS::SNS::Topic"
+    }
+    if "apptheory-local-events" not in topics or "apptheory-local-events.fifo" not in topics:
+        raise HarnessFailure(f"sqs sns publisher: plan did not list both topics: {plan_resources}")
+    return (
+        "the standard and FIFO SNS topics were provisioned on moto; the handler published through the "
+        "real SDK (MessageGroupId/DeduplicationId on the FIFO topic), GetTopicAttributes returned both "
+        "Ref ARNs and the FIFO ContentBasedDeduplication attribute; the inline Lambda subscription and the "
+        "standalone SQS subscription are registered with the delivery engine (task E6)"
+    )
 
 
 def run_s3_vectors(harness: Harness) -> str:
@@ -4101,11 +4270,13 @@ RUNNERS: dict[str, Callable[[Harness], str]] = {
     "lambda-role-encrypted": run_lambda_role_encrypted,
     "lambda-role-custom": run_lambda_role_custom,
     "sqs-producer": run_sqs_producer,
+    "sqs-sns-publisher": run_sqs_sns_publisher,
     "sqs-worker": run_sqs_worker,
     "sqs-dlq": run_sqs_dlq,
     "import-ingest": run_import_ingest,
     "import-worker": run_import_worker,
     "kinesis-handler": run_kinesis_handler,
+    "kinesis-signing": run_kinesis_signing,
     "microvm-controller": run_microvm_controller,
     "microvm-workload-go": run_microvm_workload_go,
     "microvm-workload-py": run_microvm_workload_py,

@@ -73,7 +73,7 @@ class RealTreeTests(unittest.TestCase):
         _, entries = harness.load_manifest(harness.MANIFEST_PATH)
         self.assertEqual([], [entry.key for entry in entries if entry.pending])
         classified = [entry for entry in entries if not entry.pending]
-        self.assertEqual(57, len(classified))
+        self.assertEqual(59, len(classified))
         by_key = {entry.key: entry for entry in entries}
         expected = {
             "examples/cdk/ssr-site/bin/apptheory-ssr-site.ts": "ssr-site-gateway",
@@ -82,6 +82,8 @@ class RealTreeTests(unittest.TestCase):
             "examples/cdk/media-cdn/bin/app.ts": "media-cdn-gateway",
             "examples/cdk/ssr-site/scripts/generate-assets-manifest.mjs": "ssr-assets-manifest",
             "examples/cdk/ssr-site/scripts/upload-assets.sh": "ssr-assets-upload",
+            "examples/cdk/kinesis-cloudwatch-logs/handlers/signing/main.go": "kinesis-signing",
+            "examples/cdk/sqs-queue/handlers/sns-publisher.mjs": "sqs-sns-publisher",
         }
         for key, runner in expected.items():
             self.assertEqual(runner, by_key[key].runner, key)

@@ -7,9 +7,11 @@ import {
   AppTheoryFunction,
   AppTheoryKinesisStream,
   AppTheoryKinesisStreamMapping,
+  AppTheoryKmsKey,
 } from "@theory-cloud/apptheory-cdk";
 import * as cdk from "aws-cdk-lib";
 import type { StackProps } from "aws-cdk-lib";
+import * as kms from "aws-cdk-lib/aws-kms";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import type { Construct } from "constructs";
@@ -79,6 +81,28 @@ export class KinesisCloudWatchLogsStack extends cdk.Stack {
       timeout: cdk.Duration.seconds(30),
       environment: {
         APPTHEORY_KINESIS_STREAM_NAME: logsStream.streamName,
+        APPTHEORY_KINESIS_STREAM_ARN: logsStream.stream.streamArn,
+      },
+    });
+
+    // An asymmetric SIGN_VERIFY key proves KMS Sign, Verify and GetPublicKey
+    // through the local runner; the alias is used as the KeyId, which KMS
+    // documents as an accepted key identifier.
+    const signingKey = new AppTheoryKmsKey(this, "SigningKey", {
+      description: "AppTheory local signing key",
+      aliasName: "alias/apptheory-local-signing",
+      keySpec: kms.KeySpec.RSA_2048,
+      keyUsage: kms.KeyUsage.SIGN_VERIFY,
+    });
+
+    new AppTheoryFunction(this, "SigningFunction", {
+      runtime: lambda.Runtime.PROVIDED_AL2023,
+      handler: "bootstrap",
+      code: goBootstrapCode(path.join(__dirname, "..", "handlers", "signing")),
+      timeout: cdk.Duration.seconds(30),
+      environment: {
+        SIGNING_KEY_ARN: signingKey.keyArn,
+        SIGNING_KEY_ALIAS: signingKey.alias?.aliasName ?? "",
       },
     });
 
