@@ -95,7 +95,7 @@ func (r *Runner) RunInvoke(ctx context.Context, functionID string, in io.Reader,
 		return err
 	}
 	function, _ := spec.Function(functionID)
-	image, err := r.imageFor(function)
+	image, err := r.imageFor(ctx, function)
 	if err != nil {
 		return err
 	}
@@ -196,8 +196,8 @@ func (r *Runner) invokeTarget(spec *Spec, functionID string) (string, FunctionSp
 	if function.CodeProblem != "" {
 		return "", FunctionSpec{}, unsupported(functionID, "%s", function.CodeProblem)
 	}
-	if function.LayerCount > 0 {
-		return "", FunctionSpec{}, unsupported(functionID, "function uses Lambda layers; the local runner does not assemble them")
+	if function.LayerProblem != "" {
+		return "", FunctionSpec{}, unsupported(functionID, "%s", function.LayerProblem)
 	}
 	if err := unresolvedLimitsError(function); err != nil {
 		return "", FunctionSpec{}, err

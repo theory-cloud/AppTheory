@@ -250,6 +250,19 @@
       "class": "L1",
       "description": "lambda-role baseline handler: the compiled asset serves the basic, tracing and dynamic functions and returns the expected 200 payload from each."
     },
+    "examples/cdk/lambda-packaging/bin/app.ts": {
+      "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
+      "class": "I",
+      "description": "CDK app anchor for the lambda-packaging example: the synth row synthesizes it and compares the pinned template hash and focused assertions (two layers declared by a Node and a Python function, three Docker image functions with their build arguments)."
+    },
+    "examples/cdk/lambda-packaging/handlers/node/app.js": {"run":"lambda-packaging","class":"L1","description":"The Node zip function declares the CDK layer; the handler imports layer-greeting from /opt/nodejs/node_modules, executes /opt/bin/layer-tool from PATH and reports /opt/bin and /opt/lib in the runtime paths."},
+    "examples/cdk/lambda-packaging/handlers/python/app.py": {"coveredBy":"examples/cdk/lambda-packaging/handlers/node/app.js","class":"L1","description":"The Python zip function declares the CDK layer; the handler imports layer_tool from /opt/python, executes /opt/bin/layer-tool and reports PYTHONPATH, PATH and LD_LIBRARY_PATH."},
+    "examples/cdk/lambda-packaging/images/go/main.go": {"coveredBy":"examples/cdk/lambda-packaging/handlers/node/app.js","class":"L1","description":"Provided-runtime image handler; the runner builds it from the CDK DockerImageAsset and it returns the value the Dockerfile wrote from IMAGE_VALUE."},
+    "examples/cdk/lambda-packaging/images/node/app.js": {"coveredBy":"examples/cdk/lambda-packaging/handlers/node/app.js","class":"L1","description":"Node image handler; the runner builds it from the CDK DockerImageAsset and it returns the value the Dockerfile wrote from IMAGE_VALUE."},
+    "examples/cdk/lambda-packaging/images/python/app.py": {"coveredBy":"examples/cdk/lambda-packaging/handlers/node/app.js","class":"L1","description":"Python image handler; the runner builds it from the CDK DockerImageAsset and it returns the value the Dockerfile wrote from IMAGE_VALUE."},
+    "examples/cdk/lambda-packaging/layers/node/bin/layer-tool": {"coveredBy":"examples/cdk/lambda-packaging/handlers/node/app.js","class":"L1","description":"Executable extracted from the Node layer into /opt/bin; the handler runs it through PATH."},
+    "examples/cdk/lambda-packaging/layers/python/bin/layer-tool": {"coveredBy":"examples/cdk/lambda-packaging/handlers/node/app.js","class":"L1","description":"Executable extracted from the Python layer into /opt/bin; the handler runs it through PATH."},
+    "examples/cdk/lambda-packaging/layers/python/python/layer_tool.py": {"coveredBy":"examples/cdk/lambda-packaging/handlers/node/app.js","class":"L1","description":"Python module extracted from the layer into /opt/python; the handler imports it."},
     "examples/cdk/lambda-role/handlers/policy-authorizer.ts": {"coveredBy":"examples/cdk/lambda-role/handlers/authorizer.ts","class":"L2","description":"IAM-policy authorizer function for the REST TOKEN, REST REQUEST and HTTP API authorizers; it counts its own invocations and returns the count in the authorizer context, which is how the row proves a cached decision."},
     "examples/cdk/lesser-parity/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",

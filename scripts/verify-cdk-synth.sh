@@ -35,6 +35,7 @@ examples=(
   "examples/cdk/ssr-site|AppTheorySsrSiteDemo|"
   "examples/cdk/ssr-only-provided-assets-site|AppTheorySsrOnlyProvidedAssetsSiteDemo|"
   "examples/cdk/lesser-parity|LesserParityExample|"
+  "examples/cdk/lambda-packaging|AppTheoryLambdaPackagingExample|"
   "examples/cdk/codebuild-job-runner|AppTheoryCodeBuildJobRunnerExample|"
   "examples/cdk/lambda-role|LambdaRoleExample|"
   "examples/cdk/media-cdn|MediaCdnExample|"
@@ -52,6 +53,7 @@ asserted_stacks=(
   "MediaCdnExample"
   "PathRoutedFrontendExample"
   "RestV1RouterExample"
+  "LambdaPackagingExample"
   "SqsQueueExample"
 )
 

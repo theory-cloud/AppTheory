@@ -238,6 +238,18 @@ rows below run the real production CDK apps through the gateway.
 | `examples/cdk/ssr-site/scripts/generate-assets-manifest.mjs` | L2 | The generator runs against the real `assets` directory, its `hello.txt` sha256 and byte count are asserted, and the served asset through the gateway matches the manifest. | CloudFront caching and edge network; the manifest is matched to the gateway response, not a deployed bucket. |
 | `examples/cdk/ssr-site/scripts/upload-assets.sh` | L3 | The host AWS CLI on `PATH` runs `s3 sync` and `s3 cp` against the session's s3proxy endpoint with dummy credentials; the gateway serves the assets and the generated manifest with the script's cache-control and content type. A CLI that is missing or cannot start fails the row with a named requirement error, never a skip. | CloudFront invalidation is not exercised; s3proxy has no IAM, bucket policy or event notifications. CloudFront caching and edge network. |
 
+### R4: layers and container images
+
+`examples/cdk/lambda-packaging` is the layer and container-image example. The
+two zip functions declare a CDK `LayerVersion`; the three image functions declare
+a CDK `DockerImageAsset` and read `IMAGE_VALUE` from a Dockerfile build
+argument.
+
+| Row | Class | How it is verified |
+| --- | --- | --- |
+| `examples/cdk/lambda-packaging/handlers/node/app.js` | L1 | The real runner extracts the Node and Python layers into `/opt`, builds the three images with `docker build` before serving, and serves one HTTP API. The Node handler imports `layer-greeting` from `/opt/nodejs/node_modules`, executes `/opt/bin/layer-tool` from `PATH` and reports `/opt/bin` and `/opt/lib`; the Python handler imports `layer_tool` from `/opt/python`, executes its own `/opt/bin/layer-tool` and reports `PYTHONPATH`, `PATH` and `LD_LIBRARY_PATH`; the Go, Node and Python image handlers return the value the Dockerfile wrote from `IMAGE_VALUE`, so a stale or missing image cannot pass. |
+| `examples/cdk/lambda-packaging/handlers/python/app.py`, `images/{go,node,python}`, `layers/python/python/layer_tool.py`, `Layers/*/bin/layer-tool` | L1 | Covered by the Node handler row: each is executed inside the same run. |
+
 ## Preflight
 
 The run stops before any example if:

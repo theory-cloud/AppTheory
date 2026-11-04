@@ -59,7 +59,7 @@ func TestInvokeTargetErrors(t *testing.T) {
 	spec := &Spec{Functions: []FunctionSpec{
 		{LogicalID: "Fn", Runtime: "nodejs24.x", Handler: "index.handler", AssetDir: "/tmp"},
 		{LogicalID: "BadCode", CodeProblem: "no code"},
-		{LogicalID: "Layered", LayerCount: 1},
+		{LogicalID: "Layered", LayerCount: 1, LayerProblem: "layer reference names an external ARN"},
 		{LogicalID: "Limit", UnresolvedMemorySize: true},
 	}}
 	for _, id := range []string{"", "Missing", "BadCode", "Layered", "Limit"} {

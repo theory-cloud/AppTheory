@@ -89,15 +89,25 @@ const (
 
 // FunctionSpec is one Lambda function the assembly defines.
 type FunctionSpec struct {
-	LogicalID    string            `json:"logicalId"`
-	Stack        string            `json:"stack"`
-	Runtime      string            `json:"runtime"`
-	Handler      string            `json:"handler"`
-	Architecture string            `json:"architecture"`
-	MemoryMB     int               `json:"memoryMb"`
-	Timeout      int               `json:"timeout"`
-	LayerCount   int               `json:"layerCount"`
-	Environment  map[string]string `json:"environment,omitempty"`
+	LogicalID    string `json:"logicalId"`
+	Stack        string `json:"stack"`
+	Runtime      string `json:"runtime"`
+	Handler      string `json:"handler"`
+	Architecture string `json:"architecture"`
+	MemoryMB     int    `json:"memoryMb"`
+	Timeout      int    `json:"timeout"`
+	LayerCount   int    `json:"layerCount"`
+	// Layers are the resolved Lambda layers, in the template's listed order.
+	// The runner extracts every layer into /opt in that order.
+	Layers []LayerSpec `json:"layers,omitempty"`
+	// LayerProblem names why the declared layers cannot be assembled locally.
+	// A served function with one fails closed.
+	LayerProblem string `json:"layerProblem,omitempty"`
+	// PackageType is Image for a container-image function.
+	PackageType string `json:"packageType,omitempty"`
+	// ImageAsset is the Docker image asset the function's Code.ImageUri names.
+	ImageAsset  *DockerImageAssetSpec `json:"imageAsset,omitempty"`
+	Environment map[string]string     `json:"environment,omitempty"`
 	// UnresolvedEnvironment lists environment names whose template value is a
 	// CloudFormation expression. The runner resolves the supported references
 	// before a function starts; one it cannot resolve fails closed.
@@ -117,8 +127,11 @@ type FunctionSpec struct {
 	MemorySizeExpression string `json:"memorySizeExpression,omitempty"`
 	TimeoutExpression    string `json:"timeoutExpression,omitempty"`
 	AssetDir             string `json:"assetDir,omitempty"`
-	InlineCode           string `json:"-"`
-	InlineFile           string `json:"inlineFile,omitempty"`
+	// OptDir is the merged /opt directory the run materializes from the
+	// function's layers. It is internal.
+	OptDir     string `json:"-"`
+	InlineCode string `json:"-"`
+	InlineFile string `json:"inlineFile,omitempty"`
 	// CodeProblem is set when the function's code cannot be resolved locally.
 	// Only a served function fails the run because of it; an event-source
 	// function that the transport never invokes is reported, not blocking.
@@ -643,4 +656,25 @@ func sortedKeys[V any](values map[string]V) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// LayerSpec is one Lambda layer a function declares.
+type LayerSpec struct {
+	LogicalID string `json:"logicalId"`
+	// AssetDir is the layer content directory the cloud assembly holds.
+	AssetDir string `json:"-"`
+}
+
+// DockerImageAssetSpec is the CDK Docker image asset a container-image
+// function's Code.ImageUri names. It comes from the function resource's
+// aws:asset:* metadata, the same assembly the zip functions read.
+type DockerImageAssetSpec struct {
+	// Hash is the content hash CDK put in the image URI.
+	Hash string `json:"hash"`
+	// Directory, DockerFile, BuildArgs and Target describe the local build.
+	Directory  string            `json:"-"`
+	DockerFile string            `json:"dockerFile,omitempty"`
+	BuildArgs  map[string]string `json:"buildArgs,omitempty"`
+	Target     string            `json:"target,omitempty"`
+	Platform   string            `json:"platform,omitempty"`
 }

@@ -205,6 +205,38 @@ const assertions = {
     );
   },
 
+  AppTheoryLambdaPackagingExample() {
+    const layers = byType("AWS::Lambda::LayerVersion");
+    assert.equal(layers.length, 2, "expected the Node and Python layers");
+    const layerFunctions = byType("AWS::Lambda::Function").filter(
+      ([, fn]) => Array.isArray(fn.Properties.Layers) && fn.Properties.Layers.length === 1,
+    );
+    assert.equal(layerFunctions.length, 2, "expected two functions that declare a layer");
+    const imageFunctions = byType("AWS::Lambda::Function").filter(
+      ([, fn]) => fn.Properties.PackageType === "Image",
+    );
+    assert.equal(imageFunctions.length, 3, "expected three container-image functions");
+    const buildArgs = imageFunctions.map(
+      ([, fn]) => fn.Metadata?.["aws:asset:docker-build-args"]?.["IMAGE_VALUE"],
+    );
+    assert.deepEqual(buildArgs.sort(), ["go-image-build", "node-image-build", "python-image-build"]);
+    for (const [id, fn] of imageFunctions) {
+      assert.ok(fn.Metadata?.["aws:asset:path"], `${id} has no Docker asset path`);
+      assert.ok(fn.Metadata?.["aws:asset:dockerfile-path"], `${id} has no Dockerfile`);
+      assert.ok(fn.Properties.Code?.ImageUri, `${id} has no ImageUri`);
+    }
+    const routes = byType("AWS::ApiGatewayV2::Route").map(
+      ([, route]) => route.Properties.RouteKey,
+    );
+    assert.deepEqual(routes.sort(), [
+      "GET /image/go",
+      "GET /image/node",
+      "GET /image/python",
+      "GET /layer/node",
+      "GET /layer/python",
+    ]);
+  },
+
   MediaCdnExample() {
     const distributions = byType("AWS::CloudFront::Distribution");
     assert.equal(distributions.length, 2, "expected public and private distributions");

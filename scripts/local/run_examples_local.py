@@ -102,6 +102,7 @@ SSR_SITE_APP = "examples/cdk/ssr-site"
 SSR_ONLY_APP = "examples/cdk/ssr-only-provided-assets-site"
 PATH_ROUTED_APP = "examples/cdk/path-routed-frontend"
 MEDIA_CDN_APP = "examples/cdk/media-cdn"
+LAMBDA_PACKAGING_APP = "examples/cdk/lambda-packaging"
 CONFORMANCE_SCRIPT = "examples/microvm-conformance/run_local.py"
 MICROVM_DEMO_TOKEN = "local-demo-token"
 MICROVM_WORKLOAD_GO = STATE_DIR / "bin" / "microvm-workload-go"
@@ -5810,6 +5811,69 @@ def run_ssr_assets_upload(harness: Harness) -> str:
         shutil.rmtree(staging, ignore_errors=True)
 
 
+def one_http_v2_url(spec: dict, run: LocalAppRun) -> str:
+    apis = [api for api in spec.get("apis") or [] if api.get("class") == "httpv2"]
+    if len(apis) != 1:
+        raise HarnessFailure(f"want exactly one HTTP API v2 surface, plan has {len(apis)}")
+    logical_id = str(apis[0].get("logicalId"))
+    if logical_id not in run.apis:
+        raise HarnessFailure(f"the runner did not serve {logical_id}: {run.apis}")
+    return run.apis[logical_id]
+
+
+def run_lambda_packaging(harness: Harness) -> str:
+    """Lambda layers extracted into /opt and container images built by docker.
+
+    The Node and Python handlers import a module that exists only inside the
+    layer and execute the layer's /opt/bin tool; the three image handlers read a
+    value the Dockerfile wrote from a build argument, so a stale or missing
+    image cannot pass the row.
+    """
+    run = start_local_app(harness, LAMBDA_PACKAGING_APP, name="lambda-packaging")
+    try:
+        base = one_http_v2_url(run.spec, run)
+        status, payload, _ = _json_request("GET", f"{base}/layer/node")
+        expect_status(status, 200, "packaging node layer", json.dumps(payload))
+        if payload.get("greeting") != "hello node from the node layer":
+            raise HarnessFailure(f"packaging node layer module not imported: {payload}")
+        if payload.get("tool") != "layer-tool-ok":
+            raise HarnessFailure(f"packaging node layer /opt/bin tool did not run: {payload}")
+        if not payload.get("optBin") or not payload.get("optLib"):
+            raise HarnessFailure(f"packaging node layer paths are not configured: {payload}")
+
+        status, payload, _ = _json_request("GET", f"{base}/layer/python")
+        expect_status(status, 200, "packaging python layer", json.dumps(payload))
+        if payload.get("greeting") != "hello from the python layer":
+            raise HarnessFailure(f"packaging python layer module not imported: {payload}")
+        if payload.get("tool") != "python-layer-tool-ok":
+            raise HarnessFailure(f"packaging python layer /opt/bin tool did not run: {payload}")
+        if not payload.get("optPython") or not payload.get("optBin") or not payload.get("optLib"):
+            raise HarnessFailure(f"packaging python layer paths are not configured: {payload}")
+
+        for path, want_runtime, want_value in (
+            ("/image/go", "go-provided-image", "go-image-build"),
+            ("/image/node", "node-image", "node-image-build"),
+            ("/image/python", "python-image", "python-image-build"),
+        ):
+            status, payload, _ = _json_request("GET", f"{base}{path}")
+            expect_status(status, 200, f"packaging {path}", json.dumps(payload))
+            if payload.get("runtime") != want_runtime:
+                raise HarnessFailure(f"packaging {path} ran the wrong image: {payload}")
+            if payload.get("imageValue") != want_value:
+                raise HarnessFailure(
+                    f"packaging {path}: the Dockerfile build argument did not reach the image: {payload}"
+                )
+        return (
+            "the Node and Python zip functions imported a module from the layer "
+            "and executed the /opt/bin tool, with /opt/bin on PATH and /opt/lib on "
+            "LD_LIBRARY_PATH; the Go, Node and Python image functions were built by "
+            "docker from the CDK Docker assets and returned the value the "
+            "Dockerfile wrote from its build argument"
+        )
+    finally:
+        stop_local_app(harness, run)
+
+
 RUNNERS: dict[str, Callable[[Harness], str]] = {
     "testkit-ts": run_testkit_ts,
     "testkit-ts-streaming": run_testkit_ts_streaming,
@@ -5862,6 +5926,7 @@ RUNNERS: dict[str, Callable[[Harness], str]] = {
     "media-cdn-gateway": run_media_cdn_gateway,
     "ssr-assets-manifest": run_ssr_assets_manifest,
     "ssr-assets-upload": run_ssr_assets_upload,
+    "lambda-packaging": run_lambda_packaging,
 }
 
 

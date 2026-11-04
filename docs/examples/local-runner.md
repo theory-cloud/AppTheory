@@ -315,8 +315,9 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
    function's runtime is selected before any container starts. A missing image
    class or a tag that is not pinned by digest fails here, after synthesis.
 4. **Prepare the run workspace.** Inline `Code.ZipFile` code is materialized
-   under the run scratch directory, then the run's private Docker network is
-   created.
+   under the run scratch directory, every function's layers are merged into one
+   `/opt` directory in the template's listed order, then the run's private
+   Docker network is created.
 5. **Start backends.** `--backend dynamodb`, `--backend moto`,
    `--backend s3proxy` and `--backend sqs` start the profile's digest-pinned
    emulators on the run's private network. Before it reports a backend ready,
@@ -362,9 +363,11 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
    one is configured, and closed DNS.
 9. **Run.** One container per function the CDK definition targets: HTTP routes,
    Function URLs, HTTP API authorizers, enabled event-source consumers, enabled
-   EventBridge rule targets and Lambda log-subscription destinations. Each uses
-   the official image for its runtime, digest-pinned in the profile. Handlers
-   run under the embedded Runtime Interface Emulator; the transport invokes
+   EventBridge rule targets and Lambda log-subscription destinations. A zip
+   function uses the official image for its runtime, digest-pinned in the
+   profile; a container-image function is built from its CDK `DockerImageAsset`
+   by the real `docker build` before any listener starts serving. Handlers run
+   under the embedded Runtime Interface Emulator; the transport invokes
    `/2015-03-31/functions/function/invocations`.
 10. **Serve, invoke or session.** One loopback listener per API (and per
     Function URL) builds the provider event for the matched route, runs a
@@ -894,6 +897,48 @@ WAF web ACL, custom error responses, a gRPC config or a legacy `ForwardedValues`
 cache policy are refused with a named reason; they are listed under `skipped`
 and no listener is started. Real-time logs, access logging and the properties
 that only affect caching or edge placement are reported instead.
+
+## Lambda layers and container-image functions
+
+**Layers.** A zip function's `Layers` list is resolved from the same cloud
+assembly: every entry must be an `AWS::Lambda::LayerVersion` in the function's
+stack whose content is a local asset (`aws:asset:path`). The runner extracts the
+layers into `/opt` in the template's listed order, and a later layer's file
+replaces an earlier one, as
+[Adding layers to functions](https://docs.aws.amazon.com/lambda/latest/dg/adding-layers.html)
+states. The merged directory is mounted read-only at `/opt`, and the container
+environment carries the documented runtime paths with no extra configuration:
+
+- `/opt/bin` is prepended to `PATH`;
+- `/opt/lib` is prepended to `LD_LIBRARY_PATH`;
+- a Node runtime gets `/opt/nodejs/node_modules` (and
+  `/opt/nodejs/node<major>/node_modules`) on `NODE_PATH`;
+- a Python runtime gets `/opt/python` on `PYTHONPATH`.
+
+The five-layer limit is enforced with a named refusal, and a layer ARN that is
+not a LayerVersion in the assembly (a cross-stack or external layer) is refused
+by name because its content cannot be obtained locally. The
+[layers chapter](https://docs.aws.amazon.com/lambda/latest/dg/chapter-layers.html)
+advises against layers for Go and Rust because the provided runtime has no
+module path to populate; the runner supports them all the same, and the
+`lambda-packaging` example uses layers for Node and Python only.
+
+**Container-image functions.** A function with `PackageType: Image` and
+`Code.ImageUri` that names a CDK `DockerImageAsset` is built with the real
+`docker build` from the asset's directory, Dockerfile, target, platform and
+build arguments (all read from the `aws:asset:*` metadata CDK writes). The image
+is built before any listener serves a request, so a broken Dockerfile fails the
+run instead of failing the first request; the first build of an example takes
+roughly 10–60 seconds including the base-image pull, and rebuilds are cached by
+Docker's layer cache (a second build of the same asset is near-instant). The
+function container runs the image's own entrypoint, so the Runtime Interface
+Emulator the
+[AWS base images](https://docs.aws.amazon.com/lambda/latest/dg/images-create.html)
+ship serves the same invocation path as a zip function; an image that does not
+ship a Runtime Interface Emulator fails with that name and the page cited. Image
+functions do not take layers, as the layers chapter states, and that combination
+is refused by name. The built image carries the run label and is removed when
+the run shuts down.
 
 ## Invoking one function
 
@@ -1813,7 +1858,8 @@ the harness records it.
 | HTTP API JWT authorizers | Supported (L2) | RSA-based algorithms only (`RS256`, `RS384`, `RS512`); the signature is verified with the `kid` key from the issuer's JWKS, and `iss`, `aud` (or `client_id` only when `aud` is absent), `exp`, `nbf` and `iat` are checked against the run clock. `AuthorizationScopes` is an any-of match; the claims reach the integration in `requestContext.authorizer.jwt`; see [Authorizers](#authorizers). |
 | REST API Cognito user-pool authorizers | Supported (L2) | The token is validated against the pool's JWKS through the local issuer with the same RSA-only algorithm and claim checks as the HTTP JWT authorizer; `AuthorizationScopes` is an any-of match and the claims reach the integration in `requestContext.authorizer.claims`; see [Authorizers](#authorizers). |
 | REST/HTTP Lambda authorizers with IAM-policy responses | Supported (L2) | A REST `TOKEN` or `REQUEST` `AWS::ApiGateway::Authorizer` and an HTTP API `REQUEST` authorizer with `EnableSimpleResponses: false` run the real function and match its returned policy narrowly against the method/route ARN. Identity sources are 401 before invocation when missing; `AuthorizerResultTtlInSeconds` caches on the run clock with the documented cache key; Allow invokes, Deny is 403, the `Unauthorized` error is 401 and an invalid response is 500; the stringified context reaches `requestContext.authorizer`; see [Authorizers](#authorizers). |
-| Lambda layers, container-image functions | Not served | Fail closed when a served function needs them. |
+| Lambda layers | Supported | A function's `Layers` resolve to LayerVersions in the same assembly; their content is extracted into `/opt` in the listed order (later layers win) with `/opt/bin` on `PATH`, `/opt/lib` on `LD_LIBRARY_PATH`, `/opt/nodejs/node_modules` on `NODE_PATH` and `/opt/python` on `PYTHONPATH`. The five-layer limit and an external layer ARN are refused by name; see [Lambda layers and container-image functions](#lambda-layers-and-container-image-functions). |
+| Container-image functions | Supported | `PackageType: Image` with a CDK `DockerImageAsset` is built by the real `docker build` (directory, Dockerfile, target, platform and build arguments from the assembly) before serving, then run under the image's own Runtime Interface Emulator through the same invocation path as a zip function. An image without the emulator, and an image function that declares layers, are refused by name. |
 | CloudFormation-expression environment values | Supported for `Ref`/`Fn::GetAtt`/`Fn::Join` | Tables and stream ARNs, queues, rules, buckets, KMS keys and aliases, SSM parameters, Secrets Manager ARNs, SNS topics, Kinesis streams, Cognito pool/client values, IAM/MicroVM-image/S3 Vectors ARNs and functions resolve to local values (moto/S3 require their backend). An unsupported expression fails with the function and variable named. |
 | CloudFormation-expression `MemorySize`/`Timeout` | Not resolved | A served function whose limit is `Ref`/`GetAtt`/`Fn::If` fails with the property named; the AWS defaults apply only when the property is absent. |
 | One function, explicit events (`invoke`) | Supported | Starts one function and sends newline-delimited JSON events to a warm container; `--handler-dir` runs a handler that has no CDK definition and derives no routes. |
