@@ -83,6 +83,9 @@ func (api WebSocketAPISpec) Route(routeKey string) (WebSocketRouteSpec, bool) {
 
 // WebSocketAPIs returns the WebSocket surfaces the runner serves.
 func (s *Spec) WebSocketAPIs() []WebSocketAPISpec {
+	if s == nil {
+		return nil
+	}
 	return s.WebSockets
 }
 

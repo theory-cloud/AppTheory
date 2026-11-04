@@ -328,6 +328,7 @@ TS_NODE_TRANSPILE_ONLY=1
 | `AWS::ApiGateway::RestApi` + `Resource` tree + `Method` + `AWS_PROXY` integration | Served as REST API v1 at the path reconstructed from the resource tree. `ResponseTransferMode: STREAM` and `/response-streaming-invocations` are marked streaming. |
 | `AWS::Lambda::Url` (`AuthType: NONE`) | Served as a Function URL listener. `InvokeMode: RESPONSE_STREAM` is marked streaming (buffered). A URL with `AWS_IAM` is not served as a standalone URL; when a served CloudFront distribution targets it, the gateway invokes it through the signed local OAC origin instead. |
 | `AWS::ApiGatewayV2::Authorizer` (`REQUEST`) | For an HTTP API route with simple responses, the transport sends a v2 REQUEST authorizer event and enforces `isAuthorized`. For a WebSocket `$connect` route, the transport sends the documented WebSocket authorizer event and matches the returned IAM policy against the `$connect` method ARN. A type the transport cannot run fails the route that references it closed. |
+| `AWS::ApiGateway::Authorizer` | Parsed; a `COGNITO_USER_POOLS` authorizer is run for the REST methods that reference it (R2a). A Lambda authorizer is R2b and fails closed. |
 | `AWS::Lambda::EventSourceMapping` (SQS, DynamoDB Streams, Kinesis) | Reported with its function, source, batch options, filter criteria and scaling configuration; the function is started and the mapping is delivered automatically: an SQS queue (see [SQS event-source delivery](/examples/local-runner/#sqs-event-source-delivery)), a DynamoDB stream (see [DynamoDB Streams delivery](/examples/local-runner/#dynamodb-streams-delivery)) or a Kinesis stream (see [Kinesis event-source delivery](/examples/local-runner/#kinesis-event-source-delivery)). A session can still build the provider event from real local messages or a real local write. |
 | `AWS::SNS::Topic`, `AWS::SNS::Subscription` and a topic's inline `Subscription` | Topics (standard and FIFO) are provisioned on moto. Every supported subscription is registered with the delivery engine and delivered automatically: a Lambda record, an SQS envelope or raw body, or a loopback HTTP POST. See [SNS subscription delivery](/examples/local-runner/#sns-subscription-delivery). SNS does not support Lambda or HTTP(S) targets on a FIFO topic; a Lambda or HTTP(S) subscription to one, a non-loopback HTTP endpoint and SMS/email/mobile push are reported under `skipped` with a named reason. |
 | `AWS::Events::Rule` with a Lambda target | Reported with its schedule or event pattern and target; the function is started and the rule is delivered automatically: a schedule fires on the run clock and a pattern rule receives every matching `PutEvents` entry (see [EventBridge delivery](/examples/local-runner/#eventbridge-delivery)). A session can still build the event a rule would deliver. |
@@ -925,6 +926,31 @@ Functions that no supported route, Function URL, CloudFront origin, event source
 mapping or rule targets are listed under `skipped` with the reason; they are
 never silently dropped. A session's `--target` starts one of them explicitly.
 
+## Authorizers
+
+| Kind | Template | What the transport does |
+| --- | --- | --- |
+| HTTP simple REQUEST | `AWS::ApiGatewayV2::Authorizer`, `AuthorizerType: REQUEST`, `EnableSimpleResponses` | Invokes the function with the v2 REQUEST event; `isAuthorized: false` is 401 and a true result's `context` becomes `requestContext.authorizer.lambda`. |
+| HTTP JWT | `AWS::ApiGatewayV2::Authorizer`, `AuthorizerType: JWT`, `JwtConfiguration` | Reads the identity source (default `$request.header.Authorization`), requires the `Bearer` scheme, verifies the signature against the issuer's `/.well-known/jwks.json`, and checks `iss`, `aud` (or a Cognito access token's `client_id`), `exp` and `nbf` against the run clock. Each `AuthorizationScopes` entry must be in the token's `scope`; a missing scope is 403. Claims and scopes become `requestContext.authorizer.jwt.claims` and `.scopes`. |
+| REST Cognito | `AWS::ApiGateway::Authorizer`, `Type: COGNITO_USER_POOLS`, `ProviderARNs` | Reads the identity-source header (a `Bearer ` prefix is accepted), validates the token against the pool's JWKS through the runner's local issuer, checks `AuthorizationScopes` against the access token's `scope`, and exposes the claims as `requestContext.authorizer.claims`. |
+| WebSocket `$connect` | `AWS::ApiGatewayV2::Authorizer`, `AuthorizerType: REQUEST`, referenced by the `$connect` route | Runs during the handshake with the documented WebSocket authorizer event and matches the returned IAM policy against `/<stage>/$connect`. See [WebSocket APIs](/examples/local-runner/#websocket-apis). |
+| Lambda policy (REST/HTTP, R2b) | `AWS::ApiGateway::Authorizer` `TOKEN`/`REQUEST`, HTTP non-simple REQUEST | Not run: the route fails closed at plan time with the kind named. |
+
+**Issuer resolution.** A JWT issuer or a Cognito `ProviderARN` may be a
+CloudFormation expression, because a pool id exists only after creation. The run
+evaluates the expression after provisioning. A canonical Cognito issuer
+(`https://cognito-idp.<region>.amazonaws.com/<poolId>`) or pool ARN that names a
+provisioned pool resolves to that pool's loopback issuer, and the canonical
+issuer is accepted as an alias because it is the `iss` the pool's tokens carry.
+Another `http(s)` OIDC URL is fetched directly. Anything else fails the run with
+the route and the value named.
+
+**Tokens and the clock.** Signature algorithms RS256/384/512 and ES256/384 are
+supported; `alg: none` is refused. `exp` is required; `nbf` is checked when
+present; both use the run clock, so `--clock test=<wall time>` is the way to use
+a freshly minted moto token and `clock.advance` past its expiry tests the
+expired path.
+
 ## Container environment
 
 Each function container is started with:
@@ -1046,6 +1072,12 @@ ten-character id derived from the logical id.
 above with `eventType: "CONNECT"`. The response is an IAM policy; the runner
 matches each statement's `Action` and `Resource` (with `*`/`?` wildcards)
 against the method ARN. A Deny wins; no Allow refuses with 401.
+
+**JWT and Cognito authorizer claims** — an HTTP API JWT authorizer adds
+`requestContext.authorizer.jwt = {"claims": {…}, "scopes": ["…"]}`; a REST
+Cognito authorizer adds `requestContext.authorizer = {"claims": {…}}`. The
+claims are the token's validated payload (for example `iss`, `aud`/`client_id`,
+`sub`, `token_use`, `scope`, `exp`).
 
 **SQS** — built from messages an ElasticMQ queue actually returned:
 `Records[].messageId`, `receiptHandle`, `body`, `md5OfBody`, the receive

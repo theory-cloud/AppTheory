@@ -34,6 +34,14 @@ type InvokeRequest struct {
 	// request. It is carried as requestContext.authorizer.lambda, the same
 	// place API Gateway v2 puts a simple-response authorizer context.
 	AuthorizerContext map[string]any
+	// AuthorizerJWT is a JWT authorizer's validated claims; they are carried as
+	// requestContext.authorizer.jwt.claims with the token's scopes.
+	AuthorizerJWT map[string]any
+	// AuthorizerScopes are the scopes a JWT authorizer validated.
+	AuthorizerScopes []string
+	// AuthorizerClaims is a REST Cognito authorizer's claims; they are carried
+	// as requestContext.authorizer.claims.
+	AuthorizerClaims map[string]any
 }
 
 // BuildEvent serializes the provider payload the handler receives: an HTTP API
@@ -96,6 +104,14 @@ func httpV2Event(request InvokeRequest) map[string]any {
 			context["authorizer"] = map[string]any{"lambda": request.AuthorizerContext}
 		}
 	}
+	if len(request.AuthorizerJWT) > 0 {
+		if context, ok := event["requestContext"].(map[string]any); ok {
+			context["authorizer"] = map[string]any{"jwt": map[string]any{
+				"claims": request.AuthorizerJWT,
+				"scopes": append([]string(nil), request.AuthorizerScopes...),
+			}}
+		}
+	}
 	return event
 }
 
@@ -108,7 +124,7 @@ func BuildAuthorizerEvent(request InvokeRequest) ([]byte, error) {
 		return nil, err
 	}
 	event := httpV2Event(request)
-	event["type"] = "REQUEST"
+	event["type"] = authorizerTypeRequest
 	apiID := localPhysicalID("api", request.API.LogicalID)
 	routeKey := request.Route.RouteKey
 	if routeKey == "" {
@@ -244,7 +260,7 @@ func restV1Event(request InvokeRequest) map[string]any {
 }
 
 func restRequestContext(request InvokeRequest, apiID string) map[string]any {
-	return map[string]any{
+	context := map[string]any{
 		"accountId":         LocalAccountID,
 		"apiId":             apiID,
 		"domainName":        apiID + ".execute-api." + LocalRegion + ".amazonaws.com",
@@ -265,6 +281,13 @@ func restRequestContext(request InvokeRequest, apiID string) map[string]any {
 		"resourcePath": request.Route.Path,
 		"stage":        request.API.Stage,
 	}
+	if len(request.AuthorizerClaims) > 0 {
+		// A REST API Cognito authorizer exposes the validated claims under
+		// requestContext.authorizer.claims.
+		// https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-integrate-with-cognito.html
+		context["authorizer"] = map[string]any{"claims": request.AuthorizerClaims}
+	}
+	return context
 }
 
 func functionURLEvent(request InvokeRequest) map[string]any {

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/theory-cloud/apptheory/v6/internal/localcloudfront"
@@ -31,7 +32,22 @@ type Transport struct {
 	Invokers  map[string]Invoker
 	Semaphore chan struct{}
 	Now       func() time.Time
-	Logf      func(format string, args ...any)
+	// Clock is the run clock; a JWT's exp and nbf are checked against it.
+	Clock Clock
+	Logf  func(format string, args ...any)
+
+	jwtMu        sync.Mutex
+	jwtVerifiers map[string]*jwtVerifier
+}
+
+// authorizerResult carries what one authorizer produced. Status is 0 when the
+// request may proceed, or the HTTP status that refuses it.
+type authorizerResult struct {
+	Status int
+	Lambda map[string]any
+	JWT    map[string]any
+	Scopes []string
+	Claims map[string]any
 }
 
 // NewTransport builds a transport for an API surface.
@@ -89,13 +105,13 @@ func (t *Transport) ServeHTTP(writer http.ResponseWriter, request *http.Request)
 	}
 	defer t.release()
 
-	authorizerContext, err := t.authorize(request, route, params, path, body, requestID)
+	authorizer, err := t.authorize(request, route, params, path, body, requestID)
 	if err != nil {
 		t.fail(writer, http.StatusBadGateway, "Internal Server Error", requestID, err)
 		return
 	}
-	if authorizerContext == nil && route.AuthorizerFunction != "" {
-		t.unauthorized(writer, request, path, requestID)
+	if authorizer.Status != 0 {
+		t.refuse(writer, request, path, requestID, authorizer.Status)
 		return
 	}
 
@@ -112,7 +128,10 @@ func (t *Transport) ServeHTTP(writer http.ResponseWriter, request *http.Request)
 		RemoteAddr:        request.RemoteAddr,
 		RequestID:         requestID,
 		Now:               t.Now(),
-		AuthorizerContext: authorizerContext,
+		AuthorizerContext: authorizer.Lambda,
+		AuthorizerJWT:     authorizer.JWT,
+		AuthorizerScopes:  authorizer.Scopes,
+		AuthorizerClaims:  authorizer.Claims,
 	})
 	if err != nil {
 		t.fail(writer, http.StatusBadGateway, "Internal Server Error", requestID, err)
@@ -132,6 +151,8 @@ func (t *Transport) ServeHTTP(writer http.ResponseWriter, request *http.Request)
 	t.logf("%s %s -> %d%s", request.Method, path, response.StatusCode, streamedNote(response.Streamed))
 }
 
+// authorize runs the route's authorizer. It never bypasses one: a route with an
+// authorizer kind the transport cannot run was refused at derive time.
 func (t *Transport) authorize(
 	request *http.Request,
 	route Route,
@@ -139,22 +160,46 @@ func (t *Transport) authorize(
 	path string,
 	body []byte,
 	requestID string,
-) (map[string]any, error) {
-	if route.AuthorizerFunction == "" {
-		return nil, nil
+) (authorizerResult, error) {
+	switch route.AuthorizerKind {
+	case AuthorizerKindJWT:
+		return t.authorizeJWT(request, route)
+	case AuthorizerKindCognito:
+		return t.authorizeCognito(request, route)
+	case AuthorizerKindSimpleRequest, AuthorizerKindLambdaRequest:
+		if route.AuthorizerFunction == "" {
+			return authorizerResult{}, nil
+		}
+		return t.authorizeRequest(request, route, params, path, body, requestID)
+	default:
+		if route.AuthorizerFunction == "" {
+			return authorizerResult{}, nil
+		}
+		return t.authorizeRequest(request, route, params, path, body, requestID)
 	}
+}
+
+// authorizeRequest runs a REQUEST Lambda authorizer with simple responses.
+func (t *Transport) authorizeRequest(
+	request *http.Request,
+	route Route,
+	params map[string]string,
+	path string,
+	body []byte,
+	requestID string,
+) (authorizerResult, error) {
 	invoker, ok := t.Invokers[route.AuthorizerFunction]
 	if !ok {
-		return nil, fmt.Errorf("no running container for authorizer %s", route.AuthorizerFunction)
+		return authorizerResult{}, fmt.Errorf("no running container for authorizer %s", route.AuthorizerFunction)
 	}
 	missing, err := missingIdentitySource(request.Header, request.URL.RawQuery, route.AuthorizerIdentitySources)
 	if err != nil {
-		return nil, fmt.Errorf("authorizer identity source: %w", err)
+		return authorizerResult{}, fmt.Errorf("authorizer identity source: %w", err)
 	}
 	if missing != "" {
 		t.logf("%s %s -> 401 (identity source %s is missing; authorizer %s was not invoked)",
 			request.Method, path, missing, route.AuthorizerFunction)
-		return nil, nil
+		return authorizerResult{Status: http.StatusUnauthorized}, nil
 	}
 	payload, err := BuildAuthorizerEvent(InvokeRequest{
 		API:        t.API,
@@ -171,34 +216,142 @@ func (t *Transport) authorize(
 		Now:        t.Now(),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("build authorizer event: %w", err)
+		return authorizerResult{}, fmt.Errorf("build authorizer event: %w", err)
 	}
 	raw, err := invoker.Invoke(request.Context(), payload)
 	if err != nil {
-		return nil, fmt.Errorf("invoke authorizer %s: %w", route.AuthorizerFunction, err)
+		return authorizerResult{}, fmt.Errorf("invoke authorizer %s: %w", route.AuthorizerFunction, err)
 	}
 	var result struct {
 		IsAuthorized bool           `json:"isAuthorized"`
 		Context      map[string]any `json:"context"`
 	}
 	if err := json.Unmarshal(raw, &result); err != nil {
-		return nil, fmt.Errorf("authorizer %s returned an invalid simple response: %w", route.AuthorizerFunction, err)
+		return authorizerResult{}, fmt.Errorf("authorizer %s returned an invalid simple response: %w", route.AuthorizerFunction, err)
 	}
 	if !result.IsAuthorized {
 		t.logf("%s %s -> 401 (authorizer %s denied)", request.Method, path, route.AuthorizerFunction)
-		return nil, nil
+		return authorizerResult{Status: http.StatusUnauthorized}, nil
 	}
 	if result.Context == nil {
 		result.Context = map[string]any{}
 	}
-	return result.Context, nil
+	return authorizerResult{Lambda: result.Context}, nil
 }
 
-func (t *Transport) unauthorized(writer http.ResponseWriter, request *http.Request, path, requestID string) {
-	t.logf("%s %s -> 401 (authorizer denied; request %s)", request.Method, path, requestID)
+// authorizeJWT validates an HTTP API JWT authorizer's bearer token.
+// https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-jwt-authorizer.html
+func (t *Transport) authorizeJWT(request *http.Request, route Route) (authorizerResult, error) {
+	header := ""
+	for _, source := range route.AuthorizerIdentitySources {
+		parsed, err := parseIdentitySource(source)
+		if err != nil {
+			return authorizerResult{}, err
+		}
+		header = parsed.value(request.Header, request.URL.RawQuery)
+		if header != "" {
+			break
+		}
+	}
+	if strings.TrimSpace(header) == "" {
+		t.logf("%s %s -> 401 (no JWT identity source)", request.Method, request.URL.Path)
+		return authorizerResult{Status: http.StatusUnauthorized}, nil
+	}
+	token, err := bearerToken(header)
+	if err != nil {
+		t.logf("%s %s -> 401 (%v)", request.Method, request.URL.Path, err)
+		return authorizerResult{Status: http.StatusUnauthorized}, nil
+	}
+	verifier, err := t.jwtVerifier(route)
+	if err != nil {
+		return authorizerResult{}, err
+	}
+	claims, err := verifier.verifyToken(request.Context(), token)
+	if err != nil {
+		t.logf("%s %s -> 401 (JWT refused: %v)", request.Method, request.URL.Path, err)
+		return authorizerResult{Status: http.StatusUnauthorized}, nil
+	}
+	if scope := missingScope(claims, route.AuthorizationScopes); scope != "" {
+		t.logf("%s %s -> 403 (the token does not carry scope %s)", request.Method, request.URL.Path, scope)
+		return authorizerResult{Status: http.StatusForbidden}, nil
+	}
+	return authorizerResult{JWT: claims, Scopes: tokenScopes(claims)}, nil
+}
+
+// authorizeCognito validates a REST API Cognito user-pool authorizer's token.
+// A Cognito authorizer carries the token in a header; the "Bearer" prefix is
+// accepted and optional.
+// https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-integrate-with-cognito.html
+func (t *Transport) authorizeCognito(request *http.Request, route Route) (authorizerResult, error) {
+	source := "method.request.header.Authorization"
+	if len(route.AuthorizerIdentitySources) > 0 && strings.TrimSpace(route.AuthorizerIdentitySources[0]) != "" {
+		source = strings.TrimSpace(route.AuthorizerIdentitySources[0])
+	}
+	const prefix = "method.request.header."
+	if !strings.HasPrefix(source, prefix) {
+		return authorizerResult{}, fmt.Errorf("the Cognito authorizer identity source %q is not a request header", source)
+	}
+	header := strings.TrimSpace(request.Header.Get(strings.TrimPrefix(source, prefix)))
+	if header == "" {
+		t.logf("%s %s -> 401 (no Cognito identity source)", request.Method, request.URL.Path)
+		return authorizerResult{Status: http.StatusUnauthorized}, nil
+	}
+	token := header
+	if candidate, err := bearerToken(header); err == nil {
+		token = candidate
+	}
+	verifier, err := t.jwtVerifier(route)
+	if err != nil {
+		return authorizerResult{}, err
+	}
+	claims, err := verifier.verifyToken(request.Context(), token)
+	if err != nil {
+		t.logf("%s %s -> 401 (Cognito token refused: %v)", request.Method, request.URL.Path, err)
+		return authorizerResult{Status: http.StatusUnauthorized}, nil
+	}
+	if scope := missingScope(claims, route.AuthorizationScopes); scope != "" {
+		t.logf("%s %s -> 403 (the token does not carry scope %s)", request.Method, request.URL.Path, scope)
+		return authorizerResult{Status: http.StatusForbidden}, nil
+	}
+	return authorizerResult{Claims: claims, Scopes: tokenScopes(claims)}, nil
+}
+
+// jwtVerifier returns the route's verifier, cached by its JWKS endpoint.
+func (t *Transport) jwtVerifier(route Route) (*jwtVerifier, error) {
+	if route.JWKSURL == "" || len(route.AcceptedIssuers) == 0 {
+		return nil, fmt.Errorf("the route's authorizer has no resolved issuer; the run must not serve it")
+	}
+	t.jwtMu.Lock()
+	defer t.jwtMu.Unlock()
+	if t.jwtVerifiers == nil {
+		t.jwtVerifiers = map[string]*jwtVerifier{}
+	}
+	if verifier, ok := t.jwtVerifiers[route.JWKSURL]; ok {
+		return verifier, nil
+	}
+	clock := t.Clock
+	if clock == nil {
+		clock = RealClock{}
+	}
+	verifier := newJWTVerifier(clock, jwtIssuer{
+		Accepted: route.AcceptedIssuers,
+		JWKSURL:  route.JWKSURL,
+		Audience: route.JWTAudience,
+	})
+	t.jwtVerifiers[route.JWKSURL] = verifier
+	return verifier, nil
+}
+
+// refuse writes the status an authorizer denied with.
+func (t *Transport) refuse(writer http.ResponseWriter, request *http.Request, path, requestID string, status int) {
+	message := "Unauthorized"
+	if status == http.StatusForbidden {
+		message = "Forbidden"
+	}
+	t.logf("%s %s -> %d (authorizer refused; request %s)", request.Method, path, status, requestID)
 	writer.Header().Set("Content-Type", "application/json")
-	writer.WriteHeader(http.StatusUnauthorized)
-	_, _ = writer.Write([]byte(`{"message":"Unauthorized"}`)) //nolint:errcheck // response already committed
+	writer.WriteHeader(status)
+	_, _ = writer.Write([]byte(`{"message":"` + message + `"}`)) //nolint:errcheck // response already committed
 }
 
 func readRequestBody(request *http.Request) ([]byte, error) {
@@ -303,7 +456,7 @@ func RouteTable(spec *Spec) []string {
 			}
 			lines = append(lines, fmt.Sprintf("  %-6s %-24s -> %s%s%s",
 				route.Method, route.Path, route.Function, streamingSuffix(route.Streaming),
-				simpleAuthorizerSuffix(route)))
+				authorizerSuffix(route)))
 		}
 	}
 	for _, url := range spec.FunctionURLs {
@@ -345,12 +498,25 @@ func RouteTable(spec *Spec) []string {
 	return lines
 }
 
-// simpleAuthorizerSuffix names the simple REQUEST authorizer a route runs.
-func simpleAuthorizerSuffix(route Route) string {
-	if route.AuthorizerFunction != "" {
+// authorizerSuffix names the authorizer a route runs.
+func authorizerSuffix(route Route) string {
+	switch route.AuthorizerKind {
+	case AuthorizerKindSimpleRequest:
 		return " authorizer=" + route.AuthorizerFunction
+	case AuthorizerKindJWT:
+		issuer := route.JWTIssuer
+		if issuer == "" {
+			issuer = "resolved at run"
+		}
+		return " authorizer=jwt issuer=" + issuer
+	case AuthorizerKindCognito:
+		return " authorizer=cognito-user-pools"
+	default:
+		if route.AuthorizerFunction != "" {
+			return " authorizer=" + route.AuthorizerFunction
+		}
+		return ""
 	}
-	return ""
 }
 
 // twoWayLabel names the response direction of a WebSocket route.

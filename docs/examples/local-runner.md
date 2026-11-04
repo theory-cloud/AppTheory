@@ -600,6 +600,52 @@ client close invokes it with `CLIENT_INITIATED_DISCONNECT`.
 Custom domains, IAM authorization and a REST-style Lambda authorizer on a
 WebSocket route are not served; they fail closed.
 
+## Authorizers
+
+The transport runs the authorizer a route declares before the integration. It
+never bypasses one: a kind it cannot run refuses the route at plan time with the
+kind named.
+
+**HTTP API JWT authorizers.** An `AWS::ApiGatewayV2::Authorizer` with
+`AuthorizerType: JWT` validates the token from its identity source (default
+`$request.header.Authorization`, `Bearer` scheme) exactly as
+[Controlling access to HTTP APIs with JWT authorizers](https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-jwt-authorizer.html)
+describes: the signature is verified against the issuer's
+`/.well-known/jwks.json`, and the `iss`, `aud`, `exp` and `nbf` claims are
+checked. An access token's `client_id` claim satisfies the audience check, as the
+page documents for Cognito access tokens. A route's `AuthorizationScopes` must
+all be present in the token's `scope` claim. The validated claims and scopes
+reach the integration as `requestContext.authorizer.jwt.claims` and
+`requestContext.authorizer.jwt.scopes`. A missing or malformed token is 401; a
+missing scope is 403.
+
+The issuer can be a literal OIDC URL or a CloudFormation expression that names a
+provisioned Cognito pool. For a pool the runner serves the issuer at
+`http://127.0.0.1:<port>/cognito-idp/<region>/<poolId>`; the template's canonical
+issuer (`https://cognito-idp.<region>.amazonaws.com/<poolId>`) is accepted too,
+because that is the `iss` a real pool's tokens carry. An issuer the run cannot
+resolve to a provisioned pool fails closed.
+
+**REST API Cognito user-pool authorizers.** An `AWS::ApiGateway::Authorizer`
+with `Type: COGNITO_USER_POOLS` validates the token in its identity-source
+header against the named pool's JWKS, as
+[Using Amazon Cognito user pools as authorizer](https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-integrate-with-cognito.html)
+describes. A route's `AuthorizationScopes` are checked against an access
+token's `scope` claim, and the claims reach the integration as
+`requestContext.authorizer.claims`. A missing or invalid token is 401; a missing
+scope is 403.
+
+**The run clock.** `exp` and `nbf` are compared with the run clock, so
+`--clock test` changes what "expired" means. A token minted by the moto pool uses
+wall-clock times; start a test clock at the wall clock (`--clock test=<now>`) to
+use a freshly minted token, and `clock.advance` past its expiry to prove the
+check. A test clock that starts before the token's `iat` refuses it, which is the
+documented behaviour.
+
+**Still refused.** Lambda authorizers that return an IAM policy for HTTP or REST
+routes (R2b), IAM authorization, and `$context`/`$stageVariables` identity
+sources fail closed at plan time.
+
 ## CloudFront distributions
 
 A distribution in the cloud assembly is served on its own `http://127.0.0.1:<port>`
@@ -1659,7 +1705,9 @@ the harness records it.
 | CloudFront distributions and CloudFront Functions | Served (L2) | The distribution is served on its own loopback URL. Cache behaviors, allowed methods, viewer-request/viewer-response functions, origin request policies and response headers policies are applied; the generated function code runs in a restricted Node sandbox. S3 origins read the app's deployments from s3proxy, Function URL origins invoke the real handler container, and origin groups fail over with CloudFront's rules. No caching, no edge network, no TLS. |
 | REST `MOCK` integrations | Supported (L1) | The transport returns the `IntegrationResponses` status and headers the template declares and invokes no function. CDK emits these for CORS preflight. |
 | HTTP API `REQUEST` authorizers with simple responses | Supported | The transport invokes the real authorizer function with the API Gateway v2 REQUEST event, carrying every configured `$request.header.*` or `$request.querystring.*` identity source in order; a request missing one is refused with 401 before the authorizer runs. A false `isAuthorized` is a 401, the authorizer context is carried to the handler, and a malformed response fails closed. `$context`/`$stageVariables` sources fail closed at plan time. |
-| Other authorizers (REST, JWT, non-simple responses) | Not served | Fails closed; the local transport must never bypass a real authorizer. A WebSocket `$connect` authorizer's policy is matched narrowly against the `$connect` method ARN (see [WebSocket APIs](#websocket-apis)). |
+| HTTP API JWT authorizers | Supported (L2) | The signature is verified against the issuer's JWKS; issuer, audience, expiry and not-before are checked against the run clock, scopes against `AuthorizationScopes`, and the claims reach the integration in `requestContext.authorizer.jwt`; see [Authorizers](#authorizers). |
+| REST API Cognito user-pool authorizers | Supported (L2) | The token is validated against the pool's JWKS through the local issuer, scopes are checked and the claims reach the integration in `requestContext.authorizer.claims`; see [Authorizers](#authorizers). |
+| REST/HTTP Lambda authorizers with IAM-policy responses (R2b) | Not served | Fails closed; the local transport must never bypass a real authorizer. A WebSocket `$connect` authorizer's policy is matched narrowly against the `$connect` method ARN (see [WebSocket APIs](#websocket-apis)). |
 | Lambda layers, container-image functions | Not served | Fail closed when a served function needs them. |
 | CloudFormation-expression environment values | Supported for `Ref`/`Fn::GetAtt`/`Fn::Join` | Tables and stream ARNs, queues, rules, buckets, KMS keys and aliases, SSM parameters, Secrets Manager ARNs, SNS topics, Kinesis streams, Cognito pool/client values, IAM/MicroVM-image/S3 Vectors ARNs and functions resolve to local values (moto/S3 require their backend). An unsupported expression fails with the function and variable named. |
 | CloudFormation-expression `MemorySize`/`Timeout` | Not resolved | A served function whose limit is `Ref`/`GetAtt`/`Fn::If` fails with the property named; the AWS defaults apply only when the property is absent. |
@@ -1706,15 +1754,16 @@ the harness records it.
 - **Kinesis shard topology is fixed.** The stream is created on moto from
   `AWS::Kinesis::Stream`, and `Ref`/`GetAtt Arn` resolve to it; the runner reads
   its shards and delivers each, but moto does not reshard.
-- **HTTP API authorizers** are run only for `REQUEST` authorizers with simple
-  responses. They carry every configured `$request.header.*` or
-  `$request.querystring.*` identity source in order, and a request missing one
-  is refused with 401 before the authorizer runs. REST, JWT and IAM authorizers,
-  and `$context`/`$stageVariables` identity sources, fail closed rather than
-  bypassing a real authorization decision. A WebSocket `$connect` authorizer's
-  returned policy is matched narrowly against the `$connect` method ARN (see
-  [WebSocket APIs](#websocket-apis)); Lambda authorizers that return a policy
-  for HTTP or REST routes are R2b.
+- **Authorizers cover three kinds.** An HTTP API `REQUEST` authorizer with
+  simple responses runs the real function and carries every configured
+  `$request.header.*` or `$request.querystring.*` identity source in order; an
+  HTTP API JWT authorizer and a REST Cognito user-pool authorizer validate the
+  token against the issuer's JWKS. Lambda authorizers that return an IAM policy
+  for HTTP or REST routes (R2b), IAM authorization, and
+  `$context`/`$stageVariables` identity sources fail closed rather than
+  bypassing a real authorization decision. Cognito's hosted UI/OAuth flows are
+  not served, so a token must come from the pool's API (`InitiateAuth`) or a
+  local test issuer.
 - **IAM policy evaluation** remains a docs/125 true limit. SSM parameters,
   Secrets Manager secrets and their resource policies, SNS topic policies,
   Cognito user pools and KMS keys are provisioned, but a policy attached to

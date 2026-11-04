@@ -596,6 +596,9 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 	if err = r.startWebSocketManagement(ctx, spec); err != nil {
 		return nil, err
 	}
+	if err = r.resolveRouteAuthorizers(spec); err != nil {
+		return nil, err
+	}
 	if err = r.resolveEnvironment(spec, targets); err != nil {
 		return nil, err
 	}
@@ -1118,6 +1121,7 @@ func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 			return fmt.Errorf("bind %s listener: %w", target.LogicalID, err)
 		}
 		transport := NewTransport(target, invokers, r.semaphore, r.logf)
+		transport.Clock = r.clock
 		server := &http.Server{
 			Handler:           transport,
 			ReadHeaderTimeout: 10 * time.Second,

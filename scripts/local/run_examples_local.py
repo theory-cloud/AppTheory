@@ -2015,7 +2015,7 @@ def run_lambda_role(harness: Harness, kind: str) -> str:
                 or not str(cognito.get("poolArn") or "").endswith(f"userpool/{pool_id}")
             ):
                 raise HarnessFailure(f"lambda-role custom: Cognito GetAtt values were not resolved: {cognito}")
-            pool = session.resource(kind="AWS::Cognito::UserPool")
+            pool = session.resource(logical_prefix="CognitoPool", kind="AWS::Cognito::UserPool")
             issuer = str(pool.get("localIssuer") or "")
             if not issuer.startswith("http://127.0.0.1:"):
                 raise HarnessFailure(f"lambda-role custom: the pool has no local issuer: {pool}")
@@ -2501,6 +2501,158 @@ def run_restv1_inventory(harness: Harness) -> str:
 
 def run_restv1_sse(harness: Harness) -> str:
     return run_restv1(harness, "sse")
+
+
+def _cognito(harness: Harness, endpoint: str, *arguments: str) -> subprocess.CompletedProcess:
+    return harness.run(
+        ["aws", "--endpoint-url", endpoint, "cognito-idp", *arguments],
+        timeout=180,
+    )
+
+
+def _cognito_tokens(harness: Harness, endpoint: str, pool: dict, client: dict, username: str) -> dict:
+    """Create a real user and mint real id/access tokens through the Cognito API."""
+    pool_id = pool["name"]
+    client_id = client["name"]
+    _cognito(
+        harness, endpoint,
+        "admin-create-user",
+        "--user-pool-id", pool_id,
+        "--username", username,
+        "--message-action", "SUPPRESS",
+    )
+    _cognito(
+        harness, endpoint,
+        "admin-set-user-password",
+        "--user-pool-id", pool_id,
+        "--username", username,
+        "--password", "Passw0rd!23",
+        "--permanent",
+    )
+    result = _cognito(
+        harness, endpoint,
+        "admin-initiate-auth",
+        "--user-pool-id", pool_id,
+        "--client-id", client_id,
+        "--auth-flow", "ADMIN_USER_PASSWORD_AUTH",
+        "--auth-parameters", f"USERNAME={username},PASSWORD=Passw0rd!23",
+    )
+    try:
+        return json.loads(result.stdout)["AuthenticationResult"]
+    except (json.JSONDecodeError, KeyError) as exc:
+        raise HarnessFailure(f"cognito: no AuthenticationResult for {username}: {exc}", result.stdout) from exc
+
+
+def _api_by_prefix(session: LocalSession, prefix: str, api_class: str) -> dict:
+    matches = [
+        api for api in session.info.get("apis") or []
+        if api.get("class") == api_class and str(api.get("logicalId") or "").startswith(prefix)
+    ]
+    if len(matches) != 1:
+        raise HarnessFailure(f"want one {api_class} API with prefix {prefix}, got {matches}")
+    return matches[0]
+
+
+def run_lambda_role_authorizers(harness: Harness) -> str:
+    """HTTP API JWT and REST Cognito authorizers, with real cognito tokens.
+
+    The clock starts at wall time so a freshly minted token is valid; advancing
+    it two hours proves the expiry is checked against the run clock.
+    """
+    now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+    session = start_local_session(
+        harness,
+        LAMBDA_ROLE_APP,
+        name="lambda-role-auth",
+        backends=("moto", "s3proxy"),
+        clock="test=" + now.isoformat().replace("+00:00", "Z"),
+    )
+    try:
+        pool = session.resource(logical_prefix="CognitoPool", kind="AWS::Cognito::UserPool")
+        client = session.resource(logical_prefix="CognitoClient", kind="AWS::Cognito::UserPoolClient")
+        other_client = session.resource(logical_prefix="OtherCognitoClient", kind="AWS::Cognito::UserPoolClient")
+        foreign_pool = session.resource(logical_prefix="ForeignCognitoPool", kind="AWS::Cognito::UserPool")
+        foreign_client = session.resource(logical_prefix="ForeignCognitoClient", kind="AWS::Cognito::UserPoolClient")
+        endpoint = session_endpoint(session, "cognito-idp")
+
+        valid = _cognito_tokens(harness, endpoint, pool, client, "alice")
+        other = _cognito_tokens(harness, endpoint, pool, other_client, "bob")
+        foreign = _cognito_tokens(harness, endpoint, foreign_pool, foreign_client, "carol")
+
+        http_api = _api_by_prefix(session, "AuthorizedHttpApi", "httpv2")
+        rest_api = _api_by_prefix(session, "AuthorizedRestApi", "restv1")
+        http_base = http_api["url"]
+        rest_base = rest_api["url"]
+
+        # The valid ID token reaches the integration with the documented claims.
+        status, payload, _ = _json_request(
+            "GET", f"{http_base}/protected", headers={"Authorization": f"Bearer {valid['IdToken']}"}
+        )
+        expect_status(status, 200, "jwt authorizer GET /protected", json.dumps(payload))
+        claims = payload.get("claims") or {}
+        if claims.get("token_use") != "id" or claims.get("aud") != client["name"]:
+            raise HarnessFailure(f"jwt authorizer: unexpected claims {claims}")
+        if pool["name"] not in str(claims.get("iss")):
+            raise HarnessFailure(f"jwt authorizer: the issuer claim {claims.get('iss')!r} does not name the pool")
+        if (payload.get("authorizer") or {}).get("jwt") is None:
+            raise HarnessFailure(f"jwt authorizer: requestContext.authorizer.jwt is missing: {payload}")
+
+        tampered = valid["IdToken"][:-4] + ("AAAA" if not valid["IdToken"].endswith("AAAA") else "BBBB")
+        cases = [
+            ("no token", None, 401),
+            ("bad signature", f"Bearer {tampered}", 401),
+            ("wrong audience", f"Bearer {other['IdToken']}", 401),
+            ("wrong issuer", f"Bearer {foreign['IdToken']}", 401),
+            ("wrong scheme", f"Basic {valid['IdToken']}", 401),
+        ]
+        for label, header, want in cases:
+            headers = {"Authorization": header} if header else {}
+            status, text, _ = http_request("GET", f"{http_base}/protected", headers=headers)
+            expect_status(status, want, f"jwt authorizer {label}", text)
+
+        # The REST Cognito authorizer accepts the access token and exposes its
+        # claims; a route whose scope the token lacks is refused with 403.
+        status, payload, _ = _json_request(
+            "GET", f"{rest_base}/protected", headers={"Authorization": f"Bearer {valid['AccessToken']}"}
+        )
+        expect_status(status, 200, "cognito authorizer GET /protected", json.dumps(payload))
+        claims = payload.get("claims") or {}
+        if claims.get("token_use") != "access" or claims.get("username") != "alice":
+            raise HarnessFailure(f"cognito authorizer: unexpected claims {claims}")
+        if "aws.cognito.signin.user.admin" not in str(claims.get("scope")):
+            raise HarnessFailure(f"cognito authorizer: the scope claim {claims.get('scope')!r} is wrong")
+        status, text, _ = http_request(
+            "GET", f"{rest_base}/admin", headers={"Authorization": f"Bearer {valid['AccessToken']}"}
+        )
+        expect_status(status, 403, "cognito authorizer GET /admin (missing scope)", text)
+        status, text, _ = http_request(
+            "GET", f"{rest_base}/admin", headers={"Authorization": f"Bearer {foreign['AccessToken']}"}
+        )
+        expect_status(status, 401, "cognito authorizer GET /admin (wrong issuer)", text)
+        status, text, _ = http_request("GET", f"{rest_base}/protected")
+        expect_status(status, 401, "cognito authorizer GET /protected (no token)", text)
+
+        # The expiry is checked against the run clock: two hours later the same
+        # token is expired.
+        session.clock_advance("2h")
+        status, text, _ = http_request(
+            "GET", f"{http_base}/protected", headers={"Authorization": f"Bearer {valid['IdToken']}"}
+        )
+        expect_status(status, 401, "jwt authorizer expired token", text)
+        status, text, _ = http_request(
+            "GET", f"{rest_base}/protected", headers={"Authorization": f"Bearer {valid['AccessToken']}"}
+        )
+        expect_status(status, 401, "cognito authorizer expired token", text)
+        return (
+            "a real ID token minted by the moto Cognito pool reached the HTTP API JWT-protected route and "
+            "the integration received requestContext.authorizer.jwt.claims (iss, aud, token_use); a real "
+            "access token reached the REST Cognito-protected route with its claims and the documented "
+            "scope; no token, a bad signature, a wrong audience, a wrong issuer and a Basic scheme were "
+            "refused with 401, a missing scope with 403, and after advancing the run clock two hours the "
+            "same tokens were refused as expired"
+        )
+    finally:
+        stop_local_session(harness, session)
 
 
 def run_lambda_role_index(harness: Harness) -> str:
@@ -5573,6 +5725,7 @@ RUNNERS: dict[str, Callable[[Harness], str]] = {
     "lambda-role-index": run_lambda_role_index,
     "lambda-role-encrypted": run_lambda_role_encrypted,
     "lambda-role-custom": run_lambda_role_custom,
+    "lambda-role-authorizers": run_lambda_role_authorizers,
     "sqs-producer": run_sqs_producer,
     "sqs-sns-publisher": run_sqs_sns_publisher,
     "sqs-sns-targets": run_sqs_sns_targets,

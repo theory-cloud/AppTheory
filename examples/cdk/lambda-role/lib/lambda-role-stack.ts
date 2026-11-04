@@ -7,6 +7,10 @@ import {
 } from "@theory-cloud/apptheory-cdk";
 import * as cdk from "aws-cdk-lib";
 import type { StackProps } from "aws-cdk-lib";
+import * as apigateway from "aws-cdk-lib/aws-apigateway";
+import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
+import * as apigwv2Authorizers from "aws-cdk-lib/aws-apigatewayv2-authorizers";
+import * as apigwv2Integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import * as cognito from "aws-cdk-lib/aws-cognito";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
@@ -239,6 +243,94 @@ export class LambdaRoleStack extends cdk.Stack {
             tracing: lambda.Tracing.ACTIVE,
             description: "Lambda with custom S3, SSM, Secrets Manager, and Cognito permissions",
         });
+
+        // ========================================================================
+        // JWT and Cognito authorizers: the runner validates a real token minted by
+        // the local Cognito pool and exposes the documented claims to the
+        // integration. The HTTP API declares a JWT authorizer whose issuer names
+        // the pool; the REST API declares a COGNITO_USER_POOLS authorizer with an
+        // access-token scope per route.
+        // https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-jwt-authorizer.html
+        // https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-integrate-with-cognito.html
+        // ========================================================================
+
+        // A second client of the same pool mints tokens whose audience the HTTP
+        // JWT authorizer does not accept, and a second pool mints tokens whose
+        // issuer it does not accept. Both are fixtures for the refusal rows.
+        const otherClient = new cognito.CfnUserPoolClient(this, "OtherCognitoClient", {
+            userPoolId: cognitoPool.ref,
+            clientName: "apptheory-local-other-client",
+            generateSecret: false,
+        });
+        const foreignPool = new cognito.CfnUserPool(this, "ForeignCognitoPool", {
+            userPoolName: "apptheory-local-foreign-pool",
+        });
+        const foreignClient = new cognito.CfnUserPoolClient(this, "ForeignCognitoClient", {
+            userPoolId: foreignPool.ref,
+            clientName: "apptheory-local-foreign-client",
+            generateSecret: false,
+        });
+
+        const authorizerFn = new lambda.Function(this, "AuthorizerFn", {
+            runtime: lambda.Runtime.NODEJS_24_X,
+            handler: "authorizer.handler",
+            code: handlerCode,
+            timeout: cdk.Duration.seconds(10),
+            description: "Echoes the authorizer context the integration received",
+        });
+
+        const issuer = cdk.Fn.join("", [
+            "https://cognito-idp.",
+            cdk.Aws.REGION,
+            ".amazonaws.com/",
+            cognitoPool.ref,
+        ]);
+        const jwtAuthorizer = new apigwv2Authorizers.HttpJwtAuthorizer("JwtAuthorizer", issuer, {
+            jwtAudience: [cognitoClient.ref],
+            identitySource: ["$request.header.Authorization"],
+        });
+        const authorizedHttpApi = new apigwv2.HttpApi(this, "AuthorizedHttpApi", {
+            apiName: "apptheory-local-authorized-http",
+        });
+        authorizedHttpApi.addRoutes({
+            path: "/protected",
+            methods: [apigwv2.HttpMethod.GET],
+            integration: new apigwv2Integrations.HttpLambdaIntegration("AuthorizedHttpIntegration", authorizerFn),
+            authorizer: jwtAuthorizer,
+        });
+
+        // The REST authorizer resolves the pool through its ARN. The L1 pool has
+        // no IUserPool, so the ARN is imported.
+        const poolForAuthorizer = cognito.UserPool.fromUserPoolArn(
+            this,
+            "CognitoPoolForAuthorizer",
+            cdk.Fn.getAtt("CognitoPool", "Arn").toString(),
+        );
+        const cognitoAuthorizer = new apigateway.CognitoUserPoolsAuthorizer(this, "CognitoAuthorizer", {
+            cognitoUserPools: [poolForAuthorizer],
+            authorizerName: "apptheory-local-cognito",
+            identitySource: "method.request.header.Authorization",
+        });
+        const authorizedRestApi = new apigateway.RestApi(this, "AuthorizedRestApi", {
+            restApiName: "apptheory-local-authorized-rest",
+        });
+        const restIntegration = new apigateway.LambdaIntegration(authorizerFn);
+        authorizedRestApi.root.addResource("protected").addMethod("GET", restIntegration, {
+            authorizationType: apigateway.AuthorizationType.COGNITO,
+            authorizer: cognitoAuthorizer,
+            authorizationScopes: ["aws.cognito.signin.user.admin"],
+        });
+        authorizedRestApi.root.addResource("admin").addMethod("GET", restIntegration, {
+            authorizationType: apigateway.AuthorizationType.COGNITO,
+            authorizer: cognitoAuthorizer,
+            authorizationScopes: ["api/admin"],
+        });
+
+        new cdk.CfnOutput(this, "AuthorizedHttpApiUrl", { value: authorizedHttpApi.apiEndpoint });
+        new cdk.CfnOutput(this, "AuthorizedRestApiUrl", { value: authorizedRestApi.url });
+        new cdk.CfnOutput(this, "OtherClientId", { value: otherClient.ref });
+        new cdk.CfnOutput(this, "ForeignPoolId", { value: foreignPool.ref });
+        new cdk.CfnOutput(this, "ForeignClientId", { value: foreignClient.ref });
 
         // ========================================================================
         // Pattern 5: Adding Permissions After Construction

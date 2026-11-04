@@ -115,7 +115,32 @@ const assertions = {
     const functions = byType("AWS::Lambda::Function").filter(
       ([id]) => !id.includes("AutoDeleteObjects"),
     );
-    assert.equal(functions.length, 5, "expected five example functions");
+    assert.equal(functions.length, 6, "expected six example functions");
+    assert.ok(
+      functions.some(([, fn]) => fn.Properties.Handler === "authorizer.handler"),
+      "missing the authorizer echo function",
+    );
+    // The JWT and Cognito authorizers the runner validates tokens against.
+    const jwtAuthorizers = byType("AWS::ApiGatewayV2::Authorizer").filter(
+      ([, authorizer]) => authorizer.Properties.AuthorizerType === "JWT",
+    );
+    assert.equal(jwtAuthorizers.length, 1, "missing the HTTP API JWT authorizer");
+    assert.ok(
+      jwtAuthorizers[0][1].Properties.JwtConfiguration?.Issuer,
+      "the JWT authorizer has no issuer",
+    );
+    const cognitoAuthorizers = byType("AWS::ApiGateway::Authorizer").filter(
+      ([, authorizer]) => authorizer.Properties.Type === "COGNITO_USER_POOLS",
+    );
+    assert.equal(cognitoAuthorizers.length, 1, "missing the REST Cognito authorizer");
+    const scopedMethods = byType("AWS::ApiGateway::Method").filter(
+      ([, method]) => method.Properties.AuthorizationType === "COGNITO_USER_POOLS",
+    );
+    assert.equal(scopedMethods.length, 2, "expected two Cognito-protected methods");
+    assert.deepEqual(
+      scopedMethods.map(([, method]) => method.Properties.AuthorizationScopes).sort(),
+      [["api/admin"], ["aws.cognito.signin.user.admin"]],
+    );
     const tracing = functions.filter(([, fn]) => fn.Properties.TracingConfig?.Mode === "Active");
     assert.equal(tracing.length, 3, "expected three X-Ray-traced functions");
     const encrypted = functions.find(([, fn]) => fn.Properties.Handler === "encrypted.handler");

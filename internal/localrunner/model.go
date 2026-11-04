@@ -148,6 +148,25 @@ type Route struct {
 	// $request.header.Authorization. The transport refuses a request that does
 	// not carry every source before invoking the authorizer.
 	AuthorizerIdentitySources []string `json:"authorizerIdentitySources,omitempty"`
+	// AuthorizerKind is empty for a route with no authorizer, or one of the
+	// AuthorizerKind values: http-request-simple, http-jwt, rest-cognito-user-pools.
+	AuthorizerKind AuthorizerKind `json:"authorizerKind,omitempty"`
+	// JWTIssuer, JWTIssuerExpression and JWTAudience describe an HTTP API JWT
+	// authorizer. The expression is the raw template value until the run
+	// resolves it against the provisioned Cognito pool.
+	JWTIssuer              string   `json:"jwtIssuer,omitempty"`
+	JWTIssuerExpression    string   `json:"jwtIssuerExpression,omitempty"`
+	JWTJWTests             []string `json:"-"`
+	JWTAudience            []string `json:"jwtAudience,omitempty"`
+	JWTAudienceExpressions []string `json:"-"`
+	// JWKSURL and AcceptedIssuers are filled at run time, after the local
+	// issuer is known.
+	JWKSURL         string   `json:"jwksUrl,omitempty"`
+	AcceptedIssuers []string `json:"acceptedIssuers,omitempty"`
+	// CognitoPoolARNs are the pools a REST COGNITO_USER_POOLS authorizer names.
+	CognitoPoolARNs []string `json:"cognitoPoolArns,omitempty"`
+	// AuthorizationScopes are the scopes the route requires.
+	AuthorizationScopes []string `json:"authorizationScopes,omitempty"`
 	// Mock is set for a REST API MOCK integration. A mock route has no
 	// function and no invoker; the transport returns the declared response.
 	Mock      *MockResponse `json:"mock,omitempty"`
@@ -483,6 +502,8 @@ func (s *Spec) ServedFunctions() []string {
 // Function URL targets, HTTP API authorizers, enabled event-source consumers,
 // enabled EventBridge rule targets and Lambda log-subscription destinations. It
 // is the local run's function set.
+//
+//nolint:gocyclo // one explicit branch per supported provider value.
 func (s *Spec) RuntimeFunctions() []string { //nolint:gocyclo // one explicit loop per derived source kind.
 	seen := map[string]struct{}{}
 	for _, id := range s.ServedFunctions() {
@@ -511,13 +532,13 @@ func (s *Spec) RuntimeFunctions() []string { //nolint:gocyclo // one explicit lo
 			seen[subscription.Function] = struct{}{}
 		}
 	}
-	for id := range webSocketRouteFunctionSet(s) {
-		seen[id] = struct{}{}
-	}
 	for _, notification := range s.Notifications {
 		if notification.DestinationType == notificationDestinationFunction && notification.Destination != "" {
 			seen[notification.Destination] = struct{}{}
 		}
+	}
+	for id := range webSocketRouteFunctionSet(s) {
+		seen[id] = struct{}{}
 	}
 	out := make([]string, 0, len(seen))
 	for id := range seen {
