@@ -367,7 +367,7 @@ export class LambdaRoleStack extends cdk.Stack {
             name: "apptheory-local-request",
             type: "REQUEST",
             identitySource: "method.request.header.X-Tenant, method.request.querystring.scope",
-            authorizerResultTtlInSeconds: 0,
+            authorizerResultTtlInSeconds: 60,
             authorizerUri: restAuthorizerUri,
         });
         policyAuthorizerFn.addPermission("RestAuthorizerInvoke", {
