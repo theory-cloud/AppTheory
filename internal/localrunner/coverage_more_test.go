@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -182,8 +183,16 @@ func TestRunnerBusAndDeliveryClients(t *testing.T) {
 	if err := runner.startEventBridgeBus(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if runner.eventBusURL == "" || runner.eventBusContainer == "" {
+	if !strings.HasPrefix(runner.eventBusURL, "http://127.0.0.1:") ||
+		!strings.HasPrefix(runner.eventBusContainer, "http://host.docker.internal:") {
 		t.Fatalf("bus URLs: %q %q", runner.eventBusURL, runner.eventBusContainer)
+	}
+	if len(runner.listeners) != 1 {
+		t.Fatalf("bus listeners: %d", len(runner.listeners))
+	}
+	address, ok := runner.listeners[0].Addr().(*net.TCPAddr)
+	if !ok || !address.IP.IsUnspecified() {
+		t.Fatalf("the bus must listen on every interface for host-gateway: %v", runner.listeners[0].Addr())
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, runner.eventBusURL, nil)
 	if err != nil {

@@ -547,13 +547,16 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 	return spec, nil
 }
 
-// startEventBridgeBus serves the EventBridge PutEvents JSON protocol on a
-// loopback endpoint. Containers reach it through host.docker.internal, which is
-// added as a host entry before the preflight; the harness and a developer use
-// the loopback URL the session reports.
+// startEventBridgeBus serves the EventBridge PutEvents JSON protocol for the
+// functions and the harness. Containers reach it through host.docker.internal,
+// which is added as a host entry before the preflight. Docker Desktop forwards
+// that name to the host loopback, but on Linux the host-gateway address is the
+// bridge interface, where a loopback-only listener is unreachable; the bus
+// therefore binds every interface while the URL the session reports stays
+// loopback-only.
 func (r *Runner) startEventBridgeBus(ctx context.Context) error {
 	var listenConfig net.ListenConfig
-	listener, err := listenConfig.Listen(ctx, "tcp", "127.0.0.1:0")
+	listener, err := listenConfig.Listen(ctx, "tcp", "0.0.0.0:0")
 	if err != nil {
 		return fmt.Errorf("bind the local EventBridge bus: %w", err)
 	}
@@ -576,7 +579,7 @@ func (r *Runner) startEventBridgeBus(ctx context.Context) error {
 		return fmt.Errorf("the local EventBridge bus has no TCP address")
 	}
 	port := tcpAddr.Port
-	r.eventBusURL = "http://" + listener.Addr().String()
+	r.eventBusURL = fmt.Sprintf("http://127.0.0.1:%d", port)
 	r.eventBusContainer = fmt.Sprintf("http://host.docker.internal:%d", port)
 	r.endpoints = append(r.endpoints, Endpoint{Service: "events", URL: r.eventBusContainer})
 	r.options.AddHosts = append(r.options.AddHosts, "host.docker.internal:host-gateway")

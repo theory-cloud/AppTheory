@@ -1062,12 +1062,15 @@ delivery path.
 
 ### EventBridge delivery
 
-The runner serves the EventBridge `PutEvents` JSON protocol itself on a loopback
-endpoint injected into every function as `AWS_ENDPOINT_URL_EVENTS` and
+The runner serves the EventBridge `PutEvents` JSON protocol itself on an
+ephemeral port injected into every function as `AWS_ENDPOINT_URL_EVENTS` and
 `AWS_ENDPOINT_URL_EVENTBRIDGE` (the SDKs and Tools reference names the override
 from EventBridge's API-model serviceId; both spellings point at the same
-endpoint). A handler's real SDK client and the harness's AWS CLI reach the same
-endpoint. A rule's
+endpoint). Function containers reach it as `host.docker.internal:<port>` with
+the `host-gateway` entry the runner adds. The listener binds every interface so
+that entry works on Linux, where it resolves to the bridge address; the session
+reports and the harness uses `http://127.0.0.1:<port>`. A handler's real SDK
+client and the harness's AWS CLI reach the same endpoint. A rule's
 pattern is matched by the validated EventBridge evaluator E1b uses, and the
 runner performs input shaping, target delivery, retry and dead-letter handling.
 
