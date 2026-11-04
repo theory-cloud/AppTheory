@@ -149,8 +149,22 @@ type Route struct {
 	// not carry every source before invoking the authorizer.
 	AuthorizerIdentitySources []string `json:"authorizerIdentitySources,omitempty"`
 	// AuthorizerKind is empty for a route with no authorizer, or one of the
-	// AuthorizerKind values: http-request-simple, http-jwt, rest-cognito-user-pools.
+	// AuthorizerKind values: http-request-simple, http-jwt, lambda-request-policy,
+	// rest-cognito-user-pools.
 	AuthorizerKind AuthorizerKind `json:"authorizerKind,omitempty"`
+	// AuthorizerRESTType is the REST API authorizer Type (TOKEN or REQUEST) for
+	// a Lambda authorizer that returns an IAM policy.
+	AuthorizerRESTType string `json:"authorizerRestType,omitempty"`
+	// AuthorizerCacheTTLSeconds is AuthorizerResultTtlInSeconds on the run clock.
+	// Zero disables the authorizer result cache.
+	AuthorizerCacheTTLSeconds int `json:"authorizerCacheTtlSeconds,omitempty"`
+	// AuthorizerValidationExpression is a TOKEN authorizer's
+	// IdentityValidationExpression, applied to the token before the authorizer
+	// runs.
+	AuthorizerValidationExpression string `json:"authorizerValidationExpression,omitempty"`
+	// AuthorizerPayloadFormat is an HTTP API Lambda authorizer's payload format
+	// version (1.0 or 2.0).
+	AuthorizerPayloadFormat string `json:"authorizerPayloadFormat,omitempty"`
 	// JWTIssuer, JWTIssuerExpression and JWTAudience describe an HTTP API JWT
 	// authorizer. The expression is the raw template value until the run
 	// resolves it against the provisioned Cognito pool.

@@ -2634,6 +2634,97 @@ def run_lambda_role_authorizers(harness: Harness) -> str:
         status, text, _ = http_request("GET", f"{rest_base}/protected")
         expect_status(status, 401, "cognito authorizer GET /protected (no token)", text)
 
+        # REST TOKEN, REST REQUEST and HTTP API IAM-policy authorizers run the
+        # real policy function. The function counts its own invocations and
+        # returns the count in the context, so a cached decision is proven by an
+        # unchanged count rather than by the runner's bookkeeping.
+        policy_api = _api_by_prefix(session, "PolicyHttpApi", "httpv2")
+        policy_base = policy_api["url"]
+
+        status, payload, _ = _json_request(
+            "GET", f"{rest_base}/token", headers={"Authorization": "allow"}
+        )
+        expect_status(status, 200, "rest token authorizer allow", json.dumps(payload))
+        authorizer = payload.get("authorizer") or {}
+        if authorizer.get("tenant") != "t-1":
+            raise HarnessFailure(f"rest token authorizer context = {authorizer}")
+        token_first = int(authorizer.get("invocation", "0"))
+        status, payload, _ = _json_request(
+            "GET", f"{rest_base}/token", headers={"Authorization": "allow"}
+        )
+        expect_status(status, 200, "rest token authorizer cached", json.dumps(payload))
+        if int((payload.get("authorizer") or {}).get("invocation", "0")) != token_first:
+            raise HarnessFailure("the cached rest token decision invoked the authorizer again")
+        status, _unused, _ = http_request("GET", f"{rest_base}/token")
+        expect_status(status, 401, "rest token authorizer missing token", "")
+        for label, token, want in (
+            ("deny", "deny", 403),
+            ("unauthorized", "unauthorized", 401),
+            ("invalid", "invalid", 500),
+        ):
+            status, text, _ = http_request(
+                "GET", f"{rest_base}/token", headers={"Authorization": token}
+            )
+            expect_status(status, want, f"rest token authorizer {label}", text)
+
+        # The TOKEN authorizer caches for 60 seconds on the run clock: one
+        # second past the TTL the same token invokes the function again.
+        session.clock_advance("61s")
+        status, payload, _ = _json_request(
+            "GET", f"{rest_base}/token", headers={"Authorization": "allow"}
+        )
+        expect_status(status, 200, "rest token authorizer after the ttl", json.dumps(payload))
+        token_after = int((payload.get("authorizer") or {}).get("invocation", "0"))
+        if token_after <= token_first:
+            raise HarnessFailure(
+                f"rest token authorizer did not invoke again after the ttl: {payload.get('authorizer')}"
+            )
+
+        # The REQUEST authorizer declares two identity sources and no cache.
+        status, payload, _ = _json_request(
+            "GET",
+            f"{rest_base}/request?scope=read",
+            headers={"X-Tenant": "t-1"},
+        )
+        expect_status(status, 200, "rest request authorizer allow", json.dumps(payload))
+        if (payload.get("authorizer") or {}).get("tenant") != "t-1":
+            raise HarnessFailure(f"rest request authorizer context = {payload.get('authorizer')}")
+        status, text, _ = http_request(
+            "GET", f"{rest_base}/request", headers={"X-Tenant": "t-1"}
+        )
+        expect_status(status, 401, "rest request authorizer missing query source", text)
+        status, text, _ = http_request(
+            "GET", f"{rest_base}/request?scope=read", headers={"X-Tenant": "deny"}
+        )
+        expect_status(status, 403, "rest request authorizer deny", text)
+
+        # The HTTP API authorizer returns an IAM policy in payload format 1.0
+        # and caches for 60 seconds on the run clock.
+        status, payload, _ = _json_request(
+            "GET", f"{policy_base}/policy", headers={"Authorization": "allow"}
+        )
+        expect_status(status, 200, "http policy authorizer allow", json.dumps(payload))
+        first_invocation = (payload.get("authorizer") or {}).get("invocation")
+        if not first_invocation:
+            raise HarnessFailure(f"http policy authorizer context = {payload.get('authorizer')}")
+        status, payload, _ = _json_request(
+            "GET", f"{policy_base}/policy", headers={"Authorization": "allow"}
+        )
+        expect_status(status, 200, "http policy authorizer cached", json.dumps(payload))
+        if (payload.get("authorizer") or {}).get("invocation") != first_invocation:
+            raise HarnessFailure("the cached http policy decision invoked the authorizer again")
+        for label, token, want in (
+            ("deny", "deny", 403),
+            ("unauthorized", "unauthorized", 401),
+            ("invalid", "invalid", 500),
+        ):
+            status, text, _ = http_request(
+                "GET", f"{policy_base}/policy", headers={"Authorization": token}
+            )
+            expect_status(status, want, f"http policy authorizer {label}", text)
+        status, text, _ = http_request("GET", f"{policy_base}/policy")
+        expect_status(status, 401, "http policy authorizer missing identity source", text)
+
         # The expiry is checked against the run clock: two hours later the same
         # token is expired.
         session.clock_advance("2h")

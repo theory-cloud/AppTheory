@@ -115,10 +115,14 @@ const assertions = {
     const functions = byType("AWS::Lambda::Function").filter(
       ([id]) => !id.includes("AutoDeleteObjects"),
     );
-    assert.equal(functions.length, 6, "expected six example functions");
+    assert.equal(functions.length, 7, "expected seven example functions");
     assert.ok(
       functions.some(([, fn]) => fn.Properties.Handler === "authorizer.handler"),
       "missing the authorizer echo function",
+    );
+    assert.ok(
+      functions.some(([, fn]) => fn.Properties.Handler === "policy-authorizer.handler"),
+      "missing the IAM-policy authorizer function",
     );
     // The JWT and Cognito authorizers the runner validates tokens against.
     const jwtAuthorizers = byType("AWS::ApiGatewayV2::Authorizer").filter(
@@ -133,6 +137,37 @@ const assertions = {
       ([, authorizer]) => authorizer.Properties.Type === "COGNITO_USER_POOLS",
     );
     assert.equal(cognitoAuthorizers.length, 1, "missing the REST Cognito authorizer");
+    // The REST TOKEN/REQUEST and HTTP API IAM-policy authorizers R2b serves.
+    const tokenAuthorizer = byType("AWS::ApiGateway::Authorizer").find(
+      ([, authorizer]) => authorizer.Properties.Type === "TOKEN",
+    );
+    assert.ok(tokenAuthorizer, "missing the REST TOKEN authorizer");
+    assert.equal(tokenAuthorizer[1].Properties.AuthorizerResultTtlInSeconds, 60);
+    assert.equal(
+      tokenAuthorizer[1].Properties.IdentitySource,
+      "method.request.header.Authorization",
+    );
+    const requestAuthorizer = byType("AWS::ApiGateway::Authorizer").find(
+      ([, authorizer]) => authorizer.Properties.Type === "REQUEST",
+    );
+    assert.ok(requestAuthorizer, "missing the REST REQUEST authorizer");
+    assert.equal(
+      requestAuthorizer[1].Properties.IdentitySource,
+      "method.request.header.X-Tenant, method.request.querystring.scope",
+    );
+    const policyHttpAuthorizers = byType("AWS::ApiGatewayV2::Authorizer").filter(
+      ([, authorizer]) => authorizer.Properties.AuthorizerType === "REQUEST",
+    );
+    assert.equal(policyHttpAuthorizers.length, 1, "missing the HTTP API policy authorizer");
+    assert.notEqual(
+      policyHttpAuthorizers[0][1].Properties.EnableSimpleResponses,
+      true,
+      "the HTTP API policy authorizer must not use simple responses",
+    );
+    const customMethods = byType("AWS::ApiGateway::Method").filter(
+      ([, method]) => method.Properties.AuthorizationType === "CUSTOM",
+    );
+    assert.equal(customMethods.length, 2, "expected two CUSTOM-authorizer methods");
     const scopedMethods = byType("AWS::ApiGateway::Method").filter(
       ([, method]) => method.Properties.AuthorizationType === "COGNITO_USER_POOLS",
     );

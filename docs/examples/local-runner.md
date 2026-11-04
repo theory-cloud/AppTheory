@@ -578,9 +578,10 @@ method ARN with IAM-style `*`/`?` wildcards; an explicit Deny wins, and no
 matching Allow refuses the connection with 401. This is an authorizer-policy
 match, never IAM evaluation, which stays a docs/125 true limit. A request that
 does not carry every configured identity source is refused before the authorizer
-runs. Only `$connect` can be authorized; an authorizer on another route fails
-closed at plan time. Lambda authorizers that return a policy for REST or HTTP
-API routes are R2b.
+runs. Only `$connect` can be authorized on a WebSocket API; an authorizer on
+another WebSocket route fails closed at plan time. REST and HTTP API Lambda
+authorizers that return a policy are served on their own APIs; see
+[Authorizers](#authorizers).
 
 **The `@connections` management API.** The runner serves
 `PostToConnection`, `GetConnection` and `DeleteConnection` on a TLS listener
@@ -670,9 +671,57 @@ ten minutes ahead), and `clock.advance` past its expiry to prove the check. A
 test clock that starts before the token's `iat` refuses it, which is the
 documented behaviour.
 
-**Still refused.** Lambda authorizers that return an IAM policy for HTTP or REST
-routes (R2b), IAM authorization, and `$context`/`$stageVariables` identity
-sources fail closed at plan time.
+**REST API Lambda authorizers (TOKEN and REQUEST).** An
+`AWS::ApiGateway::Authorizer` with `Type: TOKEN` or `Type: REQUEST` runs through
+the real function path before the method's integration, as
+[Use API Gateway Lambda authorizers](https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-use-lambda-authorizer.html)
+describes:
+
+- A **TOKEN** authorizer receives `{"type":"TOKEN","authorizationToken":<value>,
+  "methodArn":<arn>}`; the token comes from the single
+  `method.request.header.<name>` identity source. With caching enabled, the
+  token value is the cache key. `IdentityValidationExpression` is applied to the
+  token before the authorizer runs, and a non-match is 401 (TOKEN authorizers
+  only; the property on a REQUEST authorizer is refused at plan time).
+- A **REQUEST** authorizer receives the documented request event (`type`,
+  `methodArn`, `resource`, `path`, `httpMethod`, `headers`,
+  `multiValueHeaders`, `queryStringParameters`,
+  `multiValueQueryStringParameters`, `pathParameters`, `stageVariables`,
+  `requestContext`, `body`, `isBase64Encoded`). Its identity sources are the
+  comma-separated `method.request.header.*`, `method.request.querystring.*` and
+  `method.request.path.*` expressions in configured order; with caching enabled
+  every value is part of the cache key, in that order.
+- With caching on, a missing, null or empty identity source is refused with 401
+  **without invoking the authorizer**. `AuthorizerResultTtlInSeconds` is applied
+  on the run clock (CloudFormation's default is 300; `0` disables the cache), so
+  `--clock test` plus `clock.advance` expires a cached decision.
+- The returned policy is matched against the request's method ARN with the same
+  narrow Allow/Deny match the `$connect` authorizer uses. An Allow invokes the
+  method, a Deny is **403** outside the API Gateway test environment, the
+  authorizer's documented `{"errorMessage":"Unauthorized"}` response is **401**
+  and any other response shape is **500**.
+- `context` values reach a proxy integration as
+  `requestContext.authorizer.<key>` (also usable as `$context.authorizer.<key>`
+  in mapping templates) with the documented stringified scalars; a nested object
+  in the context is refused with 500 because API Gateway accepts strings only.
+
+**HTTP API Lambda authorizers that return an IAM policy.** An
+`AWS::ApiGatewayV2::Authorizer` with `AuthorizerType: REQUEST` and
+`EnableSimpleResponses: false` (the default) runs with
+`AuthorizerPayloadFormatVersion` `1.0` or `2.0`, as
+[Control access to HTTP APIs with Lambda authorizers](https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-lambda-authorizer.html)
+describes. Payload format 1.0 receives the REST-shaped event with `methodArn`;
+2.0 receives the HTTP API v2 event with `routeArn`, `routeKey` and
+`identitySource`. Either way the returned policy is matched against the route
+ARN, the identity sources are the cache key when
+`AuthorizerResultTtlInSeconds` is set, and `$context.routeKey` can be listed to
+cache per route. A missing identity source is 401, an invalid response is 500
+and the documented `{"errorMessage":"Unauthorized"}` response is 401. The
+authorizer context reaches the integration as `requestContext.authorizer`.
+
+**Still refused.** IAM authorization (`AuthorizationType: AWS_IAM`), other
+`$context`/`$stageVariables` identity sources, and any authorizer kind the
+runner does not name above fail closed at plan time with the kind named.
 
 ## CloudFront distributions
 
@@ -1763,7 +1812,7 @@ the harness records it.
 | HTTP API `REQUEST` authorizers with simple responses | Supported | The transport invokes the real authorizer function with the API Gateway v2 REQUEST event, carrying every configured `$request.header.*` or `$request.querystring.*` identity source in order; a request missing one is refused with 401 before the authorizer runs. A false `isAuthorized` is a 401, the authorizer context is carried to the handler, and a malformed response fails closed. `$context`/`$stageVariables` sources fail closed at plan time. |
 | HTTP API JWT authorizers | Supported (L2) | RSA-based algorithms only (`RS256`, `RS384`, `RS512`); the signature is verified with the `kid` key from the issuer's JWKS, and `iss`, `aud` (or `client_id` only when `aud` is absent), `exp`, `nbf` and `iat` are checked against the run clock. `AuthorizationScopes` is an any-of match; the claims reach the integration in `requestContext.authorizer.jwt`; see [Authorizers](#authorizers). |
 | REST API Cognito user-pool authorizers | Supported (L2) | The token is validated against the pool's JWKS through the local issuer with the same RSA-only algorithm and claim checks as the HTTP JWT authorizer; `AuthorizationScopes` is an any-of match and the claims reach the integration in `requestContext.authorizer.claims`; see [Authorizers](#authorizers). |
-| REST/HTTP Lambda authorizers with IAM-policy responses (R2b) | Not served | Fails closed; the local transport must never bypass a real authorizer. A WebSocket `$connect` authorizer's policy is matched narrowly against the `$connect` method ARN (see [WebSocket APIs](#websocket-apis)). |
+| REST/HTTP Lambda authorizers with IAM-policy responses | Supported (L2) | A REST `TOKEN` or `REQUEST` `AWS::ApiGateway::Authorizer` and an HTTP API `REQUEST` authorizer with `EnableSimpleResponses: false` run the real function and match its returned policy narrowly against the method/route ARN. Identity sources are 401 before invocation when missing; `AuthorizerResultTtlInSeconds` caches on the run clock with the documented cache key; Allow invokes, Deny is 403, the `Unauthorized` error is 401 and an invalid response is 500; the stringified context reaches `requestContext.authorizer`; see [Authorizers](#authorizers). |
 | Lambda layers, container-image functions | Not served | Fail closed when a served function needs them. |
 | CloudFormation-expression environment values | Supported for `Ref`/`Fn::GetAtt`/`Fn::Join` | Tables and stream ARNs, queues, rules, buckets, KMS keys and aliases, SSM parameters, Secrets Manager ARNs, SNS topics, Kinesis streams, Cognito pool/client values, IAM/MicroVM-image/S3 Vectors ARNs and functions resolve to local values (moto/S3 require their backend). An unsupported expression fails with the function and variable named. |
 | CloudFormation-expression `MemorySize`/`Timeout` | Not resolved | A served function whose limit is `Ref`/`GetAtt`/`Fn::If` fails with the property named; the AWS defaults apply only when the property is absent. |
@@ -1810,12 +1859,13 @@ the harness records it.
 - **Kinesis shard topology is fixed.** The stream is created on moto from
   `AWS::Kinesis::Stream`, and `Ref`/`GetAtt Arn` resolve to it; the runner reads
   its shards and delivers each, but moto does not reshard.
-- **Authorizers cover three kinds.** An HTTP API `REQUEST` authorizer with
+- **Authorizers cover five kinds.** An HTTP API `REQUEST` authorizer with
   simple responses runs the real function and carries every configured
   `$request.header.*` or `$request.querystring.*` identity source in order; an
   HTTP API JWT authorizer and a REST Cognito user-pool authorizer validate the
-  token against the issuer's JWKS. Lambda authorizers that return an IAM policy
-  for HTTP or REST routes (R2b), IAM authorization, and
+  token against the issuer's JWKS; a REST TOKEN or REQUEST Lambda authorizer and
+  an HTTP API IAM-policy Lambda authorizer run the real function and match its
+  returned policy against the method or route ARN. IAM authorization and
   `$context`/`$stageVariables` identity sources fail closed rather than
   bypassing a real authorization decision. Cognito's hosted UI/OAuth flows are
   not served, so a token must come from the pool's API (`InitiateAuth`) or a

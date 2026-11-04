@@ -326,6 +326,95 @@ export class LambdaRoleStack extends cdk.Stack {
             authorizationScopes: ["api/admin"],
         });
 
+        // ========================================================================
+        // Lambda authorizers that return an IAM policy: a REST TOKEN authorizer,
+        // a REST REQUEST authorizer over two identity sources, and an HTTP API
+        // REQUEST authorizer with an IAM-policy response. The policy function
+        // counts its own invocations and returns the count in the authorizer
+        // context, so the harness can prove a cached decision did not invoke it.
+        // The REST authorizers are L1 resources because the L2 constructs do not
+        // expose AuthorizerResultTtlInSeconds or IdentityValidationExpression.
+        // https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-use-lambda-authorizer.html
+        // https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-lambda-authorizer.html
+        // ========================================================================
+
+        const policyAuthorizerFn = new lambda.Function(this, "PolicyAuthorizerFn", {
+            runtime: lambda.Runtime.NODEJS_24_X,
+            handler: "policy-authorizer.handler",
+            code: handlerCode,
+            timeout: cdk.Duration.seconds(10),
+            description: "Returns an IAM policy and counts its own invocations",
+        });
+        const restAuthorizerUri = cdk.Fn.join("", [
+            "arn:",
+            cdk.Aws.PARTITION,
+            ":apigateway:",
+            cdk.Aws.REGION,
+            ":lambda:path/2015-03-31/functions/",
+            policyAuthorizerFn.functionArn,
+            "/invocations",
+        ]);
+        const tokenAuthorizer = new apigateway.CfnAuthorizer(this, "TokenAuthorizer", {
+            restApiId: authorizedRestApi.restApiId,
+            name: "apptheory-local-token",
+            type: "TOKEN",
+            identitySource: "method.request.header.Authorization",
+            authorizerResultTtlInSeconds: 60,
+            authorizerUri: restAuthorizerUri,
+        });
+        const requestAuthorizer = new apigateway.CfnAuthorizer(this, "RequestAuthorizer", {
+            restApiId: authorizedRestApi.restApiId,
+            name: "apptheory-local-request",
+            type: "REQUEST",
+            identitySource: "method.request.header.X-Tenant, method.request.querystring.scope",
+            authorizerResultTtlInSeconds: 0,
+            authorizerUri: restAuthorizerUri,
+        });
+        policyAuthorizerFn.addPermission("RestAuthorizerInvoke", {
+            principal: new iam.ServicePrincipal("apigateway.amazonaws.com"),
+            sourceArn: cdk.Fn.join("", [
+                "arn:",
+                cdk.Aws.PARTITION,
+                ":execute-api:",
+                cdk.Aws.REGION,
+                ":",
+                cdk.Aws.ACCOUNT_ID,
+                ":",
+                authorizedRestApi.restApiId,
+                "/authorizers/*",
+            ]),
+        });
+        authorizedRestApi.root.addResource("token").addMethod("GET", restIntegration, {
+            authorizationType: apigateway.AuthorizationType.CUSTOM,
+            authorizer: tokenAuthorizerRef(tokenAuthorizer),
+        });
+        authorizedRestApi.root.addResource("request").addMethod("GET", restIntegration, {
+            authorizationType: apigateway.AuthorizationType.CUSTOM,
+            authorizer: tokenAuthorizerRef(requestAuthorizer),
+        });
+
+        const policyHttpApi = new apigwv2.HttpApi(this, "PolicyHttpApi", {
+            apiName: "apptheory-local-policy-http",
+        });
+        const policyHttpAuthorizer = new apigwv2Authorizers.HttpLambdaAuthorizer(
+            "PolicyHttpAuthorizer",
+            policyAuthorizerFn,
+            {
+                authorizerName: "apptheory-local-policy",
+                identitySource: ["$request.header.Authorization"],
+                resultsCacheTtl: cdk.Duration.seconds(60),
+                responseTypes: [apigwv2Authorizers.HttpLambdaResponseType.IAM],
+            },
+        );
+        policyHttpApi.addRoutes({
+            path: "/policy",
+            methods: [apigwv2.HttpMethod.GET],
+            integration: new apigwv2Integrations.HttpLambdaIntegration("PolicyHttpIntegration", authorizerFn),
+            authorizer: policyHttpAuthorizer,
+        });
+
+        new cdk.CfnOutput(this, "PolicyHttpApiUrl", { value: policyHttpApi.apiEndpoint });
+
         new cdk.CfnOutput(this, "AuthorizedHttpApiUrl", { value: authorizedHttpApi.apiEndpoint });
         new cdk.CfnOutput(this, "AuthorizedRestApiUrl", { value: authorizedRestApi.url });
         new cdk.CfnOutput(this, "OtherClientId", { value: otherClient.ref });
@@ -391,4 +480,16 @@ export class LambdaRoleStack extends cdk.Stack {
             description: "Data bucket for custom Lambda",
         });
     }
+}
+
+/**
+ * Wraps an L1 AWS::ApiGateway::Authorizer as the IAuthorizer an L2 Method takes.
+ *
+ * The L2 authorizer constructs do not expose AuthorizerResultTtlInSeconds or
+ * IdentityValidationExpression, so the example declares the L1 resource and
+ * passes its id through this adapter. Only the id is needed: the runner, like
+ * API Gateway, reads the authorizer resource from the template.
+ */
+function tokenAuthorizerRef(authorizer: apigateway.CfnAuthorizer): apigateway.IAuthorizer {
+    return { authorizerId: authorizer.ref };
 }

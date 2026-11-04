@@ -276,7 +276,7 @@ func webSocketRoutes( //nolint:gocognit // one explicit branch per route authori
 			if len(props.AuthorizerID) > 0 {
 				return nil, nil, unsupported(stack.Name+"/"+id, "route has an authorizer id but authorization type NONE")
 			}
-		case "CUSTOM":
+		case authorizationTypeCustom:
 			authorizerID, ok := directRefID(props.AuthorizerID)
 			if !ok {
 				return nil, nil, unsupported(stack.Name+"/"+id, "CUSTOM route does not reference an authorizer")

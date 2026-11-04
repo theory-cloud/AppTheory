@@ -291,15 +291,17 @@ func TestDeriveHTTPAuthorizerRejectsUnsupportedIdentitySource(t *testing.T) {
 	}
 }
 
-func TestDeriveHTTPAuthorizerMustBeSimpleRequest(t *testing.T) {
+func TestDeriveHTTPPolicyAuthorizerOnARoute(t *testing.T) {
 	resources := httpAPIResources("GET /hello")
 	resources["Fn"] = withAsset(lambdaFunction(nil), "asset.deadbeef")
 	resources["Authorizer"] = map[string]any{
 		"Type": typeHTTPAuthorizer,
 		"Properties": map[string]any{
-			"AuthorizerType":        "REQUEST",
-			"AuthorizerUri":         map[string]any{"Fn::GetAtt": []any{"Fn", "Arn"}},
-			"EnableSimpleResponses": false,
+			"AuthorizerType":                 "REQUEST",
+			"AuthorizerUri":                  map[string]any{"Fn::GetAtt": []any{"Fn", "Arn"}},
+			"EnableSimpleResponses":          false,
+			"AuthorizerPayloadFormatVersion": "1.0",
+			"AuthorizerResultTtlInSeconds":   0,
 		},
 	}
 	route := mustMap(t, mustMap(t, resources["Route"])["Properties"])
@@ -307,8 +309,23 @@ func TestDeriveHTTPAuthorizerMustBeSimpleRequest(t *testing.T) {
 	route["AuthorizerId"] = map[string]any{"Ref": "Authorizer"}
 	dir := writeAssembly(t, resources)
 	mkdirAsset(t, dir)
-	if _, err := deriveAssembly(t, dir); err == nil || !strings.Contains(err.Error(), "simple responses") {
-		t.Fatalf("a non-simple authorizer must fail closed, got %v", err)
+	spec, err := deriveAssembly(t, dir)
+	if err != nil {
+		t.Fatalf("derive: %v", err)
+	}
+	var derived Route
+	for _, api := range spec.APIs {
+		for _, candidate := range api.Routes {
+			if candidate.Path == "/hello" {
+				derived = candidate
+			}
+		}
+	}
+	if derived.AuthorizerKind != AuthorizerKindLambdaRequest || derived.AuthorizerPayloadFormat != "1.0" {
+		t.Fatalf("route = %+v", derived)
+	}
+	if derived.AuthorizerCacheTTLSeconds != 0 {
+		t.Fatalf("cache ttl = %d", derived.AuthorizerCacheTTLSeconds)
 	}
 }
 

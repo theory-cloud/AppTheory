@@ -195,6 +195,7 @@ events; no route table is synthesized for them.
 | `examples/cdk/lambda-role/handlers/index.ts` | L1 | The compiled asset serves the basic, tracing and dynamic functions; each returns the expected 200 payload. |
 | `examples/cdk/lambda-role/handlers/encrypted.ts` | L2 | The compiled handler round-trips plaintext through moto KMS and reports `match=true`. Gap: emulated KMS (no HSM, key policies or grants). |
 | `examples/cdk/lambda-role/handlers/custom.ts` | L3 | The compiled handler writes and reads an object on s3proxy; the SSM lookup fails closed to `not-configured`. Gap: SSM Parameter Store; S3 is emulated. |
+| `examples/cdk/lambda-role/handlers/authorizer.ts` | L2 | The real policy function runs behind a REST TOKEN authorizer (60 s cache), a REST REQUEST authorizer over a header and a query identity source, and an HTTP API IAM-policy authorizer (payload format 1.0). Allow invokes the method and its stringified context reaches the integration; Deny is 403, the documented `Unauthorized` error is 401, an invalid policy is 500 and a missing identity source is 401 without invoking. The function counts its own invocations in its context, so an unchanged count proves a cached decision until `clock.advance` passes `AuthorizerResultTtlInSeconds`. | IAM policy evaluation is a docs/125 true limit; the authorizer's returned policy is matched narrowly against the method ARN. |
 
 ### A4: event sources and data
 
