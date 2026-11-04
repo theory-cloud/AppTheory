@@ -217,9 +217,11 @@ type SubscriptionSpec struct {
 
 	// Topic is the qualified logical id of the SNS topic the subscription
 	// targets. TopicARN is the provider ARN when it is literal or resolved from
-	// the assembly.
+	// the assembly. ARN is the local subscription ARN the runner reports in
+	// the Lambda record, the HTTP headers and the UnsubscribeUrl.
 	Topic    string `json:"topic,omitempty"`
 	TopicARN string `json:"topicArn,omitempty"`
+	ARN      string `json:"arn,omitempty"`
 	// Protocol is lambda, sqs, http or https.
 	Protocol string `json:"protocol,omitempty"`
 	// Endpoint is the qualified Lambda function or SQS queue logical id, or the

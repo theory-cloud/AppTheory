@@ -570,7 +570,10 @@ func (s *localSession) sqsReceive(ctx context.Context, request sessionRequest, b
 			"receiptHandle": aws.ToString(message.ReceiptHandle),
 			"body":          aws.ToString(message.Body),
 			"attributes":    message.Attributes,
-			"md5OfBody":     aws.ToString(message.MD5OfBody),
+			// MessageAttributes is additive: an SNS raw delivery carries the
+			// published attributes as SQS message attributes.
+			"messageAttributes": message.MessageAttributes,
+			"md5OfBody":         aws.ToString(message.MD5OfBody),
 		})
 	}
 	if !buildEvent {

@@ -105,7 +105,10 @@ writing one response per line on stdout:
 The full operation set is `describe`, `clock.now`, `clock.advance`, `invoke`,
 `sqs.send`, `sqs.receive`, `sqs.event`, `sqs.attributes`, `ddb.put`, `ddb.get`, `ddb.scan`,
 `ddb.stream-event`, `s3.put`, `eventbridge.event`, `kinesis.event`,
-`kinesis.cloudwatch-event` and `shutdown`. Every response is
+`kinesis.cloudwatch-event` and `shutdown`. `sqs.receive` and `sqs.event`
+serialize each message's SQS system attributes under `attributes` and its
+message attributes under `messageAttributes`, which is how an SNS raw delivery's
+published attributes are observed. Every response is
 `{"ok":true,"result":…}` or `{"ok":false,"error":…}`. An operation that
 references a resource the run did not provision fails with the reason; it never
 falls back to a closed endpoint. `describe` is the only operation that returns
@@ -322,6 +325,7 @@ TS_NODE_TRANSPILE_ONLY=1
 | `AWS::Lambda::Url` (`AuthType: NONE`) | Served as a Function URL listener. `InvokeMode: RESPONSE_STREAM` is marked streaming (buffered). A URL with `AWS_IAM` is not served as a standalone URL; when a served CloudFront distribution targets it, the gateway invokes it through the signed local OAC origin instead. |
 | `AWS::ApiGatewayV2::Authorizer` (`REQUEST`, simple responses) | Run for the CUSTOM routes that reference it. The transport sends a v2 REQUEST authorizer event and enforces `isAuthorized`. |
 | `AWS::Lambda::EventSourceMapping` (SQS, DynamoDB Streams, Kinesis) | Reported with its function, source, batch options, filter criteria and scaling configuration; the function is started and the mapping is registered with the delivery engine. An SQS mapping is delivered automatically (see [SQS event-source delivery](/examples/local-runner/#sqs-event-source-delivery)); stream delivery lands in E2 (DynamoDB Streams) and E5 (Kinesis). A session can still build the provider event from real local messages or a real local write. |
+| `AWS::SNS::Topic`, `AWS::SNS::Subscription` and a topic's inline `Subscription` | Topics (standard and FIFO) are provisioned on moto. Every supported subscription is registered with the delivery engine and delivered automatically: a Lambda record, an SQS envelope or raw body, or a loopback HTTP POST. See [SNS subscription delivery](/examples/local-runner/#sns-subscription-delivery). SNS does not support Lambda or HTTP(S) targets on a FIFO topic; a Lambda or HTTP(S) subscription to one, a non-loopback HTTP endpoint and SMS/email/mobile push are reported under `skipped` with a named reason. |
 | `AWS::Events::Rule` with a Lambda target | Reported with its schedule or event pattern and target; the function is started and the rule is registered with the delivery engine as a schedule or pattern kind. A session builds the event the rule would deliver; delivery lands in E3. |
 | `AWS::Logs::SubscriptionFilter` | Reported with its log group, filter and destination; the destination is a Lambda function, or an `AWS::Logs::Destination` followed to its Kinesis `TargetArn`. A Lambda destination is started and the filter is registered with the delivery engine. Delivery lands in E5; a destination the runner cannot deliver is reported under `skipped`. |
 | `AWS::ApiGatewayV2::Api` (`ProtocolType: WEBSOCKET`) | Reported under `skipped`, never served. An app with no other surface fails with the skipped reasons. |
@@ -334,8 +338,9 @@ TS_NODE_TRANSPILE_ONLY=1
 `run` and `session` start one delivery engine per run. It registers every
 derived event-source mapping, EventBridge rule, CloudWatch Logs subscription
 filter and SNS subscription at start and reports each source's state. An SQS
-mapping has a deliverer and polls automatically; every other kind reports
-`not-delivered` with the task that will implement it (E2, E3, E5 and E6).
+mapping polls automatically; an SNS subscription is armed on its topic hub and
+delivers every observed publish. Every other kind reports `not-delivered` with
+the task that will implement it (E2, E3 and E5).
 
 The state vocabulary follows the Lambda event source mapping API, which reports
 a mapping's lifecycle in `State` and its processing outcome in
@@ -345,17 +350,18 @@ a mapping's lifecycle in `State` and its processing outcome in
 | --- | --- |
 | `registered` | The kind has a deliverer and the source is registered. |
 | `polling` | A queue or stream deliverer is polling the backend. |
-| `armed` | A schedule or rule deliverer is waiting for the clock. |
+| `armed` | A schedule or rule deliverer is waiting for the clock, or an SNS subscription is attached to its topic hub. |
 | `paused` | Registered, not delivering. |
 | `stopped` | The deliverer stopped at shutdown. |
 | `failed` | The deliverer could not start or deliver; `lastError` carries the cause. |
 | `not-delivered` | The source kind has no deliverer yet; `task` and `reason` name the implementing task. |
 
-Each entry also reports `delivered` and `failed` counts, `lastError` and
-`paused`; an SQS source reports `left` (records left for redelivery), `inflight`
-and `peakInflight`. `plan` prints the state the engine would register (and
-carries it under `delivery` in `plan --json`); an SQS source is `registered`
-because the kind has a deliverer. `session describe` reports the live state:
+Each entry also reports `delivered`, `failed` and (for an SNS subscription)
+`filtered` counts, `lastError` and `paused`; an SQS source reports `left`
+(records left for redelivery), `inflight` and `peakInflight`. `plan` prints the
+state the engine would register (and carries it under `delivery` in
+`plan --json`); an SQS or SNS source is `registered` because the kind has a
+deliverer. `session describe` reports the live state:
 
 ```json
 "delivery": {
@@ -399,6 +405,23 @@ A FIFO mapping runs one receive loop locally: one batch per queue is in flight
 and message groups are not processed in parallel. AWS preserves per-group order
 while processing different groups concurrently; the local one-loop form
 preserves order at the cost of that parallelism.
+
+An SNS subscription runs on a per-topic hub. At provisioning the runner creates
+one drain queue on moto's own SQS and subscribes it to the topic without raw
+message delivery, so moto writes the documented notification envelope and the
+runner observes every publish on the same path for every subscription. A FIFO
+topic uses a FIFO drain queue with content-based deduplication, so the drain
+message also carries `MessageGroupId` and `MessageDeduplicationId`. The runner
+does not create the application's subscriptions in moto; it performs the
+fan-out itself and records one attempt per subscription: a success increments
+`delivered`, a filter miss increments `filtered`, and a target failure
+increments `failed` with `lastError`. There is no retry: AWS applies the
+subscription's delivery policy and dead-letter queue, while the local runner
+delivers once. The fan-out is also available in-process as
+`Runner.PublishLocal(topicARN, message)` (and `PublishLocalMessage` for
+attributes, a subject and FIFO ids), for E3 and E4 targets that publish without
+going through moto; it takes the same filter and target path as an observed
+publish.
 
 Shutdown drains in-flight deliveries for up to five seconds, then cancels and
 stops the deliverers.

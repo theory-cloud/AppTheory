@@ -152,6 +152,8 @@ type DeliveryState struct {
 	// Delivered and Failed count handler invocations the deliverer completed.
 	Delivered int64 `json:"delivered"`
 	Failed    int64 `json:"failed"`
+	// Filtered counts messages a subscription filter policy did not match.
+	Filtered int64 `json:"filtered,omitempty"`
 	// Inflight is the number of batches the deliverer is invoking right now;
 	// PeakInflight is the highest observed value. They make a mapping's
 	// MaximumConcurrency observable from session describe.
@@ -204,6 +206,8 @@ type DeliveryReporter interface {
 	Delivered()
 	// Failed records a failed handler invocation.
 	Failed(err error)
+	// Filtered records a message a subscription filter did not match.
+	Filtered()
 	// SetPaused records whether delivery is paused.
 	SetPaused(paused bool)
 	// SetInflight records how many batches the deliverer is invoking now. The
@@ -653,6 +657,14 @@ func (r *sourceReporter) Failed(err error) {
 		if err != nil {
 			state.LastError = err.Error()
 		}
+	}
+}
+
+func (r *sourceReporter) Filtered() {
+	r.engine.mu.Lock()
+	defer r.engine.mu.Unlock()
+	if state := r.engine.states[r.id]; state != nil {
+		state.Filtered++
 	}
 }
 

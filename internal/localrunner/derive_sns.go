@@ -10,10 +10,11 @@ import (
 )
 
 // deriveSNSSubscriptions reads AWS::SNS::Subscription resources and the inline
-// Subscription entries of AWS::SNS::Topic. Every subscription is registered
-// with the delivery engine; the SNS deliverer lands in E6. A target the runner
-// cannot deliver, or an HTTP endpoint that is not loopback, is reported under
-// skipped with a named reason.
+// Subscription entries of AWS::SNS::Topic. Every supported subscription is
+// registered with the delivery engine, which observes publishes on moto and
+// performs the fan-out. A target the runner cannot deliver, an HTTP endpoint
+// that is not loopback, or a target SNS itself does not support for a FIFO
+// topic is reported under skipped with a named reason.
 //
 // The resource shape is the CloudFormation SNS subscription reference:
 // https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-sns-subscription.html
@@ -42,12 +43,18 @@ func deriveSNSSubscriptions(spec *Spec, stacks []assemblyStack, stack assemblySt
 				})
 				continue
 			}
+			fifo, err := snsTopicFIFO(stack, topicID)
+			if err != nil {
+				return fmt.Errorf("%s/%s: %w", stack.Name, id, err)
+			}
 			if err := appendSNSSubscription(spec, stacks, stack, types, logicalID,
-				qualify(stacks, stack.Name, topicID), props); err != nil {
+				qualify(stacks, stack.Name, topicID), fifo, props); err != nil {
 				return err
 			}
 		case typeSNSTopic:
 			var props struct {
+				FifoTopic    bool                        `json:"FifoTopic"`
+				TopicName    string                      `json:"TopicName"`
 				Subscription []snsSubscriptionProperties `json:"Subscription"`
 			}
 			if len(resource.Properties) == 0 {
@@ -57,15 +64,36 @@ func deriveSNSSubscriptions(spec *Spec, stacks []assemblyStack, stack assemblySt
 				return fmt.Errorf("%s/%s: parse SNS topic subscriptions: %w", stack.Name, id, err)
 			}
 			topicID := qualify(stacks, stack.Name, id)
+			fifo := props.FifoTopic || strings.HasSuffix(strings.TrimSpace(props.TopicName), ".fifo")
 			for index, inline := range props.Subscription {
 				logicalID := topicID + "/Subscription" + strconv.Itoa(index)
-				if err := appendSNSSubscription(spec, stacks, stack, types, logicalID, topicID, inline); err != nil {
+				if err := appendSNSSubscription(spec, stacks, stack, types, logicalID, topicID, fifo, inline); err != nil {
 					return err
 				}
 			}
 		}
 	}
 	return nil
+}
+
+// snsTopicFIFO reports whether a standalone subscription's topic is FIFO. A
+// FIFO topic is named with the .fifo suffix and sets FifoTopic.
+// https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-sns-topic.html
+func snsTopicFIFO(stack assemblyStack, topicID string) (bool, error) {
+	resource, ok := stack.Template.Resources[topicID]
+	if !ok {
+		return false, nil
+	}
+	var props struct {
+		FifoTopic bool   `json:"FifoTopic"`
+		TopicName string `json:"TopicName"`
+	}
+	if len(resource.Properties) > 0 {
+		if err := json.Unmarshal(resource.Properties, &props); err != nil {
+			return false, fmt.Errorf("parse SNS topic %s properties: %w", topicID, err)
+		}
+	}
+	return props.FifoTopic || strings.HasSuffix(strings.TrimSpace(props.TopicName), ".fifo"), nil
 }
 
 // snsSubscriptionProperties is the shared shape of the standalone resource and
@@ -90,6 +118,7 @@ func appendSNSSubscription(
 	types map[string]string,
 	logicalID string,
 	topicID string,
+	topicFIFO bool,
 	props snsSubscriptionProperties,
 ) error {
 	protocol := strings.ToLower(strings.TrimSpace(props.Protocol))
@@ -101,8 +130,22 @@ func appendSNSSubscription(
 		Protocol:           protocol,
 		RawMessageDelivery: props.RawMessageDelivery,
 	}
+	if topicFIFO && (protocol == snsProtocolLambda || protocol == snsProtocolHTTP || protocol == snsProtocolHTTPS) {
+		// SNS FIFO topics cannot deliver to customer-managed endpoints; Lambda
+		// needs an SQS queue in front of it.
+		// https://docs.aws.amazon.com/sns/latest/dg/fifo-message-delivery.html
+		spec.Skipped = append(spec.Skipped, Skipped{
+			LogicalID: logicalID,
+			Kind:      typeSNSSubscription,
+			Reason: fmt.Sprintf(
+				"SNS FIFO topics cannot deliver to %s endpoints; subscribe an SQS queue and map it to the target (https://docs.aws.amazon.com/sns/latest/dg/fifo-message-delivery.html)",
+				protocol,
+			),
+		})
+		return nil
+	}
 	switch protocol {
-	case "lambda":
+	case snsProtocolLambda:
 		functionID, ok := findRefByType(props.Endpoint, types, typeLambdaFunction, attrArn)
 		if !ok {
 			spec.Skipped = append(spec.Skipped, Skipped{
@@ -114,7 +157,7 @@ func appendSNSSubscription(
 		}
 		subscription.Function = qualify(stacks, stack.Name, functionID)
 		subscription.Endpoint = subscription.Function
-	case "sqs":
+	case snsProtocolSQS:
 		queueID, ok := findRefByType(props.Endpoint, types, typeSQSQueue, attrArn)
 		if !ok {
 			spec.Skipped = append(spec.Skipped, Skipped{
@@ -126,7 +169,7 @@ func appendSNSSubscription(
 		}
 		subscription.Queue = qualify(stacks, stack.Name, queueID)
 		subscription.Endpoint = subscription.Queue
-	case "http", "https":
+	case snsProtocolHTTP, snsProtocolHTTPS:
 		endpoint := resolvedString(props.Endpoint)
 		if endpoint == "" {
 			spec.Skipped = append(spec.Skipped, Skipped{
@@ -178,14 +221,11 @@ func appendSNSSubscription(
 		return unsupported(logicalID, "SNS FilterPolicyScope must be MessageAttributes or MessageBody (got %q)", scope)
 	}
 	if len(props.FilterPolicy) > 0 && strings.TrimSpace(string(props.FilterPolicy)) != jsonNull {
-		var policy any
-		if err := json.Unmarshal(props.FilterPolicy, &policy); err != nil {
-			return unsupported(logicalID, "SNS FilterPolicy is not valid JSON: %v", err)
+		policy, err := normalizeSNSFilterPolicy(props.FilterPolicy, scope, logicalID)
+		if err != nil {
+			return err
 		}
-		if _, ok := policy.(map[string]any); !ok {
-			return unsupported(logicalID, "SNS FilterPolicy must be a JSON object")
-		}
-		subscription.FilterPolicy = append(json.RawMessage(nil), props.FilterPolicy...)
+		subscription.FilterPolicy = policy
 		subscription.FilterPolicyScope = scope
 	}
 	spec.Subscriptions = append(spec.Subscriptions, subscription)

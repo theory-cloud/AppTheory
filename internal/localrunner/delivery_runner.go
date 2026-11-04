@@ -87,7 +87,9 @@ func deliveryClient(service, endpoint string) any {
 	case backendDynamoDB:
 		return newDynamoDBClient(endpoint)
 	case backendSNS:
-		return newSNSClient(endpoint)
+		// The SNS deliverer needs both services: moto serves the publish side
+		// and the per-topic drain queue on the same endpoint.
+		return &snsLocalBackend{sns: newSNSClient(endpoint), sqs: newSQSClient(endpoint)}
 	default:
 		return nil
 	}

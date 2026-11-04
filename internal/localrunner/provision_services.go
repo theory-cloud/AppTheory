@@ -341,7 +341,7 @@ func secretSeed(value string) int64 {
 // ContentBasedDeduplication are topic attributes, as documented for FIFO
 // topics: https://docs.aws.amazon.com/sns/latest/dg/sns-fifo-topics.html
 //
-//nolint:gocyclo // one branch per topic attribute and its error path.
+//nolint:gocognit,gocyclo // one branch per topic attribute and its error path.
 func (r *Runner) provisionTopics(ctx context.Context, spec *Spec) error {
 	backend, ok := r.backendForService(backendSNS)
 	if !ok {
@@ -402,9 +402,49 @@ func (r *Runner) provisionTopics(ctx context.Context, spec *Spec) error {
 			Name: name,
 			ARN:  arn,
 		}
+		subscriptions := r.snsSubscriptionsForTopic(spec, resource)
+		topic := snsTopicRuntime{
+			LogicalID:                 resource.Stack + "/" + resource.LogicalID,
+			ARN:                       arn,
+			Name:                      name,
+			FIFO:                      props.FifoTopic || strings.HasSuffix(name, snsFIFOTopicSuffix),
+			ContentBasedDeduplication: props.ContentBasedDeduplication,
+			SubscriptionCount:         len(subscriptions),
+		}
+		if len(subscriptions) > 0 {
+			// The drain queue lives on the same moto container as the topic;
+			// moto's SNS fan-out can only write to its own SQS.
+			if err := r.provisionSNSDrain(ctx, &topic, client, newSQSClient(backend.HostURL)); err != nil {
+				return err
+			}
+		}
+		for _, index := range subscriptions {
+			spec.Subscriptions[index].TopicARN = arn
+			spec.Subscriptions[index].ARN = snsSubscriptionARN(arn, spec.Subscriptions[index].LogicalID)
+		}
+		if r.sns != nil {
+			r.sns.registerTopic(topic)
+		}
 		r.logf("provisioned SNS topic %s for %s", name, resource.LogicalID)
 	}
 	return nil
+}
+
+// snsSubscriptionsForTopic returns the indices of the derived subscriptions
+// that target one provisioned topic.
+func (r *Runner) snsSubscriptionsForTopic(spec *Spec, resource ResourceSpec) []int {
+	qualified := resource.Stack + "/" + resource.LogicalID
+	var indices []int
+	for index := range spec.Subscriptions {
+		subscription := &spec.Subscriptions[index]
+		if subscription.Kind != string(DeliveryKindSNS) {
+			continue
+		}
+		if subscription.Topic == qualified || subscription.Topic == resource.LogicalID {
+			indices = append(indices, index)
+		}
+	}
+	return indices
 }
 
 // provisionStreams creates one Kinesis stream per AWS::Kinesis::Stream. The

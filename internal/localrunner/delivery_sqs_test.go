@@ -38,6 +38,9 @@ type fakeSQS struct {
 	mu     sync.Mutex
 	queues map[string]*fakeSQSQueue
 	server *httptest.Server
+	// sent captures every SendMessage request body, so a test can assert the
+	// exact target shape (raw versus envelope, FIFO ids, attributes).
+	sent []map[string]any
 }
 
 type fakeSQSQueue struct {
@@ -179,6 +182,37 @@ func (f *fakeSQS) handle(writer http.ResponseWriter, request *http.Request) {
 			return
 		}
 		message.visibleAt = time.Now().Add(time.Duration(intField(body, "VisibilityTimeout")) * time.Second)
+		writeJSON(writer, map[string]any{})
+	case "SendMessage":
+		queue := f.queueForURL(stringField(body, "QueueUrl"))
+		if queue == nil {
+			fail(writer, "QueueDoesNotExist", "queue does not exist")
+			return
+		}
+		f.sent = append(f.sent, body)
+		id := fmt.Sprintf("sent-%d", len(f.sent))
+		message := &fakeSQSMessage{
+			id:              id,
+			body:            stringField(body, "MessageBody"),
+			group:           stringField(body, "MessageGroupId"),
+			deduplicationID: stringField(body, "MessageDeduplicationId"),
+			sentAt:          time.Now(),
+		}
+		queue.messages = append(queue.messages, message)
+		writeJSON(writer, map[string]any{"MessageId": id})
+	case "DeleteMessage":
+		queue := f.queueForURL(stringField(body, "QueueUrl"))
+		if queue == nil {
+			fail(writer, "QueueDoesNotExist", "queue does not exist")
+			return
+		}
+		handle := stringField(body, "ReceiptHandle")
+		for _, message := range queue.messages {
+			if message.receipt == handle {
+				message.deleted = true
+				break
+			}
+		}
 		writeJSON(writer, map[string]any{})
 	case "DeleteMessageBatch":
 		queue := f.queueForURL(stringField(body, "QueueUrl"))
@@ -870,6 +904,7 @@ type recordingDeliveryReporter struct {
 	phase     DeliveryPhase
 	delivered int
 	failed    int
+	filtered  int
 	left      int
 	lastError string
 }
@@ -882,6 +917,7 @@ func (r *recordingDeliveryReporter) Failed(err error) {
 		r.lastError = err.Error()
 	}
 }
+func (r *recordingDeliveryReporter) Filtered()       { r.filtered++ }
 func (r *recordingDeliveryReporter) SetPaused(bool)  {}
 func (r *recordingDeliveryReporter) SetInflight(int) {}
 func (r *recordingDeliveryReporter) Left(count int)  { r.left += count }

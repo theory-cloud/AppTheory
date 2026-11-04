@@ -379,10 +379,12 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
     and SNS subscription, starts one deliverer per source kind that has one, and
     records the others as `not-delivered` with the task that will implement
     them. SNS subscriptions are registered from `AWS::SNS::Subscription` and
-    from the inline `Subscription` property of a topic; their deliverer lands in
-    E6. The engine
+    from the inline `Subscription` property of a topic; each attaches to its
+    topic's hub, which polls the topic's moto drain queue and fans every publish
+    out to the subscription's Lambda, SQS or HTTP target. The engine
     takes the run's clock and the delivery concurrency bound; see
-    [Event delivery](#event-delivery).
+    [Event delivery](#event-delivery) and
+    [SNS subscription delivery](#sns-subscription-delivery).
 12. **Shut down.** `Ctrl-C` (`SIGINT`) or `SIGTERM` drains and stops the
     delivery engine, then stops accepting requests by closing the listeners,
     force-removes the run's containers (which aborts an in-flight invocation),
@@ -428,7 +430,10 @@ The values follow the CloudFormation reference for each resource:
   `AWS::SNS::Subscription` and a topic's inline `Subscription` are registered
   with the delivery engine; the runner does not create application
   subscriptions in moto, because moto cannot reach the Runtime Interface
-  Emulator or ElasticMQ and the engine performs the fan-out itself.
+  Emulator or ElasticMQ and the engine performs the fan-out itself. The runner
+  creates one drain queue per topic on moto's SQS and subscribes it without raw
+  delivery, so the publish is observed in the documented envelope form; see
+  [SNS subscription delivery](#sns-subscription-delivery).
 - **Kinesis** (`AWS::Kinesis::Stream`): `Ref` is the stream name; `Fn::GetAtt
   Arn` is the stream ARN
   ([reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-kinesis-stream.html)).
@@ -499,8 +504,10 @@ provisioned secret the wave-1 deterministic placeholder is kept unchanged.
 
 - **SNS subscriptions are not created in moto.** Moto cannot reach the Runtime
   Interface Emulator or ElasticMQ. The runner registers the application's
-  subscriptions with the delivery engine and, in E6, performs the fan-out. Moto
-  is used for topics and for the publish path, not for application delivery.
+  subscriptions with the delivery engine and performs the fan-out itself. Moto
+  is used for topics, the publish path and the runner's per-topic drain queue;
+  the observed deviations and their normalization are listed under
+  [SNS subscription delivery](#sns-subscription-delivery).
 - **Cognito JWKS path.** Only `/{poolId}/.well-known/jwks.json` is served; the
   runner's issuer listener is the path R2a uses.
 - **Kinesis on-demand describe.** Moto omits `StreamModeDetails` from
@@ -514,11 +521,16 @@ provisioned secret the wave-1 deterministic placeholder is kept unchanged.
 - **Secret ARN suffix.** moto appends a random six-character suffix as AWS
   does; the friendly name and the dynamic-reference resolution are stable.
 - **SNS FIFO.** The pinned moto accepts `FifoTopic` and
-  `ContentBasedDeduplication` and reports both from `GetTopicAttributes`; E6's
-  FIFO delivery rules are the runner's, not moto's.
-- **SNS message attributes and `x-amz-sns-*` headers.** E6 observes publishes
-  through a moto-SQS drain queue and emits the documented SNS record/HTTP
-  shapes itself; the observed encoding is documented with E6.
+  `ContentBasedDeduplication` and reports both from `GetTopicAttributes`; the
+  FIFO ordering and deduplication rules are the runner's, not moto's. A
+  content-based publish is delivered to a FIFO drain queue whose own
+  deduplication id is the envelope hash; the runner converts it to the
+  documented message-body hash.
+- **SNS message attributes and `x-amz-sns-*` headers.** The runner observes
+  publishes through a moto-SQS drain queue and emits the documented SNS
+  record/HTTP shapes itself; the envelope encoding, the `UnsubscribeURL`
+  placeholder and the FIFO ids are documented under
+  [SNS subscription delivery](#sns-subscription-delivery).
 
 ## CloudFront distributions
 
@@ -771,7 +783,10 @@ The operations, in the order the examples use them:
   runner's host-side SQS client. `messageGroupId` and `messageDeduplicationId`
   are passed through for a FIFO queue.
 - `sqs.receive` — receive up to `max` messages with the requested wait and
-  visibility, optionally deleting them after receipt.
+  visibility, optionally deleting them after receipt. Each message carries its
+  SQS system attributes under `attributes` and its message attributes under
+  `messageAttributes`; the latter is how an SNS raw delivery's published
+  attributes are observed.
 - `sqs.event` — receive messages and build the `Records` event the SQS mapping
   delivers, from the messages actually returned by ElasticMQ.
 - `sqs.attributes` — read a queue's counts and attributes: `visible`,
@@ -802,8 +817,9 @@ or resolved environment values; `run`, `plan` and `invoke` never print them.
 ## Event delivery
 
 `run` and `session` start a delivery engine. Every event-source mapping,
-EventBridge rule and CloudWatch Logs subscription filter the assembly derives is
-registered with it before the run reports ready. The engine owns:
+EventBridge rule, CloudWatch Logs subscription filter and SNS subscription the
+assembly derives is registered with it before the run reports ready. The engine
+owns:
 
 - the registry of deliverers, one per source kind;
 - the lifecycle: start, drain and stop on `Ctrl-C`/`SIGTERM` or the `shutdown`
@@ -812,14 +828,17 @@ registered with it before the run reports ready. The engine owns:
 - the per-source delivery state that `plan` and `session describe` report.
 
 An SQS mapping has a deliverer: it polls ElasticMQ, invokes the function and
-deletes or leaves each message exactly as Lambda documents. Every other kind is
-registered and reported as `not-delivered` with the task that will implement
-it. Nothing is silent: `plan` prints the state next to every derived source,
-and a session reports the same source list live.
+deletes or leaves each message exactly as Lambda documents. An SNS subscription
+has a deliverer: the runner observes every publish on moto and performs the
+fan-out to the subscription's target. Every other kind is registered and
+reported as `not-delivered` with the task that will implement it. Nothing is
+silent: `plan` prints the state next to every derived source, and a session
+reports the same source list live.
 
 | Source kind | Local delivery |
 | --- | --- |
 | SQS event source mapping | Delivered (E1b); see [SQS event-source delivery](#sqs-event-source-delivery) |
+| SNS subscription | Delivered (E6); see [SNS subscription delivery](#sns-subscription-delivery) |
 | DynamoDB Streams event source mapping | Task E2 |
 | EventBridge schedule and pattern rule | Task E3 |
 | CloudWatch Logs subscription filter | Task E5 |
@@ -950,6 +969,113 @@ Observed against `softwaremill/elasticmq-native@sha256:e4580ab9` (ElasticMQ
 | Redrive happens when the next receive would exceed `maxReceiveCount`; the DLQ copy carries `DeadLetterQueueSourceArn` and a higher `ApproximateReceiveCount` | The deliverer reads the queue's redrive policy and treats a receive that ElasticMQ redrives as a message that is no longer in the source queue. |
 | A FIFO group is blocked while an earlier message of the group is in flight | Per-group ordering is preserved; the deliverer additionally protects every later record of a failed group within a batch. |
 
+### SNS subscription delivery
+
+A handler publishes through the real AWS SDK to the topic the runner
+provisioned on moto. The runner observes the publish and performs the fan-out
+itself because moto cannot reach the Runtime Interface Emulator or ElasticMQ.
+The handler's `Publish` call is never replaced by a runner shortcut.
+
+**Observation.** At provisioning the runner creates one drain queue on moto's
+own SQS for every topic with a subscription and subscribes it without raw
+message delivery. moto then writes the documented notification envelope, so the
+runner sees the SNS message id, subject, timestamp and message attributes
+exactly as the target would. A FIFO topic uses a FIFO drain queue with
+content-based deduplication, which also carries `MessageGroupId` and
+`MessageDeduplicationId` as SQS system attributes and makes a publish that
+relies on topic content-based deduplication succeed. The runner polls the drain
+queue, evaluates each subscription and delivers every target itself.
+
+A drain queue was chosen over an HTTP observer for two reasons. SNS FIFO topics
+cannot deliver to HTTP(S) endpoints at all, and moto's HTTP fan-out drops the
+message group and deduplication ids, so an HTTP observer could not reproduce
+FIFO delivery ([FIFO message delivery](https://docs.aws.amazon.com/sns/latest/dg/fifo-message-delivery.html)).
+A drain queue also keeps the run loopback-only: it uses the same runner-to-moto
+path as every other local client instead of requiring moto to reach a listener
+on the host. On the pinned Colima host `host.docker.internal` did resolve to
+the host (`192.168.5.2`) and could reach a `127.0.0.1`-bound listener, but that
+is a container-to-host dependency the drain queue does not need.
+
+**Targets.**
+
+- **Lambda** receives the documented SNS event record
+  ([sample event](https://docs.aws.amazon.com/lambda/latest/dg/with-sns.html)):
+  `Records[0].EventSource`, `EventVersion`, `EventSubscriptionArn`, and `Sns`
+  with `Type`, `MessageId`, `TopicArn`, `Subject`, `Message`, `Timestamp`,
+  `MessageAttributes` and `SignatureVersion`. The runner emits
+  `UnsubscribeUrl` (the Lambda spelling) and `SigningCertURL`. The local
+  signature is deterministic over the subscription ARN and message; it is not
+  verifiable against an AWS certificate, and the local runner has no SNS
+  signing key.
+- **SQS** receives the documented JSON notification when `RawMessageDelivery`
+  is false, or the message body when it is true, with the published attributes
+  carried as SQS message attributes. The envelope names `UnsubscribeURL` and
+  `SigningCertURL`
+  ([message formats](https://docs.aws.amazon.com/sns/latest/dg/sns-message-and-json-formats.html),
+  [raw message delivery](https://docs.aws.amazon.com/sns/latest/dg/sns-large-payload-raw-message-delivery.html)).
+  A raw delivery with more than 10 message attributes is discarded, as SNS
+  documents. A FIFO queue receives the message group and deduplication ids.
+- **HTTP/HTTPS** receives a POST to a loopback endpoint with the documented JSON
+  body and `Content-Type: text/plain; charset=UTF-8`, `x-amz-sns-message-type`,
+  `x-amz-sns-message-id`, `x-amz-sns-topic-arn` and
+  `x-amz-sns-subscription-arn`; a raw delivery adds
+  `x-amz-sns-rawdelivery: true` and sends no attributes. The subscription is
+  already registered, so no `SubscriptionConfirmation` message is sent. A
+  non-loopback endpoint is refused at plan time, and delivery re-checks the
+  endpoint so the run never contacts the network.
+
+**FIFO topics.** Delivery preserves order within a message group; different
+groups may interleave, as AWS documents. A deduplication id seen within the
+five-minute interval is suppressed for every subscription, whether the
+publisher supplied it or SNS computed it from the message body. The ids are
+passed to a FIFO SQS subscription so the queue sees the same group and
+deduplication values. Lambda and HTTP(S) subscriptions to a FIFO topic are
+refused at plan time with a named reason, because SNS cannot deliver to those
+endpoints
+([FIFO message delivery](https://docs.aws.amazon.com/sns/latest/dg/fifo-message-delivery.html),
+[FIFO topics](https://docs.aws.amazon.com/sns/latest/dg/sns-fifo-topics.html)).
+
+**Filter policies.** `FilterPolicy` is evaluated per subscription with
+`FilterPolicyScope` `MessageAttributes` (the default) or `MessageBody`, and the
+documented rule is "AND across keys, OR within a key"
+([subscription filter policies](https://docs.aws.amazon.com/sns/latest/dg/sns-subscription-filter-policies.html),
+[message filtering](https://docs.aws.amazon.com/sns/latest/dg/sns-message-filtering.html)).
+Attribute-scope policies match only top-level attributes and honour the
+`String`, `String.Array` (each element is a candidate) and `Number` data types;
+a `Binary` attribute matches only `exists`. Body-scope policies require a JSON
+object body, and a non-JSON body matches nothing. The supported rules are exact
+string, `prefix`, `suffix`, `anything-but` (scalar, list and prefix forms),
+`numeric` (one comparison or a two-sided range), `exists` and
+`equals-ignore-case`. The syntax coincides with the EventBridge pattern
+evaluator E1b uses for `FilterCriteria`, so the validators and single-value
+operator primitives are shared; the SNS walker adds presence-based `exists`,
+array element matching and the array form of `anything-but`. `$or` is not SNS
+filter-policy syntax, and the `cidr` operator is not implemented locally: both
+are refused at plan time with the subscription and the offending key named,
+never accepted and silently matched against nothing.
+
+**Delivery state and the local publish path.** Each subscription reports
+`delivered`, `filtered` and `failed` counts plus `lastError` in
+`session describe`; `plan` reports it as `registered`. A target failure is a
+single attempt: AWS applies the subscription's delivery policy and dead-letter
+queue, while the local runner does not retry and reports the error. The same
+fan-out is available in-process as `Runner.PublishLocal(topicARN, message)` and
+`Runner.PublishLocalMessage(topicARN, LocalSNSMessage)` for E3 and E4 targets
+that must publish without going through moto; both take the same filter and
+target path as an observed SDK publish.
+
+**moto deviations the runner normalizes.** Observed against
+`motoserver/moto@sha256:59a1965d` (5.2.5):
+
+| Observed moto behaviour | How the runner implements AWS's behaviour |
+| --- | --- |
+| Moto's SNS fan-out only reaches moto's own SQS and cannot reach the RIE or ElasticMQ | The runner creates a drain queue on moto's SQS and performs the application fan-out itself. |
+| A non-raw FIFO delivery reports the SHA-256 of the SNS envelope as `MessageDeduplicationId` | The runner detects the envelope hash, recomputes the documented content-based deduplication id from the message body, and forwards that to FIFO queues and the deduplication window. |
+| The envelope's `UnsubscribeURL` names a placeholder subscription ARN | The runner builds `UnsubscribeUrl`/`UnsubscribeURL` from the subscription ARN it registered; the local runner does not serve the unsubscribe action. |
+| FIFO topic content-based deduplication is enforced by the drain queue, whose deduplication window ends when the drain message is deleted | The runner keeps its own five-minute deduplication window on the run clock, so a duplicate publish after the drain message is consumed is still suppressed. |
+| Moto's HTTP fan-out drops `MessageGroupId`/`MessageDeduplicationId` and SNS forbids HTTP targets on FIFO topics | The runner does not use an HTTP observer; the drain queue carries the FIFO ids. |
+| Moto accepts a FIFO queue subscription only on a FIFO topic | The runner registers subscriptions itself and follows AWS: a FIFO queue is accepted on either topic; the SNS FIFO restriction applies to Lambda and HTTP targets. |
+
 ### Delivery state
 
 The vocabulary follows the Lambda event source mapping API. AWS reports a
@@ -964,19 +1090,20 @@ The runner keeps the same shape in a smaller vocabulary:
 | --- | --- | --- |
 | `registered` | `Creating` | The kind has a deliverer; the source is registered and the deliverer is starting. |
 | `polling` | `Enabled` | A queue or stream deliverer is polling the backend. |
-| `armed` | `Enabled` | A schedule or rule deliverer is waiting for the clock. |
+| `armed` | `Enabled` | A schedule or rule deliverer is waiting for the clock, or an SNS subscription is attached to its topic hub. |
 | `paused` | `Disabled` | Registered, not delivering. |
 | `stopped` | `Deleting` | The deliverer stopped at shutdown. |
 | `failed` | `LastProcessingResult` reports a problem | The deliverer could not start or deliver; `lastError` carries the cause. |
 | `not-delivered` | no mapping exists | The source kind has no deliverer yet; `task` and `reason` name the task that will implement it. |
 
 Every entry reports its `delivered` and `failed` counts, `lastError` and
-`paused`; an SQS source also reports `left` (records left for redelivery),
+`paused`; an SNS subscription also reports `filtered` (messages its policy did
+not match); an SQS source reports `left` (records left for redelivery),
 `inflight` and `peakInflight`. The engine also reports its clock mode and
 current instant and its concurrency bound.
 
 `plan` prints the state the engine would register without starting a container;
-`plan --json` carries the same list under `delivery`. An SQS source is
+`plan --json` carries the same list under `delivery`. An SQS or SNS source is
 `registered` because the kind has a deliverer; every other kind is
 `not-delivered` with its task. `session describe` returns the live engine state
 under `delivery`:
@@ -1043,14 +1170,14 @@ the harness records it.
 | KMS and STS (moto) | Supported (L2) | `--backend moto` starts the profile's digest-pinned moto container and injects `AWS_ENDPOINT_URL_KMS`/`_STS` (and the profile's aliases). Symmetric, RSA (2048/3072/4096) and ECC (P256/P384/P521) `SIGN_VERIFY` keys declared by the assembly are created, with aliases; `Ref`/`Fn::GetAtt Arn` resolve to the created key and alias. No HSM, key policies or grants. |
 | SSM Parameter Store (moto) | Supported (L2) | `AWS::SSM::Parameter` String, StringList and SecureString are created; `Ref` returns the name and `Fn::GetAtt Type`/`Value` the declared type and value. `AWS_ENDPOINT_URL_SSM` is injected. SecureString is stored in moto's memory without envelope encryption. |
 | Secrets Manager (moto) | Supported (L2) | `AWS::SecretsManager::Secret` with `SecretString` or `GenerateSecretString` is created; `Ref` is the ARN and runtime `GetSecretValue` works. A `ResourcePolicy` is reported skipped (IAM is a docs/125 true limit). `AWS_ENDPOINT_URL_SECRETS_MANAGER` is injected. |
-| SNS topics (moto) | Supported (L2) | Standard and FIFO `AWS::SNS::Topic` are created with `FifoTopic`/`ContentBasedDeduplication`; `Ref` is the ARN and `GetAtt TopicName`/`TopicArn` resolve. `AWS::SNS::Subscription` and inline `Subscription` entries are registered with the delivery engine; delivery lands in E6. `TopicPolicy` is reported skipped. |
+| SNS topics and subscriptions (moto) | Supported (L2) | Standard and FIFO `AWS::SNS::Topic` are created with `FifoTopic`/`ContentBasedDeduplication`; `Ref` is the ARN and `GetAtt TopicName`/`TopicArn` resolve. `AWS::SNS::Subscription` and inline `Subscription` entries are delivered automatically to Lambda, SQS and loopback HTTP targets, with filter policies, raw message delivery and FIFO ordering/deduplication; see [SNS subscription delivery](#sns-subscription-delivery). `TopicPolicy` is reported skipped (IAM is a docs/125 true limit). |
 | Kinesis streams (moto) | Provisioned (L2); delivery in E5 | `AWS::Kinesis::Stream` is created with `ShardCount` or `StreamModeDetails`, and `RetentionPeriodHours`; `Ref` is the name and `GetAtt Arn` the stream ARN. `AWS_ENDPOINT_URL_KINESIS` is injected. Event-source delivery lands in E5. |
 | Cognito user pools (moto) | Supported (L2) | `AWS::Cognito::UserPool` and `UserPoolClient` are created; `Ref` returns the pool/client id and `GetAtt Arn`/`ProviderName`/`ProviderURL` the pool provider values. The runner serves the pool's JWKS and an OIDC discovery document at `http://127.0.0.1:<port>/cognito-idp/<region>/<poolId>`. A `UserPoolDomain` is reported skipped (no hosted UI). |
 | S3 (s3proxy) | Supported (L2) | `--backend s3proxy` starts the digest-pinned s3proxy container, creates the assembly's buckets, and injects the S3 endpoint as the container address so the SDK uses path-style addressing. No bucket policies, IAM or event notifications. |
 | Event source mappings (SQS delivered; DynamoDB Streams and Kinesis pending) | SQS delivered; stream delivery lands in E2/E5 | The mapping's function, source, batch options, filter criteria and scaling configuration are read from the assembly. An SQS mapping is delivered automatically; a DynamoDB Streams or Kinesis mapping reports `not-delivered` with its task. A session can still build a stream record from a real local write and invoke the handler. |
 | EventBridge rules (schedule and pattern) | Engine present; per-source delivery lands in E3 | A rule is registered per kind (schedule or pattern) and reported with its delivery state. A session builds the `Scheduled Event` envelope or the pattern's source/detail-type from the CDK rule and invokes its Lambda target. Managed rule delivery and the clock-driven scheduler land in E3. |
 | Kinesis / CloudWatch Logs subscription events | Engine present; per-source delivery lands in E5 | A `AWS::Logs::SubscriptionFilter` is derived with its log group and destination (a Lambda function, or a CloudWatch Logs destination followed to its Kinesis stream) and registered with the delivery engine. The session can build a CloudWatch Logs subscription payload from local log events and wrap it in a Kinesis record, or accept explicit base64 record data. The Kinesis stream itself and log-group capture land in E5. |
-| Delivery engine and test clock | Supported | `run` and `session` start the engine; `plan` and `session describe` report per-source state. SQS batching windows and visibility deadlines, schedules and TTL expiry take their time from `--clock test[=<RFC3339>]`; the `clock.now`/`clock.advance` session commands read and move it. ElasticMQ's own wall-clock timers and the runtime images are not slowed. `--delivery-concurrency` bounds concurrent deliveries (default 4); an SQS mapping's `MaximumConcurrency` bounds its batches within that. |
+| Delivery engine and test clock | Supported | `run` and `session` start the engine; `plan` and `session describe` report per-source state, including an SNS subscription's `filtered` count. SQS batching windows, visibility deadlines, schedules, TTL expiry and the SNS FIFO deduplication window take their time from `--clock test[=<RFC3339>]`; the `clock.now`/`clock.advance` session commands read and move it. ElasticMQ's and moto's own wall-clock timers and the runtime images are not slowed. `--delivery-concurrency` bounds concurrent deliveries (default 4); an SQS mapping's `MaximumConcurrency` bounds its batches within that. |
 | Deploy-time Secrets Manager dynamic references | Supported | A `{{resolve:secretsmanager:…}}` environment value resolves to the provisioned secret's value (the same JSON key) when the assembly declares that secret, and otherwise keeps the wave-1 deterministic local placeholder. The session's `describe` returns it to the harness; `run` and `plan` never print it. No secret is created in a cloud. |
 | Other emulators | Endpoint injection only | Pass `--endpoint service=url` and `--add-host name=address`; the profile names the environment variables. The checked-in profile binds `ssm`, `secretsmanager`, `sns`, `kinesis` and `cognito-idp` to moto, and `kms`/`sts` as before. |
 | WebSocket APIs | Reported, not served | A WebSocket API is listed under `skipped` with its reason, and an app with no HTTP route, Function URL, event source or rule fails with that list. Its `$connect`/`$disconnect`/`$default` routes are not invoked. |
@@ -1090,12 +1217,12 @@ the harness records it.
   CloudFront Functions API and globals but is not a hardened security boundary,
   does not enforce CloudFront's 1 ms CPU budget, and cannot reproduce
   CloudFront-only device, location or TLS headers.
-- **Stream, rule and SNS delivery is not wired per source yet.** SQS mapping
-  delivery is present. Every DynamoDB Streams and Kinesis mapping, EventBridge
-  rule, CloudWatch Logs subscription filter and SNS subscription is registered,
-  its function is started where it has one, and its state is reported as
-  `not-delivered` with the E2, E3, E5 or E6 task. A session can still build the
-  provider event from a real local write and invoke the handler.
+- **Stream and rule delivery is not wired per source yet.** SQS mapping and SNS
+  subscription delivery are present. Every DynamoDB Streams and Kinesis
+  mapping, EventBridge rule and CloudWatch Logs subscription filter is
+  registered, its function is started where it has one, and its state is
+  reported as `not-delivered` with the E2, E3 or E5 task. A session can still
+  build the provider event from a real local write and invoke the handler.
 - **Kinesis event-source delivery is pending.** The stream itself is created on
   moto from `AWS::Kinesis::Stream`, and `Ref`/`GetAtt Arn` resolve to it. A
   Kinesis event is still built locally (from a CloudWatch Logs subscription
@@ -1115,10 +1242,14 @@ the harness records it.
 - **Cognito hosted UI/OAuth domain** is not served. The runner serves the user
   pool issuer and JWKS (for JWT validation) but a `UserPoolDomain` is reported
   under `skipped`.
-- **SNS subscription delivery lands in E6.** The topics, their Ref/GetAtt values
-  and the subscription registry are real; a publish does not yet fan out to a
-  Lambda function, SQS queue or loopback HTTP endpoint. SMS, email and mobile
-  push are out of scope.
+- **SNS delivery is a single attempt.** A publish fans out to every matching
+  Lambda, SQS and loopback HTTP subscription, but a failed target is reported
+  with its error and is not retried; AWS applies the subscription's delivery
+  policy and dead-letter queue. SMS, email and mobile push remain out of scope,
+  and a Lambda or HTTP(S) subscription to a FIFO topic is refused because SNS
+  itself does not support it. A subscription filter policy is evaluated when
+  the publish is observed, so the local runner does not model SNS's eventual
+  consistency for a policy changed while messages are in flight.
 - **S3 event notifications** are absent from s3proxy. The import-pipeline row
   writes a real object and builds the CDK rule's EventBridge event; S3 →
   EventBridge delivery itself is the named gap.
