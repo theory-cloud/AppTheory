@@ -1126,14 +1126,17 @@ the
 [S3 event notification types](https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-how-to-event-types-and-destinations.html)
 list the observation can reproduce.
 
-**Overlapping key filters are accepted locally.** AWS's
+**Overlapping key filters are refused like AWS.** AWS's
 `PutBucketNotificationConfiguration` rejects configurations on one bucket whose
-prefix/suffix filters overlap for the same event type
+prefix/suffix filters overlap for the same event type unless the suffixes do not
+overlap
 ([object key name filtering](https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-how-to-filtering.html)).
-The runner does not reproduce that validation: it accepts overlapping
-configurations and delivers a matching observed event to every matching
-destination. This is a documented local acceptance; a template the runner
-accepts may still be rejected at deploy time.
+The runner applies the same rule at derive time: a pair whose event types
+intersect is refused when both the prefixes overlap (one is a prefix of the
+other, or either configuration has no prefix rule) and the suffixes overlap (one
+is a suffix of the other, or either configuration has no suffix rule). The error
+names both configuration ids and the event type. Pairs with different event
+types, or with non-overlapping suffixes, are registered.
 
 **S3 → EventBridge** — a bucket with `EventBridgeConfiguration` publishes the
 envelope the runner's bus builds from one entry: `source: "aws.s3"`,

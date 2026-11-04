@@ -46,6 +46,16 @@ func TestDeriveS3NotificationConfigurations(t *testing.T) {
 				map[string]any{
 					"Event": "s3:ObjectCreated:Put",
 					"Topic": map[string]any{"Ref": "Topic"},
+					// The root prefix overlaps the Lambda configuration's
+					// incoming/ prefix, which the page permits when the
+					// suffixes do not overlap.
+					"Filter": map[string]any{
+						"S3Key": map[string]any{
+							"Rules": []any{
+								map[string]any{"Name": "suffix", "Value": ".csv"},
+							},
+						},
+					},
 				},
 			},
 			"EventBridgeConfiguration": map[string]any{},
@@ -296,6 +306,137 @@ func TestDeriveS3NotificationRegistersProducibleWildcard(t *testing.T) {
 	if len(spec.Notifications) != 1 || len(spec.Notifications[0].Events) != 1 ||
 		spec.Notifications[0].Events[0] != "s3:ObjectCreated:*" {
 		t.Fatalf("notifications = %+v", spec.Notifications)
+	}
+}
+
+func s3TopicNotification(event string, rules ...map[string]any) map[string]any {
+	configuration := map[string]any{
+		"Event": event,
+		"Topic": map[string]any{"Ref": "Topic"},
+	}
+	if len(rules) > 0 {
+		configuration["Filter"] = map[string]any{
+			"S3Key": map[string]any{"Rules": rules},
+		}
+	}
+	return configuration
+}
+
+func s3FilterRule(name, value string) map[string]any {
+	return map[string]any{"Name": name, "Value": value}
+}
+
+// TestDeriveS3NotificationRefusesOverlappingFilters models the invalid
+// examples on the object key name filtering page.
+// https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-how-to-filtering.html
+func TestDeriveS3NotificationRefusesOverlappingFilters(t *testing.T) {
+	cases := []struct {
+		name    string
+		configs []map[string]any
+	}{
+		{
+			name: "root prefix next to a declared prefix for the same event type",
+			configs: []map[string]any{
+				s3TopicNotification("s3:ObjectCreated:*"),
+				s3TopicNotification("s3:ObjectCreated:*", s3FilterRule("prefix", "images")),
+			},
+		},
+		{
+			name: "suffixes overlap when one ends with the other",
+			configs: []map[string]any{
+				s3TopicNotification("s3:ObjectCreated:*", s3FilterRule("suffix", "jpg")),
+				s3TopicNotification("s3:ObjectCreated:Put", s3FilterRule("suffix", "pg")),
+			},
+		},
+		{
+			name: "overlapping prefix and suffix for the same event type",
+			configs: []map[string]any{
+				s3TopicNotification("s3:ObjectCreated:*",
+					s3FilterRule("prefix", "images"), s3FilterRule("suffix", "jpg")),
+				s3TopicNotification("s3:ObjectCreated:Put", s3FilterRule("suffix", "jpg")),
+			},
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			resources := s3NotificationAssembly(map[string]any{
+				"BucketName": "ingest-bucket",
+				"NotificationConfiguration": map[string]any{
+					"TopicConfigurations": testCase.configs,
+				},
+			})
+			dir := writeAssembly(t, resources)
+			mkdirAsset(t, dir)
+			_, err := deriveAssembly(t, dir)
+			if err == nil {
+				t.Fatal("AWS rejects this filter combination; derive must refuse it")
+			}
+			for _, want := range []string{"Bucket/notification/0", "Bucket/notification/1", "s3:ObjectCreated:Put"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("derive error %q does not name %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+// TestDeriveS3NotificationRegistersValidFilters models the valid examples on
+// the object key name filtering page.
+// https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-how-to-filtering.html
+func TestDeriveS3NotificationRegistersValidFilters(t *testing.T) {
+	cases := []struct {
+		name    string
+		configs []map[string]any
+	}{
+		{
+			name: "prefixes that cannot both begin a key",
+			configs: []map[string]any{
+				s3TopicNotification("s3:ObjectCreated:Put", s3FilterRule("prefix", "images/")),
+				s3TopicNotification("s3:ObjectCreated:Put", s3FilterRule("prefix", "logs/")),
+			},
+		},
+		{
+			name: "suffixes that cannot both end a key",
+			configs: []map[string]any{
+				s3TopicNotification("s3:ObjectCreated:Put", s3FilterRule("suffix", ".jpg")),
+				s3TopicNotification("s3:ObjectCreated:Put", s3FilterRule("suffix", ".png")),
+			},
+		},
+		{
+			name: "overlapping prefixes with non-overlapping suffixes",
+			configs: []map[string]any{
+				s3TopicNotification("s3:ObjectCreated:Put",
+					s3FilterRule("prefix", "images"), s3FilterRule("suffix", ".jpg")),
+				s3TopicNotification("s3:ObjectCreated:Put",
+					s3FilterRule("prefix", "images"), s3FilterRule("suffix", ".png")),
+			},
+		},
+		{
+			name: "overlapping filters with different event types",
+			configs: []map[string]any{
+				s3TopicNotification("s3:ObjectCreated:Put", s3FilterRule("prefix", "image/")),
+				s3TopicNotification("s3:ObjectRemoved:*", s3FilterRule("prefix", "image/")),
+			},
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			resources := s3NotificationAssembly(map[string]any{
+				"BucketName": "ingest-bucket",
+				"NotificationConfiguration": map[string]any{
+					"TopicConfigurations": testCase.configs,
+				},
+			})
+			dir := writeAssembly(t, resources)
+			mkdirAsset(t, dir)
+			spec, err := deriveAssemblyAllowNoSurface(t, dir)
+			if err != nil {
+				t.Fatalf("derive: %v", err)
+			}
+			if len(spec.Notifications) != 2 {
+				t.Fatalf("notifications = %+v", spec.Notifications)
+			}
+		})
 	}
 }
 

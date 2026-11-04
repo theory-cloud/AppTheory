@@ -185,6 +185,7 @@ func (b *notificationBuilder) next(bucketID, stack, bucketName string) Notificat
 // fails closed at plan time.
 func deriveS3Notifications(spec *Spec, stacks []assemblyStack, stack assemblyStack) error {
 	types := stack.resourceTypes()
+	start := len(spec.Notifications)
 	builder := &notificationBuilder{spec: spec, stacks: stacks, indexes: map[string]int{}}
 
 	for _, id := range sortedKeys(stack.Template.Resources) {
@@ -205,7 +206,7 @@ func deriveS3Notifications(spec *Spec, stacks []assemblyStack, stack assemblySta
 			return err
 		}
 	}
-	return nil
+	return validateNotificationOverlaps(spec.Notifications[start:])
 }
 
 func deriveBucketResourceNotifications(
@@ -487,6 +488,120 @@ func validateNotificationSpec(notification NotificationSpec) error {
 		}
 	}
 	return nil
+}
+
+// validateNotificationOverlaps refuses filter combinations AWS rejects on one
+// bucket. Two configurations with intersecting event types may not have both
+// overlapping prefixes and overlapping suffixes:
+//
+//	https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-how-to-filtering.html
+//
+// The page: "Your notification configurations that use Filter can't define
+// filtering rules with overlapping prefixes for the same event types. They can
+// only do so, if the overlapping prefixes that are used with suffixes that
+// don't overlap." A missing rule is the root filter, which "match[es] any other
+// prefix and suffix"; prefixes overlap when one is a prefix of the other ("If a
+// given string can begin with both prefixes, the two prefixes are considered
+// overlapping") and suffixes overlap when one is a suffix of the other. Pairs
+// with disjoint event types may overlap: "You can use overlapping object key
+// name filters with different event types."
+//
+// The EventBridge configuration carries no filter rules and is not part of the
+// page's rule, so it is exempt.
+func validateNotificationOverlaps(notifications []NotificationSpec) error {
+	byBucket := map[string][]NotificationSpec{}
+	for _, notification := range notifications {
+		if notification.EventBridge {
+			continue
+		}
+		byBucket[notification.Bucket] = append(byBucket[notification.Bucket], notification)
+	}
+	for _, bucket := range sortedKeys(byBucket) {
+		entries := byBucket[bucket]
+		for i := 0; i < len(entries); i++ {
+			for j := i + 1; j < len(entries); j++ {
+				event, shared := s3NotificationSharedEvent(entries[i].Events, entries[j].Events)
+				if !shared {
+					continue
+				}
+				if !notificationPrefixesOverlap(entries[i], entries[j]) ||
+					!notificationSuffixesOverlap(entries[i], entries[j]) {
+					continue
+				}
+				return fmt.Errorf(
+					"%s and %s declare overlapping prefix/suffix filters for the same event type %s; "+
+						"S3 rejects this notification configuration: "+
+						"https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-how-to-filtering.html",
+					entries[i].LogicalID, entries[j].LogicalID, event,
+				)
+			}
+		}
+	}
+	return nil
+}
+
+// s3NotificationEventKinds maps a declared event name to the concrete events
+// the local watcher can produce for it. s3:ObjectCreated:* covers
+// s3:ObjectCreated:Put, so configurations declaring the wildcard family and the
+// concrete event share an event type.
+func s3NotificationEventKinds(events []string) map[string]struct{} {
+	kinds := map[string]struct{}{}
+	for _, event := range events {
+		switch strings.TrimSpace(event) {
+		case "s3:ObjectCreated:*", "s3:ObjectCreated:Put":
+			kinds[s3RecordObjectCreatedPut] = struct{}{}
+		case "s3:ObjectRemoved:*", "s3:ObjectRemoved:Delete":
+			kinds[s3RecordObjectRemovedDelete] = struct{}{}
+		}
+	}
+	return kinds
+}
+
+// s3NotificationSharedEvent returns the first event type two configurations
+// share, if any.
+func s3NotificationSharedEvent(a, b []string) (string, bool) {
+	aKinds := s3NotificationEventKinds(a)
+	for _, event := range b {
+		for kind := range s3NotificationEventKinds([]string{event}) {
+			if _, shared := aKinds[kind]; shared {
+				return "s3:" + kind, true
+			}
+		}
+	}
+	return "", false
+}
+
+// notificationPrefixesOverlap reports whether a key can begin with both
+// configurations' prefixes. A configuration without a prefix rule has the root
+// prefix, which matches any other prefix.
+func notificationPrefixesOverlap(a, b NotificationSpec) bool {
+	aPrefix, aSet := notificationFilterValue(a.FilterRules, "prefix")
+	bPrefix, bSet := notificationFilterValue(b.FilterRules, "prefix")
+	if !aSet || !bSet {
+		return true
+	}
+	return strings.HasPrefix(aPrefix, bPrefix) || strings.HasPrefix(bPrefix, aPrefix)
+}
+
+// notificationSuffixesOverlap reports whether a key can end with both
+// configurations' suffixes. A configuration without a suffix rule has the root
+// suffix, which matches any other suffix.
+func notificationSuffixesOverlap(a, b NotificationSpec) bool {
+	aSuffix, aSet := notificationFilterValue(a.FilterRules, "suffix")
+	bSuffix, bSet := notificationFilterValue(b.FilterRules, "suffix")
+	if !aSet || !bSet {
+		return true
+	}
+	return strings.HasSuffix(aSuffix, bSuffix) || strings.HasSuffix(bSuffix, aSuffix)
+}
+
+func notificationFilterValue(rules []NotificationFilterRule, name string) (string, bool) {
+	for _, rule := range rules {
+		if strings.EqualFold(strings.TrimSpace(rule.Name), name) {
+			return rule.Value, true
+		}
+	}
+	return "", false
 }
 
 // SortNotifications orders the derived configurations for stable output.

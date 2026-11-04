@@ -1630,15 +1630,18 @@ names are the part of the
 [S3 event notification types](https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-how-to-event-types-and-destinations.html)
 list the observation can reproduce.
 
-**Overlapping filters are accepted locally.** AWS's
+**Overlapping filters are refused like AWS.** AWS's
 `PutBucketNotificationConfiguration` rejects two configurations on one bucket
-whose prefix/suffix filters overlap for the same event type, as
+that have overlapping prefixes for the same event types unless the suffixes
+don't overlap, as
 [object key name filtering](https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-how-to-filtering.html)
-documents. The local runner does not reproduce that validation: it accepts
-overlapping configurations and delivers a matching observed event to every
-matching destination. This is a documented local acceptance, not a claim about
-AWS — a template the runner accepts may still be rejected by
-`PutBucketNotificationConfiguration` at deploy time.
+documents. `plan` applies the same rule before anything starts: two
+configurations whose event types intersect may not have both overlapping
+prefixes (one is a prefix of the other, or either configuration has no prefix
+rule) and overlapping suffixes (one is a suffix of the other, or either
+configuration has no suffix rule). The refusal names both configurations and the
+event type. Pairs with disjoint event types, or with non-overlapping suffixes,
+are registered, exactly as the page's valid examples show.
 
 `plan` prints one line per destination with `delivery=registered`; `session
 describe` returns a `notifications` array with each destination's
