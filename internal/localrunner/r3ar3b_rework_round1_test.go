@@ -352,3 +352,18 @@ func TestFunctionURLOriginFetchStreamBuffersABufferedInvokeMode(t *testing.T) {
 		t.Fatalf("buffered response: %d %q", stream.StatusCode, body)
 	}
 }
+
+func TestStreamingSuffixNamesWhatEachModeDoes(t *testing.T) {
+	suffix := streamingSuffix(true)
+	for _, fragment := range []string{"streams in the default mode", "buffered under --rie"} {
+		if !strings.Contains(suffix, fragment) {
+			t.Fatalf("streaming suffix %q must say %q", suffix, fragment)
+		}
+	}
+	if strings.Contains(suffix, "buffered locally") {
+		t.Fatalf("the pre-streaming text is wrong for a streaming route: %q", suffix)
+	}
+	if streamingSuffix(false) != "" {
+		t.Fatalf("a non-streaming route has no suffix: %q", streamingSuffix(false))
+	}
+}

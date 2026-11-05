@@ -941,7 +941,7 @@ func streamingSuffix(streaming bool) string {
 	if !streaming {
 		return ""
 	}
-	return " (response streaming: buffered locally)"
+	return " (response streaming: streams in the default mode; buffered under --rie)"
 }
 
 // SummarizeEndpoints renders the endpoints the runner injects, sorted.
