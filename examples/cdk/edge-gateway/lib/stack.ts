@@ -136,6 +136,10 @@ export class EdgeGatewayStack extends cdk.Stack {
             origin: apiOrigin,
             viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
             cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+            // The origin receives only the policy-filtered request, so forward
+            // the viewer headers the row asserts on (including the one the
+            // viewer-request function adds with no key).
+            originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
             allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
             edgeLambdas: [edgeLambdas[0], edgeLambdas[1]],
         };
