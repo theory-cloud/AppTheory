@@ -331,7 +331,8 @@ export class LambdaRoleStack extends cdk.Stack {
         // a REST REQUEST authorizer over two identity sources, and an HTTP API
         // REQUEST authorizer with an IAM-policy response. The policy function
         // counts its own invocations and returns the count in the authorizer
-        // context, so the harness can prove a cached decision did not invoke it.
+        // context, so the harness can prove a cached policy was reused without
+        // invoking it.
         // The REST authorizers are L1 resources because the L2 constructs do not
         // expose AuthorizerResultTtlInSeconds or IdentityValidationExpression.
         // https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-use-lambda-authorizer.html
