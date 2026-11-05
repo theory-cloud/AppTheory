@@ -208,7 +208,8 @@ func (f *functionURLStream) write(payload []byte) error {
 	if len(payload) == 0 {
 		return nil
 	}
-	if _, err := f.writer.Write(payload); err != nil { //nolint:gosec // codeql[go/reflected-xss] the payload is the function's own response body
+	// codeql[go/reflected-xss] the payload is the function's own response body
+	if _, err := f.writer.Write(payload); err != nil { //nolint:gosec // the payload is the function's own response
 		return err
 	}
 	f.flusher.Flush()
@@ -277,7 +278,8 @@ func (f *apiGatewayStream) write(payload []byte) error {
 	if len(payload) == 0 {
 		return nil
 	}
-	if _, err := f.writer.Write(payload); err != nil { //nolint:gosec // codeql[go/reflected-xss] the payload is the function's own response body
+	// codeql[go/reflected-xss] the payload is the function's own response body
+	if _, err := f.writer.Write(payload); err != nil { //nolint:gosec // the payload is the function's own response
 		return err
 	}
 	f.flusher.Flush()
