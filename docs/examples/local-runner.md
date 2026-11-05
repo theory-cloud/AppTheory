@@ -977,8 +977,10 @@ Distributions that use Lambda@Edge, a CloudFront KeyValueStore association,
 trusted key groups or signed URLs, field-level encryption, geo restriction, a
 WAF web ACL, a gRPC config or a legacy `ForwardedValues` cache policy are
 refused with a named reason; they are listed under `skipped`
-and no listener is started. Real-time logs, access logging and the properties
-that only affect caching or edge placement are reported instead.
+and no listener is started. The cache policy is applied (see
+[Caching and invalidation](#caching-and-invalidation)); real-time logs, access
+logging, `Compress`, the behavior-level legacy `DefaultTTL`/`MinTTL`/`MaxTTL`
+fields and edge placement are reported instead.
 
 ## Lambda layers and container-image functions
 
@@ -1990,11 +1992,13 @@ the harness records it.
   Function URL's SigV4 signing and the gateway's in-process check of that
   locally signed request are reproduced, but IAM policy evaluation is not.
   A literal external custom origin is refused rather than reached. Lambda@Edge,
-  KeyValueStore, signed URLs, field-level encryption, geo restriction, WAF and
-  custom error responses refuse the distribution; caching, compression, logging
-  and placement settings are reported. The Node `vm` executor matches the
-  CloudFront Functions API and globals but is not a hardened security boundary,
-  does not enforce CloudFront's 1 ms CPU budget, and cannot reproduce
+  KeyValueStore, signed URLs, field-level encryption, geo restriction and a WAF
+  web ACL refuse the distribution. The cache policy is applied — the cache key,
+  TTLs, stale directives and error caching; `Compress`, the behavior-level legacy
+  `DefaultTTL`/`MinTTL`/`MaxTTL`, access and real-time logging, `PriceClass` and
+  the other placement settings are reported, not emulated. The Node `vm` executor
+  matches the CloudFront Functions API and globals but is not a hardened security
+  boundary, does not enforce CloudFront's 1 ms CPU budget, and cannot reproduce
   CloudFront-only device, location or TLS headers.
 - **Kinesis and CloudWatch Logs are emulated by moto.** The stream mapping,
   the subscription filter, partial failure and the function-log capture are
