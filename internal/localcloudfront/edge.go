@@ -946,10 +946,20 @@ func validateEdgeRequestObject(association *EdgeFunction, event *EdgeEvent, requ
 	}
 	// "CloudFront adds the headers after the viewer request event, which means
 	// the headers aren't available to Lambda@Edge functions in a viewer request."
-	// An origin request function may read, edit, remove or add them.
+	// A CloudFront-* header the viewer sent is shown to the viewer request
+	// function, so returning or changing it is not adding it; only a name the
+	// received request did not carry is refused. An origin request function may
+	// read, edit, remove or add them.
 	if association.EventType == edgeViewerRequest {
+		received := map[string]struct{}{}
+		for name := range edgeOriginalRequestHeaders(event) {
+			received[strings.ToLower(name)] = struct{}{}
+		}
 		for _, name := range sortedEdgeHeaderNames(headers) {
 			if !strings.HasPrefix(name, "cloudfront-") {
+				continue
+			}
+			if _, sent := received[name]; sent {
 				continue
 			}
 			if name == headerCloudFrontViewerCountry {

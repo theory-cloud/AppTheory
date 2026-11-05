@@ -847,8 +847,11 @@ next request is a miss.
   in the CloudFront edge network. The viewer events observe the plain-HTTP
   connection, so a `CloudFront-Viewer-Protocol` value is `http`; the function's
   own `Timeout` is not applied because the event timeout (5 s viewer, 30 s
-  origin) is the Lambda@Edge quota. A function that returns the
-  `CloudFront-Viewer-Country` header is a 502, as the restrictions page states.
+  origin) is the Lambda@Edge quota. A viewer-request function that adds a
+  `CloudFront-*` header is a 502, as the restrictions page states; a
+  `CloudFront-*` header the viewer sent is shown to the viewer-request function
+  and, when a cache or origin request policy forwards it, replaced by the value
+  CloudFront adds for origin-facing functions.
 - A key value store is materialised once, at plan time, from the asset the
   assembly carries. `fromBucket` is refused because the object is not part of
   the assembly; `fromAsset` and `fromInline` both carry one. CloudFront

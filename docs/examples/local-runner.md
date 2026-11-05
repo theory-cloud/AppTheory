@@ -1032,9 +1032,12 @@ behavior or origin) and — with `IncludeBody` — a base64 `body` with
 `inputTruncated` and `action`. Origin events add `origin.custom` or
 `origin.s3` inside `request` (`cf.request.origin`), and their `headers`,
 `querystring` and Host are the policy-filtered origin request CloudFront sends,
-not the viewer request. A viewer-request function that returns a `CloudFront-*`
-header (including `CloudFront-Viewer-Country`) is a 502; an origin-request
-function may read, edit, remove or add the documented CloudFront headers.
+not the viewer request. A viewer-request function that adds a `CloudFront-*`
+header (including `CloudFront-Viewer-Country`) is a 502; a header the viewer
+sent is shown to the viewer-request function and, when a cache or origin
+request policy forwards it, replaced by the value CloudFront adds for
+origin-facing functions. An origin-request function may read, edit, remove or
+add the documented CloudFront headers.
 
 A generated response must have a `status` between 200 and 599; the status may
 be the documented JSON string (the form the events carry) or a number, and
