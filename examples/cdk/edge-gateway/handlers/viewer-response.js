@@ -9,6 +9,6 @@
 exports.handler = async (event) => {
     const cf = event.Records[0].cf;
     const response = cf.response;
-    response.headers['x-edge-viewer-response'] = [{ key: 'X-Edge-Viewer-Response', value: 'seen' }];
+    response.headers['x-lambda-edge-viewer-response'] = [{ key: 'X-Lambda-Edge-Viewer-Response', value: 'seen' }];
     return response;
 };

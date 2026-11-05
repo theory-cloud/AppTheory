@@ -9,7 +9,7 @@ exports.handler = async (event) => {
     const cf = event.Records[0].cf;
     const response = cf.response;
 
-    response.headers['x-edge-origin-response'] = [{ key: 'X-Edge-Origin-Response', value: 'seen' }];
+    response.headers['x-lambda-edge-origin-response'] = [{ key: 'X-Lambda-Edge-Origin-Response', value: 'seen' }];
 
     if (cf.request.uri === '/edge/body') {
         response.body = {

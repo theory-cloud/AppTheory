@@ -21,7 +21,7 @@ exports.handler = async (event) => {
             headers: {
                 'content-type': [{ key: 'Content-Type', value: 'application/json' }],
                 'cache-control': [{ key: 'Cache-Control', value: 'max-age=120' }],
-                'x-edge-invocations': [{ key: 'X-Edge-Invocations', value: String(invocations) }],
+                'x-lambda-edge-invocations': [{ key: 'X-Lambda-Edge-Invocations', value: String(invocations) }],
             },
             body: JSON.stringify({
                 generated: true,
@@ -44,8 +44,8 @@ exports.handler = async (event) => {
     }
 
     if (request.body && request.body.data) {
-        request.headers['x-edge-origin-body-length'] = [{
-            key: 'X-Edge-Origin-Body-Length',
+        request.headers['x-lambda-edge-origin-body-length'] = [{
+            key: 'X-Lambda-Edge-Origin-Body-Length',
             value: String(Buffer.from(request.body.data, 'base64').length),
         }];
     }
