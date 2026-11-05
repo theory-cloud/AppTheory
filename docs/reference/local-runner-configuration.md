@@ -792,15 +792,16 @@ entry for 412 or 415 that names a `ResponsePagePath` is refused by name, because
 codes"; a status-only rewrite for those codes is accepted.
 
 **Invalidation.** The runner serves `CreateInvalidation`, `GetInvalidation` and
-`ListInvalidations` on a loopback control endpoint and injects it into every
-function as `AWS_ENDPOINT_URL_CLOUDFRONT`; the endpoint is printed by `run` and
-`session describe`. Paths must start with `/`, are case sensitive, are
-URL-decoded before matching, may list at most 3000 paths per request, and are at
-most 4000 characters; a `~` is refused. "The *, which replaces 0 or more
-characters, must be the last character in the invalidation path"; an asterisk
-anywhere else is a literal character. A path is matched against the cached path
-plus the query string the cache policy forwarded, so `/a.js` does not invalidate
-an entry cached under `/a.js?v=1` while `/a.js*` does. Reusing a
+`ListInvalidations` on a control endpoint that binds every interface; it is
+injected into every function as `AWS_ENDPOINT_URL_CLOUDFRONT`, `run` prints the
+`127.0.0.1` URL, and `session describe` reports it. Paths must start with `/`,
+are case sensitive, are URL-decoded before matching, may list at most 3000 paths
+per request, and are at most 4000 characters; a `~` is refused. "The *, which
+replaces 0 or more characters, must be the last character in the invalidation
+path"; an asterisk anywhere else is a literal character. A path is matched
+against the cached path plus the query string the cache policy forwarded, so
+`/a.js` does not invalidate an entry cached under `/a.js?v=1` while `/a.js*`
+does. Reusing a
 `CallerReference` with the same paths returns the previous invalidation; with a
 different path it is `InvalidationBatchAlreadyExists`, as the CreateInvalidation
 reference states. An invalidation removes the matching cached objects, so the
@@ -1445,12 +1446,18 @@ The runtime returns one JSON body (the emulator returns the same shape in
   prelude's headers and the framed payload. An error payload is still the 502
   above;
 - a buffered JSON object whose `statusCode` key is present but invalid
-  (including one outside 100-599) and a buffered body that is not valid JSON
-  are `502` on every surface: the standalone Function URL listener, the
-  Function URL origin behind CloudFront, HTTP API v2, REST API v1, the
-  WebSocket transport and `invoke`;
-- a missing `statusCode` on HTTP API v2, REST API v1, the WebSocket transport
-  and `invoke` is `502` too;
+  (including one outside 100-599) and a buffered body that is neither valid
+  JSON nor a framed stream are `502` on the standalone Function URL listener,
+  the Function URL origin behind CloudFront, HTTP API v2 and REST API v1;
+- a missing `statusCode` on HTTP API v2 and REST API v1 is `502` too, while
+  the standalone listener and the CloudFront origin apply the Function URL
+  inference rule above and answer a genuine JSON return value with a `200`;
+- `invoke` never turns a result into a status: a valid JSON body that is not a
+  proxy response, including one whose `statusCode` is missing or invalid, is
+  the `raw` result and a non-JSON body is the `rawText` result, with
+  `handlerError` reserved for a crashed handler;
+- the WebSocket transport answers a decode failure with `500` at `$connect`
+  and drops the message on a message route;
 - a request with no matching route is `404 {"message":"Not Found"}` from the
   local transport; bodies above 10 MB are `413`.
 
