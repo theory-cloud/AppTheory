@@ -1,6 +1,7 @@
 package localrunner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -409,5 +410,38 @@ func TestFunctionURLOriginStreamEndingWithErrorTrailersIsNotACleanEOF(t *testing
 	}
 	if readErr == nil || !strings.Contains(readErr.Error(), "error trailer") {
 		t.Fatalf("the trailer must end the stream with an error, not a clean EOF: %v", readErr)
+	}
+}
+
+func TestStreamFrameDecoderDelimiterBeyondTheFirst16KBIsRaw(t *testing.T) {
+	decoder := &streamFrameDecoder{}
+	stream := append(bytes.Repeat([]byte("x"), streamFrameMetadataMax), streamFrameDelimiter...)
+	stream = append(stream, []byte("payload")...)
+	got := decoder.Feed(stream)
+	if decoder.Framed() || !decoder.done {
+		t.Fatalf("a delimiter beyond the first 16 KB must not frame the stream: framed=%v done=%v", decoder.Framed(), decoder.done)
+	}
+	if !bytes.Equal(got, stream) {
+		t.Fatalf("the whole stream is the payload: %d bytes, want %d", len(got), len(stream))
+	}
+	if rest := decoder.Feed([]byte("more")); !bytes.Equal(rest, []byte("more")) {
+		t.Fatalf("later chunks pass through: %q", rest)
+	}
+}
+
+func TestStreamFrameDecoderDelimiterInsideTheFirst16KBFrames(t *testing.T) {
+	decoder := &streamFrameDecoder{}
+	metadata := `{"statusCode":200}` + strings.Repeat(" ", streamFrameMetadataMax-1-len(`{"statusCode":200}`))
+	if len(metadata) != streamFrameMetadataMax-1 {
+		t.Fatalf("metadata length: %d", len(metadata))
+	}
+	stream := append([]byte(metadata), streamFrameDelimiter...)
+	stream = append(stream, []byte("payload")...)
+	got := decoder.Feed(stream)
+	if !decoder.Framed() {
+		t.Fatal("a delimiter that starts inside the first 16 KB frames the stream")
+	}
+	if string(got) != "payload" {
+		t.Fatalf("payload: %q", got)
 	}
 }

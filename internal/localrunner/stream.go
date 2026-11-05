@@ -46,15 +46,18 @@ func (d *streamFrameDecoder) Feed(chunk []byte) []byte {
 	}
 	d.pending = append(d.pending, chunk...)
 	index := bytes.Index(d.pending, streamFrameDelimiter)
-	if index < 0 {
-		if len(d.pending) > streamFrameMetadataMax {
-			d.done = true
-			d.framed = false
-			out := d.pending
-			d.pending = nil
-			return out
+	if index < 0 || index >= streamFrameMetadataMax {
+		if index < 0 && len(d.pending) < streamFrameMetadataMax {
+			return nil
 		}
-		return nil
+		// No delimiter, or one that starts beyond the first 16 KB. The page
+		// says the delimiter "must appear within the first 16KB of stream
+		// data", so the stream is not framed and its bytes are the payload.
+		d.done = true
+		d.framed = false
+		out := d.pending
+		d.pending = nil
+		return out
 	}
 	metadata := bytes.TrimSpace(d.pending[:index])
 	d.metadata = append([]byte(nil), metadata...)
