@@ -63,7 +63,9 @@ type Options struct {
 	Backends []string
 	// PortBase pins the API listener ports; zero asks the OS for free ports.
 	PortBase int
-	// NamePrefix names containers and the network. It must be unique per run.
+	// NamePrefix names containers, the network and built images. The default
+	// is derived from the app hash, so concurrent runs of one app share names
+	// unless a unique prefix is set.
 	NamePrefix string
 	// MaxConcurrency bounds in-flight invocations; never above 32.
 	MaxConcurrency int
@@ -1217,8 +1219,10 @@ func (r *Runner) buildFunctionImage(ctx context.Context, function FunctionSpec) 
 	return tag, nil
 }
 
-// functionImageTag names one function's built image. The name is unique per run
-// so two runs of the same app never share a tag.
+// functionImageTag names one function's built image. The name is derived from
+// the run's name prefix (the app hash by default) and the function's logical
+// id, so two concurrent runs of the same app share a tag; docker caches and
+// reuses the image for both.
 func (r *Runner) functionImageTag(function FunctionSpec) string {
 	return sanitizeName(r.namePrefix + "-" + function.LogicalID + "-image")
 }

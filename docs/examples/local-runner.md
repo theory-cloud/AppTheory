@@ -1014,6 +1014,8 @@ is built before any listener serves a request, so a broken Dockerfile fails the
 run instead of failing the first request; the first build of an example takes
 roughly 10–60 seconds including the base-image pull, and rebuilds are cached by
 Docker's layer cache (a second build of the same asset is near-instant). The
+image tag is derived from the name prefix, which is the app hash by default, so
+two concurrent runs of one app share a tag and docker reuses the built image. The
 function container runs the image's own entrypoint, so the Runtime Interface
 Emulator the
 [AWS base images](https://docs.aws.amazon.com/lambda/latest/dg/images-create.html)
