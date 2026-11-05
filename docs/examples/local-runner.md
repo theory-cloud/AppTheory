@@ -1823,8 +1823,10 @@ the `host-gateway` entry the runner adds. The listener binds every interface so
 that entry works on Linux, where it resolves to the bridge address; the session
 reports and the harness uses `http://127.0.0.1:<port>`. The endpoint is
 unauthenticated and reachable from any interface on the host while a session
-runs; it and the WebSocket `@connections` management listener are the runner's
-non-loopback listeners, and the backends publish on `127.0.0.1`. A handler's
+runs. The EventBridge endpoint and the WebSocket `@connections` management
+listener bind every interface; the Runtime API listener binds loopback or, when
+the container cannot reach it, the run network's gateway address (see
+[Requirements](#requirements)); the backends publish on `127.0.0.1`. A handler's
 real SDK client and the harness's AWS CLI reach the same endpoint. A rule's
 pattern is matched by the validated EventBridge evaluator E1b uses, and the
 runner performs input shaping, target delivery, retry and dead-letter handling.
