@@ -1011,7 +1011,9 @@ headers policy at the prelude; a Lambda@Edge viewer-response function is not
 run for it, because the object has already been forwarded to the viewer while
 the body is read, and no example combines the two. A `Content-Length` in a
 streaming prelude is recomputed by the local HTTP server; a body without one is
-chunked, which is API Gateway's documented default. S3 bucket CORS rules, S3
+chunked, which is API Gateway's documented default. The local forwarders write
+the function's own response bytes to the local client; they do not build an
+HTML page from request input. S3 bucket CORS rules, S3
 IAM/bucket policies and Lambda IAM policy evaluation are not emulated. A viewer
 `If-Range` is not carried to the S3 origin (CloudFront forwards it by default),
 so a conditional range is served as an unconditional range. Lambda@Edge, key
