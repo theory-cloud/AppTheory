@@ -34,6 +34,7 @@ resolution.
 | Runner emulator pins | `scripts/local/examples-local.json` (`containers.moto`, `containers.s3proxy`, `containers.sqs` and their endpoints) |
 | Local runner | `cmd/apptheory-local` with `internal/localrunner`; `session` provides the JSON command channel |
 | Self-tests | `scripts/local/test_examples_local.py` |
+| Runtime API conformance | `scripts/local/runtime_api_conformance.py` (row `runtime-api-conformance`, L2) |
 | CI job | `.github/workflows/examples-local.yml` |
 
 ## Requirements
@@ -250,6 +251,22 @@ argument.
 | --- | --- | --- |
 | `examples/cdk/lambda-packaging/handlers/node/app.js` | L1 | The real runner extracts the Node and Python layers into `/opt`, builds the three images with `docker build` before serving, and serves one HTTP API. The Node handler imports `layer-greeting` from `/opt/nodejs/node_modules`, executes `/opt/bin/layer-tool` from `PATH` and reports `/opt/bin` and `/opt/lib`; the Python handler imports `layer_tool` from `/opt/python`, executes its own `/opt/bin/layer-tool` and reports `PYTHONPATH`, `PATH` and `LD_LIBRARY_PATH`; the Go, Node and Python image handlers return the value the Dockerfile wrote from `IMAGE_VALUE`, so a stale or missing image cannot pass. |
 | `examples/cdk/lambda-packaging/handlers/python/app.py`, `images/{go,node,python}`, `layers/python/python/layer_tool.py`, `Layers/*/bin/layer-tool` | L1 | Covered by the Node handler row: each is executed inside the same run. |
+
+## Runtime API conformance
+
+The `runtime-api-conformance` row (L2, `scripts/local/runtime_api_conformance.py`)
+builds one handler set per language on the real, digest-pinned runtime images and
+runs each case twice through the runner's own `invoke` path: once under the
+image's Runtime Interface Emulator (`--rie`) and once under the runner's Lambda
+Runtime API. It compares status, headers, body bytes, handler error type and
+message, the timeout outcome and the initialization-failure outcome, and it
+prints every remaining difference. Python is buffered only, because "Lambda
+supports response streaming on Node.js managed runtimes. For other languages,
+including Python, you can use a custom runtime with a custom Runtime API
+integration"
+([response streaming](https://docs.aws.amazon.com/lambda/latest/dg/configuration-response-streaming.html)).
+The suite is described in
+[the runner guide](/examples/local-runner/#conformance-suite).
 
 ## Preflight
 

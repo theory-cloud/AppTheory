@@ -366,14 +366,16 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
    EventBridge rule targets and Lambda log-subscription destinations. A zip
    function uses the official image for its runtime, digest-pinned in the
    profile; a container-image function is built from its CDK `DockerImageAsset`
-   by the real `docker build` before any listener starts serving. Handlers run
-   under the embedded Runtime Interface Emulator; the transport invokes
-   `/2015-03-31/functions/function/invocations`.
+   by the real `docker build` before any listener starts serving. Handlers talk
+   to the runner's Lambda Runtime API (`AWS_LAMBDA_RUNTIME_API` points at it);
+   `--rie` runs them under the image's embedded emulator instead. See
+   [Lambda Runtime API](#lambda-runtime-api).
 10. **Serve, invoke or session.** One loopback listener per API (and per
     Function URL) builds the provider event for the matched route, runs a
     CUSTOM request authorizer first when the route declares one, invokes the
-    handler and decodes the response — including the RIE's buffered streaming
-    frame. One gateway listener per servable CloudFront distribution serves the
+    handler and decodes the response. A streamed response is forwarded as the
+    runtime writes it, including the metadata prelude for a Function URL or a
+    REST API proxy integration. One gateway listener per servable CloudFront distribution serves the
     distribution's local URL: it selects the cache behavior, runs the generated
     CloudFront Functions, applies the edge policies and refuses an unwired
     origin with a named 503. `invoke` instead sends explicit events to one warm
@@ -399,6 +401,224 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
     labelled with that app; it does not delete the stale run scratch directory.
     That directory is `<scratch>/runs/<app>-<run>`, where `--scratch` defaults to
     `<user cache>/apptheory-local`; it is safe to delete by hand.
+
+## Lambda Runtime API
+
+Every function container talks to the runner over the Lambda Runtime API. The
+runner starts the container with `AWS_LAMBDA_RUNTIME_API` set to its own
+listener, so the base image's entry script takes the branch that execs the
+runtime interface client and the embedded Runtime Interface Emulator never
+runs:
+
+> "`AWS_LAMBDA_RUNTIME_API` – The host and port of the runtime API."
+> ([custom runtime requirements](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-custom.html))
+
+> The base image entry script "checks for the presence of the
+> `AWS_LAMBDA_RUNTIME_API` environment variable": when it is set the script
+> execs the runtime interface client directly, otherwise it runs the emulator.
+> ([Runtime Interface Emulator](https://github.com/aws/aws-lambda-runtime-interface-emulator))
+
+The listener implements the 2018-06-01 API:
+
+- `GET /2018-06-01/runtime/invocation/next` is a blocking long poll that
+  carries `Lambda-Runtime-Aws-Request-Id`, `Lambda-Runtime-Deadline-Ms` ("The
+  date that the function times out in Unix time milliseconds"),
+  `Lambda-Runtime-Invoked-Function-Arn` (`arn:aws:lambda:<region>:<account>:function:<logical-id>`),
+  `Lambda-Runtime-Trace-Id` and `Lambda-Runtime-Invocation-Id`. The GET has no
+  timeout: "Do not set a timeout on the GET request as the response may be
+  delayed"
+  ([runtime API](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-api.html)).
+  The client-context and cognito-identity headers are omitted because the runner
+  never makes an AWS Mobile SDK invocation.
+- `POST /2018-06-01/runtime/invocation/{AwsRequestId}/response` accepts a
+  buffered body and a chunked streaming body. The invocation id is optional:
+  "The header is optional for backward compatibility with existing
+  runtimes—omitting it does not trigger a rejection. Lambda only rejects with
+  400 InvalidInvocationId when the header is present but its value does not
+  match the active invocation" (same page).
+- `POST /2018-06-01/runtime/invocation/{AwsRequestId}/error` is accepted only
+  before the response starts: "The runtime can use this endpoint to report
+  function or runtime errors to Lambda, which also accepts the
+  `Transfer-Encoding` header. This endpoint can only be called before the
+  runtime begins sending an invocation response"
+  ([custom runtime](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-custom.html)).
+  Its body is the `ErrorRequest` object
+  (`{errorMessage, errorType, stackTrace}`), and the error type carries through
+  the `Lambda-Runtime-Function-Error-Type` header.
+- `POST /2018-06-01/runtime/init/error` records an initialization failure.
+  Values that do not match the `<Category.Reason>` pattern are normalized to
+  `Runtime.Unknown` or `Function.Unknown`, as the runtime API page says.
+- The response codes are the documented ones: `202 Accepted`, `400 Bad
+  Request` (`InvalidInvocationId`), `403 Forbidden` (an answer for an
+  invocation that is no longer active) and `500` ("Container error.
+  Non-recoverable state. Runtime should exit promptly"). A request the runtime
+  would answer twice is a 500 because only one answer per attempt is accepted.
+- `GET /runtime/restore/next` and `POST /runtime/restore/error` answer `404`
+  with "SnapStart is not enabled for this function": SnapStart is not
+  emulated.
+
+One invocation runs at a time per container, which is the default-capacity
+contract: "the runtime processes one invocation at a time" outside Lambda
+Managed Instances
+([custom runtime](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-custom.html)).
+The runner serializes invocations to a container, so a delivery batch and an
+HTTP request for the same function queue rather than racing.
+
+### Lifecycle
+
+The runtime's first `next` request is the end of the Init phase: "The Init
+phase ends when the runtime and all extensions signal that they are ready by
+sending a Next API request"
+([execution environment lifecycle](https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtime-environment.html)).
+A timeout, a crash and an initialization failure end the execution environment,
+and the runner replaces it for the next invocation, as the page describes:
+
+> "If the Lambda function crashes or times out during the Invoke phase, Lambda
+> resets the execution environment." The reset "behaves like a Shutdown event".
+> If the environment is used again, "Lambda re-initializes the extension and
+> runtime together with the next invocation."
+> ([execution environment lifecycle](https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtime-environment.html))
+
+The documented shapes the invoker sees:
+
+- **Timeout.** The invocation fails with `errorType: Sandbox.Timedout` and the
+  page's message form: `Task timed out after 3.00 seconds`, prefixed with the
+  invocation's timestamp and request id (the form of the logged line on the
+  troubleshooting page).
+- **Initialization failure.** A module that throws during initialization calls
+  `/runtime/init/error` and exits; the invocation fails with that error's type
+  and message. "If an error occurs, call the initialization error API and exit
+  immediately" ([custom runtime](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-custom.html)).
+  A runtime process that exits before calling `next` is reported as
+  `Runtime.ExitError` with `Runtime exited with error: exit status N`, the
+  documented `Runtime.ExitError` type from the troubleshooting page.
+- **Handler error.** A `/error` post reaches the invoker with the error type
+  and body, and the runner's existing handler-error contract is unchanged for
+  every caller (Function URL, API Gateway, WebSocket, the delivery engine and
+  `apptheory-local invoke`).
+- **Midstream error.** A streamed response may end with the
+  `Lambda-Runtime-Function-Error-Type` and `Lambda-Runtime-Function-Error-Body`
+  trailers. "Lambda treats this as a successful response and forwards the error
+  metadata that the runtime provides to the client"
+  ([custom runtime](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-custom.html)).
+  The local transports forward the bytes and log the error metadata.
+
+The reserved runtime environment variables are set as the configuration page
+lists them
+([defined runtime environment variables](https://docs.aws.amazon.com/lambda/latest/dg/configuration-envvars.html#configuration-envvars-runtime)):
+`_HANDLER`, `AWS_LAMBDA_RUNTIME_API`, `AWS_LAMBDA_FUNCTION_NAME`,
+`AWS_LAMBDA_FUNCTION_VERSION` (`$LATEST`), `AWS_LAMBDA_FUNCTION_MEMORY_SIZE`
+(the function's memory), `AWS_LAMBDA_LOG_GROUP_NAME` (`/aws/lambda/<name>`),
+`AWS_LAMBDA_LOG_STREAM_NAME`, `AWS_LAMBDA_INITIALIZATION_TYPE` (`on-demand`),
+`LAMBDA_TASK_ROOT`, `LAMBDA_RUNTIME_DIR`, `AWS_REGION`/`AWS_DEFAULT_REGION`
+and `TZ`. The image itself supplies `LANG`, `PATH` and `LD_LIBRARY_PATH`.
+
+### Response streaming
+
+A response is streamed when the runtime sends a chunked body; the documented
+signal is both the response-mode header and the transfer encoding:
+
+> "Set the `Lambda-Runtime-Function-Response-Mode` HTTP header to `streaming`."
+> "Set the `Transfer-Encoding` header to `chunked`."
+> ([custom runtime](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-custom.html))
+
+The runner accepts either. The Node.js runtime sets both. The Go runtime client
+(`aws-lambda-go`) sends only `Transfer-Encoding: chunked`; treating that as a
+stream is what lets a Go handler stream through the same listener.
+
+A streamed `/response` body is forwarded to the invoker chunk by chunk as the
+runtime writes it. For a Function URL and for a REST API proxy integration the
+public format is a metadata JSON prelude, the 8-null-byte delimiter and the
+payload; the transport applies the status, headers and cookies as soon as the
+prelude is complete:
+
+- Function URL: the prelude uses the same `statusCode`/`headers`/`cookies`
+  fields as the buffered response payload
+  ([Function URL payloads](https://docs.aws.amazon.com/lambda/latest/dg/urls-invocation.html)).
+  A stream without a valid prelude is delivered as a raw `200` body with the
+  runtime's `Content-Type`; the Function URL pages do not define that case, so
+  the local rule is documented here.
+- REST API: "API Gateway begins the payload stream after it receives the valid
+  metadata and delimiter from Lambda"; the format is
+  `{headers, multiValueHeaders, cookies, statusCode}<DELIMITER>payload`, "The
+  delimiter must be 8 null bytes and it must appear within the first 16KB of
+  stream data", and "If your function doesn't return either of these headers,
+  API Gateway appends `Transfer-Encoding: chunked` to the response header". A
+  function whose output does not adhere is a `500`: "API Gateway invokes your
+  Lambda function and return a 500 error response"
+  ([response transfer mode](https://docs.aws.amazon.com/apigateway/latest/developerguide/response-transfer-mode-lambda.html)).
+- CloudFront: when the Function URL origin returns a chunked response,
+  "CloudFront returns the object to the client as the object is received at the
+  edge location, and caches the object in chunked format for subsequent
+  requests"; "If your origin returns this header field, CloudFront sets the
+  value to `chunked` before returning the response to the viewer"; a Range GET
+  against a chunked response "returns the entire object to the viewer instead
+  of the requested range"; and "if the chunked response is not complete,
+  CloudFront does not cache the object". The origin response timeout applies
+  "after receiving a packet of a response from the origin and before receiving
+  the next packet"
+  ([custom origin behavior](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/RequestAndResponseBehaviorCustomOrigin.html)).
+  The local gateway implements those rules: it flushes each chunk, caches the
+  object only after the stream completes, does not cache an incomplete stream,
+  returns the whole object for a Range GET, and applies the between-packet
+  timeout.
+
+Response streaming is available on the Node.js managed runtime and, for other
+languages, "you can use a custom runtime with a custom Runtime API
+integration"; Python therefore buffers, and the Python conformance case
+compares buffered responses only
+([response streaming](https://docs.aws.amazon.com/lambda/latest/dg/configuration-response-streaming.html)).
+
+**Documented deviations.** The runner forwards at the origin's pace; Lambda's
+"first 6 MB of your function's response payload has uncapped bandwidth. After
+this initial burst, Lambda streams your response at a maximum rate of 2 MBps"
+is not reproduced. The maximum response sizes (6 MB buffered, 200 MB streamed)
+are not enforced, because enforcing them could fail a local call that succeeds
+today.
+
+### Runtime Interface Emulator mode
+
+`--rie` runs each function under the image's embedded Runtime Interface
+Emulator instead of the runner's Runtime API. It exists for two cases: comparing
+a handler against the emulator, and an image whose entry script ignores
+`AWS_LAMBDA_RUNTIME_API`. The mode is reported in `plan` (`runtime: rie …`), in
+`plan --json` (`runtimeMode`) and in `session describe` (`runtimeMode` and, per
+function, the emulator `port`). It cannot stream incrementally: the emulator
+buffers every response, which is why the streaming rows run in the default
+mode.
+
+### Conformance suite
+
+`scripts/local/runtime_api_conformance.py` builds one handler set per language
+on the real, digest-pinned runtime images (Go on `provided.al2023` via a
+`bootstrap`, Node and Python) and runs each case twice through the runner's own
+`invoke` path: once with `--rie` and once with the default Runtime API. It
+compares status, headers, body bytes, handler error type and message, the
+timeout outcome and the initialization-failure outcome, and it reports every
+remaining difference with the page that decides which mode is right. The suite
+is also a harness row (`make examples-local`), class L2:
+
+```bash
+python3 scripts/local/runtime_api_conformance.py \
+  --runner ~/.cache/apptheory-examples-local/bin/apptheory-local \
+  --profile scripts/local/examples-local.json
+```
+
+Cases: a buffered JSON response, a proxy response with headers and cookies, a
+handler error, an initialization failure, a timeout, a Node.js
+`streamifyResponse` stream and a Go `io.Reader` stream; Python is buffered only
+for the reason quoted above.
+
+Observed emulator deviations (the runner follows the page, not the emulator):
+
+- a timeout is a `200` plain-text `Task timed out after N.NN seconds` body in
+  the emulator; the page's client-visible shape is an error with
+  `errorType: Sandbox.Timedout`;
+- an initialization failure is a `502` with the raw error body in the emulator;
+  the runner reports the `init/error` type and message (or `Runtime.ExitError`
+  when the runtime exits before `next`);
+- the emulator buffers every response, so it has no chunk timing to compare;
+- the emulator does not implement `/runtime/restore/*`; both modes answer 404.
 
 ## moto-backed services: SSM, Secrets Manager, SNS, Kinesis, Cognito and KMS signing
 
@@ -1261,8 +1481,9 @@ defines but a deployment caller invokes.
 
 The operations, in the order the examples use them:
 
-- `describe` — the started functions (with resolved environment and RIE port),
-  HTTP listener URLs, event-source mappings, EventBridge rules, subscriptions,
+- `describe` — the started functions (with resolved environment and, per
+  function, the Runtime API address or the emulator port under `--rie`), the
+  run's `runtimeMode`, HTTP listener URLs, event-source mappings, EventBridge rules, subscriptions,
   provisioned resources (name, URL, ARN, stream ARN), local secrets and the live
   delivery-engine state.
 - `clock.now` — the run's clock mode and current instant.
@@ -1583,7 +1804,7 @@ The own bus was chosen over the pinned moto events service after probing
 | `Input` on a target | Accepted and ignored | Implemented |
 | `InputTransformer` | Not applied | Implemented |
 | Retry policy and `DeadLetterConfig` | Accepted, no retry or DLQ behavior | Implemented on the run clock |
-| Lambda target delivery to the RIE | Cannot reach the local function containers | Invokes the real container |
+| Lambda target delivery to a local function | Cannot reach the local function containers | Invokes the real container |
 | ElasticMQ target | moto's SQS is a different queue service | Sends to the application's ElasticMQ queue |
 | Schedules | Never fire | Fire on the run clock |
 
@@ -1888,7 +2109,7 @@ target path as an observed SDK publish.
 
 | Observed moto behaviour | How the runner implements AWS's behaviour |
 | --- | --- |
-| Moto's SNS fan-out only reaches moto's own SQS and cannot reach the RIE or ElasticMQ | The runner creates a drain queue on moto's SQS and performs the application fan-out itself. |
+| Moto's SNS fan-out only reaches moto's own SQS and cannot reach a local function container or ElasticMQ | The runner creates a drain queue on moto's SQS and performs the application fan-out itself. |
 | A non-raw FIFO delivery reports the SHA-256 of the SNS envelope as `MessageDeduplicationId` | The runner detects the envelope hash, recomputes the documented content-based deduplication id from the message body, and forwards that to FIFO queues and the deduplication window. |
 | The envelope's `UnsubscribeURL` names a placeholder subscription ARN | The runner builds `UnsubscribeUrl`/`UnsubscribeURL` from the subscription ARN it registered; the local runner does not serve the unsubscribe action. |
 | FIFO topic content-based deduplication is enforced by the drain queue, whose deduplication window ends when the drain message is deleted | The runner keeps its own five-minute deduplication window on the run clock, so a duplicate publish after the drain message is consumed is still suppressed. |
@@ -2226,7 +2447,11 @@ the harness records it.
   The function code runs in the host Node `vm`; the runner refuses to start that
   distribution if Node is not on `PATH`.
 - Docker (on macOS, colima) with the daemon running. The runner creates one
-  private network per run and publishes the RIE port on `127.0.0.1` only.
+  private network per run. In the default mode a function container reaches the
+  Runtime API through `host.docker.internal:<port>` (the listener binds every
+  interface because the run network's closed DNS cannot resolve the name; the
+  host entry is added for the container). In `--rie` mode the emulator port is
+  published on `127.0.0.1` only.
 - The app's CDK CLI installed in the app directory
   (`node_modules/.bin/cdk`); run `npm install` there once, or `npm ci` when the
   app has a lockfile. The runner does not install packages.

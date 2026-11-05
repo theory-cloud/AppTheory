@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -98,6 +99,13 @@ type Options struct {
 	// CloudFront geo restriction. An empty value is an undetermined location,
 	// which CloudFront serves.
 	ViewerCountry string
+	// RIEMode runs function containers under the image's embedded Runtime
+	// Interface Emulator instead of the runner's Runtime API. It exists to
+	// compare against the emulator and for an image whose entry script ignores
+	// AWS_LAMBDA_RUNTIME_API; it cannot stream incrementally.
+	RIEMode bool
+	// response chunk before the result line. The default protocol stays one
+	// result line per event.
 }
 
 // Runner owns one local run: the derived surface, the Docker network, the
@@ -957,6 +965,9 @@ func (r *Runner) removeRunContainers() {
 		}
 		wait.Wait()
 	}
+	for _, process := range r.invokers {
+		process.closeRuntimeAPI()
+	}
 	r.removeRunImages(deadline)
 	r.invokers = map[string]*FunctionProcess{}
 	r.backends = map[string]backendProcess{}
@@ -1250,6 +1261,7 @@ func (r *Runner) functionImageTag(function FunctionSpec) string {
 	return sanitizeName(r.namePrefix + "-" + function.LogicalID + "-image")
 }
 
+//nolint:gocognit,gocyclo // one branch per function shape the assembly can declare
 func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image string) error {
 	imageFunction := function.ImageAsset != nil
 	codeDir := function.AssetDir
@@ -1265,7 +1277,20 @@ func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image
 	if err != nil {
 		return err
 	}
-	env, overridden := r.functionEnvironment(function)
+	var api *runtimeAPI
+	if !r.options.RIEMode {
+		api, err = newRuntimeAPI(function, r.logf)
+		if err != nil {
+			return err
+		}
+	}
+	env, overridden := r.functionEnvironment(function, api)
+	if r.options.RIEMode {
+		// The emulator reads its timeout from AWS_LAMBDA_FUNCTION_TIMEOUT; the
+		// base image's entry script does not set it.
+		// https://github.com/aws/aws-lambda-runtime-interface-emulator
+		env["AWS_LAMBDA_FUNCTION_TIMEOUT"] = strconv.Itoa(function.Timeout)
+	}
 	if len(overridden) > 0 {
 		r.logf("function %s: runner-owned environment overrides template values for %s", function.LogicalID, strings.Join(overridden, ", "))
 	}
@@ -1286,8 +1311,18 @@ func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image
 	if limitErr := unresolvedLimitsError(function); limitErr != nil {
 		return limitErr
 	}
+	if api != nil && !containsAddHost(r.options.AddHosts, "host.docker.internal:host-gateway") {
+		// The container reaches the Runtime API through host.docker.internal.
+		// The run's closed DNS server cannot resolve it, so the host entry is
+		// required (the run network also sets --dns 127.0.0.2).
+		r.options.AddHosts = append(r.options.AddHosts, "host.docker.internal:host-gateway")
+	}
 	mounts := append(functionMounts(function), r.webSocketCertificateMounts()...)
 	name := r.containerName(function.LogicalID)
+	publish := 0
+	if r.options.RIEMode {
+		publish = riePort
+	}
 	options := ContainerOptions{
 		Name:     name,
 		Network:  r.network,
@@ -1297,7 +1332,7 @@ func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image
 		AddHosts: r.options.AddHosts,
 		MemoryMB: function.MemoryMB,
 		Mounts:   mounts,
-		Publish:  riePort,
+		Publish:  publish,
 		Labels:   r.labels(),
 		Detach:   true,
 	}
@@ -1309,14 +1344,24 @@ func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image
 		Container: name,
 		Image:     image,
 		Started:   time.Now().UTC(),
+		rie:       r.options.RIEMode,
+		api:       api,
+		options:   options,
+		logf:      r.logf,
+	}
+	if api != nil {
+		api.running = func(checkCtx context.Context) (bool, error) {
+			return r.docker.Running(checkCtx, name)
+		}
+		process.reset = r.resetFunction
 	}
 	r.invokers[function.LogicalID] = process
 	if _, startErr := r.docker.StartContainer(ctx, options); startErr != nil {
+		process.closeRuntimeAPI()
 		return startErr
 	}
-	port, err := waitForContainerReady(ctx, r.docker, name)
-	if err != nil {
-		if imageFunction {
+	if err := process.awaitReady(ctx, r.docker); err != nil {
+		if imageFunction && r.options.RIEMode {
 			return fmt.Errorf(
 				"function %s: the container image did not start a Runtime Interface Emulator on port %d; an image function must be based on an AWS base image that ships one (https://docs.aws.amazon.com/lambda/latest/dg/images-create.html): %w",
 				function.LogicalID, riePort, err,
@@ -1324,9 +1369,75 @@ func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image
 		}
 		return err
 	}
-	process.Port = port
-	r.logf("function %s (%s, %s) ready on 127.0.0.1:%d", function.LogicalID, function.Runtime, image, port)
+	if r.options.RIEMode {
+		r.logf("function %s (%s, %s) ready on 127.0.0.1:%d (Runtime Interface Emulator mode)", function.LogicalID, function.Runtime, image, process.Port)
+		return nil
+	}
+	if failure := process.api.initError(); failure != nil {
+		if failure.Type == "Runtime.ExitError" {
+			// A runtime client that fails its first Next API request exits
+			// before the Init phase completes. The lifecycle page resets and
+			// re-initializes the environment, so the runner retries once before
+			// reporting the failure to the first invocation.
+			// https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtime-environment.html
+			r.logf("function %s (%s, %s): the runtime exited before its first invocation (%s); restarting it once",
+				function.LogicalID, function.Runtime, image, failure.Message)
+			if resetErr := r.resetFunction(ctx, process); resetErr != nil {
+				return fmt.Errorf("function %s: restart after a failed initialization: %w", function.LogicalID, resetErr)
+			}
+			failure = process.api.initError()
+		}
+		if failure != nil {
+			r.logf("function %s (%s, %s): initialization failed; the first invocation reports %s", function.LogicalID, function.Runtime, image, failure.Type)
+		}
+		return nil
+	}
+	r.logf("function %s (%s, %s) ready on the runner's Runtime API at %s", function.LogicalID, function.Runtime, image, process.RuntimeAPIURL())
 	return nil
+}
+
+// awaitReady waits for the process's runtime to signal that the Init phase
+// finished: the embedded emulator's port in RIE mode, or the runtime's first
+// Next API request in the default mode.
+func (p *FunctionProcess) awaitReady(ctx context.Context, docker *Docker) error {
+	if p.rie {
+		port, err := waitForContainerReady(ctx, docker, p.Container)
+		if err != nil {
+			return err
+		}
+		p.Port = port
+		return nil
+	}
+	return waitForRuntimeAPIReady(ctx, docker, p.Container, p.api)
+}
+
+// resetFunction replaces one function's execution environment after a timeout,
+// a crash or an initialization failure. The container keeps its name and the
+// FunctionProcess keeps its identity, so every caller's handle stays valid.
+// https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtime-environment.html
+func (r *Runner) resetFunction(ctx context.Context, process *FunctionProcess) error {
+	r.logf("function %s: replacing the execution environment", process.Function.LogicalID)
+	r.docker.RemoveContainer(ctx, process.Container)
+	process.closeRuntimeAPI()
+	options := process.options
+	if !process.rie {
+		api, err := newRuntimeAPI(process.Function, r.logf)
+		if err != nil {
+			return err
+		}
+		api.running = func(checkCtx context.Context) (bool, error) {
+			return r.docker.Running(checkCtx, process.Container)
+		}
+		process.api = api
+		options.Env = cloneEnvironment(options.Env)
+		options.Env["AWS_LAMBDA_RUNTIME_API"] = api.ContainerAddress()
+	}
+	process.options = options
+	if _, err := r.docker.StartContainer(ctx, options); err != nil {
+		return err
+	}
+	process.Started = time.Now().UTC()
+	return process.awaitReady(ctx, r.docker)
 }
 
 // functionCommand is the container command: the handler for a zip function, or
@@ -1643,7 +1754,19 @@ func (r *Runner) Down(ctx context.Context) (int, error) {
 // PlanJSON renders the derived surface for machines (the examples harness and
 // future tooling).
 func (r *Runner) PlanJSON(spec *Spec) ([]byte, error) {
-	return json.MarshalIndent(spec, "", "  ")
+	document := struct {
+		*Spec
+		RuntimeMode string `json:"runtimeMode"`
+	}{Spec: spec, RuntimeMode: r.RuntimeMode()}
+	return json.MarshalIndent(document, "", "  ")
+}
+
+// RuntimeMode names the transport the run uses for its function containers.
+func (r *Runner) RuntimeMode() string {
+	if r.options.RIEMode {
+		return "rie"
+	}
+	return "runner"
 }
 
 func (r *Runner) labels() map[string]string {

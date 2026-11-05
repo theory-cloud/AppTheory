@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // Endpoint is one local AWS emulator endpoint the runner injects into every
@@ -162,15 +164,23 @@ func (r *Runner) securityEnvironment() map[string]string {
 }
 
 // functionEnvironment merges the template environment with the runner-owned
-// security values. The returned list names template variables the runner
-// overrides, so a run reports them instead of silently replacing an app value.
-func (r *Runner) functionEnvironment(function FunctionSpec) (map[string]string, []string) {
+// security values and, in the default runtime mode, the reserved runtime
+// environment variables the configuration page lists. The returned list names
+// template variables the runner overrides, so a run reports them instead of
+// silently replacing an app value.
+//
+// https://docs.aws.amazon.com/lambda/latest/dg/configuration-envvars.html#configuration-envvars-runtime
+func (r *Runner) functionEnvironment(function FunctionSpec, api *runtimeAPI) (map[string]string, []string) {
 	env := map[string]string{}
 	for name, value := range function.Environment {
 		env[name] = value
 	}
+	owned := r.securityEnvironment()
+	for name, value := range runtimeEnvironment(function, api) {
+		owned[name] = value
+	}
 	var overridden []string
-	for name, value := range r.securityEnvironment() {
+	for name, value := range owned {
 		if _, exists := env[name]; exists {
 			overridden = append(overridden, name)
 		}
@@ -178,6 +188,56 @@ func (r *Runner) functionEnvironment(function FunctionSpec) (map[string]string, 
 	}
 	sort.Strings(overridden)
 	return env, overridden
+}
+
+// runtimeEnvironment is the reserved environment Lambda sets for a runtime.
+// The values the runner cannot know (a physical function name and a deployed
+// log stream) use the local identity the runner reports elsewhere.
+//
+// https://docs.aws.amazon.com/lambda/latest/dg/configuration-envvars.html#configuration-envvars-runtime
+func runtimeEnvironment(function FunctionSpec, api *runtimeAPI) map[string]string {
+	if api == nil {
+		// RIE mode: the image's entry script sets the emulator's own values and
+		// AWS_LAMBDA_RUNTIME_API must stay unset, which is what selects the
+		// emulator.
+		return nil
+	}
+	memory := function.MemoryMB
+	if memory <= 0 {
+		memory = 128
+	}
+	name := function.LogicalID
+	if strings.TrimSpace(name) == "" {
+		name = "function"
+	}
+	env := map[string]string{
+		// AWS_LAMBDA_RUNTIME_API is "the host and port of the runtime API".
+		// https://docs.aws.amazon.com/lambda/latest/dg/runtimes-custom.html
+		"AWS_LAMBDA_RUNTIME_API":          api.ContainerAddress(),
+		"AWS_LAMBDA_FUNCTION_NAME":        name,
+		"AWS_LAMBDA_FUNCTION_VERSION":     "$LATEST",
+		"AWS_LAMBDA_FUNCTION_MEMORY_SIZE": strconv.Itoa(memory),
+		"AWS_LAMBDA_LOG_GROUP_NAME":       "/aws/lambda/" + name,
+		"AWS_LAMBDA_LOG_STREAM_NAME":      time.Now().UTC().Format("2006/01/02") + "/[$LATEST]" + name,
+		"AWS_LAMBDA_INITIALIZATION_TYPE":  "on-demand",
+		"LAMBDA_TASK_ROOT":                "/var/task",
+		"LAMBDA_RUNTIME_DIR":              "/var/runtime",
+		"TZ":                              ":UTC",
+	}
+	if strings.TrimSpace(function.Handler) != "" {
+		env["_HANDLER"] = function.Handler
+	}
+	return env
+}
+
+// cloneEnvironment copies an environment map so a replacement container cannot
+// mutate the configuration the previous one used.
+func cloneEnvironment(env map[string]string) map[string]string {
+	out := make(map[string]string, len(env))
+	for name, value := range env {
+		out[name] = value
+	}
+	return out
 }
 
 func lastJSONLine(output string) string {

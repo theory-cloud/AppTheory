@@ -1,9 +1,9 @@
 // Command apptheory-local runs an AppTheory app's real Lambda handlers on this
 // machine. The app's existing CDK definition is the only routing source: the
 // command synthesizes the app, reads the cloud assembly, starts each served
-// function in the official Lambda runtime image (digest-pinned, with its
-// embedded Runtime Interface Emulator) and serves the derived HTTP API v2, REST
-// API v1 and Function URL surfaces.
+// function in the official Lambda runtime image (digest-pinned) against the
+// runner's own Lambda Runtime API, and serves the derived HTTP API v2, REST API
+// v1, Function URL and CloudFront surfaces.
 //
 // Usage:
 //
@@ -15,7 +15,9 @@
 //	apptheory-local down   --app <cdk-app-dir> [flags]
 //
 // `run` is the default when no subcommand is given. Every flag is a command
-// line flag; the runner reads no operator environment variable.
+// line flag; the runner reads no operator environment variable. Function
+// containers talk to the runner's Lambda Runtime API; --rie runs them under the
+// image's embedded Runtime Interface Emulator instead.
 package main
 
 import (
@@ -140,6 +142,7 @@ type commandConfig struct {
 	function            string
 	events              stringList
 	stdio               bool
+	rieMode             bool
 	sessionTargets      stringList
 	handlerDir          string
 	runtime             string
@@ -172,6 +175,7 @@ func (c *commandConfig) register(flags *flag.FlagSet) {
 	flags.StringVar(&c.function, "function", "", "invoke: function logical id from the CDK assembly")
 	flags.Var(&c.events, "event", "invoke: JSON event file (repeatable)")
 	flags.BoolVar(&c.stdio, "stdio", false, "invoke: read newline-delimited JSON events from stdin and keep the container warm")
+	flags.BoolVar(&c.rieMode, "rie", false, "run functions under the image's embedded Runtime Interface Emulator instead of the runner's Lambda Runtime API (buffered: responses are not streamed incrementally)")
 	flags.Var(&c.sessionTargets, "target", "session: start this CDK function too, even with no route, event source or rule (repeatable)")
 	flags.StringVar(&c.handlerDir, "handler-dir", "", "invoke: built handler code directory (no CDK app)")
 	flags.StringVar(&c.runtime, "runtime", "", "invoke --handler-dir: Lambda runtime (provided.al2023, nodejs24.x, python3.14)")
@@ -278,6 +282,7 @@ func (c *commandConfig) plan(ctx context.Context, runner *localrunner.Runner) in
 	}
 	fmt.Printf("app:      %s\n", c.app)
 	fmt.Printf("assembly: %s\n", spec.AssemblyDir)
+	fmt.Printf("runtime:  %s\n", runtimeModeLabel(runner.RuntimeMode()))
 	fmt.Println()
 	fmt.Println("functions:")
 	for _, function := range spec.Functions {
@@ -299,6 +304,14 @@ func (c *commandConfig) plan(ctx context.Context, runner *localrunner.Runner) in
 		}
 	}
 	return 0
+}
+
+// runtimeModeLabel renders the function transport the run uses.
+func runtimeModeLabel(mode string) string {
+	if mode == "rie" {
+		return "rie (the image's Runtime Interface Emulator; responses are buffered)"
+	}
+	return "runner (the runner's Lambda Runtime API)"
 }
 
 // printProvisionedResources prints every resource the run creates from the CDK
@@ -474,6 +487,7 @@ func (c *commandConfig) options() (localrunner.Options, error) {
 		DeliveryConcurrency: c.deliveryConcurrency,
 		Clock:               c.clock,
 		AllowNoSurface:      c.allowNoSurface,
+		RIEMode:             c.rieMode,
 		Stdout:              os.Stdout,
 	}, nil
 }

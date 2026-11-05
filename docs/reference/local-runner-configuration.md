@@ -48,6 +48,7 @@ function the CDK definition targets and reads one JSON command per line.
 | `--function ID` | none | `invoke`: function logical id from the CDK assembly. |
 | `--event FILE` | none | `invoke`: JSON event file. Repeatable. |
 | `--stdio` | off | `invoke`: read newline-delimited JSON events from stdin and keep the container warm. |
+| `--rie` | off | Run function containers under the image's embedded Runtime Interface Emulator instead of the runner's Lambda Runtime API. Reported by `plan`, `plan --json` (`runtimeMode`) and `session describe`. It cannot stream incrementally. |
 | `--target ID` | none | `session`: start this CDK function even though no route, event source or rule targets it. Repeatable. |
 | `--handler-dir DIR` | none | `invoke`: built handler directory for an example with no CDK definition. Derives no routes. |
 | `--runtime RUNTIME` | none | `invoke --handler-dir`: Lambda runtime (`provided.al2023`, `nodejs24.x`, `python3.14`). |
@@ -1401,6 +1402,46 @@ The Runtime Interface Emulator returns one JSON body:
 `Content-Length`, `Transfer-Encoding` and other hop-by-hop headers from the
 handler are dropped and recomputed by the local HTTP server.
 
+## Runtime API fidelity
+
+The runner's Runtime API follows the AWS pages, not the emulator. What it does
+not reproduce, and the page that owns each rule:
+
+- **Lambda Managed Instances concurrency.** "Managed Instances can accept
+  concurrent /next and /response requests up to the configured
+  `AWS_LAMBDA_MAX_CONCURRENCY` limit"
+  ([runtime API](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-api.html)).
+  The runner starts no `AWS_LAMBDA_MAX_CONCURRENCY` and processes one
+  invocation at a time per container, which is the default-capacity contract.
+- **SnapStart.** `/runtime/restore/next` and `/runtime/restore/error` answer
+  `404` with "SnapStart is not enabled for this function" (same page). No
+  snapshot, restore hook or before-checkpoint hook runs.
+- **Extensions and the Telemetry API.** The lifecycle page says extensions
+  "communicate with Lambda using the Extensions API" and "can also receive log
+  messages and other telemetry from the function by using the Telemetry API"
+  ([execution environment lifecycle](https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtime-environment.html)).
+  The runner starts no extension process and serves neither API, so the
+  shutdown event, the extension crash rules and the telemetry events are not
+  reproduced.
+- **X-Ray.** The invocation carries a `Lambda-Runtime-Trace-Id` response header
+  and the runtime sets `_X_AMZN_TRACE_ID` from it, as the runtime API page
+  describes, but no X-Ray daemon runs and `AWS_XRAY_DAEMON_ADDRESS` is not set,
+  so no trace segment is produced.
+- **Init-phase timing and billing.** The 10-second Init limit and the billed
+  Init duration are not simulated; a slow initialization is simply allowed to
+  finish, and the first invocation fails with the runtime's own initialization
+  error if it does not.
+- **Streaming bandwidth and payload limits.** The 6 MB uncapped burst and
+  2 MBps cap are not reproduced, and the 6 MB buffered / 200 MB streamed
+  payload limits are not enforced.
+
+Where the emulator deviates from a page, the runner implements the page: a
+timeout is the documented `Sandbox.Timedout` error rather than the emulator's
+plain-text body, an initialization failure keeps its documented error type and
+message, and a streamed response is forwarded as it is written. The conformance
+suite in [the runner guide](/examples/local-runner/#conformance-suite) reports
+every remaining difference between the two modes.
+
 ## Isolation and cleanup
 
 - One Docker network per run: `<name-prefix>-net`, labelled
@@ -1409,8 +1450,12 @@ handler are dropped and recomputed by the local HTTP server.
   `<name-prefix>-dynamodb`, `<name-prefix>-moto`, `<name-prefix>-s3proxy` and
   `<name-prefix>-sqs`; each also carries its profile container name as a
   network alias.
-- The RIE port and each backend port are published on loopback only
-  (`-p 127.0.0.1::<port>`). The runner uses the backend's loopback port to
+- Each backend port is published on loopback only (`-p 127.0.0.1::<port>`).
+  In `--rie` mode the emulator port is published the same way. In the default
+  mode a function container reaches the Runtime API through
+  `host.docker.internal:<port>`; the listener binds every interface and the
+  container gets a `host.docker.internal:host-gateway` host entry, while the
+  URL the session reports stays loopback-only. The runner uses the backend's loopback port to
   provision buckets, keys, tables and queues and to serve a session's data
   operations; function containers reach the backend over the run network.
 - On success, failure or `SIGTERM`/`SIGINT`, the runner removes exactly its own

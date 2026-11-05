@@ -189,6 +189,9 @@ func TestRunnerLifecycle(t *testing.T) {
 	defer backend.Close()
 	var calls []string
 	runner.docker = fakeRunnerDocker(t, listenerPort(t, listener), serverPort(t, backend.URL), &calls)
+	// This lifecycle test models the embedded emulator container; the Runtime
+	// API path is exercised by its own tests and the example harness.
+	runner.options.RIEMode = true
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -236,6 +239,44 @@ func TestRunnerLifecycle(t *testing.T) {
 	}
 	if _, err := os.Stat(runner.Scratch()); !os.IsNotExist(err) {
 		t.Fatalf("run scratch was not removed: %v", err)
+	}
+}
+
+func TestRunnerSessionLifecycle(t *testing.T) {
+	base := testBase(t)
+	runner := newTestRunner(t, base)
+	listener := listenLoopback(t)
+	backend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("content-type", "application/x-amz-json-1.0")
+		if _, err := writer.Write([]byte(`{"TableNames":[]}`)); err != nil {
+			t.Errorf("write backend response: %v", err)
+		}
+	}))
+	defer backend.Close()
+	var calls []string
+	runner.docker = fakeRunnerDocker(t, listenerPort(t, listener), serverPort(t, backend.URL), &calls)
+	runner.options.RIEMode = true
+
+	commands := strings.NewReader(`{"op":"describe"}` + "\n" + `{"op":"clock.now"}` + "\n" + `{"op":"shutdown"}` + "\n")
+	var out bytes.Buffer
+	if err := runner.RunSession(context.Background(), commands, &out); err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("one response per command: %v", lines)
+	}
+	for index, line := range lines[:2] {
+		var response map[string]any
+		if err := json.Unmarshal([]byte(line), &response); err != nil {
+			t.Fatalf("response %d: %v", index, err)
+		}
+		if response["ok"] != true {
+			t.Fatalf("response %d: %v", index, response)
+		}
+	}
+	if !strings.Contains(mustSyncBuffer(t, runner.options.Stdout).String(), "local-run: ready") {
+		t.Fatal("the session did not report ready")
 	}
 }
 

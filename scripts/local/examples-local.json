@@ -596,5 +596,14 @@
       "class": "L2",
       "description": "CloudFront Function runtime 2.0 handler: get (string and json formats), exists and meta against the associated key value store."
     }
+  },
+  "suites": {
+    "scripts/local/runtime_api_conformance.py": {
+      "class": "L2",
+      "run": "runtime-api-conformance",
+      "script": "scripts/local/runtime_api_conformance.py",
+      "description": "Runtime API conformance: one handler set per language on the real digest-pinned runtime images, run once under the embedded Runtime Interface Emulator and once under the runner's Lambda Runtime API, comparing status, headers, body bytes, handler errors, timeouts and initialization failures.",
+      "gap": "The comparison runs this host's architecture; the Lambda service's Init-phase billing and its 10-second Init limit are not emulated."
+    }
   }
 }

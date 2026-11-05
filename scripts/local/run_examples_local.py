@@ -528,8 +528,11 @@ def validate_manifest(
 
     for entry in entries:
         if entry.kind == "suite":
-            suite_dir = root / entry.key
-            if not (suite_dir / "go.mod").is_file():
+            script = str(entry.data.get("script") or "")
+            if script:
+                if not (root / script).is_file():
+                    errors.append(f"suite script does not name a file in the tree: {script}")
+            elif not (root / entry.key / "go.mod").is_file():
                 errors.append(f"suite is not a Go module: {entry.key}")
 
         if entry.class_name and entry.pending:
@@ -6584,6 +6587,33 @@ def run_lambda_packaging(harness: Harness) -> str:
         stop_local_app(harness, run)
 
 
+def run_runtime_api_conformance(harness: Harness) -> str:
+    """Compare the runner's Runtime API with the RIE on the real images."""
+    workdir = STATE_DIR / "conformance"
+    result = harness.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts/local/runtime_api_conformance.py"),
+            "--runner",
+            str(LOCAL_RUNNER_BIN),
+            "--profile",
+            str(ROOT / LOCAL_PROFILE),
+            "--workdir",
+            str(workdir),
+        ],
+        timeout=3600,
+        check=False,
+    )
+    output = _combined_output(result)
+    if result.returncode != 0 or "runtime-api-conformance: PASS" not in output:
+        raise HarnessFailure("the Runtime API conformance suite did not pass", output)
+    return (
+        "the runner's Runtime API and the image's Runtime Interface Emulator agreed on status, "
+        "headers, body bytes and handler errors for Go, Node and Python; the emulator's buffered "
+        "streaming and its plain-text timeout are reported as deviations"
+    )
+
+
 RUNNERS: dict[str, Callable[[Harness], str]] = {
     "testkit-ts": run_testkit_ts,
     "testkit-ts-streaming": run_testkit_ts_streaming,
@@ -6638,6 +6668,7 @@ RUNNERS: dict[str, Callable[[Harness], str]] = {
     "ssr-assets-manifest": run_ssr_assets_manifest,
     "ssr-assets-upload": run_ssr_assets_upload,
     "lambda-packaging": run_lambda_packaging,
+    "runtime-api-conformance": run_runtime_api_conformance,
 }
 
 

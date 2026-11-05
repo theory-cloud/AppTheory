@@ -119,7 +119,7 @@ func TestServerHeaderHelpers(t *testing.T) {
 	if isHopByHopHeader("Content-Type") {
 		t.Fatal("content-type must be forwarded")
 	}
-	if streamedNote(false) != "" || !strings.Contains(streamedNote(true), "buffered") {
+	if streamedNote(false) != "" || !strings.Contains(streamedNote(true), "delivered as one body") {
 		t.Fatal("unexpected streamed note")
 	}
 }

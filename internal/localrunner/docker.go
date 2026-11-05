@@ -182,6 +182,21 @@ func (d *Docker) Running(ctx context.Context, name string) (bool, error) {
 	return strings.TrimSpace(stdout) == boolTrue, nil
 }
 
+// ExitCode returns a stopped container's exit code.
+func (d *Docker) ExitCode(ctx context.Context, name string) (int, error) {
+	stdout, stderr, err := d.exec(ctx, []string{
+		"docker", "inspect", "--format", "{{.State.ExitCode}}", name,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("read exit code of %s: %s", name, firstNonEmpty(stderr, err.Error()))
+	}
+	code, parseErr := strconv.Atoi(strings.TrimSpace(stdout))
+	if parseErr != nil {
+		return 0, fmt.Errorf("container %s returned an unreadable exit code %q", name, strings.TrimSpace(stdout))
+	}
+	return code, nil
+}
+
 // PublishedPort returns the loopback host port Docker assigned to a container
 // port, or zero while it is not published yet.
 func (d *Docker) PublishedPort(ctx context.Context, name string, containerPort int) (int, error) {
