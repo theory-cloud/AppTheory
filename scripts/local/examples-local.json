@@ -295,7 +295,7 @@
       "run": "media-cdn-gateway",
       "class": "L3",
       "gap": "Signed-URL verification (R5c): the private distribution is refused with A5a's named reason; the example ships no media, so a probe object is written to the provisioned public bucket. CloudFront edge network (docs/125 true limit); Lambda@Edge and KeyValueStore (R5b).",
-      "description": "Media CDN: the public distribution serves a probe object from the local S3 emulator with its metadata; the private trusted-key-group distribution stays refused with the named signed-URL reason; missing objects return 403 under OAC. A 403 custom error response served the configured page with status 200, cached it for ErrorCachingMinTTL on the run clock, and returned the origin status when the page itself was unavailable."
+      "description": "Media CDN: the public distribution serves a probe object from the local S3 emulator with its metadata; the private trusted-key-group distribution stays refused with the named signed-URL reason; missing objects return 403 under OAC. A 403 custom error response served the configured page with status 200; the s3proxy 403 carried Content-Type: application/xml and x-amz-request-id but no Cache-Control max-age/s-maxage, so the page was served on both requests and the second was a miss (a 403 is cached only with that header); when the page itself was unavailable the status came from the pages origin (403 AccessDenied)."
     },
     "examples/cdk/microvm-controller/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",

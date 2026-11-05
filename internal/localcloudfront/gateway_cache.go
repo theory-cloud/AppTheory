@@ -72,11 +72,23 @@ func (g *Gateway) respondFromCache(
 
 // refreshInBackground re-fetches a stale entry while the stale response is
 // served, which is what stale-while-revalidate asks for.
-func (g *Gateway) refreshInBackground(origin Origin, originRequest OriginRequest, behavior *Behavior, key string) {
+func (g *Gateway) refreshInBackground(state *requestState, origin Origin, originRequest OriginRequest, behavior *Behavior, key string) {
 	if origin == nil {
 		return
 	}
 	request := originRequest
+	storedPath := state.URI
+	storedQuery := CacheKeyQuery(state.RawQuery, policyCache(behavior))
+	viewer := &requestState{
+		Method:        http.MethodGet,
+		URI:           state.URI,
+		RawQuery:      state.RawQuery,
+		Host:          state.Host,
+		Header:        state.Header.Clone(),
+		ViewerIP:      state.ViewerIP,
+		ViewerAddress: state.ViewerAddress,
+		Proto:         state.Proto,
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -84,15 +96,16 @@ func (g *Gateway) refreshInBackground(origin Origin, originRequest OriginRequest
 		if err != nil {
 			return
 		}
-		final, errorTTL := g.applyCustomErrorResponse(ctx, origin, request, response)
-		ttl, control := g.responseTTL(final, behavior, errorTTL)
+		final, errorCaching := g.applyCustomErrorResponse(ctx, viewer, origin, request, response)
+		ttl, control := g.responseTTL(final, behavior, errorCaching)
 		if ttl <= 0 {
 			return
 		}
 		now := g.now()
 		g.Cache.Set(key, CacheEntry{
 			Response:             cloneOriginResponse(final),
-			Path:                 request.URI,
+			Path:                 storedPath,
+			Query:                storedQuery,
 			StoredAt:             now,
 			ExpiresAt:            now.Add(ttl),
 			StaleWhileRevalidate: control.StaleWhileRevalidate,
@@ -101,56 +114,157 @@ func (g *Gateway) refreshInBackground(origin Origin, originRequest OriginRequest
 	}()
 }
 
+// errorCachingDecision is the error-caching rule that applies to one origin
+// response. status is the status the rule is keyed to: the origin's ErrorCode
+// for a configured custom error response, otherwise the origin response's own
+// status. control and expiry come from the origin response that generated the
+// error, as the page states.
+//
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/HTTPStatusCodes.html
+type errorCachingDecision struct {
+	applies bool
+	status  int
+	minimum time.Duration
+	control CacheControl
+	expires time.Time
+	// behaviorTTL is set when a configured cache behavior matches the custom
+	// error page path: "If you also configured a cache behavior for the same
+	// custom error page, CloudFront uses the cache behavior TTL instead."
+	behaviorTTL  bool
+	pageBehavior *Behavior
+}
+
 // applyCustomErrorResponse replaces an origin error with the configured custom
-// error page, or keeps the origin response when the page itself is unavailable.
-// It returns the response and the error-caching TTL that applies to it.
+// error page, or keeps the origin response when no page is configured. The page
+// is resolved through the distribution's cache behaviors: "CloudFront finds the
+// first cache behavior in your distribution that has a path pattern that
+// matches the path of the custom error page" and "The CloudFront edge location
+// sends a request for the custom error page to the origin that is specified in
+// the cache behavior." When the page is unavailable, "CloudFront returns to the
+// viewer the status code that CloudFront received from the origin that contains
+// the custom error pages."
+//
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/HTTPStatusCodes.html
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/GeneratingCustomErrorResponses.html
 func (g *Gateway) applyCustomErrorResponse(
 	ctx context.Context,
+	viewer *requestState,
 	origin Origin,
 	originRequest OriginRequest,
 	response OriginResponse,
-) (OriginResponse, int) {
+) (OriginResponse, errorCachingDecision) {
 	custom, ok := g.Distribution.CustomErrorResponseFor(response.StatusCode)
 	if !ok {
-		return response, 0
+		return response, errorCachingDecision{}
 	}
-	ttl := custom.ErrorCachingMinTTL
-	if ttl <= 0 {
-		ttl = int(defaultErrorCachingTTL / time.Second)
+	decision := errorCachingDecision{
+		applies: true,
+		status:  custom.ErrorCode,
+		minimum: g.errorCachingMinimum(custom, originRequest.OriginID),
+		control: ParseCacheControl(originHeaderValues(response.Header, "Cache-Control")),
+	}
+	if expires, ok := parseHTTPDate(originHeaderValue(response.Header, "Expires")); ok {
+		decision.expires = expires
 	}
 	if custom.ResponsePagePath == "" {
 		final := cloneOriginResponse(response)
 		if custom.ResponseCode != 0 {
 			final.StatusCode = custom.ResponseCode
 		}
-		return final, ttl
+		return final, decision
 	}
-	pageRequest := originRequest
-	pageRequest.Method = http.MethodGet
-	pageRequest.URI = custom.ResponsePagePath
-	pageRequest.Body = nil
-	pageRequest.Range = ""
-	pageRequest.Header = http.Header{}
-	if originRequest.Header != nil {
-		for name, values := range originRequest.Header {
-			if isConditionalHeader(name) {
-				continue
-			}
-			pageRequest.Header[name] = append([]string(nil), values...)
+	pageBehavior := g.Distribution.BehaviorForURI(custom.ResponsePagePath)
+	if pageBehavior == nil {
+		return response, decision
+	}
+	pageOrigin, pageOriginConfig, _ := g.originForTarget(pageBehavior.TargetOriginID)
+	if pageOrigin == nil {
+		return response, decision
+	}
+	pageState := &requestState{
+		Method:        http.MethodGet,
+		URI:           custom.ResponsePagePath,
+		Host:          viewer.Host,
+		Header:        errorPageHeaders(viewer.Header),
+		ViewerIP:      viewer.ViewerIP,
+		ViewerAddress: viewer.ViewerAddress,
+		Proto:         viewer.Proto,
+	}
+	pageRequest := g.originRequest(pageState, pageBehavior, pageOriginConfig, pageBehavior.TargetOriginID, originRequest.RequestID)
+	page, err := pageOrigin.Fetch(ctx, pageRequest)
+	if err != nil {
+		return response, decision
+	}
+	if page.StatusCode < 200 || page.StatusCode >= 300 {
+		// The pages origin's status is now the response's status; it is what
+		// CloudFront returns to the viewer when the page is unavailable.
+		decision.status = page.StatusCode
+		decision.control = ParseCacheControl(originHeaderValues(page.Header, "Cache-Control"))
+		decision.expires = time.Time{}
+		if expires, ok := parseHTTPDate(originHeaderValue(page.Header, "Expires")); ok {
+			decision.expires = expires
 		}
+		return cloneOriginResponse(page), decision
 	}
-	page, err := origin.Fetch(ctx, pageRequest)
-	if err != nil || page.StatusCode < 200 || page.StatusCode >= 300 {
-		// "CloudFront returns to the viewer the status code that CloudFront
-		// received from the origin that contains the custom error pages."
-		// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/GeneratingCustomErrorResponses.html
-		return response, ttl
+	// "If you also configured a cache behavior for the same custom error page,
+	// CloudFront uses the cache behavior TTL instead." Only an explicit cache
+	// behavior counts; the default behavior alone leaves the error rule in
+	// place.
+	if _, explicit := g.Distribution.ExplicitBehaviorForURI(custom.ResponsePagePath); explicit {
+		decision.behaviorTTL = true
+		decision.pageBehavior = pageBehavior
 	}
 	page.StatusCode = custom.ResponseCode
 	if page.StatusCode == 0 {
 		page.StatusCode = http.StatusOK
 	}
-	return page, ttl
+	return page, decision
+}
+
+// errorPageHeaders builds the header set for the custom error page request: the
+// viewer's headers without the conditional headers, which belong to the object
+// that failed.
+func errorPageHeaders(viewer http.Header) http.Header {
+	header := http.Header{}
+	for name, values := range viewer {
+		if isConditionalHeader(name) {
+			continue
+		}
+		header[name] = append([]string(nil), values...)
+	}
+	return header
+}
+
+// errorCachingMinimum is the configured ErrorCachingMinTTL, or the documented
+// default. An explicit 0 disables error caching for a custom origin and means
+// one second for an S3 origin: "If you have caching enabled for an S3 bucket
+// origin, and you configure an error caching minimum TTL of 0 seconds ... you
+// will still see an error caching minimum TTL of 1 second for S3 origin
+// errors ... This doesn't apply to other types of origins."
+//
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/custom-error-pages-expiration.html
+func (g *Gateway) errorCachingMinimum(custom CustomErrorResponse, originID string) time.Duration {
+	if custom.ErrorCachingMinTTL == nil {
+		return defaultErrorCachingTTL
+	}
+	seconds := *custom.ErrorCachingMinTTL
+	if seconds > 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	if origin, ok := g.Distribution.Origin(originID); ok && origin.Kind == OriginS3 {
+		return time.Second
+	}
+	return 0
+}
+
+// staleErrorWindow is the error caching minimum TTL that applies when the
+// origin answers an expired object with a 5xx status: a custom error response
+// for that status names one, otherwise the 10 second default applies.
+func (g *Gateway) staleErrorWindow(originID string, status int) time.Duration {
+	if custom, ok := g.Distribution.CustomErrorResponseFor(status); ok {
+		return g.errorCachingMinimum(custom, originID)
+	}
+	return defaultErrorCachingTTL
 }
 
 // notModifiedFromCache answers a viewer conditional request from the cached
@@ -214,21 +328,118 @@ func isConditionalHeader(name string) bool {
 	}
 }
 
-// responseTTL chooses the cache duration: the configured error-caching TTL for
-// a custom error response, CloudFront's default 10 seconds for any other 4xx or
-// 5xx, and the cache policy's TTL rules for a normal response.
-func (g *Gateway) responseTTL(response OriginResponse, behavior *Behavior, errorCachingTTL int) (time.Duration, CacheControl) {
-	if errorCachingTTL > 0 {
-		return time.Duration(errorCachingTTL) * time.Second, CacheControl{}
+// responseTTL chooses the cache duration. A custom error page uses its cache
+// behavior's TTL when an explicit cache behavior matches the page path;
+// otherwise an error response follows the status tables; a normal response uses
+// the cache policy's TTL rules.
+//
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/HTTPStatusCodes.html
+func (g *Gateway) responseTTL(response OriginResponse, behavior *Behavior, errorCaching errorCachingDecision) (time.Duration, CacheControl) {
+	if errorCaching.applies {
+		if errorCaching.behaviorTTL && errorCaching.pageBehavior != nil {
+			if policy := policyCache(errorCaching.pageBehavior); policy != nil {
+				return policy.OriginTTL(response, g.now())
+			}
+			return 0, CacheControl{}
+		}
+		return g.errorResponseTTL(errorCaching), errorCaching.control
 	}
 	if response.StatusCode >= 400 {
-		return defaultErrorCachingTTL, CacheControl{}
+		control := ParseCacheControl(originHeaderValues(response.Header, "Cache-Control"))
+		caching := errorCachingDecision{
+			applies: true,
+			status:  response.StatusCode,
+			minimum: defaultErrorCachingTTL,
+			control: control,
+		}
+		if expires, ok := parseHTTPDate(originHeaderValue(response.Header, "Expires")); ok {
+			caching.expires = expires
+		}
+		return g.errorResponseTTLWithBehavior(caching, behavior), control
 	}
 	policy := policyCache(behavior)
 	if policy == nil {
 		return 0, CacheControl{}
 	}
 	return policy.OriginTTL(response, g.now())
+}
+
+// errorResponseTTL applies the error caching tables: CloudFront caches 404,
+// 414, 500, 501, 502, 503 and 504 unconditionally; 400, 403, 405, 412 and 415
+// "only ... if your origin returns a Cache-Control max-age or Cache-Control
+// s-maxage header"; every other status is not cached. The duration is "the
+// maximum of" the error caching minimum TTL and the origin's max-age, s-maxage
+// or Expires value, and cannot exceed the behavior's Maximum TTL.
+func (g *Gateway) errorResponseTTL(errorCaching errorCachingDecision) time.Duration {
+	return g.errorResponseTTLWithBehavior(errorCaching, nil)
+}
+
+func (g *Gateway) errorResponseTTLWithBehavior(errorCaching errorCachingDecision, behavior *Behavior) time.Duration {
+	if !errorStatusCacheable(errorCaching.status, errorCaching.control) {
+		return 0
+	}
+	ttl := errorCaching.minimum
+	if headerTTL := errorHeaderTTL(errorCaching.control, errorCaching.expires, g.now()); headerTTL > ttl {
+		ttl = headerTTL
+	}
+	if maximum := behaviorMaximumTTL(behavior); maximum > 0 && ttl > maximum {
+		ttl = maximum
+	}
+	if ttl < 0 {
+		return 0
+	}
+	return ttl
+}
+
+// errorStatusCacheable is the HTTPStatusCodes page's status table.
+func errorStatusCacheable(status int, control CacheControl) bool {
+	switch status {
+	case 404, 414, 500, 501, 502, 503, 504:
+		// "If the origin adds a Cache-Control: no-store, no-cache, or private
+		// directive for error codes 404, 410, 414, or 501, CloudFront does not
+		// cache the error response."
+		// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/custom-error-pages-expiration.html
+		if (status == 404 || status == 410 || status == 414 || status == 501) &&
+			(control.NoCache || control.NoStore || control.Private) {
+			return false
+		}
+		return true
+	case 400, 403, 405, 412, 415:
+		return control.MaxAge != nil || control.SMaxAge != nil
+	default:
+		return false
+	}
+}
+
+// errorHeaderTTL is the greatest of the origin's s-maxage, max-age and Expires
+// values; zero when the response names none.
+func errorHeaderTTL(control CacheControl, expires, now time.Time) time.Duration {
+	var ttl time.Duration
+	if control.SMaxAge != nil {
+		ttl = *control.SMaxAge
+	}
+	if control.MaxAge != nil && *control.MaxAge > ttl {
+		ttl = *control.MaxAge
+	}
+	if !expires.IsZero() {
+		if relative := expires.Sub(now); relative > ttl {
+			ttl = relative
+		}
+	}
+	if ttl < 0 {
+		return 0
+	}
+	return ttl
+}
+
+// behaviorMaximumTTL is the behavior's Maximum TTL; zero means the documented
+// 365 day ceiling in CachePolicy.OriginTTL and no practical cap here.
+func behaviorMaximumTTL(behavior *Behavior) time.Duration {
+	policy := policyCache(behavior)
+	if policy == nil || policy.MaxTTL <= 0 {
+		return 0
+	}
+	return time.Duration(policy.MaxTTL) * time.Second
 }
 
 func cloneOriginResponse(response OriginResponse) OriginResponse {

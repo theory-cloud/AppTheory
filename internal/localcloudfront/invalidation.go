@@ -211,6 +211,25 @@ func (api *InvalidationAPI) createInvalidation(writer http.ResponseWriter, reque
 		api.writeError(writer, request, http.StatusBadRequest, "InvalidArgument", err.Error())
 		return
 	}
+	// "If you make a second invalidation request with the same value for
+	// CallerReference, and if the rest of the request is the same, CloudFront
+	// doesn't create a new invalidation request. Instead, CloudFront returns
+	// information about the invalidation request that you previously created
+	// with the same CallerReference." With a different path, "CloudFront returns
+	// an InvalidationBatchAlreadyExists error."
+	// https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_CreateInvalidation.html
+	if existing, ok := api.invalidationForCallerReference(distributionID, batch.CallerReference); ok {
+		if !sameInvalidationPaths(existing.Paths, paths) {
+			api.writeError(writer, request, http.StatusBadRequest, "InvalidationBatchAlreadyExists", fmt.Sprintf(
+				"CallerReference %q was already used with different paths", batch.CallerReference))
+			return
+		}
+		writer.Header().Set("Location", cloudFrontAPIPrefix+"/distribution/"+distributionID+"/invalidation/"+existing.ID)
+		writer.Header().Set("Content-Type", "text/xml")
+		writer.WriteHeader(http.StatusCreated)
+		api.writeInvalidation(writer, &existing)
+		return
+	}
 	cache, logicalID, _ := api.distribution(distributionID)
 	removed := cache.Invalidate(paths)
 	invalidation := &Invalidation{
@@ -300,6 +319,35 @@ func (api *InvalidationAPI) writeError(writer http.ResponseWriter, _ *http.Reque
 	writer.WriteHeader(status)
 	_, _ = writer.Write([]byte(xml.Header))     //nolint:errcheck // response already committed
 	_ = xml.NewEncoder(writer).Encode(document) //nolint:errcheck // response already committed
+}
+
+// invalidationForCallerReference returns the invalidation a previous request
+// with the same CallerReference created for the distribution.
+func (api *InvalidationAPI) invalidationForCallerReference(distributionID, callerReference string) (Invalidation, bool) {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	for _, id := range api.order {
+		invalidation, ok := api.invalidations[id]
+		if !ok || invalidation.DistributionID != distributionID {
+			continue
+		}
+		if invalidation.CallerReference == callerReference {
+			return *invalidation, true
+		}
+	}
+	return Invalidation{}, false
+}
+
+func sameInvalidationPaths(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func newInvalidationID() string {

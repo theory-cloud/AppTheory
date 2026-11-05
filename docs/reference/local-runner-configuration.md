@@ -707,11 +707,11 @@ refuses the distribution instead of being ignored.
 
 | Property group | Implemented | Reported (not emulated) | Refused |
 | --- | --- | --- | --- |
-| `DistributionConfig` | `DefaultCacheBehavior`, `CacheBehaviors`, `Origins`, `OriginGroups`, `DefaultRootObject`, `Enabled` | `Aliases`, `Comment`, `HttpVersion`, `IPV6Enabled`, `Logging`, `PriceClass`, `Staging` (false), `ViewerCertificate` | `ContinuousDeploymentPolicyId`, `CustomErrorResponses`, `Restrictions`, `WebACLId`, `Staging` (true), `Enabled` (false), unknown |
+| `DistributionConfig` | `DefaultCacheBehavior`, `CacheBehaviors`, `Origins`, `OriginGroups`, `DefaultRootObject`, `Enabled`, `CustomErrorResponses` | `Aliases`, `Comment`, `HttpVersion`, `IPV6Enabled`, `Logging`, `PriceClass`, `Staging` (false), `ViewerCertificate` | `ContinuousDeploymentPolicyId`, `Restrictions`, `WebACLId`, `Staging` (true), `Enabled` (false), unknown |
 | Cache behavior | `PathPattern`, `TargetOriginId`, `AllowedMethods`, `CachedMethods` (OPTIONS failover), `CachePolicyId`, `OriginRequestPolicyId`, `ResponseHeadersPolicyId`, `FunctionAssociations` | `Compress`, `DefaultTTL`, `MinTTL`, `MaxTTL`, `RealtimeLogConfigArn`, `SmoothStreaming` (false), `ViewerProtocolPolicy` | `FieldLevelEncryptionId`, `ForwardedValues`, `GrpcConfig`, `LambdaFunctionAssociations`, `TrustedKeyGroups`, `TrustedSigners`, `SmoothStreaming` (true), unknown |
 | Origin | `Id`, `DomainName` (literal, S3 bucket, Function URL), `OriginPath`, `CustomOriginConfig`, `S3OriginConfig`, `OriginAccessControlId`, `OriginCustomHeaders` | `ConnectionAttempts`, `ConnectionTimeout`, `OriginShield`, the custom origin protocol/SSL/ports/timeouts, `OriginAccessIdentity`, S3 OAC/OAI signing (the access model is applied, not the signature) | unresolved `DomainName`, missing or both origin configs, `OriginPath` without a leading slash, unknown |
 | CloudFront Function | `FunctionCode`, `FunctionConfig.Runtime` | `AutoPublish`, `Name`, `FunctionConfig.Comment` | `KeyValueStoreAssociations`, unsupported runtime, empty code, unknown |
-| Cache policy | `ParametersInCacheKeyAndForwardedToOrigin` | `Name`, `Comment`, `DefaultTTL`, `MinTTL`, `MaxTTL`, `EnableAcceptEncodingBrotli`, `EnableAcceptEncodingGzip` | unknown managed ID, malformed config, unknown property |
+| Cache policy | `ParametersInCacheKeyAndForwardedToOrigin`, `DefaultTTL`, `MinTTL`, `MaxTTL` | `Name`, `Comment`, `EnableAcceptEncodingBrotli`, `EnableAcceptEncodingGzip` | unknown managed ID, malformed config, unknown property |
 | Origin request policy | `HeadersConfig`, `CookiesConfig`, `QueryStringsConfig` | `Name`, `Comment` | unknown mode, malformed config, unknown property |
 | Response headers policy | `CorsConfig`, `CustomHeadersConfig`, `RemoveHeadersConfig`, `SecurityHeadersConfig` | `Name`, `Comment`, `ServerTimingHeadersConfig` | malformed config, unknown property |
 | Origin access control | resolved and reported | type, signing behavior, signing protocol, name | — |
@@ -720,18 +720,33 @@ refuses the distribution instead of being ignored.
 
 A behavior's cache policy is applied in full. The cache key is the distribution
 domain plus the URL path, extended by the query strings, headers and cookies the
-policy names; the method is part of the key, so OPTIONS is cached separately
-from GET and HEAD. Only the behavior's `CachedMethods` are cached, and a
-CachingDisabled policy (or no policy) bypasses the cache.
+policy names. "The OPTIONS method is included in the cache key for OPTIONS
+requests. This means that responses to OPTIONS requests are cached separately
+from responses to GET and HEAD requests": GET and HEAD share one key, a HEAD is
+answered from the GET-stored object without a body, and a HEAD response is never
+stored (it has no body to serve a later GET). Only the behavior's
+`CachedMethods` are cached, and a CachingDisabled policy (or no policy)
+bypasses the cache.
 
-The TTL follows the Expiration page's table: `s-maxage` wins over `max-age`,
-`max-age` wins over `Expires`, `no-cache`/`no-store`/`private` are not cached
-unless `MinTTL` is above zero, and `MinTTL`/`MaxTTL` bound the result. Viewer
-`Cache-Control` and `Pragma` are never read. `stale-while-revalidate` serves the
-stale object while the gateway refreshes it, and `stale-if-error` serves it when
-the origin fails. A 4xx/5xx origin response is cached for the custom error
-response's `ErrorCachingMinTTL`, or 10 seconds when no custom error response
-matches.
+The normal TTL follows the Expiration page's table: `s-maxage` wins over
+`max-age`, `max-age` wins over `Expires`, `no-cache`/`no-store`/`private` are
+not cached unless `MinTTL` is above zero, and `MinTTL`/`MaxTTL` bound the
+result. Viewer `Cache-Control` and `Pragma` are never read.
+`stale-while-revalidate` serves the stale object while the gateway refreshes it.
+`stale-if-error` serves it when the origin fails or returns a 5xx status for an
+expired object, for the error caching minimum TTL and never past the behavior's
+`MaxTTL`; a 4xx response is returned instead of the stale object.
+
+Error responses follow the HTTPStatusCodes page's status table, not "any 4xx or
+5xx": 404, 414, 500, 501, 502, 503 and 504 are cached without a header; 400,
+403, 405, 412 and 415 "only ... if your origin returns a Cache-Control max-age
+or Cache-Control s-maxage header"; every other status (401, 429, ...) is not
+cached. The duration is "the maximum of" the error caching minimum TTL (10
+seconds by default, or the matched custom error response's
+`ErrorCachingMinTTL`) and the origin response's max-age, s-maxage or `Expires`
+value, capped by the behavior's Maximum TTL. An explicit `ErrorCachingMinTTL`
+of 0 disables error caching for a custom origin and means one second for an S3
+origin. A CachingDisabled policy caches neither errors nor custom error pages.
 
 A hit answers `x-cache: Hit from cloudfront` and an `age` in seconds; a miss
 answers `x-cache: Miss from cloudfront`. `session describe` reports per-behavior
@@ -739,17 +754,31 @@ hit and miss counts, each distribution's local id, the control-plane endpoint an
 every invalidation.
 
 **Custom error responses.** `CustomErrorResponses` is served: when the origin
-answers a configured `ErrorCode`, the gateway fetches `ResponsePagePath` from the
-same origin and serves it with `ResponseCode`. When the page itself is
-unavailable the gateway returns the status code the origin sent, as the
-custom-error page documents.
+answers a configured `ErrorCode`, the gateway finds "the first cache behavior in
+your distribution that has a path pattern that matches the path of the custom
+error page" and fetches `ResponsePagePath` from "the origin that is specified in
+the cache behavior", with that behavior's origin request policy, then serves the
+page with `ResponseCode`. When a cache behavior (not just the default behavior)
+matches the page path, "CloudFront uses the cache behavior TTL instead" of the
+error caching minimum. When the page itself is unavailable the gateway returns
+"the status code that CloudFront received from the origin that contains the
+custom error pages", i.e. the pages origin's status. A custom page is cached
+under the same status/header rule as its `ErrorCode`.
 
 **Invalidation.** The runner serves `CreateInvalidation`, `GetInvalidation` and
 `ListInvalidations` on a loopback control endpoint and injects it into every
 function as `AWS_ENDPOINT_URL_CLOUDFRONT`; the endpoint is printed by `run` and
-`session describe`. Paths must start with `/`, may use the `*` wildcard, are
-URL-decoded before matching, and a request may list at most 3000 paths. An
-invalidation removes the matching cached objects, so the next request is a miss.
+`session describe`. Paths must start with `/`, are case sensitive, are
+URL-decoded before matching, may list at most 3000 paths per request, and are at
+most 4000 characters; a `~` is refused. "The *, which replaces 0 or more
+characters, must be the last character in the invalidation path"; an asterisk
+anywhere else is a literal character. A path is matched against the cached path
+plus the query string the cache policy forwarded, so `/a.js` does not invalidate
+an entry cached under `/a.js?v=1` while `/a.js*` does. Reusing a
+`CallerReference` with the same paths returns the previous invalidation; with a
+different path it is `InvalidationBatchAlreadyExists`, as the CreateInvalidation
+reference states. An invalidation removes the matching cached objects, so the
+next request is a miss.
 
 **Deviations from CloudFront, and what the runner does instead:**
 
@@ -765,10 +794,6 @@ invalidation removes the matching cached objects, so the next request is a miss.
   `@connections` management listener. An invalidation is recorded `Completed`
   as soon as it removes the cached objects; CloudFront reports `InProgress`
   first.
-- A custom error page is fetched with the origin request's policy-filtered
-  headers, minus the conditional headers. CloudFront fetches the page from the
-  same origin the same way and returns the origin's status when the page is
-  unavailable.
 
 `Compress`, `RealtimeLogConfigArn`, aliases, the viewer certificate, access
 logging, `HttpVersion`, `IPV6Enabled`, `PriceClass` and the origin connection

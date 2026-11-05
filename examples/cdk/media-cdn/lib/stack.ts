@@ -38,10 +38,13 @@ export class MediaCdnStack extends cdk.Stack {
             autoDeleteObjects: true,
 
             // A missing object answers with the ObjectNotFound error page. The
-            // local gateway fetches the page from the same origin and serves it
-            // with the configured status; the error response is cached for
-            // ErrorCachingMinTTL. The page object is written by the harness (or
-            // by a deployment) at errors/not-found.html.
+            // local gateway resolves the page path through the distribution's
+            // cache behaviors (here the default behavior, so the same bucket),
+            // serves the page with the configured status, and applies the
+            // HTTPStatusCodes error-caching rule: the s3proxy 403 carries no
+            // Cache-Control max-age/s-maxage, so neither the 403 nor its custom
+            // page is cached. The page object is written by the harness (or by
+            // a deployment) at errors/not-found.html.
             errorResponses: [
                 {
                     httpStatus: 403,

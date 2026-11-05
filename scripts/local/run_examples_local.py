@@ -5545,10 +5545,11 @@ def run_ssr_site_gateway(harness: Harness) -> str:
             if not headers.get(name):
                 raise HarnessFailure(f"ssr-site /assets/hello.txt has no {name}: {headers}", body)
         asset_etag = headers["etag"]
-        # A viewer conditional must reach the S3 origin and its 304 must come
-        # back with the validator the origin attached; a non-match must serve
-        # the object normally. Neither depends on the origin request policy
-        # naming If-None-Match, which the pinned managed policy does not.
+        # A viewer conditional on a cached object is answered 304 from the
+        # cached validators without reaching the S3 origin (the object was just
+        # fetched above); a non-match must serve the object normally. Neither
+        # depends on the origin request policy naming If-None-Match, which the
+        # pinned managed policy does not.
         status, body, headers = http_request(
             "GET", base + "/assets/hello.txt", headers={"If-None-Match": asset_etag}
         )
@@ -5867,8 +5868,14 @@ def run_media_cdn_gateway(harness: Harness) -> str:
         if not headers.get("etag"):
             raise HarnessFailure("media-cdn /probe.txt has no ETag", body)
         # The 403 custom error response serves the configured error page with
-        # the configured status, and the error response is cached for
-        # ErrorCachingMinTTL on the run clock.
+        # the configured status. The s3proxy 403 is an S3 AccessDenied error: it
+        # carries Content-Type: application/xml and x-amz-request-id and no
+        # Cache-Control, and the HTTPStatusCodes page caches 403 "only ... if
+        # your origin returns a Cache-Control max-age or Cache-Control s-maxage
+        # header". The page is therefore served but not cached: the second
+        # request is another miss. The ErrorCachingMinTTL expiry proof for a
+        # 404 origin lives in the localcloudfront unit tests.
+        # https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/HTTPStatusCodes.html
         s3_put(
             session,
             bucket["logicalId"],
@@ -5883,14 +5890,12 @@ def run_media_cdn_gateway(harness: Harness) -> str:
         if headers.get("x-cache") != "Miss from cloudfront":
             raise HarnessFailure(f"media-cdn custom error first request = {headers.get('x-cache')!r}")
         status, body, headers = http_request("GET", base + "/missing.txt")
-        expect_status(status, 200, "media-cdn custom error page cached", body)
-        if headers.get("x-cache") != "Hit from cloudfront":
-            raise HarnessFailure(f"media-cdn custom error was not cached: {headers.get('x-cache')!r}")
-        session.clock_advance("61s")
-        status, body, headers = http_request("GET", base + "/missing.txt")
-        expect_status(status, 200, "media-cdn custom error page after the TTL", body)
+        expect_status(status, 200, "media-cdn custom error page again", body)
         if headers.get("x-cache") != "Miss from cloudfront":
-            raise HarnessFailure("the custom error response outlived ErrorCachingMinTTL")
+            raise HarnessFailure(
+                "the 403 custom error page was cached without a Cache-Control max-age/s-maxage header: "
+                f"{headers.get('x-cache')!r}"
+            )
 
         # When the custom error page itself is unavailable, CloudFront returns
         # the status code the origin sent for the page (here 403 AccessDenied).
@@ -5901,9 +5906,11 @@ def run_media_cdn_gateway(harness: Harness) -> str:
             raise HarnessFailure(f"media-cdn unavailable custom page = {body!r}")
         return (
             "the public distribution served a probe object from its provisioned bucket; the 403 "
-            "custom error response served the configured page with status 200, was a miss then a hit, "
-            "expired after ErrorCachingMinTTL on the run clock, and returned the origin status when "
-            f"the page itself was unavailable; the private distribution stayed refused ({refusal})"
+            "custom error response served the configured page with status 200; the s3proxy 403 carried "
+            "Content-Type: application/xml and x-amz-request-id but no Cache-Control max-age/s-maxage, "
+            "so the page was served on both requests and the second was a miss (the page caches a 403 "
+            "only with that header); when the page itself was unavailable the status came from the "
+            f"pages origin (403 AccessDenied); the private distribution stayed refused ({refusal})"
         )
     finally:
         stop_local_session(harness, session)

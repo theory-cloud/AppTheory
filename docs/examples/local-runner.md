@@ -840,30 +840,58 @@ The pinned managed policy table and the exact property inventory are in the
 A behavior with a cache policy caches the methods its `CachedMethods` lists
 (GET and HEAD by default), and a CachingDisabled policy always reaches the
 origin. The cache key is the distribution domain plus the URL path, extended by
-the query strings, headers and cookies the policy names; the method is part of
-the key, so OPTIONS is cached separately. `s-maxage` wins over `max-age` and
-`max-age` wins over `Expires`; `no-cache`/`no-store`/`private` are not cached
-unless `MinTTL` is above zero, and `MinTTL`/`MaxTTL` bound the result. Viewer
-`Cache-Control` and `Pragma` are ignored. `stale-while-revalidate` serves the
-stale object while the gateway refreshes it, and `stale-if-error` serves it when
-the origin fails. A 4xx/5xx origin response is cached for the custom error
-response's `ErrorCachingMinTTL`, or 10 seconds when none matches.
+the query strings, headers and cookies the policy names. "The OPTIONS method is
+included in the cache key for OPTIONS requests. This means that responses to
+OPTIONS requests are cached separately from responses to GET and HEAD requests":
+GET and HEAD share one key, a HEAD is answered from the GET-stored object
+without a body, and a HEAD response is never stored. `s-maxage` wins over
+`max-age` and `max-age` wins over `Expires`; `no-cache`/`no-store`/`private` are
+not cached unless `MinTTL` is above zero, and `MinTTL`/`MaxTTL` bound the result.
+Viewer `Cache-Control` and `Pragma` are ignored. `stale-while-revalidate` serves
+the stale object while the gateway refreshes it. `stale-if-error` serves it when
+the origin fails or returns a 5xx status for an expired object, for the error
+caching minimum TTL and never past the behavior's `MaxTTL`; a 4xx response is
+returned instead of the stale object.
+
+Error responses follow the HTTPStatusCodes page's status table, not "any 4xx or
+5xx": 404, 414, 500, 501, 502, 503 and 504 are cached without a header; 400,
+403, 405, 412 and 415 "only ... if your origin returns a Cache-Control max-age
+or Cache-Control s-maxage header"; every other status (401, 429, ...) is not
+cached. The duration is "the maximum of" the error caching minimum TTL (10
+seconds by default, or the matched custom error response's `ErrorCachingMinTTL`)
+and the origin response's max-age, s-maxage or `Expires` value, capped by the
+behavior's Maximum TTL. An explicit `ErrorCachingMinTTL` of 0 disables error
+caching for a custom origin and means one second for an S3 origin. A
+CachingDisabled policy caches neither errors nor custom error pages.
 
 A hit answers `x-cache: Hit from cloudfront` with an `age` in seconds; a miss
 answers `x-cache: Miss from cloudfront`. `session describe` reports each
 behavior's hit and miss counts and every invalidation.
 
-**Custom error responses.** `CustomErrorResponses` is served:
-`ResponsePagePath` is fetched from the same origin and returned with
-`ResponseCode`; if the page is unavailable, the origin's status is returned as
-the custom-error page documents.
+**Custom error responses.** `CustomErrorResponses` is served: the gateway finds
+"the first cache behavior in your distribution that has a path pattern that
+matches the path of the custom error page" and fetches `ResponsePagePath` from
+"the origin that is specified in the cache behavior", with that behavior's
+origin request policy, then returns the page with `ResponseCode`. When a cache
+behavior (not just the default behavior) matches the page path, "CloudFront uses
+the cache behavior TTL instead" of the error caching minimum. If the page is
+unavailable, "the status code that CloudFront received from the origin that
+contains the custom error pages" is returned, i.e. the pages origin's status. A
+custom page is cached under the same status/header rule as its `ErrorCode`.
 
 **Invalidation.** The run serves `CreateInvalidation`, `GetInvalidation` and
 `ListInvalidations` on a loopback control endpoint, injected into every function
 as `AWS_ENDPOINT_URL_CLOUDFRONT` and printed by `run` and `session describe`. A
-batch may list at most 3000 paths, every path begins with `/`, the `*` wildcard
-is supported and a path is URL-decoded before matching. An invalidation removes
-the matching objects, so the next request is a miss.
+batch may list at most 3000 paths, every path begins with `/`, is case
+sensitive, is URL-decoded before matching and is at most 4000 characters; a `~`
+is refused. "The *, which replaces 0 or more characters, must be the last
+character in the invalidation path"; an asterisk anywhere else is a literal
+character. A path is matched against the cached path plus the query string the
+cache policy forwarded, so `/a.js` does not invalidate an entry cached under
+`/a.js?v=1` while `/a.js*` does. Reusing a `CallerReference` with the same paths
+returns the previous invalidation; with a different path it is
+`InvalidationBatchAlreadyExists`. An invalidation removes the matching objects,
+so the next request is a miss.
 
 ### Origins
 
@@ -939,8 +967,8 @@ media distribution stays refused with the named signed-URL reason.
 
 Distributions that use Lambda@Edge, a CloudFront KeyValueStore association,
 trusted key groups or signed URLs, field-level encryption, geo restriction, a
-WAF web ACL, custom error responses, a gRPC config or a legacy `ForwardedValues`
-cache policy are refused with a named reason; they are listed under `skipped`
+WAF web ACL, a gRPC config or a legacy `ForwardedValues` cache policy are
+refused with a named reason; they are listed under `skipped`
 and no listener is started. Real-time logs, access logging and the properties
 that only affect caching or edge placement are reported instead.
 
@@ -1910,9 +1938,9 @@ the harness records it.
 | Other emulators | Endpoint injection only | Pass `--endpoint service=url` and `--add-host name=address`; the profile names the environment variables. The checked-in profile binds `ssm`, `secretsmanager`, `sns`, `kinesis` and `cognito-idp` to moto, and `kms`/`sts` as before. |
 | WebSocket APIs (`AWS::ApiGatewayV2::Api`, WEBSOCKET) | Served (L2) | A real RFC 6455 listener serves `$connect`, `$disconnect`, `$default` and custom routes selected by the route selection expression, with the documented proxy event, two-way route responses, the `$connect` policy authorizer, the `@connections` management API and the documented idle/lifetime close; see [WebSocket APIs](#websocket-apis). No custom domains and no IAM authorization. |
 | CloudFront distributions and CloudFront Functions | Served (L2) | The distribution is served on its own loopback URL. Cache behaviors, allowed methods, viewer-request/viewer-response functions, origin request policies and response headers policies are applied; the generated function code runs in a restricted Node sandbox. S3 origins read the app's deployments from s3proxy, Function URL origins invoke the real handler container, and origin groups fail over with CloudFront's rules. No edge network and no TLS. |
-| CloudFront caching | Supported (L2) | The cache key, `CachedMethods`, `CACHING_DISABLED`, the Expiration-page TTL rules, stale-while-revalidate/stale-if-error and origin error caching are applied; hits answer `x-cache`/`age`; `session describe` reports per-behavior hit/miss counts. A viewer Range request bypasses the local cache (documented deviation); a conditional request is answered 304 from the cached validators. See [Caching and invalidation](#caching-and-invalidation). |
-| CloudFront invalidation | Supported (L2) | `CreateInvalidation`, `GetInvalidation` and `ListInvalidations` are served on a loopback control endpoint injected as `AWS_ENDPOINT_URL_CLOUDFRONT`; the aws CLI and the SDK share it. See [Caching and invalidation](#caching-and-invalidation). |
-| CloudFront custom error responses | Supported (L2) | `CustomErrorResponses` is served from the same origin, with the configured status and `ErrorCachingMinTTL`; an unavailable page returns the origin's status. |
+| CloudFront caching | Supported (L2) | The cache key (GET and HEAD share one key, OPTIONS is separate), `CachedMethods`, `CACHING_DISABLED`, the Expiration-page TTL rules, stale-while-revalidate, stale-if-error (including a 5xx origin response for an expired object) and the HTTPStatusCodes-page error caching table are applied; hits answer `x-cache`/`age`; `session describe` reports per-behavior hit/miss counts. A viewer Range request bypasses the local cache (documented deviation); a conditional request is answered 304 from the cached validators. See [Caching and invalidation](#caching-and-invalidation). |
+| CloudFront invalidation | Supported (L2) | `CreateInvalidation`, `GetInvalidation` and `ListInvalidations` are served on a loopback control endpoint injected as `AWS_ENDPOINT_URL_CLOUDFRONT`; the aws CLI and the SDK share it. Paths are matched against the cached path plus the selected query string, with a trailing `*` only, and `CallerReference` reuse follows the API reference. See [Caching and invalidation](#caching-and-invalidation). |
+| CloudFront custom error responses | Supported (L2) | `CustomErrorResponses` is served: the page is fetched through the first cache behavior that matches its path, from that behavior's origin and with its origin request policy, with the configured status; a matching behavior's TTL wins, and an unavailable page returns the pages origin's status. |
 | CloudFront external custom origins | Supported with `--origin` (L2) | An external custom origin is refused at plan time unless `--origin domain=loopback-url` maps it; a non-loopback mapping is refused. The mapped origin receives the documented origin-request shape. |
 | REST `MOCK` integrations | Supported (L1) | The transport returns the `IntegrationResponses` status and headers the template declares and invokes no function. CDK emits these for CORS preflight. |
 | HTTP API `REQUEST` authorizers with simple responses | Supported | The transport invokes the real authorizer function with the API Gateway v2 REQUEST event, carrying every configured `$request.header.*` or `$request.querystring.*` identity source in order; a request missing one is refused with 401 before the authorizer runs. A false `isAuthorized` is a 401, the authorizer context is carried to the handler, and a malformed response fails closed. `$context`/`$stageVariables` sources fail closed at plan time. |

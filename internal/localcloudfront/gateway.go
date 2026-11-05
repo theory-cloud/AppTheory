@@ -189,27 +189,32 @@ func (g *Gateway) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	// deviation is documented in the reference.
 	cacheable := g.cacheable(behavior, state.Method) && state.Header.Get("Range") == ""
 	cacheKey := ""
+	var staleEntry CacheEntry
+	hasStaleEntry := false
 	if cacheable {
 		cacheKey = CacheKey(domainName, state.Method, state.URI, state.RawQuery, state.Header, policyCache(behavior))
-		if entry, ok := g.Cache.Get(cacheKey); ok && entry.Fresh(now) {
+		entry, ok := g.Cache.Get(cacheKey)
+		if ok && entry.Fresh(now) {
 			g.recordStats(behavior.PathPattern, true)
 			g.respondFromCache(writer, request, behavior, state, requestID, domainName, entry, now, "")
 			return
-		} else if ok && entry.ServeStaleWhileRevalidate(now) {
+		}
+		if ok && entry.ServeStaleWhileRevalidate(now) {
 			g.recordStats(behavior.PathPattern, true)
-			g.refreshInBackground(originImplementation, originRequest, behavior, cacheKey)
+			g.refreshInBackground(state, originImplementation, originRequest, behavior, cacheKey)
 			g.respondFromCache(writer, request, behavior, state, requestID, domainName, entry, now, "served stale while revalidating")
 			return
+		}
+		if ok {
+			staleEntry, hasStaleEntry = entry, true
 		}
 	}
 	g.recordStats(behavior.PathPattern, false)
 	originResponse, originErr := originImplementation.Fetch(request.Context(), originRequest)
 	if originErr != nil {
-		if cacheable {
-			if entry, ok := g.Cache.Get(cacheKey); ok && entry.ServeStaleIfError(now) {
-				g.respondFromCache(writer, request, behavior, state, requestID, domainName, entry, now, "served stale after the origin failed")
-				return
-			}
+		if hasStaleEntry && staleEntry.ServeStaleIfError(now) {
+			g.respondFromCache(writer, request, behavior, state, requestID, domainName, staleEntry, now, "served stale after the origin failed")
+			return
 		}
 		var unavailable *OriginUnavailableError
 		if errors.As(originErr, &unavailable) || errors.Is(originErr, ErrOriginUnavailable) {
@@ -220,13 +225,32 @@ func (g *Gateway) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			fmt.Sprintf("origin %q failed: %v", targetID, originErr))
 		return
 	}
-	response, errorCachingTTL := g.applyCustomErrorResponse(request.Context(), originImplementation, originRequest, originResponse)
-	if cacheable {
-		ttl, control := g.responseTTL(response, behavior, errorCachingTTL)
+	// An origin 5xx response for an expired object is treated like an
+	// unreachable origin: "If your origin returns a 5xx status code, CloudFront
+	// serves the object even though it has expired. For the duration of the
+	// error caching minimum TTL, CloudFront continues to respond to viewer
+	// requests by serving the object from the edge cache." A 4xx response is
+	// returned to the viewer instead. The stale-if-error directive extends the
+	// window, and the behavior's Maximum TTL caps it.
+	// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/HTTPStatusCodes.html
+	if hasStaleEntry && originResponse.StatusCode >= 500 && originResponse.StatusCode < 600 {
+		window := g.staleErrorWindow(targetID, originResponse.StatusCode)
+		if staleEntry.ServeStaleForErrorResponse(now, window, behaviorMaximumTTL(behavior)) {
+			g.respondFromCache(writer, request, behavior, state, requestID, domainName, staleEntry, now,
+				fmt.Sprintf("served stale after the origin returned %d", originResponse.StatusCode))
+			return
+		}
+	}
+	response, errorCaching := g.applyCustomErrorResponse(request.Context(), state, originImplementation, originRequest, originResponse)
+	// GET and HEAD share one key, but a HEAD response has no body to serve a
+	// later GET, so it is never stored under that key.
+	if cacheable && state.Method != http.MethodHead {
+		ttl, control := g.responseTTL(response, behavior, errorCaching)
 		if ttl > 0 {
 			g.Cache.Set(cacheKey, CacheEntry{
 				Response:             cloneOriginResponse(response),
 				Path:                 state.URI,
+				Query:                CacheKeyQuery(state.RawQuery, policyCache(behavior)),
 				StoredAt:             now,
 				ExpiresAt:            now.Add(ttl),
 				StaleWhileRevalidate: control.StaleWhileRevalidate,

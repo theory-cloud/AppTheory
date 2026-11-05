@@ -1,6 +1,7 @@
 package localrunner
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -62,6 +63,36 @@ func TestApplyOriginOverridesMapsAndRefuses(t *testing.T) {
 	}
 	if spec.CloudFront[0].Origins[0].LocalURL != "http://127.0.0.1:9000" {
 		t.Fatalf("local URL = %q", spec.CloudFront[0].Origins[0].LocalURL)
+	}
+}
+
+func TestApplyOriginOverridesLogsUndeclaredDomains(t *testing.T) {
+	var output bytes.Buffer
+	spec := &Spec{CloudFront: []*localcloudfront.Distribution{{
+		LogicalID: "Distribution",
+		Enabled:   true,
+		DefaultBehavior: &localcloudfront.Behavior{
+			PathPattern:    "*",
+			TargetOriginID: "api",
+			CachePolicy:    &localcloudfront.Policy{Kind: localcloudfront.PolicyCache, Cache: &localcloudfront.CachePolicy{DefaultTTL: 60}},
+		},
+		Origins: []*localcloudfront.DistributionOrigin{{
+			ID: "api", DomainName: "api.example.com", Kind: localcloudfront.OriginCustom,
+			Custom: &localcloudfront.CustomOrigin{},
+		}},
+	}}}
+	runner := &Runner{options: Options{
+		Stdout: &output,
+		Origins: map[string]string{
+			"api.example.com":        "http://127.0.0.1:9000",
+			"undeclared.example.com": "http://127.0.0.1:9001",
+		},
+	}}
+	if err := runner.applyOriginOverrides(spec); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if !strings.Contains(output.String(), "undeclared.example.com") {
+		t.Fatalf("an --origin mapping for an undeclared domain was ignored silently: %q", output.String())
 	}
 }
 

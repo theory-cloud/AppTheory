@@ -46,14 +46,27 @@ type Distribution struct {
 // https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/GeneratingCustomErrorResponses.html
 type CustomErrorResponse struct {
 	ErrorCode int `json:"errorCode"`
-	// ResponsePagePath is the path CloudFront fetches from the same origin when
-	// the origin answers ErrorCode.
+	// ResponsePagePath is the path CloudFront fetches when the origin answers
+	// ErrorCode. It is resolved through the distribution's cache behaviors:
+	// "CloudFront finds the first cache behavior in your distribution that has
+	// a path pattern that matches the path of the custom error page" and "The
+	// CloudFront edge location sends a request for the custom error page to the
+	// origin that is specified in the cache behavior."
+	// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/HTTPStatusCodes.html
 	ResponsePagePath string `json:"responsePagePath,omitempty"`
 	// ResponseCode is the status served with the custom page; 0 keeps the
 	// origin's status when no page is served.
 	ResponseCode int `json:"responseCode,omitempty"`
-	// ErrorCachingMinTTL is how long the error response is cached.
-	ErrorCachingMinTTL int `json:"errorCachingMinTtl,omitempty"`
+	// ErrorCachingMinTTL is how long the error response is cached. It is a
+	// pointer so an explicit 0 (which disables error caching for a custom
+	// origin, and means one second for an S3 origin) is distinguished from an
+	// omitted value (the 10 second default). The page: "If you have caching
+	// enabled for an S3 bucket origin, and you configure an error caching
+	// minimum TTL of 0 seconds ... you will still see an error caching minimum
+	// TTL of 1 second for S3 origin errors ... This doesn't apply to other types
+	// of origins."
+	// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/custom-error-pages-expiration.html
+	ErrorCachingMinTTL *int `json:"errorCachingMinTtl,omitempty"`
 }
 
 // CustomErrorResponseFor returns the configured error response for a status.
@@ -79,6 +92,20 @@ func (d *Distribution) BehaviorForURI(uri string) *Behavior {
 		}
 	}
 	return d.DefaultBehavior
+}
+
+// ExplicitBehaviorForURI reports the configured cache behavior (not the default
+// behavior) whose path pattern matches uri. CloudFront's custom-error-page note
+// distinguishes a cache behavior configured for the page path from the default
+// behavior: "If you also configured a cache behavior for the same custom error
+// page, CloudFront uses the cache behavior TTL instead."
+func (d *Distribution) ExplicitBehaviorForURI(uri string) (*Behavior, bool) {
+	for _, behavior := range d.CacheBehaviors {
+		if MatchPathPattern(behavior.PathPattern, uri) {
+			return behavior, true
+		}
+	}
+	return nil, false
 }
 
 // Origin returns an origin by id.
@@ -650,7 +677,7 @@ func parseCustomErrorResponse(raw json.RawMessage, distributionID string, positi
 	if response.ResponseCode != 0 && (response.ResponseCode < 200 || response.ResponseCode > 599) {
 		return CustomErrorResponse{}, fmt.Errorf("%s: CustomErrorResponses[%d].ResponseCode %d is not an HTTP status", distributionID, position, response.ResponseCode)
 	}
-	if response.ErrorCachingMinTTL < 0 {
+	if response.ErrorCachingMinTTL != nil && *response.ErrorCachingMinTTL < 0 {
 		return CustomErrorResponse{}, fmt.Errorf("%s: CustomErrorResponses[%d].ErrorCachingMinTTL is negative", distributionID, position)
 	}
 	return response, nil

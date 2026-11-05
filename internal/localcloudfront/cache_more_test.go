@@ -93,7 +93,7 @@ func TestGatewayCustomErrorWithoutAPage(t *testing.T) {
 		return OriginResponse{StatusCode: 404, Body: []byte("missing")}, nil
 	})
 	distribution := testDistribution(cachedBehavior(cachePolicy(60, 3600, 0)), nil, testOrigin("origin", "origin.example"))
-	distribution.CustomErrorResponses = []CustomErrorResponse{{ErrorCode: 404, ResponseCode: 410, ErrorCachingMinTTL: 30}}
+	distribution.CustomErrorResponses = []CustomErrorResponse{{ErrorCode: 404, ResponseCode: 410, ErrorCachingMinTTL: intPointer(30)}}
 	gateway := NewGateway(distribution, &Topology{}, map[string]Origin{"origin": origin}, nil, nil)
 	recorder := serveGateway(gateway, http.MethodGet, "http://viewer.example/x", "", nil)
 	if recorder.Code != 410 {
@@ -132,8 +132,22 @@ func TestGatewayCachesOriginErrorsForTenSeconds(t *testing.T) {
 	if gateway.Cache.Len() != 1 {
 		t.Fatalf("cache entries = %d", gateway.Cache.Len())
 	}
+	// "If your origin returns a 5xx status code, CloudFront serves the object
+	// even though it has expired. For the duration of the error caching minimum
+	// TTL, CloudFront continues to respond to viewer requests by serving the
+	// object from the edge cache." The 503 was cached for 10 seconds; 11 seconds
+	// after the first response the next request serves the stale error object
+	// while the origin answers 503 again.
 	now = now.Add(11 * time.Second)
 	recorder := serveGateway(gateway, http.MethodGet, "http://viewer.example/x", "", nil)
+	if recorder.Header().Get("x-cache") != cacheHitHeader || recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("a 5xx for an expired object must serve it stale within the error TTL: %d %q",
+			recorder.Code, recorder.Header().Get("x-cache"))
+	}
+	// Past the 10 second error caching window the origin response is returned
+	// and cached again instead of the stale object.
+	now = now.Add(10 * time.Second)
+	recorder = serveGateway(gateway, http.MethodGet, "http://viewer.example/x", "", nil)
 	if recorder.Header().Get("x-cache") != cacheMissHeader {
 		t.Fatalf("an origin error must expire after 10 seconds: %q", recorder.Header().Get("x-cache"))
 	}
@@ -224,7 +238,8 @@ func TestInvalidationsReturnsNewestFirst(t *testing.T) {
 	server := httptest.NewServer(api)
 	defer server.Close()
 	for index := 0; index < 2; index++ {
-		body := `<InvalidationBatch><Paths><Quantity>1</Quantity><Items><Path>/x</Path></Items></Paths><CallerReference>x</CallerReference></InvalidationBatch>`
+		body := `<InvalidationBatch><Paths><Quantity>1</Quantity><Items><Path>/x</Path></Items></Paths><CallerReference>caller-` +
+			strings.Repeat("x", index+1) + `</CallerReference></InvalidationBatch>`
 		response, err := http.Post(server.URL+cloudFrontAPIPrefix+"/distribution/"+distributionID+"/invalidation", "text/xml", strings.NewReader(body)) //nolint:bodyclose,noctx // readAll closes it; a test client needs no context
 		if err != nil {
 			t.Fatalf("post: %v", err)

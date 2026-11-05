@@ -73,6 +73,19 @@ func (r *Runner) applyOriginOverrides(spec *Spec) error {
 			})
 		}
 	}
+	// An --origin mapping for a domain no distribution declares has no effect;
+	// say so at plan time instead of ignoring it silently.
+	declared := map[string]bool{}
+	for _, distribution := range spec.CloudFront {
+		for _, origin := range distribution.Origins {
+			declared[origin.DomainName] = true
+		}
+	}
+	for _, domain := range sortedKeys(r.options.Origins) {
+		if !declared[domain] {
+			r.logf("origin override %s is not declared by any distribution; it has no effect", domain)
+		}
+	}
 	return nil
 }
 

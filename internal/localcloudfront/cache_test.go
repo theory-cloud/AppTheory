@@ -116,7 +116,7 @@ func TestGatewayServesTheCustomErrorPage(t *testing.T) {
 		ErrorCode:          404,
 		ResponsePagePath:   "/errors/not-found.html",
 		ResponseCode:       200,
-		ErrorCachingMinTTL: 120,
+		ErrorCachingMinTTL: intPointer(120),
 	}}
 	gateway := NewGateway(distribution, &Topology{}, map[string]Origin{"origin": origin}, nil, nil)
 	recorder := serveGateway(gateway, http.MethodGet, "http://viewer.example/missing", "", nil)

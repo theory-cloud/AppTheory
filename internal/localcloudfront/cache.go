@@ -14,8 +14,8 @@ import (
 // CloudFront caching.
 //
 // The cache key is the distribution domain plus the URL path, extended by the
-// query strings, headers and cookies the cache policy names. OPTIONS is cached
-// separately from GET and HEAD because the method is part of the key. The TTL
+// query strings, headers and cookies the cache policy names. GET and HEAD share
+// one key; OPTIONS is cached separately, as the cache-key page states. The TTL
 // comes from the origin response exactly as the Expiration page's table states:
 // s-maxage wins over max-age, max-age wins over Expires, no-cache/no-store/
 // private are not cached unless the minimum TTL is above zero, and the minimum
@@ -31,6 +31,9 @@ const (
 	defaultErrorCachingTTL = 10 * time.Second
 	// maxInvalidationPaths is the documented per-request invalidation quota.
 	maxInvalidationPaths = 3000
+	// maxInvalidationPathLength is the documented path limit: "The maximum
+	// length of a path is 4,000 characters."
+	maxInvalidationPathLength = 4000
 	// cacheHitHeader and cacheMissHeader are the documented x-cache values.
 	cacheHitHeader  = "Hit from cloudfront"
 	cacheMissHeader = "Miss from cloudfront"
@@ -41,6 +44,13 @@ type CacheEntry struct {
 	Response OriginResponse
 	// Path is the viewer path the entry was stored under, used by invalidations.
 	Path string
+	// Query is the query-string part of the cache key (the strings the cache
+	// policy selected from the viewer request). An invalidation path is matched
+	// against Path plus Query: "If you configured CloudFront to forward query
+	// strings to your origin, you must include the query strings when
+	// invalidating files."
+	// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/invalidation-specifying-objects.html
+	Query string
 	// StoredAt and ExpiresAt are on the gateway's clock.
 	StoredAt  time.Time
 	ExpiresAt time.Time
@@ -48,6 +58,15 @@ type CacheEntry struct {
 	// extensions.
 	StaleWhileRevalidate time.Duration
 	StaleIfError         time.Duration
+}
+
+// ViewerPath returns the invalidatable path: the stored path plus the selected
+// query string, when the cache policy forwarded one.
+func (e CacheEntry) ViewerPath() string {
+	if e.Query == "" {
+		return e.Path
+	}
+	return e.Path + "?" + e.Query
 }
 
 // Fresh reports whether the entry is inside its TTL.
@@ -69,6 +88,33 @@ func (e CacheEntry) ServeStaleIfError(now time.Time) bool {
 		return false
 	}
 	return now.Before(e.ExpiresAt.Add(e.StaleIfError))
+}
+
+// ServeStaleForErrorResponse reports whether an expired entry may be served
+// because the origin answered with a 5xx status. The page: "If your origin
+// returns a 5xx status code, CloudFront serves the object even though it has
+// expired. For the duration of the error caching minimum TTL, CloudFront
+// continues to respond to viewer requests by serving the object from the edge
+// cache." A stale-if-error directive extends that window, and "CloudFront will
+// only serve an object that is stale up to the specified maximum TTL value."
+//
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/HTTPStatusCodes.html
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/Expiration.html
+func (e CacheEntry) ServeStaleForErrorResponse(now time.Time, errorWindow, maxTTL time.Duration) bool {
+	window := errorWindow
+	if e.StaleIfError > window {
+		window = e.StaleIfError
+	}
+	if window <= 0 {
+		return false
+	}
+	limit := e.ExpiresAt.Add(window)
+	if maxTTL > 0 {
+		if cap := e.StoredAt.Add(maxTTL); cap.Before(limit) {
+			limit = cap
+		}
+	}
+	return now.Before(limit)
 }
 
 // Cache stores origin responses for one distribution.
@@ -135,7 +181,7 @@ func (c *Cache) Invalidate(paths []string) int {
 	removed := 0
 	for key, entry := range c.entries {
 		for _, pattern := range paths {
-			if invalidationPathMatches(pattern, entry.Path) {
+			if invalidationPathMatches(pattern, entry.ViewerPath()) {
 				delete(c.entries, key)
 				removed++
 				break
@@ -145,9 +191,16 @@ func (c *Cache) Invalidate(paths []string) int {
 	return removed
 }
 
-// invalidationPathMatches matches one invalidation path against a viewer path.
-// The invalidation path is URL-decoded first, as CloudFront documents, and *
-// matches any run of characters.
+// invalidationPathMatches matches one invalidation path against a viewer path
+// (the cached path plus its selected query string). The invalidation path is
+// URL-decoded first, as CloudFront documents, and invalidation paths are case
+// sensitive. "The *, which replaces 0 or more characters, must be the last
+// character in the invalidation path." and "Asterisks (*) inserted anywhere
+// else are treated as a literal character match instead of a wildcard
+// invalidation." A trailing * is therefore the only wildcard; every other
+// asterisk is literal.
+//
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/invalidation-specifying-objects.html
 func invalidationPathMatches(pattern, path string) bool {
 	decoded, err := url.PathUnescape(pattern)
 	if err != nil {
@@ -156,13 +209,13 @@ func invalidationPathMatches(pattern, path string) bool {
 	if !strings.HasPrefix(decoded, "/") {
 		return false
 	}
-	if !strings.Contains(decoded, "*") {
-		return decoded == path
+	if strings.HasSuffix(decoded, "*") {
+		return strings.HasPrefix(path, strings.TrimSuffix(decoded, "*"))
 	}
-	return wildcardMatch(decoded, path)
+	return decoded == path
 }
 
-// wildcardMatch is the local * and ? matcher.
+// wildcardMatch is the local * and ? matcher used for IAM-style ARN patterns.
 func wildcardMatch(pattern, value string) bool {
 	p, v := 0, 0
 	star, match := -1, 0
@@ -191,7 +244,12 @@ func wildcardMatch(pattern, value string) bool {
 
 // CacheKey builds the cache key for one request. The distribution domain and
 // the URL path are always part of it; the cache policy adds the query strings,
-// headers and cookies it names.
+// headers and cookies it names. "The OPTIONS method is included in the cache
+// key for OPTIONS requests. This means that responses to OPTIONS requests are
+// cached separately from responses to GET and HEAD requests." GET and HEAD
+// therefore share one key; every other method, which CloudFront does not
+// cache, keeps its own.
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/understanding-the-cache-key.html
 func CacheKey(host, method, path, rawQuery string, header http.Header, policy *CachePolicy) string {
 	queryRule, headerRule, cookieRule := newForwardingRule(), newForwardingRule(), newForwardingRule()
 	if policy != nil {
@@ -200,7 +258,7 @@ func CacheKey(host, method, path, rawQuery string, header http.Header, policy *C
 		cookieRule.addCookies(policy.Cookies)
 	}
 	var builder strings.Builder
-	builder.WriteString(strings.ToUpper(method))
+	builder.WriteString(cacheKeyMethod(method))
 	builder.WriteString("\n")
 	builder.WriteString(strings.ToLower(host))
 	builder.WriteString("\n")
@@ -220,6 +278,27 @@ func CacheKey(host, method, path, rawQuery string, header http.Header, policy *C
 		builder.WriteString(")")
 	}
 	return builder.String()
+}
+
+// cacheKeyMethod is the method component of the cache key. HEAD is served from
+// the object a GET stored, so it shares the GET key.
+func cacheKeyMethod(method string) string {
+	upper := strings.ToUpper(method)
+	if upper == http.MethodHead {
+		return http.MethodGet
+	}
+	return upper
+}
+
+// CacheKeyQuery returns the query-string part of the cache key for a viewer
+// request. It is stored on the entry so an invalidation path can be matched
+// against the path plus the query string the policy forwarded.
+func CacheKeyQuery(rawQuery string, policy *CachePolicy) string {
+	rule := newForwardingRule()
+	if policy != nil {
+		rule.addQuery(policy.QueryStrings)
+	}
+	return selectedQueryKey(rawQuery, rule)
 }
 
 func selectedQueryKey(rawQuery string, rule forwardingRule) string {
@@ -412,10 +491,13 @@ func parseHTTPDate(value string) (time.Time, bool) {
 }
 
 // ValidateInvalidationPaths applies the documented invalidation request rules:
-// at least one path, no more than 3000 paths, and every path must start with a
-// slash. A wildcard is allowed anywhere in the path.
+// at least one path, no more than 3000 paths, every path starts with a slash,
+// a path is at most 4000 characters, and "Don't use the ~ character in your
+// path. CloudFront doesn't support this character for invalidations, whether
+// it's URL-encoded or not." A trailing * is the wildcard; an asterisk anywhere
+// else is a literal character, so it is not refused.
 //
-// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/Invalidation_Requests.html
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/invalidation-specifying-objects.html
 func ValidateInvalidationPaths(paths []string) error {
 	if len(paths) == 0 {
 		return &InvalidationPathError{Reason: "the invalidation batch contains no path"}
@@ -429,6 +511,16 @@ func ValidateInvalidationPaths(paths []string) error {
 	for _, path := range paths {
 		if !strings.HasPrefix(path, "/") {
 			return &InvalidationPathError{Reason: fmt.Sprintf("invalidation path %q does not begin with a slash", path)}
+		}
+		if len([]rune(path)) > maxInvalidationPathLength {
+			return &InvalidationPathError{Reason: fmt.Sprintf(
+				"invalidation path is %d characters; CloudFront accepts at most %d",
+				len([]rune(path)), maxInvalidationPathLength,
+			)}
+		}
+		if strings.Contains(path, "~") {
+			return &InvalidationPathError{Reason: fmt.Sprintf(
+				"invalidation path %q contains ~; CloudFront does not support that character for invalidations", path)}
 		}
 	}
 	return nil
