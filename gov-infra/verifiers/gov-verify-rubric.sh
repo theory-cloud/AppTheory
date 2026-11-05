@@ -809,6 +809,7 @@ gov_cmd_vuln() {
     "ts/package-lock.json"
     "cdk/package-lock.json"
     "examples/cdk/codebuild-job-runner/package-lock.json"
+    "examples/cdk/edge-gateway/package-lock.json"
     "examples/cdk/hello-world/package-lock.json"
     "examples/cdk/import-pipeline/package-lock.json"
     "examples/cdk/kinesis-cloudwatch-logs/package-lock.json"
