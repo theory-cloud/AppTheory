@@ -40,7 +40,7 @@ type functionURLOrigin struct {
 	authType   string
 	// invokeMode is the URL's InvokeMode: RESPONSE_STREAM or BUFFERED (the
 	// template default). An empty value on a directly constructed origin keeps
-	// the streaming behaviour.
+	// the streaming behavior.
 	invokeMode string
 	domainName string
 	invoker    Invoker
