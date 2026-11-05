@@ -696,24 +696,39 @@ func (d *Distribution) validateBehavior(behavior *Behavior, topology *Topology) 
 		}
 	}
 	// "You can't combine CloudFront Functions and Lambda@Edge in viewer events
-	// (viewer request and viewer response)."
+	// (viewer request and viewer response)." Every viewer cell of the page's
+	// allowed-combinations table is "Not allowed", so any CloudFront Function
+	// viewer association conflicts with any Lambda@Edge viewer association,
+	// not only the same-event pair.
 	// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/edge-function-restrictions-all.html
-	for _, viewerEvent := range []struct {
+	combination := "\"You can't combine CloudFront Functions and Lambda@Edge in viewer events (viewer request and viewer response).\""
+	pageURL := "https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/edge-function-restrictions-all.html"
+	viewerFunctions := []struct {
 		eventType  string
 		functionID string
 	}{
 		{edgeViewerRequest, behavior.ViewerRequestFunction},
 		{edgeViewerResponse, behavior.ViewerResponseFunction},
-	} {
-		association := behavior.EdgeLambdas[viewerEvent.eventType]
-		if association == nil || viewerEvent.functionID == "" {
+	}
+	for _, lambdaEvent := range []string{edgeViewerRequest, edgeViewerResponse} {
+		association := behavior.EdgeLambdas[lambdaEvent]
+		if association == nil {
 			continue
 		}
-		behavior.Refusals = append(behavior.Refusals, fmt.Sprintf(
-			"event type %s associates both the CloudFront Function %s and the Lambda@Edge function %s (version %s); "+
-				"\"You can't combine CloudFront Functions and Lambda@Edge in viewer events (viewer request and viewer response).\" (%s)",
-			viewerEvent.eventType, viewerEvent.functionID, association.Function, association.Version,
-			"https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/edge-function-restrictions-all.html"))
+		for _, viewerFunction := range viewerFunctions {
+			if viewerFunction.functionID == "" {
+				continue
+			}
+			if viewerFunction.eventType == lambdaEvent {
+				behavior.Refusals = append(behavior.Refusals, fmt.Sprintf(
+					"event type %s associates both the CloudFront Function %s and the Lambda@Edge function %s (version %s); %s (%s)",
+					lambdaEvent, viewerFunction.functionID, association.Function, association.Version, combination, pageURL))
+				continue
+			}
+			behavior.Refusals = append(behavior.Refusals, fmt.Sprintf(
+				"event type %s associates the CloudFront Function %s and event type %s associates the Lambda@Edge function %s (version %s); %s (%s)",
+				viewerFunction.eventType, viewerFunction.functionID, lambdaEvent, association.Function, association.Version, combination, pageURL))
+		}
 	}
 	if behavior.FieldLevelEncryptionID != "" {
 		config, ok := topology.FieldLevelEncryptionConfig(behavior.FieldLevelEncryptionID)

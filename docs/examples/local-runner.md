@@ -1001,10 +1001,11 @@ queue, provisioned or reserved concurrency, arm64, more than 512 MB of ephemeral
 storage, environment variables beyond the reserved ones, or a runtime that is
 not Node.js or Python is refused by name from the restrictions page
 ([Restrictions on Lambda@Edge](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-at-edge-function-restrictions.html)).
-`IncludeBody` on a response event is refused by name. A behavioral association
-of a CloudFront Function and a Lambda@Edge function for the same viewer event is
-refused at plan time with both function ids named: "You can't combine CloudFront
-Functions and Lambda@Edge in viewer events (viewer request and viewer response)"
+`IncludeBody` on a response event is refused by name. A behavior that associates
+any CloudFront Function viewer event (viewer request or viewer response) with
+any Lambda@Edge viewer event is refused at plan time with both function ids and
+events named: "You can't combine CloudFront Functions and Lambda@Edge in viewer
+events (viewer request and viewer response)"
 ([Restrictions on all edge functions](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/edge-function-restrictions-all.html)).
 
 The four triggers run at the documented points
