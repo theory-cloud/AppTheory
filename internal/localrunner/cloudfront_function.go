@@ -38,6 +38,10 @@ type functionURLOrigin struct {
 	urlID      string
 	functionID string
 	authType   string
+	// invokeMode is the URL's InvokeMode: RESPONSE_STREAM or BUFFERED (the
+	// template default). An empty value on a directly constructed origin keeps
+	// the streaming behaviour.
+	invokeMode string
 	domainName string
 	invoker    Invoker
 	signer     *localOACSigner
@@ -138,12 +142,13 @@ func (o *functionURLOrigin) Fetch(ctx context.Context, request localcloudfront.O
 // produces the prelude, with a body that yields each payload chunk.
 func (o *functionURLOrigin) FetchStream(ctx context.Context, request localcloudfront.OriginRequest) (localcloudfront.StreamResponse, error) {
 	streamer, ok := o.invoker.(streamInvoker)
-	if !ok || !streamer.StreamingIncremental() {
-		// The invoker cannot forward chunks (the --rie emulator buffers every
-		// response, and any other invoker without StreamingIncremental does
-		// too). Serve the buffered response as a complete, non-chunked stream
-		// so a CloudFront distribution with this origin works in that mode,
-		// exactly as the Function URL listener falls back to Invoke.
+	if !ok || !streamer.StreamingIncremental() || o.invokeMode == bufferedInvokeMode {
+		// The URL is BUFFERED, or the invoker cannot forward chunks (the --rie
+		// emulator buffers every response, and any other invoker without
+		// StreamingIncremental does too). Serve the buffered response as a
+		// complete, non-chunked stream so a CloudFront distribution with this
+		// origin works in that mode, exactly as the Function URL listener
+		// falls back to Invoke.
 		response, err := o.Fetch(ctx, request)
 		if err != nil {
 			return localcloudfront.StreamResponse{}, err

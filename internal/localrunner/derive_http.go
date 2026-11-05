@@ -606,6 +606,12 @@ func deriveFunctionURLs(spec *Spec, stacks []assemblyStack, stack assemblyStack)
 		qualifiedURL := qualify(stacks, stack.Name, id)
 		qualifiedFunction := qualify(stacks, stack.Name, functionID)
 		spec.functionURLTargets[qualifiedURL] = qualifiedFunction
+		mode := props.InvokeMode
+		if mode != responseStreamMode {
+			// The template default is BUFFERED.
+			mode = bufferedInvokeMode
+		}
+		spec.functionURLModes[qualifiedURL] = mode
 		if props.AuthType != noneAuthorization {
 			spec.Skipped = append(spec.Skipped, Skipped{
 				LogicalID: qualifiedURL,

@@ -46,6 +46,10 @@ type streamOutcome struct {
 	// Buffered is the complete response when the gateway had to buffer it
 	// (a custom error page, or a viewer function that replaces the body).
 	Buffered OriginResponse
+	// OriginResponseRan reports that the streaming path already ran the
+	// origin-response Lambda@Edge association. A complete, non-chunked
+	// response takes the unchanged buffered finish path instead.
+	OriginResponseRan bool
 }
 
 // serveStreamingOrigin handles a response-streaming origin. It returns
@@ -85,6 +89,23 @@ func (g *Gateway) serveStreamingOrigin(
 		response.Header = http.Header{}
 	}
 
+	if !fetched.Chunked {
+		// A complete response (a BUFFERED Function URL origin, or any origin
+		// that returns the whole body without chunked encoding) takes the
+		// unchanged buffered finish path: the origin-response and
+		// viewer-response functions, custom error pages, error caching, the
+		// response headers policy and the cache TTLs all run exactly as they do
+		// for a buffered origin.
+		buffered, readErr := bufferStream(fetched.Body, false)
+		if readErr != nil {
+			return streamOutcome{}, readErr
+		}
+		buffered.StatusCode = response.StatusCode
+		buffered.StatusDescription = response.StatusDescription
+		buffered.Header = response.Header
+		return streamOutcome{Buffered: buffered}, nil
+	}
+
 	// Lambda@Edge origin-response runs once CloudFront has the status and
 	// headers. It does not receive the origin body.
 	if association := behavior.EdgeLambdas[edgeOriginResponse]; association != nil {
@@ -106,7 +127,7 @@ func (g *Gateway) serveStreamingOrigin(
 				// A body replacement is complete; the origin body is not part of
 				// the response, so the stream is closed rather than buffered.
 				_ = fetched.Body.Close() //nolint:errcheck // the replacement owns the response
-				return streamOutcome{Buffered: replaced}, nil
+				return streamOutcome{Buffered: replaced, OriginResponseRan: true}, nil
 			}
 			response = replaced
 		}
@@ -121,7 +142,7 @@ func (g *Gateway) serveStreamingOrigin(
 		}
 		buffered.StatusCode = response.StatusCode
 		buffered.Header = response.Header
-		return streamOutcome{Buffered: buffered}, nil
+		return streamOutcome{Buffered: buffered, OriginResponseRan: true}, nil
 	}
 
 	// The viewer-response function runs on the status and headers; the body is
@@ -150,9 +171,44 @@ func (g *Gateway) serveStreamingOrigin(
 		}
 		if updated.Body != nil {
 			_ = fetched.Body.Close() //nolint:errcheck // the replacement owns the response
-			return streamOutcome{Buffered: updated}, nil
+			return streamOutcome{Buffered: updated, OriginResponseRan: true}, nil
 		}
 		response = updated
+	}
+
+	// Lambda@Edge viewer-response runs before the response is returned to the
+	// viewer. Its event carries the status and headers, not the body, so for a
+	// streamed response it runs at the prelude, once both are known.
+	// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-event-structure.html
+	if association := behavior.EdgeLambdas[edgeViewerResponse]; association != nil && response.StatusCode < 400 {
+		event := g.edgeEvent(association, state, requestID, domainName, &response)
+		outcome, edgeErr := g.invokeEdge(request.Context(), association, event)
+		if edgeErr != nil {
+			_ = fetched.Body.Close() //nolint:errcheck // the origin is done with
+			g.edgeFailure(writer, request, behavior, state.Header, "viewer-response", edgeErr)
+			return streamOutcome{Handled: true}, nil
+		}
+		if outcome.Response != nil {
+			updated, responseErr := g.edgeGeneratedResponse(association, outcome.Response, nil)
+			if responseErr != nil {
+				_ = fetched.Body.Close() //nolint:errcheck // the origin is done with
+				g.edgeFailure(writer, request, behavior, state.Header, "viewer-response", responseErr)
+				return streamOutcome{Handled: true}, nil
+			}
+			if updated.StatusCode != response.StatusCode {
+				_ = fetched.Body.Close() //nolint:errcheck // the origin is done with
+				g.edgeFailure(writer, request, behavior, state.Header, "viewer-response", &EdgeValidationError{
+					Function: association.Version,
+					Reason: fmt.Sprintf("a viewer-response function cannot modify the HTTP status code (%d to %d)",
+						response.StatusCode, updated.StatusCode),
+				})
+				return streamOutcome{Handled: true}, nil
+			}
+			response.Header = updated.Header
+			if updated.StatusDescription != "" {
+				response.StatusDescription = updated.StatusDescription
+			}
+		}
 	}
 
 	applyResponseHeadersPolicy(behavior.ResponseHeadersPolicy, request.Method, state.Header, &response)

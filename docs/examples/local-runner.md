@@ -578,6 +578,13 @@ prelude is complete:
   object only after the stream completes, does not cache an incomplete stream,
   returns the whole object for a Range GET, and applies the between-packet
   timeout.
+  The Lambda@Edge viewer-response function runs at the prelude, once the status
+  and headers are known: its event carries `headers`, `status` and
+  `statusDescription`, not the body, so it cannot change the status
+  ([event structure](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-event-structure.html)).
+  A Function URL whose `InvokeMode` is `BUFFERED` (the template default)
+  returns a complete, non-chunked response, so the origin takes the unchanged
+  buffered path and every buffered rule above applies.
 
 Response streaming is available on the Node.js managed runtime and, for other
 languages, "you can use a custom runtime with a custom Runtime API
@@ -2333,7 +2340,7 @@ the harness records it.
 | --- | --- | --- |
 | HTTP API v2 (`AWS::ApiGatewayV2::Api`, HTTP) | Supported (L1) | v2.0 events with `routeKey`, `rawPath`, `requestContext.http`, cookies and path parameters. The `cookie` header is removed when `cookies` is populated, as AWS does. |
 | REST API v1 (`AWS::ApiGateway::RestApi`) | Supported (L1) | v1 events with `resource`, `multiValueHeaders`, `multiValueQueryStringParameters` and the stage. |
-| Lambda Function URL | Supported (L1) | Function URL events carry `routeKey: "$default"` (top-level and in `requestContext`, with `requestContext.stage`) and a `.lambda-url.<region>.on.aws` domain, which the runtime uses to tell them apart from HTTP API v2. A `RESPONSE_STREAM` URL forwards the prelude and the payload incrementally. A URL with an auth type other than `NONE` is reported under `skipped`, not served as a standalone URL; a distribution can still reference it as an origin. |
+| Lambda Function URL | Supported (L1) | Function URL events carry `routeKey: "$default"` (top-level and in `requestContext`, with `requestContext.stage`) and a `.lambda-url.<region>.on.aws` domain, which the runtime uses to tell them apart from HTTP API v2. A `RESPONSE_STREAM` URL forwards the prelude and the payload incrementally; a `BUFFERED` URL (the template default) serves the complete response, and behind CloudFront it takes the buffered finish path. A URL with an auth type other than `NONE` is reported under `skipped`, not served as a standalone URL; a distribution can still reference it as an origin. |
 | Response streaming (`awslambda.streamifyResponse`, SSE) | Supported (L2) | A chunked runtime response is forwarded to the Function URL, REST API proxy integration and CloudFront viewer as the runtime writes it; the Function URL and REST formats (metadata JSON, 8 null bytes, payload) and the midstream error trailers are implemented. Lambda's 6 MB uncapped burst and 2 MBps cap are not reproduced (documented deviation). |
 | Inline `Code.ZipFile` | Supported (Node, Python) | Materialized under the run scratch directory before the container starts. |
 | arm64 `provided.al2023` | Supported (L1) | Uses the host-arch image; a bootstrap built for the other architecture fails closed with a clear error. |

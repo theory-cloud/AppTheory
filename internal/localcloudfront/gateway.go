@@ -361,9 +361,11 @@ func (g *Gateway) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 					return
 				}
 				fetched = outcome.Buffered
-				// The streaming path already ran the origin-response function with
-				// the status and headers it saw when the stream opened.
-				originResponseFunctionDone = true
+				// The streaming path runs the origin-response function with the
+				// status and headers it saw when the stream opened; the
+				// unchanged buffered path still runs it for a complete response
+				// the gateway buffered before any function.
+				originResponseFunctionDone = outcome.OriginResponseRan
 				streamed = true
 			}
 		}

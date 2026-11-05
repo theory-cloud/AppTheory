@@ -477,6 +477,9 @@ type Spec struct {
 	// qualified Lambda function it targets, including URLs the transport does
 	// not serve. It lets the skip report name CloudFront origin functions.
 	functionURLTargets map[string]string
+	// functionURLModes maps a qualified AWS::Lambda::Url logical id to its
+	// InvokeMode: RESPONSE_STREAM or BUFFERED (the template default).
+	functionURLModes map[string]string
 }
 
 // RuntimeClass maps a Lambda runtime name to the image class the profile pins.

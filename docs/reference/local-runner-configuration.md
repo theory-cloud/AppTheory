@@ -1005,11 +1005,20 @@ bandwidth cap (the "first 6 MB of your function's response payload has uncapped
 bandwidth. After this initial burst, Lambda streams your response at a maximum
 rate of 2 MBps"; the local gateway forwards at the origin's pace), custom
 status descriptions or CloudFront-only device and TLS headers; the
-viewer-country header is reproduced from `--viewer-country`. A streamed
-origin response runs the Lambda@Edge origin-response function and the response
-headers policy at the prelude; a Lambda@Edge viewer-response function is not
-run for it, because the object has already been forwarded to the viewer while
-the body is read, and no example combines the two. A `Content-Length` in a
+viewer-country header is reproduced from `--viewer-country`. A complete,
+non-chunked origin response (including a Function URL whose `InvokeMode` is
+`BUFFERED`, the template default) takes the unchanged buffered finish path, so
+its viewer-response function, custom error pages, error caching, cache TTL and
+refresh all run. A streamed origin response runs the Lambda@Edge
+origin-response function, a CloudFront Function viewer-response and a
+Lambda@Edge viewer-response function at the prelude. The viewer-response event
+carries the status and headers, not the body: "Response event object data is
+contained in three subobjects: config (`Records.cf.config`), request
+(`Records.cf.request`), and response (`Records.cf.response`)", and the response
+object holds `headers`, `status` and `statusDescription`
+([event structure](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-event-structure.html));
+the function therefore runs once both are known, before the body is forwarded,
+and cannot change the status. A `Content-Length` in a
 streaming prelude is recomputed by the local HTTP server; a body without one is
 chunked, which is API Gateway's documented default. The local forwarders write
 the function's own response bytes to the local client; they do not build an

@@ -2,11 +2,14 @@ package localrunner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/theory-cloud/apptheory/v6/internal/localcloudfront"
 )
 
 // Round-1 rework tests for the LOCAL-W2-R3a/R3b PR.
@@ -264,5 +267,88 @@ func TestFunctionURLHandlerErrorIsA502OnBothPaths(t *testing.T) {
 			_ = stream.Body.Close() //nolint:errcheck // test
 		}
 		t.Fatalf("the streaming path must answer the handler error, not %d", stream.StatusCode)
+	}
+}
+
+func TestDeriveFunctionURLsRecordsTheInvokeMode(t *testing.T) {
+	resources := map[string]any{
+		"Fn": withAsset(lambdaFunction(nil), "asset.deadbeef"),
+		"Stream": map[string]any{
+			"Type": typeFunctionURL,
+			"Properties": map[string]any{
+				"AuthType":          noneAuthorization,
+				"InvokeMode":        responseStreamMode,
+				"TargetFunctionArn": map[string]any{"Fn::GetAtt": []any{"Fn", "Arn"}},
+			},
+		},
+		"Buffered": map[string]any{
+			"Type": typeFunctionURL,
+			"Properties": map[string]any{
+				"AuthType":          noneAuthorization,
+				"TargetFunctionArn": map[string]any{"Fn::GetAtt": []any{"Fn", "Arn"}},
+			},
+		},
+	}
+	dir := writeAssembly(t, resources)
+	mkdirAsset(t, dir)
+	spec, err := deriveAssembly(t, dir)
+	if err != nil {
+		t.Fatalf("derive: %v", err)
+	}
+	if spec.functionURLModes["Stream"] != responseStreamMode {
+		t.Fatalf("RESPONSE_STREAM mode: %q", spec.functionURLModes["Stream"])
+	}
+	if spec.functionURLModes["Buffered"] != bufferedInvokeMode {
+		t.Fatalf("an absent InvokeMode is the BUFFERED default: %q", spec.functionURLModes["Buffered"])
+	}
+}
+
+func TestFunctionURLOriginUsesTheURLsInvokeMode(t *testing.T) {
+	runner := &Runner{
+		options:  Options{Stdout: io.Discard},
+		invokers: map[string]*FunctionProcess{"Fn": {Container: "fn"}},
+	}
+	spec := &Spec{
+		Resources: []ResourceSpec{
+			{Stack: "S", LogicalID: "Url", Type: typeFunctionURL, Properties: json.RawMessage(`{"AuthType":"NONE"}`)},
+		},
+		functionURLTargets: map[string]string{"S/Url": "Fn"},
+		functionURLModes:   map[string]string{"S/Url": bufferedInvokeMode},
+	}
+	origin, err := runner.functionURLOrigin(spec, &localcloudfront.DistributionOrigin{
+		ID: "O", FunctionURL: "S/Url", DomainName: "url.lambda-url.local",
+	})
+	if err != nil {
+		t.Fatalf("function URL origin: %v", err)
+	}
+	implementation, ok := origin.(*functionURLOrigin)
+	if !ok {
+		t.Fatalf("origin type: %T", origin)
+	}
+	if implementation.invokeMode != bufferedInvokeMode {
+		t.Fatalf("the URL's InvokeMode must reach the origin: %q", implementation.invokeMode)
+	}
+}
+
+func TestFunctionURLOriginFetchStreamBuffersABufferedInvokeMode(t *testing.T) {
+	invoker := &fakeStreamInvoker{
+		contentType: streamIntegrationContentType,
+		streamed:    true,
+		chunks:      framedChunks(`{"statusCode":200,"headers":{"content-type":"text/plain"}}`, "streamed"),
+	}
+	origin := &functionURLOrigin{
+		originID: "origin", urlID: "url", domainName: "abc.lambda-url.us-east-1.on.aws",
+		authType: noneAuthorization, invokeMode: bufferedInvokeMode, invoker: invoker,
+	}
+	stream, err := origin.FetchStream(context.Background(), localcloudfrontOriginRequest())
+	if err != nil {
+		t.Fatalf("fetch stream: %v", err)
+	}
+	if stream.Chunked {
+		t.Fatal("a BUFFERED Function URL response is complete, not chunked")
+	}
+	body, _ := io.ReadAll(stream.Body) //nolint:errcheck // test
+	if stream.StatusCode != http.StatusOK || string(body) != "streamed" {
+		t.Fatalf("buffered response: %d %q", stream.StatusCode, body)
 	}
 }

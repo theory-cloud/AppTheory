@@ -62,6 +62,7 @@ const (
 	websocketProtocol    = "WEBSOCKET"
 	noneAuthorization    = "NONE"
 	responseStreamMode   = "RESPONSE_STREAM"
+	bufferedInvokeMode   = "BUFFERED"
 )
 
 // assemblyManifest is the cloud assembly manifest CDK writes to manifest.json.
@@ -294,7 +295,7 @@ func deriveSpec(dir string, stacks []assemblyStack) (*Spec, error) {
 // Derive turns a cloud assembly into the local runner's specification. It fails
 // closed on any construct the transport cannot serve faithfully.
 func deriveSpecInternal(dir string, stacks []assemblyStack) (*Spec, error) {
-	spec := &Spec{AssemblyDir: dir, functionURLTargets: map[string]string{}}
+	spec := &Spec{AssemblyDir: dir, functionURLTargets: map[string]string{}, functionURLModes: map[string]string{}}
 	for _, stack := range stacks {
 		if err := deriveStack(spec, dir, stacks, stack); err != nil {
 			return nil, err
