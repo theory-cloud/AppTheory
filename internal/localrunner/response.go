@@ -132,7 +132,7 @@ func splitStreamingFrame(raw []byte) ([]byte, []byte, bool, error) {
 }
 
 func mergeResponseHeaders(single map[string]string, multi map[string][]string) map[string][]string {
-	out := make(map[string][]string, len(single)+len(multi))
+	out := make(map[string][]string)
 	for name, value := range single {
 		out[name] = []string{value}
 	}
