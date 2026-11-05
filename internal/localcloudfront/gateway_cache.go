@@ -96,7 +96,7 @@ func (g *Gateway) refreshInBackground(state *requestState, origin Origin, origin
 		if err != nil {
 			return
 		}
-		final, errorCaching := g.applyCustomErrorResponse(ctx, viewer, request, response)
+		final, errorCaching := g.applyCustomErrorResponse(ctx, viewer, request, behavior, response)
 		ttl, control := g.responseTTL(final, behavior, errorCaching)
 		if ttl <= 0 {
 			return
@@ -130,8 +130,17 @@ type errorCachingDecision struct {
 	// behaviorTTL is set when a configured cache behavior matches the custom
 	// error page path: "If you also configured a cache behavior for the same
 	// custom error page, CloudFront uses the cache behavior TTL instead."
-	behaviorTTL  bool
-	pageBehavior *Behavior
+	behaviorTTL bool
+	// fetchBehavior is the cache behavior the response was fetched through:
+	// the request's behavior for a status rewrite or an unavailable page, and
+	// the page's behavior once the page is served. Its Maximum TTL caps the
+	// error caching duration: "The Cache-Control: max-age and
+	// Cache-Control: s-maxage values cannot be greater than the Maximum TTL
+	// value set for the cache behavior for which the error page is being
+	// fetched."
+	//
+	// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/custom-error-pages-expiration.html
+	fetchBehavior *Behavior
 }
 
 // applyCustomErrorResponse replaces an origin error with the configured custom
@@ -144,12 +153,17 @@ type errorCachingDecision struct {
 // viewer the status code that CloudFront received from the origin that contains
 // the custom error pages."
 //
+// The fetching behavior starts as the request's behavior and becomes the page's
+// behavior once the page is served, so the Maximum TTL cap applies to every
+// error caching path.
+//
 // https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/HTTPStatusCodes.html
 // https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/GeneratingCustomErrorResponses.html
 func (g *Gateway) applyCustomErrorResponse(
 	ctx context.Context,
 	viewer *requestState,
 	originRequest OriginRequest,
+	behavior *Behavior,
 	response OriginResponse,
 ) (OriginResponse, errorCachingDecision) {
 	custom, ok := g.Distribution.CustomErrorResponseFor(response.StatusCode)
@@ -157,10 +171,11 @@ func (g *Gateway) applyCustomErrorResponse(
 		return response, errorCachingDecision{}
 	}
 	decision := errorCachingDecision{
-		applies: true,
-		status:  custom.ErrorCode,
-		minimum: g.errorCachingMinimum(custom, originRequest.OriginID),
-		control: ParseCacheControl(originHeaderValues(response.Header, "Cache-Control")),
+		applies:       true,
+		status:        custom.ErrorCode,
+		minimum:       g.errorCachingMinimum(custom, originRequest.OriginID),
+		control:       ParseCacheControl(originHeaderValues(response.Header, "Cache-Control")),
+		fetchBehavior: behavior,
 	}
 	if expires, ok := parseHTTPDate(originHeaderValue(response.Header, "Expires")); ok {
 		decision.expires = expires
@@ -205,13 +220,15 @@ func (g *Gateway) applyCustomErrorResponse(
 		}
 		return cloneOriginResponse(page), decision
 	}
+	// The served page is fetched through pageBehavior, so its Maximum TTL caps
+	// the error caching duration even when only the default behavior matched.
+	decision.fetchBehavior = pageBehavior
 	// "If you also configured a cache behavior for the same custom error page,
 	// CloudFront uses the cache behavior TTL instead." Only an explicit cache
 	// behavior counts; the default behavior alone leaves the error rule in
 	// place.
 	if _, explicit := g.Distribution.ExplicitBehaviorForURI(custom.ResponsePagePath); explicit {
 		decision.behaviorTTL = true
-		decision.pageBehavior = pageBehavior
 	}
 	page.StatusCode = custom.ResponseCode
 	if page.StatusCode == 0 {
@@ -335,8 +352,8 @@ func isConditionalHeader(name string) bool {
 // https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/HTTPStatusCodes.html
 func (g *Gateway) responseTTL(response OriginResponse, behavior *Behavior, errorCaching errorCachingDecision) (time.Duration, CacheControl) {
 	if errorCaching.applies {
-		if errorCaching.behaviorTTL && errorCaching.pageBehavior != nil {
-			if policy := policyCache(errorCaching.pageBehavior); policy != nil && !policy.CachingDisabled {
+		if errorCaching.behaviorTTL && errorCaching.fetchBehavior != nil {
+			if policy := policyCache(errorCaching.fetchBehavior); policy != nil && !policy.CachingDisabled {
 				return policy.OriginTTL(response, g.now())
 			}
 			return 0, CacheControl{}
@@ -370,7 +387,7 @@ func (g *Gateway) responseTTL(response OriginResponse, behavior *Behavior, error
 // maximum of" the error caching minimum TTL and the origin's max-age, s-maxage
 // or Expires value, and cannot exceed the behavior's Maximum TTL.
 func (g *Gateway) errorResponseTTL(errorCaching errorCachingDecision) time.Duration {
-	return g.errorResponseTTLWithBehavior(errorCaching, nil)
+	return g.errorResponseTTLWithBehavior(errorCaching, errorCaching.fetchBehavior)
 }
 
 func (g *Gateway) errorResponseTTLWithBehavior(errorCaching errorCachingDecision, behavior *Behavior) time.Duration {

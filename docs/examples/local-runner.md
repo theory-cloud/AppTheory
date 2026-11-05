@@ -848,10 +848,13 @@ without a body, and a HEAD response is never stored. `s-maxage` wins over
 `max-age` and `max-age` wins over `Expires`; `no-cache`/`no-store`/`private` are
 not cached unless `MinTTL` is above zero, and `MinTTL`/`MaxTTL` bound the result.
 Viewer `Cache-Control` and `Pragma` are ignored. `stale-while-revalidate` serves
-the stale object while the gateway refreshes it. `stale-if-error` serves it when
-the origin fails or returns a 5xx status for an expired object, for the error
-caching minimum TTL and never past the behavior's `MaxTTL`; a 4xx response is
-returned instead of the stale object.
+the stale object while the gateway refreshes it, and `stale-if-error` serves it
+when the origin fails; both windows end at the behavior's `MaxTTL`: "CloudFront
+will serve the stale content up to the value of the stale-while-revalidate
+directive or the value of the CloudFront maximum TTL, whichever is less." A 5xx
+response for an expired object also serves the stale object, for the error
+caching minimum TTL (extended by `stale-if-error`), never past `MaxTTL`; a 4xx
+response is returned instead of the stale object.
 
 Error responses follow the HTTPStatusCodes page's status table, not "any 4xx or
 5xx": 404, 414, 500, 501, 502, 503 and 504 are cached without a header; 400,
@@ -860,9 +863,14 @@ or Cache-Control s-maxage header"; every other status (401, 429, ...) is not
 cached. The duration is "the maximum of" the error caching minimum TTL (10
 seconds by default, or the matched custom error response's `ErrorCachingMinTTL`)
 and the origin response's max-age, s-maxage or `Expires` value, capped by the
-behavior's Maximum TTL. An explicit `ErrorCachingMinTTL` of 0 disables error
-caching for a custom origin and means one second for an S3 origin. A
-CachingDisabled policy caches neither errors nor custom error pages.
+behavior's Maximum TTL. For a custom error page the cap is the Maximum TTL of
+the behavior the page is fetched through — the page's behavior when an explicit
+behavior matches the page path, otherwise the request's behavior: "The
+Cache-Control: max-age and Cache-Control: s-maxage values cannot be greater than
+the Maximum TTL value set for the cache behavior for which the error page is
+being fetched." An explicit `ErrorCachingMinTTL` of 0 disables error caching for
+a custom origin and means one second for an S3 origin. A CachingDisabled policy
+caches neither errors nor custom error pages.
 
 A hit answers `x-cache: Hit from cloudfront` with an `age` in seconds; a miss
 answers `x-cache: Miss from cloudfront`. `session describe` reports each

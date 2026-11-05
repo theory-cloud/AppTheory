@@ -199,7 +199,7 @@ func (g *Gateway) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			g.respondFromCache(writer, request, behavior, state, requestID, domainName, entry, now, "")
 			return
 		}
-		if ok && entry.ServeStaleWhileRevalidate(now) {
+		if ok && entry.ServeStaleWhileRevalidate(now, behaviorMaximumTTL(behavior)) {
 			g.recordStats(behavior.PathPattern, true)
 			g.refreshInBackground(state, originImplementation, originRequest, behavior, cacheKey)
 			g.respondFromCache(writer, request, behavior, state, requestID, domainName, entry, now, "served stale while revalidating")
@@ -212,7 +212,7 @@ func (g *Gateway) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	g.recordStats(behavior.PathPattern, false)
 	originResponse, originErr := originImplementation.Fetch(request.Context(), originRequest)
 	if originErr != nil {
-		if hasStaleEntry && staleEntry.ServeStaleIfError(now) {
+		if hasStaleEntry && staleEntry.ServeStaleIfError(now, behaviorMaximumTTL(behavior)) {
 			g.respondFromCache(writer, request, behavior, state, requestID, domainName, staleEntry, now, "served stale after the origin failed")
 			return
 		}
@@ -241,7 +241,7 @@ func (g *Gateway) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			return
 		}
 	}
-	response, errorCaching := g.applyCustomErrorResponse(request.Context(), state, originRequest, originResponse)
+	response, errorCaching := g.applyCustomErrorResponse(request.Context(), state, originRequest, behavior, originResponse)
 	// GET and HEAD share one key, but a HEAD response has no body to serve a
 	// later GET, so it is never stored under that key.
 	if cacheable && state.Method != http.MethodHead {

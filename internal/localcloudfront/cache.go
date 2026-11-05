@@ -73,21 +73,30 @@ func (e CacheEntry) ViewerPath() string {
 func (e CacheEntry) Fresh(now time.Time) bool { return now.Before(e.ExpiresAt) }
 
 // ServeStaleWhileRevalidate reports whether a stale entry may be served while
-// the gateway refreshes it.
-func (e CacheEntry) ServeStaleWhileRevalidate(now time.Time) bool {
+// the gateway refreshes it. The page: "CloudFront will serve the stale content
+// up to the value of the stale-while-revalidate directive or the value of the
+// CloudFront maximum TTL, whichever is less. After the maximum TTL duration,
+// the stale object won't be available from the edge cache, regardless of the
+// stale-while-revalidate value."
+//
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/Expiration.html
+func (e CacheEntry) ServeStaleWhileRevalidate(now time.Time, maxTTL time.Duration) bool {
 	if e.StaleWhileRevalidate <= 0 {
 		return false
 	}
-	return now.Before(e.ExpiresAt.Add(e.StaleWhileRevalidate))
+	return now.Before(e.staleLimit(e.StaleWhileRevalidate, maxTTL))
 }
 
 // ServeStaleIfError reports whether a stale entry may be served because the
-// origin failed.
-func (e CacheEntry) ServeStaleIfError(now time.Time) bool {
+// origin failed. The Stale-If-Error section carries the same Maximum TTL note as
+// stale-while-revalidate.
+//
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/Expiration.html
+func (e CacheEntry) ServeStaleIfError(now time.Time, maxTTL time.Duration) bool {
 	if e.StaleIfError <= 0 {
 		return false
 	}
-	return now.Before(e.ExpiresAt.Add(e.StaleIfError))
+	return now.Before(e.staleLimit(e.StaleIfError, maxTTL))
 }
 
 // ServeStaleForErrorResponse reports whether an expired entry may be served
@@ -108,13 +117,20 @@ func (e CacheEntry) ServeStaleForErrorResponse(now time.Time, errorWindow, maxTT
 	if window <= 0 {
 		return false
 	}
+	return now.Before(e.staleLimit(window, maxTTL))
+}
+
+// staleLimit ends a stale-serving window at whichever comes first: the
+// directive applied to the entry's expiry, or the behavior's Maximum TTL
+// applied to the entry's storage time. A zero maxTTL means no documented cap.
+func (e CacheEntry) staleLimit(window, maxTTL time.Duration) time.Time {
 	limit := e.ExpiresAt.Add(window)
 	if maxTTL > 0 {
 		if ceiling := e.StoredAt.Add(maxTTL); ceiling.Before(limit) {
 			limit = ceiling
 		}
 	}
-	return now.Before(limit)
+	return limit
 }
 
 // Cache stores origin responses for one distribution.

@@ -2,6 +2,8 @@ package localcloudfront
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -556,4 +558,184 @@ func (o *pagesOrigin) Fetch(_ context.Context, request OriginRequest) (OriginRes
 		return OriginResponse{StatusCode: 200, Body: []byte("page")}, nil
 	}
 	return OriginResponse{StatusCode: 404, Body: []byte("missing")}, nil
+}
+
+// A-R5a-R1-1: the error caching duration is capped by the Maximum TTL of the
+// behavior the error page is fetched through, not only when an explicit page
+// behavior matches. "The Cache-Control: max-age and Cache-Control: s-maxage
+// values cannot be greater than the Maximum TTL value set for the cache
+// behavior for which the error page is being fetched."
+//
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/custom-error-pages-expiration.html
+func TestCustomErrorPageThroughTheDefaultBehaviorIsCappedAtItsMaxTTL(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	objectCalls := 0
+	origin := &captureOrigin{respond: func(request OriginRequest) OriginResponse {
+		if request.URI == "/errors/500.html" {
+			return OriginResponse{StatusCode: 200, Header: http.Header{"content-type": []string{"text/html"}}, Body: []byte("page")}
+		}
+		objectCalls++
+		if objectCalls == 1 {
+			return OriginResponse{StatusCode: 500, Header: http.Header{"cache-control": []string{"max-age=3600"}}, Body: []byte("failed")}
+		}
+		// After the cached page expires the origin recovers, so the stale-on-5xx
+		// rule cannot mask the TTL check.
+		return OriginResponse{StatusCode: 200, Header: http.Header{"cache-control": []string{"max-age=60"}}, Body: []byte("fresh")}
+	}}
+	behavior := testBehavior("*", "origin", []string{"GET", "HEAD"})
+	behavior.CachePolicy = testPolicy(PolicyCache, cachePolicy(60, 60, 0), nil, nil)
+	distribution := testDistribution(behavior, nil, testOrigin("origin", "origin.example"))
+	distribution.CustomErrorResponses = []CustomErrorResponse{{ErrorCode: 500, ResponsePagePath: "/errors/500.html", ResponseCode: 200}}
+	gateway := NewGateway(distribution, &Topology{}, map[string]Origin{"origin": origin}, nil, nil)
+	gateway.Now = func() time.Time { return now }
+
+	first := serveGateway(gateway, http.MethodGet, "http://viewer.example/data", "", nil)
+	if first.Code != 200 || first.Body.String() != "page" || first.Header().Get("x-cache") != cacheMissHeader {
+		t.Fatalf("first request = %d %q %q", first.Code, first.Body.String(), first.Header().Get("x-cache"))
+	}
+	now = now.Add(59 * time.Second)
+	if hit := serveGateway(gateway, http.MethodGet, "http://viewer.example/data", "", nil); hit.Header().Get("x-cache") != cacheHitHeader {
+		t.Fatalf("at 59s the error page must still be cached: %q", hit.Header().Get("x-cache"))
+	}
+	now = now.Add(2 * time.Second)
+	miss := serveGateway(gateway, http.MethodGet, "http://viewer.example/data", "", nil)
+	if miss.Header().Get("x-cache") != cacheMissHeader || miss.Body.String() != "fresh" {
+		t.Fatalf("at 61s max-age=3600 must be capped at the default behavior's 60s Maximum TTL: %q %q",
+			miss.Header().Get("x-cache"), miss.Body.String())
+	}
+	if len(origin.requests) != 3 {
+		t.Fatalf("origin requests = %d, want 3 (the failed object fetch, its page, and the fresh object)", len(origin.requests))
+	}
+}
+
+func TestCustomErrorPageThroughAnExplicitBehaviorKeepsItsOwnMaxTTL(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	apiCalls := 0
+	api := &captureOrigin{respond: func(OriginRequest) OriginResponse {
+		apiCalls++
+		if apiCalls == 1 {
+			return OriginResponse{StatusCode: 500, Header: http.Header{"cache-control": []string{"max-age=3600"}}, Body: []byte("failed")}
+		}
+		// After the cached page expires the origin recovers, so the stale-on-5xx
+		// rule cannot mask the TTL check.
+		return OriginResponse{StatusCode: 200, Header: http.Header{"cache-control": []string{"max-age=60"}}, Body: []byte("fresh")}
+	}}
+	pages := &captureOrigin{respond: func(OriginRequest) OriginResponse {
+		return OriginResponse{StatusCode: 200, Header: http.Header{"cache-control": []string{"max-age=3600"}}, Body: []byte("page")}
+	}}
+	errorsBehavior := testBehavior("/errors/*", "pages", []string{"GET", "HEAD"})
+	errorsBehavior.CachePolicy = testPolicy(PolicyCache, cachePolicy(30, 30, 0), nil, nil)
+	defaultBehavior := testBehavior("*", "api", []string{"GET", "HEAD"})
+	defaultBehavior.CachePolicy = testPolicy(PolicyCache, cachePolicy(60, 60, 0), nil, nil)
+	distribution := testDistribution(defaultBehavior, []*Behavior{errorsBehavior},
+		testOrigin("api", "api.example"), testOrigin("pages", "pages.example"))
+	distribution.CustomErrorResponses = []CustomErrorResponse{{ErrorCode: 500, ResponsePagePath: "/errors/500.html", ResponseCode: 200}}
+	gateway := NewGateway(distribution, &Topology{}, map[string]Origin{"api": api, "pages": pages}, nil, nil)
+	gateway.Now = func() time.Time { return now }
+
+	first := serveGateway(gateway, http.MethodGet, "http://viewer.example/data", "", nil)
+	if first.Code != 200 || first.Body.String() != "page" || first.Header().Get("x-cache") != cacheMissHeader {
+		t.Fatalf("first request = %d %q %q", first.Code, first.Body.String(), first.Header().Get("x-cache"))
+	}
+	now = now.Add(29 * time.Second)
+	if hit := serveGateway(gateway, http.MethodGet, "http://viewer.example/data", "", nil); hit.Header().Get("x-cache") != cacheHitHeader {
+		t.Fatalf("at 29s the page behavior's 30s Maximum TTL must still cache the page: %q", hit.Header().Get("x-cache"))
+	}
+	now = now.Add(2 * time.Second)
+	miss := serveGateway(gateway, http.MethodGet, "http://viewer.example/data", "", nil)
+	if miss.Header().Get("x-cache") != cacheMissHeader || miss.Body.String() != "fresh" {
+		t.Fatalf("at 31s the explicit page behavior's Maximum TTL must still win: %q %q",
+			miss.Header().Get("x-cache"), miss.Body.String())
+	}
+}
+
+// A-R5a-R1-res1: both stale windows end at the behavior's Maximum TTL:
+// "CloudFront will serve the stale content up to the value of the
+// stale-while-revalidate directive or the value of the CloudFront maximum TTL,
+// whichever is less. After the maximum TTL duration, the stale object won't be
+// available from the edge cache, regardless of the stale-while-revalidate
+// value."
+//
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/Expiration.html
+func TestStaleWhileRevalidateIsCappedAtTheBehaviorMaxTTL(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	origin := okOrigin("first")
+	origin.response.Header = http.Header{"cache-control": []string{"max-age=60, stale-while-revalidate=3600"}}
+	gateway := NewGateway(testDistribution(cachedBehavior(cachePolicy(60, 120, 0)), nil, testOrigin("origin", "origin.example")),
+		&Topology{}, map[string]Origin{"origin": origin}, nil, nil)
+	gateway.Now = func() time.Time { return now }
+	serveGateway(gateway, http.MethodGet, "http://viewer.example/x", "", nil)
+
+	origin.err = context.DeadlineExceeded
+	now = now.Add(90 * time.Second)
+	stale := serveGateway(gateway, http.MethodGet, "http://viewer.example/x", "", nil)
+	if stale.Header().Get("x-cache") != cacheHitHeader || stale.Body.String() != "first" {
+		t.Fatalf("at 90s the entry is inside the 120s Maximum TTL and is served stale: %q %q",
+			stale.Header().Get("x-cache"), stale.Body.String())
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for len(origin.requests) < 2 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(origin.requests) < 2 {
+		t.Fatal("the stale-while-revalidate refresh did not reach the origin")
+	}
+	origin.err = nil
+	origin.response = OriginResponse{StatusCode: 200, Header: http.Header{"cache-control": []string{"max-age=60"}}, Body: []byte("fresh")}
+	now = now.Add(40 * time.Second)
+	fresh := serveGateway(gateway, http.MethodGet, "http://viewer.example/x", "", nil)
+	if fresh.Header().Get("x-cache") != cacheMissHeader || fresh.Body.String() != "fresh" {
+		t.Fatalf("at 130s the Maximum TTL ended the stale window: %q %q",
+			fresh.Header().Get("x-cache"), fresh.Body.String())
+	}
+}
+
+func TestStaleIfErrorIsCappedAtTheBehaviorMaxTTL(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	origin := okOrigin("first")
+	origin.response.Header = http.Header{"cache-control": []string{"max-age=60, stale-if-error=3600"}}
+	gateway := NewGateway(testDistribution(cachedBehavior(cachePolicy(60, 120, 0)), nil, testOrigin("origin", "origin.example")),
+		&Topology{}, map[string]Origin{"origin": origin}, nil, nil)
+	gateway.Now = func() time.Time { return now }
+	serveGateway(gateway, http.MethodGet, "http://viewer.example/x", "", nil)
+
+	origin.err = context.DeadlineExceeded
+	now = now.Add(90 * time.Second)
+	stale := serveGateway(gateway, http.MethodGet, "http://viewer.example/x", "", nil)
+	if stale.Code != 200 || stale.Body.String() != "first" {
+		t.Fatalf("at 90s stale-if-error = %d %q, want the stale object", stale.Code, stale.Body.String())
+	}
+	now = now.Add(40 * time.Second)
+	after := serveGateway(gateway, http.MethodGet, "http://viewer.example/x", "", nil)
+	if after.Code != http.StatusBadGateway {
+		t.Fatalf("at 130s the Maximum TTL must end the stale-if-error window: %d %q", after.Code, after.Body.String())
+	}
+	if len(origin.requests) != 3 {
+		t.Fatalf("origin requests = %d, want 3 (store, 90s and 130s)", len(origin.requests))
+	}
+}
+
+// A-R5a-R1-res4: "CloudFront doesn't support creating custom error pages for
+// these HTTP status codes" (412 Precondition Failed and 415 Unsupported Media
+// Type). A status-only rewrite stays accepted.
+//
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/HTTPStatusCodes.html
+func TestCustomErrorPagesRefuse412And415AtPlanTime(t *testing.T) {
+	for _, status := range []int{http.StatusPreconditionFailed, http.StatusUnsupportedMediaType} {
+		withPage := json.RawMessage(fmt.Sprintf(
+			`[{"ErrorCode":%d,"ResponsePagePath":"/errors/%d.html","ResponseCode":200}]`, status, status))
+		if _, err := parseCustomErrorResponses(withPage, "TestDistribution"); err == nil ||
+			!strings.Contains(err.Error(), fmt.Sprintf("%d", status)) ||
+			!strings.Contains(err.Error(), "HTTPStatusCodes.html") {
+			t.Fatalf("ErrorCode %d with a ResponsePagePath = %v, want a named refusal with the page URL", status, err)
+		}
+		statusOnly := json.RawMessage(fmt.Sprintf(`[{"ErrorCode":%d,"ResponseCode":200}]`, status))
+		if _, err := parseCustomErrorResponses(statusOnly, "TestDistribution"); err != nil {
+			t.Fatalf("a status-only rewrite for ErrorCode %d was refused: %v", status, err)
+		}
+	}
+	withPage := json.RawMessage(`[{"ErrorCode":404,"ResponsePagePath":"/errors/404.html","ResponseCode":200}]`)
+	if _, err := parseCustomErrorResponses(withPage, "TestDistribution"); err != nil {
+		t.Fatalf("a 404 custom error page was refused: %v", err)
+	}
 }

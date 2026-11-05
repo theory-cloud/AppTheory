@@ -674,6 +674,9 @@ func parseCustomErrorResponse(raw json.RawMessage, distributionID string, positi
 	if response.ResponsePagePath != "" && !strings.HasPrefix(response.ResponsePagePath, "/") {
 		return CustomErrorResponse{}, fmt.Errorf("%s: CustomErrorResponses[%d].ResponsePagePath must begin with a slash", distributionID, position)
 	}
+	if err := validateCustomErrorPage(response, distributionID, position); err != nil {
+		return CustomErrorResponse{}, err
+	}
 	if response.ResponseCode != 0 && (response.ResponseCode < 200 || response.ResponseCode > 599) {
 		return CustomErrorResponse{}, fmt.Errorf("%s: CustomErrorResponses[%d].ResponseCode %d is not an HTTP status", distributionID, position, response.ResponseCode)
 	}
@@ -681,6 +684,20 @@ func parseCustomErrorResponse(raw json.RawMessage, distributionID string, positi
 		return CustomErrorResponse{}, fmt.Errorf("%s: CustomErrorResponses[%d].ErrorCachingMinTTL is negative", distributionID, position)
 	}
 	return response, nil
+}
+
+// validateCustomErrorPage refuses a custom error page for the status codes that
+// do not support one: "CloudFront doesn't support creating custom error pages
+// for these HTTP status codes." A status-only rewrite stays accepted.
+//
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/HTTPStatusCodes.html
+func validateCustomErrorPage(response CustomErrorResponse, distributionID string, position int) error {
+	if response.ResponsePagePath == "" || (response.ErrorCode != 412 && response.ErrorCode != 415) {
+		return nil
+	}
+	return fmt.Errorf(
+		"%s: CustomErrorResponses[%d].ErrorCode %d cannot have a ResponsePagePath: CloudFront doesn't support creating custom error pages for 412 Precondition Failed or 415 Unsupported Media Type (https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/HTTPStatusCodes.html)",
+		distributionID, position, response.ErrorCode)
 }
 
 func decodeCustomErrorField(response *CustomErrorResponse, key string, value json.RawMessage) error {

@@ -732,10 +732,13 @@ The normal TTL follows the Expiration page's table: `s-maxage` wins over
 `max-age`, `max-age` wins over `Expires`, `no-cache`/`no-store`/`private` are
 not cached unless `MinTTL` is above zero, and `MinTTL`/`MaxTTL` bound the
 result. Viewer `Cache-Control` and `Pragma` are never read.
-`stale-while-revalidate` serves the stale object while the gateway refreshes it.
-`stale-if-error` serves it when the origin fails or returns a 5xx status for an
-expired object, for the error caching minimum TTL and never past the behavior's
-`MaxTTL`; a 4xx response is returned instead of the stale object.
+`stale-while-revalidate` serves the stale object while the gateway refreshes it,
+and `stale-if-error` serves it when the origin fails; both windows end at the
+behavior's `MaxTTL`: "CloudFront will serve the stale content up to the value of
+the stale-while-revalidate directive or the value of the CloudFront maximum TTL,
+whichever is less." A 5xx response for an expired object also serves the stale
+object, for the error caching minimum TTL (extended by `stale-if-error`), never
+past `MaxTTL`; a 4xx response is returned instead of the stale object.
 
 Error responses follow the HTTPStatusCodes page's status table, not "any 4xx or
 5xx": 404, 414, 500, 501, 502, 503 and 504 are cached without a header; 400,
@@ -744,8 +747,13 @@ or Cache-Control s-maxage header"; every other status (401, 429, ...) is not
 cached. The duration is "the maximum of" the error caching minimum TTL (10
 seconds by default, or the matched custom error response's
 `ErrorCachingMinTTL`) and the origin response's max-age, s-maxage or `Expires`
-value, capped by the behavior's Maximum TTL. An explicit `ErrorCachingMinTTL`
-of 0 disables error caching for a custom origin and means one second for an S3
+value, capped by the behavior's Maximum TTL. For a custom error page the cap is
+the Maximum TTL of the behavior the page is fetched through — the page's
+behavior when an explicit behavior matches the page path, otherwise the
+request's behavior: "The Cache-Control: max-age and Cache-Control: s-maxage
+values cannot be greater than the Maximum TTL value set for the cache behavior
+for which the error page is being fetched." An explicit `ErrorCachingMinTTL` of
+0 disables error caching for a custom origin and means one second for an S3
 origin. A CachingDisabled policy caches neither errors nor custom error pages.
 
 A hit answers `x-cache: Hit from cloudfront` and an `age` in seconds; a miss
@@ -763,7 +771,10 @@ matches the page path, "CloudFront uses the cache behavior TTL instead" of the
 error caching minimum. When the page itself is unavailable the gateway returns
 "the status code that CloudFront received from the origin that contains the
 custom error pages", i.e. the pages origin's status. A custom page is cached
-under the same status/header rule as its `ErrorCode`.
+under the same status/header rule as its `ErrorCode`. A `CustomErrorResponses`
+entry for 412 or 415 that names a `ResponsePagePath` is refused by name, because
+"CloudFront doesn't support creating custom error pages for these HTTP status
+codes"; a status-only rewrite for those codes is accepted.
 
 **Invalidation.** The runner serves `CreateInvalidation`, `GetInvalidation` and
 `ListInvalidations` on a loopback control endpoint and injects it into every
@@ -789,6 +800,15 @@ next request is a miss.
   reaching the origin.
 - Concurrent misses for one key each reach the origin; CloudFront collapses
   them into one request.
+- When the custom error page itself is unavailable, the pages origin's status is
+  cached under the HTTPStatusCodes status table (a 404 page response is cached
+  as a 404, for example); AWS does not state whether that fallback status is
+  cached.
+- A stored query key is order-normalized (the selected query strings are
+  sorted), while an invalidation path's query string is compared exactly as
+  given; AWS does not document the comparison. A path without the matching
+  query string does not invalidate the entry, while a trailing `*` covers every
+  variant.
 - The control endpoint is unauthenticated and binds every interface so a
   function container reaches it through `host.docker.internal`, like the
   `@connections` management listener. An invalidation is recorded `Completed`

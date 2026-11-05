@@ -158,7 +158,7 @@ func TestCacheInvalidationEdgeCases(t *testing.T) {
 	if removed := cache.Invalidate([]string{"x"}); removed != 0 {
 		t.Fatalf("a relative path must not match: %d", removed)
 	}
-	if entry := (CacheEntry{ExpiresAt: now}); entry.ServeStaleIfError(now.Add(time.Second)) {
+	if entry := (CacheEntry{ExpiresAt: now}); entry.ServeStaleIfError(now.Add(time.Second), 0) {
 		t.Fatal("an entry without stale-if-error must not serve stale")
 	}
 	if value := originHeaderValue(http.Header{}, "ETag"); value != "" {
