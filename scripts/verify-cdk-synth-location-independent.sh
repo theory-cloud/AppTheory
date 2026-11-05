@@ -32,9 +32,14 @@ mkdir -p "${copy}"
 
 # Exclude every dependency tree, build output and VCS/agent materialization so
 # the copy is a source tree, not a second checkout. ts/dist stays: it is
-# checked-in build output that the assets consume.
+# checked-in build output that the assets consume. The lambda-packaging example
+# commits a Lambda layer's node_modules content (Lambda reads it from
+# /opt/nodejs/node_modules), so that path is source and the include rules keep
+# it before the node_modules exclusion.
 rsync -a \
   --exclude '.git' \
+  --include 'examples/cdk/lambda-packaging/layers/node/nodejs/node_modules/' \
+  --include 'examples/cdk/lambda-packaging/layers/node/nodejs/node_modules/**' \
   --exclude 'node_modules' \
   --exclude 'cdk.out' \
   --exclude '.cdk-asset-stage' \
