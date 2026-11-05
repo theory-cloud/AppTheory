@@ -3,6 +3,7 @@ package localrunner
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -55,6 +56,91 @@ func TestRuntimeAPIGatewayFallbackReportsAMissingGateway(t *testing.T) {
 	}
 	if !api.boundAddress().IP.IsLoopback() {
 		t.Fatalf("the listener must stay on loopback: %s", api.boundAddress())
+	}
+}
+
+func TestNormalizeRuntimeErrorType(t *testing.T) {
+	cases := map[string]string{
+		"Runtime.NoSuchHandler":   "Runtime.NoSuchHandler",
+		"Function.ConfigInvalid":  "Function.ConfigInvalid",
+		"Runtime.lower":           "Runtime.Unknown",
+		"Function.lower":          "Function.Unknown",
+		"ValueError":              "Runtime.Unknown",
+		"Other.Thing":             "Runtime.Unknown",
+		"Runtime.":                "Runtime.Unknown",
+		"":                        "",
+		"  Runtime.InvalidEntry ": "Runtime.InvalidEntry",
+	}
+	for value, expected := range cases {
+		if got := normalizeRuntimeErrorType(value); got != expected {
+			t.Errorf("normalize(%q) = %q, want %q", value, got, expected)
+		}
+	}
+}
+
+func TestRuntimeAPIInitErrorNormalizesTheErrorTypeHeader(t *testing.T) {
+	api := testRuntimeAPI(t, 30)
+	response := postRuntime(t, api, runtimeInitErrorPath, []byte(`{"errorMessage":"boom"}`),
+		http.Header{runtimeErrorTypeHeader: {"ValueError"}})
+	if response.status != http.StatusAccepted {
+		t.Fatalf("init error status: %d", response.status)
+	}
+	_, result := api.Invoke(context.Background(), []byte(`{}`))
+	var failure *RuntimeAPIError
+	if !errors.As(result.err, &failure) {
+		t.Fatalf("the init failure must fail the next invocation: %v", result.err)
+	}
+	if failure.Type != "Runtime.Unknown" {
+		t.Fatalf("a non-conforming header must normalize: %q", failure.Type)
+	}
+}
+
+func TestRuntimeAPIInvocationErrorNormalizesTheErrorTypeHeader(t *testing.T) {
+	api := testRuntimeAPI(t, 30)
+	outcome := make(chan error, 1)
+	go func() {
+		_, result := api.Invoke(context.Background(), []byte(`{}`))
+		outcome <- result.err
+	}()
+	next := nextInvocation(t, api)
+	requestID := next.header.Get(runtimeRequestIDHeader)
+	accepted := postRuntime(t, api, runtimeAPIVersionPath+"/invocation/"+requestID+"/error",
+		[]byte(`{"errorMessage":"boom"}`), http.Header{runtimeErrorTypeHeader: {"Function.bad-reason"}})
+	if accepted.status != http.StatusAccepted {
+		t.Fatalf("error status: %d", accepted.status)
+	}
+	var failure *RuntimeAPIError
+	if !errors.As(<-outcome, &failure) {
+		t.Fatal("the invocation error must fail the invocation")
+	}
+	if failure.Type != "Function.Unknown" {
+		t.Fatalf("a non-conforming Function header must normalize to Function.Unknown: %+v", failure)
+	}
+	if failure.Message != "boom" {
+		t.Fatalf("the body message must be kept: %q", failure.Message)
+	}
+}
+
+func TestRuntimeAPIInvocationErrorKeepsAConformingErrorTypeHeader(t *testing.T) {
+	api := testRuntimeAPI(t, 30)
+	outcome := make(chan error, 1)
+	go func() {
+		_, result := api.Invoke(context.Background(), []byte(`{}`))
+		outcome <- result.err
+	}()
+	next := nextInvocation(t, api)
+	requestID := next.header.Get(runtimeRequestIDHeader)
+	accepted := postRuntime(t, api, runtimeAPIVersionPath+"/invocation/"+requestID+"/error",
+		[]byte(`{"errorMessage":"boom"}`), http.Header{runtimeErrorTypeHeader: {"Function.ConfigurationError"}})
+	if accepted.status != http.StatusAccepted {
+		t.Fatalf("error status: %d", accepted.status)
+	}
+	var failure *RuntimeAPIError
+	if !errors.As(<-outcome, &failure) {
+		t.Fatal("the invocation error must fail the invocation")
+	}
+	if failure.Type != "Function.ConfigurationError" {
+		t.Fatalf("a conforming header must be kept: %+v", failure)
 	}
 }
 

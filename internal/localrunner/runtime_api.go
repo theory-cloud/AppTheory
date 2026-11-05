@@ -688,7 +688,7 @@ func runtimeErrorFromPayload(body []byte, headerType string) *RuntimeAPIError {
 	_ = json.Unmarshal(body, &payload) //nolint:errcheck // a malformed body reports its zero fields
 	kind := payload.ErrorType
 	if kind == "" {
-		kind = headerType
+		kind = normalizeRuntimeErrorType(headerType)
 	}
 	if kind == "" {
 		kind = "Runtime.Unknown"
@@ -701,6 +701,28 @@ func runtimeErrorFromPayload(body []byte, headerType string) *RuntimeAPIError {
 		body = errorPayload(kind, message)
 	}
 	return &RuntimeAPIError{Type: kind, Message: message, Body: body}
+}
+
+// normalizeRuntimeErrorType implements the runtime API page's rule for the
+// Lambda-Runtime-Function-Error-Type header. The page recommends the
+// <Category.Reason> form, "where Category is Runtime or Function and Reason
+// starts with an uppercase letter", and states: "Values that do not match this
+// pattern are normalized to Runtime.Unknown or Function.Unknown."
+// https://docs.aws.amazon.com/lambda/latest/dg/runtimes-api.html
+func normalizeRuntimeErrorType(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	category, reason, found := strings.Cut(value, ".")
+	if found && (category == "Runtime" || category == "Function") && reason != "" &&
+		reason[0] >= 'A' && reason[0] <= 'Z' {
+		return value
+	}
+	if category == "Function" {
+		return "Function.Unknown"
+	}
+	return "Runtime.Unknown"
 }
 
 // timeoutErrorType is the documented error type for a function timeout.

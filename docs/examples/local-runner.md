@@ -457,8 +457,13 @@ The listener implements the 2018-06-01 API:
   (`{errorMessage, errorType, stackTrace}`), and the error type carries through
   the `Lambda-Runtime-Function-Error-Type` header.
 - `POST /2018-06-01/runtime/init/error` records an initialization failure.
-  Values that do not match the `<Category.Reason>` pattern are normalized to
-  `Runtime.Unknown` or `Function.Unknown`, as the runtime API page says.
+  The `Lambda-Runtime-Function-Error-Type` header is normalized on both
+  `/init/error` and `/error`: the page recommends the format
+  "`<Category.Reason>`, where `Category` is `Runtime` or `Function` and
+  `Reason` starts with an uppercase letter", and "Values that do not match this
+  pattern are normalized to `Runtime.Unknown` or `Function.Unknown`"
+  ([runtime API](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-api.html)).
+  The error type in the runtime's own JSON body is kept as the runtime sent it.
 - The response codes are the documented ones: `202 Accepted`, `400 Bad
   Request` (`InvalidInvocationId`), `403 Forbidden` (an answer for an
   invocation that is no longer active) and `500` ("Container error.
