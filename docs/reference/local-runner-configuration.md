@@ -851,7 +851,9 @@ next request is a miss.
   `CloudFront-*` header is a 502, as the restrictions page states; a
   `CloudFront-*` header the viewer sent is shown to the viewer-request function
   and, when a cache or origin request policy forwards it, replaced by the value
-  CloudFront adds for origin-facing functions.
+  CloudFront adds for origin-facing functions. `Content-Length` is not exposed
+  to a local edge event because the gateway derives it from the body, so a
+  function cannot read it and returning it is a 502 under the read-only rule.
 - A key value store is materialised once, at plan time, from the asset the
   assembly carries. `fromBucket` is refused because the object is not part of
   the assembly; `fromAsset` and `fromInline` both carry one. CloudFront
