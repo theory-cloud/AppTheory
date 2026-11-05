@@ -210,3 +210,45 @@ func TestStreamedOriginRunsTheViewerResponseAtThePrelude(t *testing.T) {
 	}
 	close(hold)
 }
+
+func TestGatewayStreamingUsesTheOriginReadTimeoutFromTheTemplate(t *testing.T) {
+	distribution := parseDistributionConfig(t, map[string]any{
+		"Enabled": true,
+		"Origins": []any{map[string]any{
+			"Id":         "origin",
+			"DomainName": "origin.example",
+			"CustomOriginConfig": map[string]any{
+				"OriginProtocolPolicy": "http-only",
+				"OriginReadTimeout":    float64(1),
+			},
+		}},
+		"DefaultCacheBehavior": map[string]any{
+			"TargetOriginId": "origin",
+			"AllowedMethods": []any{"GET", "HEAD"},
+			"CachePolicyId":  "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+		},
+	})
+	if distribution.DefaultBehavior == nil || len(distribution.Origins) != 1 {
+		t.Fatalf("distribution: %+v", distribution)
+	}
+	if distribution.DefaultBehavior.OriginResponseTimeout != 0 {
+		t.Fatal("the behavior must not carry a value; the template sets the origin's")
+	}
+	if got := originResponseTimeout(distribution.DefaultBehavior, distribution.Origins[0]); got != time.Second {
+		t.Fatalf("origin read timeout from the template: %s", got)
+	}
+
+	hold := make(chan struct{})
+	defer close(hold)
+	origin := &fakeStreamOrigin{chunks: []string{"one"}, hold: hold}
+	gateway := NewGateway(distribution, &Topology{}, map[string]Origin{"origin": origin}, nil, t.Logf)
+	started := time.Now()
+	recorder := serveGateway(gateway, http.MethodGet, "http://viewer.example/x", "", nil)
+	elapsed := time.Since(started)
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "one" {
+		t.Fatalf("response: %d %q", recorder.Code, recorder.Body.String())
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("the streaming branch used the 30s default instead of the template's 1s: %s", elapsed)
+	}
+}

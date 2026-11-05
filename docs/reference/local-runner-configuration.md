@@ -1005,7 +1005,10 @@ bandwidth cap (the "first 6 MB of your function's response payload has uncapped
 bandwidth. After this initial burst, Lambda streams your response at a maximum
 rate of 2 MBps"; the local gateway forwards at the origin's pace), custom
 status descriptions or CloudFront-only device and TLS headers; the
-viewer-country header is reproduced from `--viewer-country`. A complete,
+viewer-country header is reproduced from `--viewer-country`. The streaming
+branch applies the between-packet timeout from the origin's
+`CustomOriginConfig.OriginReadTimeout` (the origin response timeout above), with
+30 seconds as the default. A complete,
 non-chunked origin response (including a Function URL whose `InvokeMode` is
 `BUFFERED`, the template default) takes the unchanged buffered finish path, so
 its viewer-response function, custom error pages, error caching, cache TTL and

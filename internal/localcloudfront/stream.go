@@ -242,10 +242,7 @@ func (g *Gateway) serveStreamingOrigin(
 	// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/RequestAndResponseBehaviorCustomOrigin.html
 	collect := cacheable && request.Header.Get("Range") == ""
 	var cached bytes.Buffer
-	timeout := behavior.OriginResponseTimeout
-	if timeout <= 0 {
-		timeout = DefaultOriginResponseTimeout
-	}
+	timeout := originResponseTimeout(behavior, origin)
 	buffer := make([]byte, 32*1024)
 	for {
 		n, readErr := readWithOriginTimeout(fetched.Body, buffer, timeout)
@@ -287,6 +284,23 @@ func (g *Gateway) serveStreamingOrigin(
 		}
 	}
 	return streamOutcome{Handled: true}, nil
+}
+
+// originResponseTimeout is the between-packet timeout the streaming branch
+// applies. The behavior's explicit value wins; otherwise the origin's
+// CustomOriginConfig.OriginReadTimeout is used, and its default is 30 seconds:
+// the origin response timeout is "the amount of time, in seconds, that
+// CloudFront waits after receiving a packet of a response from the origin and
+// before receiving the next packet".
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/RequestAndResponseBehaviorCustomOrigin.html
+func originResponseTimeout(behavior *Behavior, origin *DistributionOrigin) time.Duration {
+	if behavior != nil && behavior.OriginResponseTimeout > 0 {
+		return behavior.OriginResponseTimeout
+	}
+	if origin != nil && origin.Custom != nil && origin.Custom.ReadTimeout != nil && *origin.Custom.ReadTimeout > 0 {
+		return time.Duration(*origin.Custom.ReadTimeout) * time.Second
+	}
+	return DefaultOriginResponseTimeout
 }
 
 // bufferStream reads the rest of a streamed origin response into memory, for

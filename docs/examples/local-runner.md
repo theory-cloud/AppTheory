@@ -577,7 +577,8 @@ prelude is complete:
   The local gateway implements those rules: it flushes each chunk, caches the
   object only after the stream completes, does not cache an incomplete stream,
   returns the whole object for a Range GET, and applies the between-packet
-  timeout.
+  timeout from the origin's `CustomOriginConfig.OriginReadTimeout` (default 30
+  seconds, as the page states).
   The Lambda@Edge viewer-response function runs at the prelude, once the status
   and headers are known: its event carries `headers`, `status` and
   `statusDescription`, not the body, so it cannot change the status
