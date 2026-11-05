@@ -1410,6 +1410,13 @@ The runtime returns one JSON body (the emulator returns the same shape in
   metadata and body;
 - `errorType`/`errorMessage` without a `statusCode` is a handler error and is
   served as `502 {"message":"Internal Server Error"}` (the detail is logged);
+- a Function URL origin applies AWS's inference rule to a genuine return value:
+  "If your function returns valid JSON and doesn't return a statusCode, Lambda
+  assumes the following: statusCode is 200 ... content-type is
+  application/json ... body is the function response"
+  ([Function URL payloads](https://docs.aws.amazon.com/lambda/latest/dg/urls-invocation.html)).
+  The buffered and streaming Function URL origin paths share this one rule; an
+  error payload is still the 502 above;
 - a missing or out-of-range `statusCode` and a malformed body are `502`;
 - a request with no matching route is `404 {"message":"Not Found"}` from the
   local transport; bodies above 10 MB are `413`.

@@ -3,6 +3,7 @@ package localrunner
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -198,5 +199,70 @@ func TestFunctionProcessInvokeStreamCarriesAHandlerErrorExplicitly(t *testing.T)
 	}
 	if !strings.Contains(string(result.Body), "kaboom") {
 		t.Fatalf("the documented error JSON stays in the body: %q", result.Body)
+	}
+}
+
+func TestDecodeFunctionURLResponseInfersAGenuineJSONBody(t *testing.T) {
+	body := []byte(`{"message":"Hello, world!"}`)
+	decoded, err := decodeFunctionURLResponse(body)
+	if err != nil {
+		t.Fatalf("a non-proxy JSON body is a genuine return value: %v", err)
+	}
+	if decoded.StatusCode != http.StatusOK {
+		t.Fatalf("inferred status: %d", decoded.StatusCode)
+	}
+	if got := decoded.Headers["Content-Type"]; len(got) != 1 || got[0] != "application/json" {
+		t.Fatalf("inferred content type: %v", decoded.Headers)
+	}
+	if string(decoded.Body) != string(body) {
+		t.Fatalf("inferred body: %q", decoded.Body)
+	}
+	quoted := []byte(`"Hello, world!"`)
+	inferred, err := decodeFunctionURLResponse(quoted)
+	if err != nil || inferred.StatusCode != http.StatusOK || string(inferred.Body) != string(quoted) {
+		t.Fatalf("a JSON string is inferred too: %+v err=%v", inferred, err)
+	}
+}
+
+func TestDecodeFunctionURLResponseRejectsAnErrorPayload(t *testing.T) {
+	if _, err := decodeFunctionURLResponse([]byte(`{"errorMessage":"kaboom","errorType":"ValueError"}`)); err == nil {
+		t.Fatal("an error payload is not a genuine return value")
+	}
+	if _, err := decodeFunctionURLResponse([]byte(`{"statusCode":"not-a-number"}`)); err == nil {
+		t.Fatal("a malformed statusCode is an error")
+	}
+}
+
+func TestFunctionURLPipeSinkEndAppliesTheInferenceRule(t *testing.T) {
+	reader, writer := io.Pipe()
+	head := make(chan streamHead, 1)
+	sink := &functionURLPipeSink{writer: writer, head: head}
+	sink.buffered = []byte(`{"message":"Hello, world!"}`)
+	go func() {
+		_, _ = io.Copy(io.Discard, reader) //nolint:errcheck // test
+	}()
+	_ = sink.End("", nil) //nolint:errcheck // test
+	_ = writer.Close()    //nolint:errcheck // end of stream
+	result := <-head
+	if result.err != nil || result.status != http.StatusOK || result.header.Get("Content-Type") != "application/json" {
+		t.Fatalf("inferred head: %+v", result)
+	}
+}
+
+func TestFunctionURLHandlerErrorIsA502OnBothPaths(t *testing.T) {
+	invoker := &fakeStreamInvoker{
+		contentType: "application/json",
+		streamed:    false,
+		chunks:      [][]byte{[]byte(`{"errorMessage":"kaboom","errorType":"ValueError"}`)},
+	}
+	origin := &functionURLOrigin{originID: "origin", urlID: "url", domainName: "abc.lambda-url.us-east-1.on.aws", authType: noneAuthorization, invoker: invoker}
+	if _, fetchErr := origin.Fetch(context.Background(), localcloudfrontOriginRequest()); fetchErr == nil {
+		t.Fatal("the buffered path answers a handler error with an error")
+	}
+	if stream, streamErr := origin.FetchStream(context.Background(), localcloudfrontOriginRequest()); streamErr == nil {
+		if stream.Body != nil {
+			_ = stream.Body.Close() //nolint:errcheck // test
+		}
+		t.Fatalf("the streaming path must answer the handler error, not %d", stream.StatusCode)
 	}
 }

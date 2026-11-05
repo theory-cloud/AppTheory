@@ -110,7 +110,7 @@ func (o *functionURLOrigin) Fetch(ctx context.Context, request localcloudfront.O
 	if err != nil {
 		return localcloudfront.OriginResponse{}, fmt.Errorf("invoke Function URL %s: %w", o.urlID, err)
 	}
-	decoded, err := DecodeResponse(raw)
+	decoded, err := decodeFunctionURLResponse(raw)
 	if err != nil {
 		return localcloudfront.OriginResponse{}, fmt.Errorf("decode Function URL %s response: %w", o.urlID, err)
 	}
@@ -308,14 +308,12 @@ func (s *functionURLPipeSink) End(_ string, _ []byte) error {
 	if s.decoder.done && s.decoder.Framed() {
 		return nil
 	}
-	// A buffered response: decode the proxy payload and emit it as a complete
-	// body. A stream that produced no bytes is an empty 200 response.
-	decoded, err := DecodeResponse(s.buffered)
+	// A buffered response: decode it with the same rule as Fetch and emit it as
+	// a complete body. A body the buffered path answers with 502 is a 502 here
+	// too, never a 200 carrying the raw bytes.
+	decoded, err := decodeFunctionURLResponse(s.buffered)
 	if err != nil {
-		s.send(http.StatusOK, http.Header{"Content-Type": []string{streamIntegrationContentType}})
-		if len(s.buffered) > 0 {
-			_, _ = s.writer.Write(s.buffered) //nolint:errcheck // reported by the pipe
-		}
+		s.sendError(fmt.Errorf("decode Function URL response: %w", err))
 		return nil
 	}
 	header := http.Header{}
@@ -337,20 +335,67 @@ func (s *functionURLPipeSink) End(_ string, _ []byte) error {
 	return nil
 }
 
-// finish reports a transport failure when no head was produced, so the gateway
-// can answer instead of waiting on a body that will never arrive.
-func (s *functionURLPipeSink) finish(err error) {
-	if s.sent || err == nil {
+// sendError answers the prelude with an error instead of a status; FetchStream
+// turns it into the gateway's 502, the same status the buffered path produces.
+func (s *functionURLPipeSink) sendError(err error) {
+	if s.sent {
 		return
 	}
 	s.sent = true
 	s.head <- streamHead{err: err}
 }
 
+// finish reports a transport failure when no head was produced, so the gateway
+// can answer instead of waiting on a body that will never arrive.
+func (s *functionURLPipeSink) finish(err error) {
+	if s.sent || err == nil {
+		return
+	}
+	s.sendError(err)
+}
+
 func (o *functionURLOrigin) logMessage(format string, args ...any) {
 	if o.logf != nil {
 		o.logf(format, args...)
 	}
+}
+
+// decodeFunctionURLResponse is the one Function URL decoding rule: the buffered
+// Fetch path and the Function URL pipe sink both use it, so a body the buffered
+// path answers with 502 is a 502 on the streaming path too.
+//
+// A non-proxy return value follows the page's inference rule: "If your function
+// returns valid JSON and doesn't return a statusCode, Lambda assumes the
+// following: statusCode is 200 ... content-type is application/json ... body is
+// the function response ... isBase64Encoded is false." An error payload
+// (errorType/errorMessage without a statusCode) is a failed invocation, not a
+// genuine return value: the runner's documented handler-error rule keeps it a
+// 502.
+// https://docs.aws.amazon.com/lambda/latest/dg/urls-invocation.html
+func decodeFunctionURLResponse(raw []byte) (LambdaResponse, error) {
+	response, err := DecodeResponse(raw)
+	if err == nil {
+		return response, nil
+	}
+	var handlerErr *HandlerError
+	if errors.As(err, &handlerErr) {
+		return LambdaResponse{}, err
+	}
+	trimmed := bytes.TrimSpace(raw)
+	if !json.Valid(trimmed) {
+		return LambdaResponse{}, err
+	}
+	var object map[string]json.RawMessage
+	if json.Unmarshal(trimmed, &object) == nil {
+		if _, hasStatus := object["statusCode"]; hasStatus {
+			return LambdaResponse{}, err
+		}
+	}
+	return LambdaResponse{
+		StatusCode: http.StatusOK,
+		Headers:    map[string][]string{"Content-Type": {"application/json"}},
+		Body:       raw,
+	}, nil
 }
 
 func buildFunctionURLEvent(

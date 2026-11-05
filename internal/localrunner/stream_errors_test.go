@@ -319,7 +319,7 @@ func TestFunctionURLPipeSinkEndDecodesTheBufferedBody(t *testing.T) {
 	}
 }
 
-func TestFunctionURLPipeSinkEndForwardsAnUndecodableBody(t *testing.T) {
+func TestFunctionURLPipeSinkEndReportsAnUndecodableBody(t *testing.T) {
 	reader, writer := io.Pipe()
 	head := make(chan streamHead, 1)
 	sink := &functionURLPipeSink{writer: writer, head: head}
@@ -330,8 +330,8 @@ func TestFunctionURLPipeSinkEndForwardsAnUndecodableBody(t *testing.T) {
 	_ = sink.End("", nil) //nolint:errcheck // test
 	_ = writer.Close()    //nolint:errcheck // end of stream
 	result := <-head
-	if result.status != http.StatusOK || result.header.Get("Content-Type") != streamIntegrationContentType {
-		t.Fatalf("undecodable head: %+v", result)
+	if result.err == nil {
+		t.Fatalf("an undecodable body must answer with an error, not %d %q", result.status, result.header.Get("Content-Type"))
 	}
 }
 
