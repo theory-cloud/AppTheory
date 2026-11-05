@@ -13,6 +13,7 @@ tree or a throwaway tree under the system temp directory.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -49,6 +50,34 @@ class RealTreeTests(unittest.TestCase):
         )
         self.assertEqual([], errors)
         self.assertGreater(len(discovered), 40)
+
+    def test_readme_rows_state_the_manifest_class(self) -> None:
+        _, entries = harness.load_manifest(harness.MANIFEST_PATH)
+        readme = (harness.ROOT / "examples" / "README.md").read_text(encoding="utf-8")
+        rows = []
+        for line in readme.splitlines():
+            if not line.startswith("| `examples/"):
+                continue
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            match = re.search(r"`(examples/[^`]+)`", cells[0])
+            self.assertIsNotNone(match, line)
+            rows.append((match.group(1), cells[2]))
+        self.assertGreater(len(rows), 15)
+        for path, stated in rows:
+            classes = {
+                entry.class_name
+                for entry in entries
+                if entry.kind == "entrypoint"
+                and (entry.key == path or entry.key.startswith(path.rstrip("/") + "/"))
+                and entry.class_name
+            }
+            self.assertTrue(classes, f"{path} names no manifest entrypoint")
+            for klass in sorted(classes):
+                self.assertRegex(
+                    stated,
+                    rf"(?<![A-Za-z0-9]){re.escape(klass)}(?![A-Za-z0-9])",
+                    f"{path}: the row must state class {klass}: {stated!r}",
+                )
 
     def test_documented_exclusions_hold_in_the_real_tree(self) -> None:
         discovered = harness.discover(harness.ROOT)
