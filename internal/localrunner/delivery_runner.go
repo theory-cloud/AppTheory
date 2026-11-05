@@ -33,6 +33,8 @@ func (r *Runner) startDelivery(ctx context.Context, spec *Spec) error {
 // started function container through the same RIE path a session invocation
 // uses.
 func (r *Runner) invokeDelivery(ctx context.Context, function string, event []byte) (InvokeResult, error) {
+	r.reloadMu.RLock()
+	defer r.reloadMu.RUnlock()
 	process, ok := r.invokers[function]
 	if !ok {
 		return InvokeResult{}, fmt.Errorf("delivery target %s is not running", function)

@@ -36,6 +36,8 @@ func (r *Runner) RunSession(ctx context.Context, in io.Reader, out io.Writer) er
 	if err != nil {
 		return err
 	}
+	r.startWatch(ctx)
+	defer r.stopWatch()
 	r.logf("local-run: ready")
 	return r.serveSession(ctx, spec, in, out)
 }
@@ -166,6 +168,13 @@ func (s *localSession) handle(ctx context.Context, line string) sessionResponse 
 
 //nolint:gocyclo // the switch is the session's explicit operation contract.
 func (s *localSession) execute(ctx context.Context, request sessionRequest) (any, error) {
+	// A watch reload replaces the runner's Spec and function set; serialize
+	// every command with it so a command never sees a half-applied change.
+	s.runner.reloadMu.RLock()
+	defer s.runner.reloadMu.RUnlock()
+	if current := s.runner.CurrentSpec(); current != nil {
+		s.spec = current
+	}
 	switch request.Op {
 	case "shutdown":
 		return map[string]any{"shutdown": true}, nil

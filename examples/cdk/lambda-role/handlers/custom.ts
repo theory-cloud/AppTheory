@@ -35,6 +35,39 @@ export async function handler(event: unknown): Promise<{ statusCode: number; bod
         };
     }
 
+    // A deterministic key/value mode for the local --data-dir row: one run
+    // writes an object through this handler, a second run reads it back.
+    const query = ((event as { queryStringParameters?: Record<string, string> } | null)?.queryStringParameters ?? {});
+    if (query.key && (query.read === "1" || query.write === "1")) {
+        if (query.write === "1") {
+            await s3.send(
+                new PutObjectCommand({
+                    Bucket: bucketName,
+                    Key: query.key,
+                    Body: query.value ?? "",
+                    ContentType: "text/plain",
+                }),
+            );
+            return {
+                statusCode: 200,
+                body: JSON.stringify({ s3Object: { bucket: bucketName, key: query.key, value: query.value ?? "" } }),
+            };
+        }
+        try {
+            const stored = await s3.send(new GetObjectCommand({ Bucket: bucketName, Key: query.key }));
+            const content = await stored.Body?.transformToString();
+            return {
+                statusCode: 200,
+                body: JSON.stringify({ s3Object: { bucket: bucketName, key: query.key, content } }),
+            };
+        } catch (error) {
+            return {
+                statusCode: 404,
+                body: JSON.stringify({ error: "Object not found", key: query.key }),
+            };
+        }
+    }
+
     // Demonstrate S3 write
     const key = `test-${Date.now()}.json`;
     await s3.send(

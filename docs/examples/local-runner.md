@@ -1572,6 +1572,113 @@ published; function containers use the run-network aliases. Neither can reach a
 real AWS endpoint. `describe` is the only operation that returns local secrets
 or resolved environment values; `run`, `plan` and `invoke` never print them.
 
+## Dev loop
+
+### Watch and rebuild
+
+`run --watch` and `session --watch` re-synthesize the app when its sources
+change and apply the new surface without restarting the session. The watcher
+follows the CDK CLI's own configuration: when `cdk.json` declares a `watch`
+object, its `include` and `exclude` patterns decide which files trigger a
+rebuild; otherwise the app directory is watched. A path is interpreted relative
+to the directory containing `cdk.json`, and `node_modules`, `cdk.out`,
+`.git`, `.venv`, `__pycache__` and the examples' `.cdk-asset-stage` directory
+are never watched ([watch mode](https://docs.aws.amazon.com/cdk/v2/guide/cli.html#cli-watch)).
+
+The runner polls every 300 ms and debounces a burst of edits for 500 ms. One
+synthesis runs at a time; an edit made while a synthesis is running schedules
+another one. A failed synthesis is logged and the previous assembly keeps
+serving. A successful change re-derives the whole Spec, provisions any new
+definitions, and compares each function's `FunctionSpec`; only a function
+whose execution inputs changed is replaced:
+
+- the asset hash (`aws:asset:path`) or inline code;
+- the image asset, environment, memory and timeout limits, or layers;
+- its runtime, handler or architecture.
+
+A replaced function keeps its logical id, its listener behaviour and the reset
+semantics of the Lambda lifecycle page: the old execution environment is
+removed and a new one starts
+([execution environment lifecycle](https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtime-environment.html)).
+A function added by the change starts; one removed stops. Routes, event
+sources, rules, subscriptions and delivery wiring are re-derived, and every
+`net.Listener` keeps its port and URL.
+
+| Change | Applied live? |
+| --- | --- |
+| A served function's code, environment, limits, layers, image or runtime | Yes: that function's execution environment is replaced; the other functions keep theirs. |
+| Routes on an existing HTTP, REST or Function URL listener | Yes: the listener's route table is swapped in place. |
+| A new or removed HTTP, REST, Function URL or WebSocket listener | No: reported by name; restart the session. |
+| A changed CloudFront distribution topology | No: reported; restart the session. |
+| Event sources, rules and subscriptions | Yes: the delivery engine is re-derived. |
+| A new resource that needs a backend this run did not start | No: reported by name with the backend; restart with `--backend`. |
+
+### Persistent data (`--data-dir`)
+
+`run`, `session` and `invoke` accept `--data-dir <dir>`. The default is still
+ephemeral: without the flag the backends start exactly as before and no state
+survives the run. With the flag, each persistable backend keeps its state under
+one directory per backend:
+
+| Backend | What persists | Option and path |
+| --- | --- | --- |
+| DynamoDB Local | Tables and items | `-dbPath /data` on `<dir>/dynamodb`; the pinned command's `-sharedDb` is kept, so the single database file is `shared-local-instance.db`. |
+| s3proxy | Buckets and objects | The filesystem jclouds provider with `JCLOUDS_FILESYSTEM_BASEDIR=/data` on `<dir>/s3proxy`. |
+| ElasticMQ | Queues and messages | `messages-storage` with the H2 file `/data/elasticmq` on `<dir>/sqs`. Verified on the pinned 1.7.1 image: a message survived a restart. |
+| moto | Nothing | Server-mode state lives in the process; there is no persistence option ([moto server mode](https://docs.getmoto.org/en/latest/docs/server_mode.html)). This is the docs/125 memory-only limit, named rather than hidden. |
+
+The DynamoDB Local page owns the options: `-dbPath` is "The directory where
+DynamoDB writes its database file"; `-inMemory` writes no database file and
+cannot be combined with `-dbPath`; and "If you use the -sharedDb option,
+DynamoDB creates a single database file named shared-local-instance.db"
+([DynamoDB Local usage notes](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/DynamoDBLocal.UsageNotes.html)).
+s3proxy's filesystem backend stores a key as a path under
+`jclouds.filesystem.basedir`, so a bind-mounted base directory is the
+persistent store ([s3proxy](https://github.com/gaul/s3proxy)). ElasticMQ's
+`messages-storage` keeps queues and messages in an H2 in-file database and
+restores them on startup ([Persisting queues and messages](https://github.com/softwaremill/elasticmq)).
+
+Definitions are re-provisioned from the CDK definition on every start. A table,
+bucket, queue, topic, stream, parameter, secret, pool or key that already
+exists in the data directory is reconciled, never dropped or recreated. A
+DynamoDB key-schema change cannot be applied to existing state: the runner
+fails at start with the table named and the UpdateTable page's rule,
+"Modifies the provisioned throughput settings, global secondary indexes,
+DynamoDB Streams settings, or global table replica settings for a given table"
+([UpdateTable](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html)).
+Missing or changed global secondary indexes are created or deleted, and an
+existing queue's visibility, retention, wait and delay attributes are updated
+without deleting its messages. The examples' `data-dir.sh`,
+`data-dir-s3.sh` and `data-dir-sqs.sh` scripts show the two-run pattern.
+
+### Seed hooks (`--seed`)
+
+`run --seed <command>` and `session --seed <command>` run a shell command after
+provisioning and the listener start, and before `local-run: ready`. The
+command runs in the app directory with the run's host-side endpoint URLs, the
+served HTTP URLs, the data directory (when set) and the dummy credentials, so
+it drives the app through its own code paths — an HTTP request to the local
+API, `apptheory-local invoke`, or the app's own CLI — and never writes to a
+backend behind the app's back. A non-zero exit fails the run with the script's
+output.
+
+| Variable | Value |
+| --- | --- |
+| `APPTHEORY_LOCAL_APP` | The CDK app directory. |
+| `APPTHEORY_LOCAL_DATA_DIR` | The `--data-dir` root, when set. |
+| `APPTHEORY_LOCAL_APIS` | JSON array of `{"class","logicalId","url"}` for every served listener. |
+| `APPTHEORY_LOCAL_URL_<LOGICALID>` | One URL per served listener. |
+| `APPTHEORY_LOCAL_ENDPOINT_<SERVICE>` | Each host-side endpoint: `DYNAMODB`, `S3`, `SQS`, `EVENTS`, `KMS`, … |
+| The profile's endpoint names | `AWS_ENDPOINT_URL_DYNAMODB`, `AWS_ENDPOINT_URL_S3`, `AWS_ENDPOINT_URL_EVENTS`, … |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `AWS_DEFAULT_REGION` | `dummy`, `dummy`, `us-east-1`, `us-east-1`. |
+
+Every inherited `AWS_*` name is removed from the seed's environment; only the
+run's dummy values are present. The committed
+[`examples/cdk/restv1-router/scripts/seed-local.sh`](https://github.com/theory-cloud/AppTheory/blob/staging/examples/cdk/restv1-router/scripts/seed-local.sh)
+reads `APPTHEORY_LOCAL_APIS`, PUTs an inventory item through the app's real
+handler and reads it back; the harness row proves the seeded item is visible
+through the same handler.
+
 ## Event delivery
 
 `run` and `session` start a delivery engine. Every event-source mapping,

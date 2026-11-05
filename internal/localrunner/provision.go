@@ -327,12 +327,23 @@ func (r *Runner) provisionTables(ctx context.Context, spec *Spec) error {
 			return err
 		}
 		input := createTableInput(name, props)
-		if _, createErr := client.CreateTable(ctx, input); createErr != nil && !tableAlreadyExists(createErr) {
+		_, createErr := client.CreateTable(ctx, input)
+		existed := createErr != nil && tableAlreadyExists(createErr)
+		if createErr != nil && !existed {
 			return fmt.Errorf("create local DynamoDB table %s for %s: %w", name, resource.LogicalID, createErr)
 		}
 		description, err := waitForTableActive(ctx, client, name)
 		if err != nil {
 			return fmt.Errorf("wait for local DynamoDB table %s: %w", name, err)
+		}
+		if existed && r.dataDir != "" {
+			if err := reconcileTableDefinition(ctx, client, name, props, description); err != nil {
+				return fmt.Errorf("reconcile local DynamoDB table %s for %s: %w", name, resource.LogicalID, err)
+			}
+			description, err = waitForTableActive(ctx, client, name)
+			if err != nil {
+				return fmt.Errorf("wait for reconciled local DynamoDB table %s: %w", name, err)
+			}
 		}
 		keySchema := make([]keySchemaAttribute, 0, len(props.KeySchema))
 		for _, key := range props.KeySchema {
@@ -464,6 +475,149 @@ func waitForTableActive(ctx context.Context, client *dynamodb.Client, name strin
 	}
 }
 
+// reconcileTableDefinition applies a re-run's definition to a table that
+// already exists in --data-dir. Key-schema changes fail closed because
+// UpdateTable cannot apply them; missing or changed global secondary indexes
+// are created, deleted or refused by name. Existing items are never dropped.
+//
+// https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html
+func reconcileTableDefinition(ctx context.Context, client *dynamodb.Client, name string, props dynamoTableProperties, description *types.TableDescription) error {
+	if description == nil {
+		return nil
+	}
+	if !sameKeySchema(description.KeySchema, props.KeySchema) {
+		return fmt.Errorf(
+			"the table already exists with a different key schema; UpdateTable " +
+				"\"Modifies the provisioned throughput settings, global secondary indexes, " +
+				"DynamoDB Streams settings, or global table replica settings for a given table\", " +
+				"so a key-schema change cannot be applied to existing state " +
+				"(https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html)",
+		)
+	}
+	existing := map[string]types.GlobalSecondaryIndexDescription{}
+	for _, index := range description.GlobalSecondaryIndexes {
+		existing[aws.ToString(index.IndexName)] = index
+	}
+	wanted := map[string]bool{}
+	for _, index := range props.GlobalSecondaryIndexes {
+		wanted[index.IndexName] = true
+		if current, ok := existing[index.IndexName]; ok {
+			if !sameGlobalSecondaryIndex(current, index) {
+				return fmt.Errorf(
+					"global secondary index %s already exists with a different shape; "+
+						"the local runner refuses to recreate the index over existing table data",
+					index.IndexName,
+				)
+			}
+			continue
+		}
+		create := &types.CreateGlobalSecondaryIndexAction{IndexName: aws.String(index.IndexName)}
+		for _, key := range index.KeySchema {
+			create.KeySchema = append(create.KeySchema, types.KeySchemaElement{
+				AttributeName: aws.String(key.AttributeName),
+				KeyType:       types.KeyType(key.KeyType),
+			})
+		}
+		create.Projection = &types.Projection{
+			ProjectionType:   types.ProjectionType(index.Projection.ProjectionType),
+			NonKeyAttributes: append([]string(nil), index.Projection.NonKeyAttributes...),
+		}
+		if _, err := client.UpdateTable(ctx, &dynamodb.UpdateTableInput{
+			TableName: aws.String(name),
+			GlobalSecondaryIndexUpdates: []types.GlobalSecondaryIndexUpdate{{
+				Create: create,
+			}},
+		}); err != nil {
+			return fmt.Errorf("create global secondary index %s: %w", index.IndexName, err)
+		}
+		if err := waitForIndexActive(ctx, client, name, index.IndexName); err != nil {
+			return err
+		}
+	}
+	for indexName := range existing {
+		if wanted[indexName] {
+			continue
+		}
+		if _, err := client.UpdateTable(ctx, &dynamodb.UpdateTableInput{
+			TableName: aws.String(name),
+			GlobalSecondaryIndexUpdates: []types.GlobalSecondaryIndexUpdate{{
+				Delete: &types.DeleteGlobalSecondaryIndexAction{IndexName: aws.String(indexName)},
+			}},
+		}); err != nil {
+			return fmt.Errorf("delete global secondary index %s: %w", indexName, err)
+		}
+	}
+	return nil
+}
+
+func sameKeySchema(actual []types.KeySchemaElement, wanted []dynamoKeySchemaElement) bool {
+	if len(actual) != len(wanted) {
+		return false
+	}
+	for index := range actual {
+		if aws.ToString(actual[index].AttributeName) != wanted[index].AttributeName {
+			return false
+		}
+		if string(actual[index].KeyType) != wanted[index].KeyType {
+			return false
+		}
+	}
+	return true
+}
+
+func sameGlobalSecondaryIndex(actual types.GlobalSecondaryIndexDescription, wanted dynamoGlobalSecondaryIndex) bool {
+	if len(actual.KeySchema) != len(wanted.KeySchema) {
+		return false
+	}
+	for index := range actual.KeySchema {
+		if aws.ToString(actual.KeySchema[index].AttributeName) != wanted.KeySchema[index].AttributeName ||
+			string(actual.KeySchema[index].KeyType) != wanted.KeySchema[index].KeyType {
+			return false
+		}
+	}
+	if actual.Projection == nil {
+		return wanted.Projection.ProjectionType == ""
+	}
+	if string(actual.Projection.ProjectionType) != wanted.Projection.ProjectionType {
+		return false
+	}
+	if len(actual.Projection.NonKeyAttributes) != len(wanted.Projection.NonKeyAttributes) {
+		return false
+	}
+	for index := range actual.Projection.NonKeyAttributes {
+		if actual.Projection.NonKeyAttributes[index] != wanted.Projection.NonKeyAttributes[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func waitForIndexActive(ctx context.Context, client *dynamodb.Client, table, index string) error {
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		out, err := client.DescribeTable(ctx, &dynamodb.DescribeTableInput{TableName: aws.String(table)})
+		if err != nil {
+			return fmt.Errorf("describe table %s while waiting for index %s: %w", table, index, err)
+		}
+		for _, candidate := range out.Table.GlobalSecondaryIndexes {
+			if aws.ToString(candidate.IndexName) == index {
+				if candidate.IndexStatus == types.IndexStatusActive {
+					return nil
+				}
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("global secondary index %s on table %s did not become ACTIVE", index, table)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
 func attributeType(definitions []dynamoAttributeDefinition, name string) (string, bool) {
 	for _, definition := range definitions {
 		if definition.AttributeName == name {
@@ -537,7 +691,8 @@ func (r *Runner) provisionQueue(ctx context.Context, client *sqs.Client, network
 		QueueName:  aws.String(name),
 		Attributes: queueAttributes(props),
 	})
-	if err != nil && !queueAlreadyExists(err) {
+	existed := err != nil && queueAlreadyExists(err)
+	if err != nil && !existed {
 		return fmt.Errorf("create local SQS queue %s for %s: %w", name, resource.LogicalID, err)
 	}
 	queueURL := ""
@@ -550,6 +705,24 @@ func (r *Runner) provisionQueue(ctx context.Context, client *sqs.Client, network
 			return fmt.Errorf("find local SQS queue %s for %s: %w", name, resource.LogicalID, findErr)
 		}
 		queueURL = aws.ToString(found.QueueUrl)
+	}
+	if existed && r.dataDir != "" {
+		// Reconcile the re-runnable attributes on a queue that already holds
+		// messages. CreateQueue is idempotent only when the attribute list
+		// matches, so an explicit SetQueueAttributes applies a definition change
+		// without deleting the queue. FifoQueue and ContentBasedDeduplication
+		// are creation-time attributes and are not changed here.
+		attributes := queueAttributes(props)
+		delete(attributes, string(sqstypes.QueueAttributeNameFifoQueue))
+		delete(attributes, string(sqstypes.QueueAttributeNameContentBasedDeduplication))
+		if len(attributes) > 0 {
+			if _, setErr := client.SetQueueAttributes(ctx, &sqs.SetQueueAttributesInput{
+				QueueUrl:   aws.String(queueURL),
+				Attributes: attributes,
+			}); setErr != nil {
+				return fmt.Errorf("reconcile local SQS queue %s for %s: %w", name, resource.LogicalID, setErr)
+			}
+		}
 	}
 	networkURL, err := rewriteQueueURL(queueURL, networkEndpoint.URL)
 	if err != nil {
@@ -704,7 +877,9 @@ func tableAlreadyExists(err error) bool {
 
 func ttlAlreadyEnabled(err error) bool {
 	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "timetolivealreadyenabled") || strings.Contains(message, "time to live is already enabled")
+	return strings.Contains(message, "timetolivealreadyenabled") ||
+		strings.Contains(message, "timetolive is already enabled") ||
+		strings.Contains(message, "time to live is already enabled")
 }
 
 func queueAlreadyExists(err error) bool {

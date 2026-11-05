@@ -259,6 +259,21 @@ argument.
 | `examples/cdk/lambda-packaging/handlers/node/app.js` | L1 | The real runner extracts the Node and Python layers into `/opt`, builds the three images with `docker build` before serving, and serves one HTTP API. The Node handler imports `layer-greeting` from `/opt/nodejs/node_modules`, executes `/opt/bin/layer-tool` from `PATH` and reports `/opt/bin` and `/opt/lib`; the Python handler imports `layer_tool` from `/opt/python`, executes its own `/opt/bin/layer-tool` and reports `PYTHONPATH`, `PATH` and `LD_LIBRARY_PATH`; the Go, Node and Python image handlers return the value the Dockerfile wrote from `IMAGE_VALUE`, so a stale or missing image cannot pass. |
 | `examples/cdk/lambda-packaging/handlers/python/app.py`, `images/{go,node,python}`, `layers/python/python/layer_tool.py`, `Layers/*/bin/layer-tool` | L1 | Covered by the Node handler row: each is executed inside the same run. |
 
+### R7: dev loop
+
+The dev-loop rows edit a real handler, run the runner's own `cdk synth`, and
+prove the result on the real path; nothing is stubbed.
+
+| Row | Class | How it is verified |
+| --- | --- | --- |
+| `examples/cdk/multilang/scripts/watch-go.sh` | L2 | A real edit to `handlers/go/main.go` is followed by a `cdk synth` rebuild; the Go API answers the new response on the unchanged listener, the Go function's execution environment is replaced, and the TypeScript and Python functions keep their Runtime API listeners. The WebSocket authorizer's asset is the whole `handlers/` directory, so it is restarted too — its asset hash changed. The source is restored and rebuilt before shutdown. |
+| `examples/cdk/multilang/scripts/watch-ts.sh` | L2 | The same proof for `handlers/ts/handler.mjs`; the Go and Python functions are not restarted. |
+| `examples/cdk/multilang/scripts/watch-py.sh` | L2 | The same proof for `handlers/py/handler.py`; the Go and TypeScript functions are not restarted. |
+| `examples/cdk/lesser-parity/scripts/data-dir.sh` | L2 | An item is written through the API handler's real DynamoDB SDK in one session; a second session with the same `--data-dir` reads it from `shared-local-instance.db`; a third session without the flag answers 404. |
+| `examples/cdk/lambda-role/scripts/data-dir-s3.sh` | L2 | The custom handler writes an S3 object through the real SDK in one invoke; a second invoke with the same `--data-dir` reads it back through the handler, and s3proxy's filesystem base directory holds the object. |
+| `examples/cdk/sqs-queue/scripts/data-dir-sqs.sh` | L2 | A real ElasticMQ message is sent to an unconsumed queue in one session; a second session with the same `--data-dir` finds it visible and receives its body from the `messages-storage` H2 database. |
+| `examples/cdk/restv1-router/scripts/seed-local.sh` | L2 | The committed seed script runs after provisioning and before `local-run: ready`, uses `APPTHEORY_LOCAL_APIS` to PUT and GET through the real inventory handler, and the seeded item is visible; a failing seed fails the run with its output. |
+
 ## Runtime API conformance
 
 The `runtime-api-conformance` row (L2, `scripts/local/runtime_api_conformance.py`)

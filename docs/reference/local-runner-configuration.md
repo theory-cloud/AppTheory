@@ -57,6 +57,9 @@ function the CDK definition targets and reads one JSON command per line.
 | `--architecture ARCH` | `arm64` for provided, `x86_64` otherwise | `invoke --handler-dir`: built architecture. |
 | `--memory MB` | 128 | `invoke --handler-dir`: function memory. |
 | `--timeout SECONDS` | 3 | `invoke --handler-dir`: function timeout. |
+| `--watch` | off | `run`/`session`: follow `cdk.json`'s `watch` include/exclude (or the app directory), re-synthesize on a change and apply the new surface without restarting the listeners. See [Dev loop](#dev-loop). |
+| `--data-dir DIR` | none (ephemeral) | `run`/`session`/`invoke`: keep DynamoDB Local, s3proxy and ElasticMQ state under `DIR`; moto stays in memory. See [Dev loop](#dev-loop). |
+| `--seed COMMAND` | none | `run`/`session`: run `sh -c COMMAND` after provisioning and before `local-run: ready`. See [Dev loop](#dev-loop). |
 
 Exit codes: `0` success, `1` a run/plan failure, `2` a usage error.
 
@@ -139,6 +142,71 @@ is listed as `unresolved (<intrinsic>)`, for example `unresolved (Ref)`, instead
 of a default. The JSON carries `unresolvedMemorySize`/`unresolvedTimeout` and
 `memorySizeExpression`/`timeoutExpression` for the same function. A served
 function with an unresolved limit still fails closed.
+
+## Dev loop
+
+### Watch and rebuild
+
+`--watch` follows the CDK CLI's watch configuration: a `cdk.json` `watch`
+object's `include`/`exclude` patterns (paths relative to the directory holding
+`cdk.json`), otherwise the app directory. Polling is every 300 ms with a
+500 ms debounce and one synthesis in flight; a failed synthesis is logged and
+the previous assembly keeps serving. A function is replaced only when its
+`FunctionSpec` execution inputs change: asset hash, image asset, environment,
+`MemorySize`/`Timeout`, layers, runtime, handler or architecture. The
+replacement uses the same reset path as a Lambda execution-environment reset,
+so the logical id and listener behaviour stay. Added functions start, removed
+functions stop; routes, event sources, rules, subscriptions and delivery
+wiring are re-derived. The listeners keep their ports and URLs.
+
+| Change | Live |
+| --- | --- |
+| Function code, image, environment, limits, layers, runtime, handler or architecture | The function is replaced. |
+| Routes on an existing HTTP/REST/Function URL listener | The route table swaps in place. |
+| A new/removed HTTP, REST, Function URL or WebSocket listener | Requires a restart; reported by name. |
+| A changed CloudFront distribution topology | Requires a restart; reported. |
+| A new resource needing a backend this run did not start | Requires a restart with `--backend`; reported. |
+
+### `--data-dir` layout
+
+```
+<data-dir>/dynamodb/shared-local-instance.db   DynamoDB Local -dbPath /data (the pinned -sharedDb is kept)
+<data-dir>/s3proxy/<bucket>/<key>              s3proxy jclouds filesystem provider, JCLOUDS_FILESYSTEM_BASEDIR=/data
+<data-dir>/sqs/elasticmq.mv.db                 ElasticMQ messages-storage (H2), verified on the pinned 1.7.1 image
+```
+
+moto is memory-only and is not persisted ([moto server mode](https://docs.getmoto.org/en/latest/docs/server_mode.html)).
+The data directory must be under `$HOME` or the working directory so Docker can
+bind-mount it. Definitions are re-provisioned from the assembly on every start;
+existing tables, buckets, queues, topics, streams, parameters, secrets, pools
+and keys are reconciled, never dropped. A DynamoDB key-schema change fails at
+start with the table named and the UpdateTable rule that a table update cannot
+change its key schema
+([UpdateTable](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html)).
+s3proxy's `jclouds.filesystem.basedir` sentence and ElasticMQ's
+`messages-storage` section are the pages the configuration follows
+([s3proxy](https://github.com/gaul/s3proxy),
+[ElasticMQ](https://github.com/softwaremill/elasticmq)).
+
+### `--seed` environment
+
+`--seed` runs `sh -c <command>` in the app directory after provisioning and
+listener start, before `local-run: ready`. Its environment carries:
+
+| Variable | Meaning |
+| --- | --- |
+| `APPTHEORY_LOCAL_APP` | The CDK app directory. |
+| `APPTHEORY_LOCAL_DATA_DIR` | The data directory, when `--data-dir` is set. |
+| `APPTHEORY_LOCAL_APIS` | JSON array of `{"class","logicalId","url"}` for every served listener. |
+| `APPTHEORY_LOCAL_URL_<LOGICALID>` | The same URLs keyed by logical id. |
+| `APPTHEORY_LOCAL_ENDPOINT_<SERVICE>` | Host-side endpoint URLs (`DYNAMODB`, `S3`, `SQS`, `EVENTS`, `KMS`, …). |
+| The profile's endpoint names | The `AWS_ENDPOINT_URL_*` names the runner injects into functions. |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `AWS_DEFAULT_REGION` | The dummy static credentials and `us-east-1`. |
+
+Inherited `AWS_*` names are removed. A non-zero exit fails the run with the
+script output. The committed
+`examples/cdk/restv1-router/scripts/seed-local.sh` is the pattern: it reads
+`APPTHEORY_LOCAL_APIS` and drives the app's REST handler.
 
 ## Run your own app
 

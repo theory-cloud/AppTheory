@@ -39,6 +39,8 @@ type ContainerPin struct {
 	Command       []string          `json:"command,omitempty"`
 	ContainerPort int               `json:"containerPort"`
 	Environment   map[string]string `json:"environment,omitempty"`
+	// Mounts are profile-declared bind mounts (host:container[:ro]).
+	Mounts []string `json:"mounts,omitempty"`
 }
 
 // Profile is the checked-in local execution profile the repo's harness and the

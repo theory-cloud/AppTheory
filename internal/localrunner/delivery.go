@@ -448,6 +448,21 @@ func (e *DeliveryEngine) Start(ctx context.Context, spec *Spec) error {
 	}
 	e.started = true
 	e.ctx, e.cancel = context.WithCancel(ctx)
+	sources, started := e.startSourcesLocked(spec)
+	e.mu.Unlock()
+	e.logf(
+		"delivery engine: %s clock, concurrency %d, %d source(s), %d deliverer(s)",
+		ClockModeOf(e.clock),
+		e.concurrency,
+		len(sources),
+		started,
+	)
+	return nil
+}
+
+// startSourcesLocked registers every derived source and starts one deliverer
+// per kind that has one. The caller holds e.mu.
+func (e *DeliveryEngine) startSourcesLocked(spec *Spec) ([]DeliverySource, int) {
 	sources := DeliverySources(spec)
 	var started int
 	for _, source := range sources {
@@ -468,14 +483,38 @@ func (e *DeliveryEngine) Start(ctx context.Context, spec *Spec) error {
 		e.wg.Add(1)
 		go e.runSource(factory, source)
 	}
+	return sources, started
+}
+
+// Restart re-derives every registered source after a watch reload. The
+// running deliverers are canceled and drained, then the new Spec's sources are
+// registered on a fresh engine context. Counters start from zero, which is the
+// honest reading of a rebuilt local session.
+func (e *DeliveryEngine) Restart(ctx context.Context, spec *Spec) error {
+	e.mu.Lock()
+	if !e.started {
+		e.mu.Unlock()
+		return e.Start(ctx, spec)
+	}
+	cancel := e.cancel
 	e.mu.Unlock()
-	e.logf(
-		"delivery engine: %s clock, concurrency %d, %d source(s), %d deliverer(s)",
-		ClockModeOf(e.clock),
-		e.concurrency,
-		len(sources),
-		started,
-	)
+	if cancel != nil {
+		cancel()
+	}
+	e.wg.Wait()
+
+	e.mu.Lock()
+	if e.stopped {
+		e.mu.Unlock()
+		return nil
+	}
+	e.ctx, e.cancel = context.WithCancel(ctx)
+	e.draining = false
+	e.order = nil
+	e.states = map[string]*DeliveryState{}
+	sources, started := e.startSourcesLocked(spec)
+	e.mu.Unlock()
+	e.logf("delivery engine reloaded: %d source(s), %d deliverer(s)", len(sources), started)
 	return nil
 }
 

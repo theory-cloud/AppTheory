@@ -85,6 +85,18 @@ func run(args []string) int {
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
+	if config.watch && command != "run" && command != commandSession {
+		fmt.Fprintln(os.Stderr, "apptheory-local: --watch is only valid on run and session")
+		return 2
+	}
+	if config.seed != "" && command != "run" && command != commandSession {
+		fmt.Fprintln(os.Stderr, "apptheory-local: --seed is only valid on run and session")
+		return 2
+	}
+	if config.dataDir != "" && command != "run" && command != commandSession && command != commandInvoke {
+		fmt.Fprintln(os.Stderr, "apptheory-local: --data-dir is only valid on run, session and invoke")
+		return 2
+	}
 	if command == commandInvoke {
 		if err := validateInvokeConfig(config); err != nil {
 			fmt.Fprintf(os.Stderr, "apptheory-local: %v\n", err)
@@ -151,6 +163,9 @@ type commandConfig struct {
 	architecture        string
 	memoryMB            int
 	timeoutSeconds      int
+	watch               bool
+	dataDir             string
+	seed                string
 }
 
 func (c *commandConfig) register(flags *flag.FlagSet) {
@@ -185,6 +200,9 @@ func (c *commandConfig) register(flags *flag.FlagSet) {
 	flags.StringVar(&c.architecture, "architecture", "", "invoke --handler-dir: built architecture (default arm64 for provided, x86_64 otherwise)")
 	flags.IntVar(&c.memoryMB, "memory", 0, "invoke --handler-dir: memory in MB (default 128)")
 	flags.IntVar(&c.timeoutSeconds, "timeout", 0, "invoke --handler-dir: function timeout in seconds (default 3)")
+	flags.BoolVar(&c.watch, "watch", false, "run/session: re-synthesize when the app's sources change and apply the new surface without restarting the listeners")
+	flags.StringVar(&c.dataDir, "data-dir", "", "run/session/invoke: keep backend state across runs (DynamoDB Local, s3proxy and ElasticMQ; moto stays in memory)")
+	flags.StringVar(&c.seed, "seed", "", "run/session: shell command to run after provisioning and before the run reports ready")
 }
 
 func (c *commandConfig) execute(command string) int {
@@ -491,6 +509,9 @@ func (c *commandConfig) options() (localrunner.Options, error) {
 		AllowNoSurface:      c.allowNoSurface,
 		RIEMode:             c.rieMode,
 		StreamChunks:        c.streamChunks,
+		Watch:               c.watch,
+		DataDir:             c.dataDir,
+		Seed:                c.seed,
 		Stdout:              os.Stdout,
 	}, nil
 }

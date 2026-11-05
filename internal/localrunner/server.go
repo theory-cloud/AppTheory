@@ -45,6 +45,34 @@ type Transport struct {
 	// entry expires on the run clock.
 	authMu    sync.Mutex
 	authCache map[string]authorizerCacheEntry
+
+	// surfaceMu guards the live route table and invoker set a watch reload
+	// swaps. The listener and the server stay; only these values change.
+	surfaceMu sync.RWMutex
+}
+
+// currentAPI returns the route table the transport serves now.
+func (t *Transport) currentAPI() APISpec {
+	t.surfaceMu.RLock()
+	defer t.surfaceMu.RUnlock()
+	return t.API
+}
+
+// invoker returns the running process for one function.
+func (t *Transport) invoker(id string) (Invoker, bool) {
+	t.surfaceMu.RLock()
+	defer t.surfaceMu.RUnlock()
+	invoker, ok := t.Invokers[id]
+	return invoker, ok
+}
+
+// SetSurface swaps the route table and invoker set after a watch reload. The
+// net.Listener and its URL do not change.
+func (t *Transport) SetSurface(api APISpec, invokers map[string]Invoker) {
+	t.surfaceMu.Lock()
+	defer t.surfaceMu.Unlock()
+	t.API = api
+	t.Invokers = invokers
 }
 
 // authorizerResult carries what one authorizer produced. Status is 0 when the
@@ -84,11 +112,11 @@ func (t *Transport) ServeHTTP(writer http.ResponseWriter, request *http.Request)
 	path := RequestPath(request)
 	var route Route
 	var params map[string]string
-	if t.API.Class == APIFunctionURL {
-		route = t.API.Routes[0]
+	if t.currentAPI().Class == APIFunctionURL {
+		route = t.currentAPI().Routes[0]
 		params = map[string]string{}
 	} else {
-		matched, matchedParams, ok := MatchRoute(t.API, request.Method, path)
+		matched, matchedParams, ok := MatchRoute(t.currentAPI(), request.Method, path)
 		if !ok {
 			t.notFound(writer, request)
 			return
@@ -103,7 +131,7 @@ func (t *Transport) ServeHTTP(writer http.ResponseWriter, request *http.Request)
 		t.logf("%s %s -> %d (MOCK integration declared by the template)", request.Method, path, route.Mock.StatusCode)
 		return
 	}
-	invoker, ok := t.Invokers[route.Function]
+	invoker, ok := t.invoker(route.Function)
 	if !ok {
 		t.fail(writer, http.StatusBadGateway, "Internal Server Error", requestID,
 			fmt.Errorf("no running container for function %s", route.Function))
@@ -126,7 +154,7 @@ func (t *Transport) ServeHTTP(writer http.ResponseWriter, request *http.Request)
 	}
 
 	payload, err := BuildEvent(InvokeRequest{
-		API:                     t.API,
+		API:                     t.currentAPI(),
 		Route:                   route,
 		Params:                  params,
 		Method:                  request.Method,
@@ -174,7 +202,7 @@ func (t *Transport) ServeHTTP(writer http.ResponseWriter, request *http.Request)
 // local Function URL surface; every other surface keeps the proxy-response
 // decoder.
 func (t *Transport) decodeBufferedResponse(raw []byte) (LambdaResponse, error) {
-	if t.API.Class == APIFunctionURL {
+	if t.currentAPI().Class == APIFunctionURL {
 		return decodeFunctionURLResponse(raw)
 	}
 	return DecodeResponse(raw)
@@ -204,7 +232,7 @@ func (t *Transport) serveStreaming(
 			errors.New("the local listener cannot flush a streamed response"))
 		return
 	}
-	if t.API.Class == APIFunctionURL {
+	if t.currentAPI().Class == APIFunctionURL {
 		sink := &functionURLStream{writer: writer, flusher: flusher}
 		result, err := streamer.InvokeStream(request.Context(), payload, sink)
 		if err != nil {
@@ -300,7 +328,7 @@ func (t *Transport) authorizeRESTLambda(
 	path string,
 	requestID string,
 ) (authorizerResult, error) {
-	invoker, ok := t.Invokers[route.AuthorizerFunction]
+	invoker, ok := t.invoker(route.AuthorizerFunction)
 	if !ok {
 		return authorizerResult{}, fmt.Errorf("no running container for authorizer %s", route.AuthorizerFunction)
 	}
@@ -311,7 +339,7 @@ func (t *Transport) authorizeRESTLambda(
 	if refusal != 0 {
 		return authorizerResult{Status: refusal}, nil
 	}
-	arn := methodARN(t.API, request.Method, path)
+	arn := methodARN(t.currentAPI(), request.Method, path)
 	// The cache holds the authorizer's POLICY, not this request's decision:
 	// "If you enable authorization caching, API Gateway caches the policy so
 	// that the Lambda authorizer function isn't invoked again. Ensure that your
@@ -328,7 +356,7 @@ func (t *Transport) authorizeRESTLambda(
 		return result, nil
 	}
 	event, err := buildRESTAuthorizerEvent(InvokeRequest{
-		API:        t.API,
+		API:        t.currentAPI(),
 		Route:      route,
 		Params:     params,
 		Method:     request.Method,
@@ -417,12 +445,12 @@ func (t *Transport) authorizeHTTPLambdaPolicy(
 	body []byte,
 	requestID string,
 ) (authorizerResult, error) {
-	invoker, ok := t.Invokers[route.AuthorizerFunction]
+	invoker, ok := t.invoker(route.AuthorizerFunction)
 	if !ok {
 		return authorizerResult{}, fmt.Errorf("no running container for authorizer %s", route.AuthorizerFunction)
 	}
 	invoke := InvokeRequest{
-		API:        t.API,
+		API:        t.currentAPI(),
 		Route:      route,
 		Params:     params,
 		Method:     request.Method,
@@ -449,7 +477,7 @@ func (t *Transport) authorizeHTTPLambdaPolicy(
 		return authorizerResult{}, err
 	}
 	cacheKey := strings.Join(values, "\x1f")
-	arn := methodARN(t.API, request.Method, path)
+	arn := methodARN(t.currentAPI(), request.Method, path)
 	// HTTP API caching has the same shape as REST: "By default, API Gateway
 	// uses the cached authorizer response for all routes of an API that use the
 	// authorizer. To cache responses per route, add $context.routeKey to your
@@ -596,7 +624,7 @@ func (t *Transport) authorizeRequest(
 	body []byte,
 	requestID string,
 ) (authorizerResult, error) {
-	invoker, ok := t.Invokers[route.AuthorizerFunction]
+	invoker, ok := t.invoker(route.AuthorizerFunction)
 	if !ok {
 		return authorizerResult{}, fmt.Errorf("no running container for authorizer %s", route.AuthorizerFunction)
 	}
@@ -610,7 +638,7 @@ func (t *Transport) authorizeRequest(
 		return authorizerResult{Status: http.StatusUnauthorized}, nil
 	}
 	payload, err := BuildAuthorizerEvent(InvokeRequest{
-		API:        t.API,
+		API:        t.currentAPI(),
 		Route:      route,
 		Params:     params,
 		Method:     request.Method,
@@ -793,7 +821,7 @@ func (t *Transport) release() {
 }
 
 func (t *Transport) notFound(writer http.ResponseWriter, request *http.Request) {
-	t.logf("%s %s -> 404 (no route in %s)", request.Method, RequestPath(request), t.API.LogicalID)
+	t.logf("%s %s -> 404 (no route in %s)", request.Method, RequestPath(request), t.currentAPI().LogicalID)
 	writer.Header().Set("Content-Type", "application/json")
 	writer.WriteHeader(http.StatusNotFound)
 	_, _ = writer.Write([]byte(`{"message":"Not Found"}`)) //nolint:errcheck // response already committed

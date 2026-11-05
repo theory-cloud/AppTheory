@@ -108,6 +108,17 @@ type Options struct {
 	// response chunk before the result line. The default protocol stays one
 	// result line per event.
 	StreamChunks bool
+	// Watch re-synthesizes the app when its sources change, derives a new Spec
+	// and restarts only the functions whose execution inputs changed. The
+	// listeners and their URLs stay.
+	Watch bool
+	// DataDir keeps backend state across runs. An empty value keeps today's
+	// ephemeral behaviour.
+	DataDir string
+	// Seed is a shell command that runs after provisioning and before the run
+	// reports ready. It is how a seed script drives the app through its own
+	// code paths.
+	Seed string
 }
 
 // Runner owns one local run: the derived surface, the Docker network, the
@@ -176,6 +187,24 @@ type Runner struct {
 	// cloudFrontGateways and cloudFrontIDs track each served distribution.
 	cloudFrontGateways map[string]*localcloudfront.Gateway
 	cloudFrontIDs      map[string]string
+	// transports and webSocketServers are the live listeners a watch reload
+	// updates in place. The net.Listener and the server stay; only the route
+	// table and the invoker set swap.
+	transports       map[string]*Transport
+	webSocketServers map[string]*WebSocketServer
+	// dataDir is the resolved persistent backend root. Empty means ephemeral.
+	dataDir string
+	// seedEnv carries the run's endpoint and URL environment for --seed.
+	seedEnv map[string]string
+	// specMu guards the current Spec while a watch reload replaces it.
+	specMu sync.RWMutex
+	// reloadMu serializes a watch reload with the session's data operations, so
+	// a command never observes a half-applied function set.
+	reloadMu sync.RWMutex
+	// watch cancels the file watcher and waits for any in-flight synthesis.
+	watch *watchSupervisor
+	// watchAssembly counts watch syntheses so each gets a fresh directory.
+	watchAssembly int
 }
 
 // NewRunner validates the options and prepares the run. It contacts no Docker
@@ -206,6 +235,9 @@ func NewRunner(options Options) (*Runner, error) {
 		builtImages:        map[string]string{},
 		cloudFrontGateways: map[string]*localcloudfront.Gateway{},
 		cloudFrontIDs:      map[string]string{},
+		transports:         map[string]*Transport{},
+		webSocketServers:   map[string]*WebSocketServer{},
+		dataDir:            options.DataDir,
 		semaphore:          make(chan struct{}, options.MaxConcurrency),
 		clock:              clock,
 		ttl:                newTTLTracker(),
@@ -376,6 +408,16 @@ func normalizeOptions(options Options) (Options, error) {
 		}
 		options.ScratchDir = filepath.Join(cache, "apptheory-local")
 	}
+	if options.Watch && options.Handler != nil {
+		return Options{}, errors.New("--watch needs a CDK app; handler mode has no definition to re-synthesize")
+	}
+	if options.Watch && strings.TrimSpace(options.AssemblyDir) != "" {
+		return Options{}, errors.New("--watch needs the CDK app sources; it cannot watch a fixed --assembly")
+	}
+	options.DataDir, err = normalizeDataDir(options.DataDir)
+	if err != nil {
+		return Options{}, err
+	}
 	options, err = normalizeConcurrency(options)
 	if err != nil {
 		return Options{}, err
@@ -542,8 +584,8 @@ func (r *Runner) CleanScratch() {
 // Plan synthesizes the app (unless an assembly was supplied) and derives the
 // surface. It starts no containers.
 func (r *Runner) Plan(ctx context.Context) (*Spec, error) {
-	if r.spec != nil {
-		return r.spec, nil
+	if current := r.CurrentSpec(); current != nil {
+		return current, nil
 	}
 	assemblyDir := r.options.AssemblyDir
 	if assemblyDir == "" {
@@ -586,7 +628,9 @@ func (r *Runner) Plan(ctx context.Context) (*Spec, error) {
 	if r.delivery != nil {
 		spec.Delivery = r.delivery.Planned(spec)
 	}
+	r.specMu.Lock()
 	r.spec = spec
+	r.specMu.Unlock()
 	return spec, nil
 }
 
@@ -600,6 +644,8 @@ func (r *Runner) Run(ctx context.Context) error {
 	if _, err := r.prepareRun(ctx); err != nil {
 		return err
 	}
+	r.startWatch(ctx)
+	defer r.stopWatch()
 	r.logf("local-run: ready")
 	return r.serve(ctx)
 }
@@ -682,7 +728,19 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 	if err := r.startDelivery(ctx, spec); err != nil {
 		return nil, err
 	}
+	if err := r.runSeed(ctx, spec); err != nil {
+		return nil, err
+	}
 	return spec, nil
+}
+
+// CurrentSpec returns the surface the run is serving now. A watch reload
+// replaces it under the same lock, so a session's describe reads the new
+// definitions without racing the file watcher.
+func (r *Runner) CurrentSpec() *Spec {
+	r.specMu.RLock()
+	defer r.specMu.RUnlock()
+	return r.spec
 }
 
 // startWebSocketManagement starts the @connections management API when the
@@ -821,6 +879,10 @@ func (r *Runner) startBackend(ctx context.Context, backend string) error {
 		return fmt.Errorf("backend %s: %w", backend, err)
 	}
 	name := r.backendsContainerName(backend)
+	pin, dataMounts, err := r.configureBackendDataDir(backend, container, pin)
+	if err != nil {
+		return err
+	}
 	endpoints := r.profile.EndpointsForContainer(container)
 	if backend == backendDynamoDB && !containsEndpointService(endpoints, backendDynamoDB) {
 		endpoints = append(endpoints, Endpoint{Service: backendDynamoDB, URL: "http://" + backendDynamoDBName + ":8000"})
@@ -839,6 +901,7 @@ func (r *Runner) startBackend(ctx context.Context, backend string) error {
 		Image:   pin.Image,
 		Command: pin.Command,
 		Env:     pin.Environment,
+		Mounts:  append(append([]string(nil), pin.Mounts...), dataMounts...),
 		Publish: pin.ContainerPort,
 		Labels:  r.labels(),
 		Detach:  true,
@@ -1268,27 +1331,31 @@ func (r *Runner) functionImageTag(function FunctionSpec) string {
 	return sanitizeName(r.namePrefix + "-" + function.LogicalID + "-image")
 }
 
+// functionRunOptions builds the container configuration for one function. A
+// watch reload reuses it, so a restarted function receives exactly the options
+// a fresh start would have produced.
+//
 //nolint:gocognit,gocyclo // one branch per function shape the assembly can declare
-func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image string) error {
+func (r *Runner) functionRunOptions(ctx context.Context, function FunctionSpec, image string) (*runtimeAPI, ContainerOptions, error) {
 	imageFunction := function.ImageAsset != nil
 	codeDir := function.AssetDir
 	if codeDir == "" && !imageFunction {
-		return fmt.Errorf("function %s has no code directory", function.LogicalID)
+		return nil, ContainerOptions{}, fmt.Errorf("function %s has no code directory", function.LogicalID)
 	}
 	if codeDir != "" {
 		if err := ensureSharedPath(codeDir); err != nil {
-			return fmt.Errorf("function %s: %w", function.LogicalID, err)
+			return nil, ContainerOptions{}, fmt.Errorf("function %s: %w", function.LogicalID, err)
 		}
 	}
 	command, err := functionCommand(function)
 	if err != nil {
-		return err
+		return nil, ContainerOptions{}, err
 	}
 	var api *runtimeAPI
 	if !r.options.RIEMode {
 		api, err = newRuntimeAPI(function, r.logf)
 		if err != nil {
-			return err
+			return nil, ContainerOptions{}, err
 		}
 		api.gateway = r.networkGateway
 		if r.runtimeAPIGateway != "" {
@@ -1308,19 +1375,19 @@ func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image
 	if len(function.Layers) > 0 {
 		layerEnv, layerErr := r.layerEnvironment(ctx, function, image, env)
 		if layerErr != nil {
-			return layerErr
+			return nil, ContainerOptions{}, layerErr
 		}
 		env = layerEnv
 	}
 	if len(function.EnvironmentExpressions) > 0 {
-		return unsupported(
+		return nil, ContainerOptions{}, unsupported(
 			function.LogicalID,
 			"environment expressions were not resolved before the container start: %s",
 			strings.Join(sortedKeys(function.EnvironmentExpressions), ", "),
 		)
 	}
 	if limitErr := unresolvedLimitsError(function); limitErr != nil {
-		return limitErr
+		return nil, ContainerOptions{}, limitErr
 	}
 	if api != nil {
 		// The container reaches the Runtime API through host.docker.internal.
@@ -1329,13 +1396,12 @@ func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image
 		r.addRuntimeHostEntry()
 	}
 	mounts := append(functionMounts(function), r.webSocketCertificateMounts()...)
-	name := r.containerName(function.LogicalID)
 	publish := 0
 	if r.options.RIEMode {
 		publish = riePort
 	}
 	options := ContainerOptions{
-		Name:     name,
+		Name:     r.containerName(function.LogicalID),
 		Network:  r.network,
 		Image:    image,
 		Command:  command,
@@ -1347,6 +1413,16 @@ func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image
 		Labels:   r.labels(),
 		Detach:   true,
 	}
+	return api, options, nil
+}
+
+//nolint:gocognit,gocyclo // one branch per function shape the assembly can declare
+func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image string) error {
+	api, options, err := r.functionRunOptions(ctx, function, image)
+	if err != nil {
+		return err
+	}
+	name := options.Name
 	// Register the container before starting it, so a signal that lands while
 	// the runtime image is still starting or waiting to accept connections
 	// still removes it.
@@ -1372,7 +1448,7 @@ func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image
 		return startErr
 	}
 	if err := process.awaitReady(ctx, r.docker); err != nil {
-		if imageFunction && r.options.RIEMode {
+		if function.ImageAsset != nil && r.options.RIEMode {
 			return fmt.Errorf(
 				"function %s: the container image did not start a Runtime Interface Emulator on port %d; an image function must be based on an AWS base image that ships one (https://docs.aws.amazon.com/lambda/latest/dg/images-create.html): %w",
 				function.LogicalID, riePort, err,
@@ -1674,19 +1750,7 @@ func (r *Runner) runtimeImageEnv(ctx context.Context, image string) (map[string]
 func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 	targets := append([]APISpec(nil), spec.HTTPAPIs()...)
 	for _, url := range spec.FunctionURLs {
-		targets = append(targets, APISpec{
-			Class:     APIFunctionURL,
-			LogicalID: url.LogicalID,
-			Stack:     url.Stack,
-			Name:      url.LogicalID,
-			Routes: []Route{{
-				Class:     APIFunctionURL,
-				Method:    "ANY",
-				Path:      catchAllPath,
-				Function:  url.Function,
-				Streaming: url.Streaming,
-			}},
-		})
+		targets = append(targets, functionURLAPI(url))
 	}
 	invokers := make(map[string]Invoker, len(r.invokers))
 	for id, process := range r.invokers {
@@ -1701,6 +1765,7 @@ func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 		}
 		transport := NewTransport(target, invokers, r.semaphore, r.logf)
 		transport.Clock = r.clock
+		r.transports[target.LogicalID] = transport
 		server := &http.Server{
 			Handler:           transport,
 			ReadHeaderTimeout: 10 * time.Second,
@@ -1722,17 +1787,19 @@ func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 		if err != nil {
 			return fmt.Errorf("bind websocket %s listener: %w", api.LogicalID, err)
 		}
+		webSocketServer := &WebSocketServer{
+			API:        api,
+			Invokers:   invokers,
+			Clock:      r.clock,
+			Semaphore:  r.semaphore,
+			Management: r.webSocketManagement,
+			Logf:       r.logf,
+			Now:        r.now,
+			DomainName: r.webSocketDomainName(),
+		}
+		r.webSocketServers[api.LogicalID] = webSocketServer
 		server := &http.Server{
-			Handler: &WebSocketServer{
-				API:        api,
-				Invokers:   invokers,
-				Clock:      r.clock,
-				Semaphore:  r.semaphore,
-				Management: r.webSocketManagement,
-				Logf:       r.logf,
-				Now:        r.now,
-				DomainName: r.webSocketDomainName(),
-			},
+			Handler:           webSocketServer,
 			ReadHeaderTimeout: 10 * time.Second,
 			IdleTimeout:       60 * time.Second,
 		}

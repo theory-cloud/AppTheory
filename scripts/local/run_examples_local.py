@@ -1326,6 +1326,355 @@ def run_local_runner(harness: Harness, lang: str) -> str:
             pass
 
 
+
+
+# --- R7 dev loop rows -------------------------------------------------------
+#
+# The watch rows edit a real handler, wait for the runner's own `cdk synth`
+# rebuild and observe the new response on the same listener URL. The data-dir
+# rows run twice against one persistent backend root and read the first run's
+# data back through the app's own handler. The seed row drives the app after
+# provisioning and before the session reports ready.
+
+WATCH_DEV_LOOP = {
+    "go": {
+        "handler": "examples/cdk/multilang/handlers/go/main.go",
+        "api_suffix": "-go",
+        "function_prefix": "GoHandler",
+        "unaffected_prefixes": ("TsHandler", "PyHandler"),
+        "old": '"hello " + ctx.Param("name")',
+        "new": '"watch " + ctx.Param("name")',
+    },
+    "ts": {
+        "handler": "examples/cdk/multilang/handlers/ts/handler.mjs",
+        "api_suffix": "-ts",
+        "function_prefix": "TsHandler",
+        "unaffected_prefixes": ("GoHandler", "PyHandler"),
+        "old": '`hello ${ctx.param("name")}`',
+        "new": '`watch ${ctx.param("name")}`',
+    },
+    "py": {
+        "handler": "examples/cdk/multilang/handlers/py/handler.py",
+        "api_suffix": "-py",
+        "function_prefix": "PyHandler",
+        "unaffected_prefixes": ("GoHandler", "TsHandler"),
+        "old": 'f"hello {ctx.param(\'name\')}"',
+        "new": 'f"watch {ctx.param(\'name\')}"',
+    },
+}
+
+
+def _api_logical_id(spec: dict, name_suffix: str) -> str:
+    for api in spec.get("apis") or []:
+        if str(api.get("name") or "").endswith(name_suffix):
+            return str(api.get("logicalId"))
+    raise HarnessFailure(f"plan has no API named *{name_suffix}: {[api.get('name') for api in spec.get('apis') or []]}")
+
+
+def _plan_function_by_handler(spec: dict, handler: str) -> str:
+    for function in spec.get("functions") or []:
+        if function.get("handler") == handler:
+            return str(function.get("logicalId"))
+    raise HarnessFailure(f"plan has no function with handler {handler!r}")
+
+
+def _wait_for_log_count(session: LocalSession, needle: str, minimum: int, seconds: float, label: str) -> None:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        text = Path(session.log_path).read_text(encoding="utf-8", errors="replace")
+        if text.count(needle) >= minimum:
+            return
+        time.sleep(0.25)
+    raise HarnessFailure(f"{label}: {needle!r} did not reach {minimum} occurrences", Path(session.log_path).read_text(encoding="utf-8", errors="replace")[-4000:])
+
+
+def _runtime_apis(session: LocalSession) -> dict[str, str]:
+    return {
+        str(function.get("logicalId")): str(function.get("runtimeApi") or "")
+        for function in session.request("describe").get("functions") or []
+    }
+
+
+def _wait_for_body(url: str, needle: str, seconds: float, label: str) -> None:
+    deadline = time.monotonic() + seconds
+    last = ""
+    while time.monotonic() < deadline:
+        try:
+            status, body, _ = http_request("GET", url, timeout=30)
+        except Exception as exc:  # the container is briefly unavailable during a reset
+            last = str(exc)
+            time.sleep(0.5)
+            continue
+        if status == 200 and needle in body:
+            return
+        last = f"{status} {body[:300]}"
+        time.sleep(0.5)
+    raise HarnessFailure(f"{label}: {needle!r} never appeared on {url} (last {last})")
+
+
+def run_dev_loop_watch(harness: Harness, lang: str) -> str:
+    case = WATCH_DEV_LOOP[lang]
+    handler = ROOT / case["handler"]
+    original = handler.read_text(encoding="utf-8")
+    session = start_local_session(
+        harness,
+        "examples/cdk/multilang",
+        name=f"watch-{lang}",
+        backends=("dynamodb", "sqs", "moto"),
+        watch=True,
+    )
+    try:
+        url = session_api_url(session.spec, session, case["api_suffix"])
+        api_id = _api_logical_id(session.spec, case["api_suffix"])
+        status, body, _ = http_request("GET", f"{url}/hello/probe")
+        expect_status(status, 200, f"watch {lang} initial request", body)
+        if "hello probe" not in body:
+            raise HarnessFailure(f"watch {lang}: initial body is not the handler response: {body!r}")
+        before = _runtime_apis(session)
+        rebuilds = Path(session.log_path).read_text(encoding="utf-8", errors="replace").count("watch: rebuilt")
+        try:
+            updated = original.replace(case["old"], case["new"], 1)
+            if updated == original:
+                raise HarnessFailure(f"watch {lang}: the handler edit marker {case['old']!r} was not found")
+            handler.write_text(updated, encoding="utf-8")
+            _wait_for_body(f"{url}/hello/probe", "watch probe", 300, f"watch {lang} rebuild")
+            _wait_for_log_count(session, "watch: rebuilt", rebuilds + 1, 120, f"watch {lang} rebuild")
+            after = _runtime_apis(session)
+            changed = [function for function in before if function.startswith(case["function_prefix"])]
+            if len(changed) != 1:
+                raise HarnessFailure(f"watch {lang}: want one {case['function_prefix']} function, got {changed}")
+            if before.get(changed[0]) == after.get(changed[0]):
+                raise HarnessFailure(
+                    f"watch {lang}: {changed[0]} kept its Runtime API after its code changed"
+                )
+            for prefix in case["unaffected_prefixes"]:
+                unaffected = [function for function in before if function.startswith(prefix)]
+                if len(unaffected) != 1:
+                    raise HarnessFailure(f"watch {lang}: want one {prefix} function, got {unaffected}")
+                if after.get(unaffected[0]) != before[unaffected[0]]:
+                    raise HarnessFailure(
+                        f"watch {lang}: unaffected function {unaffected[0]} restarted "
+                        f"({before[unaffected[0]]} -> {after.get(unaffected[0])})"
+                    )
+            # The WebSocket authorizer's CDK asset is the whole handlers/
+            # directory, so every handler edit changes its asset hash; the
+            # runner must restart it too (and only because its asset changed).
+            authorizers = [function for function in before if function.startswith("WsAuthorizer")]
+            if len(authorizers) == 1 and before.get(authorizers[0]) == after.get(authorizers[0]):
+                raise HarnessFailure(
+                    f"watch {lang}: the shared-asset {authorizers[0]} did not restart after its asset changed"
+                )
+        finally:
+            handler.write_text(original, encoding="utf-8")
+            _wait_for_body(f"{url}/hello/probe", "hello probe", 300, f"watch {lang} restore")
+            _wait_for_log_count(session, "watch: rebuilt", rebuilds + 2, 120, f"watch {lang} restore")
+        log = Path(session.log_path).read_text(encoding="utf-8", errors="replace")
+        if log.count(f"serving httpv2 {api_id} at ") != 1:
+            raise HarnessFailure(f"watch {lang}: the listener was re-bound instead of kept", log[-4000:])
+        if "watch: rebuilt" not in log:
+            raise HarnessFailure(f"watch {lang}: the runner did not report a rebuild", log[-4000:])
+        return (
+            f"{lang} handler edit re-synthesized through cdk synth and the new response arrived on the "
+            "same listener URL; the other two language functions were not restarted, and the shared-asset "
+            "WebSocket authorizer was restarted only because its handlers/ asset changed"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def run_dev_loop_watch_go(harness: Harness) -> str:
+    return run_dev_loop_watch(harness, "go")
+
+
+def run_dev_loop_watch_ts(harness: Harness) -> str:
+    return run_dev_loop_watch(harness, "ts")
+
+
+def run_dev_loop_watch_py(harness: Harness) -> str:
+    return run_dev_loop_watch(harness, "py")
+
+
+def _data_dir(harness: Harness, name: str) -> str:
+    """Create a data directory under $HOME so Docker can bind-mount it."""
+    return tempfile.mkdtemp(prefix=f"apptheory-local-data-{name}-", dir=str(Path.home()))
+
+
+def _remove_data_dir(path: str) -> None:
+    shutil.rmtree(path, ignore_errors=True)
+
+
+def run_data_dir_dynamodb(harness: Harness) -> str:
+    app = "examples/cdk/lesser-parity"
+    data_dir = _data_dir(harness, "dynamodb")
+    try:
+        first = start_local_session(
+            harness, app, name="data-dir-ddb-write", backends=("dynamodb",), data_dir=data_dir
+        )
+        try:
+            url = session_rest_url(first.spec, first)
+            status, payload, _ = _json_request(
+                "PUT", f"{url}/items/persisted", payload={"value": "kept-across-runs"}
+            )
+            expect_status(status, 200, "data-dir DynamoDB write", json.dumps(payload))
+        finally:
+            stop_local_session(harness, first)
+        database = Path(data_dir) / "dynamodb" / "shared-local-instance.db"
+        if not database.is_file():
+            raise HarnessFailure(f"data-dir DynamoDB run left no {database.name}")
+        second = start_local_session(
+            harness, app, name="data-dir-ddb-read", backends=("dynamodb",), data_dir=data_dir
+        )
+        try:
+            url = session_rest_url(second.spec, second)
+            status, payload, _ = _json_request("GET", f"{url}/items/persisted")
+            expect_status(status, 200, "data-dir DynamoDB read", json.dumps(payload))
+            if payload.get("value") != "kept-across-runs":
+                raise HarnessFailure(f"data-dir DynamoDB read returned {payload}")
+        finally:
+            stop_local_session(harness, second)
+        third = start_local_session(harness, app, name="data-dir-ddb-default", backends=("dynamodb",))
+        try:
+            url = session_rest_url(third.spec, third)
+            status, payload, _ = _json_request("GET", f"{url}/items/persisted")
+            expect_status(status, 404, "default ephemeral DynamoDB read", json.dumps(payload))
+        finally:
+            stop_local_session(harness, third)
+        return (
+            "a real DynamoDB item written through the app handler survived a second run with the same "
+            "--data-dir; a third run without it did not see the item (the default stays ephemeral)"
+        )
+    finally:
+        _remove_data_dir(data_dir)
+
+
+def run_data_dir_s3(harness: Harness) -> str:
+    app = "examples/cdk/lambda-role"
+    spec = plan_local_app(harness, app)
+    function = _plan_function_by_handler(spec, "custom.handler")
+    data_dir = _data_dir(harness, "s3")
+    key = "data-dir/persisted.txt"
+    value = "s3-value-across-runs"
+    try:
+        written, _ = invoke_local_function(
+            harness,
+            app=app,
+            function=function,
+            event={"queryStringParameters": {"key": key, "write": "1", "value": value}},
+            name="data-dir-s3-write",
+            backends=("s3proxy", "moto"),
+            data_dir=data_dir,
+        )
+        write_body = _proxy_body(written, "data-dir S3 write")
+        if (write_body.get("s3Object") or {}).get("value") != value:
+            raise HarnessFailure(f"data-dir S3 write returned {written}")
+        read, _ = invoke_local_function(
+            harness,
+            app=app,
+            function=function,
+            event={"queryStringParameters": {"key": key, "read": "1"}},
+            name="data-dir-s3-read",
+            backends=("s3proxy", "moto"),
+            data_dir=data_dir,
+        )
+        read_body = _proxy_body(read, "data-dir S3 read")
+        if (read_body.get("s3Object") or {}).get("content") != value:
+            raise HarnessFailure(f"data-dir S3 read returned {read}")
+        stored = list((Path(data_dir) / "s3proxy").rglob("persisted.txt"))
+        if not stored:
+            raise HarnessFailure("data-dir S3 store has no persisted object file")
+        return (
+            "an S3 object written through the app handler was read back by a second invoke with the same "
+            "--data-dir; the s3proxy filesystem base directory holds the object"
+        )
+    finally:
+        _remove_data_dir(data_dir)
+
+
+def _unconsumed_queue(session: LocalSession) -> str:
+    consumed = {str(source.get("source")) for source in session.info.get("eventSources") or []}
+    candidates = sorted(
+        str(resource.get("logicalId"))
+        for resource in session.info.get("resources") or []
+        if resource.get("type") == "AWS::SQS::Queue"
+        and str(resource.get("logicalId")) not in consumed
+        and "DeadLetter" not in str(resource.get("logicalId"))
+    )
+    if not candidates:
+        raise HarnessFailure("the sqs-queue session has no unconsumed queue")
+    return candidates[0]
+
+
+def run_data_dir_sqs(harness: Harness) -> str:
+    app = "examples/cdk/sqs-queue"
+    data_dir = _data_dir(harness, "sqs")
+    backends = ("sqs", "dynamodb", "moto")
+    first = start_local_session(harness, app, name="data-dir-sqs-write", backends=backends, data_dir=data_dir)
+    try:
+        queue = _unconsumed_queue(first)
+        first.request("sqs.send", queue=queue, body="persisted-message")
+    finally:
+        stop_local_session(harness, first)
+    if not (Path(data_dir) / "sqs" / "elasticmq.mv.db").is_file():
+        raise HarnessFailure("data-dir ElasticMQ run left no message database")
+    second = start_local_session(harness, app, name="data-dir-sqs-read", backends=backends, data_dir=data_dir)
+    try:
+        attributes = second.request("sqs.attributes", queue=queue)
+        if int(attributes.get("visible", 0)) < 1:
+            raise HarnessFailure(f"data-dir ElasticMQ queue {queue} lost the persisted message: {attributes}")
+        received = second.request("sqs.receive", queue=queue, max=1, waitSeconds=1, visibilitySeconds=0)
+        messages = received.get("messages") or []
+        if not messages or messages[0].get("body") != "persisted-message":
+            raise HarnessFailure(f"data-dir ElasticMQ receive returned {received}")
+        return (
+            "a real ElasticMQ message survived a second session with the same --data-dir; the pinned "
+            "1.7.1 image's messages-storage H2 database held it"
+        )
+    finally:
+        stop_local_session(harness, second)
+        _remove_data_dir(data_dir)
+
+
+def run_seed_restv1(harness: Harness) -> str:
+    app = "examples/cdk/restv1-router"
+    script = str(ROOT / "examples/cdk/restv1-router/scripts/seed-local.sh")
+    failed = harness.run(
+        [
+            str(LOCAL_RUNNER_BIN),
+            "session",
+            "--app",
+            app,
+            "--profile",
+            str(ROOT / LOCAL_PROFILE),
+            "--seed",
+            "echo seed-broke >&2; exit 9",
+            "--port-base",
+            str(harness.lease.http_port),
+            "--name-prefix",
+            local_app_prefix(harness, "seed-failure"),
+        ],
+        check=False,
+        timeout=900,
+    )
+    failed_output = _combined_output(failed)
+    if failed.returncode == 0 or "seed-broke" not in failed_output:
+        raise HarnessFailure(
+            "a failing seed did not fail the run with the script output", failed_output
+        )
+    session = start_local_session(harness, app, name="seed-restv1", seed=script)
+    try:
+        url = session_rest_url(session.spec, session)
+        status, payload, _ = _json_request("GET", f"{url}/inventory/seeded-item")
+        expect_status(status, 200, "seed row read", json.dumps(payload))
+        if payload.get("name") != "Seeded Widget" or payload.get("quantity") != 7:
+            raise HarnessFailure(f"seed row read returned {payload}")
+        return (
+            "the committed seed script ran after provisioning and before ready, drove the app's own REST "
+            "handler, and the seeded item was visible; a failing seed failed the run with its output"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
 # --- A3b example runners ----------------------------------------------------
 
 
@@ -1360,6 +1709,7 @@ def invoke_local_function(
     event: dict,
     name: str,
     backends: tuple[str, ...] = (),
+    data_dir: str | None = None,
 ) -> tuple[dict, str]:
     """Invoke one CDK function through the runner and return its decoded result."""
     ensure_cdk_app(harness, app)
@@ -1379,6 +1729,8 @@ def invoke_local_function(
     ]
     for backend in backends:
         argv.extend(["--backend", backend])
+    if data_dir:
+        argv.extend(["--data-dir", data_dir])
     result = harness.run(argv, timeout=1800, stdin_data=json.dumps(event) + "\n")
     lines = [line for line in result.stdout.splitlines() if line.strip()]
     if len(lines) != 1:
@@ -3469,6 +3821,9 @@ def start_local_session(
     allow_no_surface: bool = False,
     origins: tuple[str, ...] = (),
     viewer_country: str | None = None,
+    watch: bool = False,
+    data_dir: str | None = None,
+    seed: str | None = None,
 ) -> LocalSession:
     """Start one `apptheory-local session` and wait for its machine interface."""
     ensure_cdk_app(harness, app)
@@ -3501,6 +3856,12 @@ def start_local_session(
         argv.extend(["--clock", clock])
     if viewer_country:
         argv.extend(["--viewer-country", viewer_country])
+    if watch:
+        argv.append("--watch")
+    if data_dir:
+        argv.extend(["--data-dir", data_dir])
+    if seed:
+        argv.extend(["--seed", seed])
     process = subprocess.Popen(
         argv,
         cwd=str(ROOT),
@@ -6932,6 +7293,13 @@ RUNNERS: dict[str, Callable[[Harness], str]] = {
     "ssr-assets-upload": run_ssr_assets_upload,
     "lambda-packaging": run_lambda_packaging,
     "runtime-api-conformance": run_runtime_api_conformance,
+    "dev-loop-watch-go": run_dev_loop_watch_go,
+    "dev-loop-watch-ts": run_dev_loop_watch_ts,
+    "dev-loop-watch-py": run_dev_loop_watch_py,
+    "data-dir-dynamodb": run_data_dir_dynamodb,
+    "data-dir-s3": run_data_dir_s3,
+    "data-dir-sqs": run_data_dir_sqs,
+    "seed-restv1": run_seed_restv1,
 }
 
 
