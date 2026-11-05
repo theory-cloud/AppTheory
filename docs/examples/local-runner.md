@@ -2125,8 +2125,9 @@ the harness records it.
   as API Gateway documents.
 - **CloudFront is an edge-path gateway, not an emulator.** The distribution's
   cache behavior, generated CloudFront Functions, edge policies and origins are
-  applied, but there is no cache, no edge network, no TLS and no viewer protocol
-  enforcement. S3-origin bucket CORS rules and IAM/bucket policies are not
+  applied; the cache is a single in-memory store on the loopback listener, and
+  there is no edge network, no TLS and no viewer protocol enforcement.
+  S3-origin bucket CORS rules and IAM/bucket policies are not
   emulated; the local S3 origin returns the S3 status the OAC/OAI access model
   produces. `If-Range` is not forwarded to the S3 origin (CloudFront forwards
   it by default), so a conditional range is served as an unconditional

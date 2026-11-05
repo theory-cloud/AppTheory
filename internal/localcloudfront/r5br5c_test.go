@@ -175,6 +175,41 @@ func TestSignedURLCannedPolicySHA256AndECDSA(t *testing.T) {
 	}
 }
 
+func TestSignedURLCannedPolicyKeepsLiteralURLCharacters(t *testing.T) {
+	// "Include all punctuation and other literal values exactly as
+	// specified." A second query parameter exercises the & that
+	// encoding/json would HTML-escape.
+	// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-creating-signed-url-canned-policy.html
+	key, pemText := testRSAKey(t)
+	gateway, behavior := signingTopology(t, pemText, "test-key")
+	keyID := gateway.Topology.PublicKeys[0].ID
+	expires := time.Now().Add(time.Hour).Unix()
+	resource := "http://d111.cloudfront.local/private/file.txt?size=large&color=red"
+	policy := fmt.Sprintf(`{"Statement":[{"Resource":%q,"Condition":{"DateLessThan":{"AWS:EpochTime":%d}}}]}`, resource, expires)
+
+	for _, algorithm := range []string{"SHA1", "SHA256"} {
+		t.Run(algorithm, func(t *testing.T) {
+			signature := signPolicy(t, key, policy, algorithm)
+			suffix := fmt.Sprintf("&Expires=%d&Signature=%s&Key-Pair-Id=%s", expires, signature, keyID)
+			if algorithm == "SHA256" {
+				suffix += "&Hash-Algorithm=SHA256"
+			}
+			state := signedRequestState(resource + suffix)
+			if err := gateway.checkSignedAccess(state, behavior, time.Now()); err != nil {
+				t.Fatalf("a canned %s URL with two query parameters must verify: %v", algorithm, err)
+			}
+		})
+	}
+
+	// The same policy with the parameter order swapped is a different resource.
+	reordered := "http://d111.cloudfront.local/private/file.txt?color=red&size=large"
+	signature := signPolicy(t, key, policy, "SHA256")
+	state := signedRequestState(reordered + fmt.Sprintf("&Expires=%d&Signature=%s&Key-Pair-Id=%s&Hash-Algorithm=SHA256", expires, signature, keyID))
+	if err := gateway.checkSignedAccess(state, behavior, time.Now()); err == nil {
+		t.Fatal("a different query parameter order must not verify")
+	}
+}
+
 func TestSignedURLRejections(t *testing.T) {
 	key, pemText := testRSAKey(t)
 	gateway, behavior := signingTopology(t, pemText, "test-key")

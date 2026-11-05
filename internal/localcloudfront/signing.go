@@ -1,6 +1,7 @@
 package localcloudfront
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -493,20 +494,24 @@ func verifySignature(key *PublicKey, material *signingMaterial, state *requestSt
 		if parseErr != nil {
 			return &signedAccessError{Reason: fmt.Sprintf("Expires %q is not a Unix timestamp", material.expires)}
 		}
-		// The canned policy is canonical JSON with no whitespace. Building it
-		// through encoding/json keeps the resource string escaped exactly as a
-		// signer would, in the documented field order.
+		// The canned policy is canonical JSON with no whitespace, built in the
+		// documented field order. "Include all punctuation and other literal
+		// values exactly as specified": the resource keeps the literal URL
+		// characters, so the encoder must not HTML-escape &, < or >.
+		// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-creating-signed-url-canned-policy.html
 		canned := cannedPolicy{Statement: []cannedStatement{{
 			Resource: signedRequestURL(state),
 			Condition: cannedCondition{
 				DateLessThan: cannedDate{EpothTime: expires},
 			},
 		}}}
-		encoded, encodeErr := json.Marshal(canned)
-		if encodeErr != nil {
+		var buffer bytes.Buffer
+		encoder := json.NewEncoder(&buffer)
+		encoder.SetEscapeHTML(false)
+		if encodeErr := encoder.Encode(canned); encodeErr != nil {
 			return &signedAccessError{Reason: fmt.Sprintf("the canned policy cannot be encoded: %v", encodeErr)}
 		}
-		policy = string(encoded)
+		policy = strings.TrimSuffix(buffer.String(), "\n")
 	}
 	signature, decodeErr := decodeBase64URL(material.signature)
 	if decodeErr != nil {

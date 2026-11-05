@@ -1111,4 +1111,23 @@ func TestDecodeEdgeResponseBareResponseWithoutBody(t *testing.T) {
 	}
 }
 
+func TestReportViewerCountryHeader(t *testing.T) {
+	cachePolicy := &Policy{Cache: &CachePolicy{
+		Headers: HeaderForwarding{Mode: ForwardWhitelist, Names: []string{"cloudfront-viewer-country"}},
+	}}
+	behavior := &Behavior{CachePolicy: cachePolicy}
+	distribution := &Distribution{DefaultBehavior: behavior}
+
+	ReportViewerCountry([]*Distribution{distribution}, false)
+	if !strings.Contains(strings.Join(behavior.Reported, "\n"), "--viewer-country") {
+		t.Fatalf("a run without --viewer-country must report the header as undetermined: %v", behavior.Reported)
+	}
+
+	behavior.Reported = nil
+	ReportViewerCountry([]*Distribution{distribution}, true)
+	if len(behavior.Reported) != 0 {
+		t.Fatalf("a run with --viewer-country derives the header and must not report it: %v", behavior.Reported)
+	}
+}
+
 func pemDecode(data []byte) (*pem.Block, []byte) { return pem.Decode(data) }

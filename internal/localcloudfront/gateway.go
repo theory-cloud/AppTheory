@@ -432,8 +432,8 @@ func (g *Gateway) addViewerCountry(state *requestState, behavior *Behavior) {
 	if g.ViewerCountry == "" || behavior == nil {
 		return
 	}
-	if !cachePolicyForwardsHeader(policyCache(behavior), "cloudfront-viewer-country") &&
-		!originPolicyForwardsHeader(behavior.OriginRequestPolicy, "cloudfront-viewer-country") {
+	if !cachePolicyForwardsHeader(policyCache(behavior), headerCloudFrontViewerCountry) &&
+		!originPolicyForwardsHeader(behavior.OriginRequestPolicy, headerCloudFrontViewerCountry) {
 		return
 	}
 	state.Header.Set("CloudFront-Viewer-Country", g.ViewerCountry)

@@ -564,6 +564,7 @@ func (r *Runner) Plan(ctx context.Context) (*Spec, error) {
 	if err := r.applyOriginOverrides(spec); err != nil {
 		return nil, err
 	}
+	localcloudfront.ReportViewerCountry(spec.CloudFront, r.options.ViewerCountry != "")
 	if err := r.materializeKeyValueStores(spec); err != nil {
 		return nil, err
 	}

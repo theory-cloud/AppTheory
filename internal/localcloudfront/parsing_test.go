@@ -346,9 +346,18 @@ func TestPolicyParsing(t *testing.T) {
 			name: "origin cloudfront header gap",
 			kind: PolicyOriginRequest,
 			config: map[string]any{
+				"HeadersConfig": map[string]any{"HeaderBehavior": "whitelist", "Headers": []any{"cloudfront-viewer-city", "cloudfront-forwarded-proto"}},
+			},
+			wantReport: "cloudfront-viewer-city",
+		},
+		{
+			// CloudFront-Viewer-Country follows the run's --viewer-country, so
+			// the parser does not call it unavailable.
+			name: "origin viewer country derivable",
+			kind: PolicyOriginRequest,
+			config: map[string]any{
 				"HeadersConfig": map[string]any{"HeaderBehavior": "whitelist", "Headers": []any{"cloudfront-viewer-country", "cloudfront-forwarded-proto"}},
 			},
-			wantReport: "cloudfront-viewer-country",
 		},
 		{
 			name:       "origin unknown",

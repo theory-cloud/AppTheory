@@ -6351,23 +6351,20 @@ def run_edge_gateway(harness: Harness) -> str:
             if not decrypted.get("encrypted"):
                 raise HarnessFailure("the origin received the plaintext card field", body)
 
-            return (
-                "a Lambda@Edge viewer-request rewrote the uri (header key inserted), an origin-request "
-                "generated response was cached without a second invocation, an origin-response replaced "
-                "the body and added a header, a viewer-response added a header and stayed out of "
-                "viewer-request generated responses and custom error pages, IncludeBody exposed the "
-                "base64 body to both request events, an origin rewrite reached the other declared "
-                "origin, the runtime 2.0 CloudFront Function read get/exists/meta from its key value "
-                "store, geo restriction served US and would refuse an outside country, and the origin "
-                "decrypted the field-level encryption ciphertext with the AWS Encryption SDK"
-            )
+            # Geo restriction inside the allowlist: the GeoDistribution
+            # allows US and DE, and this session's viewer country is US.
+            _, geo_base = session_distribution(session, "GeoDistribution")
+            status, body, _ = http_request("GET", geo_base + "/geo.txt")
+            expect_status(status, 200, "geo distribution country=US", body)
+            if body != "geo content":
+                raise HarnessFailure(f"geo distribution US body = {body!r}", body)
+            geo_results = {"US": status}
         finally:
             stop_local_session(harness, session)
 
-        # Geo restriction: outside the allowlist and with an undetermined
+        # Geo restriction outside the allowlist and with an undetermined
         # location. Each session is its own run of the same app.
-        geo_results = {}
-        for country, expected in ((None, 200), ("JP", 403)):
+        for country, expected in (("JP", 403), (None, 200)):
             geo_session = start_local_session(
                 harness,
                 EDGE_GATEWAY_APP,
@@ -6389,9 +6386,15 @@ def run_edge_gateway(harness: Harness) -> str:
         if geo_results != {"US": 200, "JP": 403, "unset": 200}:
             raise HarnessFailure(f"geo restriction results = {geo_results}")
         return (
-            "the Lambda@Edge, key value store, origin rewrite and field-level encryption checks passed; "
-            "geo restriction served US (inside the allowlist), refused JP (outside it) with 403, and "
-            "served an undetermined location"
+            "a Lambda@Edge viewer-request rewrote the uri (header key inserted), an origin-request "
+            "generated response was cached without a second invocation, an origin-response replaced "
+            "the body and added a header, a viewer-response added a header and stayed out of "
+            "viewer-request generated responses and custom error pages, IncludeBody exposed the "
+            "base64 body to both request events, an origin rewrite reached the other declared "
+            "origin, the runtime 2.0 CloudFront Function read get/exists/meta from its key value "
+            "store, the origin decrypted the field-level encryption ciphertext with the AWS "
+            "Encryption SDK, and geo restriction served US inside the allowlist, refused JP outside "
+            "it with 403, and served an undetermined location"
         )
     finally:
         origin_server.shutdown()
