@@ -2637,8 +2637,9 @@ def run_lambda_role_authorizers(harness: Harness) -> str:
 
         # REST TOKEN, REST REQUEST and HTTP API IAM-policy authorizers run the
         # real policy function. The function counts its own invocations and
-        # returns the count in the context, so a cached decision is proven by an
-        # unchanged count rather than by the runner's bookkeeping.
+        # returns the count in the context, so a cached policy is proven by an
+        # unchanged count rather than by the runner's bookkeeping; the policy
+        # itself is re-evaluated per method.
         policy_api = _api_by_prefix(session, "PolicyHttpApi", "httpv2")
         policy_base = policy_api["url"]
 
@@ -2655,7 +2656,7 @@ def run_lambda_role_authorizers(harness: Harness) -> str:
         )
         expect_status(status, 200, "rest token authorizer cached", json.dumps(payload))
         if int((payload.get("authorizer") or {}).get("invocation", "0")) != token_first:
-            raise HarnessFailure("the cached rest token decision invoked the authorizer again")
+            raise HarnessFailure("the cached rest token policy invoked the authorizer again")
 
         # The cached value is the POLICY, not the decision for GET /token: the
         # policy the function returned names only that method ARN, so the same

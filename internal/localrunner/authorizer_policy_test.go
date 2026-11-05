@@ -14,7 +14,8 @@ import (
 )
 
 // countingAuthorizer returns an IAM policy and records how many times the
-// function itself ran, which is the proof a cached decision was not invoked.
+// function itself ran, which is the proof a cached policy was reused without
+// invoking the function.
 type countingAuthorizer struct {
 	mu       sync.Mutex
 	calls    int
@@ -308,13 +309,13 @@ func TestRESTAuthorizerCacheExpiresOnTheRunClock(t *testing.T) {
 		t.Fatalf("first invocation = %s", got)
 	}
 	if got := invocation(); got != "1" {
-		t.Fatalf("a cached decision must not invoke the authorizer again, got invocation %s", got)
+		t.Fatalf("a cached policy must not invoke the authorizer again, got invocation %s", got)
 	}
 	if _, err := clock.Advance(61 * time.Second); err != nil {
 		t.Fatalf("advance: %v", err)
 	}
 	if got := invocation(); got != "2" {
-		t.Fatalf("the decision after the TTL must be a new invocation, got %s", got)
+		t.Fatalf("the policy after the TTL must be a new invocation, got %s", got)
 	}
 	if authorizer.callCount() != 2 {
 		t.Fatalf("authorizer calls = %d", authorizer.callCount())

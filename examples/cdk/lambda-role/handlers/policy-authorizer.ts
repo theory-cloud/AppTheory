@@ -1,10 +1,10 @@
 /**
  * Lambda authorizer that returns an IAM policy for the REST TOKEN, REST REQUEST
- * and HTTP API (payload format 2.0) authorizer shapes.
+ * and HTTP API (payload format 1.0) authorizer shapes.
  *
  * The function counts its own invocations and returns the count in the
- * authorizer context. That is how the harness proves a cached decision did not
- * invoke the authorizer: the handler echoes the context it received.
+ * authorizer context. That is how the harness proves a cached policy was reused
+ * without invoking the authorizer: the handler echoes the context it received.
  *
  * The token/header value selects the outcome: "allow" allows, "deny" returns a
  * Deny policy, "unauthorized" throws the documented Unauthorized error, and
