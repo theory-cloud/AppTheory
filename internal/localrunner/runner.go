@@ -148,7 +148,7 @@ type Runner struct {
 	// functions bind it before their container starts.
 	runtimeAPIGateway string
 	clock             Clock
-	delivery     *DeliveryEngine
+	delivery          *DeliveryEngine
 	// sns is the per-topic hub registry the SNS deliverer attaches to and
 	// PublishLocal publishes through.
 	sns *snsHubRegistry

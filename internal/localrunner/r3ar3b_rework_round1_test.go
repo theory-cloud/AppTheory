@@ -65,20 +65,20 @@ func TestRuntimeAPIGatewayFallbackReportsAMissingGateway(t *testing.T) {
 }
 
 func TestNormalizeRuntimeErrorType(t *testing.T) {
-	cases := map[string]string{
-		"Runtime.NoSuchHandler":   "Runtime.NoSuchHandler",
-		"Function.ConfigInvalid":  "Function.ConfigInvalid",
-		"Runtime.lower":           "Runtime.Unknown",
-		"Function.lower":          "Function.Unknown",
-		"ValueError":              "Runtime.Unknown",
-		"Other.Thing":             "Runtime.Unknown",
-		"Runtime.":                "Runtime.Unknown",
-		"":                        "",
-		"  Runtime.InvalidEntry ": "Runtime.InvalidEntry",
+	cases := [][2]string{
+		{"Runtime.NoSuchHandler", "Runtime.NoSuchHandler"},
+		{"Function.ConfigInvalid", "Function.ConfigInvalid"},
+		{"Runtime.lower", "Runtime.Unknown"},
+		{"Function.lower", "Function.Unknown"},
+		{"ValueError", "Runtime.Unknown"},
+		{"Other.Thing", "Runtime.Unknown"},
+		{"Runtime.", "Runtime.Unknown"},
+		{"", ""},
+		{"  Runtime.InvalidEntry ", "Runtime.InvalidEntry"},
 	}
-	for value, expected := range cases {
-		if got := normalizeRuntimeErrorType(value); got != expected {
-			t.Errorf("normalize(%q) = %q, want %q", value, got, expected)
+	for _, testCase := range cases {
+		if got := normalizeRuntimeErrorType(testCase[0]); got != testCase[1] {
+			t.Errorf("normalize(%q) = %q, want %q", testCase[0], got, testCase[1])
 		}
 	}
 }
