@@ -758,7 +758,7 @@ func (r *Runner) startEventBridgeBus(ctx context.Context) error {
 	r.eventBusURL = fmt.Sprintf("http://127.0.0.1:%d", port)
 	r.eventBusContainer = fmt.Sprintf("http://host.docker.internal:%d", port)
 	r.endpoints = append(r.endpoints, Endpoint{Service: "events", URL: r.eventBusContainer})
-	r.options.AddHosts = append(r.options.AddHosts, "host.docker.internal:host-gateway")
+	r.addRuntimeHostEntry()
 	r.logf("local EventBridge bus at %s (containers: %s)", r.eventBusURL, r.eventBusContainer)
 	return nil
 }
@@ -1322,19 +1322,11 @@ func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image
 	if limitErr := unresolvedLimitsError(function); limitErr != nil {
 		return limitErr
 	}
-	if api != nil && !hasAddHostName(r.options.AddHosts, "host.docker.internal") {
+	if api != nil {
 		// The container reaches the Runtime API through host.docker.internal.
 		// The run's closed DNS server cannot resolve it, so the host entry is
-		// required (the run network also sets --dns 127.0.0.2). When the host
-		// owns the run network's gateway (the Linux bridge case), the entry
-		// names that address and the listener binds it; otherwise Docker's
-		// host-gateway value is used, which Colima and Docker Desktop forward
-		// to the host's loopback.
-		entry := "host.docker.internal:host-gateway"
-		if r.runtimeAPIGateway != "" {
-			entry = "host.docker.internal:" + r.runtimeAPIGateway
-		}
-		r.options.AddHosts = append(r.options.AddHosts, entry)
+		// required (the run network also sets --dns 127.0.0.2).
+		r.addRuntimeHostEntry()
 	}
 	mounts := append(functionMounts(function), r.webSocketCertificateMounts()...)
 	name := r.containerName(function.LogicalID)
@@ -1478,6 +1470,26 @@ func (r *Runner) resetFunction(ctx context.Context, process *FunctionProcess) er
 // networkGateway resolves the run network's gateway address.
 func (r *Runner) networkGateway(ctx context.Context) (string, error) {
 	return r.docker.NetworkGateway(ctx, r.network)
+}
+
+// runtimeHostEntry is the container's host.docker.internal mapping. When the
+// host owns the run network's gateway (the Linux bridge case) the entry names
+// it and the listener binds it; otherwise Docker's host-gateway value is used,
+// which Colima and Docker Desktop forward to the host's loopback.
+func (r *Runner) runtimeHostEntry() string {
+	if r.runtimeAPIGateway != "" {
+		return "host.docker.internal:" + r.runtimeAPIGateway
+	}
+	return "host.docker.internal:host-gateway"
+}
+
+// addRuntimeHostEntry adds the host.docker.internal mapping once; an entry the
+// caller supplied through --add-host wins.
+func (r *Runner) addRuntimeHostEntry() {
+	if hasAddHostName(r.options.AddHosts, "host.docker.internal") {
+		return
+	}
+	r.options.AddHosts = append(r.options.AddHosts, r.runtimeHostEntry())
 }
 
 // runtimeAPIAddressOwner reports whether the host owns an address. Binding an

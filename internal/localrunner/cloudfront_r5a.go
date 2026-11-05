@@ -127,9 +127,7 @@ func (r *Runner) startCloudFrontControl(ctx context.Context, spec *Spec) error {
 		}
 	}()
 	r.endpoints = append(r.endpoints, Endpoint{Service: "cloudfront", URL: containerURL})
-	if !containsAddHost(r.options.AddHosts, "host.docker.internal:host-gateway") {
-		r.options.AddHosts = append(r.options.AddHosts, "host.docker.internal:host-gateway")
-	}
+	r.addRuntimeHostEntry()
 	r.logf("cloudfront API at %s (containers: %s)", hostURL, containerURL)
 	return nil
 }

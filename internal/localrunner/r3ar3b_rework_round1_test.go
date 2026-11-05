@@ -508,3 +508,26 @@ func TestChooseRuntimeAPIAddressUsesABindableGateway(t *testing.T) {
 		t.Fatalf("an address the host does not own must not be used: %q", unowned.runtimeAPIGateway)
 	}
 }
+
+func TestRuntimeHostEntryUsesTheRunNetworkGateway(t *testing.T) {
+	runner := &Runner{options: Options{Stdout: io.Discard}}
+	runner.runtimeAPIGateway = "172.20.0.1"
+	runner.addRuntimeHostEntry()
+	runner.addRuntimeHostEntry()
+	if len(runner.options.AddHosts) != 1 || runner.options.AddHosts[0] != "host.docker.internal:172.20.0.1" {
+		t.Fatalf("host entries: %v", runner.options.AddHosts)
+	}
+
+	colima := &Runner{options: Options{Stdout: io.Discard}}
+	colima.addRuntimeHostEntry()
+	if len(colima.options.AddHosts) != 1 || colima.options.AddHosts[0] != "host.docker.internal:host-gateway" {
+		t.Fatalf("the forwarding entry: %v", colima.options.AddHosts)
+	}
+
+	caller := &Runner{options: Options{Stdout: io.Discard, AddHosts: []string{"host.docker.internal:10.0.0.1"}}}
+	caller.runtimeAPIGateway = "172.20.0.1"
+	caller.addRuntimeHostEntry()
+	if len(caller.options.AddHosts) != 1 || caller.options.AddHosts[0] != "host.docker.internal:10.0.0.1" {
+		t.Fatalf("a caller entry wins: %v", caller.options.AddHosts)
+	}
+}
