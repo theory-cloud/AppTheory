@@ -863,7 +863,14 @@ func TestSignedEventBody(t *testing.T) {
 }
 
 func cloudfrontPolicyForTest(resource string, expires int) string {
-	return fmt.Sprintf(`{"Statement":[{"Resource":%s,"Condition":{"DateLessThan":{"AWS:EpochTime":%d}}}]}`, jsonString(resource), expires)
+	encoded, err := json.Marshal(cannedPolicy{Statement: []cannedStatement{{
+		Resource:  resource,
+		Condition: cannedCondition{DateLessThan: cannedDate{EpothTime: int64(expires)}},
+	}}})
+	if err != nil {
+		panic(err)
+	}
+	return string(encoded)
 }
 
 func TestFieldLevelEncryptionProfileParseErrors(t *testing.T) {

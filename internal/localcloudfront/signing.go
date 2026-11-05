@@ -493,9 +493,20 @@ func verifySignature(key *PublicKey, material *signingMaterial, state *requestSt
 		if parseErr != nil {
 			return &signedAccessError{Reason: fmt.Sprintf("Expires %q is not a Unix timestamp", material.expires)}
 		}
-		resource := signedRequestURL(state)
-		policy = fmt.Sprintf(`{"Statement":[{"Resource":%s,"Condition":{"DateLessThan":{"AWS:EpochTime":%d}}}]}`,
-			jsonString(resource), expires)
+		// The canned policy is canonical JSON with no whitespace. Building it
+		// through encoding/json keeps the resource string escaped exactly as a
+		// signer would, in the documented field order.
+		canned := cannedPolicy{Statement: []cannedStatement{{
+			Resource: signedRequestURL(state),
+			Condition: cannedCondition{
+				DateLessThan: cannedDate{EpothTime: expires},
+			},
+		}}}
+		encoded, encodeErr := json.Marshal(canned)
+		if encodeErr != nil {
+			return &signedAccessError{Reason: fmt.Sprintf("the canned policy cannot be encoded: %v", encodeErr)}
+		}
+		policy = string(encoded)
 	}
 	signature, decodeErr := decodeBase64URL(material.signature)
 	if decodeErr != nil {
@@ -566,6 +577,25 @@ func baseQueryWithoutSigningParameters(raw string) string {
 		kept = append(kept, part)
 	}
 	return strings.Join(kept, "&")
+}
+
+// cannedPolicy is the canonical canned policy CloudFront signs. The field order
+// is part of the signed string.
+type cannedPolicy struct {
+	Statement []cannedStatement `json:"Statement"`
+}
+
+type cannedStatement struct {
+	Resource  string          `json:"Resource"`
+	Condition cannedCondition `json:"Condition"`
+}
+
+type cannedCondition struct {
+	DateLessThan cannedDate `json:"DateLessThan"`
+}
+
+type cannedDate struct {
+	EpothTime int64 `json:"AWS:EpochTime"`
 }
 
 // policyStatement is one signed policy statement.
@@ -756,12 +786,4 @@ func globMatch(pattern, value string) bool {
 func decodeBase64URL(value string) ([]byte, error) {
 	replaced := strings.NewReplacer("-", "+", "_", "=", "~", "/").Replace(value)
 	return base64.StdEncoding.DecodeString(replaced)
-}
-
-func jsonString(value string) string {
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		return `""`
-	}
-	return string(encoded)
 }
