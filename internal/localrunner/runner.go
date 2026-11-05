@@ -1093,8 +1093,15 @@ func (r *Runner) prepareScratch(spec *Spec) error {
 }
 
 // copyTree copies one layer's content into the merged /opt directory. Files
-// overwrite earlier layers; a symlink or special file is skipped because a
-// Lambda layer is a zip of regular files and directories.
+// overwrite earlier layers. A relative symlink whose target stays inside the
+// layer is materialized as the same symlink, which is what Lambda extracts from
+// a layer zip and what CDK's default SymlinkFollowMode.NEVER stores for an
+// asset (a Node layer built by `npm install` keeps node_modules/.bin shims as
+// symlinks). A symlink with an absolute target, or one that escapes the layer
+// root, is refused by name because the merged /opt must not expose a path
+// outside the layer. Other special files are skipped.
+//
+// https://docs.aws.amazon.com/lambda/latest/dg/packaging-layers.html
 func copyTree(source, target string) error {
 	return filepath.WalkDir(source, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
@@ -1107,6 +1114,26 @@ func copyTree(source, target string) error {
 		destination := filepath.Join(target, relative)
 		if entry.IsDir() {
 			return os.MkdirAll(destination, 0o750)
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			linkTarget, err := os.Readlink(path) //nolint:gosec // the path is a layer asset inside the cloud assembly
+			if err != nil {
+				return err
+			}
+			if filepath.IsAbs(linkTarget) {
+				return fmt.Errorf("layer symlink %s has an absolute target %q; the merged /opt must stay inside the layer", relative, linkTarget)
+			}
+			resolved := filepath.Clean(filepath.Join(filepath.Dir(relative), linkTarget))
+			if resolved == ".." || strings.HasPrefix(resolved, ".."+string(filepath.Separator)) {
+				return fmt.Errorf("layer symlink %s escapes the layer root with target %q", relative, linkTarget)
+			}
+			if err := os.MkdirAll(filepath.Dir(destination), 0o750); err != nil {
+				return err
+			}
+			if err := os.Remove(destination); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			return os.Symlink(linkTarget, destination)
 		}
 		info, err := entry.Info()
 		if err != nil {
@@ -1303,7 +1330,8 @@ func functionMounts(function FunctionSpec) []string {
 
 // layerEnvironment adds the documented layer paths to the image's own
 // environment: /opt/bin on PATH, /opt/lib on LD_LIBRARY_PATH, the Node module
-// directory for a Node runtime and /opt/python for a Python runtime.
+// directory for a Node runtime, and both Python layer paths -- /opt/python and
+// python/lib/python3.x/site-packages -- for a Python runtime.
 //
 // https://docs.aws.amazon.com/lambda/latest/dg/packaging-layers.html
 func (r *Runner) layerEnvironment(ctx context.Context, function FunctionSpec, image string, env map[string]string) (map[string]string, error) {
@@ -1340,12 +1368,38 @@ func (r *Runner) layerEnvironment(ctx context.Context, function FunctionSpec, im
 		values["NODE_PATH"] = strings.Join(modules, ":")
 	case strings.HasPrefix(function.Runtime, "python"):
 		pythonPath := "/opt/python"
+		if sitePackages := pythonSitePackages(function.Runtime); sitePackages != "" {
+			// The packaging-layers page lists two Python paths: "python" and
+			// "python/lib/python3.x/site-packages (site directories)". A layer
+			// built with pip's site-packages layout imports on AWS and must
+			// import locally too.
+			// https://docs.aws.amazon.com/lambda/latest/dg/packaging-layers.html
+			pythonPath += ":" + sitePackages
+		}
 		if existing := strings.TrimSpace(values["PYTHONPATH"]); existing != "" {
 			pythonPath += ":" + existing
 		}
 		values["PYTHONPATH"] = pythonPath
 	}
 	return values, nil
+}
+
+// pythonSitePackages returns the second documented Python layer path for the
+// function's runtime: python3.14 becomes
+// /opt/python/lib/python3.14/site-packages.
+func pythonSitePackages(runtime string) string {
+	major, minor, found := strings.Cut(strings.TrimPrefix(runtime, "python"), ".")
+	if !found || major == "" || minor == "" {
+		return ""
+	}
+	for _, part := range []string{major, minor} {
+		for _, char := range part {
+			if char < '0' || char > '9' {
+				return ""
+			}
+		}
+	}
+	return "/opt/python/lib/python" + major + "." + minor + "/site-packages"
 }
 
 func prependPath(directory, existing string) string {

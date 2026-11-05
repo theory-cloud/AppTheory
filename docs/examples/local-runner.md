@@ -959,7 +959,16 @@ environment carries the documented runtime paths with no extra configuration:
 - `/opt/lib` is prepended to `LD_LIBRARY_PATH`;
 - a Node runtime gets `/opt/nodejs/node_modules` (and
   `/opt/nodejs/node<major>/node_modules`) on `NODE_PATH`;
-- a Python runtime gets `/opt/python` on `PYTHONPATH`.
+- a Python runtime gets both documented layer paths on `PYTHONPATH`:
+  `/opt/python` and `/opt/python/lib/python<major>.<minor>/site-packages`
+  (`python3.14` becomes `/opt/python/lib/python3.14/site-packages`).
+
+A relative symlink whose target stays inside the layer is extracted as the same
+symlink, because CDK's default `SymlinkFollowMode.NEVER` stores an asset's
+symlinks and `npm install` leaves `node_modules/.bin` shims as symlinks; a
+symlink with an absolute target or one that escapes the layer root is refused
+by name. A layer asset that is a zip file rather than an extracted directory is
+refused because the runner needs the directory.
 
 The five-layer limit is enforced with a named refusal, and a layer ARN that is
 not a LayerVersion in the assembly (a cross-stack or external layer) is refused
@@ -1910,7 +1919,7 @@ the harness records it.
 | HTTP API JWT authorizers | Supported (L2) | RSA-based algorithms only (`RS256`, `RS384`, `RS512`); the signature is verified with the `kid` key from the issuer's JWKS, and `iss`, `aud` (or `client_id` only when `aud` is absent), `exp`, `nbf` and `iat` are checked against the run clock. `AuthorizationScopes` is an any-of match; the claims reach the integration in `requestContext.authorizer.jwt`; see [Authorizers](#authorizers). |
 | REST API Cognito user-pool authorizers | Supported (L2) | The token is validated against the pool's JWKS through the local issuer with the same RSA-only algorithm and claim checks as the HTTP JWT authorizer; `AuthorizationScopes` is an any-of match and the claims reach the integration in `requestContext.authorizer.claims`; see [Authorizers](#authorizers). |
 | REST/HTTP Lambda authorizers with IAM-policy responses | Supported (L2) | A REST `TOKEN` or `REQUEST` `AWS::ApiGateway::Authorizer` and an HTTP API `REQUEST` authorizer with `EnableSimpleResponses: false` run the real function and match its returned policy narrowly against the method/route ARN. Identity sources are 401 before invocation when missing; `AuthorizerResultTtlInSeconds` caches the policy on the run clock with the documented cache key, and a hit is re-evaluated against the current method/route ARN; a response without `principalId` is invalid; Allow invokes, Deny is 403, the `Unauthorized` error is 401 and an invalid response is 500; the stringified context reaches `requestContext.authorizer`; see [Authorizers](#authorizers). |
-| Lambda layers | Supported | A function's `Layers` resolve to LayerVersions in the same assembly; their content is extracted into `/opt` in the listed order (later layers win) with `/opt/bin` on `PATH`, `/opt/lib` on `LD_LIBRARY_PATH`, `/opt/nodejs/node_modules` on `NODE_PATH` and `/opt/python` on `PYTHONPATH`. The five-layer limit and an external layer ARN are refused by name; see [Lambda layers and container-image functions](#lambda-layers-and-container-image-functions). |
+| Lambda layers | Supported | A function's `Layers` resolve to LayerVersions in the same assembly; their content is extracted into `/opt` in the listed order (later layers win) with `/opt/bin` on `PATH`, `/opt/lib` on `LD_LIBRARY_PATH`, `/opt/nodejs/node_modules` on `NODE_PATH` and both `/opt/python` and `/opt/python/lib/python<major>.<minor>/site-packages` on `PYTHONPATH`. A relative symlink inside the layer is kept as a symlink; an absolute or escaping one is refused by name. The five-layer limit and an external layer ARN are refused by name; see [Lambda layers and container-image functions](#lambda-layers-and-container-image-functions). |
 | Container-image functions | Supported | `PackageType: Image` with a CDK `DockerImageAsset` is built by the real `docker build` (directory, Dockerfile, target, platform and build arguments from the assembly) before serving, then run under the image's own Runtime Interface Emulator through the same invocation path as a zip function. An image without the emulator, and an image function that declares layers, are refused by name. |
 | CloudFormation-expression environment values | Supported for `Ref`/`Fn::GetAtt`/`Fn::Join` | Tables and stream ARNs, queues, rules, buckets, KMS keys and aliases, SSM parameters, Secrets Manager ARNs, SNS topics, Kinesis streams, Cognito pool/client values, IAM/MicroVM-image/S3 Vectors ARNs and functions resolve to local values (moto/S3 require their backend). An unsupported expression fails with the function and variable named. |
 | CloudFormation-expression `MemorySize`/`Timeout` | Not resolved | A served function whose limit is `Ref`/`GetAtt`/`Fn::If` fails with the property named; the AWS defaults apply only when the property is absent. |

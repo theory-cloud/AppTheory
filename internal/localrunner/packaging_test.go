@@ -232,7 +232,7 @@ func TestLayerEnvironmentCarriesTheDocumentedPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if python["PYTHONPATH"] != "/opt/python" {
+	if python["PYTHONPATH"] != "/opt/python:/opt/python/lib/python3.14/site-packages" {
 		t.Fatalf("PYTHONPATH = %q", python["PYTHONPATH"])
 	}
 }
@@ -359,13 +359,13 @@ func TestLayerReferenceExpressionsAreRefused(t *testing.T) {
 	}
 }
 
-func TestCopyTreeSkipsSpecialFiles(t *testing.T) {
+func TestCopyTreeKeepsRelativeSymlinks(t *testing.T) {
 	source := t.TempDir()
 	target := t.TempDir()
 	if err := os.WriteFile(filepath.Join(source, "regular.txt"), []byte("ok"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(filepath.Join(source, "regular.txt"), filepath.Join(source, "link.txt")); err != nil {
+	if err := os.Symlink("regular.txt", filepath.Join(source, "link.txt")); err != nil {
 		t.Fatal(err)
 	}
 	if err := copyTree(source, target); err != nil {
@@ -374,8 +374,12 @@ func TestCopyTreeSkipsSpecialFiles(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(target, "regular.txt")); err != nil {
 		t.Fatalf("regular file missing: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(target, "link.txt")); err == nil {
-		t.Fatal("a symlink must not be copied into the layer directory")
+	info, err := os.Lstat(filepath.Join(target, "link.txt"))
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("a relative symlink must be materialized in the layer directory: %v", err)
+	}
+	if linkTarget, err := os.Readlink(filepath.Join(target, "link.txt")); err != nil || linkTarget != "regular.txt" {
+		t.Fatalf("symlink target = %q, %v", linkTarget, err)
 	}
 }
 
@@ -391,7 +395,7 @@ func TestLayerEnvironmentKeepsExistingPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("layerEnvironment: %v", err)
 	}
-	if env["PYTHONPATH"] != "/opt/python:/custom/python" {
+	if env["PYTHONPATH"] != "/opt/python:/opt/python/lib/python3.14/site-packages:/custom/python" {
 		t.Fatalf("PYTHONPATH = %q", env["PYTHONPATH"])
 	}
 	if env["PATH"] != "/opt/bin:/custom/bin" {
