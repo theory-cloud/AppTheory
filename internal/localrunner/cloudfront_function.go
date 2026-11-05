@@ -188,6 +188,14 @@ func (o *functionURLOrigin) FetchStream(ctx context.Context, request localcloudf
 			// blocked on the viewer's request context.
 			invokeErr = result.HandlerError
 		}
+		if invokeErr == nil && result.ErrorType != "" {
+			// The stream ended with the Lambda-Runtime-Function-Error-Type/-
+			// Body trailers. The viewer keeps the bytes the runtime wrote, but
+			// the stream did not complete cleanly, so the gateway must not cache
+			// the object as complete; the error metadata is logged.
+			invokeErr = &streamTrailerError{Type: result.ErrorType, Body: result.ErrorBody}
+			o.logMessage("function URL %s: %v", o.urlID, invokeErr)
+		}
 		sink.finish(invokeErr)
 		_ = writer.CloseWithError(invokeErr) //nolint:errcheck // the reader decides how to report it
 	}()
@@ -208,6 +216,24 @@ func (o *functionURLOrigin) FetchStream(ctx context.Context, request localcloudf
 		_ = reader.CloseWithError(ctx.Err()) //nolint:errcheck // the request is over
 		return localcloudfront.StreamResponse{}, ctx.Err()
 	}
+}
+
+// streamTrailerError reports a streamed response that ended with the Runtime
+// API error trailers. The page treats the response as successful and forwards
+// the error metadata; the local gateway forwards the bytes, logs this error and
+// does not cache the object as complete.
+// https://docs.aws.amazon.com/lambda/latest/dg/runtimes-custom.html
+type streamTrailerError struct {
+	Type string
+	Body []byte
+}
+
+func (e *streamTrailerError) Error() string {
+	detail := strings.TrimSpace(string(e.Body))
+	if detail == "" {
+		return fmt.Sprintf("stream ended with the %s error trailer", e.Type)
+	}
+	return fmt.Sprintf("stream ended with the %s error trailer: %s", e.Type, truncateForMessage(detail))
 }
 
 // streamHead is the status and headers the gateway needs before it can begin

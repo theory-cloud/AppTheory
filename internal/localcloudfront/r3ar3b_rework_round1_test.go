@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -145,6 +146,23 @@ func TestBufferedStreamOriginTakesTheBufferedFinishPath(t *testing.T) {
 	if second.Code != http.StatusOK || origin.streams != 1 || origin.fetches != 0 {
 		t.Fatalf("the complete response must be cached by the buffered path: status=%d streams=%d fetches=%d",
 			second.Code, origin.streams, origin.fetches)
+	}
+}
+
+func TestGatewayDoesNotCacheAStreamThatEndsWithAnError(t *testing.T) {
+	origin := &fakeStreamOrigin{
+		chunks:   []string{"partial"},
+		failWith: errors.New("stream ended with the Error error trailer"),
+	}
+	gateway := NewGateway(testDistribution(streamingBehavior(), nil, testOrigin("origin", "origin.example")),
+		&Topology{}, map[string]Origin{"origin": origin}, nil, t.Logf)
+	first := serveGateway(gateway, http.MethodGet, "http://viewer.example/x", "", nil)
+	if first.Code != http.StatusOK || first.Body.String() != "partial" {
+		t.Fatalf("first response: %d %q", first.Code, first.Body.String())
+	}
+	second := serveGateway(gateway, http.MethodGet, "http://viewer.example/x", "", nil)
+	if second.Code != http.StatusOK || origin.fetchCount() != 2 {
+		t.Fatalf("a trailer-errored stream must not be cached: status=%d fetches=%d", second.Code, origin.fetchCount())
 	}
 }
 

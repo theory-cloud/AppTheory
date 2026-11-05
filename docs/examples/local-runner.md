@@ -585,6 +585,10 @@ prelude is complete:
   A Function URL whose `InvokeMode` is `BUFFERED` (the template default)
   returns a complete, non-chunked response, so the origin takes the unchanged
   buffered path and every buffered rule above applies.
+  A stream that ends with the `Lambda-Runtime-Function-Error-Type` and
+  `Lambda-Runtime-Function-Error-Body` trailers is forwarded to the viewer but
+  not cached; the gateway logs the trailer metadata and treats the object as
+  incomplete.
 
 Response streaming is available on the Node.js managed runtime and, for other
 languages, "you can use a custom runtime with a custom Runtime API

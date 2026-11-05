@@ -1018,7 +1018,12 @@ contained in three subobjects: config (`Records.cf.config`), request
 object holds `headers`, `status` and `statusDescription`
 ([event structure](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-event-structure.html));
 the function therefore runs once both are known, before the body is forwarded,
-and cannot change the status. A `Content-Length` in a
+and cannot change the status. A streamed response that ends with the
+`Lambda-Runtime-Function-Error-Type` and `Lambda-Runtime-Function-Error-Body`
+trailers keeps the bytes the runtime wrote, but the gateway logs the trailer
+metadata and does not cache the object as complete; the pages are silent on what
+each client sees, so the local rule is the safe one (never cache a stream that
+ended with an error). A `Content-Length` in a
 streaming prelude is recomputed by the local HTTP server; a body without one is
 chunked, which is API Gateway's documented default. The local forwarders write
 the function's own response bytes to the local client; they do not build an

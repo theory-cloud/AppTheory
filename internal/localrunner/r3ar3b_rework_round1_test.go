@@ -367,3 +367,47 @@ func TestStreamingSuffixNamesWhatEachModeDoes(t *testing.T) {
 		t.Fatalf("a non-streaming route has no suffix: %q", streamingSuffix(false))
 	}
 }
+
+// trailerStreamInvoker frames a response and ends it with the Runtime API
+// error trailers, the documented midstream error path.
+type trailerStreamInvoker struct{}
+
+func (t *trailerStreamInvoker) Invoke(context.Context, []byte) ([]byte, error) {
+	return nil, errors.New("the trailer invoker streams only")
+}
+
+func (t *trailerStreamInvoker) StreamingIncremental() bool { return true }
+
+func (t *trailerStreamInvoker) InvokeStream(_ context.Context, _ []byte, sink StreamSink) (InvokeStreamResult, error) {
+	if err := sink.Start(streamIntegrationContentType, true); err != nil {
+		return InvokeStreamResult{}, err
+	}
+	frame := append([]byte(`{"statusCode":200,"headers":{"content-type":"text/plain"}}`), streamFrameDelimiter...)
+	frame = append(frame, []byte("partial")...)
+	if err := sink.Chunk(frame); err != nil {
+		return InvokeStreamResult{}, err
+	}
+	_ = sink.End("Error", []byte(`{"errorMessage":"boom"}`)) //nolint:errcheck // test
+	return InvokeStreamResult{
+		Body: frame, Streamed: true, ContentType: streamIntegrationContentType,
+		ErrorType: "Error", ErrorBody: []byte(`{"errorMessage":"boom"}`),
+	}, nil
+}
+
+func TestFunctionURLOriginStreamEndingWithErrorTrailersIsNotACleanEOF(t *testing.T) {
+	origin := &functionURLOrigin{
+		originID: "origin", urlID: "url", domainName: "abc.lambda-url.us-east-1.on.aws",
+		authType: noneAuthorization, invoker: &trailerStreamInvoker{},
+	}
+	stream, err := origin.FetchStream(context.Background(), localcloudfrontOriginRequest())
+	if err != nil {
+		t.Fatalf("fetch stream: %v", err)
+	}
+	body, readErr := io.ReadAll(stream.Body)
+	if string(body) != "partial" {
+		t.Fatalf("the viewer keeps the bytes the runtime wrote: %q", body)
+	}
+	if readErr == nil || !strings.Contains(readErr.Error(), "error trailer") {
+		t.Fatalf("the trailer must end the stream with an error, not a clean EOF: %v", readErr)
+	}
+}
