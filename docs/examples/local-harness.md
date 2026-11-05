@@ -34,6 +34,7 @@ resolution.
 | Runner emulator pins | `scripts/local/examples-local.json` (`containers.moto`, `containers.s3proxy`, `containers.sqs` and their endpoints) |
 | Local runner | `cmd/apptheory-local` with `internal/localrunner`; `session` provides the JSON command channel |
 | Self-tests | `scripts/local/test_examples_local.py` |
+| Runtime API conformance | `scripts/local/runtime_api_conformance.py` (row `runtime-api-conformance`, L2) |
 | CI job | `.github/workflows/examples-local.yml` |
 
 ## Requirements
@@ -45,7 +46,14 @@ resolution.
   the harness does not install a fallback, and a missing or unusable CLI fails
   that row with a named requirement error.
 - Python 3.14 to run the harness and the repo's Go toolchain for the runner
-  rows.
+  rows. Install the harness's Python dependencies once:
+
+  ```bash
+  python3 -m pip install -r scripts/local/requirements-examples.txt
+  ```
+
+  The field-level encryption row decrypts with the AWS Encryption SDK from that
+  file; without it the row fails with a named requirement error.
 
 ## Classes
 
@@ -157,7 +165,7 @@ these rules, so a validator that stops failing closed fails the harness.
 | `examples/testkit/ts.mjs`, `ts-streaming.mjs`, `py.py` | L1 | The real runtime code handles HTTP API v2, EventBridge work, DynamoDB Stream records and Function URL streaming; the harness asserts the example's PASS marker. |
 | `examples/mcp/tools-only` (Go) | L1 | The real binary runs in a warm `provided.al2023` container; the harness sends MCP HTTP API v2 events for initialize, tools/list, tools/call and two refusals. |
 | `examples/mcp/tools-resources-prompts` (Go) | L1 | Same warm container; tools, resources/read and prompts/get are asserted, plus an invalid-method refusal. |
-| `examples/mcp/resumable-sse` (Go) | L3 | A warm container keeps the MCP session; the buffered stream's priming, progress and result ids are asserted, and Last-Event-ID replay returns the progress events and final result. It is handler-only (`--handler-dir`, no CDK definition). Gap: incremental SSE delivery (the RIE buffers). |
+| `examples/mcp/resumable-sse` (Go) | L2 | A warm container keeps the MCP session; the tool-call stream is forwarded chunk by chunk (the row observes the first event before the 0.5s-per-step countdown ends), its priming, progress and result ids are asserted, and Last-Event-ID replay returns the progress events and final result. It is handler-only (`--handler-dir`, no CDK definition). Gap: the local invoke transport forwards at the handler's pace instead of Lambda's streaming cap. |
 | `examples/mcp/tools-only-ts`, `tools-only-py` | L1 | The real MCP server and its exported Lambda entry, driven by the MCP testkit. |
 | `examples/migration/rate-limited-http` | L1 | A real `net/http` process against DynamoDB Local: the `rate-limits` table is created from `pkg/limited`, 60 requests are allowed with the expected headers, and the 61st is the 429 refusal. |
 | Every CDK app entrypoint | I | `scripts/verify-cdk-synth.sh` synthesizes the stack, checks its pinned template hash, and runs focused construct assertions for the six examples that were never synthesized in CI. |
@@ -187,14 +195,14 @@ events; no route table is synthesized for them.
 
 | Row | Class | How it is verified |
 | --- | --- | --- |
-| `examples/cdk/multilang/handlers/{go,py,ts}` | L3 | Each language's own HTTP API v2 listener serves root, hello, a 405 and a 404. The Go REST API serves hello and three buffered SSE events. Each language's WebSocket APIs serve real frames through the `$connect` authorizer, the custom `chat` route, `$default` and the `@connections` management API. The Go row also invokes the CDK SQS, DynamoDB stream and EventBridge handlers. Gap: managed event-source delivery. |
-| `examples/cdk/lesser-parity/handlers/{api,graphql,sse}` | L1/L3 | The REST API serves the catch-all, the dedicated GraphQL route, the buffered SSE route and the declared CORS preflight. `TABLE_NAME` and `QUEUE_URL` are resolved local values. The SSE row is L3 for buffered delivery. |
-| `examples/cdk/lesser-parity/handlers/worker.mjs` | L3 | A generated two-record SQS batch is processed by the real handler; the invalid record is returned as a partial batch failure. Gap: SQS event delivery. |
+| `examples/cdk/multilang/handlers/{go,py,ts}` | L3 | Each language's own HTTP API v2 listener serves root, hello, a 405 and a 404. The Go REST API serves hello and three SSE events written incrementally. Each language's WebSocket APIs serve real frames through the `$connect` authorizer, the custom `chat` route, `$default` and the `@connections` management API. The Go row also receives the CDK SQS mapping, the DynamoDB stream record built from a real local write and both EventBridge rules. Gap: IAM policy evaluation is a docs/125 true limit; the backends are emulated (DynamoDB Local, ElasticMQ, moto) and every delivery is real. |
+| `examples/cdk/lesser-parity/handlers/{api,graphql,sse}` | L1/L2 | The REST API serves the catch-all, the dedicated GraphQL route, the incremental SSE route and the declared CORS preflight. `TABLE_NAME` and `QUEUE_URL` are resolved local values. The SSE row is L2: the integration forwards each chunk at the handler's pace. |
+| `examples/cdk/lesser-parity/handlers/worker.mjs` | L2 | Two real ElasticMQ messages are delivered as the CDK mapping's batch by the delivery engine; the invalid record is returned as a partial batch failure and stays in the queue. Gap: ElasticMQ emulates SQS. |
 | `examples/cdk/restv1-router/handlers/{api,graphql,inventory}` | L1 | Catch-all GET/POST, the GraphQL route with GET falling through, and inventory GET/PUT/DELETE with path parameters, a 404 refusal and CORS preflight. |
-| `examples/cdk/restv1-router/handlers/sse.mjs` | L3 | The real `streamifyResponse` handler returns all 10 events and `[DONE]` as one buffered body. Gap: incremental SSE delivery. |
+| `examples/cdk/restv1-router/handlers/sse.mjs` | L2 | The real `streamifyResponse` handler's 10 events and `[DONE]` reach the row incrementally; the first event arrives before the stream ends. Gap: the local integration forwards at the handler's pace instead of Lambda's 6 MB burst and 2 MBps cap. |
 | `examples/cdk/lambda-role/handlers/index.ts` | L1 | The compiled asset serves the basic, tracing and dynamic functions; each returns the expected 200 payload. |
 | `examples/cdk/lambda-role/handlers/encrypted.ts` | L2 | The compiled handler round-trips plaintext through moto KMS and reports `match=true`. Gap: emulated KMS (no HSM, key policies or grants). |
-| `examples/cdk/lambda-role/handlers/custom.ts` | L3 | The compiled handler writes and reads an object on s3proxy; the SSM lookup fails closed to `not-configured`. Gap: SSM Parameter Store; S3 is emulated. |
+| `examples/cdk/lambda-role/handlers/custom.ts` | L2 | The compiled handler writes and reads an object on s3proxy and reads its provisioned SSM parameter; an unprovisioned name fails closed to `not-configured`. Gap: IAM policy evaluation is a docs/125 true limit; S3 is emulated by s3proxy while SSM, Secrets Manager and the user pool are real on moto. |
 | `examples/cdk/lambda-role/handlers/authorizer.ts` | L2 | The real policy function runs behind a REST TOKEN authorizer (60 s cache), a REST REQUEST authorizer over a header and a query identity source, and an HTTP API IAM-policy authorizer (payload format 1.0). Allow invokes the method and its stringified context reaches the integration; Deny is 403, the documented `Unauthorized` error is 401, an invalid policy is 500 and a missing identity source is 401 without invoking. The function counts its own invocations in its context, so an unchanged count proves the cached policy was reused without invoking the function until `clock.advance` passes `AuthorizerResultTtlInSeconds`; the cached policy is re-evaluated per method, so `GET /token-other` is 403 inside the TTL and 200 after it. | IAM policy evaluation is a docs/125 true limit; the authorizer's returned policy is matched narrowly against the method ARN. |
 
 ### A4: event sources and data
@@ -206,20 +214,20 @@ shape is built from the example's own CDK definition.
 
 | Row | Class | How it is verified |
 | --- | --- | --- |
-| `examples/cdk/sqs-queue/handlers/producer.mjs` | L3 | `producer.mjs` sends through the real SQS SDK to ElasticMQ; the received body carries `eventType`, `payload` and a timestamp, and its `messageId` matches the handler's response. Gap: managed SQS event-source mapping. |
-| `examples/cdk/sqs-queue/handlers/worker.mjs` | L3 | Two messages are received from `events-queue` and invoked as the CDK mapping's batch; `worker.mjs` reports only the simulated failure as a partial batch failure. Gap: managed polling/visibility/deletion. |
-| `examples/cdk/sqs-queue/handlers/dlq-handler.mjs` | L3 | `events-queue` redrives a failing message to `events-queue-dlq` after `maxReceiveCount=5`; `dlq-handler.mjs` processes the message actually read from the DLQ and acknowledges it. Gap: managed SQS mapping. |
-| `examples/cdk/import-pipeline/handlers/{ingest,worker}/main.go` | L3 | A real object is written to s3proxy and the CDK `IngestRule` EventBridge event is built from it. Ingest writes the job META and three work messages; worker consumes the real messages and writes SUCCEEDED/FAILED records. The raw PAN is absent and the stored error is masked. Gaps: S3 → EventBridge delivery and CodeBuild. |
-| `examples/cdk/kinesis-cloudwatch-logs/handlers/go/main.go` | L3 | A gzip+base64 CloudWatch Logs subscription payload is built from local log content and accepted; a malformed Kinesis record is returned as its sequence-number partial failure. Gap: managed Kinesis/CloudWatch Logs delivery. |
+| `examples/cdk/sqs-queue/handlers/producer.mjs` | L2 | `producer.mjs` sends through the real SQS SDK to ElasticMQ; the received body carries `eventType`, `payload` and a timestamp, and its `messageId` matches the handler's response. Gap: ElasticMQ emulates SQS. |
+| `examples/cdk/sqs-queue/handlers/worker.mjs` | L2 | The delivery engine polls `events-queue`, invokes the CDK mapping's batch and deletes on success; `worker.mjs` reports only the simulated failure as a partial batch failure. Gap: ElasticMQ emulates SQS. |
+| `examples/cdk/sqs-queue/handlers/dlq-handler.mjs` | L2 | `events-queue` redrives a failing message to `events-queue-dlq` after `maxReceiveCount=5`; `dlq-handler.mjs` processes the message actually read from the DLQ and acknowledges it. Gap: ElasticMQ emulates SQS. |
+| `examples/cdk/import-pipeline/handlers/{ingest,worker}/main.go` | L3 | A real object is written to s3proxy and the CDK `IngestRule` EventBridge event is delivered by the runner from the bucket notification. Ingest writes the job META and three work messages; worker consumes the real messages through the SQS mapping and writes SUCCEEDED/FAILED records. The raw PAN is absent and the stored error is masked. Gap: CodeBuild (R8). |
+| `examples/cdk/kinesis-cloudwatch-logs/handlers/go/main.go` | L2 | The function's own log output is captured and delivered through the CloudWatch Logs subscription and the Kinesis mapping; a malformed Kinesis record is returned as its sequence-number partial failure. Gap: moto emulates Kinesis and CloudWatch Logs. |
 | `examples/cdk/microvm-controller/controller/main.go` | L3 | The CDK authorizer refuses missing, wrong and tenant-less credentials. `list` and `run` reach the managed provider boundary; `get`, `suspend`, `resume`, `terminate`, `auth-token`, `shell-auth-token` and `invoke` read the TableTheory registry on DynamoDB Local and refuse a missing session. Gap: managed MicroVM provider. |
 | `examples/cdk/microvm-controller/workloads/go/main.go`, `py/server.py`, `ts/server.js` | L1 | Each workload server runs as a host process and answers GET and POST with its HTTP contract. `server.ts` is covered by the built `server.js` the image ships. |
 | `examples/cdk/s3-vectors-semantic-search/handler/main.go` | L3 | Health reports the CDK vector index; missing/wrong auth, missing query and invalid `top_k` are refused; authorized seed/search reach the closed Bedrock endpoint with `vectorstore.embedding_failed`. Gap: managed S3 Vectors/Bedrock. |
 | `examples/microvm-conformance/run_local.py` | L3 | The real dry-run and token-leak scanner pass; live mode runs against the local controller, passes its auth refusals and stops at the managed provider boundary. Gap: managed MicroVM provider; no EqualToAI/Host live proof claimed. |
 
-The `multilang` Go row's additional event assertions use the same session: the
-SQS mapping, the DynamoDB stream record built from a real local write, and both
-EventBridge rules are invoked and their responses asserted. Its remaining gap is
-WebSocket frames and managed delivery.
+The `multilang` Go row's event assertions use the same session: the SQS mapping,
+the DynamoDB stream record built from a real local write, and both EventBridge
+rules are delivered and their responses asserted. Its remaining gap is IAM
+policy evaluation (docs/125).
 
 Handler and script rows inside the remaining CDK examples are now classified;
 no row is `PENDING-MILESTONE`.
@@ -231,7 +239,7 @@ rows below run the real production CDK apps through the gateway.
 
 | Example | Class | Verified | Named gap |
 | --- | --- | --- | --- |
-| `examples/cdk/ssr-site` | L2 | The origin group fails over from the S3 HTML primary (403 under OAC) to the real SSR handler; the viewer-response function echoes the viewer `x-request-id`; `/marketing/` proves the viewer-request rewrite and `/isr` origin path; the assets and hydration deployments are served from s3proxy with ETag/Last-Modified; full and ranged HEAD (206 with `Content-Range`), matching and non-matching `If-None-Match` GETs (304 with the origin's validators, and 200 with the body), OPTIONS and a missing object (403 `AccessDenied`) are asserted. Caching: the static-assets behavior answered a miss then a hit with `x-cache`/`age`, the CACHING_DISABLED SSR behavior never cached, an invalidation through the local API and the `aws` CLI removed the object, and the clock past the TTL was a miss. | CloudFront edge network and edge TLS (docs/125 true limits); response streaming is buffered by the RIE. |
+| `examples/cdk/ssr-site` | L2 | The origin group fails over from the S3 HTML primary (403 under OAC) to the real SSR handler; the viewer-response function echoes the viewer `x-request-id`; the SSR stream reaches the viewer through the gateway and directly on the Function URL as the handler writes it (the row observes the first part before the stream ends); `/marketing/` proves the viewer-request rewrite and `/isr` origin path; the assets and hydration deployments are served from s3proxy with ETag/Last-Modified; full and ranged HEAD (206 with `Content-Range`), matching and non-matching `If-None-Match` GETs (304 with the origin's validators, and 200 with the body), OPTIONS and a missing object (403 `AccessDenied`) are asserted. Caching: the static-assets behavior answered a miss then a hit with `x-cache`/`age`, the CACHING_DISABLED SSR behavior never cached, an invalidation through the local API and the `aws` CLI removed the object, and the clock past the TTL was a miss. | CloudFront edge network and edge TLS (docs/125 true limits); the gateway forwards a streamed response at the origin's pace (the 6 MB burst and 2 MBps cap are not reproduced). |
 | `examples/cdk/ssr-only-provided-assets-site` | L2 | The real handler is reached through the `AWS_IAM` Function URL with local SigV4 OAC signing and echoes the viewer request id into the HTML; the provided bucket serves `app.js`, `site.css` and `probe.txt`; a missing object is 403 under OAC and OPTIONS is refused. | CloudFront edge network (docs/125 true limit); IAM policy evaluation is not emulated. |
 | `examples/cdk/path-routed-frontend` | L2 | The generated SPA function rewrites `/l/...` and `/auth/...` to each prefix's `index.html`, files with an extension are served unchanged, the external API origin is mapped to a loopback listener the row starts and receives the documented origin-request shape (origin path `/prod`, origin Host, method) with a CACHING_DISABLED `x-cache` miss, POST is refused by `AllowedMethods`, and a missing file is 403 under OAC. | The example ships no SPA build output, so probe objects are written through the runner to the provisioned buckets. CloudFront edge network and edge TLS (docs/125 true limits). |
 | `examples/cdk/media-cdn` | L2 | The public distribution serves a probe object from its provisioned bucket with ETag and content type; a missing object serves the configured custom error page with the configured status. The s3proxy 403 carries `Content-Type` and `x-amz-request-id` but no `Cache-Control` max-age/s-maxage, so the page is served on both requests and the second is a miss (a 403 is cached only with that header; the `ErrorCachingMinTTL` expiry proof for a 404 origin lives in the localcloudfront unit tests). When the page itself is unavailable the status comes from the pages origin (403 `AccessDenied`). The private trusted-key-group distribution requires a signature: an unsigned request is 403, a canned-policy SHA-256 URL and a custom-policy signed cookie are served, a query string added after signing is 403, an unknown `Key-Pair-Id` is 403, OPTIONS passes unsigned, and the expired URL is 403 after `clock.advance`. The row generates an RSA key pair at run time and passes the public key through CDK context; no private key is committed. | CloudFront edge network and edge TLS (docs/125 true limits); the example ships no media, so probe objects are used. |
@@ -250,6 +258,22 @@ argument.
 | --- | --- | --- |
 | `examples/cdk/lambda-packaging/handlers/node/app.js` | L1 | The real runner extracts the Node and Python layers into `/opt`, builds the three images with `docker build` before serving, and serves one HTTP API. The Node handler imports `layer-greeting` from `/opt/nodejs/node_modules`, executes `/opt/bin/layer-tool` from `PATH` and reports `/opt/bin` and `/opt/lib`; the Python handler imports `layer_tool` from `/opt/python`, executes its own `/opt/bin/layer-tool` and reports `PYTHONPATH`, `PATH` and `LD_LIBRARY_PATH`; the Go, Node and Python image handlers return the value the Dockerfile wrote from `IMAGE_VALUE`, so a stale or missing image cannot pass. |
 | `examples/cdk/lambda-packaging/handlers/python/app.py`, `images/{go,node,python}`, `layers/python/python/layer_tool.py`, `Layers/*/bin/layer-tool` | L1 | Covered by the Node handler row: each is executed inside the same run. |
+
+## Runtime API conformance
+
+The `runtime-api-conformance` row (L2, `scripts/local/runtime_api_conformance.py`)
+builds one handler set per language on the real, digest-pinned runtime images and
+runs each case twice through the runner's own `invoke` path: once under the
+image's Runtime Interface Emulator (`--rie`) and once under the runner's Lambda
+Runtime API. It compares status, headers, body bytes, handler error type and
+message, the timeout outcome and the initialization-failure outcome, and it
+prints every remaining difference. Python is buffered only, because "Lambda
+supports response streaming on Node.js managed runtimes. For other languages,
+including Python, you can use a custom runtime with a custom Runtime API
+integration"
+([response streaming](https://docs.aws.amazon.com/lambda/latest/dg/configuration-response-streaming.html)).
+The suite is described in
+[the runner guide](/examples/local-runner/#conformance-suite).
 
 ## Preflight
 

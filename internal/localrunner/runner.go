@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -98,6 +99,15 @@ type Options struct {
 	// CloudFront geo restriction. An empty value is an undetermined location,
 	// which CloudFront serves.
 	ViewerCountry string
+	// RIEMode runs function containers under the image's embedded Runtime
+	// Interface Emulator instead of the runner's Runtime API. It exists to
+	// compare against the emulator and for an image whose entry script ignores
+	// AWS_LAMBDA_RUNTIME_API; it cannot stream incrementally.
+	RIEMode bool
+	// StreamChunks makes `invoke --stdio` write one chunk event per streamed
+	// response chunk before the result line. The default protocol stays one
+	// result line per event.
+	StreamChunks bool
 }
 
 // Runner owns one local run: the derived surface, the Docker network, the
@@ -133,8 +143,12 @@ type Runner struct {
 	listeners    []net.Listener
 	semaphore    chan struct{}
 	network      string
-	clock        Clock
-	delivery     *DeliveryEngine
+	// runtimeAPIGateway remembers the run network's gateway address once a
+	// container could not reach a loopback Runtime API listener, so later
+	// functions bind it before their container starts.
+	runtimeAPIGateway string
+	clock             Clock
+	delivery          *DeliveryEngine
 	// sns is the per-topic hub registry the SNS deliverer attaches to and
 	// PublishLocal publishes through.
 	sns *snsHubRegistry
@@ -626,6 +640,7 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 		return nil, err
 	}
 	r.logf("network %s", r.network)
+	r.chooseRuntimeAPIAddress(ctx)
 	if err = r.startBackends(ctx); err != nil {
 		return nil, err
 	}
@@ -743,7 +758,7 @@ func (r *Runner) startEventBridgeBus(ctx context.Context) error {
 	r.eventBusURL = fmt.Sprintf("http://127.0.0.1:%d", port)
 	r.eventBusContainer = fmt.Sprintf("http://host.docker.internal:%d", port)
 	r.endpoints = append(r.endpoints, Endpoint{Service: "events", URL: r.eventBusContainer})
-	r.options.AddHosts = append(r.options.AddHosts, "host.docker.internal:host-gateway")
+	r.addRuntimeHostEntry()
 	r.logf("local EventBridge bus at %s (containers: %s)", r.eventBusURL, r.eventBusContainer)
 	return nil
 }
@@ -956,6 +971,9 @@ func (r *Runner) removeRunContainers() {
 			}(name)
 		}
 		wait.Wait()
+	}
+	for _, process := range r.invokers {
+		process.closeRuntimeAPI()
 	}
 	r.removeRunImages(deadline)
 	r.invokers = map[string]*FunctionProcess{}
@@ -1250,6 +1268,7 @@ func (r *Runner) functionImageTag(function FunctionSpec) string {
 	return sanitizeName(r.namePrefix + "-" + function.LogicalID + "-image")
 }
 
+//nolint:gocognit,gocyclo // one branch per function shape the assembly can declare
 func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image string) error {
 	imageFunction := function.ImageAsset != nil
 	codeDir := function.AssetDir
@@ -1265,7 +1284,24 @@ func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image
 	if err != nil {
 		return err
 	}
-	env, overridden := r.functionEnvironment(function)
+	var api *runtimeAPI
+	if !r.options.RIEMode {
+		api, err = newRuntimeAPI(function, r.logf)
+		if err != nil {
+			return err
+		}
+		api.gateway = r.networkGateway
+		if r.runtimeAPIGateway != "" {
+			api.bindGateway(r.runtimeAPIGateway)
+		}
+	}
+	env, overridden := r.functionEnvironment(function, api)
+	if r.options.RIEMode {
+		// The emulator reads its timeout from AWS_LAMBDA_FUNCTION_TIMEOUT; the
+		// base image's entry script does not set it.
+		// https://github.com/aws/aws-lambda-runtime-interface-emulator
+		env["AWS_LAMBDA_FUNCTION_TIMEOUT"] = strconv.Itoa(function.Timeout)
+	}
 	if len(overridden) > 0 {
 		r.logf("function %s: runner-owned environment overrides template values for %s", function.LogicalID, strings.Join(overridden, ", "))
 	}
@@ -1286,8 +1322,18 @@ func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image
 	if limitErr := unresolvedLimitsError(function); limitErr != nil {
 		return limitErr
 	}
+	if api != nil {
+		// The container reaches the Runtime API through host.docker.internal.
+		// The run's closed DNS server cannot resolve it, so the host entry is
+		// required (the run network also sets --dns 127.0.0.2).
+		r.addRuntimeHostEntry()
+	}
 	mounts := append(functionMounts(function), r.webSocketCertificateMounts()...)
 	name := r.containerName(function.LogicalID)
+	publish := 0
+	if r.options.RIEMode {
+		publish = riePort
+	}
 	options := ContainerOptions{
 		Name:     name,
 		Network:  r.network,
@@ -1297,7 +1343,7 @@ func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image
 		AddHosts: r.options.AddHosts,
 		MemoryMB: function.MemoryMB,
 		Mounts:   mounts,
-		Publish:  riePort,
+		Publish:  publish,
 		Labels:   r.labels(),
 		Detach:   true,
 	}
@@ -1309,14 +1355,24 @@ func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image
 		Container: name,
 		Image:     image,
 		Started:   time.Now().UTC(),
+		rie:       r.options.RIEMode,
+		api:       api,
+		options:   options,
+		logf:      r.logf,
+	}
+	if api != nil {
+		api.running = func(checkCtx context.Context) (bool, error) {
+			return r.docker.Running(checkCtx, name)
+		}
+		process.reset = r.resetFunction
 	}
 	r.invokers[function.LogicalID] = process
 	if _, startErr := r.docker.StartContainer(ctx, options); startErr != nil {
+		process.closeRuntimeAPI()
 		return startErr
 	}
-	port, err := waitForContainerReady(ctx, r.docker, name)
-	if err != nil {
-		if imageFunction {
+	if err := process.awaitReady(ctx, r.docker); err != nil {
+		if imageFunction && r.options.RIEMode {
 			return fmt.Errorf(
 				"function %s: the container image did not start a Runtime Interface Emulator on port %d; an image function must be based on an AWS base image that ships one (https://docs.aws.amazon.com/lambda/latest/dg/images-create.html): %w",
 				function.LogicalID, riePort, err,
@@ -1324,9 +1380,157 @@ func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image
 		}
 		return err
 	}
-	process.Port = port
-	r.logf("function %s (%s, %s) ready on 127.0.0.1:%d", function.LogicalID, function.Runtime, image, port)
+	r.rememberRuntimeAPIAddress(process)
+	if r.options.RIEMode {
+		r.logf("function %s (%s, %s) ready on 127.0.0.1:%d (Runtime Interface Emulator mode)", function.LogicalID, function.Runtime, image, process.Port)
+		return nil
+	}
+	if failure := process.api.initError(); failure != nil {
+		if failure.Type == "Runtime.ExitError" {
+			// A runtime client that fails its first Next API request exits
+			// before the Init phase completes. The lifecycle page resets and
+			// re-initializes the environment, so the runner retries once before
+			// reporting the failure to the first invocation.
+			// https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtime-environment.html
+			r.logf("function %s (%s, %s): the runtime exited before its first invocation (%s); restarting it once",
+				function.LogicalID, function.Runtime, image, failure.Message)
+			if resetErr := r.resetFunction(ctx, process); resetErr != nil {
+				return fmt.Errorf("function %s: restart after a failed initialization: %w", function.LogicalID, resetErr)
+			}
+			failure = process.api.initError()
+		}
+		if failure != nil {
+			r.logf("function %s (%s, %s): initialization failed; the first invocation reports %s", function.LogicalID, function.Runtime, image, failure.Type)
+		}
+		return nil
+	}
+	r.logf("function %s (%s, %s) ready on the runner's Runtime API at %s", function.LogicalID, function.Runtime, image, process.RuntimeAPIURL())
 	return nil
+}
+
+// awaitReady waits for the process's runtime to signal that the Init phase
+// finished: the embedded emulator's port in RIE mode, or the runtime's first
+// Next API request in the default mode.
+func (p *FunctionProcess) awaitReady(ctx context.Context, docker *Docker) error {
+	if p.rie {
+		port, err := waitForContainerReady(ctx, docker, p.Container)
+		if err != nil {
+			return err
+		}
+		p.Port = port
+		return nil
+	}
+	return waitForRuntimeAPIReady(ctx, docker, p.Container, p.api)
+}
+
+// resetFunction replaces one function's execution environment after a timeout,
+// a crash or an initialization failure. The container keeps its name and the
+// FunctionProcess keeps its identity, so every caller's handle stays valid.
+// https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtime-environment.html
+func (r *Runner) resetFunction(ctx context.Context, process *FunctionProcess) error {
+	r.logf("function %s: replacing the execution environment", process.Function.LogicalID)
+	r.docker.RemoveContainer(ctx, process.Container)
+	gateway := ""
+	if process.api != nil {
+		gateway = process.api.gatewayBound()
+	}
+	process.closeRuntimeAPI()
+	options := process.options
+	if !process.rie {
+		api, err := newRuntimeAPI(process.Function, r.logf)
+		if err != nil {
+			return err
+		}
+		api.gateway = r.networkGateway
+		if gateway == "" {
+			gateway = r.runtimeAPIGateway
+		}
+		if gateway != "" && api.bindGateway(gateway) {
+			r.runtimeAPIGateway = gateway
+		}
+		api.running = func(checkCtx context.Context) (bool, error) {
+			return r.docker.Running(checkCtx, process.Container)
+		}
+		process.api = api
+		options.Env = cloneEnvironment(options.Env)
+		options.Env["AWS_LAMBDA_RUNTIME_API"] = api.ContainerAddress()
+	}
+	process.options = options
+	if _, err := r.docker.StartContainer(ctx, options); err != nil {
+		return err
+	}
+	process.Started = time.Now().UTC()
+	if err := process.awaitReady(ctx, r.docker); err != nil {
+		return err
+	}
+	r.rememberRuntimeAPIAddress(process)
+	return nil
+}
+
+// networkGateway resolves the run network's gateway address.
+func (r *Runner) networkGateway(ctx context.Context) (string, error) {
+	return r.docker.NetworkGateway(ctx, r.network)
+}
+
+// runtimeHostEntry is the container's host.docker.internal mapping. When the
+// host owns the run network's gateway (the Linux bridge case) the entry names
+// it and the listener binds it; otherwise Docker's host-gateway value is used,
+// which Colima and Docker Desktop forward to the host's loopback.
+func (r *Runner) runtimeHostEntry() string {
+	if r.runtimeAPIGateway != "" {
+		return "host.docker.internal:" + r.runtimeAPIGateway
+	}
+	return "host.docker.internal:host-gateway"
+}
+
+// addRuntimeHostEntry adds the host.docker.internal mapping once; an entry the
+// caller supplied through --add-host wins.
+func (r *Runner) addRuntimeHostEntry() {
+	if hasAddHostName(r.options.AddHosts, "host.docker.internal") {
+		return
+	}
+	r.options.AddHosts = append(r.options.AddHosts, r.runtimeHostEntry())
+}
+
+// runtimeAPIAddressOwner reports whether the host owns an address. Binding an
+// ephemeral port and closing it at once is the proof; an address that belongs
+// to the Docker VM (Colima, Docker Desktop) fails with EADDRNOTAVAIL.
+var runtimeAPIAddressOwner = func(gateway string) bool {
+	listener, err := net.Listen("tcp", net.JoinHostPort(gateway, "0"))
+	if err != nil {
+		return false
+	}
+	_ = listener.Close() //nolint:errcheck // the probe only proves ownership
+	return true
+}
+
+// chooseRuntimeAPIAddress decides whether the container reaches the host
+// through the run network's gateway. The host owns that address on Linux, so
+// the container's host entry can name it and the listener can bind it; on
+// Colima and Docker Desktop the address belongs to the VM, the bind fails, and
+// the container keeps Docker's host-gateway entry (forwarded to the host's
+// loopback). The probe binds an ephemeral port and closes it at once.
+func (r *Runner) chooseRuntimeAPIAddress(ctx context.Context) {
+	gateway, err := r.networkGateway(ctx)
+	if err != nil {
+		return
+	}
+	if !runtimeAPIAddressOwner(gateway) {
+		return
+	}
+	r.runtimeAPIGateway = gateway
+	r.logf("runtime API: the container host entry host.docker.internal -> %s (the run network's gateway)", gateway)
+}
+
+// rememberRuntimeAPIAddress keeps the gateway bind for later functions once a
+// container could not reach loopback.
+func (r *Runner) rememberRuntimeAPIAddress(process *FunctionProcess) {
+	if process == nil || process.api == nil {
+		return
+	}
+	if gateway := process.api.gatewayBound(); gateway != "" {
+		r.runtimeAPIGateway = gateway
+	}
 }
 
 // functionCommand is the container command: the handler for a zip function, or
@@ -1643,7 +1847,19 @@ func (r *Runner) Down(ctx context.Context) (int, error) {
 // PlanJSON renders the derived surface for machines (the examples harness and
 // future tooling).
 func (r *Runner) PlanJSON(spec *Spec) ([]byte, error) {
-	return json.MarshalIndent(spec, "", "  ")
+	document := struct {
+		*Spec
+		RuntimeMode string `json:"runtimeMode"`
+	}{Spec: spec, RuntimeMode: r.RuntimeMode()}
+	return json.MarshalIndent(document, "", "  ")
+}
+
+// RuntimeMode names the transport the run uses for its function containers.
+func (r *Runner) RuntimeMode() string {
+	if r.options.RIEMode {
+		return "rie"
+	}
+	return "runner"
 }
 
 func (r *Runner) labels() map[string]string {

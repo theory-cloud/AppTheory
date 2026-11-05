@@ -182,9 +182,9 @@
     },
     "examples/mcp/resumable-sse/main.go": {
       "run": "mcp-go-resumable-sse",
-      "class": "L3",
-      "gap": "Incremental SSE delivery; the RIE buffers the complete stream. Session creation, event IDs and Last-Event-ID replay are asserted on a warm container.",
-      "description": "Go MCP resumable SSE server: a warm provided.al2023 container keeps the session, the buffered tool-call stream carries priming/progress/result IDs, and Last-Event-ID replay returns the progress events and final result. Handler-only example: it ships no CDK definition, so no route table is synthesized."
+      "class": "L2",
+      "gap": "The warm handler is driven over the local invoke transport, not a deployed API Gateway; the runner forwards each chunk at the handler's pace and does not reproduce Lambda's 6 MB uncapped burst and 2 MBps streaming cap (docs/125 streaming deviation).",
+      "description": "Go MCP resumable SSE server: a warm provided.al2023 container keeps the session, the tool-call stream is forwarded incrementally (the row observes the first chunk before the 0.5s-per-step countdown finishes), and Last-Event-ID replay returns the progress events and final result. Handler-only example: it ships no CDK definition, so no route table is synthesized."
     },
     "examples/migration/rate-limited-http/main.go": {
       "run": "rate-limited-http",
@@ -350,9 +350,9 @@
     },
     "examples/cdk/lesser-parity/handlers/sse.mjs": {
       "run": "lesser-parity-sse",
-      "class": "L3",
-      "gap": "Incremental SSE delivery; the RIE buffers the response. Status, content type and all three events are asserted.",
-      "description": "Lesser-parity SSE handler: all three buffered events plus the declared CORS preflight from the same REST API."
+      "class": "L2",
+      "gap": "The local REST API integration forwards each chunk at the handler's pace; Lambda's 6 MB uncapped burst and 2 MBps streaming cap are not reproduced.",
+      "description": "Lesser-parity SSE handler: the streaming REST integration writes the three events incrementally (the row observes the first event 0.7s apart from the rest) and the declared CORS preflight is served from the same REST API."
     },
     "examples/cdk/lesser-parity/handlers/worker.mjs": {
       "run": "lesser-parity-worker",
@@ -411,8 +411,8 @@
     "examples/cdk/multilang/handlers/go/main.go": {
       "run": "multilang-go",
       "class": "L3",
-      "gap": "Response streaming is buffered by the RIE (R3b); the backends are emulated (DynamoDB Local, ElasticMQ, moto) and IAM policy evaluation is a docs/125 true limit. HTTP API v2, the Go-only REST v1 surface, real WebSocket frames, automatic SQS delivery, DynamoDB Streams and the EventBridge rules are verified.",
-      "description": "Multilang Go handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the Go REST API serves hello and all three buffered SSE events; three WebSocket APIs serve real frames through the $connect authorizer, the custom chat route, $default and the @connections management API; the CDK SQS mapping delivered a real message to the Go handler and deleted it; a real SDK-written table item reached the handler through the DynamoDB Streams mapping with the CDK stream ARN, the test clock expired a TTL item into the documented REMOVE record, and a poison record was bisected and discarded to the on-failure queue; both EventBridge rules are invoked."
+      "gap": "IAM policy evaluation is a docs/125 true limit. Backends are emulated (DynamoDB Local, ElasticMQ, moto); SQS delivery, DynamoDB Streams, EventBridge rules, WebSocket frames and incremental response streaming are real. The REST v1 surface is defined only for the Go handler in this stack.",
+      "description": "Multilang Go handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the Go REST API serves hello and the three SSE events written incrementally; three WebSocket APIs serve real frames through the $connect authorizer, the custom chat route, $default and the @connections management API; the CDK SQS mapping delivered a real message to the Go handler and deleted it; a real SDK-written table item reached the handler through the DynamoDB Streams mapping with the CDK stream ARN, the test clock expired a TTL item into the documented REMOVE record, and a poison record was bisected and discarded to the on-failure queue; both EventBridge rules are invoked."
     },
     "examples/cdk/multilang/handlers/ws-authorizer.mjs": {
       "coveredBy": "examples/cdk/multilang/handlers/go/main.go",
@@ -422,19 +422,19 @@
     "examples/cdk/multilang/handlers/py/handler.py": {
       "run": "multilang-py",
       "class": "L3",
-      "gap": "Response streaming is buffered by the RIE (R3b); the backends are emulated (DynamoDB Local, ElasticMQ, moto) and IAM policy evaluation is a docs/125 true limit. HTTP API v2, real WebSocket frames, automatic SQS delivery, DynamoDB Streams and the EventBridge rules are verified for Python; the REST v1 surface is defined only for the Go handler in this stack.",
+      "gap": "IAM policy evaluation is a docs/125 true limit. Backends are emulated (DynamoDB Local, ElasticMQ, moto); SQS delivery, DynamoDB Streams, EventBridge rules, WebSocket frames and incremental response streaming are real. The REST v1 surface is defined only for the Go handler in this stack.",
       "description": "Multilang Python handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the CDK SQS mapping delivered a real message to the Python handler and deleted it; a real SDK-written table item reached the handler through the DynamoDB Streams mapping with the CDK stream ARN, and the test clock expired a TTL item into the documented REMOVE record; the rate schedule fired and a real SDK PutEvents reached the pattern rule; the Go-only REST surface is also asserted."
     },
     "examples/cdk/multilang/handlers/ts/handler.mjs": {
       "run": "multilang-ts",
       "class": "L3",
-      "gap": "Response streaming is buffered by the RIE (R3b); the backends are emulated (DynamoDB Local, ElasticMQ, moto) and IAM policy evaluation is a docs/125 true limit. HTTP API v2, real WebSocket frames, automatic SQS delivery, DynamoDB Streams and the EventBridge rules are verified for TypeScript; the REST v1 surface is defined only for the Go handler in this stack.",
+      "gap": "IAM policy evaluation is a docs/125 true limit. Backends are emulated (DynamoDB Local, ElasticMQ, moto); SQS delivery, DynamoDB Streams, EventBridge rules, WebSocket frames and incremental response streaming are real. The REST v1 surface is defined only for the Go handler in this stack.",
       "description": "Multilang TypeScript handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the CDK SQS mapping delivered a real message to the TypeScript handler and deleted it; a real SDK-written table item reached the handler through the DynamoDB Streams mapping with the CDK stream ARN, and the test clock expired a TTL item into the documented REMOVE record; the rate schedule fired and a real SDK PutEvents reached the pattern rule; the Go-only REST surface is also asserted."
     },
     "examples/cdk/path-routed-frontend/bin/app.ts": {
       "run": "path-routed-gateway",
       "class": "L3",
-      "gap": "The example ships no SPA build output, so probe objects are written through the runner to the provisioned buckets. CloudFront edge network (docs/125 true limit); Lambda@Edge and KeyValueStore (R5b).",
+      "gap": "The example ships no SPA build output, so probe objects are written through the runner to the provisioned buckets. CloudFront edge network (docs/125 true limit).",
       "description": "Path-routed frontend: the generated SPA function rewrites /l and /auth to index.html, files are served unchanged, the external API origin is refused by name, POST is refused by AllowedMethods and a missing object is 403 under OAC. The external API origin is mapped with --origin to a loopback listener the row starts; the gateway sent the documented origin-request shape (origin path /prod, origin Host, method) and the CACHING_DISABLED behavior reported x-cache miss."
     },
     "examples/cdk/restv1-router/bin/app.ts": {
@@ -459,9 +459,9 @@
     },
     "examples/cdk/restv1-router/handlers/sse.mjs": {
       "run": "restv1-sse",
-      "class": "L3",
-      "gap": "Incremental SSE delivery; the RIE buffers the complete response. Status, content type, all 10 events and [DONE] are asserted.",
-      "description": "REST v1 router SSE handler: the real streamifyResponse handler returns all 10 events and [DONE] as one buffered body."
+      "class": "L2",
+      "gap": "The local REST API integration forwards each chunk at the handler's pace; Lambda's 6 MB uncapped burst and 2 MBps streaming cap are not reproduced.",
+      "description": "REST v1 router SSE handler: the real streamifyResponse handler writes the 10 events and [DONE] incrementally; the row observes the first event before the stream ends."
     },
     "examples/cdk/s3-vectors-semantic-search/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
@@ -539,14 +539,14 @@
     "examples/cdk/ssr-only-provided-assets-site/bin/app.ts": {
       "run": "ssr-only-gateway",
       "class": "L2",
-      "gap": "CloudFront edge network (docs/125 true limit); the AWS_IAM Function URL is reached through local SigV4 OAC signing, but IAM policy evaluation is not emulated. Lambda@Edge and KeyValueStore (R5b); signed URLs/cookies and geo restriction (R5c).",
+      "gap": "CloudFront edge network (docs/125 true limit); the AWS_IAM Function URL is reached through local SigV4 OAC signing, but IAM policy evaluation is not emulated.",
       "description": "SSR_ONLY provided assets: the real handler runs behind an AWS_IAM Function URL origin with local OAC signing and echoes the viewer request id; the provided bucket serves app.js, site.css and probe.txt; a missing object is 403 under OAC and OPTIONS is refused."
     },
     "examples/cdk/ssr-site/bin/apptheory-ssr-site.ts": {
       "run": "ssr-site-gateway",
       "class": "L2",
-      "gap": "CloudFront edge network (docs/125 true limit); response streaming is buffered by the RIE. Lambda@Edge and KeyValueStore (R5b); signed URLs/cookies and geo restriction (R5c).",
-      "description": "SSR site: the origin group fails over from the S3 HTML primary (403 under OAC) to the real SSR handler; viewer-request/viewer-response effects, the assets and hydrate deployments, full and ranged HEAD, conditional If-None-Match GETs, OPTIONS and the missing-object 403 are asserted through the gateway. Caching is real: the static-assets behavior answered a miss then a hit with x-cache and age, the CACHING_DISABLED SSR behavior never cached, an invalidation through the local API and through the aws CLI removed the object, and clock.advance past the TTL was a miss again."
+      "gap": "CloudFront edge network (docs/125 true limit); the gateway forwards a streamed response at the origin's pace and caches it in full after it completes (Lambda's 6 MB uncapped burst and 2 MBps streaming cap are not reproduced).",
+      "description": "SSR site: the origin group fails over from the S3 HTML primary (403 under OAC) to the real SSR handler; the SSR stream reaches the viewer through the gateway and directly on the Function URL as the handler writes it, the viewer-response function echoes the request id, and the assets and hydrate deployments, full and ranged HEAD, conditional If-None-Match GETs, OPTIONS and the missing-object 403 are asserted. Caching is real: the static-assets behavior answered a miss then a hit with x-cache and age, the CACHING_DISABLED SSR behavior never cached, an invalidation through the local API and through the aws CLI removed the object, and clock.advance past the TTL was a miss again."
     },
     "examples/cdk/ssr-site/scripts/generate-assets-manifest.mjs": {
       "run": "ssr-assets-manifest",
@@ -595,6 +595,15 @@
       "coveredBy": "examples/cdk/edge-gateway/bin/app.ts",
       "class": "L2",
       "description": "CloudFront Function runtime 2.0 handler: get (string and json formats), exists and meta against the associated key value store."
+    }
+  },
+  "suites": {
+    "scripts/local/runtime_api_conformance.py": {
+      "class": "L2",
+      "run": "runtime-api-conformance",
+      "script": "scripts/local/runtime_api_conformance.py",
+      "description": "Runtime API conformance: one handler set per language on the real digest-pinned runtime images, run once under the embedded Runtime Interface Emulator and once under the runner's Lambda Runtime API, comparing status, headers, body bytes, handler errors, timeouts and initialization failures.",
+      "gap": "The comparison runs this host's architecture; the Lambda service's Init-phase billing and its 10-second Init limit are not emulated."
     }
   }
 }

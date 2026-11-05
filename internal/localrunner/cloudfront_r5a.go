@@ -127,9 +127,7 @@ func (r *Runner) startCloudFrontControl(ctx context.Context, spec *Spec) error {
 		}
 	}()
 	r.endpoints = append(r.endpoints, Endpoint{Service: "cloudfront", URL: containerURL})
-	if !containsAddHost(r.options.AddHosts, "host.docker.internal:host-gateway") {
-		r.options.AddHosts = append(r.options.AddHosts, "host.docker.internal:host-gateway")
-	}
+	r.addRuntimeHostEntry()
 	r.logf("cloudfront API at %s (containers: %s)", hostURL, containerURL)
 	return nil
 }
@@ -219,6 +217,18 @@ func (o *httpOrigin) Fetch(ctx context.Context, request localcloudfront.OriginRe
 func containsAddHost(hosts []string, wanted string) bool {
 	for _, host := range hosts {
 		if host == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+// hasAddHostName reports whether an add-host entry names host, whatever address
+// it carries.
+func hasAddHostName(hosts []string, host string) bool {
+	prefix := host + ":"
+	for _, entry := range hosts {
+		if strings.HasPrefix(entry, prefix) {
 			return true
 		}
 	}

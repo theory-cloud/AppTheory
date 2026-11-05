@@ -227,7 +227,12 @@ func (s *localSession) describe() (map[string]any, error) { //nolint:gocognit //
 			"environment": function.Environment,
 		}
 		if process, ok := s.runner.invokers[id]; ok {
-			entry["port"] = process.Port
+			if process.Port != 0 {
+				entry["port"] = process.Port
+			}
+			if address := process.RuntimeAPIURL(); address != "" {
+				entry["runtimeApi"] = address
+			}
 		}
 		functions = append(functions, entry)
 	}
@@ -343,6 +348,7 @@ func (s *localSession) describe() (map[string]any, error) { //nolint:gocognit //
 		delivery = s.runner.delivery.State()
 	}
 	document := map[string]any{
+		"runtimeMode":   s.runner.RuntimeMode(),
 		"functions":     functions,
 		"apis":          apis,
 		"cloudFront":    cloudFront,

@@ -70,6 +70,7 @@ func NewTransport(api APISpec, invokers map[string]Invoker, semaphore chan struc
 	}
 }
 
+//nolint:gocyclo // the documented request pipeline is pinned by tests
 func (t *Transport) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	requestID := NewRequestID()
 	// Keep the exact casing API Gateway uses; Header.Set would canonicalize it.
@@ -147,18 +148,101 @@ func (t *Transport) ServeHTTP(writer http.ResponseWriter, request *http.Request)
 		t.fail(writer, http.StatusBadGateway, "Internal Server Error", requestID, err)
 		return
 	}
+	if route.Streaming {
+		if streamer, ok := invoker.(streamInvoker); ok && streamer.StreamingIncremental() {
+			t.serveStreaming(writer, request, streamer, payload, requestID, path)
+			return
+		}
+	}
 	raw, err := invoker.Invoke(request.Context(), payload)
 	if err != nil {
 		t.fail(writer, http.StatusBadGateway, "Internal Server Error", requestID, err)
 		return
 	}
-	response, err := DecodeResponse(raw)
+	response, err := t.decodeBufferedResponse(raw)
 	if err != nil {
 		t.fail(writer, http.StatusBadGateway, "Internal Server Error", requestID, err)
 		return
 	}
 	writeResponse(writer, response)
 	t.logf("%s %s -> %d%s", request.Method, path, response.StatusCode, streamedNote(response.Streamed))
+}
+
+// decodeBufferedResponse decodes a buffered invocation response with the rule
+// for this API surface. A Function URL infers the return-value format exactly as
+// the CloudFront Function URL origin does, so one body has one answer on every
+// local Function URL surface; every other surface keeps the proxy-response
+// decoder.
+func (t *Transport) decodeBufferedResponse(raw []byte) (LambdaResponse, error) {
+	if t.API.Class == APIFunctionURL {
+		return decodeFunctionURLResponse(raw)
+	}
+	return DecodeResponse(raw)
+}
+
+// serveStreaming forwards a response-streaming invocation to the client as the
+// runtime writes it.
+//
+// A Function URL applies the prelude's status, headers and cookies and then
+// forwards the payload chunk by chunk; a prelude-less stream is the raw body of
+// a 200 response. A REST API proxy integration begins the payload stream only
+// after valid metadata and the 8-null-byte delimiter, and answers 500 when the
+// output does not adhere.
+// https://docs.aws.amazon.com/lambda/latest/dg/urls-invocation.html
+// https://docs.aws.amazon.com/apigateway/latest/developerguide/response-transfer-mode-lambda.html
+func (t *Transport) serveStreaming(
+	writer http.ResponseWriter,
+	request *http.Request,
+	streamer streamInvoker,
+	payload []byte,
+	requestID string,
+	path string,
+) {
+	flusher, ok := writer.(http.Flusher)
+	if !ok {
+		t.fail(writer, http.StatusInternalServerError, "Internal Server Error", requestID,
+			errors.New("the local listener cannot flush a streamed response"))
+		return
+	}
+	if t.API.Class == APIFunctionURL {
+		sink := &functionURLStream{writer: writer, flusher: flusher}
+		result, err := streamer.InvokeStream(request.Context(), payload, sink)
+		if err != nil {
+			if !sink.started {
+				t.fail(writer, http.StatusBadGateway, "Internal Server Error", requestID, err)
+			}
+			return
+		}
+		if !sink.started {
+			// A RESPONSE_STREAM URL can still receive a buffered proxy
+			// response; it is decoded exactly like the buffered path.
+			response, decodeErr := t.decodeBufferedResponse(result.Body)
+			if decodeErr != nil {
+				t.fail(writer, http.StatusBadGateway, "Internal Server Error", requestID, decodeErr)
+				return
+			}
+			writeResponse(writer, response)
+			t.logf("%s %s -> %d (buffered response on a streaming Function URL)", request.Method, path, response.StatusCode)
+			return
+		}
+		t.logf("%s %s -> 200 (streamed to the client as the runtime wrote it)", request.Method, path)
+		return
+	}
+
+	sink := &apiGatewayStream{writer: writer, flusher: flusher}
+	result, err := streamer.InvokeStream(request.Context(), payload, sink)
+	if err != nil {
+		if !sink.started {
+			t.fail(writer, http.StatusBadGateway, "Internal Server Error", requestID, err)
+		}
+		return
+	}
+	if endErr := sink.End("", nil); endErr != nil {
+		t.fail(writer, http.StatusInternalServerError, "Internal Server Error", requestID, endErr)
+		return
+	}
+	_ = result
+	t.logf("%s %s -> streamed to the client as the runtime wrote it", request.Method, path)
 }
 
 // authorize runs the route's authorizer. It never bypasses one: a route with an
@@ -764,7 +848,7 @@ func streamedNote(streamed bool) string {
 	if !streamed {
 		return ""
 	}
-	return " (buffered streaming response; the RIE does not stream incrementally)"
+	return " (streamed response delivered as one body on this path)"
 }
 
 // RouteTable renders the derived surface for the CLI's plan output.
@@ -869,7 +953,7 @@ func streamingSuffix(streaming bool) string {
 	if !streaming {
 		return ""
 	}
-	return " (response streaming: buffered locally)"
+	return " (response streaming: streams in the default mode; buffered under --rie)"
 }
 
 // SummarizeEndpoints renders the endpoints the runner injects, sorted.

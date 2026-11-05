@@ -13,6 +13,7 @@ tree or a throwaway tree under the system temp directory.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -50,6 +51,34 @@ class RealTreeTests(unittest.TestCase):
         self.assertEqual([], errors)
         self.assertGreater(len(discovered), 40)
 
+    def test_readme_rows_state_the_manifest_class(self) -> None:
+        _, entries = harness.load_manifest(harness.MANIFEST_PATH)
+        readme = (harness.ROOT / "examples" / "README.md").read_text(encoding="utf-8")
+        rows = []
+        for line in readme.splitlines():
+            if not line.startswith("| `examples/"):
+                continue
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            match = re.search(r"`(examples/[^`]+)`", cells[0])
+            self.assertIsNotNone(match, line)
+            rows.append((match.group(1), cells[2]))
+        self.assertGreater(len(rows), 15)
+        for path, stated in rows:
+            classes = {
+                entry.class_name
+                for entry in entries
+                if entry.kind == "entrypoint"
+                and (entry.key == path or entry.key.startswith(path.rstrip("/") + "/"))
+                and entry.class_name
+            }
+            self.assertTrue(classes, f"{path} names no manifest entrypoint")
+            for klass in sorted(classes):
+                self.assertRegex(
+                    stated,
+                    rf"(?<![A-Za-z0-9]){re.escape(klass)}(?![A-Za-z0-9])",
+                    f"{path}: the row must state class {klass}: {stated!r}",
+                )
+
     def test_documented_exclusions_hold_in_the_real_tree(self) -> None:
         discovered = harness.discover(harness.ROOT)
         self.assertIn("examples/cdk/hello-world/bin/apptheory-hello-world.ts", discovered)
@@ -75,10 +104,10 @@ class RealTreeTests(unittest.TestCase):
         classified = [entry for entry in entries if not entry.pending]
         # 59 wave-1/P1 rows, the E6 SNS targets row and consumer, the E3
         # sqs-event-targets row with its publisher, the covered Kinesis log tap
-        # and rule target handlers, and the wave-2 E4 S3 consumer, R1 WebSocket
+        # and rule target handlers, the wave-2 E4 S3 consumer, R1 WebSocket
         # authorizer, R2a authorizer echo, R2b policy authorizer and R4
-        # lambda-packaging rows.
-        self.assertEqual(84, len(classified))
+        # lambda-packaging rows, and the R3a Runtime API conformance suite.
+        self.assertEqual(85, len(classified))
         by_key = {entry.key: entry for entry in entries}
         expected = {
             "examples/cdk/ssr-site/bin/apptheory-ssr-site.ts": "ssr-site-gateway",
@@ -241,6 +270,38 @@ class ManifestFailureTests(unittest.TestCase):
         }
         errors = self.validate(rows)
         self.assertTrue(any("declare either class or pending" in error for error in errors), errors)
+
+    def test_a_suite_script_must_name_a_real_file(self) -> None:
+        rows = {
+            "examples/demo/main.go": {"run": "run", "class": "L1"},
+            "examples/demo/run.mjs": {"run": "run2", "class": "L1"},
+            "examples/demo/extra.py": {"pending": "A4"},
+        }
+        entries = self.entries(rows) + [
+            harness.Entry(
+                key="scripts/local/missing_conformance.py",
+                kind="suite",
+                data={"class": "L2", "run": "run3", "script": "scripts/local/missing_conformance.py"},
+            )
+        ]
+        runners = {"run": lambda _harness: "ok", "run2": lambda _harness: "ok", "run3": lambda _harness: "ok"}
+        errors = harness.validate_manifest(
+            self.root, Path("examples-local.json"), self.profile, entries, self.discovered, runners
+        )
+        self.assertTrue(
+            any("suite script does not name a file in the tree" in error for error in errors), errors
+        )
+
+        write(self.root, "scripts/local/conformance.py", "print('ok')\n")
+        entries[-1] = harness.Entry(
+            key="scripts/local/conformance.py",
+            kind="suite",
+            data={"class": "L2", "run": "run3", "script": "scripts/local/conformance.py"},
+        )
+        errors = harness.validate_manifest(
+            self.root, Path("examples-local.json"), self.profile, entries, self.discovered, runners
+        )
+        self.assertEqual([], errors)
 
     def test_covered_by_resolves_to_a_running_row(self) -> None:
         rows = {

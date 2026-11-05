@@ -100,7 +100,7 @@ func TestRouteTableAndEndpointSummary(t *testing.T) {
 		FunctionURLs: []FunctionURLSpec{{LogicalID: "Url", Function: "Fn", Streaming: true}},
 	}
 	lines := strings.Join(RouteTable(spec), "\n")
-	for _, fragment := range []string{"api httpv2", "api restv1", "api fnurl", "buffered locally"} {
+	for _, fragment := range []string{"api httpv2", "api restv1", "api fnurl", "buffered under --rie"} {
 		if !strings.Contains(lines, fragment) {
 			t.Fatalf("route table missing %q:\n%s", fragment, lines)
 		}
@@ -119,7 +119,7 @@ func TestServerHeaderHelpers(t *testing.T) {
 	if isHopByHopHeader("Content-Type") {
 		t.Fatal("content-type must be forwarded")
 	}
-	if streamedNote(false) != "" || !strings.Contains(streamedNote(true), "buffered") {
+	if streamedNote(false) != "" || !strings.Contains(streamedNote(true), "delivered as one body") {
 		t.Fatal("unexpected streamed note")
 	}
 }

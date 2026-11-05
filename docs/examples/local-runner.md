@@ -44,9 +44,20 @@ caller: `provided.al2023` for Go, `nodejs:24` for Node, `python:3.14` for Python
 
 ## Run your own app
 
-The commands above run from this repository. An app that lives anywhere else
-uses the same command; `--app` is the app's CDK directory and `--profile` pins
-the runtime images:
+A fresh checkout needs the repository's two dependency trees before a CDK
+example synthesizes. The examples import `cdk/` as a file dependency and their
+bundling steps use the TypeScript runtime, so without them `cdk synth` fails
+with a bare `ts-node` error:
+
+```bash
+(cd cdk && npm ci)
+(cd ts && npm ci)
+```
+
+`make examples-local` installs both through the repository's own contract; the
+commands above run from this repository. An app that lives anywhere else uses
+the same command; `--app` is the app's CDK directory and `--profile` pins the
+runtime images:
 
 ```bash
 # Run a released module without checking out AppTheory.
@@ -366,14 +377,16 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
    EventBridge rule targets and Lambda log-subscription destinations. A zip
    function uses the official image for its runtime, digest-pinned in the
    profile; a container-image function is built from its CDK `DockerImageAsset`
-   by the real `docker build` before any listener starts serving. Handlers run
-   under the embedded Runtime Interface Emulator; the transport invokes
-   `/2015-03-31/functions/function/invocations`.
+   by the real `docker build` before any listener starts serving. Handlers talk
+   to the runner's Lambda Runtime API (`AWS_LAMBDA_RUNTIME_API` points at it);
+   `--rie` runs them under the image's embedded emulator instead. See
+   [Lambda Runtime API](#lambda-runtime-api).
 10. **Serve, invoke or session.** One loopback listener per API (and per
     Function URL) builds the provider event for the matched route, runs a
     CUSTOM request authorizer first when the route declares one, invokes the
-    handler and decodes the response — including the RIE's buffered streaming
-    frame. One gateway listener per servable CloudFront distribution serves the
+    handler and decodes the response. A streamed response is forwarded as the
+    runtime writes it, including the metadata prelude for a Function URL or a
+    REST API proxy integration. One gateway listener per servable CloudFront distribution serves the
     distribution's local URL: it selects the cache behavior, runs the generated
     CloudFront Functions, applies the edge policies and refuses an unwired
     origin with a named 503. `invoke` instead sends explicit events to one warm
@@ -399,6 +412,243 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
     labelled with that app; it does not delete the stale run scratch directory.
     That directory is `<scratch>/runs/<app>-<run>`, where `--scratch` defaults to
     `<user cache>/apptheory-local`; it is safe to delete by hand.
+
+## Lambda Runtime API
+
+Every function container talks to the runner over the Lambda Runtime API. The
+runner starts the container with `AWS_LAMBDA_RUNTIME_API` set to its own
+listener, so the base image's entry script takes the branch that execs the
+runtime interface client and the embedded Runtime Interface Emulator never
+runs:
+
+> "`AWS_LAMBDA_RUNTIME_API` – The host and port of the runtime API."
+> ([custom runtime requirements](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-custom.html))
+
+> The base image entry script "checks for the presence of the
+> `AWS_LAMBDA_RUNTIME_API` environment variable": when it is set the script
+> execs the runtime interface client directly, otherwise it runs the emulator.
+> ([Runtime Interface Emulator](https://github.com/aws/aws-lambda-runtime-interface-emulator))
+
+The listener implements the 2018-06-01 API:
+
+- `GET /2018-06-01/runtime/invocation/next` is a blocking long poll that
+  carries `Lambda-Runtime-Aws-Request-Id`, `Lambda-Runtime-Deadline-Ms` ("The
+  date that the function times out in Unix time milliseconds"),
+  `Lambda-Runtime-Invoked-Function-Arn` (`arn:aws:lambda:<region>:<account>:function:<logical-id>`),
+  `Lambda-Runtime-Trace-Id` and `Lambda-Runtime-Invocation-Id`. The GET has no
+  timeout: "Do not set a timeout on the GET request as the response may be
+  delayed"
+  ([runtime API](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-api.html)).
+  The client-context and cognito-identity headers are omitted because the runner
+  never makes an AWS Mobile SDK invocation.
+- `POST /2018-06-01/runtime/invocation/{AwsRequestId}/response` accepts a
+  buffered body and a chunked streaming body. The invocation id is optional:
+  "The header is optional for backward compatibility with existing
+  runtimes—omitting it does not trigger a rejection. Lambda only rejects with
+  400 InvalidInvocationId when the header is present but its value does not
+  match the active invocation" (same page).
+- `POST /2018-06-01/runtime/invocation/{AwsRequestId}/error` is accepted only
+  before the response starts: "The runtime can use this endpoint to report
+  function or runtime errors to Lambda, which also accepts the
+  `Transfer-Encoding` header. This endpoint can only be called before the
+  runtime begins sending an invocation response"
+  ([custom runtime](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-custom.html)).
+  Its body is the `ErrorRequest` object
+  (`{errorMessage, errorType, stackTrace}`), and the error type carries through
+  the `Lambda-Runtime-Function-Error-Type` header.
+- `POST /2018-06-01/runtime/init/error` records an initialization failure.
+  The `Lambda-Runtime-Function-Error-Type` header is normalized on both
+  `/init/error` and `/error`: the page recommends the format
+  "`<Category.Reason>`, where `Category` is `Runtime` or `Function` and
+  `Reason` starts with an uppercase letter", and "Values that do not match this
+  pattern are normalized to `Runtime.Unknown` or `Function.Unknown`"
+  ([runtime API](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-api.html)).
+  The error type in the runtime's own JSON body is kept as the runtime sent it.
+- The response codes are the documented ones: `202 Accepted`, `400 Bad
+  Request` (`InvalidInvocationId`), `403 Forbidden` (an answer for an
+  invocation that is no longer active) and `500` ("Container error.
+  Non-recoverable state. Runtime should exit promptly"). A request the runtime
+  would answer twice is a 500 because only one answer per attempt is accepted.
+- `GET /runtime/restore/next` and `POST /runtime/restore/error` answer `404`
+  with "SnapStart is not enabled for this function": SnapStart is not
+  emulated.
+
+One invocation runs at a time per container, which is the default-capacity
+contract: "the runtime processes one invocation at a time" outside Lambda
+Managed Instances
+([custom runtime](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-custom.html)).
+The runner serializes invocations to a container, so a delivery batch and an
+HTTP request for the same function queue rather than racing.
+
+### Lifecycle
+
+The runtime's first `next` request is the end of the Init phase: "The Init
+phase ends when the runtime and all extensions signal that they are ready by
+sending a Next API request"
+([execution environment lifecycle](https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtime-environment.html)).
+A timeout, a crash and an initialization failure end the execution environment,
+and the runner replaces it for the next invocation, as the page describes:
+
+> "If the Lambda function crashes or times out during the Invoke phase, Lambda
+> resets the execution environment." The reset "behaves like a Shutdown event".
+> If the environment is used again, "Lambda re-initializes the extension and
+> runtime together with the next invocation."
+> ([execution environment lifecycle](https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtime-environment.html))
+
+The documented shapes the invoker sees:
+
+- **Timeout.** The invocation fails with `errorType: Sandbox.Timedout` and the
+  page's message form: `Task timed out after 3.00 seconds`, prefixed with the
+  invocation's timestamp and request id (the form of the logged line on the
+  troubleshooting page).
+- **Initialization failure.** A module that throws during initialization calls
+  `/runtime/init/error` and exits; the invocation fails with that error's type
+  and message. "If an error occurs, call the initialization error API and exit
+  immediately" ([custom runtime](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-custom.html)).
+  A runtime process that exits before calling `next` is reported as
+  `Runtime.ExitError` with `Runtime exited with error: exit status N`, the
+  documented `Runtime.ExitError` type from the troubleshooting page.
+- **Handler error.** A `/error` post reaches the invoker with the error type
+  and body, and the runner's existing handler-error contract is unchanged for
+  every caller (Function URL, API Gateway, WebSocket, the delivery engine and
+  `apptheory-local invoke`).
+- **Midstream error.** A streamed response may end with the
+  `Lambda-Runtime-Function-Error-Type` and `Lambda-Runtime-Function-Error-Body`
+  trailers. "Lambda treats this as a successful response and forwards the error
+  metadata that the runtime provides to the client"
+  ([custom runtime](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-custom.html)).
+  The local transports forward the bytes and log the error metadata.
+
+The reserved runtime environment variables are set as the configuration page
+lists them
+([defined runtime environment variables](https://docs.aws.amazon.com/lambda/latest/dg/configuration-envvars.html#configuration-envvars-runtime)):
+`_HANDLER`, `AWS_LAMBDA_RUNTIME_API`, `AWS_LAMBDA_FUNCTION_NAME`,
+`AWS_LAMBDA_FUNCTION_VERSION` (`$LATEST`), `AWS_LAMBDA_FUNCTION_MEMORY_SIZE`
+(the function's memory), `AWS_LAMBDA_LOG_GROUP_NAME` (`/aws/lambda/<name>`),
+`AWS_LAMBDA_LOG_STREAM_NAME`, `AWS_LAMBDA_INITIALIZATION_TYPE` (`on-demand`),
+`LAMBDA_TASK_ROOT`, `LAMBDA_RUNTIME_DIR`, `AWS_REGION`/`AWS_DEFAULT_REGION`
+and `TZ`. The image itself supplies `LANG`, `PATH` and `LD_LIBRARY_PATH`.
+
+### Response streaming
+
+A response is streamed when the runtime sends a chunked body; the documented
+signal is both the response-mode header and the transfer encoding:
+
+> "Set the `Lambda-Runtime-Function-Response-Mode` HTTP header to `streaming`."
+> "Set the `Transfer-Encoding` header to `chunked`."
+> ([custom runtime](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-custom.html))
+
+The runner accepts either. The Node.js runtime sets both. The Go runtime client
+(`aws-lambda-go`) sends only `Transfer-Encoding: chunked`; treating that as a
+stream is what lets a Go handler stream through the same listener.
+
+A streamed `/response` body is forwarded to the invoker chunk by chunk as the
+runtime writes it. For a Function URL and for a REST API proxy integration the
+public format is a metadata JSON prelude, the 8-null-byte delimiter and the
+payload; the transport applies the status, headers and cookies as soon as the
+prelude is complete:
+
+- Function URL: the prelude uses the same `statusCode`/`headers`/`cookies`
+  fields as the buffered response payload
+  ([Function URL payloads](https://docs.aws.amazon.com/lambda/latest/dg/urls-invocation.html)).
+  A prelude that omits `statusCode` is a `200` with the prelude's headers and
+  the payload, the same answer the standalone listener gives a buffered frame.
+  A stream without a valid prelude is delivered as a raw `200` body with the
+  runtime's `Content-Type`; the Function URL pages do not define that case, so
+  the local rule is documented here.
+- REST API: "API Gateway begins the payload stream after it receives the valid
+  metadata and delimiter from Lambda"; the format is
+  `{headers, multiValueHeaders, cookies, statusCode}<DELIMITER>payload`, "The
+  delimiter must be 8 null bytes and it must appear within the first 16KB of
+  stream data", and "If your function doesn't return either of these headers,
+  API Gateway appends `Transfer-Encoding: chunked` to the response header". A
+  function whose output does not adhere is a `500`: "API Gateway invokes your
+  Lambda function and return a 500 error response"
+  ([response transfer mode](https://docs.aws.amazon.com/apigateway/latest/developerguide/response-transfer-mode-lambda.html)).
+- CloudFront: when the Function URL origin returns a chunked response,
+  "CloudFront returns the object to the client as the object is received at the
+  edge location, and caches the object in chunked format for subsequent
+  requests"; "If your origin returns this header field, CloudFront sets the
+  value to `chunked` before returning the response to the viewer"; a Range GET
+  against a chunked response "returns the entire object to the viewer instead
+  of the requested range"; and "if the chunked response is not complete,
+  CloudFront does not cache the object". The origin response timeout applies
+  "after receiving a packet of a response from the origin and before receiving
+  the next packet"
+  ([custom origin behavior](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/RequestAndResponseBehaviorCustomOrigin.html)).
+  The local gateway implements those rules: it flushes each chunk, caches the
+  object only after the stream completes, does not cache an incomplete stream,
+  returns the whole object for a Range GET, and applies the between-packet
+  timeout from the origin's `CustomOriginConfig.OriginReadTimeout` (default 30
+  seconds, as the page states).
+  The Lambda@Edge viewer-response function runs at the prelude, once the status
+  and headers are known: its event carries `headers`, `status` and
+  `statusDescription`, not the body, so it cannot change the status
+  ([event structure](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-event-structure.html)).
+  A Function URL whose `InvokeMode` is `BUFFERED` (the template default)
+  returns a complete, non-chunked response, so the origin takes the unchanged
+  buffered path and every buffered rule above applies.
+  A stream that ends with the `Lambda-Runtime-Function-Error-Type` and
+  `Lambda-Runtime-Function-Error-Body` trailers is forwarded to the viewer but
+  not cached; the gateway logs the trailer metadata and treats the object as
+  incomplete.
+
+Response streaming is available on the Node.js managed runtime and, for other
+languages, "you can use a custom runtime with a custom Runtime API
+integration"; Python therefore buffers, and the Python conformance case
+compares buffered responses only
+([response streaming](https://docs.aws.amazon.com/lambda/latest/dg/configuration-response-streaming.html)).
+
+**Documented deviations.** The runner forwards at the origin's pace; Lambda's
+"first 6 MB of your function's response payload has uncapped bandwidth. After
+this initial burst, Lambda streams your response at a maximum rate of 2 MBps"
+is not reproduced. The maximum response sizes (6 MB buffered, 200 MB streamed)
+are not enforced, because enforcing them could fail a local call that succeeds
+today.
+
+### Runtime Interface Emulator mode
+
+`--rie` runs each function under the image's embedded Runtime Interface
+Emulator instead of the runner's Runtime API. It exists for two cases: comparing
+a handler against the emulator, and an image whose entry script ignores
+`AWS_LAMBDA_RUNTIME_API`. The mode is reported in `plan` (`runtime: rie …`), in
+`plan --json` (`runtimeMode`) and in `session describe` (`runtimeMode` and, per
+function, the emulator `port`). It cannot stream incrementally: the emulator
+buffers every response, which is why the streaming rows run in the default
+mode.
+
+### Conformance suite
+
+`scripts/local/runtime_api_conformance.py` builds one handler set per language
+on the real, digest-pinned runtime images (Go on `provided.al2023` via a
+`bootstrap`, Node and Python) and runs each case twice through the runner's own
+`invoke` path: once with `--rie` and once with the default Runtime API. It
+compares status, headers, body bytes, handler error type and message, the
+timeout outcome and the initialization-failure outcome, and it reports every
+remaining difference with the page that decides which mode is right. The suite
+is also a harness row (`make examples-local`), class L2:
+
+```bash
+python3 scripts/local/runtime_api_conformance.py \
+  --runner ~/.cache/apptheory-examples-local/bin/apptheory-local \
+  --profile scripts/local/examples-local.json
+```
+
+Cases: a buffered JSON response, a proxy response with headers and cookies, a
+handler error, an initialization failure, a timeout, a Node.js
+`streamifyResponse` stream and a Go `io.Reader` stream; Python is buffered only
+for the reason quoted above.
+
+Observed emulator deviations (the runner follows the page, not the emulator):
+
+- a timeout is a `200` plain-text `Task timed out after N.NN seconds` body in
+  the emulator; the page's client-visible shape is an error with
+  `errorType: Sandbox.Timedout`;
+- an initialization failure is a `502` with the raw error body in the emulator;
+  the runner reports the `init/error` type and message (or `Runtime.ExitError`
+  when the runtime exits before `next`);
+- the emulator buffers every response, so it has no chunk timing to compare;
+- the emulator does not implement `/runtime/restore/*`; both modes answer 404.
 
 ## moto-backed services: SSM, Secrets Manager, SNS, Kinesis, Cognito and KMS signing
 
@@ -889,8 +1139,9 @@ contains the custom error pages" is returned, i.e. the pages origin's status. A
 custom page is cached under the same status/header rule as its `ErrorCode`.
 
 **Invalidation.** The run serves `CreateInvalidation`, `GetInvalidation` and
-`ListInvalidations` on a loopback control endpoint, injected into every function
-as `AWS_ENDPOINT_URL_CLOUDFRONT` and printed by `run` and `session describe`. A
+`ListInvalidations` on a control endpoint that binds every interface, injected
+into every function as `AWS_ENDPOINT_URL_CLOUDFRONT`; `run` prints the
+`127.0.0.1` URL and `session describe` reports it. A
 batch may list at most 3000 paths, every path begins with `/`, is case
 sensitive, is URL-decoded before matching and is at most 4000 characters; a `~`
 is refused. "The *, which replaces 0 or more characters, must be the last
@@ -951,9 +1202,18 @@ same assembly:
   2.0 event from the origin request (method, origin path, raw path, query,
   cookies, headers, viewer IP and request id), invokes the real function through
   the same runtime container `run` starts, and maps `statusCode`, `headers`,
-  `cookies`, `isBase64Encoded` and `body` back. A `RESPONSE_STREAM` function is
-  **buffered by the RIE**: the body is complete and its chunk timing is never
-  reproduced. A `NONE` URL is invoked directly. An `AWS_IAM` URL is signed with
+  `cookies`, `isBase64Encoded` and `body` back. A return value without a
+  `statusCode` follows the page's inference rule on every local Function URL
+  surface: valid JSON is a `200` with `content-type: application/json` and the
+  function response as the body, while an error payload stays the documented
+  `502` ([Function URL payloads](https://docs.aws.amazon.com/lambda/latest/dg/urls-invocation.html)).
+  The standalone listener (buffered, and a buffered response on a
+  `RESPONSE_STREAM` URL) decodes through the same rule, and a streaming prelude
+  whose metadata omits `statusCode` is a `200` with the prelude's headers and
+  the framed payload. A `RESPONSE_STREAM` function's chunks reach the gateway
+  as the runtime writes them; the prelude supplies the status, headers and
+  cookies and the payload follows. A `NONE` URL is invoked
+  directly. An `AWS_IAM` URL is signed with
   SigV4 over the method, path, query, Host, body hash and date; the gateway's
   in-process verifier checks that locally signed request before it invokes the
   handler, and the event reports `requestContext.authorizer.iam` with a loopback
@@ -1229,10 +1489,15 @@ built handler and the caller supplies every event. It exists because the Go MCP
 examples ship a handler but no CDK definition. A handler-only row is never
 described as CDK-routed.
 
-Streaming over a warm container is still buffered by the RIE: a tool call's
-complete SSE body arrives after the handler finishes, and `streamed` marks the
-framed response. The MCP rows assert session creation, event ids and
-Last-Event-ID replay content; they never claim incremental delivery.
+`--stream-chunks` makes the warm protocol carry a streamed response as it
+arrives: for each streamed invocation the runner writes one
+`{"event":"chunk","invocation":N,"index":I,"contentType":…,"data":"<base64>"}`
+line per chunk and then exactly one result line, which is the same result object
+the default protocol writes plus `"event":"result"` and `"invocation"`. A
+buffered response still produces no chunk lines, so a caller that does not pass
+the flag keeps the existing one-result-per-event contract. The MCP row uses the
+arrival times to prove the first SSE event crossed the runner before the
+countdown finished.
 
 ## Automation sessions
 
@@ -1261,8 +1526,9 @@ defines but a deployment caller invokes.
 
 The operations, in the order the examples use them:
 
-- `describe` — the started functions (with resolved environment and RIE port),
-  HTTP listener URLs, event-source mappings, EventBridge rules, subscriptions,
+- `describe` — the started functions (with resolved environment and, per
+  function, the Runtime API address or the emulator port under `--rie`), the
+  run's `runtimeMode`, HTTP listener URLs, event-source mappings, EventBridge rules, subscriptions,
   provisioned resources (name, URL, ARN, stream ARN), local secrets and the live
   delivery-engine state.
 - `clock.now` — the run's clock mode and current instant.
@@ -1292,6 +1558,7 @@ The operations, in the order the examples use them:
   the previous image when one is cached), using the table's stream ARN, view
   type and the real key schema.
 - `s3.put` — write one object to a provisioned s3proxy bucket.
+- `s3.delete` — delete one object from a provisioned s3proxy bucket.
 - `eventbridge.event` — build the event an `AWS::Events::Rule` delivers,
   deriving a scheduled envelope from `ScheduleExpression` or the source and
   detail-type from the rule's declared `EventPattern`.
@@ -1562,16 +1829,22 @@ The runner serves the EventBridge `PutEvents` JSON protocol itself on an
 ephemeral port injected into every function as `AWS_ENDPOINT_URL_EVENTS` and
 `AWS_ENDPOINT_URL_EVENTBRIDGE` (the SDKs and Tools reference names the override
 from EventBridge's API-model serviceId; both spellings point at the same
-endpoint). Function containers reach it as `host.docker.internal:<port>` with
-the `host-gateway` entry the runner adds. The listener binds every interface so
-that entry works on Linux, where it resolves to the bridge address; the session
-reports and the harness uses `http://127.0.0.1:<port>`. The endpoint is
-unauthenticated and reachable from any interface on the host while a session
-runs; it and the WebSocket `@connections` management listener are the runner's
-non-loopback listeners, and the backends publish on `127.0.0.1`. A handler's
-real SDK client and the harness's AWS CLI reach the same endpoint. A rule's
-pattern is matched by the validated EventBridge evaluator E1b uses, and the
-runner performs input shaping, target delivery, retry and dead-letter handling.
+endpoint). Function containers reach it as `host.docker.internal:<port>`
+through the host entry the runner adds: on Linux, where the host owns the run
+network's gateway, the entry names that gateway address, and elsewhere the
+entry keeps Docker's `host-gateway` value, which Colima and Docker Desktop
+forward to the host's loopback. The listener binds every interface so that
+entry works in both cases; the session reports and the harness uses
+`http://127.0.0.1:<port>`. The endpoint is unauthenticated and reachable from
+any interface on the host while a session runs. The EventBridge endpoint, the
+WebSocket `@connections` management listener and the CloudFront control endpoint
+bind every interface; the Runtime API listener binds loopback or, when the
+container cannot reach it, the run network's gateway address (see
+[Requirements](#requirements)); the backends publish on `127.0.0.1`. A
+handler's real SDK client and the harness's AWS CLI reach the same endpoint. A
+rule's pattern is matched by the validated EventBridge evaluator E1b uses, and
+the runner performs input shaping, target delivery, retry and dead-letter
+handling.
 
 The own bus was chosen over the pinned moto events service after probing
 `motoserver/moto@sha256:59a1965d` (5.2.5):
@@ -1583,7 +1856,7 @@ The own bus was chosen over the pinned moto events service after probing
 | `Input` on a target | Accepted and ignored | Implemented |
 | `InputTransformer` | Not applied | Implemented |
 | Retry policy and `DeadLetterConfig` | Accepted, no retry or DLQ behavior | Implemented on the run clock |
-| Lambda target delivery to the RIE | Cannot reach the local function containers | Invokes the real container |
+| Lambda target delivery to a local function | Cannot reach the local function containers | Invokes the real container |
 | ElasticMQ target | moto's SQS is a different queue service | Sends to the application's ElasticMQ queue |
 | Schedules | Never fire | Fire on the run clock |
 
@@ -1888,7 +2161,7 @@ target path as an observed SDK publish.
 
 | Observed moto behaviour | How the runner implements AWS's behaviour |
 | --- | --- |
-| Moto's SNS fan-out only reaches moto's own SQS and cannot reach the RIE or ElasticMQ | The runner creates a drain queue on moto's SQS and performs the application fan-out itself. |
+| Moto's SNS fan-out only reaches moto's own SQS and cannot reach a local function container or ElasticMQ | The runner creates a drain queue on moto's SQS and performs the application fan-out itself. |
 | A non-raw FIFO delivery reports the SHA-256 of the SNS envelope as `MessageDeduplicationId` | The runner detects the envelope hash, recomputes the documented content-based deduplication id from the message body, and forwards that to FIFO queues and the deduplication window. |
 | The envelope's `UnsubscribeURL` names a placeholder subscription ARN | The runner builds `UnsubscribeUrl`/`UnsubscribeURL` from the subscription ARN it registered; the local runner does not serve the unsubscribe action. |
 | FIFO topic content-based deduplication is enforced by the drain queue, whose deduplication window ends when the drain message is deleted | The runner keeps its own five-minute deduplication window on the run clock, so a duplicate publish after the drain message is consumed is still suppressed. |
@@ -2089,8 +2362,8 @@ the harness records it.
 | --- | --- | --- |
 | HTTP API v2 (`AWS::ApiGatewayV2::Api`, HTTP) | Supported (L1) | v2.0 events with `routeKey`, `rawPath`, `requestContext.http`, cookies and path parameters. The `cookie` header is removed when `cookies` is populated, as AWS does. |
 | REST API v1 (`AWS::ApiGateway::RestApi`) | Supported (L1) | v1 events with `resource`, `multiValueHeaders`, `multiValueQueryStringParameters` and the stage. |
-| Lambda Function URL | Supported (L1) | Function URL events carry `routeKey: "$default"` (top-level and in `requestContext`, with `requestContext.stage`) and a `.lambda-url.<region>.on.aws` domain, which the runtime uses to tell them apart from HTTP API v2. A URL with an auth type other than `NONE` is reported under `skipped`, not served as a standalone URL; a distribution can still reference it as an origin. |
-| Response streaming (`awslambda.streamifyResponse`, SSE) | Supported, **buffered** (L3) | The RIE buffers the whole response and returns metadata JSON + eight NUL bytes + body. The transport reproduces status, headers and complete bytes; it never reproduces chunk timing. |
+| Lambda Function URL | Supported (L1) | Function URL events carry `routeKey: "$default"` (top-level and in `requestContext`, with `requestContext.stage`) and a `.lambda-url.<region>.on.aws` domain, which the runtime uses to tell them apart from HTTP API v2. A `RESPONSE_STREAM` URL forwards the prelude and the payload incrementally; a `BUFFERED` URL (the template default) serves the complete response, and behind CloudFront it takes the buffered finish path. A URL with an auth type other than `NONE` is reported under `skipped`, not served as a standalone URL; a distribution can still reference it as an origin. |
+| Response streaming (`awslambda.streamifyResponse`, SSE) | Supported (L2) | A chunked runtime response is forwarded to the Function URL, REST API proxy integration and CloudFront viewer as the runtime writes it; the Function URL and REST formats (metadata JSON, 8 null bytes, payload) and the midstream error trailers are implemented. Lambda's 6 MB uncapped burst and 2 MBps cap are not reproduced (documented deviation). |
 | Inline `Code.ZipFile` | Supported (Node, Python) | Materialized under the run scratch directory before the container starts. |
 | arm64 `provided.al2023` | Supported (L1) | Uses the host-arch image; a bootstrap built for the other architecture fails closed with a clear error. |
 | DynamoDB Local | Supported (L2) | `--backend dynamodb` starts the profile's digest-pinned `amazon/dynamodb-local` on the run network; SDK clients resolve through `AWS_ENDPOINT_URL_DYNAMODB`. Tables are created from the CDK key schema, GSIs, streams and TTL. SSE, PITR and deletion protection are not provisioned. |
@@ -2111,7 +2384,7 @@ the harness records it.
 | WebSocket APIs (`AWS::ApiGatewayV2::Api`, WEBSOCKET) | Served (L2) | A real RFC 6455 listener serves `$connect`, `$disconnect`, `$default` and custom routes selected by the route selection expression, with the documented proxy event, two-way route responses, the `$connect` policy authorizer, the `@connections` management API and the documented idle/lifetime close; see [WebSocket APIs](#websocket-apis). No custom domains and no IAM authorization. |
 | CloudFront distributions and CloudFront Functions | Served (L2) | The distribution is served on its own loopback URL. Cache behaviors, allowed methods, viewer-request/viewer-response functions, origin request policies and response headers policies are applied; the generated function code runs in a restricted Node sandbox. S3 origins read the app's deployments from s3proxy, Function URL origins invoke the real handler container, and origin groups fail over with CloudFront's rules. No edge network and no TLS. |
 | CloudFront caching | Supported (L2) | The cache key (GET and HEAD share one key, OPTIONS is separate), `CachedMethods`, `CACHING_DISABLED`, the Expiration-page TTL rules, stale-while-revalidate, stale-if-error (including a 5xx origin response for an expired object) and the HTTPStatusCodes-page error caching table are applied; hits answer `x-cache`/`age`; `session describe` reports per-behavior hit/miss counts. A viewer Range request bypasses the local cache (documented deviation); a conditional request is answered 304 from the cached validators. See [Caching and invalidation](#caching-and-invalidation). |
-| CloudFront invalidation | Supported (L2) | `CreateInvalidation`, `GetInvalidation` and `ListInvalidations` are served on a loopback control endpoint injected as `AWS_ENDPOINT_URL_CLOUDFRONT`; the aws CLI and the SDK share it. Paths are matched against the cached path plus the selected query string, with a trailing `*` only, and `CallerReference` reuse follows the API reference. See [Caching and invalidation](#caching-and-invalidation). |
+| CloudFront invalidation | Supported (L2) | `CreateInvalidation`, `GetInvalidation` and `ListInvalidations` are served on a control endpoint that binds every interface and is injected as `AWS_ENDPOINT_URL_CLOUDFRONT`; the aws CLI and the SDK share it. Paths are matched against the cached path plus the selected query string, with a trailing `*` only, and `CallerReference` reuse follows the API reference. See [Caching and invalidation](#caching-and-invalidation). |
 | CloudFront custom error responses | Supported (L2) | `CustomErrorResponses` is served: the page is fetched through the first cache behavior that matches its path, from that behavior's origin and with its origin request policy, with the configured status; a matching behavior's TTL wins, and an unavailable page returns the pages origin's status. |
 | CloudFront external custom origins | Supported with `--origin` (L2) | An external custom origin is refused at plan time unless `--origin domain=loopback-url` maps it; a non-loopback mapping is refused. The mapped origin receives the documented origin-request shape. |
 | REST `MOCK` integrations | Supported (L1) | The transport returns the `IntegrationResponses` status and headers the template declares and invokes no function. CDK emits these for CORS preflight. |
@@ -2120,7 +2393,7 @@ the harness records it.
 | REST API Cognito user-pool authorizers | Supported (L2) | The token is validated against the pool's JWKS through the local issuer with the same RSA-only algorithm and claim checks as the HTTP JWT authorizer; `AuthorizationScopes` is an any-of match and the claims reach the integration in `requestContext.authorizer.claims`; see [Authorizers](#authorizers). |
 | REST/HTTP Lambda authorizers with IAM-policy responses | Supported (L2) | A REST `TOKEN` or `REQUEST` `AWS::ApiGateway::Authorizer` and an HTTP API `REQUEST` authorizer with `EnableSimpleResponses: false` run the real function and match its returned policy narrowly against the method/route ARN. Identity sources are 401 before invocation when missing; `AuthorizerResultTtlInSeconds` caches the policy on the run clock with the documented cache key, and a hit is re-evaluated against the current method/route ARN; a response without `principalId` is invalid; Allow invokes, Deny is 403, the `Unauthorized` error is 401 and an invalid response is 500; the stringified context reaches `requestContext.authorizer`; see [Authorizers](#authorizers). |
 | Lambda layers | Supported | A function's `Layers` resolve to LayerVersions in the same assembly; their content is extracted into `/opt` in the listed order (later layers win) with `/opt/bin` on `PATH`, `/opt/lib` on `LD_LIBRARY_PATH`, `/opt/nodejs/node_modules` on `NODE_PATH` and both `/opt/python` and `/opt/python/lib/python<major>.<minor>/site-packages` on `PYTHONPATH`. A relative symlink inside the layer is kept as a symlink; an absolute or escaping one is refused by name. The five-layer limit and an external layer ARN are refused by name; see [Lambda layers and container-image functions](#lambda-layers-and-container-image-functions). |
-| Container-image functions | Supported | `PackageType: Image` with a CDK `DockerImageAsset` is built by the real `docker build` (directory, Dockerfile, target, platform and build arguments from the assembly) before serving, then run under the image's own Runtime Interface Emulator through the same invocation path as a zip function. An image without the emulator, and an image function that declares layers, are refused by name. |
+| Container-image functions | Supported | `PackageType: Image` with a CDK `DockerImageAsset` is built by the real `docker build` (directory, Dockerfile, target, platform and build arguments from the assembly) before serving, then run through the same Runtime API invocation path as a zip function (or under the image's own emulator with `--rie`). An image function that declares layers is refused by name. |
 | CloudFormation-expression environment values | Supported for `Ref`/`Fn::GetAtt`/`Fn::Join` | Tables and stream ARNs, queues, rules, buckets, KMS keys and aliases, SSM parameters, Secrets Manager ARNs, SNS topics, Kinesis streams, Cognito pool/client values, IAM/MicroVM-image/S3 Vectors ARNs and functions resolve to local values (moto/S3 require their backend). An unsupported expression fails with the function and variable named. |
 | CloudFormation-expression `MemorySize`/`Timeout` | Not resolved | A served function whose limit is `Ref`/`GetAtt`/`Fn::If` fails with the property named; the AWS defaults apply only when the property is absent. |
 | One function, explicit events (`invoke`) | Supported | Starts one function and sends newline-delimited JSON events to a warm container; `--handler-dir` runs a handler that has no CDK definition and derives no routes. |
@@ -2130,9 +2403,11 @@ the harness records it.
 
 ## Known gaps
 
-- **Streaming is buffered.** A handler that streams is not incremental under the
-  Runtime Interface Emulator. Tests can assert the complete bytes and the status
-  and headers, never the timing of individual chunks.
+- **Streaming bandwidth.** A streamed response is forwarded at the origin's
+  pace. Lambda gives the first 6 MB of a response uncapped bandwidth and then
+  caps the rate at 2 MBps; the local gateway does not reproduce either number.
+  The 6 MB buffered and 200 MB streamed payload limits are not enforced either,
+  so a local call that works today keeps working.
 - **WebSocket domains and IAM authorization** are out of scope. The API is
   served on a loopback `ws://` URL, so a custom domain name and its certificate
   are not modelled; `AWS_IAM` route authorization and REST-style Lambda
@@ -2149,7 +2424,7 @@ the harness records it.
   emulated; the local S3 origin returns the S3 status the OAC/OAI access model
   produces. `If-Range` is not forwarded to the S3 origin (CloudFront forwards
   it by default), so a conditional range is served as an unconditional
-  range. A Function URL `RESPONSE_STREAM` body is buffered. An `AWS_IAM`
+  range. An `AWS_IAM`
   Function URL's SigV4 signing and the gateway's in-process check of that
   locally signed request are reproduced, but IAM policy evaluation is not.
   A literal external custom origin is refused rather than reached. A WAF web
@@ -2226,7 +2501,18 @@ the harness records it.
   The function code runs in the host Node `vm`; the runner refuses to start that
   distribution if Node is not on `PATH`.
 - Docker (on macOS, colima) with the daemon running. The runner creates one
-  private network per run and publishes the RIE port on `127.0.0.1` only.
+  private network per run. In the default mode a function container reaches the
+  Runtime API through `host.docker.internal:<port>` (the run network's closed
+  DNS cannot resolve the name, so the host entry is added for the container).
+  The listener never binds the unspecified address: it binds loopback
+  (`127.0.0.1:<port>`) and, when the host owns the run network's gateway
+  address (the IPAM gateway `docker network inspect <run network>` reports, the
+  Linux bridge case), also binds that address and names it in the container's
+  `host.docker.internal` entry. When the host does not own it (Colima, Docker
+  Desktop), the container keeps Docker's `host-gateway` entry, which those
+  runtimes forward to the host's loopback. The runtime's first `/next` proves
+  the address and the runner logs the entry it used. In `--rie` mode the
+  emulator port is published on `127.0.0.1` only.
 - The app's CDK CLI installed in the app directory
   (`node_modules/.bin/cdk`); run `npm install` there once, or `npm ci` when the
   app has a lockfile. The runner does not install packages.

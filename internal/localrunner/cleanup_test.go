@@ -221,6 +221,7 @@ func TestRunnerRemovesEveryResourceOnRepeatedTermination(t *testing.T) {
 			listener := listenLoopback(t)
 			docker := newCleanupDocker(listenerPort(t, listener), serverPort(t, newBackendStub(t).URL))
 			runner.docker = docker.docker()
+			runner.options.RIEMode = true
 
 			ctx, cancel := context.WithCancel(context.Background())
 			done := make(chan error, 1)
@@ -241,6 +242,7 @@ func TestRunnerCleanupRemovesContainerStartedBeforeReady(t *testing.T) {
 	docker := newCleanupDocker(1, serverPort(t, newBackendStub(t).URL))
 	docker.blockName = runner.containerName("Fn")
 	runner.docker = docker.docker()
+	runner.options.RIEMode = true
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -291,6 +293,7 @@ func TestRunnerCleanupDoesNotWaitForInFlightRequest(t *testing.T) {
 		t.Fatalf("release probe listener: %v", err)
 	}
 	runner.options.PortBase = port
+	runner.options.RIEMode = true
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)

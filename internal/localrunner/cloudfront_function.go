@@ -1,6 +1,7 @@
 package localrunner
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -9,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"sort"
@@ -20,21 +22,26 @@ import (
 )
 
 // functionURLOrigin invokes the real Lambda function behind an AWS::Lambda::Url
-// through the runner's Runtime Interface Emulator container.
+// through the function's container.
 //
 // The request is the payload format version 2.0 event Lambda builds for a
 // Function URL; the response is the statusCode/headers/cookies/isBase64Encoded/
 // body payload mapped back:
 // https://docs.aws.amazon.com/lambda/latest/dg/urls-invocation.html
 //
-// RESPONSE_STREAM functions are buffered by the RIE (LOCAL-A0): the origin
-// returns the complete body after the handler finishes and never claims
-// incremental delivery.
+// A RESPONSE_STREAM URL is forwarded to the gateway as the runtime writes it:
+// the prelude supplies the status and headers, and the payload after the
+// 8-null-byte delimiter is the origin body.
+// https://docs.aws.amazon.com/lambda/latest/dg/config-rs-invoke-furls.html
 type functionURLOrigin struct {
 	originID   string
 	urlID      string
 	functionID string
 	authType   string
+	// invokeMode is the URL's InvokeMode: RESPONSE_STREAM or BUFFERED (the
+	// template default). An empty value on a directly constructed origin keeps
+	// the streaming behavior.
+	invokeMode string
 	domainName string
 	invoker    Invoker
 	signer     *localOACSigner
@@ -43,11 +50,10 @@ type functionURLOrigin struct {
 	logf       func(string, ...any)
 }
 
-func (o *functionURLOrigin) Fetch(ctx context.Context, request localcloudfront.OriginRequest) (localcloudfront.OriginResponse, error) {
-	now := time.Now().UTC()
-	if o.now != nil {
-		now = o.now().UTC()
-	}
+// prepare builds the Function URL event, or the documented refusal when the
+// URL's AWS_IAM signature does not verify. The refusal never invokes the
+// function.
+func (o *functionURLOrigin) prepare(request localcloudfront.OriginRequest, now time.Time) ([]byte, *localcloudfront.OriginResponse, error) {
 	host := request.Host
 	if host == "" {
 		host = o.domainName
@@ -63,13 +69,13 @@ func (o *functionURLOrigin) Fetch(ctx context.Context, request localcloudfront.O
 	}
 	if o.authType != noneAuthorization {
 		if o.signer == nil {
-			return localcloudfront.OriginResponse{}, &localcloudfront.OriginUnavailableError{
+			return nil, nil, &localcloudfront.OriginUnavailableError{
 				OriginID: o.originID,
 				Reason:   fmt.Sprintf("Function URL auth type %s needs a local OAC signer", o.authType),
 			}
 		}
 		if err := o.signer.sign(signed); err != nil {
-			return localcloudfront.OriginResponse{}, fmt.Errorf("sign Function URL request for %s: %w", o.urlID, err)
+			return nil, nil, fmt.Errorf("sign Function URL request for %s: %w", o.urlID, err)
 		}
 		verify := o.verifyFn
 		if verify == nil {
@@ -77,22 +83,38 @@ func (o *functionURLOrigin) Fetch(ctx context.Context, request localcloudfront.O
 		}
 		if err := verify(signed); err != nil {
 			o.logMessage("origin %s: Function URL AWS_IAM signature was rejected: %v", o.originID, err)
-			return localcloudfront.OriginResponse{
+			refusal := localcloudfront.OriginResponse{
 				StatusCode: http.StatusForbidden,
 				Header:     http.Header{"Content-Type": []string{"text/plain; charset=utf-8"}},
 				Body:       []byte("Forbidden: the Function URL AWS_IAM signature did not verify\n"),
-			}, nil
+			}
+			return nil, &refusal, nil
 		}
 	}
 	event, err := buildFunctionURLEvent(request, o, host, now)
 	if err != nil {
+		return nil, nil, err
+	}
+	return event, nil, nil
+}
+
+func (o *functionURLOrigin) Fetch(ctx context.Context, request localcloudfront.OriginRequest) (localcloudfront.OriginResponse, error) {
+	now := time.Now().UTC()
+	if o.now != nil {
+		now = o.now().UTC()
+	}
+	event, refusal, err := o.prepare(request, now)
+	if err != nil {
 		return localcloudfront.OriginResponse{}, err
+	}
+	if refusal != nil {
+		return *refusal, nil
 	}
 	raw, err := o.invoker.Invoke(ctx, event)
 	if err != nil {
 		return localcloudfront.OriginResponse{}, fmt.Errorf("invoke Function URL %s: %w", o.urlID, err)
 	}
-	decoded, err := DecodeResponse(raw)
+	decoded, err := decodeFunctionURLResponse(raw)
 	if err != nil {
 		return localcloudfront.OriginResponse{}, fmt.Errorf("decode Function URL %s response: %w", o.urlID, err)
 	}
@@ -116,10 +138,339 @@ func (o *functionURLOrigin) Fetch(ctx context.Context, request localcloudfront.O
 	}, nil
 }
 
+// FetchStream returns the function's status and headers as soon as its stream
+// produces the prelude, with a body that yields each payload chunk.
+func (o *functionURLOrigin) FetchStream(ctx context.Context, request localcloudfront.OriginRequest) (localcloudfront.StreamResponse, error) {
+	streamer, ok := o.invoker.(streamInvoker)
+	if !ok || !streamer.StreamingIncremental() || o.invokeMode == bufferedInvokeMode {
+		// The URL is BUFFERED, or the invoker cannot forward chunks (the --rie
+		// emulator buffers every response, and any other invoker without
+		// StreamingIncremental does too). Serve the buffered response as a
+		// complete, non-chunked stream so a CloudFront distribution with this
+		// origin works in that mode, exactly as the Function URL listener
+		// falls back to Invoke.
+		response, err := o.Fetch(ctx, request)
+		if err != nil {
+			return localcloudfront.StreamResponse{}, err
+		}
+		return localcloudfront.StreamResponse{
+			StatusCode:        response.StatusCode,
+			StatusDescription: response.StatusDescription,
+			Header:            response.Header,
+			Body:              io.NopCloser(bytes.NewReader(response.Body)),
+			Chunked:           false,
+		}, nil
+	}
+	now := time.Now().UTC()
+	if o.now != nil {
+		now = o.now().UTC()
+	}
+	event, refusal, err := o.prepare(request, now)
+	if err != nil {
+		return localcloudfront.StreamResponse{}, err
+	}
+	if refusal != nil {
+		return localcloudfront.StreamResponse{
+			StatusCode: refusal.StatusCode,
+			Header:     refusal.Header,
+			Body:       io.NopCloser(bytes.NewReader(refusal.Body)),
+			Chunked:    true,
+		}, nil
+	}
+	reader, writer := io.Pipe()
+	head := make(chan streamHead, 1)
+	sink := &functionURLPipeSink{writer: writer, head: head}
+	go func() {
+		result, invokeErr := streamer.InvokeStream(ctx, event, sink)
+		if invokeErr == nil && result.HandlerError != nil {
+			// A handler error, a timeout, a crash or an init failure never
+			// produces a response; answer the gateway now instead of leaving it
+			// blocked on the viewer's request context.
+			invokeErr = result.HandlerError
+		}
+		if invokeErr == nil && result.ErrorType != "" {
+			// The stream ended with the Lambda-Runtime-Function-Error-Type/-
+			// Body trailers. The viewer keeps the bytes the runtime wrote, but
+			// the stream did not complete cleanly, so the gateway must not cache
+			// the object as complete; the error metadata is logged.
+			invokeErr = &streamTrailerError{Type: result.ErrorType, Body: result.ErrorBody}
+			o.logMessage("function URL %s: %v", o.urlID, invokeErr)
+		}
+		sink.finish(invokeErr)
+		_ = writer.CloseWithError(invokeErr) //nolint:errcheck // the reader decides how to report it
+	}()
+	select {
+	case result := <-head:
+		if result.err != nil {
+			_ = reader.CloseWithError(result.err) //nolint:errcheck // the gateway reports the error
+			return localcloudfront.StreamResponse{}, fmt.Errorf("invoke Function URL %s: %w", o.urlID, result.err)
+		}
+		return localcloudfront.StreamResponse{
+			StatusCode:        result.status,
+			StatusDescription: http.StatusText(result.status),
+			Header:            result.header,
+			Body:              reader,
+			Chunked:           true,
+		}, nil
+	case <-ctx.Done():
+		_ = reader.CloseWithError(ctx.Err()) //nolint:errcheck // the request is over
+		return localcloudfront.StreamResponse{}, ctx.Err()
+	}
+}
+
+// streamTrailerError reports a streamed response that ended with the Runtime
+// API error trailers. The page treats the response as successful and forwards
+// the error metadata; the local gateway forwards the bytes, logs this error and
+// does not cache the object as complete.
+// https://docs.aws.amazon.com/lambda/latest/dg/runtimes-custom.html
+type streamTrailerError struct {
+	Type string
+	Body []byte
+}
+
+func (e *streamTrailerError) Error() string {
+	detail := strings.TrimSpace(string(e.Body))
+	if detail == "" {
+		return fmt.Sprintf("stream ended with the %s error trailer", e.Type)
+	}
+	return fmt.Sprintf("stream ended with the %s error trailer: %s", e.Type, truncateForMessage(detail))
+}
+
+// streamHead is the status and headers the gateway needs before it can begin
+// forwarding the payload.
+type streamHead struct {
+	status int
+	header http.Header
+	err    error
+}
+
+// functionURLPipeSink parses the Function URL streaming prelude and pipes the
+// payload to the gateway.
+type functionURLPipeSink struct {
+	writer   *io.PipeWriter
+	head     chan streamHead
+	sent     bool
+	buffered []byte
+	decoder  streamFrameDecoder
+	raw      bool
+	ctype    string
+}
+
+func (s *functionURLPipeSink) Start(contentType string, streamed bool) error {
+	s.ctype = contentType
+	if !streamed {
+		// A buffered proxy response is decoded when the invocation ends.
+		s.raw = false
+		return nil
+	}
+	s.raw = strings.TrimSpace(contentType) != streamIntegrationContentType
+	return nil
+}
+
+//nolint:gocognit,gocyclo // the framed/raw split is the documented Function URL format
+func (s *functionURLPipeSink) Chunk(chunk []byte) error {
+	if s.ctype == "" || s.raw {
+		if !s.sent {
+			header := http.Header{}
+			if s.ctype != "" {
+				header.Set("Content-Type", s.ctype)
+			}
+			s.send(http.StatusOK, header)
+		}
+		if len(chunk) > 0 {
+			if _, err := s.writer.Write(chunk); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	s.buffered = append(s.buffered, chunk...)
+	payload := s.decoder.Feed(chunk)
+	if s.decoder.done && !s.sent {
+		if !s.decoder.Framed() {
+			s.send(http.StatusOK, http.Header{"Content-Type": []string{streamIntegrationContentType}})
+			if len(payload) > 0 {
+				if _, err := s.writer.Write(payload); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		metadata, err := s.decoder.Metadata()
+		if err != nil {
+			s.send(http.StatusOK, http.Header{"Content-Type": []string{streamIntegrationContentType}})
+			if len(payload) > 0 {
+				if _, writeErr := s.writer.Write(payload); writeErr != nil {
+					return writeErr
+				}
+			}
+			return nil
+		}
+		header := http.Header{}
+		status := metadata.apply(header)
+		s.send(status, header)
+		if len(payload) > 0 {
+			if _, err := s.writer.Write(payload); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if s.sent && len(payload) > 0 {
+		if _, err := s.writer.Write(payload); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *functionURLPipeSink) send(status int, header http.Header) {
+	if s.sent {
+		return
+	}
+	s.sent = true
+	s.head <- streamHead{status: status, header: header}
+}
+
+func (s *functionURLPipeSink) End(_ string, _ []byte) error {
+	if s.sent {
+		return nil
+	}
+	if s.decoder.done && s.decoder.Framed() {
+		return nil
+	}
+	// A buffered response: decode it with the same rule as Fetch and emit it as
+	// a complete body. A body the buffered path answers with 502 is a 502 here
+	// too, never a 200 carrying the raw bytes.
+	decoded, err := decodeFunctionURLResponse(s.buffered)
+	if err != nil {
+		s.sendError(fmt.Errorf("decode Function URL response: %w", err))
+		return nil
+	}
+	header := http.Header{}
+	for name, values := range decoded.Headers {
+		if isHopByHopHeader(name) {
+			continue
+		}
+		for _, value := range values {
+			header.Add(name, value)
+		}
+	}
+	for _, cookie := range decoded.Cookies {
+		header.Add("Set-Cookie", cookie)
+	}
+	s.send(decoded.StatusCode, header)
+	if len(decoded.Body) > 0 {
+		_, _ = s.writer.Write(decoded.Body) //nolint:errcheck // reported by the pipe
+	}
+	return nil
+}
+
+// sendError answers the prelude with an error instead of a status; FetchStream
+// turns it into the gateway's 502, the same status the buffered path produces.
+func (s *functionURLPipeSink) sendError(err error) {
+	if s.sent {
+		return
+	}
+	s.sent = true
+	s.head <- streamHead{err: err}
+}
+
+// finish reports a transport failure when no head was produced, so the gateway
+// can answer instead of waiting on a body that will never arrive.
+func (s *functionURLPipeSink) finish(err error) {
+	if s.sent || err == nil {
+		return
+	}
+	s.sendError(err)
+}
+
 func (o *functionURLOrigin) logMessage(format string, args ...any) {
 	if o.logf != nil {
 		o.logf(format, args...)
 	}
+}
+
+// decodeFunctionURLResponse is the one Function URL decoding rule: the buffered
+// Fetch path and the Function URL pipe sink both use it, so a body the buffered
+// path answers with 502 is a 502 on the streaming path too.
+//
+// A non-proxy return value follows the page's inference rule: "If your function
+// returns valid JSON and doesn't return a statusCode, Lambda assumes the
+// following: statusCode is 200 ... content-type is application/json ... body is
+// the function response ... isBase64Encoded is false." An error payload
+// (errorType/errorMessage without a statusCode) is a failed invocation, not a
+// genuine return value: the runner's documented handler-error rule keeps it a
+// 502.
+// https://docs.aws.amazon.com/lambda/latest/dg/urls-invocation.html
+func decodeFunctionURLResponse(raw []byte) (LambdaResponse, error) {
+	response, err := DecodeResponse(raw)
+	if err == nil {
+		return response, nil
+	}
+	var handlerErr *HandlerError
+	if errors.As(err, &handlerErr) {
+		return LambdaResponse{}, err
+	}
+	trimmed := bytes.TrimSpace(raw)
+	if !json.Valid(trimmed) {
+		// A buffered streaming frame is not valid JSON as a whole. When its
+		// metadata omits statusCode, the pipe sink's metadata apply answers
+		// 200; the buffered listener must give the same answer.
+		if framed, ok := inferFramedFunctionURLResponse(raw); ok {
+			return framed, nil
+		}
+		return LambdaResponse{}, err
+	}
+	var object map[string]json.RawMessage
+	if json.Unmarshal(trimmed, &object) == nil {
+		if _, hasStatus := object["statusCode"]; hasStatus {
+			return LambdaResponse{}, err
+		}
+	}
+	return LambdaResponse{
+		StatusCode: http.StatusOK,
+		Headers:    map[string][]string{"Content-Type": {"application/json"}},
+		Body:       raw,
+	}, nil
+}
+
+// inferFramedFunctionURLResponse applies the Function URL rule to a buffered
+// streaming frame whose metadata omits statusCode: a 200 carrying the prelude's
+// headers and cookies and the framed payload. The pipe sink's metadata apply
+// gives the streaming path the same answer. A prelude whose statusCode key is
+// present but invalid is not inferred; it stays the decoder's 502.
+func inferFramedFunctionURLResponse(raw []byte) (LambdaResponse, bool) {
+	metadataBytes, body, framed, err := splitStreamingFrame(raw)
+	if err != nil || !framed {
+		return LambdaResponse{}, false
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(metadataBytes, &fields) != nil {
+		return LambdaResponse{}, false
+	}
+	if _, hasStatus := fields["statusCode"]; hasStatus {
+		return LambdaResponse{}, false
+	}
+	var metadata streamFrameMetadata
+	if json.Unmarshal(metadataBytes, &metadata) != nil {
+		return LambdaResponse{}, false
+	}
+	header := http.Header{}
+	status := metadata.apply(header)
+	headers := map[string][]string{}
+	for name, values := range header {
+		if http.CanonicalHeaderKey(name) == "Set-Cookie" {
+			continue
+		}
+		headers[name] = values
+	}
+	return LambdaResponse{
+		StatusCode: status,
+		Headers:    headers,
+		Cookies:    append([]string(nil), metadata.Cookies...),
+		Body:       append([]byte(nil), body...),
+	}, true
 }
 
 func buildFunctionURLEvent(

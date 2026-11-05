@@ -158,10 +158,13 @@ type Behavior struct {
 	TrustedKeyGroups *TrustedKeyGroups `json:"trustedKeyGroups,omitempty"`
 	// FieldLevelEncryptionID names the AWS::CloudFront::FieldLevelEncryptionConfig
 	// the behavior applies.
-	FieldLevelEncryptionID string   `json:"fieldLevelEncryptionId,omitempty"`
-	Compress               bool     `json:"compress,omitempty"`
-	Reported               []string `json:"reported,omitempty"`
-	Refusals               []string `json:"refusals,omitempty"`
+	FieldLevelEncryptionID string `json:"fieldLevelEncryptionId,omitempty"`
+	Compress               bool   `json:"compress,omitempty"`
+	// OriginResponseTimeout bounds the wait between packets of a streamed
+	// origin response. Zero uses DefaultOriginResponseTimeout.
+	OriginResponseTimeout time.Duration `json:"originResponseTimeout,omitempty"`
+	Reported              []string      `json:"reported,omitempty"`
+	Refusals              []string      `json:"refusals,omitempty"`
 }
 
 // DistributionOrigin is one distribution origin.

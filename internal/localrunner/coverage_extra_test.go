@@ -373,6 +373,7 @@ func TestRunInvokeStreamsAProxyResult(t *testing.T) {
 	defer backend.Close()
 	var calls []string
 	runner.docker = fakeRunnerDocker(t, serverPort(t, rie.URL), serverPort(t, backend.URL), &calls)
+	runner.options.RIEMode = true
 	var out bytes.Buffer
 	if err := runner.RunInvoke(context.Background(), "Fn", strings.NewReader(`{"ok":true}`+"\n"), &out); err != nil {
 		t.Fatalf("run invoke: %v", err)

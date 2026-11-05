@@ -132,6 +132,7 @@ func (r *Runner) functionURLOrigin(spec *Spec, origin *localcloudfront.Distribut
 		urlID:      origin.FunctionURL,
 		functionID: functionID,
 		authType:   authType,
+		invokeMode: spec.functionURLModes[origin.FunctionURL],
 		domainName: origin.DomainName,
 		invoker:    invoker,
 		now:        nil,

@@ -33,6 +33,7 @@ import datetime
 import fcntl
 import gzip
 import hashlib
+import http.client
 import http.server
 import json
 import os
@@ -54,6 +55,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+from urllib.parse import urlsplit
 
 try:  # The field-level encryption row decrypts with the real AWS Encryption SDK.
     import aws_encryption_sdk
@@ -349,6 +351,55 @@ def http_request(
         raise HarnessFailure(f"{method} {url} failed: {exc.reason}") from exc
 
 
+def http_stream_request(
+    method: str,
+    url: str,
+    *,
+    headers: dict | None = None,
+    body: bytes | None = None,
+    timeout: float = 120,
+) -> tuple[int, bytes, dict, list[tuple[float, bytes]]]:
+    """Read a response incrementally and record each chunk's arrival time.
+
+    The row asserts a timing boundary: the first chunk must arrive before the
+    handler finishes writing the last one. ``read1`` returns the bytes that are
+    available, so a buffered origin returns everything at the end.
+    """
+    parsed = urlsplit(url)
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    path = parsed.path or "/"
+    if parsed.query:
+        path += "?" + parsed.query
+    connection = http.client.HTTPConnection(host, port, timeout=timeout)
+    try:
+        connection.request(method, path, body=body, headers=headers or {})
+        response = connection.getresponse()
+        header = normalized_headers(response.headers)
+        started = time.monotonic()
+        chunks: list[tuple[float, bytes]] = []
+        while True:
+            data = response.read1(65536)
+            if not data:
+                break
+            chunks.append((time.monotonic() - started, data))
+        return response.status, b"".join(data for _, data in chunks), header, chunks
+    except OSError as exc:
+        raise HarnessFailure(f"{method} {url} failed while streaming: {exc}") from exc
+    finally:
+        connection.close()
+
+
+def streamed_text(chunks: list[tuple[float, bytes]]) -> str:
+    return b"".join(data for _, data in chunks).decode("utf-8", "replace")
+
+
+def first_chunk_seconds(chunks: list[tuple[float, bytes]]) -> float:
+    if not chunks:
+        raise HarnessFailure("the response carried no chunk")
+    return chunks[0][0]
+
+
 def normalized_headers(headers) -> dict:
     """Return headers keyed by lowercase name.
 
@@ -528,8 +579,11 @@ def validate_manifest(
 
     for entry in entries:
         if entry.kind == "suite":
-            suite_dir = root / entry.key
-            if not (suite_dir / "go.mod").is_file():
+            script = str(entry.data.get("script") or "")
+            if script:
+                if not (root / script).is_file():
+                    errors.append(f"suite script does not name a file in the tree: {script}")
+            elif not (root / entry.key / "go.mod").is_file():
                 errors.append(f"suite is not a Go module: {entry.key}")
 
         if entry.class_name and entry.pending:
@@ -1727,7 +1781,8 @@ def _run_multilang_http(harness: Harness, lang: str) -> str:
         if payload.get("message") != "hello AppTheory" or payload.get("lang") != "go":
             raise HarnessFailure(f"multilang REST GET /hello/AppTheory: unexpected body {payload}")
 
-        status, text, headers = http_request("GET", f"{rest_base}/sse", timeout=60)
+        status, raw, headers, chunks = http_stream_request("GET", f"{rest_base}/sse", timeout=60)
+        text = raw.decode("utf-8", "replace")
         expect_status(status, 200, "multilang REST GET /sse", text)
         if headers.get("content-type") != "text/event-stream":
             raise HarnessFailure(f"multilang REST GET /sse: content-type {headers.get('content-type')!r}")
@@ -1736,6 +1791,13 @@ def _run_multilang_http(harness: Harness, lang: str) -> str:
             raise HarnessFailure(f"multilang REST GET /sse: unexpected event ids {event_ids}")
         if '"seq":3' not in text:
             raise HarnessFailure("multilang REST GET /sse: the final sequence was not emitted", text)
+        sse_first = first_chunk_seconds(chunks)
+        sse_last = chunks[-1][0]
+        if sse_first > 1.2 or sse_last-sse_first < 1.5:
+            raise HarnessFailure(
+                f"multilang REST GET /sse: chunks arrived at {sse_first:.2f}s..{sse_last:.2f}s; "
+                "the Go handler emits one event per second"
+            )
 
         function = _session_function_for_language(session, lang)
         source = session.event_source(kind="sqs", function=function["logicalId"])
@@ -1755,7 +1817,8 @@ def _run_multilang_http(harness: Harness, lang: str) -> str:
         websocket_detail = _run_multilang_websocket(harness, session, lang, http_base)
         return (
             f"{lang} HTTP API served four assertions (200 root, 200 hello, 405 method, 404 missing); "
-            f"REST API served hello and all 3 buffered SSE events; {websocket_detail}; "
+            f"REST API served hello and the 3 SSE events incrementally (first chunk {sse_first:.2f}s, "
+            f"last {sse_last:.2f}s); {websocket_detail}; "
             f"the CDK SQS mapping delivered one real ElasticMQ message to the {lang} handler and deleted it; "
             f"the SNS Lambda subscription delivered the documented record {sns_record}; {eventbridge_detail}; {stream_detail}"
         )
@@ -1812,19 +1875,40 @@ def run_lesser_parity(harness: Harness, kind: str) -> str:
                 raise HarnessFailure(f"lesser-parity GET /api/graphql: route specificity lost: {payload}")
             return "GraphQL POST served by its dedicated handler; GET fell through to the catch-all"
         if kind == "sse":
-            status, text, headers = http_request("GET", f"{base}/sse", timeout=60)
+            status, raw, headers, chunks = http_stream_request("GET", f"{base}/sse", timeout=60)
+            text = raw.decode("utf-8", "replace")
             expect_status(status, 200, "lesser-parity GET /sse", text)
             if headers.get("content-type") != "text/event-stream":
                 raise HarnessFailure(f"lesser-parity GET /sse: content-type {headers.get('content-type')!r}")
             if text.count("data: ") != 3 or '"count":42' not in text:
-                raise HarnessFailure(f"lesser-parity GET /sse: unexpected buffered events {text}")
-            if "content-length" not in headers:
-                raise HarnessFailure("lesser-parity GET /sse: the buffered body must have a fixed length")
+                raise HarnessFailure(f"lesser-parity GET /sse: unexpected events {text}")
+            if "content-length" in headers:
+                raise HarnessFailure(
+                    "lesser-parity GET /sse: a streamed body must not carry a fixed length "
+                    f"({headers.get('content-length')!r})"
+                )
+            first = first_chunk_seconds(chunks)
+            last = chunks[-1][0]
+            if first > 1.0:
+                raise HarnessFailure(
+                    f"lesser-parity GET /sse: the first chunk arrived after {first:.2f}s; "
+                    "the handler writes each event 0.7s apart"
+                )
+            if last-first < 0.6:
+                raise HarnessFailure(
+                    f"lesser-parity GET /sse: the chunks arrived within {last - first:.2f}s of each other; "
+                    "the handler writes each event 0.7s apart"
+                )
+            if '"type":"connection"' not in chunks[0][1].decode("utf-8", "replace"):
+                raise HarnessFailure("lesser-parity GET /sse: the first chunk is not the first event")
             status, empty, headers = http_request("OPTIONS", f"{base}/sse")
             expect_status(status, 200, "lesser-parity OPTIONS /sse", empty)
             if headers.get("access-control-allow-origin") != "*":
                 raise HarnessFailure(f"lesser-parity OPTIONS /sse: declared CORS headers missing: {headers}")
-            return "SSE route returned all 3 buffered events with a fixed length; declared CORS preflight served"
+            return (
+                f"SSE route streamed the 3 events as the handler wrote them (first chunk {first:.2f}s, "
+                f"last {last:.2f}s, no content-length); declared CORS preflight served"
+            )
         raise HarnessFailure(f"unknown lesser-parity row {kind}")
     finally:
         stop_local_app(harness, run)
@@ -1924,18 +2008,39 @@ def run_restv1(harness: Harness, kind: str) -> str:
                 raise HarnessFailure(f"restv1 OPTIONS: declared CORS headers missing: {headers}")
             return "inventory GET/PUT/DELETE served with path parameters, a 404 refusal and a declared CORS preflight"
         if kind == "sse":
-            status, text, headers = http_request("GET", f"{base}/sse", timeout=90)
+            status, raw, headers, chunks = http_stream_request("GET", f"{base}/sse", timeout=90)
+            text = raw.decode("utf-8", "replace")
             expect_status(status, 200, "restv1 GET /sse", text)
             if headers.get("content-type") != "text/event-stream":
                 raise HarnessFailure(f"restv1 GET /sse: content-type {headers.get('content-type')!r}")
-            if "content-length" not in headers:
-                raise HarnessFailure("restv1 GET /sse: the buffered body must have a fixed length")
+            if "content-length" in headers:
+                raise HarnessFailure(
+                    "restv1 GET /sse: a streamed body must not carry a fixed length "
+                    f"({headers.get('content-length')!r})"
+                )
             for index in range(1, 11):
                 if f"data: Event {index} at " not in text:
                     raise HarnessFailure(f"restv1 GET /sse: event {index} missing", text)
             if text.count("data: [DONE]") != 1:
                 raise HarnessFailure("restv1 GET /sse: the completion event is missing", text)
-            return "streaming handler returned all 10 events and [DONE] as one buffered body"
+            first = first_chunk_seconds(chunks)
+            last = chunks[-1][0]
+            if first > 2.0:
+                raise HarnessFailure(
+                    f"restv1 GET /sse: the first chunk arrived after {first:.2f}s; "
+                    "the handler writes one event per second"
+                )
+            if last-first < 8.0:
+                raise HarnessFailure(
+                    f"restv1 GET /sse: the chunks arrived within {last - first:.2f}s of each other; "
+                    "the handler writes one event per second"
+                )
+            if "data: Event 1 at " not in chunks[0][1].decode("utf-8", "replace"):
+                raise HarnessFailure("restv1 GET /sse: the first chunk is not the first event")
+            return (
+                f"the streamifyResponse handler delivered the 10 events and [DONE] incrementally "
+                f"(first chunk {first:.2f}s, last {last:.2f}s, no content-length)"
+            )
         raise HarnessFailure(f"unknown restv1 row {kind}")
     finally:
         stop_local_app(harness, run)
@@ -2085,6 +2190,7 @@ def prepare_mcp_handler(harness: Harness, example: str) -> Path:
 def mcp_event(
     method: str,
     *,
+    transport: str = "httpv2",
     http_method: str = "POST",
     request_id: str = "a3b-mcp",
     session: str | None = None,
@@ -2105,6 +2211,31 @@ def mcp_event(
         request_headers["mcp-protocol-version"] = protocol
     if body is None:
         body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": payload or {}})
+    if transport == "restv1":
+        return {
+            "resource": "/mcp",
+            "path": "/mcp",
+            "httpMethod": http_method,
+            "headers": request_headers,
+            "multiValueHeaders": {},
+            "queryStringParameters": None,
+            "multiValueQueryStringParameters": None,
+            "pathParameters": None,
+            "stageVariables": None,
+            "requestContext": {
+                "accountId": "123456789012",
+                "apiId": "local",
+                "resourceId": "mcp",
+                "resourcePath": "/mcp",
+                "httpMethod": http_method,
+                "requestId": request_id,
+                "stage": "$default",
+                "domainName": "local.execute-api.us-east-1.amazonaws.com",
+                "protocol": "HTTP/1.1",
+            },
+            "body": body,
+            "isBase64Encoded": False,
+        }
     return {
         "version": "2.0",
         "routeKey": f"{http_method} /mcp",
@@ -2134,26 +2265,29 @@ def mcp_event(
 class McpWarmContainer:
     """One warm handler container driven with newline-delimited Lambda events."""
 
-    def __init__(self, harness: Harness, example: str, name: str) -> None:
+    def __init__(self, harness: Harness, example: str, name: str, *, stream_chunks: bool = False) -> None:
         directory = prepare_mcp_handler(harness, example)
         self.harness = harness
         self.prefix = local_app_prefix(harness, name)
+        argv = [
+            str(LOCAL_RUNNER_BIN),
+            "invoke",
+            "--handler-dir",
+            str(directory),
+            "--runtime",
+            "provided.al2023",
+            "--handler",
+            "bootstrap",
+            "--profile",
+            str(ROOT / LOCAL_PROFILE),
+            "--name-prefix",
+            self.prefix,
+            "--stdio",
+        ]
+        if stream_chunks:
+            argv.append("--stream-chunks")
         self.process = subprocess.Popen(
-            [
-                str(LOCAL_RUNNER_BIN),
-                "invoke",
-                "--handler-dir",
-                str(directory),
-                "--runtime",
-                "provided.al2023",
-                "--handler",
-                "bootstrap",
-                "--profile",
-                str(ROOT / LOCAL_PROFILE),
-                "--name-prefix",
-                self.prefix,
-                "--stdio",
-            ],
+            argv,
             cwd=str(ROOT),
             env=harness.env,
             stdin=subprocess.PIPE,
@@ -2184,6 +2318,49 @@ class McpWarmContainer:
             return json.loads(line)
         except json.JSONDecodeError as exc:
             raise HarnessFailure(f"MCP container returned non-JSON: {exc}", line) from exc
+
+    def call_streaming(self, event: dict, timeout: float = 120) -> tuple[dict, list[tuple[float, bytes, str]]]:
+        """Send one event and read chunk events until the result line.
+
+        Returns the result and every chunk with its arrival time and the
+        Content-Type the runtime set. The row uses the arrival times to prove a
+        chunk crossed the runner before the handler finished.
+        """
+        if self.process.stdin is None or self.process.stdout is None:
+            raise HarnessFailure("MCP container has no stdio pipes")
+        try:
+            self.process.stdin.write(json.dumps(event) + "\n")
+            self.process.stdin.flush()
+        except BrokenPipeError as exc:
+            raise HarnessFailure("MCP container closed its input", self._stderr()) from exc
+        started = time.monotonic()
+        chunks: list[tuple[float, bytes, str]] = []
+        while True:
+            ready, _, _ = select.select([self.process.stdout], [], [], timeout)
+            if not ready:
+                self.close()
+                raise HarnessFailure("MCP container did not answer within the timeout", self._stderr())
+            line = self.process.stdout.readline()
+            if not line:
+                raise HarnessFailure(
+                    f"MCP container exited before answering (code {self.process.poll()})", self._stderr()
+                )
+            try:
+                parsed = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise HarnessFailure(f"MCP container returned non-JSON: {exc}", line) from exc
+            if parsed.get("event") == "chunk":
+                chunks.append(
+                    (
+                        time.monotonic() - started,
+                        base64.b64decode(parsed.get("data") or ""),
+                        str(parsed.get("contentType") or ""),
+                    )
+                )
+                continue
+            parsed.pop("event", None)
+            parsed.pop("invocation", None)
+            return parsed, chunks
 
     def close(self) -> str:
         if self.process.stdin is not None:
@@ -2415,13 +2592,26 @@ def _parse_sse(body: str) -> list[tuple[str, str]]:
     return events
 
 
+def _stream_payload(chunks: list[tuple[float, bytes, str]]) -> bytes:
+    """Return the SSE payload with any API Gateway streaming prelude removed."""
+    raw = b"".join(data for _, data, _ in chunks)
+    if not raw.startswith(b"{"):
+        return raw
+    delimiter = b"\x00" * 8
+    index = raw.find(delimiter)
+    if index < 0:
+        return raw
+    return raw[index + len(delimiter):]
+
+
 def run_mcp_resumable_sse(harness: Harness) -> str:
-    client = McpWarmContainer(harness, "resumable-sse", "mcp-resumable-sse")
+    client = McpWarmContainer(harness, "resumable-sse", "mcp-resumable-sse", stream_chunks=True)
     try:
         session, protocol = _mcp_initialize(client, "resumable-sse")
-        result = client.call(
+        result, chunks = client.call_streaming(
             mcp_event(
                 "tools/call",
+                transport="restv1",
                 session=session,
                 protocol=protocol,
                 payload={
@@ -2432,6 +2622,26 @@ def run_mcp_resumable_sse(harness: Harness) -> str:
             )
         )
         status, body, headers = _mcp_raw_response(result, "resumable-sse tools/call")
+        if not result.get("streamed"):
+            raise HarnessFailure(f"resumable-sse tools/call: the response was not streamed: {result}")
+        if not chunks:
+            raise HarnessFailure("resumable-sse tools/call: the runner forwarded no chunk")
+        if first_chunk_seconds(chunks) > 1.0:
+            raise HarnessFailure(
+                f"resumable-sse tools/call: the first chunk arrived after "
+                f"{first_chunk_seconds(chunks):.2f}s; the handler sleeps 0.5s between three events"
+            )
+        if chunks[-1][0]-first_chunk_seconds(chunks) < 0.8:
+            raise HarnessFailure(
+                f"resumable-sse tools/call: the chunks arrived within "
+                f"{chunks[-1][0] - first_chunk_seconds(chunks):.2f}s of each other"
+            )
+        forwarded = _stream_payload(chunks)
+        if forwarded != body.encode("utf-8"):
+            raise HarnessFailure(
+                "resumable-sse tools/call: the forwarded chunks are not the response body",
+                forwarded.decode("utf-8", "replace"),
+            )
         if status != 200 or (headers.get("content-type") or [""])[0] != "text/event-stream":
             raise HarnessFailure(f"resumable-sse tools/call: unexpected response {result}")
         events = _parse_sse(body)
@@ -2446,9 +2656,10 @@ def run_mcp_resumable_sse(harness: Harness) -> str:
         if not replay_from:
             raise HarnessFailure("resumable-sse tools/call: no event id to resume from")
 
-        resumed = client.call(
+        resumed, resumed_chunks = client.call_streaming(
             mcp_event(
                 "GET",
+                transport="restv1",
                 http_method="GET",
                 session=session,
                 protocol=protocol,
@@ -2459,7 +2670,7 @@ def run_mcp_resumable_sse(harness: Harness) -> str:
         status, resumed_body, resumed_headers = _mcp_raw_response(resumed, "resumable-sse resume")
         if status != 200 or (resumed_headers.get("content-type") or [""])[0] != "text/event-stream":
             raise HarnessFailure(f"resumable-sse resume: unexpected response {resumed}")
-        replayed = _parse_sse(resumed_body)
+        replayed = _parse_sse(_stream_payload(resumed_chunks).decode("utf-8", "replace"))
         ids = [event_id for event_id, _ in replayed if event_id]
         expected_first = str(int(replay_from) + 1)
         if not ids or ids[0] != expected_first:
@@ -2470,9 +2681,11 @@ def run_mcp_resumable_sse(harness: Harness) -> str:
             raise HarnessFailure(f"resumable-sse resume: a consumed event was replayed: {ids}")
         if not any('"text":"done"' in data for _, data in replayed):
             raise HarnessFailure(f"resumable-sse resume: the final result was not replayed: {replayed}")
+        _ = resumed_body
         return (
-            "one warm container: session created, buffered 5-event stream with ids, "
-            "and Last-Event-ID replay continuing after the consumed progress event through the final result"
+            "one warm container: the REST v1 stream crossed the runner incrementally "
+            f"(first chunk {first_chunk_seconds(chunks):.2f}s, last {chunks[-1][0]:.2f}s), the forwarded bytes "
+            "equal the response body, and Last-Event-ID replay continued after the consumed progress event"
         )
     finally:
         client.close()
@@ -5615,7 +5828,10 @@ def run_ssr_site_gateway(harness: Harness) -> str:
     try:
         _, base = session_distribution(session, "SiteDistribution")
         request_id = "a5b-ssr-request"
-        status, body, headers = http_request("GET", base + "/", headers={"x-request-id": request_id})
+        status, raw, headers, chunks = http_stream_request(
+            "GET", base + "/", headers={"x-request-id": request_id}
+        )
+        body = raw.decode("utf-8", "replace")
         assert_html(status, body, headers, "ssr-site /", "<h1>Hello from AppTheory SSR Site</h1>")
         if headers.get("x-request-id") != request_id:
             raise HarnessFailure(
@@ -5623,6 +5839,28 @@ def run_ssr_site_gateway(harness: Harness) -> str:
                 f"({headers.get('x-request-id')!r})",
                 body,
             )
+        if "content-length" in headers:
+            raise HarnessFailure(
+                f"ssr-site /: the streamed origin response must not carry a fixed length "
+                f"({headers.get('content-length')!r})"
+            )
+        if headers.get("transfer-encoding") != "chunked":
+            raise HarnessFailure(
+                f"ssr-site /: the gateway did not return a chunked response ({headers.get('transfer-encoding')!r})"
+            )
+        first = first_chunk_seconds(chunks)
+        last = chunks[-1][0]
+        if first > 1.0:
+            raise HarnessFailure(
+                f"ssr-site /: the first chunk arrived after {first:.2f}s; the SSR handler writes each part 0.7s apart"
+            )
+        if last-first < 0.6:
+            raise HarnessFailure(
+                f"ssr-site /: the chunks arrived within {last - first:.2f}s of each other; "
+                "the SSR handler writes each part 0.7s apart"
+            )
+        if "<h1>Hello from " not in chunks[0][1].decode("utf-8", "replace"):
+            raise HarnessFailure("ssr-site /: the first chunk is not the first HTML part")
         status, body, headers = http_request("GET", base + "/actions/ping")
         payload = assert_json_body(status, body, headers, "ssr-site GET /actions/ping")
         if payload.get("method") != "GET" or payload.get("path") != "/actions/ping":
@@ -5790,13 +6028,41 @@ def run_ssr_site_gateway(harness: Harness) -> str:
         if not any(int(stats.get("hits", 0)) > 0 for stats in cache.values()):
             raise HarnessFailure(f"session describe reports no cache hits: {cache}")
 
+        # The same RESPONSE_STREAM function directly on its Function URL: the
+        # Function URL listener applies the prelude and forwards each chunk.
+        function_url = next(
+            (entry for entry in session.info.get("apis") or [] if entry.get("class") == "fnurl"),
+            None,
+        )
+        if not function_url or not function_url.get("url"):
+            raise HarnessFailure(f"ssr-site: the session did not serve the SSR Function URL: {session.info.get('apis')}")
+        status, raw, headers, direct_chunks = http_stream_request(
+            "GET", str(function_url["url"]).rstrip("/") + "/", headers={"x-request-id": request_id}
+        )
+        direct_body = raw.decode("utf-8", "replace")
+        assert_html(status, direct_body, headers, "ssr-site Function URL /", "<h1>Hello from AppTheory SSR Site</h1>")
+        if "content-length" in headers:
+            raise HarnessFailure(
+                f"ssr-site Function URL /: a streamed body must not carry a fixed length "
+                f"({headers.get('content-length')!r})"
+            )
+        direct_first = first_chunk_seconds(direct_chunks)
+        direct_last = direct_chunks[-1][0]
+        if direct_first > 1.0 or direct_last-direct_first < 0.6:
+            raise HarnessFailure(
+                f"ssr-site Function URL /: chunks arrived at {direct_first:.2f}s..{direct_last:.2f}s; "
+                "the handler writes each part 0.7s apart"
+            )
+
         return (
             "SSR HTML through the origin group after the S3 primary returned 403, request-id echo, "
             "static/hydration objects from the deployment, 403 for a missing OAC object, full and "
             "ranged HEAD, matching and non-matching If-None-Match, and OPTIONS; the static-assets "
             "behavior answered a hit with x-cache/age, the CACHING_DISABLED SSR behavior never cached, "
             "an invalidation through the local API and through the aws CLI removed the object, and the "
-            "clock past the TTL was a miss"
+            "clock past the TTL was a miss; the SSR stream reached the viewer through the gateway "
+            f"(first chunk {first:.2f}s, last {last:.2f}s, chunked) and directly on the Function URL "
+            f"(first chunk {direct_first:.2f}s, last {direct_last:.2f}s)"
         )
     finally:
         stop_local_session(harness, session)
@@ -6584,6 +6850,33 @@ def run_lambda_packaging(harness: Harness) -> str:
         stop_local_app(harness, run)
 
 
+def run_runtime_api_conformance(harness: Harness) -> str:
+    """Compare the runner's Runtime API with the RIE on the real images."""
+    workdir = STATE_DIR / "conformance"
+    result = harness.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts/local/runtime_api_conformance.py"),
+            "--runner",
+            str(LOCAL_RUNNER_BIN),
+            "--profile",
+            str(ROOT / LOCAL_PROFILE),
+            "--workdir",
+            str(workdir),
+        ],
+        timeout=3600,
+        check=False,
+    )
+    output = _combined_output(result)
+    if result.returncode != 0 or "runtime-api-conformance: PASS" not in output:
+        raise HarnessFailure("the Runtime API conformance suite did not pass", output)
+    return (
+        "the runner's Runtime API and the image's Runtime Interface Emulator agreed on status, "
+        "headers, body bytes and handler errors for Go, Node and Python; the emulator's buffered "
+        "streaming and its plain-text timeout are reported as deviations"
+    )
+
+
 RUNNERS: dict[str, Callable[[Harness], str]] = {
     "testkit-ts": run_testkit_ts,
     "testkit-ts-streaming": run_testkit_ts_streaming,
@@ -6638,6 +6931,7 @@ RUNNERS: dict[str, Callable[[Harness], str]] = {
     "ssr-assets-manifest": run_ssr_assets_manifest,
     "ssr-assets-upload": run_ssr_assets_upload,
     "lambda-packaging": run_lambda_packaging,
+    "runtime-api-conformance": run_runtime_api_conformance,
 }
 
 
