@@ -2468,10 +2468,15 @@ the harness records it.
   distribution if Node is not on `PATH`.
 - Docker (on macOS, colima) with the daemon running. The runner creates one
   private network per run. In the default mode a function container reaches the
-  Runtime API through `host.docker.internal:<port>` (the listener binds every
-  interface because the run network's closed DNS cannot resolve the name; the
-  host entry is added for the container). In `--rie` mode the emulator port is
-  published on `127.0.0.1` only.
+  Runtime API through `host.docker.internal:<port>` (the run network's closed
+  DNS cannot resolve the name, so the host entry is added for the container).
+  The listener never binds the unspecified address: it binds loopback
+  (`127.0.0.1:<port>`) when the host gateway forwards to it (Colima, Docker
+  Desktop), and otherwise the run network's gateway address (the IPAM gateway
+  `docker network inspect <run network>` reports, the Linux bridge case). The
+  runtime's first `/next` proves the address; when it does not arrive the
+  listener moves to the gateway address on the same port and logs which one it
+  used. In `--rie` mode the emulator port is published on `127.0.0.1` only.
 - The app's CDK CLI installed in the app directory
   (`node_modules/.bin/cdk`); run `npm install` there once, or `npm ci` when the
   app has a lockfile. The runner does not install packages.

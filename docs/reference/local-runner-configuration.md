@@ -1468,9 +1468,15 @@ every remaining difference between the two modes.
 - Each backend port is published on loopback only (`-p 127.0.0.1::<port>`).
   In `--rie` mode the emulator port is published the same way. In the default
   mode a function container reaches the Runtime API through
-  `host.docker.internal:<port>`; the listener binds every interface and the
-  container gets a `host.docker.internal:host-gateway` host entry, while the
-  URL the session reports stays loopback-only. The runner uses the backend's loopback port to
+  `host.docker.internal:<port>`, and the container gets a
+  `host.docker.internal:host-gateway` host entry. The listener never binds the
+  unspecified address: it binds loopback (`127.0.0.1:<port>`) when the host
+  gateway forwards to it (Colima, Docker Desktop), and otherwise the run
+  network's gateway address (`docker network inspect <run network>` reports it
+  as the IPAM gateway, the Linux bridge case). The runtime's first `/next`
+  proves the address; when it does not arrive the listener moves to the
+  gateway address on the same port and logs which one it used, and the URL the
+  session reports is the bound address. The runner uses the backend's loopback port to
   provision buckets, keys, tables and queues and to serve a session's data
   operations; function containers reach the backend over the run network.
 - On success, failure or `SIGTERM`/`SIGINT`, the runner removes exactly its own

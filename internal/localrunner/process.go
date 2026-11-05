@@ -292,6 +292,12 @@ func waitForContainerReady(ctx context.Context, docker *Docker, name string) (in
 // https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtime-environment.html
 func waitForRuntimeAPIReady(ctx context.Context, docker *Docker, name string, api *runtimeAPI) error {
 	deadline := time.Now().Add(readyTimeout)
+	// The container's first /next proves the address it was given is reachable.
+	// A container that has not asked within the probe window gets the run
+	// network's gateway address instead, which is the address it reaches on
+	// Linux; Colima and Docker Desktop forward host.docker.internal to the
+	// host's loopback, where the gateway bind fails and loopback stays.
+	probe := time.Now().Add(runtimeAPIProbeTimeout)
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -309,12 +315,20 @@ func waitForRuntimeAPIReady(ctx context.Context, docker *Docker, name string, ap
 			if failure := api.initError(); failure != nil {
 				return nil
 			}
+			// The runtime may have exited because it could not reach the
+			// loopback listener. Move the listener before the one-time restart
+			// so the replacement container gets an address it can reach.
+			api.rebindToGateway(ctx)
 			if api.logf != nil {
 				api.logf("function %s: the runtime exited before its first invocation; recent output:\n%s",
 					api.function.LogicalID, docker.Logs(ctx, name))
 			}
 			api.recordInitFailure(startupFailure(ctx, docker, name))
 			return nil
+		}
+		if !probe.IsZero() && time.Now().After(probe) {
+			probe = time.Time{}
+			api.rebindToGateway(ctx)
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("container %s did not ask the runtime API for an invocation: %s", name, docker.Logs(ctx, name))

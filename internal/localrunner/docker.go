@@ -237,6 +237,24 @@ func (d *Docker) ContainerIP(ctx context.Context, name, network string) (string,
 	return address, nil
 }
 
+// NetworkGateway returns a network's IPAM gateway address: the address a
+// container on that network reaches the host at when the host's loopback is
+// not forwarded to it (the Linux bridge case).
+func (d *Docker) NetworkGateway(ctx context.Context, name string) (string, error) {
+	stdout, stderr, err := d.exec(ctx, []string{
+		"docker", "network", "inspect", "--format", "{{range .IPAM.Config}}{{println .Gateway}}{{end}}", name,
+	})
+	if err != nil {
+		return "", fmt.Errorf("inspect network %s: %s", name, firstNonEmpty(stderr, err.Error()))
+	}
+	for _, line := range strings.Split(stdout, "\n") {
+		if address := strings.TrimSpace(line); address != "" {
+			return address, nil
+		}
+	}
+	return "", fmt.Errorf("network %s has no IPAM gateway", name)
+}
+
 // Logs returns a bounded tail of a container's output.
 func (d *Docker) Logs(ctx context.Context, name string) string {
 	stdout, stderr, _ := d.exec(ctx, []string{"docker", "logs", "--tail", "60", name}) //nolint:errcheck // logs are diagnostic

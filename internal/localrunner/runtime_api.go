@@ -112,15 +112,25 @@ type runtimeAPI struct {
 	// running reports whether the container is still alive while an
 	// invocation waits. A nil check skips the probe (unit tests).
 	running func(context.Context) (bool, error)
+	// gateway resolves the run network's gateway address, the fallback bind
+	// when the container cannot reach the host's loopback. A nil function
+	// keeps the loopback bind.
+	gateway func(context.Context) (string, error)
 	logf    func(string, ...any)
 }
 
+// runtimeAPIProbeTimeout bounds how long a container is given to reach the
+// loopback listener before the listener falls back to the run network's
+// gateway address. Colima and Docker Desktop forward host.docker.internal to
+// the host's loopback; on Linux the host gateway is the bridge address, so a
+// loopback-only listener is unreachable from the container.
+const runtimeAPIProbeTimeout = 10 * time.Second
+
 func newRuntimeAPI(function FunctionSpec, logf func(string, ...any)) (*runtimeAPI, error) {
-	var listenConfig net.ListenConfig
-	// The listener binds every interface: a container reaches it through
-	// host.docker.internal, where a loopback-only listener is unreachable on
-	// Linux (the host-gateway address is the bridge interface).
-	listener, err := listenConfig.Listen(context.Background(), "tcp", "0.0.0.0:0")
+	// The listener never binds the unspecified address: that would expose the
+	// unauthenticated Runtime API (every invocation payload, the response and
+	// error channel) to every host on the developer's network.
+	listener, err := listenRuntimeAPI("127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("bind the runtime API listener for %s: %w", function.LogicalID, err)
 	}
@@ -132,32 +142,110 @@ func newRuntimeAPI(function FunctionSpec, logf func(string, ...any)) (*runtimeAP
 		closed:   make(chan struct{}),
 		logf:     logf,
 	}
-	api.server = &http.Server{
-		Handler:           http.HandlerFunc(api.serveHTTP),
+	api.server = api.newServer()
+	go api.serve(api.server, listener)
+	return api, nil
+}
+
+func listenRuntimeAPI(address string) (net.Listener, error) {
+	var listenConfig net.ListenConfig
+	return listenConfig.Listen(context.Background(), "tcp", address)
+}
+
+func (a *runtimeAPI) newServer() *http.Server {
+	return &http.Server{
+		Handler:           http.HandlerFunc(a.serveHTTP),
 		ReadHeaderTimeout: 10 * time.Second,
 		// No read or write timeout: /next is an iterator-style blocking call
 		// that Lambda may answer after seconds, and the page says not to set a
 		// timeout on it.
 		// https://docs.aws.amazon.com/lambda/latest/dg/runtimes-api.html
 	}
-	go func() {
-		if serveErr := api.server.Serve(listener); serveErr != nil && serveErr != http.ErrServerClosed {
-			api.logf("runtime API for %s stopped: %v", function.LogicalID, serveErr)
-		}
-	}()
-	return api, nil
+}
+
+func (a *runtimeAPI) serve(server *http.Server, listener net.Listener) {
+	if serveErr := server.Serve(listener); serveErr != nil && serveErr != http.ErrServerClosed {
+		a.logf("runtime API for %s stopped: %v", a.function.LogicalID, serveErr)
+	}
+}
+
+// boundAddress reports the address the listener serves on right now.
+func (a *runtimeAPI) boundAddress() *net.TCPAddr {
+	if a == nil || a.listener == nil {
+		return nil
+	}
+	address, ok := a.listener.Addr().(*net.TCPAddr)
+	if !ok {
+		return nil
+	}
+	return address
 }
 
 // HostURL is the runtime API address on the host (the CLI and tests).
 func (a *runtimeAPI) HostURL() string {
-	if a == nil || a.listener == nil {
+	address := a.boundAddress()
+	if address == nil {
 		return ""
 	}
-	address, ok := a.listener.Addr().(*net.TCPAddr)
-	if !ok {
+	return "http://" + net.JoinHostPort(address.IP.String(), strconv.Itoa(address.Port))
+}
+
+// bindGateway moves the listener to the run network's gateway address on the
+// same port, which is the address a container reaches when the host's loopback
+// is not forwarded to it (the Linux bridge case). It reports whether the move
+// succeeded; a failure leaves the current bind in place.
+func (a *runtimeAPI) bindGateway(gateway string) bool {
+	address := a.boundAddress()
+	if address == nil || a.server == nil {
+		return false
+	}
+	gateway = strings.TrimSpace(gateway)
+	if gateway == "" {
+		return false
+	}
+	listener, err := listenRuntimeAPI(net.JoinHostPort(gateway, strconv.Itoa(address.Port)))
+	if err != nil {
+		a.logf("runtime API for %s: cannot bind the run network gateway %s:%d: %v",
+			a.function.LogicalID, gateway, address.Port, err)
+		return false
+	}
+	previous, previousServer := a.listener, a.server
+	a.listener = listener
+	a.server = a.newServer()
+	go a.serve(a.server, listener)
+	_ = previousServer.Close() //nolint:errcheck // the old listener has no request yet
+	_ = previous.Close()       //nolint:errcheck // closing the old listener is best effort
+	a.logf("runtime API for %s: the container cannot reach loopback; bound the run network gateway %s:%d",
+		a.function.LogicalID, gateway, address.Port)
+	return true
+}
+
+// rebindToGateway moves the listener to the run network's gateway address when
+// the container has not reached the loopback listener.
+func (a *runtimeAPI) rebindToGateway(ctx context.Context) bool {
+	if a == nil || a.gateway == nil {
+		return false
+	}
+	address := a.boundAddress()
+	if address == nil || !address.IP.IsLoopback() {
+		return false
+	}
+	gateway, err := a.gateway(ctx)
+	if err != nil {
+		a.logf("runtime API for %s: cannot read the run network gateway: %v", a.function.LogicalID, err)
+		return false
+	}
+	return a.bindGateway(gateway)
+}
+
+// gatewayBound reports the gateway address the listener serves on, or an empty
+// string while it serves on loopback.
+func (a *runtimeAPI) gatewayBound() string {
+	address := a.boundAddress()
+	if address == nil || address.IP.IsLoopback() || address.IP.IsUnspecified() {
 		return ""
 	}
-	return "http://127.0.0.1:" + strconv.Itoa(address.Port)
+	return address.IP.String()
 }
 
 // ContainerAddress is the address a function container uses in
@@ -165,11 +253,8 @@ func (a *runtimeAPI) HostURL() string {
 // API", without a scheme.
 // https://docs.aws.amazon.com/lambda/latest/dg/runtimes-custom.html
 func (a *runtimeAPI) ContainerAddress() string {
-	if a == nil || a.listener == nil {
-		return ""
-	}
-	address, ok := a.listener.Addr().(*net.TCPAddr)
-	if !ok {
+	address := a.boundAddress()
+	if address == nil {
 		return ""
 	}
 	return "host.docker.internal:" + strconv.Itoa(address.Port)
@@ -181,7 +266,9 @@ func (a *runtimeAPI) close() {
 	}
 	a.closeOnce.Do(func() {
 		close(a.closed)
-		_ = a.server.Close() //nolint:errcheck // shutdown is best effort
+		if a.server != nil {
+			_ = a.server.Close() //nolint:errcheck // shutdown is best effort
+		}
 	})
 }
 

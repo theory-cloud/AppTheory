@@ -143,7 +143,11 @@ type Runner struct {
 	listeners    []net.Listener
 	semaphore    chan struct{}
 	network      string
-	clock        Clock
+	// runtimeAPIGateway remembers the run network's gateway address once a
+	// container could not reach a loopback Runtime API listener, so later
+	// functions bind it before their container starts.
+	runtimeAPIGateway string
+	clock             Clock
 	delivery     *DeliveryEngine
 	// sns is the per-topic hub registry the SNS deliverer attaches to and
 	// PublishLocal publishes through.
@@ -1285,6 +1289,10 @@ func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image
 		if err != nil {
 			return err
 		}
+		api.gateway = r.networkGateway
+		if r.runtimeAPIGateway != "" {
+			api.bindGateway(r.runtimeAPIGateway)
+		}
 	}
 	env, overridden := r.functionEnvironment(function, api)
 	if r.options.RIEMode {
@@ -1371,6 +1379,7 @@ func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image
 		}
 		return err
 	}
+	r.rememberRuntimeAPIAddress(process)
 	if r.options.RIEMode {
 		r.logf("function %s (%s, %s) ready on 127.0.0.1:%d (Runtime Interface Emulator mode)", function.LogicalID, function.Runtime, image, process.Port)
 		return nil
@@ -1420,12 +1429,23 @@ func (p *FunctionProcess) awaitReady(ctx context.Context, docker *Docker) error 
 func (r *Runner) resetFunction(ctx context.Context, process *FunctionProcess) error {
 	r.logf("function %s: replacing the execution environment", process.Function.LogicalID)
 	r.docker.RemoveContainer(ctx, process.Container)
+	gateway := ""
+	if process.api != nil {
+		gateway = process.api.gatewayBound()
+	}
 	process.closeRuntimeAPI()
 	options := process.options
 	if !process.rie {
 		api, err := newRuntimeAPI(process.Function, r.logf)
 		if err != nil {
 			return err
+		}
+		api.gateway = r.networkGateway
+		if gateway == "" {
+			gateway = r.runtimeAPIGateway
+		}
+		if gateway != "" && api.bindGateway(gateway) {
+			r.runtimeAPIGateway = gateway
 		}
 		api.running = func(checkCtx context.Context) (bool, error) {
 			return r.docker.Running(checkCtx, process.Container)
@@ -1439,7 +1459,27 @@ func (r *Runner) resetFunction(ctx context.Context, process *FunctionProcess) er
 		return err
 	}
 	process.Started = time.Now().UTC()
-	return process.awaitReady(ctx, r.docker)
+	if err := process.awaitReady(ctx, r.docker); err != nil {
+		return err
+	}
+	r.rememberRuntimeAPIAddress(process)
+	return nil
+}
+
+// networkGateway resolves the run network's gateway address.
+func (r *Runner) networkGateway(ctx context.Context) (string, error) {
+	return r.docker.NetworkGateway(ctx, r.network)
+}
+
+// rememberRuntimeAPIAddress keeps the gateway bind for later functions once a
+// container could not reach loopback.
+func (r *Runner) rememberRuntimeAPIAddress(process *FunctionProcess) {
+	if process == nil || process.api == nil {
+		return
+	}
+	if gateway := process.api.gatewayBound(); gateway != "" {
+		r.runtimeAPIGateway = gateway
+	}
 }
 
 // functionCommand is the container command: the handler for a zip function, or
