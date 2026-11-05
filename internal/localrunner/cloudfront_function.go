@@ -139,7 +139,22 @@ func (o *functionURLOrigin) Fetch(ctx context.Context, request localcloudfront.O
 func (o *functionURLOrigin) FetchStream(ctx context.Context, request localcloudfront.OriginRequest) (localcloudfront.StreamResponse, error) {
 	streamer, ok := o.invoker.(streamInvoker)
 	if !ok || !streamer.StreamingIncremental() {
-		return localcloudfront.StreamResponse{}, fmt.Errorf("invoke Function URL %s: %w", o.urlID, localcloudfront.ErrStreamUnavailable)
+		// The invoker cannot forward chunks (the --rie emulator buffers every
+		// response, and any other invoker without StreamingIncremental does
+		// too). Serve the buffered response as a complete, non-chunked stream
+		// so a CloudFront distribution with this origin works in that mode,
+		// exactly as the Function URL listener falls back to Invoke.
+		response, err := o.Fetch(ctx, request)
+		if err != nil {
+			return localcloudfront.StreamResponse{}, err
+		}
+		return localcloudfront.StreamResponse{
+			StatusCode:        response.StatusCode,
+			StatusDescription: response.StatusDescription,
+			Header:            response.Header,
+			Body:              io.NopCloser(bytes.NewReader(response.Body)),
+			Chunked:           false,
+		}, nil
 	}
 	now := time.Now().UTC()
 	if o.now != nil {

@@ -333,10 +333,17 @@ func (g *Gateway) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			return
 		}
 		var fetched OriginResponse
+		streamed := false
 		if streamOrigin, ok := originImplementation.(StreamOrigin); ok {
 			outcome, streamErr := g.serveStreamingOrigin(writer, request, behavior, state, requestID, domainName,
 				originRequest, origin, streamOrigin, cacheable, cacheKey, now)
-			if streamErr != nil {
+			switch {
+			case errors.Is(streamErr, ErrStreamUnavailable):
+				// The origin cannot stream this request (a --rie invoker, or a
+				// transport without incremental forwarding). Serve it through
+				// the buffered Fetch path; the Function URL listener does the
+				// same fallback on the same condition.
+			case streamErr != nil:
 				if hasStaleEntry && staleEntry.ServeStaleIfError(now, behaviorMaximumTTL(behavior)) {
 					g.respondFromCache(writer, request, behavior, state, requestID, domainName, staleEntry, now, "served stale after the origin failed")
 					return
@@ -349,15 +356,18 @@ func (g *Gateway) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 				g.respondError(writer, request, behavior, state.Header, http.StatusBadGateway,
 					fmt.Sprintf("origin %q failed: %v", targetID, streamErr))
 				return
+			default:
+				if outcome.Handled {
+					return
+				}
+				fetched = outcome.Buffered
+				// The streaming path already ran the origin-response function with
+				// the status and headers it saw when the stream opened.
+				originResponseFunctionDone = true
+				streamed = true
 			}
-			if outcome.Handled {
-				return
-			}
-			fetched = outcome.Buffered
-			// The streaming path already ran the origin-response function with
-			// the status and headers it saw when the stream opened.
-			originResponseFunctionDone = true
-		} else {
+		}
+		if !streamed {
 			var originErr error
 			fetched, originErr = originImplementation.Fetch(request.Context(), originRequest)
 			if originErr != nil {

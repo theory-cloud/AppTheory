@@ -146,10 +146,19 @@ func TestFunctionURLOriginFetchStreamDecodesABufferedResponse(t *testing.T) {
 	}
 }
 
-func TestFunctionURLOriginFetchStreamRefusesANonStreamingInvoker(t *testing.T) {
-	origin := &functionURLOrigin{originID: "origin", urlID: "url", domainName: "abc.lambda-url.us-east-1.on.aws", authType: noneAuthorization, invoker: &recordingInvoker{response: []byte(`{"statusCode":200}`)}}
-	if _, err := origin.FetchStream(context.Background(), localcloudfrontOriginRequest()); err == nil {
-		t.Fatal("a non-streaming invoker must be refused")
+func TestFunctionURLOriginFetchStreamBuffersANonStreamingInvoker(t *testing.T) {
+	origin := &functionURLOrigin{originID: "origin", urlID: "url", domainName: "abc.lambda-url.us-east-1.on.aws", authType: noneAuthorization,
+		invoker: &recordingInvoker{response: []byte(`{"statusCode":200,"headers":{"content-type":"text/plain"},"body":"buffered"}`)}}
+	stream, err := origin.FetchStream(context.Background(), localcloudfrontOriginRequest())
+	if err != nil {
+		t.Fatalf("a non-streaming invoker is served through the buffered path: %v", err)
+	}
+	if stream.Chunked {
+		t.Fatal("the buffered response is complete, not chunked")
+	}
+	body, _ := io.ReadAll(stream.Body) //nolint:errcheck // test
+	if stream.StatusCode != http.StatusOK || string(body) != "buffered" {
+		t.Fatalf("buffered response: %d %q", stream.StatusCode, body)
 	}
 }
 
