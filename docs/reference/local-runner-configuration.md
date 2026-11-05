@@ -1023,12 +1023,18 @@ object holds `headers`, `status` and `statusDescription`
 the function therefore runs once both are known, before the body is forwarded,
 and cannot change the status. A streamed response that ends with the
 `Lambda-Runtime-Function-Error-Type` and `Lambda-Runtime-Function-Error-Body`
-trailers keeps the bytes the runtime wrote, but the gateway logs the trailer
-metadata and does not cache the object as complete; the pages are silent on what
-each client sees, so the local rule is the safe one (never cache a stream that
-ended with an error). A `Content-Length` in a
-streaming prelude is recomputed by the local HTTP server; a body without one is
-chunked, which is API Gateway's documented default. The local forwarders write
+trailers keeps the bytes the runtime wrote: "Lambda treats this as a successful
+response and forwards the error metadata that the runtime provides to the
+client" ([custom runtime](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-custom.html)).
+CloudFront removes the `Trailer` header before forwarding the response from the
+origin to the viewer, and "if the chunked response is not complete, CloudFront
+does not cache the object"
+([custom origin behavior](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/RequestAndResponseBehaviorCustomOrigin.html)).
+The gateway logs the trailer metadata and does not cache the object as
+complete, and the local surfaces do not forward the trailers to a client. A
+`Content-Length` in a streaming prelude is recomputed by the local HTTP
+server; a body without one is chunked, which is API Gateway's documented
+default. The local forwarders write
 the function's own response bytes to the local client; they do not build an
 HTML page from request input. S3 bucket CORS rules, S3
 IAM/bucket policies and Lambda IAM policy evaluation are not emulated. A viewer
@@ -1427,14 +1433,24 @@ The runtime returns one JSON body (the emulator returns the same shape in
   metadata and body;
 - `errorType`/`errorMessage` without a `statusCode` is a handler error and is
   served as `502 {"message":"Internal Server Error"}` (the detail is logged);
-- a Function URL origin applies AWS's inference rule to a genuine return value:
-  "If your function returns valid JSON and doesn't return a statusCode, Lambda
-  assumes the following: statusCode is 200 ... content-type is
-  application/json ... body is the function response"
+- a Function URL applies AWS's inference rule to a genuine return value on
+  every local Function URL surface: the standalone listener (a buffered
+  response, and a buffered response on a `RESPONSE_STREAM` URL), the Function
+  URL origin behind CloudFront, and a streamed response's prelude. "If your
+  function returns valid JSON and doesn't return a statusCode, Lambda assumes
+  the following: statusCode is 200 ... content-type is application/json ...
+  body is the function response"
   ([Function URL payloads](https://docs.aws.amazon.com/lambda/latest/dg/urls-invocation.html)).
-  The buffered and streaming Function URL origin paths share this one rule; an
-  error payload is still the 502 above;
-- a missing or out-of-range `statusCode` and a malformed body are `502`;
+  A streaming prelude whose metadata omits `statusCode` is a 200 with the
+  prelude's headers and the framed payload. An error payload is still the 502
+  above;
+- a buffered JSON object whose `statusCode` key is present but invalid
+  (including one outside 100-599) and a buffered body that is not valid JSON
+  are `502` on every surface: the standalone Function URL listener, the
+  Function URL origin behind CloudFront, HTTP API v2, REST API v1, the
+  WebSocket transport and `invoke`;
+- a missing `statusCode` on HTTP API v2, REST API v1, the WebSocket transport
+  and `invoke` is `502` too;
 - a request with no matching route is `404 {"message":"Not Found"}` from the
   local transport; bodies above 10 MB are `413`.
 

@@ -551,6 +551,8 @@ prelude is complete:
 - Function URL: the prelude uses the same `statusCode`/`headers`/`cookies`
   fields as the buffered response payload
   ([Function URL payloads](https://docs.aws.amazon.com/lambda/latest/dg/urls-invocation.html)).
+  A prelude that omits `statusCode` is a `200` with the prelude's headers and
+  the payload, the same answer the standalone listener gives a buffered frame.
   A stream without a valid prelude is delivered as a raw `200` body with the
   runtime's `Content-Type`; the Function URL pages do not define that case, so
   the local rule is documented here.
@@ -1199,9 +1201,17 @@ same assembly:
   2.0 event from the origin request (method, origin path, raw path, query,
   cookies, headers, viewer IP and request id), invokes the real function through
   the same runtime container `run` starts, and maps `statusCode`, `headers`,
-  `cookies`, `isBase64Encoded` and `body` back. A `RESPONSE_STREAM` function's
-  chunks reach the gateway as the runtime writes them; the prelude supplies the
-  status, headers and cookies and the payload follows. A `NONE` URL is invoked
+  `cookies`, `isBase64Encoded` and `body` back. A return value without a
+  `statusCode` follows the page's inference rule on every local Function URL
+  surface: valid JSON is a `200` with `content-type: application/json` and the
+  function response as the body, while an error payload stays the documented
+  `502` ([Function URL payloads](https://docs.aws.amazon.com/lambda/latest/dg/urls-invocation.html)).
+  The standalone listener (buffered, and a buffered response on a
+  `RESPONSE_STREAM` URL) decodes through the same rule, and a streaming prelude
+  whose metadata omits `statusCode` is a `200` with the prelude's headers and
+  the framed payload. A `RESPONSE_STREAM` function's chunks reach the gateway
+  as the runtime writes them; the prelude supplies the status, headers and
+  cookies and the payload follows. A `NONE` URL is invoked
   directly. An `AWS_IAM` URL is signed with
   SigV4 over the method, path, query, Host, body hash and date; the gateway's
   in-process verifier checks that locally signed request before it invokes the
@@ -1818,18 +1828,22 @@ The runner serves the EventBridge `PutEvents` JSON protocol itself on an
 ephemeral port injected into every function as `AWS_ENDPOINT_URL_EVENTS` and
 `AWS_ENDPOINT_URL_EVENTBRIDGE` (the SDKs and Tools reference names the override
 from EventBridge's API-model serviceId; both spellings point at the same
-endpoint). Function containers reach it as `host.docker.internal:<port>` with
-the `host-gateway` entry the runner adds. The listener binds every interface so
-that entry works on Linux, where it resolves to the bridge address; the session
-reports and the harness uses `http://127.0.0.1:<port>`. The endpoint is
-unauthenticated and reachable from any interface on the host while a session
-runs. The EventBridge endpoint and the WebSocket `@connections` management
-listener bind every interface; the Runtime API listener binds loopback or, when
-the container cannot reach it, the run network's gateway address (see
-[Requirements](#requirements)); the backends publish on `127.0.0.1`. A handler's
-real SDK client and the harness's AWS CLI reach the same endpoint. A rule's
-pattern is matched by the validated EventBridge evaluator E1b uses, and the
-runner performs input shaping, target delivery, retry and dead-letter handling.
+endpoint). Function containers reach it as `host.docker.internal:<port>`
+through the host entry the runner adds: on Linux, where the host owns the run
+network's gateway, the entry names that gateway address, and elsewhere the
+entry keeps Docker's `host-gateway` value, which Colima and Docker Desktop
+forward to the host's loopback. The listener binds every interface so that
+entry works in both cases; the session reports and the harness uses
+`http://127.0.0.1:<port>`. The endpoint is unauthenticated and reachable from
+any interface on the host while a session runs. The EventBridge endpoint, the
+WebSocket `@connections` management listener and the CloudFront control endpoint
+bind every interface; the Runtime API listener binds loopback or, when the
+container cannot reach it, the run network's gateway address (see
+[Requirements](#requirements)); the backends publish on `127.0.0.1`. A
+handler's real SDK client and the harness's AWS CLI reach the same endpoint. A
+rule's pattern is matched by the validated EventBridge evaluator E1b uses, and
+the runner performs input shaping, target delivery, retry and dead-letter
+handling.
 
 The own bus was chosen over the pinned moto events service after probing
 `motoserver/moto@sha256:59a1965d` (5.2.5):
