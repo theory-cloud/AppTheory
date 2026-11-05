@@ -336,7 +336,7 @@ func isConditionalHeader(name string) bool {
 func (g *Gateway) responseTTL(response OriginResponse, behavior *Behavior, errorCaching errorCachingDecision) (time.Duration, CacheControl) {
 	if errorCaching.applies {
 		if errorCaching.behaviorTTL && errorCaching.pageBehavior != nil {
-			if policy := policyCache(errorCaching.pageBehavior); policy != nil {
+			if policy := policyCache(errorCaching.pageBehavior); policy != nil && !policy.CachingDisabled {
 				return policy.OriginTTL(response, g.now())
 			}
 			return 0, CacheControl{}
