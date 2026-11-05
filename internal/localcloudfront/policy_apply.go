@@ -211,7 +211,7 @@ func copyConditionalHeaders(header, viewer http.Header) {
 }
 
 func addCloudFrontHeaders(header http.Header, rule forwardingRule, state *requestState) {
-	names := []string{"cloudfront-forwarded-proto", "cloudfront-viewer-address", "cloudfront-viewer-http-version"}
+	names := []string{"cloudfront-forwarded-proto", "cloudfront-viewer-address", "cloudfront-viewer-http-version", headerCloudFrontViewerCountry}
 	for _, name := range names {
 		if rule.Except[name] {
 			continue
@@ -230,6 +230,11 @@ func addCloudFrontHeaders(header http.Header, rule forwardingRule, state *reques
 				proto = "HTTP/1.1"
 			}
 			header.Set("CloudFront-Viewer-Http-Version", proto)
+		case headerCloudFrontViewerCountry:
+			// The run's resolved viewer country, when the gateway knows one.
+			if country := state.Header.Get("CloudFront-Viewer-Country"); country != "" {
+				header.Set("CloudFront-Viewer-Country", country)
+			}
 		}
 	}
 }
@@ -447,7 +452,7 @@ func corsOriginMatches(pattern, origin string) bool {
 		return matchGlob(pattern, origin)
 	}
 	trimmed := origin
-	if scheme, rest, found := strings.Cut(origin, "://"); found && (scheme == "http" || scheme == "https") {
+	if scheme, rest, found := strings.Cut(origin, "://"); found && (scheme == "http" || scheme == valueHTTPS) {
 		trimmed = rest
 	}
 	if strings.Contains(pattern, ":") {

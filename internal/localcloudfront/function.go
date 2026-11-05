@@ -164,7 +164,16 @@ type engineInput struct {
 	Runtime string       `json:"runtime"`
 	Code    string       `json:"code"`
 	Timeout int          `json:"timeoutMs"`
+	KVS     *engineKVS   `json:"kvs,omitempty"`
 	Cases   []engineCase `json:"cases"`
+}
+
+// engineKVS is the key value store data a function can read through the
+// cloudfront module.
+type engineKVS struct {
+	Values    map[string]string `json:"values"`
+	CreatedAt string            `json:"createdAt"`
+	UpdatedAt string            `json:"updatedAt"`
 }
 
 type engineCase struct {
@@ -249,6 +258,7 @@ func (e *Executor) ExecuteBatch(
 		Runtime: function.Runtime,
 		Code:    function.Code,
 		Timeout: int(timeout / time.Millisecond),
+		KVS:     function.engineKVS(),
 		Cases:   make([]engineCase, 0, len(events)),
 	}
 	for _, event := range events {

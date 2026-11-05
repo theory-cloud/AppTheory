@@ -52,7 +52,7 @@ var distributionPropertyInventory = map[string]Disposition{
 	"OriginGroups":                 Implemented,
 	"Origins":                      Implemented,
 	"PriceClass":                   Reported,
-	"Restrictions":                 Refused,
+	"Restrictions":                 Implemented,
 	"Staging":                      Reported,
 	"ViewerCertificate":            Reported,
 	"WebACLId":                     Refused,
@@ -64,11 +64,11 @@ var behaviorPropertyInventory = map[string]Disposition{
 	"CachedMethods":              Implemented,
 	"Compress":                   Reported,
 	propertyDefaultTTL:           Reported,
-	"FieldLevelEncryptionId":     Refused,
+	"FieldLevelEncryptionId":     Implemented,
 	"ForwardedValues":            Refused,
 	"FunctionAssociations":       Implemented,
 	"GrpcConfig":                 Refused,
-	"LambdaFunctionAssociations": Refused,
+	"LambdaFunctionAssociations": Implemented,
 	propertyMaxTTL:               Reported,
 	propertyMinTTL:               Reported,
 	"OriginRequestPolicyId":      Implemented,
@@ -77,7 +77,7 @@ var behaviorPropertyInventory = map[string]Disposition{
 	"ResponseHeadersPolicyId":    Implemented,
 	"SmoothStreaming":            Reported,
 	"TargetOriginId":             Implemented,
-	"TrustedKeyGroups":           Refused,
+	"TrustedKeyGroups":           Implemented,
 	"TrustedSigners":             Refused,
 	"ViewerProtocolPolicy":       Reported,
 }
@@ -112,13 +112,13 @@ var functionPropertyInventory = map[string]Disposition{
 	"AutoPublish":                     Reported,
 	"FunctionCode":                    Implemented,
 	"FunctionConfig":                  Implemented,
-	propertyKeyValueStoreAssociations: Refused,
+	propertyKeyValueStoreAssociations: Implemented,
 	propertyName:                      Reported,
 }
 
 var functionConfigPropertyInventory = map[string]Disposition{
 	propertyComment:                   Reported,
-	propertyKeyValueStoreAssociations: Refused,
+	propertyKeyValueStoreAssociations: Implemented,
 	"Runtime":                         Implemented,
 }
 
@@ -198,6 +198,91 @@ var functionAssociationPropertyInventory = map[string]Disposition{
 	"FunctionARN": Implemented,
 }
 
+var distributionRestrictionsPropertyInventory = map[string]Disposition{
+	"GeoRestriction": Implemented,
+}
+
+var geoRestrictionPropertyInventory = map[string]Disposition{
+	"Locations":       Implemented,
+	"RestrictionType": Implemented,
+}
+
+var lambdaFunctionAssociationPropertyInventory = map[string]Disposition{
+	"EventType":         Implemented,
+	"IncludeBody":       Implemented,
+	"LambdaFunctionARN": Implemented,
+}
+
+var trustedKeyGroupsPropertyInventory = map[string]Disposition{
+	"Enabled":     Implemented,
+	propertyItems: Implemented,
+}
+
+var publicKeyConfigPropertyInventory = map[string]Disposition{
+	"CallerReference": Reported,
+	propertyComment:   Reported,
+	"EncodedKey":      Implemented,
+	propertyName:      Reported,
+}
+
+var keyGroupConfigPropertyInventory = map[string]Disposition{
+	propertyComment: Reported,
+	propertyItems:   Implemented,
+	propertyName:    Reported,
+}
+
+var keyValueStorePropertyInventory = map[string]Disposition{
+	propertyComment: Reported,
+	"ImportSource":  Implemented,
+	propertyName:    Reported,
+}
+
+var kvsImportSourcePropertyInventory = map[string]Disposition{
+	"SourceArn":  Implemented,
+	"SourceType": Implemented,
+}
+
+var fleConfigPropertyInventory = map[string]Disposition{
+	"CallerReference":          Reported,
+	propertyComment:            Reported,
+	"ContentTypeProfileConfig": Implemented,
+	"QueryArgProfileConfig":    Implemented,
+}
+
+var contentTypeProfileConfigPropertyInventory = map[string]Disposition{
+	"ContentTypeProfiles":             Implemented,
+	"ForwardWhenContentTypeIsUnknown": Implemented,
+}
+
+var contentTypeProfilePropertyInventory = map[string]Disposition{
+	"ContentType": Implemented,
+	"Format":      Implemented,
+	"ProfileId":   Implemented,
+}
+
+var queryArgProfileConfigPropertyInventory = map[string]Disposition{
+	"ForwardWhenQueryArgProfileIsUnknown": Implemented,
+	"QueryArgProfiles":                    Implemented,
+}
+
+var queryArgProfilePropertyInventory = map[string]Disposition{
+	"ProfileId": Implemented,
+	"QueryArg":  Implemented,
+}
+
+var fleProfilePropertyInventory = map[string]Disposition{
+	"CallerReference":    Reported,
+	propertyComment:      Reported,
+	"EncryptionEntities": Implemented,
+	propertyName:         Reported,
+}
+
+var encryptionEntityPropertyInventory = map[string]Disposition{
+	"FieldPatterns": Implemented,
+	"ProviderId":    Implemented,
+	"PublicKeyId":   Implemented,
+}
+
 // PropertyInventory returns the classification table for the properties the
 // reader understands. Tests use it to prove that every property in a shipped
 // template is classified.
@@ -219,6 +304,21 @@ func PropertyInventory() map[string]map[string]Disposition {
 		"SecurityHeadersConfig":                    securityHeadersPropertyInventory,
 		"OriginAccessControlConfig":                originAccessControlConfigPropertyInventory,
 		"FunctionAssociation":                      functionAssociationPropertyInventory,
+		"Restrictions":                             distributionRestrictionsPropertyInventory,
+		"GeoRestriction":                           geoRestrictionPropertyInventory,
+		"LambdaFunctionAssociation":                lambdaFunctionAssociationPropertyInventory,
+		"TrustedKeyGroups":                         trustedKeyGroupsPropertyInventory,
+		"PublicKeyConfig":                          publicKeyConfigPropertyInventory,
+		"KeyGroupConfig":                           keyGroupConfigPropertyInventory,
+		"KeyValueStore":                            keyValueStorePropertyInventory,
+		"ImportSource":                             kvsImportSourcePropertyInventory,
+		"FieldLevelEncryptionConfig":               fleConfigPropertyInventory,
+		"ContentTypeProfileConfig":                 contentTypeProfileConfigPropertyInventory,
+		"ContentTypeProfile":                       contentTypeProfilePropertyInventory,
+		"QueryArgProfileConfig":                    queryArgProfileConfigPropertyInventory,
+		"QueryArgProfile":                          queryArgProfilePropertyInventory,
+		"FieldLevelEncryptionProfileConfig":        fleProfilePropertyInventory,
+		"EncryptionEntity":                         encryptionEntityPropertyInventory,
 	}
 }
 
@@ -280,22 +380,14 @@ func refusalReason(key string) string {
 	switch key {
 	case "ContinuousDeploymentPolicyId":
 		return "continuous deployment policies are not supported locally"
-	case "Restrictions":
-		return "geo restriction decides which requests are served and is not emulated"
 	case "WebACLId":
 		return "a WAF web ACL decides which requests are served and is not emulated"
-	case "FieldLevelEncryptionId":
-		return "field-level encryption is not emulated"
 	case "ForwardedValues":
 		return "legacy ForwardedValues cache policies are not supported; use a cache policy and an origin request policy"
 	case "GrpcConfig":
 		return "gRPC is not supported locally"
-	case "LambdaFunctionAssociations":
-		return "Lambda@Edge associations are not executed by the local gateway"
-	case "TrustedKeyGroups", "TrustedSigners":
-		return "signed URLs and signed cookies are not verified locally"
-	case propertyKeyValueStoreAssociations:
-		return "CloudFront KeyValueStore associations are not available locally"
+	case "TrustedSigners":
+		return "AWS-account trusted signers are the legacy signer form; use a trusted key group"
 	default:
 		return "not supported locally"
 	}

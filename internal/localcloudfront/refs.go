@@ -47,7 +47,7 @@ func resolveOriginDomain(raw json.RawMessage, stack string, index *resourceIndex
 	}
 	for key, value := range expression {
 		switch key {
-		case "Fn::GetAtt":
+		case valueFnGetAtt:
 			id, attr, ok := getAtt(value)
 			if !ok {
 				return originDomain{Kind: refUnresolved, Expression: compactJSON(raw)}, nil
@@ -153,7 +153,7 @@ func getAtt(raw json.RawMessage) (id, attr string, ok bool) {
 func getAttFromExpression(raw json.RawMessage) (id, attr string, ok bool) {
 	var expression map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &expression); err == nil {
-		if nested, found := expression["Fn::GetAtt"]; found {
+		if nested, found := expression[valueFnGetAtt]; found {
 			return getAtt(nested)
 		}
 	}
@@ -177,7 +177,7 @@ func resolveResourceRef(raw json.RawMessage, stack string, index *resourceIndex)
 				return "", false
 			}
 			return index.qualified(stack, id), true
-		case "Fn::GetAtt":
+		case valueFnGetAtt:
 			id, _, ok := getAtt(value)
 			if !ok {
 				return "", false
@@ -228,7 +228,7 @@ func resolveFunctionRef(raw json.RawMessage, stack string, index *resourceIndex)
 	if err := json.Unmarshal(raw, &expression); err != nil || len(expression) != 1 {
 		return "", false
 	}
-	value, ok := expression["Fn::GetAtt"]
+	value, ok := expression[valueFnGetAtt]
 	if !ok {
 		return "", false
 	}

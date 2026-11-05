@@ -5,8 +5,8 @@
 // resources it references are the only routing definition. The package runs the
 // exact CloudFront Function code the template declares, applies the origin
 // request and response headers policies, and hands origin requests to an Origin
-// implementation. It is not a CloudFront emulator: there is no cache, no edge
-// network and no TLS.
+// implementation. It is not a CloudFront emulator: the cache is a single
+// in-memory store, there is no edge network and no TLS.
 package localcloudfront
 
 import (
@@ -35,8 +35,13 @@ type Resource struct {
 // distribution, reported by the caller instead of being ignored.
 func ParseTemplates(templates []Template) (*Topology, error) {
 	topology := &Topology{
-		functionsByID: make(map[string]*Function),
-		policiesByID:  make(map[string]*Policy),
+		functionsByID:   make(map[string]*Function),
+		policiesByID:    make(map[string]*Policy),
+		publicKeysByID:  make(map[string]*PublicKey),
+		keyGroupsByID:   make(map[string]*KeyGroup),
+		storesByID:      make(map[string]*KeyValueStore),
+		fleConfigsByID:  make(map[string]*FieldLevelEncryptionConfig),
+		fleProfilesByID: make(map[string]*FieldLevelEncryptionProfile),
 	}
 	index := newResourceIndex(templates)
 	for _, tpl := range templates {
@@ -50,13 +55,23 @@ func ParseTemplates(templates []Template) (*Topology, error) {
 
 // Topology is everything the gateway derived from the cloud assembly.
 type Topology struct {
-	Distributions        []*Distribution        `json:"distributions"`
-	Functions            []*Function            `json:"functions,omitempty"`
-	Policies             []*Policy              `json:"policies,omitempty"`
-	OriginAccessControls []*OriginAccessControl `json:"originAccessControls,omitempty"`
+	Distributions                []*Distribution                `json:"distributions"`
+	Functions                    []*Function                    `json:"functions,omitempty"`
+	Policies                     []*Policy                      `json:"policies,omitempty"`
+	OriginAccessControls         []*OriginAccessControl         `json:"originAccessControls,omitempty"`
+	PublicKeys                   []*PublicKey                   `json:"publicKeys,omitempty"`
+	KeyGroups                    []*KeyGroup                    `json:"keyGroups,omitempty"`
+	KeyValueStores               []*KeyValueStore               `json:"keyValueStores,omitempty"`
+	FieldLevelEncryptionConfigs  []*FieldLevelEncryptionConfig  `json:"fieldLevelEncryptionConfigs,omitempty"`
+	FieldLevelEncryptionProfiles []*FieldLevelEncryptionProfile `json:"fieldLevelEncryptionProfiles,omitempty"`
 
-	functionsByID map[string]*Function
-	policiesByID  map[string]*Policy
+	functionsByID   map[string]*Function
+	policiesByID    map[string]*Policy
+	publicKeysByID  map[string]*PublicKey
+	keyGroupsByID   map[string]*KeyGroup
+	storesByID      map[string]*KeyValueStore
+	fleConfigsByID  map[string]*FieldLevelEncryptionConfig
+	fleProfilesByID map[string]*FieldLevelEncryptionProfile
 }
 
 // Distribution returns one distribution by qualified logical id.
@@ -75,11 +90,47 @@ func (t *Topology) Function(logicalID string) (*Function, bool) {
 	return function, ok
 }
 
+// PublicKey returns one CloudFront public key by qualified logical id.
+func (t *Topology) PublicKey(logicalID string) (*PublicKey, bool) {
+	key, ok := t.publicKeysByID[logicalID]
+	return key, ok
+}
+
+// KeyGroup returns one CloudFront key group by qualified logical id.
+func (t *Topology) KeyGroup(logicalID string) (*KeyGroup, bool) {
+	group, ok := t.keyGroupsByID[logicalID]
+	return group, ok
+}
+
+// KeyValueStore returns one CloudFront key value store by qualified logical id.
+func (t *Topology) KeyValueStore(logicalID string) (*KeyValueStore, bool) {
+	store, ok := t.storesByID[logicalID]
+	return store, ok
+}
+
+// FieldLevelEncryptionConfig returns one FLE configuration by qualified
+// logical id.
+func (t *Topology) FieldLevelEncryptionConfig(logicalID string) (*FieldLevelEncryptionConfig, bool) {
+	config, ok := t.fleConfigsByID[logicalID]
+	return config, ok
+}
+
+// FieldLevelEncryptionProfile returns one FLE profile by qualified logical id.
+func (t *Topology) FieldLevelEncryptionProfile(logicalID string) (*FieldLevelEncryptionProfile, bool) {
+	profile, ok := t.fleProfilesByID[logicalID]
+	return profile, ok
+}
+
 func (t *Topology) sort() {
 	sortDistributions(t.Distributions)
 	sortFunctions(t.Functions)
 	sortPolicies(t.Policies)
 	sortOACs(t.OriginAccessControls)
+	sortPublicKeys(t.PublicKeys)
+	sortKeyGroups(t.KeyGroups)
+	sortKeyValueStores(t.KeyValueStores)
+	sortFLEConfigs(t.FieldLevelEncryptionConfigs)
+	sortFLEProfiles(t.FieldLevelEncryptionProfiles)
 }
 
 // resourceIndex resolves a logical id inside one stack.
@@ -123,6 +174,8 @@ func (i *resourceIndex) qualified(stack, logicalID string) string {
 // parseStack reads one stack in a stable order: functions and policies first,
 // because distributions reference them; then origin access controls; then the
 // distributions themselves.
+//
+//nolint:gocognit,gocyclo // one pass per resource kind so references resolve first
 func (t *Topology) parseStack(tpl Template, index *resourceIndex) error {
 	ids := sortedKeys(tpl.Resources)
 	for _, id := range ids {
@@ -159,6 +212,46 @@ func (t *Topology) parseStack(tpl Template, index *resourceIndex) error {
 			return err
 		}
 		t.OriginAccessControls = append(t.OriginAccessControls, oac)
+	}
+	for _, id := range ids {
+		resource := tpl.Resources[id]
+		switch resource.Type {
+		case typePublicKey:
+			key, err := parsePublicKey(tpl.Stack, id, resource, index)
+			if err != nil {
+				return err
+			}
+			t.PublicKeys = append(t.PublicKeys, key)
+			t.publicKeysByID[key.LogicalID] = key
+		case typeKeyGroup:
+			group, err := parseKeyGroup(tpl.Stack, id, resource, index)
+			if err != nil {
+				return err
+			}
+			t.KeyGroups = append(t.KeyGroups, group)
+			t.keyGroupsByID[group.LogicalID] = group
+		case typeKeyValueStore:
+			store, err := parseKeyValueStore(tpl.Stack, id, resource, index)
+			if err != nil {
+				return err
+			}
+			t.KeyValueStores = append(t.KeyValueStores, store)
+			t.storesByID[store.LogicalID] = store
+		case typeFLEConfig:
+			config, err := parseFieldLevelEncryptionConfig(tpl.Stack, id, resource, index)
+			if err != nil {
+				return err
+			}
+			t.FieldLevelEncryptionConfigs = append(t.FieldLevelEncryptionConfigs, config)
+			t.fleConfigsByID[config.LogicalID] = config
+		case typeFLEProfile:
+			profile, err := parseFieldLevelEncryptionProfile(tpl.Stack, id, resource, index)
+			if err != nil {
+				return err
+			}
+			t.FieldLevelEncryptionProfiles = append(t.FieldLevelEncryptionProfiles, profile)
+			t.fleProfilesByID[profile.LogicalID] = profile
+		}
 	}
 	for _, id := range ids {
 		resource := tpl.Resources[id]

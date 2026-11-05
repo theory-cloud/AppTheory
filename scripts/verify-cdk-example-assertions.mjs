@@ -237,6 +237,61 @@ const assertions = {
     ]);
   },
 
+  EdgeGatewayExample() {
+    const distributions = byType("AWS::CloudFront::Distribution");
+    assert.equal(distributions.length, 2, "expected the edge and geo distributions");
+    const configs = distributions.map(([, distribution]) => distribution.Properties.DistributionConfig);
+    const edgeConfig = configs.find((config) => config.Comment && config.Comment.startsWith("Edge gateway"));
+    const geoConfig = configs.find((config) => config.Comment && config.Comment.startsWith("Geo restricted"));
+    assert.ok(edgeConfig, "missing edge distribution");
+    assert.ok(geoConfig, "missing geo distribution");
+
+    const versions = byType("AWS::Lambda::Version");
+    assert.equal(versions.length, 4, "expected four Lambda@Edge versions");
+    const behavior = edgeConfig.DefaultCacheBehavior;
+    const associations = behavior.LambdaFunctionAssociations ?? [];
+    assert.deepEqual(
+      associations.map((association) => association.EventType).sort(),
+      ["origin-request", "origin-response", "viewer-request", "viewer-response"],
+      "the default behavior must carry all four Lambda@Edge events",
+    );
+    for (const association of associations) {
+      assert.ok(association.LambdaFunctionARN.Ref, "a Lambda@Edge association must reference a version");
+      const version = resources[association.LambdaFunctionARN.Ref];
+      assert.equal(version.Type, "AWS::Lambda::Version", "the association must name a numbered version");
+    }
+    for (const eventType of ["viewer-request", "origin-request"]) {
+      const association = associations.find((entry) => entry.EventType === eventType);
+      assert.equal(association.IncludeBody, true, `${eventType} must include the body`);
+    }
+
+    const stores = byType("AWS::CloudFront::KeyValueStore");
+    assert.equal(stores.length, 1, "expected one key value store");
+    const functions = byType("AWS::CloudFront::Function");
+    assert.equal(functions.length, 1, "expected one CloudFront Function");
+    assert.equal(functions[0][1].Properties.FunctionConfig.Runtime, "cloudfront-js-2.0");
+    const associationsOf = functions[0][1].Properties.FunctionConfig.KeyValueStoreAssociations ?? [];
+    assert.equal(associationsOf.length, 1, "the function must be associated with the store");
+    const storeRef = associationsOf[0].KeyValueStoreARN ?? {};
+    const storeTarget = storeRef.Ref ?? (storeRef["Fn::GetAtt"] ?? [])[0];
+    assert.equal(storeTarget, stores[0][0], "the association must name the key value store");
+
+    assert.equal(byType("AWS::CloudFront::PublicKey").length, 1, "expected one FLE public key");
+    assert.equal(byType("AWS::CloudFront::FieldLevelEncryptionProfile").length, 1);
+    assert.equal(byType("AWS::CloudFront::FieldLevelEncryptionConfig").length, 1);
+    const apiBehavior = edgeConfig.CacheBehaviors.find((entry) => entry.PathPattern === "/api/*");
+    assert.ok(apiBehavior, "missing the /api/* behavior");
+    assert.ok(apiBehavior.FieldLevelEncryptionId, "the /api/* behavior must link the FLE configuration");
+    assert.equal(apiBehavior.ViewerProtocolPolicy, "redirect-to-https");
+    assert.deepEqual(
+      [...apiBehavior.AllowedMethods].sort(),
+      ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"],
+    );
+
+    assert.deepEqual(geoConfig.Restrictions.GeoRestriction.RestrictionType, "whitelist");
+    assert.deepEqual([...geoConfig.Restrictions.GeoRestriction.Locations].sort(), ["DE", "US"]);
+  },
+
   MediaCdnExample() {
     const distributions = byType("AWS::CloudFront::Distribution");
     assert.equal(distributions.length, 2, "expected public and private distributions");

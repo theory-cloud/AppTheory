@@ -6,6 +6,10 @@ import (
 	"strings"
 )
 
+// headerCloudFrontViewerCountry is the CloudFront location header the run's
+// --viewer-country supplies.
+const headerCloudFrontViewerCountry = "cloudfront-viewer-country"
+
 // managedPolicyTable is the pinned id -> definition table for the AWS managed
 // CloudFront policies the gateway understands. The definitions, including every
 // Minimum/Default/Maximum TTL triple, come from the managed-cache-policies
@@ -51,7 +55,7 @@ var managedPolicyTable = map[PolicyKind]map[string]*Policy{
 		"2e54312d-136d-493c-8eb9-b001f22f67d2": {
 			Kind: PolicyCache, ID: "2e54312d-136d-493c-8eb9-b001f22f67d2", Managed: true,
 			Cache: &CachePolicy{
-				Headers:      HeaderForwarding{Mode: ForwardWhitelist, Names: []string{"authorization", "cloudfront-viewer-country", "host"}},
+				Headers:      HeaderForwarding{Mode: ForwardWhitelist, Names: []string{"authorization", headerCloudFrontViewerCountry, "host"}},
 				Cookies:      CookieForwarding{Mode: ForwardAll},
 				QueryStrings: QueryForwarding{Mode: ForwardAll},
 				MinTTL:       2, DefaultTTL: 2, MaxTTL: 600,
@@ -450,9 +454,9 @@ func parseHeaderForwarding(raw json.RawMessage, allowAllViewer bool) (HeaderForw
 				return config, fmt.Errorf("HeaderBehavior: %w", err)
 			}
 			switch behavior {
-			case "none":
+			case valueNone:
 				config.Mode = ForwardNone
-			case "whitelist":
+			case valueWhitelist:
 				config.Mode = ForwardWhitelist
 			case "allViewer":
 				if !allowAllViewer {
@@ -554,7 +558,7 @@ func validMode(mode ForwardingMode) bool {
 func reportCloudFrontHeaderGaps(policy *Policy, context string, config HeaderForwarding) {
 	if config.CloudFrontHeaders {
 		policy.Reported = append(policy.Reported,
-			context+": CloudFront device, location and TLS headers are not generated locally")
+			context+": CloudFront device and TLS headers are not generated locally; a location header follows --viewer-country")
 	}
 	for _, name := range config.Names {
 		lower := strings.ToLower(name)
@@ -567,8 +571,55 @@ func reportCloudFrontHeaderGaps(policy *Policy, context string, config HeaderFor
 
 func derivableCloudFrontHeader(name string) bool {
 	switch name {
-	case "cloudfront-forwarded-proto", "cloudfront-viewer-address", "cloudfront-viewer-http-version":
+	case "cloudfront-forwarded-proto", "cloudfront-viewer-address", "cloudfront-viewer-http-version",
+		// CloudFront-Viewer-Country comes from the run's --viewer-country.
+		headerCloudFrontViewerCountry:
 		return true
+	default:
+		return false
+	}
+}
+
+// ReportViewerCountry records what the run's --viewer-country can and cannot
+// produce for CloudFront-Viewer-Country. The header is derivable when the run
+// sets a country; otherwise the viewer's location is undetermined and the
+// header is empty, and the report names the flag that would supply it.
+//
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/adding-cloudfront-headers.html
+func ReportViewerCountry(distributions []*Distribution, hasCountry bool) {
+	if hasCountry {
+		return
+	}
+	for _, distribution := range distributions {
+		if distribution == nil {
+			continue
+		}
+		behaviors := make([]*Behavior, 0, 1+len(distribution.CacheBehaviors))
+		if distribution.DefaultBehavior != nil {
+			behaviors = append(behaviors, distribution.DefaultBehavior)
+		}
+		behaviors = append(behaviors, distribution.CacheBehaviors...)
+		for _, behavior := range behaviors {
+			reportViewerCountryGap(behavior, behavior.CachePolicy, "cache policy")
+			reportViewerCountryGap(behavior, behavior.OriginRequestPolicy, "origin request policy")
+		}
+	}
+}
+
+func reportViewerCountryGap(behavior *Behavior, policy *Policy, context string) {
+	if policy == nil || !policyForwardsViewerCountry(policy) {
+		return
+	}
+	behavior.Reported = append(behavior.Reported, context+
+		": CloudFront header cloudfront-viewer-country is undetermined (empty) because the run sets no --viewer-country")
+}
+
+func policyForwardsViewerCountry(policy *Policy) bool {
+	switch {
+	case policy.Cache != nil:
+		return forwardsHeader(policy.Cache.Headers, headerCloudFrontViewerCountry)
+	case policy.OriginRequest != nil:
+		return forwardsHeader(policy.OriginRequest.Headers, headerCloudFrontViewerCountry)
 	default:
 		return false
 	}

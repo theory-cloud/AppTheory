@@ -35,6 +35,7 @@ function the CDK definition targets and reads one JSON command per line.
 | `--image class=ref` | profile | Override a runtime image pin (`go`, `node`, `python`). The reference must be `…@sha256:<64 hex>`. |
 | `--endpoint service=url` | none | Inject a local AWS endpoint for `service` (`dynamodb`, `sqs`, `s3`, …). Repeatable. |
 | `--origin domain=url` | none | Map a CloudFront external custom origin's domain to a loopback URL. An unmapped external origin refuses the distribution at plan time; a non-loopback URL is refused. Repeatable. |
+| `--viewer-country XX` | unset (undetermined) | CloudFront geo restriction's viewer country: an ISO 3166-1 alpha-2 code in upper case. Without it the viewer's location is undetermined and CloudFront serves the content. Also feeds `CloudFront-Viewer-Country` when a policy forwards it. |
 | `--add-host name=address` | none | Extra `/etc/hosts` entry inside function containers. Repeatable. |
 | `--backend NAME` | none | Start a profile emulator on the run network: `dynamodb`, `sqs`, or a profile container such as `moto` (KMS, STS, SSM, Secrets Manager, SNS, Kinesis, Cognito) or `s3proxy` (S3). Repeatable. |
 | `--port-base N` | ephemeral | Bind the API listeners at `N`, `N+1`, …; `0` asks the OS for free ports. |
@@ -337,7 +338,7 @@ TS_NODE_TRANSPILE_ONLY=1
 | `AWS::ApiGatewayV2::Api` (`ProtocolType: WEBSOCKET`) + `Route` + `AWS_PROXY` `Integration` + `Stage` | Served on its own RFC 6455 listener. Its route selection expression, `$connect`/`$disconnect`/`$default` and custom routes are derived; `$default` and custom routes are two-way. Only the single-field `$request.body.<field>` form and its wrapped `${request.body.<field>}` equivalent are served; any other declared form (multiple variables, a static value, a nested path) fails closed at plan time with the expression named. A `CUSTOM` `$connect` authorizer is derived with its identity sources and method ARN. See [WebSocket APIs](/examples/local-runner/#websocket-apis). |
 | `AWS::ApiGateway::Method` with a `MOCK` integration | Served from the first `IntegrationResponses` entry: its status and `method.response.header.*` parameters become the response. No function is invoked. |
 | `AWS::CloudFront::Distribution`, `AWS::CloudFront::Function`, `AWS::CloudFront::CachePolicy`, `AWS::CloudFront::OriginRequestPolicy`, `AWS::CloudFront::ResponseHeadersPolicy`, `AWS::CloudFront::OriginAccessControl` | Served as the distribution's edge path on a loopback listener, with S3, Function URL and origin-group origins. A property the gateway cannot faithfully apply refuses the distribution with a named reason; cache policies are applied, while a compression, logging, legacy behavior-TTL or placement property is reported. |
-| `AWS::CloudFront::KeyGroup`, `AWS::CloudFront::PublicKey` | Reported only; a distribution that trusts a key group is refused because signed URLs and cookies are not verified locally. |
+| `AWS::CloudFront::KeyGroup`, `AWS::CloudFront::PublicKey` | Reported with their parsed keys and groups. A distribution that trusts a key group requires a signed URL or signed cookie on every request except OPTIONS; the gateway verifies the signature (RSA with SHA-1 or SHA-256, or ECDSA) against the named public key and reports an unknown `Key-Pair-Id`. |
 
 ## Delivery engine
 
@@ -631,9 +632,11 @@ Cache policies:
 | `83da9c7e-98b4-4e11-a168-04f0df8e2c65` | UseOriginCacheControlHeaders | `host`, `origin`, `x-http-method-override`, `x-http-method`, `x-method-override`; all cookies |
 | `4cc15a8a-d715-48a4-82b8-cc0b614638fe` | UseOriginCacheControlHeaders-QueryStrings | the same headers; all cookies and query strings |
 
-A CloudFront-only header listed here (`cloudfront-viewer-country`, for example)
-is omitted when the gateway cannot derive a truthful local value; the policy
-parser reports that gap instead of fabricating a country, device or TLS value.
+A CloudFront-only header listed here is derived when the gateway has a truthful
+local value: `cloudfront-viewer-country` comes from `--viewer-country`, and is
+empty, with the plan naming the flag, when the run sets no country. Device and
+TLS headers are omitted; the policy parser reports that gap instead of
+fabricating a value.
 
 Origin request policies:
 
@@ -678,8 +681,11 @@ when the policy asks for a header the gateway can derive:
 - `cloudfront-viewer-address` is the loopback viewer address;
 - `cloudfront-viewer-http-version` is the request's HTTP version.
 
-CloudFront device, location and TLS headers have no truthful local value and are
-omitted; the policy parser reports this. Host follows the policy: `AllViewer`
+CloudFront device and TLS headers have no truthful local value and are
+omitted; the policy parser reports this. `cloudfront-viewer-country` is the
+run's `--viewer-country` when that flag is set; without it the viewer's location
+is undetermined, the header is empty, and the parser reports that with the flag
+named. Host follows the policy: `AllViewer`
 and a `host` whitelist forward the viewer Host, `AllViewerExceptHostHeader` uses
 the origin domain, and a policy that forwards no Host also uses the origin
 domain (empty for an origin group, whose origin implementation chooses the
@@ -707,10 +713,16 @@ refuses the distribution instead of being ignored.
 
 | Property group | Implemented | Reported (not emulated) | Refused |
 | --- | --- | --- | --- |
-| `DistributionConfig` | `DefaultCacheBehavior`, `CacheBehaviors`, `Origins`, `OriginGroups`, `DefaultRootObject`, `Enabled`, `CustomErrorResponses` | `Aliases`, `Comment`, `HttpVersion`, `IPV6Enabled`, `Logging`, `PriceClass`, `Staging` (false), `ViewerCertificate` | `ContinuousDeploymentPolicyId`, `Restrictions`, `WebACLId`, `Staging` (true), `Enabled` (false), unknown |
-| Cache behavior | `PathPattern`, `TargetOriginId`, `AllowedMethods`, `CachedMethods` (OPTIONS failover), `CachePolicyId`, `OriginRequestPolicyId`, `ResponseHeadersPolicyId`, `FunctionAssociations` | `Compress`, `DefaultTTL`, `MinTTL`, `MaxTTL`, `RealtimeLogConfigArn`, `SmoothStreaming` (false), `ViewerProtocolPolicy` | `FieldLevelEncryptionId`, `ForwardedValues`, `GrpcConfig`, `LambdaFunctionAssociations`, `TrustedKeyGroups`, `TrustedSigners`, `SmoothStreaming` (true), unknown |
+| `DistributionConfig` | `DefaultCacheBehavior`, `CacheBehaviors`, `Origins`, `OriginGroups`, `DefaultRootObject`, `Enabled`, `CustomErrorResponses`, `Restrictions.GeoRestriction` | `Aliases`, `Comment`, `HttpVersion`, `IPV6Enabled`, `Logging`, `PriceClass`, `Staging` (false), `ViewerCertificate` | `ContinuousDeploymentPolicyId`, `Restrictions` members other than `GeoRestriction`, `WebACLId`, `Staging` (true), `Enabled` (false), unknown |
+| Cache behavior | `PathPattern`, `TargetOriginId`, `AllowedMethods`, `CachedMethods` (OPTIONS failover), `CachePolicyId`, `OriginRequestPolicyId`, `ResponseHeadersPolicyId`, `FunctionAssociations`, `LambdaFunctionAssociations`, `TrustedKeyGroups`, `FieldLevelEncryptionId` | `Compress`, `DefaultTTL`, `MinTTL`, `MaxTTL`, `RealtimeLogConfigArn`, `SmoothStreaming` (false), `ViewerProtocolPolicy` | `ForwardedValues`, `GrpcConfig`, `TrustedSigners`, `SmoothStreaming` (true), unknown |
 | Origin | `Id`, `DomainName` (literal, S3 bucket, Function URL), `OriginPath`, `CustomOriginConfig`, `S3OriginConfig`, `OriginAccessControlId`, `OriginCustomHeaders` | `ConnectionAttempts`, `ConnectionTimeout`, `OriginShield`, the custom origin protocol/SSL/ports/timeouts, `OriginAccessIdentity`, S3 OAC/OAI signing (the access model is applied, not the signature) | unresolved `DomainName`, missing or both origin configs, `OriginPath` without a leading slash, unknown |
-| CloudFront Function | `FunctionCode`, `FunctionConfig.Runtime` | `AutoPublish`, `Name`, `FunctionConfig.Comment` | `KeyValueStoreAssociations`, unsupported runtime, empty code, unknown |
+| CloudFront Function | `FunctionCode`, `FunctionConfig.Runtime`, `FunctionConfig.KeyValueStoreAssociations` (runtime 2.0 only) | `AutoPublish`, `Name`, `FunctionConfig.Comment` | unsupported runtime, empty code, unknown |
+| Lambda function association | `EventType`, `LambdaFunctionARN` (an `AWS::Lambda::Version` in the assembly), `IncludeBody` (request events only) | — | `$LATEST`, aliases, literal or unknown ARNs, container image, layers, VPC, dead-letter queue, reserved or provisioned concurrency, arm64, more than 512 MB ephemeral storage, environment variables, non-Node/Python runtime, unknown |
+| Public key | `PublicKeyConfig` (`CallerReference`, `Comment`, `EncodedKey` as a 2048-bit RSA or P-256 ECDSA PEM, `Name`) | `CallerReference`, `Comment`, `Name` | malformed or wrong-size key, unknown |
+| Key group | `KeyGroupConfig` (`Items`, `Name`) | `Comment`, `Name` | no keys, more than five keys, unknown |
+| Key value store | `ImportSource` from an assembly asset, `Name`, `Comment` | `Name`, `Comment` | non-S3 source, an import source that is not an assembly asset, key/value/store quota, malformed import file, unknown |
+| Field-level encryption configuration | `ContentTypeProfileConfig`, `QueryArgProfileConfig` | `CallerReference`, `Comment` | content type other than `application/x-www-form-urlencoded`, format other than `URLEncoded`, more than five query-argument profiles, unknown |
+| Field-level encryption profile | `EncryptionEntities` (`PublicKeyId`, `ProviderId`, `FieldPatterns`) | `CallerReference`, `Comment`, `Name` | more than ten patterns, overlapping patterns, disallowed pattern characters, a non-RSA key, unknown |
 | Cache policy | `ParametersInCacheKeyAndForwardedToOrigin`, `DefaultTTL`, `MinTTL`, `MaxTTL` | `Name`, `Comment`, `EnableAcceptEncodingBrotli`, `EnableAcceptEncodingGzip` | unknown managed ID, malformed config, unknown property |
 | Origin request policy | `HeadersConfig`, `CookiesConfig`, `QueryStringsConfig` | `Name`, `Comment` | unknown mode, malformed config, unknown property |
 | Response headers policy | `CorsConfig`, `CustomHeadersConfig`, `RemoveHeadersConfig`, `SecurityHeadersConfig` | `Name`, `Comment`, `ServerTimingHeadersConfig` | malformed config, unknown property |
@@ -805,6 +817,22 @@ next request is a miss.
   cached under the HTTPStatusCodes status table (a 404 page response is cached
   as a 404, for example); AWS does not state whether that fallback status is
   cached.
+- A geo or signed-access denial routed through a custom error page is cached
+  only when an explicit cache behavior matches the error page path: that
+  behavior's cache policy then decides, using the page's `max-age`/`s-maxage`
+  or its default TTL. The synthesized 403 carries no `max-age`, so without
+  such a behavior it is not cached. The georestrictions page's "The default
+  value is 10 seconds" suggests a geo denial gets the error caching window;
+  the gateway keeps the HTTPStatusCodes rule and names that conservative
+  choice here. When the page behavior does cache it, an unsigned 403 followed
+  by a validly signed URL stays 403 until the TTL elapses; a page served with
+  `Cache-Control: no-cache` under a behavior whose Minimum TTL is 0 avoids that
+  in a dev loop, as does `ErrorCachingMinTTL: 0` where no explicit behavior
+  matches.
+- A custom error page fetch runs no origin-request function of the page's
+  behavior and no viewer-request function; the trigger page exempts the viewer
+  request for a custom error page fetch, and the gateway applies that exemption
+  to the whole page request.
 - A stored query key is order-normalized (the selected query strings are
   sorted), while an invalidation path's query string is compared exactly as
   given; AWS does not document the comparison. A path without the matching
@@ -815,6 +843,44 @@ next request is a miss.
   `@connections` management listener. An invalidation is recorded `Completed`
   as soon as it removes the cached objects; CloudFront reports `InProgress`
   first.
+- Lambda@Edge runs in the same container as every other local Lambda rather than
+  in the CloudFront edge network. The viewer events observe the plain-HTTP
+  connection, so a `CloudFront-Viewer-Protocol` value is `http`; the function's
+  own `Timeout` is not applied because the event timeout (5 s viewer, 30 s
+  origin) is the Lambda@Edge quota. A viewer-request function that adds a
+  `CloudFront-*` header is a 502, as the restrictions page states; a
+  `CloudFront-*` header the viewer sent is shown to the viewer-request function
+  and, when a cache or origin request policy forwards it, replaced by the value
+  CloudFront adds for origin-facing functions. `Content-Length` is not exposed
+  to a local edge event because the gateway derives it from the body, so a
+  function cannot read it and returning it is a 502 under the read-only rule.
+- A key value store is materialised once, at plan time, from the asset the
+  assembly carries. `fromBucket` is refused because the object is not part of
+  the assembly; `fromAsset` and `fromInline` both carry one. CloudFront
+  replicates a store to every edge location, which has no local equivalent.
+- Signed URL and cookie verification happens before the viewer-request
+  function. AWS does not document the order, and the gateway keeps the check
+  ahead of every viewer function so a signed behavior matches the page's
+  "requires a signed URL or signed cookie for every request except OPTIONS".
+  A wildcard does not match a literal `;`, as the custom policy page states.
+- Geo restriction runs before every viewer function, from the run flag; the
+  viewer country is a run option, not a property of the request. When no flag is
+  given the location is undetermined and the content is served.
+- Field-level encryption runs after the origin-request function and before the
+  origin fetch, so the function sees the plaintext fields. A blocked unknown
+  content type or profile is a 400; AWS documents the block but not the status.
+  The local viewer is plain HTTP, so the HTTPS viewer, all-seven-methods and
+  origin-protocol preconditions are reported on the distribution instead of
+  refusing it, and the origin receives a normal (not chunked) request body. The
+  ciphertext uses RSA-OAEP with SHA-256 for both the hash and MGF1
+  (`rsa.EncryptOAEP`); the page names
+  `RSA/ECB/OAEPWithSHA-256AndMGF1Padding`, under which the MGF1 digest is a
+  provider convention. CloudFront wire compatibility is proved only against the
+  AWS Encryption SDK's `RSA_OAEP_SHA256_MGF1` wrapping algorithm. The page's 128
+  character limit on a field pattern and on a query argument is not validated.
+  When the configuration has no `QueryArgProfileConfig`, a `fle-profile` query
+  argument has no effect; the gateway names it in the request log and in the
+  distribution report instead of ignoring it silently.
 
 `Compress`, `RealtimeLogConfigArn`, aliases, the viewer certificate, access
 logging, `HttpVersion`, `IPV6Enabled`, `PriceClass` and the origin connection
@@ -930,17 +996,67 @@ S3's response overrides. Every other query parameter is unchanged.
 
 ### Fidelity
 
-**Not a CloudFront emulator: no edge network, no TLS.** The gateway
-does not reproduce viewer protocol redirects, CloudFront's 1 ms CPU limit,
-incremental streaming (the Function URL origin is buffered by the RIE),
-CloudFront-only device/location/TLS headers, custom status descriptions,
-signed-URL verification, Lambda@Edge, KeyValueStore, WAF, geo restriction or
-field-level encryption. S3 bucket CORS rules, S3
+**Not a CloudFront emulator: no edge network, no TLS.** The gateway does not
+reproduce viewer protocol redirects, CloudFront's 1 ms CPU limit, incremental
+streaming (the Function URL origin is buffered by the RIE), custom status
+descriptions or CloudFront-only device and TLS headers; the viewer-country
+header is reproduced from `--viewer-country`. S3 bucket CORS rules, S3
 IAM/bucket policies and Lambda IAM policy evaluation are not emulated. A viewer
 `If-Range` is not carried to the S3 origin (CloudFront forwards it by default),
-so a conditional range is served as an unconditional range. It refuses a
-distribution that depends on the routing or content of those features and
-reports the rest.
+so a conditional range is served as an unconditional range. Lambda@Edge, key
+value stores, signed URLs and cookies, geo restriction and field-level
+encryption are applied; a WAF web ACL is refused because managed rule content is
+a docs/125 true limit.
+
+### Lambda@Edge, key value stores, signed access, geo restriction and field-level encryption
+
+- **Lambda@Edge.** A behavior's `LambdaFunctionAssociations` invoke the real
+  function container at the four documented events. The event is the
+  `Records[0].cf` object; the viewer request and origin request events run only
+  where the trigger page says, a viewer-request generated response is not
+  cached, an origin-request generated response is cached under the behavior TTLs
+  and served from the cache without the function, a viewer-response function
+  cannot change the status, and an origin-request function may switch the
+  request to another origin the distribution declares. An invalid returned
+  object is a 502 and an unhandled exception or timeout is a 503. The viewer
+  events time out at 5 seconds and the origin events at 30 seconds on the run
+  clock. The plan-time rules are listed in the property inventory.
+  https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-cloudfront-trigger-events.html
+- **Key value stores.** A store is materialised from the asset its
+  `ImportSource` names in the assembly. `cf.kvs()` returns `get` (string, json
+  or bytes), `exists` and `meta`, and a missing key rejects, under the
+  JavaScript 2.0 runtime only. A key over 512 bytes, a value over 1 KB, a store
+  over 5 MB and more than one store per function are refused at plan time.
+  https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/kvs-with-functions.html
+- **Signed URLs and cookies.** A behavior with `TrustedKeyGroups` requires a
+  signature for every request except OPTIONS. The local `Key-Pair-Id` for each
+  `AWS::CloudFront::PublicKey` is deterministic and reported by `plan` and
+  `session describe`. Canned and custom policies, SHA-1 and SHA-256, RSA and
+  ECDSA, the section-bounded `Resource` wildcards, `DateLessThan`,
+  `DateGreaterThan` and an IPv4 `IpAddress` are applied; the 403 is subject to
+  the custom error response for 403 and its error caching. `TrustedSigners` is
+  refused by name.
+  https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-trusted-signers.html
+- **Geo restriction.** `Restrictions.GeoRestriction` is applied from
+  `--viewer-country XX` (ISO 3166-1 alpha-2, upper case) before any viewer
+  function runs. Without the flag the location is undetermined and the content
+  is served. A blocked viewer gets 403, subject to the custom error response and
+  its error caching. When a cache or origin request policy forwards
+  `CloudFront-Viewer-Country`, the gateway adds it. Any other `Restrictions`
+  member is refused by name.
+  https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/georestrictions.html
+- **Field-level encryption.** A behavior linked to an
+  `AWS::CloudFront::FieldLevelEncryptionConfig` encrypts the matching fields of
+  a `application/x-www-form-urlencoded` POST. Each value becomes base64 AWS
+  Encryption SDK ciphertext (version 1 non-framed message,
+  `ALG_AES_256_GCM_IV12_TAG16_HKDF_SHA256`) that decrypts with the profile's
+  provider name, the public key's name and
+  `RSA/ECB/OAEPWithSHA-256AndMGF1Padding`. The unknown-content-type and
+  unknown-profile rules forward or block as configured; a blocked request is a
+  400. The page's HTTPS viewer, all-seven-methods and origin-protocol
+  preconditions are reported as a local deviation (the local viewer is plain
+  HTTP) instead of refusing the distribution.
+  https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/field-level-encryption.html
 
 The run fails, naming the construct, on:
 

@@ -462,8 +462,11 @@ type Spec struct {
 	PlannedResources []PlannedResource `json:"resources,omitempty"`
 	// CloudFront is the delivery topology read from the assembly. A refused
 	// distribution is also listed under Skipped with its reasons.
-	CloudFront          []*localcloudfront.Distribution `json:"cloudFront,omitempty"`
-	CloudFrontFunctions []*localcloudfront.Function     `json:"cloudFrontFunctions,omitempty"`
+	CloudFront               []*localcloudfront.Distribution  `json:"cloudFront,omitempty"`
+	CloudFrontFunctions      []*localcloudfront.Function      `json:"cloudFrontFunctions,omitempty"`
+	CloudFrontKeyGroups      []*localcloudfront.KeyGroup      `json:"cloudFrontKeyGroups,omitempty"`
+	CloudFrontPublicKeys     []*localcloudfront.PublicKey     `json:"cloudFrontPublicKeys,omitempty"`
+	CloudFrontKeyValueStores []*localcloudfront.KeyValueStore `json:"cloudFrontKeyValueStores,omitempty"`
 	// Resources is the assembly index used to resolve function environment
 	// references. It is internal and not part of the plan document.
 	Resources []ResourceSpec `json:"-"`
@@ -540,6 +543,9 @@ func (s *Spec) RuntimeFunctions() []string { //nolint:gocyclo // one explicit lo
 		seen[id] = struct{}{}
 	}
 	for _, id := range s.CloudFrontOriginFunctions() {
+		seen[id] = struct{}{}
+	}
+	for _, id := range s.CloudFrontEdgeFunctions() {
 		seen[id] = struct{}{}
 	}
 	for _, source := range s.EventSources {

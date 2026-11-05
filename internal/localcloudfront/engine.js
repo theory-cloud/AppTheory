@@ -13,14 +13,14 @@ const runtime2 = input.runtime === 'cloudfront-js-2.0';
 const timeoutMs = Number.isInteger(input.timeoutMs) && input.timeoutMs > 0 ? input.timeoutMs : 1000;
 
 const results = [];
-function main() {
+async function main() {
   for (const item of input.cases) {
-    results.push(runCase(item.event));
+    results.push(await runCase(item.event));
   }
   process.stdout.write(JSON.stringify({ results }));
 }
 
-function runCase(event) {
+async function runCase(event) {
   const logs = [];
   try {
     if (!event || !event.request || !event.context || !event.context.eventType) {
@@ -29,7 +29,7 @@ function runCase(event) {
     const context = createContext(logs);
     // CloudFront Functions runs in strict mode. The directive is the runtime's
     // prologue; the FunctionCode body itself is not rewritten.
-    const script = new vm.Script('"use strict";\n' + input.code, { filename: 'cloudfront-function.js' });
+    const script = new vm.Script('"use strict";\n' + prepareCode(input.code, runtime2), { filename: 'cloudfront-function.js' });
     script.runInContext(context, { timeout: timeoutMs });
 
     const handler = context.handler;
@@ -42,7 +42,13 @@ function runCase(event) {
     delete context.__cfEventJSON;
     context.__cfEventObject = eventObject;
     const call = new vm.Script('handler(__cfEventObject)', { filename: 'cloudfront-invoke.js' });
-    const returned = call.runInContext(context, { timeout: timeoutMs });
+    let returned = call.runInContext(context, { timeout: timeoutMs });
+    // Runtime 2.0 supports an async handler because the key value store
+    // helpers return promises. The vm timeout does not cover promise waits, so
+    // the wait races the function timeout.
+    if (runtime2 && returned && typeof returned.then === 'function') {
+      returned = await promiseWithTimeout(returned, timeoutMs);
+    }
     delete context.__cfEventObject;
 
     const validated = validateReturn(event, returned);
@@ -53,6 +59,32 @@ function runCase(event) {
     const stack = error && error.stack ? String(error.stack) : undefined;
     return { ok: false, error: { code, message, stack }, logs };
   }
+}
+
+function promiseWithTimeout(promise, milliseconds) {
+  let timer;
+  const timeout = new Promise((resolve, reject) => {
+    timer = setTimeout(() => reject(cfError('timeout', 'the CloudFront function did not finish within the timeout')), milliseconds);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+// Runtime 2.0 code is an ES module. CloudFront documents importing the
+// cloudfront module and Node's crypto module; the vm harness has no module
+// loader, so those two documented imports become the require() bindings the
+// sandbox exposes. Every other import is left untouched and fails as it would
+// on CloudFront.
+function prepareCode(code, runtime2) {
+  if (!runtime2) {
+    return code;
+  }
+  return code
+    .replace(/^\s*import\s+([A-Za-z_$][\w$]*)\s+from\s+['"]cloudfront['"]\s*;?/gm,
+      'const $1 = require("cloudfront");')
+    .replace(/^\s*import\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s+['"]cloudfront['"]\s*;?/gm,
+      'const $1 = require("cloudfront");')
+    .replace(/^\s*import\s*\{([^}]*)\}\s*from\s+['"]crypto['"]\s*;?/gm,
+      'const {$1} = require("crypto");');
 }
 
 function cfError(code, message) {
@@ -438,6 +470,7 @@ function createContext(logs) {
   };
   sandbox.__cfRuntime = input.runtime;
   sandbox.__cfBridges = bridges;
+  sandbox.__cfKVS = input.kvs || null;
   vm.runInContext(BOOTSTRAP, context, { filename: 'cloudfront-bootstrap.js' });
   return context;
 }
@@ -751,9 +784,58 @@ const BOOTSTRAP = String.raw`
   }
   installTextCodec();
 
+  var kvsStore = globalThis.__cfKVS || null;
+  delete globalThis.__cfKVS;
+
+  // CloudFront KeyValueStore helpers. "The get, exists and meta methods
+  // return a promise." get() "will return an error when the key that you
+  // requested doesn't exist" and accepts {format: 'string'|'json'|'bytes'}.
+  // https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/functions-custom-methods.html
+  function createKVSHandle(store) {
+    var values = store.values || {};
+    return {
+      get: function (key, options) {
+        return new Promise(function (resolve, reject) {
+          if (!Object.prototype.hasOwnProperty.call(values, key)) {
+            reject(new Error("CloudFront KeyValueStore: key '" + key + "' does not exist"));
+            return;
+          }
+          var format = options && options.format ? String(options.format) : 'string';
+          var value = values[key];
+          if (format === 'json') {
+            try {
+              resolve(JSON.parse(value));
+            } catch (error) {
+              reject(error);
+            }
+            return;
+          }
+          if (format === 'bytes') {
+            resolve(new Uint8Array(B.base64ToArray(B.textToBase64(value, 'utf8'))));
+            return;
+          }
+          resolve(value);
+        });
+      },
+      exists: function (key) {
+        return Promise.resolve(Object.prototype.hasOwnProperty.call(values, key));
+      },
+      meta: function () {
+        return Promise.resolve({
+          creationDateTime: store.createdAt,
+          lastUpdatedDateTime: store.updatedAt,
+          keyCount: Object.keys(values).length
+        });
+      }
+    };
+  }
+
   var cloudfrontModule = {
     kvs: function () {
-      throw new Error('CloudFront KeyValueStore is not available in the local gateway');
+      if (!kvsStore) {
+        throw new Error('CloudFront KeyValueStore is not available: the function has no KeyValueStoreAssociations');
+      }
+      return createKVSHandle(kvsStore);
     }
   };
 

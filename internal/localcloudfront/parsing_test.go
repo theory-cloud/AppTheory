@@ -235,8 +235,8 @@ func TestFunctionPropertyDispositions(t *testing.T) {
 	}{
 		{name: "normal", properties: map[string]any{"FunctionCode": "function handler(event){return event.request;}", "FunctionConfig": map[string]any{"Runtime": runtimeJS20}}},
 		{name: "auto publish", properties: map[string]any{"AutoPublish": true, "FunctionCode": "x", "FunctionConfig": map[string]any{"Runtime": runtimeJS20}, "Name": "n"}, wantReport: "AutoPublish"},
-		{name: "kvs", properties: map[string]any{"FunctionCode": "x", "FunctionConfig": map[string]any{"Runtime": runtimeJS20, "KeyValueStoreAssociations": []any{}}}, wantRefuse: "KeyValueStoreAssociations"},
-		{name: "kvs top", properties: map[string]any{"FunctionCode": "x", "FunctionConfig": map[string]any{"Runtime": runtimeJS20}, "KeyValueStoreAssociations": []any{}}, wantRefuse: "KeyValueStoreAssociations"},
+		{name: "kvs empty", properties: map[string]any{"FunctionCode": "x", "FunctionConfig": map[string]any{"Runtime": runtimeJS20, "KeyValueStoreAssociations": []any{}}}},
+		{name: "kvs runtime 1", properties: map[string]any{"FunctionCode": "x", "FunctionConfig": map[string]any{"Runtime": runtimeJS10, "KeyValueStoreAssociations": []any{map[string]any{"KeyValueStoreARN": "arn:aws:cloudfront::123:key-value-store/abc"}}}}},
 		{name: "runtime", properties: map[string]any{"FunctionCode": "x", "FunctionConfig": map[string]any{"Runtime": "nodejs24.x"}}, wantRefuse: "runtime"},
 		{name: "empty", properties: map[string]any{"FunctionConfig": map[string]any{"Runtime": runtimeJS20}}, wantRefuse: "FunctionCode"},
 		{name: "unknown", properties: map[string]any{"FunctionCode": "x", "FunctionConfig": map[string]any{"Runtime": runtimeJS20}, "SomethingNew": true}, wantRefuse: "SomethingNew"},
@@ -346,9 +346,18 @@ func TestPolicyParsing(t *testing.T) {
 			name: "origin cloudfront header gap",
 			kind: PolicyOriginRequest,
 			config: map[string]any{
+				"HeadersConfig": map[string]any{"HeaderBehavior": "whitelist", "Headers": []any{"cloudfront-viewer-city", "cloudfront-forwarded-proto"}},
+			},
+			wantReport: "cloudfront-viewer-city",
+		},
+		{
+			// CloudFront-Viewer-Country follows the run's --viewer-country, so
+			// the parser does not call it unavailable.
+			name: "origin viewer country derivable",
+			kind: PolicyOriginRequest,
+			config: map[string]any{
 				"HeadersConfig": map[string]any{"HeaderBehavior": "whitelist", "Headers": []any{"cloudfront-viewer-country", "cloudfront-forwarded-proto"}},
 			},
-			wantReport: "cloudfront-viewer-country",
 		},
 		{
 			name:       "origin unknown",

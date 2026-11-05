@@ -316,6 +316,9 @@ func deriveSpecInternal(dir string, stacks []assemblyStack) (*Spec, error) {
 	spec.cloudFrontTopology = topology
 	spec.CloudFront = topology.Distributions
 	spec.CloudFrontFunctions = topology.Functions
+	spec.CloudFrontKeyGroups = topology.KeyGroups
+	spec.CloudFrontPublicKeys = topology.PublicKeys
+	spec.CloudFrontKeyValueStores = topology.KeyValueStores
 	for _, distribution := range topology.Distributions {
 		if len(distribution.Refusals) == 0 {
 			continue

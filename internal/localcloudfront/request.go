@@ -283,9 +283,9 @@ func decodeResponseBody(body *ResponseBody, origin []byte) ([]byte, bool, error)
 		return origin, false, nil
 	}
 	switch strings.ToLower(body.Encoding) {
-	case "", "text":
+	case "", valueText:
 		return []byte(body.Data), true, nil
-	case "base64":
+	case valueBase64:
 		decoded, err := base64.StdEncoding.DecodeString(body.Data)
 		if err != nil {
 			decoded, err = base64.RawStdEncoding.DecodeString(body.Data)
