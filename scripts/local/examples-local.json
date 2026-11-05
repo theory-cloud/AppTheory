@@ -10,7 +10,12 @@
     "containers": {
       "dynamodb-local": {
         "image": "amazon/dynamodb-local@sha256:7ef4a2c45b58c2901e70a4f28e0953a422c2c631baaaf5e2c15e0805740c7752",
-        "command": ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-inMemory"],
+        "command": [
+          "-jar",
+          "DynamoDBLocal.jar",
+          "-sharedDb",
+          "-inMemory"
+        ],
         "containerPort": 8000
       },
       "moto": {
@@ -67,39 +72,67 @@
       },
       "kms": {
         "container": "moto",
-        "env": ["AWS_ENDPOINT_URL_KMS", "KMS_ENDPOINT"]
+        "env": [
+          "AWS_ENDPOINT_URL_KMS",
+          "KMS_ENDPOINT"
+        ]
       },
       "sts": {
         "container": "moto",
-        "env": ["AWS_ENDPOINT_URL_STS", "STS_ENDPOINT"]
+        "env": [
+          "AWS_ENDPOINT_URL_STS",
+          "STS_ENDPOINT"
+        ]
       },
       "s3": {
         "container": "s3proxy",
-        "env": ["AWS_ENDPOINT_URL_S3", "S3_ENDPOINT"]
+        "env": [
+          "AWS_ENDPOINT_URL_S3",
+          "S3_ENDPOINT"
+        ]
       },
       "sqs": {
         "container": "sqs",
-        "env": ["AWS_ENDPOINT_URL_SQS", "SQS_ENDPOINT"]
+        "env": [
+          "AWS_ENDPOINT_URL_SQS",
+          "SQS_ENDPOINT"
+        ]
       },
       "ssm": {
         "container": "moto",
-        "env": ["AWS_ENDPOINT_URL_SSM", "SSM_ENDPOINT"]
+        "env": [
+          "AWS_ENDPOINT_URL_SSM",
+          "SSM_ENDPOINT"
+        ]
       },
       "secretsmanager": {
         "container": "moto",
-        "env": ["AWS_ENDPOINT_URL_SECRETS_MANAGER", "SECRETS_MANAGER_ENDPOINT"]
+        "env": [
+          "AWS_ENDPOINT_URL_SECRETS_MANAGER",
+          "SECRETS_MANAGER_ENDPOINT"
+        ]
       },
       "sns": {
         "container": "moto",
-        "env": ["AWS_ENDPOINT_URL_SNS", "SNS_ENDPOINT"]
+        "env": [
+          "AWS_ENDPOINT_URL_SNS",
+          "SNS_ENDPOINT"
+        ]
       },
       "kinesis": {
         "container": "moto",
-        "env": ["AWS_ENDPOINT_URL_KINESIS", "KINESIS_ENDPOINT"]
+        "env": [
+          "AWS_ENDPOINT_URL_KINESIS",
+          "KINESIS_ENDPOINT"
+        ]
       },
       "logs": {
         "container": "moto",
-        "env": ["AWS_ENDPOINT_URL_LOGS", "AWS_ENDPOINT_URL_CLOUDWATCH_LOGS", "CLOUDWATCH_LOGS_ENDPOINT"]
+        "env": [
+          "AWS_ENDPOINT_URL_LOGS",
+          "AWS_ENDPOINT_URL_CLOUDWATCH_LOGS",
+          "CLOUDWATCH_LOGS_ENDPOINT"
+        ]
       },
       "cognito-idp": {
         "container": "moto",
@@ -198,7 +231,7 @@
       "run": "import-worker",
       "class": "L3",
       "gap": "CodeBuild (R8); the bucket's EventBridge notification is delivered by the runner from a real object PUT, and the WorkConsumer SQS mapping delivers automatically on ElasticMQ.",
-      "description": "Import pipeline worker handler: the full ingest → worker flow runs on the CDK jobs table after the runner delivered the bucket's EventBridge notification; the WorkConsumer mapping delivers the three real work messages automatically and they produce SUCCEEDED/FAILED records and a sanitized error envelope."
+      "description": "Import pipeline worker handler: the full ingest \u2192 worker flow runs on the CDK jobs table after the runner delivered the bucket's EventBridge notification; the WorkConsumer mapping delivers the three real work messages automatically and they produce SUCCEEDED/FAILED records and a sanitized error envelope."
     },
     "examples/cdk/kinesis-cloudwatch-logs/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
@@ -255,15 +288,51 @@
       "class": "I",
       "description": "CDK app anchor for the lambda-packaging example: the synth row synthesizes it and compares the pinned template hash and focused assertions (two layers declared by a Node and a Python function, three Docker image functions with their build arguments)."
     },
-    "examples/cdk/lambda-packaging/handlers/node/app.js": {"run":"lambda-packaging","class":"L1","description":"The Node zip function declares the CDK layer; the handler imports layer-greeting from /opt/nodejs/node_modules, executes /opt/bin/layer-tool from PATH and reports /opt/bin and /opt/lib in the runtime paths."},
-    "examples/cdk/lambda-packaging/handlers/python/app.py": {"coveredBy":"examples/cdk/lambda-packaging/handlers/node/app.js","class":"L1","description":"The Python zip function declares the CDK layer; the handler imports layer_tool from /opt/python, executes /opt/bin/layer-tool and reports PYTHONPATH, PATH and LD_LIBRARY_PATH."},
-    "examples/cdk/lambda-packaging/images/go/main.go": {"coveredBy":"examples/cdk/lambda-packaging/handlers/node/app.js","class":"L1","description":"Provided-runtime image handler; the runner builds it from the CDK DockerImageAsset and it returns the value the Dockerfile wrote from IMAGE_VALUE."},
-    "examples/cdk/lambda-packaging/images/node/app.js": {"coveredBy":"examples/cdk/lambda-packaging/handlers/node/app.js","class":"L1","description":"Node image handler; the runner builds it from the CDK DockerImageAsset and it returns the value the Dockerfile wrote from IMAGE_VALUE."},
-    "examples/cdk/lambda-packaging/images/python/app.py": {"coveredBy":"examples/cdk/lambda-packaging/handlers/node/app.js","class":"L1","description":"Python image handler; the runner builds it from the CDK DockerImageAsset and it returns the value the Dockerfile wrote from IMAGE_VALUE."},
-    "examples/cdk/lambda-packaging/layers/node/bin/layer-tool": {"coveredBy":"examples/cdk/lambda-packaging/handlers/node/app.js","class":"L1","description":"Executable extracted from the Node layer into /opt/bin; the handler runs it through PATH."},
-    "examples/cdk/lambda-packaging/layers/python/bin/layer-tool": {"coveredBy":"examples/cdk/lambda-packaging/handlers/node/app.js","class":"L1","description":"Executable extracted from the Python layer into /opt/bin; the handler runs it through PATH."},
-    "examples/cdk/lambda-packaging/layers/python/python/layer_tool.py": {"coveredBy":"examples/cdk/lambda-packaging/handlers/node/app.js","class":"L1","description":"Python module extracted from the layer into /opt/python; the handler imports it."},
-    "examples/cdk/lambda-role/handlers/policy-authorizer.ts": {"coveredBy":"examples/cdk/lambda-role/handlers/authorizer.ts","class":"L2","description":"IAM-policy authorizer function for the REST TOKEN, REST REQUEST and HTTP API authorizers; it counts its own invocations and returns the count in the authorizer context, which is how the row proves a cached policy was reused without invoking the function and was re-evaluated per method (GET /token-other is 403 because the cached policy names only GET /token)."},
+    "examples/cdk/lambda-packaging/handlers/node/app.js": {
+      "run": "lambda-packaging",
+      "class": "L1",
+      "description": "The Node zip function declares the CDK layer; the handler imports layer-greeting from /opt/nodejs/node_modules, executes /opt/bin/layer-tool from PATH and reports /opt/bin and /opt/lib in the runtime paths."
+    },
+    "examples/cdk/lambda-packaging/handlers/python/app.py": {
+      "coveredBy": "examples/cdk/lambda-packaging/handlers/node/app.js",
+      "class": "L1",
+      "description": "The Python zip function declares the CDK layer; the handler imports layer_tool from /opt/python, executes /opt/bin/layer-tool and reports PYTHONPATH, PATH and LD_LIBRARY_PATH."
+    },
+    "examples/cdk/lambda-packaging/images/go/main.go": {
+      "coveredBy": "examples/cdk/lambda-packaging/handlers/node/app.js",
+      "class": "L1",
+      "description": "Provided-runtime image handler; the runner builds it from the CDK DockerImageAsset and it returns the value the Dockerfile wrote from IMAGE_VALUE."
+    },
+    "examples/cdk/lambda-packaging/images/node/app.js": {
+      "coveredBy": "examples/cdk/lambda-packaging/handlers/node/app.js",
+      "class": "L1",
+      "description": "Node image handler; the runner builds it from the CDK DockerImageAsset and it returns the value the Dockerfile wrote from IMAGE_VALUE."
+    },
+    "examples/cdk/lambda-packaging/images/python/app.py": {
+      "coveredBy": "examples/cdk/lambda-packaging/handlers/node/app.js",
+      "class": "L1",
+      "description": "Python image handler; the runner builds it from the CDK DockerImageAsset and it returns the value the Dockerfile wrote from IMAGE_VALUE."
+    },
+    "examples/cdk/lambda-packaging/layers/node/bin/layer-tool": {
+      "coveredBy": "examples/cdk/lambda-packaging/handlers/node/app.js",
+      "class": "L1",
+      "description": "Executable extracted from the Node layer into /opt/bin; the handler runs it through PATH."
+    },
+    "examples/cdk/lambda-packaging/layers/python/bin/layer-tool": {
+      "coveredBy": "examples/cdk/lambda-packaging/handlers/node/app.js",
+      "class": "L1",
+      "description": "Executable extracted from the Python layer into /opt/bin; the handler runs it through PATH."
+    },
+    "examples/cdk/lambda-packaging/layers/python/python/layer_tool.py": {
+      "coveredBy": "examples/cdk/lambda-packaging/handlers/node/app.js",
+      "class": "L1",
+      "description": "Python module extracted from the layer into /opt/python; the handler imports it."
+    },
+    "examples/cdk/lambda-role/handlers/policy-authorizer.ts": {
+      "coveredBy": "examples/cdk/lambda-role/handlers/authorizer.ts",
+      "class": "L2",
+      "description": "IAM-policy authorizer function for the REST TOKEN, REST REQUEST and HTTP API authorizers; it counts its own invocations and returns the count in the authorizer context, which is how the row proves a cached policy was reused without invoking the function and was re-evaluated per method (GET /token-other is 403 because the cached policy names only GET /token)."
+    },
     "examples/cdk/lesser-parity/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
       "class": "I",
@@ -495,6 +564,37 @@
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
       "class": "I",
       "description": "CodeBuild job runner CDK app, synthesized and hash-checked with focused project, state-change-rule and grant assertions."
+    },
+    "examples/cdk/edge-gateway/bin/app.ts": {
+      "run": "edge-gateway",
+      "class": "L2",
+      "gap": "CloudFront edge network and edge TLS (docs/125 true limits); viewer events run against the viewer's plain-HTTP connection, so ViewerProtocolPolicy is reported rather than enforced.",
+      "description": "Edge gateway: four Lambda@Edge associations run through the real Node containers (viewer-request uri rewrite, origin-request generated response cached without a second invocation, origin-response body replacement, viewer-response header), IncludeBody exposes the base64 body, an origin rewrite reaches the other declared origin, and a runtime 2.0 CloudFront Function reads get/exists/meta from its key value store."
+    },
+    "examples/cdk/edge-gateway/handlers/viewer-request.js": {
+      "coveredBy": "examples/cdk/edge-gateway/bin/app.ts",
+      "class": "L2",
+      "description": "Lambda@Edge viewer-request handler: uri and query rewrite, a header returned without a key, an IncludeBody body header and a generated response."
+    },
+    "examples/cdk/edge-gateway/handlers/origin-request.js": {
+      "coveredBy": "examples/cdk/edge-gateway/bin/app.ts",
+      "class": "L2",
+      "description": "Lambda@Edge origin-request handler: a generated response with an invocation counter and an origin rewrite."
+    },
+    "examples/cdk/edge-gateway/handlers/origin-response.js": {
+      "coveredBy": "examples/cdk/edge-gateway/bin/app.ts",
+      "class": "L2",
+      "description": "Lambda@Edge origin-response handler: a header and a body replacement."
+    },
+    "examples/cdk/edge-gateway/handlers/viewer-response.js": {
+      "coveredBy": "examples/cdk/edge-gateway/bin/app.ts",
+      "class": "L2",
+      "description": "Lambda@Edge viewer-response handler: a header on responses that may run it."
+    },
+    "examples/cdk/edge-gateway/handlers/kvs.js": {
+      "coveredBy": "examples/cdk/edge-gateway/bin/app.ts",
+      "class": "L2",
+      "description": "CloudFront Function runtime 2.0 handler: get (string and json formats), exists and meta against the associated key value store."
     }
   }
 }

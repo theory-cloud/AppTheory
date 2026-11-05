@@ -32,6 +32,12 @@ type Gateway struct {
 	MaxBody      int64
 	// Cache stores origin responses for this distribution.
 	Cache *Cache
+	// EdgeInvoker invokes Lambda@Edge function versions through the runner's
+	// real function path.
+	EdgeInvoker EdgeInvoker
+	// ViewerCountry is the run's resolved ISO 3166-1 alpha-2 viewer country.
+	// An empty value is an undetermined location.
+	ViewerCountry string
 	// stats counts hits and misses per behavior path pattern.
 	statsMu sync.Mutex
 	stats   map[string]*BehaviorStats
@@ -134,10 +140,29 @@ func (g *Gateway) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		domainName = strings.ToLower(g.Distribution.LogicalID) + ".cloudfront.local"
 	}
 
+	// Geo restriction runs before any viewer function runs. "If CloudFront
+	// can't determine a user's location, CloudFront serves the content."
+	// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/georestrictions.html
+	if g.Distribution.GeoRestriction.Blocks(g.ViewerCountry) {
+		g.respondViewerBlock(writer, request, behavior, state, requestID, domainName, http.StatusForbidden,
+			fmt.Sprintf("CloudFront geo restriction blocks viewer country %s", g.ViewerCountry))
+		return
+	}
+	// A behavior with trusted key groups requires a valid signed URL or signed
+	// cookie; OPTIONS is exempt.
+	// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-trusted-signers.html
+	if signedErr := g.checkSignedAccess(state, behavior, g.now()); signedErr != nil {
+		g.respondViewerBlock(writer, request, behavior, state, requestID, domainName, http.StatusForbidden, signedErr.Error())
+		return
+	}
+
 	// AWS documents the viewer-request trigger and the 403 (Invalid method)
 	// response separately, but not their relative order. The local gateway runs
 	// the function first by choice, so a function can answer a request whose
 	// method the behavior does not allow; see docs/examples/local-runner.md.
+	//
+	// A CloudFront Function viewer-request runs before a Lambda@Edge
+	// viewer-request when both are associated with the same behavior.
 	if behavior.ViewerRequestFunction != "" {
 		function, ok := g.function(behavior.ViewerRequestFunction)
 		if !ok {
@@ -165,6 +190,29 @@ func (g *Gateway) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		applyFunctionRequest(state, result.Request)
 	}
 
+	// Lambda@Edge viewer-request. A generated response is not cached and the
+	// viewer-response functions do not run for it.
+	if association := behavior.EdgeLambdas[edgeViewerRequest]; association != nil {
+		event := g.edgeEvent(association, state, requestID, domainName, nil, nil)
+		outcome, edgeErr := g.invokeEdge(request.Context(), association, event)
+		if edgeErr != nil {
+			g.edgeFailure(writer, request, behavior, state.Header, "viewer-request", edgeErr)
+			return
+		}
+		if outcome.Response != nil {
+			response, responseErr := g.edgeGeneratedResponse(association, outcome.Response, nil)
+			if responseErr != nil {
+				g.edgeFailure(writer, request, behavior, state.Header, "viewer-request", responseErr)
+				return
+			}
+			applyResponseHeadersPolicy(behavior.ResponseHeadersPolicy, request.Method, state.Header, &response)
+			g.log(request, behavior, response.StatusCode, "Lambda@Edge viewer-request short-circuit")
+			g.write(writer, request, response)
+			return
+		}
+		applyEdgeRequest(state, outcome.Request)
+	}
+
 	if !methodAllowed(behavior.AllowedMethods, state.Method) {
 		g.respondError(writer, request, behavior, state.Header, http.StatusForbidden,
 			fmt.Sprintf("method %s is not allowed by cache behavior %q (AllowedMethods: %s)",
@@ -174,6 +222,10 @@ func (g *Gateway) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	if state.URI == "/" && g.Distribution.DefaultRootObject != "" {
 		state.URI = "/" + g.Distribution.DefaultRootObject
 	}
+	// CloudFront adds its location headers after the viewer request event and
+	// only when a cache or origin request policy forwards them.
+	// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/adding-cloudfront-headers.html
+	g.addViewerCountry(state, behavior)
 
 	targetID := behavior.TargetOriginID
 	originImplementation, origin, _ := g.originForTarget(targetID)
@@ -210,38 +262,138 @@ func (g *Gateway) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		}
 	}
 	g.recordStats(behavior.PathPattern, false)
-	originResponse, originErr := originImplementation.Fetch(request.Context(), originRequest)
-	if originErr != nil {
-		if hasStaleEntry && staleEntry.ServeStaleIfError(now, behaviorMaximumTTL(behavior)) {
-			g.respondFromCache(writer, request, behavior, state, requestID, domainName, staleEntry, now, "served stale after the origin failed")
+
+	// Lambda@Edge origin-request runs only when CloudFront forwards a request
+	// to the origin. A generated response is cached under the normal rules and
+	// later served from the cache without running the function.
+	var originResponse OriginResponse
+	generatedByOriginRequest := false
+	if association := behavior.EdgeLambdas[edgeOriginRequest]; association != nil {
+		event := g.edgeEvent(association, state, requestID, domainName, origin, nil)
+		outcome, edgeErr := g.invokeEdge(request.Context(), association, event)
+		if edgeErr != nil {
+			g.edgeFailure(writer, request, behavior, state.Header, "origin-request", edgeErr)
 			return
 		}
-		var unavailable *OriginUnavailableError
-		if errors.As(originErr, &unavailable) || errors.Is(originErr, ErrOriginUnavailable) {
-			g.respondError(writer, request, behavior, state.Header, http.StatusServiceUnavailable, originErr.Error())
-			return
+		if outcome.Response != nil {
+			generated, responseErr := g.edgeGeneratedResponse(association, outcome.Response, nil)
+			if responseErr != nil {
+				g.edgeFailure(writer, request, behavior, state.Header, "origin-request", responseErr)
+				return
+			}
+			originResponse = generated
+			generatedByOriginRequest = true
+		} else if outcome.Request != nil {
+			viewerHost := state.Host
+			applyEdgeRequest(state, outcome.Request)
+			// The headers the origin-request function returned are exactly what
+			// CloudFront sends to the origin; the origin request policy was
+			// already applied before the function ran, so they are not filtered
+			// again.
+			originRequest.Method = state.Method
+			originRequest.URI = state.URI
+			originRequest.Query = state.RawQuery
+			originRequest.Header = state.Header.Clone()
+			if state.Host != viewerHost {
+				originRequest.Host = state.Host
+			}
+			if outcome.Request.Origin != nil {
+				resolved, ok := g.resolveEdgeOrigin(outcome.Request.Origin)
+				if !ok {
+					g.edgeFailure(writer, request, behavior, state.Header, "origin-request", &EdgeValidationError{
+						Function: association.Version,
+						Reason: fmt.Sprintf("origin %q is not an origin of the distribution; the local gateway never reaches the internet",
+							edgeOriginDomain(outcome.Request.Origin)),
+					})
+					return
+				}
+				targetID = resolved
+				originImplementation, origin, _ = g.originForTarget(targetID)
+				if originImplementation == nil {
+					g.edgeFailure(writer, request, behavior, state.Header, "origin-request", &EdgeValidationError{
+						Function: association.Version,
+						Reason:   fmt.Sprintf("origin %q has no local implementation", edgeOriginDomain(outcome.Request.Origin)),
+					})
+					return
+				}
+				rewritten := g.originRequest(state, behavior, origin, targetID, requestID)
+				rewritten.Header = state.Header.Clone()
+				originRequest = rewritten
+			}
 		}
-		g.respondError(writer, request, behavior, state.Header, http.StatusBadGateway,
-			fmt.Sprintf("origin %q failed: %v", targetID, originErr))
-		return
 	}
-	// An origin 5xx response for an expired object is treated like an
-	// unreachable origin: "If your origin returns a 5xx status code, CloudFront
-	// serves the object even though it has expired. For the duration of the
-	// error caching minimum TTL, CloudFront continues to respond to viewer
-	// requests by serving the object from the edge cache." A 4xx response is
-	// returned to the viewer instead. The stale-if-error directive extends the
-	// window, and the behavior's Maximum TTL caps it.
-	// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/HTTPStatusCodes.html
-	if hasStaleEntry && originResponse.StatusCode >= 500 && originResponse.StatusCode < 600 {
-		window := g.staleErrorWindow(targetID, originResponse.StatusCode)
-		if staleEntry.ServeStaleForErrorResponse(now, window, behaviorMaximumTTL(behavior)) {
-			g.respondFromCache(writer, request, behavior, state, requestID, domainName, staleEntry, now,
-				fmt.Sprintf("served stale after the origin returned %d", originResponse.StatusCode))
+
+	if !generatedByOriginRequest {
+		fle, fleErr := g.applyFieldLevelEncryption(state, behavior, &originRequest)
+		if fleErr != nil {
+			g.respondError(writer, request, behavior, state.Header, http.StatusServiceUnavailable, fleErr.Error())
 			return
 		}
+		if fle.Blocked {
+			g.respondViewerBlock(writer, request, behavior, state, requestID, domainName, fle.Status, fle.Reason)
+			return
+		}
+		fetched, originErr := originImplementation.Fetch(request.Context(), originRequest)
+		if originErr != nil {
+			if hasStaleEntry && staleEntry.ServeStaleIfError(now, behaviorMaximumTTL(behavior)) {
+				g.respondFromCache(writer, request, behavior, state, requestID, domainName, staleEntry, now, "served stale after the origin failed")
+				return
+			}
+			var unavailable *OriginUnavailableError
+			if errors.As(originErr, &unavailable) || errors.Is(originErr, ErrOriginUnavailable) {
+				g.respondError(writer, request, behavior, state.Header, http.StatusServiceUnavailable, originErr.Error())
+				return
+			}
+			g.respondError(writer, request, behavior, state.Header, http.StatusBadGateway,
+				fmt.Sprintf("origin %q failed: %v", targetID, originErr))
+			return
+		}
+		// Lambda@Edge origin-response runs after CloudFront receives a response
+		// from the origin and before it caches the object, "even if an error is
+		// returned from the origin". The function does not see the origin body;
+		// it may replace it.
+		if association := behavior.EdgeLambdas[edgeOriginResponse]; association != nil {
+			event := g.edgeEvent(association, state, requestID, domainName, origin, &fetched)
+			outcome, edgeErr := g.invokeEdge(request.Context(), association, event)
+			if edgeErr != nil {
+				g.edgeFailure(writer, request, behavior, state.Header, "origin-response", edgeErr)
+				return
+			}
+			if outcome.Response != nil {
+				replaced, responseErr := g.edgeGeneratedResponse(association, outcome.Response, fetched.Body)
+				if responseErr != nil {
+					g.edgeFailure(writer, request, behavior, state.Header, "origin-response", responseErr)
+					return
+				}
+				fetched = replaced
+			}
+		}
+		// An origin 5xx response for an expired object is treated like an
+		// unreachable origin: "If your origin returns a 5xx status code, CloudFront
+		// serves the object even though it has expired. For the duration of the
+		// error caching minimum TTL, CloudFront continues to respond to viewer
+		// requests by serving the object from the edge cache." A 4xx response is
+		// returned to the viewer instead. The stale-if-error directive extends the
+		// window, and the behavior's Maximum TTL caps it.
+		// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/HTTPStatusCodes.html
+		if hasStaleEntry && fetched.StatusCode >= 500 && fetched.StatusCode < 600 {
+			window := g.staleErrorWindow(targetID, fetched.StatusCode)
+			if staleEntry.ServeStaleForErrorResponse(now, window, behaviorMaximumTTL(behavior)) {
+				g.respondFromCache(writer, request, behavior, state, requestID, domainName, staleEntry, now,
+					fmt.Sprintf("served stale after the origin returned %d", fetched.StatusCode))
+				return
+			}
+		}
+		originResponse = fetched
 	}
-	response, errorCaching := g.applyCustomErrorResponse(request.Context(), state, originRequest, behavior, originResponse)
+
+	response := originResponse
+	errorCaching := errorCachingDecision{}
+	customErrorPage := false
+	if !generatedByOriginRequest {
+		response, errorCaching = g.applyCustomErrorResponse(request.Context(), state, originRequest, behavior, originResponse)
+		customErrorPage = errorCaching.applies && g.responseHasCustomPage(originResponse, response)
+	}
 	// GET and HEAD share one key, but a HEAD response has no body to serve a
 	// later GET, so it is never stored under that key.
 	if cacheable && state.Method != http.MethodHead {
@@ -259,7 +411,117 @@ func (g *Gateway) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		}
 	}
 
-	g.finishResponse(writer, request, behavior, state, requestID, domainName, response, cacheMissHeader, 0)
+	viewerResponseAllowed := !customErrorPage
+	g.finishResponse(writer, request, behavior, state, requestID, domainName, response, cacheMissHeader, 0, viewerResponseAllowed)
+}
+
+// responseHasCustomPage reports whether a custom error response replaced the
+// origin response with its configured page. The viewer-response function does
+// not run "when a custom error page is returned".
+func (g *Gateway) responseHasCustomPage(origin, final OriginResponse) bool {
+	custom, ok := g.Distribution.CustomErrorResponseFor(origin.StatusCode)
+	if !ok || custom.ResponsePagePath == "" {
+		return false
+	}
+	return final.StatusCode != origin.StatusCode || string(final.Body) != string(origin.Body)
+}
+
+// addViewerCountry adds CloudFront-Viewer-Country from the run's viewer country
+// when a cache policy or origin request policy forwards it.
+func (g *Gateway) addViewerCountry(state *requestState, behavior *Behavior) {
+	if g.ViewerCountry == "" || behavior == nil {
+		return
+	}
+	if !cachePolicyForwardsHeader(policyCache(behavior), "cloudfront-viewer-country") &&
+		!originPolicyForwardsHeader(behavior.OriginRequestPolicy, "cloudfront-viewer-country") {
+		return
+	}
+	state.Header.Set("CloudFront-Viewer-Country", g.ViewerCountry)
+}
+
+func cachePolicyForwardsHeader(policy *CachePolicy, name string) bool {
+	if policy == nil {
+		return false
+	}
+	return forwardsHeader(policy.Headers, name)
+}
+
+func originPolicyForwardsHeader(policy *Policy, name string) bool {
+	if policy == nil || policy.OriginRequest == nil {
+		return false
+	}
+	return forwardsHeader(policy.OriginRequest.Headers, name)
+}
+
+// forwardsHeader applies the header forwarding mode to one CloudFront header.
+func forwardsHeader(headers HeaderForwarding, name string) bool {
+	if headers.CloudFrontHeaders {
+		return true
+	}
+	switch headers.Mode {
+	case ForwardAll:
+		return true
+	case ForwardWhitelist:
+		for _, listed := range headers.Names {
+			if strings.EqualFold(listed, name) {
+				return true
+			}
+		}
+		return false
+	case ForwardAllExcept:
+		for _, listed := range headers.Names {
+			if strings.EqualFold(listed, name) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+// respondViewerBlock answers a request the edge refuses before the origin: geo
+// restriction and signed URL or cookie failures. The documented 403 is subject
+// to the distribution's custom error response and its error caching.
+func (g *Gateway) respondViewerBlock(
+	writer http.ResponseWriter,
+	request *http.Request,
+	behavior *Behavior,
+	state *requestState,
+	requestID, domainName string,
+	status int,
+	detail string,
+) {
+	response := errorResponse(status, detail)
+	originRequest := OriginRequest{
+		OriginID:       behavior.TargetOriginID,
+		Method:         state.Method,
+		URI:            state.URI,
+		Query:          state.RawQuery,
+		Host:           state.Host,
+		Header:         state.Header,
+		RequestID:      requestID,
+		DistributionID: localDistributionID(g.Distribution),
+	}
+	final, errorCaching := g.applyCustomErrorResponse(request.Context(), state, originRequest, behavior, response)
+	now := g.now()
+	customErrorPage := errorCaching.applies && g.responseHasCustomPage(response, final)
+	if g.cacheable(behavior, state.Method) && state.Method != http.MethodHead {
+		ttl, control := g.responseTTL(final, behavior, errorCaching)
+		if ttl > 0 {
+			key := CacheKey(domainName, state.Method, state.URI, state.RawQuery, state.Header, policyCache(behavior))
+			g.Cache.Set(key, CacheEntry{
+				Response:             cloneOriginResponse(final),
+				Path:                 state.URI,
+				Query:                CacheKeyQuery(state.RawQuery, policyCache(behavior)),
+				StoredAt:             now,
+				ExpiresAt:            now.Add(ttl),
+				StaleWhileRevalidate: control.StaleWhileRevalidate,
+				StaleIfError:         control.StaleIfError,
+			})
+		}
+	}
+	g.finishResponse(writer, request, behavior, state, requestID, domainName, final, cacheMissHeader, 0, !customErrorPage)
 }
 
 // finishResponse runs the viewer-response function and the response headers
@@ -274,6 +536,7 @@ func (g *Gateway) finishResponse(
 	response OriginResponse,
 	cacheValue string,
 	age int,
+	viewerResponseAllowed bool,
 ) {
 	final := cloneOriginResponse(response)
 	if behavior.ViewerResponseFunction != "" {
@@ -297,6 +560,35 @@ func (g *Gateway) finishResponse(
 		}
 		final = updated
 	}
+	// Lambda@Edge viewer-response. It runs regardless of whether the file came
+	// from the cache, but not when the origin returned 400 or higher, not for a
+	// custom error page, and not for a response a viewer request function
+	// generated.
+	if association := behavior.EdgeLambdas[edgeViewerResponse]; association != nil &&
+		viewerResponseAllowed && final.StatusCode < 400 {
+		event := g.edgeEvent(association, state, requestID, domainName, nil, &final)
+		outcome, edgeErr := g.invokeEdge(request.Context(), association, event)
+		if edgeErr != nil {
+			g.edgeFailure(writer, request, behavior, state.Header, "viewer-response", edgeErr)
+			return
+		}
+		if outcome.Response != nil {
+			updated, responseErr := g.edgeGeneratedResponse(association, outcome.Response, final.Body)
+			if responseErr != nil {
+				g.edgeFailure(writer, request, behavior, state.Header, "viewer-response", responseErr)
+				return
+			}
+			if updated.StatusCode != final.StatusCode {
+				g.edgeFailure(writer, request, behavior, state.Header, "viewer-response", &EdgeValidationError{
+					Function: association.Version,
+					Reason: fmt.Sprintf("a viewer-response function cannot modify the HTTP status code (%d to %d)",
+						final.StatusCode, updated.StatusCode),
+				})
+				return
+			}
+			final = updated
+		}
+	}
 	if final.Header == nil {
 		final.Header = http.Header{}
 	} else {
@@ -319,6 +611,27 @@ func (g *Gateway) logf(format string, args ...any) {
 	if g.Logf != nil {
 		g.Logf(format, args...)
 	}
+}
+
+// edgeFailure answers a Lambda@Edge failure with the documented status: 502 for
+// an incorrectly formed response, 503 for an unhandled exception in the
+// function code.
+// https://repost.aws/knowledge-center/lambda-edge-500-errors
+func (g *Gateway) edgeFailure(
+	writer http.ResponseWriter,
+	request *http.Request,
+	behavior *Behavior,
+	requestHeader http.Header,
+	eventType string,
+	err error,
+) {
+	status := http.StatusBadGateway
+	var execution *EdgeExecutionError
+	if errors.As(err, &execution) {
+		status = http.StatusServiceUnavailable
+	}
+	detail := fmt.Sprintf("Lambda@Edge %s failed: %v. The request was not passed through.", eventType, err)
+	g.respondError(writer, request, behavior, requestHeader, status, detail)
 }
 
 func (g *Gateway) functionFailure(

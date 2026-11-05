@@ -974,14 +974,64 @@ The `ssr-site`, `ssr-only-provided-assets-site`, `path-routed-frontend` and
 `media-cdn` example rows run through these origins in the harness; the private
 media distribution stays refused with the named signed-URL reason.
 
-Distributions that use Lambda@Edge, a CloudFront KeyValueStore association,
-trusted key groups or signed URLs, field-level encryption, geo restriction, a
-WAF web ACL, a gRPC config or a legacy `ForwardedValues` cache policy are
-refused with a named reason; they are listed under `skipped`
-and no listener is started. The cache policy is applied (see
+Distributions that use a WAF web ACL, trusted key groups or signed URLs,
+field-level encryption, geo restriction, a gRPC config or a legacy
+`ForwardedValues` cache policy are refused with a named reason; they are listed
+under `skipped` and no listener is started. Lambda@Edge associations and key
+value stores are served (see [Lambda@Edge and key value
+stores](#lambdaedge-and-key-value-stores)). The cache policy is applied (see
 [Caching and invalidation](#caching-and-invalidation)); real-time logs, access
 logging, `Compress`, the behavior-level legacy `DefaultTTL`/`MinTTL`/`MaxTTL`
 fields and edge placement are reported instead.
+
+## Lambda@Edge and key value stores
+
+**Lambda@Edge.** A behavior's `LambdaFunctionAssociations` run through the same
+runtime container every other Lambda in the assembly uses. The association must
+reference an `AWS::Lambda::Version` in the assembly — "The function ARN must
+specify the ARN of a function version; you can't specify an alias or $LATEST"
+([LambdaFunctionAssociation](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-cloudfront-distribution-lambdafunctionassociation.html)) —
+and a `$LATEST`, alias, literal or unknown ARN is refused by name. A function
+with a container image package, layers, a VPC configuration, a dead-letter
+queue, provisioned or reserved concurrency, arm64, more than 512 MB of ephemeral
+storage, environment variables beyond the reserved ones, or a runtime that is
+not Node.js or Python is refused by name from the restrictions page
+([Restrictions on Lambda@Edge](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-at-edge-function-restrictions.html)).
+`IncludeBody` on a response event is refused by name.
+
+The four triggers run at the documented points
+([CloudFront events that can trigger a Lambda@Edge function](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-cloudfront-trigger-events.html)):
+the viewer request runs after a CloudFront Function viewer-request and not when
+fetching a custom error page; the origin request runs only when the request is
+forwarded to the origin; the origin response runs even for an origin error and
+not for a fresh cache hit or an origin-request generated response; the viewer
+response runs from the cache or the origin and not for an origin status of 400
+or higher, a custom error page or a viewer-request generated response. The event
+is the documented `Records[0].cf` object
+([Lambda@Edge event structure](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-event-structure.html)):
+lowercase header names map to arrays of `{key, value}`, a returned entry without
+`key` gets initial capitalization, the uri must begin with a forward slash and
+never re-selects the behavior, and `IncludeBody` exposes a base64 body with
+`inputTruncated`. A viewer-request generated response is not cached; an
+origin-request generated response is cached under the behavior TTLs and served
+from the cache without running the function
+([Generating HTTP responses in a Lambda@Edge trigger](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-generating-http-responses.html)).
+A 204 with a body and an oversize body are 502s, viewer events time out at 5
+seconds and origin events at 30 on the run clock, an invalid returned object is
+a 502 and an unhandled exception or timeout is a 503. An origin-request function
+may switch to another origin the distribution declares; a domain the assembly
+does not declare is a named 502.
+
+**CloudFront KeyValueStore.** An `AWS::CloudFront::KeyValueStore` is
+materialised from the S3 asset its `ImportSource` names in the assembly, in the
+documented `{"data":[{"key","value"}]}` format
+([Create a key value store](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/kvs-with-functions-create-s3-kvp.html)).
+A function's `KeyValueStoreAssociations` makes `cf.kvs()` return a handle whose
+`get(key, {format})`, `exists(key)` and `meta()` return promises, and a missing
+key rejects, under the JavaScript 2.0 runtime only
+([CloudFront Functions custom methods](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/functions-custom-methods.html)).
+One store per function and the key/value/store size quotas are enforced at plan
+time.
 
 ## Lambda layers and container-image functions
 

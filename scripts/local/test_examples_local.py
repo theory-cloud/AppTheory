@@ -78,13 +78,14 @@ class RealTreeTests(unittest.TestCase):
         # and rule target handlers, and the wave-2 E4 S3 consumer, R1 WebSocket
         # authorizer, R2a authorizer echo, R2b policy authorizer and R4
         # lambda-packaging rows.
-        self.assertEqual(78, len(classified))
+        self.assertEqual(84, len(classified))
         by_key = {entry.key: entry for entry in entries}
         expected = {
             "examples/cdk/ssr-site/bin/apptheory-ssr-site.ts": "ssr-site-gateway",
             "examples/cdk/ssr-only-provided-assets-site/bin/app.ts": "ssr-only-gateway",
             "examples/cdk/path-routed-frontend/bin/app.ts": "path-routed-gateway",
             "examples/cdk/media-cdn/bin/app.ts": "media-cdn-gateway",
+            "examples/cdk/edge-gateway/bin/app.ts": "edge-gateway",
             "examples/cdk/ssr-site/scripts/generate-assets-manifest.mjs": "ssr-assets-manifest",
             "examples/cdk/ssr-site/scripts/upload-assets.sh": "ssr-assets-upload",
             "examples/cdk/kinesis-cloudwatch-logs/handlers/signing/main.go": "kinesis-signing",

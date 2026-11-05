@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 // CloudFormation resource types the reader understands.
@@ -17,6 +18,13 @@ const (
 	typeOriginAccessControl    = "AWS::CloudFront::OriginAccessControl"
 	typeFunctionURL            = "AWS::Lambda::Url"
 	typeS3Bucket               = "AWS::S3::Bucket"
+	typeLambdaFunction         = "AWS::Lambda::Function"
+	typeLambdaVersion          = "AWS::Lambda::Version"
+	typePublicKey              = "AWS::CloudFront::PublicKey"
+	typeKeyGroup               = "AWS::CloudFront::KeyGroup"
+	typeKeyValueStore          = "AWS::CloudFront::KeyValueStore"
+	typeFLEConfig              = "AWS::CloudFront::FieldLevelEncryptionConfig"
+	typeFLEProfile             = "AWS::CloudFront::FieldLevelEncryptionProfile"
 
 	runtimeJS10 = "cloudfront-js-1.0"
 	runtimeJS20 = "cloudfront-js-2.0"
@@ -37,8 +45,10 @@ type Distribution struct {
 	// CustomErrorResponses are the distribution's CustomErrorResponses, in the
 	// template's order.
 	CustomErrorResponses []CustomErrorResponse `json:"customErrorResponses,omitempty"`
-	Reported             []string              `json:"reported,omitempty"`
-	Refusals             []string              `json:"refusals,omitempty"`
+	// GeoRestriction is DistributionConfig Restrictions.GeoRestriction.
+	GeoRestriction *GeoRestriction `json:"geoRestriction,omitempty"`
+	Reported       []string        `json:"reported,omitempty"`
+	Refusals       []string        `json:"refusals,omitempty"`
 }
 
 // CustomErrorResponse is one DistributionConfig CustomErrorResponses entry.
@@ -140,6 +150,15 @@ type Behavior struct {
 	ResponseHeadersPolicy  *Policy  `json:"responseHeadersPolicy,omitempty"`
 	ViewerRequestFunction  string   `json:"viewerRequestFunction,omitempty"`
 	ViewerResponseFunction string   `json:"viewerResponseFunction,omitempty"`
+	// EdgeLambdas are the behavior's LambdaFunctionAssociations, keyed by event
+	// type.
+	EdgeLambdas map[string]*EdgeFunction `json:"edgeLambdas,omitempty"`
+	// TrustedKeyGroups requires a signed URL or signed cookie for every request
+	// except OPTIONS.
+	TrustedKeyGroups *TrustedKeyGroups `json:"trustedKeyGroups,omitempty"`
+	// FieldLevelEncryptionID names the AWS::CloudFront::FieldLevelEncryptionConfig
+	// the behavior applies.
+	FieldLevelEncryptionID string   `json:"fieldLevelEncryptionId,omitempty"`
 	Compress               bool     `json:"compress,omitempty"`
 	Reported               []string `json:"reported,omitempty"`
 	Refusals               []string `json:"refusals,omitempty"`
@@ -199,15 +218,42 @@ type OriginGroup struct {
 // Function is one AWS::CloudFront::Function. Code is the exact FunctionCode
 // string from the template.
 type Function struct {
-	LogicalID string   `json:"logicalId"`
-	Stack     string   `json:"stack"`
-	Name      string   `json:"name,omitempty"`
-	Comment   string   `json:"comment,omitempty"`
-	Runtime   string   `json:"runtime"`
-	Code      string   `json:"-"`
-	CodeBytes int      `json:"codeBytes"`
-	Reported  []string `json:"reported,omitempty"`
-	Refusals  []string `json:"refusals,omitempty"`
+	LogicalID string `json:"logicalId"`
+	Stack     string `json:"stack"`
+	Name      string `json:"name,omitempty"`
+	Comment   string `json:"comment,omitempty"`
+	Runtime   string `json:"runtime"`
+	Code      string `json:"-"`
+	CodeBytes int    `json:"codeBytes"`
+	// KeyValueStore names the AWS::CloudFront::KeyValueStore the function reads.
+	KeyValueStore string   `json:"keyValueStore,omitempty"`
+	Reported      []string `json:"reported,omitempty"`
+	Refusals      []string `json:"refusals,omitempty"`
+
+	store *KeyValueStore
+}
+
+// AttachStore binds the materialized key value store to the function.
+func (f *Function) AttachStore(store *KeyValueStore) { f.store = store }
+
+// Store returns the function's key value store, if any.
+func (f *Function) Store() *KeyValueStore {
+	if f == nil {
+		return nil
+	}
+	return f.store
+}
+
+// engineKVS renders the store for the Node executor.
+func (f *Function) engineKVS() *engineKVS {
+	if f == nil || f.store == nil {
+		return nil
+	}
+	return &engineKVS{
+		Values:    f.store.Values,
+		CreatedAt: f.store.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt: f.store.UpdatedAt.UTC().Format(time.RFC3339),
+	}
 }
 
 // Servable reports whether the function can run in the executor.
@@ -393,6 +439,26 @@ func sortPolicies(values []*Policy) {
 }
 
 func sortOACs(values []*OriginAccessControl) {
+	sort.Slice(values, func(i, j int) bool { return values[i].LogicalID < values[j].LogicalID })
+}
+
+func sortPublicKeys(values []*PublicKey) {
+	sort.Slice(values, func(i, j int) bool { return values[i].LogicalID < values[j].LogicalID })
+}
+
+func sortKeyGroups(values []*KeyGroup) {
+	sort.Slice(values, func(i, j int) bool { return values[i].LogicalID < values[j].LogicalID })
+}
+
+func sortKeyValueStores(values []*KeyValueStore) {
+	sort.Slice(values, func(i, j int) bool { return values[i].LogicalID < values[j].LogicalID })
+}
+
+func sortFLEConfigs(values []*FieldLevelEncryptionConfig) {
+	sort.Slice(values, func(i, j int) bool { return values[i].LogicalID < values[j].LogicalID })
+}
+
+func sortFLEProfiles(values []*FieldLevelEncryptionProfile) {
 	sort.Slice(values, func(i, j int) bool { return values[i].LogicalID < values[j].LogicalID })
 }
 
@@ -592,7 +658,7 @@ func (d *Distribution) validate(topology *Topology) {
 	}
 }
 
-//nolint:gocyclo // the loop accumulates refusals from each behavior and origin
+//nolint:gocyclo,gocognit // the loop accumulates refusals from each behavior and origin
 func (d *Distribution) validateBehavior(behavior *Behavior, topology *Topology) {
 	if behavior == nil {
 		return
@@ -617,6 +683,46 @@ func (d *Distribution) validateBehavior(behavior *Behavior, topology *Topology) 
 	if behavior.ResponseHeadersPolicy != nil && !behavior.ResponseHeadersPolicy.Servable() {
 		for _, refusal := range behavior.ResponseHeadersPolicy.Refusals {
 			behavior.Refusals = append(behavior.Refusals, fmt.Sprintf("response headers policy: %s", refusal))
+		}
+	}
+	for _, association := range behavior.EdgeLambdas {
+		if association == nil || association.Servable() {
+			continue
+		}
+		for _, refusal := range association.Refusals {
+			behavior.Refusals = append(behavior.Refusals, fmt.Sprintf("Lambda@Edge %s: %s", association.EventType, refusal))
+		}
+	}
+	if behavior.FieldLevelEncryptionID != "" {
+		config, ok := topology.FieldLevelEncryptionConfig(behavior.FieldLevelEncryptionID)
+		if !ok {
+			behavior.Refusals = append(behavior.Refusals,
+				fmt.Sprintf("FieldLevelEncryptionId %q is not in the assembly", behavior.FieldLevelEncryptionID))
+		} else {
+			if !config.Servable() {
+				behavior.Refusals = append(behavior.Refusals, fmt.Sprintf(
+					"field-level encryption configuration %s: %s", config.LogicalID, strings.Join(config.Refusals, "; ")))
+			}
+			for _, profileID := range config.profileIDs() {
+				profile, found := topology.FieldLevelEncryptionProfile(profileID)
+				if !found {
+					behavior.Refusals = append(behavior.Refusals,
+						fmt.Sprintf("field-level encryption profile %q is not in the assembly", profileID))
+					continue
+				}
+				if !profile.Servable() {
+					behavior.Refusals = append(behavior.Refusals, fmt.Sprintf(
+						"field-level encryption profile %s: %s", profile.LogicalID, strings.Join(profile.Refusals, "; ")))
+					continue
+				}
+				for _, refusal := range verifyFLEKeys(profile, topology.publicKeysByID) {
+					behavior.Refusals = append(behavior.Refusals, "field-level encryption: "+refusal)
+				}
+			}
+		}
+		origin, _ := d.Origin(behavior.TargetOriginID)
+		for _, deviation := range d.flePreconditions(behavior, origin) {
+			d.Reported = append(d.Reported, "distribution: field-level encryption: "+deviation+" (reported; the local viewer is plain HTTP)")
 		}
 	}
 	for _, functionID := range []string{behavior.ViewerRequestFunction, behavior.ViewerResponseFunction} {
@@ -824,11 +930,15 @@ func parseBehavior(
 		case propertyDefaultTTL, propertyMaxTTL, propertyMinTTL, "RealtimeLogConfigArn":
 			behavior.Reported = append(behavior.Reported, reportProperty("behavior", key))
 		case "LambdaFunctionAssociations":
-			if !isEmptyArray(value) {
-				behavior.Refusals = append(behavior.Refusals, refuseProperty("behavior", key))
-			} else {
+			if isEmptyArray(value) {
 				behavior.Reported = append(behavior.Reported, reportProperty("behavior", key))
+				continue
 			}
+			associations, associationErr := parseEdgeAssociations(value, stack, index, distributionID)
+			if associationErr != nil {
+				return nil, associationErr
+			}
+			behavior.EdgeLambdas = associations
 		case "FieldLevelEncryptionId":
 			if !isEmptyValue(value) {
 				behavior.Refusals = append(behavior.Refusals, refuseProperty("behavior", key))
@@ -1173,8 +1283,13 @@ func parseS3Origin(raw json.RawMessage, distributionID string, position int) (*S
 			}
 			continue
 		}
+		// The value is either the identity's cloudfront id or a Ref/Fn::Join
+		// expression; only its presence matters locally.
 		if err := json.Unmarshal(properties[key], &origin.OriginAccessIdentity); err != nil {
-			return nil, fmt.Errorf("%s: OriginAccessIdentity: %w", distributionID, err)
+			if _, isExpression := decodeObjectOrNil(properties[key]); !isExpression {
+				return nil, fmt.Errorf("%s: OriginAccessIdentity is not a string or an expression", distributionID)
+			}
+			origin.OriginAccessIdentity = "origin-access-identity"
 		}
 	}
 	return origin, nil
@@ -1345,6 +1460,7 @@ func parseFunction(stack, id string, resource Resource, index *resourceIndex) (*
 		return nil, fmt.Errorf("%s/%s: %w", stack, id, err)
 	}
 	function := &Function{LogicalID: index.qualified(stack, id), Stack: stack}
+	var kvsAssociations json.RawMessage
 	for _, key := range sortedKeys(properties) {
 		value := properties[key]
 		switch key {
@@ -1371,7 +1487,7 @@ func parseFunction(stack, id string, resource Resource, index *resourceIndex) (*
 					}
 					function.Reported = append(function.Reported, reportProperty("function", propertyComment))
 				case propertyKeyValueStoreAssociations:
-					function.Refusals = append(function.Refusals, refuseProperty("function", configKey))
+					kvsAssociations = config[configKey]
 				default:
 					if _, known := functionConfigPropertyInventory[configKey]; !known {
 						function.Refusals = append(function.Refusals,
@@ -1380,7 +1496,7 @@ func parseFunction(stack, id string, resource Resource, index *resourceIndex) (*
 				}
 			}
 		case propertyKeyValueStoreAssociations:
-			function.Refusals = append(function.Refusals, refuseProperty("function", key))
+			kvsAssociations = value
 		case propertyName:
 			function.Reported = append(function.Reported, reportProperty("function", key))
 		default:
@@ -1399,6 +1515,13 @@ func parseFunction(stack, id string, resource Resource, index *resourceIndex) (*
 	default:
 		function.Refusals = append(function.Refusals,
 			fmt.Sprintf("runtime %q is not a CloudFront Functions JavaScript runtime", function.Runtime))
+	}
+	if len(kvsAssociations) > 0 {
+		stores, problems := parseKeyValueStoreAssociations(kvsAssociations, stack, index, function.Runtime)
+		function.Refusals = append(function.Refusals, problems...)
+		if len(stores) > 0 {
+			function.KeyValueStore = stores[0]
+		}
 	}
 	return function, nil
 }
@@ -1492,4 +1615,13 @@ func decodeIntPointer(raw json.RawMessage) (*int, error) {
 		return nil, err
 	}
 	return &value, nil
+}
+
+// decodeObjectOrNil reports whether raw is a JSON object.
+func decodeObjectOrNil(raw json.RawMessage) (map[string]json.RawMessage, bool) {
+	var value map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, false
+	}
+	return value, true
 }

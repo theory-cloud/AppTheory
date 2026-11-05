@@ -38,6 +38,7 @@ examples=(
   "examples/cdk/lambda-packaging|AppTheoryLambdaPackagingExample|"
   "examples/cdk/codebuild-job-runner|AppTheoryCodeBuildJobRunnerExample|"
   "examples/cdk/lambda-role|LambdaRoleExample|"
+  "examples/cdk/edge-gateway|EdgeGatewayExample|"
   "examples/cdk/media-cdn|MediaCdnExample|"
   "examples/cdk/path-routed-frontend|PathRoutedFrontendExample|"
   "examples/cdk/restv1-router|RestV1RouterExample|"
@@ -50,6 +51,7 @@ examples=(
 asserted_stacks=(
   "AppTheoryCodeBuildJobRunnerExample"
   "LambdaRoleExample"
+  "EdgeGatewayExample"
   "MediaCdnExample"
   "PathRoutedFrontendExample"
   "RestV1RouterExample"

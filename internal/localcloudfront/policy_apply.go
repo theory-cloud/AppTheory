@@ -447,7 +447,7 @@ func corsOriginMatches(pattern, origin string) bool {
 		return matchGlob(pattern, origin)
 	}
 	trimmed := origin
-	if scheme, rest, found := strings.Cut(origin, "://"); found && (scheme == "http" || scheme == "https") {
+	if scheme, rest, found := strings.Cut(origin, "://"); found && (scheme == "http" || scheme == valueHTTPS) {
 		trimmed = rest
 	}
 	if strings.Contains(pattern, ":") {

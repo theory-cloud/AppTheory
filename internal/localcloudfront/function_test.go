@@ -341,7 +341,7 @@ func TestExecutorRejectsInvalidReturns(t *testing.T) {
 		"bad body encoding": `function handler(event) {
 			return { statusCode: 200, headers: {}, cookies: {}, body: { encoding: 'hex', data: '00' } };
 		}`,
-		"promise": `async function handler(event) { return event.request; }`,
+		"not an object": `function handler(event) { return "not an object"; }`,
 	}
 	for name, code := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -533,4 +533,27 @@ func asFunctionError(err error, target **FunctionError) bool {
 		return true
 	}
 	return false
+}
+
+// TestExecutorRunsAsyncHandlerInRuntime2 proves the runtime 2.0 async handler
+// the key value store helpers require.
+func TestExecutorRunsAsyncHandlerInRuntime2(t *testing.T) {
+	code := `async function handler(event) { return event.request; }`
+	result, err := NewExecutor().Execute(context.Background(), testFunction(runtimeJS20, code), testRequestEvent("viewer-request"))
+	if err != nil {
+		t.Fatalf("runtime 2.0 async handler: %v", err)
+	}
+	if result.Kind != ResultRequest {
+		t.Fatalf("want a request result, got %s", result.Kind)
+	}
+}
+
+// TestExecutorRejectsAsyncHandlerInRuntime1 keeps the runtime 1.0 synchronous
+// contract: runtime 1.0 returns the request or response object synchronously.
+func TestExecutorRejectsAsyncHandlerInRuntime1(t *testing.T) {
+	code := `async function handler(event) { return event.request; }`
+	_, err := NewExecutor().Execute(context.Background(), testFunction(runtimeJS10, code), testRequestEvent("viewer-request"))
+	if err == nil {
+		t.Fatal("runtime 1.0 must reject a promise return")
+	}
 }

@@ -290,6 +290,9 @@ func (s *localSession) describe() (map[string]any, error) { //nolint:gocognit //
 		if gateway, ok := s.runner.cloudFrontGateways[distribution.LogicalID]; ok {
 			entry["cache"] = gateway.Stats()
 		}
+		if security := distributionSecurityReport(distribution); security != nil {
+			entry["security"] = security
+		}
 		entries := make([]localcloudfront.Invalidation, 0)
 		for _, invalidation := range invalidations {
 			if distributionID, ok := s.runner.cloudFrontIDs[distribution.LogicalID]; ok && invalidation.DistributionID == distributionID {
@@ -339,7 +342,7 @@ func (s *localSession) describe() (map[string]any, error) { //nolint:gocognit //
 	if s.runner.delivery != nil {
 		delivery = s.runner.delivery.State()
 	}
-	return map[string]any{
+	document := map[string]any{
 		"functions":     functions,
 		"apis":          apis,
 		"cloudFront":    cloudFront,
@@ -351,7 +354,11 @@ func (s *localSession) describe() (map[string]any, error) { //nolint:gocognit //
 		"secrets":       secrets,
 		"endpoints":     endpoints,
 		"delivery":      delivery,
-	}, nil
+	}
+	if security := cloudFrontSecurityReport(s.spec); security != nil {
+		document["cloudFrontSecurity"] = security
+	}
+	return document, nil
 }
 
 // describeNotifications reports each S3 notification destination with the

@@ -146,18 +146,6 @@ func TestPathRoutedBehaviorOrderAndRewriteFunction(t *testing.T) {
 	}
 }
 
-func TestPrivateMediaIsRefusedForSignedURLs(t *testing.T) {
-	topology := parseSnapshot(t, "media-cdn-private-pem.json")
-	distribution := topology.Distributions[0]
-	if distribution.Servable() {
-		t.Fatal("a distribution with a trusted key group must be refused")
-	}
-	joined := strings.Join(distribution.Refusals, "\n")
-	if !strings.Contains(joined, "TrustedKeyGroups") {
-		t.Fatalf("refusal must name TrustedKeyGroups:\n%s", joined)
-	}
-}
-
 func TestEveryManagedIDUsedByASnapshotIsPinned(t *testing.T) {
 	for _, name := range snapshotNames(t) {
 		topology := parseSnapshot(t, name)

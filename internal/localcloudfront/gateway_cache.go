@@ -63,7 +63,7 @@ func (g *Gateway) respondFromCache(
 		// 304 without reaching the origin, as CloudFront does.
 		response = conditional
 	}
-	g.finishResponse(writer, request, behavior, state, requestID, domainName, response, cacheHitHeader, age)
+	g.finishResponse(writer, request, behavior, state, requestID, domainName, response, cacheHitHeader, age, true)
 	if note != "" {
 		g.logf("cloudfront %s %s %s -> %d (cached: %s, age %ds)",
 			g.Distribution.LogicalID, request.Method, request.URL.EscapedPath(), entry.Response.StatusCode, note, age)

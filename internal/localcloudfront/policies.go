@@ -450,9 +450,9 @@ func parseHeaderForwarding(raw json.RawMessage, allowAllViewer bool) (HeaderForw
 				return config, fmt.Errorf("HeaderBehavior: %w", err)
 			}
 			switch behavior {
-			case "none":
+			case valueNone:
 				config.Mode = ForwardNone
-			case "whitelist":
+			case valueWhitelist:
 				config.Mode = ForwardWhitelist
 			case "allViewer":
 				if !allowAllViewer {

@@ -94,6 +94,10 @@ type Options struct {
 	// local gateway may reach. An unmapped external origin is refused at plan
 	// time.
 	Origins map[string]string
+	// ViewerCountry is the run's resolved ISO 3166-1 alpha-2 viewer country for
+	// CloudFront geo restriction. An empty value is an undetermined location,
+	// which CloudFront serves.
+	ViewerCountry string
 }
 
 // Runner owns one local run: the derived surface, the Docker network, the
@@ -371,6 +375,11 @@ func normalizeOptions(options Options) (Options, error) {
 	if err := validateOriginOverrides(options.Origins); err != nil {
 		return Options{}, err
 	}
+	country, countryErr := validateViewerCountry(options.ViewerCountry)
+	if countryErr != nil {
+		return Options{}, countryErr
+	}
+	options.ViewerCountry = country
 	return options, nil
 }
 
@@ -555,6 +564,10 @@ func (r *Runner) Plan(ctx context.Context) (*Spec, error) {
 	if err := r.applyOriginOverrides(spec); err != nil {
 		return nil, err
 	}
+	if err := r.materializeKeyValueStores(spec); err != nil {
+		return nil, err
+	}
+	refreshCloudFrontSkips(spec)
 	if r.delivery != nil {
 		spec.Delivery = r.delivery.Planned(spec)
 	}
@@ -1546,6 +1559,8 @@ func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 		}
 		gateway := localcloudfront.NewGateway(distribution, spec.cloudFrontTopology, origins, executor, r.logf)
 		gateway.Now = r.clock.Now
+		gateway.ViewerCountry = r.options.ViewerCountry
+		gateway.EdgeInvoker = &edgeInvokerAdapter{versions: edgeVersions(spec), invokers: invokers}
 		r.cloudFrontGateways[distribution.LogicalID] = gateway
 		if r.cloudFrontAPI != nil {
 			r.cloudFrontIDs[distribution.LogicalID] = r.cloudFrontAPI.Register(distribution.LogicalID, gateway.Cache)

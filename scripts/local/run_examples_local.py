@@ -55,6 +55,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+try:  # The field-level encryption row decrypts with the real AWS Encryption SDK.
+    import aws_encryption_sdk
+    from aws_encryption_sdk.identifiers import CommitmentPolicy, EncryptionKeyType, WrappingAlgorithm
+    from aws_encryption_sdk.internal.crypto.wrapping_keys import WrappingKey
+    from aws_encryption_sdk.key_providers.raw import RawMasterKeyProvider
+
+    HAVE_ENCRYPTION_SDK = True
+except ImportError:  # pragma: no cover - reported by the field-level encryption row
+    HAVE_ENCRYPTION_SDK = False
+
 ROOT = Path(__file__).resolve().parents[2]
 HARNESS_DIR = Path(__file__).resolve().parent
 MANIFEST_PATH = HARNESS_DIR / "examples-local.json"
@@ -102,6 +112,7 @@ SSR_SITE_APP = "examples/cdk/ssr-site"
 SSR_ONLY_APP = "examples/cdk/ssr-only-provided-assets-site"
 PATH_ROUTED_APP = "examples/cdk/path-routed-frontend"
 MEDIA_CDN_APP = "examples/cdk/media-cdn"
+EDGE_GATEWAY_APP = "examples/cdk/edge-gateway"
 LAMBDA_PACKAGING_APP = "examples/cdk/lambda-packaging"
 CONFORMANCE_SCRIPT = "examples/microvm-conformance/run_local.py"
 MICROVM_DEMO_TOKEN = "local-demo-token"
@@ -311,6 +322,11 @@ def expect_output(output: str, needles: list[str], label: str) -> None:
         )
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *_args, **_kwargs):  # noqa: D401 - urllib hook
+        return None
+
+
 def http_request(
     method: str,
     url: str,
@@ -318,12 +334,14 @@ def http_request(
     headers: dict | None = None,
     body: bytes | None = None,
     timeout: float = 15,
+    follow_redirects: bool = True,
 ) -> tuple[int, str, dict]:
     request = urllib.request.Request(url, data=body, method=method)
     for key, value in (headers or {}).items():
         request.add_header(key, value)
+    opener = urllib.request.build_opener() if follow_redirects else urllib.request.build_opener(_NoRedirect)
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with opener.open(request, timeout=timeout) as response:
             return response.status, response.read().decode("utf-8", "replace"), normalized_headers(response.headers)
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read().decode("utf-8", "replace"), normalized_headers(exc.headers)
@@ -3237,6 +3255,7 @@ def start_local_session(
     clock: str | None = None,
     allow_no_surface: bool = False,
     origins: tuple[str, ...] = (),
+    viewer_country: str | None = None,
 ) -> LocalSession:
     """Start one `apptheory-local session` and wait for its machine interface."""
     ensure_cdk_app(harness, app)
@@ -3267,6 +3286,8 @@ def start_local_session(
         argv.extend(["--origin", origin])
     if clock:
         argv.extend(["--clock", clock])
+    if viewer_country:
+        argv.extend(["--viewer-country", viewer_country])
     process = subprocess.Popen(
         argv,
         cwd=str(ROOT),
@@ -3847,6 +3868,75 @@ def local_app_distribution(run: LocalAppRun, prefix: str) -> tuple[str, str]:
         f"plan has no served distribution starting with {prefix!r}; "
         f"cloudFront={[d.get('logicalId') for d in run.spec.get('cloudFront') or []]}, apis={run.apis}"
     )
+
+
+
+# --- CloudFront signing helpers --------------------------------------------
+
+
+def _cloudfront_scratch(name: str) -> Path:
+    directory = Path(tempfile.mkdtemp(prefix=f"cloudfront-{name}-", dir=str(STATE_DIR)))
+    return directory
+
+
+def generate_rsa_keypair(directory: Path) -> tuple[Path, Path]:
+    """Generate an RSA-2048 key pair with OpenSSL; the private key never leaves
+    the run scratch directory and is deleted with it."""
+    private_key = directory / "private.pem"
+    public_key = directory / "public.pem"
+    subprocess.run(
+        ["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048", "-out", str(private_key)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["openssl", "pkey", "-in", str(private_key), "-pubout", "-out", str(public_key)],
+        check=True,
+        capture_output=True,
+    )
+    return public_key, private_key
+
+
+def cloudfront_sign(private_key: Path, data: str, algorithm: str = "SHA256") -> str:
+    """Sign a CloudFront policy with OpenSSL and apply the documented base64
+    character replacements: "+" -> "-", "=" -> "_", "/" -> "~"."""
+    digest = "-sha256" if algorithm.upper() == "SHA256" else "-sha1"
+    result = subprocess.run(
+        ["openssl", "dgst", digest, "-sign", str(private_key)],
+        input=data.encode("utf-8"),
+        check=True,
+        capture_output=True,
+    )
+    encoded = base64.b64encode(result.stdout).decode("ascii")
+    return encoded.replace("+", "-").replace("=", "_").replace("/", "~")
+
+
+def cloudfront_policy_url(resource: str, expires: int) -> str:
+    """The canned policy string, with every empty space removed."""
+    return (
+        '{"Statement":[{"Resource":%s,"Condition":{"DateLessThan":{"AWS:EpochTime":%d}}}]}'
+        % (json.dumps(resource), expires)
+    )
+
+
+def cloudfront_custom_policy(resource: str, expires: int) -> str:
+    return (
+        '{"Statement":[{"Resource":%s,"Condition":{"DateLessThan":{"AWS:EpochTime":%d}}}]}'
+        % (json.dumps(resource), expires)
+    )
+
+
+def cloudfront_policy_parameter(policy: str) -> str:
+    encoded = base64.b64encode(policy.encode("utf-8")).decode("ascii")
+    return encoded.replace("+", "-").replace("=", "_").replace("/", "~")
+
+
+def session_key_pair_id(session: "LocalSession", logical_prefix: str = "") -> str:
+    security = session.info.get("cloudFrontSecurity") or {}
+    for key in security.get("publicKeys") or []:
+        if str(key.get("logicalId") or "").startswith(logical_prefix):
+            return str(key["keyPairId"])
+    raise HarnessFailure(f"session reports no CloudFront public key id: {security}")
 
 
 def session_distribution(session: LocalSession, prefix: str) -> tuple[str, str]:
@@ -5845,79 +5935,420 @@ def run_path_routed_gateway(harness: Harness) -> str:
 
 
 def run_media_cdn_gateway(harness: Harness) -> str:
-    session = start_local_session(
-        harness,
-        MEDIA_CDN_APP,
-        name="media-cdn-gateway",
-        backends=("s3proxy",),
-        clock="test=2026-01-01T00:00:00Z",
-    )
+    scratch = _cloudfront_scratch("media-cdn")
     try:
-        _, base = session_distribution(session, "PublicMediaCdnDistribution")
-        private = [
-            entry for entry in session.info.get("cloudFront") or []
-            if str(entry.get("logicalId") or "").startswith("PrivateMediaCdnDistribution")
-        ]
-        if len(private) != 1 or private[0].get("servable") or not private[0].get("refusals"):
-            raise HarnessFailure(f"the private distribution is not refused with a named reason: {private}")
-        refusal = "; ".join(str(reason) for reason in private[0]["refusals"])
-        if "TrustedKeyGroups" not in refusal and "signed" not in refusal.lower():
-            raise HarnessFailure(f"the private distribution refusal does not name signed URLs: {refusal}")
-        bucket = session.resource(logical_prefix="PublicMediaCdnMediaBucket")
-        s3_put(session, bucket["logicalId"], "probe.txt", "media-probe\n", "text/plain")
-        status, body, headers = http_request("GET", base + "/probe.txt")
-        expect_status(status, 200, "media-cdn /probe.txt", body)
-        if body != "media-probe\n" or "text/plain" not in headers.get("content-type", ""):
-            raise HarnessFailure(f"media-cdn probe = {headers.get('content-type')!r} {body!r}", body)
-        if not headers.get("etag"):
-            raise HarnessFailure("media-cdn /probe.txt has no ETag", body)
-        # The 403 custom error response serves the configured error page with
-        # the configured status. The s3proxy 403 is an S3 AccessDenied error: it
-        # carries Content-Type: application/xml and x-amz-request-id and no
-        # Cache-Control, and the HTTPStatusCodes page caches 403 "only ... if
-        # your origin returns a Cache-Control max-age or Cache-Control s-maxage
-        # header". The page is therefore served but not cached: the second
-        # request is another miss. The ErrorCachingMinTTL expiry proof for a
-        # 404 origin lives in the localcloudfront unit tests.
-        # https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/HTTPStatusCodes.html
-        s3_put(
-            session,
-            bucket["logicalId"],
-            "errors/not-found.html",
-            "<h1>media not found</h1>",
-            "text/html",
+        public_key, private_key = generate_rsa_keypair(scratch)
+        public_key_base64 = base64.b64encode(public_key.read_bytes()).decode("ascii")
+        session = start_local_session(
+            harness,
+            MEDIA_CDN_APP,
+            name="media-cdn-gateway",
+            backends=("s3proxy",),
+            context={"privateMediaPublicKeyBase64": public_key_base64},
+            clock="test=2026-01-01T00:00:00Z",
         )
-        status, body, headers = http_request("GET", base + "/missing.txt")
-        expect_status(status, 200, "media-cdn custom error page", body)
-        if "<h1>media not found</h1>" not in body:
-            raise HarnessFailure(f"media-cdn custom error page = {body!r}")
-        if headers.get("x-cache") != "Miss from cloudfront":
-            raise HarnessFailure(f"media-cdn custom error first request = {headers.get('x-cache')!r}")
-        status, body, headers = http_request("GET", base + "/missing.txt")
-        expect_status(status, 200, "media-cdn custom error page again", body)
-        if headers.get("x-cache") != "Miss from cloudfront":
-            raise HarnessFailure(
-                "the 403 custom error page was cached without a Cache-Control max-age/s-maxage header: "
-                f"{headers.get('x-cache')!r}"
+        try:
+            _, base = session_distribution(session, "PublicMediaCdnDistribution")
+            private = [
+                entry for entry in session.info.get("cloudFront") or []
+                if str(entry.get("logicalId") or "").startswith("PrivateMediaCdnDistribution")
+            ]
+            if len(private) != 1 or not private[0].get("servable"):
+                raise HarnessFailure(f"the private distribution is not served: {private}")
+            _, private_base = session_distribution(session, "PrivateMediaCdnDistribution")
+            key_pair_id = session_key_pair_id(session, "PrivateMediaCdn")
+
+            bucket = session.resource(logical_prefix="PublicMediaCdnMediaBucket")
+            s3_put(session, bucket["logicalId"], "probe.txt", "media-probe\n", "text/plain")
+            status, body, headers = http_request("GET", base + "/probe.txt")
+            expect_status(status, 200, "media-cdn /probe.txt", body)
+            if body != "media-probe\n" or "text/plain" not in headers.get("content-type", ""):
+                raise HarnessFailure(f"media-cdn probe = {headers.get('content-type')!r} {body!r}", body)
+            if not headers.get("etag"):
+                raise HarnessFailure("media-cdn /probe.txt has no ETag", body)
+
+            # The 403 custom error response serves the configured error page
+            # with the configured status. The s3proxy 403 is an S3 AccessDenied
+            # error: it carries Content-Type: application/xml and
+            # x-amz-request-id and no Cache-Control, and the HTTPStatusCodes page
+            # caches 403 "only ... if your origin returns a Cache-Control
+            # max-age or Cache-Control s-maxage header". The page is therefore
+            # served but not cached: the second request is another miss. The
+            # ErrorCachingMinTTL expiry proof for a 404 origin lives in the
+            # localcloudfront unit tests.
+            # https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/HTTPStatusCodes.html
+            s3_put(session, bucket["logicalId"], "errors/not-found.html", "<h1>media not found</h1>", "text/html")
+            status, body, headers = http_request("GET", base + "/missing.txt")
+            expect_status(status, 200, "media-cdn custom error page", body)
+            if "<h1>media not found</h1>" not in body:
+                raise HarnessFailure(f"media-cdn custom error page = {body!r}")
+            if headers.get("x-cache") != "Miss from cloudfront":
+                raise HarnessFailure(f"media-cdn custom error first request = {headers.get('x-cache')!r}")
+            status, body, headers = http_request("GET", base + "/missing.txt")
+            expect_status(status, 200, "media-cdn custom error page again", body)
+            if headers.get("x-cache") != "Miss from cloudfront":
+                raise HarnessFailure(
+                    "the 403 custom error page was cached without a Cache-Control max-age/s-maxage header: "
+                    f"{headers.get('x-cache')!r}"
+                )
+
+            # When the custom error page itself is unavailable, CloudFront
+            # returns the status code the origin sent for the page (here 403
+            # AccessDenied).
+            session.request("s3.delete", bucket=bucket["logicalId"], objectKey="errors/not-found.html")
+            status, body, headers = http_request("GET", base + "/missing-page.txt")
+            expect_status(status, 403, "media-cdn missing custom error page", body)
+            if "AccessDenied" not in body:
+                raise HarnessFailure(f"media-cdn unavailable custom page = {body!r}")
+
+            # Signed URLs and signed cookies on the private distribution.
+            # https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-signed-urls.html
+            private_bucket = session.resource(logical_prefix="PrivateMediaCdnMediaBucket")
+            s3_put(session, private_bucket["logicalId"], "private.txt", "private-media\n", "text/plain")
+            private_url = private_base + "/private.txt"
+
+            status, body, _ = http_request("GET", private_url)
+            expect_status(status, 403, "private media unsigned", body)
+            if "signed URL or signed cookie" not in body:
+                raise HarnessFailure(f"private media unsigned = {body!r}", body)
+
+            # A canned policy URL with SHA-256; the default hash algorithm is
+            # SHA-1, so Hash-Algorithm=SHA256 is explicit.
+            expires = 1767225660  # 2026-01-01T00:01:00Z
+            policy = cloudfront_policy_url(private_url, expires)
+            signed_url = (
+                private_url
+                + f"?Expires={expires}"
+                + f"&Signature={cloudfront_sign(private_key, policy, 'SHA256')}"
+                + f"&Key-Pair-Id={key_pair_id}"
+                + "&Hash-Algorithm=SHA256"
+            )
+            status, body, headers = http_request("GET", signed_url)
+            expect_status(status, 200, "private media canned signed URL", body)
+            if body != "private-media\n":
+                raise HarnessFailure(f"private media canned signed URL body = {body!r}", body)
+
+            # "If you add a query string parameter after signing the URL, the
+            # URL will no longer be valid" and CloudFront returns 403.
+            status, body, _ = http_request("GET", signed_url + "&extra=1")
+            expect_status(status, 403, "private media query added after signing", body)
+
+            # A signed cookie set with a custom policy. The names are
+            # case-sensitive.
+            cookie_expires = 1767225720  # 2026-01-01T00:02:00Z
+            cookie_policy = cloudfront_custom_policy(private_url, cookie_expires)
+            cookie_headers = {
+                "Cookie": (
+                    f"CloudFront-Policy={cloudfront_policy_parameter(cookie_policy)}; "
+                    f"CloudFront-Signature={cloudfront_sign(private_key, cookie_policy, 'SHA256')}; "
+                    f"CloudFront-Key-Pair-Id={key_pair_id}; "
+                    "CloudFront-Hash-Algorithm=SHA256"
+                )
+            }
+            status, body, headers = http_request("GET", private_url, headers=cookie_headers)
+            expect_status(status, 200, "private media custom signed cookie", body)
+            if body != "private-media\n":
+                raise HarnessFailure(f"private media signed cookie body = {body!r}", body)
+
+            # OPTIONS is exempt from signed URLs. The request still reaches the
+            # origin, where S3 answers its own 403 because the bucket declares
+            # no CORS rules; the signed-access refusal is not the reason.
+            status, body, _ = http_request("OPTIONS", private_url)
+            expect_status(status, 403, "private media unsigned OPTIONS", body)
+            if "signed URL or signed cookie" in body:
+                raise HarnessFailure(f"private media OPTIONS was refused by the signed check: {body!r}", body)
+
+            # A Key-Pair-Id that names no public key in a trusted key group.
+            wrong_key_url = (
+                private_url
+                + f"?Expires={expires}"
+                + f"&Signature={cloudfront_sign(private_key, policy, 'SHA256')}"
+                + "&Key-Pair-Id=K0000000000000"
+                + "&Hash-Algorithm=SHA256"
+            )
+            status, body, _ = http_request("GET", wrong_key_url)
+            expect_status(status, 403, "private media wrong key pair id", body)
+
+            # The expiration is checked at the time of the HTTP request. The
+            # canned URL expired one minute after the run clock's start.
+            session.clock_advance("2m")
+            status, body, _ = http_request("GET", signed_url)
+            expect_status(status, 403, "private media expired signed URL", body)
+            if "expired" not in body:
+                raise HarnessFailure(f"private media expired signed URL = {body!r}", body)
+
+            return (
+                "the public distribution served a probe object from its provisioned bucket; the 403 "
+                "custom error response served the configured page with status 200; when the page was "
+                "unavailable the status came from the pages origin (403 AccessDenied); the private "
+                "distribution required a signature: an unsigned request was 403, a canned-policy "
+                "SHA-256 URL and a custom-policy signed cookie were served, a query string added after "
+                f"signing was 403, an unknown Key-Pair-Id was 403, OPTIONS passed the signed check, and "
+                "the expired URL was 403 after clock.advance"
+            )
+        finally:
+            stop_local_session(harness, session)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+
+def _fle_provider_class(provider_name: str, private_key_pem: bytes):
+    """Build the raw RSA master key provider CloudFront's page describes.
+
+    provider_id is declared in the class body because RawMasterKeyProvider
+    computes its abstract methods when the class is created.
+    """
+
+    class KeyProvider(RawMasterKeyProvider):
+        provider_id = provider_name
+
+        def _get_raw_key(self, key_id):  # noqa: N802 - AWS Encryption SDK API
+            return WrappingKey(
+                wrapping_algorithm=WrappingAlgorithm.RSA_OAEP_SHA256_MGF1,
+                wrapping_key=private_key_pem,
+                wrapping_key_type=EncryptionKeyType.PRIVATE,
             )
 
-        # When the custom error page itself is unavailable, CloudFront returns
-        # the status code the origin sent for the page (here 403 AccessDenied).
-        session.request("s3.delete", bucket=bucket["logicalId"], objectKey="errors/not-found.html")
-        status, body, headers = http_request("GET", base + "/missing-page.txt")
-        expect_status(status, 403, "media-cdn missing custom error page", body)
-        if "AccessDenied" not in body:
-            raise HarnessFailure(f"media-cdn unavailable custom page = {body!r}")
+    return KeyProvider
+
+
+def _fle_decrypt(ciphertext: bytes, private_key_pem: bytes, key_name: str, provider_id: str) -> bytes:
+    """Decrypt a CloudFront field-level encryption value with the official AWS
+    Encryption SDK and a raw RSA master key using the page's provider name, key
+    name and algorithm."""
+    if not HAVE_ENCRYPTION_SDK:
+        raise HarnessFailure(
+            "the field-level encryption row needs the AWS Encryption SDK: "
+            "python3 -m pip install -r scripts/local/requirements-examples.txt"
+        )
+    provider = _fle_provider_class(provider_id, private_key_pem)()
+    provider.add_master_key(key_name)
+    client = aws_encryption_sdk.EncryptionSDKClient(
+        commitment_policy=CommitmentPolicy.FORBID_ENCRYPT_ALLOW_DECRYPT
+    )
+    plaintext, _header = client.decrypt(source=ciphertext, key_provider=provider)
+    return plaintext
+
+
+def run_edge_gateway(harness: Harness) -> str:
+    scratch = _cloudfront_scratch("edge-gateway")
+    origin_requests: list[dict] = []
+    fle_private_key = scratch / "fle-private.pem"
+
+    try:
+        fle_public_base64 = ""
+        fle_private_pem = b""
+
+        class OriginHandler(http.server.BaseHTTPRequestHandler):
+            def _record(self) -> bytes:
+                length = int(self.headers.get("content-length") or 0)
+                body = self.rfile.read(length) if length else b""
+                origin_requests.append(
+                    {
+                        "method": self.command,
+                        "path": self.path,
+                        "headers": {key.lower(): value for key, value in self.headers.items()},
+                        "body": body,
+                    }
+                )
+                return body
+
+            def _respond(self, status: int, payload: dict) -> None:
+                encoded = json.dumps(payload).encode("utf-8")
+                self.send_response(status)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
+
+            def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+                self._record()
+                self._respond(200, {"origin": "api", "path": self.path, "method": "GET"})
+
+            def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+                body = self._record()
+                headers = {key.lower(): value for key, value in self.headers.items()}
+                if self.path == "/api/fle" and "application/x-www-form-urlencoded" in headers.get("content-type", ""):
+                    fields = urllib.parse.parse_qs(body.decode("utf-8"), keep_blank_values=True)
+                    encrypted = fields.get("card", [""])[0]
+                    plaintext = _fle_decrypt(
+                        base64.b64decode(encrypted),
+                        fle_private_pem,
+                        "edge-gateway-fle-key",
+                        "edge-gateway",
+                    ).decode("utf-8")
+                    self._respond(200, {
+                        "path": self.path,
+                        "card": plaintext,
+                        "name": fields.get("name", [""])[0],
+                        "encrypted": encrypted != "4111111111111111",
+                    })
+                    return
+                self._respond(200, {
+                    "path": self.path,
+                    "method": "POST",
+                    "viewerBodyLength": headers.get("x-edge-viewer-body-length"),
+                    "originBodyLength": headers.get("x-edge-origin-body-length"),
+                })
+
+            def log_message(self, *_args: object) -> None:
+                return
+
+        origin_server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), OriginHandler)
+        origin_thread = threading.Thread(target=origin_server.serve_forever, daemon=True)
+        origin_thread.start()
+        origin_url = f"http://127.0.0.1:{origin_server.server_address[1]}"
+
+        session = start_local_session(
+            harness,
+            EDGE_GATEWAY_APP,
+            name="edge-gateway",
+            backends=("s3proxy",),
+            context={"flePublicKeyBase64": fle_public_base64},
+            origins=("api.example.com=" + origin_url,),
+            clock="test=2026-01-01T00:00:00Z",
+            viewer_country="US",
+        )
+        try:
+            _, base = session_distribution(session, "EdgeDistribution")
+            bucket = session.resource(logical_prefix="ContentBucket")
+            s3_put(session, bucket["logicalId"], "edge/rewritten", "rewritten object", "text/plain")
+            s3_put(session, bucket["logicalId"], "edge/body", "original body", "text/plain")
+            s3_put(session, bucket["logicalId"], "errors/not-found.html", "<h1>edge not found</h1>", "text/html")
+            s3_put(session, bucket["logicalId"], "geo.txt", "geo content", "text/plain")
+
+            # A viewer-request URI rewrite; the function omits the header key so
+            # CloudFront inserts it with initial capitalization. The
+            # origin-response and viewer-response functions both run for an
+            # origin response.
+            status, body, headers = http_request("GET", base + "/edge/rewrite")
+            expect_status(status, 200, "edge /edge/rewrite", body)
+            if body != "rewritten object":
+                raise HarnessFailure(f"edge /edge/rewrite body = {body!r}", body)
+            if headers.get("x-edge-origin-response") != "seen":
+                raise HarnessFailure(f"edge origin-response header = {headers.get('x-edge-origin-response')!r}")
+            if headers.get("x-edge-viewer-response") != "seen":
+                raise HarnessFailure(f"edge viewer-response header = {headers.get('x-edge-viewer-response')!r}")
+
+            # An origin-request generated response is cached; the function's own
+            # invocation counter proves the second request never ran it.
+            status, body, headers = http_request("GET", base + "/edge/generated")
+            expect_status(status, 200, "edge /edge/generated", body)
+            first = json.loads(body)
+            if not first.get("generated") or first.get("invocations") != 1:
+                raise HarnessFailure(f"edge generated response = {first}", body)
+            if headers.get("x-edge-viewer-response") != "seen":
+                raise HarnessFailure("a viewer-response function must run for an origin-request generated response")
+            status, body, headers = http_request("GET", base + "/edge/generated")
+            expect_status(status, 200, "edge /edge/generated again", body)
+            second = json.loads(body)
+            if second != first:
+                raise HarnessFailure(f"the cached generated response changed: {second} != {first}", body)
+            if headers.get("x-cache") != "Hit from cloudfront":
+                raise HarnessFailure(f"edge generated second request cache = {headers.get('x-cache')!r}")
+
+            # An origin-response body replacement is what reaches the viewer.
+            status, body, headers = http_request("GET", base + "/edge/body")
+            expect_status(status, 200, "edge /edge/body", body)
+            if body != "replaced by the origin-response function":
+                raise HarnessFailure(f"edge origin-response body = {body!r}", body)
+
+            # A viewer-request generated response is not cached and the
+            # viewer-response function does not run for it.
+            status, body, headers = http_request("GET", base + "/edge/viewer-generated")
+            expect_status(status, 200, "edge /edge/viewer-generated", body)
+            if "generated by the viewer-request function" not in body:
+                raise HarnessFailure(f"edge viewer generated = {body!r}", body)
+            if headers.get("x-edge-viewer-response"):
+                raise HarnessFailure("a viewer-response function ran for a viewer-request generated response")
+
+            # A custom error page is not a viewer-response input.
+            status, body, headers = http_request("GET", base + "/missing.txt")
+            expect_status(status, 200, "edge custom error page", body)
+            if "<h1>edge not found</h1>" not in body:
+                raise HarnessFailure(f"edge custom error page = {body!r}", body)
+            if headers.get("x-edge-viewer-response"):
+                raise HarnessFailure("a viewer-response function ran for a custom error page")
+
+            # IncludeBody exposes the base64 body to the viewer-request and
+            # origin-request functions on the custom-origin behavior.
+            before = len(origin_requests)
+            status, body, headers = http_request(
+                "POST",
+                base + "/api/echo",
+                headers={"content-type": "text/plain"},
+                body=b"hello",
+            )
+            expect_status(status, 200, "edge POST /api/echo", body)
+            if len(origin_requests) != before + 1:
+                raise HarnessFailure("edge POST /api/echo did not reach the mapped origin")
+            echoed = origin_requests[-1]
+            if echoed["body"] != b"hello":
+                raise HarnessFailure(f"edge POST /api/echo origin body = {echoed['body']!r}")
+            if echoed["headers"].get("x-edge-viewer-request") != "seen":
+                raise HarnessFailure(
+                    "the viewer-request header (returned without a key) did not reach the origin: "
+                    f"{echoed['headers'].get('x-edge-viewer-request')!r}"
+                )
+            if echoed["headers"].get("x-edge-viewer-body-length") != "5":
+                raise HarnessFailure(
+                    f"IncludeBody viewer length = {echoed['headers'].get('x-edge-viewer-body-length')!r}"
+                )
+            if echoed["headers"].get("x-edge-origin-body-length") != "5":
+                raise HarnessFailure(
+                    f"IncludeBody origin length = {echoed['headers'].get('x-edge-origin-body-length')!r}"
+                )
+
+            # The origin-request function rewrites the origin to the other
+            # origin the assembly declares.
+            status, body, headers = http_request("GET", base + "/edge/to-api")
+            expect_status(status, 200, "edge /edge/to-api", body)
+            try:
+                payload = json.loads(body)
+            except ValueError:
+                raise HarnessFailure(f"edge /edge/to-api did not reach the custom origin: {body!r}", body) from None
+            if payload.get("origin") != "api" or payload.get("path") != "/edge/to-api":
+                raise HarnessFailure(f"edge /edge/to-api reached {payload}")
+
+            # CloudFront Function with a key value store.
+            status, body, headers = http_request("GET", base + "/kv/target", follow_redirects=False)
+            expect_status(status, 302, "edge /kv/target", body)
+            if headers.get("location") != "/edge/rewritten":
+                raise HarnessFailure(f"edge /kv/target location = {headers.get('location')!r}")
+            status, body, headers = http_request("GET", base + "/kv/config")
+            expect_status(status, 200, "edge /kv/config", body)
+            if json.loads(body) != {"variant": "b", "enabled": True}:
+                raise HarnessFailure(f"edge /kv/config = {body!r}", body)
+            status, body, _ = http_request("GET", base + "/kv/missing")
+            expect_status(status, 404, "edge /kv/missing", body)
+            if "missing key missing" not in body:
+                raise HarnessFailure(f"edge /kv/missing = {body!r}", body)
+            status, body, _ = http_request("GET", base + "/kv/meta")
+            expect_status(status, 200, "edge /kv/meta", body)
+            metadata = json.loads(body)
+            if metadata.get("keyCount") != 2:
+                raise HarnessFailure(f"edge /kv/meta = {metadata}")
+
+            return (
+                "a Lambda@Edge viewer-request rewrote the uri (header key inserted), an origin-request "
+                "generated response was cached without a second invocation, an origin-response replaced "
+                "the body and added a header, a viewer-response added a header and stayed out of "
+                "viewer-request generated responses and custom error pages, IncludeBody exposed the "
+                "base64 body to both request events, an origin rewrite reached the other declared "
+                "origin, and the runtime 2.0 CloudFront Function read get/exists/meta from its key "
+                "value store"
+            )
+        finally:
+            stop_local_session(harness, session)
+
         return (
-            "the public distribution served a probe object from its provisioned bucket; the 403 "
-            "custom error response served the configured page with status 200; the s3proxy 403 carried "
-            "Content-Type: application/xml and x-amz-request-id but no Cache-Control max-age/s-maxage, "
-            "so the page was served on both requests and the second was a miss (the page caches a 403 "
-            "only with that header); when the page itself was unavailable the status came from the "
-            f"pages origin (403 AccessDenied); the private distribution stayed refused ({refusal})"
+            "the Lambda@Edge, key value store and origin rewrite checks passed"
         )
     finally:
-        stop_local_session(harness, session)
+        origin_server.shutdown()
+        origin_server.server_close()
+        shutil.rmtree(scratch, ignore_errors=True)
 
 
 def run_ssr_assets_manifest(harness: Harness) -> str:
@@ -6152,6 +6583,7 @@ RUNNERS: dict[str, Callable[[Harness], str]] = {
     "ssr-only-gateway": run_ssr_only_gateway,
     "path-routed-gateway": run_path_routed_gateway,
     "media-cdn-gateway": run_media_cdn_gateway,
+    "edge-gateway": run_edge_gateway,
     "ssr-assets-manifest": run_ssr_assets_manifest,
     "ssr-assets-upload": run_ssr_assets_upload,
     "lambda-packaging": run_lambda_packaging,
@@ -6213,6 +6645,11 @@ def main(argv: list[str] | None = None) -> int:
         help="use an externally managed DynamoDB Local on the leased port; never start or recreate a container",
     )
     parser.add_argument("--down", action="store_true", help="stop this checkout's profile container")
+    parser.add_argument(
+        "--only",
+        default=None,
+        help="debug filter: run only these row runners (comma separated); CI never passes it",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -6274,6 +6711,11 @@ def main(argv: list[str] | None = None) -> int:
         lease.release()
         return 1
 
+    if args.only:
+        wanted = {name.strip() for name in args.only.split(",") if name.strip()}
+        entries = [entry for entry in entries if not entry.pending and entry.runner in wanted]
+        print(f"  filter:     {', '.join(sorted(wanted))}")
+
     executed = [entry for entry in entries if entry.runner]
     results: dict[str, tuple[str, str]] = {}
     failures: list[tuple[Entry, HarnessFailure]] = []
@@ -6303,9 +6745,12 @@ def main(argv: list[str] | None = None) -> int:
 
     print()
     print("parity")
-    try:
+    if args.only:
+        print("  SKIP  --only filter: the parity suite runs on the full harness")
+    else:
+      try:
         print(f"  PASS  {verify_local_runner_parity()}")
-    except HarnessFailure as failure:
+      except HarnessFailure as failure:
         failures.append((Entry(key="local-runner-parity", kind="suite", data={"class": "L1"}), failure))
         print("  FAIL")
         print_failure("local-runner-parity", failure)
