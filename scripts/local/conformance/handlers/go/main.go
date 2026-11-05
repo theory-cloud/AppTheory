@@ -35,10 +35,14 @@ func handler(_ context.Context, in event) (any, error) {
 	case "stream":
 		reader, writer := io.Pipe()
 		go func() {
-			_, _ = writer.Write([]byte("go-1\n"))
+			if _, err := writer.Write([]byte("go-1\n")); err != nil {
+				return
+			}
 			time.Sleep(400 * time.Millisecond)
-			_, _ = writer.Write([]byte("go-2\n"))
-			_ = writer.Close()
+			if _, err := writer.Write([]byte("go-2\n")); err != nil {
+				return
+			}
+			_ = writer.Close() //nolint:errcheck // the response body is complete
 		}()
 		return reader, nil
 	default:
