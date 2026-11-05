@@ -1118,24 +1118,7 @@ func copyTree(source, target string) error {
 			return os.MkdirAll(destination, 0o750)
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
-			linkTarget, err := os.Readlink(path) //nolint:gosec // the path is a layer asset inside the cloud assembly
-			if err != nil {
-				return err
-			}
-			if filepath.IsAbs(linkTarget) {
-				return fmt.Errorf("layer symlink %s has an absolute target %q; the merged /opt must stay inside the layer", relative, linkTarget)
-			}
-			resolved := filepath.Clean(filepath.Join(filepath.Dir(relative), linkTarget))
-			if resolved == ".." || strings.HasPrefix(resolved, ".."+string(filepath.Separator)) {
-				return fmt.Errorf("layer symlink %s escapes the layer root with target %q", relative, linkTarget)
-			}
-			if err := os.MkdirAll(filepath.Dir(destination), 0o750); err != nil {
-				return err
-			}
-			if err := os.Remove(destination); err != nil && !os.IsNotExist(err) {
-				return err
-			}
-			return os.Symlink(linkTarget, destination)
+			return copyLayerSymlink(path, relative, destination)
 		}
 		info, err := entry.Info()
 		if err != nil {
@@ -1153,6 +1136,32 @@ func copyTree(source, target string) error {
 		}
 		return os.WriteFile(destination, data, info.Mode().Perm()) //nolint:gosec // destination is inside the run scratch directory
 	})
+}
+
+// copyLayerSymlink materializes one layer symlink after checking that its
+// relative target stays inside the layer root.
+func copyLayerSymlink(path, relative, destination string) error {
+	linkTarget, readErr := os.Readlink(path) //nolint:gosec // the path is a layer asset inside the cloud assembly
+	if readErr != nil {
+		return readErr
+	}
+	if filepath.IsAbs(linkTarget) {
+		return fmt.Errorf("layer symlink %s has an absolute target %q; the merged /opt must stay inside the layer", relative, linkTarget)
+	}
+	resolved := filepath.Clean(filepath.Join(filepath.Dir(relative), linkTarget))
+	if resolved == ".." || strings.HasPrefix(resolved, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("layer symlink %s escapes the layer root with target %q", relative, linkTarget)
+	}
+	if err := os.MkdirAll(filepath.Dir(destination), 0o750); err != nil {
+		return err
+	}
+	if err := os.Remove(destination); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Symlink(linkTarget, destination); err != nil { //nolint:gosec // the target was validated to stay inside the layer
+		return err
+	}
+	return nil
 }
 
 func (r *Runner) startFunctions(ctx context.Context, spec *Spec, targets []string) error {

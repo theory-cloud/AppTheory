@@ -59,7 +59,7 @@ func TestPythonSitePackagesDerivesFromTheRuntime(t *testing.T) {
 func TestCopyTreeMaterializesInLayerSymlinks(t *testing.T) {
 	source := t.TempDir()
 	target := t.TempDir()
-	if err := os.WriteFile(filepath.Join(source, "regular.js"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(source, "regular.js"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink("regular.js", filepath.Join(source, "bin-link")); err != nil {
@@ -68,7 +68,7 @@ func TestCopyTreeMaterializesInLayerSymlinks(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(source, "nested"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(source, "nested", "real.txt"), []byte("y"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(source, "nested", "real.txt"), []byte("y"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink("real.txt", filepath.Join(source, "nested", "linked.txt")); err != nil {
@@ -109,7 +109,7 @@ func TestCopyTreeRefusesEscapingSymlinks(t *testing.T) {
 			if err := os.MkdirAll(nested, 0o750); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(outside, "outside.txt"), []byte("x"), 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(outside, "outside.txt"), []byte("x"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			link := filepath.Join(nested, "escape")
