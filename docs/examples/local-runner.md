@@ -870,7 +870,8 @@ Cache-Control: max-age and Cache-Control: s-maxage values cannot be greater than
 the Maximum TTL value set for the cache behavior for which the error page is
 being fetched." An explicit `ErrorCachingMinTTL` of 0 disables error caching for
 a custom origin and means one second for an S3 origin. A CachingDisabled policy
-caches neither errors nor custom error pages.
+caches neither errors nor custom error pages, including when it is the page's
+fetching behavior.
 
 A hit answers `x-cache: Hit from cloudfront` with an `age` in seconds; a miss
 answers `x-cache: Miss from cloudfront`. `session describe` reports each

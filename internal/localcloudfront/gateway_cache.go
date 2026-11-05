@@ -352,8 +352,15 @@ func isConditionalHeader(name string) bool {
 // https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/HTTPStatusCodes.html
 func (g *Gateway) responseTTL(response OriginResponse, behavior *Behavior, errorCaching errorCachingDecision) (time.Duration, CacheControl) {
 	if errorCaching.applies {
+		// "If you're using the CachingDisabled managed cache policy, CloudFront
+		// won't cache these status codes or custom error pages." The page's
+		// fetching behavior decides, even when the request matched a cacheable
+		// explicit behavior.
+		if policy := policyCache(errorCaching.fetchBehavior); policy != nil && policy.CachingDisabled {
+			return 0, CacheControl{}
+		}
 		if errorCaching.behaviorTTL && errorCaching.fetchBehavior != nil {
-			if policy := policyCache(errorCaching.fetchBehavior); policy != nil && !policy.CachingDisabled {
+			if policy := policyCache(errorCaching.fetchBehavior); policy != nil {
 				return policy.OriginTTL(response, g.now())
 			}
 			return 0, CacheControl{}

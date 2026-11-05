@@ -113,6 +113,93 @@ func TestCachingDisabledNeverCachesErrorsOrCustomPages(t *testing.T) {
 	}
 }
 
+// A-R5a-R3-res1: "If you're using the CachingDisabled managed cache policy,
+// CloudFront won't cache these status codes or custom error pages." The rule
+// follows the behavior the page is fetched through, so a cacheable explicit
+// request behavior cannot keep a page that the CachingDisabled default
+// behavior served.
+//
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/HTTPStatusCodes.html
+func TestCustomErrorPageFetchedThroughACachingDisabledDefaultBehaviorIsNotCached(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	api := &captureOrigin{respond: func(OriginRequest) OriginResponse {
+		return OriginResponse{StatusCode: 500, Body: []byte("api failed")}
+	}}
+	pages := &captureOrigin{respond: func(OriginRequest) OriginResponse {
+		return OriginResponse{StatusCode: 200, Header: http.Header{"content-type": []string{"text/html"}}, Body: []byte("page")}
+	}}
+	disabled := cachePolicy(0, 0, 0)
+	disabled.CachingDisabled = true
+	defaultBehavior := testBehavior("*", "pages", []string{"GET", "HEAD"})
+	defaultBehavior.CachePolicy = testPolicy(PolicyCache, disabled, nil, nil)
+	apiBehavior := testBehavior("/api/*", "api", []string{"GET", "HEAD"})
+	apiBehavior.CachePolicy = testPolicy(PolicyCache, cachePolicy(60, 3600, 0), nil, nil)
+	distribution := testDistribution(defaultBehavior, []*Behavior{apiBehavior},
+		testOrigin("pages", "pages.example"), testOrigin("api", "api.example"))
+	distribution.CustomErrorResponses = []CustomErrorResponse{{
+		ErrorCode: 500, ResponsePagePath: "/errors/500.html", ResponseCode: 200,
+	}}
+	gateway := NewGateway(distribution, &Topology{}, map[string]Origin{"api": api, "pages": pages}, nil, nil)
+	gateway.Now = func() time.Time { return now }
+
+	for index := 0; index < 2; index++ {
+		recorder := serveGateway(gateway, http.MethodGet, "http://viewer.example/api/data", "", nil)
+		if recorder.Code != 200 || recorder.Body.String() != "page" || recorder.Header().Get("x-cache") != cacheMissHeader {
+			t.Fatalf("request %d = %d %q %q; the page was fetched through a CachingDisabled behavior and must not be cached",
+				index, recorder.Code, recorder.Body.String(), recorder.Header().Get("x-cache"))
+		}
+	}
+	if gateway.Cache.Len() != 0 {
+		t.Fatalf("CachingDisabled cached the error page: entries=%d", gateway.Cache.Len())
+	}
+	if len(pages.requests) != 2 {
+		t.Fatalf("page fetches = %d, want 2", len(pages.requests))
+	}
+	if len(api.requests) != 2 {
+		t.Fatalf("API origin requests = %d, want 2", len(api.requests))
+	}
+}
+
+// The sibling of A-R5a-R3-res1: the same layout with a cacheable default
+// behavior still caches the page, so the CachingDisabled rule is specific to
+// the page's fetching behavior.
+func TestCustomErrorPageFetchedThroughACacheableDefaultBehaviorIsCached(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	api := &captureOrigin{respond: func(OriginRequest) OriginResponse {
+		return OriginResponse{StatusCode: 500, Body: []byte("api failed")}
+	}}
+	pages := &captureOrigin{respond: func(OriginRequest) OriginResponse {
+		return OriginResponse{StatusCode: 200, Header: http.Header{"content-type": []string{"text/html"}}, Body: []byte("page")}
+	}}
+	defaultBehavior := testBehavior("*", "pages", []string{"GET", "HEAD"})
+	defaultBehavior.CachePolicy = testPolicy(PolicyCache, cachePolicy(60, 3600, 0), nil, nil)
+	apiBehavior := testBehavior("/api/*", "api", []string{"GET", "HEAD"})
+	apiBehavior.CachePolicy = testPolicy(PolicyCache, cachePolicy(60, 3600, 0), nil, nil)
+	distribution := testDistribution(defaultBehavior, []*Behavior{apiBehavior},
+		testOrigin("pages", "pages.example"), testOrigin("api", "api.example"))
+	distribution.CustomErrorResponses = []CustomErrorResponse{{
+		ErrorCode: 500, ResponsePagePath: "/errors/500.html", ResponseCode: 200,
+	}}
+	gateway := NewGateway(distribution, &Topology{}, map[string]Origin{"api": api, "pages": pages}, nil, nil)
+	gateway.Now = func() time.Time { return now }
+
+	first := serveGateway(gateway, http.MethodGet, "http://viewer.example/api/data", "", nil)
+	if first.Code != 200 || first.Body.String() != "page" || first.Header().Get("x-cache") != cacheMissHeader {
+		t.Fatalf("first request = %d %q %q", first.Code, first.Body.String(), first.Header().Get("x-cache"))
+	}
+	second := serveGateway(gateway, http.MethodGet, "http://viewer.example/api/data", "", nil)
+	if second.Header().Get("x-cache") != cacheHitHeader || second.Body.String() != "page" {
+		t.Fatalf("second request = %q %q; a cacheable default behavior must still cache the page",
+			second.Header().Get("x-cache"), second.Body.String())
+	}
+	if len(pages.requests) != 1 {
+		t.Fatalf("page fetches = %d, want 1", len(pages.requests))
+	}
+	if len(api.requests) != 1 {
+		t.Fatalf("API origin requests = %d, want 1", len(api.requests))
+	}
+}
+
 // F-R5a-2: the custom error page is fetched through the cache behavior whose
 // path pattern matches the page path, from that behavior's origin.
 func TestCustomErrorPageComesFromTheMatchingBehaviorOrigin(t *testing.T) {
