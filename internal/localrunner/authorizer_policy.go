@@ -38,10 +38,22 @@ type authorizerPolicy struct {
 // exception permits: the returned policy is matched against the method ARN with
 // IAM-style wildcards. It is never described as IAM evaluation, which stays a
 // docs/125 true limit.
+//
+// The output must include the principal identifier: "A Lambda authorizer
+// function's output is a dictionary-like object, which must include the
+// principal identifier (principalId) and a policy document (policyDocument)..."
+// and "If the Lambda function does not return that information, the call
+// fails." A response without one is invalid, which the transport maps to 500.
+//
+// https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-lambda-authorizer-output.html
+// https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-use-lambda-authorizer.html
 func evaluateAuthorizerPolicy(body []byte, methodARN string) (bool, map[string]any, error) {
 	var policy authorizerPolicy
 	if err := json.Unmarshal(body, &policy); err != nil {
 		return false, nil, fmt.Errorf("the authorizer response is not an IAM policy: %w", err)
+	}
+	if strings.TrimSpace(policy.PrincipalID) == "" {
+		return false, nil, fmt.Errorf("the authorizer response has no principalId")
 	}
 	if len(policy.PolicyDocument.Statement) == 0 {
 		return false, nil, fmt.Errorf("the authorizer policy has no Statement")

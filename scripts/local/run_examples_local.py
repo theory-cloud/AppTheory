@@ -2668,20 +2668,34 @@ def run_lambda_role_authorizers(harness: Harness) -> str:
             )
             expect_status(status, want, f"rest token authorizer {label}", text)
 
+        # The cached value is the POLICY, not the decision for GET /token: the
+        # policy the function returned names only that method ARN, so the same
+        # token on GET /token-other (the SAME TOKEN authorizer) is 403 inside
+        # the TTL. "Ensure that your policy is applicable to all resources and
+        # methods across your API."
+        status, text, _ = http_request(
+            "GET", f"{rest_base}/token-other", headers={"Authorization": "allow"}
+        )
+        expect_status(status, 403, "rest token authorizer cached policy names only /token", text)
+
         # The TOKEN authorizer caches for 60 seconds on the run clock: one
-        # second past the TTL the same token invokes the function again.
+        # second past the TTL GET /token-other invokes the function again and
+        # its policy (which now names /token-other) allows the method. The
+        # invocation count proves the 403 above did not invoke the function.
         session.clock_advance("61s")
         status, payload, _ = _json_request(
-            "GET", f"{rest_base}/token", headers={"Authorization": "allow"}
+            "GET", f"{rest_base}/token-other", headers={"Authorization": "allow"}
         )
-        expect_status(status, 200, "rest token authorizer after the ttl", json.dumps(payload))
+        expect_status(status, 200, "rest token authorizer after the ttl on another method", json.dumps(payload))
         token_after = int((payload.get("authorizer") or {}).get("invocation", "0"))
-        if token_after <= token_first:
+        if token_after != token_first + 1:
             raise HarnessFailure(
-                f"rest token authorizer did not invoke again after the ttl: {payload.get('authorizer')}"
+                "the cached policy for GET /token was not re-evaluated per method or the 403 invoked "
+                f"the authorizer: invocation {token_after} after {token_first}"
             )
 
-        # The REQUEST authorizer declares two identity sources and no cache.
+        # The REQUEST authorizer declares two identity sources and caches the
+        # policy for 60 seconds.
         status, payload, _ = _json_request(
             "GET",
             f"{rest_base}/request?scope=read",
@@ -2747,8 +2761,10 @@ def run_lambda_role_authorizers(harness: Harness) -> str:
             "authorizer ran the real policy function and carried its stringified context to the "
             "integration, Allow invoked the method, Deny was 403, the documented Unauthorized error was "
             "401, an invalid policy was 500, a missing identity source was 401 without invoking, and a "
-            "cached decision did not invoke the function again until the run clock passed "
-            "AuthorizerResultTtlInSeconds"
+            "cached TOKEN policy did not invoke the function again but was re-evaluated against a second "
+            "method behind the same authorizer (403 because the policy named only the first method), "
+            "until the run clock passed AuthorizerResultTtlInSeconds and the second method invoked and "
+            "was allowed"
         )
     finally:
         stop_local_session(harness, session)

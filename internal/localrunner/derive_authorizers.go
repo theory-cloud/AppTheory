@@ -295,13 +295,24 @@ func parseRESTIdentitySources(stack assemblyStack, id, raw string) ([]string, er
 }
 
 // authorizerTTL reads AuthorizerResultTtlInSeconds. An omitted property is
-// CloudFormation's 300 second default; a negative value is refused.
+// CloudFormation's 300 second default; a negative value is refused, and so is a
+// value above the documented maximum: "If it is greater than 0, API Gateway
+// will cache authorizer responses. If this field is not set, the default value
+// is 300. The maximum value is 3600, or 1 hour." The HTTP API authorizer
+// reference states the same maximum for authorizerResultTtlInSeconds.
+//
+// https://docs.aws.amazon.com/apigateway/latest/api/API_Authorizer.html
 func authorizerTTL(construct string, seconds *int) (int, error) {
 	if seconds == nil {
 		return 300, nil
 	}
 	if *seconds < 0 {
 		return 0, unsupported(construct, "AuthorizerResultTtlInSeconds %d is negative", *seconds)
+	}
+	if *seconds > 3600 {
+		return 0, unsupported(construct,
+			"AuthorizerResultTtlInSeconds %d exceeds the documented maximum of 3600 (https://docs.aws.amazon.com/apigateway/latest/api/API_Authorizer.html)",
+			*seconds)
 	}
 	return *seconds, nil
 }

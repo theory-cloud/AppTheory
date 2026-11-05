@@ -696,13 +696,24 @@ describes:
   every value is part of the cache key, in that order.
 - With caching on, a missing, null or empty identity source is refused with 401
   **without invoking the authorizer**. `AuthorizerResultTtlInSeconds` is applied
-  on the run clock (CloudFormation's default is 300; `0` disables the cache), so
-  `--clock test` plus `clock.advance` expires a cached decision.
+  on the run clock (CloudFormation's default is 300; `0` disables the cache; the
+  documented maximum is 3600), so `--clock test` plus `clock.advance` expires a
+  cached policy.
+- The cache holds the authorizer's **policy**, not a per-request decision:
+  "If you enable authorization caching, API Gateway caches the policy so that
+  the Lambda authorizer function isn't invoked again. Ensure that your policy is
+  applicable to all resources and methods across your API." On a hit the cached
+  policy is matched against the current request's method ARN, so a policy that
+  names only `/a` refuses `/b` with 403 without invoking the function.
 - The returned policy is matched against the request's method ARN with the same
   narrow Allow/Deny match the `$connect` authorizer uses. An Allow invokes the
   method, a Deny is **403** outside the API Gateway test environment, the
   authorizer's documented `{"errorMessage":"Unauthorized"}` response is **401**
-  and any other response shape is **500**.
+  and any other response shape is **500**. The output must include the principal
+  identifier: "A Lambda authorizer function's output is a dictionary-like
+  object, which must include the principal identifier (principalId) and a policy
+  document (policyDocument)"; a response without it is invalid (500), and an
+  invalid response is never cached.
 - `context` values reach a proxy integration as
   `requestContext.authorizer.<key>` (also usable as `$context.authorizer.<key>`
   in mapping templates) with the documented stringified scalars; a nested object
@@ -718,9 +729,13 @@ describes. Payload format 1.0 receives the REST-shaped event with `methodArn`;
 `identitySource`. Either way the returned policy is matched against the route
 ARN, the identity sources are the cache key when
 `AuthorizerResultTtlInSeconds` is set, and `$context.routeKey` can be listed to
-cache per route. A missing identity source is 401, an invalid response is 500
-and the documented `{"errorMessage":"Unauthorized"}` response is 401. The
-authorizer context reaches the integration as `requestContext.authorizer`.
+cache per route. The cached value is the policy response: "By default, API
+Gateway uses the cached authorizer response for all routes of an API that use
+the authorizer", so a hit is re-evaluated against the current route's ARN. A
+missing identity source is 401, an invalid response (including a missing
+`principalId`) is 500 and never cached, and the documented
+`{"errorMessage":"Unauthorized"}` response is 401. The authorizer context
+reaches the integration as `requestContext.authorizer`.
 
 **Still refused.** IAM authorization (`AuthorizationType: AWS_IAM`), other
 `$context`/`$stageVariables` identity sources, and any authorizer kind the
@@ -1894,7 +1909,7 @@ the harness records it.
 | HTTP API `REQUEST` authorizers with simple responses | Supported | The transport invokes the real authorizer function with the API Gateway v2 REQUEST event, carrying every configured `$request.header.*` or `$request.querystring.*` identity source in order; a request missing one is refused with 401 before the authorizer runs. A false `isAuthorized` is a 401, the authorizer context is carried to the handler, and a malformed response fails closed. `$context`/`$stageVariables` sources fail closed at plan time. |
 | HTTP API JWT authorizers | Supported (L2) | RSA-based algorithms only (`RS256`, `RS384`, `RS512`); the signature is verified with the `kid` key from the issuer's JWKS, and `iss`, `aud` (or `client_id` only when `aud` is absent), `exp`, `nbf` and `iat` are checked against the run clock. `AuthorizationScopes` is an any-of match; the claims reach the integration in `requestContext.authorizer.jwt`; see [Authorizers](#authorizers). |
 | REST API Cognito user-pool authorizers | Supported (L2) | The token is validated against the pool's JWKS through the local issuer with the same RSA-only algorithm and claim checks as the HTTP JWT authorizer; `AuthorizationScopes` is an any-of match and the claims reach the integration in `requestContext.authorizer.claims`; see [Authorizers](#authorizers). |
-| REST/HTTP Lambda authorizers with IAM-policy responses | Supported (L2) | A REST `TOKEN` or `REQUEST` `AWS::ApiGateway::Authorizer` and an HTTP API `REQUEST` authorizer with `EnableSimpleResponses: false` run the real function and match its returned policy narrowly against the method/route ARN. Identity sources are 401 before invocation when missing; `AuthorizerResultTtlInSeconds` caches on the run clock with the documented cache key; Allow invokes, Deny is 403, the `Unauthorized` error is 401 and an invalid response is 500; the stringified context reaches `requestContext.authorizer`; see [Authorizers](#authorizers). |
+| REST/HTTP Lambda authorizers with IAM-policy responses | Supported (L2) | A REST `TOKEN` or `REQUEST` `AWS::ApiGateway::Authorizer` and an HTTP API `REQUEST` authorizer with `EnableSimpleResponses: false` run the real function and match its returned policy narrowly against the method/route ARN. Identity sources are 401 before invocation when missing; `AuthorizerResultTtlInSeconds` caches the policy on the run clock with the documented cache key, and a hit is re-evaluated against the current method/route ARN; a response without `principalId` is invalid; Allow invokes, Deny is 403, the `Unauthorized` error is 401 and an invalid response is 500; the stringified context reaches `requestContext.authorizer`; see [Authorizers](#authorizers). |
 | Lambda layers | Supported | A function's `Layers` resolve to LayerVersions in the same assembly; their content is extracted into `/opt` in the listed order (later layers win) with `/opt/bin` on `PATH`, `/opt/lib` on `LD_LIBRARY_PATH`, `/opt/nodejs/node_modules` on `NODE_PATH` and `/opt/python` on `PYTHONPATH`. The five-layer limit and an external layer ARN are refused by name; see [Lambda layers and container-image functions](#lambda-layers-and-container-image-functions). |
 | Container-image functions | Supported | `PackageType: Image` with a CDK `DockerImageAsset` is built by the real `docker build` (directory, Dockerfile, target, platform and build arguments from the assembly) before serving, then run under the image's own Runtime Interface Emulator through the same invocation path as a zip function. An image without the emulator, and an image function that declares layers, are refused by name. |
 | CloudFormation-expression environment values | Supported for `Ref`/`Fn::GetAtt`/`Fn::Join` | Tables and stream ARNs, queues, rules, buckets, KMS keys and aliases, SSM parameters, Secrets Manager ARNs, SNS topics, Kinesis streams, Cognito pool/client values, IAM/MicroVM-image/S3 Vectors ARNs and functions resolve to local values (moto/S3 require their backend). An unsupported expression fails with the function and variable named. |

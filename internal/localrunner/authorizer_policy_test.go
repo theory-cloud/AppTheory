@@ -429,7 +429,7 @@ func TestHTTPPolicyAuthorizerRefusesMissingSourceAndInvalidResponse(t *testing.T
 
 func TestEvaluateAuthorizerPolicyDenyWinsAndWildcards(t *testing.T) {
 	arn := "arn:aws:execute-api:us-east-1:123456789012:api/prod/GET/items"
-	policy := `{"policyDocument":{"Statement":[
+	policy := `{"principalId":"user","policyDocument":{"Statement":[
 		{"Action":"execute-api:Invoke","Effect":"Allow","Resource":"` + arn + `"},
 		{"Action":"execute-api:*","Effect":"Deny","Resource":"arn:aws:execute-api:us-east-1:123456789012:api/prod/GET/*"}]}}`
 	allowed, _, err := evaluateAuthorizerPolicy([]byte(policy), arn)
@@ -439,7 +439,7 @@ func TestEvaluateAuthorizerPolicyDenyWinsAndWildcards(t *testing.T) {
 	if allowed {
 		t.Fatalf("Deny must win over Allow")
 	}
-	policy = `{"policyDocument":{"Statement":[{"Action":"*","Effect":"Allow","Resource":"arn:aws:execute-api:us-east-1:123456789012:api/prod/GET/item?"}]}}`
+	policy = `{"principalId":"user","policyDocument":{"Statement":[{"Action":"*","Effect":"Allow","Resource":"arn:aws:execute-api:us-east-1:123456789012:api/prod/GET/item?"}]}}`
 	allowed, _, err = evaluateAuthorizerPolicy([]byte(policy), arn)
 	if err != nil || !allowed {
 		t.Fatalf("wildcard resource = %v %v", allowed, err)

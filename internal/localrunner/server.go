@@ -228,9 +228,20 @@ func (t *Transport) authorizeRESTLambda(
 		return authorizerResult{Status: refusal}, nil
 	}
 	arn := methodARN(t.API, request.Method, path)
-	if cached, ok := t.cachedAuthorizerDecision(route.AuthorizerFunction, route.AuthorizerCacheTTLSeconds, cacheKey); ok {
-		t.logf("%s %s -> %d (cached authorizer decision for %s)", request.Method, path, cached.statusOrOK(), route.AuthorizerFunction)
-		return cached.result(), nil
+	// The cache holds the authorizer's POLICY, not this request's decision:
+	// "If you enable authorization caching, API Gateway caches the policy so
+	// that the Lambda authorizer function isn't invoked again. Ensure that your
+	// policy is applicable to all resources and methods across your API." A
+	// cache hit is therefore re-evaluated against the CURRENT request's method
+	// ARN and classified exactly like a fresh response.
+	// https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-use-lambda-authorizer.html
+	if cached, ok := t.cachedAuthorizerPolicy(route.AuthorizerFunction, route.AuthorizerCacheTTLSeconds, cacheKey); ok {
+		result, classifyErr := t.classifyAuthorizerPolicy(cached, arn, request.Method, path, route.AuthorizerFunction)
+		if classifyErr != nil {
+			return authorizerResult{}, classifyErr
+		}
+		t.logf("%s %s -> %d (cached authorizer policy for %s)", request.Method, path, statusOrOK(result.Status), route.AuthorizerFunction)
+		return result, nil
 	}
 	event, err := buildRESTAuthorizerEvent(InvokeRequest{
 		API:        t.API,
@@ -256,7 +267,7 @@ func (t *Transport) authorizeRESTLambda(
 	if err != nil {
 		return authorizerResult{}, err
 	}
-	t.cacheAuthorizerDecision(route.AuthorizerFunction, route.AuthorizerCacheTTLSeconds, cacheKey, result)
+	t.cacheAuthorizerPolicy(route.AuthorizerFunction, route.AuthorizerCacheTTLSeconds, cacheKey, raw, result)
 	return result, nil
 }
 
@@ -355,9 +366,19 @@ func (t *Transport) authorizeHTTPLambdaPolicy(
 	}
 	cacheKey := strings.Join(values, "\x1f")
 	arn := methodARN(t.API, request.Method, path)
-	if cached, ok := t.cachedAuthorizerDecision(route.AuthorizerFunction, route.AuthorizerCacheTTLSeconds, cacheKey); ok {
-		t.logf("%s %s -> %d (cached authorizer decision for %s)", request.Method, path, cached.statusOrOK(), route.AuthorizerFunction)
-		return cached.result(), nil
+	// HTTP API caching has the same shape as REST: "By default, API Gateway
+	// uses the cached authorizer response for all routes of an API that use the
+	// authorizer. To cache responses per route, add $context.routeKey to your
+	// authorizer's identity sources." The cached response is the POLICY, so it
+	// is re-evaluated against this route's ARN on every hit.
+	// https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-lambda-authorizer.html
+	if cached, ok := t.cachedAuthorizerPolicy(route.AuthorizerFunction, route.AuthorizerCacheTTLSeconds, cacheKey); ok {
+		result, classifyErr := t.classifyAuthorizerPolicy(cached, arn, request.Method, path, route.AuthorizerFunction)
+		if classifyErr != nil {
+			return authorizerResult{}, classifyErr
+		}
+		t.logf("%s %s -> %d (cached authorizer policy for %s)", request.Method, path, statusOrOK(result.Status), route.AuthorizerFunction)
+		return result, nil
 	}
 	var event []byte
 	if route.AuthorizerPayloadFormat == "1.0" {
@@ -376,7 +397,7 @@ func (t *Transport) authorizeHTTPLambdaPolicy(
 	if err != nil {
 		return authorizerResult{}, err
 	}
-	t.cacheAuthorizerDecision(route.AuthorizerFunction, route.AuthorizerCacheTTLSeconds, cacheKey, result)
+	t.cacheAuthorizerPolicy(route.AuthorizerFunction, route.AuthorizerCacheTTLSeconds, cacheKey, raw, result)
 	return result, nil
 }
 
@@ -406,50 +427,51 @@ func (t *Transport) classifyAuthorizerPolicy(raw []byte, arn, method, path, auth
 	return authorizerResult{PolicyContext: values}, nil
 }
 
-// authorizerCacheEntry is one cached authorizer decision.
+// authorizerCacheEntry is one cached authorizer POLICY response. The raw
+// function response is kept, not the decision it produced for the request that
+// filled the cache, because API Gateway re-evaluates a cached policy against
+// each method or route ARN.
 type authorizerCacheEntry struct {
 	expiresAt time.Time
-	status    int
-	context   map[string]any
+	raw       []byte
 }
 
-func (e authorizerCacheEntry) statusOrOK() int {
-	if e.status == 0 {
+func statusOrOK(status int) int {
+	if status == 0 {
 		return http.StatusOK
 	}
-	return e.status
+	return status
 }
 
-func (e authorizerCacheEntry) result() authorizerResult {
-	return authorizerResult{Status: e.status, PolicyContext: e.context}
-}
-
-// cachedAuthorizerDecision returns a cached decision for the authorizer while it
-// is inside its AuthorizerResultTtlInSeconds window on the run clock. A TTL of
-// zero disables the cache, which is the documented way to turn caching off.
+// cachedAuthorizerPolicy returns a cached policy response for the authorizer
+// while it is inside its AuthorizerResultTtlInSeconds window on the run clock.
+// A TTL of zero disables the cache, which is the documented way to turn caching
+// off.
 //
 // https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-use-lambda-authorizer.html
-func (t *Transport) cachedAuthorizerDecision(function string, ttlSeconds int, key string) (authorizerCacheEntry, bool) {
+func (t *Transport) cachedAuthorizerPolicy(function string, ttlSeconds int, key string) ([]byte, bool) {
 	if ttlSeconds <= 0 || key == "" {
-		return authorizerCacheEntry{}, false
+		return nil, false
 	}
 	t.authMu.Lock()
 	defer t.authMu.Unlock()
 	entry, ok := t.authCache[authorizerCacheKey(function, key)]
 	if !ok {
-		return authorizerCacheEntry{}, false
+		return nil, false
 	}
 	if !t.now().Before(entry.expiresAt) {
 		delete(t.authCache, authorizerCacheKey(function, key))
-		return authorizerCacheEntry{}, false
+		return nil, false
 	}
-	return entry, true
+	return entry.raw, true
 }
 
-func (t *Transport) cacheAuthorizerDecision(function string, ttlSeconds int, key string, result authorizerResult) {
-	// API Gateway caches the authorizer's policy response. An Unauthorized
-	// error and an invalid response are invocation failures, not a policy, so
-	// they are never cached.
+// cacheAuthorizerPolicy stores the authorizer's raw policy response. API
+// Gateway caches the policy, not a per-request decision: the same cached policy
+// is matched against every later request's method or route ARN. An Unauthorized
+// error (401) and an invalid response (500) are invocation failures, not a
+// policy, so they are never cached.
+func (t *Transport) cacheAuthorizerPolicy(function string, ttlSeconds int, key string, raw []byte, result authorizerResult) {
 	if ttlSeconds <= 0 || key == "" {
 		return
 	}
@@ -463,8 +485,7 @@ func (t *Transport) cacheAuthorizerDecision(function string, ttlSeconds int, key
 	}
 	t.authCache[authorizerCacheKey(function, key)] = authorizerCacheEntry{
 		expiresAt: t.now().Add(time.Duration(ttlSeconds) * time.Second),
-		status:    result.Status,
-		context:   result.PolicyContext,
+		raw:       append([]byte(nil), raw...),
 	}
 }
 

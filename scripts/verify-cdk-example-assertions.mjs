@@ -167,7 +167,7 @@ const assertions = {
     const customMethods = byType("AWS::ApiGateway::Method").filter(
       ([, method]) => method.Properties.AuthorizationType === "CUSTOM",
     );
-    assert.equal(customMethods.length, 2, "expected two CUSTOM-authorizer methods");
+    assert.equal(customMethods.length, 3, "expected three CUSTOM-authorizer methods");
     const scopedMethods = byType("AWS::ApiGateway::Method").filter(
       ([, method]) => method.Properties.AuthorizationType === "COGNITO_USER_POOLS",
     );

@@ -388,6 +388,16 @@ export class LambdaRoleStack extends cdk.Stack {
             authorizationType: apigateway.AuthorizationType.CUSTOM,
             authorizer: tokenAuthorizerRef(tokenAuthorizer),
         });
+        // A second CUSTOM method behind the SAME TOKEN authorizer. The policy
+        // function returns a policy for the exact methodArn it receives, so a
+        // policy cached from GET /token names only that method ARN; API Gateway
+        // re-evaluates it against GET /token-other, which therefore returns 403
+        // until the cached policy expires.
+        // https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-use-lambda-authorizer.html
+        authorizedRestApi.root.addResource("token-other").addMethod("GET", restIntegration, {
+            authorizationType: apigateway.AuthorizationType.CUSTOM,
+            authorizer: tokenAuthorizerRef(tokenAuthorizer),
+        });
         authorizedRestApi.root.addResource("request").addMethod("GET", restIntegration, {
             authorizationType: apigateway.AuthorizationType.CUSTOM,
             authorizer: tokenAuthorizerRef(requestAuthorizer),
