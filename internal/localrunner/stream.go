@@ -208,7 +208,7 @@ func (f *functionURLStream) write(payload []byte) error {
 	if len(payload) == 0 {
 		return nil
 	}
-	// codeql[go/reflected-xss] the payload is the function's own response body
+	// codeql[go/reflected-xss]
 	if _, err := f.writer.Write(payload); err != nil { //nolint:gosec // the payload is the function's own response
 		return err
 	}
@@ -278,7 +278,7 @@ func (f *apiGatewayStream) write(payload []byte) error {
 	if len(payload) == 0 {
 		return nil
 	}
-	// codeql[go/reflected-xss] the payload is the function's own response body
+	// codeql[go/reflected-xss]
 	if _, err := f.writer.Write(payload); err != nil { //nolint:gosec // the payload is the function's own response
 		return err
 	}
