@@ -1446,6 +1446,11 @@ not reproduce, and the page that owns each rule:
   Init duration are not simulated; a slow initialization is simply allowed to
   finish, and the first invocation fails with the runtime's own initialization
   error if it does not.
+- **`/tmp` across a reset.** A reset replaces the container, so the next
+  execution environment starts with an empty `/tmp`. The lifecycle page says
+  "the Lambda reset does not clear the `/tmp` directory content before the next
+  init phase" ([execution environment lifecycle](https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtime-environment.html));
+  the runner does not carry the directory over.
 - **Streaming bandwidth and payload limits.** The 6 MB uncapped burst and
   2 MBps cap are not reproduced, and the 6 MB buffered / 200 MB streamed
   payload limits are not enforced.
