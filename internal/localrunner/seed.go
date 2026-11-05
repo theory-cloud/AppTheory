@@ -46,7 +46,7 @@ func (r *Runner) runSeed(ctx context.Context, spec *Spec) error {
 
 	seedCtx, cancel := context.WithTimeout(ctx, seedTimeout)
 	defer cancel()
-	process := exec.CommandContext(seedCtx, "sh", "-c", command)
+	process := exec.CommandContext(seedCtx, "sh", "-c", command) //nolint:gosec // the operator supplies the seed command
 	process.Dir = r.options.AppDir
 	process.Env = seedProcessEnvironment(env)
 	var output bytes.Buffer
@@ -71,11 +71,13 @@ func (r *Runner) runSeed(ctx context.Context, spec *Spec) error {
 // served HTTP URLs, the data directory and the dummy credentials. It never
 // carries real AWS credentials: every AWS_* name from the caller's shell is
 // removed and only the run's dummy values are added.
+//
+//nolint:gocognit,gocyclo // one branch per endpoint family.
 func (r *Runner) seedEnvironment(spec *Spec) map[string]string {
-	env := map[string]string{
+	env := map[string]string{ //nolint:gosec // the dummy static credentials the local run injects, not secrets
 		"APPTHEORY_LOCAL_APP":              r.options.AppDir,
 		"APPTHEORY_LOCAL_SEED":             r.options.Seed,
-		"AWS_ACCESS_KEY_ID":                "dummy",
+		"AWS_ACCESS_KEY_ID":                "dummy", //nolint:gosec // a static dummy, not a secret
 		"AWS_SECRET_ACCESS_KEY":            "dummy",
 		"AWS_REGION":                       LocalRegion,
 		"AWS_DEFAULT_REGION":               LocalRegion,
@@ -107,6 +109,9 @@ func (r *Runner) seedEnvironment(spec *Spec) map[string]string {
 	}
 	if r.webSocketManagement != nil && r.webSocketManagement.URL != "" {
 		hostEndpoints["apigatewaymanagementapi"] = r.webSocketManagement.URL
+	}
+	if r.codeBuildURL != "" {
+		hostEndpoints[serviceCodeBuild] = r.codeBuildURL
 	}
 	for service, url := range hostEndpoints {
 		env[seedEndpointEnvName(service)] = url

@@ -54,9 +54,9 @@ func (d *Docker) ServerArch(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("read docker server architecture: %s", firstNonEmpty(stderr, stdout, err.Error()))
 	}
 	switch arch := strings.TrimSpace(strings.ToLower(stdout)); arch {
-	case archARM64, "aarch64":
+	case archARM64, archARM64Alias:
 		return archARM64, nil
-	case archAMD64, "x86_64":
+	case archAMD64, archAMD64Alias:
 		return archAMD64, nil
 	default:
 		return "", fmt.Errorf("unsupported docker server architecture %q", arch)
@@ -146,6 +146,20 @@ func ContainerArgv(options ContainerOptions) []string {
 	argv = append(argv, options.Image)
 	argv = append(argv, options.Command...)
 	return argv
+}
+
+// EnsureImage pulls a digest-pinned image when the local daemon does not have
+// it. A digest reference is immutable, so an existing image is already the
+// pinned content.
+func (d *Docker) EnsureImage(ctx context.Context, image string) error {
+	if _, _, err := d.exec(ctx, []string{"docker", "image", "inspect", "--format", "{{.Id}}", image}); err == nil {
+		return nil
+	}
+	stdout, stderr, err := d.exec(ctx, []string{"docker", "pull", image})
+	if err != nil {
+		return fmt.Errorf("pull %s: %s", image, firstNonEmpty(stderr, stdout, err.Error()))
+	}
+	return nil
 }
 
 // StartContainer starts one container and returns its id.

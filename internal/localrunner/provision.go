@@ -337,8 +337,8 @@ func (r *Runner) provisionTables(ctx context.Context, spec *Spec) error {
 			return fmt.Errorf("wait for local DynamoDB table %s: %w", name, err)
 		}
 		if existed && r.dataDir != "" {
-			if err := reconcileTableDefinition(ctx, client, name, props, description); err != nil {
-				return fmt.Errorf("reconcile local DynamoDB table %s for %s: %w", name, resource.LogicalID, err)
+			if reconcileErr := reconcileTableDefinition(ctx, client, name, props, description); reconcileErr != nil {
+				return fmt.Errorf("reconcile local DynamoDB table %s for %s: %w", name, resource.LogicalID, reconcileErr)
 			}
 			description, err = waitForTableActive(ctx, client, name)
 			if err != nil {

@@ -593,10 +593,10 @@ func applyRuleTargetSettings(
 		spec.DeadLetterQueue = queue
 		spec.DeadLetterQueueName = name
 	}
-	if spec.SQSMessageGroupID != "" && spec.Type != "sqs" {
+	if spec.SQSMessageGroupID != "" && spec.Type != backendSQS {
 		return unsupported(logicalID, "SqsParameters is only valid on an SQS target")
 	}
-	if spec.Type == "sqs" {
+	if spec.Type == backendSQS {
 		fifo, err := queueIsFIFO(stack, types, spec.QueueName)
 		if err != nil {
 			return err

@@ -50,6 +50,7 @@ const (
 	typeRESTStage           = "AWS::ApiGateway::Stage"
 	typeRESTAuthorizer      = "AWS::ApiGateway::Authorizer"
 	typeFunctionURL         = "AWS::Lambda::Url"
+	typeCodeBuildProject    = "AWS::CodeBuild::Project"
 	typeBucketDeploy        = "Custom::CDKBucketDeployment"
 	typeCloudFront          = "AWS::CloudFront::Distribution"
 	typeCloudFrontFn        = "AWS::CloudFront::Function"
@@ -79,7 +80,20 @@ type assemblyArtifact struct {
 }
 
 type template struct {
-	Resources map[string]templateResource `json:"Resources"`
+	// Parameters, Conditions and Mappings are read so a property expression
+	// that depends only on the template (a parameter default, a condition over
+	// defaults, or a mapping) resolves without a deployed stack.
+	// https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/parameters-section-structure.html
+	Parameters map[string]templateParameter         `json:"Parameters"`
+	Conditions map[string]json.RawMessage           `json:"Conditions"`
+	Mappings   map[string]map[string]map[string]any `json:"Mappings"`
+	Resources  map[string]templateResource          `json:"Resources"`
+}
+
+type templateParameter struct {
+	Type          string            `json:"Type"`
+	Default       json.RawMessage   `json:"Default"`
+	AllowedValues []json.RawMessage `json:"AllowedValues"`
 }
 
 type templateResource struct {
@@ -295,8 +309,18 @@ func deriveSpec(dir string, stacks []assemblyStack) (*Spec, error) {
 // Derive turns a cloud assembly into the local runner's specification. It fails
 // closed on any construct the transport cannot serve faithfully.
 func deriveSpecInternal(dir string, stacks []assemblyStack) (*Spec, error) {
-	spec := &Spec{AssemblyDir: dir, functionURLTargets: map[string]string{}, functionURLModes: map[string]string{}}
+	spec := &Spec{
+		AssemblyDir:        dir,
+		functionURLTargets: map[string]string{},
+		functionURLModes:   map[string]string{},
+		Templates:          map[string]templateContext{},
+	}
 	for _, stack := range stacks {
+		spec.Templates[stack.Name] = templateContext{
+			Parameters: stack.Template.Parameters,
+			Conditions: stack.Template.Conditions,
+			Mappings:   stack.Template.Mappings,
+		}
 		if err := deriveStack(spec, dir, stacks, stack); err != nil {
 			return nil, err
 		}
@@ -405,6 +429,12 @@ func plannedLocalID(resource ResourceSpec) (string, bool, bool) {
 			name = ssmParameterName(resource)
 		}
 		return name, false, true
+	case typeCodeBuildProject:
+		name, err := resourceName(resource)
+		if err != nil {
+			return "", false, false
+		}
+		return name, false, true
 	case typeSecretsSecret:
 		return secretLocalName(resource), true, true
 	case typeKMSKey:
@@ -509,6 +539,9 @@ func (s *Spec) sort() {
 	sort.Slice(s.Subscriptions, func(i, j int) bool {
 		return s.Subscriptions[i].LogicalID < s.Subscriptions[j].LogicalID
 	})
+	sort.Slice(s.CodeBuildProjects, func(i, j int) bool {
+		return s.CodeBuildProjects[i].LogicalID < s.CodeBuildProjects[j].LogicalID
+	})
 	SortNotifications(s.Notifications)
 	sort.Slice(s.Skipped, func(i, j int) bool { return s.Skipped[i].LogicalID < s.Skipped[j].LogicalID })
 	sort.Slice(s.CloudFront, func(i, j int) bool { return s.CloudFront[i].LogicalID < s.CloudFront[j].LogicalID })
@@ -543,6 +576,9 @@ func deriveStack(spec *Spec, assemblyDir string, stacks []assemblyStack, stack a
 		return err
 	}
 	if err := deriveS3Notifications(spec, stacks, stack); err != nil {
+		return err
+	}
+	if err := deriveCodeBuildProjects(spec, stacks, stack); err != nil {
 		return err
 	}
 	return deriveSubscriptions(spec, stacks, stack)
@@ -581,18 +617,40 @@ func deriveFunctions(spec *Spec, assemblyDir string, stacks []assemblyStack, sta
 	return nil
 }
 
+//nolint:gocyclo // one branch per function shape.
 func parseFunction(assemblyDir string, stack assemblyStack, id string, resource templateResource) (FunctionSpec, error) {
 	var props lambdaFunctionProperties
 	if err := json.Unmarshal(resource.Properties, &props); err != nil {
 		return FunctionSpec{}, fmt.Errorf("%s/%s: parse function properties: %w", stack.Name, id, err)
 	}
-	memoryMB, memoryResolved := decodeInt(props.MemorySize, 128)
-	timeout, timeoutResolved := decodeInt(props.Timeout, 3)
+	context := templateContext{
+		Parameters: stack.Template.Parameters,
+		Conditions: stack.Template.Conditions,
+		Mappings:   stack.Template.Mappings,
+	}
+	memoryMB, memoryResolved, memoryExpression, memoryErr := resolveTemplateInt(props.MemorySize, context, 128)
+	if memoryErr != nil {
+		return FunctionSpec{}, fmt.Errorf("%s/%s: MemorySize: %w", stack.Name, id, memoryErr)
+	}
+	timeout, timeoutResolved, timeoutExpression, timeoutErr := resolveTemplateInt(props.Timeout, context, 3)
+	if timeoutErr != nil {
+		return FunctionSpec{}, fmt.Errorf("%s/%s: Timeout: %w", stack.Name, id, timeoutErr)
+	}
+	if memoryResolved {
+		if err := validateFunctionLimit(id, "MemorySize", memoryMB, 128, 32768); err != nil {
+			return FunctionSpec{}, err
+		}
+	}
+	if timeoutResolved {
+		if err := validateFunctionLimit(id, "Timeout", timeout, 1, 900); err != nil {
+			return FunctionSpec{}, err
+		}
+	}
 	function := FunctionSpec{
 		Stack:                stack.Name,
 		Runtime:              props.Runtime,
 		Handler:              props.Handler,
-		Architecture:         "x86_64",
+		Architecture:         archAMD64Alias,
 		MemoryMB:             memoryMB,
 		Timeout:              timeout,
 		LayerCount:           len(props.Layers),
@@ -601,10 +659,10 @@ func parseFunction(assemblyDir string, stack assemblyStack, id string, resource 
 		UnresolvedTimeout:    !timeoutResolved,
 	}
 	if !memoryResolved {
-		function.MemorySizeExpression = intExpression(props.MemorySize)
+		function.MemorySizeExpression = memoryExpression
 	}
 	if !timeoutResolved {
-		function.TimeoutExpression = intExpression(props.Timeout)
+		function.TimeoutExpression = timeoutExpression
 	}
 	if len(props.Architectures) > 0 {
 		function.Architecture = props.Architectures[0]
@@ -690,20 +748,6 @@ func decodeString(raw json.RawMessage) (string, error) {
 		return "", fmt.Errorf("value is not a literal string: %w", err)
 	}
 	return value, nil
-}
-
-// decodeInt decodes a literal integer. The fallback is used only when the
-// property is absent; a CloudFormation expression is reported as unresolved so
-// the caller can fail closed instead of applying the default silently.
-func decodeInt(raw json.RawMessage, fallback int) (int, bool) {
-	if len(raw) == 0 {
-		return fallback, true
-	}
-	var value int
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return fallback, false
-	}
-	return value, true
 }
 
 // intExpression names the CloudFormation intrinsic that kept an integer

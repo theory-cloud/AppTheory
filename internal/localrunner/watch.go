@@ -25,7 +25,7 @@ import (
 //
 //   - a function whose asset hash, image asset, environment, limits, layers or
 //     runtime changed is replaced through the same reset path a Lambda
-//     execution-environment reset uses; its logical id, Runtime API behaviour
+//     execution-environment reset uses; its logical id, Runtime API behavior
 //     and warm-state semantics stay;
 //   - routes, event sources, rules, subscriptions and delivery wiring are
 //     re-derived; every listener keeps its net.Listener and URL;
@@ -302,7 +302,7 @@ func (r *Runner) reloadWatchedApp(ctx context.Context) error {
 	r.logf("watch: source change detected; synthesizing into %s", assemblyDir)
 	synthCtx, cancel := context.WithTimeout(ctx, r.options.SynthTimeout)
 	defer cancel()
-	if err := Synth(synthCtx, SynthOptions{
+	if err := synthRunner(synthCtx, SynthOptions{
 		AppDir:    r.options.AppDir,
 		OutputDir: assemblyDir,
 		Context:   r.options.Context,
@@ -323,11 +323,11 @@ func (r *Runner) reloadWatchedApp(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := r.applyOriginOverrides(spec); err != nil {
-		return err
+	if applyErr := r.applyOriginOverrides(spec); applyErr != nil {
+		return applyErr
 	}
-	if err := r.materializeKeyValueStores(spec); err != nil {
-		return err
+	if storeErr := r.materializeKeyValueStores(spec); storeErr != nil {
+		return storeErr
 	}
 	refreshCloudFrontSkips(spec)
 	targets, err := r.runtimeFunctions(spec)
@@ -369,6 +369,9 @@ func (r *Runner) watchRefusals(next *Spec) []string {
 	}
 	if !reflect.DeepEqual(current.CloudFront, next.CloudFront) {
 		refusals = append(refusals, "the CloudFront distribution topology changed")
+	}
+	if !reflect.DeepEqual(current.CodeBuildProjects, next.CodeBuildProjects) {
+		refusals = append(refusals, "the CodeBuild project set changed")
 	}
 	if missing := newResourceBackends(current, next, r); len(missing) > 0 {
 		refusals = append(refusals, missing...)
@@ -475,6 +478,8 @@ func newResourceBackends(current, next *Spec, r *Runner) []string {
 
 // applyWatchedSpec provisions the new definitions, restarts the changed
 // functions and swaps the route tables and delivery sources.
+//
+//nolint:gocyclo // the documented apply order.
 func (r *Runner) applyWatchedSpec(ctx context.Context, next *Spec, targets []string, assemblyDir string) (bool, error) {
 	r.reloadMu.Lock()
 	locked := true

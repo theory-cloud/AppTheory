@@ -60,6 +60,42 @@
         }
       }
     },
+    "codeBuild": {
+      "agent": {
+        "aarch64": {
+          "tag": "public.ecr.aws/codebuild/local-builds:aarch64",
+          "digest": "sha256:7d7b5d35d2ac4e062ae7ba8c662ffed15229a52d09bd0d664a7816c439679192",
+          "pinned": "2026-11-05",
+          "license": "Amazon Software License 1.0 (aws/aws-codebuild-docker-images LICENSE.txt)",
+          "compressedBytes": 569100000
+        },
+        "x86_64": {
+          "tag": "public.ecr.aws/codebuild/local-builds:latest",
+          "digest": "sha256:ccb19bdd7af94e4dc761e4c58c267e9455c28ec68d938086b4dc1cf8fe6b0940",
+          "pinned": "2026-11-05",
+          "license": "Amazon Software License 1.0 (aws/aws-codebuild-docker-images LICENSE.txt)",
+          "compressedBytes": 1309700000
+        }
+      },
+      "images": {
+        "aws/codebuild/standard:7.0": {
+          "aarch64": {
+            "tag": "public.ecr.aws/codebuild/amazonlinux-aarch64-lambda-standard:nodejs24",
+            "digest": "sha256:56d1ee8b3216e09d67048793fb835dd75b8e367b812842ff6fe3c4edbeec3bdf",
+            "pinned": "2026-11-05",
+            "license": "Amazon Software License 1.0 (aws/aws-codebuild-docker-images LICENSE.txt)",
+            "compressedBytes": 1283010354
+          },
+          "x86_64": {
+            "tag": "public.ecr.aws/codebuild/amazonlinux-x86_64-lambda-standard:nodejs24",
+            "digest": "sha256:e198554f4a84c3c478f1755efcc342d2370228e40fa9e41132cbe43e1c959df9",
+            "pinned": "2026-11-05",
+            "license": "Amazon Software License 1.0 (aws/aws-codebuild-docker-images LICENSE.txt)",
+            "compressedBytes": 1357342127
+          }
+        }
+      }
+    },
     "endpoints": {
       "dynamodb": {
         "container": "dynamodb-local",
@@ -247,6 +283,21 @@
       "gap": "ElasticMQ 1.7.1 persists queues and messages through messages-storage (verified on the pinned image); IAM, KMS encryption and AWS-managed scaling are not emulated.",
       "description": "SQS --data-dir: a real ElasticMQ message was sent to an unconsumed queue in one session; a second session with the same --data-dir found it visible and received its body; the messages-storage H2 database held it."
     },
+    "examples/cdk/restv1-router/scripts/stage-prefix.sh": {
+      "run": "stage-prefixed-rest",
+      "class": "L1",
+      "description": "Stage-prefixed REST URL: the API is served at /stage-probe at the root and /prod/stage-probe under the named stage; the v1 event carries path/resource without the stage and requestContext.path with it, and requestContext.stage=prod. plan prints both forms."
+    },
+    "examples/cdk/hello-world/handlers/stage-echo/handler.mjs": {
+      "run": "stage-prefixed-http",
+      "class": "L1",
+      "description": "Stage-prefixed HTTP API URL: an HTTP API with a named (dev) stage served /echo at the root and /dev/echo under the stage; the payload-format-2.0 event carried rawPath=/dev/echo, requestContext.http.path=/dev/echo and requestContext.stage=dev."
+    },
+    "examples/cdk/restv1-router/scripts/intrinsic-limits.sh": {
+      "run": "intrinsic-limits",
+      "class": "L1",
+      "description": "CloudFormation-expression MemorySize/Timeout: the L1 CfnFunction escape hatch declares a Ref to a parameter Default (256 MB), an Fn::If over a condition evaluable from that default (10 s), and an Fn::FindInMap pair (512 MB / 30 s); plan resolves them with no unresolved flags, the inventory handler answers, and docker inspect proves the resolved 256 MB reached the real container."
+    },
     "examples/cdk/restv1-router/scripts/seed-local.sh": {
       "run": "seed-restv1",
       "class": "L2",
@@ -258,6 +309,12 @@
       "class": "L1",
       "description": "hello-world TypeScript app module imported by the handler; exercised through the same HTTP assertions."
     },
+    "examples/cdk/import-pipeline/scripts/codebuild-local.sh": {
+      "run": "codebuild-import",
+      "class": "L2",
+      "gap": "The local agent runs the build in a Docker container on its own compose network; there is no VPC, cache, artifact upload or report group, and the project's aws/codebuild/standard:7.0 image is mapped to the profile's digest-pinned aarch64 Lambda-standard image. The agent and image are the published AWS images, not a mock.",
+      "description": "CodeBuild through AWS's local agent: StartBuild on the synthesized BatchStep project ran its inline buildspec with the pinned agent and build image; BatchGetBuilds reported BUILD/COMPLETED SUCCEEDED and the command log; ListBuildsForProject returned the id; the state-change rule delivered the SUCCEEDED event to the import-build-events SQS target. No mock."
+    },
     "examples/cdk/import-pipeline/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
       "class": "I",
@@ -266,13 +323,13 @@
     "examples/cdk/import-pipeline/handlers/ingest/main.go": {
       "run": "import-ingest",
       "class": "L3",
-      "gap": "CodeBuild (R8); the bucket's EventBridge notification is delivered by the runner from a real object PUT, and the WorkConsumer SQS mapping delivers automatically on ElasticMQ.",
+      "gap": "IAM policy evaluation is a docs/125 true limit; the bucket's EventBridge notification is delivered by the runner from a real object PUT, the WorkConsumer SQS mapping delivers automatically on ElasticMQ, and the CodeBuild step is proven by the codebuild-import row.",
       "description": "Import pipeline ingest handler: a real object is written to s3proxy, the runner's S3 notification watcher publishes the documented aws.s3 Object Created event to the local bus, and IngestRule invokes the handler with no harness PutEvents; the handler writes the job meta and three work messages that the WorkConsumer mapping delivers to the worker and deletes."
     },
     "examples/cdk/import-pipeline/handlers/worker/main.go": {
       "run": "import-worker",
       "class": "L3",
-      "gap": "CodeBuild (R8); the bucket's EventBridge notification is delivered by the runner from a real object PUT, and the WorkConsumer SQS mapping delivers automatically on ElasticMQ.",
+      "gap": "IAM policy evaluation is a docs/125 true limit; the bucket's EventBridge notification is delivered by the runner from a real object PUT, the WorkConsumer SQS mapping delivers automatically on ElasticMQ, and the CodeBuild step is proven by the codebuild-import row.",
       "description": "Import pipeline worker handler: the full ingest \u2192 worker flow runs on the CDK jobs table after the runner delivered the bucket's EventBridge notification; the WorkConsumer mapping delivers the three real work messages automatically and they produce SUCCEEDED/FAILED records and a sanitized error envelope."
     },
     "examples/cdk/kinesis-cloudwatch-logs/bin/app.ts": {

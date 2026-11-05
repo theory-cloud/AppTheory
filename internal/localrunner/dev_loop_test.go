@@ -316,7 +316,7 @@ func testSharedDir(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	t.Cleanup(func() { _ = os.RemoveAll(dir) }) //nolint:errcheck // test cleanup
 	return dir
 }
 
@@ -335,7 +335,7 @@ func serveTransport(t *testing.T, transport *Transport, method, path string) str
 	t.Helper()
 	server := httptest.NewServer(transport)
 	defer server.Close()
-	request, err := http.NewRequest(method, server.URL+path, nil)
+	request, err := http.NewRequestWithContext(context.Background(), method, server.URL+path, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -343,7 +343,7 @@ func serveTransport(t *testing.T, transport *Transport, method, path string) str
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer response.Body.Close() //nolint:errcheck // test cleanup
+	defer func() { _ = response.Body.Close() }() //nolint:errcheck // test cleanup
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
 		t.Fatal(err)

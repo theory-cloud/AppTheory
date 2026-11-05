@@ -1634,8 +1634,224 @@ def run_data_dir_sqs(harness: Harness) -> str:
         _remove_data_dir(data_dir)
 
 
+def _codebuild_call(endpoint: str, operation: str, payload: dict) -> dict:
+    status, text, _ = http_request(
+        "POST",
+        endpoint + "/",
+        headers={
+            "Content-Type": "application/x-amz-json-1.1",
+            "X-Amz-Target": "CodeBuild_20161006." + operation,
+        },
+        body=json.dumps(payload).encode("utf-8"),
+        timeout=120,
+    )
+    try:
+        decoded = json.loads(text) if text else {}
+    except json.JSONDecodeError as exc:
+        raise HarnessFailure(f"CodeBuild {operation} response is not JSON: {exc}", text) from exc
+    if status != 200:
+        raise HarnessFailure(f"CodeBuild {operation} returned {status}: {decoded}")
+    return decoded
+
+
+def _codebuild_queue_event(session: LocalSession, queue: str, status: str, timeout: float = 180) -> dict:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        received = session.request(
+            "sqs.receive", queue=queue, max=10, waitSeconds=1, visibilitySeconds=0
+        )
+        for message in received.get("messages") or []:
+            try:
+                envelope = json.loads(message.get("body") or "{}")
+            except json.JSONDecodeError:
+                continue
+            detail = envelope.get("detail") or {}
+            if (
+                envelope.get("source") == "aws.codebuild"
+                and envelope.get("detail-type") == "CodeBuild Build State Change"
+                and detail.get("build-status") == status
+            ):
+                return envelope
+        time.sleep(0.5)
+    raise HarnessFailure(f"the build state-change rule delivered no {status} event")
+
+
+def run_codebuild_import(harness: Harness) -> str:
+    app = "examples/cdk/import-pipeline"
+    session = start_local_session(
+        harness, app, name="codebuild-import", backends=("dynamodb", "s3proxy", "sqs", "moto")
+    )
+    try:
+        projects = session.info.get("codeBuild") or []
+        matches = [project for project in projects if str(project.get("logicalId", "")).startswith("BatchStepProject")]
+        if len(matches) != 1:
+            raise HarnessFailure(f"want one BatchStep CodeBuild project, got {projects}")
+        project = matches[0]
+        endpoints = [entry["url"] for entry in session.info.get("endpoints") or [] if entry.get("service") == "codebuild"]
+        if not endpoints:
+            raise HarnessFailure("the session has no CodeBuild endpoint")
+        endpoint = endpoints[0]
+        started = _codebuild_call(endpoint, "StartBuild", {"projectName": project["name"]})
+        build_id = str((started.get("build") or {}).get("id") or "")
+        if not build_id:
+            raise HarnessFailure(f"StartBuild returned no build id: {started}")
+        deadline = time.monotonic() + 300
+        build = {}
+        while time.monotonic() < deadline:
+            builds = _codebuild_call(endpoint, "BatchGetBuilds", {"ids": [build_id]}).get("builds") or []
+            if builds:
+                build = builds[0]
+                if build.get("buildStatus") in ("SUCCEEDED", "FAILED"):
+                    break
+            time.sleep(0.5)
+        if build.get("buildStatus") != "SUCCEEDED":
+            raise HarnessFailure(f"build {build_id} did not succeed: {build}")
+        phases = {phase.get("phaseType"): phase for phase in build.get("phases") or []}
+        for phase in ("BUILD", "COMPLETED"):
+            if (phases.get(phase) or {}).get("phaseStatus") != "SUCCEEDED":
+                raise HarnessFailure(f"build {build_id} phase {phase} is not SUCCEEDED: {build.get('phases')}")
+        log_text = str((build.get("logs") or {}).get("text") or "")
+        if "batch step placeholder" not in log_text:
+            raise HarnessFailure(f"the build log does not show the buildspec command: {log_text[-2000:]}")
+        listed = _codebuild_call(endpoint, "ListBuildsForProject", {"projectName": project["name"]})
+        if build_id not in (listed.get("ids") or []):
+            raise HarnessFailure(f"ListBuildsForProject did not return {build_id}: {listed}")
+        queue = next(
+            (resource for resource in session.info.get("resources") or [] if resource.get("name") == "import-build-events"),
+            None,
+        )
+        if queue is None:
+            raise HarnessFailure("the assembly did not provision the import-build-events queue")
+        envelope = _codebuild_queue_event(session, str(queue["logicalId"]), "SUCCEEDED")
+        detail = envelope.get("detail") or {}
+        if detail.get("project-name") != project["name"] or detail.get("build-id") != build_id:
+            raise HarnessFailure(f"the state-change event does not name the build: {envelope}")
+        result = (
+            "StartBuild ran the project's buildspec through the published local CodeBuild agent and the "
+            "pinned build image; BatchGetBuilds reported BUILD and COMPLETED SUCCEEDED with the command log, "
+            "ListBuildsForProject returned the build, and the state-change rule delivered the SUCCEEDED "
+            "event to the real SQS target"
+        )
+    finally:
+        stop_local_session(harness, session)
+    # The agent's compose children and volumes are outside the session label;
+    # clean them up explicitly and prove none escaped.
+    leftovers = harness.run(
+        ["docker", "ps", "-a", "--filter", "name=apptheory-codebuild-", "--format", "{{.Names}}"]
+    ).stdout.strip()
+    if leftovers:
+        raise HarnessFailure(f"CodeBuild left containers behind: {leftovers}")
+    networks = harness.run(
+        ["docker", "network", "ls", "--filter", "name=apptheory-codebuild-", "--format", "{{.Name}}"]
+    ).stdout.strip()
+    if networks:
+        raise HarnessFailure(f"CodeBuild left networks behind: {networks}")
+    return result
+
+
+def run_stage_prefixed_rest(harness: Harness) -> str:
+    app = "examples/cdk/restv1-router"
+    ensure_cdk_app(harness, app)
+    plan = harness.run(
+        [
+            str(LOCAL_RUNNER_BIN),
+            "plan",
+            "--app",
+            app,
+            "--profile",
+            str(ROOT / LOCAL_PROFILE),
+        ]
+    )
+    if "(also /prod/" not in plan.stdout:
+        raise HarnessFailure("plan does not print the stage-prefixed REST form", plan.stdout)
+    session = start_local_session(harness, app, name="stage-prefix-rest")
+    try:
+        url = session_rest_url(session.spec, session)
+        status, root, _ = _json_request("GET", f"{url}/stage-probe")
+        expect_status(status, 200, "root REST request", json.dumps(root))
+        status, prefixed, _ = _json_request("GET", f"{url}/prod/stage-probe")
+        expect_status(status, 200, "stage-prefixed REST request", json.dumps(prefixed))
+        if root.get("path") != "/stage-probe" or root.get("requestContextPath") != "/stage-probe":
+            raise HarnessFailure(f"root REST event shape = {root}")
+        if (prefixed.get("path"), prefixed.get("requestContextPath"), prefixed.get("requestContextStage")) != (
+            "/stage-probe",
+            "/prod/stage-probe",
+            "prod",
+        ):
+            raise HarnessFailure(f"stage-prefixed REST event shape = {prefixed}")
+        return (
+            "the REST API served /stage-probe at the root and /prod/stage-probe under the named stage; the "
+            "handler saw path/resource without the stage and requestContext.path with it, stage=prod"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def run_stage_prefixed_http(harness: Harness) -> str:
+    app = "examples/cdk/hello-world"
+    session = start_local_session(harness, app, name="stage-prefix-http", context={"lang": "go"})
+    try:
+        url = session_api_url(session.spec, session, "-stage-echo")
+        status, root, _ = _json_request("GET", f"{url}/echo")
+        expect_status(status, 200, "root HTTP API request", json.dumps(root))
+        status, prefixed, _ = _json_request("GET", f"{url}/dev/echo")
+        expect_status(status, 200, "stage-prefixed HTTP API request", json.dumps(prefixed))
+        if (root.get("rawPath"), root.get("path"), root.get("stage")) != ("/echo", "/echo", "dev"):
+            raise HarnessFailure(f"root HTTP API event shape = {root}")
+        if (prefixed.get("rawPath"), prefixed.get("path"), prefixed.get("stage")) != (
+            "/dev/echo",
+            "/dev/echo",
+            "dev",
+        ):
+            raise HarnessFailure(f"stage-prefixed HTTP API event shape = {prefixed}")
+        return (
+            "an HTTP API with a named stage served /echo at the root and /dev/echo under the stage; the "
+            "payload-format-2.0 rawPath and requestContext.http.path carried /dev/echo with stage=dev"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def run_intrinsic_limits(harness: Harness) -> str:
+    app = "examples/cdk/restv1-router"
+    spec = plan_local_app(harness, app)
+    by_handler = {str(function.get("handler")): function for function in spec.get("functions") or []}
+    inventory = by_handler.get("inventory.handler") or {}
+    graphql = by_handler.get("graphql.handler") or {}
+    if (inventory.get("memoryMb"), inventory.get("timeout")) != (256, 10):
+        raise HarnessFailure(f"Ref/Fn::If limits resolved to {inventory}")
+    if (graphql.get("memoryMb"), graphql.get("timeout")) != (512, 30):
+        raise HarnessFailure(f"Fn::FindInMap limits resolved to {graphql}")
+    for function, label in ((inventory, "inventory"), (graphql, "graphql")):
+        if function.get("unresolvedMemorySize") or function.get("unresolvedTimeout"):
+            raise HarnessFailure(f"{label} limits stayed unresolved: {function}")
+    session = start_local_session(harness, app, name="intrinsic-limits")
+    try:
+        url = session_rest_url(session.spec, session)
+        status, payload, _ = _json_request(
+            "PUT", f"{url}/inventory/intrinsic-probe", payload={"name": "intrinsic limit"}
+        )
+        expect_status(status, 200, "intrinsic-limit inventory write", json.dumps(payload))
+        status, payload, _ = _json_request("GET", f"{url}/inventory/intrinsic-probe")
+        expect_status(status, 200, "intrinsic-limit inventory read", json.dumps(payload))
+        inspected = harness.run(
+            ["docker", "inspect", "--format", "{{.HostConfig.Memory}}", f"{session.prefix}-{str(inventory['logicalId']).lower()}"]
+        )
+        memory_bytes = int(inspected.stdout.strip())
+        if memory_bytes != 256 * 1024 * 1024:
+            raise HarnessFailure(f"inventory container memory = {memory_bytes}, want 268435456")
+        return (
+            "a parameterised MemorySize (Ref default 256) with a conditional Timeout (Fn::If 10) and a "
+            "Fn::FindInMap MemorySize/Timeout (512/30) resolved in plan and reached the real container "
+            "(docker inspect memory 268435456); the inventory handler answered"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
 def run_seed_restv1(harness: Harness) -> str:
     app = "examples/cdk/restv1-router"
+    ensure_cdk_app(harness, app)
     script = str(ROOT / "examples/cdk/restv1-router/scripts/seed-local.sh")
     failed = harness.run(
         [
@@ -3371,21 +3587,34 @@ def run_lambda_role_custom(harness: Harness) -> str:
 
 def _assert_derived_surface(spec: dict, lang: str) -> None:
     functions = spec.get("functions") or []
-    if len(functions) != 1:
-        raise HarnessFailure(f"apptheory-local plan derived {len(functions)} functions, want 1", json.dumps(spec))
-    function = functions[0]
+    language_functions = [
+        function
+        for function in functions
+        if (function.get("environment") or {}).get("APPTHEORY_HELLO_LANG") == lang
+    ]
+    if len(language_functions) != 1:
+        raise HarnessFailure(
+            f"apptheory-local plan derived {len(language_functions)} {lang} functions, want 1", json.dumps(spec)
+        )
+    function = language_functions[0]
     expected_runtime = LOCAL_RUNNER_RUNTIMES[lang]
     if function.get("runtime") != expected_runtime:
         raise HarnessFailure(f"apptheory-local plan: runtime {function.get('runtime')!r}, want {expected_runtime!r}")
     if function.get("architecture") != "arm64":
         raise HarnessFailure(f"apptheory-local plan: architecture {function.get('architecture')!r}, want arm64")
     apis = spec.get("apis") or []
-    if len(apis) != 1 or apis[0].get("class") != "httpv2":
+    language_apis = [api for api in apis if str(api.get("name") or "").endswith("-" + lang)]
+    if len(language_apis) != 1 or language_apis[0].get("class") != "httpv2":
         raise HarnessFailure(f"apptheory-local plan: want one HTTP API v2 surface, got {apis}")
-    routes = {(route.get("method"), route.get("path")) for route in apis[0].get("routes") or []}
+    routes = {(route.get("method"), route.get("path")) for route in language_apis[0].get("routes") or []}
     for expected in (("ANY", "/"), ("ANY", "/{proxy+}")):
         if expected not in routes:
             raise HarnessFailure(f"apptheory-local plan: route {expected} missing from {sorted(routes)}")
+    # The R8 stage-shape probe adds one named-stage HTTP API to every
+    # hello-world stack; it must not shadow the language surface above.
+    stage_apis = [api for api in apis if api.get("class") == "httpv2" and api.get("stage") == "dev"]
+    if len(stage_apis) != 1:
+        raise HarnessFailure(f"apptheory-local plan: want one dev-stage HTTP API, got {apis}")
 
 
 def _wait_for_local_runner(process: subprocess.Popen, log_path: str, seconds: int = 600) -> list[str]:
@@ -7300,6 +7529,10 @@ RUNNERS: dict[str, Callable[[Harness], str]] = {
     "data-dir-s3": run_data_dir_s3,
     "data-dir-sqs": run_data_dir_sqs,
     "seed-restv1": run_seed_restv1,
+    "intrinsic-limits": run_intrinsic_limits,
+    "stage-prefixed-rest": run_stage_prefixed_rest,
+    "stage-prefixed-http": run_stage_prefixed_http,
+    "codebuild-import": run_codebuild_import,
 }
 
 

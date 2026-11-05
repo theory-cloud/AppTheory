@@ -45,6 +45,10 @@ const (
 
 	archARM64 = "arm64"
 	archAMD64 = "amd64"
+	// archARM64Alias and archAMD64Alias are the CPU architecture names the
+	// Lambda and CodeBuild pages and the profile pins use.
+	archARM64Alias = "aarch64"
+	archAMD64Alias = "x86_64"
 
 	// FunctionURLDomainSuffix keeps synthesized Function URL events
 	// distinguishable from HTTP API v2 events, which the AppTheory runtime
@@ -427,6 +431,33 @@ type ResourceSpec struct {
 	Properties json.RawMessage `json:"-"`
 }
 
+// CodeBuildProjectSpec is one AWS::CodeBuild::Project the local runner serves.
+// It carries the deployed image name and the buildspec; the profile maps the
+// image to a digest-pinned local build image per architecture.
+type CodeBuildProjectSpec struct {
+	LogicalID string `json:"logicalId"`
+	Stack     string `json:"stack"`
+	// Name is the local physical project name. AWS generates a name when the
+	// template omits one; the runner uses resourceName's deterministic local
+	// name, which is also the Ref the state-change rule's event pattern uses.
+	Name string `json:"name"`
+	// Image is the project's Environment.Image, for example
+	// aws/codebuild/standard:7.0.
+	Image string `json:"image"`
+	// BuildSpec is the inline buildspec (JSON or YAML). BuildSpecPath is the
+	// source-relative path form.
+	BuildSpec     string `json:"buildSpec,omitempty"`
+	BuildSpecPath string `json:"buildSpecPath,omitempty"`
+	// SourceType is the project's Source.Type, for example NO_SOURCE.
+	SourceType string `json:"sourceType,omitempty"`
+	// EnvironmentVariables are the project's literal Environment.Variables.
+	EnvironmentVariables map[string]string `json:"environmentVariables,omitempty"`
+	Privileged           bool              `json:"privileged,omitempty"`
+	TimeoutMinutes       int               `json:"timeoutMinutes,omitempty"`
+	// Deviations name project features the local agent does not reproduce.
+	Deviations []string `json:"deviations,omitempty"`
+}
+
 // PlannedResource is one resource the run provisions, with the local identifier
 // the CDK definition determines before any backend starts.
 type PlannedResource struct {
@@ -453,7 +484,10 @@ type Spec struct {
 	// one destination (function, queue, topic) or the bucket's EventBridge
 	// configuration, so plan and describe report them one by one.
 	Notifications []NotificationSpec `json:"notifications,omitempty"`
-	Skipped       []Skipped          `json:"skipped"`
+	// CodeBuildProjects are the AWS::CodeBuild::Project resources the runner
+	// serves through AWS's local CodeBuild agent.
+	CodeBuildProjects []CodeBuildProjectSpec `json:"codeBuild,omitempty"`
+	Skipped           []Skipped              `json:"skipped"`
 	// Delivery is the state the engine would register for every source. Plan
 	// fills it; a live session reports the engine's own state instead.
 	Delivery []DeliveryState `json:"delivery,omitempty"`
@@ -470,6 +504,9 @@ type Spec struct {
 	// Resources is the assembly index used to resolve function environment
 	// references. It is internal and not part of the plan document.
 	Resources []ResourceSpec `json:"-"`
+	// Templates holds each stack's parameters, conditions and mappings for the
+	// intrinsic resolver. It never appears in plan output.
+	Templates map[string]templateContext `json:"-"`
 	// cloudFrontTopology keeps the parsed policies and function code the
 	// gateway needs. It never appears in plan output.
 	cloudFrontTopology *localcloudfront.Topology

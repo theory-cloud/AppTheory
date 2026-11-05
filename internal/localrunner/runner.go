@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -113,7 +112,7 @@ type Options struct {
 	// listeners and their URLs stay.
 	Watch bool
 	// DataDir keeps backend state across runs. An empty value keeps today's
-	// ephemeral behaviour.
+	// ephemeral behavior.
 	DataDir string
 	// Seed is a shell command that runs after provisioning and before the run
 	// reports ready. It is how a seed script drives the app through its own
@@ -187,6 +186,11 @@ type Runner struct {
 	// cloudFrontGateways and cloudFrontIDs track each served distribution.
 	cloudFrontGateways map[string]*localcloudfront.Gateway
 	cloudFrontIDs      map[string]string
+	// codeBuild serves the CodeBuild control API and runs builds through the
+	// local agent; codeBuildURL is the loopback endpoint functions receive as
+	// AWS_ENDPOINT_URL_CODEBUILD.
+	codeBuild    *codeBuildService
+	codeBuildURL string
 	// transports and webSocketServers are the live listeners a watch reload
 	// updates in place. The net.Listener and the server stay; only the route
 	// table and the invoker set swap.
@@ -194,8 +198,6 @@ type Runner struct {
 	webSocketServers map[string]*WebSocketServer
 	// dataDir is the resolved persistent backend root. Empty means ephemeral.
 	dataDir string
-	// seedEnv carries the run's endpoint and URL environment for --seed.
-	seedEnv map[string]string
 	// specMu guards the current Spec while a watch reload replaces it.
 	specMu sync.RWMutex
 	// reloadMu serializes a watch reload with the session's data operations, so
@@ -380,6 +382,8 @@ func (r *Runner) deliverySQSClient() (*sqs.Client, error) {
 
 // normalizeOptions applies defaults and rejects unusable combinations before
 // any synthesis or container work.
+//
+//nolint:gocyclo // one validation per option.
 func normalizeOptions(options Options) (Options, error) {
 	options.Stdout = outputOrDefault(options.Stdout)
 	if options.Handler != nil {
@@ -595,7 +599,7 @@ func (r *Runner) Plan(ctx context.Context) (*Spec, error) {
 		assemblyDir = filepath.Join(r.scratch, "cdk.out")
 		synthCtx, cancel := context.WithTimeout(ctx, r.options.SynthTimeout)
 		defer cancel()
-		if err := Synth(synthCtx, SynthOptions{
+		if err := synthRunner(synthCtx, SynthOptions{
 			AppDir:    r.options.AppDir,
 			OutputDir: assemblyDir,
 			Context:   r.options.Context,
@@ -708,6 +712,9 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 	if err = r.startCloudFrontControl(ctx, spec); err != nil {
 		return nil, err
 	}
+	if err = r.startCodeBuildControl(ctx, spec, arch); err != nil {
+		return nil, err
+	}
 	if err = r.resolveEnvironment(spec, targets); err != nil {
 		return nil, err
 	}
@@ -754,7 +761,11 @@ func (r *Runner) startWebSocketManagement(ctx context.Context, spec *Spec) error
 	if err != nil {
 		return err
 	}
-	if err := management.start(ctx); err != nil {
+	listeners, err := r.listenControl(ctx, "WebSocket management")
+	if err != nil {
+		return err
+	}
+	if err := management.start(ctx, listeners); err != nil {
 		return err
 	}
 	r.webSocketManagement = management
@@ -789,12 +800,10 @@ func (r *Runner) webSocketCertificateMounts() []string {
 // therefore binds every interface while the URL the session reports stays
 // loopback-only.
 func (r *Runner) startEventBridgeBus(ctx context.Context) error {
-	var listenConfig net.ListenConfig
-	listener, err := listenConfig.Listen(ctx, "tcp", "0.0.0.0:0")
+	listeners, err := r.listenControl(ctx, "EventBridge")
 	if err != nil {
-		return fmt.Errorf("bind the local EventBridge bus: %w", err)
+		return err
 	}
-	r.listeners = append(r.listeners, listener)
 	server := &http.Server{
 		Handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 			r.eventBus.serveEventBridgeHTTP(ctx, writer, request)
@@ -803,20 +812,20 @@ func (r *Runner) startEventBridgeBus(ctx context.Context) error {
 		IdleTimeout:       60 * time.Second,
 	}
 	r.servers = append(r.servers, server)
-	go func() {
-		if serveErr := server.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) && !errors.Is(serveErr, net.ErrClosed) {
-			r.logf("local EventBridge bus stopped: %v", serveErr)
-		}
-	}()
-	tcpAddr, ok := listener.Addr().(*net.TCPAddr)
-	if !ok {
-		return fmt.Errorf("the local EventBridge bus has no TCP address")
+	serve := func(listener net.Listener) {
+		go func() {
+			if serveErr := server.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) && !errors.Is(serveErr, net.ErrClosed) {
+				r.logf("local EventBridge bus stopped: %v", serveErr)
+			}
+		}()
 	}
-	port := tcpAddr.Port
-	r.eventBusURL = fmt.Sprintf("http://127.0.0.1:%d", port)
-	r.eventBusContainer = fmt.Sprintf("http://host.docker.internal:%d", port)
+	serve(listeners.Loopback)
+	if listeners.Gateway != nil {
+		serve(listeners.Gateway)
+	}
+	r.eventBusURL = listeners.HostURL
+	r.eventBusContainer = listeners.ContainerURL
 	r.endpoints = append(r.endpoints, Endpoint{Service: "events", URL: r.eventBusContainer})
-	r.addRuntimeHostEntry()
 	r.logf("local EventBridge bus at %s (containers: %s)", r.eventBusURL, r.eventBusContainer)
 	return nil
 }
@@ -872,6 +881,8 @@ func (r *Runner) startBackends(ctx context.Context) error {
 // startBackend starts one emulator, resolves its network address for the
 // function containers' closed DNS and waits until its published host port
 // answers a read-only protocol call.
+//
+//nolint:gocyclo // one branch per backend shape.
 func (r *Runner) startBackend(ctx context.Context, backend string) error {
 	container := backendContainer(backend)
 	pin, err := r.profile.Container(container)
@@ -1128,9 +1139,9 @@ func (r *Runner) resolveImages(spec *Spec, hostArch string, targets []string) er
 func archMatches(host, declared string) bool {
 	normalize := func(value string) string {
 		switch strings.ToLower(strings.TrimSpace(value)) {
-		case "x86_64", archAMD64:
+		case archAMD64Alias, archAMD64:
 			return archAMD64
-		case archARM64, "aarch64":
+		case archARM64, archARM64Alias:
 			return archARM64
 		default:
 			return strings.ToLower(strings.TrimSpace(value))
@@ -1329,218 +1340,6 @@ func (r *Runner) buildFunctionImage(ctx context.Context, function FunctionSpec) 
 // reuses the image for both.
 func (r *Runner) functionImageTag(function FunctionSpec) string {
 	return sanitizeName(r.namePrefix + "-" + function.LogicalID + "-image")
-}
-
-// functionRunOptions builds the container configuration for one function. A
-// watch reload reuses it, so a restarted function receives exactly the options
-// a fresh start would have produced.
-//
-//nolint:gocognit,gocyclo // one branch per function shape the assembly can declare
-func (r *Runner) functionRunOptions(ctx context.Context, function FunctionSpec, image string) (*runtimeAPI, ContainerOptions, error) {
-	imageFunction := function.ImageAsset != nil
-	codeDir := function.AssetDir
-	if codeDir == "" && !imageFunction {
-		return nil, ContainerOptions{}, fmt.Errorf("function %s has no code directory", function.LogicalID)
-	}
-	if codeDir != "" {
-		if err := ensureSharedPath(codeDir); err != nil {
-			return nil, ContainerOptions{}, fmt.Errorf("function %s: %w", function.LogicalID, err)
-		}
-	}
-	command, err := functionCommand(function)
-	if err != nil {
-		return nil, ContainerOptions{}, err
-	}
-	var api *runtimeAPI
-	if !r.options.RIEMode {
-		api, err = newRuntimeAPI(function, r.logf)
-		if err != nil {
-			return nil, ContainerOptions{}, err
-		}
-		api.gateway = r.networkGateway
-		if r.runtimeAPIGateway != "" {
-			api.bindGateway(r.runtimeAPIGateway)
-		}
-	}
-	env, overridden := r.functionEnvironment(function, api)
-	if r.options.RIEMode {
-		// The emulator reads its timeout from AWS_LAMBDA_FUNCTION_TIMEOUT; the
-		// base image's entry script does not set it.
-		// https://github.com/aws/aws-lambda-runtime-interface-emulator
-		env["AWS_LAMBDA_FUNCTION_TIMEOUT"] = strconv.Itoa(function.Timeout)
-	}
-	if len(overridden) > 0 {
-		r.logf("function %s: runner-owned environment overrides template values for %s", function.LogicalID, strings.Join(overridden, ", "))
-	}
-	if len(function.Layers) > 0 {
-		layerEnv, layerErr := r.layerEnvironment(ctx, function, image, env)
-		if layerErr != nil {
-			return nil, ContainerOptions{}, layerErr
-		}
-		env = layerEnv
-	}
-	if len(function.EnvironmentExpressions) > 0 {
-		return nil, ContainerOptions{}, unsupported(
-			function.LogicalID,
-			"environment expressions were not resolved before the container start: %s",
-			strings.Join(sortedKeys(function.EnvironmentExpressions), ", "),
-		)
-	}
-	if limitErr := unresolvedLimitsError(function); limitErr != nil {
-		return nil, ContainerOptions{}, limitErr
-	}
-	if api != nil {
-		// The container reaches the Runtime API through host.docker.internal.
-		// The run's closed DNS server cannot resolve it, so the host entry is
-		// required (the run network also sets --dns 127.0.0.2).
-		r.addRuntimeHostEntry()
-	}
-	mounts := append(functionMounts(function), r.webSocketCertificateMounts()...)
-	publish := 0
-	if r.options.RIEMode {
-		publish = riePort
-	}
-	options := ContainerOptions{
-		Name:     r.containerName(function.LogicalID),
-		Network:  r.network,
-		Image:    image,
-		Command:  command,
-		Env:      env,
-		AddHosts: r.options.AddHosts,
-		MemoryMB: function.MemoryMB,
-		Mounts:   mounts,
-		Publish:  publish,
-		Labels:   r.labels(),
-		Detach:   true,
-	}
-	return api, options, nil
-}
-
-//nolint:gocognit,gocyclo // one branch per function shape the assembly can declare
-func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image string) error {
-	api, options, err := r.functionRunOptions(ctx, function, image)
-	if err != nil {
-		return err
-	}
-	name := options.Name
-	// Register the container before starting it, so a signal that lands while
-	// the runtime image is still starting or waiting to accept connections
-	// still removes it.
-	process := &FunctionProcess{
-		Function:  function,
-		Container: name,
-		Image:     image,
-		Started:   time.Now().UTC(),
-		rie:       r.options.RIEMode,
-		api:       api,
-		options:   options,
-		logf:      r.logf,
-	}
-	if api != nil {
-		api.running = func(checkCtx context.Context) (bool, error) {
-			return r.docker.Running(checkCtx, name)
-		}
-		process.reset = r.resetFunction
-	}
-	r.invokers[function.LogicalID] = process
-	if _, startErr := r.docker.StartContainer(ctx, options); startErr != nil {
-		process.closeRuntimeAPI()
-		return startErr
-	}
-	if err := process.awaitReady(ctx, r.docker); err != nil {
-		if function.ImageAsset != nil && r.options.RIEMode {
-			return fmt.Errorf(
-				"function %s: the container image did not start a Runtime Interface Emulator on port %d; an image function must be based on an AWS base image that ships one (https://docs.aws.amazon.com/lambda/latest/dg/images-create.html): %w",
-				function.LogicalID, riePort, err,
-			)
-		}
-		return err
-	}
-	r.rememberRuntimeAPIAddress(process)
-	if r.options.RIEMode {
-		r.logf("function %s (%s, %s) ready on 127.0.0.1:%d (Runtime Interface Emulator mode)", function.LogicalID, function.Runtime, image, process.Port)
-		return nil
-	}
-	if failure := process.api.initError(); failure != nil {
-		if failure.Type == "Runtime.ExitError" {
-			// A runtime client that fails its first Next API request exits
-			// before the Init phase completes. The lifecycle page resets and
-			// re-initializes the environment, so the runner retries once before
-			// reporting the failure to the first invocation.
-			// https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtime-environment.html
-			r.logf("function %s (%s, %s): the runtime exited before its first invocation (%s); restarting it once",
-				function.LogicalID, function.Runtime, image, failure.Message)
-			if resetErr := r.resetFunction(ctx, process); resetErr != nil {
-				return fmt.Errorf("function %s: restart after a failed initialization: %w", function.LogicalID, resetErr)
-			}
-			failure = process.api.initError()
-		}
-		if failure != nil {
-			r.logf("function %s (%s, %s): initialization failed; the first invocation reports %s", function.LogicalID, function.Runtime, image, failure.Type)
-		}
-		return nil
-	}
-	r.logf("function %s (%s, %s) ready on the runner's Runtime API at %s", function.LogicalID, function.Runtime, image, process.RuntimeAPIURL())
-	return nil
-}
-
-// awaitReady waits for the process's runtime to signal that the Init phase
-// finished: the embedded emulator's port in RIE mode, or the runtime's first
-// Next API request in the default mode.
-func (p *FunctionProcess) awaitReady(ctx context.Context, docker *Docker) error {
-	if p.rie {
-		port, err := waitForContainerReady(ctx, docker, p.Container)
-		if err != nil {
-			return err
-		}
-		p.Port = port
-		return nil
-	}
-	return waitForRuntimeAPIReady(ctx, docker, p.Container, p.api)
-}
-
-// resetFunction replaces one function's execution environment after a timeout,
-// a crash or an initialization failure. The container keeps its name and the
-// FunctionProcess keeps its identity, so every caller's handle stays valid.
-// https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtime-environment.html
-func (r *Runner) resetFunction(ctx context.Context, process *FunctionProcess) error {
-	r.logf("function %s: replacing the execution environment", process.Function.LogicalID)
-	r.docker.RemoveContainer(ctx, process.Container)
-	gateway := ""
-	if process.api != nil {
-		gateway = process.api.gatewayBound()
-	}
-	process.closeRuntimeAPI()
-	options := process.options
-	if !process.rie {
-		api, err := newRuntimeAPI(process.Function, r.logf)
-		if err != nil {
-			return err
-		}
-		api.gateway = r.networkGateway
-		if gateway == "" {
-			gateway = r.runtimeAPIGateway
-		}
-		if gateway != "" && api.bindGateway(gateway) {
-			r.runtimeAPIGateway = gateway
-		}
-		api.running = func(checkCtx context.Context) (bool, error) {
-			return r.docker.Running(checkCtx, process.Container)
-		}
-		process.api = api
-		options.Env = cloneEnvironment(options.Env)
-		options.Env["AWS_LAMBDA_RUNTIME_API"] = api.ContainerAddress()
-	}
-	process.options = options
-	if _, err := r.docker.StartContainer(ctx, options); err != nil {
-		return err
-	}
-	process.Started = time.Now().UTC()
-	if err := process.awaitReady(ctx, r.docker); err != nil {
-		return err
-	}
-	r.rememberRuntimeAPIAddress(process)
-	return nil
 }
 
 // networkGateway resolves the run network's gateway address.

@@ -13,6 +13,7 @@ import {
 import * as cdk from "aws-cdk-lib";
 import type { StackProps } from "aws-cdk-lib";
 import * as codebuild from "aws-cdk-lib/aws-codebuild";
+import * as eventsTargets from "aws-cdk-lib/aws-events-targets";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import type { Construct } from "constructs";
 
@@ -120,7 +121,12 @@ export class ImportPipelineStack extends cdk.Stack {
       },
     });
 
-    new AppTheoryCodeBuildJobRunner(this, "BatchStep", {
+    // The state-change rule needs a target for the local row to observe the
+    // automatic delivery: the build events land on a real SQS queue.
+    const buildEvents = new AppTheoryQueue(this, "BuildEvents", {
+      queueName: "import-build-events",
+    });
+    const batchStep = new AppTheoryCodeBuildJobRunner(this, "BatchStep", {
       enableStateChangeRule: true,
       buildSpec: codebuild.BuildSpec.fromObject({
         version: "0.2",
@@ -131,5 +137,6 @@ export class ImportPipelineStack extends cdk.Stack {
         },
       }),
     });
+    batchStep.stateChangeRule?.addTarget(new eventsTargets.SqsQueue(buildEvents.queue));
   }
 }

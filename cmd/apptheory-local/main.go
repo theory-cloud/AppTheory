@@ -58,14 +58,15 @@ func main() {
 	os.Exit(run(os.Args[1:]))
 }
 
+//nolint:gocyclo // the command switch is explicit.
 func run(args []string) int {
-	command := "run"
+	command := commandRun
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		command = args[0]
 		args = args[1:]
 	}
 	switch command {
-	case "run", "plan", commandInvoke, commandSession, "down":
+	case commandRun, "plan", commandInvoke, commandSession, "down":
 	case "help", "-h", "--help":
 		fmt.Print(usageText)
 		return 0
@@ -85,15 +86,15 @@ func run(args []string) int {
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
-	if config.watch && command != "run" && command != commandSession {
+	if config.watch && command != commandRun && command != commandSession {
 		fmt.Fprintln(os.Stderr, "apptheory-local: --watch is only valid on run and session")
 		return 2
 	}
-	if config.seed != "" && command != "run" && command != commandSession {
+	if config.seed != "" && command != commandRun && command != commandSession {
 		fmt.Fprintln(os.Stderr, "apptheory-local: --seed is only valid on run and session")
 		return 2
 	}
-	if config.dataDir != "" && command != "run" && command != commandSession && command != commandInvoke {
+	if config.dataDir != "" && command != commandRun && command != commandSession && command != commandInvoke {
 		fmt.Fprintln(os.Stderr, "apptheory-local: --data-dir is only valid on run, session and invoke")
 		return 2
 	}
@@ -110,6 +111,7 @@ func run(args []string) int {
 }
 
 const (
+	commandRun     = "run"
 	commandInvoke  = "invoke"
 	commandSession = "session"
 )
@@ -315,6 +317,7 @@ func (c *commandConfig) plan(ctx context.Context, runner *localrunner.Runner) in
 		fmt.Printf("  %s\n", line)
 	}
 	printProvisionedResources(spec)
+	printCodeBuildProjects(spec)
 	printDerivedEvents(spec)
 	if len(spec.Skipped) > 0 {
 		fmt.Println()
@@ -349,6 +352,23 @@ func printProvisionedResources(spec *localrunner.Spec) {
 			localID += " (assigned at run)"
 		}
 		fmt.Printf("  %-40s %-40s %s\n", resource.LogicalID, resource.Type, localID)
+	}
+}
+
+// printCodeBuildProjects prints the projects the local CodeBuild endpoint
+// serves, with the profile's local image mapping and every named deviation.
+func printCodeBuildProjects(spec *localrunner.Spec) {
+	if len(spec.CodeBuildProjects) == 0 {
+		return
+	}
+	fmt.Println()
+	fmt.Println("codebuild projects:")
+	for _, project := range spec.CodeBuildProjects {
+		fmt.Printf("  %-40s %-40s image=%s timeout=%dm\n",
+			project.LogicalID, project.Name, project.Image, project.TimeoutMinutes)
+		for _, deviation := range project.Deviations {
+			fmt.Printf("    deviation: %s\n", deviation)
+		}
 	}
 }
 

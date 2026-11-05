@@ -65,7 +65,7 @@ func (r *Runner) backendDataDir(name string) (string, error) {
 // configureBackendDataDir adapts one profile pin to a persistent data
 // directory and returns the bind mounts the container needs. It never changes a
 // pin when --data-dir is absent: the default run stays byte-for-byte ephemeral.
-func (r *Runner) configureBackendDataDir(backend, container string, pin ContainerPin) (ContainerPin, []string, error) {
+func (r *Runner) configureBackendDataDir(_ string, container string, pin ContainerPin) (ContainerPin, []string, error) {
 	if r.dataDir == "" {
 		return pin, nil, nil
 	}
@@ -96,8 +96,8 @@ func (r *Runner) configureBackendDataDir(backend, container string, pin Containe
 		pin.Environment["JCLOUDS_PROVIDER"] = "filesystem"
 		pin.Environment["JCLOUDS_FILESYSTEM_BASEDIR"] = "/data"
 		return pin, []string{dir + ":/data"}, nil
-	case "sqs":
-		dir, err := r.backendDataDir("sqs")
+	case backendSQS:
+		dir, err := r.backendDataDir(backendSQS)
 		if err != nil {
 			return pin, nil, err
 		}
@@ -105,7 +105,7 @@ func (r *Runner) configureBackendDataDir(backend, container string, pin Containe
 		// in-file database and restores them on startup. The pinned 1.7.1 image
 		// was verified to persist a message across a restart.
 		// https://github.com/softwaremill/elasticmq
-		config, err := r.elasticMQDataConfig(dir)
+		config, err := r.elasticMQDataConfig()
 		if err != nil {
 			return pin, nil, err
 		}
@@ -146,7 +146,7 @@ func dynamoDBPersistentCommand(command []string) []string {
 // elasticMQDataConfig writes the ElasticMQ configuration that enables message
 // storage under the bind-mounted data directory. The image entrypoint reads
 // /opt/elasticmq.conf.
-func (r *Runner) elasticMQDataConfig(dataDir string) (string, error) {
+func (r *Runner) elasticMQDataConfig() (string, error) {
 	dir := filepath.Join(r.scratch, "elasticmq")
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return "", fmt.Errorf("create the ElasticMQ config directory: %w", err)

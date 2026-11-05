@@ -28,13 +28,13 @@ import (
 // https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-how-to-call-websocket-api-connections.html
 //
 // The runner serves PostToConnection, GetConnection and DeleteConnection on a
-// TLS listener that binds every interface so a function container can reach it
-// through host.docker.internal; the session reports and the harness use the
-// loopback URL. It is injected as the API Gateway Management API endpoint. The
-// listener is TLS because every SDK builds the endpoint from the event's
-// requestContext.domainName as https://<domainName>, and because the documented
-// deployed management endpoint is HTTPS. It is unauthenticated and reachable
-// from any interface on the host while a session runs.
+// TLS listener that binds loopback and, when the host owns the run network's
+// gateway, that address too; a function container reaches it through
+// host.docker.internal. It never binds the unspecified address. It is injected
+// as the API Gateway Management API endpoint. The listener is TLS because every
+// SDK builds the endpoint from the event's requestContext.domainName as
+// https://<domainName>, and because the documented deployed management endpoint
+// is HTTPS.
 //
 // A connection that has closed is reported with the documented 410 GONE.
 
@@ -50,7 +50,6 @@ const (
 type webSocketManagement struct {
 	mu          sync.RWMutex
 	connections map[string]*webSocketConnection
-	listener    net.Listener
 	server      *http.Server
 	// URL is the loopback URL the runner and the harness use; ContainerURL is
 	// the URL a function container uses.
@@ -85,39 +84,43 @@ func newWebSocketManagement(scratch string, logf func(format string, args ...any
 	}, nil
 }
 
-// start binds the listener on every interface so a function container reaches
-// it through host.docker.internal, and serves it over TLS.
-func (m *webSocketManagement) start(ctx context.Context) error {
-	var listenConfig net.ListenConfig
-	listener, err := listenConfig.Listen(ctx, "tcp", "0.0.0.0:0")
+// startLoopback is the test/simple form: bind loopback only.
+func (m *webSocketManagement) startLoopback(ctx context.Context) error {
+	runner := &Runner{}
+	listeners, err := runner.listenControl(ctx, "WebSocket management")
 	if err != nil {
-		return fmt.Errorf("bind the WebSocket management API: %w", err)
+		return err
 	}
+	return m.start(ctx, listeners)
+}
+
+// start serves the management API over TLS on the control listeners the
+// runner bound: loopback and, when the host owns it, the run network gateway.
+func (m *webSocketManagement) start(_ context.Context, listeners *controlListeners) error {
 	certificate, err := tls.X509KeyPair(m.certificatePEM, m.certificatePEM)
 	if err != nil {
-		_ = listener.Close() //nolint:errcheck // failing anyway
 		return fmt.Errorf("load the management certificate: %w", err)
 	}
-	tcpAddr, ok := listener.Addr().(*net.TCPAddr)
-	if !ok {
-		_ = listener.Close() //nolint:errcheck // failing anyway
-		return fmt.Errorf("the WebSocket management API has no TCP address")
-	}
-	m.listener = listener
-	m.URL = fmt.Sprintf("https://127.0.0.1:%d", tcpAddr.Port)
-	m.ContainerURL = fmt.Sprintf("https://%s:%d", webSocketManagementCertDNS, tcpAddr.Port)
+	m.URL = "https://" + strings.TrimPrefix(listeners.HostURL, "http://")
+	m.ContainerURL = "https://" + strings.TrimPrefix(listeners.ContainerURL, "http://")
 	m.server = &http.Server{
 		Handler:           m,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12},
 	}
-	go func() {
-		if serveErr := m.server.ServeTLS(listener, "", ""); serveErr != nil &&
-			serveErr != http.ErrServerClosed && !strings.Contains(serveErr.Error(), "use of closed network connection") {
-			m.logf("WebSocket management API stopped: %v", serveErr)
-		}
-	}()
+	serve := func(listener net.Listener) {
+		go func() {
+			if serveErr := m.server.ServeTLS(listener, "", ""); serveErr != nil &&
+				serveErr != http.ErrServerClosed && !strings.Contains(serveErr.Error(), "use of closed network connection") {
+				m.logf("WebSocket management API stopped: %v", serveErr)
+			}
+		}()
+	}
+	serve(listeners.Loopback)
+	if listeners.Gateway != nil {
+		serve(listeners.Gateway)
+	}
 	m.logf("serving the WebSocket management API at %s (containers: %s)", m.URL, m.ContainerURL)
 	return nil
 }
@@ -250,9 +253,6 @@ func (m *webSocketManagement) connectionCount() int {
 func (m *webSocketManagement) close() {
 	if m.server != nil {
 		_ = m.server.Close() //nolint:errcheck // shutting down the run's own server
-	}
-	if m.listener != nil {
-		_ = m.listener.Close() //nolint:errcheck // shutting down the run's own listener
 	}
 }
 

@@ -75,7 +75,7 @@ func (r *Runner) provisionSNSDrain(
 	}
 	subscription, err := snsClient.Subscribe(ctx, &sns.SubscribeInput{
 		TopicArn:              aws.String(topic.ARN),
-		Protocol:              aws.String("sqs"),
+		Protocol:              aws.String(backendSQS),
 		Endpoint:              aws.String(topic.DrainARN),
 		ReturnSubscriptionArn: true,
 	})
