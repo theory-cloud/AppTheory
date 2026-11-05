@@ -119,6 +119,12 @@ type InvokeStreamResult struct {
 	Streamed bool
 	// ContentType is the response Content-Type the runtime set.
 	ContentType string
+	// HandlerError is set when the runtime answered with an error instead of a
+	// response: an /error post, a timeout, a crash or an initialization
+	// failure. Body then carries the documented error JSON, so a sink can
+	// answer the invocation without waiting for a response that will never
+	// arrive.
+	HandlerError error
 	// ErrorType and ErrorBody are the midstream error trailers, when present.
 	ErrorType string
 	ErrorBody []byte
@@ -151,6 +157,17 @@ func (p *FunctionProcess) InvokeStream(ctx context.Context, payload []byte, sink
 	}
 	body, result := p.api.InvokeStream(ctx, payload, sink)
 	p.afterInvocation(ctx, result)
+	if result.reported != nil {
+		// The runtime reported an error instead of a response. The body is the
+		// documented error JSON; carrying the error explicitly keeps the
+		// outcome distinct from a successful body of the same bytes.
+		return InvokeStreamResult{
+			Body:         body,
+			Streamed:     result.streamed,
+			ContentType:  result.contentType,
+			HandlerError: result.reported,
+		}, nil
+	}
 	if len(body) == 0 && result.err != nil {
 		return InvokeStreamResult{Streamed: result.streamed, ContentType: result.contentType}, result.err
 	}

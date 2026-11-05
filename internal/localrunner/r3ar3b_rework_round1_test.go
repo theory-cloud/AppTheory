@@ -175,3 +175,28 @@ func TestDockerNetworkGatewayFailsWithoutOne(t *testing.T) {
 		t.Fatalf("inspect failure: %v", err)
 	}
 }
+
+func TestFunctionProcessInvokeStreamCarriesAHandlerErrorExplicitly(t *testing.T) {
+	api := testRuntimeAPI(t, 30)
+	process := &FunctionProcess{Function: FunctionSpec{LogicalID: "Fn", Timeout: 30}, Container: "fn", api: api, logf: t.Logf}
+	posted := make(chan struct{})
+	go func() {
+		next := nextInvocation(t, api)
+		requestID := next.header.Get(runtimeRequestIDHeader)
+		postRuntime(t, api, runtimeAPIVersionPath+"/invocation/"+requestID+"/error",
+			[]byte(`{"errorMessage":"kaboom","errorType":"ValueError"}`),
+			http.Header{runtimeErrorTypeHeader: {"ValueError"}})
+		close(posted)
+	}()
+	result, err := process.InvokeStream(context.Background(), []byte(`{}`), nil)
+	if err != nil {
+		t.Fatalf("InvokeStream: %v", err)
+	}
+	<-posted
+	if result.HandlerError == nil {
+		t.Fatalf("a handler error must be carried explicitly, not as a body-only result: %+v", result)
+	}
+	if !strings.Contains(string(result.Body), "kaboom") {
+		t.Fatalf("the documented error JSON stays in the body: %q", result.Body)
+	}
+}

@@ -161,7 +161,13 @@ func (o *functionURLOrigin) FetchStream(ctx context.Context, request localcloudf
 	head := make(chan streamHead, 1)
 	sink := &functionURLPipeSink{writer: writer, head: head}
 	go func() {
-		_, invokeErr := streamer.InvokeStream(ctx, event, sink)
+		result, invokeErr := streamer.InvokeStream(ctx, event, sink)
+		if invokeErr == nil && result.HandlerError != nil {
+			// A handler error, a timeout, a crash or an init failure never
+			// produces a response; answer the gateway now instead of leaving it
+			// blocked on the viewer's request context.
+			invokeErr = result.HandlerError
+		}
 		sink.finish(invokeErr)
 		_ = writer.CloseWithError(invokeErr) //nolint:errcheck // the reader decides how to report it
 	}()

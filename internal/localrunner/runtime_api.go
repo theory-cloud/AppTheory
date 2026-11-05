@@ -83,6 +83,9 @@ type runtimeInvocationResult struct {
 	streamed    bool
 	errorType   string
 	errorBody   []byte
+	// reported is the Lambda error the runtime reported instead of a response:
+	// an /error post, a timeout, a crash or an initialization failure.
+	reported *RuntimeAPIError
 	// reset asks the caller to replace the execution environment: a timeout, a
 	// crash and an init failure all end the environment, as the lifecycle page
 	// describes.
@@ -314,7 +317,7 @@ func (a *runtimeAPI) invoke(ctx context.Context, payload []byte, sink StreamSink
 		// fresh execution environment.
 		// https://docs.aws.amazon.com/lambda/latest/dg/runtimes-custom.html
 		a.logf("function %s: initialization failed: %v", a.function.LogicalID, failure)
-		return failure.Body, runtimeInvocationResult{body: failure.Body, err: failure, reset: true}
+		return failure.Body, runtimeInvocationResult{body: failure.Body, err: failure, reported: failure, reset: true}
 	}
 	timeout := a.functionTimeout()
 	now := time.Now().UTC()
@@ -353,7 +356,7 @@ func (a *runtimeAPI) invoke(ctx context.Context, payload []byte, sink StreamSink
 			body := timeoutPayload(invocation.requestID, now, a.functionTimeout())
 			payloadErr := &RuntimeAPIError{Type: timeoutErrorType, Message: strings.TrimSpace(string(body)), Body: body}
 			a.logf("function %s: invocation %s exceeded its %s timeout", a.function.LogicalID, invocation.requestID, timeout)
-			return body, runtimeInvocationResult{body: body, err: payloadErr, reset: true}
+			return body, runtimeInvocationResult{body: body, err: payloadErr, reported: payloadErr, reset: true}
 		case <-ctx.Done():
 			return nil, runtimeInvocationResult{err: ctx.Err()}
 		case <-a.closed:
@@ -378,8 +381,9 @@ func (a *runtimeAPI) invoke(ctx context.Context, payload []byte, sink StreamSink
 // https://docs.aws.amazon.com/lambda/latest/dg/troubleshooting-invocation.html
 func (a *runtimeAPI) crashPayload(requestID, message string) ([]byte, runtimeInvocationResult) {
 	payload := errorPayload("Runtime.ExitError", fmt.Sprintf("RequestId: %s Error: %s", requestID, message))
+	failure := &RuntimeAPIError{Type: "Runtime.ExitError", Message: message, Body: payload}
 	a.logf("function %s: %s", a.function.LogicalID, message)
-	return payload, runtimeInvocationResult{body: payload, err: &RuntimeAPIError{Type: "Runtime.ExitError", Message: message, Body: payload}, reset: true}
+	return payload, runtimeInvocationResult{body: payload, err: failure, reported: failure, reset: true}
 }
 
 func (a *runtimeAPI) functionTimeout() time.Duration {
@@ -454,11 +458,11 @@ func (a *runtimeAPI) serveInitError(writer http.ResponseWriter, request *http.Re
 	active := a.active
 	a.mu.Unlock()
 	if active != nil {
-		active.finish(runtimeInvocationResult{body: body, err: failure, reset: true})
+		active.finish(runtimeInvocationResult{body: body, err: failure, reported: failure, reset: true})
 	} else {
 		select {
 		case pending := <-a.pending:
-			pending.finish(runtimeInvocationResult{body: body, err: failure, reset: true})
+			pending.finish(runtimeInvocationResult{body: body, err: failure, reported: failure, reset: true})
 		default:
 		}
 	}
@@ -629,7 +633,7 @@ func (a *runtimeAPI) serveInvocationError(writer http.ResponseWriter, request *h
 		return
 	}
 	failure := runtimeErrorFromPayload(body, request.Header.Get(runtimeErrorTypeHeader))
-	invocation.finish(runtimeInvocationResult{body: body, err: failure})
+	invocation.finish(runtimeInvocationResult{body: body, err: failure, reported: failure})
 	writeRuntimeStatus(writer)
 }
 
