@@ -152,6 +152,10 @@ func (g *Gateway) revalidateOriginRequest(
 	if outcome.Request == nil {
 		return nil, true
 	}
+	// A refresh follows a rewritten origin exactly like a miss: OriginID and
+	// OriginPath follow the target and Host follows the target's domain unless
+	// the function changed Host.
+	hostChanged := edgeRequestHost(outcome.Request) != request.Host
 	applyEdgeOriginRequest(request, outcome.Request)
 	if outcome.Request.Origin == nil {
 		return nil, true
@@ -168,6 +172,9 @@ func (g *Gateway) revalidateOriginRequest(
 	request.OriginID = resolved
 	if *originConfig != nil {
 		request.OriginPath = (*originConfig).OriginPath
+		if !hostChanged {
+			request.Host = (*originConfig).DomainName
+		}
 	}
 	return nil, true
 }
