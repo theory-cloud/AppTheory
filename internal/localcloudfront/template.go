@@ -5,8 +5,8 @@
 // resources it references are the only routing definition. The package runs the
 // exact CloudFront Function code the template declares, applies the origin
 // request and response headers policies, and hands origin requests to an Origin
-// implementation. It is not a CloudFront emulator: there is no cache, no edge
-// network and no TLS.
+// implementation. It is not a CloudFront emulator: the cache is a single
+// in-memory store, there is no edge network and no TLS.
 package localcloudfront
 
 import (
