@@ -974,24 +974,27 @@ The `ssr-site`, `ssr-only-provided-assets-site`, `path-routed-frontend` and
 `media-cdn` example rows run through these origins in the harness; the private
 media distribution stays refused with the named signed-URL reason.
 
-Distributions that use a WAF web ACL, trusted key groups or signed URLs,
-field-level encryption, geo restriction, a gRPC config or a legacy
+Distributions that use a WAF web ACL, a gRPC config or a legacy
 `ForwardedValues` cache policy are refused with a named reason; they are listed
-under `skipped` and no listener is started. Lambda@Edge associations and key
-value stores are served (see [Lambda@Edge and key value
-stores](#lambdaedge-and-key-value-stores)). The cache policy is applied (see
-[Caching and invalidation](#caching-and-invalidation)); real-time logs, access
-logging, `Compress`, the behavior-level legacy `DefaultTTL`/`MinTTL`/`MaxTTL`
-fields and edge placement are reported instead.
+under `skipped` and no listener is started. Lambda@Edge, key value stores,
+trusted key groups, signed URLs and cookies, field-level encryption and geo
+restriction are served (see [Lambda@Edge, key value stores, signed access, geo
+restriction and field-level
+encryption](#lambdaedge-key-value-stores-signed-access-geo-restriction-and-field-level-encryption));
+`TrustedSigners` (AWS-account signers), continuous deployment policies and any
+`Restrictions` member other than `GeoRestriction` are refused by name. The cache
+policy is applied (see [Caching and invalidation](#caching-and-invalidation));
+real-time logs, access logging, `Compress`, the behavior-level legacy
+`DefaultTTL`/`MinTTL`/`MaxTTL` fields and edge placement are reported instead.
 
-## Lambda@Edge and key value stores
+## Lambda@Edge, key value stores, signed access, geo restriction and field-level encryption
 
 **Lambda@Edge.** A behavior's `LambdaFunctionAssociations` run through the same
 runtime container every other Lambda in the assembly uses. The association must
 reference an `AWS::Lambda::Version` in the assembly — "The function ARN must
 specify the ARN of a function version; you can't specify an alias or $LATEST"
-([LambdaFunctionAssociation](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-cloudfront-distribution-lambdafunctionassociation.html)) —
-and a `$LATEST`, alias, literal or unknown ARN is refused by name. A function
+([LambdaFunctionAssociation](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-cloudfront-distribution-lambdafunctionassociation.html))
+— and a `$LATEST`, alias, literal or unknown ARN is refused by name. A function
 with a container image package, layers, a VPC configuration, a dead-letter
 queue, provisioned or reserved concurrency, arm64, more than 512 MB of ephemeral
 storage, environment variables beyond the reserved ones, or a runtime that is
@@ -1001,37 +1004,124 @@ not Node.js or Python is refused by name from the restrictions page
 
 The four triggers run at the documented points
 ([CloudFront events that can trigger a Lambda@Edge function](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-cloudfront-trigger-events.html)):
-the viewer request runs after a CloudFront Function viewer-request and not when
-fetching a custom error page; the origin request runs only when the request is
-forwarded to the origin; the origin response runs even for an origin error and
-not for a fresh cache hit or an origin-request generated response; the viewer
-response runs from the cache or the origin and not for an origin status of 400
-or higher, a custom error page or a viewer-request generated response. The event
-is the documented `Records[0].cf` object
+
+- **viewer request** runs when CloudFront receives the request, after a
+  CloudFront Function viewer-request when both are associated. It does not run
+  when fetching a custom error page.
+- **origin request** runs only when the request is forwarded to the origin, so
+  a cache hit never runs it.
+- **origin response** runs after the origin answers, even with an error status,
+  and does not run for a fresh cache hit or when an origin-request function
+  generated the response.
+- **viewer response** runs before the response reaches the viewer, from the
+  cache or the origin, and does not run when the origin returned 400 or higher,
+  for a custom error page, or for a viewer-request generated response.
+
+The event object is the documented `Records[0].cf` shape
 ([Lambda@Edge event structure](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-event-structure.html)):
-lowercase header names map to arrays of `{key, value}`, a returned entry without
-`key` gets initial capitalization, the uri must begin with a forward slash and
-never re-selects the behavior, and `IncludeBody` exposes a base64 body with
-`inputTruncated`. A viewer-request generated response is not cached; an
-origin-request generated response is cached under the behavior TTLs and served
-from the cache without running the function
+`config` carries `distributionDomainName`, `distributionId`, `eventType` and
+`requestId`; `request` carries `clientIp`, `headers` as lowercase names mapping
+to arrays of `{key, value}` (a returned entry without `key` gets initial
+capitalization for each part, separated by hyphens), `method`, `querystring`,
+`uri` (which must begin with a forward slash and never changes the matched
+behavior or origin) and — with `IncludeBody` — a base64 `body` with
+`inputTruncated` and `action`. Origin events add `origin.custom` or
+`origin.s3`. A viewer-request function that returns the `CloudFront-*` header
+is a 502.
+
+A generated response must have a `status` between 200 and 599. A viewer-request
+generated response is not cached. An origin-request generated response is cached
+under the behavior's normal TTL rules and later served from the cache without
+running the function
 ([Generating HTTP responses in a Lambda@Edge trigger](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-generating-http-responses.html)).
-A 204 with a body and an oversize body are 502s, viewer events time out at 5
-seconds and origin events at 30 on the run clock, an invalid returned object is
-a 502 and an unhandled exception or timeout is a 503. An origin-request function
-may switch to another origin the distribution declares; a domain the assembly
-does not declare is a named 502.
+A 204 with a body is a 502. The request body exposed with `IncludeBody` is
+truncated at 40 KB for viewer events and 1 MB for origin events, and a replaced
+body over the limit (53.2 KB or 1.33 MB when base64) is a 502. Viewer events
+time out at 5 seconds and origin events at 30 seconds on the run clock
+([Quotas on Lambda@Edge](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/cloudfront-limits.html#limits-lambda-at-edge)).
+An invalid returned object is a 502 and an unhandled exception or timeout is a
+503 ([Resolve Lambda@Edge 502 and 503 errors](https://repost.aws/knowledge-center/lambda-edge-500-errors)).
+A `viewer-response` function that changes the status code is a 502, as the
+restrictions page requires.
+
+An origin-request function may return a different `origin`; the gateway resolves
+its domain to an origin the distribution declares. A domain the assembly does
+not declare is a named 502 — the gateway never reaches the internet.
 
 **CloudFront KeyValueStore.** An `AWS::CloudFront::KeyValueStore` is
-materialised from the S3 asset its `ImportSource` names in the assembly, in the
-documented `{"data":[{"key","value"}]}` format
+materialised from its `ImportSource`: the import file is the S3 asset the cloud
+assembly carries, in the documented `{"data":[{"key","value"}]}` format
 ([Create a key value store](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/kvs-with-functions-create-s3-kvp.html)).
 A function's `KeyValueStoreAssociations` makes `cf.kvs()` return a handle whose
-`get(key, {format})`, `exists(key)` and `meta()` return promises, and a missing
-key rejects, under the JavaScript 2.0 runtime only
+`get(key, {format})` (string, json or bytes), `exists(key)` and `meta()`
+(`creationDateTime`, `lastUpdatedDateTime`, `keyCount`) return promises, and a
+missing key rejects, exactly as the helper page states
 ([CloudFront Functions custom methods](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/functions-custom-methods.html)).
-One store per function and the key/value/store size quotas are enforced at plan
-time.
+The store is available only under the JavaScript 2.0 runtime; a 1.0 function
+that associates one is refused by name, one store per function is enforced, and
+a key over 512 bytes, a value over 1 KB or a store over 5 MB is refused at plan
+time. A function without an association that calls `cf.kvs()` fails exactly as
+before. `session describe` reports each store with its key count.
+
+**Signed URLs and signed cookies.** A behavior whose `TrustedKeyGroups` is
+enabled requires a valid signed URL or signed cookie for every request except
+OPTIONS
+([Serve private content with signed URLs and signed cookies](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-trusted-signers.html)).
+The signature is verified against the real public keys of the behavior's key
+groups: canned (`Expires`) and custom (`Policy`) policies, SHA-1 by default and
+SHA-256 through `Hash-Algorithm`, RSA and ECDSA keys, the documented base64
+character replacements (`+`→`-`, `=`→`_`, `/`→`~`), the canned policy JSON with
+its whitespace removed, and the `CloudFront-Expires`/`CloudFront-Signature`/
+`CloudFront-Key-Pair-Id`/`CloudFront-Hash-Algorithm` (or `CloudFront-Policy`)
+cookie names, which are case-sensitive
+([Create a signed URL using a canned policy](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-creating-signed-url-canned-policy.html),
+[Create a signed URL using a custom policy](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-creating-signed-url-custom-policy.html)).
+A custom policy's `Resource` is matched against the raw request URL within the
+protocol/domain/path/query section boundaries, with the four documented
+exceptions (a trailing asterisk in the path also covers the query, a trailing
+asterisk in the domain also covers the path and query, an omitted protocol with
+a leading asterisk in the domain means a protocol wildcard, and `*` alone
+matches any URL). `DateLessThan` and `DateGreaterThan` are evaluated on the run
+clock and `IpAddress` is an IPv4 CIDR range; IPv6 is refused as the page states.
+A missing, malformed, expired, not-yet-valid, wrong-key or wrong-IP signature is
+the documented 403, which is subject to the distribution's custom error response
+for 403 and its error caching. A query string added after signing invalidates
+the URL. A behavior without trusted key groups stays public, and `TrustedSigners`
+(the legacy AWS-account signer form) is refused by name. Each
+`AWS::CloudFront::PublicKey` gets a deterministic local `Key-Pair-Id` reported by
+`plan` and `session describe`, so an application can sign locally.
+
+**Geo restriction.** `Restrictions.GeoRestriction` is applied from the run's
+`--viewer-country XX` flag (ISO 3166-1 alpha-2, upper case) before any viewer
+function runs. An allowlist serves only the listed countries, a denylist blocks
+them, and `none` does not restrict
+([Restrict the geographic distribution of your content](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/georestrictions.html)).
+Without the flag the viewer's location is undetermined and the content is
+served, as the page states. A blocked viewer gets 403, subject to the custom
+error response for 403 and its error caching. When a cache or origin request
+policy forwards `CloudFront-Viewer-Country`, the gateway adds it from the same
+source
+([Add CloudFront request headers](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/adding-cloudfront-headers.html)).
+Any other `Restrictions` member is refused by name.
+
+**Field-level encryption.** A behavior linked to an
+`AWS::CloudFront::FieldLevelEncryptionConfig` encrypts the fields a profile
+selects for a POST whose content type is `application/x-www-form-urlencoded`.
+The profile is the content-type profile, overridden by the `fle-profile` query
+argument when the configuration allows it; an unknown content type or profile is
+forwarded or blocked as the configuration says
+([Use field-level encryption](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/field-level-encryption.html)).
+Each matching field value is replaced with base64 AWS Encryption SDK ciphertext
+that decrypts with the profile's public key's private key under the profile's
+provider name, the public key's name and
+`RSA/ECB/OAEPWithSHA-256AndMGF1Padding`; the local gateway writes the SDK's
+version 1 non-framed message with the `ALG_AES_256_GCM_IV12_TAG16_HKDF_SHA256`
+suite. More than ten field patterns, overlapping patterns and characters the
+page does not allow are refused at plan time. The page's HTTPS viewer, all-seven
+methods and origin-protocol preconditions are reported as a local deviation: the
+local viewer is plain HTTP, so the behavior is applied and the requirement is
+named in the distribution's report. `FieldLevelEncryptionId` on a behavior that
+names no configuration in the assembly is refused by name.
 
 ## Lambda layers and container-image functions
 
@@ -2042,15 +2132,21 @@ the harness records it.
   range. A Function URL `RESPONSE_STREAM` body is buffered. An `AWS_IAM`
   Function URL's SigV4 signing and the gateway's in-process check of that
   locally signed request are reproduced, but IAM policy evaluation is not.
-  A literal external custom origin is refused rather than reached. Lambda@Edge,
-  KeyValueStore, signed URLs, field-level encryption, geo restriction and a WAF
-  web ACL refuse the distribution. The cache policy is applied — the cache key,
-  TTLs, stale directives and error caching; `Compress`, the behavior-level legacy
+  A literal external custom origin is refused rather than reached. A WAF web
+  ACL refuses the distribution: managed rule content is owned by AWS and is a
+  docs/125 true limit. Lambda@Edge associations run through the real Node or
+  Python containers; a key value store is materialised from the asset the
+  assembly carries; signed URLs and cookies are verified against the key
+  group's real public keys; geo restriction uses the run's
+  `--viewer-country`; and field-level encryption produces AWS Encryption SDK
+  ciphertext. The cache policy is applied — the cache key, TTLs, stale
+  directives and error caching; `Compress`, the behavior-level legacy
   `DefaultTTL`/`MinTTL`/`MaxTTL`, access and real-time logging, `PriceClass` and
-  the other placement settings are reported, not emulated. The Node `vm` executor
-  matches the CloudFront Functions API and globals but is not a hardened security
-  boundary, does not enforce CloudFront's 1 ms CPU budget, and cannot reproduce
-  CloudFront-only device, location or TLS headers.
+  the other placement settings are reported, not emulated. The Node `vm`
+  executor matches the CloudFront Functions API and globals but is not a
+  hardened security boundary, does not enforce CloudFront's 1 ms CPU budget, and
+  cannot reproduce CloudFront-only device headers or TLS; the viewer-country
+  header is reproduced from `--viewer-country`.
 - **Kinesis and CloudWatch Logs are emulated by moto.** The stream mapping,
   the subscription filter, partial failure and the function-log capture are
   real, but a moto stream never splits or merges and its sequence numbers are

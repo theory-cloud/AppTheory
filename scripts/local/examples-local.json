@@ -362,9 +362,9 @@
     },
     "examples/cdk/media-cdn/bin/app.ts": {
       "run": "media-cdn-gateway",
-      "class": "L3",
-      "gap": "Signed-URL verification (R5c): the private distribution is refused with A5a's named reason; the example ships no media, so a probe object is written to the provisioned public bucket. CloudFront edge network (docs/125 true limit); Lambda@Edge and KeyValueStore (R5b).",
-      "description": "Media CDN: the public distribution serves a probe object from the local S3 emulator with its metadata; the private trusted-key-group distribution stays refused with the named signed-URL reason; missing objects return 403 under OAC. A 403 custom error response served the configured page with status 200; the s3proxy 403 carried Content-Type: application/xml and x-amz-request-id but no Cache-Control max-age/s-maxage, so the page was served on both requests and the second was a miss (a 403 is cached only with that header); when the page itself was unavailable the status came from the pages origin (403 AccessDenied)."
+      "class": "L2",
+      "gap": "CloudFront edge network and edge TLS (docs/125 true limits); the private distribution's signed URLs and cookies are verified against the key group's real public keys, and the local S3 origin uses the OAC access model without bucket policies.",
+      "description": "Media CDN: the public distribution serves a probe object from the local S3 emulator with its metadata and a custom 403 error page; the private trusted-key-group distribution requires a signature: unsigned 403, a canned-policy SHA-256 URL, a custom-policy signed cookie, a query added after signing 403, an unknown Key-Pair-Id 403, OPTIONS exempt, and the expired URL 403 after clock.advance."
     },
     "examples/cdk/microvm-controller/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
@@ -568,8 +568,8 @@
     "examples/cdk/edge-gateway/bin/app.ts": {
       "run": "edge-gateway",
       "class": "L2",
-      "gap": "CloudFront edge network and edge TLS (docs/125 true limits); viewer events run against the viewer's plain-HTTP connection, so ViewerProtocolPolicy is reported rather than enforced.",
-      "description": "Edge gateway: four Lambda@Edge associations run through the real Node containers (viewer-request uri rewrite, origin-request generated response cached without a second invocation, origin-response body replacement, viewer-response header), IncludeBody exposes the base64 body, an origin rewrite reaches the other declared origin, and a runtime 2.0 CloudFront Function reads get/exists/meta from its key value store."
+      "gap": "CloudFront edge network and edge TLS (docs/125 true limits); viewer events run against the viewer's plain-HTTP connection, so ViewerProtocolPolicy is reported rather than enforced. The field-level encryption row needs the AWS Encryption SDK on the harness interpreter.",
+      "description": "Edge gateway: four Lambda@Edge associations run through the real Node containers (viewer-request uri rewrite, origin-request generated response cached without a second invocation, origin-response body replacement, viewer-response header), IncludeBody exposes the base64 body, an origin rewrite reaches the other declared origin, a runtime 2.0 CloudFront Function reads get/exists/meta from its key value store, geo restriction serves US, refuses JP and serves an undetermined location, and the origin decrypts the field-level encryption ciphertext with the real AWS Encryption SDK."
     },
     "examples/cdk/edge-gateway/handlers/viewer-request.js": {
       "coveredBy": "examples/cdk/edge-gateway/bin/app.ts",

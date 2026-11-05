@@ -566,7 +566,9 @@ func parseDistribution(
 			distribution.Reported = append(distribution.Reported, reportProperty("distribution", key))
 		case "Restrictions":
 			seen[key] = true
-			distribution.Refusals = append(distribution.Refusals, refuseProperty("distribution", key))
+			restriction, problems := parseRestrictions(raw, distribution.LogicalID)
+			distribution.GeoRestriction = restriction
+			distribution.Refusals = append(distribution.Refusals, problems...)
 		case "Staging":
 			seen[key] = true
 			var staging bool
@@ -940,11 +942,17 @@ func parseBehavior(
 			}
 			behavior.EdgeLambdas = associations
 		case "FieldLevelEncryptionId":
-			if !isEmptyValue(value) {
-				behavior.Refusals = append(behavior.Refusals, refuseProperty("behavior", key))
-			} else {
+			if isEmptyValue(value) {
 				behavior.Reported = append(behavior.Reported, reportProperty("behavior", key))
+				continue
 			}
+			configID, ok := resolveResourceRef(value, stack, index)
+			if !ok {
+				behavior.Refusals = append(behavior.Refusals,
+					"FieldLevelEncryptionId does not reference an AWS::CloudFront::FieldLevelEncryptionConfig in this assembly")
+				continue
+			}
+			behavior.FieldLevelEncryptionID = configID
 		case "ForwardedValues":
 			behavior.Refusals = append(behavior.Refusals, refuseProperty("behavior", key))
 		case "GrpcConfig":
@@ -959,9 +967,21 @@ func parseBehavior(
 			} else {
 				behavior.Reported = append(behavior.Reported, reportProperty("behavior", key))
 			}
-		case "TrustedKeyGroups", "TrustedSigners":
-			if !isEmptyArray(value) && !isEmptyValue(value) {
-				behavior.Refusals = append(behavior.Refusals, refuseProperty("behavior", key))
+		case "TrustedKeyGroups":
+			if isEmptyValue(value) {
+				behavior.Reported = append(behavior.Reported, reportProperty("behavior", key))
+				continue
+			}
+			settings, problem := parseTrustedKeyGroups(value, stack, index)
+			if problem != "" {
+				behavior.Refusals = append(behavior.Refusals, problem)
+				continue
+			}
+			behavior.TrustedKeyGroups = settings
+		case "TrustedSigners":
+			if !isEmptyValue(value) {
+				behavior.Refusals = append(behavior.Refusals,
+					"TrustedSigners names AWS-account signers; that legacy signer form is not supported locally, use a trusted key group")
 			} else {
 				behavior.Reported = append(behavior.Reported, reportProperty("behavior", key))
 			}

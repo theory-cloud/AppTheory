@@ -239,9 +239,12 @@ const assertions = {
 
   EdgeGatewayExample() {
     const distributions = byType("AWS::CloudFront::Distribution");
-    assert.equal(distributions.length, 1, "expected the edge distribution");
-    const edgeConfig = distributions[0][1].Properties.DistributionConfig;
-    assert.equal(edgeConfig.Comment, "Edge gateway distribution");
+    assert.equal(distributions.length, 2, "expected the edge and geo distributions");
+    const configs = distributions.map(([, distribution]) => distribution.Properties.DistributionConfig);
+    const edgeConfig = configs.find((config) => config.Comment && config.Comment.startsWith("Edge gateway"));
+    const geoConfig = configs.find((config) => config.Comment && config.Comment.startsWith("Geo restricted"));
+    assert.ok(edgeConfig, "missing edge distribution");
+    assert.ok(geoConfig, "missing geo distribution");
 
     const versions = byType("AWS::Lambda::Version");
     assert.equal(versions.length, 4, "expected four Lambda@Edge versions");
@@ -272,6 +275,21 @@ const assertions = {
     const storeRef = associationsOf[0].KeyValueStoreARN ?? {};
     const storeTarget = storeRef.Ref ?? (storeRef["Fn::GetAtt"] ?? [])[0];
     assert.equal(storeTarget, stores[0][0], "the association must name the key value store");
+
+    assert.equal(byType("AWS::CloudFront::PublicKey").length, 1, "expected one FLE public key");
+    assert.equal(byType("AWS::CloudFront::FieldLevelEncryptionProfile").length, 1);
+    assert.equal(byType("AWS::CloudFront::FieldLevelEncryptionConfig").length, 1);
+    const apiBehavior = edgeConfig.CacheBehaviors.find((entry) => entry.PathPattern === "/api/*");
+    assert.ok(apiBehavior, "missing the /api/* behavior");
+    assert.ok(apiBehavior.FieldLevelEncryptionId, "the /api/* behavior must link the FLE configuration");
+    assert.equal(apiBehavior.ViewerProtocolPolicy, "redirect-to-https");
+    assert.deepEqual(
+      [...apiBehavior.AllowedMethods].sort(),
+      ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"],
+    );
+
+    assert.deepEqual(geoConfig.Restrictions.GeoRestriction.RestrictionType, "whitelist");
+    assert.deepEqual([...geoConfig.Restrictions.GeoRestriction.Locations].sort(), ["DE", "US"]);
   },
 
   MediaCdnExample() {

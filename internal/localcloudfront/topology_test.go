@@ -72,8 +72,8 @@ func TestSnapshotTopology(t *testing.T) {
 		{name: "path-routed-frontend-basic.json", wantServable: true, behaviors: 0, functions: 0, origins: 1},
 		{name: "path-routed-frontend-multi-spa.json", wantServable: true, behaviors: 3, functions: 1, origins: 3},
 		{name: "media-cdn-basic.json", wantServable: true, behaviors: 0, functions: 0, origins: 1},
-		{name: "media-cdn-private-keygroup.json", wantServable: false},
-		{name: "media-cdn-private-pem.json", wantServable: false},
+		{name: "media-cdn-private-keygroup.json", wantServable: true, behaviors: 0, functions: 0, origins: 1},
+		{name: "media-cdn-private-pem.json", wantServable: true, behaviors: 0, functions: 0, origins: 1},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -143,6 +143,27 @@ func TestPathRoutedBehaviorOrderAndRewriteFunction(t *testing.T) {
 	}
 	if len(topology.Functions) != 1 || topology.Functions[0].Runtime != runtimeJS20 {
 		t.Fatalf("unexpected functions: %+v", topology.Functions)
+	}
+}
+
+func TestPrivateMediaTrustedKeyGroupsAreResolved(t *testing.T) {
+	topology := parseSnapshot(t, "media-cdn-private-pem.json")
+	distribution := topology.Distributions[0]
+	if !distribution.Servable() {
+		t.Fatalf("a distribution with a trusted key group must be served: %v", distribution.Refusals)
+	}
+	behavior := distribution.DefaultBehavior
+	if behavior.TrustedKeyGroups == nil || !behavior.TrustedKeyGroups.Enabled {
+		t.Fatalf("the behavior must require a signed URL or cookie: %+v", behavior.TrustedKeyGroups)
+	}
+	if len(topology.PublicKeys) != 1 || len(topology.KeyGroups) != 1 {
+		t.Fatalf("want one public key and one key group, got %d/%d", len(topology.PublicKeys), len(topology.KeyGroups))
+	}
+	if topology.PublicKeys[0].ID == "" {
+		t.Fatal("the local public key needs a deterministic Key-Pair-Id")
+	}
+	if len(topology.KeyGroups[0].Items) != 1 {
+		t.Fatalf("key group items = %v", topology.KeyGroups[0].Items)
 	}
 }
 

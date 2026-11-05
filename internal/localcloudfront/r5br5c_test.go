@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -139,6 +140,267 @@ func signedRequestState(url string) *requestState {
 	return newRequestState(request, nil)
 }
 
+func TestSignedURLCannedPolicyRSAAndSHA1Default(t *testing.T) {
+	key, pemText := testRSAKey(t)
+	gateway, behavior := signingTopology(t, pemText, "test-key")
+	expires := time.Now().Add(time.Hour).Unix()
+	url := "http://d111.cloudfront.local/private/file.txt"
+	policy := fmt.Sprintf(`{"Statement":[{"Resource":%q,"Condition":{"DateLessThan":{"AWS:EpochTime":%d}}}]}`, url, expires)
+	signature := signPolicy(t, key, policy, "SHA1")
+	keyID := gateway.Topology.PublicKeys[0].ID
+
+	state := signedRequestState(url + fmt.Sprintf("?Expires=%d&Signature=%s&Key-Pair-Id=%s", expires, signature, keyID))
+	if err := gateway.checkSignedAccess(state, behavior, time.Now()); err != nil {
+		t.Fatalf("a canned SHA-1 URL must verify: %v", err)
+	}
+
+	// The same signature with Hash-Algorithm=SHA256 must not verify.
+	state = signedRequestState(url + fmt.Sprintf("?Expires=%d&Signature=%s&Key-Pair-Id=%s&Hash-Algorithm=SHA256", expires, signature, keyID))
+	if err := gateway.checkSignedAccess(state, behavior, time.Now()); err == nil {
+		t.Fatal("a SHA-1 signature must not pass as SHA-256")
+	}
+}
+
+func TestSignedURLCannedPolicySHA256AndECDSA(t *testing.T) {
+	key, pemText := testECDSAKey(t)
+	gateway, behavior := signingTopology(t, pemText, "ecdsa-key")
+	expires := time.Now().Add(time.Hour).Unix()
+	url := "http://d111.cloudfront.local/private/file.txt"
+	policy := fmt.Sprintf(`{"Statement":[{"Resource":%q,"Condition":{"DateLessThan":{"AWS:EpochTime":%d}}}]}`, url, expires)
+	signature := signPolicy(t, key, policy, "SHA256")
+	keyID := gateway.Topology.PublicKeys[0].ID
+	state := signedRequestState(url + fmt.Sprintf("?Expires=%d&Signature=%s&Key-Pair-Id=%s&Hash-Algorithm=SHA256", expires, signature, keyID))
+	if err := gateway.checkSignedAccess(state, behavior, time.Now()); err != nil {
+		t.Fatalf("an ECDSA SHA-256 URL must verify: %v", err)
+	}
+}
+
+func TestSignedURLRejections(t *testing.T) {
+	key, pemText := testRSAKey(t)
+	gateway, behavior := signingTopology(t, pemText, "test-key")
+	keyID := gateway.Topology.PublicKeys[0].ID
+	now := time.Now()
+	url := "http://d111.cloudfront.local/private/file.txt"
+	expires := now.Add(time.Hour).Unix()
+	canned := fmt.Sprintf(`{"Statement":[{"Resource":%q,"Condition":{"DateLessThan":{"AWS:EpochTime":%d}}}]}`, url, expires)
+	signature := signPolicy(t, key, canned, "SHA256")
+
+	cases := []struct {
+		name   string
+		state  *requestState
+		needle string
+	}{
+		{"missing", signedRequestState(url), "no signed URL or signed cookie"},
+		{"wrong key", signedRequestState(url + fmt.Sprintf("?Expires=%d&Signature=%s&Key-Pair-Id=K000000000000", expires, signature)), "not a public key"},
+		{"expired", signedRequestState(url + fmt.Sprintf("?Expires=%d&Signature=%s&Key-Pair-Id=%s&Hash-Algorithm=SHA256", now.Add(-time.Hour).Unix(), signPolicy(t, key, fmt.Sprintf(`{"Statement":[{"Resource":%q,"Condition":{"DateLessThan":{"AWS:EpochTime":%d}}}]}`, url, now.Add(-time.Hour).Unix()), "SHA256"), keyID)), "expired"},
+		{"bad signature", signedRequestState(url + fmt.Sprintf("?Expires=%d&Signature=AAAA&Key-Pair-Id=%s", expires, keyID)), "signature"},
+		{"bad hash algorithm", signedRequestState(url + fmt.Sprintf("?Expires=%d&Signature=%s&Key-Pair-Id=%s&Hash-Algorithm=MD5", expires, signature, keyID)), "Hash-Algorithm"},
+		{"query added after signing", signedRequestState(url + fmt.Sprintf("?Expires=%d&Signature=%s&Key-Pair-Id=%s&Hash-Algorithm=SHA256&extra=1", expires, signature, keyID)), "does not match"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			err := gateway.checkSignedAccess(test.state, behavior, now)
+			if err == nil {
+				t.Fatalf("%s must be rejected", test.name)
+			}
+			if !strings.Contains(err.Error(), test.needle) {
+				t.Fatalf("%s: %v does not name %q", test.name, err, test.needle)
+			}
+		})
+	}
+}
+
+func TestSignedURLOPTIONSIsExempt(t *testing.T) {
+	key, pemText := testRSAKey(t)
+	gateway, behavior := signingTopology(t, pemText, "test-key")
+	_ = key
+	request := httptest.NewRequestWithContext(context.Background(), http.MethodOptions, "http://d111.cloudfront.local/private/file.txt", nil)
+	state := newRequestState(request, nil)
+	if err := gateway.checkSignedAccess(state, behavior, time.Now()); err != nil {
+		t.Fatalf("OPTIONS must not require a signature: %v", err)
+	}
+}
+
+func TestSignedCookieCustomPolicy(t *testing.T) {
+	key, pemText := testRSAKey(t)
+	gateway, behavior := signingTopology(t, pemText, "test-key")
+	keyID := gateway.Topology.PublicKeys[0].ID
+	now := time.Now()
+	url := "http://d111.cloudfront.local/private/file.txt"
+	expires := now.Add(time.Hour).Unix()
+	policy := fmt.Sprintf(`{"Statement":[{"Resource":%q,"Condition":{"DateLessThan":{"AWS:EpochTime":%d}}}]}`, url+"*", expires)
+	signature := signPolicy(t, key, policy, "SHA256")
+	encodedPolicy := strings.NewReplacer("+", "-", "=", "_", "/", "~").Replace(base64.StdEncoding.EncodeToString([]byte(policy)))
+
+	state := signedRequestState(url)
+	state.Header.Set("Cookie", fmt.Sprintf("CloudFront-Policy=%s; CloudFront-Signature=%s; CloudFront-Key-Pair-Id=%s; CloudFront-Hash-Algorithm=SHA256",
+		encodedPolicy, signature, keyID))
+	if err := gateway.checkSignedAccess(state, behavior, now); err != nil {
+		t.Fatalf("a custom-policy signed cookie must verify: %v", err)
+	}
+
+	// Cookie names are case-sensitive.
+	state = signedRequestState(url)
+	state.Header.Set("Cookie", fmt.Sprintf("cloudfront-policy=%s; cloudfront-signature=%s; cloudfront-key-pair-id=%s",
+		encodedPolicy, signature, keyID))
+	if err := gateway.checkSignedAccess(state, behavior, now); err == nil {
+		t.Fatal("lower-case cookie names are not signed cookies")
+	}
+}
+
+func TestCustomPolicyConditions(t *testing.T) {
+	now := time.Now()
+	base := func(condition string) string {
+		return fmt.Sprintf(`{"Statement":[{"Resource":"http://d111.cloudfront.local/*","Condition":%s}]}`, condition)
+	}
+	cases := []struct {
+		name      string
+		policy    string
+		viewerIP  string
+		wantError string
+	}{
+		{"valid", base(fmt.Sprintf(`{"DateLessThan":{"AWS:EpochTime":%d}}`, now.Add(time.Hour).Unix())), "203.0.113.5", ""},
+		{"expired", base(fmt.Sprintf(`{"DateLessThan":{"AWS:EpochTime":%d}}`, now.Add(-time.Minute).Unix())), "203.0.113.5", "expired"},
+		{"not yet valid", base(fmt.Sprintf(`{"DateLessThan":{"AWS:EpochTime":%d},"DateGreaterThan":{"AWS:EpochTime":%d}}`, now.Add(time.Hour).Unix(), now.Add(time.Minute).Unix())), "203.0.113.5", "not valid yet"},
+		{"ip allowed", base(fmt.Sprintf(`{"DateLessThan":{"AWS:EpochTime":%d},"IpAddress":{"AWS:SourceIp":"192.0.2.0/24"}}`, now.Add(time.Hour).Unix())), "192.0.2.10", ""},
+		{"ip denied", base(fmt.Sprintf(`{"DateLessThan":{"AWS:EpochTime":%d},"IpAddress":{"AWS:SourceIp":"192.0.2.0/24"}}`, now.Add(time.Hour).Unix())), "198.51.100.1", "outside the policy IpAddress"},
+		{"ipv6 refused", base(fmt.Sprintf(`{"DateLessThan":{"AWS:EpochTime":%d},"IpAddress":{"AWS:SourceIp":"2001:db8::/32"}}`, now.Add(time.Hour).Unix())), "192.0.2.10", "IPv6"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			statement, err := parsePolicyStatement(test.policy)
+			if err != nil {
+				t.Fatalf("parse policy: %v", err)
+			}
+			err = statement.evaluate("http://d111.cloudfront.local/file.txt", test.viewerIP, now)
+			if test.wantError == "" {
+				if err != nil {
+					t.Fatalf("policy must pass: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("want an error naming %q, got %v", test.wantError, err)
+			}
+		})
+	}
+}
+
+func TestMatchResourcePatternSections(t *testing.T) {
+	cases := []struct {
+		pattern string
+		url     string
+		want    bool
+	}{
+		{"*", "http://d111.cloudfront.local/anything", true},
+		{"https://www.example.com/hello*world", "https://www.example.com/helloworld", true},
+		{"https://www.example.com/hello*world", "https://www.example.com/hello-world", true},
+		{"https://www.example.com/hello*world", "https://www.example.net/hello?world", false},
+		{"http://example.com/hello*", "http://example.com/hello?x=1", true},
+		{"http://example.com*", "http://example.com/a/b?c=d", true},
+		{"*example.com", "http://example.com/", true},
+		{"*example.com", "http://example.com/a", false},
+		{"https://*", "https://d111.cloudfront.local/training/orientation.pdf", true},
+		{"https://d111.cloudfront.local/*game_download.zip*", "https://d111.cloudfront.local/example_game_download.zip?license=yes", true},
+		{"http://example.com/path?c*", "http://example.com/path?cat", true},
+		{"http://example.com/path?c*", "http://example.com/path?dog", false},
+	}
+	for _, test := range cases {
+		if got := matchResourcePattern(test.pattern, test.url); got != test.want {
+			t.Fatalf("%q against %q = %v, want %v", test.pattern, test.url, got, test.want)
+		}
+	}
+}
+
+func TestGeoRestrictionBlocks(t *testing.T) {
+	allow := &GeoRestriction{Type: "whitelist", Locations: []string{"US", "DE"}}
+	deny := &GeoRestriction{Type: "blacklist", Locations: []string{"US"}}
+	cases := []struct {
+		name      string
+		restrict  *GeoRestriction
+		country   string
+		wantBlock bool
+	}{
+		{"allowlist inside", allow, "US", false},
+		{"allowlist outside", allow, "JP", true},
+		{"allowlist undetermined", allow, "", false},
+		{"denylist inside", deny, "US", true},
+		{"denylist outside", deny, "JP", false},
+		{"denylist undetermined", deny, "", false},
+		{"none", &GeoRestriction{Type: "none"}, "JP", false},
+		{"nil", nil, "JP", false},
+	}
+	for _, test := range cases {
+		if got := test.restrict.Blocks(test.country); got != test.wantBlock {
+			t.Fatalf("%s: Blocks(%q) = %v, want %v", test.name, test.country, got, test.wantBlock)
+		}
+	}
+}
+
+func TestParseRestrictionsRefusals(t *testing.T) {
+	cases := []struct {
+		name   string
+		raw    string
+		needle string
+	}{
+		{"lowercase country", `{"GeoRestriction":{"RestrictionType":"whitelist","Locations":["us"]}}`, "ISO 3166-1 alpha-2"},
+		{"unknown type", `{"GeoRestriction":{"RestrictionType":"sometimes","Locations":[]}}`, "RestrictionType"},
+		{"empty allowlist", `{"GeoRestriction":{"RestrictionType":"whitelist","Locations":[]}}`, "no Locations"},
+		{"other member", `{"GeoRestriction":{"RestrictionType":"none"},"SomethingElse":{}}`, "SomethingElse"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			_, refusals := parseRestrictions([]byte(test.raw), "TestDistribution")
+			if len(refusals) == 0 {
+				t.Fatalf("%s must be refused", test.name)
+			}
+			if !strings.Contains(strings.Join(refusals, "\n"), test.needle) {
+				t.Fatalf("%s: refusals %v do not name %q", test.name, refusals, test.needle)
+			}
+		})
+	}
+}
+
+func TestFieldLevelEncryptionProfileRules(t *testing.T) {
+	patterns := func(values ...string) string {
+		quoted := make([]string, 0, len(values))
+		for _, value := range values {
+			quoted = append(quoted, fmt.Sprintf("%q", value))
+		}
+		return strings.Join(quoted, ",")
+	}
+	cases := []struct {
+		name    string
+		fields  string
+		refused bool
+		needle  string
+	}{
+		{"valid", patterns("card", "ssn"), false, ""},
+		{"wildcard", patterns("card*"), false, ""},
+		{"too many", patterns("a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"), true, "up to 10"},
+		{"overlap", patterns("ABC*", "AB*"), true, "overlap"},
+		{"bad character", patterns("card number"), true, "characters"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			profile := &FieldLevelEncryptionProfile{
+				LogicalID: "Profile",
+				Entities:  []EncryptionEntity{{PublicKeyID: "Key", ProviderID: "p", FieldPatterns: splitPatterns(test.fields)}},
+			}
+			validateFieldPatterns(profile)
+			if test.refused {
+				if len(profile.Refusals) == 0 || !strings.Contains(strings.Join(profile.Refusals, "\n"), test.needle) {
+					t.Fatalf("%s: refusals %v do not name %q", test.name, profile.Refusals, test.needle)
+				}
+				return
+			}
+			if len(profile.Refusals) != 0 {
+				t.Fatalf("%s: unexpected refusals %v", test.name, profile.Refusals)
+			}
+		})
+	}
+}
+
 func splitPatterns(encoded string) []string {
 	trimmed := strings.Trim(encoded, "[]")
 	if trimmed == "" {
@@ -150,6 +412,67 @@ func splitPatterns(encoded string) []string {
 		out = append(out, strings.Trim(part, `"`))
 	}
 	return out
+}
+
+func TestFieldLevelEncryptionSelectsProfile(t *testing.T) {
+	config := &FieldLevelEncryptionConfig{
+		ContentTypeProfileConfig: &ContentTypeProfileConfig{
+			Profiles: []ContentTypeProfile{{ContentType: formContentType, Format: "URLEncoded", ProfileID: "Default"}},
+		},
+		QueryArgProfileConfig: &QueryArgProfileConfig{
+			Profiles: []QueryArgProfile{{QueryArg: "cards", ProfileID: "Cards"}},
+		},
+	}
+	if profile, problem := config.selectProfile("/", ""); profile != "Default" || problem != "" {
+		t.Fatalf("content type profile = %q (%s)", profile, problem)
+	}
+	if profile, problem := config.selectProfile("/", "fle-profile=cards"); profile != "Cards" || problem != "" {
+		t.Fatalf("query argument profile = %q (%s)", profile, problem)
+	}
+	if _, problem := config.selectProfile("/", "fle-profile=unknown"); problem == "" {
+		t.Fatal("an unknown query argument profile must block when forwarding is disabled")
+	}
+	config.QueryArgProfileConfig.ForwardWhenQueryArgProfileIsUnknown = true
+	if profile, problem := config.selectProfile("/", "fle-profile=unknown"); profile != "Default" || problem != "" {
+		t.Fatalf("an unknown profile must fall back to the content type profile: %q (%s)", profile, problem)
+	}
+}
+
+func TestFieldLevelEncryptionEncryptsMatchingFields(t *testing.T) {
+	key, _ := testRSAKey(t)
+	profile := &FieldLevelEncryptionProfile{
+		LogicalID: "Profile",
+		Entities: []EncryptionEntity{{
+			PublicKeyID:   "Key",
+			ProviderID:    "DEMO",
+			FieldPatterns: []string{"card"},
+		}},
+	}
+	keys := map[string]*PublicKey{"Key": {LogicalID: "Key", Name: "DEMOKEY", key: &key.PublicKey}}
+	body := []byte("card=4111111111111111&name=Jane+Doe")
+	encrypted, err := encryptFormBody(body, profile, keys, nil)
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	if strings.Contains(string(encrypted), "4111111111111111") {
+		t.Fatalf("the plaintext card number survived: %s", encrypted)
+	}
+	if !strings.Contains(string(encrypted), "name=Jane+Doe") {
+		t.Fatalf("the name field must stay unchanged: %s", encrypted)
+	}
+	// The ciphertext field is base64 after URL decoding.
+	_, value, _ := strings.Cut(string(encrypted), "card=")
+	unescaped, err := url.QueryUnescape(strings.Split(value, "&")[0])
+	if err != nil {
+		t.Fatalf("the ciphertext is not URL-encoded: %v", err)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(unescaped)
+	if err != nil {
+		t.Fatalf("the ciphertext must be base64: %v", err)
+	}
+	if len(decoded) < 100 || decoded[0] != esdkVersion {
+		t.Fatalf("the ciphertext is not an AWS Encryption SDK message: %x", decoded[:min(4, len(decoded))])
+	}
 }
 
 func TestKeyValueStoreImportFile(t *testing.T) {

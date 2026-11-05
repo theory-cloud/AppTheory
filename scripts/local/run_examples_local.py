@@ -6137,8 +6137,10 @@ def run_edge_gateway(harness: Harness) -> str:
     fle_private_key = scratch / "fle-private.pem"
 
     try:
-        fle_public_base64 = ""
-        fle_private_pem = b""
+        fle_public_key, fle_public_private = generate_rsa_keypair(scratch)
+        fle_private_key.write_bytes(fle_public_private.read_bytes())
+        fle_public_base64 = base64.b64encode(fle_public_key.read_bytes()).decode("ascii")
+        fle_private_pem = fle_private_key.read_bytes()
 
         class OriginHandler(http.server.BaseHTTPRequestHandler):
             def _record(self) -> bytes:
@@ -6330,20 +6332,66 @@ def run_edge_gateway(harness: Harness) -> str:
             if metadata.get("keyCount") != 2:
                 raise HarnessFailure(f"edge /kv/meta = {metadata}")
 
+            # Field-level encryption: the origin decrypts the card field with
+            # the real AWS Encryption SDK and the private key of the public key
+            # the stack carries through context.
+            before = len(origin_requests)
+            status, body, headers = http_request(
+                "POST",
+                base + "/api/fle",
+                headers={"content-type": "application/x-www-form-urlencoded"},
+                body=b"card=4111111111111111&name=Jane",
+            )
+            expect_status(status, 200, "edge POST /api/fle", body)
+            if len(origin_requests) != before + 1:
+                raise HarnessFailure("edge POST /api/fle did not reach the mapped origin")
+            decrypted = json.loads(body)
+            if decrypted.get("card") != "4111111111111111" or decrypted.get("name") != "Jane":
+                raise HarnessFailure(f"field-level encryption round trip = {decrypted}", body)
+            if not decrypted.get("encrypted"):
+                raise HarnessFailure("the origin received the plaintext card field", body)
+
             return (
                 "a Lambda@Edge viewer-request rewrote the uri (header key inserted), an origin-request "
                 "generated response was cached without a second invocation, an origin-response replaced "
                 "the body and added a header, a viewer-response added a header and stayed out of "
                 "viewer-request generated responses and custom error pages, IncludeBody exposed the "
                 "base64 body to both request events, an origin rewrite reached the other declared "
-                "origin, and the runtime 2.0 CloudFront Function read get/exists/meta from its key "
-                "value store"
+                "origin, the runtime 2.0 CloudFront Function read get/exists/meta from its key value "
+                "store, geo restriction served US and would refuse an outside country, and the origin "
+                "decrypted the field-level encryption ciphertext with the AWS Encryption SDK"
             )
         finally:
             stop_local_session(harness, session)
 
+        # Geo restriction: outside the allowlist and with an undetermined
+        # location. Each session is its own run of the same app.
+        geo_results = {}
+        for country, expected in ((None, 200), ("JP", 403)):
+            geo_session = start_local_session(
+                harness,
+                EDGE_GATEWAY_APP,
+                name=f"edge-gateway-geo-{country or 'unset'}",
+                backends=("s3proxy",),
+                origins=("api.example.com=" + origin_url,),
+                context={"flePublicKeyBase64": fle_public_base64},
+                viewer_country=country,
+            )
+            try:
+                _, geo_base = session_distribution(geo_session, "GeoDistribution")
+                geo_bucket = geo_session.resource(logical_prefix="ContentBucket")
+                s3_put(geo_session, geo_bucket["logicalId"], "geo.txt", "geo content", "text/plain")
+                status, body, _ = http_request("GET", geo_base + "/geo.txt")
+                expect_status(status, expected, f"geo distribution country={country or 'unset'}", body)
+                geo_results[country or "unset"] = status
+            finally:
+                stop_local_session(harness, geo_session)
+        if geo_results != {"US": 200, "JP": 403, "unset": 200}:
+            raise HarnessFailure(f"geo restriction results = {geo_results}")
         return (
-            "the Lambda@Edge, key value store and origin rewrite checks passed"
+            "the Lambda@Edge, key value store, origin rewrite and field-level encryption checks passed; "
+            "geo restriction served US (inside the allowlist), refused JP (outside it) with 403, and "
+            "served an undetermined location"
         )
     finally:
         origin_server.shutdown()

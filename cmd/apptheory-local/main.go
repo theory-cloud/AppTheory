@@ -134,6 +134,7 @@ type commandConfig struct {
 	images              stringList
 	endpoints           stringList
 	origins             stringList
+	viewerCountry       string
 	addHosts            stringList
 	backends            stringList
 	function            string
@@ -165,6 +166,7 @@ func (c *commandConfig) register(flags *flag.FlagSet) {
 	flags.Var(&c.images, "image", "runtime image override class=tag@sha256:... (repeatable)")
 	flags.Var(&c.endpoints, "endpoint", "local AWS endpoint service=url (repeatable)")
 	flags.Var(&c.origins, "origin", "map an external CloudFront custom origin domain to a loopback URL: domain=url (repeatable)")
+	flags.StringVar(&c.viewerCountry, "viewer-country", "", "CloudFront geo restriction: the viewer's ISO 3166-1 alpha-2 country (for example US); omit for an undetermined location")
 	flags.Var(&c.addHosts, "add-host", "extra /etc/hosts entry name=address for function containers (repeatable)")
 	flags.Var(&c.backends, "backend", "local emulator the runner starts on the run network: dynamodb, or a profile container such as moto or s3proxy (repeatable)")
 	flags.StringVar(&c.function, "function", "", "invoke: function logical id from the CDK assembly")
@@ -462,6 +464,7 @@ func (c *commandConfig) options() (localrunner.Options, error) {
 		Images:              images,
 		Endpoints:           endpoints,
 		Origins:             origins,
+		ViewerCountry:       c.viewerCountry,
 		AddHosts:            c.addHosts,
 		Backends:            c.backends,
 		ExtraFunctions:      append([]string(nil), c.sessionTargets...),

@@ -52,7 +52,7 @@ var distributionPropertyInventory = map[string]Disposition{
 	"OriginGroups":                 Implemented,
 	"Origins":                      Implemented,
 	"PriceClass":                   Reported,
-	"Restrictions":                 Refused,
+	"Restrictions":                 Implemented,
 	"Staging":                      Reported,
 	"ViewerCertificate":            Reported,
 	"WebACLId":                     Refused,
@@ -64,7 +64,7 @@ var behaviorPropertyInventory = map[string]Disposition{
 	"CachedMethods":              Implemented,
 	"Compress":                   Reported,
 	propertyDefaultTTL:           Reported,
-	"FieldLevelEncryptionId":     Refused,
+	"FieldLevelEncryptionId":     Implemented,
 	"ForwardedValues":            Refused,
 	"FunctionAssociations":       Implemented,
 	"GrpcConfig":                 Refused,
@@ -77,7 +77,7 @@ var behaviorPropertyInventory = map[string]Disposition{
 	"ResponseHeadersPolicyId":    Implemented,
 	"SmoothStreaming":            Reported,
 	"TargetOriginId":             Implemented,
-	"TrustedKeyGroups":           Refused,
+	"TrustedKeyGroups":           Implemented,
 	"TrustedSigners":             Refused,
 	"ViewerProtocolPolicy":       Reported,
 }
@@ -386,12 +386,8 @@ func refusalReason(key string) string {
 		return "legacy ForwardedValues cache policies are not supported; use a cache policy and an origin request policy"
 	case "GrpcConfig":
 		return "gRPC is not supported locally"
-	case "Restrictions":
-		return "geo restriction decides which requests are served and is not emulated"
-	case "FieldLevelEncryptionId":
-		return "field-level encryption is not emulated"
-	case "TrustedKeyGroups", "TrustedSigners":
-		return "signed URLs and signed cookies are not verified locally"
+	case "TrustedSigners":
+		return "AWS-account trusted signers are the legacy signer form; use a trusted key group"
 	default:
 		return "not supported locally"
 	}

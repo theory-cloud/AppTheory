@@ -5,6 +5,28 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
 
+// Sample RSA-2048 public key for the field-level encryption profile. The
+// proving row replaces it through CDK context with a key pair generated at run
+// time; no private key is ever committed. The committed value keeps the
+// synthesized template deployable as written.
+const SAMPLE_FLE_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAudf8/iNkQgdvjEdm6xYS
+JAyxd/kGTbJfQNg9YhInb7TSm0dGu0yx8yZ3fnpmH2FBYXZ+NFVW/yfM8xU3FO+e
+bykZ3JCsmEbHMEqDnDqPWy1x7a/0XN1+0R/v6bPQ7EHLa6k7VlZjP+zLBbt2T2V0
+O0cv9LVGFG/rpwB3g7OXI8DKMc4m50eDFyZN/1lCvF5oIGlgm4pjdD48sUBk3X9S
+kSvhVXPl0JNHoGg+Gn4FPK0xQTSzv0r4EfxXPw0fU6zfFHclm0k+K6B9Lb/k0z5d
+8Yn8c3JqtXu3F/EzLxVjfWQ2pRHlI9E0q9EuS7UOFD4FD0D3sLfXd8ZNpQ/hdnT1
+7wIDAQAB
+-----END PUBLIC KEY-----`;
+
+function contextPublicKey(scope: Construct, name: string, fallback: string): string {
+    const encoded = scope.node.tryGetContext(name) as string | undefined;
+    if (!encoded) {
+        return fallback;
+    }
+    return Buffer.from(encoded, 'base64').toString('utf8');
+}
+
 /**
  * Edge gateway example: Lambda@Edge associations, a CloudFront KeyValueStore,
  * geo restriction and field-level encryption on distributions the local runner
@@ -13,6 +35,7 @@ import { Construct } from 'constructs';
 export class EdgeGatewayStack extends cdk.Stack {
     public readonly bucket: s3.Bucket;
     public readonly distribution: cloudfront.Distribution;
+    public readonly geoDistribution: cloudfront.Distribution;
 
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
         super(scope, id, props);
@@ -140,7 +163,68 @@ export class EdgeGatewayStack extends cdk.Stack {
             }],
         });
 
+        // Field-level encryption. The L2 Distribution cannot express
+        // FieldLevelEncryptionId (aws/aws-cdk#30203), so the configuration is
+        // linked to the /api/* behavior through the L1 property override.
+        const fleKey = new cloudfront.CfnPublicKey(this, 'FieldLevelEncryptionKey', {
+            publicKeyConfig: {
+                callerReference: 'edge-gateway-fle',
+                name: 'edge-gateway-fle-key',
+                encodedKey: contextPublicKey(this, 'flePublicKeyBase64', SAMPLE_FLE_PUBLIC_KEY),
+            },
+        });
+        const fleProfile = new cloudfront.CfnFieldLevelEncryptionProfile(this, 'FieldLevelEncryptionProfile', {
+            fieldLevelEncryptionProfileConfig: {
+                callerReference: 'edge-gateway-fle',
+                name: 'edge-gateway-fle-profile',
+                encryptionEntities: [{
+                    publicKeyId: fleKey.ref,
+                    providerId: 'edge-gateway',
+                    fieldPatterns: ['card'],
+                }],
+            },
+        });
+        const fleConfig = new cloudfront.CfnFieldLevelEncryptionConfig(this, 'FieldLevelEncryptionConfig', {
+            callerReference: 'edge-gateway-fle',
+            comment: 'Encrypts the card field',
+            contentTypeProfileConfig: {
+                // Forward unknown content types untouched so the same behavior
+                // can echo non-form requests in the row.
+                forwardWhenContentTypeIsUnknown: true,
+                contentTypeProfiles: [{
+                    contentType: 'application/x-www-form-urlencoded',
+                    format: 'URLEncoded',
+                    profileId: fleProfile.ref,
+                }],
+            },
+            // The service requires the query-argument block; an empty profile
+            // list with forwarding disabled keeps the content-type profile in
+            // charge.
+            queryArgProfileConfig: {
+                forwardWhenQueryArgProfileIsUnknown: false,
+                queryArgProfiles: [],
+            },
+        });
+        // additionalBehaviors emits /api/* first, so its entry is index 0.
+        (this.distribution.node.defaultChild as cloudfront.CfnDistribution).addPropertyOverride(
+            'DistributionConfig.CacheBehaviors.0.FieldLevelEncryptionId',
+            fleConfig.ref,
+        );
+
+        // Geo restriction: a separate distribution with an allowlist.
+        this.geoDistribution = new cloudfront.Distribution(this, 'GeoDistribution', {
+            comment: 'Geo restricted distribution',
+            defaultBehavior: {
+                origin: new origins.S3Origin(this.bucket),
+                viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+            },
+            geoRestriction: cloudfront.GeoRestriction.allowlist('US', 'DE'),
+        });
+
         new cdk.CfnOutput(this, 'DistributionDomain', { value: this.distribution.distributionDomainName });
+        new cdk.CfnOutput(this, 'GeoDistributionDomain', { value: this.geoDistribution.distributionDomainName });
         new cdk.CfnOutput(this, 'BucketName', { value: this.bucket.bucketName });
+        new cdk.CfnOutput(this, 'KeyValueStoreId', { value: store.keyValueStoreId });
     }
 }

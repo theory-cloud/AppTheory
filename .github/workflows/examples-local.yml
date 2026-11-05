@@ -53,6 +53,11 @@ jobs:
         with:
           python-version: "3.14"
 
+      # The field-level encryption row decrypts with the official AWS
+      # Encryption SDK, so the harness interpreter needs it.
+      - name: Install the harness Python dependencies
+        run: python -m pip install -r scripts/local/requirements-examples.txt
+
       # The service container publishes the profile port; --external tells the
       # harness to wait for it instead of starting a compose container on the
       # same host port. --slot 0 pins the compose slot to that port.
