@@ -474,11 +474,15 @@ func (a *runtimeAPI) serveInvocationResponse(writer http.ResponseWriter, request
 	}
 
 	sink := invocation.sink
+	// A sink failure means the invocation's client stopped reading. Lambda does
+	// not interrupt a streamed response when the client disconnects, so the
+	// runner keeps draining the runtime's body and completes the invocation; the
+	// execution environment is not replaced.
+	// https://docs.aws.amazon.com/lambda/latest/dg/configuration-response-streaming.html
+	var sinkErr error
 	if sink != nil {
 		if startErr := sink.Start(contentType, true); startErr != nil {
-			writeRuntimeError(writer, http.StatusInternalServerError, "the invocation client stopped reading: "+startErr.Error())
-			invocation.finish(runtimeInvocationResult{err: startErr, reset: true})
-			return
+			sink, sinkErr = nil, startErr
 		}
 	}
 	var collected bytes.Buffer
@@ -489,9 +493,7 @@ func (a *runtimeAPI) serveInvocationResponse(writer http.ResponseWriter, request
 			collected.Write(buffer[:n])
 			if sink != nil {
 				if chunkErr := sink.Chunk(buffer[:n]); chunkErr != nil {
-					writeRuntimeError(writer, http.StatusInternalServerError, "the invocation client stopped reading: "+chunkErr.Error())
-					invocation.finish(runtimeInvocationResult{err: chunkErr, reset: true})
-					return
+					sink, sinkErr = nil, chunkErr
 				}
 			}
 		}
@@ -525,6 +527,7 @@ func (a *runtimeAPI) serveInvocationResponse(writer http.ResponseWriter, request
 		streamed:    true,
 		errorType:   errorType,
 		errorBody:   decoded,
+		err:         sinkErr,
 	})
 	writeRuntimeStatus(writer)
 }

@@ -213,11 +213,11 @@ func TestRuntimeAPIStreamingSinkErrorIsRefused(t *testing.T) {
 	request.Header.Set("Content-Type", "text/event-stream")
 	recorder := httptest.NewRecorder()
 	api.serveHTTP(recorder, request)
-	if recorder.Code != http.StatusInternalServerError {
-		t.Fatalf("sink failure: %d", recorder.Code)
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("a client disconnect still completes the invocation: %d", recorder.Code)
 	}
-	if result := <-done; result.err == nil || !result.reset {
-		t.Fatalf("a sink failure must end the invocation: %+v", result)
+	if result := <-done; result.err == nil || result.reset {
+		t.Fatalf("a sink failure must not replace the environment: %+v", result)
 	}
 }
 
@@ -423,11 +423,11 @@ func TestRuntimeAPIStreamingSinkStartErrorIsRefused(t *testing.T) {
 	request.Header.Set("Content-Type", "text/event-stream")
 	recorder := httptest.NewRecorder()
 	api.serveHTTP(recorder, request)
-	if recorder.Code != http.StatusInternalServerError {
-		t.Fatalf("sink start error: %d", recorder.Code)
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("a client disconnect still completes the invocation: %d", recorder.Code)
 	}
-	if outcome := <-done; outcome.err == nil {
-		t.Fatal("a failed sink start must end the invocation")
+	if outcome := <-done; outcome.err == nil || outcome.reset {
+		t.Fatalf("a failed sink start must not replace the environment: %+v", outcome)
 	}
 }
 
