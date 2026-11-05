@@ -414,6 +414,12 @@ func decodeFunctionURLResponse(raw []byte) (LambdaResponse, error) {
 	}
 	trimmed := bytes.TrimSpace(raw)
 	if !json.Valid(trimmed) {
+		// A buffered streaming frame is not valid JSON as a whole. When its
+		// metadata omits statusCode, the pipe sink's metadata apply answers
+		// 200; the buffered listener must give the same answer.
+		if framed, ok := inferFramedFunctionURLResponse(raw); ok {
+			return framed, nil
+		}
 		return LambdaResponse{}, err
 	}
 	var object map[string]json.RawMessage
@@ -427,6 +433,44 @@ func decodeFunctionURLResponse(raw []byte) (LambdaResponse, error) {
 		Headers:    map[string][]string{"Content-Type": {"application/json"}},
 		Body:       raw,
 	}, nil
+}
+
+// inferFramedFunctionURLResponse applies the Function URL rule to a buffered
+// streaming frame whose metadata omits statusCode: a 200 carrying the prelude's
+// headers and cookies and the framed payload. The pipe sink's metadata apply
+// gives the streaming path the same answer. A prelude whose statusCode key is
+// present but invalid is not inferred; it stays the decoder's 502.
+func inferFramedFunctionURLResponse(raw []byte) (LambdaResponse, bool) {
+	metadataBytes, body, framed, err := splitStreamingFrame(raw)
+	if err != nil || !framed {
+		return LambdaResponse{}, false
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(metadataBytes, &fields) != nil {
+		return LambdaResponse{}, false
+	}
+	if _, hasStatus := fields["statusCode"]; hasStatus {
+		return LambdaResponse{}, false
+	}
+	var metadata streamFrameMetadata
+	if json.Unmarshal(metadataBytes, &metadata) != nil {
+		return LambdaResponse{}, false
+	}
+	header := http.Header{}
+	status := metadata.apply(header)
+	headers := map[string][]string{}
+	for name, values := range header {
+		if http.CanonicalHeaderKey(name) == "Set-Cookie" {
+			continue
+		}
+		headers[name] = values
+	}
+	return LambdaResponse{
+		StatusCode: status,
+		Headers:    headers,
+		Cookies:    append([]string(nil), metadata.Cookies...),
+		Body:       append([]byte(nil), body...),
+	}, true
 }
 
 func buildFunctionURLEvent(

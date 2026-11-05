@@ -159,13 +159,25 @@ func (t *Transport) ServeHTTP(writer http.ResponseWriter, request *http.Request)
 		t.fail(writer, http.StatusBadGateway, "Internal Server Error", requestID, err)
 		return
 	}
-	response, err := DecodeResponse(raw)
+	response, err := t.decodeBufferedResponse(raw)
 	if err != nil {
 		t.fail(writer, http.StatusBadGateway, "Internal Server Error", requestID, err)
 		return
 	}
 	writeResponse(writer, response)
 	t.logf("%s %s -> %d%s", request.Method, path, response.StatusCode, streamedNote(response.Streamed))
+}
+
+// decodeBufferedResponse decodes a buffered invocation response with the rule
+// for this API surface. A Function URL infers the return-value format exactly as
+// the CloudFront Function URL origin does, so one body has one answer on every
+// local Function URL surface; every other surface keeps the proxy-response
+// decoder.
+func (t *Transport) decodeBufferedResponse(raw []byte) (LambdaResponse, error) {
+	if t.API.Class == APIFunctionURL {
+		return decodeFunctionURLResponse(raw)
+	}
+	return DecodeResponse(raw)
 }
 
 // serveStreaming forwards a response-streaming invocation to the client as the
@@ -204,7 +216,7 @@ func (t *Transport) serveStreaming(
 		if !sink.started {
 			// A RESPONSE_STREAM URL can still receive a buffered proxy
 			// response; it is decoded exactly like the buffered path.
-			response, decodeErr := DecodeResponse(result.Body)
+			response, decodeErr := t.decodeBufferedResponse(result.Body)
 			if decodeErr != nil {
 				t.fail(writer, http.StatusBadGateway, "Internal Server Error", requestID, decodeErr)
 				return
