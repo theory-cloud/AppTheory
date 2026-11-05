@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -47,12 +49,16 @@ const (
 // https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/cloudfront-limits.html#limits-lambda-at-edge
 // https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-at-edge-function-restrictions.html
 const (
-	edgeViewerTimeout   = 5 * time.Second
-	edgeOriginTimeout   = 30 * time.Second
-	edgeViewerBodyLimit = 40 * 1024
-	edgeOriginBodyLimit = 1 << 20
-	edgeViewerB64Limit  = 53 * 1024
-	edgeOriginB64Limit  = 1331 * 1024
+	edgeViewerTimeout = 5 * time.Second
+	edgeOriginTimeout = 30 * time.Second
+	// The restrictions page states the body limits in decimal KB and MB:
+	// "For viewer request events, the body limit is 40 KB", "1 MB" for the
+	// origin request event, and 53.2 KB / 1.33 MB when the returned body is
+	// base64 encoded text.
+	edgeViewerBodyLimit = 40_000
+	edgeOriginBodyLimit = 1_000_000
+	edgeViewerB64Limit  = 53_200
+	edgeOriginB64Limit  = 1_330_000
 )
 
 // EdgeFunction is one LambdaFunctionAssociations entry resolved to an
@@ -85,12 +91,12 @@ type EdgeRecord struct {
 	CF EdgeCF `json:"cf"`
 }
 
-// EdgeCF is the cf object.
+// EdgeCF is the cf object. The origin object is part of the request object,
+// not the cf object.
 type EdgeCF struct {
 	Config   EdgeConfig    `json:"config"`
 	Request  *EdgeRequest  `json:"request,omitempty"`
 	Response *EdgeResponse `json:"response,omitempty"`
-	Origin   *EdgeOrigin   `json:"origin,omitempty"`
 }
 
 // EdgeConfig is the config object.
@@ -121,12 +127,53 @@ type EdgeRequest struct {
 	Origin *EdgeOrigin `json:"origin,omitempty"`
 }
 
-// EdgeResponse is the response object.
+// EdgeResponse is the response object. Status is documented as a string and
+// renders as one; a numeric status is also accepted because handlers commonly
+// return one.
 type EdgeResponse struct {
 	Headers           map[string][]EdgeHeader `json:"headers"`
-	Status            int                     `json:"status"`
+	Status            EdgeStatus              `json:"status"`
 	StatusDescription string                  `json:"statusDescription,omitempty"`
 	Body              *EdgeBody               `json:"body,omitempty"`
+	// BodyEncoding is the flat encoding beside a string body:
+	// "If you include body in the response object but omit bodyEncoding,
+	// CloudFront treats the body as text."
+	BodyEncoding string `json:"bodyEncoding,omitempty"`
+}
+
+// EdgeStatus is an HTTP status that CloudFront documents as a string:
+// "status: 'HTTP status code (string)'". UnmarshalJSON accepts a JSON string or
+// number; MarshalJSON always writes the string form the events carry.
+//
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-generating-http-responses.html
+type EdgeStatus int
+
+// UnmarshalJSON accepts "200" and 200.
+func (s *EdgeStatus) UnmarshalJSON(raw []byte) error {
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		value, parseErr := strconv.Atoi(strings.TrimSpace(text))
+		if parseErr != nil {
+			return fmt.Errorf("status %q is not an integer", text)
+		}
+		*s = EdgeStatus(value)
+		return nil
+	}
+	var number json.Number
+	if err := json.Unmarshal(raw, &number); err != nil {
+		return fmt.Errorf("status is neither a string nor a number")
+	}
+	value, parseErr := number.Int64()
+	if parseErr != nil {
+		return fmt.Errorf("status %q is not an integer", number)
+	}
+	*s = EdgeStatus(value)
+	return nil
+}
+
+// MarshalJSON writes the string form.
+func (s EdgeStatus) MarshalJSON() ([]byte, error) {
+	return json.Marshal(strconv.Itoa(int(s)))
 }
 
 // EdgeBody is the body object. A generated response may return the body as a
@@ -136,6 +183,9 @@ type EdgeBody struct {
 	Action         string `json:"action,omitempty"`
 	Encoding       string `json:"encoding,omitempty"`
 	Data           string `json:"data,omitempty"`
+	// fromString marks the flat string form, where a sibling bodyEncoding
+	// supplies the encoding.
+	fromString bool
 }
 
 // UnmarshalJSON accepts the object form and the plain-string body form.
@@ -145,6 +195,7 @@ func (b *EdgeBody) UnmarshalJSON(raw []byte) error {
 		b.Action = "replace"
 		b.Encoding = "text"
 		b.Data = text
+		b.fromString = true
 		return nil
 	}
 	type plain EdgeBody
@@ -153,6 +204,7 @@ func (b *EdgeBody) UnmarshalJSON(raw []byte) error {
 		return fmt.Errorf("body is neither a string nor an object: %w", err)
 	}
 	*b = EdgeBody(decoded)
+	b.fromString = false
 	return nil
 }
 
@@ -453,6 +505,28 @@ func validateEdgeLambda(versionID, stack string, index *resourceIndex) []string 
 				refusals = append(refusals, fmt.Sprintf(
 					"the function requests %d MB of ephemeral storage; Lambda@Edge allows at most 512 MB", storage.Size))
 			}
+		case "RuntimeManagementConfig":
+			var management struct {
+				UpdateRuntimeOn string `json:"UpdateRuntimeOn"`
+			}
+			if decodeErr := json.Unmarshal(raw, &management); decodeErr == nil &&
+				management.UpdateRuntimeOn != "" && !strings.EqualFold(management.UpdateRuntimeOn, "Auto") {
+				refusals = append(refusals, fmt.Sprintf(
+					"the function sets RuntimeManagementConfig.UpdateRuntimeOn to %q; Lambda@Edge supports only Auto (default)",
+					management.UpdateRuntimeOn))
+			}
+		case "TracingConfig":
+			var tracing struct {
+				Mode string `json:"Mode"`
+			}
+			if decodeErr := json.Unmarshal(raw, &tracing); decodeErr == nil && strings.EqualFold(tracing.Mode, "Active") {
+				refusals = append(refusals, "the function sets TracingConfig.Mode Active; Lambda@Edge does not support AWS X-Ray")
+			}
+		case "KmsKeyArn", "KMSKeyArn":
+			if !isEmptyValue(raw) {
+				refusals = append(refusals,
+					"the function sets KmsKeyArn; Lambda@Edge does not support a customer managed key for .zip deployment packages")
+			}
 		case "Runtime":
 			var runtime string
 			_ = json.Unmarshal(raw, &runtime) //nolint:errcheck // a non-string runtime is refused below
@@ -492,32 +566,56 @@ func edgeRuntimeSupported(runtime string) bool {
 	return strings.HasPrefix(lower, "nodejs") || strings.HasPrefix(lower, "python")
 }
 
-// edgeEvent builds the documented event object for one event type.
+// edgeEvent builds a viewer event from the viewer state. Origin events are
+// built by edgeOriginEvent from the policy-filtered origin request.
 // https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-event-structure.html
 func (g *Gateway) edgeEvent(
 	association *EdgeFunction,
 	state *requestState,
 	requestID, domainName string,
-	origin *DistributionOrigin,
 	response *OriginResponse,
 ) *EdgeEvent {
-	record := EdgeRecord{CF: EdgeCF{Config: EdgeConfig{
+	record := g.edgeRecord(association, requestID, domainName)
+	record.CF.Request = edgeRequestFromState(state, association.IncludeBody)
+	if response != nil {
+		record.CF.Response = edgeResponseFromOrigin(response)
+	}
+	return &EdgeEvent{Records: []EdgeRecord{record}}
+}
+
+// edgeOriginEvent builds an origin request or origin response event from the
+// origin request CloudFront would send: the policy-filtered headers, the
+// CloudFront headers a policy added, its Host and policy-forwarded query
+// string. "Origin-facing functions see the header value that CloudFront added."
+// The origin object lives inside the request:
+// "origin (read/write) (origin events only) The origin to send the request to."
+//
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-at-edge-function-restrictions.html
+func (g *Gateway) edgeOriginEvent(
+	association *EdgeFunction,
+	originRequest OriginRequest,
+	origin *DistributionOrigin,
+	requestID, domainName string,
+	response *OriginResponse,
+) *EdgeEvent {
+	record := g.edgeRecord(association, requestID, domainName)
+	record.CF.Request = edgeRequestFromOriginRequest(association, originRequest, origin)
+	if response != nil {
+		record.CF.Response = edgeResponseFromOrigin(response)
+	}
+	return &EdgeEvent{Records: []EdgeRecord{record}}
+}
+
+func (g *Gateway) edgeRecord(association *EdgeFunction, requestID, domainName string) EdgeRecord {
+	return EdgeRecord{CF: EdgeCF{Config: EdgeConfig{
 		DistributionDomainName: domainName,
 		DistributionID:         localDistributionID(g.Distribution),
 		EventType:              association.EventType,
 		RequestID:              requestID,
 	}}}
-	record.CF.Request = edgeRequestFromState(state, association.IncludeBody, association.EventType == edgeViewerRequest)
-	if response != nil {
-		record.CF.Response = edgeResponseFromOrigin(response)
-	}
-	if association.EventType == edgeOriginRequest || association.EventType == edgeOriginResponse {
-		record.CF.Origin = edgeOriginFromDistribution(origin)
-	}
-	return &EdgeEvent{Records: []EdgeRecord{record}}
 }
 
-func edgeRequestFromState(state *requestState, includeBody, viewerEvent bool) *EdgeRequest {
+func edgeRequestFromState(state *requestState, includeBody bool) *EdgeRequest {
 	request := &EdgeRequest{
 		ClientIP:    state.ViewerIP,
 		Headers:     edgeHeaders(state.Header, state.Host),
@@ -525,39 +623,56 @@ func edgeRequestFromState(state *requestState, includeBody, viewerEvent bool) *E
 		Querystring: state.RawQuery,
 		URI:         state.URI,
 	}
-	if includeBody && len(state.Body) > 0 {
-		limit := edgeOriginBodyLimit
-		if viewerEvent {
-			limit = edgeViewerBodyLimit
-		}
-		body := state.Body
-		truncated := false
-		if len(body) > limit {
-			body = body[:limit]
-			truncated = true
-		}
-		// "CloudFront always base64 encodes the request body before exposing it
-		// to Lambda@Edge."
-		request.Body = &EdgeBody{
-			InputTruncated: truncated,
-			Action:         "read-only",
-			Encoding:       "base64",
-			Data:           base64.StdEncoding.EncodeToString(body),
-		}
-	}
+	request.Body = edgeRequestBody(state.Body, includeBody, edgeViewerBodyLimit)
 	return request
+}
+
+func edgeRequestFromOriginRequest(
+	association *EdgeFunction,
+	originRequest OriginRequest,
+	origin *DistributionOrigin,
+) *EdgeRequest {
+	return &EdgeRequest{
+		ClientIP:    originRequest.ViewerIP,
+		Headers:     edgeHeaders(originRequest.Header, originRequest.Host),
+		Method:      originRequest.Method,
+		Querystring: originRequest.Query,
+		URI:         originRequest.URI,
+		Body:        edgeRequestBody(originRequest.Body, association.IncludeBody, edgeOriginBodyLimit),
+		Origin:      edgeOriginFromDistribution(origin),
+	}
+}
+
+// edgeRequestBody exposes a base64 body. "CloudFront always base64 encodes the
+// request body before exposing it to Lambda@Edge."
+func edgeRequestBody(body []byte, includeBody bool, limit int) *EdgeBody {
+	if !includeBody || len(body) == 0 {
+		return nil
+	}
+	truncated := false
+	if len(body) > limit {
+		body = body[:limit]
+		truncated = true
+	}
+	return &EdgeBody{
+		InputTruncated: truncated,
+		Action:         "read-only",
+		Encoding:       "base64",
+		Data:           base64.StdEncoding.EncodeToString(body),
+	}
 }
 
 func edgeResponseFromOrigin(response *OriginResponse) *EdgeResponse {
 	return &EdgeResponse{
 		Headers:           edgeHeaders(response.Header, ""),
-		Status:            response.StatusCode,
+		Status:            EdgeStatus(response.StatusCode),
 		StatusDescription: response.StatusDescription,
 	}
 }
 
 // edgeHeaders renders a header set as lowercase keys mapping to arrays of
-// {key, value}. A repeated header keeps one array entry per value.
+// {key, value}. A repeated header keeps one array entry per value. Disallowed
+// headers are not exposed to edge functions.
 func edgeHeaders(header http.Header, host string) map[string][]EdgeHeader {
 	out := map[string][]EdgeHeader{}
 	for name, values := range header {
@@ -565,7 +680,7 @@ func edgeHeaders(header http.Header, host string) map[string][]EdgeHeader {
 			continue
 		}
 		lower := strings.ToLower(name)
-		if lower == "content-length" {
+		if lower == "content-length" || edgeDisallowedHeader(lower) {
 			continue
 		}
 		entries := make([]EdgeHeader, 0, len(values))
@@ -574,7 +689,7 @@ func edgeHeaders(header http.Header, host string) map[string][]EdgeHeader {
 		}
 		out[lower] = entries
 	}
-	if host != "" {
+	if host != "" && !edgeDisallowedHeader("host") {
 		out["host"] = []EdgeHeader{{Key: "Host", Value: host}}
 	}
 	return out
@@ -665,20 +780,22 @@ func (g *Gateway) invokeEdge(
 }
 
 // lambdaEdgeEnvelope is the shape a Lambda handler returns: either the cf
-// record object or a bare request/response object.
+// record object or a bare request/response object. BodyEncoding is the flat
+// encoding beside a string body.
 type lambdaEdgeEnvelope struct {
 	Records           []EdgeRecord            `json:"Records"`
-	Status            *int                    `json:"status"`
+	Status            *EdgeStatus             `json:"status"`
 	StatusDescription string                  `json:"statusDescription"`
 	Headers           map[string][]EdgeHeader `json:"headers"`
 	Body              *EdgeBody               `json:"body"`
+	BodyEncoding      string                  `json:"bodyEncoding"`
 	URI               string                  `json:"uri"`
 	Method            string                  `json:"method"`
 	Querystring       string                  `json:"querystring"`
 	Origin            *EdgeOrigin             `json:"origin"`
 }
 
-func decodeEdgeResponse(association *EdgeFunction, _ *EdgeEvent, raw []byte) (*EdgeOutcome, error) {
+func decodeEdgeResponse(association *EdgeFunction, event *EdgeEvent, raw []byte) (*EdgeOutcome, error) {
 	var envelope lambdaEdgeEnvelope
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return nil, &EdgeValidationError{Function: association.Version, Reason: "the response is not a JSON object"}
@@ -688,13 +805,16 @@ func decodeEdgeResponse(association *EdgeFunction, _ *EdgeEvent, raw []byte) (*E
 		record = envelope.Records[0]
 	}
 	if record.CF.Response != nil {
-		if err := validateEdgeResponseObject(association, record.CF.Response); err != nil {
+		if err := applyBodyEncoding(record.CF.Response.Body, record.CF.Response.BodyEncoding); err != nil {
+			return nil, &EdgeValidationError{Function: association.Version, Reason: err.Error()}
+		}
+		if err := validateEdgeResponseObject(association, event, record.CF.Response); err != nil {
 			return nil, err
 		}
 		return &EdgeOutcome{Response: record.CF.Response}, nil
 	}
 	if record.CF.Request != nil {
-		request, err := validateEdgeRequestObject(association, record.CF.Request)
+		request, err := validateEdgeRequestObject(association, event, record.CF.Request)
 		if err != nil {
 			return nil, err
 		}
@@ -707,59 +827,182 @@ func decodeEdgeResponse(association *EdgeFunction, _ *EdgeEvent, raw []byte) (*E
 			Headers:           envelope.Headers,
 			Body:              envelope.Body,
 		}
-		if err := validateEdgeResponseObject(association, response); err != nil {
+		if err := applyBodyEncoding(response.Body, envelope.BodyEncoding); err != nil {
+			return nil, &EdgeValidationError{Function: association.Version, Reason: err.Error()}
+		}
+		if err := validateEdgeResponseObject(association, event, response); err != nil {
 			return nil, err
 		}
 		return &EdgeOutcome{Response: response}, nil
 	}
 	if envelope.URI != "" || envelope.Method != "" {
-		request, err := validateEdgeRequestObject(association, &EdgeRequest{
+		request := &EdgeRequest{
 			Method:      envelope.Method,
 			URI:         envelope.URI,
 			Querystring: envelope.Querystring,
 			Headers:     envelope.Headers,
 			Body:        envelope.Body,
 			Origin:      envelope.Origin,
-		})
+		}
+		if err := applyBodyEncoding(request.Body, envelope.BodyEncoding); err != nil {
+			return nil, &EdgeValidationError{Function: association.Version, Reason: err.Error()}
+		}
+		validated, err := validateEdgeRequestObject(association, event, request)
 		if err != nil {
 			return nil, err
 		}
-		return &EdgeOutcome{Request: request}, nil
+		return &EdgeOutcome{Request: validated}, nil
 	}
 	return nil, &EdgeValidationError{Function: association.Version, Reason: "the response contains neither a request nor a response object"}
 }
 
+// applyBodyEncoding reads bodyEncoding beside a string body. "The only valid
+// encodings are text and base64. If you include body in the response object but
+// omit bodyEncoding, CloudFront treats the body as text."
+//
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-generating-http-responses.html
+func applyBodyEncoding(body *EdgeBody, encoding string) error {
+	if body == nil || !body.fromString || encoding == "" {
+		return nil
+	}
+	switch strings.ToLower(encoding) {
+	case valueText, valueBase64:
+		body.Encoding = strings.ToLower(encoding)
+		body.Action = valueReplace
+		return nil
+	default:
+		return fmt.Errorf("bodyEncoding %q is not text or base64", encoding)
+	}
+}
+
+const edgeRestrictionsPage = "https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/edge-function-restrictions-all.html"
+
+// edgeDisallowedHeaders are "not exposed to edge functions, and functions can't
+// add them". A function that adds one fails validation with a 502.
+//
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/edge-function-restrictions-all.html
+func edgeDisallowedHeader(name string) bool {
+	lower := strings.ToLower(name)
+	switch lower {
+	case "connection", "expect", "keep-alive", "proxy-authenticate", "proxy-authorization",
+		"proxy-connection", "trailer", "upgrade", "x-accel-buffering", "x-accel-charset",
+		"x-accel-limit-rate", "x-accel-redirect", "x-amzn-auth", "x-amzn-cf-billing",
+		"x-amzn-cf-id", "x-amzn-cf-xff", "x-amzn-errortype", "x-amzn-fle-profile",
+		"x-amzn-header-count", "x-amzn-header-order", "x-amzn-lambda-integration-tag",
+		"x-amzn-requestid", "x-cache", "x-forwarded-proto", "x-real-ip",
+		"cloudfront-viewer-cert-pem", "client-cert", "client-cert-chain":
+		return true
+	}
+	return strings.HasPrefix(lower, "x-amz-cf-") || strings.HasPrefix(lower, "x-edge-")
+}
+
+// edgeReadOnlyHeaders is the per-event read-only list. "If your function adds or
+// edits a read-only header, the request fails CloudFront validation and
+// CloudFront returns HTTP status code 502 (Bad Gateway) to the viewer."
+func edgeReadOnlyHeaders(eventType string) []string {
+	switch eventType {
+	case edgeViewerRequest:
+		return []string{"cdn-loop", "content-length", "host", "transfer-encoding", "via"}
+	case edgeOriginRequest:
+		return []string{"accept-encoding", "cdn-loop", "content-length", "if-modified-since",
+			"if-none-match", "if-range", "if-unmodified-since", "transfer-encoding", "via"}
+	case edgeOriginResponse:
+		return []string{"transfer-encoding", "via"}
+	case edgeViewerResponse:
+		return []string{"warning", "via", "content-length", "content-encoding", "transfer-encoding"}
+	default:
+		return nil
+	}
+}
+
+func edgeOriginalRequestHeaders(event *EdgeEvent) map[string][]EdgeHeader {
+	if event == nil || len(event.Records) == 0 || event.Records[0].CF.Request == nil {
+		return nil
+	}
+	return event.Records[0].CF.Request.Headers
+}
+
+func edgeOriginalResponseHeaders(event *EdgeEvent) map[string][]EdgeHeader {
+	if event == nil || len(event.Records) == 0 || event.Records[0].CF.Response == nil {
+		return nil
+	}
+	return event.Records[0].CF.Response.Headers
+}
+
 // validateEdgeRequestObject applies the event structure's read-only and
-// read-write rules.
-func validateEdgeRequestObject(association *EdgeFunction, request *EdgeRequest) (*EdgeRequest, error) {
+// read-write rules, the viewer-request CloudFront header rule, and the
+// restrictions page's disallowed and read-only headers.
+func validateEdgeRequestObject(association *EdgeFunction, event *EdgeEvent, request *EdgeRequest) (*EdgeRequest, error) {
 	if request.Method == "" {
 		return nil, &EdgeValidationError{Function: association.Version, Reason: "request.method is missing"}
 	}
 	if !strings.HasPrefix(request.URI, "/") {
 		return nil, &EdgeValidationError{Function: association.Version, Reason: "request.uri must begin with a forward slash"}
 	}
-	if _, ok := request.Headers["set-cookie"]; ok {
+	headers := normalizeEdgeHeaders(request.Headers)
+	request.Headers = headers
+	if _, ok := headers["set-cookie"]; ok {
 		return nil, &EdgeValidationError{Function: association.Version, Reason: "a request object cannot carry a set-cookie header"}
 	}
-	headers := map[string][]EdgeHeader{}
-	for name, entries := range request.Headers {
-		lower := strings.ToLower(name)
-		if strings.HasPrefix(lower, "cloudfront-") {
-			return nil, &EdgeValidationError{Function: association.Version, Reason: fmt.Sprintf(
-				"a viewer request function cannot add the %s header; CloudFront adds CloudFront-* headers after the viewer request event and returns 502", name)}
-		}
-		for position := range entries {
-			if entries[position].Key == "" {
-				entries[position].Key = http.CanonicalHeaderKey(name)
+	// "CloudFront adds the headers after the viewer request event, which means
+	// the headers aren't available to Lambda@Edge functions in a viewer request."
+	// An origin request function may read, edit, remove or add them.
+	if association.EventType == edgeViewerRequest {
+		for _, name := range sortedEdgeHeaderNames(headers) {
+			if !strings.HasPrefix(name, "cloudfront-") {
+				continue
 			}
+			if name == headerCloudFrontViewerCountry {
+				return nil, &EdgeValidationError{Function: association.Version, Reason: "a viewer request function cannot add the CloudFront-Viewer-Country header; " +
+					"CloudFront adds CloudFront-* headers after the viewer request event and returns 502"}
+			}
+			return nil, &EdgeValidationError{Function: association.Version, Reason: fmt.Sprintf(
+				"a viewer request function cannot add the %s header; CloudFront adds CloudFront-* headers after the viewer request event and returns 502",
+				http.CanonicalHeaderKey(name))}
 		}
-		headers[lower] = entries
 	}
-	request.Headers = headers
+	if err := validateEdgeHeaderRules(association, association.EventType, headers, edgeOriginalRequestHeaders(event), event != nil); err != nil {
+		return nil, err
+	}
+	if err := validateEdgeRequestReplacement(association, request); err != nil {
+		return nil, err
+	}
 	return request, nil
 }
 
-func validateEdgeResponseObject(association *EdgeFunction, response *EdgeResponse) error {
+// validateEdgeRequestReplacement enforces the include-body replacement limits:
+// "If your Lambda@Edge function replaces the request body, the following size
+// limits apply to the body that the function returns."
+func validateEdgeRequestReplacement(association *EdgeFunction, request *EdgeRequest) error {
+	if request.Body == nil || request.Body.Action != valueReplace {
+		return nil
+	}
+	limit, base64Limit := edgeOriginBodyLimit, edgeOriginB64Limit
+	if association.EventType == edgeViewerRequest {
+		limit, base64Limit = edgeViewerBodyLimit, edgeViewerB64Limit
+	}
+	switch strings.ToLower(request.Body.Encoding) {
+	case "", valueText:
+		if len(request.Body.Data) > limit {
+			return &EdgeValidationError{Function: association.Version, Reason: fmt.Sprintf(
+				"the %s body replacement is %d bytes; CloudFront allows %d", association.EventType, len(request.Body.Data), limit)}
+		}
+	case valueBase64:
+		if len(request.Body.Data) > base64Limit {
+			return &EdgeValidationError{Function: association.Version, Reason: fmt.Sprintf(
+				"the %s base64 body replacement is %d encoded bytes; CloudFront allows %d", association.EventType, len(request.Body.Data), base64Limit)}
+		}
+		if _, err := base64.StdEncoding.DecodeString(request.Body.Data); err != nil {
+			return &EdgeValidationError{Function: association.Version, Reason: "the body is not valid base64"}
+		}
+	default:
+		return &EdgeValidationError{Function: association.Version, Reason: fmt.Sprintf(
+			"body encoding %q is not text or base64", request.Body.Encoding)}
+	}
+	return nil
+}
+
+func validateEdgeResponseObject(association *EdgeFunction, event *EdgeEvent, response *EdgeResponse) error {
 	if response.Status < 200 || response.Status > 599 {
 		return &EdgeValidationError{Function: association.Version, Reason: fmt.Sprintf(
 			"response.status %d is not between 200 and 599", response.Status)}
@@ -773,17 +1016,78 @@ func validateEdgeResponseObject(association *EdgeFunction, response *EdgeRespons
 				"response.body.action %q is not replace", response.Body.Action)}
 		}
 	}
-	headers := map[string][]EdgeHeader{}
-	for name, entries := range response.Headers {
+	headers := normalizeEdgeHeaders(response.Headers)
+	response.Headers = headers
+	original := edgeOriginalResponseHeaders(event)
+	return validateEdgeHeaderRules(association, association.EventType, headers, original, original != nil)
+}
+
+func normalizeEdgeHeaders(headers map[string][]EdgeHeader) map[string][]EdgeHeader {
+	normalized := map[string][]EdgeHeader{}
+	for name, entries := range headers {
 		for position := range entries {
 			if entries[position].Key == "" {
 				entries[position].Key = http.CanonicalHeaderKey(name)
 			}
 		}
-		headers[strings.ToLower(name)] = entries
+		normalized[strings.ToLower(name)] = entries
 	}
-	response.Headers = headers
+	return normalized
+}
+
+// validateEdgeHeaderRules refuses a disallowed header the function added and a
+// read-only header it added, changed or removed relative to the event it
+// received.
+func validateEdgeHeaderRules(
+	association *EdgeFunction,
+	eventType string,
+	returned map[string][]EdgeHeader,
+	original map[string][]EdgeHeader,
+	enforceReadOnly bool,
+) error {
+	for _, name := range sortedEdgeHeaderNames(returned) {
+		if !edgeDisallowedHeader(name) {
+			continue
+		}
+		return &EdgeValidationError{Function: association.Version, Reason: fmt.Sprintf(
+			"the %s header is not exposed to edge functions and a function cannot add it; CloudFront returns 502 (Bad Gateway) (%s)",
+			http.CanonicalHeaderKey(name), edgeRestrictionsPage)}
+	}
+	if !enforceReadOnly {
+		return nil
+	}
+	for _, name := range edgeReadOnlyHeaders(eventType) {
+		before, had := original[name]
+		after, has := returned[name]
+		if had == has && edgeHeaderValuesEqual(before, after) {
+			continue
+		}
+		return &EdgeValidationError{Function: association.Version, Reason: fmt.Sprintf(
+			"the %s header is read-only in a %s event and the function added, changed or removed it; CloudFront returns 502 (Bad Gateway) (%s)",
+			http.CanonicalHeaderKey(name), eventType, edgeRestrictionsPage)}
+	}
 	return nil
+}
+
+func edgeHeaderValuesEqual(left, right []EdgeHeader) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for position := range left {
+		if left[position].Value != right[position].Value {
+			return false
+		}
+	}
+	return true
+}
+
+func sortedEdgeHeaderNames(headers map[string][]EdgeHeader) []string {
+	names := make([]string, 0, len(headers))
+	for name := range headers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // edgeGeneratedResponse turns a generated response object into an
@@ -808,13 +1112,17 @@ func (g *Gateway) edgeGeneratedResponse(association *EdgeFunction, response *Edg
 			}
 			body = []byte(response.Body.Data)
 		case valueBase64:
+			// The page states the base64 limit on the encoded body: "If the
+			// Lambda@Edge function returns the body as base64 encoded text ...
+			// the body limit is 53.2 KB" (viewer) / "1.33 MB" (origin).
+			if len(response.Body.Data) > base64Limit {
+				return OriginResponse{}, &EdgeValidationError{Function: association.Version, Reason: fmt.Sprintf(
+					"the %s base64 body replacement is %d encoded bytes; CloudFront allows %d",
+					association.EventType, len(response.Body.Data), base64Limit)}
+			}
 			decoded, err := base64.StdEncoding.DecodeString(response.Body.Data)
 			if err != nil {
 				return OriginResponse{}, &EdgeValidationError{Function: association.Version, Reason: "the body is not valid base64"}
-			}
-			if len(decoded) > base64Limit {
-				return OriginResponse{}, &EdgeValidationError{Function: association.Version, Reason: fmt.Sprintf(
-					"the %s base64 body replacement is %d bytes; CloudFront allows %d", association.EventType, len(decoded), base64Limit)}
 			}
 			body = decoded
 		default:
@@ -828,7 +1136,7 @@ func (g *Gateway) edgeGeneratedResponse(association *EdgeFunction, response *Edg
 			header.Add(name, entry.Value)
 		}
 	}
-	status := response.Status
+	status := int(response.Status)
 	if status == 0 {
 		status = http.StatusOK
 	}
@@ -869,8 +1177,8 @@ func (g *Gateway) resolveEdgeOrigin(origin *EdgeOrigin) (string, bool) {
 	return "", false
 }
 
-// applyEdgeRequest copies a returned request object back into the state. The
-// method is read-only and the rewrite never re-selects the cache behavior.
+// applyEdgeRequest copies a returned viewer request object back into the state.
+// The method is read-only and the rewrite never re-selects the cache behavior.
 func applyEdgeRequest(state *requestState, request *EdgeRequest) {
 	state.URI = request.URI
 	state.RawQuery = request.Querystring
@@ -895,6 +1203,49 @@ func applyEdgeRequest(state *requestState, request *EdgeRequest) {
 		case valueBase64:
 			if decoded, err := base64.StdEncoding.DecodeString(request.Body.Data); err == nil {
 				state.Body = decoded
+			}
+		}
+	}
+}
+
+// edgeRequestHost returns the returned request's Host header value.
+func edgeRequestHost(request *EdgeRequest) string {
+	for name, entries := range request.Headers {
+		if !strings.EqualFold(name, "host") || len(entries) == 0 {
+			continue
+		}
+		return entries[0].Value
+	}
+	return ""
+}
+
+// applyEdgeOriginRequest applies a returned origin-request object to the
+// policy-filtered origin request CloudFront sends to the origin. The method is
+// read-only; the viewer state and the cache key never change.
+func applyEdgeOriginRequest(originRequest *OriginRequest, request *EdgeRequest) {
+	originRequest.URI = request.URI
+	originRequest.Query = request.Querystring
+	header := http.Header{}
+	host := originRequest.Host
+	for name, entries := range request.Headers {
+		lower := strings.ToLower(name)
+		for _, entry := range entries {
+			if lower == "host" {
+				host = entry.Value
+				continue
+			}
+			header.Add(lower, entry.Value)
+		}
+	}
+	originRequest.Header = header
+	originRequest.Host = host
+	if request.Body != nil && request.Body.Action == valueReplace {
+		switch strings.ToLower(request.Body.Encoding) {
+		case "", valueText:
+			originRequest.Body = []byte(request.Body.Data)
+		case valueBase64:
+			if decoded, err := base64.StdEncoding.DecodeString(request.Body.Data); err == nil {
+				originRequest.Body = decoded
 			}
 		}
 	}

@@ -161,8 +161,8 @@ func (g *Gateway) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	// the function first by choice, so a function can answer a request whose
 	// method the behavior does not allow; see docs/examples/local-runner.md.
 	//
-	// A CloudFront Function viewer-request runs before a Lambda@Edge
-	// viewer-request when both are associated with the same behavior.
+	// A behavior cannot combine a CloudFront Function and a Lambda@Edge
+	// function in a viewer event; topology validation refuses that combination.
 	if behavior.ViewerRequestFunction != "" {
 		function, ok := g.function(behavior.ViewerRequestFunction)
 		if !ok {
@@ -193,7 +193,7 @@ func (g *Gateway) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	// Lambda@Edge viewer-request. A generated response is not cached and the
 	// viewer-response functions do not run for it.
 	if association := behavior.EdgeLambdas[edgeViewerRequest]; association != nil {
-		event := g.edgeEvent(association, state, requestID, domainName, nil, nil)
+		event := g.edgeEvent(association, state, requestID, domainName, nil)
 		outcome, edgeErr := g.invokeEdge(request.Context(), association, event)
 		if edgeErr != nil {
 			g.edgeFailure(writer, request, behavior, state.Header, "viewer-request", edgeErr)
@@ -253,7 +253,7 @@ func (g *Gateway) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		}
 		if ok && entry.ServeStaleWhileRevalidate(now, behaviorMaximumTTL(behavior)) {
 			g.recordStats(behavior.PathPattern, true)
-			g.refreshInBackground(state, originImplementation, originRequest, behavior, cacheKey)
+			g.refreshInBackground(state, originImplementation, origin, originRequest, behavior, cacheKey, requestID, domainName)
 			g.respondFromCache(writer, request, behavior, state, requestID, domainName, entry, now, "served stale while revalidating")
 			return
 		}
@@ -265,11 +265,13 @@ func (g *Gateway) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 
 	// Lambda@Edge origin-request runs only when CloudFront forwards a request
 	// to the origin. A generated response is cached under the normal rules and
-	// later served from the cache without running the function.
+	// later served from the cache without running the function. Its event is
+	// built from the policy-filtered origin request, and a returned object is
+	// applied to that request, never to the viewer state.
 	var originResponse OriginResponse
 	generatedByOriginRequest := false
 	if association := behavior.EdgeLambdas[edgeOriginRequest]; association != nil {
-		event := g.edgeEvent(association, state, requestID, domainName, origin, nil)
+		event := g.edgeOriginEvent(association, originRequest, origin, requestID, domainName, nil)
 		outcome, edgeErr := g.invokeEdge(request.Context(), association, event)
 		if edgeErr != nil {
 			g.edgeFailure(writer, request, behavior, state.Header, "origin-request", edgeErr)
@@ -284,19 +286,11 @@ func (g *Gateway) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			originResponse = generated
 			generatedByOriginRequest = true
 		} else if outcome.Request != nil {
-			viewerHost := state.Host
-			applyEdgeRequest(state, outcome.Request)
-			// The headers the origin-request function returned are exactly what
-			// CloudFront sends to the origin; the origin request policy was
-			// already applied before the function ran, so they are not filtered
-			// again.
-			originRequest.Method = state.Method
-			originRequest.URI = state.URI
-			originRequest.Query = state.RawQuery
-			originRequest.Header = state.Header.Clone()
-			if state.Host != viewerHost {
-				originRequest.Host = state.Host
-			}
+			// The returned request is exactly what CloudFront sends to the
+			// origin: the origin request policy was already applied before the
+			// function ran, so it is not filtered again.
+			hostChanged := edgeRequestHost(outcome.Request) != originRequest.Host
+			applyEdgeOriginRequest(&originRequest, outcome.Request)
 			if outcome.Request.Origin != nil {
 				resolved, ok := g.resolveEdgeOrigin(outcome.Request.Origin)
 				if !ok {
@@ -316,9 +310,13 @@ func (g *Gateway) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 					})
 					return
 				}
-				rewritten := g.originRequest(state, behavior, origin, targetID, requestID)
-				rewritten.Header = state.Header.Clone()
-				originRequest = rewritten
+				originRequest.OriginID = targetID
+				if origin != nil {
+					originRequest.OriginPath = origin.OriginPath
+					if !hostChanged {
+						originRequest.Host = origin.DomainName
+					}
+				}
 			}
 		}
 	}
@@ -353,7 +351,7 @@ func (g *Gateway) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		// returned from the origin". The function does not see the origin body;
 		// it may replace it.
 		if association := behavior.EdgeLambdas[edgeOriginResponse]; association != nil {
-			event := g.edgeEvent(association, state, requestID, domainName, origin, &fetched)
+			event := g.edgeOriginEvent(association, originRequest, origin, requestID, domainName, &fetched)
 			outcome, edgeErr := g.invokeEdge(request.Context(), association, event)
 			if edgeErr != nil {
 				g.edgeFailure(writer, request, behavior, state.Header, "origin-response", edgeErr)
@@ -566,7 +564,7 @@ func (g *Gateway) finishResponse(
 	// generated.
 	if association := behavior.EdgeLambdas[edgeViewerResponse]; association != nil &&
 		viewerResponseAllowed && final.StatusCode < 400 {
-		event := g.edgeEvent(association, state, requestID, domainName, nil, &final)
+		event := g.edgeEvent(association, state, requestID, domainName, &final)
 		outcome, edgeErr := g.invokeEdge(request.Context(), association, event)
 		if edgeErr != nil {
 			g.edgeFailure(writer, request, behavior, state.Header, "viewer-response", edgeErr)

@@ -309,12 +309,21 @@ func TestEdgeBodyUnmarshalJSON(t *testing.T) {
 
 func TestEdgeEventShape(t *testing.T) {
 	gateway, _ := edgeGateway(t, map[string]string{"origin-request": "Function"})
-	state := newRequestState(httptest.NewRequestWithContext(context.Background(), http.MethodPost, "http://d111.cloudfront.local/echo?a=1", strings.NewReader("hello")), []byte("hello"))
 	origin := &DistributionOrigin{ID: "Origin", DomainName: "example.com", Kind: OriginCustom, Custom: &CustomOrigin{
 		ProtocolPolicy: valueHTTPSOnly, ReadTimeout: intPointer(30), KeepaliveSeconds: intPointer(5), SSLProtocols: []string{"TLSv1.2"},
 	}}
 	association := &EdgeFunction{EventType: edgeOriginRequest, IncludeBody: true}
-	event := gateway.edgeEvent(association, state, "req-1", "d111.cloudfront.local", origin, nil)
+	originRequest := OriginRequest{
+		OriginID: "Origin",
+		Method:   http.MethodPost,
+		URI:      "/echo",
+		Query:    "a=1",
+		Host:     "d111.cloudfront.local",
+		Header:   http.Header{"X-Test": []string{"v"}},
+		Body:     []byte("hello"),
+		ViewerIP: "127.0.0.1",
+	}
+	event := gateway.edgeOriginEvent(association, originRequest, origin, "req-1", "d111.cloudfront.local", nil)
 	record := event.Records[0].CF
 	if record.Config.EventType != edgeOriginRequest || record.Config.RequestID != "req-1" {
 		t.Fatalf("config = %+v", record.Config)
@@ -332,14 +341,15 @@ func TestEdgeEventShape(t *testing.T) {
 	if _, ok := record.Request.Headers["host"]; !ok {
 		t.Fatalf("headers = %v", record.Request.Headers)
 	}
-	if record.Origin == nil || record.Origin.Custom == nil || record.Origin.Custom.Protocol != valueHTTPS || record.Origin.Custom.Port != 443 {
-		t.Fatalf("origin = %+v", record.Origin)
+	if record.Request.Origin == nil || record.Request.Origin.Custom == nil ||
+		record.Request.Origin.Custom.Protocol != valueHTTPS || record.Request.Origin.Custom.Port != 443 {
+		t.Fatalf("origin = %+v", record.Request.Origin)
 	}
-	// A body over the viewer limit is truncated and flagged.
+	// A viewer body over the 40 KB limit is truncated and flagged.
+	state := newRequestState(httptest.NewRequestWithContext(context.Background(), http.MethodPost, "http://d111.cloudfront.local/echo", nil), nil)
 	association.EventType = edgeViewerRequest
-	big := make([]byte, edgeViewerBodyLimit+10)
-	state.Body = big
-	event = gateway.edgeEvent(association, state, "req-2", "d111.cloudfront.local", nil, nil)
+	state.Body = make([]byte, edgeViewerBodyLimit+10)
+	event = gateway.edgeEvent(association, state, "req-2", "d111.cloudfront.local", nil)
 	if !event.Records[0].CF.Request.Body.InputTruncated {
 		t.Fatal("a viewer body over 40 KB must be truncated")
 	}
@@ -353,15 +363,15 @@ func TestEdgeRequestApplicationAndOriginResolution(t *testing.T) {
 		URI:         "/rewritten",
 		Querystring: "y=2",
 		Headers: map[string][]EdgeHeader{
-			"host":        {{Key: "Host", Value: "other.example.com"}},
-			"x-added":     {{Value: "seen"}},
-			"cookie":      {{Value: "a=b"}},
-			"x-edge-body": {{Value: "1"}},
+			"host":         {{Key: "Host", Value: "other.example.com"}},
+			"x-added":      {{Value: "seen"}},
+			"cookie":       {{Value: "a=b"}},
+			"x-extra-body": {{Value: "1"}},
 		},
 		Body:   &EdgeBody{Action: valueReplace, Encoding: valueText, Data: "replaced"},
 		Origin: &EdgeOrigin{Custom: &EdgeCustomOrigin{DomainName: "example.com"}},
 	}
-	validated, err := validateEdgeRequestObject(&EdgeFunction{Version: "v"}, returned)
+	validated, err := validateEdgeRequestObject(&EdgeFunction{Version: "v", EventType: edgeOriginRequest}, nil, returned)
 	if err != nil {
 		t.Fatalf("validate: %v", err)
 	}
@@ -679,16 +689,21 @@ func TestEdgeGeneratedResponseBodyLimits(t *testing.T) {
 
 func TestEdgeValidationErrors(t *testing.T) {
 	association := &EdgeFunction{Version: "v"}
-	if _, err := validateEdgeRequestObject(association, &EdgeRequest{Method: "GET", URI: "missing-slash"}); err == nil {
+	if _, err := validateEdgeRequestObject(association, nil, &EdgeRequest{Method: "GET", URI: "missing-slash"}); err == nil {
 		t.Fatal("a uri without a leading slash must be refused")
 	}
-	if _, err := validateEdgeRequestObject(association, &EdgeRequest{Method: "GET", URI: "/x", Headers: map[string][]EdgeHeader{"set-cookie": {{Value: "a=b"}}}}); err == nil {
+	if _, err := validateEdgeRequestObject(association, nil, &EdgeRequest{Method: "GET", URI: "/x", Headers: map[string][]EdgeHeader{"set-cookie": {{Value: "a=b"}}}}); err == nil {
 		t.Fatal("a request cannot carry set-cookie")
 	}
-	if _, err := validateEdgeRequestObject(association, &EdgeRequest{Method: "GET", URI: "/x", Headers: map[string][]EdgeHeader{"cloudfront-viewer-country": {{Value: "US"}}}}); err == nil {
+	if _, err := validateEdgeRequestObject(&EdgeFunction{Version: "v", EventType: edgeViewerRequest}, nil,
+		&EdgeRequest{Method: "GET", URI: "/x", Headers: map[string][]EdgeHeader{"cloudfront-viewer-country": {{Value: "US"}}}}); err == nil {
 		t.Fatal("a viewer request cannot add a CloudFront header")
 	}
-	if err := validateEdgeResponseObject(association, &EdgeResponse{Status: 200, Body: &EdgeBody{Action: "read-only"}}); err == nil {
+	if _, err := validateEdgeRequestObject(&EdgeFunction{Version: "v", EventType: edgeOriginRequest}, nil,
+		&EdgeRequest{Method: "GET", URI: "/x", Headers: map[string][]EdgeHeader{"cloudfront-viewer-country": {{Value: "US"}}}}); err != nil {
+		t.Fatalf("an origin request may add a CloudFront header: %v", err)
+	}
+	if err := validateEdgeResponseObject(association, nil, &EdgeResponse{Status: 200, Body: &EdgeBody{Action: "read-only"}}); err == nil {
 		t.Fatal("a response body action must be replace")
 	}
 }
@@ -799,15 +814,16 @@ func TestGeoBlocksBeforeViewerFunction(t *testing.T) {
 func TestEdgeEventJSONRoundTrip(t *testing.T) {
 	gateway, _ := edgeGateway(t, nil)
 	state := newRequestState(httptest.NewRequestWithContext(context.Background(), http.MethodGet, "http://d111.cloudfront.local/x", nil), nil)
-	event := gateway.edgeEvent(&EdgeFunction{EventType: edgeViewerResponse}, state, "r", "d", nil, &OriginResponse{
-		StatusCode: 200, StatusDescription: "OK", Header: http.Header{"X-Edge": []string{"v"}}, Body: []byte("body"),
+	event := gateway.edgeEvent(&EdgeFunction{EventType: edgeViewerResponse}, state, "r", "d", &OriginResponse{
+		StatusCode: 200, StatusDescription: "OK", Header: http.Header{"X-Origin": []string{"v"}}, Body: []byte("body"),
 	})
 	encoded, err := json.Marshal(event)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
-	if !strings.Contains(string(encoded), `"status":200`) || strings.Contains(string(encoded), `"body"`) {
-		t.Fatalf("a response event must not expose the origin body: %s", encoded)
+	// "status: 'HTTP status code (string)'": the event carries the string form.
+	if !strings.Contains(string(encoded), `"status":"200"`) || strings.Contains(string(encoded), `"body"`) {
+		t.Fatalf("a response event must carry a string status and no origin body: %s", encoded)
 	}
 }
 
@@ -1099,7 +1115,7 @@ func TestGatewayFunctionErrors(t *testing.T) {
 }
 
 func TestEdgeRequestMissingMethod(t *testing.T) {
-	if _, err := validateEdgeRequestObject(&EdgeFunction{Version: "v"}, &EdgeRequest{URI: "/x"}); err == nil {
+	if _, err := validateEdgeRequestObject(&EdgeFunction{Version: "v"}, nil, &EdgeRequest{URI: "/x"}); err == nil {
 		t.Fatal("a request without a method must be refused")
 	}
 }

@@ -829,6 +829,10 @@ next request is a miss.
   `Cache-Control: no-cache` under a behavior whose Minimum TTL is 0 avoids that
   in a dev loop, as does `ErrorCachingMinTTL: 0` where no explicit behavior
   matches.
+- A custom error page fetch runs no origin-request function of the page's
+  behavior and no viewer-request function; the trigger page exempts the viewer
+  request for a custom error page fetch, and the gateway applies that exemption
+  to the whole page request.
 - A stored query key is order-normalized (the selected query strings are
   sorted), while an invalidation path's query string is compared exactly as
   given; AWS does not document the comparison. A path without the matching
@@ -869,6 +873,9 @@ next request is a miss.
   provider convention. CloudFront wire compatibility is proved only against the
   AWS Encryption SDK's `RSA_OAEP_SHA256_MGF1` wrapping algorithm. The page's 128
   character limit on a field pattern and on a query argument is not validated.
+  When the configuration has no `QueryArgProfileConfig`, a `fle-profile` query
+  argument has no effect; the gateway names it in the request log and in the
+  distribution report instead of ignoring it silently.
 
 `Compress`, `RealtimeLogConfigArn`, aliases, the viewer certificate, access
 logging, `HttpVersion`, `IPV6Enabled`, `PriceClass` and the origin connection

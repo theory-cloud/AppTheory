@@ -107,11 +107,25 @@ func (r *Runner) materializeKeyValueStores(spec *Spec) error {
 		}
 		source, ok := sources[store.ObjectKey]
 		if !ok {
-			for objectKey, candidate := range sources {
+			// A suffix match is ambiguous: two assets can share a final path
+			// segment. Prefer an exact object key and refuse by name when more
+			// than one asset matches, instead of picking one nondeterministically.
+			matches := make([]string, 0, 1)
+			for objectKey := range sources {
 				if strings.HasSuffix(objectKey, store.ObjectKey) || strings.HasSuffix(store.ObjectKey, objectKey) {
-					source, ok = candidate, true
-					break
+					matches = append(matches, objectKey)
 				}
+			}
+			sort.Strings(matches)
+			switch len(matches) {
+			case 0:
+			case 1:
+				source, ok = sources[matches[0]], true
+			default:
+				store.Refusals = append(store.Refusals, fmt.Sprintf(
+					"the import source object %q matches more than one asset by suffix (%s); use an exact object key with ImportSource.fromAsset or fromInline",
+					store.ObjectKey, strings.Join(matches, ", ")))
+				continue
 			}
 		}
 		if !ok {

@@ -16,7 +16,7 @@ exports.handler = async (event) => {
     if (request.uri === '/edge/generated') {
         invocations += 1;
         return {
-            status: 200,
+            status: '200',
             statusDescription: 'OK',
             headers: {
                 'content-type': [{ key: 'Content-Type', value: 'application/json' }],
@@ -26,7 +26,7 @@ exports.handler = async (event) => {
             body: JSON.stringify({
                 generated: true,
                 invocations,
-                originKind: cf.origin && cf.origin.s3 ? 's3' : 'custom',
+                originKind: request.origin && request.origin.s3 ? 's3' : 'custom',
             }),
         };
     }

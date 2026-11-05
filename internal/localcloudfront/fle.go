@@ -439,6 +439,15 @@ func fieldPatternsOverlap(a, b string) bool {
 	return strings.HasPrefix(aPrefix, bPrefix) || strings.HasPrefix(bPrefix, aPrefix)
 }
 
+// queryArgument returns one decoded query argument's first value.
+func queryArgument(rawQuery, name string) string {
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return ""
+	}
+	return values.Get(name)
+}
+
 // selectProfile applies the configuration's rules for choosing the profile:
 // the content-type profile, overridden by the fle-profile query argument when
 // the configuration allows it.
@@ -785,6 +794,13 @@ func (g *Gateway) applyFieldLevelEncryption(
 			Reason: fmt.Sprintf(
 				"field-level encryption: content type %q is not configured and the configuration blocks unknown content types", contentType),
 		}, nil
+	}
+	if requested := queryArgument(state.RawQuery, "fle-profile"); requested != "" && config.QueryArgProfileConfig == nil {
+		// The page documents the override only through a QueryArgProfileConfig;
+		// without one the argument has no effect, so name it instead of
+		// silently ignoring it.
+		g.logf("cloudfront %s: fle-profile %q is ignored: field-level encryption configuration %s has no QueryArgProfileConfig",
+			g.Distribution.LogicalID, requested, config.LogicalID)
 	}
 	profileID, problem := config.selectProfile(state.URI, state.RawQuery)
 	if problem != "" {

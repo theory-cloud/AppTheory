@@ -1001,13 +1001,16 @@ queue, provisioned or reserved concurrency, arm64, more than 512 MB of ephemeral
 storage, environment variables beyond the reserved ones, or a runtime that is
 not Node.js or Python is refused by name from the restrictions page
 ([Restrictions on Lambda@Edge](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-at-edge-function-restrictions.html)).
-`IncludeBody` on a response event is refused by name.
+`IncludeBody` on a response event is refused by name. A behavioral association
+of a CloudFront Function and a Lambda@Edge function for the same viewer event is
+refused at plan time with both function ids named: "You can't combine CloudFront
+Functions and Lambda@Edge in viewer events (viewer request and viewer response)"
+([Restrictions on all edge functions](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/edge-function-restrictions-all.html)).
 
 The four triggers run at the documented points
 ([CloudFront events that can trigger a Lambda@Edge function](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-cloudfront-trigger-events.html)):
 
-- **viewer request** runs when CloudFront receives the request, after a
-  CloudFront Function viewer-request when both are associated. It does not run
+- **viewer request** runs when CloudFront receives the request. It does not run
   when fetching a custom error page.
 - **origin request** runs only when the request is forwarded to the origin, so
   a cache hit never runs it.
@@ -1027,21 +1030,32 @@ capitalization for each part, separated by hyphens), `method`, `querystring`,
 `uri` (which must begin with a forward slash and never changes the matched
 behavior or origin) and — with `IncludeBody` — a base64 `body` with
 `inputTruncated` and `action`. Origin events add `origin.custom` or
-`origin.s3`. A viewer-request function that returns the `CloudFront-*` header
-is a 502.
+`origin.s3` inside `request` (`cf.request.origin`), and their `headers`,
+`querystring` and Host are the policy-filtered origin request CloudFront sends,
+not the viewer request. A viewer-request function that returns a `CloudFront-*`
+header (including `CloudFront-Viewer-Country`) is a 502; an origin-request
+function may read, edit, remove or add the documented CloudFront headers.
 
-A generated response must have a `status` between 200 and 599. A viewer-request
+A generated response must have a `status` between 200 and 599; the status may
+be the documented JSON string (the form the events carry) or a number, and
+`bodyEncoding` beside a string `body` selects `text` or `base64`. A viewer-request
 generated response is not cached. An origin-request generated response is cached
 under the behavior's normal TTL rules and later served from the cache without
 running the function
 ([Generating HTTP responses in a Lambda@Edge trigger](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-generating-http-responses.html)).
 A 204 with a body is a 502. The request body exposed with `IncludeBody` is
 truncated at 40 KB for viewer events and 1 MB for origin events, and a replaced
-body over the limit (53.2 KB or 1.33 MB when base64) is a 502. Viewer events
-time out at 5 seconds and origin events at 30 seconds on the run clock
+body over the limit is a 502; a base64 replacement is limited on its encoded
+length, 53.2 KB for a viewer event and 1.33 MB for an origin event. Viewer
+events time out at 5 seconds and origin events at 30 seconds on the run clock
 ([Quotas on Lambda@Edge](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/cloudfront-limits.html#limits-lambda-at-edge)).
 An invalid returned object is a 502 and an unhandled exception or timeout is a
 503 ([Resolve Lambda@Edge 502 and 503 errors](https://repost.aws/knowledge-center/lambda-edge-500-errors)).
+The restrictions page's disallowed headers are stripped from every event, and a
+function that adds one is a 502; a read-only header that a function adds,
+changes or removes relative to the event it received is a 502, with the header
+and the page named
+([Restrictions on all edge functions](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/edge-function-restrictions-all.html)).
 A `viewer-response` function that changes the status code is a 502, as the
 restrictions page requires.
 

@@ -695,6 +695,26 @@ func (d *Distribution) validateBehavior(behavior *Behavior, topology *Topology) 
 			behavior.Refusals = append(behavior.Refusals, fmt.Sprintf("Lambda@Edge %s: %s", association.EventType, refusal))
 		}
 	}
+	// "You can't combine CloudFront Functions and Lambda@Edge in viewer events
+	// (viewer request and viewer response)."
+	// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/edge-function-restrictions-all.html
+	for _, viewerEvent := range []struct {
+		eventType  string
+		functionID string
+	}{
+		{edgeViewerRequest, behavior.ViewerRequestFunction},
+		{edgeViewerResponse, behavior.ViewerResponseFunction},
+	} {
+		association := behavior.EdgeLambdas[viewerEvent.eventType]
+		if association == nil || viewerEvent.functionID == "" {
+			continue
+		}
+		behavior.Refusals = append(behavior.Refusals, fmt.Sprintf(
+			"event type %s associates both the CloudFront Function %s and the Lambda@Edge function %s (version %s); "+
+				"\"You can't combine CloudFront Functions and Lambda@Edge in viewer events (viewer request and viewer response).\" (%s)",
+			viewerEvent.eventType, viewerEvent.functionID, association.Function, association.Version,
+			"https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/edge-function-restrictions-all.html"))
+	}
 	if behavior.FieldLevelEncryptionID != "" {
 		config, ok := topology.FieldLevelEncryptionConfig(behavior.FieldLevelEncryptionID)
 		if !ok {
@@ -720,6 +740,11 @@ func (d *Distribution) validateBehavior(behavior *Behavior, topology *Topology) 
 				for _, refusal := range verifyFLEKeys(profile, topology.publicKeysByID) {
 					behavior.Refusals = append(behavior.Refusals, "field-level encryption: "+refusal)
 				}
+			}
+			if config.QueryArgProfileConfig == nil {
+				d.Reported = append(d.Reported, fmt.Sprintf(
+					"distribution: field-level encryption: configuration %s has no QueryArgProfileConfig, so a fle-profile query argument is ignored",
+					config.LogicalID))
 			}
 		}
 		origin, _ := d.Origin(behavior.TargetOriginID)

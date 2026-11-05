@@ -71,8 +71,18 @@ func (g *Gateway) respondFromCache(
 }
 
 // refreshInBackground re-fetches a stale entry while the stale response is
-// served, which is what stale-while-revalidate asks for.
-func (g *Gateway) refreshInBackground(state *requestState, origin Origin, originRequest OriginRequest, behavior *Behavior, key string) {
+// served, which is what stale-while-revalidate asks for. A revalidation is a
+// request CloudFront forwards to the origin, so it runs the behavior's
+// origin-request and origin-response functions exactly like a miss.
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-cloudfront-trigger-events.html
+func (g *Gateway) refreshInBackground(
+	state *requestState,
+	origin Origin,
+	originConfig *DistributionOrigin,
+	originRequest OriginRequest,
+	behavior *Behavior,
+	key, requestID, domainName string,
+) {
 	if origin == nil {
 		return
 	}
@@ -92,26 +102,136 @@ func (g *Gateway) refreshInBackground(state *requestState, origin Origin, origin
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		response, err := origin.Fetch(ctx, request)
+		generated, ok := g.revalidateOriginRequest(ctx, &request, &origin, &originConfig, behavior, requestID, domainName)
+		if !ok {
+			return
+		}
+		if generated != nil {
+			g.storeRefreshed(ctx, viewer, request, behavior, key, storedPath, storedQuery, *generated, true)
+			return
+		}
+		fetched, err := origin.Fetch(ctx, request)
 		if err != nil {
 			return
 		}
-		final, errorCaching := g.applyCustomErrorResponse(ctx, viewer, request, behavior, response)
-		ttl, control := g.responseTTL(final, behavior, errorCaching)
-		if ttl <= 0 {
+		if !g.revalidateOriginResponse(ctx, &fetched, request, originConfig, behavior, requestID, domainName) {
 			return
 		}
-		now := g.now()
-		g.Cache.Set(key, CacheEntry{
-			Response:             cloneOriginResponse(final),
-			Path:                 storedPath,
-			Query:                storedQuery,
-			StoredAt:             now,
-			ExpiresAt:            now.Add(ttl),
-			StaleWhileRevalidate: control.StaleWhileRevalidate,
-			StaleIfError:         control.StaleIfError,
-		})
+		g.storeRefreshed(ctx, viewer, request, behavior, key, storedPath, storedQuery, fetched, false)
 	}()
+}
+
+// revalidateOriginRequest runs the origin-request function for a revalidation.
+// It reports a generated response when the function produced one, and false when
+// the refresh must be abandoned (a function error, an unknown origin, or no
+// local implementation).
+func (g *Gateway) revalidateOriginRequest(
+	ctx context.Context,
+	request *OriginRequest,
+	origin *Origin,
+	originConfig **DistributionOrigin,
+	behavior *Behavior,
+	requestID, domainName string,
+) (*OriginResponse, bool) {
+	association := behavior.EdgeLambdas[edgeOriginRequest]
+	if association == nil {
+		return nil, true
+	}
+	event := g.edgeOriginEvent(association, *request, *originConfig, requestID, domainName, nil)
+	outcome, err := g.invokeEdge(ctx, association, event)
+	if err != nil {
+		return nil, false
+	}
+	if outcome.Response != nil {
+		generated, responseErr := g.edgeGeneratedResponse(association, outcome.Response, nil)
+		if responseErr != nil {
+			return nil, false
+		}
+		return &generated, true
+	}
+	if outcome.Request == nil {
+		return nil, true
+	}
+	applyEdgeOriginRequest(request, outcome.Request)
+	if outcome.Request.Origin == nil {
+		return nil, true
+	}
+	resolved, found := g.resolveEdgeOrigin(outcome.Request.Origin)
+	if !found {
+		return nil, false
+	}
+	*originConfig, _ = g.Distribution.Origin(resolved)
+	*origin = g.Origins[resolved]
+	if *origin == nil {
+		return nil, false
+	}
+	request.OriginID = resolved
+	if *originConfig != nil {
+		request.OriginPath = (*originConfig).OriginPath
+	}
+	return nil, true
+}
+
+// revalidateOriginResponse runs the origin-response function for a
+// revalidation. It reports false when the refresh must be abandoned.
+func (g *Gateway) revalidateOriginResponse(
+	ctx context.Context,
+	response *OriginResponse,
+	request OriginRequest,
+	originConfig *DistributionOrigin,
+	behavior *Behavior,
+	requestID, domainName string,
+) bool {
+	association := behavior.EdgeLambdas[edgeOriginResponse]
+	if association == nil {
+		return true
+	}
+	event := g.edgeOriginEvent(association, request, originConfig, requestID, domainName, response)
+	outcome, err := g.invokeEdge(ctx, association, event)
+	if err != nil {
+		return false
+	}
+	if outcome.Response == nil {
+		return true
+	}
+	replaced, responseErr := g.edgeGeneratedResponse(association, outcome.Response, response.Body)
+	if responseErr != nil {
+		return false
+	}
+	*response = replaced
+	return true
+}
+
+// storeRefreshed applies the custom error rule and the TTL to a revalidated
+// object and stores it under the existing cache key.
+func (g *Gateway) storeRefreshed(
+	ctx context.Context,
+	viewer *requestState,
+	originRequest OriginRequest,
+	behavior *Behavior,
+	key, storedPath, storedQuery string,
+	response OriginResponse,
+	generated bool,
+) {
+	final := response
+	errorCaching := errorCachingDecision{}
+	if !generated {
+		final, errorCaching = g.applyCustomErrorResponse(ctx, viewer, originRequest, behavior, response)
+	}
+	ttl, control := g.responseTTL(final, behavior, errorCaching)
+	if ttl <= 0 {
+		return
+	}
+	now := g.now()
+	g.Cache.Set(key, CacheEntry{
+		Response:             cloneOriginResponse(final),
+		Path:                 storedPath,
+		Query:                storedQuery,
+		StoredAt:             now,
+		ExpiresAt:            now.Add(ttl),
+		StaleWhileRevalidate: control.StaleWhileRevalidate,
+		StaleIfError:         control.StaleIfError,
+	})
 }
 
 // errorCachingDecision is the error-caching rule that applies to one origin

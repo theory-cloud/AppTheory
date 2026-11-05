@@ -860,7 +860,13 @@ func TestEdgeRequestWithoutBody(t *testing.T) {
 	gateway, _ := edgeGateway(t, nil)
 	state := newRequestState(httptest.NewRequestWithContext(context.Background(), http.MethodGet, "http://d111.cloudfront.local/x", nil), nil)
 	for _, eventType := range []string{edgeViewerRequest, edgeOriginRequest} {
-		event := gateway.edgeEvent(&EdgeFunction{EventType: eventType, IncludeBody: true}, state, "r", "d", nil, nil)
+		association := &EdgeFunction{EventType: eventType, IncludeBody: true}
+		var event *EdgeEvent
+		if eventType == edgeViewerRequest {
+			event = gateway.edgeEvent(association, state, "r", "d", nil)
+		} else {
+			event = gateway.edgeOriginEvent(association, OriginRequest{Method: http.MethodGet, URI: "/x"}, nil, "r", "d", nil)
+		}
 		if event.Records[0].CF.Request.Body != nil {
 			t.Fatalf("%s: an empty body must not be exposed", eventType)
 		}

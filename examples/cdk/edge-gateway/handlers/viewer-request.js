@@ -19,7 +19,7 @@ exports.handler = async (event) => {
 
     if (request.uri === '/edge/viewer-generated') {
         return {
-            status: 200,
+            status: '200',
             statusDescription: 'OK',
             headers: {
                 'content-type': [{ key: 'Content-Type', value: 'text/plain' }],
