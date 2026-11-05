@@ -110,8 +110,8 @@ func (e CacheEntry) ServeStaleForErrorResponse(now time.Time, errorWindow, maxTT
 	}
 	limit := e.ExpiresAt.Add(window)
 	if maxTTL > 0 {
-		if cap := e.StoredAt.Add(maxTTL); cap.Before(limit) {
-			limit = cap
+		if ceiling := e.StoredAt.Add(maxTTL); ceiling.Before(limit) {
+			limit = ceiling
 		}
 	}
 	return now.Before(limit)
@@ -213,33 +213,6 @@ func invalidationPathMatches(pattern, path string) bool {
 		return strings.HasPrefix(path, strings.TrimSuffix(decoded, "*"))
 	}
 	return decoded == path
-}
-
-// wildcardMatch is the local * and ? matcher used for IAM-style ARN patterns.
-func wildcardMatch(pattern, value string) bool {
-	p, v := 0, 0
-	star, match := -1, 0
-	for v < len(value) {
-		switch {
-		case p < len(pattern) && (pattern[p] == '?' || pattern[p] == value[v]):
-			p++
-			v++
-		case p < len(pattern) && pattern[p] == '*':
-			star = p
-			match = v
-			p++
-		case star >= 0:
-			p = star + 1
-			match++
-			v = match
-		default:
-			return false
-		}
-	}
-	for p < len(pattern) && pattern[p] == '*' {
-		p++
-	}
-	return p == len(pattern)
 }
 
 // CacheKey builds the cache key for one request. The distribution domain and

@@ -241,7 +241,7 @@ func (g *Gateway) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			return
 		}
 	}
-	response, errorCaching := g.applyCustomErrorResponse(request.Context(), state, originImplementation, originRequest, originResponse)
+	response, errorCaching := g.applyCustomErrorResponse(request.Context(), state, originRequest, originResponse)
 	// GET and HEAD share one key, but a HEAD response has no body to serve a
 	// later GET, so it is never stored under that key.
 	if cacheable && state.Method != http.MethodHead {

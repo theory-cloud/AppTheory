@@ -96,7 +96,7 @@ func (g *Gateway) refreshInBackground(state *requestState, origin Origin, origin
 		if err != nil {
 			return
 		}
-		final, errorCaching := g.applyCustomErrorResponse(ctx, viewer, origin, request, response)
+		final, errorCaching := g.applyCustomErrorResponse(ctx, viewer, request, response)
 		ttl, control := g.responseTTL(final, behavior, errorCaching)
 		if ttl <= 0 {
 			return
@@ -149,7 +149,6 @@ type errorCachingDecision struct {
 func (g *Gateway) applyCustomErrorResponse(
 	ctx context.Context,
 	viewer *requestState,
-	origin Origin,
 	originRequest OriginRequest,
 	response OriginResponse,
 ) (OriginResponse, errorCachingDecision) {
