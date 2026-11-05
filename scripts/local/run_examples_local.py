@@ -2656,17 +2656,6 @@ def run_lambda_role_authorizers(harness: Harness) -> str:
         expect_status(status, 200, "rest token authorizer cached", json.dumps(payload))
         if int((payload.get("authorizer") or {}).get("invocation", "0")) != token_first:
             raise HarnessFailure("the cached rest token decision invoked the authorizer again")
-        status, _unused, _ = http_request("GET", f"{rest_base}/token")
-        expect_status(status, 401, "rest token authorizer missing token", "")
-        for label, token, want in (
-            ("deny", "deny", 403),
-            ("unauthorized", "unauthorized", 401),
-            ("invalid", "invalid", 500),
-        ):
-            status, text, _ = http_request(
-                "GET", f"{rest_base}/token", headers={"Authorization": token}
-            )
-            expect_status(status, want, f"rest token authorizer {label}", text)
 
         # The cached value is the POLICY, not the decision for GET /token: the
         # policy the function returned names only that method ARN, so the same
@@ -2693,6 +2682,20 @@ def run_lambda_role_authorizers(harness: Harness) -> str:
                 "the cached policy for GET /token was not re-evaluated per method or the 403 invoked "
                 f"the authorizer: invocation {token_after} after {token_first}"
             )
+
+        # The remaining token values use their own cache keys and do not touch
+        # the "allow" entry proved above.
+        status, _unused, _ = http_request("GET", f"{rest_base}/token")
+        expect_status(status, 401, "rest token authorizer missing token", "")
+        for label, token, want in (
+            ("deny", "deny", 403),
+            ("unauthorized", "unauthorized", 401),
+            ("invalid", "invalid", 500),
+        ):
+            status, text, _ = http_request(
+                "GET", f"{rest_base}/token", headers={"Authorization": token}
+            )
+            expect_status(status, want, f"rest token authorizer {label}", text)
 
         # The REQUEST authorizer declares two identity sources and caches the
         # policy for 60 seconds.
