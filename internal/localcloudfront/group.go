@@ -1,9 +1,11 @@
 package localcloudfront
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -67,6 +69,56 @@ func (g *OriginGroupOrigin) Fetch(ctx context.Context, request OriginRequest) (O
 		return response, nil
 	}
 	return secondary.Origin.Fetch(ctx, memberRequest(request, secondary))
+}
+
+// FetchStream sends the request to the primary member and fails over to the
+// secondary when CloudFront would. A buffered member's complete response is
+// wrapped as a single-chunk stream so the gateway has one streaming path.
+func (g *OriginGroupOrigin) FetchStream(ctx context.Context, request OriginRequest) (StreamResponse, error) {
+	if len(g.Members) < 2 {
+		return StreamResponse{}, &OriginUnavailableError{
+			OriginID: g.GroupID,
+			Reason:   fmt.Sprintf("an origin group needs a primary and a secondary member; the assembly declares %d", len(g.Members)),
+		}
+	}
+	primary := g.Members[0]
+	secondary := g.Members[1]
+	stream, err := fetchStreamMember(ctx, primary.Origin, memberRequest(request, primary))
+	if !failoverMethod(request) {
+		return stream, err
+	}
+	if err != nil {
+		if !g.failsOverOn(failoverStatusForError(err)) {
+			return stream, err
+		}
+		return fetchStreamMember(ctx, secondary.Origin, memberRequest(request, secondary))
+	}
+	if !g.failsOverOn(stream.StatusCode) {
+		return stream, nil
+	}
+	if stream.Body != nil {
+		_ = stream.Body.Close() //nolint:errcheck // failing over discards the primary body
+	}
+	return fetchStreamMember(ctx, secondary.Origin, memberRequest(request, secondary))
+}
+
+// fetchStreamMember streams a member's response, or completes a buffered
+// member's response into a single-chunk stream.
+func fetchStreamMember(ctx context.Context, origin Origin, request OriginRequest) (StreamResponse, error) {
+	if streamer, ok := origin.(StreamOrigin); ok {
+		return streamer.FetchStream(ctx, request)
+	}
+	response, err := origin.Fetch(ctx, request)
+	if err != nil {
+		return StreamResponse{}, err
+	}
+	return StreamResponse{
+		StatusCode:        response.StatusCode,
+		StatusDescription: response.StatusDescription,
+		Header:            response.Header,
+		Body:              io.NopCloser(bytes.NewReader(response.Body)),
+		Chunked:           false,
+	}, nil
 }
 
 // memberRequest applies the member's origin path and Host. A request Host that

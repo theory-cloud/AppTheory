@@ -8,11 +8,10 @@ import (
 	"strings"
 )
 
-// streamingFrameSeparator is the eight NUL bytes the Lambda Runtime Interface
-// Emulator writes between the metadata of a streamed response and its body. The
-// RIE never streams incrementally: it buffers the whole response and returns it
-// once (LOCAL-A0). The local transport reproduces the bytes and headers, not the
-// chunk timing.
+// streamingFrameSeparator is the eight NUL bytes between a streaming response's
+// metadata JSON and its payload. The runner's transports parse it as the prelude
+// arrives and forward the payload; a buffered caller decodes the complete frame.
+// https://docs.aws.amazon.com/apigateway/latest/developerguide/response-transfer-mode-lambda.html
 var streamingFrameSeparator = []byte{0, 0, 0, 0, 0, 0, 0, 0}
 
 // LambdaResponse is a decoded Lambda proxy response.

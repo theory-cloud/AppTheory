@@ -3,6 +3,7 @@ package localrunner
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -219,14 +220,24 @@ func (r *Runner) streamInvocations(ctx context.Context, process *FunctionProcess
 		if !json.Valid([]byte(line)) {
 			return fmt.Errorf("event %d is not valid JSON", count+1)
 		}
-		raw, err := process.Invoke(ctx, []byte(line))
+		var result InvokeResult
+		if r.options.StreamChunks {
+			sink := &chunkEventWriter{writer: writer, invocation: count + 1}
+			streamed, streamErr := process.InvokeStream(ctx, []byte(line), sink)
+			if streamErr != nil {
+				return streamErr
+			}
+			result = decodeInvokeResult(streamed.Body)
+		} else {
+			raw, err := process.Invoke(ctx, []byte(line))
+			if err != nil {
+				return err
+			}
+			result = decodeInvokeResult(raw)
+		}
+		encoded, err := encodeInvokeResult(result, r.options.StreamChunks, count+1)
 		if err != nil {
 			return err
-		}
-		result := decodeInvokeResult(raw)
-		encoded, err := json.Marshal(result)
-		if err != nil {
-			return fmt.Errorf("encode invocation result: %w", err)
 		}
 		if _, err := writer.Write(append(encoded, '\n')); err != nil {
 			return fmt.Errorf("write invocation result: %w", err)
@@ -243,6 +254,79 @@ func (r *Runner) streamInvocations(ctx context.Context, process *FunctionProcess
 		return errors.New("no invocation event was supplied")
 	}
 	return nil
+}
+
+// chunkEvent is one chunk of a streamed response. It precedes the result line
+// only when the caller asks for chunk events, so the default protocol stays one
+// result line per event.
+type chunkEvent struct {
+	Event       string `json:"event"`
+	Invocation  int    `json:"invocation"`
+	Index       int    `json:"index"`
+	ContentType string `json:"contentType,omitempty"`
+	Data        string `json:"data"`
+}
+
+type resultEvent struct {
+	Event      string `json:"event"`
+	Invocation int    `json:"invocation"`
+	InvokeResult
+}
+
+// chunkEventWriter writes one JSON chunk event per chunk the runtime produces.
+type chunkEventWriter struct {
+	writer      *bufio.Writer
+	invocation  int
+	index       int
+	contentType string
+	streamed    bool
+}
+
+func (w *chunkEventWriter) Start(contentType string, streamed bool) error {
+	w.contentType = contentType
+	w.streamed = streamed
+	return nil
+}
+
+func (w *chunkEventWriter) Chunk(chunk []byte) error {
+	if !w.streamed {
+		return nil
+	}
+	encoded, err := json.Marshal(chunkEvent{
+		Event:       "chunk",
+		Invocation:  w.invocation,
+		Index:       w.index,
+		ContentType: w.contentType,
+		Data:        base64.StdEncoding.EncodeToString(chunk),
+	})
+	if err != nil {
+		return fmt.Errorf("encode invocation chunk: %w", err)
+	}
+	if _, err := w.writer.Write(append(encoded, '\n')); err != nil {
+		return fmt.Errorf("write invocation chunk: %w", err)
+	}
+	if err := w.writer.Flush(); err != nil {
+		return fmt.Errorf("flush invocation chunk: %w", err)
+	}
+	w.index++
+	return nil
+}
+
+func (w *chunkEventWriter) End(string, []byte) error { return nil }
+
+func encodeInvokeResult(result InvokeResult, chunks bool, invocation int) ([]byte, error) {
+	if !chunks {
+		encoded, err := json.Marshal(result)
+		if err != nil {
+			return nil, fmt.Errorf("encode invocation result: %w", err)
+		}
+		return encoded, nil
+	}
+	encoded, err := json.Marshal(resultEvent{Event: "result", Invocation: invocation, InvokeResult: result})
+	if err != nil {
+		return nil, fmt.Errorf("encode invocation result: %w", err)
+	}
+	return encoded, nil
 }
 
 func decodeInvokeResult(raw []byte) InvokeResult {

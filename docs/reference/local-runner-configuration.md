@@ -48,6 +48,7 @@ function the CDK definition targets and reads one JSON command per line.
 | `--function ID` | none | `invoke`: function logical id from the CDK assembly. |
 | `--event FILE` | none | `invoke`: JSON event file. Repeatable. |
 | `--stdio` | off | `invoke`: read newline-delimited JSON events from stdin and keep the container warm. |
+| `--stream-chunks` | off | `invoke`: with `--stdio`, write one `{"event":"chunk",…}` line per streamed response chunk before the result line. A buffered response still writes only the result, so the default one-result-per-event contract is unchanged. |
 | `--rie` | off | Run function containers under the image's embedded Runtime Interface Emulator instead of the runner's Lambda Runtime API. Reported by `plan`, `plan --json` (`runtimeMode`) and `session describe`. It cannot stream incrementally. |
 | `--target ID` | none | `session`: start this CDK function even though no route, event source or rule targets it. Repeatable. |
 | `--handler-dir DIR` | none | `invoke`: built handler directory for an example with no CDK definition. Derives no routes. |
@@ -329,7 +330,7 @@ TS_NODE_TRANSPILE_ONLY=1
 | `AWS::Lambda::Function` with `Code.ZipFile` | Materialized as `<module>.js` / `<module>.py` under `<scratch>/inline/<logicalId>/`. |
 | `AWS::ApiGatewayV2::Api` (`ProtocolType: HTTP`) + `Route` + `AWS_PROXY` `Integration` | Served as HTTP API v2. `$default` routes become a catch-all. |
 | `AWS::ApiGateway::RestApi` + `Resource` tree + `Method` + `AWS_PROXY` integration | Served as REST API v1 at the path reconstructed from the resource tree. `ResponseTransferMode: STREAM` and `/response-streaming-invocations` are marked streaming. |
-| `AWS::Lambda::Url` (`AuthType: NONE`) | Served as a Function URL listener. `InvokeMode: RESPONSE_STREAM` is marked streaming (buffered). A URL with `AWS_IAM` is not served as a standalone URL; when a served CloudFront distribution targets it, the gateway invokes it through the signed local OAC origin instead. |
+| `AWS::Lambda::Url` (`AuthType: NONE`) | Served as a Function URL listener. `InvokeMode: RESPONSE_STREAM` is marked streaming and forwarded incrementally. A URL with `AWS_IAM` is not served as a standalone URL; when a served CloudFront distribution targets it, the gateway invokes it through the signed local OAC origin instead. |
 | `AWS::ApiGatewayV2::Authorizer` (`REQUEST`) | For an HTTP API route with simple responses, the transport sends a v2 REQUEST authorizer event and enforces `isAuthorized`. With `EnableSimpleResponses: false` it sends payload format 1.0 or 2.0 and matches the returned IAM policy against the route ARN. For a WebSocket `$connect` route, the transport sends the documented WebSocket authorizer event and matches the returned IAM policy against the `$connect` method ARN. A type the transport cannot run fails the route that references it closed. |
 | `AWS::ApiGateway::Authorizer` | Parsed; a `COGNITO_USER_POOLS` authorizer is run for the REST methods that reference it (R2a). A Lambda authorizer is R2b and fails closed. |
 | `AWS::Lambda::EventSourceMapping` (SQS, DynamoDB Streams, Kinesis) | Reported with its function, source, batch options, filter criteria and scaling configuration; the function is started and the mapping is delivered automatically: an SQS queue (see [SQS event-source delivery](/examples/local-runner/#sqs-event-source-delivery)), a DynamoDB stream (see [DynamoDB Streams delivery](/examples/local-runner/#dynamodb-streams-delivery)) or a Kinesis stream (see [Kinesis event-source delivery](/examples/local-runner/#kinesis-event-source-delivery)). A session can still build the provider event from real local messages or a real local write. |
@@ -963,8 +964,9 @@ The runner registers:
   [Function URL payload format 2.0 event](https://docs.aws.amazon.com/lambda/latest/dg/urls-invocation.html)
   from the origin request and invokes the real function through the same
   runtime container `run` starts. `statusCode`, `headers`, `cookies`,
-  `isBase64Encoded` and `body` map back. `RESPONSE_STREAM` is buffered by the
-  RIE: the body is complete and chunk timing is not reproduced. A `NONE` URL is
+  `isBase64Encoded` and `body` map back. A `RESPONSE_STREAM` URL is streamed:
+  the prelude supplies the status, headers and cookies and the payload after
+  the 8-null-byte delimiter follows as the runtime writes it. A `NONE` URL is
   invoked directly. An `AWS_IAM` URL is signed with SigV4 (method, path, query,
   Host, body hash and date); the gateway's in-process verifier checks that
   locally signed request before it invokes the handler, and the event reports
@@ -998,10 +1000,18 @@ S3's response overrides. Every other query parameter is unchanged.
 ### Fidelity
 
 **Not a CloudFront emulator: no edge network, no TLS.** The gateway does not
-reproduce viewer protocol redirects, CloudFront's 1 ms CPU limit, incremental
-streaming (the Function URL origin is buffered by the RIE), custom status
-descriptions or CloudFront-only device and TLS headers; the viewer-country
-header is reproduced from `--viewer-country`. S3 bucket CORS rules, S3
+reproduce viewer protocol redirects, CloudFront's 1 ms CPU limit, the streaming
+bandwidth cap (the "first 6 MB of your function's response payload has uncapped
+bandwidth. After this initial burst, Lambda streams your response at a maximum
+rate of 2 MBps"; the local gateway forwards at the origin's pace), custom
+status descriptions or CloudFront-only device and TLS headers; the
+viewer-country header is reproduced from `--viewer-country`. A streamed
+origin response runs the Lambda@Edge origin-response function and the response
+headers policy at the prelude; a Lambda@Edge viewer-response function is not
+run for it, because the object has already been forwarded to the viewer while
+the body is read, and no example combines the two. A `Content-Length` in a
+streaming prelude is recomputed by the local HTTP server; a body without one is
+chunked, which is API Gateway's documented default. S3 bucket CORS rules, S3
 IAM/bucket policies and Lambda IAM policy evaluation are not emulated. A viewer
 `If-Range` is not carried to the S3 origin (CloudFront forwards it by default),
 so a conditional range is served as an unconditional range. Lambda@Edge, key
@@ -1385,14 +1395,17 @@ A body that is not valid UTF-8 is base64-encoded and `isBase64Encoded` is `true`
 
 ## Response decoding
 
-The Runtime Interface Emulator returns one JSON body:
+The runtime returns one JSON body (the emulator returns the same shape in
+`--rie` mode):
 
 - `statusCode`, `headers`, `multiValueHeaders`, `cookies`, `body`,
   `isBase64Encoded` are all honoured; `multiValueHeaders` wins over `headers` for
   the same name;
-- a body framed as `{metadata JSON}` + eight NUL bytes + bytes is decoded as a
-  buffered streaming response (`Streamed: true`) and served with its metadata
-  and complete body;
+- a chunked body is a streaming response. The transports parse the metadata
+  prelude (`{metadata JSON}` + eight NUL bytes) when the Function URL or REST
+  API proxy integration requires one, forward the payload as it arrives, and a
+  buffered caller decodes the complete framed body (`Streamed: true`) with its
+  metadata and body;
 - `errorType`/`errorMessage` without a `statusCode` is a handler error and is
   served as `502 {"message":"Internal Server Error"}` (the detail is logged);
 - a missing or out-of-range `statusCode` and a malformed body are `502`;

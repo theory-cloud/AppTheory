@@ -321,6 +321,7 @@ func (g *Gateway) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		}
 	}
 
+	originResponseFunctionDone := false
 	if !generatedByOriginRequest {
 		fle, fleErr := g.applyFieldLevelEncryption(state, behavior, &originRequest)
 		if fleErr != nil {
@@ -331,26 +332,54 @@ func (g *Gateway) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			g.respondViewerBlock(writer, request, behavior, state, requestID, domainName, fle.Status, fle.Reason)
 			return
 		}
-		fetched, originErr := originImplementation.Fetch(request.Context(), originRequest)
-		if originErr != nil {
-			if hasStaleEntry && staleEntry.ServeStaleIfError(now, behaviorMaximumTTL(behavior)) {
-				g.respondFromCache(writer, request, behavior, state, requestID, domainName, staleEntry, now, "served stale after the origin failed")
+		var fetched OriginResponse
+		if streamOrigin, ok := originImplementation.(StreamOrigin); ok {
+			outcome, streamErr := g.serveStreamingOrigin(writer, request, behavior, state, requestID, domainName,
+				originRequest, origin, streamOrigin, cacheable, cacheKey, now)
+			if streamErr != nil {
+				if hasStaleEntry && staleEntry.ServeStaleIfError(now, behaviorMaximumTTL(behavior)) {
+					g.respondFromCache(writer, request, behavior, state, requestID, domainName, staleEntry, now, "served stale after the origin failed")
+					return
+				}
+				var unavailable *OriginUnavailableError
+				if errors.As(streamErr, &unavailable) || errors.Is(streamErr, ErrOriginUnavailable) {
+					g.respondError(writer, request, behavior, state.Header, http.StatusServiceUnavailable, streamErr.Error())
+					return
+				}
+				g.respondError(writer, request, behavior, state.Header, http.StatusBadGateway,
+					fmt.Sprintf("origin %q failed: %v", targetID, streamErr))
 				return
 			}
-			var unavailable *OriginUnavailableError
-			if errors.As(originErr, &unavailable) || errors.Is(originErr, ErrOriginUnavailable) {
-				g.respondError(writer, request, behavior, state.Header, http.StatusServiceUnavailable, originErr.Error())
+			if outcome.Handled {
 				return
 			}
-			g.respondError(writer, request, behavior, state.Header, http.StatusBadGateway,
-				fmt.Sprintf("origin %q failed: %v", targetID, originErr))
-			return
+			fetched = outcome.Buffered
+			// The streaming path already ran the origin-response function with
+			// the status and headers it saw when the stream opened.
+			originResponseFunctionDone = true
+		} else {
+			var originErr error
+			fetched, originErr = originImplementation.Fetch(request.Context(), originRequest)
+			if originErr != nil {
+				if hasStaleEntry && staleEntry.ServeStaleIfError(now, behaviorMaximumTTL(behavior)) {
+					g.respondFromCache(writer, request, behavior, state, requestID, domainName, staleEntry, now, "served stale after the origin failed")
+					return
+				}
+				var unavailable *OriginUnavailableError
+				if errors.As(originErr, &unavailable) || errors.Is(originErr, ErrOriginUnavailable) {
+					g.respondError(writer, request, behavior, state.Header, http.StatusServiceUnavailable, originErr.Error())
+					return
+				}
+				g.respondError(writer, request, behavior, state.Header, http.StatusBadGateway,
+					fmt.Sprintf("origin %q failed: %v", targetID, originErr))
+				return
+			}
 		}
 		// Lambda@Edge origin-response runs after CloudFront receives a response
 		// from the origin and before it caches the object, "even if an error is
 		// returned from the origin". The function does not see the origin body;
 		// it may replace it.
-		if association := behavior.EdgeLambdas[edgeOriginResponse]; association != nil {
+		if association := behavior.EdgeLambdas[edgeOriginResponse]; association != nil && !originResponseFunctionDone {
 			event := g.edgeOriginEvent(association, originRequest, origin, requestID, domainName, &fetched)
 			outcome, edgeErr := g.invokeEdge(request.Context(), association, event)
 			if edgeErr != nil {

@@ -104,8 +104,10 @@ type Options struct {
 	// compare against the emulator and for an image whose entry script ignores
 	// AWS_LAMBDA_RUNTIME_API; it cannot stream incrementally.
 	RIEMode bool
+	// StreamChunks makes `invoke --stdio` write one chunk event per streamed
 	// response chunk before the result line. The default protocol stays one
 	// result line per event.
+	StreamChunks bool
 }
 
 // Runner owns one local run: the derived surface, the Docker network, the

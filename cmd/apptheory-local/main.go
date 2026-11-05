@@ -143,6 +143,7 @@ type commandConfig struct {
 	events              stringList
 	stdio               bool
 	rieMode             bool
+	streamChunks        bool
 	sessionTargets      stringList
 	handlerDir          string
 	runtime             string
@@ -176,6 +177,7 @@ func (c *commandConfig) register(flags *flag.FlagSet) {
 	flags.Var(&c.events, "event", "invoke: JSON event file (repeatable)")
 	flags.BoolVar(&c.stdio, "stdio", false, "invoke: read newline-delimited JSON events from stdin and keep the container warm")
 	flags.BoolVar(&c.rieMode, "rie", false, "run functions under the image's embedded Runtime Interface Emulator instead of the runner's Lambda Runtime API (buffered: responses are not streamed incrementally)")
+	flags.BoolVar(&c.streamChunks, "stream-chunks", false, "invoke --stdio: write one chunk event per streamed response chunk before the result line")
 	flags.Var(&c.sessionTargets, "target", "session: start this CDK function too, even with no route, event source or rule (repeatable)")
 	flags.StringVar(&c.handlerDir, "handler-dir", "", "invoke: built handler code directory (no CDK app)")
 	flags.StringVar(&c.runtime, "runtime", "", "invoke --handler-dir: Lambda runtime (provided.al2023, nodejs24.x, python3.14)")
@@ -488,6 +490,7 @@ func (c *commandConfig) options() (localrunner.Options, error) {
 		Clock:               c.clock,
 		AllowNoSurface:      c.allowNoSurface,
 		RIEMode:             c.rieMode,
+		StreamChunks:        c.streamChunks,
 		Stdout:              os.Stdout,
 	}, nil
 }

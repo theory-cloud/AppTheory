@@ -1171,9 +1171,10 @@ same assembly:
   2.0 event from the origin request (method, origin path, raw path, query,
   cookies, headers, viewer IP and request id), invokes the real function through
   the same runtime container `run` starts, and maps `statusCode`, `headers`,
-  `cookies`, `isBase64Encoded` and `body` back. A `RESPONSE_STREAM` function is
-  **buffered by the RIE**: the body is complete and its chunk timing is never
-  reproduced. A `NONE` URL is invoked directly. An `AWS_IAM` URL is signed with
+  `cookies`, `isBase64Encoded` and `body` back. A `RESPONSE_STREAM` function's
+  chunks reach the gateway as the runtime writes them; the prelude supplies the
+  status, headers and cookies and the payload follows. A `NONE` URL is invoked
+  directly. An `AWS_IAM` URL is signed with
   SigV4 over the method, path, query, Host, body hash and date; the gateway's
   in-process verifier checks that locally signed request before it invokes the
   handler, and the event reports `requestContext.authorizer.iam` with a loopback
@@ -1449,10 +1450,15 @@ built handler and the caller supplies every event. It exists because the Go MCP
 examples ship a handler but no CDK definition. A handler-only row is never
 described as CDK-routed.
 
-Streaming over a warm container is still buffered by the RIE: a tool call's
-complete SSE body arrives after the handler finishes, and `streamed` marks the
-framed response. The MCP rows assert session creation, event ids and
-Last-Event-ID replay content; they never claim incremental delivery.
+`--stream-chunks` makes the warm protocol carry a streamed response as it
+arrives: for each streamed invocation the runner writes one
+`{"event":"chunk","invocation":N,"index":I,"contentType":…,"data":"<base64>"}`
+line per chunk and then exactly one result line, which is the same result object
+the default protocol writes plus `"event":"result"` and `"invocation"`. A
+buffered response still produces no chunk lines, so a caller that does not pass
+the flag keeps the existing one-result-per-event contract. The MCP row uses the
+arrival times to prove the first SSE event crossed the runner before the
+countdown finished.
 
 ## Automation sessions
 
@@ -2310,8 +2316,8 @@ the harness records it.
 | --- | --- | --- |
 | HTTP API v2 (`AWS::ApiGatewayV2::Api`, HTTP) | Supported (L1) | v2.0 events with `routeKey`, `rawPath`, `requestContext.http`, cookies and path parameters. The `cookie` header is removed when `cookies` is populated, as AWS does. |
 | REST API v1 (`AWS::ApiGateway::RestApi`) | Supported (L1) | v1 events with `resource`, `multiValueHeaders`, `multiValueQueryStringParameters` and the stage. |
-| Lambda Function URL | Supported (L1) | Function URL events carry `routeKey: "$default"` (top-level and in `requestContext`, with `requestContext.stage`) and a `.lambda-url.<region>.on.aws` domain, which the runtime uses to tell them apart from HTTP API v2. A URL with an auth type other than `NONE` is reported under `skipped`, not served as a standalone URL; a distribution can still reference it as an origin. |
-| Response streaming (`awslambda.streamifyResponse`, SSE) | Supported, **buffered** (L3) | The RIE buffers the whole response and returns metadata JSON + eight NUL bytes + body. The transport reproduces status, headers and complete bytes; it never reproduces chunk timing. |
+| Lambda Function URL | Supported (L1) | Function URL events carry `routeKey: "$default"` (top-level and in `requestContext`, with `requestContext.stage`) and a `.lambda-url.<region>.on.aws` domain, which the runtime uses to tell them apart from HTTP API v2. A `RESPONSE_STREAM` URL forwards the prelude and the payload incrementally. A URL with an auth type other than `NONE` is reported under `skipped`, not served as a standalone URL; a distribution can still reference it as an origin. |
+| Response streaming (`awslambda.streamifyResponse`, SSE) | Supported (L2) | A chunked runtime response is forwarded to the Function URL, REST API proxy integration and CloudFront viewer as the runtime writes it; the Function URL and REST formats (metadata JSON, 8 null bytes, payload) and the midstream error trailers are implemented. Lambda's 6 MB uncapped burst and 2 MBps cap are not reproduced (documented deviation). |
 | Inline `Code.ZipFile` | Supported (Node, Python) | Materialized under the run scratch directory before the container starts. |
 | arm64 `provided.al2023` | Supported (L1) | Uses the host-arch image; a bootstrap built for the other architecture fails closed with a clear error. |
 | DynamoDB Local | Supported (L2) | `--backend dynamodb` starts the profile's digest-pinned `amazon/dynamodb-local` on the run network; SDK clients resolve through `AWS_ENDPOINT_URL_DYNAMODB`. Tables are created from the CDK key schema, GSIs, streams and TTL. SSE, PITR and deletion protection are not provisioned. |
@@ -2341,7 +2347,7 @@ the harness records it.
 | REST API Cognito user-pool authorizers | Supported (L2) | The token is validated against the pool's JWKS through the local issuer with the same RSA-only algorithm and claim checks as the HTTP JWT authorizer; `AuthorizationScopes` is an any-of match and the claims reach the integration in `requestContext.authorizer.claims`; see [Authorizers](#authorizers). |
 | REST/HTTP Lambda authorizers with IAM-policy responses | Supported (L2) | A REST `TOKEN` or `REQUEST` `AWS::ApiGateway::Authorizer` and an HTTP API `REQUEST` authorizer with `EnableSimpleResponses: false` run the real function and match its returned policy narrowly against the method/route ARN. Identity sources are 401 before invocation when missing; `AuthorizerResultTtlInSeconds` caches the policy on the run clock with the documented cache key, and a hit is re-evaluated against the current method/route ARN; a response without `principalId` is invalid; Allow invokes, Deny is 403, the `Unauthorized` error is 401 and an invalid response is 500; the stringified context reaches `requestContext.authorizer`; see [Authorizers](#authorizers). |
 | Lambda layers | Supported | A function's `Layers` resolve to LayerVersions in the same assembly; their content is extracted into `/opt` in the listed order (later layers win) with `/opt/bin` on `PATH`, `/opt/lib` on `LD_LIBRARY_PATH`, `/opt/nodejs/node_modules` on `NODE_PATH` and both `/opt/python` and `/opt/python/lib/python<major>.<minor>/site-packages` on `PYTHONPATH`. A relative symlink inside the layer is kept as a symlink; an absolute or escaping one is refused by name. The five-layer limit and an external layer ARN are refused by name; see [Lambda layers and container-image functions](#lambda-layers-and-container-image-functions). |
-| Container-image functions | Supported | `PackageType: Image` with a CDK `DockerImageAsset` is built by the real `docker build` (directory, Dockerfile, target, platform and build arguments from the assembly) before serving, then run under the image's own Runtime Interface Emulator through the same invocation path as a zip function. An image without the emulator, and an image function that declares layers, are refused by name. |
+| Container-image functions | Supported | `PackageType: Image` with a CDK `DockerImageAsset` is built by the real `docker build` (directory, Dockerfile, target, platform and build arguments from the assembly) before serving, then run through the same Runtime API invocation path as a zip function (or under the image's own emulator with `--rie`). An image function that declares layers is refused by name. |
 | CloudFormation-expression environment values | Supported for `Ref`/`Fn::GetAtt`/`Fn::Join` | Tables and stream ARNs, queues, rules, buckets, KMS keys and aliases, SSM parameters, Secrets Manager ARNs, SNS topics, Kinesis streams, Cognito pool/client values, IAM/MicroVM-image/S3 Vectors ARNs and functions resolve to local values (moto/S3 require their backend). An unsupported expression fails with the function and variable named. |
 | CloudFormation-expression `MemorySize`/`Timeout` | Not resolved | A served function whose limit is `Ref`/`GetAtt`/`Fn::If` fails with the property named; the AWS defaults apply only when the property is absent. |
 | One function, explicit events (`invoke`) | Supported | Starts one function and sends newline-delimited JSON events to a warm container; `--handler-dir` runs a handler that has no CDK definition and derives no routes. |
@@ -2351,9 +2357,11 @@ the harness records it.
 
 ## Known gaps
 
-- **Streaming is buffered.** A handler that streams is not incremental under the
-  Runtime Interface Emulator. Tests can assert the complete bytes and the status
-  and headers, never the timing of individual chunks.
+- **Streaming bandwidth.** A streamed response is forwarded at the origin's
+  pace. Lambda gives the first 6 MB of a response uncapped bandwidth and then
+  caps the rate at 2 MBps; the local gateway does not reproduce either number.
+  The 6 MB buffered and 200 MB streamed payload limits are not enforced either,
+  so a local call that works today keeps working.
 - **WebSocket domains and IAM authorization** are out of scope. The API is
   served on a loopback `ws://` URL, so a custom domain name and its certificate
   are not modelled; `AWS_IAM` route authorization and REST-style Lambda
@@ -2370,7 +2378,7 @@ the harness records it.
   emulated; the local S3 origin returns the S3 status the OAC/OAI access model
   produces. `If-Range` is not forwarded to the S3 origin (CloudFront forwards
   it by default), so a conditional range is served as an unconditional
-  range. A Function URL `RESPONSE_STREAM` body is buffered. An `AWS_IAM`
+  range. An `AWS_IAM`
   Function URL's SigV4 signing and the gateway's in-process check of that
   locally signed request are reproduced, but IAM policy evaluation is not.
   A literal external custom origin is refused rather than reached. A WAF web
