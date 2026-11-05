@@ -119,7 +119,10 @@ type runtimeAPI struct {
 	// when the container cannot reach the host's loopback. A nil function
 	// keeps the loopback bind.
 	gateway func(context.Context) (string, error)
-	logf    func(string, ...any)
+	// boundGateway is the run network gateway the listener also serves on,
+	// when the container reaches the host through it (the Linux bridge case).
+	boundGateway string
+	logf         func(string, ...any)
 }
 
 // runtimeAPIProbeTimeout bounds how long a container is given to reach the
@@ -150,7 +153,9 @@ func newRuntimeAPI(function FunctionSpec, logf func(string, ...any)) (*runtimeAP
 	return api, nil
 }
 
-func listenRuntimeAPI(address string) (net.Listener, error) {
+// listenRuntimeAPI is a variable so a test can prove the gateway bind without
+// exposing a real non-loopback address.
+var listenRuntimeAPI = func(address string) (net.Listener, error) {
 	var listenConfig net.ListenConfig
 	return listenConfig.Listen(context.Background(), "tcp", address)
 }
@@ -193,17 +198,17 @@ func (a *runtimeAPI) HostURL() string {
 	return "http://" + net.JoinHostPort(address.IP.String(), strconv.Itoa(address.Port))
 }
 
-// bindGateway moves the listener to the run network's gateway address on the
-// same port, which is the address a container reaches when the host's loopback
-// is not forwarded to it (the Linux bridge case). It reports whether the move
-// succeeded; a failure leaves the current bind in place.
+// bindGateway adds a listener on the run network's gateway address on the same
+// port, which is the address a container reaches when the host's loopback is
+// not forwarded to it (the Linux bridge case). The loopback listener stays
+// bound for the CLI. It reports whether the extra bind succeeded.
 func (a *runtimeAPI) bindGateway(gateway string) bool {
 	address := a.boundAddress()
 	if address == nil || a.server == nil {
 		return false
 	}
 	gateway = strings.TrimSpace(gateway)
-	if gateway == "" {
+	if gateway == "" || a.boundGateway != "" {
 		return false
 	}
 	listener, err := listenRuntimeAPI(net.JoinHostPort(gateway, strconv.Itoa(address.Port)))
@@ -212,25 +217,17 @@ func (a *runtimeAPI) bindGateway(gateway string) bool {
 			a.function.LogicalID, gateway, address.Port, err)
 		return false
 	}
-	previous, previousServer := a.listener, a.server
-	a.listener = listener
-	a.server = a.newServer()
+	a.boundGateway = gateway
 	go a.serve(a.server, listener)
-	_ = previousServer.Close() //nolint:errcheck // the old listener has no request yet
-	_ = previous.Close()       //nolint:errcheck // closing the old listener is best effort
-	a.logf("runtime API for %s: the container cannot reach loopback; bound the run network gateway %s:%d",
+	a.logf("runtime API for %s: also bound the run network gateway %s:%d for the container",
 		a.function.LogicalID, gateway, address.Port)
 	return true
 }
 
-// rebindToGateway moves the listener to the run network's gateway address when
-// the container has not reached the loopback listener.
+// rebindToGateway adds the run network's gateway listener when the container
+// has not reached the loopback listener.
 func (a *runtimeAPI) rebindToGateway(ctx context.Context) bool {
-	if a == nil || a.gateway == nil {
-		return false
-	}
-	address := a.boundAddress()
-	if address == nil || !address.IP.IsLoopback() {
+	if a == nil || a.gateway == nil || a.boundGateway != "" {
 		return false
 	}
 	gateway, err := a.gateway(ctx)
@@ -241,14 +238,13 @@ func (a *runtimeAPI) rebindToGateway(ctx context.Context) bool {
 	return a.bindGateway(gateway)
 }
 
-// gatewayBound reports the gateway address the listener serves on, or an empty
-// string while it serves on loopback.
+// gatewayBound reports the run network gateway the listener also serves on, or
+// an empty string while it serves only loopback.
 func (a *runtimeAPI) gatewayBound() string {
-	address := a.boundAddress()
-	if address == nil || address.IP.IsLoopback() || address.IP.IsUnspecified() {
+	if a == nil {
 		return ""
 	}
-	return address.IP.String()
+	return a.boundGateway
 }
 
 // ContainerAddress is the address a function container uses in

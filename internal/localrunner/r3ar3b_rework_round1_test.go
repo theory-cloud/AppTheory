@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -443,5 +444,67 @@ func TestStreamFrameDecoderDelimiterInsideTheFirst16KBFrames(t *testing.T) {
 	}
 	if string(got) != "payload" {
 		t.Fatalf("payload: %q", got)
+	}
+}
+
+func TestRuntimeAPIBindsTheContainerGatewayAlongsideLoopback(t *testing.T) {
+	api := testRuntimeAPI(t, 30)
+	before := api.listener.Addr().String()
+	original := listenRuntimeAPI
+	listenRuntimeAPI = func(string) (net.Listener, error) {
+		return original("127.0.0.1:0")
+	}
+	defer func() { listenRuntimeAPI = original }()
+	if !api.bindGateway("172.20.0.1") {
+		t.Fatal("the gateway bind must succeed")
+	}
+	if api.gatewayBound() != "172.20.0.1" {
+		t.Fatalf("bound gateway: %q", api.gatewayBound())
+	}
+	if api.listener.Addr().String() != before {
+		t.Fatalf("the loopback listener must stay bound: %s -> %s", before, api.listener.Addr())
+	}
+	if !strings.HasPrefix(api.HostURL(), "http://127.0.0.1:") {
+		t.Fatalf("the host URL stays loopback: %q", api.HostURL())
+	}
+	if api.bindGateway("172.20.0.2") {
+		t.Fatal("a second gateway bind must be refused; one container address is enough")
+	}
+}
+
+func TestChooseRuntimeAPIAddressUsesABindableGateway(t *testing.T) {
+	original := runtimeAPIAddressOwner
+	defer func() { runtimeAPIAddressOwner = original }()
+
+	runner := &Runner{
+		options: Options{Stdout: io.Discard},
+		network: "run-net",
+		docker: &Docker{exec: func(_ context.Context, argv []string) (string, string, error) {
+			if strings.Contains(strings.Join(argv, " "), "network inspect") {
+				return "172.20.0.1\n", "", nil
+			}
+			return "", "", nil
+		}},
+	}
+	runtimeAPIAddressOwner = func(gateway string) bool { return gateway == "172.20.0.1" }
+	runner.chooseRuntimeAPIAddress(context.Background())
+	if runner.runtimeAPIGateway != "172.20.0.1" {
+		t.Fatalf("bindable gateway: %q", runner.runtimeAPIGateway)
+	}
+
+	unowned := &Runner{
+		options: Options{Stdout: io.Discard},
+		network: "run-net",
+		docker: &Docker{exec: func(_ context.Context, argv []string) (string, string, error) {
+			if strings.Contains(strings.Join(argv, " "), "network inspect") {
+				return "192.168.5.2\n", "", nil
+			}
+			return "", "", nil
+		}},
+	}
+	runtimeAPIAddressOwner = func(string) bool { return false }
+	unowned.chooseRuntimeAPIAddress(context.Background())
+	if unowned.runtimeAPIGateway != "" {
+		t.Fatalf("an address the host does not own must not be used: %q", unowned.runtimeAPIGateway)
 	}
 }

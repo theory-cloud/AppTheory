@@ -130,6 +130,7 @@ func (r *Runner) prepareInvoke(ctx context.Context, spec *Spec, functionID strin
 		return err
 	}
 	r.logf("network %s", r.network)
+	r.chooseRuntimeAPIAddress(ctx)
 	if err = r.startBackends(ctx); err != nil {
 		return err
 	}

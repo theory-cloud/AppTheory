@@ -640,6 +640,7 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 		return nil, err
 	}
 	r.logf("network %s", r.network)
+	r.chooseRuntimeAPIAddress(ctx)
 	if err = r.startBackends(ctx); err != nil {
 		return nil, err
 	}
@@ -1321,11 +1322,19 @@ func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image
 	if limitErr := unresolvedLimitsError(function); limitErr != nil {
 		return limitErr
 	}
-	if api != nil && !containsAddHost(r.options.AddHosts, "host.docker.internal:host-gateway") {
+	if api != nil && !hasAddHostName(r.options.AddHosts, "host.docker.internal") {
 		// The container reaches the Runtime API through host.docker.internal.
 		// The run's closed DNS server cannot resolve it, so the host entry is
-		// required (the run network also sets --dns 127.0.0.2).
-		r.options.AddHosts = append(r.options.AddHosts, "host.docker.internal:host-gateway")
+		// required (the run network also sets --dns 127.0.0.2). When the host
+		// owns the run network's gateway (the Linux bridge case), the entry
+		// names that address and the listener binds it; otherwise Docker's
+		// host-gateway value is used, which Colima and Docker Desktop forward
+		// to the host's loopback.
+		entry := "host.docker.internal:host-gateway"
+		if r.runtimeAPIGateway != "" {
+			entry = "host.docker.internal:" + r.runtimeAPIGateway
+		}
+		r.options.AddHosts = append(r.options.AddHosts, entry)
 	}
 	mounts := append(functionMounts(function), r.webSocketCertificateMounts()...)
 	name := r.containerName(function.LogicalID)
@@ -1469,6 +1478,36 @@ func (r *Runner) resetFunction(ctx context.Context, process *FunctionProcess) er
 // networkGateway resolves the run network's gateway address.
 func (r *Runner) networkGateway(ctx context.Context) (string, error) {
 	return r.docker.NetworkGateway(ctx, r.network)
+}
+
+// runtimeAPIAddressOwner reports whether the host owns an address. Binding an
+// ephemeral port and closing it at once is the proof; an address that belongs
+// to the Docker VM (Colima, Docker Desktop) fails with EADDRNOTAVAIL.
+var runtimeAPIAddressOwner = func(gateway string) bool {
+	listener, err := net.Listen("tcp", net.JoinHostPort(gateway, "0"))
+	if err != nil {
+		return false
+	}
+	_ = listener.Close() //nolint:errcheck // the probe only proves ownership
+	return true
+}
+
+// chooseRuntimeAPIAddress decides whether the container reaches the host
+// through the run network's gateway. The host owns that address on Linux, so
+// the container's host entry can name it and the listener can bind it; on
+// Colima and Docker Desktop the address belongs to the VM, the bind fails, and
+// the container keeps Docker's host-gateway entry (forwarded to the host's
+// loopback). The probe binds an ephemeral port and closes it at once.
+func (r *Runner) chooseRuntimeAPIAddress(ctx context.Context) {
+	gateway, err := r.networkGateway(ctx)
+	if err != nil {
+		return
+	}
+	if !runtimeAPIAddressOwner(gateway) {
+		return
+	}
+	r.runtimeAPIGateway = gateway
+	r.logf("runtime API: the container host entry host.docker.internal -> %s (the run network's gateway)", gateway)
 }
 
 // rememberRuntimeAPIAddress keeps the gateway bind for later functions once a

@@ -225,6 +225,18 @@ func containsAddHost(hosts []string, wanted string) bool {
 	return false
 }
 
+// hasAddHostName reports whether an add-host entry names host, whatever address
+// it carries.
+func hasAddHostName(hosts []string, host string) bool {
+	prefix := host + ":"
+	for _, entry := range hosts {
+		if strings.HasPrefix(entry, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func joinOriginPath(base, path string) string {
 	if base == "" || base == "/" {
 		if strings.HasPrefix(path, "/") {
