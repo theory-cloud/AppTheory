@@ -972,7 +972,8 @@ same assembly:
 
 The `ssr-site`, `ssr-only-provided-assets-site`, `path-routed-frontend` and
 `media-cdn` example rows run through these origins in the harness; the private
-media distribution stays refused with the named signed-URL reason.
+media distribution requires a signed URL or signed cookie, which the row proves
+against real keys generated at run time.
 
 Distributions that use a WAF web ACL, a gRPC config or a legacy
 `ForwardedValues` cache policy are refused with a named reason; they are listed
