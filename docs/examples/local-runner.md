@@ -44,9 +44,20 @@ caller: `provided.al2023` for Go, `nodejs:24` for Node, `python:3.14` for Python
 
 ## Run your own app
 
-The commands above run from this repository. An app that lives anywhere else
-uses the same command; `--app` is the app's CDK directory and `--profile` pins
-the runtime images:
+A fresh checkout needs the repository's two dependency trees before a CDK
+example synthesizes. The examples import `cdk/` as a file dependency and their
+bundling steps use the TypeScript runtime, so without them `cdk synth` fails
+with a bare `ts-node` error:
+
+```bash
+(cd cdk && npm ci)
+(cd ts && npm ci)
+```
+
+`make examples-local` installs both through the repository's own contract; the
+commands above run from this repository. An app that lives anywhere else uses
+the same command; `--app` is the app's CDK directory and `--profile` pins the
+runtime images:
 
 ```bash
 # Run a released module without checking out AppTheory.
@@ -1519,6 +1530,7 @@ The operations, in the order the examples use them:
   the previous image when one is cached), using the table's stream ARN, view
   type and the real key schema.
 - `s3.put` — write one object to a provisioned s3proxy bucket.
+- `s3.delete` — delete one object from a provisioned s3proxy bucket.
 - `eventbridge.event` — build the event an `AWS::Events::Rule` delivers,
   deriving a scheduled envelope from `ScheduleExpression` or the source and
   detail-type from the rule's declared `EventPattern`.

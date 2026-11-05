@@ -46,7 +46,14 @@ resolution.
   the harness does not install a fallback, and a missing or unusable CLI fails
   that row with a named requirement error.
 - Python 3.14 to run the harness and the repo's Go toolchain for the runner
-  rows.
+  rows. Install the harness's Python dependencies once:
+
+  ```bash
+  python3 -m pip install -r scripts/local/requirements-examples.txt
+  ```
+
+  The field-level encryption row decrypts with the AWS Encryption SDK from that
+  file; without it the row fails with a named requirement error.
 
 ## Classes
 

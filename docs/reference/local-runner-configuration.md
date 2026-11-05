@@ -108,7 +108,7 @@ writing one response per line on stdout:
 
 The full operation set is `describe`, `clock.now`, `clock.advance`, `invoke`,
 `sqs.send`, `sqs.receive`, `sqs.event`, `sqs.attributes`, `ddb.put`, `ddb.get`, `ddb.scan`,
-`ddb.stream-event`, `s3.put`, `eventbridge.event`, `kinesis.event`,
+`ddb.stream-event`, `s3.put`, `s3.delete`, `eventbridge.event`, `kinesis.event`,
 `kinesis.cloudwatch-event` and `shutdown`. `sqs.receive` and `sqs.event`
 serialize each message's SQS system attributes under `attributes` and its
 message attributes under `messageAttributes`, which is how an SNS raw delivery's

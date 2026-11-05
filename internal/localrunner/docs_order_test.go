@@ -87,7 +87,7 @@ func TestDocumentedRunStepOrderMatchesTheRunner(t *testing.T) {
 	assertInOrder(t, document, sessionSection, "documented session operation", []string{
 		"`describe`", "`clock.now`", "`clock.advance`", "`invoke`", "`sqs.send`", "`sqs.receive`", "`sqs.event`",
 		"`ddb.put`", "`ddb.get`", "`ddb.scan`", "`ddb.stream-event`",
-		"`s3.put`", "`eventbridge.event`", "`kinesis.event`", "`kinesis.cloudwatch-event`", "`shutdown`",
+		"`s3.put`", "`s3.delete`", "`eventbridge.event`", "`kinesis.event`", "`kinesis.cloudwatch-event`", "`shutdown`",
 	})
 	if !strings.Contains(sessionSection, "one JSON command per line") {
 		t.Fatalf("%s: the session section must describe the line protocol", document)
