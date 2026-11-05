@@ -116,12 +116,12 @@ func TestDeriveRESTCognitoAuthorizer(t *testing.T) {
 	}
 }
 
-func TestDeriveRefusesUnsupportedAuthorizerOnARoute(t *testing.T) {
+func TestDeriveHTTPPolicyAuthorizerRequiresAFunction(t *testing.T) {
 	resources := authorizerAssembly(map[string]any{
 		"Auth": map[string]any{"Type": typeHTTPAuthorizer, "Properties": map[string]any{
 			"AuthorizerType":        "REQUEST",
 			"EnableSimpleResponses": false,
-			"AuthorizerUri":         map[string]any{"Fn::GetAtt": []any{"Fn", "Arn"}},
+			"AuthorizerUri":         map[string]any{"Fn::GetAtt": []any{"Missing", "Arn"}},
 		}},
 		"Route": map[string]any{"Type": typeHTTPRoute, "Properties": map[string]any{
 			"ApiId":             map[string]any{"Ref": "Api"},
@@ -133,9 +133,8 @@ func TestDeriveRefusesUnsupportedAuthorizerOnARoute(t *testing.T) {
 	})
 	dir := writeAssembly(t, resources)
 	mkdirAsset(t, dir)
-	_, err := deriveAssembly(t, dir)
-	if err == nil || !strings.Contains(err.Error(), "lambda-request-policy") {
-		t.Fatalf("derive error = %v", err)
+	if _, err := deriveAssembly(t, dir); err == nil || !strings.Contains(err.Error(), "Lambda function") {
+		t.Fatalf("an authorizer without a Lambda function must fail closed, got %v", err)
 	}
 }
 

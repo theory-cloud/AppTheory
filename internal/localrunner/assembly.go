@@ -94,12 +94,13 @@ type lambdaFunctionProperties struct {
 	MemorySize    json.RawMessage   `json:"MemorySize"`
 	Timeout       json.RawMessage   `json:"Timeout"`
 	Layers        []json.RawMessage `json:"Layers"`
+	PackageType   string            `json:"PackageType"`
 	Environment   struct {
 		Variables map[string]json.RawMessage `json:"Variables"`
 	} `json:"Environment"`
 	Code struct {
-		ZipFile  string `json:"ZipFile"`
-		ImageURI string `json:"ImageUri"`
+		ZipFile  string          `json:"ZipFile"`
+		ImageURI json.RawMessage `json:"ImageUri"`
 	} `json:"Code"`
 }
 
@@ -444,14 +445,16 @@ func validateServedFunctions(spec *Spec) error {
 		if !ok {
 			return fmt.Errorf("assembly references function %q but defines no such resource", id)
 		}
-		if _, err := RuntimeClass(function.Runtime); err != nil {
-			return fmt.Errorf("function %s: %w", id, err)
-		}
 		if function.CodeProblem != "" {
 			return unsupported(id, "%s", function.CodeProblem)
 		}
-		if function.LayerCount > 0 {
-			return unsupported(id, "function uses %d Lambda layer(s); the local runner does not assemble layers", function.LayerCount)
+		if function.LayerProblem != "" {
+			return unsupported(id, "%s", function.LayerProblem)
+		}
+		if function.ImageAsset == nil {
+			if _, err := RuntimeClass(function.Runtime); err != nil {
+				return fmt.Errorf("function %s: %w", id, err)
+			}
 		}
 		if err := unresolvedLimitsError(function); err != nil {
 			return err
@@ -602,10 +605,6 @@ func parseFunction(assemblyDir string, stack assemblyStack, id string, resource 
 	if len(props.Architectures) > 0 {
 		function.Architecture = props.Architectures[0]
 	}
-	if props.Code.ImageURI != "" {
-		function.CodeProblem = "container-image Lambda functions (Code.ImageUri) are not supported locally"
-		return function, nil
-	}
 	function.EnvironmentExpressions = map[string]string{}
 	for name, raw := range props.Environment.Variables {
 		value, err := decodeString(raw)
@@ -618,6 +617,12 @@ func parseFunction(assemblyDir string, stack assemblyStack, id string, resource 
 	}
 	sort.Strings(function.UnresolvedEnvironment)
 
+	if err := resolveFunctionPackaging(assemblyDir, stack, id, resource, props, &function); err != nil {
+		return FunctionSpec{}, err
+	}
+	if function.PackageType == "Image" {
+		return function, nil
+	}
 	if props.Code.ZipFile != "" {
 		function.InlineCode = props.Code.ZipFile
 		function.InlineFile = inlineFileName(function.Runtime, function.Handler)
@@ -630,28 +635,37 @@ func parseFunction(assemblyDir string, stack assemblyStack, id string, resource 
 		return function, nil
 	}
 
+	if err := resolveZipCode(assemblyDir, stack, id, resource, &function); err != nil {
+		return FunctionSpec{}, err
+	}
+	return function, nil
+}
+
+// resolveZipCode fills AssetDir from the cloud assembly's aws:asset:path, or
+// records why the function's zip code cannot be materialized locally.
+func resolveZipCode(assemblyDir string, stack assemblyStack, id string, resource templateResource, function *FunctionSpec) error {
 	assetPath, err := metadataString(resource.Metadata, assetPathMetadataKey)
 	if err != nil {
-		return FunctionSpec{}, fmt.Errorf("%s/%s: %w", stack.Name, id, err)
+		return fmt.Errorf("%s/%s: %w", stack.Name, id, err)
 	}
 	if assetPath == "" {
 		function.CodeProblem = "function code has no local asset directory (aws:asset:path) and no inline Code.ZipFile"
-		return function, nil
+		return nil
 	}
 	if !filepath.IsAbs(assetPath) {
 		assetPath = filepath.Join(assemblyDir, assetPath)
 	}
-	info, err := os.Stat(assetPath)
-	if err != nil {
-		function.CodeProblem = fmt.Sprintf("function asset %s is unavailable: %v", assetPath, err)
-		return function, nil
+	info, statErr := os.Stat(assetPath)
+	if statErr != nil {
+		function.CodeProblem = fmt.Sprintf("function asset %s is unavailable: %v", assetPath, statErr)
+		return nil
 	}
 	if !info.IsDir() {
 		function.CodeProblem = fmt.Sprintf("function asset %s is not a directory", assetPath)
-		return function, nil
+		return nil
 	}
 	function.AssetDir = filepath.Clean(assetPath)
-	return function, nil
+	return nil
 }
 
 func metadataString(metadata map[string]json.RawMessage, key string) (string, error) {

@@ -34,8 +34,49 @@ type Distribution struct {
 	CacheBehaviors    []*Behavior           `json:"cacheBehaviors,omitempty"`
 	Origins           []*DistributionOrigin `json:"origins"`
 	OriginGroups      []*OriginGroup        `json:"originGroups,omitempty"`
-	Reported          []string              `json:"reported,omitempty"`
-	Refusals          []string              `json:"refusals,omitempty"`
+	// CustomErrorResponses are the distribution's CustomErrorResponses, in the
+	// template's order.
+	CustomErrorResponses []CustomErrorResponse `json:"customErrorResponses,omitempty"`
+	Reported             []string              `json:"reported,omitempty"`
+	Refusals             []string              `json:"refusals,omitempty"`
+}
+
+// CustomErrorResponse is one DistributionConfig CustomErrorResponses entry.
+//
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/GeneratingCustomErrorResponses.html
+type CustomErrorResponse struct {
+	ErrorCode int `json:"errorCode"`
+	// ResponsePagePath is the path CloudFront fetches when the origin answers
+	// ErrorCode. It is resolved through the distribution's cache behaviors:
+	// "CloudFront finds the first cache behavior in your distribution that has
+	// a path pattern that matches the path of the custom error page" and "The
+	// CloudFront edge location sends a request for the custom error page to the
+	// origin that is specified in the cache behavior."
+	// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/HTTPStatusCodes.html
+	ResponsePagePath string `json:"responsePagePath,omitempty"`
+	// ResponseCode is the status served with the custom page; 0 keeps the
+	// origin's status when no page is served.
+	ResponseCode int `json:"responseCode,omitempty"`
+	// ErrorCachingMinTTL is how long the error response is cached. It is a
+	// pointer so an explicit 0 (which disables error caching for a custom
+	// origin, and means one second for an S3 origin) is distinguished from an
+	// omitted value (the 10 second default). The page: "If you have caching
+	// enabled for an S3 bucket origin, and you configure an error caching
+	// minimum TTL of 0 seconds ... you will still see an error caching minimum
+	// TTL of 1 second for S3 origin errors ... This doesn't apply to other types
+	// of origins."
+	// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/custom-error-pages-expiration.html
+	ErrorCachingMinTTL *int `json:"errorCachingMinTtl,omitempty"`
+}
+
+// CustomErrorResponseFor returns the configured error response for a status.
+func (d *Distribution) CustomErrorResponseFor(status int) (CustomErrorResponse, bool) {
+	for _, response := range d.CustomErrorResponses {
+		if response.ErrorCode == status {
+			return response, true
+		}
+	}
+	return CustomErrorResponse{}, false
 }
 
 // Servable reports whether every property the distribution uses is either
@@ -51,6 +92,20 @@ func (d *Distribution) BehaviorForURI(uri string) *Behavior {
 		}
 	}
 	return d.DefaultBehavior
+}
+
+// ExplicitBehaviorForURI reports the configured cache behavior (not the default
+// behavior) whose path pattern matches uri. CloudFront's custom-error-page note
+// distinguishes a cache behavior configured for the page path from the default
+// behavior: "If you also configured a cache behavior for the same custom error
+// page, CloudFront uses the cache behavior TTL instead."
+func (d *Distribution) ExplicitBehaviorForURI(uri string) (*Behavior, bool) {
+	for _, behavior := range d.CacheBehaviors {
+		if MatchPathPattern(behavior.PathPattern, uri) {
+			return behavior, true
+		}
+	}
+	return nil, false
 }
 
 // Origin returns an origin by id.
@@ -92,13 +147,15 @@ type Behavior struct {
 
 // DistributionOrigin is one distribution origin.
 type DistributionOrigin struct {
-	ID                  string            `json:"id"`
-	DomainName          string            `json:"domainName,omitempty"`
-	DomainExpression    string            `json:"domainExpression,omitempty"`
-	Kind                OriginKind        `json:"kind,omitempty"`
-	OriginPath          string            `json:"originPath,omitempty"`
-	Bucket              string            `json:"bucket,omitempty"`
-	FunctionURL         string            `json:"functionUrl,omitempty"`
+	ID               string     `json:"id"`
+	DomainName       string     `json:"domainName,omitempty"`
+	DomainExpression string     `json:"domainExpression,omitempty"`
+	Kind             OriginKind `json:"kind,omitempty"`
+	OriginPath       string     `json:"originPath,omitempty"`
+	Bucket           string     `json:"bucket,omitempty"`
+	FunctionURL      string     `json:"functionUrl,omitempty"`
+	// LocalURL is the loopback URL a run flag maps an external custom origin to.
+	LocalURL            string            `json:"localUrl,omitempty"`
 	OriginAccessControl string            `json:"originAccessControl,omitempty"`
 	Custom              *CustomOrigin     `json:"customOrigin,omitempty"`
 	S3                  *S3Origin         `json:"s3Origin,omitempty"`
@@ -212,12 +269,20 @@ type QueryForwarding struct {
 	Names []string       `json:"names,omitempty"`
 }
 
-// CachePolicy is the part of a cache policy that changes what reaches the
-// origin. TTLs and cache hits are not emulated.
+// CachePolicy is a cache policy: what reaches the origin and how long the
+// gateway may cache the origin response.
 type CachePolicy struct {
 	Headers      HeaderForwarding `json:"headers"`
 	Cookies      CookieForwarding `json:"cookies"`
 	QueryStrings QueryForwarding  `json:"queryStrings"`
+	// MinTTL, DefaultTTL and MaxTTL are the cache policy's TTL bounds in
+	// seconds. They apply as the Expiration page's table states.
+	MinTTL     int `json:"minTtl"`
+	DefaultTTL int `json:"defaultTtl"`
+	MaxTTL     int `json:"maxTtl"`
+	// CachingDisabled is the managed CachingDisabled policy: every request goes
+	// to the origin.
+	CachingDisabled bool `json:"cachingDisabled,omitempty"`
 }
 
 // OriginRequestPolicy is the origin request policy definition.
@@ -459,11 +524,11 @@ func parseDistribution(
 			}
 		case "CustomErrorResponses":
 			seen[key] = true
-			if !isEmptyArray(raw) {
-				distribution.Refusals = append(distribution.Refusals, refuseProperty("distribution", key))
-			} else {
-				distribution.Reported = append(distribution.Reported, reportProperty("distribution", key))
+			responses, err := parseCustomErrorResponses(raw, distribution.LogicalID)
+			if err != nil {
+				return nil, err
 			}
+			distribution.CustomErrorResponses = responses
 		case "ContinuousDeploymentPolicyId":
 			seen[key] = true
 			if !isEmptyValue(raw) {
@@ -574,6 +639,82 @@ func (d *Distribution) validateBehavior(behavior *Behavior, topology *Topology) 
 	}
 }
 
+// parseCustomErrorResponses reads the distribution's custom error responses and
+// refuses a value CloudFront itself would reject.
+func parseCustomErrorResponses(raw json.RawMessage, distributionID string) ([]CustomErrorResponse, error) {
+	var values []json.RawMessage
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return nil, fmt.Errorf("%s: CustomErrorResponses: %w", distributionID, err)
+	}
+	responses := make([]CustomErrorResponse, 0, len(values))
+	for position, value := range values {
+		response, err := parseCustomErrorResponse(value, distributionID, position)
+		if err != nil {
+			return nil, err
+		}
+		responses = append(responses, response)
+	}
+	return responses, nil
+}
+
+func parseCustomErrorResponse(raw json.RawMessage, distributionID string, position int) (CustomErrorResponse, error) {
+	properties, err := decodeObject(raw)
+	if err != nil {
+		return CustomErrorResponse{}, fmt.Errorf("%s: CustomErrorResponses[%d]: %w", distributionID, position, err)
+	}
+	response := CustomErrorResponse{}
+	for _, key := range sortedKeys(properties) {
+		if err := decodeCustomErrorField(&response, key, properties[key]); err != nil {
+			return CustomErrorResponse{}, fmt.Errorf("%s: CustomErrorResponses[%d].%s: %w", distributionID, position, key, err)
+		}
+	}
+	if response.ErrorCode < 400 || response.ErrorCode > 599 {
+		return CustomErrorResponse{}, fmt.Errorf("%s: CustomErrorResponses[%d].ErrorCode %d is not an HTTP error status", distributionID, position, response.ErrorCode)
+	}
+	if response.ResponsePagePath != "" && !strings.HasPrefix(response.ResponsePagePath, "/") {
+		return CustomErrorResponse{}, fmt.Errorf("%s: CustomErrorResponses[%d].ResponsePagePath must begin with a slash", distributionID, position)
+	}
+	if err := validateCustomErrorPage(response, distributionID, position); err != nil {
+		return CustomErrorResponse{}, err
+	}
+	if response.ResponseCode != 0 && (response.ResponseCode < 200 || response.ResponseCode > 599) {
+		return CustomErrorResponse{}, fmt.Errorf("%s: CustomErrorResponses[%d].ResponseCode %d is not an HTTP status", distributionID, position, response.ResponseCode)
+	}
+	if response.ErrorCachingMinTTL != nil && *response.ErrorCachingMinTTL < 0 {
+		return CustomErrorResponse{}, fmt.Errorf("%s: CustomErrorResponses[%d].ErrorCachingMinTTL is negative", distributionID, position)
+	}
+	return response, nil
+}
+
+// validateCustomErrorPage refuses a custom error page for the status codes that
+// do not support one: "CloudFront doesn't support creating custom error pages
+// for these HTTP status codes." A status-only rewrite stays accepted.
+//
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/HTTPStatusCodes.html
+func validateCustomErrorPage(response CustomErrorResponse, distributionID string, position int) error {
+	if response.ResponsePagePath == "" || (response.ErrorCode != 412 && response.ErrorCode != 415) {
+		return nil
+	}
+	return fmt.Errorf(
+		"%s: CustomErrorResponses[%d].ErrorCode %d cannot have a ResponsePagePath: CloudFront doesn't support creating custom error pages for 412 Precondition Failed or 415 Unsupported Media Type (https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/HTTPStatusCodes.html)",
+		distributionID, position, response.ErrorCode)
+}
+
+func decodeCustomErrorField(response *CustomErrorResponse, key string, value json.RawMessage) error {
+	switch key {
+	case "ErrorCode":
+		return json.Unmarshal(value, &response.ErrorCode)
+	case "ResponsePagePath":
+		return json.Unmarshal(value, &response.ResponsePagePath)
+	case "ResponseCode":
+		return json.Unmarshal(value, &response.ResponseCode)
+	case "ErrorCachingMinTTL":
+		return json.Unmarshal(value, &response.ErrorCachingMinTTL)
+	default:
+		return fmt.Errorf("property %q is not understood", key)
+	}
+}
+
 func parseBehaviors(
 	raw json.RawMessage,
 	stack string,
@@ -657,7 +798,6 @@ func parseBehavior(
 				continue
 			}
 			behavior.CachePolicy = lookupPolicy(policy, topology)
-			behavior.Reported = append(behavior.Reported, "caching is not emulated; every request is forwarded to the origin as a cache miss")
 		case "OriginRequestPolicyId":
 			policy, problem := resolvePolicyRef(value, PolicyOriginRequest, stack, index)
 			if problem != "" {

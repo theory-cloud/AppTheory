@@ -67,6 +67,9 @@ func (r *Runner) cloudFrontOrigin(spec *Spec, origin *localcloudfront.Distributi
 	case origin.Kind == localcloudfront.OriginS3:
 		return r.s3OriginFor(spec, origin)
 	case origin.Kind == localcloudfront.OriginCustom:
+		if origin.LocalURL != "" {
+			return newHTTPOrigin(origin, r.logf)
+		}
 		return &refusedOrigin{
 			originID: origin.ID,
 			reason: fmt.Sprintf(

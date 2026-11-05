@@ -477,10 +477,10 @@ func TestImageForAndLabels(t *testing.T) {
 	}, archARM64, []string{"Fn"}); err != nil {
 		t.Fatalf("resolve node image: %v", err)
 	}
-	if _, err := runner.imageFor(FunctionSpec{LogicalID: "Fn", Runtime: "nodejs24.x"}); err != nil {
+	if _, err := runner.imageFor(context.Background(), FunctionSpec{LogicalID: "Fn", Runtime: "nodejs24.x"}); err != nil {
 		t.Fatalf("image for: %v", err)
 	}
-	if _, err := runner.imageFor(FunctionSpec{LogicalID: "Fn", Runtime: "java21"}); err == nil {
+	if _, err := runner.imageFor(context.Background(), FunctionSpec{LogicalID: "Fn", Runtime: "java21"}); err == nil {
 		t.Fatal("unsupported runtime must fail")
 	}
 	labels := runner.labels()

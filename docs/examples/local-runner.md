@@ -18,7 +18,7 @@ policies, and hands origin requests to an origin implementation. The S3 origin
 reads the app's own bucket deployments from the local s3proxy backend, the
 Function URL origin invokes the real handler through the runner's runtime
 container, and an origin group applies CloudFront's failover rules. It is not a
-CloudFront emulator: there is no caching, no edge network and no TLS.
+CloudFront emulator: there is no edge network and no TLS.
 
 ```bash
 # Serve the app in the background, then use the printed URLs.
@@ -315,8 +315,9 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
    function's runtime is selected before any container starts. A missing image
    class or a tag that is not pinned by digest fails here, after synthesis.
 4. **Prepare the run workspace.** Inline `Code.ZipFile` code is materialized
-   under the run scratch directory, then the run's private Docker network is
-   created.
+   under the run scratch directory, every function's layers are merged into one
+   `/opt` directory in the template's listed order, then the run's private
+   Docker network is created.
 5. **Start backends.** `--backend dynamodb`, `--backend moto`,
    `--backend s3proxy` and `--backend sqs` start the profile's digest-pinned
    emulators on the run's private network. Before it reports a backend ready,
@@ -362,9 +363,11 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
    one is configured, and closed DNS.
 9. **Run.** One container per function the CDK definition targets: HTTP routes,
    Function URLs, HTTP API authorizers, enabled event-source consumers, enabled
-   EventBridge rule targets and Lambda log-subscription destinations. Each uses
-   the official image for its runtime, digest-pinned in the profile. Handlers
-   run under the embedded Runtime Interface Emulator; the transport invokes
+   EventBridge rule targets and Lambda log-subscription destinations. A zip
+   function uses the official image for its runtime, digest-pinned in the
+   profile; a container-image function is built from its CDK `DockerImageAsset`
+   by the real `docker build` before any listener starts serving. Handlers run
+   under the embedded Runtime Interface Emulator; the transport invokes
    `/2015-03-31/functions/function/invocations`.
 10. **Serve, invoke or session.** One loopback listener per API (and per
     Function URL) builds the provider event for the matched route, runs a
@@ -578,9 +581,10 @@ method ARN with IAM-style `*`/`?` wildcards; an explicit Deny wins, and no
 matching Allow refuses the connection with 401. This is an authorizer-policy
 match, never IAM evaluation, which stays a docs/125 true limit. A request that
 does not carry every configured identity source is refused before the authorizer
-runs. Only `$connect` can be authorized; an authorizer on another route fails
-closed at plan time. Lambda authorizers that return a policy for REST or HTTP
-API routes are R2b.
+runs. Only `$connect` can be authorized on a WebSocket API; an authorizer on
+another WebSocket route fails closed at plan time. REST and HTTP API Lambda
+authorizers that return a policy are served on their own APIs; see
+[Authorizers](#authorizers).
 
 **The `@connections` management API.** The runner serves
 `PostToConnection`, `GetConnection` and `DeleteConnection` on a TLS listener
@@ -670,16 +674,79 @@ ten minutes ahead), and `clock.advance` past its expiry to prove the check. A
 test clock that starts before the token's `iat` refuses it, which is the
 documented behaviour.
 
-**Still refused.** Lambda authorizers that return an IAM policy for HTTP or REST
-routes (R2b), IAM authorization, and `$context`/`$stageVariables` identity
-sources fail closed at plan time.
+**REST API Lambda authorizers (TOKEN and REQUEST).** An
+`AWS::ApiGateway::Authorizer` with `Type: TOKEN` or `Type: REQUEST` runs through
+the real function path before the method's integration, as
+[Use API Gateway Lambda authorizers](https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-use-lambda-authorizer.html)
+describes:
+
+- A **TOKEN** authorizer receives `{"type":"TOKEN","authorizationToken":<value>,
+  "methodArn":<arn>}`; the token comes from the single
+  `method.request.header.<name>` identity source. With caching enabled, the
+  token value is the cache key. `IdentityValidationExpression` is applied to the
+  token before the authorizer runs, and a non-match is 401 (TOKEN authorizers
+  only; the property on a REQUEST authorizer is refused at plan time).
+- A **REQUEST** authorizer receives the documented request event (`type`,
+  `methodArn`, `resource`, `path`, `httpMethod`, `headers`,
+  `multiValueHeaders`, `queryStringParameters`,
+  `multiValueQueryStringParameters`, `pathParameters`, `stageVariables`,
+  `requestContext`, `body`, `isBase64Encoded`). Its identity sources are the
+  comma-separated `method.request.header.*`, `method.request.querystring.*` and
+  `method.request.path.*` expressions in configured order; with caching enabled
+  every value is part of the cache key, in that order.
+- With caching on, a missing, null or empty identity source is refused with 401
+  **without invoking the authorizer**. `AuthorizerResultTtlInSeconds` is applied
+  on the run clock (CloudFormation's default is 300; `0` disables the cache; the
+  documented maximum is 3600), so `--clock test` plus `clock.advance` expires a
+  cached policy.
+- The cache holds the authorizer's **policy**, not a per-request decision:
+  "If you enable authorization caching, API Gateway caches the policy so that
+  the Lambda authorizer function isn't invoked again. Ensure that your policy is
+  applicable to all resources and methods across your API." On a hit the cached
+  policy is matched against the current request's method ARN, so a policy that
+  names only `/a` refuses `/b` with 403 without invoking the function.
+- The returned policy is matched against the request's method ARN with the same
+  narrow Allow/Deny match the `$connect` authorizer uses. An Allow invokes the
+  method, a Deny is **403** outside the API Gateway test environment, the
+  authorizer's documented `{"errorMessage":"Unauthorized"}` response is **401**
+  and any other response shape is **500**. The output must include the principal
+  identifier: "A Lambda authorizer function's output is a dictionary-like
+  object, which must include the principal identifier (principalId) and a policy
+  document (policyDocument)"; a response without it is invalid (500), and an
+  invalid response is never cached.
+- `context` values reach a proxy integration as
+  `requestContext.authorizer.<key>` (also usable as `$context.authorizer.<key>`
+  in mapping templates) with the documented stringified scalars; a nested object
+  in the context is refused with 500 because API Gateway accepts strings only.
+
+**HTTP API Lambda authorizers that return an IAM policy.** An
+`AWS::ApiGatewayV2::Authorizer` with `AuthorizerType: REQUEST` and
+`EnableSimpleResponses: false` (the default) runs with
+`AuthorizerPayloadFormatVersion` `1.0` or `2.0`, as
+[Control access to HTTP APIs with Lambda authorizers](https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-lambda-authorizer.html)
+describes. Payload format 1.0 receives the REST-shaped event with `methodArn`;
+2.0 receives the HTTP API v2 event with `routeArn`, `routeKey` and
+`identitySource`. Either way the returned policy is matched against the route
+ARN, the identity sources are the cache key when
+`AuthorizerResultTtlInSeconds` is set, and `$context.routeKey` can be listed to
+cache per route. The cached value is the policy response: "By default, API
+Gateway uses the cached authorizer response for all routes of an API that use
+the authorizer", so a hit is re-evaluated against the current route's ARN. A
+missing identity source is 401, an invalid response (including a missing
+`principalId`) is 500 and never cached, and the documented
+`{"errorMessage":"Unauthorized"}` response is 401. The authorizer context
+reaches the integration as `requestContext.authorizer`.
+
+**Still refused.** IAM authorization (`AuthorizationType: AWS_IAM`), other
+`$context`/`$stageVariables` identity sources, and any authorizer kind the
+runner does not name above fail closed at plan time with the kind named.
 
 ## CloudFront distributions
 
 A distribution in the cloud assembly is served on its own `http://127.0.0.1:<port>`
 URL, printed on the `serving cloudfront …` line. The local gateway is the
 delivery path a FaceTheory or AppTheory site is tested through; it is **not a
-CloudFront emulator: no caching, no edge network, no TLS**.
+CloudFront emulator: no edge network, no TLS**.
 
 ### What is read
 
@@ -757,15 +824,83 @@ policy is applied after the viewer-response function. The four conditional
 request headers (`If-Match`, `If-None-Match`, `If-Modified-Since` and
 `If-Unmodified-Since`) are always forwarded to the origin for it to evaluate,
 as CloudFront forwards them, so a policy that does not list them does not drop
-them. Caching is not emulated: every request is forwarded to the origin as a
-cache miss, and a cache policy is used only for the values it contributes to the
-origin request. The
+them. The
+[Expiration page](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/Expiration.html)
+TTL rules are applied to the origin response; see
+[Caching and invalidation](#caching-and-invalidation). The
 `ViewerProtocolPolicy` is reported, not enforced, because the local URL is plain
 HTTP; the same is true for compression, access logging, aliases, the viewer
 certificate and the distribution's HTTP/IPv6/price-class settings.
 
 The pinned managed policy table and the exact property inventory are in the
 [configuration reference](/reference/local-runner-configuration/#cloudfront-distributions).
+
+### Caching and invalidation
+
+A behavior with a cache policy caches the methods its `CachedMethods` lists
+(GET and HEAD by default), and a CachingDisabled policy always reaches the
+origin. The cache key is the distribution domain plus the URL path, extended by
+the query strings, headers and cookies the policy names. "The OPTIONS method is
+included in the cache key for OPTIONS requests. This means that responses to
+OPTIONS requests are cached separately from responses to GET and HEAD requests":
+GET and HEAD share one key, a HEAD is answered from the GET-stored object
+without a body, and a HEAD response is never stored. `s-maxage` wins over
+`max-age` and `max-age` wins over `Expires`; `no-cache`/`no-store`/`private` are
+not cached unless `MinTTL` is above zero, and `MinTTL`/`MaxTTL` bound the result.
+Viewer `Cache-Control` and `Pragma` are ignored. `stale-while-revalidate` serves
+the stale object while the gateway refreshes it, and `stale-if-error` serves it
+when the origin fails; both windows end at the behavior's `MaxTTL`: "CloudFront
+will serve the stale content up to the value of the stale-while-revalidate
+directive or the value of the CloudFront maximum TTL, whichever is less." A 5xx
+response for an expired object also serves the stale object, for the error
+caching minimum TTL (extended by `stale-if-error`), never past `MaxTTL`; a 4xx
+response is returned instead of the stale object.
+
+Error responses follow the HTTPStatusCodes page's status table, not "any 4xx or
+5xx": 404, 414, 500, 501, 502, 503 and 504 are cached without a header; 400,
+403, 405, 412 and 415 "only ... if your origin returns a Cache-Control max-age
+or Cache-Control s-maxage header"; every other status (401, 429, ...) is not
+cached. The duration is "the maximum of" the error caching minimum TTL (10
+seconds by default, or the matched custom error response's `ErrorCachingMinTTL`)
+and the origin response's max-age, s-maxage or `Expires` value, capped by the
+behavior's Maximum TTL. For a custom error page the cap is the Maximum TTL of
+the behavior the page is fetched through — the page's behavior when an explicit
+behavior matches the page path, otherwise the request's behavior: "The
+Cache-Control: max-age and Cache-Control: s-maxage values cannot be greater than
+the Maximum TTL value set for the cache behavior for which the error page is
+being fetched." An explicit `ErrorCachingMinTTL` of 0 disables error caching for
+a custom origin and means one second for an S3 origin. A CachingDisabled policy
+caches neither errors nor custom error pages, including when it is the page's
+fetching behavior.
+
+A hit answers `x-cache: Hit from cloudfront` with an `age` in seconds; a miss
+answers `x-cache: Miss from cloudfront`. `session describe` reports each
+behavior's hit and miss counts and every invalidation.
+
+**Custom error responses.** `CustomErrorResponses` is served: the gateway finds
+"the first cache behavior in your distribution that has a path pattern that
+matches the path of the custom error page" and fetches `ResponsePagePath` from
+"the origin that is specified in the cache behavior", with that behavior's
+origin request policy, then returns the page with `ResponseCode`. When a cache
+behavior (not just the default behavior) matches the page path, "CloudFront uses
+the cache behavior TTL instead" of the error caching minimum. If the page is
+unavailable, "the status code that CloudFront received from the origin that
+contains the custom error pages" is returned, i.e. the pages origin's status. A
+custom page is cached under the same status/header rule as its `ErrorCode`.
+
+**Invalidation.** The run serves `CreateInvalidation`, `GetInvalidation` and
+`ListInvalidations` on a loopback control endpoint, injected into every function
+as `AWS_ENDPOINT_URL_CLOUDFRONT` and printed by `run` and `session describe`. A
+batch may list at most 3000 paths, every path begins with `/`, is case
+sensitive, is URL-decoded before matching and is at most 4000 characters; a `~`
+is refused. "The *, which replaces 0 or more characters, must be the last
+character in the invalidation path"; an asterisk anywhere else is a literal
+character. A path is matched against the cached path plus the query string the
+cache policy forwarded, so `/a.js` does not invalidate an entry cached under
+`/a.js?v=1` while `/a.js*` does. Reusing a `CallerReference` with the same paths
+returns the previous invalidation; with a different path it is
+`InvalidationBatchAlreadyExists`. An invalidation removes the matching objects,
+so the next request is a miss.
 
 ### Origins
 
@@ -841,10 +976,65 @@ media distribution stays refused with the named signed-URL reason.
 
 Distributions that use Lambda@Edge, a CloudFront KeyValueStore association,
 trusted key groups or signed URLs, field-level encryption, geo restriction, a
-WAF web ACL, custom error responses, a gRPC config or a legacy `ForwardedValues`
-cache policy are refused with a named reason; they are listed under `skipped`
-and no listener is started. Real-time logs, access logging and the properties
-that only affect caching or edge placement are reported instead.
+WAF web ACL, a gRPC config or a legacy `ForwardedValues` cache policy are
+refused with a named reason; they are listed under `skipped`
+and no listener is started. The cache policy is applied (see
+[Caching and invalidation](#caching-and-invalidation)); real-time logs, access
+logging, `Compress`, the behavior-level legacy `DefaultTTL`/`MinTTL`/`MaxTTL`
+fields and edge placement are reported instead.
+
+## Lambda layers and container-image functions
+
+**Layers.** A zip function's `Layers` list is resolved from the same cloud
+assembly: every entry must be an `AWS::Lambda::LayerVersion` in the function's
+stack whose content is a local asset (`aws:asset:path`). The runner extracts the
+layers into `/opt` in the template's listed order, and a later layer's file
+replaces an earlier one, as
+[Adding layers to functions](https://docs.aws.amazon.com/lambda/latest/dg/adding-layers.html)
+states. The merged directory is mounted read-only at `/opt`, and the container
+environment carries the documented runtime paths with no extra configuration:
+
+- `/opt/bin` is prepended to `PATH`;
+- `/opt/lib` is prepended to `LD_LIBRARY_PATH`;
+- a Node runtime gets `/opt/nodejs/node_modules` (and
+  `/opt/nodejs/node<major>/node_modules`) on `NODE_PATH`;
+- a Python runtime gets both documented layer paths on `PYTHONPATH`:
+  `/opt/python` and `/opt/python/lib/python<major>.<minor>/site-packages`
+  (`python3.14` becomes `/opt/python/lib/python3.14/site-packages`).
+
+A relative symlink whose target stays inside the layer is extracted as the same
+symlink, because CDK's default `SymlinkFollowMode.NEVER` stores an asset's
+symlinks and `npm install` leaves `node_modules/.bin` shims as symlinks; a
+symlink with an absolute target or one that escapes the layer root is refused
+by name. A layer asset that is a zip file rather than an extracted directory is
+refused because the runner needs the directory.
+
+The five-layer limit is enforced with a named refusal, and a layer ARN that is
+not a LayerVersion in the assembly (a cross-stack or external layer) is refused
+by name because its content cannot be obtained locally. The
+[layers chapter](https://docs.aws.amazon.com/lambda/latest/dg/chapter-layers.html)
+advises against layers for Go and Rust because the provided runtime has no
+module path to populate; the runner supports them all the same, and the
+`lambda-packaging` example uses layers for Node and Python only.
+
+**Container-image functions.** A function with `PackageType: Image` and
+`Code.ImageUri` that names a CDK `DockerImageAsset` is built with the real
+`docker build` from the asset's directory, Dockerfile, target, platform and
+build arguments (all read from the `aws:asset:*` metadata CDK writes). The image
+is built before any listener serves a request, so a broken Dockerfile fails the
+run instead of failing the first request; the first build of an example takes
+roughly 10–60 seconds including the base-image pull, and rebuilds are cached by
+Docker's layer cache (a second build of the same asset is near-instant). The
+image tag is derived from the name prefix, which is the app hash by default, so
+two concurrent runs of one app share a tag and docker reuses the built image. The
+function container runs the image's own entrypoint, so the Runtime Interface
+Emulator the
+[AWS base images](https://docs.aws.amazon.com/lambda/latest/dg/images-create.html)
+ship serves the same invocation path as a zip function; an image that does not
+ship a Runtime Interface Emulator fails with that name and the page cited. Image
+functions do not take layers, as the layers chapter states, and that combination
+is refused by name. The built image carries the run label and is removed when
+the run shuts down.
 
 ## Invoking one function
 
@@ -1641,7 +1831,9 @@ prefixes (one is a prefix of the other, or either configuration has no prefix
 rule) and overlapping suffixes (one is a suffix of the other, or either
 configuration has no suffix rule). The refusal names both configurations and the
 event type. Pairs with disjoint event types, or with non-overlapping suffixes,
-are registered, exactly as the page's valid examples show.
+are registered, exactly as the page's valid examples show. A filter rule value
+that contains a wildcard (`*.jpg`) is refused at plan time with the page cited:
+S3 does not allow a wildcard in a notification filter prefix or suffix.
 
 `plan` prints one line per destination with `delivery=registered`; `session
 describe` returns a `notifications` array with each destination's
@@ -1758,13 +1950,18 @@ the harness records it.
 | Deploy-time Secrets Manager dynamic references | Supported | A `{{resolve:secretsmanager:…}}` environment value resolves to the provisioned secret's value (the same JSON key) when the assembly declares that secret, and otherwise keeps the wave-1 deterministic local placeholder. The session's `describe` returns it to the harness; `run` and `plan` never print it. No secret is created in a cloud. |
 | Other emulators | Endpoint injection only | Pass `--endpoint service=url` and `--add-host name=address`; the profile names the environment variables. The checked-in profile binds `ssm`, `secretsmanager`, `sns`, `kinesis` and `cognito-idp` to moto, and `kms`/`sts` as before. |
 | WebSocket APIs (`AWS::ApiGatewayV2::Api`, WEBSOCKET) | Served (L2) | A real RFC 6455 listener serves `$connect`, `$disconnect`, `$default` and custom routes selected by the route selection expression, with the documented proxy event, two-way route responses, the `$connect` policy authorizer, the `@connections` management API and the documented idle/lifetime close; see [WebSocket APIs](#websocket-apis). No custom domains and no IAM authorization. |
-| CloudFront distributions and CloudFront Functions | Served (L2) | The distribution is served on its own loopback URL. Cache behaviors, allowed methods, viewer-request/viewer-response functions, origin request policies and response headers policies are applied; the generated function code runs in a restricted Node sandbox. S3 origins read the app's deployments from s3proxy, Function URL origins invoke the real handler container, and origin groups fail over with CloudFront's rules. No caching, no edge network, no TLS. |
+| CloudFront distributions and CloudFront Functions | Served (L2) | The distribution is served on its own loopback URL. Cache behaviors, allowed methods, viewer-request/viewer-response functions, origin request policies and response headers policies are applied; the generated function code runs in a restricted Node sandbox. S3 origins read the app's deployments from s3proxy, Function URL origins invoke the real handler container, and origin groups fail over with CloudFront's rules. No edge network and no TLS. |
+| CloudFront caching | Supported (L2) | The cache key (GET and HEAD share one key, OPTIONS is separate), `CachedMethods`, `CACHING_DISABLED`, the Expiration-page TTL rules, stale-while-revalidate, stale-if-error (including a 5xx origin response for an expired object) and the HTTPStatusCodes-page error caching table are applied; hits answer `x-cache`/`age`; `session describe` reports per-behavior hit/miss counts. A viewer Range request bypasses the local cache (documented deviation); a conditional request is answered 304 from the cached validators. See [Caching and invalidation](#caching-and-invalidation). |
+| CloudFront invalidation | Supported (L2) | `CreateInvalidation`, `GetInvalidation` and `ListInvalidations` are served on a loopback control endpoint injected as `AWS_ENDPOINT_URL_CLOUDFRONT`; the aws CLI and the SDK share it. Paths are matched against the cached path plus the selected query string, with a trailing `*` only, and `CallerReference` reuse follows the API reference. See [Caching and invalidation](#caching-and-invalidation). |
+| CloudFront custom error responses | Supported (L2) | `CustomErrorResponses` is served: the page is fetched through the first cache behavior that matches its path, from that behavior's origin and with its origin request policy, with the configured status; a matching behavior's TTL wins, and an unavailable page returns the pages origin's status. |
+| CloudFront external custom origins | Supported with `--origin` (L2) | An external custom origin is refused at plan time unless `--origin domain=loopback-url` maps it; a non-loopback mapping is refused. The mapped origin receives the documented origin-request shape. |
 | REST `MOCK` integrations | Supported (L1) | The transport returns the `IntegrationResponses` status and headers the template declares and invokes no function. CDK emits these for CORS preflight. |
 | HTTP API `REQUEST` authorizers with simple responses | Supported | The transport invokes the real authorizer function with the API Gateway v2 REQUEST event, carrying every configured `$request.header.*` or `$request.querystring.*` identity source in order; a request missing one is refused with 401 before the authorizer runs. A false `isAuthorized` is a 401, the authorizer context is carried to the handler, and a malformed response fails closed. `$context`/`$stageVariables` sources fail closed at plan time. |
 | HTTP API JWT authorizers | Supported (L2) | RSA-based algorithms only (`RS256`, `RS384`, `RS512`); the signature is verified with the `kid` key from the issuer's JWKS, and `iss`, `aud` (or `client_id` only when `aud` is absent), `exp`, `nbf` and `iat` are checked against the run clock. `AuthorizationScopes` is an any-of match; the claims reach the integration in `requestContext.authorizer.jwt`; see [Authorizers](#authorizers). |
 | REST API Cognito user-pool authorizers | Supported (L2) | The token is validated against the pool's JWKS through the local issuer with the same RSA-only algorithm and claim checks as the HTTP JWT authorizer; `AuthorizationScopes` is an any-of match and the claims reach the integration in `requestContext.authorizer.claims`; see [Authorizers](#authorizers). |
-| REST/HTTP Lambda authorizers with IAM-policy responses (R2b) | Not served | Fails closed; the local transport must never bypass a real authorizer. A WebSocket `$connect` authorizer's policy is matched narrowly against the `$connect` method ARN (see [WebSocket APIs](#websocket-apis)). |
-| Lambda layers, container-image functions | Not served | Fail closed when a served function needs them. |
+| REST/HTTP Lambda authorizers with IAM-policy responses | Supported (L2) | A REST `TOKEN` or `REQUEST` `AWS::ApiGateway::Authorizer` and an HTTP API `REQUEST` authorizer with `EnableSimpleResponses: false` run the real function and match its returned policy narrowly against the method/route ARN. Identity sources are 401 before invocation when missing; `AuthorizerResultTtlInSeconds` caches the policy on the run clock with the documented cache key, and a hit is re-evaluated against the current method/route ARN; a response without `principalId` is invalid; Allow invokes, Deny is 403, the `Unauthorized` error is 401 and an invalid response is 500; the stringified context reaches `requestContext.authorizer`; see [Authorizers](#authorizers). |
+| Lambda layers | Supported | A function's `Layers` resolve to LayerVersions in the same assembly; their content is extracted into `/opt` in the listed order (later layers win) with `/opt/bin` on `PATH`, `/opt/lib` on `LD_LIBRARY_PATH`, `/opt/nodejs/node_modules` on `NODE_PATH` and both `/opt/python` and `/opt/python/lib/python<major>.<minor>/site-packages` on `PYTHONPATH`. A relative symlink inside the layer is kept as a symlink; an absolute or escaping one is refused by name. The five-layer limit and an external layer ARN are refused by name; see [Lambda layers and container-image functions](#lambda-layers-and-container-image-functions). |
+| Container-image functions | Supported | `PackageType: Image` with a CDK `DockerImageAsset` is built by the real `docker build` (directory, Dockerfile, target, platform and build arguments from the assembly) before serving, then run under the image's own Runtime Interface Emulator through the same invocation path as a zip function. An image without the emulator, and an image function that declares layers, are refused by name. |
 | CloudFormation-expression environment values | Supported for `Ref`/`Fn::GetAtt`/`Fn::Join` | Tables and stream ARNs, queues, rules, buckets, KMS keys and aliases, SSM parameters, Secrets Manager ARNs, SNS topics, Kinesis streams, Cognito pool/client values, IAM/MicroVM-image/S3 Vectors ARNs and functions resolve to local values (moto/S3 require their backend). An unsupported expression fails with the function and variable named. |
 | CloudFormation-expression `MemorySize`/`Timeout` | Not resolved | A served function whose limit is `Ref`/`GetAtt`/`Fn::If` fails with the property named; the AWS defaults apply only when the property is absent. |
 | One function, explicit events (`invoke`) | Supported | Starts one function and sends newline-delimited JSON events to a warm container; `--handler-dir` runs a handler that has no CDK definition and derives no routes. |
@@ -1796,11 +1993,13 @@ the harness records it.
   Function URL's SigV4 signing and the gateway's in-process check of that
   locally signed request are reproduced, but IAM policy evaluation is not.
   A literal external custom origin is refused rather than reached. Lambda@Edge,
-  KeyValueStore, signed URLs, field-level encryption, geo restriction, WAF and
-  custom error responses refuse the distribution; caching, compression, logging
-  and placement settings are reported. The Node `vm` executor matches the
-  CloudFront Functions API and globals but is not a hardened security boundary,
-  does not enforce CloudFront's 1 ms CPU budget, and cannot reproduce
+  KeyValueStore, signed URLs, field-level encryption, geo restriction and a WAF
+  web ACL refuse the distribution. The cache policy is applied — the cache key,
+  TTLs, stale directives and error caching; `Compress`, the behavior-level legacy
+  `DefaultTTL`/`MinTTL`/`MaxTTL`, access and real-time logging, `PriceClass` and
+  the other placement settings are reported, not emulated. The Node `vm` executor
+  matches the CloudFront Functions API and globals but is not a hardened security
+  boundary, does not enforce CloudFront's 1 ms CPU budget, and cannot reproduce
   CloudFront-only device, location or TLS headers.
 - **Kinesis and CloudWatch Logs are emulated by moto.** The stream mapping,
   the subscription filter, partial failure and the function-log capture are
@@ -1810,12 +2009,13 @@ the harness records it.
 - **Kinesis shard topology is fixed.** The stream is created on moto from
   `AWS::Kinesis::Stream`, and `Ref`/`GetAtt Arn` resolve to it; the runner reads
   its shards and delivers each, but moto does not reshard.
-- **Authorizers cover three kinds.** An HTTP API `REQUEST` authorizer with
+- **Authorizers cover five kinds.** An HTTP API `REQUEST` authorizer with
   simple responses runs the real function and carries every configured
   `$request.header.*` or `$request.querystring.*` identity source in order; an
   HTTP API JWT authorizer and a REST Cognito user-pool authorizer validate the
-  token against the issuer's JWKS. Lambda authorizers that return an IAM policy
-  for HTTP or REST routes (R2b), IAM authorization, and
+  token against the issuer's JWKS; a REST TOKEN or REQUEST Lambda authorizer and
+  an HTTP API IAM-policy Lambda authorizer run the real function and match its
+  returned policy against the method or route ARN. IAM authorization and
   `$context`/`$stageVariables` identity sources fail closed rather than
   bypassing a real authorization decision. Cognito's hosted UI/OAuth flows are
   not served, so a token must come from the pool's API (`InitiateAuth`) or a

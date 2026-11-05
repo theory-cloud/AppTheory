@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +39,12 @@ type Transport struct {
 
 	jwtMu        sync.Mutex
 	jwtVerifiers map[string]*jwtVerifier
+
+	// authMu guards the authorizer result cache. The cache key is the
+	// authorizer function plus the documented identity-source cache key, and an
+	// entry expires on the run clock.
+	authMu    sync.Mutex
+	authCache map[string]authorizerCacheEntry
 }
 
 // authorizerResult carries what one authorizer produced. Status is 0 when the
@@ -48,6 +55,8 @@ type authorizerResult struct {
 	JWT    map[string]any
 	Scopes []string
 	Claims map[string]any
+	// PolicyContext is the stringified context a policy authorizer returned.
+	PolicyContext map[string]any
 }
 
 // NewTransport builds a transport for an API surface.
@@ -116,22 +125,23 @@ func (t *Transport) ServeHTTP(writer http.ResponseWriter, request *http.Request)
 	}
 
 	payload, err := BuildEvent(InvokeRequest{
-		API:               t.API,
-		Route:             route,
-		Params:            params,
-		Method:            request.Method,
-		Path:              path,
-		RawPath:           request.URL.EscapedPath(),
-		RawQuery:          request.URL.RawQuery,
-		Header:            request.Header,
-		Body:              body,
-		RemoteAddr:        request.RemoteAddr,
-		RequestID:         requestID,
-		Now:               t.Now(),
-		AuthorizerContext: authorizer.Lambda,
-		AuthorizerJWT:     authorizer.JWT,
-		AuthorizerScopes:  authorizer.Scopes,
-		AuthorizerClaims:  authorizer.Claims,
+		API:                     t.API,
+		Route:                   route,
+		Params:                  params,
+		Method:                  request.Method,
+		Path:                    path,
+		RawPath:                 request.URL.EscapedPath(),
+		RawQuery:                request.URL.RawQuery,
+		Header:                  request.Header,
+		Body:                    body,
+		RemoteAddr:              request.RemoteAddr,
+		RequestID:               requestID,
+		Now:                     t.Now(),
+		AuthorizerContext:       authorizer.Lambda,
+		AuthorizerPolicyContext: authorizer.PolicyContext,
+		AuthorizerJWT:           authorizer.JWT,
+		AuthorizerScopes:        authorizer.Scopes,
+		AuthorizerClaims:        authorizer.Claims,
 	})
 	if err != nil {
 		t.fail(writer, http.StatusBadGateway, "Internal Server Error", requestID, err)
@@ -166,17 +176,331 @@ func (t *Transport) authorize(
 		return t.authorizeJWT(request, route)
 	case AuthorizerKindCognito:
 		return t.authorizeCognito(request, route)
-	case AuthorizerKindSimpleRequest, AuthorizerKindLambdaRequest:
+	case AuthorizerKindSimpleRequest:
 		if route.AuthorizerFunction == "" {
-			return authorizerResult{}, nil
+			return authorizerResult{}, fmt.Errorf("route declares a simple-response authorizer the runner did not derive")
 		}
 		return t.authorizeRequest(request, route, params, path, body, requestID)
+	case AuthorizerKindLambdaRequest:
+		if route.AuthorizerFunction == "" {
+			return authorizerResult{}, fmt.Errorf("route declares a Lambda authorizer the runner did not derive")
+		}
+		if route.AuthorizerRESTType != "" {
+			return t.authorizeRESTLambda(request, route, params, path, requestID)
+		}
+		return t.authorizeHTTPLambdaPolicy(request, route, params, path, body, requestID)
 	default:
 		if route.AuthorizerFunction == "" {
 			return authorizerResult{}, nil
 		}
+		// A route built without an explicit kind keeps the historical contract:
+		// the authorizer runs as a simple-response REQUEST authorizer.
 		return t.authorizeRequest(request, route, params, path, body, requestID)
 	}
+}
+
+// authorizeRESTLambda runs a REST API TOKEN or REQUEST Lambda authorizer that
+// returns an IAM policy, and matches the policy against the method ARN.
+//
+// A missing identity source is refused with 401 before the authorizer runs; with
+// caching enabled the identity sources (or the token) are the cache key on the
+// run clock. A Deny policy is 403 outside the test environment, the documented
+// Unauthorized error is 401 and an invalid response is 500.
+//
+// https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-use-lambda-authorizer.html
+// https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-lambda-authorizer-output.html
+func (t *Transport) authorizeRESTLambda(
+	request *http.Request,
+	route Route,
+	params map[string]string,
+	path string,
+	requestID string,
+) (authorizerResult, error) {
+	invoker, ok := t.Invokers[route.AuthorizerFunction]
+	if !ok {
+		return authorizerResult{}, fmt.Errorf("no running container for authorizer %s", route.AuthorizerFunction)
+	}
+	token, cacheKey, refusal, err := t.restAuthorizerKey(request, route, params, path)
+	if err != nil {
+		return authorizerResult{}, err
+	}
+	if refusal != 0 {
+		return authorizerResult{Status: refusal}, nil
+	}
+	arn := methodARN(t.API, request.Method, path)
+	// The cache holds the authorizer's POLICY, not this request's decision:
+	// "If you enable authorization caching, API Gateway caches the policy so
+	// that the Lambda authorizer function isn't invoked again. Ensure that your
+	// policy is applicable to all resources and methods across your API." A
+	// cache hit is therefore re-evaluated against the CURRENT request's method
+	// ARN and classified exactly like a fresh response.
+	// https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-use-lambda-authorizer.html
+	if cached, ok := t.cachedAuthorizerPolicy(route.AuthorizerFunction, route.AuthorizerCacheTTLSeconds, cacheKey); ok {
+		result, classifyErr := t.classifyAuthorizerPolicy(cached, arn, request.Method, path, route.AuthorizerFunction)
+		if classifyErr != nil {
+			return authorizerResult{}, classifyErr
+		}
+		t.logf("%s %s -> %d (cached authorizer policy for %s)", request.Method, path, statusOrOK(result.Status), route.AuthorizerFunction)
+		return result, nil
+	}
+	event, err := buildRESTAuthorizerEvent(InvokeRequest{
+		API:        t.API,
+		Route:      route,
+		Params:     params,
+		Method:     request.Method,
+		Path:       path,
+		RawPath:    request.URL.EscapedPath(),
+		RawQuery:   request.URL.RawQuery,
+		Header:     request.Header,
+		RequestID:  requestID,
+		Now:        t.Now(),
+		RemoteAddr: request.RemoteAddr,
+	}, route.AuthorizerRESTType, token)
+	if err != nil {
+		return authorizerResult{}, fmt.Errorf("build the REST authorizer event: %w", err)
+	}
+	raw, err := invoker.Invoke(request.Context(), event)
+	if err != nil {
+		return authorizerResult{}, fmt.Errorf("invoke authorizer %s: %w", route.AuthorizerFunction, err)
+	}
+	result, err := t.classifyAuthorizerPolicy(raw, arn, request.Method, path, route.AuthorizerFunction)
+	if err != nil {
+		return authorizerResult{}, err
+	}
+	t.cacheAuthorizerPolicy(route.AuthorizerFunction, route.AuthorizerCacheTTLSeconds, cacheKey, raw, result)
+	return result, nil
+}
+
+// restAuthorizerKey resolves the token or identity-source values that are the
+// authorizer's cache key. A missing or invalid token is the documented 401 that
+// is returned without invoking the authorizer.
+func (t *Transport) restAuthorizerKey(request *http.Request, route Route, params map[string]string, path string) (token, cacheKey string, refusal int, err error) {
+	if route.AuthorizerRESTType == authorizerTypeToken {
+		if len(route.AuthorizerIdentitySources) != 1 {
+			return "", "", 0, fmt.Errorf("TOKEN authorizer has %d identity sources", len(route.AuthorizerIdentitySources))
+		}
+		source, parseErr := parseRESTIdentitySource(route.AuthorizerIdentitySources[0])
+		if parseErr != nil {
+			return "", "", 0, parseErr
+		}
+		value := source.value(request.Header, request.URL.RawQuery, params)
+		if expression := strings.TrimSpace(route.AuthorizerValidationExpression); expression != "" {
+			matched, matchErr := regexp.MatchString(expression, value)
+			if matchErr != nil {
+				return "", "", 0, fmt.Errorf("the authorizer IdentityValidationExpression is not a regular expression: %w", matchErr)
+			}
+			if !matched {
+				t.logf("%s %s -> 401 (the token does not match IdentityValidationExpression)", request.Method, path)
+				return "", "", http.StatusUnauthorized, nil
+			}
+		}
+		// With caching enabled API Gateway verifies the identity source before
+		// invoking the authorizer; with caching off it passes the request
+		// through and lets the function decide.
+		if value == "" && route.AuthorizerCacheTTLSeconds > 0 {
+			t.logf("%s %s -> 401 (token header %s is missing; authorizer %s was not invoked)",
+				request.Method, path, source.name, route.AuthorizerFunction)
+			return "", "", http.StatusUnauthorized, nil
+		}
+		return value, value, 0, nil
+	}
+	missing, err := missingRESTIdentitySource(request.Header, request.URL.RawQuery, params, route.AuthorizerIdentitySources)
+	if err != nil {
+		return "", "", 0, err
+	}
+	if missing != "" && route.AuthorizerCacheTTLSeconds > 0 {
+		t.logf("%s %s -> 401 (identity source %s is missing; authorizer %s was not invoked)",
+			request.Method, path, missing, route.AuthorizerFunction)
+		return "", "", http.StatusUnauthorized, nil
+	}
+	values, err := restIdentitySourceValues(request.Header, request.URL.RawQuery, params, route.AuthorizerIdentitySources)
+	if err != nil {
+		return "", "", 0, err
+	}
+	return "", strings.Join(values, "\x1f"), 0, nil
+}
+
+// authorizeHTTPLambdaPolicy runs an HTTP API REQUEST Lambda authorizer that
+// returns an IAM policy. Payload format 1.0 carries methodArn and 2.0 carries
+// routeArn; either way the returned policy is matched against the route ARN.
+//
+// https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-lambda-authorizer.html
+func (t *Transport) authorizeHTTPLambdaPolicy(
+	request *http.Request,
+	route Route,
+	params map[string]string,
+	path string,
+	body []byte,
+	requestID string,
+) (authorizerResult, error) {
+	invoker, ok := t.Invokers[route.AuthorizerFunction]
+	if !ok {
+		return authorizerResult{}, fmt.Errorf("no running container for authorizer %s", route.AuthorizerFunction)
+	}
+	invoke := InvokeRequest{
+		API:        t.API,
+		Route:      route,
+		Params:     params,
+		Method:     request.Method,
+		Path:       path,
+		RawPath:    request.URL.EscapedPath(),
+		RawQuery:   request.URL.RawQuery,
+		Header:     request.Header,
+		Body:       body,
+		RemoteAddr: request.RemoteAddr,
+		RequestID:  requestID,
+		Now:        t.Now(),
+	}
+	missing, err := missingIdentitySourceWithContext(request.Header, request.URL.RawQuery, route, params, route.AuthorizerIdentitySources)
+	if err != nil {
+		return authorizerResult{}, err
+	}
+	if missing != "" {
+		t.logf("%s %s -> 401 (identity source %s is missing; authorizer %s was not invoked)",
+			request.Method, path, missing, route.AuthorizerFunction)
+		return authorizerResult{Status: http.StatusUnauthorized}, nil
+	}
+	values, err := identitySourceValuesWithContext(request.Header, request.URL.RawQuery, route, params, route.AuthorizerIdentitySources)
+	if err != nil {
+		return authorizerResult{}, err
+	}
+	cacheKey := strings.Join(values, "\x1f")
+	arn := methodARN(t.API, request.Method, path)
+	// HTTP API caching has the same shape as REST: "By default, API Gateway
+	// uses the cached authorizer response for all routes of an API that use the
+	// authorizer. To cache responses per route, add $context.routeKey to your
+	// authorizer's identity sources." The cached response is the POLICY, so it
+	// is re-evaluated against this route's ARN on every hit.
+	// https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-lambda-authorizer.html
+	if cached, ok := t.cachedAuthorizerPolicy(route.AuthorizerFunction, route.AuthorizerCacheTTLSeconds, cacheKey); ok {
+		result, classifyErr := t.classifyAuthorizerPolicy(cached, arn, request.Method, path, route.AuthorizerFunction)
+		if classifyErr != nil {
+			return authorizerResult{}, classifyErr
+		}
+		t.logf("%s %s -> %d (cached authorizer policy for %s)", request.Method, path, statusOrOK(result.Status), route.AuthorizerFunction)
+		return result, nil
+	}
+	var event []byte
+	if route.AuthorizerPayloadFormat == "1.0" {
+		event, err = buildHTTPAuthorizerEventV1(invoke, values)
+	} else {
+		event, err = BuildAuthorizerEvent(invoke)
+	}
+	if err != nil {
+		return authorizerResult{}, fmt.Errorf("build the HTTP API authorizer event: %w", err)
+	}
+	raw, err := invoker.Invoke(request.Context(), event)
+	if err != nil {
+		return authorizerResult{}, fmt.Errorf("invoke authorizer %s: %w", route.AuthorizerFunction, err)
+	}
+	result, err := t.classifyAuthorizerPolicy(raw, arn, request.Method, path, route.AuthorizerFunction)
+	if err != nil {
+		return authorizerResult{}, err
+	}
+	t.cacheAuthorizerPolicy(route.AuthorizerFunction, route.AuthorizerCacheTTLSeconds, cacheKey, raw, result)
+	return result, nil
+}
+
+// classifyAuthorizerPolicy maps a Lambda authorizer's raw response to the
+// documented status: an Allow policy proceeds, a Deny policy is 403, the
+// Unauthorized error is 401 and an invalid response is 500. The returned context
+// is stringified because API Gateway does not accept nested context values.
+func (t *Transport) classifyAuthorizerPolicy(raw []byte, arn, method, path, authorizerFunction string) (authorizerResult, error) {
+	allowed, context, err := evaluateAuthorizerPolicy(raw, arn)
+	if err != nil {
+		if authorizerUnauthorizedResponse(raw) {
+			t.logf("%s %s -> 401 (authorizer %s returned Unauthorized)", method, path, authorizerFunction)
+			return authorizerResult{Status: http.StatusUnauthorized}, nil
+		}
+		t.logf("%s %s -> 500 (authorizer %s returned an invalid response: %v)", method, path, authorizerFunction, err)
+		return authorizerResult{Status: http.StatusInternalServerError}, nil
+	}
+	if !allowed {
+		t.logf("%s %s -> 403 (authorizer %s returned a Deny policy for %s)", method, path, authorizerFunction, arn)
+		return authorizerResult{Status: http.StatusForbidden}, nil
+	}
+	values, err := authorizerContextValues(context)
+	if err != nil {
+		t.logf("%s %s -> 500 (authorizer %s returned an invalid context: %v)", method, path, authorizerFunction, err)
+		return authorizerResult{Status: http.StatusInternalServerError}, nil
+	}
+	return authorizerResult{PolicyContext: values}, nil
+}
+
+// authorizerCacheEntry is one cached authorizer POLICY response. The raw
+// function response is kept, not the decision it produced for the request that
+// filled the cache, because API Gateway re-evaluates a cached policy against
+// each method or route ARN.
+type authorizerCacheEntry struct {
+	expiresAt time.Time
+	raw       []byte
+}
+
+func statusOrOK(status int) int {
+	if status == 0 {
+		return http.StatusOK
+	}
+	return status
+}
+
+// cachedAuthorizerPolicy returns a cached policy response for the authorizer
+// while it is inside its AuthorizerResultTtlInSeconds window on the run clock.
+// A TTL of zero disables the cache, which is the documented way to turn caching
+// off.
+//
+// https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-use-lambda-authorizer.html
+func (t *Transport) cachedAuthorizerPolicy(function string, ttlSeconds int, key string) ([]byte, bool) {
+	if ttlSeconds <= 0 || key == "" {
+		return nil, false
+	}
+	t.authMu.Lock()
+	defer t.authMu.Unlock()
+	entry, ok := t.authCache[authorizerCacheKey(function, key)]
+	if !ok {
+		return nil, false
+	}
+	if !t.now().Before(entry.expiresAt) {
+		delete(t.authCache, authorizerCacheKey(function, key))
+		return nil, false
+	}
+	return entry.raw, true
+}
+
+// cacheAuthorizerPolicy stores the authorizer's raw policy response. API
+// Gateway caches the policy, not a per-request decision: the same cached policy
+// is matched against every later request's method or route ARN. An Unauthorized
+// error (401) and an invalid response (500) are invocation failures, not a
+// policy, so they are never cached.
+func (t *Transport) cacheAuthorizerPolicy(function string, ttlSeconds int, key string, raw []byte, result authorizerResult) {
+	if ttlSeconds <= 0 || key == "" {
+		return
+	}
+	if result.Status != 0 && result.Status != http.StatusForbidden {
+		return
+	}
+	t.authMu.Lock()
+	defer t.authMu.Unlock()
+	if t.authCache == nil {
+		t.authCache = map[string]authorizerCacheEntry{}
+	}
+	t.authCache[authorizerCacheKey(function, key)] = authorizerCacheEntry{
+		expiresAt: t.now().Add(time.Duration(ttlSeconds) * time.Second),
+		raw:       append([]byte(nil), raw...),
+	}
+}
+
+func authorizerCacheKey(function, key string) string {
+	return function + "\x00" + key
+}
+
+func (t *Transport) now() time.Time {
+	if t.Clock != nil {
+		return t.Clock.Now()
+	}
+	if t.Now != nil {
+		return t.Now()
+	}
+	return time.Now()
 }
 
 // authorizeRequest runs a REQUEST Lambda authorizer with simple responses.

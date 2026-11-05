@@ -27,8 +27,8 @@ func TestDocumentedCloudFrontPhaseOrder(t *testing.T) {
 	}
 	assertDocumentedOrder(t, document, section, markers)
 
-	if !strings.Contains(section, "not a\nCloudFront emulator: no caching, no edge network, no TLS") &&
-		!strings.Contains(section, "not a CloudFront emulator: no caching, no edge network, no TLS") {
+	if !strings.Contains(section, "not a\nCloudFront emulator: no edge network, no TLS") &&
+		!strings.Contains(section, "not a CloudFront emulator: no edge network, no TLS") {
 		t.Fatalf("%s: the CloudFront section must carry the fidelity statement", document)
 	}
 	if !strings.Contains(section, "CloudFront does not document the relative order") {
@@ -52,6 +52,14 @@ func TestDocumentedCloudFrontPhaseOrder(t *testing.T) {
 		"methodAllowed(",
 		"originRequest(",
 		"originImplementation.Fetch(",
+		"finishResponse(",
+	})
+	cacheSource, err := os.ReadFile("gateway_cache.go") //nolint:gosec // checked-in source path
+	if err != nil {
+		t.Fatalf("read gateway_cache.go: %v", err)
+	}
+	finish := goFunctionBody(t, string(cacheSource)+string(gatewaySource), "func (g *Gateway) finishResponse(")
+	assertDocumentedOrder(t, "gateway.go finishResponse", finish, []string{
 		"ViewerResponseFunction",
 		"applyResponseHeadersPolicy(behavior.ResponseHeadersPolicy, request.Method, state.Header, &final)",
 	})

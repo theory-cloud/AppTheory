@@ -35,6 +35,9 @@ const (
 	// resolve, so an SDK cannot reach a real AWS endpoint.
 	ClosedDNSServer = "127.0.0.2"
 
+	schemeHTTP  = "http"
+	schemeHTTPS = "https"
+
 	// ClosedEndpoint is the global endpoint used when no local backend is
 	// configured. A connection to it is refused locally, which keeps a handler
 	// that calls AWS from reaching real AWS.
@@ -89,15 +92,25 @@ const (
 
 // FunctionSpec is one Lambda function the assembly defines.
 type FunctionSpec struct {
-	LogicalID    string            `json:"logicalId"`
-	Stack        string            `json:"stack"`
-	Runtime      string            `json:"runtime"`
-	Handler      string            `json:"handler"`
-	Architecture string            `json:"architecture"`
-	MemoryMB     int               `json:"memoryMb"`
-	Timeout      int               `json:"timeout"`
-	LayerCount   int               `json:"layerCount"`
-	Environment  map[string]string `json:"environment,omitempty"`
+	LogicalID    string `json:"logicalId"`
+	Stack        string `json:"stack"`
+	Runtime      string `json:"runtime"`
+	Handler      string `json:"handler"`
+	Architecture string `json:"architecture"`
+	MemoryMB     int    `json:"memoryMb"`
+	Timeout      int    `json:"timeout"`
+	LayerCount   int    `json:"layerCount"`
+	// Layers are the resolved Lambda layers, in the template's listed order.
+	// The runner extracts every layer into /opt in that order.
+	Layers []LayerSpec `json:"layers,omitempty"`
+	// LayerProblem names why the declared layers cannot be assembled locally.
+	// A served function with one fails closed.
+	LayerProblem string `json:"layerProblem,omitempty"`
+	// PackageType is Image for a container-image function.
+	PackageType string `json:"packageType,omitempty"`
+	// ImageAsset is the Docker image asset the function's Code.ImageUri names.
+	ImageAsset  *DockerImageAssetSpec `json:"imageAsset,omitempty"`
+	Environment map[string]string     `json:"environment,omitempty"`
 	// UnresolvedEnvironment lists environment names whose template value is a
 	// CloudFormation expression. The runner resolves the supported references
 	// before a function starts; one it cannot resolve fails closed.
@@ -117,8 +130,11 @@ type FunctionSpec struct {
 	MemorySizeExpression string `json:"memorySizeExpression,omitempty"`
 	TimeoutExpression    string `json:"timeoutExpression,omitempty"`
 	AssetDir             string `json:"assetDir,omitempty"`
-	InlineCode           string `json:"-"`
-	InlineFile           string `json:"inlineFile,omitempty"`
+	// OptDir is the merged /opt directory the run materializes from the
+	// function's layers. It is internal.
+	OptDir     string `json:"-"`
+	InlineCode string `json:"-"`
+	InlineFile string `json:"inlineFile,omitempty"`
 	// CodeProblem is set when the function's code cannot be resolved locally.
 	// Only a served function fails the run because of it; an event-source
 	// function that the transport never invokes is reported, not blocking.
@@ -149,8 +165,22 @@ type Route struct {
 	// not carry every source before invoking the authorizer.
 	AuthorizerIdentitySources []string `json:"authorizerIdentitySources,omitempty"`
 	// AuthorizerKind is empty for a route with no authorizer, or one of the
-	// AuthorizerKind values: http-request-simple, http-jwt, rest-cognito-user-pools.
+	// AuthorizerKind values: http-request-simple, http-jwt, lambda-request-policy,
+	// rest-cognito-user-pools.
 	AuthorizerKind AuthorizerKind `json:"authorizerKind,omitempty"`
+	// AuthorizerRESTType is the REST API authorizer Type (TOKEN or REQUEST) for
+	// a Lambda authorizer that returns an IAM policy.
+	AuthorizerRESTType string `json:"authorizerRestType,omitempty"`
+	// AuthorizerCacheTTLSeconds is AuthorizerResultTtlInSeconds on the run clock.
+	// Zero disables the authorizer result cache.
+	AuthorizerCacheTTLSeconds int `json:"authorizerCacheTtlSeconds,omitempty"`
+	// AuthorizerValidationExpression is a TOKEN authorizer's
+	// IdentityValidationExpression, applied to the token before the authorizer
+	// runs.
+	AuthorizerValidationExpression string `json:"authorizerValidationExpression,omitempty"`
+	// AuthorizerPayloadFormat is an HTTP API Lambda authorizer's payload format
+	// version (1.0 or 2.0).
+	AuthorizerPayloadFormat string `json:"authorizerPayloadFormat,omitempty"`
 	// JWTIssuer, JWTIssuerExpression and JWTAudience describe an HTTP API JWT
 	// authorizer. The expression is the raw template value until the run
 	// resolves it against the provisioned Cognito pool.
@@ -629,4 +659,25 @@ func sortedKeys[V any](values map[string]V) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// LayerSpec is one Lambda layer a function declares.
+type LayerSpec struct {
+	LogicalID string `json:"logicalId"`
+	// AssetDir is the layer content directory the cloud assembly holds.
+	AssetDir string `json:"-"`
+}
+
+// DockerImageAssetSpec is the CDK Docker image asset a container-image
+// function's Code.ImageUri names. It comes from the function resource's
+// aws:asset:* metadata, the same assembly the zip functions read.
+type DockerImageAssetSpec struct {
+	// Hash is the content hash CDK put in the image URI.
+	Hash string `json:"hash"`
+	// Directory, DockerFile, BuildArgs and Target describe the local build.
+	Directory  string            `json:"-"`
+	DockerFile string            `json:"dockerFile,omitempty"`
+	BuildArgs  map[string]string `json:"buildArgs,omitempty"`
+	Target     string            `json:"target,omitempty"`
+	Platform   string            `json:"platform,omitempty"`
 }

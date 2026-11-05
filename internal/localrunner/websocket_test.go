@@ -253,11 +253,11 @@ func TestEvaluateAuthorizerPolicy(t *testing.T) {
 	if err != nil || !allowed || context["tenant"] != "demo" {
 		t.Fatalf("allow policy = %t %v %v", allowed, context, err)
 	}
-	deny := `{"policyDocument":{"Statement":[{"Action":"execute-api:Invoke","Effect":"Deny","Resource":"*"}]}}`
+	deny := `{"principalId":"user","policyDocument":{"Statement":[{"Action":"execute-api:Invoke","Effect":"Deny","Resource":"*"}]}}`
 	denied, _, denyErr := evaluateAuthorizerPolicy([]byte(deny), methodARN)
 	require.NoError(t, denyErr)
 	require.False(t, denied, "a Deny policy must refuse")
-	wrongResource := `{"policyDocument":{"Statement":[{"Action":"execute-api:Invoke","Effect":"Allow","Resource":"arn:aws:execute-api:us-east-1:123456789012:other/dev/$connect"}]}}`
+	wrongResource := `{"principalId":"user","policyDocument":{"Statement":[{"Action":"execute-api:Invoke","Effect":"Allow","Resource":"arn:aws:execute-api:us-east-1:123456789012:other/dev/$connect"}]}}`
 	otherAllowed, _, otherErr := evaluateAuthorizerPolicy([]byte(wrongResource), methodARN)
 	require.NoError(t, otherErr)
 	require.False(t, otherAllowed, "a policy for another API must refuse")

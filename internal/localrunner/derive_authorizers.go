@@ -28,7 +28,11 @@ import (
 
 const (
 	authorizerTypeRequest          = "REQUEST"
+	authorizerTypeToken            = "TOKEN"
 	authorizerTypeCognitoUserPools = "COGNITO_USER_POOLS"
+	authorizationTypeCustom        = "CUSTOM"
+	authorizerPayloadFormatV2      = "2.0"
+	authorizerPayloadFormatV1      = "1.0"
 )
 
 // AuthorizerKind names one authorizer implementation.
@@ -56,6 +60,15 @@ type apiAuthorizer struct {
 	// SimpleResponses is EnableSimpleResponses for an HTTP API REQUEST
 	// authorizer.
 	SimpleResponses bool
+	// RESTType is a REST authorizer's Type (TOKEN or REQUEST).
+	RESTType string
+	// PayloadFormat is an HTTP API Lambda authorizer's payload format version.
+	PayloadFormat string
+	// CacheTTLSeconds is AuthorizerResultTtlInSeconds. It is -1 when the
+	// template omits the property so the CloudFormation default applies.
+	CacheTTLSeconds int
+	// ValidationExpression is a TOKEN authorizer's IdentityValidationExpression.
+	ValidationExpression string
 	// JWT is set for a JWT authorizer.
 	JWT *jwtAuthorizer
 	// Cognito is set for a REST Cognito user-pool authorizer.
@@ -80,11 +93,13 @@ type cognitoAuthorizer struct {
 }
 
 type httpJWTAuthorizerProperties struct {
-	AuthorizerType        string          `json:"AuthorizerType"`
-	AuthorizerURI         json.RawMessage `json:"AuthorizerUri"`
-	IdentitySource        []string        `json:"IdentitySource"`
-	EnableSimpleResponses bool            `json:"EnableSimpleResponses"`
-	JwtConfiguration      struct {
+	AuthorizerType                 string          `json:"AuthorizerType"`
+	AuthorizerURI                  json.RawMessage `json:"AuthorizerUri"`
+	IdentitySource                 []string        `json:"IdentitySource"`
+	EnableSimpleResponses          bool            `json:"EnableSimpleResponses"`
+	AuthorizerPayloadFormatVersion string          `json:"AuthorizerPayloadFormatVersion"`
+	AuthorizerResultTtlInSeconds   *int            `json:"AuthorizerResultTtlInSeconds"`
+	JwtConfiguration               struct {
 		Issuer   json.RawMessage   `json:"Issuer"`
 		Audience []json.RawMessage `json:"Audience"`
 	} `json:"JwtConfiguration"`
@@ -95,7 +110,8 @@ type restAuthorizerProperties struct {
 	ProviderARNs                 []json.RawMessage `json:"ProviderARNs"`
 	AuthorizerURI                json.RawMessage   `json:"AuthorizerUri"`
 	IdentitySource               string            `json:"IdentitySource"`
-	AuthorizerResultTtlInSeconds int               `json:"AuthorizerResultTtlInSeconds"`
+	IdentityValidationExpression string            `json:"IdentityValidationExpression"`
+	AuthorizerResultTtlInSeconds *int              `json:"AuthorizerResultTtlInSeconds"`
 }
 
 // deriveAPIAuthorizers parses every authorizer resource in one stack. A
@@ -113,7 +129,7 @@ func deriveAPIAuthorizers(stacks []assemblyStack, stack assemblyStack, types map
 			}
 			authorizers[id] = authorizer
 		case typeRESTAuthorizer:
-			authorizer, err := parseRESTAPIAuthorizer(stack, id, resource)
+			authorizer, err := parseRESTAPIAuthorizer(stack, types, id, resource)
 			if err != nil {
 				return nil, err
 			}
@@ -162,11 +178,30 @@ func parseHTTPAPIAuthorizer(stack assemblyStack, types map[string]string, id str
 		if props.EnableSimpleResponses {
 			kind = AuthorizerKindSimpleRequest
 		}
+		payloadFormat := strings.TrimSpace(props.AuthorizerPayloadFormatVersion)
+		if payloadFormat == "" {
+			// API Gateway requires an explicit payload format version for a
+			// Lambda authorizer created outside the console.
+			payloadFormat = authorizerPayloadFormatV2
+		}
+		if payloadFormat != authorizerPayloadFormatV1 && payloadFormat != authorizerPayloadFormatV2 {
+			return apiAuthorizer{}, unsupported(
+				stack.Name+"/"+id,
+				"HTTP API authorizer payload format %q is not 1.0 or 2.0",
+				payloadFormat,
+			)
+		}
+		ttl, err := authorizerTTL(stack.Name+"/"+id, props.AuthorizerResultTtlInSeconds)
+		if err != nil {
+			return apiAuthorizer{}, err
+		}
 		return apiAuthorizer{
 			Kind:            kind,
 			Function:        functionID,
 			IdentitySources: identitySources,
 			SimpleResponses: props.EnableSimpleResponses,
+			PayloadFormat:   payloadFormat,
+			CacheTTLSeconds: ttl,
 		}, nil
 	default:
 		return apiAuthorizer{}, unsupported(
@@ -178,7 +213,9 @@ func parseHTTPAPIAuthorizer(stack assemblyStack, types map[string]string, id str
 }
 
 // parseRESTAPIAuthorizer reads an AWS::ApiGateway::Authorizer.
-func parseRESTAPIAuthorizer(stack assemblyStack, id string, resource templateResource) (apiAuthorizer, error) {
+//
+// https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-apigateway-authorizer.html
+func parseRESTAPIAuthorizer(stack assemblyStack, types map[string]string, id string, resource templateResource) (apiAuthorizer, error) {
 	var props restAuthorizerProperties
 	if len(resource.Properties) > 0 {
 		if err := json.Unmarshal(resource.Properties, &props); err != nil {
@@ -196,13 +233,88 @@ func parseRESTAPIAuthorizer(stack assemblyStack, id string, resource templateRes
 			IdentitySources: []string{strings.TrimSpace(props.IdentitySource)},
 			Cognito:         &cognitoAuthorizer{ProviderARNs: props.ProviderARNs},
 		}, nil
-	case "TOKEN", authorizerTypeRequest:
-		return apiAuthorizer{Kind: AuthorizerKindLambdaRequest}, nil
+	case authorizerTypeToken, authorizerTypeRequest:
+		functionID, ok := findRefByType(props.AuthorizerURI, types, typeLambdaFunction, attrArn)
+		if !ok {
+			return apiAuthorizer{}, unsupported(stack.Name+"/"+id, "REST authorizer Uri does not reference a Lambda function")
+		}
+		identitySources, err := parseRESTIdentitySources(stack, id, props.IdentitySource)
+		if err != nil {
+			return apiAuthorizer{}, err
+		}
+		if authorizerType == authorizerTypeToken {
+			if len(identitySources) != 1 || !strings.HasPrefix(identitySources[0], "method.request.header.") {
+				return apiAuthorizer{}, unsupported(
+					stack.Name+"/"+id,
+					"TOKEN authorizer identity source %q must be one method.request.header.<name> expression",
+					props.IdentitySource,
+				)
+			}
+		}
+		validation := strings.TrimSpace(props.IdentityValidationExpression)
+		if validation != "" && authorizerType != authorizerTypeToken {
+			return apiAuthorizer{}, unsupported(
+				stack.Name+"/"+id,
+				"IdentityValidationExpression is supported for TOKEN authorizers only",
+			)
+		}
+		ttl, err := authorizerTTL(stack.Name+"/"+id, props.AuthorizerResultTtlInSeconds)
+		if err != nil {
+			return apiAuthorizer{}, err
+		}
+		return apiAuthorizer{
+			Kind:                 AuthorizerKindLambdaRequest,
+			Function:             functionID,
+			IdentitySources:      identitySources,
+			RESTType:             authorizerType,
+			CacheTTLSeconds:      ttl,
+			ValidationExpression: validation,
+		}, nil
 	case "":
 		return apiAuthorizer{}, unsupported(stack.Name+"/"+id, "REST authorizer declares no Type")
 	default:
 		return apiAuthorizer{}, unsupported(stack.Name+"/"+id, "REST authorizer type %q is not run locally", props.Type)
 	}
+}
+
+// parseRESTIdentitySources splits a REST authorizer's comma-separated
+// IdentitySource list and reads every expression at plan time.
+func parseRESTIdentitySources(stack assemblyStack, id, raw string) ([]string, error) {
+	parsed := make([]string, 0, 4)
+	for _, source := range strings.Split(raw, ",") {
+		trimmed := strings.TrimSpace(source)
+		if trimmed == "" {
+			continue
+		}
+		if err := validateRESTIdentitySource(trimmed); err != nil {
+			return nil, unsupported(stack.Name+"/"+id, "%v", err)
+		}
+		parsed = append(parsed, trimmed)
+	}
+	return parsed, nil
+}
+
+// authorizerTTL reads AuthorizerResultTtlInSeconds. An omitted property is
+// CloudFormation's 300 second default; a negative value is refused, and so is a
+// value above the documented maximum: "If it is greater than 0, API Gateway
+// will cache authorizer responses. If this field is not set, the default value
+// is 300. The maximum value is 3600, or 1 hour." The HTTP API authorizer
+// reference states the same maximum for authorizerResultTtlInSeconds.
+//
+// https://docs.aws.amazon.com/apigateway/latest/api/API_Authorizer.html
+func authorizerTTL(construct string, seconds *int) (int, error) {
+	if seconds == nil {
+		return 300, nil
+	}
+	if *seconds < 0 {
+		return 0, unsupported(construct, "AuthorizerResultTtlInSeconds %d is negative", *seconds)
+	}
+	if *seconds > 3600 {
+		return 0, unsupported(construct,
+			"AuthorizerResultTtlInSeconds %d exceeds the documented maximum of 3600 (https://docs.aws.amazon.com/apigateway/latest/api/API_Authorizer.html)",
+			*seconds)
+	}
+	return *seconds, nil
 }
 
 // parseIssuerValue splits a JWT issuer into a literal and, when the template

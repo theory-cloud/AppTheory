@@ -210,6 +210,18 @@ func TestS3OriginMissingObjectIs403UnderOACAnd404WithoutIt(t *testing.T) {
 	if response.StatusCode != http.StatusForbidden || !strings.Contains(string(response.Body), "AccessDenied") {
 		t.Fatalf("OAC response = %d %q", response.StatusCode, response.Body)
 	}
+	// The media-cdn row relies on this shape: the s3proxy 403 carries the XML
+	// content type and a request id and no Cache-Control, so the HTTPStatusCodes
+	// page does not cache the 403 or its custom error page.
+	if got := response.Header.Get("Content-Type"); got != "application/xml" {
+		t.Fatalf("403 Content-Type = %q", got)
+	}
+	if got := response.Header.Get("x-amz-request-id"); got != "local-request-id" {
+		t.Fatalf("403 x-amz-request-id = %q", got)
+	}
+	if got := response.Header.Get("Cache-Control"); got != "" {
+		t.Fatalf("the s3proxy 403 carries Cache-Control %q; CloudFront would cache it", got)
+	}
 	origin.noListBucket = false
 	response, err = origin.Fetch(context.Background(), localcloudfront.OriginRequest{Method: http.MethodGet, URI: "/missing.txt"})
 	if err != nil {

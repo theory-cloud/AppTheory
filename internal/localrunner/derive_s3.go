@@ -466,6 +466,13 @@ func validateNotificationSpec(notification NotificationSpec) error {
 			return fmt.Errorf("%s declares the %s filter twice", notification.LogicalID, name)
 		}
 		seen[name] = struct{}{}
+		if strings.Contains(rule.Value, "*") {
+			return fmt.Errorf(
+				"%s %s filter value %q contains a wildcard; an S3 notification filter prefix or suffix cannot contain a wildcard "+
+					"(https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-how-to-filtering.html)",
+				notification.LogicalID, name, rule.Value,
+			)
+		}
 	}
 	if notification.EventBridge {
 		return nil

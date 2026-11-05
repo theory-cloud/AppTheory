@@ -172,7 +172,9 @@ func TestDeriveAuthorizerRefusals(t *testing.T) {
 
 	// An authorizer no method references is parsed but harmless.
 	for name, authorizer := range map[string]map[string]any{
-		"rest token":   {"Type": "TOKEN"},
+		"rest token": {"Type": "TOKEN",
+			"IdentitySource": "method.request.header.Authorization",
+			"AuthorizerUri":  map[string]any{"Fn::GetAtt": []any{"Fn", "Arn"}}},
 		"rest cognito": {"Type": "COGNITO_USER_POOLS", "ProviderARNs": []any{"arn:aws:cognito-idp:us-east-1:123456789012:userpool/x"}},
 	} {
 		t.Run(name, func(t *testing.T) {

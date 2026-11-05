@@ -107,7 +107,7 @@ func httpRoutes(stack assemblyStack, types map[string]string, apiID string, auth
 			if len(props.AuthorizerID) > 0 {
 				return nil, unsupported(stack.Name+"/"+id, "route has an authorizer id but authorization type NONE")
 			}
-		case "CUSTOM":
+		case authorizationTypeCustom:
 			authorizerID, ok := directRefID(props.AuthorizerID)
 			if !ok {
 				return nil, unsupported(stack.Name+"/"+id, "CUSTOM route does not reference an authorizer")
@@ -116,16 +116,24 @@ func httpRoutes(stack assemblyStack, types map[string]string, apiID string, auth
 			if !ok {
 				return nil, unsupported(stack.Name+"/"+id, "CUSTOM route references authorizer %s, which the runner did not derive", authorizerID)
 			}
-			if authorizer.Kind != AuthorizerKindSimpleRequest {
+			switch authorizer.Kind {
+			case AuthorizerKindSimpleRequest:
+				route.AuthorizerKind = authorizer.Kind
+				route.AuthorizerFunction = authorizer.Function
+				route.AuthorizerIdentitySources = authorizer.IdentitySources
+			case AuthorizerKindLambdaRequest:
+				route.AuthorizerKind = authorizer.Kind
+				route.AuthorizerFunction = authorizer.Function
+				route.AuthorizerIdentitySources = authorizer.IdentitySources
+				route.AuthorizerCacheTTLSeconds = authorizer.CacheTTLSeconds
+				route.AuthorizerPayloadFormat = authorizer.PayloadFormat
+			default:
 				return nil, unsupported(
 					stack.Name+"/"+id,
-					"CUSTOM route uses a %s authorizer; the local HTTP transport runs only REQUEST authorizers with simple responses",
+					"CUSTOM route uses a %s authorizer; the local HTTP transport runs REQUEST authorizers that return a simple response or an IAM policy",
 					authorizer.Kind,
 				)
 			}
-			route.AuthorizerKind = authorizer.Kind
-			route.AuthorizerFunction = authorizer.Function
-			route.AuthorizerIdentitySources = authorizer.IdentitySources
 		case "JWT":
 			authorizerID, ok := directRefID(props.AuthorizerID)
 			if !ok {
@@ -192,7 +200,7 @@ func httpRoute(stack assemblyStack, types map[string]string, id string, props ht
 			integrationProps.IntegrationType,
 		)
 	}
-	if integrationProps.PayloadFormatVersion != "" && integrationProps.PayloadFormatVersion != "2.0" {
+	if integrationProps.PayloadFormatVersion != "" && integrationProps.PayloadFormatVersion != authorizerPayloadFormatV2 {
 		return Route{}, unsupported(
 			stack.Name+"/"+integrationID,
 			"payload format %q is not supported locally; HTTP API v2 requires 2.0",
@@ -357,6 +365,22 @@ func restRoute(
 				authorizer.Kind,
 			)
 		}
+	case authorizationTypeCustom:
+		authorizerID, ok := directRefID(props.AuthorizerID)
+		if !ok {
+			return Route{}, unsupported(stack.Name+"/"+id, "CUSTOM method does not reference an authorizer")
+		}
+		authorizer, ok := authorizers[authorizerID]
+		if !ok {
+			return Route{}, unsupported(stack.Name+"/"+id, "method references authorizer %s, which the runner did not derive", authorizerID)
+		}
+		if authorizer.Kind != AuthorizerKindLambdaRequest || authorizer.RESTType == "" {
+			return Route{}, unsupported(
+				stack.Name+"/"+id,
+				"CUSTOM method uses a %s authorizer, not a REST TOKEN or REQUEST Lambda authorizer",
+				authorizer.Kind,
+			)
+		}
 	default:
 		return Route{}, unsupported(
 			stack.Name+"/"+id,
@@ -365,6 +389,13 @@ func restRoute(
 		)
 	}
 	if props.Integration.Type == mockIntegration {
+		if authorization != "" && authorization != noneAuthorization {
+			return Route{}, unsupported(
+				stack.Name+"/"+id,
+				"MOCK method declares authorization %q; the local transport serves a mock response without running an authorizer",
+				authorization,
+			)
+		}
 		return restMockRoute(stack, paths, id, props)
 	}
 	if props.Integration.Type != proxyIntegration {
@@ -397,6 +428,16 @@ func restRoute(
 		route.AuthorizationScopes = props.AuthorizationScopes
 		authorizerID, _ := directRefID(props.AuthorizerID)
 		route.CognitoPoolARNs = cognitoPoolARNExpressions(authorizers[authorizerID])
+	}
+	if authorization == authorizationTypeCustom {
+		authorizerID, _ := directRefID(props.AuthorizerID)
+		authorizer := authorizers[authorizerID]
+		route.AuthorizerKind = AuthorizerKindLambdaRequest
+		route.AuthorizerFunction = authorizer.Function
+		route.AuthorizerIdentitySources = authorizer.IdentitySources
+		route.AuthorizerRESTType = authorizer.RESTType
+		route.AuthorizerCacheTTLSeconds = authorizer.CacheTTLSeconds
+		route.AuthorizerValidationExpression = authorizer.ValidationExpression
 	}
 	return route, nil
 }

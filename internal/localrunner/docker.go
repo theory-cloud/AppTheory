@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -312,4 +313,87 @@ func (d *Docker) FollowLogs(ctx context.Context, name string, since time.Time, o
 		return nil
 	}
 	return command.Wait()
+}
+
+// ImageBuildOptions describes one locally built container-image function.
+type ImageBuildOptions struct {
+	Tag        string
+	Directory  string
+	DockerFile string
+	BuildArgs  map[string]string
+	Target     string
+	Platform   string
+	Labels     map[string]string
+}
+
+// BuildImageArgv is the exact docker build argv for options, sorted so a test
+// can pin what the runner asks Docker to do.
+func BuildImageArgv(options ImageBuildOptions) []string {
+	argv := []string{"docker", "build", "-t", options.Tag}
+	for _, label := range sortedLabels(options.Labels) {
+		argv = append(argv, "--label", label)
+	}
+	dockerFile := options.DockerFile
+	if dockerFile != "" {
+		if !filepath.IsAbs(dockerFile) {
+			dockerFile = filepath.Join(options.Directory, dockerFile)
+		}
+		argv = append(argv, "-f", dockerFile)
+	}
+	if options.Target != "" {
+		argv = append(argv, "--target", options.Target)
+	}
+	if options.Platform != "" {
+		argv = append(argv, "--platform", options.Platform)
+	}
+	for _, argument := range sortedBuildArgs(options.BuildArgs) {
+		argv = append(argv, "--build-arg", argument)
+	}
+	return append(argv, options.Directory)
+}
+
+// BuildImage builds one container image from the cloud assembly's Docker asset.
+func (d *Docker) BuildImage(ctx context.Context, options ImageBuildOptions) error {
+	stdout, stderr, err := d.exec(ctx, BuildImageArgv(options))
+	if err != nil {
+		return fmt.Errorf("docker build %s: %s", options.Tag, firstNonEmpty(stderr, stdout, err.Error()))
+	}
+	return nil
+}
+
+// ImageEnv reads the environment the image itself declares, so the layer
+// paths can be prepended to the image's own PATH and LD_LIBRARY_PATH.
+func (d *Docker) ImageEnv(ctx context.Context, image string) (map[string]string, error) {
+	stdout, stderr, err := d.exec(ctx, []string{
+		"docker", "image", "inspect", "--format", "{{range .Config.Env}}{{println .}}{{end}}", image,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("inspect image %s: %s", image, firstNonEmpty(stderr, err.Error()))
+	}
+	values := map[string]string{}
+	for _, line := range splitLines(stdout) {
+		name, value, found := strings.Cut(line, "=")
+		if !found || strings.TrimSpace(name) == "" {
+			continue
+		}
+		values[strings.TrimSpace(name)] = value
+	}
+	return values, nil
+}
+
+// RemoveImage removes an image the run built. A missing image is not an error:
+// cleanup runs after failures too.
+func (d *Docker) RemoveImage(ctx context.Context, tag string) {
+	_, _, _ = d.exec(ctx, []string{"docker", "image", "rm", "-f", tag}) //nolint:errcheck // best-effort cleanup
+}
+
+// ListImages lists the images carrying one label.
+func (d *Docker) ListImages(ctx context.Context, label string) ([]string, error) {
+	stdout, stderr, err := d.exec(ctx, []string{
+		"docker", "image", "ls", "--filter", "label=" + label, "--format", "{{.Repository}}:{{.Tag}}",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list docker images: %s", firstNonEmpty(stderr, err.Error()))
+	}
+	return splitLines(stdout), nil
 }

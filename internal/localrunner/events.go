@@ -42,6 +42,10 @@ type InvokeRequest struct {
 	// AuthorizerClaims is a REST Cognito authorizer's claims; they are carried
 	// as requestContext.authorizer.claims.
 	AuthorizerClaims map[string]any
+	// AuthorizerPolicyContext is the context a Lambda authorizer that returns an
+	// IAM policy produced. It is stringified and carried as
+	// requestContext.authorizer for REST and HTTP API integrations.
+	AuthorizerPolicyContext map[string]any
 }
 
 // BuildEvent serializes the provider payload the handler receives: an HTTP API
@@ -112,6 +116,11 @@ func httpV2Event(request InvokeRequest) map[string]any {
 			}}
 		}
 	}
+	if len(request.AuthorizerPolicyContext) > 0 {
+		if context, ok := event["requestContext"].(map[string]any); ok {
+			context["authorizer"] = request.AuthorizerPolicyContext
+		}
+	}
 	return event
 }
 
@@ -138,8 +147,9 @@ func BuildAuthorizerEvent(request InvokeRequest) ([]byte, error) {
 }
 
 const (
-	identitySourceHeaderPrefix      = "$request.header."
-	identitySourceQueryStringPrefix = "$request.querystring."
+	identitySourceHeaderPrefix       = "$request.header."
+	identitySourceQueryStringPrefix  = "$request.querystring."
+	identitySourceRouteKeyExpression = "$context.routeKey"
 )
 
 // identitySource is one parsed provider identity source expression.
@@ -154,11 +164,17 @@ type identitySourceKind int
 const (
 	identitySourceHeader identitySourceKind = iota
 	identitySourceQueryString
+	identitySourcePath
+	identitySourceRouteKey
 )
 
 // parseIdentitySource accepts the request identity sources the transport can
-// resolve. API Gateway also accepts $context and $stageVariables expressions;
-// the local transport refuses them instead of passing an empty string.
+// resolve. API Gateway also accepts other $context and $stageVariables
+// expressions; the local transport refuses them instead of passing an empty
+// string. $context.routeKey is accepted because the HTTP API authorizer page
+// documents it as the way to cache an authorizer per route.
+//
+// https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-lambda-authorizer.html
 func parseIdentitySource(raw string) (identitySource, error) {
 	source := strings.TrimSpace(raw)
 	switch {
@@ -174,10 +190,12 @@ func parseIdentitySource(raw string) (identitySource, error) {
 			return identitySource{}, fmt.Errorf("identity source %q has no query string name", raw)
 		}
 		return identitySource{raw: source, kind: identitySourceQueryString, name: name}, nil
+	case source == identitySourceRouteKeyExpression:
+		return identitySource{raw: source, kind: identitySourceRouteKey}, nil
 	default:
 		return identitySource{}, fmt.Errorf(
-			"identity source %q is not supported locally; only %s<name> and %s<name> are run",
-			raw, identitySourceHeaderPrefix, identitySourceQueryStringPrefix,
+			"identity source %q is not supported locally; only %s<name>, %s<name> and %s are run",
+			raw, identitySourceHeaderPrefix, identitySourceQueryStringPrefix, identitySourceRouteKeyExpression,
 		)
 	}
 }
@@ -193,6 +211,12 @@ func validateIdentitySource(source string) error {
 // case-insensitive; a query string name is case-sensitive. An empty result
 // means the source is absent or empty.
 func (s identitySource) value(header http.Header, rawQuery string) string {
+	return s.valueFor(header, rawQuery, Route{}, nil)
+}
+
+// valueFor resolves the expression including the context variables that depend
+// on the matched route.
+func (s identitySource) valueFor(header http.Header, rawQuery string, route Route, params map[string]string) string {
 	switch s.kind {
 	case identitySourceHeader:
 		return strings.TrimSpace(header.Get(s.name))
@@ -202,6 +226,10 @@ func (s identitySource) value(header http.Header, rawQuery string) string {
 			return ""
 		}
 		return strings.TrimSpace(values.Get(s.name))
+	case identitySourcePath:
+		return strings.TrimSpace(params[s.name])
+	case identitySourceRouteKey:
+		return strings.TrimSpace(route.RouteKey)
 	default:
 		return ""
 	}
@@ -210,13 +238,17 @@ func (s identitySource) value(header http.Header, rawQuery string) string {
 // identitySourceValues resolves every configured source in order, for the
 // authorizer event's identitySource array.
 func identitySourceValues(header http.Header, rawQuery string, sources []string) ([]string, error) {
+	return identitySourceValuesWithContext(header, rawQuery, Route{}, nil, sources)
+}
+
+func identitySourceValuesWithContext(header http.Header, rawQuery string, route Route, params map[string]string, sources []string) ([]string, error) {
 	values := make([]string, 0, len(sources))
 	for _, source := range sources {
 		parsed, err := parseIdentitySource(source)
 		if err != nil {
 			return nil, err
 		}
-		values = append(values, parsed.value(header, rawQuery))
+		values = append(values, parsed.valueFor(header, rawQuery, route, params))
 	}
 	return values, nil
 }
@@ -224,12 +256,16 @@ func identitySourceValues(header http.Header, rawQuery string, sources []string)
 // missingIdentitySource names the first configured source the request does not
 // carry. API Gateway refuses such a request without invoking the authorizer.
 func missingIdentitySource(header http.Header, rawQuery string, sources []string) (string, error) {
+	return missingIdentitySourceWithContext(header, rawQuery, Route{}, nil, sources)
+}
+
+func missingIdentitySourceWithContext(header http.Header, rawQuery string, route Route, params map[string]string, sources []string) (string, error) {
 	for _, source := range sources {
 		parsed, err := parseIdentitySource(source)
 		if err != nil {
 			return "", err
 		}
-		if parsed.value(header, rawQuery) == "" {
+		if parsed.valueFor(header, rawQuery, route, params) == "" {
 			return parsed.raw, nil
 		}
 	}
@@ -286,6 +322,12 @@ func restRequestContext(request InvokeRequest, apiID string) map[string]any {
 		// requestContext.authorizer.claims.
 		// https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-integrate-with-cognito.html
 		context["authorizer"] = map[string]any{"claims": request.AuthorizerClaims}
+	}
+	if len(request.AuthorizerPolicyContext) > 0 {
+		// A REST API Lambda authorizer exposes its context values under
+		// requestContext.authorizer.<key>, as $context.authorizer.<key>.
+		// https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-lambda-authorizer-output.html
+		context["authorizer"] = request.AuthorizerPolicyContext
 	}
 	return context
 }

@@ -53,3 +53,8 @@ gov-infra/evidence/py-coverage.data
 .mcp.json
 GEMINI.md
 AGENTS.md
+
+# The Node layer in examples/cdk/lambda-packaging must commit the layer's
+# nodejs/node_modules content: the Lambda packaging page puts it there.
+!examples/cdk/lambda-packaging/layers/node/nodejs/node_modules/
+!examples/cdk/lambda-packaging/layers/node/nodejs/node_modules/**

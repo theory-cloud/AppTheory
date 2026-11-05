@@ -136,7 +136,7 @@ func (g *Gateway) originRequest(
 	header := http.Header{}
 	for name, values := range state.Header {
 		lower := strings.ToLower(name)
-		if lower == "cookie" || lower == "host" || isHopByHopHeader(lower) || strings.HasPrefix(lower, "cloudfront-") {
+		if lower == headerCookie || lower == headerHost || isHopByHopHeader(lower) || strings.HasPrefix(lower, "cloudfront-") {
 			continue
 		}
 		if !headerRule.selected(lower) {

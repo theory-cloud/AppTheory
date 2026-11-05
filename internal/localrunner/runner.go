@@ -63,7 +63,9 @@ type Options struct {
 	Backends []string
 	// PortBase pins the API listener ports; zero asks the OS for free ports.
 	PortBase int
-	// NamePrefix names containers and the network. It must be unique per run.
+	// NamePrefix names containers, the network and built images. The default
+	// is derived from the app hash, so concurrent runs of one app share names
+	// unless a unique prefix is set.
 	NamePrefix string
 	// MaxConcurrency bounds in-flight invocations; never above 32.
 	MaxConcurrency int
@@ -88,20 +90,30 @@ type Options struct {
 	// AllowNoSurface lets an invoke read an assembly whose functions have no
 	// HTTP route. Run and plan leave it false and refuse such an assembly.
 	AllowNoSurface bool
+	// Origins maps an external custom origin's domain to a loopback URL the
+	// local gateway may reach. An unmapped external origin is refused at plan
+	// time.
+	Origins map[string]string
 }
 
 // Runner owns one local run: the derived surface, the Docker network, the
 // function containers and the HTTP listeners.
 type Runner struct {
-	options        Options
-	profile        *Profile
-	docker         *Docker
-	spec           *Spec
-	runID          string
-	appHash        string
-	namePrefix     string
-	scratch        string
-	images         map[string]string
+	options    Options
+	profile    *Profile
+	docker     *Docker
+	spec       *Spec
+	runID      string
+	appHash    string
+	namePrefix string
+	scratch    string
+	images     map[string]string
+	// imageEnvs caches the environment each runtime image declares, so layer
+	// paths can be prepended to the image's own PATH and LD_LIBRARY_PATH.
+	imageEnvs map[string]map[string]string
+	// builtImages maps a container-image function's logical id to the image the
+	// run built for it.
+	builtImages    map[string]string
 	endpoints      []Endpoint
 	invokers       map[string]*FunctionProcess
 	backends       map[string]backendProcess
@@ -138,6 +150,14 @@ type Runner struct {
 	// webSocketManagement serves the @connections API for every WebSocket API
 	// the run serves; it is nil when the assembly declares none.
 	webSocketManagement *webSocketManagement
+	// cloudFrontAPI serves CreateInvalidation/GetInvalidation for every served
+	// distribution; cloudFrontAPIURL is the loopback endpoint injected into
+	// functions as AWS_ENDPOINT_URL_CLOUDFRONT.
+	cloudFrontAPI    *localcloudfront.InvalidationAPI
+	cloudFrontAPIURL string
+	// cloudFrontGateways and cloudFrontIDs track each served distribution.
+	cloudFrontGateways map[string]*localcloudfront.Gateway
+	cloudFrontIDs      map[string]string
 }
 
 // NewRunner validates the options and prepares the run. It contacts no Docker
@@ -153,22 +173,26 @@ func NewRunner(options Options) (*Runner, error) {
 	}
 
 	runner := &Runner{
-		options:      options,
-		docker:       NewDocker(),
-		appHash:      hashOf(options.AppDir),
-		runID:        shortID(),
-		invokers:     map[string]*FunctionProcess{},
-		backends:     map[string]backendProcess{},
-		tables:       map[string]tableInfo{},
-		localSecrets: map[string]string{},
-		apiURLs:      map[string]string{},
-		endpoints:    append([]Endpoint(nil), options.Endpoints...),
-		images:       map[string]string{},
-		semaphore:    make(chan struct{}, options.MaxConcurrency),
-		clock:        clock,
-		ttl:          newTTLTracker(),
-		ttlTables:    map[string]ttlTable{},
-		eventBus:     newEventBridgeBus(clock),
+		options:            options,
+		docker:             NewDocker(),
+		appHash:            hashOf(options.AppDir),
+		runID:              shortID(),
+		invokers:           map[string]*FunctionProcess{},
+		backends:           map[string]backendProcess{},
+		tables:             map[string]tableInfo{},
+		localSecrets:       map[string]string{},
+		apiURLs:            map[string]string{},
+		endpoints:          append([]Endpoint(nil), options.Endpoints...),
+		images:             map[string]string{},
+		imageEnvs:          map[string]map[string]string{},
+		builtImages:        map[string]string{},
+		cloudFrontGateways: map[string]*localcloudfront.Gateway{},
+		cloudFrontIDs:      map[string]string{},
+		semaphore:          make(chan struct{}, options.MaxConcurrency),
+		clock:              clock,
+		ttl:                newTTLTracker(),
+		ttlTables:          map[string]ttlTable{},
+		eventBus:           newEventBridgeBus(clock),
 	}
 	runner.namePrefix = sanitizeNamePrefix(options.NamePrefix, "apptheory-local-"+runner.appHash)
 	runner.network = runner.namePrefix + "-net"
@@ -215,6 +239,7 @@ func NewRunner(options Options) (*Runner, error) {
 	runner.delivery.RegisterDeliverer(DeliveryKindEventBridgeRule, func(source DeliverySource) (Deliverer, error) {
 		return NewEventBridgeDeliverer(source, runner.eventBus)
 	})
+	runner.cloudFrontAPI = localcloudfront.NewInvalidationAPI(clock.Now, runner.logf)
 	runner.sns = newSNSHubRegistry(runner.clock, runner.logf, runner.snsQueueLookup, runner.deliverySQSClient)
 	runner.delivery.RegisterDeliverer(DeliveryKindSNS, func(source DeliverySource) (Deliverer, error) {
 		return NewSNSDeliverer(source, runner.sns)
@@ -342,6 +367,9 @@ func normalizeOptions(options Options) (Options, error) {
 	}
 	if options.SynthTimeout <= 0 {
 		options.SynthTimeout = 30 * time.Minute
+	}
+	if err := validateOriginOverrides(options.Origins); err != nil {
+		return Options{}, err
 	}
 	return options, nil
 }
@@ -524,6 +552,9 @@ func (r *Runner) Plan(ctx context.Context) (*Spec, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := r.applyOriginOverrides(spec); err != nil {
+		return nil, err
+	}
 	if r.delivery != nil {
 		spec.Delivery = r.delivery.Planned(spec)
 	}
@@ -597,6 +628,9 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 		return nil, err
 	}
 	if err = r.resolveRouteAuthorizers(spec); err != nil {
+		return nil, err
+	}
+	if err = r.startCloudFrontControl(ctx, spec); err != nil {
 		return nil, err
 	}
 	if err = r.resolveEnvironment(spec, targets); err != nil {
@@ -909,8 +943,32 @@ func (r *Runner) removeRunContainers() {
 		}
 		wait.Wait()
 	}
+	r.removeRunImages(deadline)
 	r.invokers = map[string]*FunctionProcess{}
 	r.backends = map[string]backendProcess{}
+}
+
+// removeRunImages removes every image the run built for a container-image
+// function, including one whose function failed before it was tracked.
+func (r *Runner) removeRunImages(deadline time.Time) {
+	removed := map[string]struct{}{}
+	imageCtx, cancel := cleanupOperationContext(deadline)
+	images, err := r.docker.ListImages(imageCtx, labelRun+"="+r.runID)
+	cancel()
+	if err == nil {
+		for _, image := range images {
+			removed[image] = struct{}{}
+		}
+	}
+	for _, tag := range r.builtImages {
+		removed[tag] = struct{}{}
+	}
+	for image := range removed {
+		removeCtx, removeCancel := cleanupOperationContext(deadline)
+		r.docker.RemoveImage(removeCtx, image)
+		removeCancel()
+	}
+	r.builtImages = map[string]string{}
 }
 
 // cleanupOperationContext returns a context bounded by both the remaining
@@ -934,6 +992,17 @@ func (r *Runner) resolveImages(spec *Spec, hostArch string, targets []string) er
 		function, ok := spec.Function(id)
 		if !ok {
 			return fmt.Errorf("assembly references function %q but defines no such resource", id)
+		}
+		if function.ImageAsset != nil {
+			// A container-image function carries its runtime in the image; the
+			// profile's runtime pins do not apply.
+			if function.LayerProblem != "" {
+				return unsupported(function.LogicalID, "%s", function.LayerProblem)
+			}
+			if err := unresolvedLimitsError(function); err != nil {
+				return err
+			}
+			continue
 		}
 		class, err := RuntimeClass(function.Runtime)
 		if err != nil {
@@ -1000,13 +1069,105 @@ func (r *Runner) prepareScratch(spec *Spec) error {
 		}
 		spec.Functions[index].AssetDir = filepath.Join(r.scratch, "inline", sanitizeName(spec.Functions[index].LogicalID))
 	}
+	for index := range spec.Functions {
+		function := &spec.Functions[index]
+		if len(function.Layers) == 0 {
+			continue
+		}
+		optDir := filepath.Join(r.scratch, "layers", sanitizeName(function.LogicalID))
+		if err := os.RemoveAll(optDir); err != nil {
+			return fmt.Errorf("reset the layer directory for %s: %w", function.LogicalID, err)
+		}
+		if err := os.MkdirAll(optDir, 0o750); err != nil {
+			return fmt.Errorf("create the layer directory for %s: %w", function.LogicalID, err)
+		}
+		// Lambda extracts the layers in the listed order and a later layer's
+		// file replaces an earlier one.
+		// https://docs.aws.amazon.com/lambda/latest/dg/adding-layers.html
+		for _, layer := range function.Layers {
+			if err := copyTree(layer.AssetDir, optDir); err != nil {
+				return fmt.Errorf("extract layer %s for %s: %w", layer.LogicalID, function.LogicalID, err)
+			}
+		}
+		function.OptDir = optDir
+	}
+	return nil
+}
+
+// copyTree copies one layer's content into the merged /opt directory. Files
+// overwrite earlier layers. A relative symlink whose target stays inside the
+// layer is materialized as the same symlink, which is what Lambda extracts from
+// a layer zip and what CDK's default SymlinkFollowMode.NEVER stores for an
+// asset (a Node layer built by `npm install` keeps node_modules/.bin shims as
+// symlinks). A symlink with an absolute target, or one that escapes the layer
+// root, is refused by name because the merged /opt must not expose a path
+// outside the layer. Other special files are skipped.
+//
+// https://docs.aws.amazon.com/lambda/latest/dg/packaging-layers.html
+func copyTree(source, target string) error {
+	return filepath.WalkDir(source, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(source, path)
+		if err != nil {
+			return err
+		}
+		destination := filepath.Join(target, relative)
+		if entry.IsDir() {
+			return os.MkdirAll(destination, 0o750)
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return copyLayerSymlink(path, relative, destination)
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		data, err := os.ReadFile(path) //nolint:gosec // the path is a layer asset inside the cloud assembly
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(destination), 0o750); err != nil {
+			return err
+		}
+		return os.WriteFile(destination, data, info.Mode().Perm()) //nolint:gosec // destination is inside the run scratch directory
+	})
+}
+
+// copyLayerSymlink materializes one layer symlink after checking that its
+// relative target stays inside the layer root.
+func copyLayerSymlink(path, relative, destination string) error {
+	linkTarget, readErr := os.Readlink(path) //nolint:gosec // the path is a layer asset inside the cloud assembly
+	if readErr != nil {
+		return readErr
+	}
+	if filepath.IsAbs(linkTarget) {
+		return fmt.Errorf("layer symlink %s has an absolute target %q; the merged /opt must stay inside the layer", relative, linkTarget)
+	}
+	resolved := filepath.Clean(filepath.Join(filepath.Dir(relative), linkTarget))
+	if resolved == ".." || strings.HasPrefix(resolved, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("layer symlink %s escapes the layer root with target %q", relative, linkTarget)
+	}
+	if err := os.MkdirAll(filepath.Dir(destination), 0o750); err != nil {
+		return err
+	}
+	if err := os.Remove(destination); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Symlink(linkTarget, destination); err != nil { //nolint:gosec // the target was validated to stay inside the layer
+		return err
+	}
 	return nil
 }
 
 func (r *Runner) startFunctions(ctx context.Context, spec *Spec, targets []string) error {
 	for _, id := range targets {
 		function, _ := spec.Function(id)
-		image, err := r.imageFor(function)
+		image, err := r.imageFor(ctx, function)
 		if err != nil {
 			return err
 		}
@@ -1017,7 +1178,13 @@ func (r *Runner) startFunctions(ctx context.Context, spec *Spec, targets []strin
 	return nil
 }
 
-func (r *Runner) imageFor(function FunctionSpec) (string, error) {
+// imageFor returns the image a function runs. A container-image function is
+// built from its CDK Docker asset first, so `run` never starts serving before
+// the image exists; docker caches the build layers, so a rebuild is cheap.
+func (r *Runner) imageFor(ctx context.Context, function FunctionSpec) (string, error) {
+	if function.ImageAsset != nil {
+		return r.buildFunctionImage(ctx, function)
+	}
 	class, err := RuntimeClass(function.Runtime)
 	if err != nil {
 		return "", err
@@ -1029,21 +1196,71 @@ func (r *Runner) imageFor(function FunctionSpec) (string, error) {
 	return image, nil
 }
 
+// buildFunctionImage runs the real docker build for one container-image
+// function. The tag is derived from the run prefix and the function's logical
+// id, and the image carries the run label so cleanup can remove it.
+// https://docs.aws.amazon.com/lambda/latest/dg/images-create.html
+func (r *Runner) buildFunctionImage(ctx context.Context, function FunctionSpec) (string, error) {
+	if tag, ok := r.builtImages[function.LogicalID]; ok {
+		return tag, nil
+	}
+	asset := function.ImageAsset
+	if err := ensureSharedPath(asset.Directory); err != nil {
+		return "", fmt.Errorf("function %s: %w", function.LogicalID, err)
+	}
+	tag := r.functionImageTag(function)
+	options := ImageBuildOptions{
+		Tag:        tag,
+		Directory:  asset.Directory,
+		DockerFile: asset.DockerFile,
+		BuildArgs:  asset.BuildArgs,
+		Target:     asset.Target,
+		Platform:   asset.Platform,
+		Labels:     r.labels(),
+	}
+	started := time.Now()
+	r.logf("building image %s from %s (the first build compiles the image; docker caches later builds)", tag, asset.Directory)
+	if err := r.docker.BuildImage(ctx, options); err != nil {
+		return "", fmt.Errorf("function %s: %w", function.LogicalID, err)
+	}
+	r.logf("built image %s in %s", tag, time.Since(started).Round(time.Second))
+	r.builtImages[function.LogicalID] = tag
+	return tag, nil
+}
+
+// functionImageTag names one function's built image. The name is derived from
+// the run's name prefix (the app hash by default) and the function's logical
+// id, so two concurrent runs of the same app share a tag; docker caches and
+// reuses the image for both.
+func (r *Runner) functionImageTag(function FunctionSpec) string {
+	return sanitizeName(r.namePrefix + "-" + function.LogicalID + "-image")
+}
+
 func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image string) error {
+	imageFunction := function.ImageAsset != nil
 	codeDir := function.AssetDir
-	if codeDir == "" {
+	if codeDir == "" && !imageFunction {
 		return fmt.Errorf("function %s has no code directory", function.LogicalID)
 	}
-	if err := ensureSharedPath(codeDir); err != nil {
-		return fmt.Errorf("function %s: %w", function.LogicalID, err)
+	if codeDir != "" {
+		if err := ensureSharedPath(codeDir); err != nil {
+			return fmt.Errorf("function %s: %w", function.LogicalID, err)
+		}
 	}
-	handler, err := handlerArgument(function)
+	command, err := functionCommand(function)
 	if err != nil {
 		return err
 	}
 	env, overridden := r.functionEnvironment(function)
 	if len(overridden) > 0 {
 		r.logf("function %s: runner-owned environment overrides template values for %s", function.LogicalID, strings.Join(overridden, ", "))
+	}
+	if len(function.Layers) > 0 {
+		layerEnv, layerErr := r.layerEnvironment(ctx, function, image, env)
+		if layerErr != nil {
+			return layerErr
+		}
+		env = layerEnv
 	}
 	if len(function.EnvironmentExpressions) > 0 {
 		return unsupported(
@@ -1055,16 +1272,17 @@ func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image
 	if limitErr := unresolvedLimitsError(function); limitErr != nil {
 		return limitErr
 	}
+	mounts := append(functionMounts(function), r.webSocketCertificateMounts()...)
 	name := r.containerName(function.LogicalID)
 	options := ContainerOptions{
 		Name:     name,
 		Network:  r.network,
 		Image:    image,
-		Command:  []string{handler},
+		Command:  command,
 		Env:      env,
 		AddHosts: r.options.AddHosts,
 		MemoryMB: function.MemoryMB,
-		Mounts:   append([]string{codeDir + ":/var/task:ro"}, r.webSocketCertificateMounts()...),
+		Mounts:   mounts,
 		Publish:  riePort,
 		Labels:   r.labels(),
 		Detach:   true,
@@ -1084,6 +1302,12 @@ func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image
 	}
 	port, err := waitForContainerReady(ctx, r.docker, name)
 	if err != nil {
+		if imageFunction {
+			return fmt.Errorf(
+				"function %s: the container image did not start a Runtime Interface Emulator on port %d; an image function must be based on an AWS base image that ships one (https://docs.aws.amazon.com/lambda/latest/dg/images-create.html): %w",
+				function.LogicalID, riePort, err,
+			)
+		}
 		return err
 	}
 	process.Port = port
@@ -1091,7 +1315,144 @@ func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image
 	return nil
 }
 
-//nolint:gocyclo // one explicit branch per supported provider value.
+// functionCommand is the container command: the handler for a zip function, or
+// none for a container image, which runs its own entrypoint.
+func functionCommand(function FunctionSpec) ([]string, error) {
+	if function.ImageAsset != nil {
+		return nil, nil
+	}
+	handler, err := handlerArgument(function)
+	if err != nil {
+		return nil, err
+	}
+	return []string{handler}, nil
+}
+
+// functionMounts binds the function's code and, when it declares layers, the
+// merged /opt directory Lambda would extract the layers into.
+func functionMounts(function FunctionSpec) []string {
+	mounts := []string{}
+	if function.AssetDir != "" {
+		mounts = append(mounts, function.AssetDir+":/var/task:ro")
+	}
+	if function.OptDir != "" {
+		mounts = append(mounts, function.OptDir+":/opt:ro")
+	}
+	return mounts
+}
+
+// layerEnvironment adds the documented layer paths to the image's own
+// environment: /opt/bin on PATH, /opt/lib on LD_LIBRARY_PATH, the Node module
+// directory for a Node runtime, and both Python layer paths -- /opt/python and
+// python/lib/python3.x/site-packages -- for a Python runtime.
+//
+// https://docs.aws.amazon.com/lambda/latest/dg/packaging-layers.html
+func (r *Runner) layerEnvironment(ctx context.Context, function FunctionSpec, image string, env map[string]string) (map[string]string, error) {
+	imageEnv, err := r.runtimeImageEnv(ctx, image)
+	if err != nil {
+		return nil, err
+	}
+	values := make(map[string]string, len(env)+4)
+	for name, value := range env {
+		values[name] = value
+	}
+	basePath := strings.TrimSpace(values["PATH"])
+	if basePath == "" {
+		basePath = strings.TrimSpace(imageEnv["PATH"])
+	}
+	if basePath == "" {
+		basePath = "/usr/local/bin:/usr/bin:/bin"
+	}
+	values["PATH"] = prependPath("/opt/bin", basePath)
+	baseLibraryPath := strings.TrimSpace(values["LD_LIBRARY_PATH"])
+	if baseLibraryPath == "" {
+		baseLibraryPath = strings.TrimSpace(imageEnv["LD_LIBRARY_PATH"])
+	}
+	values["LD_LIBRARY_PATH"] = prependPath("/opt/lib", baseLibraryPath)
+	switch {
+	case strings.HasPrefix(function.Runtime, "nodejs"):
+		modules := []string{"/opt/nodejs/node_modules"}
+		if major := nodeMajorVersion(function.Runtime); major != "" {
+			modules = append(modules, "/opt/nodejs/node"+major+"/node_modules")
+		}
+		if existing := strings.TrimSpace(values["NODE_PATH"]); existing != "" {
+			modules = append(modules, existing)
+		}
+		values["NODE_PATH"] = strings.Join(modules, ":")
+	case strings.HasPrefix(function.Runtime, "python"):
+		pythonPath := "/opt/python"
+		if sitePackages := pythonSitePackages(function.Runtime); sitePackages != "" {
+			// The packaging-layers page lists two Python paths: "python" and
+			// "python/lib/python3.x/site-packages (site directories)". A layer
+			// built with pip's site-packages layout imports on AWS and must
+			// import locally too.
+			// https://docs.aws.amazon.com/lambda/latest/dg/packaging-layers.html
+			pythonPath += ":" + sitePackages
+		}
+		if existing := strings.TrimSpace(values["PYTHONPATH"]); existing != "" {
+			pythonPath += ":" + existing
+		}
+		values["PYTHONPATH"] = pythonPath
+	}
+	return values, nil
+}
+
+// pythonSitePackages returns the second documented Python layer path for the
+// function's runtime: python3.14 becomes
+// /opt/python/lib/python3.14/site-packages.
+func pythonSitePackages(runtime string) string {
+	major, minor, found := strings.Cut(strings.TrimPrefix(runtime, "python"), ".")
+	if !found || major == "" || minor == "" {
+		return ""
+	}
+	for _, part := range []string{major, minor} {
+		for _, char := range part {
+			if char < '0' || char > '9' {
+				return ""
+			}
+		}
+	}
+	return "/opt/python/lib/python" + major + "." + minor + "/site-packages"
+}
+
+func prependPath(directory, existing string) string {
+	if strings.TrimSpace(existing) == "" {
+		return directory
+	}
+	return directory + ":" + existing
+}
+
+// nodeMajorVersion turns nodejs24.x into 24.
+func nodeMajorVersion(runtime string) string {
+	rest := strings.TrimPrefix(runtime, "nodejs")
+	major, _, _ := strings.Cut(rest, ".")
+	if major == "" {
+		return ""
+	}
+	for _, char := range major {
+		if char < '0' || char > '9' {
+			return ""
+		}
+	}
+	return major
+}
+
+func (r *Runner) runtimeImageEnv(ctx context.Context, image string) (map[string]string, error) {
+	if env, ok := r.imageEnvs[image]; ok {
+		return env, nil
+	}
+	env, err := r.docker.ImageEnv(ctx, image)
+	if err != nil {
+		// The image may not be pulled yet; docker run will pull it. The layer
+		// paths are still prepended to a documented default.
+		r.logf("image %s environment is not readable yet (%v); using the documented default PATH", image, err)
+		env = map[string]string{}
+	}
+	r.imageEnvs[image] = env
+	return env, nil
+}
+
+//nolint:gocyclo,gocognit // one explicit branch per supported provider and API kind.
 func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 	targets := append([]APISpec(nil), spec.HTTPAPIs()...)
 	for _, url := range spec.FunctionURLs {
@@ -1184,6 +1545,11 @@ func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 			return fmt.Errorf("bind cloudfront %s listener: %w", distribution.LogicalID, err)
 		}
 		gateway := localcloudfront.NewGateway(distribution, spec.cloudFrontTopology, origins, executor, r.logf)
+		gateway.Now = r.clock.Now
+		r.cloudFrontGateways[distribution.LogicalID] = gateway
+		if r.cloudFrontAPI != nil {
+			r.cloudFrontIDs[distribution.LogicalID] = r.cloudFrontAPI.Register(distribution.LogicalID, gateway.Cache)
+		}
 		server := &http.Server{
 			Handler:           gateway,
 			ReadHeaderTimeout: 10 * time.Second,
@@ -1248,7 +1614,14 @@ func (r *Runner) Down(ctx context.Context) (int, error) {
 	for _, network := range networks {
 		r.docker.RemoveNetwork(ctx, network)
 	}
-	return len(containers) + len(networks), nil
+	images, err := r.docker.ListImages(ctx, labelApp+"="+r.appHash)
+	if err != nil {
+		return 0, err
+	}
+	for _, image := range images {
+		r.docker.RemoveImage(ctx, image)
+	}
+	return len(containers) + len(networks) + len(images), nil
 }
 
 // PlanJSON renders the derived surface for machines (the examples harness and

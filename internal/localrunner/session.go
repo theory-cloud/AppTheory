@@ -18,6 +18,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	sqstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
+
+	"github.com/theory-cloud/apptheory/v6/internal/localcloudfront"
 )
 
 // RunSession is the automation interface behind `apptheory-local session`. It
@@ -263,6 +265,10 @@ func (s *localSession) describe() (map[string]any, error) { //nolint:gocognit //
 		apis = append(apis, entry)
 	}
 	cloudFront := make([]map[string]any, 0, len(s.spec.CloudFront))
+	invalidations := []localcloudfront.Invalidation{}
+	if s.runner.cloudFrontAPI != nil {
+		invalidations = s.runner.cloudFrontAPI.Invalidations()
+	}
 	for _, distribution := range s.spec.CloudFront {
 		entry := map[string]any{
 			"logicalId": distribution.LogicalID,
@@ -274,6 +280,24 @@ func (s *localSession) describe() (map[string]any, error) { //nolint:gocognit //
 		}
 		if url, ok := s.runner.apiURLs[distribution.LogicalID]; ok {
 			entry["url"] = url
+		}
+		if id, ok := s.runner.cloudFrontIDs[distribution.LogicalID]; ok {
+			entry["distributionId"] = id
+		}
+		if s.runner.cloudFrontAPIURL != "" {
+			entry["invalidationEndpoint"] = s.runner.cloudFrontAPIURL
+		}
+		if gateway, ok := s.runner.cloudFrontGateways[distribution.LogicalID]; ok {
+			entry["cache"] = gateway.Stats()
+		}
+		entries := make([]localcloudfront.Invalidation, 0)
+		for _, invalidation := range invalidations {
+			if distributionID, ok := s.runner.cloudFrontIDs[distribution.LogicalID]; ok && invalidation.DistributionID == distributionID {
+				entries = append(entries, invalidation)
+			}
+		}
+		if len(entries) > 0 {
+			entry["invalidations"] = entries
 		}
 		cloudFront = append(cloudFront, entry)
 	}

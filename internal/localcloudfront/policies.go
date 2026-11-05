@@ -7,72 +7,84 @@ import (
 )
 
 // managedPolicyTable is the pinned id -> definition table for the AWS managed
-// CloudFront policies the gateway understands. The definitions come from the
-// CloudFront developer guide. An id that is not here is refused rather than
-// guessed.
+// CloudFront policies the gateway understands. The definitions, including every
+// Minimum/Default/Maximum TTL triple, come from the managed-cache-policies
+// page; an id that is not here is refused rather than guessed.
+//
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-managed-cache-policies.html
 var managedPolicyTable = map[PolicyKind]map[string]*Policy{
 	PolicyCache: {
-		// CachingOptimized.
+		// CachingOptimized: 1 / 86,400 / 31,536,000 seconds.
 		"658327ea-f89d-4fab-a63d-7e88639e58f6": {
 			Kind: PolicyCache, ID: "658327ea-f89d-4fab-a63d-7e88639e58f6", Managed: true,
 			Cache: &CachePolicy{
 				Headers:      HeaderForwarding{Mode: ForwardNone},
 				Cookies:      CookieForwarding{Mode: ForwardNone},
 				QueryStrings: QueryForwarding{Mode: ForwardNone},
+				MinTTL:       1, DefaultTTL: 86400, MaxTTL: 31536000,
 			},
 		},
-		// CachingDisabled.
+		// CachingDisabled: 0 / 0 / 0 seconds. The triple is inert because
+		// CachingDisabled bypasses the cache entirely, but it must match the
+		// page.
 		"4135ea2d-6df8-44a3-9df3-4b5a84be39ad": {
 			Kind: PolicyCache, ID: "4135ea2d-6df8-44a3-9df3-4b5a84be39ad", Managed: true,
 			Cache: &CachePolicy{
 				Headers:      HeaderForwarding{Mode: ForwardNone},
 				Cookies:      CookieForwarding{Mode: ForwardNone},
 				QueryStrings: QueryForwarding{Mode: ForwardNone},
+				MinTTL:       0, DefaultTTL: 0, MaxTTL: 0,
+				CachingDisabled: true,
 			},
 		},
-		// CachingOptimizedForUncompressedObjects.
+		// CachingOptimizedForUncompressedObjects: 1 / 86,400 / 31,536,000 seconds.
 		"b2884449-e4de-46a7-ac36-70bc7f1ddd6d": {
 			Kind: PolicyCache, ID: "b2884449-e4de-46a7-ac36-70bc7f1ddd6d", Managed: true,
 			Cache: &CachePolicy{
 				Headers:      HeaderForwarding{Mode: ForwardNone},
 				Cookies:      CookieForwarding{Mode: ForwardNone},
 				QueryStrings: QueryForwarding{Mode: ForwardNone},
+				MinTTL:       1, DefaultTTL: 86400, MaxTTL: 31536000,
 			},
 		},
-		// Amplify.
+		// Amplify: 2 / 2 / 600 seconds.
 		"2e54312d-136d-493c-8eb9-b001f22f67d2": {
 			Kind: PolicyCache, ID: "2e54312d-136d-493c-8eb9-b001f22f67d2", Managed: true,
 			Cache: &CachePolicy{
 				Headers:      HeaderForwarding{Mode: ForwardWhitelist, Names: []string{"authorization", "cloudfront-viewer-country", "host"}},
 				Cookies:      CookieForwarding{Mode: ForwardAll},
 				QueryStrings: QueryForwarding{Mode: ForwardAll},
+				MinTTL:       2, DefaultTTL: 2, MaxTTL: 600,
 			},
 		},
-		// Elemental-MediaPackage.
+		// Elemental-MediaPackage: 0 / 86,400 / 31,536,000 seconds.
 		"08627262-05a9-4f76-9ded-b50ca2e3a84f": {
 			Kind: PolicyCache, ID: "08627262-05a9-4f76-9ded-b50ca2e3a84f", Managed: true,
 			Cache: &CachePolicy{
 				Headers:      HeaderForwarding{Mode: ForwardWhitelist, Names: []string{"origin"}},
 				Cookies:      CookieForwarding{Mode: ForwardNone},
 				QueryStrings: QueryForwarding{Mode: ForwardWhitelist, Names: []string{"aws.manifestfilter", "start", "end", "m"}},
+				MinTTL:       0, DefaultTTL: 86400, MaxTTL: 31536000,
 			},
 		},
-		// UseOriginCacheControlHeaders.
+		// UseOriginCacheControlHeaders: 0 / 0 / 31,536,000 seconds.
 		"83da9c7e-98b4-4e11-a168-04f0df8e2c65": {
 			Kind: PolicyCache, ID: "83da9c7e-98b4-4e11-a168-04f0df8e2c65", Managed: true,
 			Cache: &CachePolicy{
 				Headers:      HeaderForwarding{Mode: ForwardWhitelist, Names: []string{"host", "origin", "x-http-method-override", "x-http-method", "x-method-override"}},
 				Cookies:      CookieForwarding{Mode: ForwardAll},
 				QueryStrings: QueryForwarding{Mode: ForwardNone},
+				MinTTL:       0, DefaultTTL: 0, MaxTTL: 31536000,
 			},
 		},
-		// UseOriginCacheControlHeaders-QueryStrings.
+		// UseOriginCacheControlHeaders-QueryStrings: 0 / 0 / 31,536,000 seconds.
 		"4cc15a8a-d715-48a4-82b8-cc0b614638fe": {
 			Kind: PolicyCache, ID: "4cc15a8a-d715-48a4-82b8-cc0b614638fe", Managed: true,
 			Cache: &CachePolicy{
 				Headers:      HeaderForwarding{Mode: ForwardWhitelist, Names: []string{"host", "origin", "x-http-method-override", "x-http-method", "x-method-override"}},
 				Cookies:      CookieForwarding{Mode: ForwardAll},
 				QueryStrings: QueryForwarding{Mode: ForwardAll},
+				MinTTL:       0, DefaultTTL: 0, MaxTTL: 31536000,
 			},
 		},
 	},
@@ -330,33 +342,27 @@ func parseCachePolicyConfig(raw json.RawMessage, policy *Policy) (*CachePolicy, 
 		switch key {
 		case propertyName, propertyComment:
 			policy.Reported = append(policy.Reported, reportProperty("cache policy", key))
-		case propertyDefaultTTL, propertyMaxTTL, propertyMinTTL:
-			policy.Reported = append(policy.Reported, reportProperty("cache policy", key))
-		case "ParametersInCacheKeyAndForwardedToOrigin":
-			parameters, err := decodeObject(value)
+		case propertyMinTTL:
+			seconds, err := decodeIntPointer(value)
 			if err != nil {
-				return nil, fmt.Errorf("ParametersInCacheKeyAndForwardedToOrigin: %w", err)
+				return nil, fmt.Errorf("MinTTL: %w", err)
 			}
-			for _, parameterKey := range sortedKeys(parameters) {
-				parameterValue := parameters[parameterKey]
-				switch parameterKey {
-				case "HeadersConfig":
-					cache.Headers, err = parseHeaderForwarding(parameterValue, false)
-				case "CookiesConfig":
-					cache.Cookies, err = parseCookieForwarding(parameterValue)
-				case "QueryStringsConfig":
-					cache.QueryStrings, err = parseQueryForwarding(parameterValue)
-				case "EnableAcceptEncodingBrotli", "EnableAcceptEncodingGzip":
-					policy.Reported = append(policy.Reported, reportProperty("cache policy", parameterKey))
-				default:
-					if _, known := cacheParametersPropertyInventory[parameterKey]; !known {
-						policy.Refusals = append(policy.Refusals,
-							fmt.Sprintf("ParametersInCacheKeyAndForwardedToOrigin property %q is not understood", parameterKey))
-					}
-				}
-				if err != nil {
-					return nil, err
-				}
+			cache.MinTTL = *seconds
+		case propertyDefaultTTL:
+			seconds, err := decodeIntPointer(value)
+			if err != nil {
+				return nil, fmt.Errorf("DefaultTTL: %w", err)
+			}
+			cache.DefaultTTL = *seconds
+		case propertyMaxTTL:
+			seconds, err := decodeIntPointer(value)
+			if err != nil {
+				return nil, fmt.Errorf("MaxTTL: %w", err)
+			}
+			cache.MaxTTL = *seconds
+		case "ParametersInCacheKeyAndForwardedToOrigin":
+			if err := parseCacheParameters(value, policy, cache); err != nil {
+				return nil, err
 			}
 		default:
 			if _, known := cachePolicyPropertyInventory[key]; !known {
@@ -367,6 +373,35 @@ func parseCachePolicyConfig(raw json.RawMessage, policy *Policy) (*CachePolicy, 
 	}
 	reportCloudFrontHeaderGaps(policy, "cache policy", cache.Headers)
 	return cache, nil
+}
+
+func parseCacheParameters(raw json.RawMessage, policy *Policy, cache *CachePolicy) error {
+	parameters, err := decodeObject(raw)
+	if err != nil {
+		return fmt.Errorf("ParametersInCacheKeyAndForwardedToOrigin: %w", err)
+	}
+	for _, key := range sortedKeys(parameters) {
+		value := parameters[key]
+		switch key {
+		case "HeadersConfig":
+			cache.Headers, err = parseHeaderForwarding(value, false)
+		case "CookiesConfig":
+			cache.Cookies, err = parseCookieForwarding(value)
+		case "QueryStringsConfig":
+			cache.QueryStrings, err = parseQueryForwarding(value)
+		case "EnableAcceptEncodingBrotli", "EnableAcceptEncodingGzip":
+			policy.Reported = append(policy.Reported, reportProperty("cache policy", key))
+		default:
+			if _, known := cacheParametersPropertyInventory[key]; !known {
+				policy.Refusals = append(policy.Refusals,
+					fmt.Sprintf("ParametersInCacheKeyAndForwardedToOrigin property %q is not understood", key))
+			}
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func parseOriginRequestPolicyConfig(raw json.RawMessage, policy *Policy) (*OriginRequestPolicy, error) {

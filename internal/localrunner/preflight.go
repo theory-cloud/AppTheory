@@ -37,7 +37,7 @@ func ValidateEndpoint(endpoint Endpoint) error {
 	if err != nil {
 		return fmt.Errorf("endpoint %s=%q: %w", endpoint.Service, endpoint.URL, err)
 	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+	if parsed.Scheme != schemeHTTP && parsed.Scheme != schemeHTTPS {
 		return fmt.Errorf("endpoint %s=%q must use http or https", endpoint.Service, endpoint.URL)
 	}
 	host := strings.ToLower(parsed.Hostname())

@@ -102,6 +102,7 @@ SSR_SITE_APP = "examples/cdk/ssr-site"
 SSR_ONLY_APP = "examples/cdk/ssr-only-provided-assets-site"
 PATH_ROUTED_APP = "examples/cdk/path-routed-frontend"
 MEDIA_CDN_APP = "examples/cdk/media-cdn"
+LAMBDA_PACKAGING_APP = "examples/cdk/lambda-packaging"
 CONFORMANCE_SCRIPT = "examples/microvm-conformance/run_local.py"
 MICROVM_DEMO_TOKEN = "local-demo-token"
 MICROVM_WORKLOAD_GO = STATE_DIR / "bin" / "microvm-workload-go"
@@ -2634,6 +2635,115 @@ def run_lambda_role_authorizers(harness: Harness) -> str:
         status, text, _ = http_request("GET", f"{rest_base}/protected")
         expect_status(status, 401, "cognito authorizer GET /protected (no token)", text)
 
+        # REST TOKEN, REST REQUEST and HTTP API IAM-policy authorizers run the
+        # real policy function. The function counts its own invocations and
+        # returns the count in the context, so a cached policy is proven by an
+        # unchanged count rather than by the runner's bookkeeping; the policy
+        # itself is re-evaluated per method.
+        policy_api = _api_by_prefix(session, "PolicyHttpApi", "httpv2")
+        policy_base = policy_api["url"]
+
+        status, payload, _ = _json_request(
+            "GET", f"{rest_base}/token", headers={"Authorization": "allow"}
+        )
+        expect_status(status, 200, "rest token authorizer allow", json.dumps(payload))
+        authorizer = payload.get("authorizer") or {}
+        if authorizer.get("tenant") != "t-1":
+            raise HarnessFailure(f"rest token authorizer context = {authorizer}")
+        token_first = int(authorizer.get("invocation", "0"))
+        status, payload, _ = _json_request(
+            "GET", f"{rest_base}/token", headers={"Authorization": "allow"}
+        )
+        expect_status(status, 200, "rest token authorizer cached", json.dumps(payload))
+        if int((payload.get("authorizer") or {}).get("invocation", "0")) != token_first:
+            raise HarnessFailure("the cached rest token policy invoked the authorizer again")
+
+        # The cached value is the POLICY, not the decision for GET /token: the
+        # policy the function returned names only that method ARN, so the same
+        # token on GET /token-other (the SAME TOKEN authorizer) is 403 inside
+        # the TTL. "Ensure that your policy is applicable to all resources and
+        # methods across your API."
+        status, text, _ = http_request(
+            "GET", f"{rest_base}/token-other", headers={"Authorization": "allow"}
+        )
+        expect_status(status, 403, "rest token authorizer cached policy names only /token", text)
+
+        # The TOKEN authorizer caches for 60 seconds on the run clock: one
+        # second past the TTL GET /token-other invokes the function again and
+        # its policy (which now names /token-other) allows the method. The
+        # invocation count proves the 403 above did not invoke the function.
+        session.clock_advance("61s")
+        status, payload, _ = _json_request(
+            "GET", f"{rest_base}/token-other", headers={"Authorization": "allow"}
+        )
+        expect_status(status, 200, "rest token authorizer after the ttl on another method", json.dumps(payload))
+        token_after = int((payload.get("authorizer") or {}).get("invocation", "0"))
+        if token_after != token_first + 1:
+            raise HarnessFailure(
+                "the cached policy for GET /token was not re-evaluated per method or the 403 invoked "
+                f"the authorizer: invocation {token_after} after {token_first}"
+            )
+
+        # The remaining token values use their own cache keys and do not touch
+        # the "allow" entry proved above.
+        status, _unused, _ = http_request("GET", f"{rest_base}/token")
+        expect_status(status, 401, "rest token authorizer missing token", "")
+        for label, token, want in (
+            ("deny", "deny", 403),
+            ("unauthorized", "unauthorized", 401),
+            ("invalid", "invalid", 500),
+        ):
+            status, text, _ = http_request(
+                "GET", f"{rest_base}/token", headers={"Authorization": token}
+            )
+            expect_status(status, want, f"rest token authorizer {label}", text)
+
+        # The REQUEST authorizer declares two identity sources and caches the
+        # policy for 60 seconds.
+        status, payload, _ = _json_request(
+            "GET",
+            f"{rest_base}/request?scope=read",
+            headers={"X-Tenant": "t-1"},
+        )
+        expect_status(status, 200, "rest request authorizer allow", json.dumps(payload))
+        if (payload.get("authorizer") or {}).get("tenant") != "t-1":
+            raise HarnessFailure(f"rest request authorizer context = {payload.get('authorizer')}")
+        status, text, _ = http_request(
+            "GET", f"{rest_base}/request", headers={"X-Tenant": "t-1"}
+        )
+        expect_status(status, 401, "rest request authorizer missing query source", text)
+        status, text, _ = http_request(
+            "GET", f"{rest_base}/request?scope=read", headers={"X-Tenant": "deny"}
+        )
+        expect_status(status, 403, "rest request authorizer deny", text)
+
+        # The HTTP API authorizer returns an IAM policy in payload format 1.0
+        # and caches for 60 seconds on the run clock.
+        status, payload, _ = _json_request(
+            "GET", f"{policy_base}/policy", headers={"Authorization": "allow"}
+        )
+        expect_status(status, 200, "http policy authorizer allow", json.dumps(payload))
+        first_invocation = (payload.get("authorizer") or {}).get("invocation")
+        if not first_invocation:
+            raise HarnessFailure(f"http policy authorizer context = {payload.get('authorizer')}")
+        status, payload, _ = _json_request(
+            "GET", f"{policy_base}/policy", headers={"Authorization": "allow"}
+        )
+        expect_status(status, 200, "http policy authorizer cached", json.dumps(payload))
+        if (payload.get("authorizer") or {}).get("invocation") != first_invocation:
+            raise HarnessFailure("the cached http policy decision invoked the authorizer again")
+        for label, token, want in (
+            ("deny", "deny", 403),
+            ("unauthorized", "unauthorized", 401),
+            ("invalid", "invalid", 500),
+        ):
+            status, text, _ = http_request(
+                "GET", f"{policy_base}/policy", headers={"Authorization": token}
+            )
+            expect_status(status, want, f"http policy authorizer {label}", text)
+        status, text, _ = http_request("GET", f"{policy_base}/policy")
+        expect_status(status, 401, "http policy authorizer missing identity source", text)
+
         # The expiry is checked against the run clock: two hours later the same
         # token is expired.
         session.clock_advance("2h")
@@ -2651,7 +2761,14 @@ def run_lambda_role_authorizers(harness: Harness) -> str:
             "access token reached the REST Cognito-protected route with its claims and the documented "
             "scope; no token, a bad signature, a wrong audience, a wrong issuer and a Basic scheme were "
             "refused with 401, a missing scope with 403, and after advancing the run clock two hours the "
-            "same tokens were refused as expired"
+            "same tokens were refused as expired; a REST TOKEN, a REST REQUEST and an HTTP API IAM-policy "
+            "authorizer ran the real policy function and carried its stringified context to the "
+            "integration, Allow invoked the method, Deny was 403, the documented Unauthorized error was "
+            "401, an invalid policy was 500, a missing identity source was 401 without invoking, and a "
+            "cached TOKEN policy did not invoke the function again but was re-evaluated against a second "
+            "method behind the same authorizer (403 because the policy named only the first method), "
+            "until the run clock passed AuthorizerResultTtlInSeconds and the second method invoked and "
+            "was allowed"
         )
     finally:
         stop_local_session(harness, session)
@@ -2948,6 +3065,7 @@ def start_local_app(
     name: str,
     context: dict | None = None,
     backends: tuple[str, ...] = (),
+    origins: tuple[str, ...] = (),
 ) -> LocalAppRun:
     ensure_cdk_app(harness, app)
     spec = plan_local_app(harness, app, context)
@@ -2969,6 +3087,8 @@ def start_local_app(
         argv.extend(["-c", f"{key}={value}"])
     for backend in backends:
         argv.extend(["--backend", backend])
+    for origin in origins:
+        argv.extend(["--origin", origin])
     process = subprocess.Popen(
         argv,
         cwd=str(ROOT),
@@ -3116,6 +3236,7 @@ def start_local_session(
     targets: tuple[str, ...] = (),
     clock: str | None = None,
     allow_no_surface: bool = False,
+    origins: tuple[str, ...] = (),
 ) -> LocalSession:
     """Start one `apptheory-local session` and wait for its machine interface."""
     ensure_cdk_app(harness, app)
@@ -3142,6 +3263,8 @@ def start_local_session(
         argv.extend(["--backend", backend])
     for target in targets:
         argv.extend(["--target", target])
+    for origin in origins:
+        argv.extend(["--origin", origin])
     if clock:
         argv.extend(["--clock", clock])
     process = subprocess.Popen(
@@ -5392,9 +5515,15 @@ def run_microvm_conformance(harness: Harness) -> str:
 
 
 def run_ssr_site_gateway(harness: Harness) -> str:
-    run = start_local_app(harness, SSR_SITE_APP, name="ssr-site-gateway", backends=("dynamodb", "s3proxy"))
+    session = start_local_session(
+        harness,
+        SSR_SITE_APP,
+        name="ssr-site-gateway",
+        backends=("dynamodb", "s3proxy"),
+        clock="test=2026-01-01T00:00:00Z",
+    )
     try:
-        _, base = local_app_distribution(run, "SiteDistribution")
+        _, base = session_distribution(session, "SiteDistribution")
         request_id = "a5b-ssr-request"
         status, body, headers = http_request("GET", base + "/", headers={"x-request-id": request_id})
         assert_html(status, body, headers, "ssr-site /", "<h1>Hello from AppTheory SSR Site</h1>")
@@ -5420,10 +5549,11 @@ def run_ssr_site_gateway(harness: Harness) -> str:
             if not headers.get(name):
                 raise HarnessFailure(f"ssr-site /assets/hello.txt has no {name}: {headers}", body)
         asset_etag = headers["etag"]
-        # A viewer conditional must reach the S3 origin and its 304 must come
-        # back with the validator the origin attached; a non-match must serve
-        # the object normally. Neither depends on the origin request policy
-        # naming If-None-Match, which the pinned managed policy does not.
+        # A viewer conditional on a cached object is answered 304 from the
+        # cached validators without reaching the S3 origin (the object was just
+        # fetched above); a non-match must serve the object normally. Neither
+        # depends on the origin request policy naming If-None-Match, which the
+        # pinned managed policy does not.
         status, body, headers = http_request(
             "GET", base + "/assets/hello.txt", headers={"If-None-Match": asset_etag}
         )
@@ -5481,13 +5611,105 @@ def run_ssr_site_gateway(harness: Harness) -> str:
         expect_status(status, 403, "ssr-site OPTIONS /assets/hello.txt", body)
         if "AccessForbidden" not in body:
             raise HarnessFailure(f"ssr-site OPTIONS is not AccessForbidden: {body}", body)
+
+        # Caching. The static-assets behavior caches for a day, so the second
+        # request is a hit with an age; the CACHING_DISABLED SSR behavior never
+        # caches; an invalidation removes the live object; and the clock past
+        # the TTL is a miss again.
+        status, body, headers = http_request("GET", base + "/assets/hello.txt")
+        expect_status(status, 200, "ssr-site assets cache hit", body)
+        if headers.get("x-cache") != "Hit from cloudfront" or not headers.get("age"):
+            raise HarnessFailure(f"ssr-site assets hit headers = {headers.get('x-cache')!r} age={headers.get('age')!r}")
+        for attempt in range(2):
+            status, _, headers = http_request("GET", base + "/actions/ping")
+            expect_status(status, 200, f"ssr-site CACHING_DISABLED request {attempt}", "")
+            if headers.get("x-cache") != "Miss from cloudfront":
+                raise HarnessFailure(
+                    f"ssr-site CACHING_DISABLED behavior answered {headers.get('x-cache')!r}, want a miss"
+                )
+
+        distribution = next(
+            entry for entry in session.info["cloudFront"]
+            if str(entry.get("logicalId", "")).startswith("SiteDistribution")
+        )
+        endpoint = distribution.get("invalidationEndpoint")
+        distribution_id = distribution.get("distributionId")
+        if not endpoint or not distribution_id:
+            raise HarnessFailure(f"ssr-site distribution does not report its invalidation endpoint: {distribution}")
+        batch = (
+            '<InvalidationBatch xmlns="http://cloudfront.amazonaws.com/doc/2020-05-31/">'
+            "<Paths><Quantity>1</Quantity><Items><Path>/assets/*</Path></Items></Paths>"
+            "<CallerReference>ssr-site-row</CallerReference></InvalidationBatch>"
+        )
+        status, text, _ = http_request(
+            "POST",
+            f"{endpoint}/2020-05-31/distribution/{distribution_id}/invalidation",
+            body=batch.encode("utf-8"),
+            headers={"content-type": "text/xml"},
+        )
+        if status != 201:
+            raise HarnessFailure(f"ssr-site CreateInvalidation = {status}: {text}", text)
+        status, _, headers = http_request("GET", base + "/assets/hello.txt")
+        expect_status(status, 200, "ssr-site assets after invalidation", "")
+        if headers.get("x-cache") != "Miss from cloudfront":
+            raise HarnessFailure("the invalidation did not remove the cached asset")
+
+        # The same invalidation through the host AWS CLI proves the control
+        # endpoint is usable from the CLI, not only from a raw HTTP call.
+        require_aws_cli()
+        cli_env = {
+            "AWS_ACCESS_KEY_ID": "dummy",
+            "AWS_SECRET_ACCESS_KEY": "dummy",
+            "AWS_DEFAULT_REGION": "us-east-1",
+            "AWS_EC2_METADATA_DISABLED": "true",
+            "AWS_CONFIG_FILE": os.devnull,
+            "AWS_SHARED_CREDENTIALS_FILE": os.devnull,
+        }
+        result = harness.run(
+            [
+                "aws",
+                "cloudfront",
+                "create-invalidation",
+                "--distribution-id",
+                distribution_id,
+                "--paths",
+                "/assets/*",
+                "--endpoint-url",
+                endpoint,
+            ],
+            timeout=300,
+            env=cli_env,
+        )
+        if '"Status": "Completed"' not in result.stdout and '"Status":"Completed"' not in result.stdout:
+            raise HarnessFailure(f"aws cloudfront create-invalidation did not report a completed invalidation: {result.stdout}")
+
+        status, _, headers = http_request("GET", base + "/assets/hello.txt")
+        expect_status(status, 200, "ssr-site assets after the CLI invalidation", "")
+        if headers.get("x-cache") != "Miss from cloudfront":
+            raise HarnessFailure("the CLI invalidation did not remove the cached asset")
+        session.clock_advance("25h")
+        status, _, headers = http_request("GET", base + "/assets/hello.txt")
+        expect_status(status, 200, "ssr-site assets after the TTL", "")
+        if headers.get("x-cache") != "Miss from cloudfront":
+            raise HarnessFailure("the asset was served from cache after its TTL")
+        described = session.request("describe")
+        cache = next(
+            entry for entry in described["cloudFront"]
+            if str(entry.get("logicalId", "")).startswith("SiteDistribution")
+        ).get("cache") or {}
+        if not any(int(stats.get("hits", 0)) > 0 for stats in cache.values()):
+            raise HarnessFailure(f"session describe reports no cache hits: {cache}")
+
         return (
             "SSR HTML through the origin group after the S3 primary returned 403, request-id echo, "
             "static/hydration objects from the deployment, 403 for a missing OAC object, full and "
-            "ranged HEAD, matching and non-matching If-None-Match, and OPTIONS"
+            "ranged HEAD, matching and non-matching If-None-Match, and OPTIONS; the static-assets "
+            "behavior answered a hit with x-cache/age, the CACHING_DISABLED SSR behavior never cached, "
+            "an invalidation through the local API and through the aws CLI removed the object, and the "
+            "clock past the TTL was a miss"
         )
     finally:
-        stop_local_app(harness, run)
+        stop_local_session(harness, session)
 
 
 def run_ssr_only_gateway(harness: Harness) -> str:
@@ -5527,7 +5749,35 @@ def run_ssr_only_gateway(harness: Harness) -> str:
 
 
 def run_path_routed_gateway(harness: Harness) -> str:
-    session = start_local_session(harness, PATH_ROUTED_APP, name="path-routed-gateway", backends=("s3proxy",))
+    origin_requests: list[dict] = []
+
+    class OriginHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+            origin_requests.append(
+                {"method": "GET", "path": self.path, "headers": dict(self.headers)}
+            )
+            payload = json.dumps({"origin": "api", "path": self.path}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *_args: object) -> None:
+            return
+
+    origin_server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), OriginHandler)
+    origin_thread = threading.Thread(target=origin_server.serve_forever, daemon=True)
+    origin_thread.start()
+    origin_domain = "example.execute-api.us-east-1.amazonaws.com"
+    origin_url = f"http://127.0.0.1:{origin_server.server_address[1]}"
+    session = start_local_session(
+        harness,
+        PATH_ROUTED_APP,
+        name="path-routed-gateway",
+        backends=("s3proxy",),
+        origins=(f"{origin_domain}={origin_url}",),
+    )
     try:
         _, base = session_distribution(session, "FrontendDistribution")
         client = session.resource(logical_prefix="ClientBucket")
@@ -5548,11 +5798,34 @@ def run_path_routed_gateway(harness: Harness) -> str:
         expect_status(status, 200, "path-routed /auth/app.js", body)
         if body != 'console.log("auth")':
             raise HarnessFailure(f"path-routed auth file = {body!r}", body)
+        # The external API origin is mapped to the listener the row started.
+        # The gateway sends the documented origin-request shape (the origin path
+        # from the template, the origin Host and the viewer method) and the
+        # response travels back through the gateway's CACHING_DISABLED behavior.
         for path in ("/auth/wallet/balance", "/api/whatever"):
-            status, body, _ = http_request("GET", base + path)
-            expect_status(status, 503, f"path-routed {path}", body)
-            if "external network" not in body:
-                raise HarnessFailure(f"path-routed {path} does not name the external origin: {body}", body)
+            before = len(origin_requests)
+            status, body, headers = http_request("GET", base + path)
+            expect_status(status, 200, f"path-routed {path}", body)
+            payload = json.loads(body)
+            if payload.get("origin") != "api" or payload.get("path") != f"/prod{path}":
+                raise HarnessFailure(f"path-routed {path}: the mapped origin answered {payload}")
+            if headers.get("x-cache") != "Miss from cloudfront":
+                raise HarnessFailure(
+                    f"path-routed {path}: the CACHING_DISABLED behavior answered {headers.get('x-cache')!r}"
+                )
+            if len(origin_requests) != before + 1:
+                raise HarnessFailure(f"path-routed {path}: the origin received {len(origin_requests) - before} requests")
+            received = origin_requests[-1]
+            if received["method"] != "GET" or received["path"] != f"/prod{path}":
+                raise HarnessFailure(f"path-routed {path}: origin request shape {received}")
+            if received["headers"].get("Host") != origin_domain:
+                raise HarnessFailure(
+                    f"path-routed {path}: origin Host {received['headers'].get('Host')!r}, want {origin_domain!r}"
+                )
+            status, body, headers = http_request("GET", base + path)
+            expect_status(status, 200, f"path-routed {path} again", body)
+            if headers.get("x-cache") != "Miss from cloudfront":
+                raise HarnessFailure(f"path-routed {path}: a CACHING_DISABLED behavior cached")
         status, body, _ = http_request("POST", base + "/l/dashboard", body=b"")
         expect_status(status, 403, "path-routed POST /l/dashboard", body)
         status, body, _ = http_request("GET", base + "/l/missing.js")
@@ -5561,14 +5834,24 @@ def run_path_routed_gateway(harness: Harness) -> str:
             raise HarnessFailure(f"path-routed missing file is not AccessDenied: {body}", body)
         return (
             "the generated SPA function rewrote /l and /auth to index.html, files served unchanged, "
-            "the external API origin refused by name, POST refused by AllowedMethods, missing file 403"
+            "the mapped external API origin received the documented origin-request shape (origin path, "
+            "Host, method) and its response came back with x-cache miss on a CACHING_DISABLED behavior, "
+            "POST refused by AllowedMethods, missing file 403"
         )
     finally:
         stop_local_session(harness, session)
+        origin_server.shutdown()
+        origin_server.server_close()
 
 
 def run_media_cdn_gateway(harness: Harness) -> str:
-    session = start_local_session(harness, MEDIA_CDN_APP, name="media-cdn-gateway", backends=("s3proxy",))
+    session = start_local_session(
+        harness,
+        MEDIA_CDN_APP,
+        name="media-cdn-gateway",
+        backends=("s3proxy",),
+        clock="test=2026-01-01T00:00:00Z",
+    )
     try:
         _, base = session_distribution(session, "PublicMediaCdnDistribution")
         private = [
@@ -5588,13 +5871,50 @@ def run_media_cdn_gateway(harness: Harness) -> str:
             raise HarnessFailure(f"media-cdn probe = {headers.get('content-type')!r} {body!r}", body)
         if not headers.get("etag"):
             raise HarnessFailure("media-cdn /probe.txt has no ETag", body)
-        status, body, _ = http_request("GET", base + "/missing.txt")
-        expect_status(status, 403, "media-cdn /missing.txt", body)
+        # The 403 custom error response serves the configured error page with
+        # the configured status. The s3proxy 403 is an S3 AccessDenied error: it
+        # carries Content-Type: application/xml and x-amz-request-id and no
+        # Cache-Control, and the HTTPStatusCodes page caches 403 "only ... if
+        # your origin returns a Cache-Control max-age or Cache-Control s-maxage
+        # header". The page is therefore served but not cached: the second
+        # request is another miss. The ErrorCachingMinTTL expiry proof for a
+        # 404 origin lives in the localcloudfront unit tests.
+        # https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/HTTPStatusCodes.html
+        s3_put(
+            session,
+            bucket["logicalId"],
+            "errors/not-found.html",
+            "<h1>media not found</h1>",
+            "text/html",
+        )
+        status, body, headers = http_request("GET", base + "/missing.txt")
+        expect_status(status, 200, "media-cdn custom error page", body)
+        if "<h1>media not found</h1>" not in body:
+            raise HarnessFailure(f"media-cdn custom error page = {body!r}")
+        if headers.get("x-cache") != "Miss from cloudfront":
+            raise HarnessFailure(f"media-cdn custom error first request = {headers.get('x-cache')!r}")
+        status, body, headers = http_request("GET", base + "/missing.txt")
+        expect_status(status, 200, "media-cdn custom error page again", body)
+        if headers.get("x-cache") != "Miss from cloudfront":
+            raise HarnessFailure(
+                "the 403 custom error page was cached without a Cache-Control max-age/s-maxage header: "
+                f"{headers.get('x-cache')!r}"
+            )
+
+        # When the custom error page itself is unavailable, CloudFront returns
+        # the status code the origin sent for the page (here 403 AccessDenied).
+        session.request("s3.delete", bucket=bucket["logicalId"], objectKey="errors/not-found.html")
+        status, body, headers = http_request("GET", base + "/missing-page.txt")
+        expect_status(status, 403, "media-cdn missing custom error page", body)
         if "AccessDenied" not in body:
-            raise HarnessFailure(f"media-cdn missing object is not AccessDenied: {body}", body)
+            raise HarnessFailure(f"media-cdn unavailable custom page = {body!r}")
         return (
-            "the public distribution served a probe object from its provisioned bucket; "
-            f"the private distribution stayed refused ({refusal})"
+            "the public distribution served a probe object from its provisioned bucket; the 403 "
+            "custom error response served the configured page with status 200; the s3proxy 403 carried "
+            "Content-Type: application/xml and x-amz-request-id but no Cache-Control max-age/s-maxage, "
+            "so the page was served on both requests and the second was a miss (the page caches a 403 "
+            "only with that header); when the page itself was unavailable the status came from the "
+            f"pages origin (403 AccessDenied); the private distribution stayed refused ({refusal})"
         )
     finally:
         stop_local_session(harness, session)
@@ -5719,6 +6039,69 @@ def run_ssr_assets_upload(harness: Harness) -> str:
         shutil.rmtree(staging, ignore_errors=True)
 
 
+def one_http_v2_url(spec: dict, run: LocalAppRun) -> str:
+    apis = [api for api in spec.get("apis") or [] if api.get("class") == "httpv2"]
+    if len(apis) != 1:
+        raise HarnessFailure(f"want exactly one HTTP API v2 surface, plan has {len(apis)}")
+    logical_id = str(apis[0].get("logicalId"))
+    if logical_id not in run.apis:
+        raise HarnessFailure(f"the runner did not serve {logical_id}: {run.apis}")
+    return run.apis[logical_id]
+
+
+def run_lambda_packaging(harness: Harness) -> str:
+    """Lambda layers extracted into /opt and container images built by docker.
+
+    The Node and Python handlers import a module that exists only inside the
+    layer and execute the layer's /opt/bin tool; the three image handlers read a
+    value the Dockerfile wrote from a build argument, so a stale or missing
+    image cannot pass the row.
+    """
+    run = start_local_app(harness, LAMBDA_PACKAGING_APP, name="lambda-packaging")
+    try:
+        base = one_http_v2_url(run.spec, run)
+        status, payload, _ = _json_request("GET", f"{base}/layer/node")
+        expect_status(status, 200, "packaging node layer", json.dumps(payload))
+        if payload.get("greeting") != "hello node from the node layer":
+            raise HarnessFailure(f"packaging node layer module not imported: {payload}")
+        if payload.get("tool") != "layer-tool-ok":
+            raise HarnessFailure(f"packaging node layer /opt/bin tool did not run: {payload}")
+        if not payload.get("optBin") or not payload.get("optLib"):
+            raise HarnessFailure(f"packaging node layer paths are not configured: {payload}")
+
+        status, payload, _ = _json_request("GET", f"{base}/layer/python")
+        expect_status(status, 200, "packaging python layer", json.dumps(payload))
+        if payload.get("greeting") != "hello from the python layer":
+            raise HarnessFailure(f"packaging python layer module not imported: {payload}")
+        if payload.get("tool") != "python-layer-tool-ok":
+            raise HarnessFailure(f"packaging python layer /opt/bin tool did not run: {payload}")
+        if not payload.get("optPython") or not payload.get("optBin") or not payload.get("optLib"):
+            raise HarnessFailure(f"packaging python layer paths are not configured: {payload}")
+
+        for path, want_runtime, want_value in (
+            ("/image/go", "go-provided-image", "go-image-build"),
+            ("/image/node", "node-image", "node-image-build"),
+            ("/image/python", "python-image", "python-image-build"),
+        ):
+            status, payload, _ = _json_request("GET", f"{base}{path}")
+            expect_status(status, 200, f"packaging {path}", json.dumps(payload))
+            if payload.get("runtime") != want_runtime:
+                raise HarnessFailure(f"packaging {path} ran the wrong image: {payload}")
+            if payload.get("imageValue") != want_value:
+                raise HarnessFailure(
+                    f"packaging {path}: the Dockerfile build argument did not reach the image: {payload}"
+                )
+        return (
+            "the Node and Python zip functions imported a module from the layer "
+            "and executed the /opt/bin tool, with /opt/bin on PATH and /opt/lib on "
+            "LD_LIBRARY_PATH; the Go, Node and Python image functions were built by "
+            "docker from the CDK Docker assets and returned the value the "
+            "Dockerfile wrote from its build argument"
+        )
+    finally:
+        stop_local_app(harness, run)
+
+
 RUNNERS: dict[str, Callable[[Harness], str]] = {
     "testkit-ts": run_testkit_ts,
     "testkit-ts-streaming": run_testkit_ts_streaming,
@@ -5771,6 +6154,7 @@ RUNNERS: dict[str, Callable[[Harness], str]] = {
     "media-cdn-gateway": run_media_cdn_gateway,
     "ssr-assets-manifest": run_ssr_assets_manifest,
     "ssr-assets-upload": run_ssr_assets_upload,
+    "lambda-packaging": run_lambda_packaging,
 }
 
 

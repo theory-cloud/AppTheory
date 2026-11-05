@@ -62,7 +62,7 @@ func buildEventRequest(state *requestState, context EventContext) *Event {
 	headers := map[string]HeaderValue{}
 	for name, values := range state.Header {
 		lower := strings.ToLower(name)
-		if lower == "cookie" {
+		if lower == headerCookie {
 			continue
 		}
 		headers[lower] = headerValue(values)
@@ -120,7 +120,7 @@ func applyFunctionRequest(state *requestState, returned *EventRequest) {
 	state.Host = ""
 	for name, value := range returned.Headers {
 		lower := strings.ToLower(name)
-		if lower == "host" {
+		if lower == headerHost {
 			state.Host = value.Value
 			continue
 		}
