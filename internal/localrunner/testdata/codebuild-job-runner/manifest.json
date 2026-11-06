@@ -1,0 +1,11 @@
+{
+  "version": "54.0.0",
+  "artifacts": {
+    "AppTheoryCodeBuildJobRunnerExample": {
+      "type": "aws:cloudformation:stack",
+      "properties": {
+        "templateFile": "AppTheoryCodeBuildJobRunnerExample.template.json"
+      }
+    }
+  }
+}
