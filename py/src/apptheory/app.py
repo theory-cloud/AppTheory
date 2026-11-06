@@ -472,7 +472,7 @@ class App:
     ) -> App:
         """Register a route and raise registration errors.
 
-        Fluent registration fails closed with a startup panic. The Strict variants
+        Fluent registration fails closed with a startup raise. The Strict variants
         are the supported error-returning registration API for callers that
         register conditionally and want to log the failure and continue: they
         raise the same canonical AppTheoryError the fluent path raises.
