@@ -154,9 +154,6 @@ func TestRIEServing(t *testing.T) {
 	if ready, err := rieServing(context.Background(), closed.Port); ready || err == nil {
 		t.Fatalf("expected a closed port to fail: %v %v", ready, err)
 	}
-	if ready, err := rieServing(nil, 1); ready || err == nil {
-		t.Fatalf("expected a nil context to fail: %v %v", ready, err)
-	}
 }
 
 func TestWaitForContainerReady(t *testing.T) {

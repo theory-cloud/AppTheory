@@ -584,6 +584,13 @@ func TestDataDirRefusals(t *testing.T) {
 	if _, err := normalizeDataDir(filepath.Join(blocker, "sub")); err == nil {
 		t.Fatal("a data directory under a file was accepted")
 	}
+	private := filepath.Join(root, "private")
+	if err := os.MkdirAll(private, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := normalizeDataDir(filepath.Join(private, "sub")); err == nil {
+		t.Fatal("a data directory inside an unreadable parent was accepted")
+	}
 	if _, err := normalizeDataDir(blocker); err == nil || !strings.Contains(err.Error(), "not a directory") {
 		t.Fatalf("a file as --data-dir = %v", err)
 	}
@@ -596,6 +603,10 @@ func TestDataDirRefusals(t *testing.T) {
 	runner = &Runner{options: Options{Stdout: io.Discard}, scratch: blocker, profile: &Profile{}}
 	if _, err := runner.elasticMQDataConfig(); err == nil {
 		t.Fatal("an ElasticMQ config under a file was written")
+	}
+	sqs := &Runner{dataDir: root, options: Options{Stdout: io.Discard}, scratch: blocker, profile: &Profile{}}
+	if _, _, err := sqs.configureBackendDataDir("", backendSQS, ContainerPin{}); err == nil {
+		t.Fatal("an ElasticMQ data directory with an unwritable config was accepted")
 	}
 	if _, _, err := (&Runner{profile: &Profile{}}).configureBackendDataDir("", "moto", ContainerPin{}); err != nil {
 		t.Fatalf("moto without --data-dir = %v", err)
@@ -708,5 +719,35 @@ func TestDataDirModesAllowTheContainerUsers(t *testing.T) {
 	}
 	if info, statErr := os.Stat(config); statErr != nil || info.Mode().Perm() != 0o644 {
 		t.Fatalf("ElasticMQ config = %v, %v", info, statErr)
+	}
+}
+
+func TestWatchGlobBranches(t *testing.T) {
+	config := watchConfig{Include: []string{"src/**", "cdk.json"}, Exclude: []string{"src/generated/**"}}
+	cases := map[string]bool{
+		"cdk.json":           true,
+		"src/app.ts":         true,
+		"src/generated/x.ts": false,
+		"lib/x.ts":           false,
+	}
+	for path, want := range cases {
+		if got := watchIncludes(config, path); got != want {
+			t.Fatalf("watchIncludes(%q) = %v, want %v", path, got, want)
+		}
+	}
+	if !watchGlobMatch("src/**", "src") {
+		t.Fatal("** did not match zero segments")
+	}
+	if watchGlobMatch("src/*", "src/a/b") {
+		t.Fatal("* matched across segments")
+	}
+	if watchGlobMatch("[", "x") {
+		t.Fatal("an invalid pattern matched")
+	}
+	if parts := splitWatchPath("/"); parts != nil {
+		t.Fatalf("splitWatchPath(/) = %v", parts)
+	}
+	if parts := splitWatchPath("/a/b/"); len(parts) != 2 {
+		t.Fatalf("splitWatchPath = %v", parts)
 	}
 }
