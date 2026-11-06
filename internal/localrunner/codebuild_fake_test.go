@@ -340,9 +340,11 @@ func TestDeliveryEngineRestart(t *testing.T) {
 // request to the Runtime API the container was given, so the restart path can
 // be exercised without a real runtime image.
 type restartFakeDocker struct {
-	mu      sync.Mutex
-	runs    int
-	failRun int
+	mu       sync.Mutex
+	runs     int
+	failRun  int
+	failRuns map[int]bool
+	buildErr error
 }
 
 func (f *restartFakeDocker) exec(ctx context.Context, argv []string) (string, string, error) {
@@ -350,12 +352,17 @@ func (f *restartFakeDocker) exec(ctx context.Context, argv []string) (string, st
 		return "", "", nil
 	}
 	switch argv[1] {
+	case "build":
+		if f.buildErr != nil {
+			return "", "build failed", f.buildErr
+		}
+		return "sha256:image-id", "", nil
 	case "run":
 		f.mu.Lock()
 		f.runs++
 		run := f.runs
 		f.mu.Unlock()
-		if f.failRun > 0 && run == f.failRun {
+		if (f.failRun > 0 && run == f.failRun) || f.failRuns[run] {
 			return "", "restart failed", errors.New("restart failed")
 		}
 		for _, argument := range argv {

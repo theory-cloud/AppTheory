@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -114,7 +115,13 @@ func (r *Runner) watchLoop(ctx context.Context, config watchConfig) {
 			pending = false
 			before := previous
 			if err := r.reloadWatchedApp(ctx); err != nil {
-				r.logf("watch: %v; the previous assembly keeps serving", err)
+				// A reported error already carries the serving-state line from
+				// applyWatchedSpec; only a pre-apply failure keeps the previous
+				// assembly, so only that path appends the sentence.
+				var reported *watchStateReported
+				if !errors.As(err, &reported) {
+					r.logf("watch: %v; the previous assembly keeps serving", err)
+				}
 			}
 			config = loadWatchConfig(r.options.AppDir)
 			after := snapshotWatchTree(config)
@@ -476,8 +483,43 @@ func newResourceBackends(current, next *Spec, r *Runner) []string {
 	return out
 }
 
+// watchedFunctionApply is one function a reload batch starts or replaces. The
+// image is resolved for every entry before the first container changes, so a
+// build or image failure restarts nothing.
+type watchedFunctionApply struct {
+	function FunctionSpec
+	previous *FunctionProcess
+	image    string
+	reason   string
+}
+
+// appliedWatchedFunction is one function the batch already started or
+// replaced, with the definition it ran before so a later failure can restore
+// it. An added function has no previous definition; its rollback stops it.
+type appliedWatchedFunction struct {
+	process  *FunctionProcess
+	previous FunctionSpec
+	image    string
+	added    bool
+}
+
+// watchStateReported marks a reload error whose serving state
+// applyWatchedSpec already logged. The watcher must not append the
+// previous-assembly line to it.
+type watchStateReported struct{ err error }
+
+func (e *watchStateReported) Error() string { return e.err.Error() }
+
+func (e *watchStateReported) Unwrap() error { return e.err }
+
 // applyWatchedSpec provisions the new definitions, restarts the changed
 // functions and swaps the route tables and delivery sources.
+//
+// The apply is staged so a running container never loses the code directory it
+// bind-mounts at /var/task: every image is resolved before the first container
+// changes, and a failure after a function was replaced rolls the replaced
+// functions back to their previous definition (still mounted from the previous
+// assembly) before the new assembly directory is removed.
 //
 //nolint:gocyclo // the documented apply order.
 func (r *Runner) applyWatchedSpec(ctx context.Context, next *Spec, targets []string, assemblyDir string) (bool, error) {
@@ -506,9 +548,9 @@ func (r *Runner) applyWatchedSpec(ctx context.Context, next *Spec, targets []str
 		r.restoreProvisioning(saved)
 		return false, err
 	}
-	if err := r.resolveImages(next, arch, targets); err != nil {
+	if resolveErr := r.resolveImages(next, arch, targets); resolveErr != nil {
 		r.restoreProvisioning(saved)
-		return false, err
+		return false, resolveErr
 	}
 
 	previousInvokers := map[string]*FunctionProcess{}
@@ -519,7 +561,24 @@ func (r *Runner) applyWatchedSpec(ctx context.Context, next *Spec, targets []str
 	for _, id := range targets {
 		targetSet[id] = true
 	}
-	// Removed functions stop first, so their names and ports are free.
+	plan, err := r.planWatchedFunctions(ctx, next, targets, previousInvokers)
+	if err != nil {
+		r.restoreProvisioning(saved)
+		return false, err
+	}
+
+	applied := make([]appliedWatchedFunction, 0, len(plan))
+	for _, item := range plan {
+		entry, applyErr := r.startOrReplaceWatchedFunction(ctx, item)
+		if applyErr != nil {
+			return r.failWatchedApply(ctx, next, targets, assemblyDir, applied, applyErr)
+		}
+		applied = append(applied, entry)
+	}
+	// Removed functions stop only after every replacement succeeded, so a
+	// mid-batch failure leaves the previous assembly running. A stopped
+	// function's code directory stays mounted until its container is removed,
+	// and cleanupOldAssemblies keeps every directory a live container mounts.
 	for id := range previousInvokers {
 		if targetSet[id] {
 			continue
@@ -527,38 +586,6 @@ func (r *Runner) applyWatchedSpec(ctx context.Context, next *Spec, targets []str
 		r.logf("watch: function %s was removed; stopping it", id)
 		r.stopFunction(ctx, previousInvokers[id])
 		delete(r.invokers, id)
-	}
-	changed := 0
-	for _, id := range targets {
-		function, _ := next.Function(id)
-		previous, exists := previousInvokers[id]
-		if !exists {
-			r.logf("watch: function %s was added; starting it", id)
-			image, imageErr := r.imageFor(ctx, function)
-			if imageErr != nil {
-				return false, imageErr
-			}
-			if startErr := r.startFunction(ctx, function, image); startErr != nil {
-				return false, startErr
-			}
-			continue
-		}
-		reason := functionReloadReason(previous.Function, function)
-		if reason == "" {
-			continue
-		}
-		changed++
-		r.logf("watch: function %s changed (%s); replacing its execution environment", id, reason)
-		// A changed image asset must be rebuilt even though the logical id (and
-		// therefore the tag) is the same.
-		delete(r.builtImages, id)
-		image, imageErr := r.imageFor(ctx, function)
-		if imageErr != nil {
-			return false, imageErr
-		}
-		if restartErr := r.restartFunction(ctx, previous, function, image); restartErr != nil {
-			return false, restartErr
-		}
 	}
 	r.refreshTransportSurfaces(next)
 	r.specMu.Lock()
@@ -571,14 +598,135 @@ func (r *Runner) applyWatchedSpec(ctx context.Context, next *Spec, targets []str
 	locked = false
 	if r.delivery != nil {
 		if err := r.delivery.Restart(ctx, next); err != nil {
-			return true, err
+			r.logf("watch: the new assembly is serving; restarting the delivery engine failed: %v", err)
+			return true, &watchStateReported{err: fmt.Errorf("restart the delivery engine: %w", err)}
 		}
 		next.Delivery = r.delivery.State().Sources
 	}
 	r.cleanupOldAssemblies(assemblyDir)
+	restarted := 0
+	for _, item := range plan {
+		if item.previous != nil {
+			restarted++
+		}
+	}
 	r.logf("watch: rebuilt; %d function(s) restarted, %d route table(s), %d delivery source(s)",
-		changed, len(next.HTTPAPIs())+len(next.WebSockets), len(next.EventSources)+len(next.Rules)+len(next.Subscriptions))
+		restarted, len(next.HTTPAPIs())+len(next.WebSockets), len(next.EventSources)+len(next.Rules)+len(next.Subscriptions))
 	return true, nil
+}
+
+// startOrReplaceWatchedFunction applies one planned function. An added
+// function that fails to start is removed from the invoker set before the
+// error is returned, so the rollback never sees a dead process.
+func (r *Runner) startOrReplaceWatchedFunction(ctx context.Context, item watchedFunctionApply) (appliedWatchedFunction, error) {
+	if item.previous == nil {
+		r.logf("watch: function %s was added; starting it", item.function.LogicalID)
+		if err := r.startFunction(ctx, item.function, item.image); err != nil {
+			// startFunction registers the process before starting the container;
+			// the dead entry must not stay in the invoker set.
+			if process, ok := r.invokers[item.function.LogicalID]; ok {
+				r.stopFunction(ctx, process)
+				delete(r.invokers, item.function.LogicalID)
+			}
+			return appliedWatchedFunction{}, err
+		}
+		return appliedWatchedFunction{process: r.invokers[item.function.LogicalID], added: true}, nil
+	}
+	r.logf("watch: function %s changed (%s); replacing its execution environment", item.function.LogicalID, item.reason)
+	previous := item.previous.Function
+	previousImage := item.previous.Image
+	if err := r.restartFunction(ctx, item.previous, item.function, item.image); err != nil {
+		return appliedWatchedFunction{}, err
+	}
+	return appliedWatchedFunction{process: item.previous, previous: previous, image: previousImage}, nil
+}
+
+// planWatchedFunctions resolves the image every added or changed function
+// needs before anything is stopped or restarted. A failure here leaves every
+// running container on the previous assembly.
+func (r *Runner) planWatchedFunctions(ctx context.Context, next *Spec, targets []string, previousInvokers map[string]*FunctionProcess) ([]watchedFunctionApply, error) {
+	plan := make([]watchedFunctionApply, 0, len(targets))
+	for _, id := range targets {
+		function, _ := next.Function(id)
+		previous, exists := previousInvokers[id]
+		if !exists {
+			image, err := r.imageFor(ctx, function)
+			if err != nil {
+				return nil, err
+			}
+			plan = append(plan, watchedFunctionApply{function: function, image: image})
+			continue
+		}
+		reason := functionReloadReason(previous.Function, function)
+		if reason == "" {
+			continue
+		}
+		// A changed image asset must be rebuilt even though the logical id (and
+		// therefore the tag) is the same.
+		delete(r.builtImages, id)
+		image, err := r.imageFor(ctx, function)
+		if err != nil {
+			return nil, err
+		}
+		plan = append(plan, watchedFunctionApply{function: function, previous: previous, image: image, reason: reason})
+	}
+	return plan, nil
+}
+
+// failWatchedApply restores the previous assembly after a start or restart
+// failure. A successful rollback removes the new assembly directory, which no
+// running container mounts any more; a failed rollback keeps it, because a
+// container may still run from it, and the spec is set to what is serving.
+func (r *Runner) failWatchedApply(ctx context.Context, next *Spec, targets []string, assemblyDir string, applied []appliedWatchedFunction, applyErr error) (bool, error) {
+	if len(applied) == 0 {
+		_ = os.RemoveAll(assemblyDir) //nolint:errcheck // no container mounts the assembly the apply never used
+		return false, applyErr
+	}
+	var rollbackFailures []string
+	for index := len(applied) - 1; index >= 0; index-- {
+		entry := applied[index]
+		if entry.added {
+			r.stopFunction(ctx, entry.process)
+			delete(r.invokers, entry.process.Function.LogicalID)
+			continue
+		}
+		if err := r.replaceFunctionEnvironment(ctx, entry.process, entry.previous, entry.image); err != nil {
+			rollbackFailures = append(rollbackFailures, fmt.Sprintf("function %s: %v", entry.previous.LogicalID, err))
+		}
+	}
+	if len(rollbackFailures) == 0 {
+		_ = os.RemoveAll(assemblyDir) //nolint:errcheck // every replaced function is mounted from the previous assembly again
+		r.logf("watch: %v; rolled back %d replaced function(s); the previous assembly keeps serving", applyErr, len(applied))
+		return false, &watchStateReported{err: applyErr}
+	}
+	r.specMu.Lock()
+	r.spec = r.servingWatchedSpec(next, targets)
+	r.specMu.Unlock()
+	r.logf("watch: %v; partially applied: %d restarted, %d not; a restart is required (%s)",
+		applyErr, len(rollbackFailures), len(targets)-len(rollbackFailures), strings.Join(rollbackFailures, "; "))
+	return true, &watchStateReported{err: applyErr}
+}
+
+// servingWatchedSpec is the spec a failed rollback leaves behind: every target
+// function carries the definition its live process runs, and a target with no
+// live process is dropped. The rest of the derived assembly stays.
+func (r *Runner) servingWatchedSpec(next *Spec, targets []string) *Spec {
+	targetSet := map[string]bool{}
+	for _, id := range targets {
+		targetSet[id] = true
+	}
+	serving := *next
+	serving.Functions = make([]FunctionSpec, 0, len(next.Functions))
+	for _, function := range next.Functions {
+		if !targetSet[function.LogicalID] {
+			serving.Functions = append(serving.Functions, function)
+			continue
+		}
+		if process, ok := r.invokers[function.LogicalID]; ok {
+			serving.Functions = append(serving.Functions, process.Function)
+		}
+	}
+	return &serving
 }
 
 // stopFunction removes one function's container and closes its Runtime API.
@@ -757,6 +905,10 @@ func imageAssetFingerprint(function FunctionSpec) string {
 	return string(encoded)
 }
 
+// cleanupOldAssemblies removes the watch assemblies no running container
+// mounts. A function the reload did not replace keeps its previous code
+// directory, so the assembly its /var/task is bound from stays until that
+// function is replaced; removing it would empty the container's /var/task.
 func (r *Runner) cleanupOldAssemblies(current string) {
 	watchRoot := filepath.Join(r.scratch, "watch")
 	entries, err := os.ReadDir(watchRoot)
@@ -768,11 +920,23 @@ func (r *Runner) cleanupOldAssemblies(current string) {
 			continue
 		}
 		path := filepath.Join(watchRoot, entry.Name())
-		if path == current {
+		if path == current || r.watchAssemblyMounted(path) {
 			continue
 		}
-		_ = os.RemoveAll(path) //nolint:errcheck // the previous asset directories are no longer served
+		_ = os.RemoveAll(path) //nolint:errcheck // nothing mounts the assembly any more
 	}
+}
+
+// watchAssemblyMounted reports whether a live function's code or layer
+// directory lives under one assembly directory.
+func (r *Runner) watchAssemblyMounted(assemblyDir string) bool {
+	prefix := assemblyDir + string(filepath.Separator)
+	for _, process := range r.invokers {
+		if strings.HasPrefix(process.Function.AssetDir, prefix) || strings.HasPrefix(process.Function.OptDir, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 type provisioningSnapshot struct {
