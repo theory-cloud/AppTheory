@@ -34,6 +34,45 @@ func TestStagePrefixFor(t *testing.T) {
 	}
 }
 
+func TestTransportPrefersTheStageFormOverALiteralRootRoute(t *testing.T) {
+	stageInvoker := &recordingInvoker{response: []byte(`{"statusCode":200,"body":"stage"}`)}
+	rootInvoker := &recordingInvoker{response: []byte(`{"statusCode":200,"body":"root"}`)}
+	api := APISpec{Class: APIRESTV1, LogicalID: "Rest", Stage: "prod", Routes: []Route{
+		{Class: APIRESTV1, Method: "GET", Path: "/x", Function: "StageFn"},
+		{Class: APIRESTV1, Method: "GET", Path: "/prod/x", Function: "RootFn"},
+	}}
+	transport := NewTransport(api, map[string]Invoker{"StageFn": stageInvoker, "RootFn": rootInvoker}, nil, nil)
+	server := httptest.NewServer(transport)
+	defer server.Close()
+
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL+"/prod/x", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close() //nolint:errcheck // test cleanup
+	if stageInvoker.calls != 1 || rootInvoker.calls != 0 {
+		t.Fatalf("the stage form was not preferred: stage=%d root=%d", stageInvoker.calls, rootInvoker.calls)
+	}
+	var event map[string]any
+	if err := json.Unmarshal(stageInvoker.payload, &event); err != nil {
+		t.Fatalf("event is not JSON: %v", err)
+	}
+	if event["path"] != "/x" || event["resource"] != "/x" {
+		t.Fatalf("path/resource = %v/%v, want the stage-stripped /x", event["path"], event["resource"])
+	}
+	context, ok := event["requestContext"].(map[string]any)
+	if !ok {
+		t.Fatal("event has no requestContext")
+	}
+	if context["path"] != "/prod/x" || context["stage"] != "prod" {
+		t.Fatalf("requestContext = %v", context)
+	}
+}
+
 func TestTransportServesRootAndNamedStageWithTheDocumentedEventShape(t *testing.T) {
 	invoker := &recordingInvoker{response: []byte(`{"statusCode":200,"body":"ok"}`)}
 	api := APISpec{Class: APIRESTV1, LogicalID: "Rest", Stage: "prod", Routes: []Route{{

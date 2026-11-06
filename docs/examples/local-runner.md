@@ -430,9 +430,10 @@ The runner serves both forms on the same listener:
 | `GET /dev/hello` on an HTTP API with stage `dev` | The `dev` stage form; the route table matches `/hello`. |
 | `GET /hello` on an HTTP API with the `$default` stage | The root; `/$default/hello` is not served. |
 
-A root route wins when a path matches both forms; otherwise a leading
-`/{stage}` is stripped and the remainder is matched. The event the handler
-sees carries exactly the documented fields:
+The `/{stage}` form is tried first: a path that matches both the stage
+remainder and a literal root route resolves to the stage form, and the root
+form is matched only when the remainder matches no route. The event the
+handler sees carries exactly the documented fields:
 
 - REST v1: `path` and `resource` are the resource path without the stage, while
   `requestContext.path` includes it (`/prod/hello`); `requestContext.stage` is
