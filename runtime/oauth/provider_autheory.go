@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v7/runtime"
 )
 
 // Autheory is the first Provider adapter of the MCP auth facade (DESIGN §6):

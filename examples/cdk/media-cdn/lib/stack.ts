@@ -36,7 +36,30 @@ export class MediaCdnStack extends cdk.Stack {
             // Auto-cleanup for development (use RETAIN for production)
             removalPolicy: cdk.RemovalPolicy.DESTROY,
             autoDeleteObjects: true,
+
+            // A missing object answers with the ObjectNotFound error page. The
+            // local gateway resolves the page path through the distribution's
+            // cache behaviors (here the default behavior, so the same bucket),
+            // serves the page with the configured status, and applies the
+            // HTTPStatusCodes error-caching rule: the s3proxy 403 carries no
+            // Cache-Control max-age/s-maxage, so neither the 403 nor its custom
+            // page is cached. The page object is written by the harness (or by
+            // a deployment) at errors/not-found.html.
+            errorResponses: [
+                {
+                    httpStatus: 403,
+                    responseHttpStatus: 200,
+                    responsePagePath: '/errors/not-found.html',
+                    ttl: cdk.Duration.seconds(60),
+                },
+            ],
         });
+
+        // The proving row generates an RSA key pair at run time and passes the
+        // public key through CDK context as base64. The committed default is a
+        // sample public key with no private key in this repository, so the
+        // synthesized template stays deployable as written.
+        const privateMediaPublicKey = contextPublicKey(this, 'privateMediaPublicKeyBase64', SAMPLE_PRIVATE_MEDIA_PUBLIC_KEY);
 
         // =====================================================================
         // Example 2: Private Media CDN with Signed URLs
@@ -54,15 +77,7 @@ export class MediaCdnStack extends cdk.Stack {
         this.privateMediaCdn = new AppTheoryMediaCdn(this, 'PrivateMediaCdn', {
             privateMedia: {
                 // Sample RSA-2048 public key (DO NOT USE IN PRODUCTION)
-                publicKeyPem: `-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAudf8/iNkQgdvjEdm6xYS
-JAyxd/kGTbJfQNg9YhInb7TSm0dGu0yx8yZ3fnpmH2FBYXZ+NFVW/yfM8xU3FO+e
-bykZ3JCsmEbHMEqDnDqPWy1x7a/0XN1+0R/v6bPQ7EHLa6k7VlZjP+zLBbt2T2V0
-O0cv9LVGFG/rpwB3g7OXI8DKMc4m50eDFyZN/1lCvF5oIGlgm4pjdD48sUBk3X9S
-kSvhVXPl0JNHoGg+Gn4FPK0xQTSzv0r4EfxXPw0fU6zfFHclm0k+K6B9Lb/k0z5d
-8Yn8c3JqtXu3F/EzLxVjfWQ2pRHlI9E0q9EuS7UOFD4FD0D3sLfXd8ZNpQ/hdnT1
-7wIDAQAB
------END PUBLIC KEY-----`,
+                publicKeyPem: privateMediaPublicKey,
                 publicKeyName: 'example-media-key',
                 keyGroupName: 'example-media-key-group',
                 keyGroupComment: 'Key group for private media access (example)',
@@ -121,4 +136,25 @@ kSvhVXPl0JNHoGg+Gn4FPK0xQTSzv0r4EfxXPw0fU6zfFHclm0k+K6B9Lb/k0z5d
             value: `aws cloudfront create-invalidation --distribution-id \${PublicMediaCdnId} --paths "/*"`,
         });
     }
+}
+
+// Sample RSA-2048 public key for the private media distribution. The proving
+// row replaces it through CDK context with a key pair generated at run time; no
+// private key is committed.
+const SAMPLE_PRIVATE_MEDIA_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAudf8/iNkQgdvjEdm6xYS
+JAyxd/kGTbJfQNg9YhInb7TSm0dGu0yx8yZ3fnpmH2FBYXZ+NFVW/yfM8xU3FO+e
+bykZ3JCsmEbHMEqDnDqPWy1x7a/0XN1+0R/v6bPQ7EHLa6k7VlZjP+zLBbt2T2V0
+O0cv9LVGFG/rpwB3g7OXI8DKMc4m50eDFyZN/1lCvF5oIGlgm4pjdD48sUBk3X9S
+kSvhVXPl0JNHoGg+Gn4FPK0xQTSzv0r4EfxXPw0fU6zfFHclm0k+K6B9Lb/k0z5d
+8Yn8c3JqtXu3F/EzLxVjfWQ2pRHlI9E0q9EuS7UOFD4FD0D3sLfXd8ZNpQ/hdnT1
+7wIDAQAB
+-----END PUBLIC KEY-----`;
+
+function contextPublicKey(scope: cdk.Stack, name: string, fallback: string): string {
+    const encoded = scope.node.tryGetContext(name) as string | undefined;
+    if (!encoded) {
+        return fallback;
+    }
+    return Buffer.from(encoded, 'base64').toString('utf8');
 }

@@ -129,6 +129,7 @@ type triggerContext struct {
 	hasPush        bool
 	pushBranches   []string
 	hasPullRequest bool
+	prBranches     []string
 	hasDispatch    bool
 }
 
@@ -452,7 +453,12 @@ func (wf *workflowFile) parseTrigger(name string, value *yaml.Node) error {
 		return nil
 	case "pull_request":
 		wf.ctx.hasPullRequest = true
-		return parsePullRequestTrigger(value)
+		branches, err := parsePullRequestTrigger(value)
+		if err != nil {
+			return err
+		}
+		wf.ctx.prBranches = branches
+		return nil
 	case "workflow_dispatch":
 		wf.ctx.hasDispatch = true
 		return parseDispatchTrigger(value)
@@ -494,29 +500,50 @@ func parsePushTrigger(node *yaml.Node) ([]string, error) {
 	return branches, nil
 }
 
-func parsePullRequestTrigger(node *yaml.Node) error {
+// parsePullRequestTrigger models the one pull_request branch filter the
+// operator ruling of 2026-11-06 allows: the examples harness workflow runs only
+// for pull requests targeting staging, because premain and main derive from
+// staging. Any filter that omits staging fails closed: it could hide the staging
+// pull request the parity gate is anchored to. Every other pull_request key stays
+// unmodeled.
+func parsePullRequestTrigger(node *yaml.Node) ([]string, error) {
 	if isNullNode(node) {
-		return nil
+		return nil, nil
 	}
 	if node.Kind != yaml.MappingNode {
-		return fmt.Errorf("pull_request: trigger must be a mapping")
+		return nil, fmt.Errorf("pull_request: trigger must be a mapping")
 	}
+	var branches []string
 	for i := 0; i+1 < len(node.Content); i += 2 {
 		key := node.Content[i].Value
-		if key != "types" {
-			return fmt.Errorf("pull_request: key %q is not modeled; a filter there could hide the staging pull request", key)
-		}
-		values, err := scalarSequence(node.Content[i+1])
-		if err != nil {
-			return fmt.Errorf("pull_request: types %w", err)
-		}
-		for _, required := range []string{"opened", "synchronize"} {
-			if !containsString(values, required) {
-				return fmt.Errorf("pull_request: types must include %q so a staging pull request is re-checked", required)
+		switch key {
+		case "types":
+			values, err := scalarSequence(node.Content[i+1])
+			if err != nil {
+				return nil, fmt.Errorf("pull_request: types %w", err)
 			}
+			for _, required := range []string{"opened", "synchronize"} {
+				if !containsString(values, required) {
+					return nil, fmt.Errorf("pull_request: types must include %q so a staging pull request is re-checked", required)
+				}
+			}
+		case "branches":
+			values, err := scalarSequence(node.Content[i+1])
+			if err != nil {
+				return nil, fmt.Errorf("pull_request: branches %w", err)
+			}
+			if len(values) == 0 {
+				return nil, fmt.Errorf("pull_request: branches must name the staging pull request")
+			}
+			if !containsString(values, stagingBranch) {
+				return nil, fmt.Errorf("pull_request: branches must include %q; a filter that omits it could hide the staging pull request", stagingBranch)
+			}
+			branches = values
+		default:
+			return nil, fmt.Errorf("pull_request: key %q is not modeled; a filter there could hide the staging pull request", key)
 		}
 	}
-	return nil
+	return branches, nil
 }
 
 func parseDispatchTrigger(node *yaml.Node) error {
@@ -908,9 +935,12 @@ func classifyJob(ctx triggerContext, job workflowJob) (*jobClass, bool, error) {
 		}
 		if ctx.hasPullRequest {
 			for _, base := range baseDomain {
+				if !pullRequestTargetsBase(ctx.prBranches, base) {
+					continue
+				}
 				class.prBases[base] = true
 			}
-			class.prAny = true
+			class.prAny = len(ctx.prBranches) == 0
 		}
 		class.dispatch = ctx.hasDispatch
 		return class, false, nil
@@ -927,7 +957,7 @@ func classifyJob(ctx triggerContext, job workflowJob) (*jobClass, bool, error) {
 		}
 	}
 	if ctx.hasPullRequest {
-		if err := classifyPullRequest(condition, class, job.id); err != nil {
+		if err := classifyPullRequest(condition, class, ctx.prBranches, job.id); err != nil {
 			return nil, false, err
 		}
 	}
@@ -953,8 +983,18 @@ func classifyPush(condition expr, pushBranches []string, jobID string) ([]string
 	return sortedKeys(refs), nil
 }
 
-func classifyPullRequest(condition expr, class *jobClass, jobID string) error {
+// pullRequestTargetsBase reports whether a pull_request trigger filtered to
+// prBranches can fire for a pull request targeting base. An unfiltered trigger
+// (nil) fires for every base.
+func pullRequestTargetsBase(prBranches []string, base string) bool {
+	return len(prBranches) == 0 || containsString(prBranches, base)
+}
+
+func classifyPullRequest(condition expr, class *jobClass, prBranches []string, jobID string) error {
 	for _, base := range baseDomain {
+		if !pullRequestTargetsBase(prBranches, base) {
+			continue
+		}
 		for _, head := range headDomain {
 			if head == base {
 				// A same-repository pull request cannot originate from the

@@ -276,6 +276,43 @@ class TestApp(unittest.TestCase):
         self.assertEqual(cm.exception.code, "app.bad_request")
         self.assertEqual(cm.exception.status_code, 400)
 
+    def test_handle_strict_returns_canonical_error_without_registering(self) -> None:
+        cases = [
+            ("invalid pattern", "/x/{}", _ok, "invalid route pattern"),
+            ("nil handler", "/nil", None, "route handler is nil"),
+        ]
+
+        for name, pattern, handler, message in cases:
+            with self.subTest(name=name):
+                app: App = create_app(tier="p0")
+                with self.assertRaises(AppTheoryError) as cm:
+                    app.handle_strict("GET", pattern, handler)
+                app_err = cm.exception
+                self.assertEqual(app_err.code, "app.bad_request")
+                self.assertEqual(app_err.status_code, 400)
+                self.assertIn(message, app_err.message)
+
+                # The fluent path reports the same canonical error, so the two
+                # surfaces cannot drift apart.
+                with self.assertRaises(AppTheoryError) as fluent:
+                    create_app(tier="p0").get(pattern, handler)
+                self.assertEqual(fluent.exception.code, app_err.code)
+                self.assertEqual(fluent.exception.message, app_err.message)
+
+        app = create_app(tier="p0")
+        app.handle_strict("GET", "/dup/{id}", _ok)
+        with self.assertRaises(AppTheoryError) as cm:
+            app.handle_strict("get", "/dup/:id", _ok)
+        self.assertEqual(cm.exception.code, "app.bad_request")
+        self.assertIn("duplicate route", cm.exception.message)
+
+    def test_handle_strict_registers_valid_route_and_serves(self) -> None:
+        app: App = create_app(tier="p0")
+        app.handle_strict("GET", "/ping", _ok)
+        resp = app.serve(Request(method="GET", path="/ping", body=""))
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(resp.body, b"ok")
+
     def test_handle_fails_closed_on_invalid_registrations(self) -> None:
         cases = [
             ("invalid pattern", lambda: create_app(tier="p0").get("/x/{}", _ok), "invalid route pattern"),

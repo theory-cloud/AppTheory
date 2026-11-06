@@ -98,6 +98,20 @@ node --check examples/cdk/microvm-controller/workloads/ts/server.js
 python3 -m py_compile examples/cdk/microvm-controller/workloads/py/server.py
 ```
 
+The same controller can be exercised end to end against local backends, with no
+AWS credentials, through the local runner's session flow:
+
+```bash
+go run ./cmd/apptheory-local session --app examples/cdk/microvm-controller \
+  --profile scripts/local/examples-local.json --backend dynamodb \
+  -c microvmDemoBearerToken=<value>
+```
+
+See [Run an app locally](../../../docs/examples/local-runner.md) for the session
+protocol. The run executes the real CDK authorizer and controller routes; every
+provider-backed operation stops at the managed MicroVM provider boundary, which
+is the named cloud gap.
+
 ## Live deployment shape
 
 The stack needs a bootstrapped CDK environment in a region where Lambda MicroVMs are available. The steward verified `us-east-1` with the AWS-managed base image:

@@ -399,7 +399,7 @@ func canonicalRouteKey(method, path string) (string, string, error) {
 	return method + " " + path, path, nil
 }
 
-func (a *SecureApp) register(method, pattern string, handler Handler, posture AuthPosture, surface SecureRouteSurface, parent, field string) *SecureApp {
+func (a *SecureApp) register(method, pattern string, handler Handler, posture AuthPosture, surface SecureRouteSurface, parent, field string, options ...RouteOption) *SecureApp {
 	core := a.requireCore()
 	if err := posture.validate(); err != nil {
 		panic(err)
@@ -408,7 +408,7 @@ func (a *SecureApp) register(method, pattern string, handler Handler, posture Au
 	if err != nil {
 		panic(err)
 	}
-	if err := core.router.addSecure(method, canonicalPath, handler, surface, posture); err != nil {
+	if err := core.router.addSecure(method, canonicalPath, handler, surface, posture, options...); err != nil {
 		panic(err)
 	}
 	core.secureRoutes = append(core.secureRoutes, SecureRoute{
@@ -419,9 +419,10 @@ func (a *SecureApp) register(method, pattern string, handler Handler, posture Au
 	return a
 }
 
-// Handle registers a posture-bearing HTTP route.
-func (a *SecureApp) Handle(method, pattern string, handler Handler, posture AuthPosture) *SecureApp {
-	return a.register(method, pattern, handler, posture, SecureRouteHTTP, "", "")
+// Handle registers a posture-bearing HTTP route. Route options, including
+// WithRouteGuard, run after the posture gate and before application middleware.
+func (a *SecureApp) Handle(method, pattern string, handler Handler, posture AuthPosture, options ...RouteOption) *SecureApp {
+	return a.register(method, pattern, handler, posture, SecureRouteHTTP, "", "", options...)
 }
 func (a *SecureApp) Get(pattern string, handler Handler, posture AuthPosture) *SecureApp {
 	return a.Handle("GET", pattern, handler, posture)

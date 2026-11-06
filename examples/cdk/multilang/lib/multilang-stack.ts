@@ -1,5 +1,5 @@
-import { execSync } from "node:child_process";
-import { copyFileSync, mkdirSync, readdirSync } from "node:fs";
+import { execFileSync, execSync } from "node:child_process";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import * as path from "node:path";
 
 import {
@@ -15,9 +15,12 @@ import {
 import * as cdk from "aws-cdk-lib";
 import { Stack } from "aws-cdk-lib";
 import type { StackProps } from "aws-cdk-lib";
+import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as events from "aws-cdk-lib/aws-events";
+import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as sns from "aws-cdk-lib/aws-sns";
 import * as lambdaEventSources from "aws-cdk-lib/aws-lambda-event-sources";
 import * as sqs from "aws-cdk-lib/aws-sqs";
 import type { Construct } from "constructs";
@@ -32,6 +35,9 @@ function contextValue(app: cdk.App, key: string): string | undefined {
 function copyDir(src: string, dest: string): void {
   mkdirSync(dest, { recursive: true });
   for (const entry of readdirSync(src, { withFileTypes: true })) {
+    if (shouldSkipAssetEntry(entry.name)) {
+      continue;
+    }
     const from = path.join(src, entry.name);
     const to = path.join(dest, entry.name);
     if (entry.isDirectory()) {
@@ -42,6 +48,74 @@ function copyDir(src: string, dest: string): void {
       copyFileSync(from, to);
     }
   }
+}
+
+function shouldSkipAssetEntry(name: string): boolean {
+  return (
+    name === "__pycache__" ||
+    name.endsWith("_test.go") ||
+    name.endsWith(".pyc") ||
+    name.endsWith(".pyo") ||
+    name.endsWith(".egg-info")
+  );
+}
+
+const assetExclude = [
+  "__pycache__",
+  "**/__pycache__",
+  "*.pyc",
+  "**/*.pyc",
+  "*.pyo",
+  "**/*.pyo",
+  "*.egg-info",
+  "**/*.egg-info",
+];
+
+function resetAssetStage(exampleDir: string, name: string): string {
+  const stageDir = path.join(exampleDir, ".cdk-asset-stage", name);
+  rmSync(stageDir, { force: true, recursive: true });
+  mkdirSync(stageDir, { recursive: true });
+  return stageDir;
+}
+
+function stageHandlerFiles(handlersDir: string, stageDir: string, files: string[]): void {
+  for (const file of files) {
+    copyFileSync(path.join(handlersDir, file), path.join(stageDir, file));
+  }
+}
+
+// The vendored AppTheory runtime imports its declared dependencies, including
+// @theory-cloud/tabletheory-ts, when the barrel entry loads. A Lambda asset
+// that carries only ts/dist therefore fails at init in a clean runtime. Stage
+// the runtime's production dependency closure next to the vendored dist so the
+// asset is self-contained.
+function stageNodeDependencies(runtimeDir: string, stageDir: string): void {
+  const runtimeNodeModules = path.join(runtimeDir, "node_modules");
+  const marker = path.join(runtimeNodeModules, "@theory-cloud", "tabletheory-ts", "package.json");
+  if (!existsSync(marker)) {
+    throw new Error(
+      `missing ${marker}; run 'cd ts && npm ci --ignore-scripts' before synthesizing the TypeScript asset`,
+    );
+  }
+  const listed = execFileSync("npm", ["ls", "--omit=dev", "--all", "--parseable"], {
+    cwd: runtimeDir,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const prefix = `${runtimeNodeModules}${path.sep}`;
+  const destination = path.join(stageDir, "node_modules");
+  for (const line of listed.split("\n")) {
+    const dependency = line.trim();
+    if (!dependency.startsWith(prefix)) {
+      continue;
+    }
+    copyDir(dependency, path.join(destination, dependency.slice(prefix.length)));
+  }
+}
+
+function cleanOutputDir(outputDir: string): void {
+  rmSync(outputDir, { force: true, recursive: true });
+  mkdirSync(outputDir, { recursive: true });
 }
 
 export class MultiLangStack extends Stack {
@@ -103,21 +177,23 @@ export class MultiLangStack extends Stack {
       environment: { ...commonEnv, APPTHEORY_LANG: "go" },
     });
 
+    const tsHandlersDir = path.join(__dirname, "..", "handlers", "ts");
+    const tsStageDir = resetAssetStage(path.join(__dirname, ".."), "ts");
+    stageHandlerFiles(tsHandlersDir, tsStageDir, ["handler.mjs", "package.json"]);
+    copyDir(path.join(repoRoot, "ts", "dist"), path.join(tsStageDir, "vendor", "apptheory"));
+    stageNodeDependencies(path.join(repoRoot, "ts"), tsStageDir);
     const tsHandler = new AppTheoryFunction(this, "TsHandler", {
       runtime: lambda.Runtime.NODEJS_24_X,
       handler: "handler.handler",
-      code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers", "ts"), {
+      code: lambda.Code.fromAsset(tsStageDir, {
+        exclude: assetExclude,
         bundling: {
           image: lambda.Runtime.NODEJS_24_X.bundlingImage,
-          command: ["bash", "-c", "cp -R /asset-input/* /asset-output/"],
+          command: ["bash", "-c", "set -euo pipefail && cp -R /asset-input/. /asset-output/"],
           local: {
             tryBundle(outputDir: string) {
-              const handlerDir = path.join(__dirname, "..", "handlers", "ts");
-              copyFileSync(path.join(handlerDir, "handler.mjs"), path.join(outputDir, "handler.mjs"));
-              copyFileSync(path.join(handlerDir, "package.json"), path.join(outputDir, "package.json"));
-              const sdkIn = path.join(repoRoot, "ts", "dist", "index.js");
-              mkdirSync(path.join(outputDir, "vendor", "apptheory"), { recursive: true });
-              copyFileSync(sdkIn, path.join(outputDir, "vendor", "apptheory", "index.js"));
+              cleanOutputDir(outputDir);
+              copyDir(tsStageDir, outputDir);
               return true;
             },
           },
@@ -126,19 +202,22 @@ export class MultiLangStack extends Stack {
       environment: { ...commonEnv, APPTHEORY_LANG: "ts" },
     });
 
+    const pyHandlersDir = path.join(__dirname, "..", "handlers", "py");
+    const pyStageDir = resetAssetStage(path.join(__dirname, ".."), "py");
+    stageHandlerFiles(pyHandlersDir, pyStageDir, ["handler.py"]);
+    copyDir(path.join(repoRoot, "py", "src", "apptheory"), path.join(pyStageDir, "apptheory"));
     const pyHandler = new AppTheoryFunction(this, "PyHandler", {
       runtime: lambda.Runtime.PYTHON_3_14,
       handler: "handler.handler",
-      code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers", "py"), {
+      code: lambda.Code.fromAsset(pyStageDir, {
+        exclude: assetExclude,
         bundling: {
           image: lambda.Runtime.PYTHON_3_14.bundlingImage,
-          command: ["bash", "-c", "cp -R /asset-input/* /asset-output/"],
+          command: ["bash", "-c", "set -euo pipefail && cp -R /asset-input/. /asset-output/"],
           local: {
             tryBundle(outputDir: string) {
-              const handlerDir = path.join(__dirname, "..", "handlers", "py");
-              copyFileSync(path.join(handlerDir, "handler.py"), path.join(outputDir, "handler.py"));
-              const sdkIn = path.join(repoRoot, "py", "src", "apptheory");
-              copyDir(sdkIn, path.join(outputDir, "apptheory"));
+              cleanOutputDir(outputDir);
+              copyDir(pyStageDir, outputDir);
               return true;
             },
           },
@@ -146,6 +225,29 @@ export class MultiLangStack extends Stack {
       }),
       environment: { ...commonEnv, APPTHEORY_LANG: "py" },
     });
+
+    // One standard SNS topic and Lambda subscription per language. SNS does
+    // not support Lambda subscriptions on FIFO topics, so these are standard
+    // topics; the local runner delivers the documented Lambda SNS record to
+    // each handler, which records it for the parity row.
+    const snsTopics: Record<string, sns.CfnTopic> = {};
+    for (const [lang, handler] of [["go", goHandler], ["ts", tsHandler], ["py", pyHandler]] as const) {
+      const topic = new sns.CfnTopic(this, `${lang.toUpperCase()}SnsTopic`, {
+        topicName: `${name}-${lang}-events`,
+      });
+      new sns.CfnSubscription(this, `${lang.toUpperCase()}SnsSubscription`, {
+        topicArn: topic.ref,
+        protocol: "lambda",
+        endpoint: handler.fn.functionArn,
+      });
+      handler.fn.addPermission(`${lang.toUpperCase()}SnsInvoke`, {
+        principal: new iam.ServicePrincipal("sns.amazonaws.com"),
+        sourceArn: topic.ref,
+      });
+      handler.fn.addEnvironment("APPTHEORY_DEMO_TOPIC_ARN", topic.ref);
+      handler.fn.addEnvironment("APPTHEORY_DEMO_SNS_NAME", topic.getAtt("TopicName").toString());
+      snsTopics[lang] = topic;
+    }
 
     const goQueue = new sqs.Queue(this, "GoQueue");
     goHandler.fn.addEnvironment("APPTHEORY_DEMO_QUEUE_NAME", goQueue.queueName);
@@ -155,9 +257,25 @@ export class MultiLangStack extends Stack {
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
       stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
+      timeToLiveAttribute: "expiresAt",
     });
     goHandler.fn.addEnvironment("APPTHEORY_DEMO_TABLE_NAME", goTable.tableName);
-    new AppTheoryDynamoDBStreamMapping(this, "GoStream", { consumer: goHandler.fn, table: goTable });
+    // The Go mapping proves the failure path: a poison record exhausts two
+    // retries, the batch is bisected at the reported sequence number, and the
+    // discarded batch pointer reaches the on-failure SQS queue.
+    const goStreamDlq = new sqs.Queue(this, "GoStreamDlq", {
+      queueName: `${name}-go-stream-dlq`,
+    });
+    new AppTheoryDynamoDBStreamMapping(this, "GoStream", {
+      consumer: goHandler.fn,
+      table: goTable,
+      startingPosition: lambda.StartingPosition.TRIM_HORIZON,
+      batchSize: 10,
+      retryAttempts: 2,
+      bisectBatchOnError: true,
+      reportBatchItemFailures: true,
+      onFailure: new lambdaEventSources.SqsDlq(goStreamDlq),
+    });
 
     const goSchedule = new AppTheoryEventBridgeHandler(this, "GoSchedule", {
       handler: goHandler.fn,
@@ -182,9 +300,14 @@ export class MultiLangStack extends Stack {
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
       stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
+      timeToLiveAttribute: "expiresAt",
     });
     tsHandler.fn.addEnvironment("APPTHEORY_DEMO_TABLE_NAME", tsTable.tableName);
-    new AppTheoryDynamoDBStreamMapping(this, "TsStream", { consumer: tsHandler.fn, table: tsTable });
+    new AppTheoryDynamoDBStreamMapping(this, "TsStream", {
+      consumer: tsHandler.fn,
+      table: tsTable,
+      startingPosition: lambda.StartingPosition.TRIM_HORIZON,
+    });
 
     const tsSchedule = new AppTheoryEventBridgeHandler(this, "TsSchedule", {
       handler: tsHandler.fn,
@@ -209,9 +332,14 @@ export class MultiLangStack extends Stack {
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
       stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
+      timeToLiveAttribute: "expiresAt",
     });
     pyHandler.fn.addEnvironment("APPTHEORY_DEMO_TABLE_NAME", pyTable.tableName);
-    new AppTheoryDynamoDBStreamMapping(this, "PyStream", { consumer: pyHandler.fn, table: pyTable });
+    new AppTheoryDynamoDBStreamMapping(this, "PyStream", {
+      consumer: pyHandler.fn,
+      table: pyTable,
+      startingPosition: lambda.StartingPosition.TRIM_HORIZON,
+    });
 
     const pySchedule = new AppTheoryEventBridgeHandler(this, "PySchedule", {
       handler: pyHandler.fn,
@@ -264,6 +392,61 @@ export class MultiLangStack extends Stack {
       handler: pyHandler.fn,
       stageName: "dev",
     });
+
+    // A custom route is selected by the API's route selection expression
+    // ($request.body.action). AppTheoryWebSocketApi declares the three
+    // predefined routes and does not expose its integration, so the row uses
+    // the L1 escape hatch: reuse the $default route's integration target.
+    // The construct and this stack can resolve different aws-cdk-lib copies, so
+    // the route is found structurally (CfnResource, resource type) rather than
+    // with instanceof.
+    function cfnRouteOf(api: apigwv2.WebSocketApi, routeKey: string): apigwv2.CfnRoute {
+      for (const child of api.node.findAll()) {
+        if (!cdk.CfnResource.isCfnResource(child)) continue;
+        if (child.cfnResourceType !== "AWS::ApiGatewayV2::Route") continue;
+        const route = child as apigwv2.CfnRoute;
+        if (route.routeKey === routeKey) {
+          return route;
+        }
+      }
+      throw new Error(`the WebSocket API has no ${routeKey} route`);
+    }
+    function addCustomRoute(api: apigwv2.WebSocketApi, routeKey: string): void {
+      const defaultRoute = cfnRouteOf(api, "$default");
+      new apigwv2.CfnRoute(api, `CustomRoute${routeKey}`, {
+        apiId: api.apiId,
+        routeKey,
+        authorizationType: "NONE",
+        target: defaultRoute.target,
+      });
+    }
+    addCustomRoute(goWs.api, "chat");
+    addCustomRoute(tsWs.api, "chat");
+    addCustomRoute(pyWs.api, "chat");
+
+    // One API declares a $connect authorizer: a REQUEST Lambda authorizer that
+    // returns an IAM policy. The local runner runs it and matches the policy
+    // against the $connect method ARN. The L1 resources are deliberate:
+    // AppTheoryWebSocketApi has no authorizer property.
+    const wsAuthorizerFn = new lambda.Function(this, "WsAuthorizerFn", {
+      runtime: lambda.Runtime.NODEJS_24_X,
+      handler: "ws-authorizer.handler",
+      code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers")),
+      timeout: cdk.Duration.seconds(10),
+      description: "WebSocket $connect REQUEST authorizer; returns an IAM policy",
+    });
+    const wsAuthorizer = new apigwv2.CfnAuthorizer(this, "GoWsConnectAuthorizer", {
+      apiId: goWs.api.apiId,
+      authorizerType: "REQUEST",
+      name: `${name}-go-connect`,
+      identitySource: ["$request.header.Authorization"],
+      authorizerUri:
+        `arn:aws:apigateway:${cdk.Stack.of(this).region}:lambda:path/2015-03-31/functions/` +
+        `${wsAuthorizerFn.functionArn}/invocations`,
+    });
+    const goConnectRoute = cfnRouteOf(goWs.api, "$connect");
+    goConnectRoute.authorizationType = "CUSTOM";
+    goConnectRoute.authorizerId = wsAuthorizer.ref;
 
     new cdk.CfnOutput(this, "GoWebSocketUrl", { value: goWs.stage.url });
     new cdk.CfnOutput(this, "TsWebSocketUrl", { value: tsWs.stage.url });

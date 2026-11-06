@@ -2,12 +2,13 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"pgregory.net/rapid"
 
-	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v7/runtime"
 )
 
 // Feature: cloud-mcp-gateway, Property 9: Session Store Round-Trip
@@ -94,8 +95,8 @@ func TestMemorySessionStorePutReapsExpiredSessions(t *testing.T) {
 	store := NewMemorySessionStore(WithClock(fixedClock(base)))
 	ctx := context.Background()
 
-	if err := store.Put(ctx, &Session{ID: "expired", ExpiresAt: base.Add(-time.Second)}); err != nil {
-		t.Fatalf("Put expired failed: %v", err)
+	if err := store.Put(ctx, &Session{ID: "expired", ExpiresAt: base.Add(-time.Second)}); !errors.Is(err, ErrSessionExpired) {
+		t.Fatalf("Put expired error = %v, want %v", err, ErrSessionExpired)
 	}
 	if err := store.Put(ctx, &Session{ID: "fresh", ExpiresAt: base.Add(time.Minute)}); err != nil {
 		t.Fatalf("Put fresh failed: %v", err)
@@ -106,7 +107,7 @@ func TestMemorySessionStorePutReapsExpiredSessions(t *testing.T) {
 	total := len(store.store)
 	store.mu.RUnlock()
 	if expiredStillStored {
-		t.Fatal("Put must reap expired sessions")
+		t.Fatal("Put must not store an expired session")
 	}
 	if total != 1 {
 		t.Fatalf("stored sessions = %d, want 1", total)

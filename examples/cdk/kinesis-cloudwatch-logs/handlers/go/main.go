@@ -9,13 +9,50 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
 
-	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v7/runtime"
 )
 
 const streamNameEnv = "APPTHEORY_KINESIS_STREAM_NAME"
 
+const receiptQueueEnv = "RECEIPT_QUEUE_URL"
+
 type cloudWatchLogsProcessor func(context.Context, apptheory.CloudWatchLogsSubscription) error
+
+// sendReceipt records one delivered record in the example's receipt queue, so
+// the harness can assert the real payload the local mapping delivered.
+func sendReceipt(ctx context.Context, streamARN string, decoded apptheory.CloudWatchLogsSubscription) error {
+	queueURL := strings.TrimSpace(os.Getenv(receiptQueueEnv))
+	if queueURL == "" {
+		return nil
+	}
+	receipt := map[string]any{
+		"kind":                "kinesis",
+		"streamArn":           streamARN,
+		"logGroup":            decoded.LogGroup,
+		"logStream":           decoded.LogStream,
+		"messageType":         decoded.MessageType,
+		"subscriptionFilters": decoded.SubscriptionFilters,
+		"logEvents":           decoded.LogEvents,
+	}
+	body, err := json.Marshal(receipt)
+	if err != nil {
+		return err
+	}
+	cfg, err := config.LoadDefaultConfig(ctx)
+	if err != nil {
+		return err
+	}
+	client := sqs.NewFromConfig(cfg)
+	_, err = client.SendMessage(ctx, &sqs.SendMessageInput{
+		QueueUrl:    aws.String(queueURL),
+		MessageBody: aws.String(string(body)),
+	})
+	return err
+}
 
 func buildApp(logger *log.Logger, processor cloudWatchLogsProcessor) *apptheory.App {
 	if logger == nil {
@@ -39,7 +76,7 @@ func buildApp(logger *log.Logger, processor cloudWatchLogsProcessor) *apptheory.
 
 		// SafeSummary intentionally excludes raw CloudWatch log messages.
 		logger.Printf("processed cloudwatch logs subscription %s", decoded.SafeSummary.SafeLog)
-		return nil
+		return sendReceipt(ctx.Context(), record.EventSourceArn, decoded)
 	})
 	return app
 }

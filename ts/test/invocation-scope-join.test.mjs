@@ -19,12 +19,14 @@ import {
 //   ts/src/app.ts|timeoutMiddleware.<anonymous>[#1]
 //     the timeout middleware's abort timer, discharged by the proof (its
 //     clearTimeout is in a finally of the same scope), so it needs no baseline
-//     entry — this test is what still pins the join.
+//     entry. The middleware starts no handler task: the tests below pin that the
+//     handler runs on the invoking task and that the timeout is reported only
+//     after it exits.
 //
-// Each test is strict: it asserts an ordering that only holds while the join is
-// present, so deleting the join makes the test fail instead of merely weakening
-// it. The tests drive the runtime's real timers through node:test's mock clock,
-// so the 5000 ms drain budget and the middleware's abort deadline are exercised
+// Each test is strict: it asserts an ordering that only holds while the handler
+// runs inline, so bringing back a second execution context makes the test fail
+// instead of merely weakening it. The drain tests drive the runtime's real
+// timers through node:test's mock clock, so the 5000 ms drain budget is exercised
 // without a wall-clock wait.
 //
 // The tests load the built package, so they exercise the source under test only
@@ -34,11 +36,6 @@ assertDistIsFresh();
 
 // Mirrors APIGATEWAY_V2_STREAMING_BODY_TIMEOUT_MS in src/internal/aws-http.ts.
 const STREAMING_BODY_TIMEOUT_MS = 5000;
-
-const MIDDLEWARE_TIMEOUT_MS = 20;
-
-// Mirrors TIMEOUT_MIDDLEWARE_JOIN_GRACE_MS in src/app.ts.
-const TIMEOUT_MIDDLEWARE_JOIN_GRACE_MS = 250;
 
 function flush() {
   return new Promise((resolve) => {
@@ -304,69 +301,146 @@ test("http api v2 adapter clears its drain budget timer on every read", async ()
   }
 });
 
-test("timeout middleware returns at the deadline for an uncooperative handler", async () => {
-  mock.timers.enable({ apis: ["setTimeout", "Date"] });
-  try {
-    const middleware = timeoutMiddleware({
-      defaultTimeoutMs: MIDDLEWARE_TIMEOUT_MS,
-      timeoutMessage: "too slow",
+test("timeout middleware returns an ordinary result untouched", async () => {
+  const app = createApp({ tier: "p0" });
+  app.use(timeoutMiddleware({ defaultTimeoutMs: 1000 }));
+
+  app.get("/ok", async () => okResponse("ok"));
+
+  const resp = await app.serve(request("/ok"));
+  assert.equal(resp.status, 200);
+  assert.equal(Buffer.from(resp.body).toString("utf8"), "ok");
+});
+
+test("timeout middleware reports the timeout after a cooperative handler unwinds", async () => {
+  const app = createApp({ tier: "p0" });
+  app.use(timeoutMiddleware({ defaultTimeoutMs: 5 }));
+
+  const order = [];
+  let aborted = false;
+  app.get("/cooperative", async (ctx) => {
+    const signal = abortSignalFromContextCarrier(ctx?.ctx ?? null);
+    await new Promise((resolve) => {
+      if (signal?.aborted) {
+        resolve();
+        return;
+      }
+      signal?.addEventListener("abort", () => resolve(), { once: true });
     });
-    const ctx = new Context({ request: request("/uncooperative") });
-    const order = [];
-    const state = { settled: false, error: null };
+    aborted = signal?.aborted === true;
+    order.push("handler:finish");
+    return okResponse("late");
+  });
 
-    const served = middleware(ctx, async () => {
-      // Ignores the abort signal: the middleware must report the timeout at the
-      // deadline (plus its bounded join), not after this finishes.
-      order.push("handler:start");
-      await new Promise((resolve) => {
-        setTimeout(resolve, 10_000);
-      });
-      order.push("handler:finish");
-      return okResponse("late");
-    });
+  const resp = await app.serve(request("/cooperative"));
+  const body = JSON.parse(Buffer.from(resp.body).toString("utf8"));
 
-    const settled = served.then(
-      () => {
-        order.push("middleware:settled");
-        state.settled = true;
-      },
-      (err) => {
-        order.push("middleware:settled");
-        state.settled = true;
-        state.error = err;
-      },
-    );
+  assert.equal(resp.status, 408);
+  assert.equal(body.error.code, "app.timeout");
+  assert.equal(aborted, true, "the handler did not observe its abort signal");
+  assert.deepEqual(
+    order,
+    ["handler:finish"],
+    "the middleware reported the timeout before the handler unwound",
+  );
+});
 
-    mock.timers.tick(MIDDLEWARE_TIMEOUT_MS);
-    await flush();
+test("timeout middleware waits for an uncooperative handler before reporting the timeout", async () => {
+  const app = createApp({ tier: "p0" });
+  app.use(timeoutMiddleware({ defaultTimeoutMs: 5 }));
 
-    assert.ok(
-      order.includes("handler:start"),
-      "the middleware did not start the handler",
-    );
-    assert.equal(
-      state.settled,
-      false,
-      "the middleware settled before its bounded join grace elapsed",
-    );
+  const order = [];
+  let release;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  app.get("/uncooperative", async () => {
+    // Ignores the abort signal entirely: the middleware must not return until
+    // this handler exits, so it cannot produce an early 408 or a late write.
+    order.push("handler:start");
+    await held;
+    order.push("handler:finish");
+    return okResponse("late");
+  });
 
-    // Advance past the bounded join grace: the middleware settles with
-    // app.timeout even though the handler is still running.
-    mock.timers.tick(TIMEOUT_MIDDLEWARE_JOIN_GRACE_MS + 1);
-    await flush();
-    await settled;
+  let settled = false;
+  let resp = null;
+  const served = app.serve(request("/uncooperative")).then((out) => {
+    settled = true;
+    resp = out;
+  });
 
-    assert.equal(state.error?.code, "app.timeout");
-    assert.equal(
-      order.includes("handler:finish"),
-      false,
-      "the middleware waited for the handler it timed out",
-    );
-    assert.equal(order[order.length - 1], "middleware:settled");
-  } finally {
-    mock.timers.reset();
-  }
+  await new Promise((resolve) => {
+    setTimeout(resolve, 500);
+  });
+  assert.equal(
+    settled,
+    false,
+    "the middleware returned while the handler it timed out was still running",
+  );
+  assert.deepEqual(
+    order,
+    ["handler:start"],
+    "the handler ran past the middleware return",
+  );
+
+  release();
+  await served;
+
+  const body = JSON.parse(Buffer.from(resp.body).toString("utf8"));
+  assert.equal(resp.status, 408);
+  assert.equal(body.error.code, "app.timeout");
+  assert.deepEqual(
+    order,
+    ["handler:start", "handler:finish"],
+    "the handler's work landed after the middleware returned",
+  );
+});
+
+test("timeout middleware holds a real API Gateway v2 invocation until the handler exits", async () => {
+  const app = createApp({ tier: "p0" });
+  app.use(timeoutMiddleware({ defaultTimeoutMs: 5 }));
+
+  const order = [];
+  let release;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  app.get("/held", async () => {
+    order.push("handler:start");
+    await held;
+    order.push("handler:finish");
+    return okResponse("late");
+  });
+
+  let settled = false;
+  let out = null;
+  const served = app.serveAPIGatewayV2(apigwV2Event("/held")).then((response) => {
+    settled = true;
+    out = response;
+  });
+
+  await new Promise((resolve) => {
+    setTimeout(resolve, 500);
+  });
+  assert.equal(
+    settled,
+    false,
+    "the adapter returned while the handler it timed out was still running",
+  );
+  assert.deepEqual(order, ["handler:start"]);
+
+  release();
+  await served;
+
+  const body = JSON.parse(out.body);
+  assert.equal(out.statusCode, 408);
+  assert.equal(body.error.code, "app.timeout");
+  assert.deepEqual(
+    order,
+    ["handler:start", "handler:finish"],
+    "the adapter returned before the handler it timed out finished",
+  );
 });
 
 test("timeout middleware clears its abort timer before it returns", async () => {

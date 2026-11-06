@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/aws/aws-lambda-go/lambda"
-	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
-	"github.com/theory-cloud/apptheory/v6/runtime/mcp"
+	apptheory "github.com/theory-cloud/apptheory/v7/runtime"
+	"github.com/theory-cloud/apptheory/v7/runtime/mcp"
 )
 
 type countdownArgs struct {
@@ -49,7 +49,9 @@ func buildServer() *mcp.Server {
 				"total":   in.Steps,
 				"message": fmt.Sprintf("step %d/%d", i, in.Steps),
 			}})
-			time.Sleep(30 * time.Millisecond)
+			// The harness asserts the first event crosses the local transport
+			// before this countdown finishes, so the gap is observable.
+			time.Sleep(500 * time.Millisecond)
 		}
 
 		return &mcp.ToolResult{

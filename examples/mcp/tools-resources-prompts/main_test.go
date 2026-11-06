@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/theory-cloud/apptheory/v6/testkit"
-	mcptest "github.com/theory-cloud/apptheory/v6/testkit/mcp"
+	"github.com/theory-cloud/apptheory/v7/testkit"
+	mcptest "github.com/theory-cloud/apptheory/v7/testkit/mcp"
 )
 
 func TestToolsResourcesPromptsExample(t *testing.T) {

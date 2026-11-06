@@ -30,19 +30,20 @@ File layout is organized by behavior domain. The historical tier/milestone label
 - `contract-tests/fixtures/objectstore/` — SP13 bounded object-store Put, capped Get, Delete, deterministic fake behavior, and forbidden operation errors
 - `contract-tests/fixtures/vectorstore/` — SP14 semantic vector-store, Bedrock Titan embedding, metadata filter, and deterministic fake behavior
 
-The current corpus contains 319 machine-readable contract vectors plus the internal schema file. <!-- apptheory-fixture-count: 319 -->
-Of those, 306 are single-envelope behavior fixtures executed by the Go, TypeScript, and Python runners. The thirteen
+The current corpus contains 320 machine-readable contract vectors plus the internal schema file. <!-- apptheory-fixture-count: 320 -->
+Of those, 306 are single-envelope behavior fixtures executed by the Go, TypeScript, and Python runners. The fourteen
 nested tables under `routing/` — `limiter/multi-window-cancellation.v1.json`, `mcp-route-algebra/expectations.json`, `mcp-route-algebra/facade-route-inventory.json`,
 `mcp-auth-facade/facade-transport-posture.v1.json`, `mcp-auth-facade/facade-route-model.v1.json`,
 `mcp-auth-facade/jwks-validator.v1.json`, `mcp-auth-facade/discovery-bootstrap.v1.json`,
 `mcp-auth-facade/route-challenge.v1.json`, `mcp-auth-facade/facade-provider-conformance.v1.json`,
 `mcp-auth-facade/facade-store-conformance.v1.json`, `mcp-auth-facade/facade-conformance.v1.json`,
-`mcp-auth-facade/facade-journey.v1.json`, and `mcp-auth-facade/facade-threat-controls.v1.json` — are deliberate
+`mcp-auth-facade/facade-middleware-order.v1.json`, `mcp-auth-facade/facade-journey.v1.json`, and
+`mcp-auth-facade/facade-threat-controls.v1.json` — are deliberate
 exceptions: the generic harness assumes all three runtime legs participate and only discovers one directory level,
 while these versioned contracts ship as loader tests. Go and CDK tests load the four route/facade tables directly, and
 the Go, TypeScript, and Python suites each load the three M2 acceptance tables, the two M3a provider/store
-conformance tables, and the M3c-1a facade conformance and M3c-2 facade journey and threat-controls tables, so route
-and facade literals each exist exactly once.
+conformance tables, the M3c-1a facade conformance, the M3c-2 facade journey and threat-controls tables, and the
+security-M1 middleware-order table, so route and facade literals each exist exactly once.
 The generic schema gate validates one level deep, so the nested tables are validated by their loaders.
 
 ## Schema gate

@@ -18,10 +18,12 @@ import (
 )
 
 type fakeDynamoStreamSpillStore struct {
-	mu        sync.Mutex
-	objects   map[string][]byte
-	gets      int
-	beforePut func(string)
+	mu             sync.Mutex
+	objects        map[string][]byte
+	gets           int
+	beforePut      func(string)
+	deleteFailures int
+	deleteErr      error
 }
 
 func newFakeDynamoStreamSpillStore() *fakeDynamoStreamSpillStore {
@@ -63,6 +65,13 @@ func (s *fakeDynamoStreamSpillStore) delete(_ context.Context, key string) error
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if s.deleteFailures > 0 {
+		s.deleteFailures--
+		if s.deleteErr != nil {
+			return s.deleteErr
+		}
+		return errors.New("spill delete failed")
+	}
 	delete(s.objects, key)
 	return nil
 }
@@ -111,6 +120,7 @@ type fakeMCPTableDB struct {
 	session                 map[string]sessionRecord
 	streams                 map[string]map[string]dynamoStreamRecord
 	beforeCreateStreamEvent func(dynamoStreamRecord)
+	beforeTransactExecute   func()
 	afterMatchStreamRecords func(*fakeMCPTableQuery, []dynamoStreamRecord)
 }
 
@@ -211,12 +221,19 @@ func expireStreamRecord(t *testing.T, db *fakeMCPTableDB, sessionID, eventID str
 type fakeMCPTransactionBuilder struct {
 	db              *fakeMCPTableDB
 	conditionChecks []fakeMCPTransactionConditionCheck
+	updates         []fakeMCPTransactionUpdate
 	puts            []dynamoStreamRecord
 	creates         []dynamoStreamRecord
 }
 
 type fakeMCPTransactionConditionCheck struct {
 	record     dynamoStreamRecord
+	conditions []tablecore.TransactCondition
+}
+
+type fakeMCPTransactionUpdate struct {
+	record     dynamoStreamRecord
+	fields     []string
 	conditions []tablecore.TransactCondition
 }
 
@@ -237,10 +254,18 @@ func (b *fakeMCPTransactionBuilder) Create(model any, _ ...tablecore.TransactCon
 }
 
 func (b *fakeMCPTransactionBuilder) Update(
-	_ any,
-	_ []string,
-	_ ...tablecore.TransactCondition,
+	model any,
+	fields []string,
+	conditions ...tablecore.TransactCondition,
 ) tablecore.TransactionBuilder {
+	record, ok := extractStreamRecord(model)
+	if ok {
+		b.updates = append(b.updates, fakeMCPTransactionUpdate{
+			record:     record,
+			fields:     append([]string(nil), fields...),
+			conditions: append([]tablecore.TransactCondition(nil), conditions...),
+		})
+	}
 	return b
 }
 
@@ -296,6 +321,10 @@ func (b *fakeMCPTransactionBuilder) execute(ctx context.Context) error {
 	b.db.mu.Lock()
 	defer b.db.mu.Unlock()
 
+	if b.db.beforeTransactExecute != nil {
+		b.db.beforeTransactExecute()
+	}
+
 	for _, check := range b.conditionChecks {
 		existing, exists := b.db.lockedStreamRecord(check.record.SessionID, check.record.EventID)
 		for _, condition := range check.conditions {
@@ -303,6 +332,31 @@ func (b *fakeMCPTransactionBuilder) execute(ctx context.Context) error {
 				return tableerrors.ErrConditionFailed
 			}
 		}
+	}
+
+	for _, update := range b.updates {
+		existing, exists := b.db.lockedStreamRecord(update.record.SessionID, update.record.EventID)
+		for _, condition := range update.conditions {
+			if !fakeMCPTransactConditionMet(existing, exists, condition) {
+				return tableerrors.ErrConditionFailed
+			}
+		}
+		if !exists {
+			return tableerrors.ErrConditionFailed
+		}
+		for _, field := range update.fields {
+			value, ok := fakeMCPStreamFieldValue(update.record, true, field)
+			if !ok {
+				return errors.New("unsupported transactional update field")
+			}
+			if err := fakeMCPSetStreamField(&existing, field, value); err != nil {
+				return err
+			}
+		}
+		if b.db.streams[update.record.SessionID] == nil {
+			b.db.streams[update.record.SessionID] = make(map[string]dynamoStreamRecord)
+		}
+		b.db.streams[update.record.SessionID][update.record.EventID] = existing
 	}
 
 	for _, record := range b.puts {
@@ -867,6 +921,26 @@ func fakeMCPMatchStreamCondition(record dynamoStreamRecord, exists bool, conditi
 			return false
 		}
 		return reflect.DeepEqual(value, condition.value)
+	case "<", "<=", ">", ">=":
+		value, ok := fakeMCPStreamFieldValue(record, exists, condition.field)
+		if !ok {
+			return false
+		}
+		actual, actualOK := fakeMCPInt64(value)
+		want, wantOK := fakeMCPInt64(condition.value)
+		if !actualOK || !wantOK {
+			return false
+		}
+		switch condition.operator {
+		case "<":
+			return actual < want
+		case "<=":
+			return actual <= want
+		case ">":
+			return actual > want
+		default:
+			return actual >= want
+		}
 	default:
 		return false
 	}
@@ -920,6 +994,12 @@ func fakeMCPStreamFieldExists(record dynamoStreamRecord, exists bool, field stri
 		return record.DataStorage != ""
 	case "NextSeq":
 		return record.Kind == dynamoStreamRecordKindSession
+	case "AggregateVersion":
+		return record.AggregateVersion != 0
+	case "EventCount":
+		return record.Kind == dynamoStreamRecordKindSession
+	case "AggregateBytes":
+		return record.Kind == dynamoStreamRecordKindSession
 	case "Closed":
 		return record.Kind == dynamoStreamRecordKindStream
 	case "Deleted":
@@ -959,6 +1039,12 @@ func fakeMCPStreamFieldValue(record dynamoStreamRecord, exists bool, field strin
 		return record.DataStorage, true
 	case "NextSeq":
 		return record.NextSeq, true
+	case "AggregateVersion":
+		return record.AggregateVersion, true
+	case "EventCount":
+		return record.EventCount, true
+	case "AggregateBytes":
+		return record.AggregateBytes, true
 	case "Closed":
 		return record.Closed, true
 	case "Deleted":
@@ -1042,6 +1128,24 @@ func fakeMCPSetStreamField(record *dynamoStreamRecord, field string, value any) 
 			return errors.New("expected NextSeq to be numeric")
 		}
 		record.NextSeq = v
+	case "AggregateVersion":
+		v, ok := fakeMCPInt64(value)
+		if !ok {
+			return errors.New("expected AggregateVersion to be numeric")
+		}
+		record.AggregateVersion = v
+	case "EventCount":
+		v, ok := fakeMCPInt64(value)
+		if !ok {
+			return errors.New("expected EventCount to be numeric")
+		}
+		record.EventCount = v
+	case "AggregateBytes":
+		v, ok := fakeMCPInt64(value)
+		if !ok {
+			return errors.New("expected AggregateBytes to be numeric")
+		}
+		record.AggregateBytes = v
 	case "Closed":
 		v, ok := value.(bool)
 		if !ok {

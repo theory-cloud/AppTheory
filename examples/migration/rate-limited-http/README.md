@@ -7,8 +7,8 @@ This example represents a common Lift-era pattern:
 
 The goal is to demonstrate an **end-to-end migration** of rate limiting to AppTheory’s TableTheory-backed port:
 
-- `github.com/theory-cloud/apptheory/v6/pkg/limited`
-- `github.com/theory-cloud/apptheory/v6/pkg/limited/middleware`
+- `github.com/theory-cloud/apptheory/v7/pkg/limited`
+- `github.com/theory-cloud/apptheory/v7/pkg/limited/middleware`
 
 ## Files
 
@@ -62,3 +62,9 @@ Then request:
 ```bash
 curl -i http://localhost:8080/hello
 ```
+
+The server listens on `:8080` unless `LISTEN_ADDR` names another address. The
+local example harness (`make examples-local`) sets `LISTEN_ADDR` to its own
+leased port, provisions the `rate-limits` table from the `pkg/limited` model,
+and asserts the allowed-request and 429 refusal behavior against the real
+server.

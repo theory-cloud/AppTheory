@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 
 import {
+  buildAPIGatewayV2Request,
   createMcpTestHarness,
   sequenceIdGenerator,
 } from "../../../ts/dist/index.js";
 
-import { createToolsOnlyMcpServer } from "./server.mjs";
+import { createToolsOnlyMcpServer, handler } from "./server.mjs";
 
 const server = createToolsOnlyMcpServer({
   idGenerator: sequenceIdGenerator(["sess-example"], "sess"),
@@ -28,3 +29,18 @@ assert.equal(call.response.status, 200);
 assert.deepEqual(call.bodyJson.result, {
   content: [{ type: "text", text: "hello TypeScript MCP" }],
 });
+
+// Exercise the exported Lambda entry with a testkit-built API Gateway v2 event.
+const lambdaEvent = buildAPIGatewayV2Request("POST", "/mcp", {
+  headers: {
+    accept: "application/json, text/event-stream",
+    "content-type": "application/json",
+  },
+  body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" }),
+});
+const lambdaResponse = await handler(lambdaEvent, {});
+assert.equal(lambdaResponse.statusCode, 200);
+assert.ok(lambdaResponse.headers["mcp-session-id"]?.[0], "expected an MCP session id");
+assert.equal(JSON.parse(lambdaResponse.body).jsonrpc, "2.0");
+
+console.log("examples/mcp/tools-only-ts/server.test.mjs: PASS");

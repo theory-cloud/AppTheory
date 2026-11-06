@@ -12,8 +12,8 @@ import (
 	"github.com/theory-cloud/tabletheory/v6"
 	"github.com/theory-cloud/tabletheory/v6/pkg/session"
 
-	"github.com/theory-cloud/apptheory/v6/pkg/limited"
-	limitedmw "github.com/theory-cloud/apptheory/v6/pkg/limited/middleware"
+	"github.com/theory-cloud/apptheory/v7/pkg/limited"
+	limitedmw "github.com/theory-cloud/apptheory/v7/pkg/limited/middleware"
 )
 
 func resolveRegion(getenv func(string) string) string {
@@ -29,6 +29,19 @@ func resolveRegion(getenv func(string) string) string {
 		region = "us-east-1"
 	}
 	return region
+}
+
+// resolveListenAddr returns the address the demo listens on. The local example
+// harness sets LISTEN_ADDR so its slots never collide with another session;
+// the default keeps the documented :8080 behavior for manual runs.
+func resolveListenAddr(getenv func(string) string) string {
+	if getenv == nil {
+		return ":8080"
+	}
+	if addr := getenv("LISTEN_ADDR"); addr != "" {
+		return addr
+	}
+	return ":8080"
 }
 
 func main() {
@@ -61,6 +74,7 @@ func main() {
 		_, _ = w.Write([]byte("ok"))
 	}))
 
-	log.Println("listening on :8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	listenAddr := resolveListenAddr(os.Getenv)
+	log.Printf("listening on %s", listenAddr)
+	log.Fatal(http.ListenAndServe(listenAddr, nil))
 }

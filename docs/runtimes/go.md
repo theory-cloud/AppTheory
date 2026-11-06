@@ -5,7 +5,7 @@ description: The Go implementation of the AppTheory contract — routing, middle
 
 # Go Runtime
 
-The Go runtime is the most complete implementation of the AppTheory contract and ships with the broadest middleware and CDK surface. It is **a reference implementation, not the source of truth** — 309 single-envelope [contract fixtures](../reference/contract-fixtures.md) run in Go, TypeScript, and Python, while the remaining thirteen nested tables cover the MCP route algebra, the auth-facade surface, and the multi-window rate limiter cancellation classification (the M2 acceptance, M3a provider/store conformance, M3b-i route-model and transport-posture, and the multi-window limiter cancellation tables load in every runtime; the route-algebra expectations and facade-inventory tables are Go/CDK-TS). <!-- apptheory-fixture-count: 322 -->
+The Go runtime is the most complete implementation of the AppTheory contract and ships with the broadest middleware and CDK surface. It is **a reference implementation, not the source of truth** — 309 single-envelope [contract fixtures](../reference/contract-fixtures.md) run in Go, TypeScript, and Python, while the remaining sixteen nested tables cover the MCP route algebra, the auth-facade surface, and the multi-window rate limiter cancellation classification (the M2 acceptance, M3a provider/store conformance, M3b-i route-model and transport-posture, security-M1 middleware-order, and multi-window limiter cancellation tables load in every runtime; the route-algebra expectations and facade-inventory tables are Go/CDK-TS). <!-- apptheory-fixture-count: 325 -->
 
 ## Install
 
@@ -33,16 +33,16 @@ Module layout (see `api-snapshots/go.txt` for the exact exported surface):
 
 | Package | Purpose |
 | --- | --- |
-| `github.com/theory-cloud/apptheory/v6/runtime` | Core runtime: `apptheory.New`, `Context`, `Request`, `Response`, route registration, middleware. |
-| `github.com/theory-cloud/apptheory/v6/runtime/mcp` | MCP Streamable HTTP transport, sessions, resumable SSE. |
-| `github.com/theory-cloud/apptheory/v6/runtime/mcproutes` | Versioned MCP endpoint and OAuth route algebra. |
-| `github.com/theory-cloud/apptheory/v6/runtime/mcpfacade` | Golden-path MCP/OAuth facade registration and metadata composition. |
-| `github.com/theory-cloud/apptheory/v6/runtime/oauth` | OAuth protected-resource metadata, PKCE, DCR, token-store helpers. |
-| `github.com/theory-cloud/apptheory/v6/testkit` | Deterministic test environment (clock, ID queue, event builders). |
-| `github.com/theory-cloud/apptheory/v6/testkit/mcp` | In-process MCP client for unit tests. |
-| `github.com/theory-cloud/apptheory/v6/pkg/limited` | DynamoDB-backed cross-instance rate limiter. |
-| `github.com/theory-cloud/apptheory/v6/pkg/jobs` | Jobs-ledger primitives. |
-| `github.com/theory-cloud/apptheory/v6/pkg/sanitization` | Safe logging helpers. |
+| `github.com/theory-cloud/apptheory/v7/runtime` | Core runtime: `apptheory.New`, `Context`, `Request`, `Response`, route registration, middleware. |
+| `github.com/theory-cloud/apptheory/v7/runtime/mcp` | MCP Streamable HTTP transport, sessions, resumable SSE. |
+| `github.com/theory-cloud/apptheory/v7/runtime/mcproutes` | Versioned MCP endpoint and OAuth route algebra. |
+| `github.com/theory-cloud/apptheory/v7/runtime/mcpfacade` | Golden-path MCP/OAuth facade registration and metadata composition. |
+| `github.com/theory-cloud/apptheory/v7/runtime/oauth` | OAuth protected-resource metadata, PKCE, DCR, token-store helpers. |
+| `github.com/theory-cloud/apptheory/v7/testkit` | Deterministic test environment (clock, ID queue, event builders). |
+| `github.com/theory-cloud/apptheory/v7/testkit/mcp` | In-process MCP client for unit tests. |
+| `github.com/theory-cloud/apptheory/v7/pkg/limited` | DynamoDB-backed cross-instance rate limiter. |
+| `github.com/theory-cloud/apptheory/v7/pkg/jobs` | Jobs-ledger primitives. |
+| `github.com/theory-cloud/apptheory/v7/pkg/sanitization` | Safe logging helpers. |
 
 ## Minimal app
 
@@ -54,7 +54,7 @@ import (
     "encoding/json"
 
     "github.com/aws/aws-lambda-go/lambda"
-    apptheory "github.com/theory-cloud/apptheory/v6/runtime"
+    apptheory "github.com/theory-cloud/apptheory/v7/runtime"
 )
 
 func main() {
@@ -114,11 +114,11 @@ func TestHello(t *testing.T) {
 
 ## Route registration
 
-Fluent route registration fails closed: invalid patterns, duplicate method/pattern pairs, and nil handlers panic during registration instead of silently producing a dead route. Strict helpers remain deprecated compatibility wrappers when a caller still needs an error-returning shape, and their errors now use canonical `AppTheoryError` messages where applicable:
+Fluent route registration fails closed: invalid patterns, duplicate method/pattern pairs, and nil handlers panic during registration instead of silently producing a dead route. The `*Strict` helpers are the supported error-returning registration API for callers that register conditionally and want to log the failure and continue; they return the same canonical `AppTheoryError` the fluent path panics with:
 
 ```go
 if _, err := app.GetStrict("/users/{id}", h); err != nil {
-    t.Fatal(err)
+    log.Printf("skipping route: %v", err)
 }
 ```
 
@@ -149,8 +149,8 @@ import (
     "context"
     "encoding/json"
 
-    apptheory "github.com/theory-cloud/apptheory/v6/runtime"
-    "github.com/theory-cloud/apptheory/v6/runtime/mcp"
+    apptheory "github.com/theory-cloud/apptheory/v7/runtime"
+    "github.com/theory-cloud/apptheory/v7/runtime/mcp"
 )
 
 srv := mcp.NewServer("example", "1.0.0")
@@ -181,11 +181,11 @@ See the [MCP Method Surface](../integrations/mcp.md) for the full Streamable HTT
 
 ## What's verified
 
-The Go runtime passes the 309 generic runner fixtures and directly consumes the MCP route-algebra, facade-inventory, and MCP auth-facade tables, covering all 322 contract vectors on every commit. <!-- apptheory-fixture-count: 322 --> Any behavioral divergence on a shared surface is treated as a contract bug — fix the implementation, or update the fixture and prove the change holds across every participating runtime.
+The Go runtime passes the 309 generic runner fixtures and directly consumes the MCP route-algebra, facade-inventory, and MCP auth-facade tables, covering all 325 contract vectors on every commit. <!-- apptheory-fixture-count: 325 --> Any behavioral divergence on a shared surface is treated as a contract bug — fix the implementation, or update the fixture and prove the change holds across every participating runtime.
 
 ## Next reads
 
 - [API Reference](../api-reference.md) — full surface table
 - [HTTP Runtime tiers](../features/http-runtime.md) — P0 / P1 / P2
 - [Event Shape Dispatch](../reference/event-shapes.md) — when `HandleLambda` calls what
-- [Contract Fixtures](../reference/contract-fixtures.md) — the 322-fixture covenant <!-- apptheory-fixture-count: 322 -->
+- [Contract Fixtures](../reference/contract-fixtures.md) — the 325-fixture covenant <!-- apptheory-fixture-count: 325 -->

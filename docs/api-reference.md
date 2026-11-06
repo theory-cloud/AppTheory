@@ -323,9 +323,10 @@ across runtimes. Use the normal fluent registration path for new code:
 - TypeScript: `app.get("/users/{id}", h)` or `app.handle("GET", "/users/{id}", h)`
 - Python: `app.get("/users/{id}", h)` or `app.handle("GET", "/users/{id}", h)`
 
-Strict helpers remain as deprecated compatibility wrappers for code that already depends on their error-returning or
-throwing shape. Python strict helpers now raise `AppTheoryError` rather than `ValueError`, and Go strict helpers return
-canonical `AppTheoryError` messaging where applicable. See `UPGRADING.md` for per-line deprecation notes.
+Strict helpers are the supported error-returning registration API for code that registers conditionally: fluent
+registration fails closed with a startup panic/throw, while Python strict helpers raise `AppTheoryError` rather than
+`ValueError` and Go strict helpers return canonical `AppTheoryError` values. See
+[fail-closed route registration](../UPGRADING.md#fail-closed-route-registration) in `UPGRADING.md`.
 
 ## Cross-language feature surfaces
 
@@ -623,7 +624,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>1223 exported top-level symbols</summary>
+<summary>1248 exported top-level symbols</summary>
 
 ```text
 AccountAssertion, AccountAssertionAssumeFailed, AccountAssertionMismatch, AccountAssertionNotConfigured, AccountAssertionState, AccountAssertionUnavailable,
@@ -665,8 +666,8 @@ EnvEgressNetworkConnectorRefs, EnvEmbeddingDimensions, EnvEmbeddingModelID, EnvE
 EnvIngressNetworkConnectorRefs, EnvironmentErrorNotificationsOptions, EnvJobsTableName, EnvLogging, EnvNetworkConnectorRefs, EnvSessionRegistryTableName, EnvVectorBucketName,
 EnvVectorDimension, EnvVectorIndexARN, EnvVectorIndexName, ErrAccountMismatch, ErrArtifactArchiveInvalid, ErrArtifactDigestMismatch, ErrArtifactInvalidRequest,
 ErrArtifactUnavailable, ErrArtifactVersionMismatch, ErrArtifactVersionRequired, ErrAssumeRoleFailed, ErrAuthorizationCodeExpired, ErrAuthorizationCodeNotFound,
-ErrAuthorizationCodeReplayed, ErrBearerTokenExpired, ErrBearerTokenInsufficientScope, ErrBearerTokenInvalidAudience, ErrBrokerExpired, ErrBrokerLocked, ErrBrokerNotFound,
-ErrBrokerNotSeedable, ErrBrokerRevoked, ErrBrokerVersionConflict, ErrCallerIdentityUnavailable, ErrClientNotFound, ErrClientVersionConflict, ErrDimensionMismatch,
+ErrAuthorizationCodeReplayed, ErrBearerTokenExpired, ErrBearerTokenInsufficientScope, ErrBearerTokenInvalidAudience, ErrBrokerExpired, ErrBrokerFamilyCapabilityMissing, ErrBrokerFamilyExists, ErrBrokerFamilyMismatch, ErrBrokerFamilyStateUnavailable, ErrBrokerLegacyLineageUnsupported, ErrBrokerLocked, ErrBrokerNotFound,
+ErrBrokerNotSeedable, ErrBrokerRevoked, ErrBrokerSuccessorExists, ErrBrokerVersionConflict, ErrCallerIdentityUnavailable, ErrClientNotFound, ErrClientVersionConflict, ErrDimensionMismatch,
 ErrEmbeddingFailed, ErrEventNotFound, ErrExpectedAccountNotConfigured, ErrInvalidAuthorizationHeader, ErrInvalidBearerToken, ErrInvalidConfig, ErrInvalidEncryptionConfig,
 ErrInvalidGetLimit, ErrInvalidInput, ErrInvalidObjectRef, ErrInvalidPresignPut, ErrInvalidStoreConfig, ErrInvalidURL, ErrInvalidVector, ErrMissingBearerToken, ErrNotFound,
 ErrObjectNotFound, ErrObjectTooLarge, Error, ErrorCodeControllerCommandFailed, ErrorCodeControllerIncomplete, ErrorCodeDimensionMismatch, ErrorCodeEmbeddingFailed,
@@ -676,7 +677,7 @@ ErrorCodeProviderOperationFailed, ErrorCodeProviderOperationUnsupported, ErrorCo
 ErrorCodeRealLifecycleIncomplete, ErrorCodeRouteContractIncomplete, ErrorCodeSessionOwnerMismatch, ErrorCodeSessionRegistryIncomplete, ErrorCodeTenantBindingViolation,
 ErrorCodeTokenSafetyViolation, ErrorCodeUnauthenticatedController, ErrorCodeUnsupportedOperation, ErrorEnvelope, ErrorEnvelopeFromError, ErrorNotifier, ErrorType,
 ErrorTypeConflict, ErrorTypeInternal, ErrorTypeInvalidInput, ErrorTypeNotFound, ErrorTypeRateLimit, ErrRecordKeyRequired, ErrRefreshTokenExpired, ErrRefreshTokenNotFound,
-ErrSessionNotFound, ErrStreamEventTooLarge, ErrStreamNotFound, ErrTaskNotFound, ErrTaskTerminal, ErrTransactionExpired, ErrTransactionNotFound, ErrUnsupportedOperation,
+ErrSessionCapacityExceeded, ErrSessionExpired, ErrSessionNotFound, ErrStreamAggregateBackfillRequired, ErrStreamAggregateCapacityExceeded, ErrStreamAppendConflict, ErrStreamEventTooLarge, ErrStreamNotFound, ErrStreamTransactionRequired, ErrTaskNotFound, ErrTaskTerminal, ErrTransactionExpired, ErrTransactionNotFound, ErrUnsupportedOperation,
 EscapeHatches, ETag, Event, EventBridgeEvent, EventBridgeEventOptions, EventBridgeHandler, EventBridgePattern, EventBridgeRule, EventBridgeScheduledWorkloadResultSummary,
 EventBridgeScheduledWorkloadSummary, EventBridgeSelector, EventBridgeWorkloadEnvelope, EventBus, EventBusConfig, EventContext, EventHandler, EventMiddleware, EventQuery,
 FacadeConfig, Factory, FakeClient, FakeEmbedder, FakeProvider, FakeSNSClient, FakeStore, FakeStreamerClient, FixedWindowStrategy, FullyRedact, GenerateOpenAPI,
@@ -731,18 +732,18 @@ RateLimitStoreOptions, RateLimitStrategy, RateLimitWindow, RawJSON, ReadResource
 RecordStatus, RecordStatusFailed, RecordStatusPending, RecordStatusProcessing, RecordStatusSkipped, RecordStatusSucceeded, RefreshLeaseInput, RefreshRequest,
 RefreshSemaphoreSlotInput, RefreshStage, RefreshTokenRecord, RefreshTokenStore, RegisterControllerRoutes, RegisterMCPFacade, RegisterMCPFacadeSecure, RegisterMCPServer,
 RegisterMicroVMControllerRoutes, RegistryClient, RegistryClientOption, RelatedTaskMetadata, ReleaseLeaseInput, ReleaseSemaphoreSlotInput, ReportKinesisPutRecordsFailures,
-Request, RequestIDSource, RequestIDSourceDefault, RequestIDSourceServer, RequireAnyScope, RequireAuth, RequireBearerTokenMiddleware, RequireBearerTokenOptions,
+Request, RequestIDSource, RequestIDSourceDefault, RequestIDSourceServer, RequireAnyScope, RequireAuth, RequireBearerTokenGuard, RequireBearerTokenMiddleware, RequireBearerTokenOptions,
 RequiredForbiddenOperationFields, RequiredOperations, RequireEventBridgeWorkloadEnvelope, RequireScope, ResourceContent, ResourceDef, ResourceHandler,
 ResourceMetadataURLFromMcpEndpoint, ResourceName, ResourcePathFromProtectedResourcePath, ResourceRegistry, ResourceSubscription, ResourceSubscriptionHook, ResourceTemplateDef,
-Response, ResultType, ResultTypeComplete, ResultTypeInputRequired, RFC9728ResourceMetadataURL, RootDiscoveryConfig, Route, RouteInventory, RouteOption,
-RouteRefreshBrokerFamilyStore, RouteRefreshBrokerHandleTTLReporter, RouteRefreshBrokerRecord, RouteRefreshBrokerSeeder, RouteRefreshBrokerStore, RouteRefreshBrokerStoreOptions,
+Response, ResultType, ResultTypeComplete, ResultTypeInputRequired, RFC9728ResourceMetadataURL, RootDiscoveryConfig, Route, RouteGuard, RouteInventory, RouteOption,
+BrokerFamilyStatusActive, BrokerFamilyStatusRevoked, RouteRefreshBrokerFamilyStore, RouteRefreshBrokerHandleTTLReporter, RouteRefreshBrokerTransactionalFamilyStore, RouteRefreshFamilyRotation, RouteRefreshFamilyState, RouteRefreshBrokerRecord, RouteRefreshBrokerSeeder, RouteRefreshBrokerStore, RouteRefreshBrokerStoreOptions,
 RouteRefreshEvent, RouteRefreshEventClass, RouteRefreshEventGraceServed, RouteRefreshEventHook, RouteRefreshEventIssued, RouteRefreshEventLockAcquired,
 RouteRefreshEventRefreshed, RouteRefreshEventReuse, RouteRefreshEventStateFailure, RouteRefreshEventUpstreamReauthRequired, RouteRefreshEventValidationRejected,
 RouteRefreshExpirySignalAbsent, RouteRefreshExpirySignalExpired, RouteRefreshOutcomeAccessTokenOnly, RouteRefreshOutcomeBindingRejected, RouteRefreshOutcomeRateLimited,
 RouteRefreshOutcomeRevokedFamily, RouteRefreshOutcomeRevokedWalk, RouteRefreshPolicy, RouteRefreshReasonAccessTokenOnly, RouteRefreshReasonAlreadyServed,
 RouteRefreshReasonBindingRejected, RouteRefreshReasonClientMismatch, RouteRefreshReasonClientRejected, RouteRefreshReasonFamilyRevokeFailed,
-RouteRefreshReasonFamilyRevokeUnavailable, RouteRefreshReasonHandleMalformed, RouteRefreshReasonLockContention, RouteRefreshReasonRecordAbsent, RouteRefreshReasonRecordExpired,
-RouteRefreshReasonRecordRevoked, RouteRefreshReasonResourceMismatch, RouteRefreshReasonRewriteFailure, RouteRefreshReasonStoreFailure, RouteRefreshReasonSuccessorBody,
+RouteRefreshReasonFamilyRevokeUnavailable, RouteRefreshReasonFamilyStateUnavailable, RouteRefreshReasonHandleMalformed, RouteRefreshReasonLegacyLineage, RouteRefreshReasonLockContention, RouteRefreshReasonRecordAbsent, RouteRefreshReasonRecordExpired,
+RouteRefreshReasonRecordRevoked, RouteRefreshReasonResourceMismatch, RouteRefreshReasonRotatedReuse, RouteRefreshReasonRewriteFailure, RouteRefreshReasonStoreFailure, RouteRefreshReasonSuccessorBody,
 RouteRefreshReasonUpstreamRejected, RPCError, RunConformance, S3EncryptionBucketDefault, S3EncryptionConfig, S3EncryptionKMS, S3EncryptionMode, S3EncryptionS3Managed,
 S3StoreConfig, S3VectorsAPI, S3VectorStore, SafeError, SafeJSONForHTML, SanitizationType, SanitizeFields, SanitizeFieldValue, SanitizeJSON, SanitizeJSONValue, SanitizeLogString,
 SanitizerFunc, SanitizeXML, ScrubFreeText, SecureApp, SecureOpenAPISpec, SecureOptions, SecurePrincipal, SecurePrincipalResolver, SecureRoute, SecureRouteAppSync,
@@ -750,7 +751,7 @@ SecureRouteHTTP, SecureRouteSurface, SecureRouteWebSocket, SemanticIndex, Semant
 SensitiveFields, Server, ServerIdentity, ServerOption, Session, SessionCommandInput, SessionKey, SessionListInput, SessionQueryInput, SessionReconstructionHook,
 SessionReconstructionOption, SessionReconstructionRequest, SessionRecord, SessionRecordFromRegistryRecord, SessionRecordToRegistryRecord, SessionRegistry,
 SessionRegistryContract, SessionRegistryLister, SessionRegistryPartitionKey, SessionRegistryRecord, SessionRegistrySortKey, SessionRegistryTableName, SessionSpec, SessionStatus,
-SessionStore, SessionTokenMetadata, SessionTokenMetadataFromProviderToken, SetLogger, SlidingWindowStrategy, SNSEvent, SNSEventOptions, SNSHandler, SNSNotifierOptions,
+SessionExpirySweeper, SessionStore, SessionTokenMetadata, SessionTokenMetadataFromProviderToken, SetLogger, SlidingWindowStrategy, SNSEvent, SNSEventOptions, SNSHandler, SNSNotifierOptions,
 SNSPublishCall, SNSRecordOptions, SourceProvenance, SpanRecord, SQSEvent, SQSEventOptions, SQSHandler, SQSMessageOptions, SSEEvent, SSEMessage, SSEResponse, SSEStreamResponse,
 StageGlobalRoute, StateFailed, StateImagePrepared, StateImagePreparing, StateReadinessProbing, StateReady, StateRequested, StateResuming, StateRunning, StateStarted,
 StateStarting, StateStopped, StateStopping, StateSuspended, StateSuspending, StateTearingDown, StateTerminated, StateTerminating, StateValidated, StateValidating,
@@ -777,8 +778,8 @@ WithEMFClock, WithEMFNamespace, WithEMFService, WithEMFWriter, WithEnvironmentEr
 WithIdentifier, WithIDGenerator, WithInitialSessionListenerBudget, WithInitialSessionListenerEnabled, WithLegacyHTTPErrorShape, WithLifecycleContract,
 WithLifecycleHandler, WithLimits, WithLogger,
 WithLoggingLevelHook, WithObservability, WithOriginValidator, WithPolicyHook, WithProfileClock, WithProfileEnvironment, WithProfileSanitizer, WithProfileWriter,
-WithRegistryClientTTL, WithRequestIDSource, WithResourceSubscriptionHooks, WithRevocationEndpoint, WithSanitizer, WithServerIDGenerator, WithServerInfoMetadata,
-WithSessionReconstructionClock, WithSessionReconstructionStaleAfter, WithSessionStore, WithStreamEventByteLimit, WithStreamEventsPerSessionLimit, WithStreamIDGenerator,
+WithRegistryClientTTL, WithRequestIDSource, WithResourceSubscriptionHooks, WithRevocationEndpoint, WithRouteGuard, WithSanitizer, WithServerIDGenerator, WithServerInfoMetadata,
+WithSessionCapacityLimit, WithSessionReconstructionClock, WithSessionReconstructionStaleAfter, WithSessionStore, WithStreamEventByteLimit, WithStreamEventsPerSessionLimit, WithStreamIDGenerator,
 WithStreamSessionByteLimit, WithStreamStore, WithTaskRuntime, WithTenantClaim, WithTier, WithToolContextHook, WithVerboseHandlerErrors, WithWebSocketClientFactory,
 WithWebSocketSupport, WithZapLogger, WrapError, XMLSanitizationPattern
 ```

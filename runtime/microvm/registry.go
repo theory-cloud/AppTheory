@@ -218,6 +218,17 @@ func (r *ReconstructingSessionRegistry) List(ctx context.Context, input SessionL
 	return lister.List(ctx, input)
 }
 
+// setClock aligns a wrapped built-in registry with the controller clock so
+// live-record filtering and provider refresh use the same instant.
+func (r *ReconstructingSessionRegistry) setClock(now func() time.Time) {
+	if r == nil || r.registry == nil || now == nil {
+		return
+	}
+	if setter, ok := r.registry.(interface{ setClock(func() time.Time) }); ok {
+		setter.setClock(now)
+	}
+}
+
 // ReconstructSessionRecord invokes a product-owned hook and validates the returned operational state.
 func ReconstructSessionRecord(ctx context.Context, request SessionReconstructionRequest, hook SessionReconstructionHook) (SessionRecord, error) {
 	if ctx == nil {
@@ -432,9 +443,39 @@ func sessionRecordFromRegistryRecordAllowLegacy(record SessionRegistryRecord) (S
 	return out, nil
 }
 
+// sessionRecordForList converts one registry item for a list path. Owner filtering happens before
+// full validation so ownerless and cross-subject records are excluded without failing the caller's
+// list; a same-owner record that is malformed still fails closed. Expired same-owner records are
+// excluded before provider bindings are constructed.
+func sessionRecordForList(
+	record SessionRegistryRecord,
+	allowLegacy bool,
+	subject string,
+	now time.Time,
+) (SessionRecord, bool, error) {
+	normalized := normalizeSessionRegistryRecord(record)
+	candidate := sessionRecordFromRegistryNoValidate(normalized)
+	owner := strings.TrimSpace(candidate.AuthSubject)
+	subject = strings.TrimSpace(subject)
+	if owner == "" || subject == "" || owner != subject {
+		return SessionRecord{}, false, nil
+	}
+	if err := validateSessionRegistryRecord(normalized, allowLegacy); err != nil {
+		return SessionRecord{}, false, err
+	}
+	if err := ValidateSessionRecord(candidate); err != nil {
+		return SessionRecord{}, false, err
+	}
+	if sessionRecordExpired(candidate, now) {
+		return SessionRecord{}, false, nil
+	}
+	return candidate, true, nil
+}
+
 // TableTheorySessionRegistry stores MicroVM session registry records through the blessed TableTheory DB path.
 type TableTheorySessionRegistry struct {
-	db tablecore.DB
+	db  tablecore.DB
+	now func() time.Time
 }
 
 var _ SessionRegistry = (*TableTheorySessionRegistry)(nil)
@@ -444,7 +485,10 @@ func NewTableTheorySessionRegistry(db tablecore.DB) (*TableTheorySessionRegistry
 	if db == nil {
 		return nil, safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session registry requires TableTheory DB", "")
 	}
-	return &TableTheorySessionRegistry{db: db}, nil
+	return &TableTheorySessionRegistry{
+		db:  db,
+		now: func() time.Time { return time.Now().UTC() },
+	}, nil
 }
 
 // Put validates and upserts a session record through TableTheory.
@@ -571,7 +615,9 @@ func (r *TableTheorySessionRegistry) Delete(ctx context.Context, key SessionKey)
 
 // List retrieves tenant-bound session records through TableTheory. It reads the canonical
 // length-framed partition and unions in the pre-M1 partition so items written by an earlier release
-// stay listable mid-migration; when both partitions hold a session the canonical item wins.
+// stay listable mid-migration; when both partitions hold a session the canonical item wins. Canonical
+// precedence is applied before owner filtering, and only records whose stored AuthSubject exactly
+// equals the non-empty caller subject and whose lifetime has not elapsed are returned.
 func (r *TableTheorySessionRegistry) List(ctx context.Context, input SessionListInput) ([]SessionRecord, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -590,24 +636,34 @@ func (r *TableTheorySessionRegistry) List(ctx context.Context, input SessionList
 		All(&records); err != nil {
 		return nil, sessionRegistryOperationError(input.RequestID)
 	}
+	now := r.registryNow()
 	canonical := make(map[string]struct{}, len(records))
+	out := make([]SessionRecord, 0, len(records))
 	for _, record := range records {
 		canonical[record.SessionID] = struct{}{}
-	}
-	legacyRecords, err := r.listLegacyRecords(ctx, input, canonical)
-	if err != nil {
-		return nil, err
-	}
-	combined := make([]SessionRegistryRecord, 0, len(records)+len(legacyRecords))
-	combined = append(combined, records...)
-	combined = append(combined, legacyRecords...)
-	out := make([]SessionRecord, 0, len(combined))
-	for _, record := range combined {
-		session, err := sessionRecordFromRegistryRecordAllowLegacy(record)
+		session, include, err := sessionRecordForList(record, false, input.AuthSubject, now)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, session)
+		if include {
+			out = append(out, session)
+		}
+	}
+	legacyRecords, err := r.listLegacyRecords(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	for _, record := range legacyRecords {
+		if _, ok := canonical[record.SessionID]; ok {
+			continue
+		}
+		session, include, err := sessionRecordForList(record, true, input.AuthSubject, now)
+		if err != nil {
+			return nil, err
+		}
+		if include {
+			out = append(out, session)
+		}
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].SessionID < out[j].SessionID
@@ -615,10 +671,24 @@ func (r *TableTheorySessionRegistry) List(ctx context.Context, input SessionList
 	return out, nil
 }
 
+func (r *TableTheorySessionRegistry) registryNow() time.Time {
+	if r == nil || r.now == nil {
+		return time.Now().UTC()
+	}
+	return r.now().UTC()
+}
+
+func (r *TableTheorySessionRegistry) setClock(now func() time.Time) {
+	if r == nil || now == nil {
+		return
+	}
+	r.now = now
+}
+
 // listLegacyRecords reads the pre-M1 partition and returns the records for the requested identity
 // that are not already present in the canonical partition, so List can union the two partitions
 // while keeping the canonical item when both forms exist.
-func (r *TableTheorySessionRegistry) listLegacyRecords(ctx context.Context, input SessionListInput, canonical map[string]struct{}) ([]SessionRegistryRecord, error) {
+func (r *TableTheorySessionRegistry) listLegacyRecords(ctx context.Context, input SessionListInput) ([]SessionRegistryRecord, error) {
 	legacyKey := legacySessionRegistryPartitionKey(input.TenantID, input.Namespace)
 	if legacyKey == "" || legacyKey == SessionRegistryPartitionKey(input.TenantID, input.Namespace) {
 		return nil, nil
@@ -635,9 +705,6 @@ func (r *TableTheorySessionRegistry) listLegacyRecords(ctx context.Context, inpu
 		if record.TenantID != input.TenantID || record.Namespace != input.Namespace {
 			continue
 		}
-		if _, ok := canonical[record.SessionID]; ok {
-			continue
-		}
 		out = append(out, record)
 	}
 	return out, nil
@@ -647,13 +714,17 @@ func (r *TableTheorySessionRegistry) listLegacyRecords(ctx context.Context, inpu
 type MemorySessionRegistry struct {
 	mu      sync.Mutex
 	records map[string]SessionRegistryRecord
+	now     func() time.Time
 }
 
 var _ SessionRegistry = (*MemorySessionRegistry)(nil)
 
 // NewMemorySessionRegistry creates an empty deterministic session registry.
 func NewMemorySessionRegistry() *MemorySessionRegistry {
-	return &MemorySessionRegistry{records: map[string]SessionRegistryRecord{}}
+	return &MemorySessionRegistry{
+		records: map[string]SessionRegistryRecord{},
+		now:     func() time.Time { return time.Now().UTC() },
+	}
 }
 
 // Put validates and stores a record in memory.
@@ -741,7 +812,10 @@ func (r *MemorySessionRegistry) Delete(_ context.Context, key SessionKey) error 
 
 // List returns records for exactly one tenant and namespace. It unions the canonical and pre-M1
 // partition membership so items written by an earlier release stay listable; when both forms exist
-// for a session the canonical item wins.
+// for a session the canonical item wins. Canonical precedence is applied before owner filtering, so
+// a caller-owned legacy duplicate can never bypass an ownerless or cross-subject canonical record.
+// Only records whose stored AuthSubject exactly equals the non-empty caller subject, and whose
+// lifetime has not elapsed, are returned.
 func (r *MemorySessionRegistry) List(_ context.Context, input SessionListInput) ([]SessionRecord, error) {
 	if r == nil {
 		return nil, safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session registry is not configured", input.RequestID)
@@ -752,20 +826,53 @@ func (r *MemorySessionRegistry) List(_ context.Context, input SessionListInput) 
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	now := r.registryNow()
 	canonicalPK := SessionRegistryPartitionKey(input.TenantID, input.Namespace)
-	out := make([]SessionRecord, 0)
 	seen := make(map[string]struct{})
+	out, err := r.appendCanonicalList(input, canonicalPK, now, seen)
+	if err != nil {
+		return nil, err
+	}
+	out, err = r.appendLegacyList(input, canonicalPK, now, seen, out)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].SessionID < out[j].SessionID
+	})
+	return out, nil
+}
+
+func (r *MemorySessionRegistry) appendCanonicalList(
+	input SessionListInput,
+	canonicalPK string,
+	now time.Time,
+	seen map[string]struct{},
+) ([]SessionRecord, error) {
+	out := make([]SessionRecord, 0)
 	for _, record := range r.records {
 		if record.TenantID != input.TenantID || record.Namespace != input.Namespace || record.PK != canonicalPK {
 			continue
 		}
-		session, err := SessionRecordFromRegistryRecord(cloneSessionRegistryRecord(record))
+		seen[record.SessionID] = struct{}{}
+		session, include, err := sessionRecordForList(record, false, input.AuthSubject, now)
 		if err != nil {
 			return nil, err
 		}
-		seen[session.SessionID] = struct{}{}
-		out = append(out, session)
+		if include {
+			out = append(out, session)
+		}
 	}
+	return out, nil
+}
+
+func (r *MemorySessionRegistry) appendLegacyList(
+	input SessionListInput,
+	canonicalPK string,
+	now time.Time,
+	seen map[string]struct{},
+	out []SessionRecord,
+) ([]SessionRecord, error) {
 	for _, record := range r.records {
 		if record.TenantID != input.TenantID || record.Namespace != input.Namespace || record.PK == canonicalPK {
 			continue
@@ -773,17 +880,29 @@ func (r *MemorySessionRegistry) List(_ context.Context, input SessionListInput) 
 		if _, ok := seen[record.SessionID]; ok {
 			continue
 		}
-		session, err := sessionRecordFromRegistryRecordAllowLegacy(cloneSessionRegistryRecord(record))
+		session, include, err := sessionRecordForList(record, true, input.AuthSubject, now)
 		if err != nil {
 			return nil, err
 		}
-		seen[session.SessionID] = struct{}{}
-		out = append(out, session)
+		if include {
+			out = append(out, session)
+		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].SessionID < out[j].SessionID
-	})
 	return out, nil
+}
+
+func (r *MemorySessionRegistry) registryNow() time.Time {
+	if r == nil || r.now == nil {
+		return time.Now().UTC()
+	}
+	return r.now().UTC()
+}
+
+func (r *MemorySessionRegistry) setClock(now func() time.Time) {
+	if r == nil || now == nil {
+		return
+	}
+	r.now = now
 }
 
 func normalizeSessionRegistryRecord(record SessionRegistryRecord) SessionRegistryRecord {

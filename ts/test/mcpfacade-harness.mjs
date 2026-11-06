@@ -195,14 +195,24 @@ class RecordingBrokerStore {
     return this.inner.revoke(handleHash);
   }
 
-  // The optional capabilities are forwarded so a suite sees the reference
-  // store's real family behavior and lifetime report through the decorator.
+  // The family capabilities are forwarded so a suite sees the reference
+  // store's real transactional behavior and lifetime report through the
+  // decorator.
   listFamily(familyHash) {
     return this.inner.listFamily(familyHash);
   }
 
   revokeFamily(familyHash) {
     return this.inner.revokeFamily(familyHash);
+  }
+
+  createFamily(root) {
+    this.handles.push(root.handleHash);
+    return this.inner.createFamily(root);
+  }
+
+  rotateFamily(rotation) {
+    return this.inner.rotateFamily(rotation);
   }
 
   routeRefreshBrokerHandleTTLSeconds() {

@@ -1000,6 +1000,36 @@ test("AppTheoryHttpApi refuses invalid explicit-route and stage configuration", 
       error: /routes method must be one of/,
     },
     {
+      name: "explicit route with an uppercase authorizer",
+      props: { routes: [{ path: "/v1/ping", methods: ["GET"], authorizer: "IAM" }] },
+      error: /routes authorizer must be AppTheoryHttpApiRouteAuthorizer\.IAM or \.NONE/,
+    },
+    {
+      name: "explicit route with a misspelled authorizer",
+      props: { routes: [{ path: "/v1/ping", methods: ["GET"], authorizer: "iamm" }] },
+      error: /routes authorizer must be AppTheoryHttpApiRouteAuthorizer\.IAM or \.NONE/,
+    },
+    {
+      name: "explicit route with a null authorizer",
+      props: { routes: [{ path: "/v1/ping", methods: ["GET"], authorizer: null }] },
+      error: /routes authorizer must be AppTheoryHttpApiRouteAuthorizer\.IAM or \.NONE/,
+    },
+    {
+      name: "explicit route with a numeric authorizer",
+      props: { routes: [{ path: "/v1/ping", methods: ["GET"], authorizer: 1 }] },
+      error: /routes authorizer must be AppTheoryHttpApiRouteAuthorizer\.IAM or \.NONE/,
+    },
+    {
+      name: "explicit route with an object authorizer",
+      props: { routes: [{ path: "/v1/ping", methods: ["GET"], authorizer: { mode: "iam" } }] },
+      error: /routes authorizer must be AppTheoryHttpApiRouteAuthorizer\.IAM or \.NONE/,
+    },
+    {
+      name: "explicit route with an unchecked whitespace authorizer",
+      props: { routes: [{ path: "/v1/ping", methods: ["GET"], authorizer: " none " }] },
+      error: /routes authorizer must be AppTheoryHttpApiRouteAuthorizer\.IAM or \.NONE/,
+    },
+    {
       name: "explicit route without a leading slash",
       props: { routes: [{ path: "v1/ping", methods: ["GET"] }] },
       error: /routes path must be an absolute path/,

@@ -73,14 +73,15 @@ Enforcement rule (anti-drift):
 
 **10/10 definition:** SEC-1 through SEC-4 pass.
 
-### SEC-2 dependency-audit exceptions: two operator-ruled AWS exceptions
+### SEC-2 dependency-audit exceptions: three live operator-ruled exceptions
 
-SEC-2 grants **no dependency-audit exceptions** beyond the two below. Each is an exact match (lockfile,
-package, version, node path / dependency chain, and advisory ids) and is **self-expiring and
-fail-closed**: it carries a hard `recheck_by` deadline, a registry-backed removal probe runs on every
-invocation so a stale exception cannot survive by never matching again, and when a removal condition is
-met the checker fails with a clear message. Any *other* finding, in any lockfile, still fails the gate.
-Nothing beyond these two may be added without a new operator ruling.
+SEC-2 grants **no dependency-audit exceptions** beyond the three live ones below (two AWS-published chains in the
+CDK lockfile class, one dev-only TypeScript lint-tool node). Each is an exact match (lockfile, package, version,
+node path / dependency chain, and advisory ids) and is **self-expiring and fail-closed**: it carries a hard
+`recheck_by` deadline, a removal probe runs on every invocation so a stale exception cannot survive by never
+matching again (registry-backed for the jsii chain and for the TypeScript lint-tool node, lockfile-local for the
+bundled path), and when a removal condition is met the checker fails with a clear message. Any *other* finding, in
+any lockfile, still fails the gate. Nothing beyond these three may be added without a new operator ruling.
 
 Operator rulings, quoted verbatim:
 
@@ -89,20 +90,25 @@ Operator rulings, quoted verbatim:
 > 2026-10-04: the same treatment applies, for consistency, to AWS-published build toolchain transitive
 > chains with no upstream fix.
 
-**E1 - brace-expansion 5.0.9 bundled inside aws-cdk-lib.** Findings `GHSA-q2hr-2g5m-vwhr`,
-`GHSA-qhr7-859c-m2p7`, and `GHSA-6j4f-fj2g-mc7p` on `brace-expansion@5.0.9` at
-`node_modules/aws-cdk-lib/node_modules/brace-expansion` (bundled), reached only through aws-cdk-lib's own
-bundled `minimatch`. AWS publishes it and only AWS can publish a tarball that bundles the patched
-release (`brace-expansion >= 5.0.12` exists on npm but cannot be installed into the bundled subtree); it
-is build-time only and no AppTheory runtime package or Lambda ships it. Scope (widened 2026-10-06):
-every npm lockfile in this repository whose installed tree carries that bundled path -
-`cdk/package-lock.json` plus all twelve `examples/cdk/*/package-lock.json` files. Before the widening the
-scope was cdk/ plus four examples, which left eight example lockfiles carrying the identical vulnerable
-AWS path with no gate coverage and no recorded exception; the SEC-2 Node scan set is now the same full
-list, so every lockfile is either reported vulnerable or reported excepted. Owner: AppTheory steward
-(Factory dependency sweeps). **Removal condition:** the
-`aws-cdk-lib` version this repository pins bundles `brace-expansion >= 5.0.12`. **Hard recheck by
-2026-11-02.**
+> 2026-11-01: "Dev-only exception" - override minimatch to 11.0.1 everywhere except eslint-plugin-import-x,
+> keep import-x on 10.2.6, and record the single remaining 10.2.6 node path as a reviewed exception.
+
+**E1 (retired 2026-10-10) - brace-expansion 5.0.9 bundled inside aws-cdk-lib.** Findings
+`GHSA-q2hr-2g5m-vwhr`, `GHSA-qhr7-859c-m2p7`, and `GHSA-6j4f-fj2g-mc7p` on
+`brace-expansion@5.0.9` at `node_modules/aws-cdk-lib/node_modules/brace-expansion` (bundled), reached only
+through aws-cdk-lib's own bundled `minimatch`. AWS publishes it and only AWS can publish a tarball that
+bundles the patched release (`brace-expansion >= 5.0.12` exists on npm but cannot be installed into the
+bundled subtree); it is build-time only and no AppTheory runtime package or Lambda ships it. Scope
+(widened 2026-10-06): every npm lockfile in this repository whose installed tree carries that bundled path
+- the cdk lockfile plus the `examples/cdk/*/package-lock.json` files (twelve at the widening; fifteen after
+LOCAL-A1 added media-cdn, path-routed-frontend and restv1-router). Before the widening the scope was cdk/
+plus four examples, which left eight example lockfiles carrying the identical vulnerable AWS path with no
+gate coverage and no recorded exception; the SEC-2 Node scan set is now the same full list, so every
+lockfile is either reported vulnerable or reported excepted. Owner: AppTheory steward
+(Factory dependency sweeps). **Removal condition:** the `aws-cdk-lib` version this repository pins bundles
+`brace-expansion >= 5.0.12`. **That condition was met:** the pinned aws-cdk-lib 2.275.0 tarball bundles
+the patched `brace-expansion@5.0.12`, so the exception was retired as standard maintenance and the
+bundled-graph anchor now asserts the fixed bundle positively.
 
 **E2 - braces 3.0.3 in the jsii build toolchain.** Finding `GHSA-vfj7-8cjw-p6xm` (high) on `braces@3.0.3`
 at `node_modules/braces`, reached only via `jsii-pacmak -> jsii-rosetta -> fast-glob -> micromatch ->
@@ -111,14 +117,62 @@ which are pure propagation of this single advisory. The advisory's range is `aff
 publishes **no** patched `braces`, so no installable version pair clears it; the chain is the dev
 toolchain of the cdk devDependency `jsii-pacmak`, build-time only. Scope: `cdk/package-lock.json` only
 (the example lockfiles do not carry the jsii chain). **Removal condition:** a patched `braces` (> 3.0.3)
-is published, or the jsii toolchain no longer resolves `braces <= 3.0.3`. **Hard recheck by 2026-11-02.**
+is published, or the jsii toolchain no longer resolves `braces <= 3.0.3`. **Hard recheck by 2026-12-01
+(renewed 2026-11-01 from 2026-11-02).** The renewal is standard maintenance under the same 2026-10-04
+ruling, not a new exception grant: on **2026-11-01** the npm registry's latest published `braces` was still
+**3.0.3**, so no patched release exists and the removal condition remains unmet. The checker records the
+renewal and its evidence in `E2.renewal`.
 
-Both exceptions live in the ONE shared list in `scripts/check-visible-aws-cdk-finding.mjs`; the npm and
-OSV scanner paths match findings against that same list, `scripts/verify-cdk-audit.sh` and
+**E3 - minimatch 10.2.6 bundled inside aws-cdk-lib.** Finding `GHSA-g3hv-75wg-m249` (moderate,
+`CVE-2026-118764`) on `minimatch@10.2.6` at `node_modules/aws-cdk-lib/node_modules/minimatch`
+(bundled), reached only through aws-cdk-lib's own bundled `minimatch`; npm lists the derived
+`aws-cdk-lib` entry as pure propagation. AWS publishes it and only AWS can publish a tarball that bundles
+the patched release (`minimatch 11.0.1` exists on npm but cannot be installed into the bundled subtree);
+the latest published aws-cdk-lib (2.275.0) still declares a bundled minimatch `^10.2.6`, so no
+aws-cdk-lib release resolves it. It is build/CLI-time only and no AppTheory runtime package or Lambda
+ships it. Scope: the same full bundled-path set as E1 - the cdk lockfile plus all fifteen
+`examples/cdk/*/package-lock.json` files, including the three LOCAL-A1 additions. Owner: AppTheory
+steward (Factory dependency sweeps). **Removal condition:** the pinned `aws-cdk-lib` bundles
+`minimatch >= 11.0.1`. **Hard recheck by 2026-12-01.** Operator ruling: 2026-10-03 (the
+bundled-dependency ruling quoted above), extended 2026-10-04.
+
+The scan-set completeness is itself gated: `gov-verify-rubric.sh` compares `node_lockfiles` with
+`git ls-files '*package-lock.json' '*npm-shrinkwrap.json'` before scanning and fails when a tracked
+lockfile is missing, and `check-visible-aws-cdk-finding.mjs --self-test` performs the same comparison
+against `AWS_CDK_LOCKFILES`. A new example lockfile therefore cannot be added without either being
+scanned or failing SEC-2.
+
+**E4 - minimatch 10.2.6 kept for eslint-plugin-import-x (TypeScript lint tooling, dev-only).** Finding
+`GHSA-g3hv-75wg-m249` (moderate, `CVE-2026-118764`) on `minimatch@10.2.6` at
+`node_modules/eslint-plugin-import-x/node_modules/minimatch`, resolved only by the
+`eslint-plugin-import-x` lint-plugin edge. Every other minimatch consumer in `ts/package-lock.json` -
+`eslint`, `@eslint/config-array`, and `@typescript-eslint/typescript-estree` - is overridden to the
+patched `minimatch@11.0.1` at the single hoisted root node, so the 10.2.6 node has exactly one parent; the
+graph anchor pins both minimatch nodes and the exact parent set, and any parent, path, version, or
+override drift fails closed. The blocked upgrade: `minimatch 11` removed the
+`makeRe` export that `eslint-plugin-import-x` 4.17.1 imports at module load, so loading the plugin under a
+minimatch 11 override throws and ESLint cannot load its config; 4.17.1 is the latest published release and
+still declares minimatch `^9.0.3 || ^10.1.2`. **Dev-only:** the node is `dev: true`, the root package's
+runtime dependencies do not mention minimatch, `npm ls --omit=dev --all` inside `ts/` reports no minimatch,
+and the published package ships only `dist`, `LICENSE`, `README.md`, and `package.json`. Scope:
+`ts/package-lock.json` only. Owner: AppTheory steward (Factory dependency sweeps). **Removal condition:**
+`eslint-plugin-import-x` publishes a release compatible with `minimatch >= 11.0.1`. **Hard recheck by
+2026-12-01.** Operator ruling: 2026-11-01 (the dev-only exception quoted above).
+
+The two AWS exceptions live in the ONE shared list in `scripts/check-visible-aws-cdk-finding.mjs`; the npm
+and OSV scanner paths match findings against that same list, `scripts/verify-cdk-audit.sh` and
 `gov-verify-rubric.sh`'s `osv_scan_lockfile` accept a non-zero scanner exit only when the checker emits
 the `exception-applied:` machine marker, and the checker's `--self-test` battery proves the negative
 cases (a different advisory id, version, node path, or lockfile, an expired `recheck_by`, or a met
 removal condition) still fail closed.
+
+The dev-only TypeScript exception lives in `scripts/check-visible-ts-brace-finding.mjs`, which the same
+`osv_scan_lockfile` routes `ts/package-lock.json` to. It matches exactly one package/version/advisory/alias
+shape, runs a lockfile-local and a registry-backed removal probe on every invocation, and its `--self-test`
+battery proves that any other minimatch path, version, advisory, parent, override map, or lockfile still
+fails (65 offline cases). The gate requires the per-kind marker
+(`exception-applied: ts-dev-import-x-minimatch ` for the TypeScript lockfile, the shared AWS marker for the
+CDK lockfiles), so a status-1 scan without that exact marker still fails.
 
 This section previously recorded that SEC-2 carried **no** exception. The pattern reused here is the one
 SEC-2's earlier exception established: advisory `GHSA-528h-pc64-c93x` / `CVE-2026-71429` for
@@ -133,7 +187,7 @@ every stable `jsii-rosetta` inside `jsii-pacmak`'s peer range (`>= 5.9.0`, 5.9.0
 STABLE `jsii-rosetta >= 6.0.16`, `cdk/package.json` now pins `jsii-rosetta 6.0.16`, and
 `cdk/package-lock.json` resolves `stream-json` 3.7.0, so `npm audit` on `cdk/` reported an empty
 vulnerability map. The exception and all of its machinery were removed at the time and are re-created
-here, narrowed to the two AWS-blocked findings above.
+here, narrowed to the AWS-blocked findings recorded in this section.
 
 ## Compliance Readiness (CMP) — auditability and evidence
 | ID | Points | Requirement | How to verify |

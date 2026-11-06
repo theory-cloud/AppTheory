@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	runtimemicrovm "github.com/theory-cloud/apptheory/v6/runtime/microvm"
+	runtimemicrovm "github.com/theory-cloud/apptheory/v7/runtime/microvm"
 )
 
 const (

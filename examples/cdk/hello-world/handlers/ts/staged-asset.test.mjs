@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { cpSync, mkdtempSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { cpSync, existsSync, mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -8,10 +9,33 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "../../../../..");
 const handlerDir = path.join(repoRoot, "examples", "cdk", "hello-world", "handlers", "ts");
 const distDir = path.join(repoRoot, "ts", "dist");
-const nodeModulesDir = path.join(repoRoot, "ts", "node_modules");
+const runtimeDir = path.join(repoRoot, "ts");
+const runtimeNodeModules = path.join(runtimeDir, "node_modules");
 
-// Stage the Lambda asset exactly as the stack's local bundler does: the handler
-// files plus the complete ts/dist runtime, not a single entry file.
+function stageRuntimeDependencies(destination) {
+  const marker = path.join(runtimeNodeModules, "@theory-cloud", "tabletheory-ts", "package.json");
+  if (!existsSync(marker)) {
+    throw new Error(`missing ${marker}; run 'cd ts && npm ci --ignore-scripts' first`);
+  }
+  const listed = execFileSync("npm", ["ls", "--omit=dev", "--all", "--parseable"], {
+    cwd: runtimeDir,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const prefix = `${runtimeNodeModules}${path.sep}`;
+  for (const line of listed.split("\n")) {
+    const dependency = line.trim();
+    if (!dependency.startsWith(prefix)) {
+      continue;
+    }
+    cpSync(dependency, path.join(destination, dependency.slice(prefix.length)), { recursive: true });
+  }
+}
+
+// Stage the Lambda asset exactly as the stack's bundler does: the handler files,
+// the complete ts/dist runtime, and the runtime's production dependency closure.
+// Nothing resolves from the checkout or from a symlink, so a missing dependency
+// fails here the same way it fails at init in a clean Lambda runtime.
 const stage = mkdtempSync(path.join(tmpdir(), "apptheory-hello-world-ts-"));
 try {
   const vendorDir = path.join(stage, "vendor", "apptheory");
@@ -20,9 +44,7 @@ try {
     cpSync(path.join(handlerDir, file), path.join(stage, file));
   }
   cpSync(distDir, vendorDir, { recursive: true });
-  // The deployment environment provides the runtime's declared dependencies; mirror
-  // that here so the staged import surface resolves against the installed tree.
-  symlinkSync(nodeModulesDir, path.join(stage, "node_modules"), "dir");
+  stageRuntimeDependencies(path.join(stage, "node_modules"));
 
   const { handler } = await import(pathToFileURL(path.join(stage, "handler.mjs")).href);
   assert.equal(typeof handler, "function", "staged handler.mjs must export a function");

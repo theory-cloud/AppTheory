@@ -10,11 +10,30 @@ type Handler func(*Context) (*Response, error)
 
 type RouteOption func(*routeOptions)
 
+// RouteGuard runs after a route's authorization gate and before application
+// middleware. A non-nil response denies the request without running any
+// application middleware or the route handler.
+type RouteGuard func(*Context) (*Response, error)
+
 type routeOptions struct {
 	authRequired     bool
 	optionalAuth     bool
 	requiredScopes   []string
 	requiredAnyScope []string
+	guards           []RouteGuard
+}
+
+// WithRouteGuard attaches route-level guards. Guards run in registration order
+// and before application middleware, so a short-circuiting middleware cannot
+// bypass them.
+func WithRouteGuard(guards ...RouteGuard) RouteOption {
+	return func(opts *routeOptions) {
+		for _, guard := range guards {
+			if guard != nil {
+				opts.guards = append(opts.guards, guard)
+			}
+		}
+	}
 }
 
 func RequireAuth() RouteOption {
@@ -73,6 +92,7 @@ type route struct {
 	OptionalAuth     bool
 	RequiredScopes   []string
 	RequiredAnyScope []string
+	Guards           []RouteGuard
 	Secure           bool
 	SecureSurface    SecureRouteSurface
 	PosturePresent   bool
@@ -100,8 +120,14 @@ func (r *router) addStrict(method, pattern string, handler Handler, opts routeOp
 	return r.addRecord(method, pattern, handler, opts, false, "", AuthPosture{}, false)
 }
 
-func (r *router) addSecure(method, pattern string, handler Handler, surface SecureRouteSurface, posture AuthPosture) error {
-	return r.addRecord(method, pattern, handler, routeOptions{}, true, surface, posture, true)
+func (r *router) addSecure(method, pattern string, handler Handler, surface SecureRouteSurface, posture AuthPosture, options ...RouteOption) error {
+	opts := routeOptions{}
+	for _, option := range options {
+		if option != nil {
+			option(&opts)
+		}
+	}
+	return r.addRecord(method, pattern, handler, opts, true, surface, posture, true)
 }
 
 func (r *router) addRecord(method, pattern string, handler Handler, opts routeOptions, secure bool, surface SecureRouteSurface, posture AuthPosture, posturePresent bool) error {
@@ -150,6 +176,7 @@ func (r *router) addRecord(method, pattern string, handler Handler, opts routeOp
 		OptionalAuth:     opts.optionalAuth,
 		RequiredScopes:   append([]string(nil), opts.requiredScopes...),
 		RequiredAnyScope: append([]string(nil), opts.requiredAnyScope...),
+		Guards:           append([]RouteGuard(nil), opts.guards...),
 		Secure:           secure,
 		SecureSurface:    surface,
 		PosturePresent:   posturePresent,

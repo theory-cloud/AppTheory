@@ -28,7 +28,10 @@ const FIXTURE_DIR = path.join(
 );
 
 const fixture = JSON.parse(
-  readFileSync(path.join(FIXTURE_DIR, "facade-store-conformance.v1.json"), "utf8"),
+  readFileSync(
+    path.join(FIXTURE_DIR, "facade-store-conformance.v1.json"),
+    "utf8",
+  ),
 );
 const CASES = fixture.cases ?? [];
 const EPOCH = new Date(fixture.clock?.epoch ?? "2026-01-01T00:00:00Z");
@@ -89,6 +92,25 @@ class NonBumpingBrokerStore extends MemoryRouteRefreshBrokerStore {
   }
 }
 
+/** Deliberately broken: revokes members individually, leaving no tombstone. */
+class NonTombstoneBrokerStore extends MemoryRouteRefreshBrokerStore {
+  async revokeFamily(familyHash) {
+    const records = await this.listFamily(familyHash);
+    const revoked = [];
+    for (const record of records) {
+      revoked.push(await this.revoke(record.handleHash));
+    }
+    return revoked;
+  }
+}
+
+/** Deliberately broken: returns a successor without storing it or updating the predecessor. */
+class NonAtomicRotateBrokerStore extends MemoryRouteRefreshBrokerStore {
+  async rotateFamily(rotation) {
+    return rotation.successor;
+  }
+}
+
 /** Deliberately broken: a handle lifetime far longer than the table's TTL. */
 function newTTLIgnoringBrokerStores(clock) {
   const stores = newStores(clock);
@@ -111,6 +133,26 @@ function newNonTerminalCodeStores(clock) {
 function newNonBumpingBrokerStores(clock) {
   const stores = newStores(clock);
   stores.routeRefreshBroker = new NonBumpingBrokerStore({
+    now: () => clock.now(),
+    lockTtlSeconds: LOCK_TTL_SECONDS,
+    ttlSeconds: ROUTE_REFRESH_TTL_SECONDS,
+  });
+  return stores;
+}
+
+function newNonTombstoneBrokerStores(clock) {
+  const stores = newStores(clock);
+  stores.routeRefreshBroker = new NonTombstoneBrokerStore({
+    now: () => clock.now(),
+    lockTtlSeconds: LOCK_TTL_SECONDS,
+    ttlSeconds: ROUTE_REFRESH_TTL_SECONDS,
+  });
+  return stores;
+}
+
+function newNonAtomicRotateBrokerStores(clock) {
+  const stores = newStores(clock);
+  stores.routeRefreshBroker = new NonAtomicRotateBrokerStore({
     now: () => clock.now(),
     lockTtlSeconds: LOCK_TTL_SECONDS,
     ttlSeconds: ROUTE_REFRESH_TTL_SECONDS,
@@ -149,6 +191,19 @@ const BROKEN_BUNDLES = [
       "store.route_refresh_broker.revoke_bumps_version",
     ],
   },
+  {
+    name: "non_tombstone_broker",
+    build: newNonTombstoneBrokerStores,
+    expectFailed: [
+      "store.route_refresh_broker.family_tombstone_revokes_more_than_eight_members",
+      "store.route_refresh_broker.family_tombstone_covers_more_than_one_hundred_members",
+    ],
+  },
+  {
+    name: "non_atomic_rotate_broker",
+    build: newNonAtomicRotateBrokerStores,
+    expectFailed: ["store.route_refresh_broker.family_rotate_is_atomic"],
+  },
 ];
 
 /** Runs each row on its own so one broken bundle reports every failing row. */
@@ -165,15 +220,15 @@ async function failingCaseIds(build, cases) {
   return failed;
 }
 
-test("store conformance fixture carries 48 cases", () => {
-  assert.equal(CASES.length, 48);
-  assert.equal(new Set(CASES.map((c) => c.id)).size, 48);
+test("store conformance fixture carries 65 cases", () => {
+  assert.equal(CASES.length, 65);
+  assert.equal(new Set(CASES.map((c) => c.id)).size, 65);
 });
 
 test("the in-memory reference stores satisfy the store conformance table", async () => {
   const clock = new ManualClock(EPOCH);
   const result = await runStoreConformance(newStores(clock), CASES, clock);
-  assert.equal(result.ran, 48);
+  assert.equal(result.ran, 65);
   console.log(
     `store conformance: ${result.ran}/${CASES.length} cases passed (in-memory reference stores)`,
   );
@@ -403,15 +458,23 @@ test("the broker store lists and revokes a refresh family", async () => {
     chainGeneration: 1,
     familyHash,
   });
-  await broker.put(record("member-a", "family-a"));
-  await broker.put(record("member-b", "family-a"));
-  await broker.put(record("member-c", "family-b"));
+  const root = (familyHash) => ({
+    ...record(familyHash, familyHash),
+    status: "active",
+    chainGeneration: 1,
+  });
+  await broker.createFamily(root("family-a"));
+  await broker.put({
+    ...record("member-b", "family-a"),
+    chainGeneration: 2,
+  });
+  await broker.createFamily(root("family-b"));
 
   const listed = await broker.listFamily("family-a");
-  assert.deepEqual(
-    listed.map((member) => member.handleHash).sort(),
-    ["member-a", "member-b"],
-  );
+  assert.deepEqual(listed.map((member) => member.handleHash).sort(), [
+    "family-a",
+    "member-b",
+  ]);
   assert.equal((await broker.listFamily("")).length, 0);
 
   const revoked = await broker.revokeFamily("family-a");

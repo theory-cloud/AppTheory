@@ -139,7 +139,7 @@ app.WebSocket("$disconnect", disconnectHandler, apptheory.Public())
 ```
 
 The TypeScript methods are `get`, `post`, `appSyncField`, and `webSocket`; Python uses `get`, `post`,
-`appsync_field`, and `websocket`. The facade does not forward legacy posture-less registrations or deprecated strict
+`appsync_field`, and `websocket`. The facade does not forward legacy posture-less registrations or strict
 variants. Non-HTTP event registrations such as SQS, SNS, Kinesis, EventBridge, and DynamoDB Streams are forwarded
 unchanged because they are separate, non-posture-bearing registries.
 

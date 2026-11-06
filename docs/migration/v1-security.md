@@ -202,6 +202,9 @@ What changed:
 - Timeout middleware now documents and tests a cooperative cancellation contract across runtimes.
 - A timed-out request returns `app.timeout`, but user code must observe cancellation (`ctx.Done()`, `AbortSignal`, or
   equivalent cooperative checks) if it needs to stop work before side effects commit.
+- The handler chain runs on the invoking goroutine/thread/task, and the middleware reports the timeout only after the
+  chain returns. A handler that never observes cancellation runs to completion and is bounded only by the Lambda
+  function timeout; the middleware does not return early, abandon it, or wait for a fixed grace window.
 
 What you need to do:
 

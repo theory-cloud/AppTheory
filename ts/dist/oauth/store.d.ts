@@ -179,20 +179,57 @@ export interface RouteRefreshBrokerSeeder {
     put(record: RouteRefreshBrokerRecord): Promise<void>;
 }
 /**
- * The optional family capability of a broker store. A refresh family is the
- * chain of handles one authorization grant produced; `familyHash` names it on
- * every record. `listFamily` answers which handles belong to a family and what
- * state each is in, and `revokeFamily` revokes every record of a family in one
- * operation, so a confirmed theft is not limited by the eight-link successor
- * walk a long-lived chain would exhaust.
+ * The enumeration/revocation half of the family capability of a broker store. A
+ * refresh family is the chain of handles one authorization grant produced;
+ * `familyHash` names it on every record. `listFamily` answers which live handles
+ * belong to a family and what state each is in, and `revokeFamily` revokes every
+ * live record of a family in one operation.
  *
- * A store that does not implement this capability remains fully usable: the
- * facade falls back to the bounded successor walk and reports a state event, so
- * the degradation is visible rather than silent.
+ * This pair alone is not enough for the framework-owned front channel: a
+ * conforming store must implement
+ * {@link RouteRefreshBrokerTransactionalFamilyStore}, which adds atomic root
+ * creation and atomic rotation. The pair remains exported as the incident
+ * surface and for stores that keep it while they migrate.
  */
 export interface RouteRefreshBrokerFamilyStore {
     listFamily(familyHash: string): Promise<RouteRefreshBrokerRecord[]>;
     revokeFamily(familyHash: string): Promise<RouteRefreshBrokerRecord[]>;
+}
+/** Family-state status values of the transactional family capability. */
+export declare const BROKER_FAMILY_STATUS_ACTIVE = "active";
+export declare const BROKER_FAMILY_STATUS_REVOKED = "revoked";
+/** The store-internal family-state record behind one refresh family. */
+export interface RouteRefreshFamilyState {
+    familyHash: string;
+    status: string;
+    version: number;
+    createdAt: Date;
+    revokedAt?: Date;
+}
+/**
+ * One atomic rotation request: the presented handle is still locked by
+ * `lockOwner` at `expectedVersion`, its family is active, and `successor` does
+ * not exist. The store creates the successor, checks the family/generation and
+ * identity bindings, writes the grace response onto the presented record,
+ * clears the lock, and returns the stored successor.
+ */
+export interface RouteRefreshFamilyRotation {
+    presentedHandleHash: string;
+    lockOwner: string;
+    expectedVersion: number;
+    successor: RouteRefreshBrokerRecord;
+    graceRefreshResponse: string;
+    graceExpiresAt: Date;
+}
+/**
+ * The mandatory transactional family capability of a broker store used by the
+ * framework-owned front channel. It extends the enumeration/revocation pair with
+ * atomic root creation and atomic rotation; every Get, AcquireLock, and
+ * RotateFamily of a family-marked handle honors the family tombstone.
+ */
+export interface RouteRefreshBrokerTransactionalFamilyStore extends RouteRefreshBrokerFamilyStore {
+    createFamily(root: RouteRefreshBrokerRecord): Promise<RouteRefreshBrokerRecord>;
+    rotateFamily(rotation: RouteRefreshFamilyRotation): Promise<RouteRefreshBrokerRecord>;
 }
 /**
  * The optional capability a broker store reports its local handle lifetime
@@ -253,6 +290,30 @@ export declare class BrokerNotFoundError extends Error {
  * while the client-facing body stays the uniform `invalid_grant`.
  */
 export declare class BrokerExpiredError extends Error {
+    constructor(message?: string);
+}
+/** The broker store lacks the transactional family capability. */
+export declare class BrokerFamilyCapabilityMissingError extends Error {
+    constructor(message?: string);
+}
+/** CreateFamily was called for a family ID that already exists. */
+export declare class BrokerFamilyExistsError extends Error {
+    constructor(message?: string);
+}
+/** A family-marked record's required family state is missing or corrupt. */
+export declare class BrokerFamilyStateUnavailableError extends Error {
+    constructor(message?: string);
+}
+/** A root, successor, or presented record fails its family/generation binding. */
+export declare class BrokerFamilyMismatchError extends Error {
+    constructor(message?: string);
+}
+/** A rotation successor handle is already stored. */
+export declare class BrokerSuccessorExistsError extends Error {
+    constructor(message?: string);
+}
+/** A family-less record was presented for ordinary rotation. */
+export declare class BrokerLegacyLineageUnsupportedError extends Error {
     constructor(message?: string);
 }
 export interface MemoryTransactionStoreOptions {
@@ -333,9 +394,10 @@ export interface MemoryRouteRefreshBrokerStoreOptions {
  * is distinguishable from one that never existed at the SPI, even though the
  * facade renders the same client-facing body for both.
  */
-export declare class MemoryRouteRefreshBrokerStore implements RouteRefreshBrokerStore, RouteRefreshBrokerSeeder, RouteRefreshBrokerFamilyStore, RouteRefreshBrokerHandleTTLReporter {
+export declare class MemoryRouteRefreshBrokerStore implements RouteRefreshBrokerStore, RouteRefreshBrokerSeeder, RouteRefreshBrokerTransactionalFamilyStore, RouteRefreshBrokerHandleTTLReporter {
     private readonly records;
     private readonly storedAt;
+    private readonly families;
     private readonly now;
     private readonly lockTtlMs;
     private readonly ttlMs;
@@ -387,18 +449,36 @@ export declare class MemoryRouteRefreshBrokerStore implements RouteRefreshBroker
      */
     routeRefreshBrokerHandleTTLSeconds(): number;
     /**
+     * Atomically creates an active family-state record and its generation-1 root
+     * record. A pre-existing family ID, active or revoked, is never overwritten or
+     * reactivated, and an existing root handle is never replaced.
+     */
+    createFamily(root: RouteRefreshBrokerRecord): Promise<RouteRefreshBrokerRecord>;
+    /**
+     * Atomically rotates one family handle: lock owner, expected version, active
+     * family, matching family/generation/identity, and successor uniqueness are
+     * checked before the successor is created and the presented record updated.
+     */
+    rotateFamily(rotation: RouteRefreshFamilyRotation): Promise<RouteRefreshBrokerRecord>;
+    /**
      * Lists every live record of one refresh family. Aged-out records are purged
      * as they are observed and are not listed; a blank family hash is answered
      * with an empty list, because no record can belong to no family.
      */
     listFamily(familyHash: string): Promise<RouteRefreshBrokerRecord[]>;
     /**
-     * Revokes every live record of one refresh family and returns the records it
-     * handled. Revocation is idempotent, so already-revoked members are returned
-     * unchanged rather than reported as errors, and a blank family hash revokes
-     * nothing.
+     * Atomically writes the family revocation tombstone and revokes every live
+     * member it handles. The tombstone is terminal and authoritative: every get,
+     * acquireLock, and rotateFamily of a family-marked handle honors it. A family
+     * that never existed is an idempotent no-op; a family with live members but no
+     * family state is a partially backfilled or corrupt lineage and fails closed.
      */
     revokeFamily(familyHash: string): Promise<RouteRefreshBrokerRecord[]>;
+    /**
+     * Reports the tombstone/binding error a family-marked record raises, or null
+     * for a family-less record (which the facade refuses separately).
+     */
+    private familyStateError;
     /** Whether the handle's own lifetime, apart from any refresh lock, elapsed. */
     private expired;
     /**

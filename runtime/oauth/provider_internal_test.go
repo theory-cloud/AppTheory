@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/theory-cloud/apptheory/v6/testkit/oauthprovider"
+	"github.com/theory-cloud/apptheory/v7/testkit/oauthprovider"
 )
 
 // b64url encodes a raw JWS segment.

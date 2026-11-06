@@ -385,6 +385,35 @@ def bearer_token_from_headers(headers: dict[str, Any] | None) -> str:
     return parts[1].strip()
 
 
+def _prepare_bearer_options(
+    options: RequireBearerTokenOptions | None,
+) -> tuple[RequireBearerTokenOptions, _ResourceMetadataURLTemplate | None]:
+    opts = options or RequireBearerTokenOptions()
+    template: _ResourceMetadataURLTemplate | None = None
+    if str(opts.resource_metadata_url_template or "").strip():
+        template = _compile_resource_metadata_url_template(opts.resource_metadata_url_template)
+    return opts, template
+
+
+def _authorize_bearer_token(
+    ctx: Context,
+    opts: RequireBearerTokenOptions,
+    template: _ResourceMetadataURLTemplate | None,
+) -> Response | None:
+    """Validate the request credential and bind verified claims to the context."""
+    token = bearer_token_from_headers(ctx.request.headers)
+    if opts.claims_validator is not None:
+        claims = opts.claims_validator(ctx, token)
+        ctx.set(CONTEXT_KEY_BEARER_TOKEN, token)
+        ctx.set(CONTEXT_KEY_BEARER_CLAIMS, _clone_claims(claims))
+        return None
+    if opts.validator is None:
+        return _unauthorized_response(opts, ctx, template)
+    opts.validator(ctx, token)
+    ctx.set(CONTEXT_KEY_BEARER_TOKEN, token)
+    return None
+
+
 def require_bearer_token_middleware(options: RequireBearerTokenOptions | None = None):
     """Enforce ``Authorization: Bearer <token>`` and, when it is missing or
     invalid, return 401 with the MCP 2025-06-18 compatible WWW-Authenticate
@@ -395,28 +424,38 @@ def require_bearer_token_middleware(options: RequireBearerTokenOptions | None = 
     request whose challenge would advertise a broken or partially resolved
     discovery URL.
     """
-    opts = options or RequireBearerTokenOptions()
-    template: _ResourceMetadataURLTemplate | None = None
-    if str(opts.resource_metadata_url_template or "").strip():
-        template = _compile_resource_metadata_url_template(opts.resource_metadata_url_template)
+    opts, template = _prepare_bearer_options(options)
 
     def middleware(ctx: Context, next_handler):
         try:
-            token = bearer_token_from_headers(ctx.request.headers)
-            if opts.claims_validator is not None:
-                claims = opts.claims_validator(ctx, token)
-                ctx.set(CONTEXT_KEY_BEARER_TOKEN, token)
-                ctx.set(CONTEXT_KEY_BEARER_CLAIMS, _clone_claims(claims))
-                return next_handler(ctx)
-            if opts.validator is None:
-                return _unauthorized_response(opts, ctx, template)
-            opts.validator(ctx, token)
-            ctx.set(CONTEXT_KEY_BEARER_TOKEN, token)
+            denied = _authorize_bearer_token(ctx, opts, template)
+            if denied is not None:
+                return denied
             return next_handler(ctx)
         except Exception as exc:  # noqa: BLE001
             return _bearer_error_response(opts, exc, ctx, template)
 
     return middleware
+
+
+def require_bearer_token_guard(options: RequireBearerTokenOptions | None = None):
+    """Return the same credential decision as
+    :func:`require_bearer_token_middleware` in route-guard form.
+
+    The runtime runs a route guard after a route's authorization gate and before
+    application middleware, so a short-circuiting middleware cannot bypass
+    bearer validation. Verified claims are bound to the context before the guard
+    admits the request.
+    """
+    opts, template = _prepare_bearer_options(options)
+
+    def guard(ctx: Context) -> Response | None:
+        try:
+            return _authorize_bearer_token(ctx, opts, template)
+        except Exception as exc:  # noqa: BLE001
+            return _bearer_error_response(opts, exc, ctx, template)
+
+    return guard
 
 
 def new_memory_bearer_token_validator(

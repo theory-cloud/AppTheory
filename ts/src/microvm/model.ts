@@ -783,6 +783,8 @@ export interface TableTheoryMicroVMSessionRegistryOptions {
   model_name?: string;
   table_name?: string;
   auto_register?: boolean;
+  // now is a test-only seam for deterministic live-record filtering.
+  now?: () => Date;
 }
 
 export interface MicroVMRegistryClientOptions {

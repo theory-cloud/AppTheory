@@ -9,6 +9,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "py" / "src"))
 
+import apptheory  # noqa: E402
 import apptheory.aws_http as aws_http  # noqa: E402
 from apptheory.context import Context  # noqa: E402
 from apptheory.errors import AppError  # noqa: E402
@@ -215,62 +216,143 @@ class TestBufferedAdapterScopes(unittest.TestCase):
 
 
 class TestTimeoutMiddlewareScope(unittest.TestCase):
-    def test_timeout_middleware_returns_timeout_at_the_deadline(self) -> None:
+    def test_timeout_middleware_returns_an_ordinary_result(self) -> None:
+        mw = timeout_middleware(TimeoutConfig(default_timeout_ms=1000))
+        ctx = Context(request=Request(method="GET", path="/"))
+
+        self.assertEqual(mw(ctx, lambda _ctx: "ok"), "ok")
+        self.assertEqual([t for t in threading.enumerate() if t.name == _TIMEOUT_THREAD_NAME], [])
+
+    def test_timeout_middleware_reports_the_timeout_after_the_handler_unwinds(self) -> None:
         mw = timeout_middleware(TimeoutConfig(default_timeout_ms=10, timeout_message="too slow"))
         ctx = Context(request=Request(method="GET", path="/"))
 
-        handler_started = threading.Event()
-        release = threading.Event()
+        unwound = threading.Event()
 
-        def uncooperative(_ctx: Context):
-            # Ignores the cancellation token: the middleware must report the
-            # timeout at the deadline (plus its bounded join), not after this
-            # blocks forever.
-            handler_started.set()
-            release.wait()
+        def cooperative(handler_ctx: Context):
+            # Observes the deadline-bearing cancellation token and unwinds at the
+            # deadline, so the middleware reports the timeout afterwards.
+            carrier = getattr(handler_ctx, "ctx", None)
+            cancelled = getattr(carrier, "cancelled", None)
+            if cancelled is not None:
+                cancelled.wait(timeout=2.0)
+            unwound.set()
             return "late"
 
-        started = time.monotonic()
         with self.assertRaises(AppError) as cm:
-            mw(ctx, uncooperative)
-        elapsed = time.monotonic() - started
+            mw(ctx, cooperative)
 
         self.assertEqual(cm.exception.code, "app.timeout")
-        self.assertTrue(handler_started.is_set(), "the middleware never ran the handler")
-        self.assertLess(elapsed, 1.0, "the middleware held the invocation for a blocked handler")
+        # The handler runs on the invoking thread, so the middleware cannot
+        # report the timeout before the handler has unwound.
+        self.assertTrue(unwound.is_set(), "the middleware reported the timeout before the handler unwound")
+        self.assertEqual([t for t in threading.enumerate() if t.name == _TIMEOUT_THREAD_NAME], [])
 
-        release.set()
-        deadline = time.monotonic() + 2.0
-        while [t for t in threading.enumerate() if t.name == _TIMEOUT_THREAD_NAME] and time.monotonic() < deadline:
-            time.sleep(0.01)
-        self.assertEqual(
-            [t for t in threading.enumerate() if t.name == _TIMEOUT_THREAD_NAME],
-            [],
-            "the timeout handler worker outlived its invocation",
-        )
-
-    def test_timeout_middleware_never_abandons_a_handler_that_ignores_cancellation(self) -> None:
+    def test_timeout_middleware_waits_for_a_handler_that_ignores_cancellation(self) -> None:
         mw = timeout_middleware(TimeoutConfig(default_timeout_ms=5, timeout_message="too slow"))
         ctx = Context(request=Request(method="GET", path="/"))
 
-        side_effect = threading.Event()
+        started = threading.Event()
+        release = threading.Event()
+        finished = threading.Event()
+        returned = threading.Event()
+        errors: list[BaseException] = []
 
         def uncooperative(_ctx: Context):
-            # Ignores the cancellation token but unwinds well inside the
-            # middleware's bounded join window, so its side effect is inside the
-            # invocation and the middleware reports the timeout afterwards.
-            time.sleep(0.05)
-            side_effect.set()
+            # Ignores the cancellation token: the middleware must not return
+            # until this handler exits, so it cannot produce an early timeout or
+            # a post-return side effect.
+            started.set()
+            release.wait()
+            finished.set()
             return "late"
 
-        with self.assertRaises(AppError) as cm:
-            mw(ctx, uncooperative)
+        def call() -> None:
+            try:
+                mw(ctx, uncooperative)
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+            finally:
+                returned.set()
 
-        self.assertEqual(cm.exception.code, "app.timeout")
-        # The handler's own side effect having landed is the proof that the
-        # middleware joined it rather than abandoning it, and it cannot land after
-        # the middleware returned, so no elapsed-time bound is needed.
-        self.assertTrue(side_effect.is_set(), "the handler it timed out was abandoned")
+        caller = threading.Thread(target=call, name="apptheory-timeout-test", daemon=True)
+        caller.start()
+        self.assertTrue(started.wait(timeout=2.0), "the middleware never ran the handler")
+
+        # The deadline is 5 ms and the handler ignores it: the middleware must
+        # keep waiting instead of raising while the handler still runs. The wait
+        # is well past the removal's old 250 ms grace window, so only inline
+        # execution holds here.
+        self.assertFalse(
+            returned.wait(timeout=0.5),
+            "the middleware returned while the handler it timed out was still running",
+        )
+        self.assertFalse(finished.is_set(), "the handler ran its side effect before it was released")
+
+        release.set()
+        self.assertTrue(returned.wait(timeout=2.0), "the middleware did not return after the handler exited")
+        caller.join(timeout=2.0)
+        self.assertFalse(caller.is_alive(), "the middleware call thread outlived its invocation")
+
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], AppError)
+        self.assertEqual(errors[0].code, "app.timeout")
+        self.assertTrue(finished.is_set(), "the middleware returned before the handler it timed out finished")
+        self.assertEqual([t for t in threading.enumerate() if t.name == _TIMEOUT_THREAD_NAME], [])
+
+    def test_timeout_middleware_holds_the_api_gateway_v2_adapter_until_the_handler_exits(self) -> None:
+        app = apptheory.create_app(tier="p0")
+        app.use(timeout_middleware(TimeoutConfig(default_timeout_ms=5, timeout_message="too slow")))
+
+        started = threading.Event()
+        release = threading.Event()
+        finished = threading.Event()
+
+        def handler(_ctx: Context):
+            started.set()
+            release.wait()
+            finished.set()
+            return apptheory.text(200, "late")
+
+        app.get("/held", handler)
+
+        result: list[dict] = []
+
+        def call() -> None:
+            result.append(
+                app.serve_apigw_v2(
+                    {
+                        "version": "2.0",
+                        "rawPath": "/held",
+                        "rawQueryString": "",
+                        "headers": {},
+                        "requestContext": {"http": {"method": "GET", "path": "/held"}},
+                        "body": "",
+                        "isBase64Encoded": False,
+                    }
+                )
+            )
+
+        caller = threading.Thread(target=call, name="apptheory-timeout-adapter-test", daemon=True)
+        caller.start()
+        self.assertTrue(started.wait(timeout=2.0), "the adapter never ran the handler")
+
+        # The deadline is 5 ms and the old middleware gave up after a 250 ms
+        # grace window: wait past both, with the handler still held, to prove the
+        # adapter cannot return while the handler can still write.
+        time.sleep(0.5)
+        self.assertFalse(result, "the adapter returned while the handler it timed out was still running")
+        self.assertFalse(finished.is_set())
+
+        release.set()
+        caller.join(timeout=2.0)
+        self.assertFalse(caller.is_alive(), "the adapter call thread outlived its invocation")
+
+        self.assertEqual(len(result), 1)
+        out = result[0]
+        self.assertEqual(out["statusCode"], 408)
+        self.assertIn("app.timeout", out["body"])
+        self.assertTrue(finished.is_set(), "the adapter returned before the handler it timed out finished")
         self.assertEqual([t for t in threading.enumerate() if t.name == _TIMEOUT_THREAD_NAME], [])
 
 

@@ -217,16 +217,16 @@ injects none (the framework-injected `MCP_ENDPOINT` is retired). The supported w
 your CDK passes `server.protectedResourceMetadataUrl` into a configuration surface you already own, and your app passes
 that value to the runtime as the template option.
 
-Adopter's CDK — hand the property to your own config (a Lambda environment variable, a parameter-store value, or
-anything else you control):
+Adopter's CDK — hand the property to your own config (a Lambda environment variable on the same handler, a
+parameter-store value, or anything else you control):
 
 ```ts
 const mcp = new AppTheoryRemoteMcpServer(stack, "Mcp", { handler, actorPath: true });
 
-new Function(stack, "App", {
-  // ... your own config surface:
-  environment: { RESOURCE_METADATA_URL_TEMPLATE: mcp.protectedResourceMetadataUrl },
-});
+// Configure the SAME function the construct routes every MCP transport and
+// protected-resource request to. The construct injects no environment variable
+// and creates no second function.
+handler.addEnvironment("RESOURCE_METADATA_URL_TEMPLATE", mcp.protectedResourceMetadataUrl);
 ```
 
 Adopter's app — wire that value as a per-actor template so the middleware resolves `{actor}` from the matched route:

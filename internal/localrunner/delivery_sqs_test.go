@@ -1,0 +1,1601 @@
+package localrunner
+
+import (
+	"context"
+	"crypto/md5" //nolint:gosec // SQS's MD5OfBody is not a security hash
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"path"
+	"sort"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	sqstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
+)
+
+// fakeSQS models the pinned ElasticMQ responses the deliverer depends on, as
+// observed against softwaremill/elasticmq-native@sha256:e4580ab9:
+//   - GetQueueUrl answers with the container's localhost address;
+//   - a named GetQueueAttributes subset answers with an empty map, while All
+//     carries every attribute;
+//   - a receipt handle is rotated on every receive and the previous handle is
+//     rejected by DeleteMessageBatch and ChangeMessageVisibility;
+//   - maxReceiveCount moves a message to the dead-letter queue when the next
+//     receive would exceed it, carrying ApproximateReceiveCount one higher;
+//   - FIFO messages are returned in per-group order and a group is blocked
+//     while an earlier message of that group is in flight;
+//   - FIFO SequenceNumber values are small decimal strings.
+type fakeSQS struct {
+	mu     sync.Mutex
+	queues map[string]*fakeSQSQueue
+	server *httptest.Server
+	// sent captures every SendMessage request body, so a test can assert the
+	// exact target shape (raw versus envelope, FIFO ids, attributes).
+	sent []map[string]any
+	// failSend and failGetAttributes inject the service errors the SNS
+	// deliverer must report.
+	failSend          bool
+	failGetAttributes bool
+	emptyCreateURL    bool
+}
+
+type fakeSQSQueue struct {
+	name            string
+	fifo            bool
+	visibility      time.Duration
+	maxReceiveCount int
+	dlq             *fakeSQSQueue
+	messages        []*fakeSQSMessage
+	sequence        int
+}
+
+type fakeSQSMessage struct {
+	id                string
+	body              string
+	group             string
+	deduplicationID   string
+	sequence          string
+	receipt           string
+	receiveCount      int
+	visibleAt         time.Time
+	deleted           bool
+	sentAt            time.Time
+	messageAttributes map[string]string
+}
+
+func newFakeSQS(t *testing.T) *fakeSQS {
+	t.Helper()
+	fake := &fakeSQS{queues: map[string]*fakeSQSQueue{}}
+	fake.server = httptest.NewServer(http.HandlerFunc(fake.handle))
+	t.Cleanup(fake.server.Close)
+	return fake
+}
+
+func (f *fakeSQS) queue(name string, configure func(*fakeSQSQueue)) *fakeSQSQueue {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	queue := &fakeSQSQueue{name: name, visibility: 30 * time.Second}
+	if configure != nil {
+		configure(queue)
+	}
+	f.queues[name] = queue
+	return queue
+}
+
+func (f *fakeSQS) seed(queue *fakeSQSQueue, body string, attributes map[string]string) *fakeSQSMessage {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	message := &fakeSQSMessage{
+		id:                fmt.Sprintf("msg-%d", len(queue.messages)+1),
+		body:              body,
+		sentAt:            time.Now(),
+		messageAttributes: attributes,
+	}
+	if queue.fifo {
+		message.sequence = fmt.Sprintf("%d", queue.sequence)
+		queue.sequence++
+		if group := attributes["group"]; group != "" {
+			message.group = group
+		}
+		message.deduplicationID = fmt.Sprintf("dedup-%d", queue.sequence)
+	}
+	queue.messages = append(queue.messages, message)
+	return message
+}
+
+func (f *fakeSQS) messageCount(queue *fakeSQSQueue) (visible, notVisible, deleted int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	now := time.Now()
+	for _, message := range queue.messages {
+		switch {
+		case message.deleted:
+			deleted++
+		case message.visibleAt.After(now):
+			notVisible++
+		default:
+			visible++
+		}
+	}
+	return visible, notVisible, deleted
+}
+
+func (f *fakeSQS) handle(writer http.ResponseWriter, request *http.Request) {
+	target := strings.TrimPrefix(request.Header.Get("X-Amz-Target"), "AmazonSQS.")
+	body := map[string]any{}
+	if request.Body != nil {
+		decoder := json.NewDecoder(request.Body)
+		decoder.UseNumber()
+		if err := decoder.Decode(&body); err != nil {
+			fail(writer, "InvalidRequest", "decode request: "+err.Error())
+			return
+		}
+	}
+	writer.Header().Set("Content-Type", "application/x-amz-json-1.0")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	switch target {
+	case "CreateQueue":
+		name := stringField(body, "QueueName")
+		if name == "" {
+			fail(writer, "InvalidRequest", "QueueName is required")
+			return
+		}
+		if _, ok := f.queues[name]; !ok {
+			queue := &fakeSQSQueue{name: name, visibility: 30 * time.Second}
+			if attributes, ok := body["Attributes"].(map[string]any); ok {
+				if value, ok := attributes["FifoQueue"].(string); ok && strings.EqualFold(value, "true") {
+					queue.fifo = true
+				}
+			}
+			f.queues[name] = queue
+		}
+		queueURL := "http://localhost:9324/000000000000/" + name
+		if f.emptyCreateURL {
+			queueURL = ""
+		}
+		writeJSON(writer, map[string]any{"QueueUrl": queueURL})
+	case "GetQueueUrl":
+		name := stringField(body, "QueueName")
+		if _, ok := f.queues[name]; !ok {
+			fail(writer, "QueueDoesNotExist", "queue "+name+" does not exist")
+			return
+		}
+		writeJSON(writer, map[string]any{"QueueUrl": "http://localhost:9324/000000000000/" + name})
+	case "GetQueueAttributes":
+		if f.failGetAttributes {
+			fail(writer, "InternalError", "attribute read failed")
+			return
+		}
+		queue := f.queueForURL(stringField(body, "QueueUrl"))
+		if queue == nil {
+			fail(writer, "QueueDoesNotExist", "queue does not exist")
+			return
+		}
+		writeJSON(writer, map[string]any{"Attributes": queue.attributes(time.Now())})
+	case "ReceiveMessage":
+		queue := f.queueForURL(stringField(body, "QueueUrl"))
+		if queue == nil {
+			fail(writer, "QueueDoesNotExist", "queue does not exist")
+			return
+		}
+		max := intField(body, "MaxNumberOfMessages")
+		if max <= 0 {
+			max = 1
+		}
+		visibility := queue.visibility
+		if value, ok := body["VisibilityTimeout"]; ok {
+			visibility = time.Duration(intValue(value)) * time.Second
+		}
+		messages := queue.receive(max, visibility, time.Now())
+		writeJSON(writer, map[string]any{"Messages": messages})
+	case "ChangeMessageVisibility":
+		queue := f.queueForURL(stringField(body, "QueueUrl"))
+		if queue == nil {
+			fail(writer, "QueueDoesNotExist", "queue does not exist")
+			return
+		}
+		handle := stringField(body, "ReceiptHandle")
+		message, ok := queue.byReceipt(handle)
+		if !ok {
+			fail(writer, "ReceiptHandleIsInvalid", "The receipt handle is not valid")
+			return
+		}
+		message.visibleAt = time.Now().Add(time.Duration(intField(body, "VisibilityTimeout")) * time.Second)
+		writeJSON(writer, map[string]any{})
+	case "SendMessage":
+		if f.failSend {
+			fail(writer, "InternalError", "send failed")
+			return
+		}
+		queue := f.queueForURL(stringField(body, "QueueUrl"))
+		if queue == nil {
+			fail(writer, "QueueDoesNotExist", "queue does not exist")
+			return
+		}
+		f.sent = append(f.sent, body)
+		id := fmt.Sprintf("sent-%d", len(f.sent))
+		message := &fakeSQSMessage{
+			id:              id,
+			body:            stringField(body, "MessageBody"),
+			group:           stringField(body, "MessageGroupId"),
+			deduplicationID: stringField(body, "MessageDeduplicationId"),
+			sentAt:          time.Now(),
+		}
+		queue.messages = append(queue.messages, message)
+		writeJSON(writer, map[string]any{"MessageId": id})
+	case "DeleteMessage":
+		queue := f.queueForURL(stringField(body, "QueueUrl"))
+		if queue == nil {
+			fail(writer, "QueueDoesNotExist", "queue does not exist")
+			return
+		}
+		handle := stringField(body, "ReceiptHandle")
+		for _, message := range queue.messages {
+			if message.receipt == handle {
+				message.deleted = true
+				break
+			}
+		}
+		writeJSON(writer, map[string]any{})
+	case "DeleteMessageBatch":
+		queue := f.queueForURL(stringField(body, "QueueUrl"))
+		if queue == nil {
+			fail(writer, "QueueDoesNotExist", "queue does not exist")
+			return
+		}
+		var successful, failed []map[string]any
+		entries, ok := body["Entries"].([]any)
+		if !ok {
+			fail(writer, "InvalidRequest", "Entries is not a list")
+			return
+		}
+		for _, raw := range entries {
+			entry, ok := raw.(map[string]any)
+			if !ok {
+				fail(writer, "InvalidRequest", "an Entry is not an object")
+				return
+			}
+			id := stringField(entry, "Id")
+			message, ok := queue.byReceipt(stringField(entry, "ReceiptHandle"))
+			if !ok {
+				failed = append(failed, map[string]any{
+					"Id": id, "SenderFault": true, "Code": "ReceiptHandleIsInvalid",
+				})
+				continue
+			}
+			message.deleted = true
+			successful = append(successful, map[string]any{"Id": id})
+		}
+		writeJSON(writer, map[string]any{"Successful": successful, "Failed": failed})
+	default:
+		fail(writer, "InvalidAction", "unsupported fake action "+target)
+	}
+}
+
+func (f *fakeSQS) queueForURL(queueURL string) *fakeSQSQueue {
+	parsed, err := url.Parse(queueURL)
+	if err != nil {
+		return nil
+	}
+	return f.queues[path.Base(parsed.Path)]
+}
+
+func (q *fakeSQSQueue) attributes(now time.Time) map[string]string {
+	visible, notVisible := 0, 0
+	for _, message := range q.messages {
+		if message.deleted {
+			continue
+		}
+		if message.visibleAt.After(now) {
+			notVisible++
+		} else {
+			visible++
+		}
+	}
+	attributes := map[string]string{
+		"ApproximateNumberOfMessages":           fmt.Sprintf("%d", visible),
+		"ApproximateNumberOfMessagesNotVisible": fmt.Sprintf("%d", notVisible),
+		"ApproximateNumberOfMessagesDelayed":    "0",
+		"VisibilityTimeout":                     fmt.Sprintf("%d", int(q.visibility.Seconds())),
+		"QueueArn":                              "arn:aws:sqs:elasticmq:000000000000:" + q.name,
+	}
+	if q.fifo {
+		attributes["FifoQueue"] = "true"
+	}
+	if q.maxReceiveCount > 0 && q.dlq != nil {
+		attributes["RedrivePolicy"] = fmt.Sprintf(
+			`{"deadLetterTargetArn":"arn:aws:sqs:elasticmq:000000000000:%s","maxReceiveCount":%d}`,
+			q.dlq.name,
+			q.maxReceiveCount,
+		)
+	}
+	return attributes
+}
+
+func (q *fakeSQSQueue) receive(max int, visibility time.Duration, now time.Time) []map[string]any {
+	var received []*fakeSQSMessage
+	blocked := map[string]bool{}
+	for _, message := range q.messages {
+		if len(received) >= max {
+			break
+		}
+		if message.deleted {
+			continue
+		}
+		if q.fifo && blocked[message.group] {
+			continue
+		}
+		if q.maxReceiveCount > 0 && q.dlq != nil && message.receiveCount >= q.maxReceiveCount {
+			moved := *message
+			moved.deleted = false
+			moved.receipt = ""
+			moved.visibleAt = time.Time{}
+			moved.receiveCount = message.receiveCount + 1
+			message.deleted = true
+			q.dlq.messages = append(q.dlq.messages, &moved)
+			continue
+		}
+		if message.visibleAt.After(now) {
+			if q.fifo {
+				blocked[message.group] = true
+			}
+			continue
+		}
+		message.receiveCount++
+		message.receipt = fmt.Sprintf("%s#%d", message.id, message.receiveCount)
+		message.visibleAt = now.Add(visibility)
+		received = append(received, message)
+	}
+	output := make([]map[string]any, 0, len(received))
+	for _, message := range received {
+		attributes := map[string]string{
+			"ApproximateReceiveCount":          fmt.Sprintf("%d", message.receiveCount),
+			"SentTimestamp":                    fmt.Sprintf("%d", message.sentAt.UnixMilli()),
+			"SenderId":                         "dummy",
+			"ApproximateFirstReceiveTimestamp": fmt.Sprintf("%d", message.sentAt.UnixMilli()),
+		}
+		if q.fifo {
+			attributes["MessageGroupId"] = message.group
+			attributes["MessageDeduplicationId"] = message.deduplicationID
+			attributes["SequenceNumber"] = message.sequence
+		}
+		output = append(output, map[string]any{
+			"MessageId":         message.id,
+			"ReceiptHandle":     message.receipt,
+			"Body":              message.body,
+			"MD5OfBody":         md5Of(message.body),
+			"Attributes":        attributes,
+			"MessageAttributes": messageAttributes(message.messageAttributes),
+		})
+	}
+	return output
+}
+
+func (q *fakeSQSQueue) byReceipt(handle string) (*fakeSQSMessage, bool) {
+	for _, message := range q.messages {
+		if !message.deleted && message.receipt != "" && message.receipt == handle {
+			return message, true
+		}
+	}
+	return nil, false
+}
+
+func messageAttributes(values map[string]string) map[string]any {
+	output := map[string]any{}
+	for name, value := range values {
+		if name == "group" {
+			continue
+		}
+		output[name] = map[string]any{"StringValue": value, "DataType": "String"}
+	}
+	return output
+}
+
+func md5Of(value string) string {
+	sum := md5.Sum([]byte(value)) //nolint:gosec // matches the SQS MD5OfBody field
+	return hex.EncodeToString(sum[:])
+}
+
+func writeJSON(writer http.ResponseWriter, value any) {
+	writer.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(writer).Encode(value); err != nil {
+		http.Error(writer, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func fail(writer http.ResponseWriter, code, message string) {
+	writer.Header().Set("X-Amzn-Errortype", code)
+	writer.WriteHeader(http.StatusBadRequest)
+	//nolint:errcheck // the fake response is best-effort once the status is written
+	_ = json.NewEncoder(writer).Encode(map[string]any{"__type": code, "message": message})
+}
+
+func stringField(body map[string]any, name string) string {
+	value, ok := body[name].(string)
+	if !ok {
+		return ""
+	}
+	return value
+}
+
+func intField(body map[string]any, name string) int {
+	return intValue(body[name])
+}
+
+func intValue(value any) int {
+	switch typed := value.(type) {
+	case json.Number:
+		number, err := typed.Int64()
+		if err != nil {
+			return 0
+		}
+		return int(number)
+	case float64:
+		return int(typed)
+	case int:
+		return typed
+	default:
+		return 0
+	}
+}
+
+type deliveredEvent struct {
+	function string
+	event    []byte
+}
+
+func sqsMessageForTest(id, body string, attributes map[string]string) sqstypes.Message {
+	return sqstypes.Message{
+		MessageId:     aws.String(id),
+		Body:          aws.String(body),
+		ReceiptHandle: aws.String(id + "#1"),
+		Attributes:    attributes,
+	}
+}
+
+func waitForCondition(t *testing.T, condition func() bool, message string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal(message)
+}
+
+func startSQSDelivery(t *testing.T, fake *fakeSQS, clock Clock, concurrency int, sources []EventSourceSpec, invoker func(context.Context, string, []byte) (InvokeResult, error)) *DeliveryEngine {
+	t.Helper()
+	resolver := func(kind DeliveryKind) (DeliveryBackend, error) {
+		if kind != DeliveryKindSQS {
+			t.Fatalf("unexpected delivery kind %s", kind)
+		}
+		return DeliveryBackend{
+			Service:  backendSQS,
+			Endpoint: fake.server.URL,
+			Client:   newSQSClient(fake.server.URL),
+		}, nil
+	}
+	engine := NewDeliveryEngine(clock, concurrency, resolver, invoker, nil)
+	engine.RegisterDeliverer(DeliveryKindSQS, NewSQSDeliverer)
+	spec := &Spec{EventSources: sources}
+	if err := engine.Start(context.Background(), spec); err != nil {
+		t.Fatalf("start delivery: %v", err)
+	}
+	t.Cleanup(func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := engine.Stop(stopCtx); err != nil {
+			t.Errorf("stop delivery: %v", err)
+		}
+	})
+	return engine
+}
+
+func waitForSource(t *testing.T, engine *DeliveryEngine, id string, predicate func(DeliveryState) bool) DeliveryState {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, state := range engine.State().Sources {
+			if state.ID == id && predicate(state) {
+				return state
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("source %s never reached the expected state: %+v", id, engine.State().Sources)
+	return DeliveryState{}
+}
+
+func sqsSource(logicalID, queueName string) EventSourceSpec {
+	return EventSourceSpec{
+		LogicalID:               logicalID,
+		Stack:                   "Stack",
+		Function:                "Stack/Worker",
+		Type:                    backendSQS,
+		Source:                  "Stack/" + queueName,
+		SourceName:              queueName,
+		SourceARN:               "arn:aws:sqs:us-east-1:123456789012:" + queueName,
+		BatchSize:               10,
+		ReportBatchItemFailures: true,
+		Enabled:                 true,
+	}
+}
+
+func TestSQSDelivererDeletesASuccessfulBatchAndReportsPolling(t *testing.T) {
+	fake := newFakeSQS(t)
+	queue := fake.queue("events", nil)
+	fake.seed(queue, `{"n":1}`, nil)
+	fake.seed(queue, `{"n":2}`, nil)
+	clock := NewTestClock(DefaultTestClockStart)
+	events := make(chan deliveredEvent, 4)
+	engine := startSQSDelivery(t, fake, clock, 2, []EventSourceSpec{sqsSource("Mapping", "events")},
+		func(_ context.Context, function string, event []byte) (InvokeResult, error) {
+			events <- deliveredEvent{function: function, event: event}
+			return InvokeResult{Raw: json.RawMessage(`{"batchItemFailures":[]}`)}, nil
+		})
+	state := waitForSource(t, engine, "Mapping", func(state DeliveryState) bool { return state.Delivered == 1 })
+	if state.State != DeliveryPhasePolling || state.Failed != 0 {
+		t.Fatalf("unexpected delivery state: %+v", state)
+	}
+	delivered := <-events
+	var event map[string]any
+	if err := json.Unmarshal(delivered.event, &event); err != nil {
+		t.Fatalf("decode event: %v", err)
+	}
+	records, ok := event["Records"].([]any)
+	if !ok || len(records) != 2 {
+		t.Fatalf("want a two-record batch, got %s", delivered.event)
+	}
+	visible, notVisible, deleted := fake.messageCount(queue)
+	if deleted != 2 || visible != 0 || notVisible != 0 {
+		t.Fatalf("a successful batch must delete every record: visible=%d notVisible=%d deleted=%d", visible, notVisible, deleted)
+	}
+}
+
+func TestSQSDelivererLeavesAFailedBatchAndRedeliversOnTheTestClock(t *testing.T) {
+	fake := newFakeSQS(t)
+	queue := fake.queue("events", func(queue *fakeSQSQueue) { queue.visibility = 300 * time.Second })
+	fake.seed(queue, `{"n":1}`, nil)
+	clock := NewTestClock(DefaultTestClockStart)
+	var invocations atomic.Int32
+	engine := startSQSDelivery(t, fake, clock, 1, []EventSourceSpec{sqsSource("Mapping", "events")},
+		func(context.Context, string, []byte) (InvokeResult, error) {
+			invocations.Add(1)
+			return InvokeResult{}, fmt.Errorf("handler exploded")
+		})
+	state := waitForSource(t, engine, "Mapping", func(state DeliveryState) bool { return state.Failed == 1 })
+	if state.State != DeliveryPhaseFailed || state.LastError != "handler exploded" {
+		t.Fatalf("an invocation failure must report failed with its error: %+v", state)
+	}
+	if state.Left != 1 {
+		t.Fatalf("an invocation failure must count the record it left, got left=%d", state.Left)
+	}
+	visible, notVisible, deleted := fake.messageCount(queue)
+	if visible != 0 || notVisible != 1 || deleted != 0 {
+		t.Fatalf("a failed batch must leave its messages: visible=%d notVisible=%d deleted=%d", visible, notVisible, deleted)
+	}
+	if _, err := clock.Advance(300 * time.Second); err != nil {
+		t.Fatalf("advance clock: %v", err)
+	}
+	waitForSource(t, engine, "Mapping", func(state DeliveryState) bool { return state.Failed == 2 })
+	if invocations.Load() != 2 {
+		t.Fatalf("want a second invocation after the visibility timeout, got %d", invocations.Load())
+	}
+}
+
+func TestSQSDelivererPartialBatchFailureLeavesOnlyTheReportedRecord(t *testing.T) {
+	fake := newFakeSQS(t)
+	queue := fake.queue("events", func(queue *fakeSQSQueue) { queue.visibility = 300 * time.Second })
+	first := fake.seed(queue, `{"id":"first"}`, nil)
+	second := fake.seed(queue, `{"id":"second"}`, nil)
+	third := fake.seed(queue, `{"id":"third"}`, nil)
+	clock := NewTestClock(DefaultTestClockStart)
+	var invoked atomic.Int32
+	engine := startSQSDelivery(t, fake, clock, 1, []EventSourceSpec{sqsSource("Mapping", "events")},
+		func(context.Context, string, []byte) (InvokeResult, error) {
+			invoked.Add(1)
+			return InvokeResult{Raw: json.RawMessage(`{"batchItemFailures":[{"itemIdentifier":"` + second.id + `"}]}`)}, nil
+		})
+	state := waitForSource(t, engine, "Mapping", func(state DeliveryState) bool { return state.Delivered == 1 })
+	if state.Left != 1 {
+		t.Fatalf("a partial batch failure must count one left record, got %d", state.Left)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if !first.deleted || second.deleted || !third.deleted {
+		t.Fatalf("partial failure must leave only %s: first=%t second=%t third=%t", second.id, first.deleted, second.deleted, third.deleted)
+	}
+	if second.receiveCount != 1 {
+		t.Fatalf("the failed record must stay received once, got %d", second.receiveCount)
+	}
+}
+
+func TestSQSDelivererMalformedPartialFailureFailsTheWholeBatch(t *testing.T) {
+	cases := map[string]string{
+		"unknown identifier": `{"batchItemFailures":[{"itemIdentifier":"not-in-batch"}]}`,
+		"empty identifier":   `{"batchItemFailures":[{"itemIdentifier":""}]}`,
+		"bad key name":       `{"batchItemFailures":[{"messageId":"msg-1"}]}`,
+		"not an object":      `{"batchItemFailures":["msg-1"]}`,
+		"invalid json":       `{`,
+	}
+	for name, response := range cases {
+		t.Run(name, func(t *testing.T) {
+			fake := newFakeSQS(t)
+			queue := fake.queue("events", func(queue *fakeSQSQueue) { queue.visibility = 300 * time.Second })
+			fake.seed(queue, `{"n":1}`, nil)
+			clock := NewTestClock(DefaultTestClockStart)
+			engine := startSQSDelivery(t, fake, clock, 1, []EventSourceSpec{sqsSource("Mapping", "events")},
+				func(context.Context, string, []byte) (InvokeResult, error) {
+					return InvokeResult{Raw: json.RawMessage(response)}, nil
+				})
+			state := waitForSource(t, engine, "Mapping", func(state DeliveryState) bool { return state.Failed == 1 })
+			if state.State != DeliveryPhaseFailed || state.LastError == "" {
+				t.Fatalf("a malformed response must fail the batch: %+v", state)
+			}
+			if _, _, deleted := fake.messageCount(queue); deleted != 0 {
+				t.Fatalf("a malformed response must delete nothing, deleted=%d", deleted)
+			}
+		})
+	}
+}
+
+func TestSQSDelivererDeletesMessagesThatMatchNoFilter(t *testing.T) {
+	fake := newFakeSQS(t)
+	queue := fake.queue("events", nil)
+	fake.seed(queue, `{"kind":"keep","n":1}`, nil)
+	fake.seed(queue, `{"kind":"drop","n":2}`, nil)
+	fake.seed(queue, `{"kind":"keep","n":3}`, nil)
+	mapping := sqsSource("Mapping", "events")
+	mapping.FilterCriteria = json.RawMessage(`{"Filters":[{"Pattern":"{\"body\":{\"kind\":[\"keep\"]}}"}]}`)
+	clock := NewTestClock(DefaultTestClockStart)
+	events := make(chan []byte, 4)
+	engine := startSQSDelivery(t, fake, clock, 1, []EventSourceSpec{mapping},
+		func(_ context.Context, _ string, event []byte) (InvokeResult, error) {
+			events <- event
+			return InvokeResult{Raw: json.RawMessage(`{"batchItemFailures":[]}`)}, nil
+		})
+	waitForSource(t, engine, "Mapping", func(state DeliveryState) bool { return state.Delivered == 1 })
+	event := <-events
+	var decoded struct {
+		Records []struct {
+			Body string `json:"body"`
+		} `json:"Records"`
+	}
+	if err := json.Unmarshal(event, &decoded); err != nil {
+		t.Fatalf("decode event: %v", err)
+	}
+	if len(decoded.Records) != 2 {
+		t.Fatalf("want the two matching records, got %s", event)
+	}
+	for _, record := range decoded.Records {
+		if !strings.Contains(record.Body, `"keep"`) {
+			t.Fatalf("a non-matching record reached the handler: %s", record.Body)
+		}
+	}
+	visible, notVisible, deleted := fake.messageCount(queue)
+	if deleted != 3 || visible != 0 || notVisible != 0 {
+		t.Fatalf("non-matching messages must be deleted without invocation: visible=%d notVisible=%d deleted=%d", visible, notVisible, deleted)
+	}
+}
+
+func TestSQSDelivererFIFOProtectsAFailedGroupAndItsOrder(t *testing.T) {
+	fake := newFakeSQS(t)
+	queue := fake.queue("events.fifo", func(queue *fakeSQSQueue) {
+		queue.fifo = true
+		queue.visibility = 300 * time.Second
+	})
+	group := map[string]string{"group": "gA"}
+	a1 := fake.seed(queue, "A1", group)
+	a2 := fake.seed(queue, "A2", group)
+	b1 := fake.seed(queue, "B1", map[string]string{"group": "gB"})
+	clock := NewTestClock(DefaultTestClockStart)
+	var round atomic.Int32
+	events := make(chan []byte, 4)
+	engine := startSQSDelivery(t, fake, clock, 1, []EventSourceSpec{sqsSource("Mapping", "events.fifo")},
+		func(_ context.Context, _ string, event []byte) (InvokeResult, error) {
+			events <- event
+			if round.Add(1) == 1 {
+				return InvokeResult{Raw: json.RawMessage(`{"batchItemFailures":[{"itemIdentifier":"` + a1.id + `"}]}`)}, nil
+			}
+			return InvokeResult{Raw: json.RawMessage(`{"batchItemFailures":[]}`)}, nil
+		})
+	waitForSource(t, engine, "Mapping", func(state DeliveryState) bool { return state.Delivered == 1 })
+	first := <-events
+	if !strings.Contains(string(first), "A1") || !strings.Contains(string(first), "B1") {
+		t.Fatalf("unexpected first FIFO batch: %s", first)
+	}
+	fake.mu.Lock()
+	b1Deleted, a1Deleted, a2Deleted := b1.deleted, a1.deleted, a2.deleted
+	fake.mu.Unlock()
+	if !b1Deleted {
+		t.Fatalf("a successful message in another group must be deleted")
+	}
+	if a1Deleted || a2Deleted {
+		t.Fatalf("a failed FIFO group must keep its failed record and every later record: a1=%t a2=%t", a1Deleted, a2Deleted)
+	}
+	if _, err := clock.Advance(300 * time.Second); err != nil {
+		t.Fatalf("advance clock: %v", err)
+	}
+	waitForCondition(t, func() bool {
+		fake.mu.Lock()
+		defer fake.mu.Unlock()
+		return a1.deleted && a2.deleted
+	}, "the successful FIFO redelivery must delete both records")
+	var redeliveredBodies []string
+	for {
+		select {
+		case event := <-events:
+			var batch struct {
+				Records []struct {
+					Body string `json:"body"`
+				} `json:"Records"`
+			}
+			if err := json.Unmarshal(event, &batch); err != nil {
+				t.Fatalf("decode redelivered event: %v", err)
+			}
+			for _, record := range batch.Records {
+				redeliveredBodies = append(redeliveredBodies, record.Body)
+			}
+		default:
+			if len(redeliveredBodies) == 0 {
+				t.Fatal("the failed FIFO group was never redelivered")
+			}
+			if strings.Join(redeliveredBodies, ",") != "A1,A2" {
+				t.Fatalf("the failed group must redeliver in order A1,A2 (got %v)", redeliveredBodies)
+			}
+			return
+		}
+	}
+}
+
+func TestSQSDelivererBatchingWindowWaitsForTheRunClock(t *testing.T) {
+	fake := newFakeSQS(t)
+	queue := fake.queue("events", nil)
+	fake.seed(queue, `{"n":1}`, nil)
+	fake.seed(queue, `{"n":2}`, nil)
+	mapping := sqsSource("Mapping", "events")
+	mapping.BatchSize = 100
+	mapping.MaximumBatchingWindowInSeconds = 10
+	clock := NewTestClock(DefaultTestClockStart)
+	events := make(chan []byte, 4)
+	engine := startSQSDelivery(t, fake, clock, 1, []EventSourceSpec{mapping},
+		func(_ context.Context, _ string, event []byte) (InvokeResult, error) {
+			events <- event
+			return InvokeResult{Raw: json.RawMessage(`{"batchItemFailures":[]}`)}, nil
+		})
+	time.Sleep(300 * time.Millisecond)
+	for _, state := range engine.State().Sources {
+		if state.Delivered != 0 {
+			t.Fatalf("a batch window must not invoke before the clock reaches the window: %+v", state)
+		}
+	}
+	for delivered := false; !delivered; {
+		if _, err := clock.Advance(10 * time.Second); err != nil {
+			t.Fatalf("advance clock: %v", err)
+		}
+		select {
+		case event := <-events:
+			var decoded struct {
+				Records []any `json:"Records"`
+			}
+			if err := json.Unmarshal(event, &decoded); err != nil {
+				t.Fatalf("decode event: %v", err)
+			}
+			if len(decoded.Records) != 2 {
+				t.Fatalf("want both messages in the window batch, got %s", event)
+			}
+			delivered = true
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
+
+func TestSQSDelivererBoundsConcurrentBatches(t *testing.T) {
+	fake := newFakeSQS(t)
+	queue := fake.queue("events", nil)
+	for index := 0; index < 12; index++ {
+		fake.seed(queue, fmt.Sprintf(`{"n":%d}`, index), nil)
+	}
+	mapping := sqsSource("Mapping", "events")
+	mapping.BatchSize = 1
+	mapping.MaximumConcurrency = 2
+	clock := NewTestClock(DefaultTestClockStart)
+	var current, peak int32
+	started := make(chan struct{}, 12)
+	release := make(chan struct{})
+	engine := startSQSDelivery(t, fake, clock, 4, []EventSourceSpec{mapping},
+		func(context.Context, string, []byte) (InvokeResult, error) {
+			value := atomic.AddInt32(&current, 1)
+			for {
+				observed := atomic.LoadInt32(&peak)
+				if value <= observed || atomic.CompareAndSwapInt32(&peak, observed, value) {
+					break
+				}
+			}
+			started <- struct{}{}
+			<-release
+			atomic.AddInt32(&current, -1)
+			return InvokeResult{Raw: json.RawMessage(`{"batchItemFailures":[]}`)}, nil
+		})
+	for index := 0; index < 2; index++ {
+		select {
+		case <-started:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("only %d concurrent batch(es) started with MaximumConcurrency=2", index)
+		}
+	}
+	close(release)
+	state := waitForSource(t, engine, "Mapping", func(state DeliveryState) bool { return state.Delivered == 12 })
+	if observed := atomic.LoadInt32(&peak); observed > 2 {
+		t.Fatalf("MaximumConcurrency=2 allowed %d concurrent batches", observed)
+	}
+	if state.PeakInflight > 2 || state.PeakInflight < 2 {
+		t.Fatalf("the engine must report the observed peak of 2, got %d", state.PeakInflight)
+	}
+}
+
+func TestSQSDelivererRedrivesToTheDeadLetterMapping(t *testing.T) {
+	fake := newFakeSQS(t)
+	dead := fake.queue("events-dlq", nil)
+	main := fake.queue("events", func(queue *fakeSQSQueue) {
+		queue.visibility = 300 * time.Second
+		queue.maxReceiveCount = 2
+		queue.dlq = dead
+	})
+	fake.seed(main, `{"fail":true}`, nil)
+	clock := NewTestClock(DefaultTestClockStart)
+	var mainInvocations, deadInvocations atomic.Int32
+	engine := startSQSDelivery(t, fake, clock, 2, []EventSourceSpec{
+		sqsSource("MainMapping", "events"),
+		{LogicalID: "DeadMapping", Stack: "Stack", Function: "Stack/DLQ", Type: backendSQS, SourceName: "events-dlq", SourceARN: "arn:aws:sqs:us-east-1:123456789012:events-dlq", BatchSize: 1, Enabled: true},
+	}, func(_ context.Context, function string, event []byte) (InvokeResult, error) {
+		if function == "Stack/Worker" {
+			mainInvocations.Add(1)
+			return InvokeResult{}, fmt.Errorf("keep failing")
+		}
+		deadInvocations.Add(1)
+		return InvokeResult{Raw: json.RawMessage(`{"batchItemFailures":[]}`)}, nil
+	})
+	waitForSource(t, engine, "MainMapping", func(state DeliveryState) bool { return state.Failed == 1 })
+	if _, err := clock.Advance(300 * time.Second); err != nil {
+		t.Fatalf("advance clock: %v", err)
+	}
+	state := waitForSource(t, engine, "MainMapping", func(state DeliveryState) bool { return state.Failed == 2 })
+	if state.Left != 2 {
+		t.Fatalf("want two left records before redrive, got %d", state.Left)
+	}
+	if _, err := clock.Advance(300 * time.Second); err != nil {
+		t.Fatalf("advance clock: %v", err)
+	}
+	waitForSource(t, engine, "DeadMapping", func(state DeliveryState) bool { return state.Delivered == 1 })
+	if mainInvocations.Load() != 2 || deadInvocations.Load() != 1 {
+		t.Fatalf("want two main invocations and one DLQ invocation, got %d/%d", mainInvocations.Load(), deadInvocations.Load())
+	}
+	visible, notVisible, deleted := fake.messageCount(dead)
+	if visible != 0 || notVisible != 0 || deleted != 1 {
+		t.Fatalf("the DLQ mapping must delete the redriven message: visible=%d notVisible=%d deleted=%d", visible, notVisible, deleted)
+	}
+}
+
+func TestSQSRecordMatchesFiltersMetadataAndBody(t *testing.T) {
+	message := sqsMessageForTest("msg-1", `{"kind":"keep"}`, map[string]string{"SentTimestamp": "123"})
+	record := sqsRecordMap("arn:aws:sqs:us-east-1:123456789012:q", message)
+	metadata := json.RawMessage(`{"Filters":[{"Pattern":"{\"attributes\":{\"SentTimestamp\":[\"123\"]}}"}]}`)
+	if matched, err := sqsRecordMatchesFilters(metadata, record, `{"kind":"keep"}`); err != nil || !matched {
+		t.Fatalf("a metadata filter must match the record attributes: matched=%t err=%v", matched, err)
+	}
+	body := json.RawMessage(`{"Filters":[{"Pattern":"{\"body\":{\"kind\":[\"keep\"]}}"}]}`)
+	if matched, err := sqsRecordMatchesFilters(body, record, `{"kind":"keep"}`); err != nil || !matched {
+		t.Fatalf("a body filter must match the parsed body: matched=%t err=%v", matched, err)
+	}
+	if matched, err := sqsRecordMatchesFilters(body, record, `not-json`); err != nil || matched {
+		t.Fatalf("a body filter must not match an unparseable body: matched=%t err=%v", matched, err)
+	}
+	malformed := json.RawMessage(`{"Filters":[{"Pattern":"{\"body\":{\"kind\":\"keep\"}}"}]}`)
+	if _, err := sqsRecordMatchesFilters(malformed, record, `{"kind":"keep"}`); err == nil {
+		t.Fatal("an unvalidated malformed pattern must be reported, never treated as a non-match")
+	}
+}
+
+func TestSQSDelivererFilterEvaluationFailureLeavesTheWholeBatch(t *testing.T) {
+	deliverer := &SQSDeliverer{
+		source: DeliverySource{ID: "Mapping"},
+		mapping: EventSourceSpec{
+			FilterCriteria: json.RawMessage(`{"Filters":[{"Pattern":"{\"kind\":\"keep\"}"}]}`),
+		},
+	}
+	reporter := &recordingDeliveryReporter{}
+	batch := []sqstypes.Message{
+		sqsMessageForTest("msg-1", `{"kind":"keep"}`, nil),
+		sqsMessageForTest("msg-2", `{"kind":"drop"}`, nil),
+	}
+	matching, filtered, ok := deliverer.classifyBatch(DelivererEnv{State: reporter}, batch, "arn:aws:sqs:us-east-1:123456789012:q")
+	if ok || matching != nil || filtered != nil {
+		t.Fatalf("an invalid pattern must fail the batch: ok=%t matching=%v filtered=%v", ok, matching, filtered)
+	}
+	if reporter.failed != 1 || reporter.left != len(batch) || reporter.phase != DeliveryPhaseFailed {
+		t.Fatalf("the failure must be reported and the batch left: %+v", reporter)
+	}
+	if !strings.Contains(reporter.lastError, "not a valid Lambda event filter pattern") {
+		t.Fatalf("the failure must be reported loudly: %q", reporter.lastError)
+	}
+}
+
+type recordingDeliveryReporter struct {
+	phase        DeliveryPhase
+	delivered    int
+	failed       int
+	filtered     int
+	left         int
+	discarded    int
+	fired        int
+	deadLettered int
+	lastError    string
+}
+
+func (r *recordingDeliveryReporter) SetPhase(phase DeliveryPhase) { r.phase = phase }
+func (r *recordingDeliveryReporter) Delivered()                   { r.delivered++ }
+func (r *recordingDeliveryReporter) Failed(err error) {
+	r.failed++
+	if err != nil {
+		r.lastError = err.Error()
+	}
+}
+func (r *recordingDeliveryReporter) Filtered()           { r.filtered++ }
+func (r *recordingDeliveryReporter) SetPaused(bool)      {}
+func (r *recordingDeliveryReporter) SetInflight(int)     {}
+func (r *recordingDeliveryReporter) Left(count int)      { r.left += count }
+func (r *recordingDeliveryReporter) Discarded(count int) { r.discarded += count }
+func (r *recordingDeliveryReporter) Fired()              { r.fired++ }
+func (r *recordingDeliveryReporter) DeadLettered()       { r.deadLettered++ }
+
+func TestSQSMaxReceiveCountAcceptsBothRedriveForms(t *testing.T) {
+	cases := map[string]int{
+		`{"deadLetterTargetArn":"arn","maxReceiveCount":5}`: 5,
+		"\"{\\\"maxReceiveCount\\\":3}\"":                   3,
+		`{}`:                                                0,
+		`not-json`:                                          0,
+	}
+	for raw, want := range cases {
+		if got := sqsMaxReceiveCount(json.RawMessage(raw)); got != want {
+			t.Fatalf("sqsMaxReceiveCount(%s) = %d, want %d", raw, got, want)
+		}
+	}
+}
+
+func TestNormalizeEventFilterCriteria(t *testing.T) {
+	if _, err := normalizeEventFilterCriteria(nil, "Mapping"); err != nil {
+		t.Fatalf("no filter criteria: %v", err)
+	}
+	if encoded, err := normalizeEventFilterCriteria(json.RawMessage(`{}`), "Mapping"); err != nil || encoded != nil {
+		t.Fatalf("empty filter criteria: %v %s", err, encoded)
+	}
+	if _, err := normalizeEventFilterCriteria(json.RawMessage(`{"Filters":[{"Pattern":"[]"}]}`), "Mapping"); err == nil {
+		t.Fatal("a non-object pattern must be refused")
+	}
+	if _, err := normalizeEventFilterCriteria(json.RawMessage(`{"Filters":[{"Pattern":"{"}]}`), "Mapping"); err == nil {
+		t.Fatal("invalid JSON must be refused")
+	}
+	six := `{"Filters":[{"Pattern":"{}"},{"Pattern":"{}"},{"Pattern":"{}"},{"Pattern":"{}"},{"Pattern":"{}"},{"Pattern":"{}"}]}`
+	if _, err := normalizeEventFilterCriteria(json.RawMessage(six), "Mapping"); err == nil {
+		t.Fatal("more than five filters must be refused")
+	}
+}
+
+func TestNormalizeEventFilterCriteriaRejectsMalformedPatterns(t *testing.T) {
+	longPattern, err := json.Marshal(map[string]any{"kind": []any{strings.Repeat("x", eventFilterPatternMaximumLength)}})
+	if err != nil {
+		t.Fatalf("build long pattern: %v", err)
+	}
+	cases := []struct {
+		name string
+		// key and value are asserted in the refusal so the operator
+		// validator is proved to name the offending key and value.
+		pattern string
+		key     string
+		value   string
+	}{
+		{name: "scalar where a list is required", pattern: `{"kind":"keep"}`, key: "kind", value: `"keep"`},
+		{name: "scalar in the report", pattern: `{"exists":"yes"}`, key: "exists", value: `"yes"`},
+		{name: "unknown operator", pattern: `{"kind":[{"anyting-but":["x"]}]}`, key: "kind[0].anyting-but", value: `["x"]`},
+		{name: "multi-key operator", pattern: `{"kind":[{"prefix":"k","suffix":"p"}]}`, key: "kind[0]", value: `{"prefix":"k","suffix":"p"}`},
+		{name: "numeric without a number", pattern: `{"n":[{"numeric":[">"]}]}`, key: "n[0].numeric", value: `[">"]`},
+		{name: "numeric not a list", pattern: `{"n":[{"numeric":">"}]}`, key: "n[0].numeric", value: `">"`},
+		{name: "numeric odd length", pattern: `{"n":[{"numeric":[">",1,"<"]}]}`, key: "n[0].numeric", value: `[">",1,"<"]`},
+		{name: "numeric unknown operator", pattern: `{"n":[{"numeric":["!=",1]}]}`, key: "n[0].numeric[0]", value: `"!="`},
+		{name: "numeric string bound", pattern: `{"n":[{"numeric":[">","1"]}]}`, key: "n[0].numeric[1]", value: `"1"`},
+		{name: "numeric lower-only upper operator", pattern: `{"n":[{"numeric":[">=",1,">=",10]}]}`, key: "n[0].numeric[2]", value: `">="`},
+		{name: "exists not a boolean", pattern: `{"kind":[{"exists":"yes"}]}`, key: "kind[0].exists", value: `"yes"`},
+		{name: "prefix not a string", pattern: `{"kind":[{"prefix":1}]}`, key: "kind[0].prefix", value: `1`},
+		{name: "suffix object form", pattern: `{"kind":[{"suffix":{"equals-ignore-case":"ep"}}]}`, key: "kind[0].suffix", value: `{"equals-ignore-case":"ep"}`},
+		{name: "equals-ignore-case not a string", pattern: `{"kind":[{"equals-ignore-case":true}]}`, key: "kind[0].equals-ignore-case", value: `true`},
+		{name: "anything-but empty list", pattern: `{"kind":[{"anything-but":[]}]}`, key: "kind[0].anything-but", value: `[]`},
+		{name: "anything-but mixed list", pattern: `{"kind":[{"anything-but":["drop",2]}]}`, key: "kind[0].anything-but", value: `["drop",2]`},
+		{name: "anything-but object item", pattern: `{"kind":[{"anything-but":[{"prefix":"dr"}]}]}`, key: "kind[0].anything-but[0]", value: `{"prefix":"dr"}`},
+		{name: "anything-but equals-ignore-case", pattern: `{"kind":[{"anything-but":{"equals-ignore-case":"drop"}}]}`, key: "kind[0].anything-but.equals-ignore-case", value: `"drop"`},
+		{name: "anything-but unknown operator", pattern: `{"kind":[{"anything-but":{"wildcard":"*"}}]}`, key: "kind[0].anything-but.wildcard", value: `"*"`},
+		{name: "anything-but suffix value", pattern: `{"kind":[{"anything-but":{"suffix":2}}]}`, key: "kind[0].anything-but.suffix", value: `2`},
+		{name: "anything-but empty prefix list", pattern: `{"kind":[{"anything-but":{"prefix":[]}}]}`, key: "kind[0].anything-but.prefix", value: `[]`},
+		{name: "or not a list", pattern: `{"$or":{}}`, key: "$or", value: `{}`},
+		{name: "or empty list", pattern: `{"$or":[]}`, key: "$or", value: `[]`},
+		{name: "or non-object", pattern: `{"$or":["x"]}`, key: "$or[0]", value: `"x"`},
+		{name: "empty leaf list", pattern: `{"kind":[]}`, key: "kind", value: `[]`},
+		{name: "nested list", pattern: `{"kind":[["keep"]]}`, key: "kind[0]", value: `["keep"]`},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			criteria := mustFilterCriteria(t, testCase.pattern)
+			_, err := normalizeEventFilterCriteria(criteria, "Mapping")
+			if err == nil {
+				t.Fatalf("pattern %s must be refused", testCase.pattern)
+			}
+			var unsupportedErr *UnsupportedError
+			if !errors.As(err, &unsupportedErr) {
+				t.Fatalf("pattern %s must report a named unsupported error, got %T: %v", testCase.pattern, err, err)
+			}
+			if unsupportedErr.Construct != "Mapping" {
+				t.Fatalf("the refusal must name the mapping: %+v", unsupportedErr)
+			}
+			for _, want := range []string{"filter 1", testCase.key, testCase.value} {
+				if !strings.Contains(unsupportedErr.Reason, want) {
+					t.Fatalf("refusal %q does not name %q", unsupportedErr.Reason, want)
+				}
+			}
+		})
+	}
+
+	t.Run("pattern over the documented maximum", func(t *testing.T) {
+		criteria := mustFilterCriteria(t, string(longPattern))
+		_, err := normalizeEventFilterCriteria(criteria, "Mapping")
+		if err == nil || !strings.Contains(err.Error(), "4096") {
+			t.Fatalf("a pattern over 4096 characters must be refused, got %v", err)
+		}
+	})
+}
+
+func TestNormalizeEventFilterCriteriaAcceptsDocumentedOperators(t *testing.T) {
+	patterns := []string{
+		`{"kind":["keep"]}`,
+		`{"kind":[null]}`,
+		// "numeric" here is a field name, not an operator: EventBridge only
+		// reads an operator when it is an object inside a rule array. The same
+		// holds at every depth, so the field-name form is accepted at the root,
+		// at depth one and at depth two.
+		`{"numeric":[">"]}`,
+		`{"body":{"numeric":[">"]}}`,
+		`{"body":{"outer":{"numeric":[">"]}}}`,
+		`{"body":{"kind":["keep"]}}`,
+		`{"kind":[{"prefix":"ke"}]}`,
+		`{"kind":[{"suffix":"ep"}]}`,
+		`{"kind":[{"equals-ignore-case":"KEEP"}]}`,
+		`{"kind":[{"anything-but":"drop"}]}`,
+		`{"kind":[{"anything-but":["drop","skip"]}]}`,
+		`{"kind":[{"anything-but":[1,2,3]}]}`,
+		`{"kind":[{"anything-but":{"prefix":"dr"}}]}`,
+		`{"kind":[{"anything-but":{"prefix":["dr","ol"]}}]}`,
+		`{"kind":[{"anything-but":{"suffix":".json"}}]}`,
+		`{"kind":[{"anything-but":{"suffix":[".json",".yaml"]}}]}`,
+		`{"n":[{"numeric":["=",1]}]}`,
+		`{"n":[{"numeric":["<",10]}]}`,
+		`{"n":[{"numeric":[">",1]}]}`,
+		`{"n":[{"numeric":[">=",1,"<",10]}]}`,
+		`{"n":[{"numeric":[">",1,"<=",10]}]}`,
+		`{"kind":[{"exists":true}]}`,
+		`{"kind":[{"exists":false}]}`,
+		`{"$or":[{"a":["x"]},{"b":["y"]}]}`,
+		`{"body":{"$or":[{"a":["x"]},{"b":[{"prefix":"y"}]}]}}`,
+	}
+	for _, pattern := range patterns {
+		t.Run(pattern, func(t *testing.T) {
+			if _, err := normalizeEventFilterCriteria(mustFilterCriteria(t, pattern), "Mapping"); err != nil {
+				t.Fatalf("pattern %s must be accepted: %v", pattern, err)
+			}
+		})
+	}
+}
+
+func mustFilterCriteria(t *testing.T, pattern string) json.RawMessage {
+	t.Helper()
+	encoded, err := json.Marshal(eventFilterCriteria{Filters: []eventFilter{{Pattern: pattern}}})
+	if err != nil {
+		t.Fatalf("encode filter criteria: %v", err)
+	}
+	return encoded
+}
+
+func TestEventPatternMatching(t *testing.T) {
+	cases := []struct {
+		name    string
+		pattern string
+		target  string
+		want    bool
+	}{
+		{name: "equals", pattern: `{"kind":["keep"]}`, target: `{"kind":"keep"}`, want: true},
+		{name: "equals miss", pattern: `{"kind":["keep"]}`, target: `{"kind":"drop"}`, want: false},
+		{name: "prefix", pattern: `{"kind":[{"prefix":"ke"}]}`, target: `{"kind":"keep"}`, want: true},
+		{name: "suffix", pattern: `{"kind":[{"suffix":"ep"}]}`, target: `{"kind":"keep"}`, want: true},
+		{name: "ignore case", pattern: `{"kind":[{"equals-ignore-case":"KEEP"}]}`, target: `{"kind":"keep"}`, want: true},
+		{name: "anything but", pattern: `{"kind":[{"anything-but":["drop"]}]}`, target: `{"kind":"keep"}`, want: true},
+		{name: "anything but match", pattern: `{"kind":[{"anything-but":["drop"]}]}`, target: `{"kind":"drop"}`, want: false},
+		{name: "anything but prefix", pattern: `{"kind":[{"anything-but":{"prefix":"dr"}}]}`, target: `{"kind":"keep"}`, want: true},
+		{name: "anything but prefix match", pattern: `{"kind":[{"anything-but":{"prefix":"ke"}}]}`, target: `{"kind":"keep"}`, want: false},
+		{name: "anything but prefix list", pattern: `{"kind":[{"anything-but":{"prefix":["dr","ol"]}}]}`, target: `{"kind":"keep"}`, want: true},
+		{name: "anything but prefix list match", pattern: `{"kind":[{"anything-but":{"prefix":["dr","ke"]}}]}`, target: `{"kind":"keep"}`, want: false},
+		{name: "anything but suffix", pattern: `{"kind":[{"anything-but":{"suffix":".json"}}]}`, target: `{"kind":"data.txt"}`, want: true},
+		{name: "anything but suffix match", pattern: `{"kind":[{"anything-but":{"suffix":".json"}}]}`, target: `{"kind":"data.json"}`, want: false},
+		{name: "anything but suffix list", pattern: `{"kind":[{"anything-but":{"suffix":[".json",".yaml"]}}]}`, target: `{"kind":"data.txt"}`, want: true},
+		{name: "anything but suffix list match", pattern: `{"kind":[{"anything-but":{"suffix":[".json",".yaml"]}}]}`, target: `{"kind":"data.yaml"}`, want: false},
+		{name: "exists", pattern: `{"kind":[{"exists":true}]}`, target: `{"kind":"keep"}`, want: true},
+		{name: "missing exists", pattern: `{"kind":[{"exists":true}]}`, target: `{"other":"x"}`, want: false},
+		{name: "not exists", pattern: `{"kind":[{"exists":false}]}`, target: `{"other":"x"}`, want: true},
+		{name: "null", pattern: `{"kind":[null]}`, target: `{"kind":null}`, want: true},
+		{name: "missing null", pattern: `{"kind":[null]}`, target: `{"other":"x"}`, want: true},
+		{name: "numeric range", pattern: `{"n":[{"numeric":[">",1,"<=",10]}]}`, target: `{"n":10}`, want: true},
+		{name: "numeric outside", pattern: `{"n":[{"numeric":[">",1,"<=",10]}]}`, target: `{"n":0}`, want: false},
+		{name: "numeric representation", pattern: `{"n":[300]}`, target: `{"n":300.0}`, want: false},
+		{name: "metadata attributes", pattern: `{"attributes":{"SentTimestamp":["123"]}}`, target: `{"attributes":{"SentTimestamp":"123"}}`, want: true},
+		{name: "or", pattern: `{"$or":[{"a":["x"]},{"b":["y"]}]}`, target: `{"b":"y"}`, want: true},
+		{name: "nested", pattern: `{"body":{"kind":["keep"]}}`, target: `{"body":{"kind":"keep"}}`, want: true},
+		// EventBridge reads a pattern-object key as a field name, so a field
+		// named after an operator is ordinary data at every depth.
+		{name: "root numeric field", pattern: `{"numeric":[">"]}`, target: `{"numeric":">"}`, want: true},
+		{name: "depth one numeric field", pattern: `{"body":{"numeric":[">"]}}`, target: `{"body":{"numeric":">"}}`, want: true},
+		{name: "depth two numeric field", pattern: `{"body":{"outer":{"numeric":[">"]}}}`, target: `{"body":{"outer":{"numeric":">"}}}`, want: true},
+		{name: "anything-but field is a literal rule", pattern: `{"body":{"anything-but":["drop"]}}`, target: `{"body":{"anything-but":"drop"}}`, want: true},
+		{name: "anything-but field miss", pattern: `{"body":{"anything-but":["drop"]}}`, target: `{"body":{"anything-but":"keep"}}`, want: false},
+		{name: "anything-but operator excludes the value", pattern: `{"body":{"anything-but":[{"anything-but":"drop"}]}}`, target: `{"body":{"anything-but":"drop"}}`, want: false},
+		// An event array matches when the intersection with the pattern array
+		// is non-empty; one element satisfying one rule is enough.
+		// https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-event-patterns-arrays.html
+		{name: "event array intersection", pattern: `{"kind":["keep"]}`, target: `{"kind":["drop","keep"]}`, want: true},
+		{name: "event array intersection miss", pattern: `{"kind":["keep"]}`, target: `{"kind":["drop","hold"]}`, want: false},
+		{name: "operator on event array element", pattern: `{"kind":[{"prefix":"ke"}]}`, target: `{"kind":["drop","keep"]}`, want: true},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			pattern, err := decodePatternValue([]byte(testCase.pattern))
+			if err != nil {
+				t.Fatalf("pattern: %v", err)
+			}
+			target, err := decodePatternValue([]byte(testCase.target))
+			if err != nil {
+				t.Fatalf("target: %v", err)
+			}
+			if got := eventPatternMatches(pattern, target); got != testCase.want {
+				t.Fatalf("matched=%t want %t", got, testCase.want)
+			}
+		})
+	}
+}
+
+// TestSQSFilterPatternObjectKeysAreFieldNames pins F5 on the production path:
+// normalizeEventFilterCriteria (derive-time validation) then
+// sqsRecordMatchesFilters (the per-record evaluator classifyBatch calls). A
+// pattern-object key is a field name, so a body field named after an operator is
+// ordinary data at every depth; an operator is read only from an object inside a
+// rule list, so the same operator keeps working at the same depth. Equality is
+// exact character-by-character matching, which is why the equals-ignore-case
+// field cases are case-sensitive literals.
+//
+// https://docs.aws.amazon.com/lambda/latest/dg/invocation-eventfiltering.html
+func TestSQSFilterPatternObjectKeysAreFieldNames(t *testing.T) {
+	message := sqsMessageForTest("msg-1", `{}`, nil)
+	record := sqsRecordMap("arn:aws:sqs:us-east-1:123456789012:q", message)
+	cases := []struct {
+		name    string
+		pattern string
+		body    string
+		want    bool
+	}{
+		{name: "numeric field", pattern: `{"body":{"numeric":[">"]}}`, body: `{"numeric":">"}`, want: true},
+		{name: "prefix field", pattern: `{"body":{"prefix":["us-"]}}`, body: `{"prefix":"us-"}`, want: true},
+		{name: "suffix field", pattern: `{"body":{"suffix":[".log"]}}`, body: `{"suffix":".log"}`, want: true},
+		{name: "exists field holding an array", pattern: `{"body":{"exists":[true]}}`, body: `{"exists":[true]}`, want: true},
+		{name: "equals-ignore-case field is an exact rule", pattern: `{"body":{"equals-ignore-case":["KEEP"]}}`, body: `{"equals-ignore-case":"KEEP"}`, want: true},
+		{name: "equals-ignore-case field does not fold case", pattern: `{"body":{"equals-ignore-case":["KEEP"]}}`, body: `{"equals-ignore-case":"keep"}`, want: false},
+		{name: "anything-but field matches the literal value", pattern: `{"body":{"anything-but":["drop"]}}`, body: `{"anything-but":"drop"}`, want: true},
+		{name: "anything-but field does not match another value", pattern: `{"body":{"anything-but":["drop"]}}`, body: `{"anything-but":"keep"}`, want: false},
+		{name: "depth two numeric field", pattern: `{"body":{"outer":{"numeric":[">"]}}}`, body: `{"outer":{"numeric":">"}}`, want: true},
+		// The same operator inside a rule list still works at the same depth.
+		{name: "numeric operator rule", pattern: `{"body":{"numeric":[{"numeric":[">",1]}]}}`, body: `{"numeric":2}`, want: true},
+		{name: "prefix operator rule", pattern: `{"body":{"prefix":[{"prefix":"us-"}]}}`, body: `{"prefix":"us-east-1"}`, want: true},
+		{name: "suffix operator rule", pattern: `{"body":{"suffix":[{"suffix":".log"}]}}`, body: `{"suffix":"app.log"}`, want: true},
+		{name: "exists operator rule", pattern: `{"body":{"exists":[{"exists":true}]}}`, body: `{"exists":true}`, want: true},
+		{name: "equals-ignore-case operator rule", pattern: `{"body":{"equals-ignore-case":[{"equals-ignore-case":"KEEP"}]}}`, body: `{"equals-ignore-case":"keep"}`, want: true},
+		{name: "anything-but operator rule", pattern: `{"body":{"anything-but":[{"anything-but":"drop"}]}}`, body: `{"anything-but":"keep"}`, want: true},
+		{name: "anything-but operator excludes the value", pattern: `{"body":{"anything-but":[{"anything-but":"drop"}]}}`, body: `{"anything-but":"drop"}`, want: false},
+		{name: "depth two operator rule", pattern: `{"body":{"outer":{"numeric":[{"numeric":[">",1]}]}}}`, body: `{"outer":{"numeric":2}}`, want: true},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			criteria := mustFilterCriteria(t, testCase.pattern)
+			if _, err := normalizeEventFilterCriteria(criteria, "Mapping"); err != nil {
+				t.Fatalf("derive-time validation refused a documented pattern %s: %v", testCase.pattern, err)
+			}
+			matched, err := sqsRecordMatchesFilters(criteria, record, testCase.body)
+			if err != nil {
+				t.Fatalf("pattern %s must evaluate without error: %v", testCase.pattern, err)
+			}
+			if matched != testCase.want {
+				t.Fatalf("pattern %s on body %s: matched=%t want %t", testCase.pattern, testCase.body, matched, testCase.want)
+			}
+		})
+	}
+}
+
+// TestSQSFilterPatternObjectMatchesEachElementOfAnArrayOfObjects pins F6 on the
+// production path: normalizeEventFilterCriteria (derive-time validation) then
+// sqsRecordMatchesFilters (the per-record evaluator classifyBatch calls). A
+// nested pattern object applied to an array of objects is applied to each
+// element, so it matches when any element matches, and a multi-key pattern
+// object never matches across elements. An empty array, an array of scalars and
+// a scalar match nothing; nested arrays are crushed out at every level.
+//
+// https://github.com/aws/event-ruler#json-array-matching
+// https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-event-patterns-arrays.html
+func TestSQSFilterPatternObjectMatchesEachElementOfAnArrayOfObjects(t *testing.T) {
+	cases := []struct {
+		name    string
+		pattern string
+		body    string
+		want    bool
+	}{
+		{
+			name:    "event-ruler employees example",
+			pattern: `{"body":{"employees":{"firstName":["Anna"]}}}`,
+			body:    `{"employees":[{"firstName":"John","lastName":"Doe"},{"firstName":"Anna","lastName":"Smith"}]}`,
+			want:    true,
+		},
+		{
+			name:    "one element carries both fields of a two-key pattern object",
+			pattern: `{"body":{"employees":{"firstName":["Anna"],"lastName":["Smith"]}}}`,
+			body:    `{"employees":[{"firstName":"Anna","lastName":"Smith"}]}`,
+			want:    true,
+		},
+		{
+			name:    "a two-key pattern object does not match across elements",
+			pattern: `{"body":{"employees":{"firstName":["Anna"],"lastName":["Jones"]}}}`,
+			body:    `{"employees":[{"firstName":"Anna","lastName":"Smith"},{"firstName":"Peter","lastName":"Jones"}]}`,
+			want:    false,
+		},
+		{
+			name:    "nested object at depth two",
+			pattern: `{"body":{"team":{"employees":{"firstName":["Anna"]}}}}`,
+			body:    `{"team":{"employees":[{"firstName":"John"},{"firstName":"Anna"}]}}`,
+			want:    true,
+		},
+		{
+			name:    "array of objects inside an array of objects",
+			pattern: `{"body":{"groups":{"members":{"name":["x"]}}}}`,
+			body:    `{"groups":[{"members":[{"name":"y"}]},{"members":[{"name":"x"}]}]}`,
+			want:    true,
+		},
+		{
+			name:    "array nested inside an array of objects",
+			pattern: `{"body":{"items":{"sku":["A-1"]}}}`,
+			body:    `{"items":[[{"sku":"A-2"}],[{"sku":"A-1"}]]}`,
+			want:    true,
+		},
+		{
+			name:    "empty array",
+			pattern: `{"body":{"employees":{"firstName":["Anna"]}}}`,
+			body:    `{"employees":[]}`,
+			want:    false,
+		},
+		{
+			name:    "array of scalars",
+			pattern: `{"body":{"tags":{"name":["x"]}}}`,
+			body:    `{"tags":["x","y"]}`,
+			want:    false,
+		},
+		{
+			name:    "nested pattern object against a scalar",
+			pattern: `{"body":{"employee":{"firstName":["Anna"]}}}`,
+			body:    `{"employee":"Anna"}`,
+			want:    false,
+		},
+		{
+			name:    "operator rule list on one element",
+			pattern: `{"body":{"items":{"price":[{"numeric":[">",10]}]}}}`,
+			body:    `{"items":[{"price":5},{"price":11}]}`,
+			want:    true,
+		},
+		{
+			name:    "$or inside the per-element application",
+			pattern: `{"body":{"items":{"$or":[{"kind":["keep"]},{"flag":[true]}]}}}`,
+			body:    `{"items":[{"kind":"drop"},{"flag":true}]}`,
+			want:    true,
+		},
+		{
+			name:    "$or does not match across elements",
+			pattern: `{"body":{"items":{"$or":[{"kind":["keep"],"flag":[true]}]}}}`,
+			body:    `{"items":[{"kind":"keep"},{"flag":true}]}`,
+			want:    false,
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			criteria := mustFilterCriteria(t, testCase.pattern)
+			if _, err := normalizeEventFilterCriteria(criteria, "Mapping"); err != nil {
+				t.Fatalf("derive-time validation refused a valid pattern %s: %v", testCase.pattern, err)
+			}
+			record := sqsRecordMap("arn:aws:sqs:us-east-1:123456789012:q", sqsMessageForTest("msg-1", testCase.body, nil))
+			matched, err := sqsRecordMatchesFilters(criteria, record, testCase.body)
+			if err != nil {
+				t.Fatalf("pattern %s must evaluate without error: %v", testCase.pattern, err)
+			}
+			if matched != testCase.want {
+				t.Fatalf("pattern %s on body %s: matched=%t want %t", testCase.pattern, testCase.body, matched, testCase.want)
+			}
+		})
+	}
+}
+
+func TestEventPatternExistsMatchesLeafNodesOnly(t *testing.T) {
+	cases := []struct {
+		name    string
+		pattern string
+		target  string
+		body    string
+		want    bool
+	}{
+		{
+			name:    "body leaf exists",
+			pattern: `{"body":{"address":[{"exists":true}]}}`,
+			target:  `{"messageId":"m1"}`,
+			body:    `{"address":"123 Main St"}`,
+			want:    true,
+		},
+		{
+			name:    "body intermediate node does not exist",
+			pattern: `{"body":{"address":[{"exists":true}]}}`,
+			target:  `{"messageId":"m1"}`,
+			body:    `{"address":{"street":"123 Main St","city":"Anytown"}}`,
+			want:    false,
+		},
+		{
+			name:    "body absent field does not exist",
+			pattern: `{"body":{"address":[{"exists":true}]}}`,
+			target:  `{"messageId":"m1"}`,
+			body:    `{"name":"John Doe"}`,
+			want:    false,
+		},
+		{
+			name:    "body intermediate node is not absent",
+			pattern: `{"body":{"address":[{"exists":false}]}}`,
+			target:  `{"messageId":"m1"}`,
+			body:    `{"address":{"street":"123 Main St"}}`,
+			want:    false,
+		},
+		{
+			name:    "body absent field is absent",
+			pattern: `{"body":{"address":[{"exists":false}]}}`,
+			target:  `{"messageId":"m1"}`,
+			body:    `{"name":"John Doe"}`,
+			want:    true,
+		},
+		{
+			name:    "record intermediate node does not exist",
+			pattern: `{"attributes":[{"exists":true}]}`,
+			target:  `{"messageId":"m1","attributes":{"SentTimestamp":"123"}}`,
+			body:    `{}`,
+			want:    false,
+		},
+		{
+			name:    "record leaf exists",
+			pattern: `{"messageId":[{"exists":true}]}`,
+			target:  `{"messageId":"m1"}`,
+			body:    `{}`,
+			want:    true,
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			pattern, err := decodePatternValue([]byte(testCase.pattern))
+			if err != nil {
+				t.Fatalf("pattern: %v", err)
+			}
+			if validateErr := validateEventFilterPattern(mustMapValue(t, pattern)); validateErr != nil {
+				t.Fatalf("pattern must be accepted: %v", validateErr)
+			}
+			target, err := decodePatternValue([]byte(testCase.target))
+			if err != nil {
+				t.Fatalf("target: %v", err)
+			}
+			record := mustMapValue(t, target)
+			body, err := decodePatternValue([]byte(testCase.body))
+			if err != nil {
+				t.Fatalf("body: %v", err)
+			}
+			record["body"] = body
+			if got := eventPatternMatches(pattern, record); got != testCase.want {
+				t.Fatalf("matched=%t want %t", got, testCase.want)
+			}
+		})
+	}
+}
+
+func mustMapValue(t *testing.T, value any) map[string]any {
+	t.Helper()
+	object, ok := value.(map[string]any)
+	if !ok {
+		t.Fatalf("value is not an object: %#v", value)
+	}
+	return object
+}
+
+func TestApplySQSMappingOptionsRejectsInvalidSQSConfiguration(t *testing.T) {
+	cases := []struct {
+		name       string
+		queue      string
+		batchSize  int
+		window     int
+		concurrent int
+	}{
+		{name: "window over 300", queue: `{"QueueName":"q"}`, batchSize: 10, window: 301},
+		{name: "large batch without window", queue: `{"QueueName":"q"}`, batchSize: 11},
+		{name: "fifo window", queue: `{"QueueName":"q.fifo","FifoQueue":true}`, batchSize: 10, window: 5},
+		{name: "fifo batch", queue: `{"QueueName":"q.fifo","FifoQueue":true}`, batchSize: 11},
+		{name: "concurrency low", queue: `{"QueueName":"q"}`, batchSize: 10, concurrent: 1},
+		{name: "concurrency high", queue: `{"QueueName":"q"}`, batchSize: 10, concurrent: 1001},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			source := EventSourceSpec{LogicalID: "Mapping", BatchSize: testCase.batchSize}
+			properties := eventSourceMappingProperties{
+				BatchSize:                      testCase.batchSize,
+				MaximumBatchingWindowInSeconds: testCase.window,
+			}
+			if testCase.concurrent != 0 {
+				properties.ScalingConfig = &struct {
+					MaximumConcurrency int `json:"MaximumConcurrency"`
+				}{MaximumConcurrency: testCase.concurrent}
+			}
+			if err := applySQSMappingOptions(&source, properties, json.RawMessage(testCase.queue)); err == nil {
+				t.Fatalf("want a refusal for %s", testCase.name)
+			}
+		})
+	}
+	valid := EventSourceSpec{LogicalID: "Mapping", BatchSize: 100}
+	properties := eventSourceMappingProperties{
+		BatchSize:                      100,
+		MaximumBatchingWindowInSeconds: 10,
+		FilterCriteria:                 json.RawMessage(`{"Filters":[{"Pattern":"{\"body\":{\"kind\":[\"keep\"]}}"}]}`),
+	}
+	properties.ScalingConfig = &struct {
+		MaximumConcurrency int `json:"MaximumConcurrency"`
+	}{MaximumConcurrency: 5}
+	if err := applySQSMappingOptions(&valid, properties, json.RawMessage(`{"QueueName":"q","VisibilityTimeout":300}`)); err != nil {
+		t.Fatalf("valid mapping: %v", err)
+	}
+	if valid.VisibilityTimeout != 300 || valid.MaximumConcurrency != 5 || len(valid.FilterCriteria) == 0 {
+		t.Fatalf("mapping options were not recorded: %+v", valid)
+	}
+}
+
+func TestNewSQSDelivererAndBatchSize(t *testing.T) {
+	if _, err := NewSQSDeliverer(DeliverySource{ID: "Mapping"}); err == nil {
+		t.Fatal("a source without an SQS mapping must be refused")
+	}
+	factory, err := NewSQSDeliverer(DeliverySource{
+		ID:      "Mapping",
+		Mapping: &EventSourceSpec{Type: backendSQS, SourceName: "q"},
+	})
+	if err != nil {
+		t.Fatalf("new deliverer: %v", err)
+	}
+	deliverer, ok := factory.(*SQSDeliverer)
+	if !ok {
+		t.Fatalf("unexpected deliverer type %T", factory)
+	}
+	if deliverer.batchSize() != 10 {
+		t.Fatalf("default batch size = %d, want 10", deliverer.batchSize())
+	}
+	deliverer.mapping.BatchSize = 50000
+	if deliverer.batchSize() != 10000 {
+		t.Fatalf("batch size clamp = %d, want 10000", deliverer.batchSize())
+	}
+	deliverer.queue.FIFO = true
+	if deliverer.batchSize() != 10 {
+		t.Fatalf("FIFO batch size clamp = %d, want 10", deliverer.batchSize())
+	}
+	if deliverer.clockNow().IsZero() {
+		t.Fatal("a deliverer without a clock must fall back to real time")
+	}
+}
+
+func TestSQSDelivererWaitObservesCancellation(t *testing.T) {
+	deliverer := &SQSDeliverer{clock: NewTestClock(DefaultTestClockStart)}
+	deliverer.wait(context.Background(), 0)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	deliverer.wait(ctx, time.Hour)
+}
+
+func TestSQSRecordMapCarriesFIFOAttributes(t *testing.T) {
+	message := sqsMessageForTest("msg-1", `{"n":1}`, map[string]string{
+		"MessageGroupId":         "gA",
+		"MessageDeduplicationId": "d1",
+		"SequenceNumber":         "0",
+	})
+	record := sqsRecordMap("arn:aws:sqs:us-east-1:123456789012:q.fifo", message)
+	attributes, ok := record["attributes"].(map[string]string)
+	if !ok {
+		t.Fatalf("record attributes are %T", record["attributes"])
+	}
+	for name, want := range map[string]string{
+		"MessageGroupId":         "gA",
+		"MessageDeduplicationId": "d1",
+		"SequenceNumber":         "0",
+	} {
+		if attributes[name] != want {
+			t.Fatalf("attribute %s = %q, want %q", name, attributes[name], want)
+		}
+	}
+	if _, ok := record["messageAttributes"].(map[string]any); !ok {
+		t.Fatalf("a record must carry an (empty) messageAttributes object")
+	}
+}
+
+func TestBatchFailuresInterpretsAWSDocumentedResponses(t *testing.T) {
+	batch := []sqstypes.Message{sqsMessageForTest("msg-1", "{}", nil), sqsMessageForTest("msg-2", "{}", nil)}
+	cases := []struct {
+		name        string
+		report      bool
+		raw         string
+		proxy       bool
+		want        []string
+		whole       bool
+		expectError bool
+	}{
+		{name: "no report", raw: `{"batchItemFailures":[]}`, want: nil},
+		{name: "empty list", report: true, raw: `{"batchItemFailures":[]}`, want: nil},
+		{name: "null list", report: true, raw: `{"batchItemFailures":null}`, want: nil},
+		{name: "empty object", report: true, raw: `{}`, want: nil},
+		{name: "null response", report: true, raw: `null`, want: nil},
+		{name: "one failure", report: true, raw: `{"batchItemFailures":[{"itemIdentifier":"msg-2"}]}`, want: []string{"msg-2"}},
+		{name: "unknown id", report: true, raw: `{"batchItemFailures":[{"itemIdentifier":"nope"}]}`, whole: true, expectError: true},
+		{name: "empty id", report: true, raw: `{"batchItemFailures":[{"itemIdentifier":""}]}`, whole: true, expectError: true},
+		{name: "bad key", report: true, raw: `{"batchItemFailures":[{"messageId":"msg-2"}]}`, whole: true, expectError: true},
+		{name: "invalid list", report: true, raw: `{"batchItemFailures":"msg-2"}`, whole: true, expectError: true},
+		{name: "invalid json", report: true, raw: `{`, whole: true, expectError: true},
+		{name: "trailing data", report: true, raw: `{"batchItemFailures":[]} trailing`, whole: true, expectError: true},
+		{name: "second value", report: true, raw: `{"batchItemFailures":[]}{"batchItemFailures":[]}`, whole: true, expectError: true},
+		{name: "proxy response", report: true, proxy: true, whole: true, expectError: true},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			deliverer := &SQSDeliverer{mapping: EventSourceSpec{ReportBatchItemFailures: testCase.report}}
+			failed, whole, err := deliverer.batchFailures(
+				InvokeResult{Proxy: testCase.proxy, Raw: json.RawMessage(testCase.raw)},
+				batch,
+			)
+			if whole != testCase.whole {
+				t.Fatalf("whole=%t want %t (err %v)", whole, testCase.whole, err)
+			}
+			if (err != nil) != testCase.expectError {
+				t.Fatalf("err=%v want error=%t", err, testCase.expectError)
+			}
+			got := make([]string, 0, len(failed))
+			for id := range failed {
+				got = append(got, id)
+			}
+			sort.Strings(got)
+			if strings.Join(got, ",") != strings.Join(testCase.want, ",") {
+				t.Fatalf("failures=%v want %v", got, testCase.want)
+			}
+		})
+	}
+}

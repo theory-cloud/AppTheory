@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/theory-cloud/apptheory/v6/runtime/oauth/store"
+	"github.com/theory-cloud/apptheory/v7/runtime/oauth/store"
 )
 
 // storeConformanceFixture is the shared store conformance table. From
@@ -14,7 +14,7 @@ import (
 const storeConformanceFixture = "../../../contract-tests/fixtures/routing/mcp-auth-facade/facade-store-conformance.v1.json"
 
 // fixtureCaseCount is the case count the shared fixture must carry.
-const fixtureCaseCount = 48
+const fixtureCaseCount = 65
 
 func newStores(clock *store.ManualClock) store.Stores {
 	return store.Stores{

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v7/runtime"
 
 	"github.com/stretchr/testify/require"
 )

@@ -1,0 +1,152 @@
+{
+  "contract": {
+    "id": "m3.mcp-state-bounds/v1",
+    "section": "state-bounds",
+    "kind": "conformance",
+    "status": "M3",
+    "notes": "Residual conformance table for M3. Every built-in in-memory SessionStore keeps at most 1000 live sessions per store instance: expired sessions are swept first, an expired incoming Put is refused, a live same-ID overwrite consumes no new capacity, and no live session is ever evicted. Durable streams bound each session at 10000 logical events and 67108864 logical payload bytes across inline plus spilled records; admission proves the active/current aggregate schema, enforces both bounds, allocates the sequence, and updates aggregate/stream/event state in one backend transaction. Pre-aggregate sessions refuse appends until an operator/product-owned backfill atomically counts every retained inline and spilled record; missing counters are never treated as zero. DeleteSession tombstones first, paginates beyond 1000 records, deletes stream/event/spill/task/replay/cancellation state, and rejects late appends. The capacity refusal maps identically through single and batch initialize as JSON-RPC CodeServerError (-32000) with message 'Session capacity exceeded', HTTP 200, and no Mcp-Session-Id header; other store errors keep their generic mappings. All bounds are fixed constants with test-only seams, never production environment or CDK knobs."
+  },
+  "limits": {
+    "memory_sessions_per_store": 1000,
+    "memory_stream_events_per_session": 10000,
+    "memory_stream_bytes_per_session": 67108864,
+    "durable_aggregate_events_per_session": 10000,
+    "durable_aggregate_bytes_per_session": 67108864,
+    "durable_spill_inline_max_bytes": 32768,
+    "durable_max_event_bytes": 10485760,
+    "delete_pagination_page_size": 1000
+  },
+  "errors": {
+    "session_capacity": {
+      "message": "Session capacity exceeded",
+      "jsonrpc_code": -32000,
+      "http_status": 200,
+      "session_header": false
+    },
+    "aggregate_capacity": "stream aggregate capacity exceeded",
+    "aggregate_backfill_required": "stream aggregate backfill required",
+    "transaction_unsupported": "stream append requires a transactional backend"
+  },
+  "outcomes": {
+    "admitted": "the live session was stored",
+    "capacity_refused": "the store refused a new live session without evicting another",
+    "refreshed": "the same live session ID was overwritten without consuming new capacity",
+    "expired_refused": "the incoming record was already expired and was not stored",
+    "expired_swept": "expired sessions were removed before the decision",
+    "cleaned": "associated session/stream/task/replay/cancellation state was removed",
+    "appended": "the event was admitted and its sequence allocated",
+    "capacity_denied": "the aggregate count or byte bound refused the append",
+    "backfill_required": "the session aggregate schema is pre-M3 and the append was refused",
+    "transaction_required": "the backend cannot prove a single conditional transaction and the append was refused before any event write",
+    "deleted": "all retained session records, spill objects, and task/replay/cancellation state were removed",
+    "late_append_refused": "an append after DeleteSession was refused",
+    "spill_cleanup_joined": "a refused append deleted its spilled object; cleanup failure is reported with the refusal"
+  },
+  "cases": [
+    {
+      "id": "memory.session.capacity_refuses_new_live_session",
+      "surface": "memory_session_store",
+      "scenario": "capacity_1001st_live",
+      "params": { "live_sessions": 1000, "new_session": "session-1001" },
+      "expect": { "1000": "admitted", "1001": "capacity_refused", "evicted": "none" }
+    },
+    {
+      "id": "memory.session.expired_first_reclaims_before_admission",
+      "surface": "memory_session_store",
+      "scenario": "expired_first",
+      "params": { "live_sessions": 1000, "advance_seconds": 3601 },
+      "expect": { "swept": 1000, "next_put": "admitted" }
+    },
+    {
+      "id": "memory.session.same_id_live_refresh_consumes_no_capacity",
+      "surface": "memory_session_store",
+      "scenario": "same_id_refresh",
+      "params": { "live_sessions": 1000 },
+      "expect": { "refresh": "refreshed", "put": "admitted" }
+    },
+    {
+      "id": "memory.session.expired_incoming_put_not_revived",
+      "surface": "memory_session_store",
+      "scenario": "expired_put",
+      "params": { "advance_seconds": 3601 },
+      "expect": { "put": "expired_refused", "get": "not_found" }
+    },
+    {
+      "id": "memory.session.cleanup_removes_associated_state",
+      "surface": "memory_session_store",
+      "scenario": "associated_cleanup",
+      "params": {},
+      "expect": { "stream": "not_found", "task": "not_found", "replay": "not_found", "cancellation": "not_found", "delete": "cleaned" }
+    },
+    {
+      "id": "http.initialize.capacity_refusal_maps_server_error",
+      "surface": "http_initialize",
+      "scenario": "capacity_refusal_single",
+      "params": { "live_sessions": 1000 },
+      "expect": { "status": 200, "jsonrpc_code": -32000, "message": "Session capacity exceeded", "session_header": false }
+    },
+    {
+      "id": "batch.initialize.capacity_refusal_maps_server_error",
+      "surface": "batch_initialize",
+      "scenario": "capacity_refusal_batch",
+      "params": { "live_sessions": 1000 },
+      "expect": { "status": 200, "jsonrpc_code": -32000, "message": "Session capacity exceeded", "session_header": false }
+    },
+    {
+      "id": "durable.aggregate.count_boundary",
+      "surface": "durable_stream_store",
+      "scenario": "aggregate_count_boundary",
+      "params": { "test_event_limit": 3 },
+      "expect": { "first_three": "appended", "fourth": "capacity_denied", "replay": "sequence_continuous" }
+    },
+    {
+      "id": "durable.aggregate.byte_boundary",
+      "surface": "durable_stream_store",
+      "scenario": "aggregate_byte_boundary",
+      "params": { "test_byte_limit": 32 },
+      "expect": { "fits": "appended", "overflow": "capacity_denied" }
+    },
+    {
+      "id": "durable.aggregate.spill_counts_toward_aggregate",
+      "surface": "durable_stream_store",
+      "scenario": "spill_aggregate",
+      "params": { "test_byte_limit": 64, "inline_max_bytes": 8 },
+      "expect": { "inline_plus_spill": "appended", "overflow": "capacity_denied", "spill_cleanup_on_refusal": "spill_cleanup_joined" }
+    },
+    {
+      "id": "durable.aggregate.pre_aggregate_schema_refused",
+      "surface": "durable_stream_store",
+      "scenario": "pre_aggregate_refusal",
+      "params": {},
+      "expect": { "append": "backfill_required", "no_event": true }
+    },
+    {
+      "id": "durable.aggregate.concurrent_append_unique_sequence",
+      "surface": "durable_stream_store",
+      "scenario": "concurrent_append",
+      "params": { "writers": 8, "test_event_limit": 32 },
+      "expect": { "all": "appended", "sequences": "unique_and_continuous" }
+    },
+    {
+      "id": "durable.aggregate.non_transactional_backend_refused",
+      "surface": "durable_stream_store",
+      "scenario": "transaction_required",
+      "params": {},
+      "expect": { "append": "transaction_required", "no_event": true }
+    },
+    {
+      "id": "durable.delete.paginates_beyond_1000_records",
+      "surface": "durable_stream_store",
+      "scenario": "delete_pagination",
+      "params": { "events": 1001 },
+      "expect": { "delete": "deleted", "remaining": 0 }
+    },
+    {
+      "id": "durable.delete.late_append_refused",
+      "surface": "durable_stream_store",
+      "scenario": "late_append",
+      "params": {},
+      "expect": { "append_after_delete": "late_append_refused" }
+    }
+  ]
+}

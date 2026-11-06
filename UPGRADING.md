@@ -17,6 +17,57 @@ or deprecation posture must add or update a section here before the release is p
 
 ### Unreleased
 
+- **Go module import paths move to `github.com/theory-cloud/apptheory/v7`.** This is the import-path half of the v7
+  major release: every Go consumer must rewrite its AppTheory runtime imports from
+  `github.com/theory-cloud/apptheory/v6/...` to `github.com/theory-cloud/apptheory/v7/...`, and CDK Go consumers move
+  to `github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v7`. Pin the exact tag you are moving to with
+  `go get github.com/theory-cloud/apptheory/v7@v7.0.0` (or the matching v7 RC tag), then run `go mod tidy` in each
+  module. Runtime and CDK module tags continue to target the same immutable release commit; do not mix major lines.
+  The Go API surface is unchanged beyond import paths: the api-snapshot diff between the two lines is header-path-only,
+  so Go code that compiles on v6 compiles on v7 after the import rewrite. The TypeScript and Python runtimes carry no
+  module-path change.
+
+- **The `*Strict` route registrars are supported again; they are no longer deprecated.** Go `HandleStrict` /
+  `GetStrict` / `PostStrict` / `PutStrict` / `PatchStrict` / `DeleteStrict` / `OptionsStrict`, TypeScript
+  `handleStrict`, and Python `handle_strict` are the supported error-returning registration API for callers that
+  register conditionally and want to log a rejected route and continue. The posture, not the behavior, changed:
+  fluent registration still fails closed with a startup panic (Go) or a thrown/raised `AppTheoryError`
+  (TypeScript/Python), and the Strict variants still report the same canonical `AppTheoryError`. No removal
+  horizon, no signature change, and no runtime behavior change. Closes #1233; see the rewritten
+  [fail-closed route registration](#fail-closed-route-registration) table.
+
+- **CDK MCP front door: `DISABLED` and `LOCKED` are enforced, not aliases.** This is an intentional
+  **synthesis-breaking security correction** for configurations that only asserted a posture.
+  - Owned `originReachability: DISABLED` now requires an effective ordinary `ownedApi.domain` (or the deprecated
+    equivalent), emits `DisableExecuteApiEndpoint: true`, and advertises only `https://<domain>/...`. A later L1
+    re-enable of the default endpoint fails final synthesis.
+  - Owned `LOCKED` now additionally requires `ownedApi.domain.mutualTlsAuthentication` and a final whole-stack proof
+    that every `AWS::ApiGatewayV2::ApiMapping` bound to the owned API targets an in-stack
+    `AWS::ApiGatewayV2::DomainName` with `MutualTlsAuthentication.TruststoreUri`. Missing, contradictory, imported, or
+    unresolvable mapping/domain evidence fails synthesis. `LOCKED` is an mTLS ingress model, not `DISABLED`.
+  - Attach-mode `LOCKED` fails for imported and concrete APIs. Attach-mode `DISABLED` is accepted only on a same-stack
+    concrete `HttpApi` whose emitted `DisableExecuteApiEndpoint` resolves to literal `true`; an imported API fails.
+  - Supplying `ownedApi.domain.mutualTlsAuthentication` without owned `LOCKED` fails as contradictory.
+  - Migrate before deploying: mTLS-capable clients can add an owned mutual-TLS domain and keep `LOCKED`; all other
+    clients should use `DISABLED` with an ordinary owned custom domain. Attach users must move to an owned mTLS domain,
+    or to a same-stack concrete API that disables the default endpoint for `DISABLED`. The new optional prop is
+    `AppTheoryMcpServerDomainOptions.mutualTlsAuthentication`.
+
+- **CDK explicit routes reject every authorizer value except `IAM` or `NONE`.** An omitted
+  `AppTheoryHttpApiRouteOptions.authorizer` still defaults to `NONE`, but uppercase `IAM`, misspellings, `null`,
+  numbers, objects, and unchecked configuration values now fail synthesis before the route is emitted instead of
+  silently becoming a public `NONE` route.
+
+- **The generated Lambda@Edge challenge-restoration handler is asynchronous.** It now returns a promise so
+  Lambda@Edge observes the origin response instead of discarding a synchronous return value. Redeploy the construct to
+  update the function code; clients see the restored `WWW-Authenticate` header once CloudFront propagates the new
+  version.
+
+- **The Remote MCP CDK guide now configures the function it passes to the construct.** The example attaches
+  `RESOURCE_METADATA_URL_TEMPLATE` to `props.handler` through `handler.addEnvironment(...)` instead of creating a second
+  unreferenced function. If you copied the old example, move that environment variable onto the actual MCP handler; the
+  construct still injects no environment variable.
+
 - **Object store: S3 `Get` now returns the typed not-found error for an absent object.** Go returns
   `objectstore.ErrObjectNotFound`; TypeScript and Python return `objectstore.not_found` for S3 `NoSuchKey`,
   `NoSuchVersion`, and an HTTP 404. The original SDK error stays in the chain (`errors.As`, `cause`, `__cause__`), so
@@ -24,37 +75,88 @@ or deprecation posture must add or update a section here before the release is p
   is only distinguishable from a denial when the caller holds `s3:ListBucket`; without it S3 answers 403
   `AccessDenied`, which remains an error. `Delete` is unchanged and stays idempotent.
 
-- **MCP auth facade: the route refresh policy is required, and the broker store contract now distinguishes expiry
-  from absence.** This is a **startup-breaking change for any consumer of the framework-owned front channel**
+- **MCP auth facade: HTTP discovery origins use parsed-IP loopback semantics.** An HTTP origin is now accepted
+  only for the exact hostname `localhost` or a host that parses as a loopback IP literal (127.0.0.0/8, IPv6 `::1` in
+  its `::1` and expanded spellings, or an IPv4-mapped IPv6 address whose mapped IPv4 address is loopback). DNS names
+  such as `127.attacker.example`, `127.0.0.1.example.com`, and `127.0.0.1.attacker.example` are rejected, as are
+  trailing-dot, short-IPv4, integer-IPv4, unspecified, and public addresses. A deployment that unsafely configured
+  such a hostname for cleartext metadata must use an HTTPS non-loopback origin or a real loopback literal; HTTPS
+  origins are otherwise unchanged. The shared origin table is executed by Go, TypeScript, and Python.
+
+- **MCP auth facade: brokered refresh now requires a transactional family store.** This is a
+  **startup-breaking change for every consumer of the framework-owned front channel**
   (`mcpfacade.RegisterMCPFacade` / `RegisterMCPFacadeSecure`, `registerMcpFacade`, `register_mcp_facade` with
-  `Provider` / `provider` set). Registration now fails closed unless the encoded
-  `RouteRefreshPolicy` / `routeRefreshPolicy` / `route_refresh_policy` is supplied: a missing or zero handle TTL is
-  an error rather than a silent fallback, and the reuse-rate ceiling is likewise required. Adopt in the same change:
+  `Provider` / `provider` set). Registration fails closed unless the encoded `RouteRefreshPolicy` /
+  `routeRefreshPolicy` / `route_refresh_policy` is supplied **and** the route refresh broker implements
+  `RouteRefreshBrokerTransactionalFamilyStore` / `RouteRefreshBrokerTransactionalFamilyStore` /
+  `RouteRefreshBrokerTransactionalFamilyStore`: `CreateFamily`, `RotateFamily`, `ListFamily`, `RevokeFamily`.
+  There is no environment-variable or registration opt-out. Adopt in the same change:
 
-  - Set the policy. `HandleTTL` (60 s–30 d; the TheoryMCP stages use 30 days) is the route refresh handle's local
-    lifetime and must be the lifetime the broker store applies. `GraceWindow` is optional (default 120 s, maximum
-    120 s). `ReuseRateCeiling` (9–120 per family per hour) is the beyond-grace access-token-only budget.
-  - If the broker store exposes a handle-lifetime reporter (`RouteRefreshBrokerHandleTTLReporter` /
-    `routeRefreshBrokerHandleTTLSeconds()` / `route_refresh_broker_handle_ttl_seconds()`), its value must equal
-    `HandleTTL` or registration fails. The in-memory reference stores implement it; a durable store may omit it, in
-    which case the application owns the agreement.
-  - Durable broker stores should distinguish an aged-out handle from an unknown one: return
-    `oauthstore.ErrBrokerExpired` / throw `BrokerExpiredError` (Python raises `BrokerExpiredError`). The
-    client-facing body is unchanged (`invalid_grant`); the distinction drives expiry-versus-absence telemetry.
-  - Durable broker stores should implement the optional family capability (`RouteRefreshBrokerFamilyStore`:
-    `ListFamily`/`RevokeFamily`) and persist the new record fields `ChainGeneration`, `FamilyHash`, and
-    `DepthOneServedAt`. Without the capability, a family-hashed record still revokes, but only through the bounded
-    eight-link successor walk and with a state-failure telemetry event.
-  - A durable store that cannot store the new fields keeps working for rotation, but pre-policy records are then
-    classified structurally and family revocation degrades to the walk. Persisting them is required for the
-    long-lived-chain guarantee.
-  - Optionally wire `RouteRefreshEvents` / `routeRefreshEvents` / `route_refresh_events` to the application's
-    telemetry pipeline. Events are hash-only and never carry raw token or handle material.
+  - Implement the transactional family capability. `CreateFamily` atomically creates an active family-state record
+    and its generation-1 root; `RotateFamily` atomically checks the caller's lock, expected version, active family,
+    family/generation/identity bindings, and successor uniqueness before creating the successor and updating the
+    predecessor's grace response; `RevokeFamily` writes a terminal family tombstone and revokes every live member;
+    `ListFamily` remains the incident enumeration surface. Every `Get`, `AcquireLock`, and `RotateFamily` of a
+    family-marked handle must honor the tombstone, and the tombstone must outlive every member, including successors
+    minted before revocation. The old optional `ListFamily`/`RevokeFamily` pair alone is not sufficient.
+  - Migrate or reauthorize pre-policy lineage. A family-less record (generation 0, empty family hash) and a
+    family-marked record with missing/corrupt family state are refused before the upstream call and before any
+    successor is minted. Do not normalize a suffix online. Quiesce legacy refresh traffic, then either backfill the
+    complete lineage and family state under the store's transactional conformance proof and resume, or revoke/reject
+    legacy handles and require a new authorization grant. The `DepthOneServedAt` field is retained for stored-record
+    compatibility but is no longer written.
+  - Remove any dependence on beyond-grace token serving. Every presentation at or after the grace deadline now
+    revokes the family and returns the uniform `invalid_grant` with no access token, refresh handle, or ID token.
+    The in-grace lost-response replay and live-head refresh are unchanged.
+  - Keep the policy fields. `HandleTTL` and `GraceWindow` keep their meaning. `ReuseRateCeiling` is retained for
+    configuration compatibility and its `[9, 120]` validation, but no refresh path uses it. The broker's optional
+    handle-lifetime reporter still has to agree with `HandleTTL`.
+  - Durable broker stores should keep distinguishing an aged-out handle from an unknown one
+    (`oauthstore.ErrBrokerExpired` / `BrokerExpiredError`) and should persist `ChainGeneration` and `FamilyHash` plus
+    the new family-state/tombstone record. A store that cannot express the family transaction must be migrated
+    before it is enabled; it now fails registration rather than degrading to a bounded walk.
+  - Optionally wire `RouteRefreshEvents` / `routeRefreshEvents` / `route_refresh_events`; events are hash-only. The
+    live reuse outcome is `revoked_family`; the old outcome names are retained only for compatibility.
 
-  The grace window widened from 30 s to 120 s by default: a rotated (previous) handle replayed inside the window
-  still receives the full stored successor body; beyond it, the first immediate-predecessor presentation receives
-  the access token only (never handle material), and a second serve or a deeper replay revokes the family. The
-  shared conformance table now has 48 rows, including the broker expiry signal and the family capability rows.
+  The shared store conformance table now has 65 rows, including atomic family creation/rotation, tombstone-honoring
+  reads and locks, both rotation/revocation linearization orders, families past the removed eight-link budget and
+  past one DynamoDB transaction's 100-action cap, listed-versus-aged-out enumeration, and partially backfilled
+  mixed lineage. The shared refresh table has 19 rows, including the first beyond-grace presentation with no token
+  material and reuse after more than eight rotations. The generated TypeScript dist and API snapshots move with this
+  change. No module-path major bump is required.
+
+- **Local runner: `apptheory-local` runs your app's real Lambda handlers on your machine** (delivered across
+  #1211–#1234). It is a development tool: **nothing in this section changes a deployed stack.**
+
+  - **What you get.** Five entry points: `run` (the default) serves the app's HTTP API v2, REST API v1, Function
+    URL and CloudFront surfaces; `plan` prints the derived surface without starting anything; `invoke` starts one
+    function for event-source handlers and handler-only examples; `session` starts every CDK-targeted function with
+    one JSON command per line; `down` removes a run's leftover containers and networks. `--watch` re-synthesizes on a
+    source change and applies the new surface without restarting the listeners. `--data-dir` keeps DynamoDB Local,
+    s3proxy and ElasticMQ state between runs; moto stays in memory. `--seed` runs a shell command after provisioning
+    and before `local-run: ready`. The app's existing CDK definition is the only routing source — there is no second
+    hand-written route table.
+  - **What it requires.** Go 1.27+ to build or run the command; TypeScript and Python handlers never need Go, because
+    they run in their own runtime images. Docker with the daemon running — on macOS, colima — and bind-mounted code
+    under `$HOME` or the working directory, because colima does not share `/private/tmp`. A `--profile` for `run`,
+    `invoke` and `session`: it pins every runtime image by digest (an `--image` override must be `…@sha256:<64 hex>`)
+    and carries the Python image the in-container preflight needs, so a Python handler runs in the pinned
+    `python:3.14` image. Node.js 24+ on the host only when a served CloudFront distribution has CloudFront
+    Functions. The reference host is colima with 4 CPUs and about 6 GB shared by the runtime images, the emulator
+    containers and the HTTP transport; `--delivery-concurrency` defaults to 4 for it, and values above 32 are refused.
+  - **What it does not change.** No deployed-runtime behaviour: the runner serves the Lambda Runtime API itself and
+    nothing under `runtime/`, `testkit/` or `pkg/` imports it. No CDK synth output change for an existing stack: the
+    runner reads the app's own cloud assembly. No new deploy-time knobs: every setting is a command flag or the local
+    profile file, and no deployed resource reads either.
+  - **Where the limits are documented.** The capability matrix in [run an app locally](docs/examples/local-runner.md)
+    classifies each surface: L1 runs fully locally, L2 runs locally with an emulator and documented limits, L3 is
+    exercised as fully as possible with a named cloud gap. [Local runner
+    configuration](docs/reference/local-runner-configuration.md) records the exact Runtime API fidelity and the
+    deviations each backend carries, including the limits both pages
+    call "docs/125 true limits" (IAM policy evaluation, managed WAF rule content, moto's memory-only state and
+    others), which are named there rather than hidden. The harness that exercises all of it is
+    `make examples-local`; its classification manifest and runner profile are the same checked-in
+    `scripts/local/examples-local.json`.
 
 AppTheory v6 moves the Go runtime and the generated CDK Go bindings onto the next semantic import version. The release
 range from the v5 line also carries other breaking runtime, CDK, TypeScript, and Python changes; read `CHANGELOG.md` and
@@ -63,12 +165,37 @@ upgrade.
 
 ### TableTheory v6 dependency (Go module path) with TypeScript and Python assets
 
-AppTheory now requires TableTheory v6 in all three runtimes: `github.com/theory-cloud/tabletheory/v6 v6.1.1` in Go,
-`theory-cloud-tabletheory-ts-6.1.1.tgz` in TypeScript and `tabletheory_py-6.1.1-py3-none-any.whl` in Python. Both non-Go
+AppTheory now requires TableTheory v6 in all three runtimes: `github.com/theory-cloud/tabletheory/v6 v6.3.0` in Go,
+`theory-cloud-tabletheory-ts-6.3.0.tgz` in TypeScript and `tabletheory_py-6.3.0-py3-none-any.whl` in Python. Both non-Go
 assets keep your existing integrity discipline — immutable GitHub Release pins at SHA-512
-`g9+SCnBLJ3/OdnLObPpfMLmVn7PDLcLeI0/UBfCOqaNe+WQD+Z6GtYAbIV8UoKaxPG/3kOkZv9cY0UiAPe8s4Q==` for the TypeScript tarball
-and SHA-256 `dc249bd7d20a713b2a9b23c7109975bf4061814b9f9a7e935eb6014e3d2bda82` for the Python wheel. TableTheory v6
-changes no TypeScript or Python API, so those two runtimes change version only.
+`ji8q/RXu6V8UKfRozQnqotPEm6O5nY3Ikg6TJcK1dzVemU+flclZUFGOUvlOU4a8ztGbOKmQ/DA3wJeu6pMDdA==` for the TypeScript tarball
+and SHA-256 `29b7c60b67eef35f0683f515fe61f03d00b26e39deeb6636e534cc8a2b6f296e` for the Python wheel. Both digests were
+computed from the downloaded v6.3.0 assets and cross-checked against the release's `tabletheory-SHA256SUMS.txt`. The
+floor moved from v6.1.1 on 2026-11-06; the previous v6.1.1 digests were SHA-512
+`g9+SCnBLJ3/OdnLObPpfMLmVn7PDLcLeI0/UBfCOqaNe+WQD+Z6GtYAbIV8UoKaxPG/3kOkZv9cY0UiAPe8s4Q==` and SHA-256
+`dc249bd7d20a713b2a9b23c7109975bf4061814b9f9a7e935eb6014e3d2bda82`.
+
+**What v6.2.0 and v6.3.0 change for consumers.** Taken from TableTheory's
+[CHANGELOG at v6.3.0](https://github.com/theory-cloud/TableTheory/blob/v6.3.0/CHANGELOG.md):
+
+- **v6.2.0** — TypeScript `ensureTable` and Python `ensure_table` no longer touch TTL on a table that already exists,
+  matching Go's `DB.EnsureTable`, which is the reference: an existing table is left exactly as it is, with no
+  `UpdateTimeToLive` or `DescribeTimeToLive` call. New tables are still created with TTL, and `createTable` /
+  `create_table` still converges TTL on an existing table. A different-attribute conflict is now
+  `TTLAttributeMismatchError` (still an `ErrInvalidModel` `TheorydbError` / `ValidationError`), matching Go's
+  `errors.Is(err, schema.ErrTTLAttributeMismatch)`, which this release also exports. Callers that relied on
+  `ensureTable` / `ensure_table` to enable TTL on an existing table must call `createTable` / `create_table`,
+  `updateTimeToLive` / `update_time_to_live`, or manage TTL in infrastructure as code; TypeScript/Python
+  auto-migration inherits the new behavior because it goes through `ensureTable` / `ensure_table`. No new IAM
+  permissions are required and Go behavior is unchanged.
+- **v6.3.0** — examples-local delivers real stream and S3 events, plus the `examples/cdk-multilang` and reconcile
+  example fixes. No library API changes: the release is a stable promotion of `v6.3.0-rc` whose changelog entries are
+  all `examples-local` / `examples` scoped.
+
+Neither release changes an AppTheory symbol, an AppTheory runtime behavior, or the AppTheory dependency floor beyond
+the version pin itself. TableTheory's `docs/migration/v6.md` at the v6.3.0 tag still carries only the v6.0
+`WithLambdaTimeout` change; there is no separate v6.2/v6.3 migration page, so this section is the consumer-facing
+record for the minor moves.
 
 **Go consumers must move their own TableTheory to v6 in the same change.** The Go module path moves from
 `github.com/theory-cloud/tabletheory/v5` to `/v6`, and the `/v5` and `/v6` `core.DB` are distinct interface types:
@@ -77,7 +204,7 @@ be passed into an AppTheory constructor that still requires `/v5`, and no consum
 requirement and every import must move together:
 
 ```bash
-go get github.com/theory-cloud/tabletheory/v6@v6.1.1
+go get github.com/theory-cloud/tabletheory/v6@v6.3.0
 go mod tidy
 ```
 
@@ -171,9 +298,9 @@ new AppTheoryMcpServer(this, "ConsolidatedMcp", {
   handler,
   transportPosture: AppTheoryMcpTransportPosture.RUNTIME_BEARER,
   runtimePosture: { requireBearerToken: true },
-  originReachability: AppTheoryMcpOriginReachability.LOCKED,
+  originReachability: AppTheoryMcpOriginReachability.DISABLED,
   denialSignal: {},
-  ownedApi: { stage: { throttlingEnabled: true } },
+  ownedApi: { stage: { throttlingEnabled: true }, domain: { domainName: "mcp.example.com", certificate } },
   routeModel: AppTheoryMcpRouteModel.CONSOLIDATED,
 });
 ```
@@ -723,9 +850,12 @@ new AppTheoryMcpServer(this, "McpServer", {
   handler,
   facade: { providerId: "autheory" },
   runtimePosture: { requireBearerToken: true },
-  originReachability: AppTheoryMcpOriginReachability.LOCKED,
+  originReachability: AppTheoryMcpOriginReachability.DISABLED,
   denialSignal: { metricName: "apptheory.mcp.auth_denied" },
-  ownedApi: { stage: { throttlingEnabled: true } },
+  ownedApi: {
+    stage: { throttlingEnabled: true },
+    domain: { domainName: "mcp.example.com", certificate },
+  },
 });
 
 // After (explicit JWT): a static issuer and audience at the gateway.
@@ -743,7 +873,10 @@ new AppTheoryMcpServer(this, "McpServer", {
   handler,
   transportPosture: AppTheoryMcpTransportPosture.NONE_PUBLIC,
   originReachability: AppTheoryMcpOriginReachability.DISABLED,
-  ownedApi: { stage: { throttlingEnabled: true } },
+  ownedApi: {
+    stage: { throttlingEnabled: true },
+    domain: { domainName: "mcp.example.com", certificate },
+  },
 });
 ```
 
@@ -1310,17 +1443,19 @@ Use the normal registration path for new code:
 | TypeScript | `app.get(...)`, `app.post(...)`, `app.handle(...)`, and other fluent methods |
 | Python | `app.get(...)`, `app.post(...)`, `app.handle(...)`, and other fluent methods |
 
-Strict helpers are deprecated compatibility wrappers for callers that already depend on their error-returning/throwing shape.
-Their failure details now share the canonical AppTheory error path: Python `add_strict` / `handle_strict` raise
-`AppTheoryError` instead of `ValueError`, and Go `GetStrict` / `HandleStrict` / related helpers return canonical
-`AppTheoryError` messages where applicable rather than older segment-specific strings. Update tests that asserted the
-legacy exception class or exact message text:
+The `*Strict` helpers are a **supported** registration API, not a deprecated compatibility shim. Register through them
+when route construction is conditional — feature flags, tenant-specific route tables, migration shims — and you want to
+log a rejected route and continue instead of letting the fluent path's fail-closed startup panic/throw/raise end
+initialization. They carry no removal horizon. Their failure details use the canonical AppTheory error path: Python
+`add_strict` / `handle_strict` raise `AppTheoryError` instead of `ValueError`, and Go `GetStrict` / `HandleStrict` /
+related helpers return canonical `AppTheoryError` values rather than older segment-specific strings. Update tests that
+asserted the legacy exception class or exact message text:
 
-| Runtime | Deprecated compatibility helper | Replacement | Horizon |
+| Runtime | Supported error-returning helper | Fluent counterpart | Horizon |
 | --- | --- | --- | --- |
-| Go | `GetStrict`, `HandleStrict`, and related `*Strict` helpers | Normal fluent registration; catch startup panics in tests if you need setup-error assertions | Supported for v1.x; earliest removal is v2.0. |
-| TypeScript | `handleStrict` | `handle` / `get` / `post` / normal fluent registration | Supported for v1.x; earliest removal is v2.0. |
-| Python | `handle_strict` | `handle` / `get` / `post` / normal fluent registration | Supported for v1.x; earliest removal is v2.0. |
+| Go | `GetStrict`, `HandleStrict`, and related `*Strict` helpers, returning `(*App, error)` | `Get` / `Handle` and related fluent methods, which panic on the same error | Supported; no removal planned. |
+| TypeScript | `handleStrict`, which throws the canonical `AppTheoryError` | `handle` / `get` / `post`, which throw on the same error | Supported; no removal planned. |
+| Python | `handle_strict`, which raises the canonical `AppTheoryError` | `handle` / `get` / `post`, which raise on the same error | Supported; no removal planned. |
 
 When upgrading, run application startup tests that construct every route and include duplicate-route, invalid-pattern,
 and nil/undefined/None-handler cases if your service builds route tables programmatically. A route typo that was
