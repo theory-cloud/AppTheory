@@ -34,6 +34,49 @@ def write(root: Path, relative: str, content: str = "") -> Path:
     return path
 
 
+FIDELITY_CLASSES = ("L1", "L2", "L3", "I")
+
+
+def fidelity_table_errors(document: str, entries: list[harness.Entry]) -> list[str]:
+    """Check the fidelity table against the manifest, row by row.
+
+    Every classified entrypoint must appear exactly once in the table, under the
+    class the manifest gives it. The table is the document a developer trusts for
+    a row's class, so a missing, duplicated or misclassified row is an error.
+    """
+    stated: dict[str, list[str]] = {}
+    in_table = False
+    for line in document.splitlines():
+        if line.startswith("### ") and "rows" in line:
+            in_table = True
+            continue
+        if line.startswith("## ") or (line.startswith("### ") and "rows" not in line):
+            in_table = False
+            continue
+        if not in_table or not line.startswith("| `"):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) < 2 or cells[1] not in FIDELITY_CLASSES:
+            continue
+        for path in re.findall(r"`([^`]+)`", cells[0]):
+            stated.setdefault(path, []).append(cells[1])
+
+    errors = []
+    for entry in entries:
+        if entry.kind != "entrypoint" or not entry.class_name:
+            continue
+        classes = stated.get(entry.key, [])
+        if not classes:
+            errors.append(f"{entry.key}: missing from the fidelity table")
+        elif len(classes) > 1:
+            errors.append(f"{entry.key}: listed {len(classes)} times ({', '.join(classes)})")
+        elif classes[0] != entry.class_name:
+            errors.append(
+                f"{entry.key}: listed as {classes[0]}, but the manifest class is {entry.class_name}"
+            )
+    return errors
+
+
 class RealTreeTests(unittest.TestCase):
     """The checked-in manifest must classify every discovered entrypoint."""
 
@@ -78,6 +121,30 @@ class RealTreeTests(unittest.TestCase):
                     rf"(?<![A-Za-z0-9]){re.escape(klass)}(?![A-Za-z0-9])",
                     f"{path}: the row must state class {klass}: {stated!r}",
                 )
+
+    def test_fidelity_table_matches_the_manifest(self) -> None:
+        _, entries = harness.load_manifest(harness.MANIFEST_PATH)
+        document = (harness.ROOT / "docs" / "examples" / "local-harness.md").read_text(encoding="utf-8")
+        self.assertEqual([], fidelity_table_errors(document, entries))
+
+    def test_fidelity_table_checker_fails_closed(self) -> None:
+        entry = harness.Entry(key="examples/a/main.go", kind="entrypoint", data={"class": "L2", "run": "row"})
+        misclassified = "### L1 rows\n\n| `examples/a/main.go` | L1 | proof | — |\n"
+        self.assertEqual(
+            ["examples/a/main.go: listed as L1, but the manifest class is L2"],
+            fidelity_table_errors(misclassified, [entry]),
+        )
+        missing = fidelity_table_errors("### L1 rows\n\n", [entry])
+        self.assertEqual(["examples/a/main.go: missing from the fidelity table"], missing)
+        duplicated = (
+            "### L2 rows\n\n"
+            "| `examples/a/main.go` | L2 | proof | — |\n"
+            "| `examples/a/main.go` | L2 | proof | — |\n"
+        )
+        self.assertEqual(
+            ["examples/a/main.go: listed 2 times (L2, L2)"],
+            fidelity_table_errors(duplicated, [entry]),
+        )
 
     def test_documented_exclusions_hold_in_the_real_tree(self) -> None:
         discovered = harness.discover(harness.ROOT)
