@@ -1620,7 +1620,11 @@ The runtime returns one JSON body (the emulator returns the same shape in
   buffered caller decodes the complete framed body (`Streamed: true`) with its
   metadata and body;
 - `errorType`/`errorMessage` without a `statusCode` is a handler error and is
-  served as `502 {"message":"Internal Server Error"}` (the detail is logged);
+  served as `502 {"message":"Internal Server Error"}` (the detail is logged)
+  on the four HTTP-serving surfaces: the standalone Function URL listener, a
+  Function URL origin behind CloudFront, HTTP API v2 and REST API v1. The
+  `invoke` bullet below keeps its own result rules, and the WebSocket
+  transport's answer is its own bullet;
 - a Function URL applies AWS's inference rule to a genuine return value on
   every local Function URL surface: the standalone listener (a buffered
   response, and a buffered response on a `RESPONSE_STREAM` URL), the Function
@@ -1636,6 +1640,10 @@ The runtime returns one JSON body (the emulator returns the same shape in
   (including one outside 100-599) and a buffered body that is neither valid
   JSON nor a framed stream are `502` on the standalone Function URL listener,
   the Function URL origin behind CloudFront, HTTP API v2 and REST API v1;
+- a buffered streaming frame whose metadata carries a present-but-invalid
+  `statusCode` is `502` on those same four HTTP-serving surfaces; it is neither
+  an inferred return value nor a handler error, so neither of the two bullets
+  above names it;
 - a missing `statusCode` on HTTP API v2 and REST API v1 is `502` too, while
   the standalone listener and the CloudFront origin apply the Function URL
   inference rule above and answer a genuine JSON return value with a `200`;
@@ -1643,13 +1651,25 @@ The runtime returns one JSON body (the emulator returns the same shape in
   proxy response, including one whose `statusCode` is missing or invalid, is
   the `raw` result and a non-JSON body is the `rawText` result, with
   `handlerError` reserved for a crashed handler;
-- the WebSocket transport answers a decode failure with `500` at `$connect`
-  and drops the message on a message route;
+- the WebSocket transport answers any invoke failure at `$connect` with `500`
+  (not only a decode failure) and drops the message on a message route when the
+  invoke fails, including a decode failure;
 - a request with no matching route is `404 {"message":"Not Found"}` from the
   local transport; bodies above 10 MB are `413`.
 
 `Content-Length`, `Transfer-Encoding` and other hop-by-hop headers from the
 handler are dropped and recomputed by the local HTTP server.
+
+Cookies follow the Function URL page: "To return cookies from your function,
+don't manually add set-cookie headers. Instead, include the cookies in your
+response payload object. Lambda automatically interprets this and adds them as
+set-cookie headers in your HTTP response"
+([Function URL payloads](https://docs.aws.amazon.com/lambda/latest/dg/urls-invocation.html)).
+The buffered Function URL inference therefore takes cookies from the frame's
+`cookies` field and does not turn a `Set-Cookie` header into cookies. The
+streamed pipe sink forwards a `Set-Cookie` metadata header as-is, which is a
+local pass-through divergence from that rule; a handler that wants the AWS
+behaviour puts cookies in `cookies` on every surface.
 
 ## Runtime API fidelity
 
