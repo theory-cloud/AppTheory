@@ -41,15 +41,17 @@ func newWatchBatchFixture(t *testing.T, fake *restartFakeDocker) *watchBatchFixt
 	}
 	output := &bytes.Buffer{}
 	runner := &Runner{
-		options:    Options{Stdout: output},
-		scratch:    scratch,
-		docker:     &Docker{exec: fake.exec},
-		clock:      RealClock{},
-		delivery:   NewDeliveryEngine(RealClock{}, 0, nil, nil, nil),
-		invokers:   map[string]*FunctionProcess{},
-		backends:   map[string]backendProcess{},
-		transports: map[string]*Transport{},
-		images:     map[string]string{"node": "public.ecr.aws/lambda/nodejs:24@sha256:" + strings.Repeat("c", 64)},
+		options:     Options{Stdout: output},
+		scratch:     scratch,
+		docker:      &Docker{exec: fake.exec},
+		clock:       RealClock{},
+		delivery:    NewDeliveryEngine(RealClock{}, 0, nil, nil, nil),
+		invokers:    map[string]*FunctionProcess{},
+		backends:    map[string]backendProcess{},
+		transports:  map[string]*Transport{},
+		builtImages: map[string]string{},
+		namePrefix:  "watch-test",
+		images:      map[string]string{"node": "public.ecr.aws/lambda/nodejs:24@sha256:" + strings.Repeat("c", 64)},
 	}
 	t.Cleanup(func() {
 		for _, process := range runner.invokers {
@@ -124,6 +126,43 @@ func TestApplyWatchedSpecPreflightFailureRestartsNothing(t *testing.T) {
 	}
 }
 
+func TestApplyWatchedSpecKeepsUnchangedFunctionsServing(t *testing.T) {
+	fake := &restartFakeDocker{}
+	fixture := newWatchBatchFixture(t, fake)
+	// Fn2 is byte-identical to the running definition: the plan must leave it
+	// alone, and the cleanup must keep the assembly its /var/task still mounts.
+	fixture.next.Functions[1] = fixture.previous["Fn2"]
+	unchanged := fixture.runner.invokers["Fn2"]
+
+	applied, err := fixture.runner.applyWatchedSpec(context.Background(), fixture.next, []string{"Fn1", "Fn2"}, fixture.newDir)
+	if err != nil || !applied {
+		t.Fatalf("a valid reload was not applied: applied=%v err=%v", applied, err)
+	}
+	if fake.runs != 1 {
+		t.Fatalf("docker run calls = %d, want 1 (only Fn1 restarted)", fake.runs)
+	}
+	if fixture.runner.invokers["Fn2"] != unchanged {
+		t.Fatal("the unchanged function got a new process")
+	}
+	if unchanged.Function.AssetDir != filepath.Join(fixture.oldDir, "asset.old") {
+		t.Fatalf("Fn2 mounts %q, not the previous assembly", unchanged.Function.AssetDir)
+	}
+	// The apply already cleaned the watch root; run it again to pin that the
+	// directory a live container mounts survives every pass.
+	fixture.runner.cleanupOldAssemblies(fixture.newDir)
+	for _, path := range []string{
+		filepath.Join(fixture.oldDir, "asset.old", "index.js"),
+		filepath.Join(fixture.newDir, "asset.new", "index.js"),
+	} {
+		if _, statErr := os.Stat(path); statErr != nil {
+			t.Fatalf("a directory a serving function mounts was removed: %v", statErr)
+		}
+	}
+	if got := fixture.runner.invokers["Fn1"].Function.AssetDir; got != filepath.Join(fixture.newDir, "asset.new") {
+		t.Fatalf("Fn1 mounts %q, not the new assembly", got)
+	}
+}
+
 func TestApplyWatchedSpecRollsBackAFailedBatch(t *testing.T) {
 	fake := &restartFakeDocker{failRuns: map[int]bool{2: true}}
 	fixture := newWatchBatchFixture(t, fake)
@@ -149,6 +188,64 @@ func TestApplyWatchedSpecRollsBackAFailedBatch(t *testing.T) {
 	}
 	if _, statErr := os.Stat(fixture.newDir); !os.IsNotExist(statErr) {
 		t.Fatalf("the rolled-back assembly directory was kept: %v", statErr)
+	}
+	if !strings.Contains(fixture.output.String(), "rolled back 1 replaced function(s); the previous assembly keeps serving") {
+		t.Fatalf("the log does not name the rollback: %s", fixture.output.String())
+	}
+}
+
+func TestApplyWatchedSpecRollsBackAContainerImageFunctionByID(t *testing.T) {
+	fake := &restartFakeDocker{failRuns: map[int]bool{2: true}}
+	fixture := newWatchBatchFixture(t, fake)
+	imageDir := filepath.Join(fixture.newDir, "image")
+	if err := os.MkdirAll(imageDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	oldIDs := map[string]string{"Fn1": "sha256:old-1", "Fn2": "sha256:old-2"}
+	tags := map[string]string{}
+	for index, id := range []string{"Fn1", "Fn2"} {
+		previous := fixture.previous[id]
+		previous.AssetDir = ""
+		previous.PackageType = "Image"
+		previous.ImageAsset = &DockerImageAssetSpec{Hash: "old", Directory: imageDir}
+		tag := fixture.runner.functionImageTag(previous)
+		tags[id] = tag
+		fixture.runner.invokers[id].Function = previous
+		fixture.runner.invokers[id].Image = tag
+		fake.imageStore()[tag] = oldIDs[id]
+
+		next := fixture.next.Functions[index]
+		next.AssetDir = ""
+		next.PackageType = "Image"
+		next.ImageAsset = &DockerImageAssetSpec{Hash: "new", Directory: imageDir}
+		fixture.next.Functions[index] = next
+	}
+
+	applied, err := fixture.runner.applyWatchedSpec(context.Background(), fixture.next, []string{"Fn1", "Fn2"}, fixture.newDir)
+	if err == nil || applied {
+		t.Fatalf("a failed image function start was applied: applied=%v err=%v", applied, err)
+	}
+	if fake.runs != 4 {
+		t.Fatalf("docker run calls = %d, want 4 (two starts, the failed start's restore and the rollback)", fake.runs)
+	}
+	// The rebuild moved each tag to its new image. Every restore must start the
+	// immutable id the plan recorded, never the tag that now names new content.
+	if got := fake.runImages[2]; got != oldIDs["Fn2"] {
+		t.Fatalf("the failed start restored %q, want the old image id %q", got, oldIDs["Fn2"])
+	}
+	if got := fake.runImages[3]; got != oldIDs["Fn1"] {
+		t.Fatalf("the batch rollback started %q, want the old image id %q", got, oldIDs["Fn1"])
+	}
+	for id, tag := range tags {
+		if got := fake.images[tag]; got != oldIDs[id] {
+			t.Fatalf("tag %s names %q after the rollback, want the old image %q", tag, got, oldIDs[id])
+		}
+		if got := fixture.runner.invokers[id].Image; got != oldIDs[id] {
+			t.Fatalf("%s runs image %q, want the old image id %q", id, got, oldIDs[id])
+		}
+	}
+	if fake.images[tags["Fn1"]] == "sha256:built-1" || fake.images[tags["Fn2"]] == "sha256:built-2" {
+		t.Fatalf("a rebuilt image was left as the tag's target: %+v", fake.images)
 	}
 	if !strings.Contains(fixture.output.String(), "rolled back 1 replaced function(s); the previous assembly keeps serving") {
 		t.Fatalf("the log does not name the rollback: %s", fixture.output.String())

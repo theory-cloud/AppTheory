@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -338,13 +340,26 @@ func TestDeliveryEngineRestart(t *testing.T) {
 
 // restartFakeDocker starts a goroutine that sends the runtime's first /next
 // request to the Runtime API the container was given, so the restart path can
-// be exercised without a real runtime image.
+// be exercised without a real runtime image. It models the daemon's image
+// store just enough for a watch reload: a build produces a new immutable id
+// and moves the tag, image inspect resolves a reference to its id, and tag
+// points a tag at an id.
 type restartFakeDocker struct {
-	mu       sync.Mutex
-	runs     int
-	failRun  int
-	failRuns map[int]bool
-	buildErr error
+	mu        sync.Mutex
+	runs      int
+	failRun   int
+	failRuns  map[int]bool
+	buildErr  error
+	images    map[string]string
+	builds    int
+	runImages []string
+}
+
+func (f *restartFakeDocker) imageStore() map[string]string {
+	if f.images == nil {
+		f.images = map[string]string{}
+	}
+	return f.images
 }
 
 func (f *restartFakeDocker) exec(ctx context.Context, argv []string) (string, string, error) {
@@ -356,11 +371,29 @@ func (f *restartFakeDocker) exec(ctx context.Context, argv []string) (string, st
 		if f.buildErr != nil {
 			return "", "build failed", f.buildErr
 		}
-		return "sha256:image-id", "", nil
+		f.mu.Lock()
+		f.builds++
+		id := fmt.Sprintf("sha256:built-%d", f.builds)
+		for index, argument := range argv {
+			if argument == "-t" && index+1 < len(argv) {
+				f.imageStore()[argv[index+1]] = id
+			}
+		}
+		f.mu.Unlock()
+		return id, "", nil
 	case "run":
 		f.mu.Lock()
 		f.runs++
 		run := f.runs
+		image := ""
+		for _, argument := range argv {
+			if _, known := f.imageStore()[argument]; known || strings.HasPrefix(argument, "sha256:") {
+				image = argument
+			}
+		}
+		if image != "" {
+			f.runImages = append(f.runImages, image)
+		}
 		f.mu.Unlock()
 		if (f.failRun > 0 && run == f.failRun) || f.failRuns[run] {
 			return "", "restart failed", errors.New("restart failed")
@@ -388,6 +421,49 @@ func (f *restartFakeDocker) exec(ctx context.Context, argv []string) (string, st
 			}()
 		}
 		return "container-id", "", nil
+	case "tag":
+		if len(argv) < 4 {
+			return "", "", nil
+		}
+		f.mu.Lock()
+		source := f.imageStore()[argv[2]]
+		if source == "" {
+			source = argv[2]
+		}
+		f.imageStore()[argv[3]] = source
+		f.mu.Unlock()
+		return "", "", nil
+	case "image":
+		if len(argv) < 3 {
+			return "", "", nil
+		}
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		switch argv[2] {
+		case "inspect":
+			reference := argv[len(argv)-1]
+			id, ok := f.imageStore()[reference]
+			if !ok && strings.HasPrefix(reference, "sha256:") {
+				return reference, "", nil
+			}
+			if !ok {
+				return "", "no such image", fmt.Errorf("no such image: %s", reference)
+			}
+			return id, "", nil
+		case "rm":
+			for _, reference := range argv[3:] {
+				delete(f.imageStore(), reference)
+			}
+			return "", "", nil
+		case "ls":
+			references := make([]string, 0, len(f.imageStore()))
+			for reference := range f.imageStore() {
+				references = append(references, reference)
+			}
+			sort.Strings(references)
+			return strings.Join(references, "\n"), "", nil
+		}
+		return "", "", nil
 	case "inspect":
 		return "true", "", nil
 	case "version":
@@ -460,7 +536,7 @@ func TestRestartFunctionRestoresThePreviousDefinition(t *testing.T) {
 	process := &FunctionProcess{Function: base, Container: "c", Image: "img", options: ContainerOptions{Name: "c", Image: "img"}, logf: func(string, ...any) {}}
 	next := base
 	next.MemoryMB = 256
-	if err := runner.restartFunction(context.Background(), process, next, "img"); err == nil {
+	if err := runner.restartFunction(context.Background(), process, next, "img", ""); err == nil {
 		t.Fatal("a failed restart did not report the failure")
 	}
 	if process.Function.MemoryMB != 128 {
