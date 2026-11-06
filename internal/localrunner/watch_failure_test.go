@@ -99,6 +99,37 @@ func newWatchBatchFixture(t *testing.T, fake *restartFakeDocker) *watchBatchFixt
 	}
 }
 
+// makeImageFunctions turns both fixture functions into container-image
+// functions that build from imageDir, and records the tag and image id each
+// running function has before the reload.
+func (f *watchBatchFixture) makeImageFunctions(t *testing.T, imageDir string) (map[string]string, map[string]string) {
+	t.Helper()
+	if err := os.MkdirAll(imageDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	tags := map[string]string{}
+	ids := map[string]string{}
+	for index, id := range []string{"Fn1", "Fn2"} {
+		previous := f.previous[id]
+		previous.AssetDir = ""
+		previous.PackageType = "Image"
+		previous.ImageAsset = &DockerImageAssetSpec{Hash: "old", Directory: imageDir}
+		tag := f.runner.functionImageTag(previous)
+		tags[id] = tag
+		ids[id] = "sha256:old-" + strings.TrimPrefix(id, "Fn")
+		f.runner.invokers[id].Function = previous
+		f.runner.invokers[id].Image = tag
+		f.fake.imageStore()[tag] = ids[id]
+
+		next := f.next.Functions[index]
+		next.AssetDir = ""
+		next.PackageType = "Image"
+		next.ImageAsset = &DockerImageAssetSpec{Hash: "new", Directory: imageDir}
+		f.next.Functions[index] = next
+	}
+	return tags, ids
+}
+
 func TestApplyWatchedSpecPreflightFailureRestartsNothing(t *testing.T) {
 	fake := &restartFakeDocker{buildErr: errors.New("build failed")}
 	fixture := newWatchBatchFixture(t, fake)
@@ -197,29 +228,7 @@ func TestApplyWatchedSpecRollsBackAFailedBatch(t *testing.T) {
 func TestApplyWatchedSpecRollsBackAContainerImageFunctionByID(t *testing.T) {
 	fake := &restartFakeDocker{failRuns: map[int]bool{2: true}}
 	fixture := newWatchBatchFixture(t, fake)
-	imageDir := filepath.Join(fixture.newDir, "image")
-	if err := os.MkdirAll(imageDir, 0o750); err != nil {
-		t.Fatal(err)
-	}
-	oldIDs := map[string]string{"Fn1": "sha256:old-1", "Fn2": "sha256:old-2"}
-	tags := map[string]string{}
-	for index, id := range []string{"Fn1", "Fn2"} {
-		previous := fixture.previous[id]
-		previous.AssetDir = ""
-		previous.PackageType = "Image"
-		previous.ImageAsset = &DockerImageAssetSpec{Hash: "old", Directory: imageDir}
-		tag := fixture.runner.functionImageTag(previous)
-		tags[id] = tag
-		fixture.runner.invokers[id].Function = previous
-		fixture.runner.invokers[id].Image = tag
-		fake.imageStore()[tag] = oldIDs[id]
-
-		next := fixture.next.Functions[index]
-		next.AssetDir = ""
-		next.PackageType = "Image"
-		next.ImageAsset = &DockerImageAssetSpec{Hash: "new", Directory: imageDir}
-		fixture.next.Functions[index] = next
-	}
+	tags, oldIDs := fixture.makeImageFunctions(t, filepath.Join(fixture.newDir, "image"))
 
 	applied, err := fixture.runner.applyWatchedSpec(context.Background(), fixture.next, []string{"Fn1", "Fn2"}, fixture.newDir)
 	if err == nil || applied {
@@ -249,6 +258,80 @@ func TestApplyWatchedSpecRollsBackAContainerImageFunctionByID(t *testing.T) {
 	}
 	if !strings.Contains(fixture.output.String(), "rolled back 1 replaced function(s); the previous assembly keeps serving") {
 		t.Fatalf("the log does not name the rollback: %s", fixture.output.String())
+	}
+}
+
+func TestApplyWatchedSpecRemovesTheReplacedImageAfterSuccess(t *testing.T) {
+	fake := &restartFakeDocker{}
+	fixture := newWatchBatchFixture(t, fake)
+	tags, oldIDs := fixture.makeImageFunctions(t, filepath.Join(fixture.newDir, "image"))
+	// Fn2 is byte-identical to the running definition, so only Fn1 is planned.
+	fixture.next.Functions[1] = fixture.runner.invokers["Fn2"].Function
+
+	applied, err := fixture.runner.applyWatchedSpec(context.Background(), fixture.next, []string{"Fn1", "Fn2"}, fixture.newDir)
+	if err != nil || !applied {
+		t.Fatalf("a valid image reload was not applied: applied=%v err=%v", applied, err)
+	}
+	if fake.runs != 1 {
+		t.Fatalf("docker run calls = %d, want 1", fake.runs)
+	}
+	if got := fake.images[tags["Fn1"]]; got == "" || got == oldIDs["Fn1"] {
+		t.Fatalf("the tag names %q after a successful apply, want the rebuilt image", got)
+	}
+	if len(fake.removed) != 1 || fake.removed[0] != oldIDs["Fn1"] {
+		t.Fatalf("removed images = %v, want only the replaced image %q", fake.removed, oldIDs["Fn1"])
+	}
+}
+
+func TestApplyWatchedSpecFailsClosedWhenThePreviousImageIsGone(t *testing.T) {
+	fake := &restartFakeDocker{}
+	fixture := newWatchBatchFixture(t, fake)
+	fixture.makeImageFunctions(t, filepath.Join(fixture.newDir, "image"))
+	fixture.runner.invokers["Fn1"].Image = "gone-image"
+	fixture.next.Functions[1] = fixture.runner.invokers["Fn2"].Function
+
+	applied, err := fixture.runner.applyWatchedSpec(context.Background(), fixture.next, []string{"Fn1", "Fn2"}, fixture.newDir)
+	if err == nil || applied {
+		t.Fatalf("a reload whose previous image is gone was applied: applied=%v err=%v", applied, err)
+	}
+	if !strings.Contains(err.Error(), "resolve the image a rollback would restore") || !strings.Contains(err.Error(), "gone-image") {
+		t.Fatalf("the error does not name the missing image: %v", err)
+	}
+	if fake.builds != 0 || fake.runs != 0 {
+		t.Fatalf("the failed plan built %d image(s) and ran %d container(s)", fake.builds, fake.runs)
+	}
+	if got := fixture.runner.invokers["Fn1"].Image; got != "gone-image" {
+		t.Fatalf("Fn1 changed its image before the plan failed: %q", got)
+	}
+	if got := fixture.runner.invokers["Fn1"].Function.ImageAsset.Hash; got != "old" {
+		t.Fatalf("Fn1 took the new definition before the plan failed: %q", got)
+	}
+}
+
+func TestApplyWatchedSpecLogsATagRestoreFailure(t *testing.T) {
+	fake := &restartFakeDocker{failRuns: map[int]bool{2: true}, tagErr: errors.New("tag failed")}
+	fixture := newWatchBatchFixture(t, fake)
+	_, oldIDs := fixture.makeImageFunctions(t, filepath.Join(fixture.newDir, "image"))
+
+	applied, err := fixture.runner.applyWatchedSpec(context.Background(), fixture.next, []string{"Fn1", "Fn2"}, fixture.newDir)
+	if err == nil || applied {
+		t.Fatalf("a failed image function start was applied: applied=%v err=%v", applied, err)
+	}
+	if fake.runs != 4 {
+		t.Fatalf("docker run calls = %d, want 4", fake.runs)
+	}
+	if got := fake.runImages[3]; got != oldIDs["Fn1"] {
+		t.Fatalf("the batch rollback started %q, want the old image id %q", got, oldIDs["Fn1"])
+	}
+	if len(fake.removed) != 0 {
+		t.Fatalf("a failed apply removed an image: %v", fake.removed)
+	}
+	log := fixture.output.String()
+	if !strings.Contains(log, "could not point image tag") || !strings.Contains(log, "the rolled-back container runs that image by id") {
+		t.Fatalf("the log does not name the failed tag restore: %s", log)
+	}
+	if !strings.Contains(log, "rolled back 1 replaced function(s); the previous assembly keeps serving") {
+		t.Fatalf("the rollback did not report the serving state: %s", log)
 	}
 }
 

@@ -353,6 +353,8 @@ type restartFakeDocker struct {
 	images    map[string]string
 	builds    int
 	runImages []string
+	removed   []string
+	tagErr    error
 }
 
 func (f *restartFakeDocker) imageStore() map[string]string {
@@ -425,6 +427,9 @@ func (f *restartFakeDocker) exec(ctx context.Context, argv []string) (string, st
 		if len(argv) < 4 {
 			return "", "", nil
 		}
+		if f.tagErr != nil {
+			return "", "tag failed", f.tagErr
+		}
 		f.mu.Lock()
 		source := f.imageStore()[argv[2]]
 		if source == "" {
@@ -452,6 +457,7 @@ func (f *restartFakeDocker) exec(ctx context.Context, argv []string) (string, st
 			return id, "", nil
 		case "rm":
 			for _, reference := range argv[3:] {
+				f.removed = append(f.removed, reference)
 				delete(f.imageStore(), reference)
 			}
 			return "", "", nil
