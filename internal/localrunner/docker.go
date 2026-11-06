@@ -3,6 +3,7 @@ package localrunner
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os/exec"
@@ -462,11 +463,52 @@ func (d *Docker) RemoveImage(ctx context.Context, tag string) {
 	_, _, _ = d.exec(ctx, []string{"docker", "image", "rm", "-f", tag}) //nolint:errcheck // best-effort cleanup
 }
 
-// RemoveImageIfUnused removes an image by id without forcing. Docker refuses
-// when another tag or a container still references it, so an image shared with
-// a running function survives a watch reload's cleanup.
-func (d *Docker) RemoveImageIfUnused(ctx context.Context, image string) {
-	_, _, _ = d.exec(ctx, []string{"docker", "image", "rm", image}) //nolint:errcheck // the old image is only a cleanup opportunity
+// ImageReferences is what still names or uses an image: the repo tags that
+// point at it and the containers (running or stopped) that run it.
+type ImageReferences struct {
+	RepoTags   []string
+	Containers []string
+}
+
+// ImageReferences reports the repo tags that name an image and the containers
+// that run it, so a cleanup can tell the dangling image a reload built from an
+// image a foreign tag, a pinned reference or a container still holds. Docker
+// exposes no reference count; these are the two references its removal rule
+// consults (https://docs.docker.com/reference/cli/docker/image/rm/).
+func (d *Docker) ImageReferences(ctx context.Context, image string) (ImageReferences, error) {
+	stdout, stderr, err := d.exec(ctx, []string{
+		"docker", "image", "inspect", "--format", "{{json .RepoTags}}", image,
+	})
+	if err != nil {
+		return ImageReferences{}, fmt.Errorf("inspect image %s: %s", image, firstNonEmpty(stderr, err.Error()))
+	}
+	references := ImageReferences{}
+	if raw := strings.TrimSpace(stdout); raw != "" && raw != "null" {
+		if err := json.Unmarshal([]byte(raw), &references.RepoTags); err != nil {
+			return ImageReferences{}, fmt.Errorf("inspect image %s: parse its repo tags: %w", image, err)
+		}
+	}
+	stdout, stderr, err = d.exec(ctx, []string{
+		"docker", "ps", "-a", "--filter", "ancestor=" + image, "--format", "{{.ID}}",
+	})
+	if err != nil {
+		return ImageReferences{}, fmt.Errorf("list the containers using image %s: %s", image, firstNonEmpty(stderr, err.Error()))
+	}
+	references.Containers = splitLines(stdout)
+	return references, nil
+}
+
+// RemoveImageByID removes an image by its immutable id without forcing. Docker
+// refuses while a container (running or stopped) references the image or while
+// two or more repo tags name it, and untags the last tag and deletes the image
+// when exactly one does. It never forces, so a refusal leaves every reference
+// intact. https://docs.docker.com/reference/cli/docker/image/rm/
+func (d *Docker) RemoveImageByID(ctx context.Context, image string) error {
+	stdout, stderr, err := d.exec(ctx, []string{"docker", "image", "rm", image})
+	if err != nil {
+		return fmt.Errorf("remove image %s: %s", image, firstNonEmpty(stderr, stdout, err.Error()))
+	}
+	return nil
 }
 
 // ListImages lists the images carrying one label.

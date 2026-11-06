@@ -193,16 +193,35 @@ wiring are re-derived. The listeners keep their ports and URLs.
 
 A reload that fails after a function was replaced restores the previous
 definition. A container-image function is restored from the immutable image id
-recorded before the rebuild moved its tag, the tag is pointed back at that
-image, and the image this reload built is removed by id without `-f`. Docker
-refuses that removal while another tag or container still references the image,
-so a foreign, pinned or shared image is never removed; a tag-restore failure
+recorded before the rebuild moved its tag, and the tag is pointed back at that
+image. The image this reload built is then removed by id without `-f`, and only
+after an inspect proves nothing still names or uses it: no repo tag and no
+container, running or stopped. That is this run's dangling rebuild; an image a
+foreign tag, a pinned reference or a container still holds is left in place and
+the log names the reference. The check comes first rather than relying on the
+daemon's refusal: Docker refuses an unforced `docker image rm <id>` while a
+container references the image or while two or more repo tags name it, and at
+exactly one tag it untags that tag and deletes the image
+([docker image rm](https://docs.docker.com/reference/cli/docker/image/rm/)).
+Docker's Engine API has no conditional delete (only `force` and `noprune`), so a
+tag added between the inspect and the remove is the one window the check cannot
+close; the remove is still refused while two tags exist. A tag-restore failure
 keeps the rebuilt image and logs it. The apply log names the branch it took:
 `rolled back ...; the previous assembly keeps serving` when every replaced
-function was restored, `no replaced function was restored` when none was, and
-`partially applied: ... restored, ... not` in between. A full rollback removes
+function was restored, `no replaced function was restored` when none was,
+`partially applied: ... restored, ... not` in between, and `no function was
+applied; the previous assembly keeps serving` when the failure stopped the
+batch before any function was replaced. A branch that leaves any function
+unrestored ends with `a restart is required`. A full rollback removes
 the new assembly directory; any rollback that leaves a function unrestored
 keeps it because a container may still mount it.
+
+The shutdown sweep removes every image the run built, but it runs only on a
+clean exit: a signal-killed run can leave its run-labelled images behind
+(`apptheory.local.run=<run-id>`), and a tagged image survives a plain
+`docker image prune`. Remove them with `docker image rm` on the tags the run
+printed, or list them by label (`docker image ls --filter
+label=apptheory.local.run`).
 
 ### `--data-dir` layout
 

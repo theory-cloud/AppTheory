@@ -759,9 +759,10 @@ func (r *Runner) rebuiltImageID(ctx context.Context, function FunctionSpec, imag
 // running container mounts any more; a failed rollback keeps it, because a
 // container may still run from it, and the spec is set to what is serving. A
 // container-image function restarts from the immutable image id recorded at
-// plan time, and its tag is pointed back at that image; the image this reload
-// built is then removed by id, unforced, so a foreign or pinned image that
-// shares the id is never touched.
+// plan time, and its tag is pointed back at that image. The image this reload
+// built is then removed only after an inspect proves nothing names or uses it
+// any more: no repo tag and no container (see removeDanglingImage), so a
+// foreign, pinned or shared image is never untagged by the cleanup.
 func (r *Runner) failWatchedApply(ctx context.Context, next *Spec, targets []string, assemblyDir string, applied []appliedWatchedFunction, applyErr error) (bool, error) {
 	var restoreFailure *watchedRestoreFailure
 	restoreFailed := errors.As(applyErr, &restoreFailure)
@@ -780,6 +781,11 @@ func (r *Runner) failWatchedApply(ctx context.Context, next *Spec, targets []str
 		if entry.added {
 			r.stopFunction(ctx, entry.process)
 			delete(r.invokers, entry.process.Function.LogicalID)
+			// The added function's image is this run's build, named by this
+			// run's tag until the entry is stopped. Nothing else may name or use
+			// it, or the inspect leaves it, so the rollback does not leak a
+			// container-image build it can safely remove.
+			r.removeDanglingImage(ctx, entry.rebuiltImageID, r.functionImageTag(entry.process.Function), "the added function's image")
 			continue
 		}
 		rollbackImage := entry.image
@@ -790,11 +796,11 @@ func (r *Runner) failWatchedApply(ctx context.Context, next *Spec, targets []str
 			rollbackFailures = append(rollbackFailures, fmt.Sprintf("function %s: %v", entry.previous.LogicalID, err))
 			continue
 		}
-		if entry.rebuiltImageID != "" && r.restoreFunctionImageTag(ctx, entry.previous, entry.previousImageID) {
-			// The tag no longer names the rebuild's image. Remove it by the id
-			// captured before the tag moved; docker refuses if anything else
-			// still references it.
-			r.docker.RemoveImageIfUnused(ctx, entry.rebuiltImageID)
+		if r.restoreFunctionImageTag(ctx, entry.previous, entry.previousImageID) {
+			// The tag names the restored image again, so the rebuild has no tag
+			// left. Remove it by the id captured before the tag moved; the
+			// inspect keeps a foreign tag or a container's image.
+			r.removeDanglingImage(ctx, entry.rebuiltImageID, "", "the rebuilt image")
 		}
 	}
 	if len(rollbackFailures) == 0 {
@@ -881,8 +887,8 @@ func (r *Runner) restartFunction(ctx context.Context, process *FunctionProcess, 
 				"function %s: restart failed (%v) and the previous definition could not start (%v)",
 				function.LogicalID, err, restoreErr)}
 		}
-		if rebuiltImageID != "" && r.restoreFunctionImageTag(ctx, previous, previousImageID) {
-			r.docker.RemoveImageIfUnused(ctx, rebuiltImageID)
+		if r.restoreFunctionImageTag(ctx, previous, previousImageID) {
+			r.removeDanglingImage(ctx, rebuiltImageID, "", "the rebuilt image")
 		}
 		return fmt.Errorf("function %s: %w", function.LogicalID, err)
 	}
@@ -913,16 +919,76 @@ func (r *Runner) restoreFunctionImageTag(ctx context.Context, function FunctionS
 }
 
 // removeReplacedImages removes the image a replaced container-image function
-// ran before the reload, once the new assembly is fully serving. Docker
-// refuses to remove an image another tag or a container holds, so an image
-// shared with a live function survives.
+// ran before the reload, once the new assembly is fully serving. The rebuild
+// moved this run's tag to the new content, so the replaced image normally has
+// no tag; the inspect leaves it when a foreign tag or a container still names
+// it. See removeDanglingImage for the removal rule.
 func (r *Runner) removeReplacedImages(ctx context.Context, applied []appliedWatchedFunction) {
 	for _, entry := range applied {
 		if entry.previousImageID == "" {
 			continue
 		}
-		r.docker.RemoveImageIfUnused(ctx, entry.previousImageID)
+		r.removeDanglingImage(ctx, entry.previousImageID, "", "the replaced image")
 	}
+}
+
+// removeDanglingImage removes one image this run built and no longer serves,
+// but only when an inspect proves nothing names or uses it: no repo tag other
+// than ownedTag (the tag this run's build wrote and has not moved yet) and no
+// container, running or stopped. Docker's rule is that an unforced removal by
+// id is refused while a container references the image or while two or more
+// repo tags name it, and that it untags the last tag and deletes the image
+// when that is the only reference; the inspect is what tells this run's
+// dangling rebuild from a foreign, pinned or shared image
+// (https://docs.docker.com/reference/cli/docker/image/rm/).
+//
+// The sequence is inspect, then remove, and the Docker Engine API offers no
+// conditional delete: DELETE /images/{name} takes only force and noprune, so
+// the daemon cannot "remove if untagged" atomically
+// (https://docs.docker.com/reference/api/engine/version/v1.51/#tag/Image/operation/ImageDelete).
+// A tag or container that appears between the inspect and the remove is still
+// refused at two tags or one container; the residual window is a single
+// foreign tag added in that instant, which the unforced remove would untag.
+// Tag-scoped removal is atomic, but the tag here is the function's own tag,
+// which the rollback has already pointed back at the previous image.
+func (r *Runner) removeDanglingImage(ctx context.Context, imageID, ownedTag, what string) {
+	if imageID == "" {
+		return
+	}
+	references, err := r.docker.ImageReferences(ctx, imageID)
+	if err != nil {
+		r.logf("watch: %s: could not inspect image %s (%v); leaving it in place", what, imageID, err)
+		return
+	}
+	var foreignTags []string
+	for _, tag := range references.RepoTags {
+		if ownedTag != "" && tag == ownedTag {
+			continue
+		}
+		foreignTags = append(foreignTags, tag)
+	}
+	if len(foreignTags) > 0 || len(references.Containers) > 0 {
+		r.logf("watch: %s: image %s is still referenced by %s; leaving it in place",
+			what, imageID, describeImageReferences(foreignTags, references.Containers))
+		return
+	}
+	if err := r.docker.RemoveImageByID(ctx, imageID); err != nil {
+		r.logf("watch: %s: could not remove image %s (%v); leaving it in place", what, imageID, err)
+		return
+	}
+	r.logf("watch: %s: removed image %s", what, imageID)
+}
+
+// describeImageReferences names what still holds an image, for the cleanup log.
+func describeImageReferences(tags, containers []string) string {
+	parts := make([]string, 0, len(tags)+len(containers))
+	for _, tag := range tags {
+		parts = append(parts, "tag "+tag)
+	}
+	for _, container := range containers {
+		parts = append(parts, "container "+container)
+	}
+	return strings.Join(parts, ", ")
 }
 
 func (r *Runner) replaceFunctionEnvironment(ctx context.Context, process *FunctionProcess, function FunctionSpec, image string) error {
