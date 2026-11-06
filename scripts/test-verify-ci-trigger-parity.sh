@@ -42,8 +42,9 @@
 # cannot come back behind it, and no other job inherits the carve-out.
 #
 # plus the canonical regressions (a promotion-scoped rubric, a push-broadened
-# deterministic-build job, a `pull_request` branch filter, and YAML smuggling)
-# and green controls proving the classifier is not vacuously failing.
+# deterministic-build job, a `pull_request` branch filter that omits staging, and
+# YAML smuggling) and green controls proving the classifier is not vacuously
+# failing.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -179,7 +180,13 @@ elif mode == "rubric_step_event_gate":
 elif mode == "append":
     text = text.rstrip("\n") + "\n" + sys.argv[3] + "\n"
 elif mode == "add_pull_request_branch_filter":
-    text = text.replace("  pull_request:\n    types:", "  pull_request:\n    branches: [staging]\n    types:", 1)
+    text = text.replace("  pull_request:\n    types:",
+                        f"  pull_request:\n    branches: [{sys.argv[3]}]\n    types:", 1)
+elif mode == "examples_local_filter":
+    if '    branches: ["staging"]\n' not in text:
+        raise SystemExit("examples-local staging filter fixture not found")
+    text = text.replace('    branches: ["staging"]\n',
+                        f'    branches: ["{sys.argv[3]}"]\n', 1)
 elif mode == "add_yaml_smuggling":
     text = text.replace("  release-security-gates:\n", "  release-security-gates: &base\n", 1)
     text = text.rstrip("\n") + "\n  clone:\n    <<: *base\n    runs-on: ubuntu-latest\n"
@@ -323,10 +330,16 @@ reset_fixture
 mutate ci.yml append "$(new_job sneaky-not-pr 'Sneaky not pull request' "github.event_name != 'pull_request'")"
 expect_fail "new negated-event push-only job" "push parity"
 
-# F. Unmodeled trigger and YAML shapes fail closed.
+# F. Unmodeled trigger and YAML shapes fail closed. A pull_request branch filter
+# is modeled only when it keeps pull requests to staging: a filter that omits
+# staging could hide the lane the parity gate is anchored to.
 reset_fixture
-mutate ci.yml add_pull_request_branch_filter
-expect_fail "pull_request trigger gained a branch filter" "not modeled"
+mutate ci.yml add_pull_request_branch_filter premain
+expect_fail "pull_request trigger filtered away from staging" "must include \"staging\""
+
+reset_fixture
+mutate examples-local.yml examples_local_filter premain
+expect_fail "examples harness filtered away from staging" "must include \"staging\""
 
 reset_fixture
 mutate ci.yml add_yaml_smuggling
@@ -377,7 +390,7 @@ jobs:
     steps:
       - run: echo evil
 YAML
-expect_fail "new workflow scoped to the promotion lane" "not modeled"
+expect_fail "new workflow scoped to the promotion lane" "must include \"staging\""
 
 # The recorded staging-lane scope exception is scoped to ci.yml: a same-named job
 # in another workflow file does not inherit the carve-out.
