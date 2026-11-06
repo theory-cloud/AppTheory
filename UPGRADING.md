@@ -113,12 +113,37 @@ upgrade.
 
 ### TableTheory v6 dependency (Go module path) with TypeScript and Python assets
 
-AppTheory now requires TableTheory v6 in all three runtimes: `github.com/theory-cloud/tabletheory/v6 v6.1.1` in Go,
-`theory-cloud-tabletheory-ts-6.1.1.tgz` in TypeScript and `tabletheory_py-6.1.1-py3-none-any.whl` in Python. Both non-Go
+AppTheory now requires TableTheory v6 in all three runtimes: `github.com/theory-cloud/tabletheory/v6 v6.3.0` in Go,
+`theory-cloud-tabletheory-ts-6.3.0.tgz` in TypeScript and `tabletheory_py-6.3.0-py3-none-any.whl` in Python. Both non-Go
 assets keep your existing integrity discipline — immutable GitHub Release pins at SHA-512
-`g9+SCnBLJ3/OdnLObPpfMLmVn7PDLcLeI0/UBfCOqaNe+WQD+Z6GtYAbIV8UoKaxPG/3kOkZv9cY0UiAPe8s4Q==` for the TypeScript tarball
-and SHA-256 `dc249bd7d20a713b2a9b23c7109975bf4061814b9f9a7e935eb6014e3d2bda82` for the Python wheel. TableTheory v6
-changes no TypeScript or Python API, so those two runtimes change version only.
+`ji8q/RXu6V8UKfRozQnqotPEm6O5nY3Ikg6TJcK1dzVemU+flclZUFGOUvlOU4a8ztGbOKmQ/DA3wJeu6pMDdA==` for the TypeScript tarball
+and SHA-256 `29b7c60b67eef35f0683f515fe61f03d00b26e39deeb6636e534cc8a2b6f296e` for the Python wheel. Both digests were
+computed from the downloaded v6.3.0 assets and cross-checked against the release's `tabletheory-SHA256SUMS.txt`. The
+floor moved from v6.1.1 on 2026-11-06; the previous v6.1.1 digests were SHA-512
+`g9+SCnBLJ3/OdnLObPpfMLmVn7PDLcLeI0/UBfCOqaNe+WQD+Z6GtYAbIV8UoKaxPG/3kOkZv9cY0UiAPe8s4Q==` and SHA-256
+`dc249bd7d20a713b2a9b23c7109975bf4061814b9f9a7e935eb6014e3d2bda82`.
+
+**What v6.2.0 and v6.3.0 change for consumers.** Taken from TableTheory's
+[CHANGELOG at v6.3.0](https://github.com/theory-cloud/TableTheory/blob/v6.3.0/CHANGELOG.md):
+
+- **v6.2.0** — TypeScript `ensureTable` and Python `ensure_table` no longer touch TTL on a table that already exists,
+  matching Go's `DB.EnsureTable`, which is the reference: an existing table is left exactly as it is, with no
+  `UpdateTimeToLive` or `DescribeTimeToLive` call. New tables are still created with TTL, and `createTable` /
+  `create_table` still converges TTL on an existing table. A different-attribute conflict is now
+  `TTLAttributeMismatchError` (still an `ErrInvalidModel` `TheorydbError` / `ValidationError`), matching Go's
+  `errors.Is(err, schema.ErrTTLAttributeMismatch)`, which this release also exports. Callers that relied on
+  `ensureTable` / `ensure_table` to enable TTL on an existing table must call `createTable` / `create_table`,
+  `updateTimeToLive` / `update_time_to_live`, or manage TTL in infrastructure as code; TypeScript/Python
+  auto-migration inherits the new behavior because it goes through `ensureTable` / `ensure_table`. No new IAM
+  permissions are required and Go behavior is unchanged.
+- **v6.3.0** — examples-local delivers real stream and S3 events, plus the `examples/cdk-multilang` and reconcile
+  example fixes. No library API changes: the release is a stable promotion of `v6.3.0-rc` whose changelog entries are
+  all `examples-local` / `examples` scoped.
+
+Neither release changes an AppTheory symbol, an AppTheory runtime behavior, or the AppTheory dependency floor beyond
+the version pin itself. TableTheory's `docs/migration/v6.md` at the v6.3.0 tag still carries only the v6.0
+`WithLambdaTimeout` change; there is no separate v6.2/v6.3 migration page, so this section is the consumer-facing
+record for the minor moves.
 
 **Go consumers must move their own TableTheory to v6 in the same change.** The Go module path moves from
 `github.com/theory-cloud/tabletheory/v5` to `/v6`, and the `/v5` and `/v6` `core.DB` are distinct interface types:
@@ -127,7 +152,7 @@ be passed into an AppTheory constructor that still requires `/v5`, and no consum
 requirement and every import must move together:
 
 ```bash
-go get github.com/theory-cloud/tabletheory/v6@v6.1.1
+go get github.com/theory-cloud/tabletheory/v6@v6.3.0
 go mod tidy
 ```
 
