@@ -47,6 +47,7 @@ func TestProvisionTablesReconcilesExistingTableInDataDir(t *testing.T) {
 			mu.Unlock()
 			writeTestResponse(t, writer, `{"Table":{"TableName":"jobs","TableStatus":"ACTIVE",`+
 				`"TableArn":"arn:aws:dynamodb:us-east-1:123456789012:table/jobs",`+
+				`"AttributeDefinitions":[{"AttributeName":"pk","AttributeType":"S"},{"AttributeName":"status","AttributeType":"S"},{"AttributeName":"old","AttributeType":"S"},{"AttributeName":"added","AttributeType":"S"}],`+
 				`"KeySchema":[{"AttributeName":"pk","KeyType":"HASH"}],`+
 				`"GlobalSecondaryIndexes":[`+indexes+`]}}`)
 		case strings.HasSuffix(target, "UpdateTable"):
@@ -162,25 +163,71 @@ func TestReconcileTableDefinitionRefusesIndexShapeChange(t *testing.T) {
 }
 
 func TestSameKeySchema(t *testing.T) {
-	actual := []types.KeySchemaElement{
-		{AttributeName: aws.String("pk"), KeyType: types.KeyTypeHash},
-		{AttributeName: aws.String("sk"), KeyType: types.KeyTypeRange},
+	description := &types.TableDescription{
+		KeySchema: []types.KeySchemaElement{
+			{AttributeName: aws.String("pk"), KeyType: types.KeyTypeHash},
+			{AttributeName: aws.String("sk"), KeyType: types.KeyTypeRange},
+		},
+		AttributeDefinitions: []types.AttributeDefinition{
+			{AttributeName: aws.String("pk"), AttributeType: types.ScalarAttributeTypeS},
+			{AttributeName: aws.String("sk"), AttributeType: types.ScalarAttributeTypeS},
+		},
 	}
-	wanted := []dynamoKeySchemaElement{
-		{AttributeName: "pk", KeyType: "HASH"},
-		{AttributeName: "sk", KeyType: "RANGE"},
+	props := dynamoTableProperties{
+		KeySchema: []dynamoKeySchemaElement{
+			{AttributeName: "pk", KeyType: "HASH"},
+			{AttributeName: "sk", KeyType: "RANGE"},
+		},
+		AttributeDefinitions: []dynamoAttributeDefinition{
+			{AttributeName: "pk", AttributeType: "S"},
+			{AttributeName: "sk", AttributeType: "S"},
+		},
 	}
-	if !sameKeySchema(actual, wanted) {
+	if !sameKeySchema(description, props) {
 		t.Fatal("a matching key schema was reported as changed")
 	}
-	if sameKeySchema(actual, wanted[:1]) {
+	shorter := props
+	shorter.KeySchema = props.KeySchema[:1]
+	if sameKeySchema(description, shorter) {
 		t.Fatal("a shorter key schema was reported as matching")
 	}
-	if sameKeySchema(actual, []dynamoKeySchemaElement{wanted[1], wanted[0]}) {
+	reordered := props
+	reordered.KeySchema = []dynamoKeySchemaElement{props.KeySchema[1], props.KeySchema[0]}
+	if sameKeySchema(description, reordered) {
 		t.Fatal("a reordered key schema was reported as matching")
 	}
-	if sameKeySchema(actual, []dynamoKeySchemaElement{{AttributeName: "pk", KeyType: "RANGE"}, wanted[1]}) {
+	changedType := props
+	changedType.KeySchema = []dynamoKeySchemaElement{{AttributeName: "pk", KeyType: "RANGE"}, props.KeySchema[1]}
+	if sameKeySchema(description, changedType) {
 		t.Fatal("a changed key type was reported as matching")
+	}
+	changedAttributeType := props
+	changedAttributeType.AttributeDefinitions = []dynamoAttributeDefinition{
+		{AttributeName: "pk", AttributeType: "N"},
+		{AttributeName: "sk", AttributeType: "S"},
+	}
+	if sameKeySchema(description, changedAttributeType) {
+		t.Fatal("a changed key attribute type was reported as matching")
+	}
+}
+
+func TestReconcileTableDefinitionRefusesKeyAttributeTypeChange(t *testing.T) {
+	description := &types.TableDescription{
+		KeySchema:            []types.KeySchemaElement{{AttributeName: aws.String("pk"), KeyType: types.KeyTypeHash}},
+		AttributeDefinitions: []types.AttributeDefinition{{AttributeName: aws.String("pk"), AttributeType: types.ScalarAttributeTypeS}},
+	}
+	props := dynamoTableProperties{
+		KeySchema:            []dynamoKeySchemaElement{{AttributeName: "pk", KeyType: "HASH"}},
+		AttributeDefinitions: []dynamoAttributeDefinition{{AttributeName: "pk", AttributeType: "N"}},
+	}
+	err := reconcileTableDefinition(context.Background(), nil, "jobs", props, description)
+	if err == nil {
+		t.Fatal("a key attribute type change was accepted")
+	}
+	for _, want := range []string{"different key schema", "UpdateTable", "https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the refusal does not cite %q: %v", want, err)
+		}
 	}
 }
 

@@ -485,7 +485,7 @@ func reconcileTableDefinition(ctx context.Context, client *dynamodb.Client, name
 	if description == nil {
 		return nil
 	}
-	if !sameKeySchema(description.KeySchema, props.KeySchema) {
+	if !sameKeySchema(description, props) {
 		return fmt.Errorf(
 			"the table already exists with a different key schema; UpdateTable " +
 				"\"Modifies the provisioned throughput settings, global secondary indexes, " +
@@ -550,15 +550,30 @@ func reconcileTableDefinition(ctx context.Context, client *dynamodb.Client, name
 	return nil
 }
 
-func sameKeySchema(actual []types.KeySchemaElement, wanted []dynamoKeySchemaElement) bool {
+// sameKeySchema compares the key attributes and their declared types. A type
+// change (S to N) keeps the names and roles but cannot be applied to existing
+// items, so it is refused like any other key-schema change.
+func sameKeySchema(description *types.TableDescription, props dynamoTableProperties) bool {
+	actual, wanted := description.KeySchema, props.KeySchema
 	if len(actual) != len(wanted) {
 		return false
+	}
+	actualTypes := map[string]string{}
+	for _, definition := range description.AttributeDefinitions {
+		actualTypes[aws.ToString(definition.AttributeName)] = string(definition.AttributeType)
+	}
+	wantedTypes := map[string]string{}
+	for _, definition := range props.AttributeDefinitions {
+		wantedTypes[definition.AttributeName] = definition.AttributeType
 	}
 	for index := range actual {
 		if aws.ToString(actual[index].AttributeName) != wanted[index].AttributeName {
 			return false
 		}
 		if string(actual[index].KeyType) != wanted[index].KeyType {
+			return false
+		}
+		if actualTypes[wanted[index].AttributeName] != wantedTypes[wanted[index].AttributeName] {
 			return false
 		}
 	}
