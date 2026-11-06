@@ -284,9 +284,11 @@ prove the result on the real path; nothing is stubbed.
 | `examples/cdk/import-pipeline/scripts/codebuild-local.sh` | L2 | `StartBuild` runs the `BatchStep` project's buildspec through the published local CodeBuild agent and the profile-pinned build image; `BatchGetBuilds` reports BUILD and COMPLETED SUCCEEDED with the command log, `ListBuildsForProject` returns the id, and the state-change rule delivers the SUCCEEDED event to the real `import-build-events` SQS target. The agent's compose children and volumes are checked gone after shutdown. |
 
 The CodeBuild row pulls the agent and the curated build image. The aarch64 pair
-needs about 8 GB free on the colima disk; the documented 4 CPU / ~6 GB host
-should have that free before the row runs. A pull that fails for capacity fails
-the row with the registry error rather than mocking the build.
+needs about 8 GB of colima disk, and the opt-in full-toolchain image adds about
+10.9 GB on disk. Colima's disk is not a fixed limit, so grow it before a pull
+when it is short ([colima](https://github.com/abiosoft/colima)); a pull that
+fails for capacity fails the row with the registry error rather than mocking the
+build.
 
 ## Runtime API conformance
 

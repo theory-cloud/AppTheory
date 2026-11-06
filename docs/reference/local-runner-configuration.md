@@ -1367,6 +1367,9 @@ architecture:
         "aws/codebuild/standard:7.0": {
           "aarch64": {"tag": "public.ecr.aws/codebuild/amazonlinux-aarch64-lambda-standard:nodejs24", "digest": "sha256:…", "compressedBytes": 1283010354},
           "x86_64": {"tag": "public.ecr.aws/codebuild/amazonlinux-x86_64-lambda-standard:nodejs24", "digest": "sha256:…", "compressedBytes": 1357342127}
+        },
+        "public.ecr.aws/codebuild/amazonlinux-aarch64-standard:3.0": {
+          "aarch64": {"tag": "public.ecr.aws/codebuild/amazonlinux-aarch64-standard:3.0", "digest": "sha256:…", "compressedBytes": 4677714403}
         }
       }
     }
@@ -1375,9 +1378,14 @@ architecture:
 ```
 
 An unmapped `Environment.Image` or an architecture with no pin fails before the
-run starts. AWS publishes curated images per architecture; `standard:7.0` is an
-x86_64 image, so the aarch64 host maps it to the smallest curated aarch64 build
-image. The images are distributed under the Amazon Software License 1.0
+run starts. The agent takes the build image explicitly, so the class mapping is
+a local affordance rather than an AWS rule; `standard:7.0` is an x86_64 image,
+so the aarch64 host maps it to the Lambda-standard aarch64 image. A build that
+needs the full toolchain opts in with
+`imageOverride: public.ecr.aws/codebuild/amazonlinux-aarch64-standard:3.0`,
+which the checked-in profile pins as its own class; the Lambda-standard image
+stays the default. The images are distributed under the Amazon Software
+License 1.0
 ([aws-codebuild-docker-images](https://github.com/aws/aws-codebuild-docker-images)).
 The agent is the published local agent
 ([use the CodeBuild agent](https://docs.aws.amazon.com/codebuild/latest/userguide/use-codebuild-agent.html)).
@@ -1405,9 +1413,11 @@ bus.
 Deviations: CodePipeline, VPC, EFS, secondary sources, cache, artifact upload,
 report groups, privileged mode and non-small compute types are not served; each
 is reported on the project's `skipped` entry (and in `plan`). Only `NO_SOURCE`
-buildspecs run. `CompressedBytes` is the public registry's compressed size; the
-aarch64 agent plus build image need about 8 GB free on the colima disk, and a
-capacity failure fails the row rather than mocking a build.
+buildspecs run. `CompressedBytes` is the public registry's compressed size. The
+aarch64 agent plus Lambda-standard image need about 8 GB of colima disk, and the
+opt-in full-toolchain image adds about 10.9 GB on disk; colima's disk is not a
+fixed limit, so grow it before a pull when it is short. A capacity failure fails
+the row rather than mocking a build.
 
 ## Container environment
 

@@ -93,6 +93,15 @@
             "license": "Amazon Software License 1.0 (aws/aws-codebuild-docker-images LICENSE.txt)",
             "compressedBytes": 1357342127
           }
+        },
+        "public.ecr.aws/codebuild/amazonlinux-aarch64-standard:3.0": {
+          "aarch64": {
+            "tag": "public.ecr.aws/codebuild/amazonlinux-aarch64-standard:3.0",
+            "digest": "sha256:af9a04646321922b7bc478b3a539eda2714f91148074233acbecf878c0f4fde8",
+            "pinned": "2026-11-05",
+            "license": "Amazon Software License 1.0 (aws/aws-codebuild-docker-images LICENSE.txt)",
+            "compressedBytes": 4677714403
+          }
         }
       }
     },

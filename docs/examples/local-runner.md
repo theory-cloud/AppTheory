@@ -1515,11 +1515,12 @@ is AWS's own image ([use the CodeBuild agent](https://docs.aws.amazon.com/codebu
 | aarch64 | `public.ecr.aws/codebuild/local-builds:aarch64` | `sha256:7d7b5d35d2ac4e062ae7ba8c662ffed15229a52d09bd0d664a7816c439679192` | 569 MB |
 | x86_64 | `public.ecr.aws/codebuild/local-builds:latest` | `sha256:ccb19bdd7af94e4dc761e4c58c267e9455c28ec68d938086b4dc1cf8fe6b0940` | 1.31 GB |
 
-Curated CodeBuild images are published per architecture. The profile maps the
-project's `Environment.Image` to one local class. The import-pipeline project
-declares the CDK default `aws/codebuild/standard:7.0` (an Ubuntu image that AWS
-publishes for x86_64 only); on the documented aarch64 host it maps to the
-smallest curated aarch64 build image:
+The local agent takes the build image explicitly, so the profile's class
+mapping is a local affordance: no AWS page assigns a local image to a declared
+`Environment.Image`. The import-pipeline project declares the CDK default
+`aws/codebuild/standard:7.0` (an Ubuntu image that AWS publishes for x86_64
+only); on the documented aarch64 host the profile maps it to the Lambda-standard
+aarch64 build image:
 
 | Declared image | aarch64 pin | x86_64 pin |
 | --- | --- | --- |
@@ -1527,9 +1528,11 @@ smallest curated aarch64 build image:
 
 Both images are distributed under the Amazon Software License 1.0
 ([aws-codebuild-docker-images](https://github.com/aws/aws-codebuild-docker-images)).
-The mapping is size-conscious on the 30 GB colima disk; a build that needs the
-full `standard:7.0` toolchain can pin the larger `amazonlinux-aarch64-standard`
-image in the profile.
+A build that needs the full `standard:7.0` toolchain opts in with
+`imageOverride: public.ecr.aws/codebuild/amazonlinux-aarch64-standard:3.0`; the
+checked-in profile pins that class (`sha256:af9a0464…`, 4.68 GB compressed,
+about 10.9 GB on disk, the same license). The Lambda-standard image stays the
+default.
 
 `StartBuild` creates a build id (`<project>:<uuid>`), writes the project's
 inline buildspec and environment to the run scratch directory, and runs the
@@ -1559,11 +1562,11 @@ Deviations, named rather than hidden:
 | Compute type | `BUILD_GENERAL1_SMALL` only; an override is refused by name. |
 
 **Requirements.** The CodeBuild row pulls the agent and one curated build image.
-On the documented 4 CPU / ~6 GB colima host, reserve about 8 GB free on the
-colima disk for the aarch64 pair (569 MB + 1.28 GB compressed; about 2.2 GB +
-4.9 GB on disk) and more for the x86_64 agent. The row also needs the Docker
-socket, because the agent launches the build container itself. If colima's disk
-is short, grow it before the pull
+The aarch64 pair needs about 8 GB of colima disk (569 MB + 1.28 GB compressed;
+about 2.2 GB + 4.9 GB on disk), and the opt-in full-toolchain image adds about
+10.9 GB on disk. The row also needs the Docker socket, because the agent
+launches the build container itself. Colima's disk is not a fixed limit: grow it
+before the pull when it is short
 ([colima](https://github.com/abiosoft/colima)); a pull that fails for capacity
 fails the row rather than mocking the build.
 
