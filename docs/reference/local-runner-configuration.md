@@ -259,6 +259,8 @@ script output. The committed
 `apptheory-local` runs any CDK app, not only the examples in this repository.
 The app can come from a released module, an installed binary or a sibling
 AppTheory checkout; the flags and generated events are the same in all cases.
+The example harness's row-level classes and named limits are in the
+[fidelity table](/examples/local-harness/#fidelity-table).
 
 ```bash
 # From a released module; <version> must contain the command (v7.0.0 or later;

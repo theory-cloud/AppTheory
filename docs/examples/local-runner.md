@@ -2598,10 +2598,11 @@ gone.
 ## Capability matrix
 
 Classes follow the repository's local-execution convention: **L1** runs fully
-locally, **L2** runs locally with an emulator and documented limits, and **L3**
-is exercised as fully as possible with a named cloud gap. `apptheory local`
-serving a surface is not by itself a class: the class belongs to an example, and
-the harness records it.
+locally, **L2** runs locally with an emulator and a named fidelity limit, and
+**L3** is exercised as fully as possible with a named cloud gap from the
+docs/125 true-limit list. `apptheory local` serving a surface is not by itself a
+class: the class belongs to an example, and the harness records it. Every row's
+class and named limit is in the [harness fidelity table](/examples/local-harness/#fidelity-table).
 
 | Capability | Local runner | Notes |
 | --- | --- | --- |
@@ -2730,10 +2731,11 @@ the harness records it.
   `ObjectRemoved:Delete`; a create and a delete inside one 250 ms poll is not
   observed. S3 → EventBridge emission is delivered by the runner and proven by
   the import-pipeline row.
-- **Managed services** remain L3 gaps where the examples use them: the MicroVM
-  provider in the controller and conformance rows, and S3 Vectors/Bedrock in
-  the semantic-search row. The runner stops at those boundaries; it never fakes
-  a success.
+- **Managed services** are L3 gaps where the examples use them: the MicroVM
+  managed provider in the controller and conformance rows, and S3
+  Vectors/Bedrock in the semantic-search row. Both are AWS-only services with
+  no emulator in the docs/125 true-limit list. The runner stops at those
+  boundaries; it never fakes a success.
 - **One container per function.** In-flight invocations are bounded to 32 and
   queue behind the function's container; delivery batches for the same
   function also serialize there, even when a mapping's `MaximumConcurrency`
