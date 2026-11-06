@@ -169,6 +169,12 @@ every minimatch node is `dev: true`, the root package declares no minimatch runt
 any drift - or any other advisory, version, path, or lockfile - fails closed. The `ts/` brace-expansion path
 itself remains exception-free: the only instance (`5.0.12`) is past every recorded 5.x fix.
 
+The 2026-11-06 `eslint` 10.13.0 -> 10.14.0 move (Dependabot #1222) is an in-family devDependency bump. eslint's own
+`minimatch` range moved `^10.2.5` -> `^10.2.6`, which the reviewed override still resolves onto the hoisted
+`11.0.1`, so the minimatch node set, the brace-expansion node, and the single reviewed `10.2.6` exception node are
+unchanged. Only the anchor's recorded `eslint` parent version and range moved with the package; no override was
+added, dropped, or loosened, and `@humanfs/node` re-resolved `0.16.6` -> `0.16.8` inside eslint's own range.
+
 ## Refresh register (2026-11-01, LOCAL-M0)
 
 The 2026-11-01 dependency refresh re-resolved every checked-in lockfile against its declared range, aligned

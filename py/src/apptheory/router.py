@@ -67,7 +67,7 @@ class Router:
         auth_required: bool = False,
         guard: Any | None = None,
     ) -> None:
-        """Register a route through the deprecated strict compatibility path."""
+        """Register a route through the supported error-returning registration path."""
         if handler is None:
             raise _route_registration_error("route handler is nil")
 

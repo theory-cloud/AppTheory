@@ -304,9 +304,11 @@ export class App {
     /**
      * Registers a route and throws registration errors.
      *
-     * @deprecated handle now fails closed on invalid registrations. Use handle
-     * for normal application registration and catch errors during tests only when
-     * required.
+     * Fluent registration fails closed with a startup throw. The Strict variants are
+     * the supported error-returning registration API for callers that register
+     * conditionally and want to log the failure and continue: they throw the same
+     * canonical AppTheoryError the fluent path throws, so a caller can catch it
+     * rather than guarding every registration site.
      */
     handleStrict(method, pattern, handler, options = {}) {
         this._router.addStrict(method, pattern, handler, options);

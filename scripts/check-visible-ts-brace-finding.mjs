@@ -299,9 +299,9 @@ const expectation = {
       version: "8.72.1",
     },
     {
-      dependencyRange: "^10.2.5",
+      dependencyRange: "^10.2.6",
       path: "node_modules/eslint",
-      version: "10.13.0",
+      version: "10.14.0",
     },
     {
       dependencyRange: "^9.0.3 || ^10.1.2",
@@ -723,7 +723,7 @@ function runSelfTest() {
       version: "8.72.1",
       dependencies: { minimatch: "^10.2.2" },
     },
-    "node_modules/eslint": { version: "10.13.0", dependencies: { minimatch: "^10.2.5" } },
+    "node_modules/eslint": { version: "10.14.0", dependencies: { minimatch: "^10.2.6" } },
     "node_modules/eslint-plugin-import-x": {
       version: "4.17.1",
       dependencies: { minimatch: "^9.0.3 || ^10.1.2" },

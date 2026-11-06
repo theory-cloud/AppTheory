@@ -17,6 +17,15 @@ or deprecation posture must add or update a section here before the release is p
 
 ### Unreleased
 
+- **The `*Strict` route registrars are supported again; they are no longer deprecated.** Go `HandleStrict` /
+  `GetStrict` / `PostStrict` / `PutStrict` / `PatchStrict` / `DeleteStrict` / `OptionsStrict`, TypeScript
+  `handleStrict`, and Python `handle_strict` are the supported error-returning registration API for callers that
+  register conditionally and want to log a rejected route and continue. The posture, not the behavior, changed:
+  fluent registration still fails closed with a startup panic (Go) or a thrown/raised `AppTheoryError`
+  (TypeScript/Python), and the Strict variants still report the same canonical `AppTheoryError`. No removal
+  horizon, no signature change, and no runtime behavior change. Closes #1233; see the rewritten
+  [fail-closed route registration](#fail-closed-route-registration) table.
+
 - **CDK MCP front door: `DISABLED` and `LOCKED` are enforced, not aliases.** This is an intentional
   **synthesis-breaking security correction** for configurations that only asserted a posture.
   - Owned `originReachability: DISABLED` now requires an effective ordinary `ownedApi.domain` (or the deprecated
@@ -106,6 +115,39 @@ or deprecation posture must add or update a section here before the release is p
   material and reuse after more than eight rotations. The generated TypeScript dist and API snapshots move with this
   change. No module-path major bump is required.
 
+- **Local runner: `apptheory-local` runs your app's real Lambda handlers on your machine** (delivered across
+  #1211–#1234). It is a development tool: **nothing in this section changes a deployed stack.**
+
+  - **What you get.** Five entry points: `run` (the default) serves the app's HTTP API v2, REST API v1, Function
+    URL and CloudFront surfaces; `plan` prints the derived surface without starting anything; `invoke` starts one
+    function for event-source handlers and handler-only examples; `session` starts every CDK-targeted function with
+    one JSON command per line; `down` removes a run's leftover containers and networks. `--watch` re-synthesizes on a
+    source change and applies the new surface without restarting the listeners. `--data-dir` keeps DynamoDB Local,
+    s3proxy and ElasticMQ state between runs; moto stays in memory. `--seed` runs a shell command after provisioning
+    and before `local-run: ready`. The app's existing CDK definition is the only routing source — there is no second
+    hand-written route table.
+  - **What it requires.** Go 1.27+ to build or run the command; TypeScript and Python handlers never need Go, because
+    they run in their own runtime images. Docker with the daemon running — on macOS, colima — and bind-mounted code
+    under `$HOME` or the working directory, because colima does not share `/private/tmp`. A `--profile` for `run`,
+    `invoke` and `session`: it pins every runtime image by digest (an `--image` override must be `…@sha256:<64 hex>`)
+    and carries the Python image the in-container preflight needs, so a Python handler runs in the pinned
+    `python:3.14` image. Node.js 24+ on the host only when a served CloudFront distribution has CloudFront
+    Functions. The reference host is colima with 4 CPUs and about 6 GB shared by the runtime images, the emulator
+    containers and the HTTP transport; `--delivery-concurrency` defaults to 4 for it, and values above 32 are refused.
+  - **What it does not change.** No deployed-runtime behaviour: the runner serves the Lambda Runtime API itself and
+    nothing under `runtime/`, `testkit/` or `pkg/` imports it. No CDK synth output change for an existing stack: the
+    runner reads the app's own cloud assembly. No new deploy-time knobs: every setting is a command flag or the local
+    profile file, and no deployed resource reads either.
+  - **Where the limits are documented.** The capability matrix in [run an app locally](docs/examples/local-runner.md)
+    classifies each surface: L1 runs fully locally, L2 runs locally with an emulator and documented limits, L3 is
+    exercised as fully as possible with a named cloud gap. [Local runner
+    configuration](docs/reference/local-runner-configuration.md) records the exact Runtime API fidelity and the
+    deviations each backend carries, including the limits both pages
+    call "docs/125 true limits" (IAM policy evaluation, managed WAF rule content, moto's memory-only state and
+    others), which are named there rather than hidden. The harness that exercises all of it is
+    `make examples-local`; its classification manifest and runner profile are the same checked-in
+    `scripts/local/examples-local.json`.
+
 AppTheory v6 moves the Go runtime and the generated CDK Go bindings onto the next semantic import version. The release
 range from the v5 line also carries other breaking runtime, CDK, TypeScript, and Python changes; read `CHANGELOG.md` and
 the v6 release notes for the commit-level detail, and treat the import-path move below as the mechanical part of the
@@ -113,12 +155,37 @@ upgrade.
 
 ### TableTheory v6 dependency (Go module path) with TypeScript and Python assets
 
-AppTheory now requires TableTheory v6 in all three runtimes: `github.com/theory-cloud/tabletheory/v6 v6.1.1` in Go,
-`theory-cloud-tabletheory-ts-6.1.1.tgz` in TypeScript and `tabletheory_py-6.1.1-py3-none-any.whl` in Python. Both non-Go
+AppTheory now requires TableTheory v6 in all three runtimes: `github.com/theory-cloud/tabletheory/v6 v6.3.0` in Go,
+`theory-cloud-tabletheory-ts-6.3.0.tgz` in TypeScript and `tabletheory_py-6.3.0-py3-none-any.whl` in Python. Both non-Go
 assets keep your existing integrity discipline — immutable GitHub Release pins at SHA-512
-`g9+SCnBLJ3/OdnLObPpfMLmVn7PDLcLeI0/UBfCOqaNe+WQD+Z6GtYAbIV8UoKaxPG/3kOkZv9cY0UiAPe8s4Q==` for the TypeScript tarball
-and SHA-256 `dc249bd7d20a713b2a9b23c7109975bf4061814b9f9a7e935eb6014e3d2bda82` for the Python wheel. TableTheory v6
-changes no TypeScript or Python API, so those two runtimes change version only.
+`ji8q/RXu6V8UKfRozQnqotPEm6O5nY3Ikg6TJcK1dzVemU+flclZUFGOUvlOU4a8ztGbOKmQ/DA3wJeu6pMDdA==` for the TypeScript tarball
+and SHA-256 `29b7c60b67eef35f0683f515fe61f03d00b26e39deeb6636e534cc8a2b6f296e` for the Python wheel. Both digests were
+computed from the downloaded v6.3.0 assets and cross-checked against the release's `tabletheory-SHA256SUMS.txt`. The
+floor moved from v6.1.1 on 2026-11-06; the previous v6.1.1 digests were SHA-512
+`g9+SCnBLJ3/OdnLObPpfMLmVn7PDLcLeI0/UBfCOqaNe+WQD+Z6GtYAbIV8UoKaxPG/3kOkZv9cY0UiAPe8s4Q==` and SHA-256
+`dc249bd7d20a713b2a9b23c7109975bf4061814b9f9a7e935eb6014e3d2bda82`.
+
+**What v6.2.0 and v6.3.0 change for consumers.** Taken from TableTheory's
+[CHANGELOG at v6.3.0](https://github.com/theory-cloud/TableTheory/blob/v6.3.0/CHANGELOG.md):
+
+- **v6.2.0** — TypeScript `ensureTable` and Python `ensure_table` no longer touch TTL on a table that already exists,
+  matching Go's `DB.EnsureTable`, which is the reference: an existing table is left exactly as it is, with no
+  `UpdateTimeToLive` or `DescribeTimeToLive` call. New tables are still created with TTL, and `createTable` /
+  `create_table` still converges TTL on an existing table. A different-attribute conflict is now
+  `TTLAttributeMismatchError` (still an `ErrInvalidModel` `TheorydbError` / `ValidationError`), matching Go's
+  `errors.Is(err, schema.ErrTTLAttributeMismatch)`, which this release also exports. Callers that relied on
+  `ensureTable` / `ensure_table` to enable TTL on an existing table must call `createTable` / `create_table`,
+  `updateTimeToLive` / `update_time_to_live`, or manage TTL in infrastructure as code; TypeScript/Python
+  auto-migration inherits the new behavior because it goes through `ensureTable` / `ensure_table`. No new IAM
+  permissions are required and Go behavior is unchanged.
+- **v6.3.0** — examples-local delivers real stream and S3 events, plus the `examples/cdk-multilang` and reconcile
+  example fixes. No library API changes: the release is a stable promotion of `v6.3.0-rc` whose changelog entries are
+  all `examples-local` / `examples` scoped.
+
+Neither release changes an AppTheory symbol, an AppTheory runtime behavior, or the AppTheory dependency floor beyond
+the version pin itself. TableTheory's `docs/migration/v6.md` at the v6.3.0 tag still carries only the v6.0
+`WithLambdaTimeout` change; there is no separate v6.2/v6.3 migration page, so this section is the consumer-facing
+record for the minor moves.
 
 **Go consumers must move their own TableTheory to v6 in the same change.** The Go module path moves from
 `github.com/theory-cloud/tabletheory/v5` to `/v6`, and the `/v5` and `/v6` `core.DB` are distinct interface types:
@@ -127,7 +194,7 @@ be passed into an AppTheory constructor that still requires `/v5`, and no consum
 requirement and every import must move together:
 
 ```bash
-go get github.com/theory-cloud/tabletheory/v6@v6.1.1
+go get github.com/theory-cloud/tabletheory/v6@v6.3.0
 go mod tidy
 ```
 
@@ -1366,17 +1433,19 @@ Use the normal registration path for new code:
 | TypeScript | `app.get(...)`, `app.post(...)`, `app.handle(...)`, and other fluent methods |
 | Python | `app.get(...)`, `app.post(...)`, `app.handle(...)`, and other fluent methods |
 
-Strict helpers are deprecated compatibility wrappers for callers that already depend on their error-returning/throwing shape.
-Their failure details now share the canonical AppTheory error path: Python `add_strict` / `handle_strict` raise
-`AppTheoryError` instead of `ValueError`, and Go `GetStrict` / `HandleStrict` / related helpers return canonical
-`AppTheoryError` messages where applicable rather than older segment-specific strings. Update tests that asserted the
-legacy exception class or exact message text:
+The `*Strict` helpers are a **supported** registration API, not a deprecated compatibility shim. Register through them
+when route construction is conditional — feature flags, tenant-specific route tables, migration shims — and you want to
+log a rejected route and continue instead of letting the fluent path's fail-closed startup panic/throw/raise end
+initialization. They carry no removal horizon. Their failure details use the canonical AppTheory error path: Python
+`add_strict` / `handle_strict` raise `AppTheoryError` instead of `ValueError`, and Go `GetStrict` / `HandleStrict` /
+related helpers return canonical `AppTheoryError` values rather than older segment-specific strings. Update tests that
+asserted the legacy exception class or exact message text:
 
-| Runtime | Deprecated compatibility helper | Replacement | Horizon |
+| Runtime | Supported error-returning helper | Fluent counterpart | Horizon |
 | --- | --- | --- | --- |
-| Go | `GetStrict`, `HandleStrict`, and related `*Strict` helpers | Normal fluent registration; catch startup panics in tests if you need setup-error assertions | Supported for v1.x; earliest removal is v2.0. |
-| TypeScript | `handleStrict` | `handle` / `get` / `post` / normal fluent registration | Supported for v1.x; earliest removal is v2.0. |
-| Python | `handle_strict` | `handle` / `get` / `post` / normal fluent registration | Supported for v1.x; earliest removal is v2.0. |
+| Go | `GetStrict`, `HandleStrict`, and related `*Strict` helpers, returning `(*App, error)` | `Get` / `Handle` and related fluent methods, which panic on the same error | Supported; no removal planned. |
+| TypeScript | `handleStrict`, which throws the canonical `AppTheoryError` | `handle` / `get` / `post`, which throw on the same error | Supported; no removal planned. |
+| Python | `handle_strict`, which raises the canonical `AppTheoryError` | `handle` / `get` / `post`, which raise on the same error | Supported; no removal planned. |
 
 When upgrading, run application startup tests that construct every route and include duplicate-route, invalid-pattern,
 and nil/undefined/None-handler cases if your service builds route tables programmatically. A route typo that was

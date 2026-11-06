@@ -472,9 +472,10 @@ class App:
     ) -> App:
         """Register a route and raise registration errors.
 
-        Deprecated: handle now fails closed on invalid registrations. Use handle
-        for normal application registration and catch errors during tests only
-        when required.
+        Fluent registration fails closed with a startup raise. The Strict variants
+        are the supported error-returning registration API for callers that
+        register conditionally and want to log the failure and continue: they
+        raise the same canonical AppTheoryError the fluent path raises.
         """
         self._router.add_strict(method, pattern, handler, auth_required=auth_required, guard=guard)
         return self

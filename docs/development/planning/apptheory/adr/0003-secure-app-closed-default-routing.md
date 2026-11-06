@@ -325,6 +325,9 @@ reflection can bypass static checking. The secure methods do not accept legacy a
 deprecated `*Strict` registration variants are not copied to `SecureApp`; secure HTTP, AppSync, and WebSocket
 registration has one path and panics/throws on duplicate, malformed, nil-handler, or invalid-posture registrations.
 
+*Postscript (2026-11-05): the `*Strict` registration helpers are a supported API again; this ADR's decision not to
+copy them to `SecureApp` is unchanged.*
+
 Example:
 
 ```go

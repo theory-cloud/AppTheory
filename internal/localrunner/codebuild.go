@@ -27,9 +27,13 @@ type codeBuildProjectProperties struct {
 		ComputeType          string `json:"ComputeType"`
 		PrivilegedMode       bool   `json:"PrivilegedMode"`
 		EnvironmentVariables []struct {
-			Name  string `json:"Name"`
-			Value string `json:"Value"`
-			Type  string `json:"Type"`
+			Name string `json:"Name"`
+			// Value is a String in the schema, but CloudFormation accepts an
+			// intrinsic function wherever a string is expected, so the raw
+			// form is kept until it is resolved.
+			// https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-codebuild-project-environmentvariable.html
+			Value json.RawMessage `json:"Value"`
+			Type  string          `json:"Type"`
 		} `json:"EnvironmentVariables"`
 	} `json:"Environment"`
 	Source struct {
@@ -114,7 +118,13 @@ func deriveCodeBuildProjects(spec *Spec, stacks []assemblyStack, stack assemblyS
 			if strings.TrimSpace(variable.Name) == "" {
 				continue
 			}
-			project.EnvironmentVariables[variable.Name] = variable.Value
+			value, deviation := codeBuildEnvironmentValue(variable.Value, stack, context)
+			if deviation != "" {
+				project.Deviations = append(project.Deviations,
+					"environment variable "+variable.Name+" "+deviation)
+				continue
+			}
+			project.EnvironmentVariables[variable.Name] = value
 		}
 		if project.SourceType != "" && project.SourceType != "NO_SOURCE" {
 			project.Deviations = append(project.Deviations,
@@ -161,6 +171,105 @@ func rawValue(raw json.RawMessage) any {
 		return nil
 	}
 	return value
+}
+
+// codeBuildEnvironmentValue resolves one EnvironmentVariables Value. The schema
+// types Value as a String, so a literal resolves directly; a CloudFormation
+// expression resolves through the shared template resolver, and a Ref or
+// Fn::GetAtt that names a resource in the same stack resolves to the
+// deterministic local value the runner derives from the template. Anything that
+// still depends on the deployed stack (or on a backend this plan did not start)
+// returns a deviation naming the expression instead of failing the plan.
+//
+// https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-codebuild-project-environmentvariable.html
+func codeBuildEnvironmentValue(raw json.RawMessage, stack assemblyStack, context templateContext) (string, string) {
+	if len(raw) == 0 || string(raw) == jsonNull {
+		return "", ""
+	}
+	var literal string
+	if err := json.Unmarshal(raw, &literal); err == nil {
+		return literal, ""
+	}
+	value := rawValue(raw)
+	if value == nil {
+		return "", "is not valid JSON"
+	}
+	resolved, err := context.resolve(value)
+	if err == nil {
+		if text, ok := templateString(resolved); ok {
+			return text, ""
+		}
+		return "", "is a CloudFormation expression that does not resolve to a string"
+	}
+	var unresolved *unresolvedTemplateError
+	if !asUnresolved(err, &unresolved) {
+		return "", "is a CloudFormation expression that failed to resolve (" + err.Error() + ")"
+	}
+	if local, ok := codeBuildLocalReference(value, stack); ok {
+		return local, ""
+	}
+	return "", "is a CloudFormation expression that cannot be resolved before deployment (" +
+		unresolved.Name + "); the local agent receives the project without it"
+}
+
+// codeBuildLocalReference resolves a single-intrinsic Ref or Fn::GetAtt that
+// names a resource in the same stack to the deterministic local value the runner
+// derives from the template. Types whose local value needs a started backend
+// stay unresolved.
+func codeBuildLocalReference(value any, stack assemblyStack) (string, bool) {
+	intrinsic, ok := value.(map[string]any)
+	if !ok || len(intrinsic) != 1 {
+		return "", false
+	}
+	id, attr := "", ""
+	if ref, ok := intrinsic["Ref"].(string); ok {
+		id = ref
+	} else if getAtt, ok := intrinsic["Fn::GetAtt"]; ok {
+		parsedID, parsedAttr, err := parseGetAtt(getAtt)
+		if err != nil {
+			return "", false
+		}
+		id, attr = parsedID, parsedAttr
+	} else {
+		return "", false
+	}
+	resource, ok := stack.Template.Resources[id]
+	if !ok {
+		return "", false
+	}
+	spec := ResourceSpec{
+		Stack:      stack.Name,
+		LogicalID:  id,
+		Type:       resource.Type,
+		Properties: resource.Properties,
+	}
+	// A bucket's Ref is the physical name provisioning creates, and the plan
+	// already prints that same name, so it resolves even though no s3proxy is
+	// running yet. localResourceValue refuses it because a function's
+	// environment must not name a bucket that does not exist.
+	if resource.Type == typeS3Bucket && attr == "" {
+		name, err := resourceName(spec)
+		if err != nil || name == "" {
+			return "", false
+		}
+		return name, true
+	}
+	local, err := localResourceValueFor(spec, nil, nil)
+	if err != nil {
+		return "", false
+	}
+	if attr == "" {
+		resolved, err := refString(spec, local)
+		if err != nil || resolved == "" {
+			return "", false
+		}
+		return resolved, true
+	}
+	resolved, ok := local.attribute(attr)
+	if !ok || resolved == "" {
+		return "", false
+	}
+	return resolved, true
 }
 
 func looksLikeBuildSpecPath(value string) bool {

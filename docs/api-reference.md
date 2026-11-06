@@ -323,9 +323,10 @@ across runtimes. Use the normal fluent registration path for new code:
 - TypeScript: `app.get("/users/{id}", h)` or `app.handle("GET", "/users/{id}", h)`
 - Python: `app.get("/users/{id}", h)` or `app.handle("GET", "/users/{id}", h)`
 
-Strict helpers remain as deprecated compatibility wrappers for code that already depends on their error-returning or
-throwing shape. Python strict helpers now raise `AppTheoryError` rather than `ValueError`, and Go strict helpers return
-canonical `AppTheoryError` messaging where applicable. See `UPGRADING.md` for per-line deprecation notes.
+Strict helpers are the supported error-returning registration API for code that registers conditionally: fluent
+registration fails closed with a startup panic/throw, while Python strict helpers raise `AppTheoryError` rather than
+`ValueError` and Go strict helpers return canonical `AppTheoryError` values. See
+[fail-closed route registration](../UPGRADING.md#fail-closed-route-registration) in `UPGRADING.md`.
 
 ## Cross-language feature surfaces
 

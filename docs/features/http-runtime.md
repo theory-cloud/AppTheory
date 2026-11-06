@@ -133,9 +133,10 @@ app.get("/users/{id}", handler)
 app.handle("GET", "/users/{id}", handler)
 ```
 
-The strict helpers remain only as deprecated compatibility wrappers for code that depends on their older
-error-returning or throwing shape. Their failures use the canonical AppTheory error path: Python strict helpers raise
-`AppTheoryError`, and Go strict helpers return canonical `AppTheoryError` messages where applicable.
+The strict helpers are the supported error-returning registration API for callers that register conditionally.
+Fluent registration fails closed with a startup panic/throw; the strict variants return or raise the same canonical
+`AppTheoryError` instead, so the caller can log a rejected route and continue: Python strict helpers raise
+`AppTheoryError`, and Go strict helpers return canonical `AppTheoryError` values.
 
 ## Response helpers
 

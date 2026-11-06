@@ -237,6 +237,12 @@ func (r *Runner) resolveRef(id, stack string, resources map[string]map[string]Re
 	if err != nil {
 		return "", err
 	}
+	return refString(resource, value)
+}
+
+// refString is the Ref half of local reference resolution, split out so the
+// plan can resolve a Ref without a started run.
+func refString(resource ResourceSpec, value resourceValue) (string, error) {
 	switch resource.Type {
 	case typeKMSKey:
 		return value.KeyID, nil
@@ -250,7 +256,7 @@ func (r *Runner) resolveRef(id, stack string, resources map[string]map[string]Re
 		typeS3Bucket, typeDynamoTable, typeEventsRule, typeEventsBus, typeLambdaFunction, typeKinesisStream:
 		return value.Name, nil
 	default:
-		return "", fmt.Errorf("ref to %s (%s) is not resolvable locally", id, resource.Type)
+		return "", fmt.Errorf("ref to %s (%s) is not resolvable locally", resource.LogicalID, resource.Type)
 	}
 }
 
@@ -308,9 +314,16 @@ func (v resourceValue) attribute(attr string) (string, bool) {
 // localResourceValue derives the deterministic local name for a resource and,
 // for a KMS key, S3 bucket, DynamoDB table or SQS queue the run started a
 // backend for, the value provisioning created.
+func (r *Runner) localResourceValue(resource ResourceSpec, provisioned resourceValues) (resourceValue, error) {
+	return localResourceValueFor(resource, provisioned, r.queueURL)
+}
+
+// localResourceValueFor is the runner-free form of localResourceValue. queueURL
+// is nil before a run starts, which leaves an SQS queue's URL unresolved
+// because it carries the run's ElasticMQ endpoint.
 //
 //nolint:gocyclo // one case per supported template resource type.
-func (r *Runner) localResourceValue(resource ResourceSpec, provisioned resourceValues) (resourceValue, error) {
+func localResourceValueFor(resource ResourceSpec, provisioned resourceValues, queueURL func(string) string) (resourceValue, error) {
 	key := resource.Stack + "/" + resource.LogicalID
 	if value, ok := provisioned[key]; ok {
 		return value, nil
@@ -350,7 +363,13 @@ func (r *Runner) localResourceValue(resource ResourceSpec, provisioned resourceV
 			resource.LogicalID,
 		)
 	case typeSQSQueue:
-		value.URL = r.queueURL(name)
+		if queueURL == nil {
+			return resourceValue{}, fmt.Errorf(
+				"%s is an SQS queue; its URL carries the run's queue endpoint, so it is unresolved before a run starts",
+				resource.LogicalID,
+			)
+		}
+		value.URL = queueURL(name)
 		value.ARN = "arn:" + LocalPartition + ":sqs:" + LocalRegion + ":" + LocalAccountID + ":" + name
 	case typeDynamoTable:
 		value.ARN = "arn:" + LocalPartition + ":dynamodb:" + LocalRegion + ":" + LocalAccountID + ":table/" + name

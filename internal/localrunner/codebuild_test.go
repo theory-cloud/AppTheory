@@ -2,9 +2,13 @@ package localrunner
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -43,6 +47,131 @@ func TestDeriveCodeBuildProject(t *testing.T) {
 	}
 	if project.EnvironmentVariables["STAGE"] != "dev" {
 		t.Fatalf("environment = %v", project.EnvironmentVariables)
+	}
+}
+
+func TestDeriveCodeBuildProjectResolvesEnvironmentIntrinsics(t *testing.T) {
+	stack := assemblyStack{
+		Name: "Stack",
+		Template: template{
+			Parameters: map[string]templateParameter{
+				"Stage": {Default: json.RawMessage(`"dev"`)},
+			},
+			Resources: map[string]templateResource{
+				"Jobs": {
+					Type:       typeDynamoTable,
+					Properties: json.RawMessage(`{"TableName":"jobs"}`),
+				},
+				"Ingest": {
+					Type: typeS3Bucket,
+				},
+				"Secret": {
+					Type: typeSecretsSecret,
+				},
+				"Project": {
+					Type: typeCodeBuildProject,
+					Properties: json.RawMessage(`{
+						"Environment":{"Image":"aws/codebuild/standard:7.0","EnvironmentVariables":[
+							{"Name":"JOBS","Value":{"Ref":"Jobs"},"Type":"PLAINTEXT"},
+							{"Name":"BUCKET","Value":{"Ref":"Ingest"},"Type":"PLAINTEXT"},
+							{"Name":"SECRET_ARN","Value":{"Ref":"Secret"},"Type":"PLAINTEXT"},
+							{"Name":"STAGE","Value":{"Ref":"Stage"},"Type":"PLAINTEXT"},
+							{"Name":"JOINED","Value":{"Fn::Join":["-",["a",{"Ref":"Stage"}]]},"Type":"PLAINTEXT"},
+							{"Name":"UNRESOLVED","Value":{"Fn::ImportValue":"SharedBucket"},"Type":"PLAINTEXT"},
+							{"Name":"LITERAL","Value":"plain","Type":"PLAINTEXT"}
+						]},
+						"Source":{"Type":"NO_SOURCE","BuildSpec":"version: 0.2"},
+						"Artifacts":{"Type":"NO_ARTIFACTS"},"Cache":{"Type":"NO_CACHE"}
+					}`),
+				},
+			},
+		},
+	}
+	spec := &Spec{}
+	if err := deriveCodeBuildProjects(spec, []assemblyStack{stack}, stack); err != nil {
+		t.Fatalf("an intrinsic environment value failed the whole derivation: %v", err)
+	}
+	project := spec.CodeBuildProjects[0]
+	want := map[string]string{
+		"JOBS":    "jobs",
+		"BUCKET":  "local-stack-ingest",
+		"STAGE":   "dev",
+		"JOINED":  "a-dev",
+		"LITERAL": "plain",
+	}
+	for name, expected := range want {
+		if got := project.EnvironmentVariables[name]; got != expected {
+			t.Fatalf("%s = %q, want %q (environment %v)", name, got, expected, project.EnvironmentVariables)
+		}
+	}
+	if !strings.HasPrefix(project.EnvironmentVariables["SECRET_ARN"], "arn:"+LocalPartition+":secretsmanager:") {
+		t.Fatalf("secret ARN = %q", project.EnvironmentVariables["SECRET_ARN"])
+	}
+	if _, ok := project.EnvironmentVariables["UNRESOLVED"]; ok {
+		t.Fatalf("an unresolvable expression was injected as %q", project.EnvironmentVariables["UNRESOLVED"])
+	}
+	joined := strings.Join(project.Deviations, "; ")
+	if !strings.Contains(joined, "environment variable UNRESOLVED") || !strings.Contains(joined, "Fn::ImportValue") {
+		t.Fatalf("deviations %q do not name the unresolved variable and its expression", joined)
+	}
+	if strings.Contains(joined, "environment variable JOBS") || strings.Contains(joined, "environment variable BUCKET") {
+		t.Fatalf("deviations %q name a variable that resolved", joined)
+	}
+}
+
+// TestExampleCodeBuildJobRunnerPlans proves the plan succeeds on the
+// codebuild-job-runner example's own synthesized template, whose
+// EnvironmentVariables are Refs to the jobs table, the ingest bucket and the
+// secret. The assembly under testdata holds that example's `npx cdk synth`
+// template byte for byte — the same template scripts/verify-cdk-synth.sh pins —
+// plus a manifest trimmed to the stack artifact. Regenerate both from
+// examples/cdk/codebuild-job-runner when the example changes; the pinned-hash
+// check below fails until the fixture matches the example's snapshot.
+func TestExampleCodeBuildJobRunnerPlans(t *testing.T) {
+	dir := filepath.Join("testdata", "codebuild-job-runner")
+	fixture, err := os.ReadFile(filepath.Join(dir, "AppTheoryCodeBuildJobRunnerExample.template.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned, err := os.ReadFile(filepath.Join("..", "..", "examples", "cdk", "codebuild-job-runner", "snapshots", "AppTheoryCodeBuildJobRunnerExample.template.sha256"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed := sha256.Sum256(fixture)
+	if got, want := hex.EncodeToString(observed[:]), strings.TrimSpace(string(pinned)); got != want {
+		t.Fatalf("fixture template hash = %s, want the example's pinned %s; refresh the fixture from a fresh `npx cdk synth`", got, want)
+	}
+	stacks, err := loadAssembly(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := deriveSpecInternal(dir, stacks)
+	if err != nil {
+		t.Fatalf("plan failed on the example's synthesized template: %v", err)
+	}
+	if len(spec.CodeBuildProjects) != 1 {
+		t.Fatalf("projects = %+v", spec.CodeBuildProjects)
+	}
+	project := spec.CodeBuildProjects[0]
+	if project.LogicalID != "RunnerProject5D2C85B4" {
+		t.Fatalf("project = %+v", project)
+	}
+	resolved := map[string]string{
+		"APPTHEORY_JOBS_TABLE_NAME": "local-apptheorycodebuildjobrunnerexample-jobstable10c8edf6",
+		"INGEST_BUCKET":             "local-apptheorycodebuildjobrunnerexample-ingestbu-30e6fa032b",
+	}
+	for name, expected := range resolved {
+		if got := project.EnvironmentVariables[name]; got != expected {
+			t.Fatalf("%s = %q, want %q", name, got, expected)
+		}
+	}
+	if !strings.HasPrefix(project.EnvironmentVariables["SECRET_ARN"], "arn:"+LocalPartition+":secretsmanager:") {
+		t.Fatalf("SECRET_ARN = %q", project.EnvironmentVariables["SECRET_ARN"])
+	}
+	for _, deviation := range project.Deviations {
+		if strings.Contains(deviation, "environment variable") {
+			t.Fatalf("the example still reports an unresolved environment variable: %q", deviation)
+		}
 	}
 }
 

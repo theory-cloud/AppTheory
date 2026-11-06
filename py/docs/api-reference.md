@@ -72,9 +72,13 @@ def handler(event, ctx):
 
 ## Strict route registration (`app.handle_strict`)
 
-By default, invalid route patterns are silently ignored (fail-closed).
+The fluent path (`app.get`, `app.post`, `app.handle`, …) fails closed: an invalid pattern, a duplicate
+method/pattern pair, or a `None` handler raises `AppTheoryError` during registration instead of producing a
+route that never matches.
 
-✅ CORRECT: use `app.handle_strict(...)` in tests/CI for fast feedback.
+Use `app.handle_strict(...)` when you register routes conditionally and want to catch that error, log it, and
+continue. It raises the same canonical `AppTheoryError` as the fluent path and is a supported registration
+entry point, not a compatibility shim.
 
 ```py
 async def user(ctx):
