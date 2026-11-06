@@ -8,9 +8,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
-	"github.com/theory-cloud/apptheory/v6/runtime/mcproutes"
-	"github.com/theory-cloud/apptheory/v6/runtime/oauth"
+	apptheory "github.com/theory-cloud/apptheory/v7/runtime"
+	"github.com/theory-cloud/apptheory/v7/runtime/mcproutes"
+	"github.com/theory-cloud/apptheory/v7/runtime/oauth"
 )
 
 // middlewareOrderGroup names the runtime-bearer ordering group the shared

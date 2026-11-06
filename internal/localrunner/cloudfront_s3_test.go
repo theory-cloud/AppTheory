@@ -11,7 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
-	"github.com/theory-cloud/apptheory/v6/internal/localcloudfront"
+	"github.com/theory-cloud/apptheory/v7/internal/localcloudfront"
 )
 
 func newTestS3Origin(t *testing.T, handler http.HandlerFunc) (*s3Origin, *httptest.Server) {

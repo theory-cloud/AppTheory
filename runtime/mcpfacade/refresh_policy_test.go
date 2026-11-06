@@ -9,9 +9,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/theory-cloud/apptheory/v6/runtime/oauth"
-	oauthstore "github.com/theory-cloud/apptheory/v6/runtime/oauth/store"
-	"github.com/theory-cloud/apptheory/v6/testkit/oauthprovider"
+	"github.com/theory-cloud/apptheory/v7/runtime/oauth"
+	oauthstore "github.com/theory-cloud/apptheory/v7/runtime/oauth/store"
+	"github.com/theory-cloud/apptheory/v7/testkit/oauthprovider"
 )
 
 // eventRecorder captures the route refresh telemetry the facade emits.

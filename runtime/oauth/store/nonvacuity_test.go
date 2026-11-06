@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/theory-cloud/apptheory/v6/runtime/oauth/store"
+	"github.com/theory-cloud/apptheory/v7/runtime/oauth/store"
 )
 
 // Non-vacuity negative controls for the shared store conformance table. Each

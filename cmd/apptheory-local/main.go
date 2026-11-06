@@ -33,7 +33,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/theory-cloud/apptheory/v6/internal/localrunner"
+	"github.com/theory-cloud/apptheory/v7/internal/localrunner"
 )
 
 const usageText = `apptheory-local runs an AppTheory app's real Lambda handlers locally.

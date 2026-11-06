@@ -14,7 +14,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 
-	"github.com/theory-cloud/apptheory/v6/internal/localcloudfront"
+	"github.com/theory-cloud/apptheory/v7/internal/localcloudfront"
 )
 
 func TestProvisionTablesWithFakeBackend(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/theory-cloud/apptheory/v6/internal/localcloudfront"
+	"github.com/theory-cloud/apptheory/v7/internal/localcloudfront"
 )
 
 // Resource types the assembly reader understands.

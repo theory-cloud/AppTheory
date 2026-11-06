@@ -6,7 +6,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	oauthstore "github.com/theory-cloud/apptheory/v6/runtime/oauth/store"
+	oauthstore "github.com/theory-cloud/apptheory/v7/runtime/oauth/store"
 )
 
 // frontChannelFieldOutsideProvider reports the first front-channel field that is

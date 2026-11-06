@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/theory-cloud/apptheory/v6/runtime/oauth/store"
+	"github.com/theory-cloud/apptheory/v7/runtime/oauth/store"
 )
 
 // storeConformanceFixture is the shared store conformance table. From

@@ -216,7 +216,7 @@ func TestDocumentedMinimalProfileIsValid(t *testing.T) {
 		t.Run(filepath.Base(document), func(t *testing.T) {
 			section := documentedSection(t, document, "## Run your own app")
 			for _, fragment := range []string{
-				"github.com/theory-cloud/apptheory/v6/cmd/apptheory-local@",
+				"github.com/theory-cloud/apptheory/v7/cmd/apptheory-local@",
 				"go install",
 				"go run -C",
 				"go build -C",

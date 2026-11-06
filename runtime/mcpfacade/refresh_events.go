@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
-	oauthstore "github.com/theory-cloud/apptheory/v6/runtime/oauth/store"
+	apptheory "github.com/theory-cloud/apptheory/v7/runtime"
+	oauthstore "github.com/theory-cloud/apptheory/v7/runtime/oauth/store"
 )
 
 // RouteRefreshEventClass is the closed class vocabulary of the route refresh

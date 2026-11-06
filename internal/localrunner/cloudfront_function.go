@@ -18,7 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/theory-cloud/apptheory/v6/internal/localcloudfront"
+	"github.com/theory-cloud/apptheory/v7/internal/localcloudfront"
 )
 
 // functionURLOrigin invokes the real Lambda function behind an AWS::Lambda::Url

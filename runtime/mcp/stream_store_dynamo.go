@@ -13,8 +13,8 @@ import (
 	tablecore "github.com/theory-cloud/tabletheory/v6/pkg/core"
 	tableerrors "github.com/theory-cloud/tabletheory/v6/pkg/errors"
 
-	"github.com/theory-cloud/apptheory/v6/pkg/objectstore"
-	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
+	"github.com/theory-cloud/apptheory/v7/pkg/objectstore"
+	apptheory "github.com/theory-cloud/apptheory/v7/runtime"
 )
 
 const (

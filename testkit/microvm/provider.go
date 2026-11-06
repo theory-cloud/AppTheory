@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	runtimemicrovm "github.com/theory-cloud/apptheory/v6/runtime/microvm"
+	runtimemicrovm "github.com/theory-cloud/apptheory/v7/runtime/microvm"
 )
 
 // ProviderCall records one fake provider operation.

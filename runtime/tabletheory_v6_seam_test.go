@@ -7,11 +7,11 @@ import (
 	tabletheory "github.com/theory-cloud/tabletheory/v6"
 	tablecore "github.com/theory-cloud/tabletheory/v6/pkg/core"
 
-	"github.com/theory-cloud/apptheory/v6/pkg/jobs"
-	"github.com/theory-cloud/apptheory/v6/pkg/limited"
-	"github.com/theory-cloud/apptheory/v6/pkg/services"
-	mcpruntime "github.com/theory-cloud/apptheory/v6/runtime/mcp"
-	"github.com/theory-cloud/apptheory/v6/runtime/microvm"
+	"github.com/theory-cloud/apptheory/v7/pkg/jobs"
+	"github.com/theory-cloud/apptheory/v7/pkg/limited"
+	"github.com/theory-cloud/apptheory/v7/pkg/services"
+	mcpruntime "github.com/theory-cloud/apptheory/v7/runtime/mcp"
+	"github.com/theory-cloud/apptheory/v7/runtime/microvm"
 )
 
 // A TableTheory v6 *LambdaDB must satisfy core.ExtendedDB. In v5 the declared

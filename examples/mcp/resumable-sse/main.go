@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/aws/aws-lambda-go/lambda"
-	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
-	"github.com/theory-cloud/apptheory/v6/runtime/mcp"
+	apptheory "github.com/theory-cloud/apptheory/v7/runtime"
+	"github.com/theory-cloud/apptheory/v7/runtime/mcp"
 )
 
 type countdownArgs struct {

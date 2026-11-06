@@ -13,12 +13,12 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 
-	"github.com/theory-cloud/apptheory/v6/pkg/naming"
-	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
-	"github.com/theory-cloud/apptheory/v6/runtime/mcpfacade"
-	"github.com/theory-cloud/apptheory/v6/runtime/mcproutes"
-	"github.com/theory-cloud/apptheory/v6/runtime/oauth"
-	"github.com/theory-cloud/apptheory/v6/testkit"
+	"github.com/theory-cloud/apptheory/v7/pkg/naming"
+	apptheory "github.com/theory-cloud/apptheory/v7/runtime"
+	"github.com/theory-cloud/apptheory/v7/runtime/mcpfacade"
+	"github.com/theory-cloud/apptheory/v7/runtime/mcproutes"
+	"github.com/theory-cloud/apptheory/v7/runtime/oauth"
+	"github.com/theory-cloud/apptheory/v7/testkit"
 )
 
 // newFixtureP0App builds the application every p0 fixture runs against: the
