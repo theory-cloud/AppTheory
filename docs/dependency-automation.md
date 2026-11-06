@@ -65,11 +65,11 @@ Put this in `renovate.json` (or merge the same fields into your existing Renovat
 This config intentionally matches both direct release assets and Go module requirements:
 
 ```text
-github.com/theory-cloud/apptheory/v7 v4.0.0
-https://github.com/theory-cloud/AppTheory/releases/download/v4.0.0/theory-cloud-apptheory-4.0.0.tgz
-https://github.com/theory-cloud/AppTheory/releases/download/v4.0.0/theory-cloud-apptheory-cdk-4.0.0.tgz
-https://github.com/theory-cloud/AppTheory/releases/download/v4.0.0/apptheory-4.0.0-py3-none-any.whl
-https://github.com/theory-cloud/AppTheory/releases/download/v4.0.0/apptheory_cdk-4.0.0-py3-none-any.whl
+github.com/theory-cloud/apptheory/v7 v7.0.0
+https://github.com/theory-cloud/AppTheory/releases/download/v7.0.0/theory-cloud-apptheory-7.0.0.tgz
+https://github.com/theory-cloud/AppTheory/releases/download/v7.0.0/theory-cloud-apptheory-cdk-7.0.0.tgz
+https://github.com/theory-cloud/AppTheory/releases/download/v7.0.0/apptheory-7.0.0-py3-none-any.whl
+https://github.com/theory-cloud/AppTheory/releases/download/v7.0.0/apptheory_cdk-7.0.0-py3-none-any.whl
 ```
 
 Each release asset URL carries the version twice — once in the `download/v<version>` tag path and once in the file name.
@@ -90,7 +90,7 @@ Renovate can move URLs, but it cannot prove that your downloaded release assets 
 checksum verification step from the install docs in your CI or bootstrap script:
 
 ```bash
-VERSION=4.0.0
+VERSION=7.0.0
 TAG="v${VERSION}"
 PYTHON_VERSION="${VERSION/-rc/rc0}"
 gh release download "${TAG}" --repo theory-cloud/AppTheory --pattern "SHA256SUMS.txt" --clobber

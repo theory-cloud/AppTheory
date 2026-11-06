@@ -1467,8 +1467,9 @@ pattern rather than wrapping it in a fallback router.
 Before the v1.15 strengthening work, some documentation and examples used strict helpers as the recommended way to
 catch bad route patterns. When moving from older v1 lines to v1.15 or later:
 
-1. Replace strict helper usage in ordinary app setup with normal fluent registration.
-2. Keep strict helpers only where a test deliberately asserts the compatibility shape.
+1. Use normal fluent registration for ordinary app setup.
+2. Keep strict helpers where route construction is conditional and you want a rejected route logged and skipped, as
+   described above, or where a test deliberately asserts that error-returning shape.
 3. Replace new framework-emitted `AppError` usage with `AppTheoryError`.
 4. Plan migration away from Go `JSONHandler` if you still have Lift-era handler adapters.
 5. Keep any temporary flat legacy HTTP error format opt-in isolated to migration boundaries.

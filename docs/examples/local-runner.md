@@ -69,12 +69,13 @@ go install github.com/theory-cloud/apptheory/v7/cmd/apptheory-local@<version>
 apptheory-local --app ~/code/my-app --profile ~/code/my-app/local-profile.json
 ```
 
-`<version>` is a release that contains the command (v6.5.0 or later);
-`go list -m -versions github.com/theory-cloud/apptheory/v7` lists released
-versions.
+`<version>` is a release that contains the command (v7.0.0 or later; the module
+path is `/v7`); `go list -m -versions github.com/theory-cloud/apptheory/v7`
+lists released versions. v7.0.0 is the first release that contains
+`apptheory-local`.
 
-Before that release, run the command from a sibling AppTheory checkout (the
-same model as FaceTheory Phase 3):
+Run the command from a sibling AppTheory checkout when developing the runner
+itself (the same model as FaceTheory Phase 3):
 
 ```bash
 # Run from the checkout without installing anything.

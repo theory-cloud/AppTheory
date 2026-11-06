@@ -248,14 +248,15 @@ The app can come from a released module, an installed binary or a sibling
 AppTheory checkout; the flags and generated events are the same in all cases.
 
 ```bash
-# From a released module; <version> must contain the command (v6.5.0 or later).
+# From a released module; <version> must contain the command (v7.0.0 or later;
+# the module path is /v7).
 go run github.com/theory-cloud/apptheory/v7/cmd/apptheory-local@<version> \
   --app ~/code/my-app --profile ~/code/my-app/local-profile.json
 
 # Or install it once.
 go install github.com/theory-cloud/apptheory/v7/cmd/apptheory-local@<version>
 
-# Before a release, run or build from a sibling AppTheory checkout.
+# When developing the runner itself, run or build from a sibling AppTheory checkout.
 go run -C ~/code/AppTheory ./cmd/apptheory-local \
   --app ~/code/my-app --profile ~/code/my-app/local-profile.json
 go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
