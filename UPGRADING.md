@@ -115,6 +115,39 @@ or deprecation posture must add or update a section here before the release is p
   material and reuse after more than eight rotations. The generated TypeScript dist and API snapshots move with this
   change. No module-path major bump is required.
 
+- **Local runner: `apptheory-local` runs your app's real Lambda handlers on your machine** (delivered across
+  #1211–#1234). It is a development tool: **nothing in this section changes a deployed stack.**
+
+  - **What you get.** Five entry points: `run` (the default) serves the app's HTTP API v2, REST API v1, Function
+    URL and CloudFront surfaces; `plan` prints the derived surface without starting anything; `invoke` starts one
+    function for event-source handlers and handler-only examples; `session` starts every CDK-targeted function with
+    one JSON command per line; `down` removes a run's leftover containers and networks. `--watch` re-synthesizes on a
+    source change and applies the new surface without restarting the listeners. `--data-dir` keeps DynamoDB Local,
+    s3proxy and ElasticMQ state between runs; moto stays in memory. `--seed` runs a shell command after provisioning
+    and before `local-run: ready`. The app's existing CDK definition is the only routing source — there is no second
+    hand-written route table.
+  - **What it requires.** Go 1.27+ to build or run the command; TypeScript and Python handlers never need Go, because
+    they run in their own runtime images. Docker with the daemon running — on macOS, colima — and bind-mounted code
+    under `$HOME` or the working directory, because colima does not share `/private/tmp`. A `--profile` for `run`,
+    `invoke` and `session`: it pins every runtime image by digest (an `--image` override must be `…@sha256:<64 hex>`)
+    and carries the Python image the in-container preflight needs, so a Python handler runs in the pinned
+    `python:3.14` image. Node.js 24+ on the host only when a served CloudFront distribution has CloudFront
+    Functions. The reference host is colima with 4 CPUs and about 6 GB shared by the runtime images, the emulator
+    containers and the HTTP transport; `--delivery-concurrency` defaults to 4 for it, and values above 32 are refused.
+  - **What it does not change.** No deployed-runtime behaviour: the runner serves the Lambda Runtime API itself and
+    nothing under `runtime/`, `testkit/` or `pkg/` imports it. No CDK synth output change for an existing stack: the
+    runner reads the app's own cloud assembly. No new deploy-time knobs: every setting is a command flag or the local
+    profile file, and no deployed resource reads either.
+  - **Where the limits are documented.** The capability matrix in [run an app locally](docs/examples/local-runner.md)
+    classifies each surface: L1 runs fully locally, L2 runs locally with an emulator and documented limits, L3 is
+    exercised as fully as possible with a named cloud gap. [Local runner
+    configuration](docs/reference/local-runner-configuration.md) records the exact Runtime API fidelity and the
+    deviations each backend carries, including the limits both pages
+    call "docs/125 true limits" (IAM policy evaluation, managed WAF rule content, moto's memory-only state and
+    others), which are named there rather than hidden. The harness that exercises all of it is
+    `make examples-local`; its classification manifest and runner profile are the same checked-in
+    `scripts/local/examples-local.json`.
+
 AppTheory v6 moves the Go runtime and the generated CDK Go bindings onto the next semantic import version. The release
 range from the v5 line also carries other breaking runtime, CDK, TypeScript, and Python changes; read `CHANGELOG.md` and
 the v6 release notes for the commit-level detail, and treat the import-path move below as the mechanical part of the
