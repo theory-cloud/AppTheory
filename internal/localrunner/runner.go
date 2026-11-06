@@ -794,11 +794,12 @@ func (r *Runner) webSocketCertificateMounts() []string {
 
 // startEventBridgeBus serves the EventBridge PutEvents JSON protocol for the
 // functions and the harness. Containers reach it through host.docker.internal,
-// which is added as a host entry before the preflight. Docker Desktop forwards
-// that name to the host loopback, but on Linux the host-gateway address is the
-// bridge interface, where a loopback-only listener is unreachable; the bus
-// therefore binds every interface while the URL the session reports stays
-// loopback-only.
+// which is added as a host entry before the preflight. The bus listens through
+// listenControl, which binds loopback and, when the host owns the run network's
+// gateway (the Linux bridge case), that gateway address on the same port; on
+// Colima and Docker Desktop the gateway belongs to the VM, that bind fails
+// harmlessly, and Docker's host-gateway entry forwards the name to the host
+// loopback. The URL the session reports stays loopback-only.
 func (r *Runner) startEventBridgeBus(ctx context.Context) error {
 	listeners, err := r.listenControl(ctx, "EventBridge")
 	if err != nil {
