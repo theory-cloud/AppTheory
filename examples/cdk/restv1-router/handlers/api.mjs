@@ -16,6 +16,8 @@ export async function handler(event) {
             path: path,
             pathParameters: pathParameters || {},
             timestamp: new Date().toISOString(),
+            requestContextPath: event.requestContext?.path ?? null,
+            requestContextStage: event.requestContext?.stage ?? null,
         }),
     };
 }

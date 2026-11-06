@@ -29,8 +29,11 @@ func (a *App) Handle(method, pattern string, handler Handler, opts ...RouteOptio
 
 // HandleStrict registers a route and returns registration errors instead of panicking.
 //
-// Deprecated: Handle now fails closed on invalid registrations. Use Handle for
-// normal application registration and recover during tests only when required.
+// Fluent registration fails closed with a startup panic. The Strict variants are
+// the supported error-returning registration API for callers that register
+// conditionally and want to log the failure and continue: they return the same
+// canonical AppTheoryError the fluent path panics with, so a caller can branch on
+// it rather than recovering.
 func (a *App) HandleStrict(method, pattern string, handler Handler, opts ...RouteOption) (*App, error) {
 	if a == nil {
 		return nil, errors.New("apptheory: app is nil")
@@ -56,8 +59,8 @@ func (a *App) Get(pattern string, handler Handler, opts ...RouteOption) *App {
 	return a.Handle("GET", pattern, handler, opts...)
 }
 
-// Deprecated: the fluent registration helpers now fail closed; use Get unless
-// you specifically need an error-returning compatibility wrapper.
+// GetStrict registers a GET route and returns registration errors instead of
+// panicking; see HandleStrict.
 func (a *App) GetStrict(pattern string, handler Handler, opts ...RouteOption) (*App, error) {
 	return a.HandleStrict("GET", pattern, handler, opts...)
 }
@@ -66,8 +69,8 @@ func (a *App) Post(pattern string, handler Handler, opts ...RouteOption) *App {
 	return a.Handle("POST", pattern, handler, opts...)
 }
 
-// Deprecated: the fluent registration helpers now fail closed; use Post unless
-// you specifically need an error-returning compatibility wrapper.
+// PostStrict registers a POST route and returns registration errors instead of
+// panicking; see HandleStrict.
 func (a *App) PostStrict(pattern string, handler Handler, opts ...RouteOption) (*App, error) {
 	return a.HandleStrict("POST", pattern, handler, opts...)
 }
@@ -76,8 +79,8 @@ func (a *App) Put(pattern string, handler Handler, opts ...RouteOption) *App {
 	return a.Handle("PUT", pattern, handler, opts...)
 }
 
-// Deprecated: the fluent registration helpers now fail closed; use Put unless
-// you specifically need an error-returning compatibility wrapper.
+// PutStrict registers a PUT route and returns registration errors instead of
+// panicking; see HandleStrict.
 func (a *App) PutStrict(pattern string, handler Handler, opts ...RouteOption) (*App, error) {
 	return a.HandleStrict("PUT", pattern, handler, opts...)
 }
@@ -86,8 +89,8 @@ func (a *App) Patch(pattern string, handler Handler, opts ...RouteOption) *App {
 	return a.Handle("PATCH", pattern, handler, opts...)
 }
 
-// Deprecated: the fluent registration helpers now fail closed; use Patch unless
-// you specifically need an error-returning compatibility wrapper.
+// PatchStrict registers a PATCH route and returns registration errors instead of
+// panicking; see HandleStrict.
 func (a *App) PatchStrict(pattern string, handler Handler, opts ...RouteOption) (*App, error) {
 	return a.HandleStrict("PATCH", pattern, handler, opts...)
 }
@@ -96,8 +99,8 @@ func (a *App) Options(pattern string, handler Handler, opts ...RouteOption) *App
 	return a.Handle("OPTIONS", pattern, handler, opts...)
 }
 
-// Deprecated: the fluent registration helpers now fail closed; use Options unless
-// you specifically need an error-returning compatibility wrapper.
+// OptionsStrict registers an OPTIONS route and returns registration errors
+// instead of panicking; see HandleStrict.
 func (a *App) OptionsStrict(pattern string, handler Handler, opts ...RouteOption) (*App, error) {
 	return a.HandleStrict("OPTIONS", pattern, handler, opts...)
 }
@@ -106,8 +109,8 @@ func (a *App) Delete(pattern string, handler Handler, opts ...RouteOption) *App 
 	return a.Handle("DELETE", pattern, handler, opts...)
 }
 
-// Deprecated: the fluent registration helpers now fail closed; use Delete unless
-// you specifically need an error-returning compatibility wrapper.
+// DeleteStrict registers a DELETE route and returns registration errors instead
+// of panicking; see HandleStrict.
 func (a *App) DeleteStrict(pattern string, handler Handler, opts ...RouteOption) (*App, error) {
 	return a.HandleStrict("DELETE", pattern, handler, opts...)
 }
@@ -246,6 +249,10 @@ func (a *App) serveP0(ctx context.Context, req Request, opts serveOptions) (resp
 		if denied, ok := a.authorizeSecureP0(match.Route, requestCtx, opts); ok {
 			return denied
 		}
+	}
+
+	if denied, ok := a.serveRouteGuardsP0(match.Route.Guards, requestCtx, normalized, opts); ok {
+		return denied
 	}
 
 	handler := a.applyMiddlewares(match.Route.Handler)
@@ -397,6 +404,18 @@ func (a *App) servePortableMatch(tier Tier, normalized Request, match *routeMatc
 	// request was actually authorized under, not the caller-supplied header value.
 	state.tenantID = requestCtx.TenantID
 
+	if out, guardErr := applyRouteGuards(match.Route.Guards, requestCtx); guardErr != nil {
+		state.errorCode = errorCodeForError(guardErr)
+		return a.respondToServeError(opts, guardErr, normalized, state.requestID, state.traceID)
+	} else if out != nil {
+		resp, normErr := normalizeResponse(out)
+		if normErr != nil {
+			state.errorCode = errorCodeForError(normErr)
+			return a.respondToServeError(opts, normErr, normalized, state.requestID, state.traceID)
+		}
+		return resp
+	}
+
 	requestCtx.MiddlewareTrace = append(requestCtx.MiddlewareTrace, "handler")
 
 	handler := a.applyMiddlewares(match.Route.Handler)
@@ -427,6 +446,39 @@ func (a *App) servePortableMatch(tier Tier, normalized Request, match *routeMatc
 	resp = limitStreamedResponse(requestCtx.Context(), resp, a.limits.MaxResponseBytes)
 
 	return resp
+}
+
+// applyRouteGuards runs a route's pre-middleware guards in registration order.
+// The first guard that returns a response or an error ends the chain.
+func applyRouteGuards(guards []RouteGuard, requestCtx *Context) (*Response, error) {
+	for _, guard := range guards {
+		if guard == nil {
+			continue
+		}
+		response, err := guard(requestCtx)
+		if err != nil || response != nil {
+			return response, err
+		}
+	}
+	return nil, nil
+}
+
+// serveRouteGuardsP0 runs the P0 route guards and returns their response, if
+// any. Keeping the guard response normalization out of serveP0 keeps that
+// function's branch count within the repo's complexity gate.
+func (a *App) serveRouteGuardsP0(guards []RouteGuard, requestCtx *Context, request Request, opts serveOptions) (Response, bool) {
+	out, err := applyRouteGuards(guards, requestCtx)
+	if err != nil {
+		return a.respondToServeError(opts, err, request, opts.fallbackRequestID), true
+	}
+	if out == nil {
+		return Response{}, false
+	}
+	resp, normErr := normalizeResponse(out)
+	if normErr != nil {
+		return a.respondToServeError(opts, normErr, request, opts.fallbackRequestID), true
+	}
+	return resp, true
 }
 
 func (a *App) authorizePortableRoute(matched route, requestCtx *Context, requestID string, errorResponder requestErrorResponder) (Response, string, bool) {

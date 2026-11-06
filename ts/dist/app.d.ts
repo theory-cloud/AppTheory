@@ -1,7 +1,7 @@
 import type { ALBTargetGroupRequest, ALBTargetGroupResponse, AppSyncResolverEvent, APIGatewayProxyRequest, APIGatewayProxyResponse, APIGatewayV2HTTPRequest, APIGatewayV2HTTPResponse, APIGatewayWebSocketProxyRequest, DynamoDBStreamEvent, DynamoDBStreamEventResponse, DynamoDBStreamRecord, EventBridgeEvent, EventBridgeSelector, KinesisEvent, KinesisEventResponse, KinesisEventRecord, LambdaFunctionURLRequest, LambdaFunctionURLResponse, SNSEvent, SNSEventRecord, SQSEvent, SQSEventResponse, SQSMessage } from "./aws-types.js";
 import { type Clock } from "./clock.js";
 import { Context, EventContext } from "./context.js";
-import type { EventMiddleware, Handler, Middleware, WebSocketClientFactory } from "./context.js";
+import type { EventMiddleware, Handler, Middleware, RouteGuard, WebSocketClientFactory } from "./context.js";
 import { type HTTPErrorFormat } from "./http-error-format.js";
 import { type IdGenerator } from "./ids.js";
 import { type RequestIdSource } from "./request-id-source.js";
@@ -26,6 +26,8 @@ export interface CORSConfig {
 /** Per-route registration options. */
 export interface RouteOptions {
     authRequired?: boolean;
+    /** Runs after route authorization and before application middleware. */
+    guard?: RouteGuard;
 }
 /** Hook that resolves the authenticated identity for protected routes. */
 export type AuthHook = (ctx: Context) => string | Promise<string>;
@@ -205,16 +207,18 @@ export declare class App {
     getHTTPErrorFormat(): HTTPErrorFormat;
     /** Registers a handler for an HTTP method and route pattern. */
     handle(method: string, pattern: string, handler: Handler, options?: RouteOptions): this;
-    [secureRegisterRoute](method: string, pattern: string, handler: Handler, postureValue: AuthPosture, surface: "http" | "appsync", appSyncParentType?: string, appSyncField?: string): void;
+    [secureRegisterRoute](method: string, pattern: string, handler: Handler, postureValue: AuthPosture, surface: "http" | "appsync", appSyncParentType?: string, appSyncField?: string, options?: RouteOptions): void;
     [secureRegisterAppSync](parentTypeName: string, fieldName: string, handler: Handler, posture: AuthPosture): void;
     [secureRegisterWebSocket](routeKey: string, handler: Handler, postureValue: AuthPosture): void;
     [secureRoutesSnapshot](): SecureRoute[];
     /**
      * Registers a route and throws registration errors.
      *
-     * @deprecated handle now fails closed on invalid registrations. Use handle
-     * for normal application registration and catch errors during tests only when
-     * required.
+     * Fluent registration fails closed with a startup throw. The Strict variants are
+     * the supported error-returning registration API for callers that register
+     * conditionally and want to log the failure and continue: they throw the same
+     * canonical AppTheoryError the fluent path throws, so a caller can catch it
+     * rather than guarding every registration site.
      */
     handleStrict(method: string, pattern: string, handler: Handler, options?: RouteOptions): this;
     /** Registers a GET route handler. */
@@ -297,13 +301,13 @@ export declare class App {
 export declare class SecureApp {
     #private;
     constructor(options?: SecureOptions);
-    handle(method: string, pattern: string, handler: Handler, posture: AuthPosture): this;
-    get(pattern: string, handler: Handler, posture: AuthPosture): this;
-    post(pattern: string, handler: Handler, posture: AuthPosture): this;
-    put(pattern: string, handler: Handler, posture: AuthPosture): this;
-    patch(pattern: string, handler: Handler, posture: AuthPosture): this;
-    options(pattern: string, handler: Handler, posture: AuthPosture): this;
-    delete(pattern: string, handler: Handler, posture: AuthPosture): this;
+    handle(method: string, pattern: string, handler: Handler, posture: AuthPosture, options?: RouteOptions): this;
+    get(pattern: string, handler: Handler, posture: AuthPosture, options?: RouteOptions): this;
+    post(pattern: string, handler: Handler, posture: AuthPosture, options?: RouteOptions): this;
+    put(pattern: string, handler: Handler, posture: AuthPosture, options?: RouteOptions): this;
+    patch(pattern: string, handler: Handler, posture: AuthPosture, options?: RouteOptions): this;
+    options(pattern: string, handler: Handler, posture: AuthPosture, options?: RouteOptions): this;
+    delete(pattern: string, handler: Handler, posture: AuthPosture, options?: RouteOptions): this;
     appSyncField(parentTypeName: string, fieldName: string, handler: Handler, posture: AuthPosture): this;
     webSocket(routeKey: string, handler: Handler, posture: AuthPosture): this;
     routes(): SecureRoute[];
@@ -354,20 +358,14 @@ export declare function createLambdaFunctionURLStreamingHandler(app: App): Lambd
 /**
  * Creates middleware that fails requests closed when timeout policy expires.
  *
- * The handler chain runs on a task raced against the deadline signal, and the
- * middleware reports `app.timeout` when the deadline fires while the chain is
- * still running -- at the deadline, not after the chain returns. A handler that
- * observes its signal unwinds immediately and is never left running; a handler
- * that ignores cancellation is exactly the case this middleware exists to bound.
- *
- * The middleware does not abandon the handler: after the deadline it joins it for
- * a bounded grace window (TIMEOUT_MIDDLEWARE_JOIN_GRACE_MS) before returning the
- * timeout response. A handler that ignores cancellation and does not unwind
- * within that window is the one documented place where work the middleware
- * started can still be running when the response returns; the Lambda function
- * timeout remains its outer bound. A handler that never yields (for example a
- * synchronous CPU loop with no await point) cannot be interrupted by the
- * middleware by construction.
+ * The handler chain runs on the invoking task with an abort signal that carries
+ * the deadline, and the middleware reports `app.timeout` once the chain returns
+ * if its abort signal fired. It starts no handler promise, race, or task of its
+ * own: a handler that observes its signal unwinds immediately, and a handler
+ * that ignores it runs until it returns, bounded by the Lambda function timeout
+ * rather than abandoned by the middleware. There is no grace window and no
+ * abandoned work, and a handler that ignores cancellation can hold the
+ * invocation until the Lambda function timeout.
  */
 export declare function timeoutMiddleware(config?: TimeoutConfig): Middleware;
 //# sourceMappingURL=app.d.ts.map

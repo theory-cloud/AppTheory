@@ -487,9 +487,9 @@ func (front *frontChannelConfig) openBrokerRecord(
 	if err != nil {
 		return "", nil, err
 	}
-	seeder, ok := front.stores.RouteRefreshBroker.(oauthstore.RouteRefreshBrokerSeeder)
+	familyStore, ok := front.stores.RouteRefreshBroker.(oauthstore.RouteRefreshBrokerTransactionalFamilyStore)
 	if !ok {
-		return "", nil, fmt.Errorf("mcpfacade: route refresh broker store cannot be seeded")
+		return "", nil, errRouteRefreshBrokerFamilyCapabilityMissing
 	}
 	broker := &oauthstore.RouteRefreshBrokerRecord{
 		HandleHash:                    oauthstore.HashKey(handle),
@@ -510,9 +510,13 @@ func (front *frontChannelConfig) openBrokerRecord(
 		ChainGeneration:               refreshChainRootGeneration,
 		FamilyHash:                    oauthstore.HashKey(handle),
 	}
-	if err = seeder.Put(ctx.Context(), broker); err != nil {
+	// The root and its family state are one atomic create: either both land or the
+	// handle is never returned and never minted into a facade code.
+	stored, err := familyStore.CreateFamily(ctx.Context(), broker)
+	if err != nil {
 		return "", nil, err
 	}
+	broker = stored
 	event := eventFromRecord(broker)
 	event.Class = RouteRefreshEventIssued
 	event.StatusTo = oauthstore.BrokerStatusIssued

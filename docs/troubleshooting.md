@@ -119,8 +119,10 @@ Cause:
 Fix:
 
 - correct the route pattern or duplicate method/path pair in the normal fluent registration path
-- keep strict helpers only for deprecated compatibility tests that intentionally assert the older helper shape
-- see `UPGRADING.md` for the v1.15 deprecation notes
+- use the strict helpers when a rejected route should be logged and skipped instead of ending startup; they are a
+  supported registration API
+- see [fail-closed route registration](../UPGRADING.md#fail-closed-route-registration) in `UPGRADING.md` for the
+  registration contract
 
 ## Issue: one Lambda behaves differently across HTTP, queue, or stream triggers
 

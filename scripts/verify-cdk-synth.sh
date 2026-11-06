@@ -5,6 +5,8 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 # shellcheck source=lib/cdk-runtime-deps.sh
 source "scripts/lib/cdk-runtime-deps.sh"
+# shellcheck source=lib/ts-runtime-deps.sh
+source "scripts/lib/ts-runtime-deps.sh"
 
 epoch="${SOURCE_DATE_EPOCH:-}"
 if [[ -z "${epoch}" ]]; then
@@ -15,6 +17,11 @@ if [[ -z "${epoch}" ]]; then
   fi
 fi
 export SOURCE_DATE_EPOCH="${epoch}"
+
+# Two examples put CDK_DEFAULT_ACCOUNT/CDK_DEFAULT_REGION into their stacks.
+# Leaving an operator's values in place would fold them into the template (and
+# its hash), so the gate always synthesizes environment-agnostic stacks.
+unset CDK_DEFAULT_ACCOUNT CDK_DEFAULT_REGION CDK_CONTEXT_JSON
 
 examples=(
   "examples/cdk/hello-world|AppTheoryHelloWorldGo|-c lang=go"
@@ -28,6 +35,28 @@ examples=(
   "examples/cdk/ssr-site|AppTheorySsrSiteDemo|"
   "examples/cdk/ssr-only-provided-assets-site|AppTheorySsrOnlyProvidedAssetsSiteDemo|"
   "examples/cdk/lesser-parity|LesserParityExample|"
+  "examples/cdk/lambda-packaging|AppTheoryLambdaPackagingExample|"
+  "examples/cdk/codebuild-job-runner|AppTheoryCodeBuildJobRunnerExample|"
+  "examples/cdk/lambda-role|LambdaRoleExample|"
+  "examples/cdk/edge-gateway|EdgeGatewayExample|"
+  "examples/cdk/media-cdn|MediaCdnExample|"
+  "examples/cdk/path-routed-frontend|PathRoutedFrontendExample|"
+  "examples/cdk/restv1-router|RestV1RouterExample|"
+  "examples/cdk/sqs-queue|SqsQueueExample|"
+)
+
+# Stacks whose template is also checked for the resources the example exists to
+# demonstrate. A pinned hash alone would accept a template that silently lost
+# its feature.
+asserted_stacks=(
+  "AppTheoryCodeBuildJobRunnerExample"
+  "LambdaRoleExample"
+  "EdgeGatewayExample"
+  "MediaCdnExample"
+  "PathRoutedFrontendExample"
+  "RestV1RouterExample"
+  "LambdaPackagingExample"
+  "SqsQueueExample"
 )
 
 if ! command -v node >/dev/null 2>&1; then
@@ -71,6 +100,10 @@ if [[ "${#missing_cdk_deps[@]}" -ne 0 ]]; then
   exit 1
 fi
 ensure_cdk_runtime_deps_installed || exit $?
+# The hello-world and multilang TypeScript assets vendor the runtime's
+# production dependency closure from ts/node_modules, so the tree must be
+# installed before they are staged.
+ensure_ts_runtime_deps_installed || exit $?
 
 failed=0
 for entry in "${examples[@]}"; do
@@ -126,6 +159,15 @@ for entry in "${examples[@]}"; do
     cleanup
     failed=1
     continue
+  fi
+
+  if [[ " ${asserted_stacks[*]} " == *" ${stack_name} "* ]]; then
+    if ! node scripts/verify-cdk-example-assertions.mjs "${stack_name}" "${template}" 2>&1; then
+      echo "cdk-synth: FAIL (focused assertions failed for ${stack_name})" >&2
+      cleanup
+      failed=1
+      continue
+    fi
   fi
 
   expected="$(tr -d ' \t\r\n' < "${snapshot_file}")"

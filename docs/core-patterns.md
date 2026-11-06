@@ -105,20 +105,22 @@ app.Get("/users/{id}", handleUser)
 app.Get("/users/me", handleMe)
 ```
 
-## Pattern: use strict route registration in tests and CI
+## Pattern: use strict route registration when you register conditionally
 
-Default route registration preserves backwards compatibility. Invalid patterns can therefore be ignored unless you opt
-into strict registration.
+Fluent route registration fails closed: invalid patterns panic (Go) or throw/raise `AppTheoryError` (TypeScript,
+Python) during registration, so a bad route table cannot reach production as a dead route. When route construction is
+conditional — feature flags, tenant-specific tables, migration shims — use the `*Strict` helpers to receive that same
+error and decide whether to log and continue.
 
 CORRECT:
 
 ```go
 if _, err := app.GetStrict("/users/{id}", handleUser); err != nil {
-	panic(err)
+	log.Printf("skipping route: %v", err)
 }
 ```
 
-INCORRECT:
+INCORRECT (a pattern the fluent path rejects can no longer produce a dead route):
 
 ```go
 app.Get("/{proxy+}/x", handleUser)

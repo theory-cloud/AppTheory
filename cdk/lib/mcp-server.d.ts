@@ -66,9 +66,17 @@ export interface AppTheoryMcpRuntimePostureOptions {
 }
 /** Direct-origin reachability decision required under `runtime-bearer` and `none-public`. */
 export declare enum AppTheoryMcpOriginReachability {
-    /** The execute-api default endpoint is disabled. */
+    /**
+     * Disable the execute-api default endpoint and advertise an owned ordinary
+     * custom domain as the only MCP authority.
+     */
     DISABLED = "disabled",
-    /** The origin is reachable only through a locked front door (CloudFront / VPC origin). */
+    /**
+     * Disable the execute-api default endpoint and require mutual TLS on every
+     * custom domain mapped to the construct-owned API. The owned domain's
+     * `mutualTlsAuthentication` is the concrete lock; an enum alone or an
+     * external/attached front door never satisfies it.
+     */
     LOCKED = "locked"
 }
 /** Denial-telemetry declaration required under `runtime-bearer`. */
@@ -116,6 +124,17 @@ export interface AppTheoryMcpServerDomainOptions {
      * @default undefined
      */
     readonly hostedZone?: route53.IHostedZone;
+    /**
+     * Mutual TLS truststore for the owned custom domain.
+     *
+     * Supplying this is the concrete `AppTheoryMcpOriginReachability.LOCKED`
+     * evidence: the construct disables the default execute-api endpoint and
+     * requires every API mapping bound to the owned API to target a domain whose
+     * `MutualTlsAuthentication` carries a truststore URI. Supplying it with any
+     * other origin decision, or selecting `LOCKED` without it, fails synthesis.
+     * @default undefined
+     */
+    readonly mutualTlsAuthentication?: apigwv2.MTLSConfig;
 }
 /** Stage configuration for an AppTheory-owned MCP HTTP API. */
 export interface AppTheoryMcpServerStageOptions {

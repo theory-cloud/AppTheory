@@ -5,7 +5,7 @@ description: Tiered middleware, routing, normalization, and the AppTheory error 
 
 # HTTP Runtime (P0–P2)
 
-The HTTP runtime is AppTheory's largest shared contract surface. It defines route matching, the middleware chain, request/response normalization, and the error envelope — and it is enforced identically in all three runtimes by the shared fixtures. The [322-vector corpus](../reference/contract-fixtures.md) includes 309 generic runner fixtures — including SP09 MCP, SP12 OAuth, and SP13 objectstore across Go, TypeScript, and Python — plus the thirteen nested MCP route-algebra, auth-facade and limiter cancellation tables. <!-- apptheory-fixture-count: 322 -->
+The HTTP runtime is AppTheory's largest shared contract surface. It defines route matching, the middleware chain, request/response normalization, and the error envelope — and it is enforced identically in all three runtimes by the shared fixtures. The [325-vector corpus](../reference/contract-fixtures.md) includes 309 generic runner fixtures — including SP09 MCP, SP12 OAuth, and SP13 objectstore across Go, TypeScript, and Python — plus the sixteen nested MCP route-algebra, auth-facade and limiter cancellation tables. <!-- apptheory-fixture-count: 325 -->
 
 The runtime is **tiered.** You opt into a tier when you create the app:
 
@@ -133,9 +133,10 @@ app.get("/users/{id}", handler)
 app.handle("GET", "/users/{id}", handler)
 ```
 
-The strict helpers remain only as deprecated compatibility wrappers for code that depends on their older
-error-returning or throwing shape. Their failures use the canonical AppTheory error path: Python strict helpers raise
-`AppTheoryError`, and Go strict helpers return canonical `AppTheoryError` messages where applicable.
+The strict helpers are the supported error-returning registration API for callers that register conditionally.
+Fluent registration fails closed with a startup panic/throw; the strict variants return or raise the same canonical
+`AppTheoryError` instead, so the caller can log a rejected route and continue: Python strict helpers raise
+`AppTheoryError`, and Go strict helpers return canonical `AppTheoryError` values.
 
 ## Response helpers
 
@@ -263,17 +264,21 @@ the runtime puts around a body forwards close to the body it wraps. See
 ### Timeout middleware
 
 `TimeoutMiddleware` (Go/TypeScript) and `timeout_middleware` (Python) fail a
-request closed when its timeout policy expires. The handler chain runs on a worker
-with a deadline-bearing context, and the middleware reports `app.timeout`/HTTP 408
-**at the deadline** — not after the handler returns. A handler that observes its
-canceled context returns immediately and is never left running; a handler that
-ignores cancellation is exactly the case the middleware exists to bound. After the
-deadline the middleware joins the worker for a bounded grace window (250 ms in all
-three runtimes) before it returns the timeout response, so an uncooperative
-handler cannot hold the invocation open. A synchronous handler with no
-cancellation point cannot be interrupted by the middleware by construction; it is
-the documented residual, bounded by the Lambda function timeout rather than by the
-middleware waiting for it.
+request closed when its timeout policy expires. The handler chain runs on the
+**invoking** goroutine/thread/task with a deadline-bearing context (Go), abort
+signal (TypeScript), or cancellation token (Python), and the middleware reports
+`app.timeout`/HTTP 408 **after the chain returns** when the deadline passed. It
+starts no second execution context, so there is nothing to abandon: a handler
+that observes its cancellation unwinds immediately and is never left running,
+and a handler that ignores it runs until it returns. There is no grace window and
+no worker to join.
+
+The tradeoff is explicit: a handler or dependency that never observes
+cancellation is bounded only by the Lambda function timeout, not by the
+middleware. That is the normative no-carve-out rule — the middleware must not
+return while work it started can still run, and a bounded wait that ends in
+abandoning that work is not a join. See
+[Invocation-scoped work](../development/planning/apptheory/supporting/apptheory-runtime-contract-v0.md#invocation-scoped-work-normative).
 
 ### The invocation-scope guard
 
@@ -402,4 +407,4 @@ Deliberately conservative, and reported rather than assumed joined:
 - [Logging Profiles](logging-profiles.md) — profile-backed structured JSON log output
 - [Sanitization](sanitization.md) — safe logging helpers
 - [Event Workloads](event-workloads.md) — the non-HTTP side of the runtime
-- [Contract Fixtures](../reference/contract-fixtures.md) — 322 vectors: 309 generic fixtures across Go/TS/Python plus thirteen nested MCP route-algebra, auth-facade and limiter cancellation tables <!-- apptheory-fixture-count: 322 -->
+- [Contract Fixtures](../reference/contract-fixtures.md) — 325 vectors: 309 generic fixtures across Go/TS/Python plus sixteen nested MCP route-algebra, auth-facade and limiter cancellation tables <!-- apptheory-fixture-count: 325 -->

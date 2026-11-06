@@ -1,0 +1,8 @@
+# Python packages the examples harness itself imports.
+#
+# The field-level encryption row decrypts the gateway's ciphertext with the
+# official AWS Encryption SDK (a raw RSA master key with the page's provider
+# name, key name and algorithm); that is the proof the ciphertext is
+# CloudFront-compatible, so the harness runs the real SDK rather than a local
+# reader. Everything else the harness uses is the Python standard library.
+aws-encryption-sdk==4.0.7

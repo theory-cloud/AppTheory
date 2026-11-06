@@ -1492,3 +1492,82 @@ def _apply_mutation(config: FacadeConfig, mutation: dict) -> None:
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TransactionalFamilyCapabilityTests(unittest.TestCase):
+    """Registration requires the transactional refresh-family capability."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.fixture = json.loads(
+            (
+                _REPO_ROOT
+                / "contract-tests"
+                / "fixtures"
+                / "routing"
+                / "mcp-auth-facade"
+                / "facade-family-capability.v1.json"
+            ).read_text()
+        )
+
+    def _variant(self, name: str):
+        inner = MemoryRouteRefreshBrokerStore()
+        base = ("put", "get", "acquire_lock", "compare_and_swap", "revoke")
+        legacy = base + ("list_family", "revoke_family")
+        methods = {
+            "base_stores_only": base,
+            "legacy_family_only": legacy,
+            "missing_create_family": legacy + ("rotate_family",),
+            "missing_rotate_family": legacy + ("create_family",),
+            "missing_list_family": base + ("create_family", "rotate_family", "revoke_family"),
+            "missing_revoke_family": base + ("create_family", "rotate_family", "list_family"),
+            "complete": legacy + ("create_family", "rotate_family"),
+        }[name]
+        wrapper = type("_BrokerVariant", (), {})()
+        for method in methods:
+            setattr(wrapper, method, getattr(inner, method))
+        return wrapper
+
+    def test_registration_requires_the_capability(self) -> None:
+        self.assertEqual(7, len(self.fixture["cases"]))
+        for row in self.fixture["cases"]:
+            with self.subTest(case=row["id"]):
+                config = _front_channel_config()
+                config.stores.route_refresh_broker = self._variant(row["variant"])
+                if row["expect"] == "accepted":
+                    register_mcp_facade(create_app(), config)
+                    continue
+                with self.assertRaises(ValueError) as raised:
+                    register_mcp_facade(create_app(), config)
+                wanted = {
+                    "transactional_family": "transactional refresh-family",
+                    "create_family": "create_family",
+                    "rotate_family": "rotate_family",
+                    "list_family": "list_family",
+                    "revoke_family": "revoke_family",
+                }[row["missing"]]
+                self.assertIn(wanted, str(raised.exception))
+
+
+class OriginValidationConformanceTests(unittest.TestCase):
+    """Pins normalize_request_origin to the shared parsed-IP origin table."""
+
+    def test_shared_origin_table(self) -> None:
+        fixture = json.loads(
+            (
+                _REPO_ROOT
+                / "contract-tests"
+                / "fixtures"
+                / "routing"
+                / "mcp-auth-facade"
+                / "facade-origin-validation.v1.json"
+            ).read_text()
+        )
+        self.assertGreater(len(fixture["cases"]), 0)
+        for row in fixture["cases"]:
+            with self.subTest(case=row["id"]):
+                canonical = normalize_request_origin(row["raw"])
+                if row["expect"] == "accepted":
+                    self.assertEqual(canonical, row["canonical"])
+                else:
+                    self.assertIsNone(canonical, f"{row['raw']} must be rejected")

@@ -12,6 +12,12 @@ export const handler = async (event) => {
             const body = JSON.parse(record.body);
             console.log(`Processing message: ${record.messageId}`, body);
 
+            // The maximum-concurrency row sends a deliberate delay so more
+            // than one batch is in flight at once.
+            if (typeof body.delayMs === "number" && body.delayMs > 0) {
+                await new Promise((resolve) => setTimeout(resolve, body.delayMs));
+            }
+
             // Simulate processing
             if (body.shouldFail) {
                 throw new Error(`Simulated failure for message: ${record.messageId}`);

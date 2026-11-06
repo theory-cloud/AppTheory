@@ -1,6 +1,6 @@
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import type { Dirent } from "node:fs";
 import * as path from "node:path";
 
@@ -64,9 +64,61 @@ function shouldSkipAssetEntry(name: string): boolean {
   );
 }
 
+const assetExclude = [
+  "__pycache__",
+  "**/__pycache__",
+  "*.pyc",
+  "**/*.pyc",
+  "*.pyo",
+  "**/*.pyo",
+  "*.egg-info",
+  "**/*.egg-info",
+];
+
 function cleanOutputDir(outputDir: string): void {
   rmSync(outputDir, { force: true, recursive: true });
   mkdirSync(outputDir, { recursive: true });
+}
+
+function resetAssetStage(exampleDir: string, name: string): string {
+  const stageDir = path.join(exampleDir, ".cdk-asset-stage", name);
+  cleanOutputDir(stageDir);
+  return stageDir;
+}
+
+function stageHandlerFiles(handlersDir: string, stageDir: string, files: string[]): void {
+  for (const file of files) {
+    copyFileSync(path.join(handlersDir, file), path.join(stageDir, file));
+  }
+}
+
+// The vendored AppTheory runtime imports its declared dependencies, including
+// @theory-cloud/tabletheory-ts, when the barrel entry loads. A Lambda asset
+// that carries only ts/dist therefore fails at init in a clean runtime. Stage
+// the runtime's production dependency closure next to the vendored dist so the
+// asset is self-contained.
+function stageNodeDependencies(runtimeDir: string, stageDir: string): void {
+  const runtimeNodeModules = path.join(runtimeDir, "node_modules");
+  const marker = path.join(runtimeNodeModules, "@theory-cloud", "tabletheory-ts", "package.json");
+  if (!existsSync(marker)) {
+    throw new Error(
+      `missing ${marker}; run 'cd ts && npm ci --ignore-scripts' before synthesizing the TypeScript asset`,
+    );
+  }
+  const listed = execFileSync("npm", ["ls", "--omit=dev", "--all", "--parseable"], {
+    cwd: runtimeDir,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const prefix = `${runtimeNodeModules}${path.sep}`;
+  const destination = path.join(stageDir, "node_modules");
+  for (const line of listed.split("\n")) {
+    const dependency = line.trim();
+    if (!dependency.startsWith(prefix)) {
+      continue;
+    }
+    copyDir(dependency, path.join(destination, dependency.slice(prefix.length)));
+  }
 }
 
 function assetHashFor(paths: string[]): string {
@@ -138,6 +190,21 @@ export class HelloWorldStack extends Stack {
       cors: true,
     });
 
+    // R8 stage-shape proof: an HTTP API with a named (non-$default) stage. The
+    // runner serves both the root URL and /{stage}/... and the handler sees the
+    // documented v2 fields (rawPath with the stage, requestContext.stage).
+    const stageEchoFn = new lambda.Function(this, "StageEchoFn", {
+      runtime: lambda.Runtime.NODEJS_24_X,
+      handler: "handler.handler",
+      code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers", "stage-echo")),
+      description: "HTTP API v2 named-stage event-shape probe",
+    });
+    new AppTheoryHttpApi(this, "StageEchoApi", {
+      apiName: "apptheory-hello-world-stage-echo",
+      handler: stageEchoFn,
+      stage: { stageName: "dev" },
+    });
+
     new CfnOutput(this, "Language", { value: lang });
     new CfnOutput(this, "ApiUrl", { value: api.api.apiEndpoint });
     new CfnOutput(this, "Curl", { value: `curl ${api.api.apiEndpoint}/hello/AppTheory` });
@@ -191,27 +258,24 @@ export class HelloWorldStack extends Stack {
           }),
           environment: { APPTHEORY_HELLO_LANG: "go", APPTHEORY_TIER: "p2" },
         });
-      case "ts":
+      case "ts": {
+        const handlerDir = path.join(__dirname, "..", "handlers", "ts");
+        const stageDir = resetAssetStage(path.join(__dirname, ".."), "ts");
+        stageHandlerFiles(handlerDir, stageDir, ["app.mjs", "handler.mjs", "package.json"]);
+        copyDir(path.join(repoRoot, "ts", "dist"), path.join(stageDir, "vendor", "apptheory"));
+        stageNodeDependencies(path.join(repoRoot, "ts"), stageDir);
         return new AppTheoryFunction(this, "Handler", {
           runtime: lambda.Runtime.NODEJS_24_X,
           handler: "handler.handler",
-          code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers", "ts"), {
-            assetHashType: cdk.AssetHashType.CUSTOM,
-            assetHash: assetHashFor([
-              path.join(__dirname, "..", "handlers", "ts"),
-              path.join(repoRoot, "ts", "dist"),
-            ]),
+          code: lambda.Code.fromAsset(stageDir, {
+            exclude: assetExclude,
             bundling: {
               image: lambda.Runtime.NODEJS_24_X.bundlingImage,
-              command: ["bash", "-c", "cp -R /asset-input/* /asset-output/"],
+              command: ["bash", "-c", "set -euo pipefail && cp -R /asset-input/. /asset-output/"],
               local: {
                 tryBundle(outputDir: string) {
-                  const handlerDir = path.join(__dirname, "..", "handlers", "ts");
                   cleanOutputDir(outputDir);
-                  copyFileSync(path.join(handlerDir, "app.mjs"), path.join(outputDir, "app.mjs"));
-                  copyFileSync(path.join(handlerDir, "handler.mjs"), path.join(outputDir, "handler.mjs"));
-                  copyFileSync(path.join(handlerDir, "package.json"), path.join(outputDir, "package.json"));
-                  copyDir(path.join(repoRoot, "ts", "dist"), path.join(outputDir, "vendor", "apptheory"));
+                  copyDir(stageDir, outputDir);
                   return true;
                 },
               },
@@ -219,25 +283,24 @@ export class HelloWorldStack extends Stack {
           }),
           environment: { APPTHEORY_HELLO_LANG: "ts", APPTHEORY_TIER: "p2" },
         });
-      case "py":
+      }
+      case "py": {
+        const handlerDir = path.join(__dirname, "..", "handlers", "py");
+        const stageDir = resetAssetStage(path.join(__dirname, ".."), "py");
+        stageHandlerFiles(handlerDir, stageDir, ["handler.py"]);
+        copyDir(path.join(repoRoot, "py", "src", "apptheory"), path.join(stageDir, "apptheory"));
         return new AppTheoryFunction(this, "Handler", {
           runtime: lambda.Runtime.PYTHON_3_14,
           handler: "handler.handler",
-          code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers", "py"), {
-            assetHashType: cdk.AssetHashType.CUSTOM,
-            assetHash: assetHashFor([
-              path.join(__dirname, "..", "handlers", "py", "handler.py"),
-              path.join(repoRoot, "py", "src", "apptheory"),
-            ]),
+          code: lambda.Code.fromAsset(stageDir, {
+            exclude: assetExclude,
             bundling: {
               image: lambda.Runtime.PYTHON_3_14.bundlingImage,
-              command: ["bash", "-c", "cp -R /asset-input/* /asset-output/"],
+              command: ["bash", "-c", "set -euo pipefail && cp -R /asset-input/. /asset-output/"],
               local: {
                 tryBundle(outputDir: string) {
-                  const handlerDir = path.join(__dirname, "..", "handlers", "py");
                   cleanOutputDir(outputDir);
-                  copyFileSync(path.join(handlerDir, "handler.py"), path.join(outputDir, "handler.py"));
-                  copyDir(path.join(repoRoot, "py", "src", "apptheory"), path.join(outputDir, "apptheory"));
+                  copyDir(stageDir, outputDir);
                   return true;
                 },
               },
@@ -245,6 +308,7 @@ export class HelloWorldStack extends Stack {
           }),
           environment: { APPTHEORY_HELLO_LANG: "py", APPTHEORY_TIER: "p2" },
         });
+      }
     }
   }
 }

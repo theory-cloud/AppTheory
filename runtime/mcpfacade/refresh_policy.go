@@ -25,15 +25,16 @@ import (
 //     rotation. Zero selects DefaultRefreshGraceWindow. Inside the window the
 //     rotated (previous) handle replays the full stored successor body,
 //     including its handle material, because that is the lost-response recovery
-//     path. The window is bounded by MaxRefreshGraceWindow, and it is exclusive
-//     at its end: a presentation at exactly graceExpiresAt is beyond grace.
-//   - ReuseRateCeiling bounds, per refresh family per hour, how many
-//     out-of-grace depth-1 presentations are answered with the access token
-//     only. It must lie in
-//     [MinRefreshReuseRateCeiling, MaxRefreshReuseRateCeiling]; the floor is
-//     above the benign dual-session cadence of roughly eight rotations per hour
-//     per family, so the ceiling throttles harvest without tripping on the race
-//     it exists to protect.
+//     path. At and beyond the window the presentation is reuse: the family is
+//     revoked and the client receives the uniform invalid_grant with no
+//     credential material. The window is bounded by MaxRefreshGraceWindow, and
+//     it is exclusive at its end: a presentation at exactly graceExpiresAt is
+//     beyond grace.
+//   - ReuseRateCeiling is retained for configuration compatibility. It
+//     previously bounded the removed beyond-grace access-token-only serve; no
+//     refresh path uses it now, and no token is served beyond grace. The field
+//     and its validation stay so an existing configuration keeps registering
+//     unchanged, and the F20 limiter semantics are untouched.
 type RouteRefreshPolicy struct {
 	HandleTTL        time.Duration
 	GraceWindow      time.Duration
@@ -62,23 +63,15 @@ const (
 	// MaxRefreshGraceWindow is the hard bound on the lossless replay carve-out.
 	MaxRefreshGraceWindow = 120 * time.Second
 
-	// MinRefreshReuseRateCeiling is the smallest accepted per-family hourly
-	// budget of beyond-grace access-token-only serves. The documented referent
-	// for the floor is the benign dual-session cadence: two sessions rotating
-	// about four times an hour produce roughly eight presentations, so a ceiling
-	// at or below eight would throttle the race it protects.
+	// MinRefreshReuseRateCeiling is the smallest accepted value of the retained
+	// ReuseRateCeiling field. The field no longer gates a token serve; the floor
+	// and ceiling keep every existing configuration valid and are pinned by the
+	// policy tests.
 	MinRefreshReuseRateCeiling = 9
 
-	// MaxRefreshReuseRateCeiling caps the configured budget so no deployment can
-	// turn the throttle into an unbounded access-token harvest path.
+	// MaxRefreshReuseRateCeiling caps the retained ReuseRateCeiling field so an
+	// existing configuration stays within the accepted range.
 	MaxRefreshReuseRateCeiling = 120
-
-	// refreshReuseRateWindow is the fixed window of the per-family reuse budget.
-	refreshReuseRateWindow = time.Hour
-
-	// refreshReuseRateOperation is the rate-limit operation the reuse budget is
-	// counted under.
-	refreshReuseRateOperation = "route_refresh_reuse_depth1"
 
 	// refreshChainRootGeneration is the generation of a handle the facade mints
 	// as the root of a new refresh family. Every successor records the presented

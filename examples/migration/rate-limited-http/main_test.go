@@ -26,3 +26,20 @@ func TestResolveRegion_PrefersAWSRegionThenDefaultThenFallback(t *testing.T) {
 		t.Fatalf("expected us-east-1 fallback, got %q", got)
 	}
 }
+
+func TestResolveListenAddr_PrefersHarnessValueThenDefault(t *testing.T) {
+	if got := resolveListenAddr(nil); got != ":8080" {
+		t.Fatalf("expected the documented default, got %q", got)
+	}
+
+	empty := func(string) string { return "" }
+	if got := resolveListenAddr(empty); got != ":8080" {
+		t.Fatalf("expected the documented default for an unset override, got %q", got)
+	}
+
+	env := map[string]string{"LISTEN_ADDR": "127.0.0.1:8131"}
+	getenv := func(key string) string { return env[key] }
+	if got := resolveListenAddr(getenv); got != "127.0.0.1:8131" {
+		t.Fatalf("expected the harness listen address to win, got %q", got)
+	}
+}

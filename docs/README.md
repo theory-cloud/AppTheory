@@ -45,6 +45,7 @@ sanctioned category roots. Avoid adding new root-level feature guides when a cat
 - [API Reference](./api-reference.md)
 - [Core Patterns](./core-patterns.md)
 - [Testing Guide](./testing-guide.md)
+- [Local Examples Harness](./examples/local-harness.md)
 - [Troubleshooting](./troubleshooting.md) &#124; [Operations](./guides/operations.md)
 - [Migration Guide](./migration-guide.md)
 

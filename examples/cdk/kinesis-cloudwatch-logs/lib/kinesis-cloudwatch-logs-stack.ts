@@ -7,9 +7,12 @@ import {
   AppTheoryFunction,
   AppTheoryKinesisStream,
   AppTheoryKinesisStreamMapping,
+  AppTheoryKmsKey,
+  AppTheoryQueue,
 } from "@theory-cloud/apptheory-cdk";
 import * as cdk from "aws-cdk-lib";
 import type { StackProps } from "aws-cdk-lib";
+import * as kms from "aws-cdk-lib/aws-kms";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import type { Construct } from "constructs";
@@ -72,6 +75,10 @@ export class KinesisCloudWatchLogsStack extends cdk.Stack {
       retentionPeriod: cdk.Duration.hours(24),
     });
 
+    const consumerReceipts = new AppTheoryQueue(this, "ConsumerReceipts", {
+      queueName: "kinesis-consumer-receipts",
+      enableDlq: false,
+    });
     const consumer = new AppTheoryFunction(this, "LogsConsumer", {
       runtime: lambda.Runtime.PROVIDED_AL2023,
       handler: "bootstrap",
@@ -79,12 +86,61 @@ export class KinesisCloudWatchLogsStack extends cdk.Stack {
       timeout: cdk.Duration.seconds(30),
       environment: {
         APPTHEORY_KINESIS_STREAM_NAME: logsStream.streamName,
+        APPTHEORY_KINESIS_STREAM_ARN: logsStream.stream.streamArn,
+        RECEIPT_QUEUE_URL: consumerReceipts.queueUrl,
+      },
+    });
+    consumerReceipts.grantSendMessages(consumer.fn);
+
+    // A Lambda target for the consumer's own function log. The runner captures
+    // the container's stdout/stderr into /aws/lambda/<function name>; this
+    // subscription filter delivers that real invocation output to the tap.
+    const logTapReceipts = new AppTheoryQueue(this, "LogTapReceipts", {
+      queueName: "kinesis-logtap-receipts",
+      enableDlq: false,
+    });
+    const logTap = new AppTheoryFunction(this, "LogTapFunction", {
+      runtime: lambda.Runtime.PROVIDED_AL2023,
+      handler: "bootstrap",
+      code: goBootstrapCode(path.join(__dirname, "..", "handlers", "logtap")),
+      timeout: cdk.Duration.seconds(30),
+      environment: {
+        RECEIPT_QUEUE_URL: logTapReceipts.queueUrl,
+      },
+    });
+    logTapReceipts.grantSendMessages(logTap.fn);
+    new AppTheoryCloudWatchLogsSubscription(this, "ConsumerLogSubscription", {
+      logGroup: consumer.fn.logGroup,
+      destinationArn: logTap.fn.functionArn,
+      filterName: "apptheory-consumer-output",
+      filterPatternText: "",
+    });
+
+    // An asymmetric SIGN_VERIFY key proves KMS Sign, Verify and GetPublicKey
+    // through the local runner; the alias is used as the KeyId, which KMS
+    // documents as an accepted key identifier.
+    const signingKey = new AppTheoryKmsKey(this, "SigningKey", {
+      description: "AppTheory local signing key",
+      aliasName: "alias/apptheory-local-signing",
+      keySpec: kms.KeySpec.RSA_2048,
+      keyUsage: kms.KeyUsage.SIGN_VERIFY,
+    });
+
+    new AppTheoryFunction(this, "SigningFunction", {
+      runtime: lambda.Runtime.PROVIDED_AL2023,
+      handler: "bootstrap",
+      code: goBootstrapCode(path.join(__dirname, "..", "handlers", "signing")),
+      timeout: cdk.Duration.seconds(30),
+      environment: {
+        SIGNING_KEY_ARN: signingKey.keyArn,
+        SIGNING_KEY_ALIAS: signingKey.alias?.aliasName ?? "",
       },
     });
 
     new AppTheoryKinesisStreamMapping(this, "LogsConsumerMapping", {
       stream: logsStream.stream,
       consumer: consumer.fn,
+      startingPosition: lambda.StartingPosition.TRIM_HORIZON,
       batchSize: 100,
       maxBatchingWindow: cdk.Duration.seconds(5),
       retryAttempts: 2,

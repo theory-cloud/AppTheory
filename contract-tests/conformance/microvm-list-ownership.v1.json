@@ -1,0 +1,82 @@
+{
+  "contract": {
+    "id": "m3.microvm-list-ownership/v1",
+    "section": "list-ownership",
+    "kind": "conformance",
+    "status": "M3",
+    "notes": "Residual conformance table for M3 MicroVM list ownership. Every registry (memory and TableTheory) and every real controller list path unions the canonical and legacy partitions with canonical-record precedence by session ID before owner filtering, so a caller-owned legacy duplicate cannot bypass an ownerless or cross-subject canonical record. A record is listable only when the caller subject and the stored AuthSubject are both non-empty and exactly equal. Expired records and invalid same-owner records are excluded/fail closed before provider bindings are constructed; excluded records cause no provider list binding, metadata disclosure, refresh, or mutation. Empty-subject identity-only callers receive an empty list after owner filtering. Ownerless records are never adopted, listable, or refreshable: a keyed legacy read does not rekey or persist an ownerless item, an owned legacy rekey preserves the stored owner, and an existing record with an empty owner fails before any write. Keyed denial shapes are preserved: owner mismatch keeps m15.microvm.session_owner_mismatch/403, ownerless or invalid records keep the session-registry-incomplete failure. F17 caller-selected-tenant behavior is unchanged."
+  },
+  "subject": {
+    "caller": "subject-a",
+    "same_tenant_other": "subject-b"
+  },
+  "errors": {
+    "owner_mismatch": {
+      "code": "m15.microvm.session_owner_mismatch",
+      "status": 403
+    },
+    "registry_incomplete": "m15.microvm.session_registry_incomplete"
+  },
+  "cases": [
+    {
+      "id": "list.same_subject_live_records_only",
+      "scenario": "same_subject_live",
+      "expect": { "listed": ["session-own-live"], "excluded": ["session-other", "session-own-expired"] }
+    },
+    {
+      "id": "list.empty_subject_returns_empty",
+      "scenario": "empty_subject",
+      "expect": { "listed": [], "provider_bindings": 0 }
+    },
+    {
+      "id": "list.cross_subject_excluded",
+      "scenario": "cross_subject",
+      "expect": { "listed": [], "provider_bindings": 0 }
+    },
+    {
+      "id": "list.ownerless_excluded",
+      "scenario": "ownerless",
+      "expect": { "listed": [], "provider_bindings": 0 }
+    },
+    {
+      "id": "list.canonical_precedence_over_legacy_duplicate",
+      "scenario": "canonical_precedence",
+      "expect": { "canonical_winner": "session-dup", "legacy_ignored": true }
+    },
+    {
+      "id": "list.caller_owned_legacy_duplicate_cannot_override_canonical_ownerless",
+      "scenario": "canonical_ownerless_duplicate",
+      "expect": { "listed": [], "provider_bindings": 0 }
+    },
+    {
+      "id": "list.expired_records_excluded_before_provider",
+      "scenario": "expired_records",
+      "expect": { "provider_bindings": 0 }
+    },
+    {
+      "id": "controller.list.defense_in_depth_filters_registry_ignoring_subject",
+      "scenario": "controller_defense_in_depth",
+      "expect": { "provider_bindings": 0, "refresh_writes": 0 }
+    },
+    {
+      "id": "keyed.owner_mismatch_preserves_denial_shape",
+      "scenario": "keyed_owner_mismatch",
+      "expect": { "code": "m15.microvm.session_owner_mismatch", "status": 403 }
+    },
+    {
+      "id": "keyed.ownerless_record_preserves_registry_incomplete_shape",
+      "scenario": "keyed_ownerless",
+      "expect": { "code": "m15.microvm.session_registry_incomplete", "status": 404 }
+    },
+    {
+      "id": "keyed.ownerless_legacy_read_not_rekeyed_and_owned_rekey_preserves_owner",
+      "scenario": "legacy_rekey_preserves_owner",
+      "expect": { "ownerless_rejected_before_write": true, "owned_owner_preserved": true }
+    },
+    {
+      "id": "write.existing_ownerless_record_not_adopted",
+      "scenario": "existing_ownerless_refresh",
+      "expect": { "refresh": "registry_incomplete", "owner_filled": false }
+    }
+  ]
+}

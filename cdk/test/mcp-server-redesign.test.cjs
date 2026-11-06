@@ -12,6 +12,13 @@ const assertions = require("aws-cdk-lib/assertions");
 
 const apptheory = require("../lib");
 
+const DOMAIN_CERTIFICATE_ARN =
+  "arn:aws:acm:us-east-1:123456789012:certificate/11111111-2222-3333-4444-555555555555";
+
+function ordinaryDomain() {
+  return { domainName: "mcp.example.com", certificateArn: DOMAIN_CERTIFICATE_ARN };
+}
+
 const fixture = JSON.parse(
   fs.readFileSync(
     path.resolve(
@@ -217,7 +224,13 @@ test("AppTheoryMcpServer input surfaces exclude undeclared origin and URL author
     AppTheoryMcpRouteFamily: ["patterns", "rootAuthorizationServerDiscovery"],
     AppTheoryMcpServerOwnedApiOptions: ["apiName", "domain", "stage"],
     AppTheoryMcpSessionStateOptions: ["enabled", "removalPolicy", "tableName", "ttlMinutes"],
-    AppTheoryMcpServerDomainOptions: ["certificate", "certificateArn", "domainName", "hostedZone"],
+    AppTheoryMcpServerDomainOptions: [
+      "certificate",
+      "certificateArn",
+      "domainName",
+      "hostedZone",
+      "mutualTlsAuthentication",
+    ],
     AppTheoryMcpServerStageOptions: [
       "accessLogRetention",
       "accessLogging",
@@ -469,9 +482,9 @@ test("AppTheoryMcpServer none-public keeps every route public without facade res
     handler: handler(stack),
     routeFamily: { patterns: ["/mcp"] },
     transportPosture: apptheory.AppTheoryMcpTransportPosture.NONE_PUBLIC,
-    originReachability: apptheory.AppTheoryMcpOriginReachability.LOCKED,
+    originReachability: apptheory.AppTheoryMcpOriginReachability.DISABLED,
     sessionState: { enabled: false },
-    ownedApi: { stage: { throttlingEnabled: true } },
+    ownedApi: { stage: { throttlingEnabled: true }, domain: ordinaryDomain() },
   });
   const template = assertions.Template.fromStack(stack).toJSON();
   assert.deepEqual(routeKeys(template), ["DELETE /mcp", "GET /mcp", "POST /mcp"]);
@@ -669,7 +682,7 @@ test("AppTheoryMcpServer refuses an upstream callback override under none-public
     () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
       handler: handler(stack),
       transportPosture: apptheory.AppTheoryMcpTransportPosture.NONE_PUBLIC,
-      originReachability: apptheory.AppTheoryMcpOriginReachability.LOCKED,
+      originReachability: apptheory.AppTheoryMcpOriginReachability.DISABLED,
       upstreamCallbackPath: "/cb",
       sessionState: { enabled: false },
       ownedApi: { stage: { throttlingEnabled: true } },
@@ -1165,10 +1178,10 @@ test("AppTheoryMcpServer flips the facade-scoped default to runtime bearer", () 
     handler: handler(stack),
     facade: { providerId: "autheory" },
     runtimePosture: { requireBearerToken: true },
-    originReachability: apptheory.AppTheoryMcpOriginReachability.LOCKED,
+    originReachability: apptheory.AppTheoryMcpOriginReachability.DISABLED,
     denialSignal: {},
     sessionState: { enabled: false },
-    ownedApi: { stage: { throttlingEnabled: true } },
+    ownedApi: { stage: { throttlingEnabled: true }, domain: ordinaryDomain() },
   });
   const template = assertions.Template.fromStack(stack).toJSON();
   const authorizations = authorizationTypeByRouteKey(template);
@@ -1231,7 +1244,7 @@ test("AppTheoryMcpServer none-public keeps every route public", () => {
     transportPosture: apptheory.AppTheoryMcpTransportPosture.NONE_PUBLIC,
     originReachability: apptheory.AppTheoryMcpOriginReachability.DISABLED,
     sessionState: { enabled: false },
-    ownedApi: { stage: { throttlingEnabled: true } },
+    ownedApi: { stage: { throttlingEnabled: true }, domain: ordinaryDomain() },
   });
   const template = assertions.Template.fromStack(stack).toJSON();
   const routes = routeAuthorizations(template);
@@ -1291,9 +1304,9 @@ test("AppTheoryMcpServer rejects invalid transport authorizer configuration", ()
       props: {
         transportPosture: apptheory.AppTheoryMcpTransportPosture.RUNTIME_BEARER,
         runtimePosture: { requireBearerToken: true },
-        originReachability: apptheory.AppTheoryMcpOriginReachability.LOCKED,
+        originReachability: apptheory.AppTheoryMcpOriginReachability.DISABLED,
         denialSignal: {},
-        ownedApi: { stage: { throttlingEnabled: true } },
+        ownedApi: { stage: { throttlingEnabled: true }, domain: ordinaryDomain() },
         transportAuthorizer: { issuer: "https://accounts.example.com" },
       },
       error: /transportAuthorizer is only valid with transportPosture JWT/,
@@ -1302,8 +1315,8 @@ test("AppTheoryMcpServer rejects invalid transport authorizer configuration", ()
       name: "none-public with a transport authorizer",
       props: {
         transportPosture: apptheory.AppTheoryMcpTransportPosture.NONE_PUBLIC,
-        originReachability: apptheory.AppTheoryMcpOriginReachability.LOCKED,
-        ownedApi: { stage: { throttlingEnabled: true } },
+        originReachability: apptheory.AppTheoryMcpOriginReachability.DISABLED,
+        ownedApi: { stage: { throttlingEnabled: true }, domain: ordinaryDomain() },
         transportAuthorizer: { issuer: "https://accounts.example.com" },
       },
       error: /transportAuthorizer is only valid with transportPosture JWT/,
@@ -1330,10 +1343,10 @@ test("AppTheoryMcpServer consolidated mode emits two greedy NONE routes with sem
     handler: handler(stack),
     transportPosture: apptheory.AppTheoryMcpTransportPosture.RUNTIME_BEARER,
     runtimePosture: { requireBearerToken: true },
-    originReachability: apptheory.AppTheoryMcpOriginReachability.LOCKED,
+    originReachability: apptheory.AppTheoryMcpOriginReachability.DISABLED,
     denialSignal: {},
     sessionState: { enabled: false },
-    ownedApi: { stage: { throttlingEnabled: true } },
+    ownedApi: { stage: { throttlingEnabled: true }, domain: ordinaryDomain() },
     routeModel: apptheory.AppTheoryMcpRouteModel.CONSOLIDATED,
   });
 
@@ -1372,10 +1385,10 @@ test("AppTheoryMcpServer consolidated ids are stable across route-family changes
       routeFamily: { patterns, rootAuthorizationServerDiscovery: patterns.length === 1 },
       transportPosture: apptheory.AppTheoryMcpTransportPosture.RUNTIME_BEARER,
       runtimePosture: { requireBearerToken: true },
-      originReachability: apptheory.AppTheoryMcpOriginReachability.LOCKED,
+      originReachability: apptheory.AppTheoryMcpOriginReachability.DISABLED,
       denialSignal: {},
       sessionState: { enabled: false },
-      ownedApi: { stage: { throttlingEnabled: true } },
+      ownedApi: { stage: { throttlingEnabled: true }, domain: ordinaryDomain() },
       routeModel: apptheory.AppTheoryMcpRouteModel.CONSOLIDATED,
     });
     return Object.entries(assertions.Template.fromStack(stack).toJSON().Resources)
@@ -1402,7 +1415,7 @@ test("AppTheoryMcpServer consolidated mode grants one API-scoped permission when
     transportPosture: apptheory.AppTheoryMcpTransportPosture.NONE_PUBLIC,
     originReachability: apptheory.AppTheoryMcpOriginReachability.DISABLED,
     sessionState: { enabled: false },
-    ownedApi: { stage: { throttlingEnabled: true } },
+    ownedApi: { stage: { throttlingEnabled: true }, domain: ordinaryDomain() },
     routeModel: apptheory.AppTheoryMcpRouteModel.CONSOLIDATED,
     scopePermissionToRoute: false,
   });
@@ -1416,16 +1429,15 @@ test("AppTheoryMcpServer consolidated mode grants one API-scoped permission when
 test("AppTheoryMcpServer consolidated attaches to an empty API and keeps the runtime inventory", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "ConsolidatedAttachStack");
-  const importedApi = apigwv2.HttpApi.fromHttpApiAttributes(stack, "Frontdoor", {
-    httpApiId: "api-consolidated",
-    apiEndpoint: "https://api.example.com",
+  const importedApi = new apigwv2.HttpApi(stack, "Frontdoor", {
+    disableExecuteApiEndpoint: true,
   });
   const server = new apptheory.AppTheoryMcpServer(stack, "McpServer", {
     handler: handler(stack),
     api: importedApi,
     transportPosture: apptheory.AppTheoryMcpTransportPosture.RUNTIME_BEARER,
     runtimePosture: { requireBearerToken: true },
-    originReachability: apptheory.AppTheoryMcpOriginReachability.LOCKED,
+    originReachability: apptheory.AppTheoryMcpOriginReachability.DISABLED,
     denialSignal: {},
     owningApiDefense: { accessLogging: true, throttling: { rateLimit: 50, burstLimit: 100 } },
     sessionState: { enabled: false },
@@ -1434,7 +1446,12 @@ test("AppTheoryMcpServer consolidated attaches to an empty API and keeps the run
 
   const template = assertions.Template.fromStack(stack).toJSON();
   assert.deepEqual(routeKeys(template), ["ANY /", "ANY /{proxy+}"].sort());
-  assert.equal(resourcesOfType(template, "AWS::ApiGatewayV2::Api").length, 0, "attach mode owns no API");
+  assert.equal(server.ownedApi, undefined, "attach mode owns no API");
+  assert.equal(
+    resourcesOfType(template, "AWS::ApiGatewayV2::Api").length,
+    1,
+    "the attached API is the only API in the stack",
+  );
   assert.equal(server.routeInventory.routes.length, fixture.routes.length);
   assert.equal(server.routeInventory.callbackPattern, fixture.callback_pattern);
 });
@@ -1473,14 +1490,23 @@ test("AppTheoryMcpServer refuses consolidated with iam or jwt and on an API that
   {
     const app = new cdk.App();
     const stack = new cdk.Stack(app, "ConsolidatedAttachRefused");
-    const httpApi = new apptheory.AppTheoryHttpApi(stack, "HttpApi", { handler: handler(stack) });
+    const httpApi = new apigwv2.HttpApi(stack, "HttpApi", { disableExecuteApiEndpoint: true });
+    new apigwv2.HttpRoute(stack, "ExistingRoute", {
+      httpApi,
+      routeKey: apigwv2.HttpRouteKey.with("/existing", apigwv2.HttpMethod.GET),
+      integration: new apigwv2Integrations.HttpLambdaIntegration(
+        "ExistingInt",
+        handler(stack, "ExistingFn"),
+      ),
+      authorizer: new apigwv2Authorizers.HttpIamAuthorizer(),
+    });
     assert.throws(
       () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
         handler: handler(stack, "Fn2"),
-        api: httpApi.api,
+        api: httpApi,
         transportPosture: apptheory.AppTheoryMcpTransportPosture.RUNTIME_BEARER,
         runtimePosture: { requireBearerToken: true },
-        originReachability: apptheory.AppTheoryMcpOriginReachability.LOCKED,
+        originReachability: apptheory.AppTheoryMcpOriginReachability.DISABLED,
         denialSignal: {},
         owningApiDefense: { accessLogging: true, throttling: { rateLimit: 50, burstLimit: 100 } },
         sessionState: { enabled: false },
@@ -1532,7 +1558,7 @@ test("AppTheoryMcpServer consolidated template is stable", () => {
     transportPosture: apptheory.AppTheoryMcpTransportPosture.NONE_PUBLIC,
     originReachability: apptheory.AppTheoryMcpOriginReachability.DISABLED,
     sessionState: { enabled: false },
-    ownedApi: { stage: { throttlingEnabled: true } },
+    ownedApi: { stage: { throttlingEnabled: true }, domain: ordinaryDomain() },
     routeModel: apptheory.AppTheoryMcpRouteModel.CONSOLIDATED,
   });
 
@@ -1547,32 +1573,31 @@ test("AppTheoryMcpServer consolidated template is stable", () => {
 test("AppTheoryMcpServer consolidated attach sees a route bound from a sibling construct scope", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "ConsolidatedSiblingRouteStack");
-  const importedApi = apigwv2.HttpApi.fromHttpApiAttributes(stack, "Frontdoor", {
-    httpApiId: "api-sibling",
-    apiEndpoint: "https://api.example.com",
+  const attachedApi = new apigwv2.HttpApi(stack, "Frontdoor", {
+    disableExecuteApiEndpoint: true,
   });
   // The TMS shape: an OAuth facade route wired onto the attached API by a
   // stack-level construct, not by the API or the server.
   for (const [index, routePath] of ["/oauth/authorize", "/oauth/token"].entries()) {
     new apigwv2.HttpRoute(stack, `OAuthFacadeRoute${index}`, {
-      httpApi: importedApi,
+      httpApi: attachedApi,
       routeKey: apigwv2.HttpRouteKey.with(routePath, apigwv2.HttpMethod.GET),
       integration: new apigwv2Integrations.HttpLambdaIntegration(`OAuthInt${index}`, handler(stack, `Fn${index}`)),
       authorizer: new apigwv2Authorizers.HttpIamAuthorizer(),
     });
   }
   assert.equal(
-    importedApi.node.children.filter((child) => child instanceof apigwv2.HttpRoute).length,
+    attachedApi.node.children.filter((child) => child instanceof apigwv2.HttpRoute).length,
     0,
     "the sibling routes are not children of the API, so a children-only guard cannot see them",
   );
   assert.throws(
     () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
       handler: handler(stack, "FnServer"),
-      api: importedApi,
+      api: attachedApi,
       transportPosture: apptheory.AppTheoryMcpTransportPosture.RUNTIME_BEARER,
       runtimePosture: { requireBearerToken: true },
-      originReachability: apptheory.AppTheoryMcpOriginReachability.LOCKED,
+      originReachability: apptheory.AppTheoryMcpOriginReachability.DISABLED,
       denialSignal: {},
       owningApiDefense: { accessLogging: true, throttling: { rateLimit: 50, burstLimit: 100 } },
       sessionState: { enabled: false },
@@ -1585,9 +1610,8 @@ test("AppTheoryMcpServer consolidated attach sees a route bound from a sibling c
 test("AppTheoryMcpServer consolidated attach ignores routes on a different API in the same stack", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "ConsolidatedOtherApiStack");
-  const importedApi = apigwv2.HttpApi.fromHttpApiAttributes(stack, "Frontdoor", {
-    httpApiId: "api-target",
-    apiEndpoint: "https://api.example.com",
+  const attachedApi = new apigwv2.HttpApi(stack, "Frontdoor", {
+    disableExecuteApiEndpoint: true,
   });
   const otherApi = apigwv2.HttpApi.fromHttpApiAttributes(stack, "OtherApi", {
     httpApiId: "api-other",
@@ -1601,10 +1625,10 @@ test("AppTheoryMcpServer consolidated attach ignores routes on a different API i
   });
   new apptheory.AppTheoryMcpServer(stack, "McpServer", {
     handler: handler(stack, "FnServer"),
-    api: importedApi,
+    api: attachedApi,
     transportPosture: apptheory.AppTheoryMcpTransportPosture.RUNTIME_BEARER,
     runtimePosture: { requireBearerToken: true },
-    originReachability: apptheory.AppTheoryMcpOriginReachability.LOCKED,
+    originReachability: apptheory.AppTheoryMcpOriginReachability.DISABLED,
     denialSignal: {},
     owningApiDefense: { accessLogging: true, throttling: { rateLimit: 50, burstLimit: 100 } },
     sessionState: { enabled: false },
@@ -1617,16 +1641,15 @@ test("AppTheoryMcpServer consolidated attach ignores routes on a different API i
 function consolidatedAttachWithLaterRoute(routeKey, authorizer, id) {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "ConsolidatedLaterRouteStack");
-  const importedApi = apigwv2.HttpApi.fromHttpApiAttributes(stack, "Frontdoor", {
-    httpApiId: "api-later",
-    apiEndpoint: "https://api.example.com",
+  const attachedApi = new apigwv2.HttpApi(stack, "Frontdoor", {
+    disableExecuteApiEndpoint: true,
   });
   new apptheory.AppTheoryMcpServer(stack, "McpServer", {
     handler: handler(stack, "FnServer"),
-    api: importedApi,
+    api: attachedApi,
     transportPosture: apptheory.AppTheoryMcpTransportPosture.RUNTIME_BEARER,
     runtimePosture: { requireBearerToken: true },
-    originReachability: apptheory.AppTheoryMcpOriginReachability.LOCKED,
+    originReachability: apptheory.AppTheoryMcpOriginReachability.DISABLED,
     denialSignal: {},
     owningApiDefense: { accessLogging: true, throttling: { rateLimit: 50, burstLimit: 100 } },
     sessionState: { enabled: false },
@@ -1634,7 +1657,7 @@ function consolidatedAttachWithLaterRoute(routeKey, authorizer, id) {
   });
   const separator = routeKey.indexOf(" ");
   new apigwv2.HttpRoute(stack, id, {
-    httpApi: importedApi,
+    httpApi: attachedApi,
     routeKey: apigwv2.HttpRouteKey.with(
       routeKey.slice(separator + 1),
       routeKey.slice(0, separator),
@@ -1680,10 +1703,10 @@ function consolidatedOwnedWithLaterRoute(routeKey, authorizer, id) {
     handler: handler(stack, "FnServer"),
     transportPosture: apptheory.AppTheoryMcpTransportPosture.RUNTIME_BEARER,
     runtimePosture: { requireBearerToken: true },
-    originReachability: apptheory.AppTheoryMcpOriginReachability.LOCKED,
+    originReachability: apptheory.AppTheoryMcpOriginReachability.DISABLED,
     denialSignal: {},
     sessionState: { enabled: false },
-    ownedApi: { stage: { throttlingEnabled: true } },
+    ownedApi: { stage: { throttlingEnabled: true }, domain: ordinaryDomain() },
     routeModel: apptheory.AppTheoryMcpRouteModel.CONSOLIDATED,
   });
   const separator = routeKey.indexOf(" ");

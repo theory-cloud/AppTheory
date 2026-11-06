@@ -183,7 +183,10 @@ CloudFormation generates the physical names for all six groups, none can hit the
   scopes, capabilities, and handlers. A deliberately public MCP server must select
   `transportPosture: AppTheoryMcpTransportPosture.NONE_PUBLIC` and carry the mandatory `originReachability` and
   throttling floor; `runtime-bearer` additionally requires `FacadeConfig.RequireBearerToken` on the runtime side and a
-  `denialSignal` declaration. `routeModel` defaults to `AppTheoryMcpRouteModel.EXPLICIT`; set
+  `denialSignal` declaration. `originReachability` is enforced on resources the construct can inspect: owned
+  `DISABLED` requires an ordinary `ownedApi.domain`, and owned `LOCKED` additionally requires
+  `ownedApi.domain.mutualTlsAuthentication` plus final whole-stack mapping/truststore proof. Attach-mode `LOCKED` is
+  unsupported. `routeModel` defaults to `AppTheoryMcpRouteModel.EXPLICIT`; set
   `AppTheoryMcpRouteModel.CONSOLIDATED` to emit only `ANY /` + `ANY /{proxy+}` for the runtime router to dispatch,
   which is valid only for the `runtime-bearer` and `none-public` postures. `routeIdMode` defaults to
   `AppTheoryMcpRouteIdMode.LEGACY`; `AppTheoryMcpRouteIdMode.SEMANTIC` derives explicit route ids from method and

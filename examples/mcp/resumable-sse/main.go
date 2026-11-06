@@ -49,7 +49,9 @@ func buildServer() *mcp.Server {
 				"total":   in.Steps,
 				"message": fmt.Sprintf("step %d/%d", i, in.Steps),
 			}})
-			time.Sleep(30 * time.Millisecond)
+			// The harness asserts the first event crosses the local transport
+			// before this countdown finishes, so the gap is observable.
+			time.Sleep(500 * time.Millisecond)
 		}
 
 		return &mcp.ToolResult{

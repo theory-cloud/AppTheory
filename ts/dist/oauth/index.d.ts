@@ -1,4 +1,4 @@
-import type { Context, Handler, Middleware } from "../context.js";
+import type { Context, Handler, Middleware, RouteGuard } from "../context.js";
 import type { Headers } from "../types.js";
 export declare const CONTEXT_KEY_BEARER_TOKEN = "oauth.bearer_token";
 export declare const CONTEXT_KEY_BEARER_CLAIMS = "oauth.bearer_claims";
@@ -185,6 +185,14 @@ export declare function bearerTokenFromHeaders(headers: Headers | undefined): st
  * challenge would advertise a broken or partially resolved discovery URL.
  */
 export declare function requireBearerTokenMiddleware(options?: RequireBearerTokenOptions): Middleware;
+/**
+ * Returns the same credential decision as {@link requireBearerTokenMiddleware}
+ * in route-guard form. The runtime runs a route guard after a route's
+ * authorization gate and before application middleware, so a short-circuiting
+ * middleware cannot bypass bearer validation. Verified claims are bound to the
+ * context before the guard admits the request.
+ */
+export declare function requireBearerTokenGuard(options?: RequireBearerTokenOptions): RouteGuard;
 export declare function newMemoryBearerTokenValidator(records: BearerTokenRecord[], options?: BearerTokenValidationOptions): BearerTokenClaimsValidator;
 export declare function bearerTokenClaimsFromContext(ctx: Context): BearerTokenClaims | null;
 export declare function claudeDynamicClientRegistrationPolicy(): DynamicClientRegistrationPolicy;

@@ -202,6 +202,11 @@ class MicroVMRealController:
                 "",
             ) from None
         self._clock = clock or time.time
+        set_registry_clock = getattr(registry, "set_registry_clock", None)
+        if callable(set_registry_clock):
+            set_registry_clock(self._clock)
+        elif hasattr(registry, "_clock"):
+            registry._clock = self._clock
         self._ids = id_generator or _random_microvm_session_id
         self._ttl_seconds = int(ttl_seconds or 0) if int(ttl_seconds or 0) > 0 else 3600
         self._deployment_defaults = _normalize_deployment_defaults(
@@ -389,8 +394,16 @@ class MicroVMRealController:
             )
             bindings: list[MicroVMProviderSessionBinding] = []
             records_by_key: dict[tuple[str, str, str], MicroVMSessionRecord] = {}
+            caller_subject = str(request.auth_context.subject or "").strip()
+            now = self._now()
             for record in records:
+                # Defense in depth: a custom registry may ignore auth_subject.
+                stored_owner = str(record.auth_subject or "").strip()
+                if not caller_subject or not stored_owner or stored_owner != caller_subject:
+                    continue
                 validate_microvm_session_record(record)
+                if float(record.expires_at or 0.0) > 0 and now >= float(record.expires_at):
+                    continue
                 binding = _provider_binding_from_record(record)
                 bindings.append(binding)
                 records_by_key[(binding.tenant_id, binding.namespace, binding.session_id)] = record
@@ -454,7 +467,7 @@ class MicroVMRealController:
             next_record.token_metadata = [*_clone_session_token_metadata_list(record.token_metadata), metadata]
             next_record.last_action = _command_from_operation(operation)
             next_record.last_command_id = request.request_id
-            next_record.auth_subject = str(record.auth_subject or "").strip() or request.auth_context.subject
+            next_record.auth_subject = str(record.auth_subject or "").strip()
             next_record.updated_at = now
             next_record.last_observed_at = now
             next_record.generation += 1
@@ -560,9 +573,11 @@ class MicroVMRealController:
             generation=(current.generation + 1 if current is not None and current.generation > 0 else 1),
             last_action=request.command,
             last_command_id=request.request_id,
-            auth_subject=(str(current.auth_subject or "").strip() or request.auth_context.subject)
-            if current is not None
-            else request.auth_context.subject,
+            auth_subject=(
+                str(current.auth_subject or "").strip()
+                if current is not None
+                else str(request.auth_context.subject or "").strip()
+            ),
             token_metadata=_clone_session_token_metadata_list(current.token_metadata if current is not None else []),
             metadata=_clone_string_map(current.metadata if current is not None else request.session_spec.metadata),
         )

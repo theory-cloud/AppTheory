@@ -23,6 +23,8 @@ go test ./examples/cdk/s3-vectors-semantic-search/handler
 node examples/cdk/hello-world/handlers/ts/handler.test.mjs
 node examples/cdk/hello-world/handlers/ts/staged-asset.test.mjs
 python3 examples/cdk/hello-world/handlers/py/handler_test.py
+node examples/cdk/multilang/handlers/ts/handler.test.mjs
+python3 examples/cdk/multilang/handlers/py/handler_test.py
 node --check examples/mcp/tools-only-ts/server.mjs
 node --check examples/mcp/tools-only-ts/server.test.mjs
 node examples/mcp/tools-only-ts/server.test.mjs

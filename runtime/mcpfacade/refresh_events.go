@@ -25,7 +25,7 @@ const (
 	// invalid_grant for record-state failures.
 	RouteRefreshEventValidationRejected RouteRefreshEventClass = "validation_rejected"
 	// RouteRefreshEventLockAcquired is emitted when the facade takes the route
-	// refresh lock before a rotation or a depth-1 serve.
+	// refresh lock before a rotation.
 	RouteRefreshEventLockAcquired RouteRefreshEventClass = "lock_acquired"
 	// RouteRefreshEventGraceServed is emitted when a rotated-away handle inside
 	// its grace window replays the stored successor body.
@@ -48,21 +48,23 @@ const (
 // are deliberately distinct from the client-facing response, which is the same
 // uniform invalid_grant for every terminal outcome.
 const (
-	// RouteRefreshOutcomeAccessTokenOnly is a beyond-grace depth-1 presentation
-	// answered with the access token only.
+	// RouteRefreshOutcomeAccessTokenOnly is retained for telemetry compatibility.
+	// The beyond-grace access-token-only serve was removed: every beyond-grace
+	// presentation revokes the family and returns no credential material.
 	RouteRefreshOutcomeAccessTokenOnly = "access_token_only"
-	// RouteRefreshOutcomeRevokedFamily is a theft-class presentation answered by
-	// revoking the whole family through the store's family capability.
+	// RouteRefreshOutcomeRevokedFamily is a reuse presentation answered by
+	// revoking the whole family through the store's transactional tombstone.
 	RouteRefreshOutcomeRevokedFamily = "revoked_family"
-	// RouteRefreshOutcomeRevokedWalk is a theft-class presentation answered by
-	// the bounded successor walk, because no family hash or no family capability
-	// was available.
+	// RouteRefreshOutcomeRevokedWalk is retained for telemetry compatibility. The
+	// bounded successor walk and its eight-link success exit were removed; a
+	// family-less lineage is refused rather than walked.
 	RouteRefreshOutcomeRevokedWalk = "revoked_walk"
-	// RouteRefreshOutcomeRateLimited is a depth-1 presentation refused by the
-	// per-family hourly budget.
+	// RouteRefreshOutcomeRateLimited is retained for telemetry compatibility. The
+	// per-family reuse budget no longer gates a token serve.
 	RouteRefreshOutcomeRateLimited = "rate_limited"
-	// RouteRefreshOutcomeBindingRejected is a depth-1 presentation whose scope or
-	// resource binding was refused before any serve.
+	// RouteRefreshOutcomeBindingRejected is retained for telemetry compatibility.
+	// A live-head refresh still validates its binding; a beyond-grace
+	// presentation is reuse and is refused uniformly before any serve.
 	RouteRefreshOutcomeBindingRejected = "binding_rejected"
 )
 
@@ -82,10 +84,22 @@ const (
 	RouteRefreshReasonRewriteFailure          = "rewrite_failure"
 	RouteRefreshReasonFamilyRevokeUnavailable = "family_revoke_unavailable"
 	RouteRefreshReasonFamilyRevokeFailed      = "family_revoke_failed"
-	RouteRefreshReasonAlreadyServed           = "already_served"
-	RouteRefreshReasonUpstreamRejected        = "upstream_rejected"
-	RouteRefreshReasonSuccessorBody           = "successor_body"
-	RouteRefreshReasonAccessTokenOnly         = "access_token_only"
+	// RouteRefreshReasonAlreadyServed is retained for telemetry compatibility. A
+	// beyond-grace presentation is reuse on its first occurrence.
+	RouteRefreshReasonAlreadyServed    = "already_served"
+	RouteRefreshReasonUpstreamRejected = "upstream_rejected"
+	RouteRefreshReasonSuccessorBody    = "successor_body"
+	// RouteRefreshReasonAccessTokenOnly is retained for telemetry compatibility.
+	RouteRefreshReasonAccessTokenOnly = "access_token_only"
+	// RouteRefreshReasonRotatedReuse is the reason of a beyond-grace reuse
+	// presentation that revoked the family.
+	RouteRefreshReasonRotatedReuse = "rotated_reuse"
+	// RouteRefreshReasonLegacyLineage is a family-less (pre-policy) record
+	// presented for ordinary rotation: migration or reauthorization is required.
+	RouteRefreshReasonLegacyLineage = "legacy_lineage_unsupported"
+	// RouteRefreshReasonFamilyStateUnavailable is a family-marked record whose
+	// required family state is missing or corrupt.
+	RouteRefreshReasonFamilyStateUnavailable = "family_state_unavailable"
 )
 
 // Expiry signals. The store distinguishes an aged-out handle from one that
@@ -134,9 +148,9 @@ type RouteRefreshEvent struct {
 	// ChainGeneration is the presented record's family generation, 0 for a
 	// record that predates the policy.
 	ChainGeneration int
-	// ChainDepth is the classified distance from the presented handle to the
-	// head: 1 for an immediate-predecessor replay, 2 for a deeper replay (the
-	// value is capped at 2 because every depth at or above 2 is theft class).
+	// ChainDepth is retained for telemetry compatibility. The removed depth-1
+	// serve no longer sets it; a beyond-grace presentation is reuse on its first
+	// occurrence and is reported without a depth classification.
 	ChainDepth int
 	// ExpirySignal is absent or expired for a record-state rejection.
 	ExpirySignal string
@@ -165,12 +179,10 @@ func (front *frontChannelConfig) emitRouteRefresh(ctx context.Context, event Rou
 	front.events(ctx, event)
 }
 
-// emitLockAcquired reports a successful refresh lock acquisition. The depth is
-// 1 for a beyond-grace depth-1 serve and 0 for a rotation.
+// emitLockAcquired reports a successful refresh lock acquisition.
 func (front *frontChannelConfig) emitLockAcquired(
 	ctx *apptheory.Context,
 	record *oauthstore.RouteRefreshBrokerRecord,
-	depth int,
 ) {
 	if front == nil {
 		return
@@ -178,7 +190,6 @@ func (front *frontChannelConfig) emitLockAcquired(
 	event := eventFromRecord(record)
 	event.Class = RouteRefreshEventLockAcquired
 	event.StatusTo = oauthstore.BrokerStatusRefreshing
-	event.ChainDepth = depth
 	event.At = ctx.Now()
 	front.emitRouteRefresh(ctx.Context(), event)
 }

@@ -10,7 +10,8 @@
 // verified principal are rejected with HTTP 401 and the MCP handler never runs.
 // Set FacadeConfig.TransportPosture to select another posture: runtime-bearer
 // pairs with FacadeConfig.RequireBearerToken to validate an RFC 9728 bearer
-// token in the runtime, and none-public is the explicit public posture.
+// token in a route-level guard that runs before application middleware, and
+// none-public is the explicit public posture.
 //
 // # Mounting on a closed-by-default SecureApp
 //
@@ -29,7 +30,7 @@
 //
 //	Route family                          SecureApp posture  Authority
 //	MCP transport, posture iam or jwt     Authenticated()    the app's SecurePrincipalResolver (the gateway has already validated the caller)
-//	MCP transport, posture runtime-bearer Public()           the facade's RFC 9728 bearer validator, which fails closed
+//	MCP transport, posture runtime-bearer Public()           the facade's route-level RFC 9728 bearer guard, which runs before application middleware and fails closed
 //	MCP transport, posture none-public    Public()           none, by explicit facade contract
 //	protected-resource metadata           Public()           none: RFC 9728 metadata is public by design
 //	authorization-server discovery        Public()           none: RFC 8414 metadata is public by design

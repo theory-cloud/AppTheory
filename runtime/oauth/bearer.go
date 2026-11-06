@@ -122,6 +122,47 @@ type RequireBearerTokenOptions struct {
 	resourceMetadataURLTemplate *resourceMetadataURLTemplate
 }
 
+// prepareRequireBearerTokenOptions compiles the optional challenge template at
+// registration time so no request can advertise a partially resolved URL.
+func prepareRequireBearerTokenOptions(opts RequireBearerTokenOptions) RequireBearerTokenOptions {
+	if strings.TrimSpace(opts.ResourceMetadataURLTemplate) != "" {
+		compiled, err := compileResourceMetadataURLTemplate(opts.ResourceMetadataURLTemplate)
+		if err != nil {
+			panic(fmt.Sprintf("oauth: invalid ResourceMetadataURLTemplate: %v", err))
+		}
+		opts.resourceMetadataURLTemplate = compiled
+	}
+	return opts
+}
+
+// requireBearerTokenDecision validates the request credential and binds any
+// verified claims to the context. A non-nil response is the denial to return.
+func requireBearerTokenDecision(c *apptheory.Context, opts RequireBearerTokenOptions) *apptheory.Response {
+	token, err := BearerTokenFromHeaders(c.Request.Headers)
+	if err != nil {
+		return unauthorizedResponse(c, opts)
+	}
+	if opts.ClaimsValidator != nil {
+		claims, err := opts.ClaimsValidator(c, token)
+		if err != nil {
+			return bearerErrorResponse(c, opts, err)
+		}
+		c.Set(ContextKeyBearerToken, token)
+		if claims != nil {
+			c.Set(ContextKeyBearerClaims, *claims)
+		}
+		return nil
+	}
+	if opts.Validator == nil {
+		return unauthorizedResponse(c, opts)
+	}
+	if err := opts.Validator(c, token); err != nil {
+		return bearerErrorResponse(c, opts, err)
+	}
+	c.Set(ContextKeyBearerToken, token)
+	return nil
+}
+
 // RequireBearerTokenMiddleware enforces `Authorization: Bearer <token>` and,
 // when missing/invalid, returns 401 with the MCP 2025-06-18 compatible
 // WWW-Authenticate challenge that points to protected resource metadata.
@@ -130,40 +171,26 @@ type RequireBearerTokenOptions struct {
 // malformed template panics: the middleware never serves a request whose
 // challenge would advertise a broken or partially resolved discovery URL.
 func RequireBearerTokenMiddleware(opts RequireBearerTokenOptions) apptheory.Middleware {
-	if strings.TrimSpace(opts.ResourceMetadataURLTemplate) != "" {
-		compiled, err := compileResourceMetadataURLTemplate(opts.ResourceMetadataURLTemplate)
-		if err != nil {
-			panic(fmt.Sprintf("oauth: invalid ResourceMetadataURLTemplate: %v", err))
-		}
-		opts.resourceMetadataURLTemplate = compiled
-	}
+	opts = prepareRequireBearerTokenOptions(opts)
 	return func(next apptheory.Handler) apptheory.Handler {
 		return func(c *apptheory.Context) (*apptheory.Response, error) {
-			token, err := BearerTokenFromHeaders(c.Request.Headers)
-			if err != nil {
-				return unauthorizedResponse(c, opts), nil
+			if denied := requireBearerTokenDecision(c, opts); denied != nil {
+				return denied, nil
 			}
-			if opts.ClaimsValidator != nil {
-				claims, err := opts.ClaimsValidator(c, token)
-				if err != nil {
-					return bearerErrorResponse(c, opts, err), nil
-				}
-				c.Set(ContextKeyBearerToken, token)
-				if claims != nil {
-					c.Set(ContextKeyBearerClaims, *claims)
-				}
-				return next(c)
-			}
-			if opts.Validator == nil {
-				return unauthorizedResponse(c, opts), nil
-			}
-			if err := opts.Validator(c, token); err != nil {
-				return bearerErrorResponse(c, opts, err), nil
-			}
-
-			c.Set(ContextKeyBearerToken, token)
 			return next(c)
 		}
+	}
+}
+
+// RequireBearerTokenGuard returns the same credential decision as
+// RequireBearerTokenMiddleware in route-guard form. The runtime executes a
+// route guard after a route's authorization gate and before application
+// middleware, so a short-circuiting middleware cannot bypass bearer validation.
+// Verified claims are bound to the context before the guard admits the request.
+func RequireBearerTokenGuard(opts RequireBearerTokenOptions) apptheory.RouteGuard {
+	opts = prepareRequireBearerTokenOptions(opts)
+	return func(c *apptheory.Context) (*apptheory.Response, error) {
+		return requireBearerTokenDecision(c, opts), nil
 	}
 }
 

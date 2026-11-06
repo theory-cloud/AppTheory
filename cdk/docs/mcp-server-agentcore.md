@@ -34,6 +34,7 @@ Note on SSE progress streaming:
 ```ts
 import * as cdk from "aws-cdk-lib";
 import { Duration } from "aws-cdk-lib";
+import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import { Construct } from "constructs";
 
@@ -51,15 +52,24 @@ export class AgentCoreMcpStack extends cdk.Stack {
       timeout: Duration.seconds(30),
     });
 
+    const certificate = acm.Certificate.fromCertificateArn(
+      this,
+      "McpCertificate",
+      "arn:aws:acm:us-east-1:123456789012:certificate/11111111-2222-3333-4444-555555555555",
+    );
+
     const mcp = new AppTheoryMcpServer(this, "McpServer", {
       handler,
       routeFamily: { patterns: ["/mcp"] },
       transportPosture: AppTheoryMcpTransportPosture.NONE_PUBLIC,
-      // Locked front door, or AppTheoryMcpOriginReachability.DISABLED when the
-      // execute-api default endpoint is disabled.
-      originReachability: AppTheoryMcpOriginReachability.LOCKED,
-      // `none-public` requires an explicit owned-stage throttling decision.
-      ownedApi: { stage: { throttlingEnabled: true } },
+      // AgentCore clients do not present client certificates: DISABLED with an
+      // ordinary custom domain. LOCKED instead requires mutualTlsAuthentication.
+      originReachability: AppTheoryMcpOriginReachability.DISABLED,
+      ownedApi: {
+        // `none-public` requires an explicit owned-stage throttling decision.
+        stage: { throttlingEnabled: true },
+        domain: { domainName: "mcp.example.com", certificate },
+      },
     });
 
     new cdk.CfnOutput(this, "McpEndpoint", { value: mcp.endpoints[0] });
@@ -85,6 +95,7 @@ from aws_cdk import (
     Duration,
     Stack,
 )
+from aws_cdk import aws_certificatemanager as _acm
 from aws_cdk import aws_lambda as _lambda
 from constructs import Construct
 
@@ -92,6 +103,7 @@ from apptheory_cdk import (
     AppTheoryMcpOriginReachability,
     AppTheoryMcpRouteFamily,
     AppTheoryMcpServer,
+    AppTheoryMcpServerDomainOptions,
     AppTheoryMcpServerOwnedApiOptions,
     AppTheoryMcpServerStageOptions,
     AppTheoryMcpTransportPosture,
@@ -112,15 +124,25 @@ class AgentCoreMcpStack(Stack):
             timeout=Duration.seconds(30),
         )
 
+        certificate = _acm.Certificate.from_certificate_arn(
+            self,
+            "McpCertificate",
+            "arn:aws:acm:us-east-1:123456789012:certificate/11111111-2222-3333-4444-555555555555",
+        )
+
         mcp = AppTheoryMcpServer(
             self,
             "McpServer",
             handler=handler,
             route_family=AppTheoryMcpRouteFamily(patterns=["/mcp"]),
             transport_posture=AppTheoryMcpTransportPosture.NONE_PUBLIC,
-            origin_reachability=AppTheoryMcpOriginReachability.LOCKED,
+            origin_reachability=AppTheoryMcpOriginReachability.DISABLED,
             owned_api=AppTheoryMcpServerOwnedApiOptions(
-                stage=AppTheoryMcpServerStageOptions(throttling_enabled=True)
+                stage=AppTheoryMcpServerStageOptions(throttling_enabled=True),
+                domain=AppTheoryMcpServerDomainOptions(
+                    domain_name="mcp.example.com",
+                    certificate=certificate,
+                ),
             ),
         )
         CfnOutput(self, "McpEndpoint", value=mcp.endpoints[0])
@@ -137,8 +159,12 @@ const mcp = new AppTheoryMcpServer(this, "McpServer", {
   handler,
   routeFamily: { patterns: ["/mcp"] },
   transportPosture: AppTheoryMcpTransportPosture.NONE_PUBLIC,
-  originReachability: AppTheoryMcpOriginReachability.LOCKED,
-  ownedApi: { stage: { throttlingEnabled: true } },
+  originReachability: AppTheoryMcpOriginReachability.DISABLED,
+  // `certificate` is the ordinary custom domain certificate from the minimal stack.
+  ownedApi: {
+    stage: { throttlingEnabled: true },
+    domain: { domainName: "mcp.example.com", certificate },
+  },
   sessionState: { enabled: true, ttlMinutes: 60 },
 });
 ```
@@ -175,7 +201,7 @@ const mcp = new AppTheoryMcpServer(this, "McpServer", {
   handler,
   routeFamily: { patterns: ["/mcp"] },
   transportPosture: AppTheoryMcpTransportPosture.NONE_PUBLIC,
-  originReachability: AppTheoryMcpOriginReachability.LOCKED,
+  originReachability: AppTheoryMcpOriginReachability.DISABLED,
   ownedApi: {
     stage: { throttlingEnabled: true },
     domain: {
@@ -208,7 +234,7 @@ const mcp = new AppTheoryMcpServer(this, "McpServer", {
   handler,
   routeFamily: { patterns: ["/mcp"] },
   transportPosture: AppTheoryMcpTransportPosture.NONE_PUBLIC,
-  originReachability: AppTheoryMcpOriginReachability.LOCKED,
+  originReachability: AppTheoryMcpOriginReachability.DISABLED,
   ownedApi: {
     stage: {
       stageName: "prod",
@@ -217,6 +243,8 @@ const mcp = new AppTheoryMcpServer(this, "McpServer", {
       throttlingRateLimit: 50,
       throttlingBurstLimit: 100,
     },
+    // `certificate` is the ordinary custom domain certificate from the minimal stack.
+    domain: { domainName: "mcp.example.com", certificate },
   },
 });
 ```

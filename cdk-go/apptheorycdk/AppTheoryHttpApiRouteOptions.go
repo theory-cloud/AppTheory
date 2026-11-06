@@ -15,6 +15,11 @@ type AppTheoryHttpApiRouteOptions struct {
 	// Segments are literals, `{parameter}`, or `{proxy+}` segments.
 	Path *string `field:"required" json:"path" yaml:"path"`
 	// Gateway authorization posture for the route.
+	//
+	// Omit for `NONE`. Every explicit value other than `IAM` or `NONE` — an
+	// uppercase spelling, a misspelling, `null`, a number, an object, or any
+	// unchecked configuration value — fails synthesis before this route is
+	// emitted instead of silently falling back to `NONE`.
 	// Default: AppTheoryHttpApiRouteAuthorizer.NONE
 	//
 	Authorizer AppTheoryHttpApiRouteAuthorizer `field:"optional" json:"authorizer" yaml:"authorizer"`

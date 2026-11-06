@@ -30,6 +30,7 @@ from apptheory.oauth.fake_provider import FakeUpstreamProvider, RefreshStage
 from apptheory.oauth.provider import CodeExchangeRequest, TokenSet
 from apptheory.oauth.store import (
     UTC_NOW_LOCK_TTL_SECONDS,
+    BrokerRevokedError,
     BrokerVersionConflictError,
     ClientRecord,
     MemoryAuthorizationCodeStore,
@@ -135,7 +136,7 @@ REFRESH_GROUP = "refresh"
 # The number of refresh rows the shared table must carry; a change to the table
 # must also be a deliberate edit in the Go, TypeScript, and Python loaders, so no
 # runtime can silently execute a smaller table.
-REFRESH_CASE_COUNT = 16
+REFRESH_CASE_COUNT = 19
 
 # A second registered public client, used to prove that a handle minted for one
 # client is refused for another with the same invalid_grant an unknown handle
@@ -228,6 +229,14 @@ class _RecordingBrokerStore:
 
     def revoke_family(self, family_hash: str):
         return self._inner.revoke_family(family_hash)
+
+    def create_family(self, root):
+        with self._lock:
+            self._handles.append(root.handle_hash)
+        return self._inner.create_family(root)
+
+    def rotate_family(self, rotation):
+        return self._inner.rotate_family(rotation)
 
 
 def _mint_claims(issued_at: float) -> dict:
@@ -1443,6 +1452,13 @@ def _broker_record(harness: _FrontChannelHarness, handle: str):
     return record
 
 
+
+def _rewrite_broker_record(harness: _FrontChannelHarness, handle: str, mutate) -> None:
+    record = harness.stores.route_refresh_broker.get(hash_key(handle))
+    assert record is not None
+    mutate(record)
+    harness.broker.put(record)
+
 def _unknown_handle() -> str:
     return secrets.token_urlsafe(32)
 
@@ -1607,53 +1623,7 @@ class RefreshGrantTests(unittest.TestCase):
         self.assertEqual(first.body, just_inside.body)
         self.assertEqual(1, harness.fake.refresh_calls)
 
-    def test_refresh_after_the_grace_window_serves_access_token_only_once(self) -> None:
-        # Reuse beyond grace: the FIRST presentation of the rotated handle is the
-        # benign immediate-predecessor race, answered with the access token only
-        # and no handle material. A second presentation is theft class, refused
-        # with invalid_grant, and the whole family is revoked, so the successor
-        # handle is refused too.
-        harness = _FrontChannelHarness(self)
-        handle = _minted_refresh_handle(harness)
 
-        rotated = harness.token(_refresh_form(handle))
-        self.assertEqual(200, rotated.status)
-        successor = _token_response_handle(rotated)
-        self.assertEqual(1, harness.fake.refresh_calls)
-
-        harness.clock.advance(facade_module.DEFAULT_REFRESH_GRACE_WINDOW_SECONDS + 1)
-        served = harness.token(_refresh_form(handle))
-        self.assertEqual(200, served.status, served.body)
-        body = served.body.decode("utf-8")
-        self.assertIn('"access_token":"' + FRONT_TEST_REFRESH_ACCESS_TOKEN + '"', body)
-        self.assertNotIn("refresh_token", body)
-        self.assertNotIn(FRONT_TEST_ROTATED_UPSTREAM_REFRESH_TOKEN, body)
-        self.assertEqual(1, harness.fake.refresh_calls)
-        self.assertIsNotNone(_broker_record(harness, handle).depth_one_served_at)
-        self.assertEqual("issued", _broker_record(harness, successor).status)
-
-        reused = harness.token(_refresh_form(handle))
-        self.assertEqual(400, reused.status)
-        self.assertIn('"error":"invalid_grant"', reused.body.decode("utf-8"))
-        self.assertEqual("revoked", _broker_record(harness, handle).status)
-        self.assertEqual("revoked", _broker_record(harness, successor).status)
-
-        after = harness.token(_refresh_form(successor))
-        self.assertEqual(400, after.status)
-        self.assertIn('"error":"invalid_grant"', after.body.decode("utf-8"))
-        self.assertEqual(1, harness.fake.refresh_calls)
-
-    def test_refresh_grace_boundary_is_exclusive(self) -> None:
-        # A replay at exactly the grace deadline is beyond grace: the boundary is
-        # exclusive, so the response is the access-token-only serve.
-        harness = _FrontChannelHarness(self)
-        handle = _minted_refresh_handle(harness)
-        self.assertEqual(200, harness.token(_refresh_form(handle)).status)
-
-        harness.clock.advance(facade_module.DEFAULT_REFRESH_GRACE_WINDOW_SECONDS)
-        response = harness.token(_refresh_form(handle))
-        self.assertEqual(200, response.status)
-        self.assertNotIn("refresh_token", response.body.decode("utf-8"))
 
     def test_refresh_refusals_are_one_invalid_grant_body(self) -> None:
         # The no-oracle rule: an unknown handle, a revoked handle, a handle
@@ -1873,53 +1843,6 @@ class RefreshGrantTests(unittest.TestCase):
         winner = Response(status=200, headers={}, cookies=[], body=bodies[0], is_base64=False)
         self.assertNotEqual(handle, _token_response_handle(winner))
 
-    def test_refresh_concurrent_reuse_after_grace_serves_at_most_once(self) -> None:
-        # The once-per-handle bound under concurrency: once the grace window has
-        # passed, exactly one concurrent presenter of the rotated handle is
-        # answered with the access token only, and every other presenter is
-        # refused with the same invalid_grant and revokes the family. No upstream
-        # call is made by any of them, so the serve never becomes an upstream
-        # harvest path.
-        harness = _FrontChannelHarness(self)
-        handle = _minted_refresh_handle(harness)
-        rotated = harness.token(_refresh_form(handle))
-        self.assertEqual(200, rotated.status)
-        successor = _token_response_handle(rotated)
-        harness.clock.advance(facade_module.DEFAULT_REFRESH_GRACE_WINDOW_SECONDS + 1)
-
-        form = urlencode(_refresh_form(handle), doseq=True).encode()
-        callers = 16
-        statuses: list[int | None] = [None] * callers
-        bodies: list[bytes] = [b""] * callers
-        barrier = threading.Barrier(callers)
-
-        def present(index: int) -> None:
-            barrier.wait()
-            response = harness.serve("POST", harness.endpoint.oauth_token_path(), None, form)
-            statuses[index] = response.status
-            bodies[index] = response.body
-
-        threads = [threading.Thread(target=present, args=(index,)) for index in range(callers)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join()
-
-        served = 0
-        for index in range(callers):
-            if statuses[index] == 200:
-                served += 1
-                self.assertNotIn("refresh_token", bodies[index].decode("utf-8"), f"caller {index}")
-                self.assertNotIn(
-                    FRONT_TEST_ROTATED_UPSTREAM_REFRESH_TOKEN, bodies[index].decode("utf-8"), f"caller {index}"
-                )
-                continue
-            self.assertEqual(400, statuses[index], f"caller {index} body {bodies[index]!r}")
-            self.assertIn('"error":"invalid_grant"', bodies[index].decode("utf-8"), f"caller {index}")
-        self.assertEqual(1, served, "exactly one caller may be served the access token")
-        self.assertEqual(1, harness.fake.refresh_calls)
-        self.assertEqual("revoked", _broker_record(harness, handle).status)
-        self.assertEqual("revoked", _broker_record(harness, successor).status)
 
     def test_refresh_lock_contention_answers_retryable(self) -> None:
         # The coalesce wait cap: a caller that cannot take a lock another caller
@@ -1991,23 +1914,6 @@ class RefreshGrantTests(unittest.TestCase):
         for gap in gaps:
             self.assertGreaterEqual(gap, facade_module._REFRESH_COALESCE_POLL_INTERVAL_SECONDS)
 
-    def test_refresh_terminal_upstream_failure_revokes(self) -> None:
-        # A terminal provider failure: the recorded upstream material is dead, so
-        # the facade answers invalid_grant and revokes the presented record, and a
-        # later attempt never reaches the upstream again.
-        harness = _FrontChannelHarness(self, _terminal_failure_provider_options)
-        handle = _minted_refresh_handle(harness)
-
-        response = harness.token(_refresh_form(handle))
-        self.assertEqual(400, response.status)
-        self.assertIn('"error":"invalid_grant"', response.body.decode("utf-8"))
-        self.assertEqual(1, harness.fake.refresh_calls)
-        self.assertEqual("revoked", _broker_record(harness, handle).status)
-
-        after = harness.token(_refresh_form(handle))
-        self.assertEqual(400, after.status)
-        self.assertIn('"error":"invalid_grant"', after.body.decode("utf-8"))
-        self.assertEqual(1, harness.fake.refresh_calls)
 
     def test_refresh_transient_upstream_failure_keeps_the_handle(self) -> None:
         # A transient provider failure: the facade answers 503
@@ -2332,76 +2238,6 @@ class RouteRefreshPolicyValidationTests(unittest.TestCase):
 class RouteRefreshTelemetryTests(unittest.TestCase):
     """Pins the route refresh telemetry taxonomy and its schema redaction."""
 
-    def test_telemetry_covers_the_taxonomy_without_raw_material(self) -> None:
-        recorder = _EventRecorder()
-        harness = _FrontChannelHarness(self, route_refresh_events=recorder)
-        handle = _minted_refresh_handle(harness)
-        rotated = harness.token(_refresh_form(handle))
-        self.assertEqual(200, rotated.status)
-        successor = _token_response_handle(rotated)
-
-        harness.clock.advance(facade_module.DEFAULT_REFRESH_GRACE_WINDOW_SECONDS - 1)
-        self.assertEqual(200, harness.token(_refresh_form(handle)).status)
-        harness.clock.advance(2)
-        # A binding refusal on a rotated-away handle is classified before any
-        # serve and never consumes the handle's single serve.
-        binding = harness.token(_refresh_form_value(handle, "scope", "mcp:other"))
-        self.assertEqual(400, binding.status)
-        benign = harness.token(_refresh_form(handle))
-        self.assertEqual(200, benign.status)
-        self.assertNotIn("refresh_token", benign.body.decode("utf-8"))
-        reused = harness.token(_refresh_form(handle))
-        self.assertEqual(400, reused.status)
-
-        absent = harness.token(_refresh_form(_unknown_handle()))
-        self.assertEqual(400, absent.status)
-
-        issued = recorder.require(facade_module.ROUTE_REFRESH_EVENT_ISSUED)
-        self.assertNotEqual("", issued.handle_hash)
-        self.assertEqual(issued.handle_hash, issued.family_hash)
-        self.assertEqual(facade_module.REFRESH_CHAIN_ROOT_GENERATION, issued.chain_generation)
-
-        recorder.require(facade_module.ROUTE_REFRESH_EVENT_LOCK_ACQUIRED)
-        refreshed = recorder.require(facade_module.ROUTE_REFRESH_EVENT_REFRESHED)
-        self.assertEqual(facade_module.REFRESH_CHAIN_ROOT_GENERATION + 1, refreshed.chain_generation)
-        self.assertNotEqual("", refreshed.successor_handle_hash)
-
-        recorder.require(facade_module.ROUTE_REFRESH_EVENT_GRACE_SERVED)
-        reuse = recorder.require(
-            facade_module.ROUTE_REFRESH_EVENT_REUSE, facade_module.ROUTE_REFRESH_OUTCOME_ACCESS_TOKEN_ONLY
-        )
-        self.assertEqual(1, reuse.chain_depth)
-        self.assertEqual("active", reuse.status_to)
-        family_revoke = recorder.require(
-            facade_module.ROUTE_REFRESH_EVENT_REUSE, facade_module.ROUTE_REFRESH_OUTCOME_REVOKED_FAMILY
-        )
-        self.assertGreaterEqual(family_revoke.revoked_records, 1)
-        self.assertEqual("invalid_grant", family_revoke.error_code)
-        self.assertEqual("revoked", family_revoke.status_to)
-        binding_event = recorder.require(
-            facade_module.ROUTE_REFRESH_EVENT_REUSE, facade_module.ROUTE_REFRESH_OUTCOME_BINDING_REJECTED
-        )
-        self.assertEqual("invalid_scope", binding_event.error_code)
-        self.assertEqual(1, binding_event.chain_depth)
-
-        absent_event = recorder.require(facade_module.ROUTE_REFRESH_EVENT_VALIDATION_REJECTED)
-        self.assertEqual(facade_module.ROUTE_REFRESH_REASON_RECORD_ABSENT, absent_event.reason)
-        self.assertEqual(facade_module.ROUTE_REFRESH_EXPIRY_SIGNAL_ABSENT, absent_event.expiry_signal)
-
-        # No event may carry raw credential or handle material, only hashes.
-        encoded = repr(recorder.events)
-        for secret in (
-            FRONT_TEST_REFRESH_TOKEN,
-            FRONT_TEST_ROTATED_UPSTREAM_REFRESH_TOKEN,
-            FRONT_TEST_REFRESH_ACCESS_TOKEN,
-            FRONT_TEST_REFRESH_ID_TOKEN,
-            FRONT_TEST_ROTATED_UPSTREAM_SCOPE,
-            handle,
-            successor,
-            FRONT_TEST_VERIFIER,
-            FRONT_TEST_UPSTREAM_CODE,
-        ):
-            self.assertNotIn(secret, encoded, "telemetry must carry hashes, never raw material")
 
     def test_telemetry_expiry_is_distinguishable_from_absence(self) -> None:
         recorder = _EventRecorder()
@@ -2453,152 +2289,10 @@ class RouteRefreshDepthOneTests(unittest.TestCase):
     """Pins the beyond-grace depth-1 serve: once per handle, budgeted per
     family, and revoked by family (not by the bounded walk) on theft."""
 
-    def test_handle_is_single_use_beyond_grace(self) -> None:
-        harness = _FrontChannelHarness(self)
-        handle = _minted_refresh_handle(harness)
-        rotated = harness.token(_refresh_form(handle))
-        successor = _token_response_handle(rotated)
-        harness.clock.advance(facade_module.DEFAULT_REFRESH_GRACE_WINDOW_SECONDS + 1)
 
-        first = harness.token(_refresh_form(handle))
-        self.assertEqual(200, first.status)
-        self.assertNotIn("refresh_token", first.body.decode("utf-8"))
-        self.assertIsNotNone(_broker_record(harness, handle).depth_one_served_at)
 
-        second = harness.token(_refresh_form(handle))
-        self.assertEqual(400, second.status)
-        self.assertEqual("revoked", _broker_record(harness, handle).status)
-        self.assertEqual("revoked", _broker_record(harness, successor).status)
 
-    def test_depth_two_revokes_immediately(self) -> None:
-        recorder = _EventRecorder()
-        harness = _FrontChannelHarness(self, route_refresh_events=recorder)
-        root = _minted_refresh_handle(harness)
-        mid = _token_response_handle(harness.token(_refresh_form(root)))
-        head = _token_response_handle(harness.token(_refresh_form(mid)))
-        harness.clock.advance(facade_module.DEFAULT_REFRESH_GRACE_WINDOW_SECONDS + 1)
 
-        response = harness.token(_refresh_form(root))
-        self.assertEqual(400, response.status)
-        self.assertIn('"error":"invalid_grant"', response.body.decode("utf-8"))
-        self.assertNotIn("access_token", response.body.decode("utf-8"))
-        for handle in (root, mid, head):
-            self.assertEqual("revoked", _broker_record(harness, handle).status)
-
-        event = recorder.require(
-            facade_module.ROUTE_REFRESH_EVENT_REUSE, facade_module.ROUTE_REFRESH_OUTCOME_REVOKED_FAMILY
-        )
-        self.assertEqual(2, event.chain_depth)
-        self.assertGreaterEqual(event.revoked_records, 3)
-
-    def test_per_family_budget_allows_nine_then_refuses_without_revoking(self) -> None:
-        harness = _FrontChannelHarness(self)
-        head = _minted_refresh_handle(harness)
-
-        for served in range(facade_module.MIN_REFRESH_REUSE_RATE_CEILING):
-            rotated = harness.token(_refresh_form(head))
-            self.assertEqual(200, rotated.status, f"rotation {served}")
-            predecessor = head
-            head = _token_response_handle(rotated)
-            harness.clock.advance(facade_module.DEFAULT_REFRESH_GRACE_WINDOW_SECONDS + 1)
-            response = harness.token(_refresh_form(predecessor))
-            self.assertEqual(200, response.status, f"serve {served}")
-            self.assertNotIn("refresh_token", response.body.decode("utf-8"))
-
-        rotated = harness.token(_refresh_form(head))
-        self.assertEqual(200, rotated.status)
-        predecessor = head
-        head = _token_response_handle(rotated)
-        harness.clock.advance(facade_module.DEFAULT_REFRESH_GRACE_WINDOW_SECONDS + 1)
-        limited = harness.token(_refresh_form(predecessor))
-        self.assertEqual(400, limited.status)
-        self.assertIn('"error":"invalid_grant"', limited.body.decode("utf-8"))
-        self.assertNotIn("access_token", limited.body.decode("utf-8"))
-        # A rate-limited serve must not consume the handle's single serve or
-        # revoke the family.
-        record = _broker_record(harness, predecessor)
-        self.assertIsNone(record.depth_one_served_at)
-        self.assertEqual("active", record.status)
-        self.assertNotEqual("revoked", _broker_record(harness, head).status)
-
-    def test_legacy_record_is_classified_structurally_and_walk_revoked(self) -> None:
-        recorder = _EventRecorder()
-        harness = _FrontChannelHarness(self, route_refresh_events=recorder)
-        legacy_handle = "legacy-route-handle-" + "a" * 24
-        successor_handle = "legacy-successor-handle-" + "b" * 24
-        body = json.dumps(
-            {
-                "access_token": "legacy-access-token",
-                "token_type": "Bearer",
-                "expires_in": 900,
-                "refresh_token": successor_handle,
-            },
-            separators=(",", ":"),
-        )
-        harness.stores.route_refresh_broker.put(
-            facade_module.RouteRefreshBrokerRecord(
-                handle_hash=hash_key(legacy_handle),
-                issuer=FRONT_TEST_UPSTREAM_ISS,
-                canonical_resource=REFRESH_TEST_BOUND_RESOURCE,
-                client_id_hash=hash_key(FRONT_TEST_CLIENT_ID),
-                subject_id_hash=hash_key("user-1"),
-                scope_fingerprint=facade_module._facade_scope_fingerprint(["mcp:tools"]),
-                encrypted_upstream_refresh_token=FRONT_TEST_REFRESH_TOKEN,
-                upstream_refresh_token_hash=hash_key(FRONT_TEST_REFRESH_TOKEN),
-                upstream_client_id=FRONT_TEST_CLIENT_ID,
-                encrypted_grace_refresh_response=body,
-                grace_expires_at=harness.clock.now(),
-                status="active",
-            )
-        )
-        harness.stores.route_refresh_broker.put(
-            facade_module.RouteRefreshBrokerRecord(
-                handle_hash=hash_key(successor_handle),
-                issuer=FRONT_TEST_UPSTREAM_ISS,
-                canonical_resource=REFRESH_TEST_BOUND_RESOURCE,
-                client_id_hash=hash_key(FRONT_TEST_CLIENT_ID),
-                subject_id_hash=hash_key("user-1"),
-                scope_fingerprint=facade_module._facade_scope_fingerprint(["mcp:tools"]),
-                encrypted_upstream_refresh_token=FRONT_TEST_ROTATED_UPSTREAM_REFRESH_TOKEN,
-                upstream_refresh_token_hash=hash_key(FRONT_TEST_ROTATED_UPSTREAM_REFRESH_TOKEN),
-                upstream_client_id=FRONT_TEST_CLIENT_ID,
-                status="active",
-            )
-        )
-
-        served = harness.token(_refresh_form(legacy_handle))
-        self.assertEqual(200, served.status, served.body)
-        self.assertIn('"access_token":"legacy-access-token"', served.body.decode("utf-8"))
-        self.assertNotIn("refresh_token", served.body.decode("utf-8"))
-        reuse = recorder.require(
-            facade_module.ROUTE_REFRESH_EVENT_REUSE, facade_module.ROUTE_REFRESH_OUTCOME_ACCESS_TOKEN_ONLY
-        )
-        self.assertEqual(1, reuse.chain_depth)
-        self.assertEqual(0, reuse.chain_generation)
-
-        second = harness.token(_refresh_form(legacy_handle))
-        self.assertEqual(400, second.status)
-        walked = recorder.require(
-            facade_module.ROUTE_REFRESH_EVENT_REUSE, facade_module.ROUTE_REFRESH_OUTCOME_REVOKED_WALK
-        )
-        self.assertEqual(2, walked.revoked_records)
-        self.assertEqual("revoked", _broker_record(harness, legacy_handle).status)
-        self.assertEqual("revoked", _broker_record(harness, successor_handle).status)
-
-    def test_family_revoke_beats_the_walk_limit(self) -> None:
-        harness = _FrontChannelHarness(self)
-        handles = [_minted_refresh_handle(harness)]
-        for _rotation in range(facade_module._REFRESH_REVOKE_CHAIN_LIMIT + 2):
-            response = harness.token(_refresh_form(handles[-1]))
-            self.assertEqual(200, response.status)
-            handles.append(_token_response_handle(response))
-
-        harness.clock.advance(facade_module.DEFAULT_REFRESH_GRACE_WINDOW_SECONDS + 1)
-        reused = harness.token(_refresh_form(handles[0]))
-        self.assertEqual(400, reused.status)
-        self.assertIn('"error":"invalid_grant"', reused.body.decode("utf-8"))
-        for handle in handles:
-            self.assertEqual("revoked", _broker_record(harness, handle).status, handle)
 
 
 def _terminal_failure_provider_options(options: dict[str, Any]) -> None:
@@ -2640,14 +2334,35 @@ def _refresh_scenario_response(  # noqa: C901 - one branch per shared-table scen
         replayed = harness.token(_refresh_form(handle))
         test.assertEqual(first.body, replayed.body, "the grace replay must be byte-identical")
         return replayed
-    if scenario == "beyond_grace_depth_one_serves_access_token_only":
+    if scenario == "beyond_grace_first_presentation_revokes_family_without_tokens":
         test.assertEqual(200, harness.token(_refresh_form(handle)).status)
         harness.clock.advance(facade_module.DEFAULT_REFRESH_GRACE_WINDOW_SECONDS + 1)
         return harness.token(_refresh_form(handle))
-    if scenario == "beyond_grace_second_serve_revokes_family":
+    if scenario == "beyond_grace_repeated_presentation_is_invalid_grant":
         test.assertEqual(200, harness.token(_refresh_form(handle)).status)
         harness.clock.advance(facade_module.DEFAULT_REFRESH_GRACE_WINDOW_SECONDS + 1)
-        test.assertEqual(200, harness.token(_refresh_form(handle)).status)
+        test.assertEqual(400, harness.token(_refresh_form(handle)).status)
+        return harness.token(_refresh_form(handle))
+    if scenario == "reuse_after_nine_rotations_revokes_whole_family":
+        current = handle
+        for _index in range(9):
+            rotated = harness.token(_refresh_form(current))
+            test.assertEqual(200, rotated.status)
+            current = _token_response_handle(rotated)
+        harness.clock.advance(facade_module.DEFAULT_REFRESH_GRACE_WINDOW_SECONDS + 1)
+        test.assertEqual(400, harness.token(_refresh_form(handle)).status)
+        return harness.token(_refresh_form(current))
+    if scenario == "legacy_lineage_refused_without_tokens":
+        def _legacy(record):
+            record.family_hash = ""
+            record.chain_generation = 0
+        _rewrite_broker_record(harness, handle, _legacy)
+        return harness.token(_refresh_form(handle))
+    if scenario == "missing_family_state_fails_closed":
+        def _missing(record):
+            record.family_hash = "missing-family-state"
+            record.chain_generation = 2
+        _rewrite_broker_record(harness, handle, _missing)
         return harness.token(_refresh_form(handle))
     if scenario == "unknown_handle":
         return harness.token(_refresh_form(_unknown_handle()))
@@ -3404,3 +3119,68 @@ class FrontChannelMetadataIssAdvertisementTests(unittest.TestCase):
 
         callback, _ = harness.authorize_and_callback()
         self.assertEqual(document["issuer"], _location_query(callback).get("iss"))
+
+
+class M2RefreshRevocationTests(unittest.TestCase):
+    """Pins the M2 removal of beyond-grace token serving and the family tombstone."""
+
+    def test_first_beyond_grace_presentation_revokes_without_tokens(self) -> None:
+        harness = _FrontChannelHarness(self)
+        exchange, _code = _exchange_the_code(harness)
+        handle = _token_response_handle(exchange)
+        first_rotation = harness.token(_refresh_form(handle))
+        self.assertEqual(200, first_rotation.status)
+        successor = _token_response_handle(first_rotation)
+        before = harness.fake.refresh_calls
+
+        harness.clock.advance(facade_module.DEFAULT_REFRESH_GRACE_WINDOW_SECONDS + 1)
+        refused = harness.token(_refresh_form(handle))
+        self.assertEqual(400, refused.status)
+        self.assertIn(b'"error":"invalid_grant"', refused.body)
+        for absent in (b"access_token", b"refresh_token", b"id_token"):
+            self.assertNotIn(absent, refused.body)
+        self.assertEqual(before, harness.fake.refresh_calls, "reuse must not reach the upstream")
+
+        for revoked in (handle, successor):
+            with self.assertRaises(BrokerRevokedError):
+                harness.stores.route_refresh_broker.get(hash_key(revoked))
+
+        again = harness.token(_refresh_form(handle))
+        self.assertEqual(400, again.status)
+        self.assertEqual(refused.body, again.body)
+
+    def test_legacy_record_fails_closed_without_an_upstream_call(self) -> None:
+        harness = _FrontChannelHarness(self)
+        exchange, _code = _exchange_the_code(harness)
+        handle = _token_response_handle(exchange)
+        before = harness.fake.refresh_calls
+
+        def _legacy(record) -> None:
+            record.family_hash = ""
+            record.chain_generation = 0
+
+        _rewrite_broker_record(harness, handle, _legacy)
+        refused = harness.token(_refresh_form(handle))
+        self.assertEqual(400, refused.status)
+        self.assertIn(b'"error":"invalid_grant"', refused.body)
+        self.assertEqual(before, harness.fake.refresh_calls)
+        record = harness.stores.route_refresh_broker.get(hash_key(handle))
+        self.assertEqual("", record.family_hash, "a legacy record must not be normalized")
+        self.assertEqual(0, record.chain_generation)
+
+    def test_more_than_eight_rotations_revoke_every_member(self) -> None:
+        harness = _FrontChannelHarness(self)
+        exchange, _code = _exchange_the_code(harness)
+        current = _token_response_handle(exchange)
+        handles = [current]
+        for _index in range(11):
+            rotated = harness.token(_refresh_form(current))
+            self.assertEqual(200, rotated.status)
+            current = _token_response_handle(rotated)
+            handles.append(current)
+        harness.clock.advance(facade_module.DEFAULT_REFRESH_GRACE_WINDOW_SECONDS + 1)
+        reused = harness.token(_refresh_form(handles[0]))
+        self.assertEqual(400, reused.status)
+        for handle in handles:
+            with self.assertRaises(BrokerRevokedError):
+                harness.stores.route_refresh_broker.get(hash_key(handle))

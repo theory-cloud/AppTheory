@@ -873,13 +873,20 @@ Sessions are tracked with the `mcp-session-id` header.
 - session TTL is controlled by `MCP_SESSION_TTL_MINUTES` (default `60`)
 - session TTL is refreshed on access (sliding window)
 - `notifications/initialized` persists an `"initialized": "true"` marker in the session data
-- `DELETE /mcp` returns `202 Accepted` and deletes the session plus best-effort stream state for that session
+- `DELETE /mcp` returns `202 Accepted` and removes the session plus its stream, event/replay, task, and
+  cancellation state through the shared cleanup helper
 
 Persistence options:
 
-- default session store: in-memory
+- default session store: in-memory, bounded at 1,000 live sessions per store instance
 - persistent sessions: `mcp.WithSessionStore(mcp.NewDynamoSessionStore(db))`
 - default Dynamo table name: `MCP_SESSION_TABLE` when set, otherwise `mcp-sessions`
+- the 1,000-session bound is a fixed framework constant; it is per process, not a distributed quota, and
+  there is no production environment/CDK knob for it. Capacity refusal is JSON-RPC `-32000` with
+  `Session capacity exceeded`, HTTP 200, and no `mcp-session-id` header.
+
+See [MCP state bounds and MicroVM list ownership](../features/mcp-state-bounds/) for the full capacity,
+aggregate, spill, backfill, and ownership contract.
 
 Stream persistence note:
 
@@ -899,10 +906,14 @@ Stream persistence note:
 - S3 lifecycle expiration is a best-effort cleanup backstop for spilled payload objects, not minute-level replay access
   enforcement; the runtime enforces replay access from the DynamoDB `expiresAt` value before reading inline or spilled
   event data.
-- `DynamoStreamStore` gets its strongest `DeleteSession`/`Append` race protection from a TableTheory DB that implements
-  `TransactWrite`; the standard production TableTheory DB provides that path. Test doubles or custom `tablecore.DB`
-  implementations without `TransactWrite` still get active-session guards, but they cannot make the final event create
-  atomic with session deletion.
+- `DynamoStreamStore` requires a TableTheory DB that implements `TransactWrite` for append admission.
+  A test double or custom `tablecore.DB` without transactional conditional writes is refused with
+  `stream append requires a transactional backend` before any event write; there is no save-then-create
+  fallback.
+- Each durable session is bounded at 10,000 logical events and 64 MiB across inline and spilled records.
+  The aggregate schema is versioned; pre-aggregate sessions refuse appends with
+  `stream aggregate backfill required` until an operator/product-owned backfill counts every retained
+  inline and spilled record.
 - `MCP_STREAM_MAX_EVENT_BYTES` (default `10485760`) is the hard maximum for one logical stream event. Events over that
   limit fail closed with a stable JSON-RPC stream delivery error instead of timing out after a failed append.
 - the CDK Remote MCP stream table only provisions storage and env vars; the application still must wire

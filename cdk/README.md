@@ -146,3 +146,8 @@ cd cdk
 npm ci
 npm test
 ```
+
+After changing `cdk/lib`, regenerate the committed Go bindings with
+`tc-toolchain exec AppTheory -- ./scripts/update-cdk-generated.sh`. `verify-cdk-go-drift` compares the packed jsii
+assembly byte for byte, and `jsii-pacmak`'s gzip stream depends on the Node build, so a run under Homebrew Node
+reports false drift; always repack under the pinned toolchain.

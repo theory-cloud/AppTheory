@@ -408,6 +408,7 @@ func TestSessionValidationAndKeys(t *testing.T) {
 func TestRealControllerCommandsAndTokenSafety(t *testing.T) {
 	now := time.Unix(1000, 0).UTC()
 	registry := NewMemorySessionRegistry()
+	registry.now = func() time.Time { return now }
 	provider := newRealControllerProvider(now)
 	controller, err := NewRealController(
 		provider,
@@ -1072,6 +1073,7 @@ func TestMemorySessionRegistryListIsTenantBoundAndSorted(t *testing.T) {
 	require.Error(t, err)
 
 	registry := NewMemorySessionRegistry()
+	registry.now = func() time.Time { return now }
 	_, err = registry.List(context.Background(), SessionListInput{RequestID: "req-incomplete-list", TenantID: "tenant-1"})
 	require.Error(t, err)
 
@@ -1084,7 +1086,11 @@ func TestMemorySessionRegistryListIsTenantBoundAndSorted(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	records, err := registry.List(context.Background(), SessionListInput{TenantID: "tenant-1", Namespace: "namespace-1"})
+	records, err := registry.List(context.Background(), SessionListInput{
+		TenantID:    "tenant-1",
+		Namespace:   "namespace-1",
+		AuthSubject: "subject-1",
+	})
 	require.NoError(t, err)
 	require.Equal(t, []string{"session-a", "session-b"}, []string{records[0].SessionID, records[1].SessionID})
 }

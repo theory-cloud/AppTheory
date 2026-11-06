@@ -209,20 +209,65 @@ export interface RouteRefreshBrokerSeeder {
 }
 
 /**
- * The optional family capability of a broker store. A refresh family is the
- * chain of handles one authorization grant produced; `familyHash` names it on
- * every record. `listFamily` answers which handles belong to a family and what
- * state each is in, and `revokeFamily` revokes every record of a family in one
- * operation, so a confirmed theft is not limited by the eight-link successor
- * walk a long-lived chain would exhaust.
+ * The enumeration/revocation half of the family capability of a broker store. A
+ * refresh family is the chain of handles one authorization grant produced;
+ * `familyHash` names it on every record. `listFamily` answers which live handles
+ * belong to a family and what state each is in, and `revokeFamily` revokes every
+ * live record of a family in one operation.
  *
- * A store that does not implement this capability remains fully usable: the
- * facade falls back to the bounded successor walk and reports a state event, so
- * the degradation is visible rather than silent.
+ * This pair alone is not enough for the framework-owned front channel: a
+ * conforming store must implement
+ * {@link RouteRefreshBrokerTransactionalFamilyStore}, which adds atomic root
+ * creation and atomic rotation. The pair remains exported as the incident
+ * surface and for stores that keep it while they migrate.
  */
 export interface RouteRefreshBrokerFamilyStore {
   listFamily(familyHash: string): Promise<RouteRefreshBrokerRecord[]>;
   revokeFamily(familyHash: string): Promise<RouteRefreshBrokerRecord[]>;
+}
+
+/** Family-state status values of the transactional family capability. */
+export const BROKER_FAMILY_STATUS_ACTIVE = "active";
+export const BROKER_FAMILY_STATUS_REVOKED = "revoked";
+
+/** The store-internal family-state record behind one refresh family. */
+export interface RouteRefreshFamilyState {
+  familyHash: string;
+  status: string;
+  version: number;
+  createdAt: Date;
+  revokedAt?: Date;
+}
+
+/**
+ * One atomic rotation request: the presented handle is still locked by
+ * `lockOwner` at `expectedVersion`, its family is active, and `successor` does
+ * not exist. The store creates the successor, checks the family/generation and
+ * identity bindings, writes the grace response onto the presented record,
+ * clears the lock, and returns the stored successor.
+ */
+export interface RouteRefreshFamilyRotation {
+  presentedHandleHash: string;
+  lockOwner: string;
+  expectedVersion: number;
+  successor: RouteRefreshBrokerRecord;
+  graceRefreshResponse: string;
+  graceExpiresAt: Date;
+}
+
+/**
+ * The mandatory transactional family capability of a broker store used by the
+ * framework-owned front channel. It extends the enumeration/revocation pair with
+ * atomic root creation and atomic rotation; every Get, AcquireLock, and
+ * RotateFamily of a family-marked handle honors the family tombstone.
+ */
+export interface RouteRefreshBrokerTransactionalFamilyStore extends RouteRefreshBrokerFamilyStore {
+  createFamily(
+    root: RouteRefreshBrokerRecord,
+  ): Promise<RouteRefreshBrokerRecord>;
+  rotateFamily(
+    rotation: RouteRefreshFamilyRotation,
+  ): Promise<RouteRefreshBrokerRecord>;
 }
 
 /**
@@ -311,6 +356,58 @@ export class BrokerExpiredError extends Error {
   constructor(message = "route refresh broker record expired") {
     super(message);
     this.name = "BrokerExpiredError";
+  }
+}
+
+/** The broker store lacks the transactional family capability. */
+export class BrokerFamilyCapabilityMissingError extends Error {
+  constructor(
+    message = "route refresh broker store lacks the transactional family capability",
+  ) {
+    super(message);
+    this.name = "BrokerFamilyCapabilityMissingError";
+  }
+}
+
+/** CreateFamily was called for a family ID that already exists. */
+export class BrokerFamilyExistsError extends Error {
+  constructor(message = "route refresh family already exists") {
+    super(message);
+    this.name = "BrokerFamilyExistsError";
+  }
+}
+
+/** A family-marked record's required family state is missing or corrupt. */
+export class BrokerFamilyStateUnavailableError extends Error {
+  constructor(message = "route refresh family state is missing or corrupt") {
+    super(message);
+    this.name = "BrokerFamilyStateUnavailableError";
+  }
+}
+
+/** A root, successor, or presented record fails its family/generation binding. */
+export class BrokerFamilyMismatchError extends Error {
+  constructor(message = "route refresh family or generation binding mismatch") {
+    super(message);
+    this.name = "BrokerFamilyMismatchError";
+  }
+}
+
+/** A rotation successor handle is already stored. */
+export class BrokerSuccessorExistsError extends Error {
+  constructor(message = "route refresh successor already exists") {
+    super(message);
+    this.name = "BrokerSuccessorExistsError";
+  }
+}
+
+/** A family-less record was presented for ordinary rotation. */
+export class BrokerLegacyLineageUnsupportedError extends Error {
+  constructor(
+    message = "route refresh legacy lineage is unsupported for ordinary rotation",
+  ) {
+    super(message);
+    this.name = "BrokerLegacyLineageUnsupportedError";
   }
 }
 
@@ -512,11 +609,12 @@ export class MemoryRouteRefreshBrokerStore
   implements
     RouteRefreshBrokerStore,
     RouteRefreshBrokerSeeder,
-    RouteRefreshBrokerFamilyStore,
+    RouteRefreshBrokerTransactionalFamilyStore,
     RouteRefreshBrokerHandleTTLReporter
 {
   private readonly records = new Map<string, RouteRefreshBrokerRecord>();
   private readonly storedAt = new Map<string, number>();
+  private readonly families = new Map<string, RouteRefreshFamilyState>();
   private readonly now: () => Date;
   private readonly lockTtlMs: number;
   private readonly ttlMs: number;
@@ -559,6 +657,8 @@ export class MemoryRouteRefreshBrokerStore
       this.discard(handleHash);
       return Promise.reject(new BrokerExpiredError());
     }
+    const familyError = this.familyStateError(record);
+    if (familyError !== null) return Promise.reject(familyError);
     return Promise.resolve(structuredClone(record));
   }
 
@@ -582,6 +682,8 @@ export class MemoryRouteRefreshBrokerStore
       this.discard(handleHash);
       return Promise.reject(new BrokerExpiredError());
     }
+    const familyError = this.familyStateError(record);
+    if (familyError !== null) return Promise.reject(familyError);
     if (record.status === "revoked") {
       return Promise.reject(new BrokerRevokedError());
     }
@@ -622,6 +724,8 @@ export class MemoryRouteRefreshBrokerStore
       this.discard(record.handleHash);
       return Promise.reject(new BrokerExpiredError());
     }
+    const familyError = this.familyStateError(current);
+    if (familyError !== null) return Promise.reject(familyError);
     if (current.status === "revoked") {
       return Promise.reject(new BrokerRevokedError());
     }
@@ -670,6 +774,140 @@ export class MemoryRouteRefreshBrokerStore
   }
 
   /**
+   * Atomically creates an active family-state record and its generation-1 root
+   * record. A pre-existing family ID, active or revoked, is never overwritten or
+   * reactivated, and an existing root handle is never replaced.
+   */
+  createFamily(
+    root: RouteRefreshBrokerRecord,
+  ): Promise<RouteRefreshBrokerRecord> {
+    if (!root.handleHash || !root.familyHash) {
+      return Promise.reject(
+        new Error("store: family root needs a handle and family hash"),
+      );
+    }
+    if (
+      root.familyHash !== root.handleHash ||
+      (root.chainGeneration ?? 0) !== 1
+    ) {
+      return Promise.reject(new BrokerFamilyMismatchError());
+    }
+    if (root.status !== "issued" && root.status !== "active") {
+      return Promise.reject(new BrokerFamilyMismatchError());
+    }
+    if (this.families.has(root.familyHash)) {
+      return Promise.reject(new BrokerFamilyExistsError());
+    }
+    if (this.records.has(root.handleHash)) {
+      return Promise.reject(new BrokerSuccessorExistsError());
+    }
+    const at = this.now();
+    const stored: RouteRefreshBrokerRecord = {
+      ...structuredClone(root),
+      status: root.status,
+      version: 1,
+    };
+    this.families.set(root.familyHash, {
+      familyHash: root.familyHash,
+      status: BROKER_FAMILY_STATUS_ACTIVE,
+      version: 1,
+      createdAt: at,
+    });
+    this.records.set(stored.handleHash, stored);
+    this.storedAt.set(stored.handleHash, at.getTime());
+    return Promise.resolve(structuredClone(stored));
+  }
+
+  /**
+   * Atomically rotates one family handle: lock owner, expected version, active
+   * family, matching family/generation/identity, and successor uniqueness are
+   * checked before the successor is created and the presented record updated.
+   */
+  rotateFamily(
+    rotation: RouteRefreshFamilyRotation,
+  ): Promise<RouteRefreshBrokerRecord> {
+    if (
+      !rotation.presentedHandleHash ||
+      !rotation.successor ||
+      !rotation.successor.handleHash
+    ) {
+      return Promise.reject(
+        new Error("store: rotation needs a presented handle and successor"),
+      );
+    }
+    if (!rotation.lockOwner) return Promise.reject(new BrokerLockedError());
+    const presented = this.records.get(rotation.presentedHandleHash);
+    if (!presented) return Promise.reject(new BrokerNotFoundError());
+    if (this.expired(rotation.presentedHandleHash)) {
+      this.discard(rotation.presentedHandleHash);
+      return Promise.reject(new BrokerExpiredError());
+    }
+    if (!presented.familyHash) {
+      return Promise.reject(new BrokerLegacyLineageUnsupportedError());
+    }
+    const familyError = this.familyStateError(presented);
+    if (familyError !== null) return Promise.reject(familyError);
+    if (presented.status === "revoked") {
+      return Promise.reject(new BrokerRevokedError());
+    }
+    const at = this.now().getTime();
+    const lockExpiresAt = expiryMs(presented.refreshLockExpiresAt);
+    if (
+      !presented.refreshLockOwner ||
+      presented.refreshLockOwner !== rotation.lockOwner ||
+      lockExpiresAt === null ||
+      at >= lockExpiresAt
+    ) {
+      return Promise.reject(new BrokerLockedError());
+    }
+    if (presented.version !== rotation.expectedVersion) {
+      return Promise.reject(new BrokerVersionConflictError());
+    }
+    const successor = rotation.successor;
+    if (successor.handleHash === presented.handleHash) {
+      return Promise.reject(new BrokerSuccessorExistsError());
+    }
+    if (
+      successor.familyHash !== presented.familyHash ||
+      (successor.chainGeneration ?? 0) !==
+        (presented.chainGeneration ?? 0) + 1 ||
+      !sameBrokerIdentity(presented, successor)
+    ) {
+      return Promise.reject(new BrokerFamilyMismatchError());
+    }
+    if (this.records.has(successor.handleHash)) {
+      return Promise.reject(new BrokerSuccessorExistsError());
+    }
+    const storedSuccessor: RouteRefreshBrokerRecord = {
+      ...structuredClone(successor),
+      status: successor.status,
+      version: 1,
+    };
+    delete storedSuccessor.refreshLockOwner;
+    delete storedSuccessor.refreshLockExpiresAt;
+    if (storedSuccessor.status !== "issued") {
+      return Promise.reject(new BrokerFamilyMismatchError());
+    }
+    const completed: RouteRefreshBrokerRecord = {
+      ...structuredClone(presented),
+      encryptedGraceRefreshResponse: rotation.graceRefreshResponse,
+      graceExpiresAt: rotation.graceExpiresAt,
+      status: "active",
+      version: presented.version + 1,
+    };
+    delete completed.refreshLockOwner;
+    delete completed.refreshLockExpiresAt;
+    const presentedStoredAt = this.storedAt.get(presented.handleHash);
+    this.records.set(storedSuccessor.handleHash, storedSuccessor);
+    this.storedAt.set(storedSuccessor.handleHash, at);
+    if (presentedStoredAt !== undefined) {
+      this.storedAt.set(presented.handleHash, presentedStoredAt);
+    }
+    this.records.set(presented.handleHash, completed);
+    return Promise.resolve(structuredClone(storedSuccessor));
+  }
+
+  /**
    * Lists every live record of one refresh family. Aged-out records are purged
    * as they are observed and are not listed; a blank family hash is answered
    * with an empty list, because no record can belong to no family.
@@ -690,13 +928,29 @@ export class MemoryRouteRefreshBrokerStore
   }
 
   /**
-   * Revokes every live record of one refresh family and returns the records it
-   * handled. Revocation is idempotent, so already-revoked members are returned
-   * unchanged rather than reported as errors, and a blank family hash revokes
-   * nothing.
+   * Atomically writes the family revocation tombstone and revokes every live
+   * member it handles. The tombstone is terminal and authoritative: every get,
+   * acquireLock, and rotateFamily of a family-marked handle honors it. A family
+   * that never existed is an idempotent no-op; a family with live members but no
+   * family state is a partially backfilled or corrupt lineage and fails closed.
    */
   revokeFamily(familyHash: string): Promise<RouteRefreshBrokerRecord[]> {
     if (String(familyHash ?? "").trim() === "") return Promise.resolve([]);
+    const state = this.families.get(familyHash);
+    if (!state) {
+      for (const [handleHash, record] of this.records) {
+        if (this.expired(handleHash)) continue;
+        if (record.familyHash === familyHash) {
+          return Promise.reject(new BrokerFamilyStateUnavailableError());
+        }
+      }
+      return Promise.resolve([]);
+    }
+    if (state.status !== BROKER_FAMILY_STATUS_REVOKED) {
+      state.status = BROKER_FAMILY_STATUS_REVOKED;
+      state.revokedAt = this.now();
+      state.version += 1;
+    }
     const family: RouteRefreshBrokerRecord[] = [];
     for (const [handleHash, record] of this.records) {
       if (this.expired(handleHash)) {
@@ -713,6 +967,27 @@ export class MemoryRouteRefreshBrokerStore
       family.push(structuredClone(record));
     }
     return Promise.resolve(family);
+  }
+
+  /**
+   * Reports the tombstone/binding error a family-marked record raises, or null
+   * for a family-less record (which the facade refuses separately).
+   */
+  private familyStateError(record: RouteRefreshBrokerRecord): Error | null {
+    if (!record.familyHash) return null;
+    const state = this.families.get(record.familyHash);
+    if (!state || !state.familyHash) {
+      return new BrokerFamilyStateUnavailableError();
+    }
+    if (state.status === BROKER_FAMILY_STATUS_REVOKED) {
+      return new BrokerRevokedError();
+    }
+    const generation = record.chainGeneration ?? 0;
+    if (generation < 1) return new BrokerFamilyMismatchError();
+    if (generation === 1 && record.handleHash !== record.familyHash) {
+      return new BrokerFamilyMismatchError();
+    }
+    return null;
   }
 
   /** Whether the handle's own lifetime, apart from any refresh lock, elapsed. */
@@ -732,6 +1007,26 @@ export class MemoryRouteRefreshBrokerStore
     this.records.delete(handleHash);
     this.storedAt.delete(handleHash);
   }
+}
+
+/** Reports whether a successor preserves every identity field a handle binds. */
+function sameBrokerIdentity(
+  presented: RouteRefreshBrokerRecord,
+  successor: RouteRefreshBrokerRecord,
+): boolean {
+  return (
+    presented.issuer === successor.issuer &&
+    presented.stage === successor.stage &&
+    presented.canonicalResource === successor.canonicalResource &&
+    presented.clientNamespace === successor.clientNamespace &&
+    presented.endpointKind === successor.endpointKind &&
+    presented.partnerId === successor.partnerId &&
+    presented.agentId === successor.agentId &&
+    presented.clientIdHash === successor.clientIdHash &&
+    presented.subjectIdHash === successor.subjectIdHash &&
+    presented.scopeFingerprint === successor.scopeFingerprint &&
+    presented.upstreamClientId === successor.upstreamClientId
+  );
 }
 
 export interface MemoryRateLimitStoreOptions {
@@ -1309,20 +1604,8 @@ async function runStoreCase(
       const otherHash = `${key}-other-family`;
       const familySize = numberParam(params, "family_size", 0);
       const otherSize = numberParam(params, "other_family_size", 0);
-      for (let index = 0; index < familySize; index += 1) {
-        await seedBrokerFamilyRecord(
-          stores,
-          `${key}-member-${index}`,
-          familyHash,
-        );
-      }
-      for (let index = 0; index < otherSize; index += 1) {
-        await seedBrokerFamilyRecord(
-          stores,
-          `${key}-other-${index}`,
-          otherHash,
-        );
-      }
+      await seedFamilyWithRoot(stores, familyHash, familySize, key, "member");
+      await seedFamilyWithRoot(stores, otherHash, otherSize, key, "other");
       const records = await family.listFamily(familyHash);
       const otherRecords = await family.listFamily(otherHash);
       return {
@@ -1336,23 +1619,29 @@ async function runStoreCase(
       const otherHash = `${key}-other-family`;
       const familySize = numberParam(params, "family_size", 0);
       const otherSize = numberParam(params, "other_family_size", 0);
+      await seedFamilyWithRoot(stores, familyHash, familySize, key, "member");
+      await seedFamilyWithRoot(stores, otherHash, otherSize, key, "other");
       const familyKeys: string[] = [];
       const otherKeys: string[] = [];
       for (let index = 0; index < familySize; index += 1) {
-        const handleHash = `${key}-member-${index}`;
-        await seedBrokerFamilyRecord(stores, handleHash, familyHash);
-        familyKeys.push(handleHash);
+        familyKeys.push(index === 0 ? familyHash : `${key}-member-${index}`);
       }
       for (let index = 0; index < otherSize; index += 1) {
-        const handleHash = `${key}-other-${index}`;
-        await seedBrokerFamilyRecord(stores, handleHash, otherHash);
-        otherKeys.push(handleHash);
+        otherKeys.push(index === 0 ? otherHash : `${key}-other-${index}`);
       }
       const revoked = await family.revokeFamily(familyHash);
       const familyStatuses: string[] = [];
       for (const handleHash of familyKeys) {
-        const record = await stores.routeRefreshBroker.get(handleHash);
-        familyStatuses.push(record?.status ?? "not_found");
+        try {
+          const record = await stores.routeRefreshBroker.get(handleHash);
+          familyStatuses.push(record?.status ?? "not_found");
+        } catch (err) {
+          if (err instanceof BrokerRevokedError) {
+            familyStatuses.push("revoked");
+            continue;
+          }
+          throw err;
+        }
       }
       const otherStatuses: string[] = [];
       for (const handleHash of otherKeys) {
@@ -1409,10 +1698,16 @@ async function runStoreCase(
         revoke_again_version_delta: v2 - v1,
       };
     }
-    default:
+    default: {
+      if (testCase.scenario.startsWith("family_")) {
+        const { runFamilyConformanceCase } =
+          await import("./family-conformance.js");
+        return runFamilyConformanceCase(stores, testCase, clock);
+      }
       throw new Error(
         `store conformance case ${testCase.id} has an unknown scenario ${testCase.scenario}`,
       );
+    }
   }
 }
 
@@ -1477,10 +1772,46 @@ async function seedBrokerFamilyRecord(
     stores,
     brokerRecord(handleHash, {
       status: "active",
+      chainGeneration: 2,
+      familyHash,
+    }),
+  );
+}
+
+/**
+ * Creates a family root through the transactional capability and backfills the
+ * remaining members through the store's create path, so the family rows start
+ * from a lineage the new contract can rotate and revoke.
+ */
+async function seedFamilyWithRoot(
+  stores: Stores,
+  familyHash: string,
+  size: number,
+  key: string,
+  prefix: string,
+): Promise<void> {
+  if (size <= 0) return;
+  const family =
+    stores.routeRefreshBroker as Partial<RouteRefreshBrokerTransactionalFamilyStore>;
+  if (typeof family.createFamily !== "function") {
+    throw new Error(
+      "store conformance: broker lacks the transactional family capability",
+    );
+  }
+  await family.createFamily(
+    brokerRecord(familyHash, {
+      status: "active",
       chainGeneration: 1,
       familyHash,
     }),
   );
+  for (let index = 1; index < size; index += 1) {
+    await seedBrokerFamilyRecord(
+      stores,
+      `${key}-${prefix}-${index}`,
+      familyHash,
+    );
+  }
 }
 
 async function clientUpdateOutcome(

@@ -5,7 +5,7 @@ description: The Python implementation of the AppTheory contract — typed, asyn
 
 # Python Runtime
 
-The Python runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. It executes the 309 generic runner fixtures in the [322-vector corpus](../reference/contract-fixtures.md), including the SP09 MCP tier, SP12 OAuth tier, and SP13 objectstore tier; the Python suite also loads the shared MCP route-algebra expectations table and the M2 auth-facade acceptance tables and the two M3a provider/store conformance tables (JWKS validator, OIDC discovery bootstrap, route challenge, provider conformance, and store conformance), and the multi-window limiter cancellation table. The remaining three CDK-facing facade tables (facade route-inventory, route-model, and transport-posture) are outside Python's scope. <!-- apptheory-fixture-count: 322 -->
+The Python runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. It executes the 309 generic runner fixtures in the [325-vector corpus](../reference/contract-fixtures.md), including the SP09 MCP tier, SP12 OAuth tier, and SP13 objectstore tier; the Python suite also loads the shared MCP route-algebra expectations table and the M2 auth-facade acceptance tables, the security-M1 middleware-order table, and the two M3a provider/store conformance tables (JWKS validator, OIDC discovery bootstrap, route challenge, provider conformance, and store conformance), and the multi-window limiter cancellation table. The remaining three CDK-facing facade tables (facade route-inventory, route-model, and transport-posture) are outside Python's scope. <!-- apptheory-fixture-count: 325 -->
 
 ## Install
 
@@ -94,9 +94,10 @@ app.handle("GET", "/users/{id}", handler)
 app.get("/users/{id}", handler)
 ```
 
-Normal fluent registration fails closed on invalid patterns, duplicates, and `None` handlers. `handle_strict` remains as
-a deprecated compatibility wrapper for callers that still need the old helper shape; it now raises `AppTheoryError`
-rather than `ValueError` for registration failures.
+Normal fluent registration fails closed on invalid patterns, duplicates, and `None` handlers: it raises
+`AppTheoryError` during registration instead of producing a dead route. `handle_strict` is a supported
+error-returning registration entry point for callers that register conditionally and want to catch, log, and
+continue; it raises the same canonical `AppTheoryError` rather than the older `ValueError`.
 
 
 ## Object-store dependency posture
@@ -124,7 +125,7 @@ Applies to HTTP error serialization only.
 
 ## What's verified
 
-The Python runner passes all 309 generic fixtures in the 322-vector corpus on every commit. <!-- apptheory-fixture-count: 322 --> It includes the SP09 MCP tier, SP12 OAuth tier, and SP13 objectstore tier; the Python suite also loads the shared MCP route-algebra expectations table and the M2 auth-facade acceptance tables and the two M3a provider/store conformance tables (JWKS validator, OIDC discovery bootstrap, route challenge, provider conformance, and store conformance) plus the multi-window limiter cancellation table, while the facade route-inventory, route-model, and transport-posture tables are consumed by Go and CDK-TS. Tests live under `py/tests/` and are exercised by `./scripts/verify-python-tests.sh` and `make rubric`.
+The Python runner passes all 309 generic fixtures in the 325-vector corpus on every commit. <!-- apptheory-fixture-count: 325 --> It includes the SP09 MCP tier, SP12 OAuth tier, and SP13 objectstore tier; the Python suite also loads the shared MCP route-algebra expectations table and the M2 auth-facade acceptance tables, the security-M1 middleware-order table, and the two M3a provider/store conformance tables (JWKS validator, OIDC discovery bootstrap, route challenge, provider conformance, and store conformance) plus the multi-window limiter cancellation table, while the facade route-inventory, route-model, and transport-posture tables are consumed by Go and CDK-TS. Tests live under `py/tests/` and are exercised by `./scripts/verify-python-tests.sh` and `make rubric`.
 
 ## Next reads
 

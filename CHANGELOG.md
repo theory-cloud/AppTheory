@@ -1,5 +1,27 @@
 # Changelog
 
+## [6.4.0](https://github.com/theory-cloud/AppTheory/compare/v6.3.1...v6.4.0) (2026-10-27)
+
+
+### Features
+
+* **mcp:** allow declining the optional common stream with 405 ([343a404](https://github.com/theory-cloud/AppTheory/commit/343a40444e0ee63985f2a1c88e1203954c1d3817))
+* **mcp:** opt-in 405 for the optional common stream (Go/TS/Python parity) ([9923105](https://github.com/theory-cloud/AppTheory/commit/992310534aacde143e1d44dae5b81c9645361b14))
+
+
+### Bug Fixes
+
+* **deps:** align the Python build pin at setuptools 84.2.1 ([ea15888](https://github.com/theory-cloud/AppTheory/commit/ea1588898978b0bb81f4b6ce5e49b5a68d73284d))
+* **deps:** bump actions/setup-python to v7.1.0 and re-anchor the rubric guard ([aa3da5b](https://github.com/theory-cloud/AppTheory/commit/aa3da5b1913c2bc3dbad6c2a38b6d5aece2a8772))
+* **deps:** bump GitHub Actions, Ruff, and setuptools pins ([e912d6c](https://github.com/theory-cloud/AppTheory/commit/e912d6cb91f6d005050faf218ca4ce061c24c0a9))
+* **deps:** bump Go AWS SDK group and refresh compiled assets ([0726c2a](https://github.com/theory-cloud/AppTheory/commit/0726c2a3ac2a0468efb545a40cbc66e66e588ebd))
+* **deps:** bump ruby/setup-ruby to v1.334.0 for the Pages build ([b4fc204](https://github.com/theory-cloud/AppTheory/commit/b4fc204230bfe56ec4354db0befad2880ed8d873))
+* **deps:** bump ruff to 0.17.2 ([5d3af44](https://github.com/theory-cloud/AppTheory/commit/5d3af44296514105acc8fd93a15eb512066e05ea))
+* **deps:** bump the TypeScript runtime and lint graph and re-anchor the brace validator ([86a1633](https://github.com/theory-cloud/AppTheory/commit/86a1633b11e47af9da200e225a0170b96ed8ca36))
+* **deps:** bump TypeScript lint toolchain and re-anchor brace graph ([fa994c9](https://github.com/theory-cloud/AppTheory/commit/fa994c9b7080c488ae535d592a5859bdaf73e2f1))
+* **deps:** consolidate Dependabot and security updates (2026-10-26) ([fe3362f](https://github.com/theory-cloud/AppTheory/commit/fe3362f0d1868419b418c96d94ba7d47c1ebfc11))
+* **deps:** consolidate post-merge Dependabot updates ([#1194](https://github.com/theory-cloud/AppTheory/issues/1194) [#1195](https://github.com/theory-cloud/AppTheory/issues/1195) [#1196](https://github.com/theory-cloud/AppTheory/issues/1196)) ([648c4e3](https://github.com/theory-cloud/AppTheory/commit/648c4e3a96c01d3b8afe6e075ec341161badf542))
+
 ## [6.4.0-rc](https://github.com/theory-cloud/AppTheory/compare/v6.3.1...v6.4.0-rc) (2026-10-27)
 
 

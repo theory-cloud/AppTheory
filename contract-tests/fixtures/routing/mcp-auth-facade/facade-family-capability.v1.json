@@ -1,0 +1,18 @@
+{
+  "contract": {
+    "id": "mcp.auth.facade.transactional_family_capability",
+    "kind": "conformance",
+    "status": "M2",
+    "notes": "Registration refusal rows for the mandatory transactional refresh-family capability. The framework-owned front channel may be declared only when the route refresh broker implements CreateFamily, RotateFamily, ListFamily, and RevokeFamily in addition to the five store SPIs. A base-store-only bundle, a bundle with only the old optional ListFamily/RevokeFamily pair, and any bundle missing one transactional method are refused before any route is mounted and before a root or successor can be minted. Each runtime constructs the named variant from its own reference store and applies its real registration path; a refusal must name the missing capability or method, and a complete bundle must register. The old optional family pair remains exported for incident tooling but is not sufficient for the front channel."
+  },
+  "required_methods": ["create_family", "rotate_family", "list_family", "revoke_family"],
+  "cases": [
+    { "id": "capability.base_stores_only_refused", "variant": "base_stores_only", "expect": "refused", "missing": "transactional_family" },
+    { "id": "capability.legacy_family_only_refused", "variant": "legacy_family_only", "expect": "refused", "missing": "transactional_family" },
+    { "id": "capability.missing_create_family_refused", "variant": "missing_create_family", "expect": "refused", "missing": "create_family" },
+    { "id": "capability.missing_rotate_family_refused", "variant": "missing_rotate_family", "expect": "refused", "missing": "rotate_family" },
+    { "id": "capability.missing_list_family_refused", "variant": "missing_list_family", "expect": "refused", "missing": "list_family" },
+    { "id": "capability.missing_revoke_family_refused", "variant": "missing_revoke_family", "expect": "refused", "missing": "revoke_family" },
+    { "id": "capability.complete_accepted", "variant": "complete", "expect": "accepted" }
+  ]
+}

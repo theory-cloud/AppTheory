@@ -20,6 +20,10 @@
  * value as the canonical `WWW-Authenticate` header when the origin did not emit
  * one, then deletes every consumed source header.
  *
+ * The generated handler is `async`: Lambda@Edge uses the returned promise as the
+ * invocation result, whereas a plain synchronous return value is discarded.
+ * Tests must await that promise instead of reading a detached early value.
+ *
  * This module is internal to the CDK package and intentionally NOT exported from
  * `index.ts`, so it never appears in the jsii assembly or generated bindings.
  *
