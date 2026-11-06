@@ -114,11 +114,11 @@ func TestHello(t *testing.T) {
 
 ## Route registration
 
-Fluent route registration fails closed: invalid patterns, duplicate method/pattern pairs, and nil handlers panic during registration instead of silently producing a dead route. Strict helpers remain deprecated compatibility wrappers when a caller still needs an error-returning shape, and their errors now use canonical `AppTheoryError` messages where applicable:
+Fluent route registration fails closed: invalid patterns, duplicate method/pattern pairs, and nil handlers panic during registration instead of silently producing a dead route. The `*Strict` helpers are the supported error-returning registration API for callers that register conditionally and want to log the failure and continue; they return the same canonical `AppTheoryError` the fluent path panics with:
 
 ```go
 if _, err := app.GetStrict("/users/{id}", h); err != nil {
-    t.Fatal(err)
+    log.Printf("skipping route: %v", err)
 }
 ```
 

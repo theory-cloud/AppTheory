@@ -39,7 +39,7 @@ export interface Match<THandler> {
 /** Fail-closed HTTP route matcher used by the AppTheory runtime. */
 export declare class Router<THandler> {
     private readonly _routes;
-    /** Registers a route through the deprecated strict compatibility path. */
+    /** Registers a route through the supported error-returning registration path. */
     addStrict(method: string, pattern: string, handler: THandler, options?: RouteOptions): void;
     /** Registers one posture-bearing secure route. */
     addSecure(method: string, pattern: string, handler: THandler, metadata: SecureRouteMetadata): void;

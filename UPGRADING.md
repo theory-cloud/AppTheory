@@ -17,6 +17,15 @@ or deprecation posture must add or update a section here before the release is p
 
 ### Unreleased
 
+- **The `*Strict` route registrars are supported again; they are no longer deprecated.** Go `HandleStrict` /
+  `GetStrict` / `PostStrict` / `PutStrict` / `PatchStrict` / `DeleteStrict` / `OptionsStrict`, TypeScript
+  `handleStrict`, and Python `handle_strict` are the supported error-returning registration API for callers that
+  register conditionally and want to log a rejected route and continue. The posture, not the behavior, changed:
+  fluent registration still fails closed with a startup panic (Go) or a thrown/raised `AppTheoryError`
+  (TypeScript/Python), and the Strict variants still report the same canonical `AppTheoryError`. No removal
+  horizon, no signature change, and no runtime behavior change. Closes #1233; see the rewritten
+  [fail-closed route registration](#fail-closed-route-registration) table.
+
 - **CDK MCP front door: `DISABLED` and `LOCKED` are enforced, not aliases.** This is an intentional
   **synthesis-breaking security correction** for configurations that only asserted a posture.
   - Owned `originReachability: DISABLED` now requires an effective ordinary `ownedApi.domain` (or the deprecated
@@ -1391,17 +1400,19 @@ Use the normal registration path for new code:
 | TypeScript | `app.get(...)`, `app.post(...)`, `app.handle(...)`, and other fluent methods |
 | Python | `app.get(...)`, `app.post(...)`, `app.handle(...)`, and other fluent methods |
 
-Strict helpers are deprecated compatibility wrappers for callers that already depend on their error-returning/throwing shape.
-Their failure details now share the canonical AppTheory error path: Python `add_strict` / `handle_strict` raise
-`AppTheoryError` instead of `ValueError`, and Go `GetStrict` / `HandleStrict` / related helpers return canonical
-`AppTheoryError` messages where applicable rather than older segment-specific strings. Update tests that asserted the
-legacy exception class or exact message text:
+The `*Strict` helpers are a **supported** registration API, not a deprecated compatibility shim. Register through them
+when route construction is conditional — feature flags, tenant-specific route tables, migration shims — and you want to
+log a rejected route and continue instead of letting the fluent path's fail-closed startup panic/throw/raise end
+initialization. They carry no removal horizon. Their failure details use the canonical AppTheory error path: Python
+`add_strict` / `handle_strict` raise `AppTheoryError` instead of `ValueError`, and Go `GetStrict` / `HandleStrict` /
+related helpers return canonical `AppTheoryError` values rather than older segment-specific strings. Update tests that
+asserted the legacy exception class or exact message text:
 
-| Runtime | Deprecated compatibility helper | Replacement | Horizon |
+| Runtime | Supported error-returning helper | Fluent counterpart | Horizon |
 | --- | --- | --- | --- |
-| Go | `GetStrict`, `HandleStrict`, and related `*Strict` helpers | Normal fluent registration; catch startup panics in tests if you need setup-error assertions | Supported for v1.x; earliest removal is v2.0. |
-| TypeScript | `handleStrict` | `handle` / `get` / `post` / normal fluent registration | Supported for v1.x; earliest removal is v2.0. |
-| Python | `handle_strict` | `handle` / `get` / `post` / normal fluent registration | Supported for v1.x; earliest removal is v2.0. |
+| Go | `GetStrict`, `HandleStrict`, and related `*Strict` helpers, returning `(*App, error)` | `Get` / `Handle` and related fluent methods, which panic on the same error | Supported; no removal planned. |
+| TypeScript | `handleStrict`, which throws the canonical `AppTheoryError` | `handle` / `get` / `post`, which throw on the same error | Supported; no removal planned. |
+| Python | `handle_strict`, which raises the canonical `AppTheoryError` | `handle` / `get` / `post`, which raise on the same error | Supported; no removal planned. |
 
 When upgrading, run application startup tests that construct every route and include duplicate-route, invalid-pattern,
 and nil/undefined/None-handler cases if your service builds route tables programmatically. A route typo that was

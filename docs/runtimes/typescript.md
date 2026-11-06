@@ -94,8 +94,9 @@ app.handle("GET", "/users/{id}", handler);
 app.get("/users/{id}", handler);
 ```
 
-Normal fluent registration fails closed on invalid patterns, duplicates, and undefined handlers. `handleStrict` remains
-as a deprecated compatibility wrapper for callers that still need the old helper shape.
+Normal fluent registration fails closed on invalid patterns, duplicates, and undefined handlers. `handleStrict` is a
+supported error-returning registration entry point for callers that register conditionally and want to catch, log, and
+continue; it throws the same canonical `AppTheoryError`.
 
 ## HTTP error format
 

@@ -68,7 +68,7 @@ export interface Match<THandler> {
 export class Router<THandler> {
   private readonly _routes: Array<Route<THandler>> = [];
 
-  /** Registers a route through the deprecated strict compatibility path. */
+  /** Registers a route through the supported error-returning registration path. */
   addStrict(
     method: string,
     pattern: string,

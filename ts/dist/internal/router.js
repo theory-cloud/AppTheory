@@ -3,7 +3,7 @@ import { normalizeMethod, normalizePath, splitPath } from "./http.js";
 /** Fail-closed HTTP route matcher used by the AppTheory runtime. */
 export class Router {
     _routes = [];
-    /** Registers a route through the deprecated strict compatibility path. */
+    /** Registers a route through the supported error-returning registration path. */
     addStrict(method, pattern, handler, options = {}) {
         if (handler === null || handler === undefined) {
             throw routeRegistrationError("route handler is nil");

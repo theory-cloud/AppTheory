@@ -94,9 +94,10 @@ app.handle("GET", "/users/{id}", handler)
 app.get("/users/{id}", handler)
 ```
 
-Normal fluent registration fails closed on invalid patterns, duplicates, and `None` handlers. `handle_strict` remains as
-a deprecated compatibility wrapper for callers that still need the old helper shape; it now raises `AppTheoryError`
-rather than `ValueError` for registration failures.
+Normal fluent registration fails closed on invalid patterns, duplicates, and `None` handlers: it raises
+`AppTheoryError` during registration instead of producing a dead route. `handle_strict` is a supported
+error-returning registration entry point for callers that register conditionally and want to catch, log, and
+continue; it raises the same canonical `AppTheoryError` rather than the older `ValueError`.
 
 
 ## Object-store dependency posture
