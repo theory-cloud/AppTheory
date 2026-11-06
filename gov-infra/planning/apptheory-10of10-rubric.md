@@ -73,15 +73,15 @@ Enforcement rule (anti-drift):
 
 **10/10 definition:** SEC-1 through SEC-4 pass.
 
-### SEC-2 dependency-audit exceptions: three live operator-ruled exceptions
+### SEC-2 dependency-audit exceptions: two live operator-ruled exceptions
 
-SEC-2 grants **no dependency-audit exceptions** beyond the three live ones below (two AWS-published chains in the
-CDK lockfile class, one dev-only TypeScript lint-tool node). Each is an exact match (lockfile, package, version,
-node path / dependency chain, and advisory ids) and is **self-expiring and fail-closed**: it carries a hard
-`recheck_by` deadline, a removal probe runs on every invocation so a stale exception cannot survive by never
-matching again (registry-backed for the jsii chain and for the TypeScript lint-tool node, lockfile-local for the
-bundled path), and when a removal condition is met the checker fails with a clear message. Any *other* finding, in
-any lockfile, still fails the gate. Nothing beyond these three may be added without a new operator ruling.
+SEC-2 grants **no dependency-audit exceptions** beyond the two live ones below (both AWS-published chains in the
+CDK lockfile class). Each is an exact match (lockfile, package, version, node path / dependency chain, and advisory
+ids) and is **self-expiring and fail-closed**: it carries a hard `recheck_by` deadline, a removal probe runs on every
+invocation so a stale exception cannot survive by never matching again (registry-backed for the jsii chain,
+lockfile-local for the bundled path), and when a removal condition is met the checker fails with a clear message. Any
+*other* finding, in any lockfile, still fails the gate. Nothing beyond these two may be added without a new operator
+ruling.
 
 Operator rulings, quoted verbatim:
 
@@ -92,6 +92,7 @@ Operator rulings, quoted verbatim:
 
 > 2026-11-01: "Dev-only exception" - override minimatch to 11.0.1 everywhere except eslint-plugin-import-x,
 > keep import-x on 10.2.6, and record the single remaining 10.2.6 node path as a reviewed exception.
+> (Retired with E4 on 2026-11-06; kept here as the ruling that created it.)
 
 **E1 (retired 2026-10-10) - brace-expansion 5.0.9 bundled inside aws-cdk-lib.** Findings
 `GHSA-q2hr-2g5m-vwhr`, `GHSA-qhr7-859c-m2p7`, and `GHSA-6j4f-fj2g-mc7p` on
@@ -142,22 +143,25 @@ lockfile is missing, and `check-visible-aws-cdk-finding.mjs --self-test` perform
 against `AWS_CDK_LOCKFILES`. A new example lockfile therefore cannot be added without either being
 scanned or failing SEC-2.
 
-**E4 - minimatch 10.2.6 kept for eslint-plugin-import-x (TypeScript lint tooling, dev-only).** Finding
-`GHSA-g3hv-75wg-m249` (moderate, `CVE-2026-118764`) on `minimatch@10.2.6` at
+**E4 (retired 2026-11-06) - minimatch 10.2.6 kept for eslint-plugin-import-x (TypeScript lint tooling, dev-only).**
+Finding `GHSA-g3hv-75wg-m249` (moderate, `CVE-2026-118764`) on `minimatch@10.2.6` at
 `node_modules/eslint-plugin-import-x/node_modules/minimatch`, resolved only by the
 `eslint-plugin-import-x` lint-plugin edge. Every other minimatch consumer in `ts/package-lock.json` -
-`eslint`, `@eslint/config-array`, and `@typescript-eslint/typescript-estree` - is overridden to the
-patched `minimatch@11.0.1` at the single hoisted root node, so the 10.2.6 node has exactly one parent; the
-graph anchor pins both minimatch nodes and the exact parent set, and any parent, path, version, or
-override drift fails closed. The blocked upgrade: `minimatch 11` removed the
-`makeRe` export that `eslint-plugin-import-x` 4.17.1 imports at module load, so loading the plugin under a
-minimatch 11 override throws and ESLint cannot load its config; 4.17.1 is the latest published release and
-still declares minimatch `^9.0.3 || ^10.1.2`. **Dev-only:** the node is `dev: true`, the root package's
-runtime dependencies do not mention minimatch, `npm ls --omit=dev --all` inside `ts/` reports no minimatch,
-and the published package ships only `dist`, `LICENSE`, `README.md`, and `package.json`. Scope:
-`ts/package-lock.json` only. Owner: AppTheory steward (Factory dependency sweeps). **Removal condition:**
-`eslint-plugin-import-x` publishes a release compatible with `minimatch >= 11.0.1`. **Hard recheck by
-2026-12-01.** Operator ruling: 2026-11-01 (the dev-only exception quoted above).
+`eslint`, `@eslint/config-array`, and `@typescript-eslint/typescript-estree` - was overridden to the
+patched `minimatch@11.0.1`; the graph anchor pinned both minimatch nodes and the exact parent set, and any
+parent, path, version, or override drift failed closed. The blocked upgrade at the time: `minimatch 11`
+removed the `makeRe` export that `eslint-plugin-import-x` 4.17.1 imports at module load, so loading the
+plugin under a minimatch 11 override threw and ESLint could not load its config; 4.17.1 was the latest
+published release and declared minimatch `^9.0.3 || ^10.1.2`. **Dev-only:** the node was `dev: true`, the
+root package's runtime dependencies do not mention minimatch, `npm ls --omit=dev --all` inside `ts/`
+reported no minimatch, and the published package ships only `dist`, `LICENSE`, `README.md`, and
+`package.json`. Scope: `ts/package-lock.json` only. Owner: AppTheory steward (Factory dependency sweeps).
+**Removal condition:** `eslint-plugin-import-x` publishes a release compatible with `minimatch >= 11.0.1`.
+**That condition was met:** on 2026-11-06 the operator adopted `eslint-plugin-import-x` 4.18.0, whose
+published minimatch range is `^9.0.3 || ^10.1.2 || ^11.0.1` and whose `no-internal-modules` rule no longer
+imports `makeRe` (upstream #570). The dev-only override, the exception, its registry-backed removal probe,
+and its recheck deadline were removed; `ts/package-lock.json` now resolves a single `minimatch@11.0.1` for
+every consumer. Operator ruling: 2026-11-01 (the dev-only exception quoted above).
 
 The two AWS exceptions live in the ONE shared list in `scripts/check-visible-aws-cdk-finding.mjs`; the npm
 and OSV scanner paths match findings against that same list, `scripts/verify-cdk-audit.sh` and
@@ -166,13 +170,15 @@ the `exception-applied:` machine marker, and the checker's `--self-test` battery
 cases (a different advisory id, version, node path, or lockfile, an expired `recheck_by`, or a met
 removal condition) still fail closed.
 
-The dev-only TypeScript exception lives in `scripts/check-visible-ts-brace-finding.mjs`, which the same
-`osv_scan_lockfile` routes `ts/package-lock.json` to. It matches exactly one package/version/advisory/alias
-shape, runs a lockfile-local and a registry-backed removal probe on every invocation, and its `--self-test`
-battery proves that any other minimatch path, version, advisory, parent, override map, or lockfile still
-fails (65 offline cases). The gate requires the per-kind marker
-(`exception-applied: ts-dev-import-x-minimatch ` for the TypeScript lockfile, the shared AWS marker for the
-CDK lockfiles), so a status-1 scan without that exact marker still fails.
+The former dev-only TypeScript exception was removed with E4 on 2026-11-06.
+`scripts/check-visible-ts-brace-finding.mjs`, which the same `osv_scan_lockfile` routes
+`ts/package-lock.json` to, now enforces the exception-free graph: exactly one minimatch node
+(`11.0.1` at `node_modules/minimatch`), any minimatch below `11.0.1` at any node path failing closed,
+the exact brace-expansion and runner nodes, the exact minimatch parent set, the exact override map, and
+an empty OSV findings set. Its `--self-test` battery proves that a vulnerable copy reintroduced at the
+old `eslint-plugin-import-x` path, any other minimatch path, version, parent, override map, or lockfile,
+and any finding still fail (26 offline cases). The gate requires the shared AWS marker for the CDK
+lockfiles and no marker for the TypeScript lockfile, so a status-1 TypeScript scan fails closed.
 
 This section previously recorded that SEC-2 carried **no** exception. The pattern reused here is the one
 SEC-2's earlier exception established: advisory `GHSA-528h-pc64-c93x` / `CVE-2026-71429` for

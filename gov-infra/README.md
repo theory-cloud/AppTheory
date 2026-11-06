@@ -20,20 +20,18 @@ Notes:
 - `SEC-3` (supply-chain) may materialize Node dependencies with scripts disabled and scan `node_modules` lifecycle hooks,
   plus lightweight scans of `go.mod` and Python dependency files. Use the allowlist only with justification:
   `gov-infra/planning/apptheory-supply-chain-allowlist.txt`.
-- `SEC-2` carries exactly three reviewed exceptions, each self-expiring with a hard `recheck_by 2026-12-01` and an
-  automatic removal probe: two AWS-published chains in the CDK lockfile class - `braces@3.0.3` reached only through
+- `SEC-2` carries exactly two reviewed exceptions, both AWS-published chains in the CDK lockfile class and both
+  self-expiring with a hard `recheck_by 2026-12-01` and an automatic removal probe: `braces@3.0.3` reached only through
   the `jsii-pacmak` dev-toolchain chain in `cdk/` (registry-backed probe; renewed 2026-11-01 from 2026-11-02 because
-  no patched `braces` was published) and `minimatch@10.2.5` bundled inside `aws-cdk-lib` across `cdk/` plus all
-  `examples/cdk/*/` (lockfile-local probe) - and one dev-only TypeScript lint-tool node, `minimatch@10.2.6` kept for
-  `eslint-plugin-import-x` in `ts/`, whose remover is a published import-x release compatible with
-  `minimatch >= 11.0.1` (registry-backed probe, overridden to `11.0.1` everywhere else). Everything else still fails
-  closed, and the exceptions, their operator rulings, and their exact scope are recorded in
-  `gov-infra/planning/apptheory-10of10-rubric.md` SEC-2.
-- The former `ts/` brace-expansion exception stays retired, and the `brace-expansion@5.0.12` path remains
-  exception-free. The 2026-11-01 `minimatch` override replaced the single hoisted `minimatch@10.2.6` path with the
-  reviewed graph (patched `11.0.1` for every consumer except `eslint-plugin-import-x`); the TypeScript checker
-  requires that exact graph, the exact minimatch parent set, and the exact override map, plus an empty findings set
-  outside the one reviewed dev-only advisory; any parent, version, path, override, or finding drift fails closed.
+  no patched `braces` was published) and `minimatch@10.2.6` bundled inside `aws-cdk-lib` across `cdk/` plus all
+  `examples/cdk/*/` (lockfile-local probe). Everything else still fails closed, and the exceptions, their operator
+  rulings, and their exact scope are recorded in `gov-infra/planning/apptheory-10of10-rubric.md` SEC-2.
+- The former `ts/` brace-expansion and dev-only minimatch exceptions stay retired. The 2026-11-06 adoption of
+  `eslint-plugin-import-x` 4.18.0 (whose minimatch range accepts `>= 11.0.1`) removed E4
+  (`ts-dev-import-x-minimatch`): `ts/package.json` now overrides `minimatch` to `11.0.1` for every consumer,
+  including import-x. The TypeScript checker requires that exact graph, the exact minimatch parent set, and the exact
+  override map, and fails on any minimatch below `11.0.1` at any node path or on any OSV finding; there is no
+  TypeScript exception.
 
 ## What’s In Here
 
