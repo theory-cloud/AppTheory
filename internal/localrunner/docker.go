@@ -54,9 +54,9 @@ func (d *Docker) ServerArch(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("read docker server architecture: %s", firstNonEmpty(stderr, stdout, err.Error()))
 	}
 	switch arch := strings.TrimSpace(strings.ToLower(stdout)); arch {
-	case archARM64, "aarch64":
+	case archARM64, archARM64Alias:
 		return archARM64, nil
-	case archAMD64, "x86_64":
+	case archAMD64, archAMD64Alias:
 		return archAMD64, nil
 	default:
 		return "", fmt.Errorf("unsupported docker server architecture %q", arch)
@@ -146,6 +146,20 @@ func ContainerArgv(options ContainerOptions) []string {
 	argv = append(argv, options.Image)
 	argv = append(argv, options.Command...)
 	return argv
+}
+
+// EnsureImage pulls a digest-pinned image when the local daemon does not have
+// it. A digest reference is immutable, so an existing image is already the
+// pinned content.
+func (d *Docker) EnsureImage(ctx context.Context, image string) error {
+	if _, _, err := d.exec(ctx, []string{"docker", "image", "inspect", "--format", "{{.Id}}", image}); err == nil {
+		return nil
+	}
+	stdout, stderr, err := d.exec(ctx, []string{"docker", "pull", image})
+	if err != nil {
+		return fmt.Errorf("pull %s: %s", image, firstNonEmpty(stderr, stdout, err.Error()))
+	}
+	return nil
 }
 
 // StartContainer starts one container and returns its id.
@@ -414,10 +428,45 @@ func (d *Docker) ImageEnv(ctx context.Context, image string) (map[string]string,
 	return values, nil
 }
 
+// ImageID resolves an image reference to the daemon's immutable id. A watch
+// reload records it before a rebuild can move the tag, and a rollback starts
+// the previous container from that id, so the tag's new target cannot leak into
+// the restored container.
+func (d *Docker) ImageID(ctx context.Context, image string) (string, error) {
+	stdout, stderr, err := d.exec(ctx, []string{
+		"docker", "image", "inspect", "--format", "{{.Id}}", image,
+	})
+	if err != nil {
+		return "", fmt.Errorf("inspect image %s: %s", image, firstNonEmpty(stderr, err.Error()))
+	}
+	id := strings.TrimSpace(stdout)
+	if id == "" {
+		return "", fmt.Errorf("inspect image %s: docker returned no id", image)
+	}
+	return id, nil
+}
+
+// TagImage points tag at a source image id (or another tag). A watch rollback
+// uses it to put back the tag a rebuild moved.
+func (d *Docker) TagImage(ctx context.Context, source, tag string) error {
+	stdout, stderr, err := d.exec(ctx, []string{"docker", "tag", source, tag})
+	if err != nil {
+		return fmt.Errorf("tag image %s as %s: %s", source, tag, firstNonEmpty(stderr, stdout, err.Error()))
+	}
+	return nil
+}
+
 // RemoveImage removes an image the run built. A missing image is not an error:
 // cleanup runs after failures too.
 func (d *Docker) RemoveImage(ctx context.Context, tag string) {
 	_, _, _ = d.exec(ctx, []string{"docker", "image", "rm", "-f", tag}) //nolint:errcheck // best-effort cleanup
+}
+
+// RemoveImageIfUnused removes an image by id without forcing. Docker refuses
+// when another tag or a container still references it, so an image shared with
+// a running function survives a watch reload's cleanup.
+func (d *Docker) RemoveImageIfUnused(ctx context.Context, image string) {
+	_, _, _ = d.exec(ctx, []string{"docker", "image", "rm", image}) //nolint:errcheck // the old image is only a cleanup opportunity
 }
 
 // ListImages lists the images carrying one label.

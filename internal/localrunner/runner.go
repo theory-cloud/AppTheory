@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -108,6 +107,17 @@ type Options struct {
 	// response chunk before the result line. The default protocol stays one
 	// result line per event.
 	StreamChunks bool
+	// Watch re-synthesizes the app when its sources change, derives a new Spec
+	// and restarts only the functions whose execution inputs changed. The
+	// listeners and their URLs stay.
+	Watch bool
+	// DataDir keeps backend state across runs. An empty value keeps today's
+	// ephemeral behavior.
+	DataDir string
+	// Seed is a shell command that runs after provisioning and before the run
+	// reports ready. It is how a seed script drives the app through its own
+	// code paths.
+	Seed string
 }
 
 // Runner owns one local run: the derived surface, the Docker network, the
@@ -176,6 +186,27 @@ type Runner struct {
 	// cloudFrontGateways and cloudFrontIDs track each served distribution.
 	cloudFrontGateways map[string]*localcloudfront.Gateway
 	cloudFrontIDs      map[string]string
+	// codeBuild serves the CodeBuild control API and runs builds through the
+	// local agent; codeBuildURL is the loopback endpoint functions receive as
+	// AWS_ENDPOINT_URL_CODEBUILD.
+	codeBuild    *codeBuildService
+	codeBuildURL string
+	// transports and webSocketServers are the live listeners a watch reload
+	// updates in place. The net.Listener and the server stay; only the route
+	// table and the invoker set swap.
+	transports       map[string]*Transport
+	webSocketServers map[string]*WebSocketServer
+	// dataDir is the resolved persistent backend root. Empty means ephemeral.
+	dataDir string
+	// specMu guards the current Spec while a watch reload replaces it.
+	specMu sync.RWMutex
+	// reloadMu serializes a watch reload with the session's data operations, so
+	// a command never observes a half-applied function set.
+	reloadMu sync.RWMutex
+	// watch cancels the file watcher and waits for any in-flight synthesis.
+	watch *watchSupervisor
+	// watchAssembly counts watch syntheses so each gets a fresh directory.
+	watchAssembly int
 }
 
 // NewRunner validates the options and prepares the run. It contacts no Docker
@@ -206,6 +237,9 @@ func NewRunner(options Options) (*Runner, error) {
 		builtImages:        map[string]string{},
 		cloudFrontGateways: map[string]*localcloudfront.Gateway{},
 		cloudFrontIDs:      map[string]string{},
+		transports:         map[string]*Transport{},
+		webSocketServers:   map[string]*WebSocketServer{},
+		dataDir:            options.DataDir,
 		semaphore:          make(chan struct{}, options.MaxConcurrency),
 		clock:              clock,
 		ttl:                newTTLTracker(),
@@ -348,6 +382,8 @@ func (r *Runner) deliverySQSClient() (*sqs.Client, error) {
 
 // normalizeOptions applies defaults and rejects unusable combinations before
 // any synthesis or container work.
+//
+//nolint:gocyclo // one validation per option.
 func normalizeOptions(options Options) (Options, error) {
 	options.Stdout = outputOrDefault(options.Stdout)
 	if options.Handler != nil {
@@ -375,6 +411,16 @@ func normalizeOptions(options Options) (Options, error) {
 			return Options{}, fmt.Errorf("resolve the user cache directory for the run scratch space: %w", cacheErr)
 		}
 		options.ScratchDir = filepath.Join(cache, "apptheory-local")
+	}
+	if options.Watch && options.Handler != nil {
+		return Options{}, errors.New("--watch needs a CDK app; handler mode has no definition to re-synthesize")
+	}
+	if options.Watch && strings.TrimSpace(options.AssemblyDir) != "" {
+		return Options{}, errors.New("--watch needs the CDK app sources; it cannot watch a fixed --assembly")
+	}
+	options.DataDir, err = normalizeDataDir(options.DataDir)
+	if err != nil {
+		return Options{}, err
 	}
 	options, err = normalizeConcurrency(options)
 	if err != nil {
@@ -542,8 +588,8 @@ func (r *Runner) CleanScratch() {
 // Plan synthesizes the app (unless an assembly was supplied) and derives the
 // surface. It starts no containers.
 func (r *Runner) Plan(ctx context.Context) (*Spec, error) {
-	if r.spec != nil {
-		return r.spec, nil
+	if current := r.CurrentSpec(); current != nil {
+		return current, nil
 	}
 	assemblyDir := r.options.AssemblyDir
 	if assemblyDir == "" {
@@ -553,7 +599,7 @@ func (r *Runner) Plan(ctx context.Context) (*Spec, error) {
 		assemblyDir = filepath.Join(r.scratch, "cdk.out")
 		synthCtx, cancel := context.WithTimeout(ctx, r.options.SynthTimeout)
 		defer cancel()
-		if err := Synth(synthCtx, SynthOptions{
+		if err := synthRunner(synthCtx, SynthOptions{
 			AppDir:    r.options.AppDir,
 			OutputDir: assemblyDir,
 			Context:   r.options.Context,
@@ -586,7 +632,9 @@ func (r *Runner) Plan(ctx context.Context) (*Spec, error) {
 	if r.delivery != nil {
 		spec.Delivery = r.delivery.Planned(spec)
 	}
+	r.specMu.Lock()
 	r.spec = spec
+	r.specMu.Unlock()
 	return spec, nil
 }
 
@@ -600,6 +648,8 @@ func (r *Runner) Run(ctx context.Context) error {
 	if _, err := r.prepareRun(ctx); err != nil {
 		return err
 	}
+	r.startWatch(ctx)
+	defer r.stopWatch()
 	r.logf("local-run: ready")
 	return r.serve(ctx)
 }
@@ -662,6 +712,9 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 	if err = r.startCloudFrontControl(ctx, spec); err != nil {
 		return nil, err
 	}
+	if err = r.startCodeBuildControl(ctx, spec, arch); err != nil {
+		return nil, err
+	}
 	if err = r.resolveEnvironment(spec, targets); err != nil {
 		return nil, err
 	}
@@ -682,7 +735,19 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 	if err := r.startDelivery(ctx, spec); err != nil {
 		return nil, err
 	}
+	if err := r.runSeed(ctx, spec); err != nil {
+		return nil, err
+	}
 	return spec, nil
+}
+
+// CurrentSpec returns the surface the run is serving now. A watch reload
+// replaces it under the same lock, so a session's describe reads the new
+// definitions without racing the file watcher.
+func (r *Runner) CurrentSpec() *Spec {
+	r.specMu.RLock()
+	defer r.specMu.RUnlock()
+	return r.spec
 }
 
 // startWebSocketManagement starts the @connections management API when the
@@ -696,7 +761,11 @@ func (r *Runner) startWebSocketManagement(ctx context.Context, spec *Spec) error
 	if err != nil {
 		return err
 	}
-	if err := management.start(ctx); err != nil {
+	listeners, err := r.listenControl(ctx, "WebSocket management")
+	if err != nil {
+		return err
+	}
+	if err := management.start(ctx, listeners); err != nil {
 		return err
 	}
 	r.webSocketManagement = management
@@ -725,18 +794,17 @@ func (r *Runner) webSocketCertificateMounts() []string {
 
 // startEventBridgeBus serves the EventBridge PutEvents JSON protocol for the
 // functions and the harness. Containers reach it through host.docker.internal,
-// which is added as a host entry before the preflight. Docker Desktop forwards
-// that name to the host loopback, but on Linux the host-gateway address is the
-// bridge interface, where a loopback-only listener is unreachable; the bus
-// therefore binds every interface while the URL the session reports stays
-// loopback-only.
+// which is added as a host entry before the preflight. The bus listens through
+// listenControl, which binds loopback and, when the host owns the run network's
+// gateway (the Linux bridge case), that gateway address on the same port; on
+// Colima and Docker Desktop the gateway belongs to the VM, that bind fails
+// harmlessly, and Docker's host-gateway entry forwards the name to the host
+// loopback. The URL the session reports stays loopback-only.
 func (r *Runner) startEventBridgeBus(ctx context.Context) error {
-	var listenConfig net.ListenConfig
-	listener, err := listenConfig.Listen(ctx, "tcp", "0.0.0.0:0")
+	listeners, err := r.listenControl(ctx, "EventBridge")
 	if err != nil {
-		return fmt.Errorf("bind the local EventBridge bus: %w", err)
+		return err
 	}
-	r.listeners = append(r.listeners, listener)
 	server := &http.Server{
 		Handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 			r.eventBus.serveEventBridgeHTTP(ctx, writer, request)
@@ -745,20 +813,20 @@ func (r *Runner) startEventBridgeBus(ctx context.Context) error {
 		IdleTimeout:       60 * time.Second,
 	}
 	r.servers = append(r.servers, server)
-	go func() {
-		if serveErr := server.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) && !errors.Is(serveErr, net.ErrClosed) {
-			r.logf("local EventBridge bus stopped: %v", serveErr)
-		}
-	}()
-	tcpAddr, ok := listener.Addr().(*net.TCPAddr)
-	if !ok {
-		return fmt.Errorf("the local EventBridge bus has no TCP address")
+	serve := func(listener net.Listener) {
+		go func() {
+			if serveErr := server.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) && !errors.Is(serveErr, net.ErrClosed) {
+				r.logf("local EventBridge bus stopped: %v", serveErr)
+			}
+		}()
 	}
-	port := tcpAddr.Port
-	r.eventBusURL = fmt.Sprintf("http://127.0.0.1:%d", port)
-	r.eventBusContainer = fmt.Sprintf("http://host.docker.internal:%d", port)
+	serve(listeners.Loopback)
+	if listeners.Gateway != nil {
+		serve(listeners.Gateway)
+	}
+	r.eventBusURL = listeners.HostURL
+	r.eventBusContainer = listeners.ContainerURL
 	r.endpoints = append(r.endpoints, Endpoint{Service: "events", URL: r.eventBusContainer})
-	r.addRuntimeHostEntry()
 	r.logf("local EventBridge bus at %s (containers: %s)", r.eventBusURL, r.eventBusContainer)
 	return nil
 }
@@ -814,6 +882,8 @@ func (r *Runner) startBackends(ctx context.Context) error {
 // startBackend starts one emulator, resolves its network address for the
 // function containers' closed DNS and waits until its published host port
 // answers a read-only protocol call.
+//
+//nolint:gocyclo // one branch per backend shape.
 func (r *Runner) startBackend(ctx context.Context, backend string) error {
 	container := backendContainer(backend)
 	pin, err := r.profile.Container(container)
@@ -821,6 +891,10 @@ func (r *Runner) startBackend(ctx context.Context, backend string) error {
 		return fmt.Errorf("backend %s: %w", backend, err)
 	}
 	name := r.backendsContainerName(backend)
+	pin, dataMounts, err := r.configureBackendDataDir(backend, container, pin)
+	if err != nil {
+		return err
+	}
 	endpoints := r.profile.EndpointsForContainer(container)
 	if backend == backendDynamoDB && !containsEndpointService(endpoints, backendDynamoDB) {
 		endpoints = append(endpoints, Endpoint{Service: backendDynamoDB, URL: "http://" + backendDynamoDBName + ":8000"})
@@ -839,6 +913,7 @@ func (r *Runner) startBackend(ctx context.Context, backend string) error {
 		Image:   pin.Image,
 		Command: pin.Command,
 		Env:     pin.Environment,
+		Mounts:  append(append([]string(nil), pin.Mounts...), dataMounts...),
 		Publish: pin.ContainerPort,
 		Labels:  r.labels(),
 		Detach:  true,
@@ -1065,9 +1140,9 @@ func (r *Runner) resolveImages(spec *Spec, hostArch string, targets []string) er
 func archMatches(host, declared string) bool {
 	normalize := func(value string) string {
 		switch strings.ToLower(strings.TrimSpace(value)) {
-		case "x86_64", archAMD64:
+		case archAMD64Alias, archAMD64:
 			return archAMD64
-		case archARM64, "aarch64":
+		case archARM64, archARM64Alias:
 			return archARM64
 		default:
 			return strings.ToLower(strings.TrimSpace(value))
@@ -1266,205 +1341,6 @@ func (r *Runner) buildFunctionImage(ctx context.Context, function FunctionSpec) 
 // reuses the image for both.
 func (r *Runner) functionImageTag(function FunctionSpec) string {
 	return sanitizeName(r.namePrefix + "-" + function.LogicalID + "-image")
-}
-
-//nolint:gocognit,gocyclo // one branch per function shape the assembly can declare
-func (r *Runner) startFunction(ctx context.Context, function FunctionSpec, image string) error {
-	imageFunction := function.ImageAsset != nil
-	codeDir := function.AssetDir
-	if codeDir == "" && !imageFunction {
-		return fmt.Errorf("function %s has no code directory", function.LogicalID)
-	}
-	if codeDir != "" {
-		if err := ensureSharedPath(codeDir); err != nil {
-			return fmt.Errorf("function %s: %w", function.LogicalID, err)
-		}
-	}
-	command, err := functionCommand(function)
-	if err != nil {
-		return err
-	}
-	var api *runtimeAPI
-	if !r.options.RIEMode {
-		api, err = newRuntimeAPI(function, r.logf)
-		if err != nil {
-			return err
-		}
-		api.gateway = r.networkGateway
-		if r.runtimeAPIGateway != "" {
-			api.bindGateway(r.runtimeAPIGateway)
-		}
-	}
-	env, overridden := r.functionEnvironment(function, api)
-	if r.options.RIEMode {
-		// The emulator reads its timeout from AWS_LAMBDA_FUNCTION_TIMEOUT; the
-		// base image's entry script does not set it.
-		// https://github.com/aws/aws-lambda-runtime-interface-emulator
-		env["AWS_LAMBDA_FUNCTION_TIMEOUT"] = strconv.Itoa(function.Timeout)
-	}
-	if len(overridden) > 0 {
-		r.logf("function %s: runner-owned environment overrides template values for %s", function.LogicalID, strings.Join(overridden, ", "))
-	}
-	if len(function.Layers) > 0 {
-		layerEnv, layerErr := r.layerEnvironment(ctx, function, image, env)
-		if layerErr != nil {
-			return layerErr
-		}
-		env = layerEnv
-	}
-	if len(function.EnvironmentExpressions) > 0 {
-		return unsupported(
-			function.LogicalID,
-			"environment expressions were not resolved before the container start: %s",
-			strings.Join(sortedKeys(function.EnvironmentExpressions), ", "),
-		)
-	}
-	if limitErr := unresolvedLimitsError(function); limitErr != nil {
-		return limitErr
-	}
-	if api != nil {
-		// The container reaches the Runtime API through host.docker.internal.
-		// The run's closed DNS server cannot resolve it, so the host entry is
-		// required (the run network also sets --dns 127.0.0.2).
-		r.addRuntimeHostEntry()
-	}
-	mounts := append(functionMounts(function), r.webSocketCertificateMounts()...)
-	name := r.containerName(function.LogicalID)
-	publish := 0
-	if r.options.RIEMode {
-		publish = riePort
-	}
-	options := ContainerOptions{
-		Name:     name,
-		Network:  r.network,
-		Image:    image,
-		Command:  command,
-		Env:      env,
-		AddHosts: r.options.AddHosts,
-		MemoryMB: function.MemoryMB,
-		Mounts:   mounts,
-		Publish:  publish,
-		Labels:   r.labels(),
-		Detach:   true,
-	}
-	// Register the container before starting it, so a signal that lands while
-	// the runtime image is still starting or waiting to accept connections
-	// still removes it.
-	process := &FunctionProcess{
-		Function:  function,
-		Container: name,
-		Image:     image,
-		Started:   time.Now().UTC(),
-		rie:       r.options.RIEMode,
-		api:       api,
-		options:   options,
-		logf:      r.logf,
-	}
-	if api != nil {
-		api.running = func(checkCtx context.Context) (bool, error) {
-			return r.docker.Running(checkCtx, name)
-		}
-		process.reset = r.resetFunction
-	}
-	r.invokers[function.LogicalID] = process
-	if _, startErr := r.docker.StartContainer(ctx, options); startErr != nil {
-		process.closeRuntimeAPI()
-		return startErr
-	}
-	if err := process.awaitReady(ctx, r.docker); err != nil {
-		if imageFunction && r.options.RIEMode {
-			return fmt.Errorf(
-				"function %s: the container image did not start a Runtime Interface Emulator on port %d; an image function must be based on an AWS base image that ships one (https://docs.aws.amazon.com/lambda/latest/dg/images-create.html): %w",
-				function.LogicalID, riePort, err,
-			)
-		}
-		return err
-	}
-	r.rememberRuntimeAPIAddress(process)
-	if r.options.RIEMode {
-		r.logf("function %s (%s, %s) ready on 127.0.0.1:%d (Runtime Interface Emulator mode)", function.LogicalID, function.Runtime, image, process.Port)
-		return nil
-	}
-	if failure := process.api.initError(); failure != nil {
-		if failure.Type == "Runtime.ExitError" {
-			// A runtime client that fails its first Next API request exits
-			// before the Init phase completes. The lifecycle page resets and
-			// re-initializes the environment, so the runner retries once before
-			// reporting the failure to the first invocation.
-			// https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtime-environment.html
-			r.logf("function %s (%s, %s): the runtime exited before its first invocation (%s); restarting it once",
-				function.LogicalID, function.Runtime, image, failure.Message)
-			if resetErr := r.resetFunction(ctx, process); resetErr != nil {
-				return fmt.Errorf("function %s: restart after a failed initialization: %w", function.LogicalID, resetErr)
-			}
-			failure = process.api.initError()
-		}
-		if failure != nil {
-			r.logf("function %s (%s, %s): initialization failed; the first invocation reports %s", function.LogicalID, function.Runtime, image, failure.Type)
-		}
-		return nil
-	}
-	r.logf("function %s (%s, %s) ready on the runner's Runtime API at %s", function.LogicalID, function.Runtime, image, process.RuntimeAPIURL())
-	return nil
-}
-
-// awaitReady waits for the process's runtime to signal that the Init phase
-// finished: the embedded emulator's port in RIE mode, or the runtime's first
-// Next API request in the default mode.
-func (p *FunctionProcess) awaitReady(ctx context.Context, docker *Docker) error {
-	if p.rie {
-		port, err := waitForContainerReady(ctx, docker, p.Container)
-		if err != nil {
-			return err
-		}
-		p.Port = port
-		return nil
-	}
-	return waitForRuntimeAPIReady(ctx, docker, p.Container, p.api)
-}
-
-// resetFunction replaces one function's execution environment after a timeout,
-// a crash or an initialization failure. The container keeps its name and the
-// FunctionProcess keeps its identity, so every caller's handle stays valid.
-// https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtime-environment.html
-func (r *Runner) resetFunction(ctx context.Context, process *FunctionProcess) error {
-	r.logf("function %s: replacing the execution environment", process.Function.LogicalID)
-	r.docker.RemoveContainer(ctx, process.Container)
-	gateway := ""
-	if process.api != nil {
-		gateway = process.api.gatewayBound()
-	}
-	process.closeRuntimeAPI()
-	options := process.options
-	if !process.rie {
-		api, err := newRuntimeAPI(process.Function, r.logf)
-		if err != nil {
-			return err
-		}
-		api.gateway = r.networkGateway
-		if gateway == "" {
-			gateway = r.runtimeAPIGateway
-		}
-		if gateway != "" && api.bindGateway(gateway) {
-			r.runtimeAPIGateway = gateway
-		}
-		api.running = func(checkCtx context.Context) (bool, error) {
-			return r.docker.Running(checkCtx, process.Container)
-		}
-		process.api = api
-		options.Env = cloneEnvironment(options.Env)
-		options.Env["AWS_LAMBDA_RUNTIME_API"] = api.ContainerAddress()
-	}
-	process.options = options
-	if _, err := r.docker.StartContainer(ctx, options); err != nil {
-		return err
-	}
-	process.Started = time.Now().UTC()
-	if err := process.awaitReady(ctx, r.docker); err != nil {
-		return err
-	}
-	r.rememberRuntimeAPIAddress(process)
-	return nil
 }
 
 // networkGateway resolves the run network's gateway address.
@@ -1674,19 +1550,7 @@ func (r *Runner) runtimeImageEnv(ctx context.Context, image string) (map[string]
 func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 	targets := append([]APISpec(nil), spec.HTTPAPIs()...)
 	for _, url := range spec.FunctionURLs {
-		targets = append(targets, APISpec{
-			Class:     APIFunctionURL,
-			LogicalID: url.LogicalID,
-			Stack:     url.Stack,
-			Name:      url.LogicalID,
-			Routes: []Route{{
-				Class:     APIFunctionURL,
-				Method:    "ANY",
-				Path:      catchAllPath,
-				Function:  url.Function,
-				Streaming: url.Streaming,
-			}},
-		})
+		targets = append(targets, functionURLAPI(url))
 	}
 	invokers := make(map[string]Invoker, len(r.invokers))
 	for id, process := range r.invokers {
@@ -1701,6 +1565,7 @@ func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 		}
 		transport := NewTransport(target, invokers, r.semaphore, r.logf)
 		transport.Clock = r.clock
+		r.transports[target.LogicalID] = transport
 		server := &http.Server{
 			Handler:           transport,
 			ReadHeaderTimeout: 10 * time.Second,
@@ -1722,17 +1587,19 @@ func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 		if err != nil {
 			return fmt.Errorf("bind websocket %s listener: %w", api.LogicalID, err)
 		}
+		webSocketServer := &WebSocketServer{
+			API:        api,
+			Invokers:   invokers,
+			Clock:      r.clock,
+			Semaphore:  r.semaphore,
+			Management: r.webSocketManagement,
+			Logf:       r.logf,
+			Now:        r.now,
+			DomainName: r.webSocketDomainName(),
+		}
+		r.webSocketServers[api.LogicalID] = webSocketServer
 		server := &http.Server{
-			Handler: &WebSocketServer{
-				API:        api,
-				Invokers:   invokers,
-				Clock:      r.clock,
-				Semaphore:  r.semaphore,
-				Management: r.webSocketManagement,
-				Logf:       r.logf,
-				Now:        r.now,
-				DomainName: r.webSocketDomainName(),
-			},
+			Handler:           webSocketServer,
 			ReadHeaderTimeout: 10 * time.Second,
 			IdleTimeout:       60 * time.Second,
 		}

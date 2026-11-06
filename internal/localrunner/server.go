@@ -45,6 +45,34 @@ type Transport struct {
 	// entry expires on the run clock.
 	authMu    sync.Mutex
 	authCache map[string]authorizerCacheEntry
+
+	// surfaceMu guards the live route table and invoker set a watch reload
+	// swaps. The listener and the server stay; only these values change.
+	surfaceMu sync.RWMutex
+}
+
+// currentAPI returns the route table the transport serves now.
+func (t *Transport) currentAPI() APISpec {
+	t.surfaceMu.RLock()
+	defer t.surfaceMu.RUnlock()
+	return t.API
+}
+
+// invoker returns the running process for one function.
+func (t *Transport) invoker(id string) (Invoker, bool) {
+	t.surfaceMu.RLock()
+	defer t.surfaceMu.RUnlock()
+	invoker, ok := t.Invokers[id]
+	return invoker, ok
+}
+
+// SetSurface swaps the route table and invoker set after a watch reload. The
+// net.Listener and its URL do not change.
+func (t *Transport) SetSurface(api APISpec, invokers map[string]Invoker) {
+	t.surfaceMu.Lock()
+	defer t.surfaceMu.Unlock()
+	t.API = api
+	t.Invokers = invokers
 }
 
 // authorizerResult carries what one authorizer produced. Status is 0 when the
@@ -82,13 +110,33 @@ func (t *Transport) ServeHTTP(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 	path := RequestPath(request)
+	api := t.currentAPI()
 	var route Route
 	var params map[string]string
-	if t.API.Class == APIFunctionURL {
-		route = t.API.Routes[0]
+	stagePrefix := ""
+	if api.Class == APIFunctionURL {
+		route = api.Routes[0]
 		params = map[string]string{}
 	} else {
-		matched, matchedParams, ok := MatchRoute(t.API, request.Method, path)
+		// A named stage is served under /{stage}/... in addition to the root,
+		// as the execute-api URL does:
+		// "The base URL for REST APIs is in the following format:
+		// https://api-id.execute-api.region.amazonaws.com/stage/"
+		// https://docs.aws.amazon.com/apigateway/latest/developerguide/how-to-call-api.html
+		// An HTTP API's "$default stage ... is served from the base of your
+		// API's URL"; a named stage is served under /{stage}
+		// https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-stages.html
+		matched, matchedParams, ok := Route{}, map[string]string{}, false
+		if prefix, rest, prefixed := stagePrefixFor(api, path); prefixed {
+			if candidate, candidateParams, found := MatchRoute(api, request.Method, rest); found {
+				matched, matchedParams, ok = candidate, candidateParams, true
+				stagePrefix = prefix
+				path = rest
+			}
+		}
+		if !ok {
+			matched, matchedParams, ok = MatchRoute(api, request.Method, path)
+		}
 		if !ok {
 			t.notFound(writer, request)
 			return
@@ -103,7 +151,7 @@ func (t *Transport) ServeHTTP(writer http.ResponseWriter, request *http.Request)
 		t.logf("%s %s -> %d (MOCK integration declared by the template)", request.Method, path, route.Mock.StatusCode)
 		return
 	}
-	invoker, ok := t.Invokers[route.Function]
+	invoker, ok := t.invoker(route.Function)
 	if !ok {
 		t.fail(writer, http.StatusBadGateway, "Internal Server Error", requestID,
 			fmt.Errorf("no running container for function %s", route.Function))
@@ -115,7 +163,7 @@ func (t *Transport) ServeHTTP(writer http.ResponseWriter, request *http.Request)
 	}
 	defer t.release()
 
-	authorizer, err := t.authorize(request, route, params, path, body, requestID)
+	authorizer, err := t.authorizeWithStage(request, route, params, path, body, requestID, stagePrefix)
 	if err != nil {
 		t.fail(writer, http.StatusBadGateway, "Internal Server Error", requestID, err)
 		return
@@ -126,12 +174,13 @@ func (t *Transport) ServeHTTP(writer http.ResponseWriter, request *http.Request)
 	}
 
 	payload, err := BuildEvent(InvokeRequest{
-		API:                     t.API,
+		API:                     t.currentAPI(),
 		Route:                   route,
 		Params:                  params,
 		Method:                  request.Method,
 		Path:                    path,
 		RawPath:                 request.URL.EscapedPath(),
+		StagePrefix:             stagePrefix,
 		RawQuery:                request.URL.RawQuery,
 		Header:                  request.Header,
 		Body:                    body,
@@ -174,7 +223,7 @@ func (t *Transport) ServeHTTP(writer http.ResponseWriter, request *http.Request)
 // local Function URL surface; every other surface keeps the proxy-response
 // decoder.
 func (t *Transport) decodeBufferedResponse(raw []byte) (LambdaResponse, error) {
-	if t.API.Class == APIFunctionURL {
+	if t.currentAPI().Class == APIFunctionURL {
 		return decodeFunctionURLResponse(raw)
 	}
 	return DecodeResponse(raw)
@@ -204,7 +253,7 @@ func (t *Transport) serveStreaming(
 			errors.New("the local listener cannot flush a streamed response"))
 		return
 	}
-	if t.API.Class == APIFunctionURL {
+	if t.currentAPI().Class == APIFunctionURL {
 		sink := &functionURLStream{writer: writer, flusher: flusher}
 		result, err := streamer.InvokeStream(request.Context(), payload, sink)
 		if err != nil {
@@ -247,6 +296,8 @@ func (t *Transport) serveStreaming(
 
 // authorize runs the route's authorizer. It never bypasses one: a route with an
 // authorizer kind the transport cannot run was refused at derive time.
+// authorize keeps the template-free call shape used by tests and by a
+// root-only request.
 func (t *Transport) authorize(
 	request *http.Request,
 	route Route,
@@ -254,6 +305,18 @@ func (t *Transport) authorize(
 	path string,
 	body []byte,
 	requestID string,
+) (authorizerResult, error) {
+	return t.authorizeWithStage(request, route, params, path, body, requestID, "")
+}
+
+func (t *Transport) authorizeWithStage(
+	request *http.Request,
+	route Route,
+	params map[string]string,
+	path string,
+	body []byte,
+	requestID string,
+	stagePrefix string,
 ) (authorizerResult, error) {
 	switch route.AuthorizerKind {
 	case AuthorizerKindJWT:
@@ -264,22 +327,22 @@ func (t *Transport) authorize(
 		if route.AuthorizerFunction == "" {
 			return authorizerResult{}, fmt.Errorf("route declares a simple-response authorizer the runner did not derive")
 		}
-		return t.authorizeRequest(request, route, params, path, body, requestID)
+		return t.authorizeRequest(request, route, params, path, body, requestID, stagePrefix)
 	case AuthorizerKindLambdaRequest:
 		if route.AuthorizerFunction == "" {
 			return authorizerResult{}, fmt.Errorf("route declares a Lambda authorizer the runner did not derive")
 		}
 		if route.AuthorizerRESTType != "" {
-			return t.authorizeRESTLambda(request, route, params, path, requestID)
+			return t.authorizeRESTLambda(request, route, params, path, requestID, stagePrefix)
 		}
-		return t.authorizeHTTPLambdaPolicy(request, route, params, path, body, requestID)
+		return t.authorizeHTTPLambdaPolicy(request, route, params, path, body, requestID, stagePrefix)
 	default:
 		if route.AuthorizerFunction == "" {
 			return authorizerResult{}, nil
 		}
 		// A route built without an explicit kind keeps the historical contract:
 		// the authorizer runs as a simple-response REQUEST authorizer.
-		return t.authorizeRequest(request, route, params, path, body, requestID)
+		return t.authorizeRequest(request, route, params, path, body, requestID, stagePrefix)
 	}
 }
 
@@ -299,8 +362,9 @@ func (t *Transport) authorizeRESTLambda(
 	params map[string]string,
 	path string,
 	requestID string,
+	stagePrefix string,
 ) (authorizerResult, error) {
-	invoker, ok := t.Invokers[route.AuthorizerFunction]
+	invoker, ok := t.invoker(route.AuthorizerFunction)
 	if !ok {
 		return authorizerResult{}, fmt.Errorf("no running container for authorizer %s", route.AuthorizerFunction)
 	}
@@ -311,7 +375,7 @@ func (t *Transport) authorizeRESTLambda(
 	if refusal != 0 {
 		return authorizerResult{Status: refusal}, nil
 	}
-	arn := methodARN(t.API, request.Method, path)
+	arn := methodARN(t.currentAPI(), request.Method, path)
 	// The cache holds the authorizer's POLICY, not this request's decision:
 	// "If you enable authorization caching, API Gateway caches the policy so
 	// that the Lambda authorizer function isn't invoked again. Ensure that your
@@ -328,17 +392,18 @@ func (t *Transport) authorizeRESTLambda(
 		return result, nil
 	}
 	event, err := buildRESTAuthorizerEvent(InvokeRequest{
-		API:        t.API,
-		Route:      route,
-		Params:     params,
-		Method:     request.Method,
-		Path:       path,
-		RawPath:    request.URL.EscapedPath(),
-		RawQuery:   request.URL.RawQuery,
-		Header:     request.Header,
-		RequestID:  requestID,
-		Now:        t.Now(),
-		RemoteAddr: request.RemoteAddr,
+		API:         t.currentAPI(),
+		Route:       route,
+		Params:      params,
+		Method:      request.Method,
+		Path:        path,
+		RawPath:     request.URL.EscapedPath(),
+		StagePrefix: stagePrefix,
+		RawQuery:    request.URL.RawQuery,
+		Header:      request.Header,
+		RequestID:   requestID,
+		Now:         t.Now(),
+		RemoteAddr:  request.RemoteAddr,
 	}, route.AuthorizerRESTType, token)
 	if err != nil {
 		return authorizerResult{}, fmt.Errorf("build the REST authorizer event: %w", err)
@@ -416,24 +481,26 @@ func (t *Transport) authorizeHTTPLambdaPolicy(
 	path string,
 	body []byte,
 	requestID string,
+	stagePrefix string,
 ) (authorizerResult, error) {
-	invoker, ok := t.Invokers[route.AuthorizerFunction]
+	invoker, ok := t.invoker(route.AuthorizerFunction)
 	if !ok {
 		return authorizerResult{}, fmt.Errorf("no running container for authorizer %s", route.AuthorizerFunction)
 	}
 	invoke := InvokeRequest{
-		API:        t.API,
-		Route:      route,
-		Params:     params,
-		Method:     request.Method,
-		Path:       path,
-		RawPath:    request.URL.EscapedPath(),
-		RawQuery:   request.URL.RawQuery,
-		Header:     request.Header,
-		Body:       body,
-		RemoteAddr: request.RemoteAddr,
-		RequestID:  requestID,
-		Now:        t.Now(),
+		API:         t.currentAPI(),
+		Route:       route,
+		Params:      params,
+		Method:      request.Method,
+		Path:        path,
+		RawPath:     request.URL.EscapedPath(),
+		StagePrefix: stagePrefix,
+		RawQuery:    request.URL.RawQuery,
+		Header:      request.Header,
+		Body:        body,
+		RemoteAddr:  request.RemoteAddr,
+		RequestID:   requestID,
+		Now:         t.Now(),
 	}
 	missing, err := missingIdentitySourceWithContext(request.Header, request.URL.RawQuery, route, params, route.AuthorizerIdentitySources)
 	if err != nil {
@@ -449,7 +516,7 @@ func (t *Transport) authorizeHTTPLambdaPolicy(
 		return authorizerResult{}, err
 	}
 	cacheKey := strings.Join(values, "\x1f")
-	arn := methodARN(t.API, request.Method, path)
+	arn := methodARN(t.currentAPI(), request.Method, path)
 	// HTTP API caching has the same shape as REST: "By default, API Gateway
 	// uses the cached authorizer response for all routes of an API that use the
 	// authorizer. To cache responses per route, add $context.routeKey to your
@@ -595,8 +662,9 @@ func (t *Transport) authorizeRequest(
 	path string,
 	body []byte,
 	requestID string,
+	stagePrefix string,
 ) (authorizerResult, error) {
-	invoker, ok := t.Invokers[route.AuthorizerFunction]
+	invoker, ok := t.invoker(route.AuthorizerFunction)
 	if !ok {
 		return authorizerResult{}, fmt.Errorf("no running container for authorizer %s", route.AuthorizerFunction)
 	}
@@ -610,18 +678,19 @@ func (t *Transport) authorizeRequest(
 		return authorizerResult{Status: http.StatusUnauthorized}, nil
 	}
 	payload, err := BuildAuthorizerEvent(InvokeRequest{
-		API:        t.API,
-		Route:      route,
-		Params:     params,
-		Method:     request.Method,
-		Path:       path,
-		RawPath:    request.URL.EscapedPath(),
-		RawQuery:   request.URL.RawQuery,
-		Header:     request.Header,
-		Body:       body,
-		RemoteAddr: request.RemoteAddr,
-		RequestID:  requestID,
-		Now:        t.Now(),
+		API:         t.currentAPI(),
+		Route:       route,
+		Params:      params,
+		Method:      request.Method,
+		Path:        path,
+		RawPath:     request.URL.EscapedPath(),
+		StagePrefix: stagePrefix,
+		RawQuery:    request.URL.RawQuery,
+		Header:      request.Header,
+		Body:        body,
+		RemoteAddr:  request.RemoteAddr,
+		RequestID:   requestID,
+		Now:         t.Now(),
 	})
 	if err != nil {
 		return authorizerResult{}, fmt.Errorf("build authorizer event: %w", err)
@@ -793,7 +862,7 @@ func (t *Transport) release() {
 }
 
 func (t *Transport) notFound(writer http.ResponseWriter, request *http.Request) {
-	t.logf("%s %s -> 404 (no route in %s)", request.Method, RequestPath(request), t.API.LogicalID)
+	t.logf("%s %s -> 404 (no route in %s)", request.Method, RequestPath(request), t.currentAPI().LogicalID)
 	writer.Header().Set("Content-Type", "application/json")
 	writer.WriteHeader(http.StatusNotFound)
 	_, _ = writer.Write([]byte(`{"message":"Not Found"}`)) //nolint:errcheck // response already committed
@@ -857,13 +926,14 @@ func RouteTable(spec *Spec) []string {
 	for _, api := range spec.APIs {
 		lines = append(lines, fmt.Sprintf("api %-8s %-28s stage=%s", api.Class, api.LogicalID, api.Stage))
 		for _, route := range api.Routes {
+			pathCell := route.Path + stageFormSuffix(api, route)
 			if route.Mock != nil {
 				lines = append(lines, fmt.Sprintf("  %-6s %-24s -> MOCK %d (declared by the template)",
-					route.Method, route.Path, route.Mock.StatusCode))
+					route.Method, pathCell, route.Mock.StatusCode))
 				continue
 			}
 			lines = append(lines, fmt.Sprintf("  %-6s %-24s -> %s%s%s",
-				route.Method, route.Path, route.Function, streamingSuffix(route.Streaming),
+				route.Method, pathCell, route.Function, streamingSuffix(route.Streaming),
 				authorizerSuffix(route)))
 		}
 	}
@@ -904,6 +974,18 @@ func RouteTable(spec *Spec) []string {
 		}
 	}
 	return lines
+}
+
+// stageFormSuffix prints the stage-prefixed form of a route for a named stage,
+// so plan shows both the root (custom-domain) and the execute-api URL.
+func stageFormSuffix(api APISpec, route Route) string {
+	if api.Stage == "" || api.Stage == LocalStageName {
+		return ""
+	}
+	if route.Path == catchAllPath {
+		return " (also /" + api.Stage + "/*)"
+	}
+	return " (also /" + api.Stage + route.Path + ")"
 }
 
 // authorizerSuffix names the authorizer a route runs.

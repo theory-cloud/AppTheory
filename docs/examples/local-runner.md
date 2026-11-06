@@ -413,6 +413,44 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
     That directory is `<scratch>/runs/<app>-<run>`, where `--scratch` defaults to
     `<user cache>/apptheory-local`; it is safe to delete by hand.
 
+### Stage-prefixed URLs
+
+A REST API's execute-api base URL is
+`https://{restapi_id}.execute-api.{region}.amazonaws.com/{stage_name}/`
+([invoke a REST API](https://docs.aws.amazon.com/apigateway/latest/developerguide/how-to-call-api.html)).
+An HTTP API's "$default stage ... is served from the base of your API's URL";
+a named stage is part of the URL, so it is served under `/{stage}`
+([HTTP API stages](https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-stages.html)).
+The runner serves both forms on the same listener:
+
+| Request | Served as |
+| --- | --- |
+| `GET /hello` on a named-stage API | The root (custom-domain) form. |
+| `GET /prod/hello` on a REST API with stage `prod` | The `prod` stage form; the route table matches `/hello`. |
+| `GET /dev/hello` on an HTTP API with stage `dev` | The `dev` stage form; the route table matches `/hello`. |
+| `GET /hello` on an HTTP API with the `$default` stage | The root; `/$default/hello` is not served. |
+
+The `/{stage}` form is tried first: a path that matches both the stage
+remainder and a literal root route resolves to the stage form, and the root
+form is matched only when the remainder matches no route. The event the
+handler sees carries exactly the documented fields:
+
+- REST v1: `path` and `resource` are the resource path without the stage, while
+  `requestContext.path` includes it (`/prod/hello`); `requestContext.stage` is
+  the stage name.
+- HTTP API v2: `rawPath` and `requestContext.http.path` include the stage
+  (`/dev/hello`); `requestContext.stage` is the stage name. The payload-format
+  page says "Format 2.0 has rawPath" and, for a custom-domain API mapping,
+  "rawPath won't provide the API mapping value"
+  ([HTTP API Lambda integrations](https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-develop-integrations-lambda.html)).
+- The REST proxy-integration event fields are the ones the page defines:
+  `path` is "The request path" and `requestContext.path` is the path API
+  Gateway used, with the stage for a stage-prefixed URL
+  ([REST proxy integrations](https://docs.aws.amazon.com/apigateway/latest/developerguide/set-up-lambda-proxy-integrations.html)).
+
+`plan` prints both forms on the route line, for example
+`GET /hello (also /prod/hello) -> Handler`.
+
 ## Lambda Runtime API
 
 Every function container talks to the runner over the Lambda Runtime API. The
@@ -838,12 +876,14 @@ authorizers that return a policy are served on their own APIs; see
 
 **The `@connections` management API.** The runner serves
 `PostToConnection`, `GetConnection` and `DeleteConnection` on a TLS listener
-(`POST`/`GET`/`DELETE /{connectionId}`) that binds every interface
-(`0.0.0.0:0`) so a function container reaches it through `host.docker.internal`;
-the session reports the loopback URL (`https://127.0.0.1:<port>`) and the
-harness uses that, while the container-facing URL is
-`https://host.docker.internal:<port>`. The listener is unauthenticated and
-reachable from any interface on the host while a session runs. The endpoint is
+(`POST`/`GET`/`DELETE /{connectionId}`) that binds loopback and, when the host
+owns the run network's gateway (the Linux bridge case), that address too; a
+function container reaches it through `host.docker.internal` (Docker's
+`host-gateway` forwards to the host loopback on Colima and Docker Desktop). The
+listener never binds the unspecified address. The session reports the loopback
+URL (`https://127.0.0.1:<port>`) and the harness uses that, while the
+container-facing URL is `https://host.docker.internal:<port>`. The listener is
+unauthenticated. The endpoint is
 injected into every function as the API Gateway Management API endpoint override
 (`AWS_ENDPOINT_URL_APIGATEWAYMANAGEMENTAPI`), and the event's
 `requestContext.domainName` is the container-facing host of that listener, so a
@@ -1139,8 +1179,9 @@ contains the custom error pages" is returned, i.e. the pages origin's status. A
 custom page is cached under the same status/header rule as its `ErrorCode`.
 
 **Invalidation.** The run serves `CreateInvalidation`, `GetInvalidation` and
-`ListInvalidations` on a control endpoint that binds every interface, injected
-into every function as `AWS_ENDPOINT_URL_CLOUDFRONT`; `run` prints the
+`ListInvalidations` on a control endpoint that binds loopback and, when the host
+owns the run network's gateway, that address too; it is injected into every
+function as `AWS_ENDPOINT_URL_CLOUDFRONT`; `run` prints the
 `127.0.0.1` URL and `session describe` reports it. A
 batch may list at most 3000 paths, every path begins with `/`, is case
 sensitive, is URL-decoded before matching and is at most 4000 characters; a `~`
@@ -1455,6 +1496,80 @@ functions do not take layers, as the layers chapter states, and that combination
 is refused by name. The built image carries the run label and is removed when
 the run shuts down.
 
+## CodeBuild
+
+A synthesized `AWS::CodeBuild::Project` is served through AWS's published local
+CodeBuild agent. The runner implements the CodeBuild JSON 1.1 API operations an
+app or test uses — `StartBuild`, `BatchGetBuilds`, `ListBuildsForProject`
+(plus `BatchGetProjects` and `ListProjects`) — on a control endpoint injected
+into every function as `AWS_ENDPOINT_URL_CODEBUILD`. `StartBuild` runs the
+project's buildspec through the real agent, and every state transition is
+published as a "CodeBuild Build State Change" event on the run's EventBridge
+bus, so the app's state-change rule delivers it.
+
+The agent and the build image are digest-pinned in the profile. The local agent
+is AWS's own image ([use the CodeBuild agent](https://docs.aws.amazon.com/codebuild/latest/userguide/use-codebuild-agent.html)):
+
+| Architecture | Agent image | Manifest digest | Compressed |
+| --- | --- | --- | --- |
+| aarch64 | `public.ecr.aws/codebuild/local-builds:aarch64` | `sha256:7d7b5d35d2ac4e062ae7ba8c662ffed15229a52d09bd0d664a7816c439679192` | 569 MB |
+| x86_64 | `public.ecr.aws/codebuild/local-builds:latest` | `sha256:ccb19bdd7af94e4dc761e4c58c267e9455c28ec68d938086b4dc1cf8fe6b0940` | 1.31 GB |
+
+The local agent takes the build image explicitly, so the profile's class
+mapping is a local affordance: no AWS page assigns a local image to a declared
+`Environment.Image`. The import-pipeline project declares the CDK default
+`aws/codebuild/standard:7.0` (an Ubuntu image that AWS publishes for x86_64
+only); on the documented aarch64 host the profile maps it to the Lambda-standard
+aarch64 build image:
+
+| Declared image | aarch64 pin | x86_64 pin |
+| --- | --- | --- |
+| `aws/codebuild/standard:7.0` | `public.ecr.aws/codebuild/amazonlinux-aarch64-lambda-standard:nodejs24` (`sha256:56d1ee8b…`, 1.28 GB compressed) | `public.ecr.aws/codebuild/amazonlinux-x86_64-lambda-standard:nodejs24` (`sha256:e198554f…`, 1.36 GB compressed) |
+
+Both images are distributed under the Amazon Software License 1.0
+([aws-codebuild-docker-images](https://github.com/aws/aws-codebuild-docker-images)).
+A build that needs the full `standard:7.0` toolchain opts in with
+`imageOverride: public.ecr.aws/codebuild/amazonlinux-aarch64-standard:3.0`; the
+checked-in profile pins that class (`sha256:af9a0464…`, 4.68 GB compressed,
+about 10.9 GB on disk, the same license). The Lambda-standard image stays the
+default.
+
+`StartBuild` creates a build id (`<project>:<uuid>`), writes the project's
+inline buildspec and environment to the run scratch directory, and runs the
+agent container with the Docker socket. The agent uses its own compose project
+(a per-build name), starts the pinned build image, and the runner captures the
+`[Container]` phase lines. `BatchGetBuilds` reports the build with its phases
+(`SUBMITTED`, `QUEUED`, `PROVISIONING`, `DOWNLOAD_SOURCE`, `INSTALL`,
+`PRE_BUILD`, `BUILD`, `POST_BUILD`, `COMPLETED`), the status, and the captured
+log; `ListBuildsForProject` returns the project's build ids newest first. The
+state-change event carries `source: aws.codebuild`,
+`detail-type: CodeBuild Build State Change` and
+`detail: {build-status, project-name, build-id, current-phase}`; the build id
+and project name match the API response and the template's `Ref`. The
+import-pipeline row starts the build through the API, observes BUILD and
+COMPLETED SUCCEEDED, reads the command log, and receives the SUCCEEDED event on
+the example's real SQS rule target.
+
+Deviations, named rather than hidden:
+
+| Feature | Local behaviour |
+| --- | --- |
+| CodePipeline | Not served; only the CodeBuild project and its state-change rule the example synthesizes run. |
+| VPC / EFS / secondary sources | Not connected or fetched. The build container runs on the agent's own Docker network, not the run network, so a build that calls AWS fails closed at `AWS_ENDPOINT_URL=http://127.0.0.1:1`. |
+| Cache, artifacts upload, report groups | No cache and no upload; the agent's artifact directory is under the run scratch directory. Report groups are not created. |
+| Source | Only `NO_SOURCE` buildspecs run locally; a source type that needs a repository is reported by name. |
+| Privileged mode | Reported, not enabled: the build container starts unprivileged. |
+| Compute type | `BUILD_GENERAL1_SMALL` only; an override is refused by name. |
+
+**Requirements.** The CodeBuild row pulls the agent and one curated build image.
+The aarch64 pair needs about 8 GB of colima disk (569 MB + 1.28 GB compressed;
+about 2.2 GB + 4.9 GB on disk), and the opt-in full-toolchain image adds about
+10.9 GB on disk. The row also needs the Docker socket, because the agent
+launches the build container itself. Colima's disk is not a fixed limit: grow it
+before the pull when it is short
+([colima](https://github.com/abiosoft/colima)); a pull that fails for capacity
+fails the row rather than mocking the build.
+
 ## Invoking one function
 
 `plan` and `run` are about HTTP surfaces. `invoke` starts one function and
@@ -1571,6 +1686,121 @@ The `ddb.*` and `sqs.*` operations use the loopback endpoints the runner
 published; function containers use the run-network aliases. Neither can reach a
 real AWS endpoint. `describe` is the only operation that returns local secrets
 or resolved environment values; `run`, `plan` and `invoke` never print them.
+
+## Dev loop
+
+### Watch and rebuild
+
+`run --watch` and `session --watch` re-synthesize the app when its sources
+change and apply the new surface without restarting the session. The watcher
+follows the CDK CLI's own configuration: when `cdk.json` declares a `watch`
+object, its `include` and `exclude` patterns decide which files trigger a
+rebuild; otherwise the app directory is watched. A path is interpreted relative
+to the directory containing `cdk.json`, and `node_modules`, `cdk.out`,
+`.git`, `.venv`, `__pycache__` and the examples' `.cdk-asset-stage` directory
+are never watched ([watch mode](https://docs.aws.amazon.com/cdk/v2/guide/cli.html#cli-watch)).
+
+The runner polls every 300 ms and debounces a burst of edits for 500 ms. One
+synthesis runs at a time; an edit made while a synthesis is running schedules
+another one. A failed synthesis is logged and the previous assembly keeps
+serving. A successful change re-derives the whole Spec, provisions any new
+definitions, and compares each function's `FunctionSpec`; only a function
+whose execution inputs changed is replaced:
+
+- the asset hash (`aws:asset:path`) or inline code;
+- the image asset, environment, memory and timeout limits, or layers;
+- its runtime, handler or architecture.
+
+A replaced function keeps its logical id, its listener behaviour and the reset
+semantics of the Lambda lifecycle page: the old execution environment is
+removed and a new one starts
+([execution environment lifecycle](https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtime-environment.html)).
+A function added by the change starts; one removed stops. Routes, event
+sources, rules, subscriptions and delivery wiring are re-derived, and every
+`net.Listener` keeps its port and URL.
+
+| Change | Applied live? |
+| --- | --- |
+| A served function's code, environment, limits, layers, image or runtime | Yes: that function's execution environment is replaced; the other functions keep theirs. |
+| Routes on an existing HTTP, REST or Function URL listener | Yes: the listener's route table is swapped in place. |
+| A new or removed HTTP, REST, Function URL or WebSocket listener | No: reported by name; restart the session. |
+| A changed CloudFront distribution topology | No: reported; restart the session. |
+| Event sources, rules and subscriptions | Yes: the delivery engine is re-derived. |
+| A new resource that needs a backend this run did not start | No: reported by name with the backend; restart with `--backend`. |
+
+### Persistent data (`--data-dir`)
+
+`run`, `session` and `invoke` accept `--data-dir <dir>`. The default is still
+ephemeral: without the flag the backends start exactly as before and no state
+survives the run. With the flag, each persistable backend keeps its state under
+one directory per backend:
+
+| Backend | What persists | Option and path |
+| --- | --- | --- |
+| DynamoDB Local | Tables and items | `-dbPath /data` on `<dir>/dynamodb`; the pinned command's `-sharedDb` is kept, so the single database file is `shared-local-instance.db`. |
+| s3proxy | Buckets and objects | The filesystem jclouds provider with `JCLOUDS_FILESYSTEM_BASEDIR=/data` on `<dir>/s3proxy`. |
+| ElasticMQ | Queues and messages | `messages-storage` with the H2 file `/data/elasticmq` on `<dir>/sqs`. Verified on the pinned 1.7.1 image: a message survived a restart. |
+| moto | Nothing | Server-mode state lives in the process; there is no persistence option ([moto server mode](https://docs.getmoto.org/en/latest/docs/server_mode.html)). This is the docs/125 memory-only limit, named rather than hidden. |
+
+The runner widens the data root to `0755` and each backend directory to `0777`
+because the pinned emulator images run as their own non-root users, and a Linux
+bind mount keeps the host UID (colima maps it to the container user instead).
+The ElasticMQ config file is `0644` and holds no secret. These modes assume a
+single-user development machine: the backend directories are `0777` without the
+sticky bit, so another user of the same host could write to or delete the
+emulator store.
+
+The DynamoDB Local page owns the options: `-dbPath` is "The directory where
+DynamoDB writes its database file"; `-inMemory` writes no database file and
+cannot be combined with `-dbPath`; and "If you use the -sharedDb option,
+DynamoDB creates a single database file named shared-local-instance.db"
+([DynamoDB Local usage notes](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/DynamoDBLocal.UsageNotes.html)).
+s3proxy's filesystem backend stores a key as a path under
+`jclouds.filesystem.basedir`, so a bind-mounted base directory is the
+persistent store ([s3proxy](https://github.com/gaul/s3proxy)). ElasticMQ's
+`messages-storage` keeps queues and messages in an H2 in-file database and
+restores them on startup ([Persisting queues and messages](https://github.com/softwaremill/elasticmq)).
+
+Definitions are re-provisioned from the CDK definition on every start. A table,
+bucket, queue, topic, stream, parameter, secret, pool or key that already
+exists in the data directory is reconciled, never dropped or recreated. A
+DynamoDB key-schema change cannot be applied to existing state: the runner
+fails at start with the table named and the UpdateTable page's rule,
+"Modifies the provisioned throughput settings, global secondary indexes,
+DynamoDB Streams settings, or global table replica settings for a given table"
+([UpdateTable](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html)).
+Missing or changed global secondary indexes are created or deleted, and an
+existing queue's visibility, retention, wait and delay attributes are updated
+without deleting its messages. The examples' `data-dir.sh`,
+`data-dir-s3.sh` and `data-dir-sqs.sh` scripts show the two-run pattern.
+
+### Seed hooks (`--seed`)
+
+`run --seed <command>` and `session --seed <command>` run a shell command after
+provisioning and the listener start, and before `local-run: ready`. The
+command runs in the app directory with the run's host-side endpoint URLs, the
+served HTTP URLs, the data directory (when set) and the dummy credentials, so
+it drives the app through its own code paths — an HTTP request to the local
+API, `apptheory-local invoke`, or the app's own CLI — and never writes to a
+backend behind the app's back. A non-zero exit fails the run with the script's
+output.
+
+| Variable | Value |
+| --- | --- |
+| `APPTHEORY_LOCAL_APP` | The CDK app directory. |
+| `APPTHEORY_LOCAL_DATA_DIR` | The `--data-dir` root, when set. |
+| `APPTHEORY_LOCAL_APIS` | JSON array of `{"class","logicalId","url"}` for every served listener. |
+| `APPTHEORY_LOCAL_URL_<LOGICALID>` | One URL per served listener. |
+| `APPTHEORY_LOCAL_ENDPOINT_<SERVICE>` | Each host-side endpoint: `DYNAMODB`, `S3`, `SQS`, `EVENTS`, `KMS`, … |
+| The profile's endpoint names | `AWS_ENDPOINT_URL_DYNAMODB`, `AWS_ENDPOINT_URL_S3`, `AWS_ENDPOINT_URL_EVENTS`, … |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `AWS_DEFAULT_REGION` | `dummy`, `dummy`, `us-east-1`, `us-east-1`. |
+
+Every inherited `AWS_*` name is removed from the seed's environment; only the
+run's dummy values are present. The committed
+[`examples/cdk/restv1-router/scripts/seed-local.sh`](https://github.com/theory-cloud/AppTheory/blob/staging/examples/cdk/restv1-router/scripts/seed-local.sh)
+reads `APPTHEORY_LOCAL_APIS`, PUTs an inventory item through the app's real
+handler and reads it back; the harness row proves the seeded item is visible
+through the same handler.
 
 ## Event delivery
 
@@ -1833,14 +2063,15 @@ endpoint). Function containers reach it as `host.docker.internal:<port>`
 through the host entry the runner adds: on Linux, where the host owns the run
 network's gateway, the entry names that gateway address, and elsewhere the
 entry keeps Docker's `host-gateway` value, which Colima and Docker Desktop
-forward to the host's loopback. The listener binds every interface so that
-entry works in both cases; the session reports and the harness uses
-`http://127.0.0.1:<port>`. The endpoint is unauthenticated and reachable from
-any interface on the host while a session runs. The EventBridge endpoint, the
-WebSocket `@connections` management listener and the CloudFront control endpoint
-bind every interface; the Runtime API listener binds loopback or, when the
-container cannot reach it, the run network's gateway address (see
-[Requirements](#requirements)); the backends publish on `127.0.0.1`. A
+forward to the host's loopback. The listener binds loopback and, when the host
+owns the run network's gateway, the same port on that address; it never binds
+the unspecified address. The session reports and the harness uses
+`http://127.0.0.1:<port>`. The endpoint is unauthenticated. The EventBridge
+endpoint, the WebSocket `@connections` management listener, the CloudFront
+control endpoint and the CodeBuild control endpoint follow the same rule; the
+Runtime API listener binds loopback or, when the container cannot reach it, the
+run network's gateway address (see [Requirements](#requirements)); the backends
+publish on `127.0.0.1`. A
 handler's real SDK client and the harness's AWS CLI reach the same endpoint. A
 rule's pattern is matched by the validated EventBridge evaluator E1b uses, and
 the runner performs input shaping, target delivery, retry and dead-letter
@@ -2384,7 +2615,7 @@ the harness records it.
 | WebSocket APIs (`AWS::ApiGatewayV2::Api`, WEBSOCKET) | Served (L2) | A real RFC 6455 listener serves `$connect`, `$disconnect`, `$default` and custom routes selected by the route selection expression, with the documented proxy event, two-way route responses, the `$connect` policy authorizer, the `@connections` management API and the documented idle/lifetime close; see [WebSocket APIs](#websocket-apis). No custom domains and no IAM authorization. |
 | CloudFront distributions and CloudFront Functions | Served (L2) | The distribution is served on its own loopback URL. Cache behaviors, allowed methods, viewer-request/viewer-response functions, origin request policies and response headers policies are applied; the generated function code runs in a restricted Node sandbox. S3 origins read the app's deployments from s3proxy, Function URL origins invoke the real handler container, and origin groups fail over with CloudFront's rules. No edge network and no TLS. |
 | CloudFront caching | Supported (L2) | The cache key (GET and HEAD share one key, OPTIONS is separate), `CachedMethods`, `CACHING_DISABLED`, the Expiration-page TTL rules, stale-while-revalidate, stale-if-error (including a 5xx origin response for an expired object) and the HTTPStatusCodes-page error caching table are applied; hits answer `x-cache`/`age`; `session describe` reports per-behavior hit/miss counts. A viewer Range request bypasses the local cache (documented deviation); a conditional request is answered 304 from the cached validators. See [Caching and invalidation](#caching-and-invalidation). |
-| CloudFront invalidation | Supported (L2) | `CreateInvalidation`, `GetInvalidation` and `ListInvalidations` are served on a control endpoint that binds every interface and is injected as `AWS_ENDPOINT_URL_CLOUDFRONT`; the aws CLI and the SDK share it. Paths are matched against the cached path plus the selected query string, with a trailing `*` only, and `CallerReference` reuse follows the API reference. See [Caching and invalidation](#caching-and-invalidation). |
+| CloudFront invalidation | Supported (L2) | `CreateInvalidation`, `GetInvalidation` and `ListInvalidations` are served on a control endpoint that binds loopback and, when the host owns the run gateway, that address too; it is injected as `AWS_ENDPOINT_URL_CLOUDFRONT`; the aws CLI and the SDK share it. Paths are matched against the cached path plus the selected query string, with a trailing `*` only, and `CallerReference` reuse follows the API reference. See [Caching and invalidation](#caching-and-invalidation). |
 | CloudFront custom error responses | Supported (L2) | `CustomErrorResponses` is served: the page is fetched through the first cache behavior that matches its path, from that behavior's origin and with its origin request policy, with the configured status; a matching behavior's TTL wins, and an unavailable page returns the pages origin's status. |
 | CloudFront external custom origins | Supported with `--origin` (L2) | An external custom origin is refused at plan time unless `--origin domain=loopback-url` maps it; a non-loopback mapping is refused. The mapped origin receives the documented origin-request shape. |
 | REST `MOCK` integrations | Supported (L1) | The transport returns the `IntegrationResponses` status and headers the template declares and invokes no function. CDK emits these for CORS preflight. |
@@ -2395,10 +2626,11 @@ the harness records it.
 | Lambda layers | Supported | A function's `Layers` resolve to LayerVersions in the same assembly; their content is extracted into `/opt` in the listed order (later layers win) with `/opt/bin` on `PATH`, `/opt/lib` on `LD_LIBRARY_PATH`, `/opt/nodejs/node_modules` on `NODE_PATH` and both `/opt/python` and `/opt/python/lib/python<major>.<minor>/site-packages` on `PYTHONPATH`. A relative symlink inside the layer is kept as a symlink; an absolute or escaping one is refused by name. The five-layer limit and an external layer ARN are refused by name; see [Lambda layers and container-image functions](#lambda-layers-and-container-image-functions). |
 | Container-image functions | Supported | `PackageType: Image` with a CDK `DockerImageAsset` is built by the real `docker build` (directory, Dockerfile, target, platform and build arguments from the assembly) before serving, then run through the same Runtime API invocation path as a zip function (or under the image's own emulator with `--rie`). An image function that declares layers is refused by name. |
 | CloudFormation-expression environment values | Supported for `Ref`/`Fn::GetAtt`/`Fn::Join` | Tables and stream ARNs, queues, rules, buckets, KMS keys and aliases, SSM parameters, Secrets Manager ARNs, SNS topics, Kinesis streams, Cognito pool/client values, IAM/MicroVM-image/S3 Vectors ARNs and functions resolve to local values (moto/S3 require their backend). An unsupported expression fails with the function and variable named. |
-| CloudFormation-expression `MemorySize`/`Timeout` | Not resolved | A served function whose limit is `Ref`/`GetAtt`/`Fn::If` fails with the property named; the AWS defaults apply only when the property is absent. |
+| `AWS::CodeBuild::Project` | Served through AWS's local agent (L2) | `StartBuild` runs the project's buildspec in AWS's published local CodeBuild agent, with the build image mapped by the profile per architecture; `BatchGetBuilds`/`ListBuildsForProject` report the phases and log, and "CodeBuild Build State Change" events reach the app's EventBridge rules. Deviations: no CodePipeline, VPC, cache, artifact upload or report groups; see [CodeBuild](#codebuild). |
+| CloudFormation-expression `MemorySize`/`Timeout` | Resolved (`Ref` parameter Default, `Fn::If` over defaults, `Fn::FindInMap`, `Fn::Join`; an `Fn::If` selecting `AWS::NoValue` omits the property) | The resolved value is validated against the Lambda page's ranges (128..32768 MB, 1..900 s); an omitted property takes the documented default (128 MB, 3 s). A parameter without a `Default`, a `Fn::GetAtt` on a deployed resource, or an unknown condition/mapping stays `unresolved (<intrinsic>)` and a served function fails closed with the parameter or intrinsic named. The restv1-router `intrinsic-limits` row proves all three forms reach the real container. |
 | One function, explicit events (`invoke`) | Supported | Starts one function and sends newline-delimited JSON events to a warm container; `--handler-dir` runs a handler that has no CDK definition and derives no routes. |
 | Every target, explicit commands (`session`) | Supported | Starts every CDK-targeted function, serves the HTTP surface, and answers a JSON-line command protocol for invocation, SQS, DynamoDB, S3, EventBridge and Kinesis operations. `--target` adds a function no route or event source targets. |
-| Stage-prefixed URLs (`/prod/...`) | Not honoured | The stage is reported in the event; URLs are served at the root, as API Gateway does for custom domains. |
+| Stage-prefixed URLs (`/prod/...`) | Supported | A REST API is served at `/{stage}/...` in addition to the root; an HTTP API with a named (non-`$default`) stage is served at `/{stage}/...` in addition to the root. The `$default` stage keeps the root. The root stays the custom-domain form. The events carry the documented fields: REST v1 `path`/`resource` without the stage and `requestContext.path` with it; HTTP API v2 `rawPath` and `requestContext.http.path` with it; `requestContext.stage` in both. |
 | Multiple APIs in one stack | Supported | Each API gets its own listener and route table, so `ANY /` surfaces never shadow each other. |
 
 ## Known gaps

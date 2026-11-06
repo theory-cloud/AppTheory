@@ -20,6 +20,10 @@ type SynthOptions struct {
 	Stderr    io.Writer
 }
 
+// synthRunner is the synthesis function; tests replace it to exercise the
+// reload path without a CDK app.
+var synthRunner = Synth
+
 // Synth runs `cdk synth` for the app with static dummy credentials and a fixed
 // account/region. It never reads an operator's AWS configuration: every AWS_*
 // and CDK_* variable is removed from the child environment first.

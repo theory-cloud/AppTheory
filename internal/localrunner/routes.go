@@ -29,6 +29,30 @@ func MatchRoute(api APISpec, method, path string) (Route, map[string]string, boo
 	return Route{}, nil, false
 }
 
+// stagePrefixFor splits a named stage off a request path. The $default stage
+// is served from the root, so it never produces a prefix. A REST API's
+// execute-api base URL is /{stage}/; an HTTP API's named stage is served under
+// /{stage}, while the $default stage is served from the base of the URL.
+// https://docs.aws.amazon.com/apigateway/latest/developerguide/how-to-call-api.html
+// https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-stages.html
+func stagePrefixFor(api APISpec, path string) (prefix, rest string, ok bool) {
+	if api.Class != APIRESTV1 && api.Class != APIHTTPV2 {
+		return "", "", false
+	}
+	stage := strings.TrimSpace(api.Stage)
+	if stage == "" || stage == LocalStageName {
+		return "", "", false
+	}
+	prefix = "/" + stage
+	if path == prefix {
+		return prefix, "/", true
+	}
+	if strings.HasPrefix(path, prefix+"/") {
+		return prefix, path[len(prefix):], true
+	}
+	return "", "", false
+}
+
 func methodMatches(routeMethod, requestMethod string) bool {
 	routeMethod = strings.ToUpper(strings.TrimSpace(routeMethod))
 	if routeMethod == "" || routeMethod == "ANY" {

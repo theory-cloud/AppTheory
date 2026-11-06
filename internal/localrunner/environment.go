@@ -65,8 +65,9 @@ func (r *Runner) resolveEnvironment(spec *Spec, targets []string) error {
 			continue
 		}
 		if len(function.EnvironmentExpressions) > 0 {
+			template := spec.Templates[function.Stack]
 			for name, raw := range function.EnvironmentExpressions {
-				value, err := r.resolveExpression(raw, function.Stack, resources, provisioned)
+				value, err := r.resolveExpressionWithTemplate(raw, function.Stack, resources, provisioned, template)
 				if err != nil {
 					return fmt.Errorf("function %s: environment %s: %w", function.LogicalID, name, err)
 				}
@@ -104,21 +105,41 @@ func (s *Spec) resourceIndex() map[string]map[string]ResourceSpec {
 	return index
 }
 
+// resolveExpression is the template-free form the existing callers use; a
+// template context adds parameter, condition and mapping resolution.
 func (r *Runner) resolveExpression(raw, stack string, resources map[string]map[string]ResourceSpec, provisioned resourceValues) (string, error) {
+	return r.resolveExpressionWithTemplate(raw, stack, resources, provisioned, templateContext{})
+}
+
+func (r *Runner) resolveExpressionWithTemplate(raw, stack string, resources map[string]map[string]ResourceSpec, provisioned resourceValues, template templateContext) (string, error) {
 	var value any
 	if err := json.Unmarshal([]byte(raw), &value); err != nil {
 		return "", fmt.Errorf("expression is not valid JSON: %w", err)
 	}
-	return r.evaluate(value, stack, resources, provisioned)
+	return r.evaluate(value, stack, resources, provisioned, template)
 }
 
-func (r *Runner) evaluate(value any, stack string, resources map[string]map[string]ResourceSpec, provisioned resourceValues) (string, error) {
+func (r *Runner) evaluate(value any, stack string, resources map[string]map[string]ResourceSpec, provisioned resourceValues, template templateContext) (string, error) {
 	switch typed := value.(type) {
 	case string:
 		return typed, nil
 	case map[string]any:
 		if id, ok := typed["Ref"].(string); ok && id != "" {
-			return r.resolveRef(id, stack, resources, provisioned)
+			return r.resolveRef(id, stack, resources, provisioned, template)
+		}
+		if rawIf, ok := typed["Fn::If"]; ok {
+			return r.resolveIf(rawIf, stack, resources, provisioned, template)
+		}
+		if rawMap, ok := typed["Fn::FindInMap"]; ok {
+			resolved, err := template.findInMap(rawMap)
+			if err != nil {
+				return "", err
+			}
+			text, ok := templateString(resolved)
+			if !ok {
+				return "", fmt.Errorf("Fn::FindInMap resolved to a non-string value")
+			}
+			return text, nil
 		}
 		if rawGetAtt, ok := typed["Fn::GetAtt"]; ok {
 			id, attr, err := parseGetAtt(rawGetAtt)
@@ -128,7 +149,7 @@ func (r *Runner) evaluate(value any, stack string, resources map[string]map[stri
 			return r.resolveGetAtt(id, attr, stack, resources, provisioned)
 		}
 		if rawJoin, ok := typed["Fn::Join"]; ok {
-			return r.resolveJoin(rawJoin, stack, resources, provisioned)
+			return r.resolveJoin(rawJoin, stack, resources, provisioned, template)
 		}
 		keys := make([]string, 0, len(typed))
 		for key := range typed {
@@ -140,7 +161,26 @@ func (r *Runner) evaluate(value any, stack string, resources map[string]map[stri
 	}
 }
 
-func (r *Runner) resolveJoin(raw any, stack string, resources map[string]map[string]ResourceSpec, provisioned resourceValues) (string, error) {
+func (r *Runner) resolveIf(raw any, stack string, resources map[string]map[string]ResourceSpec, provisioned resourceValues, template templateContext) (string, error) {
+	parts, ok := raw.([]any)
+	if !ok || len(parts) != 3 {
+		return "", fmt.Errorf("Fn::If must be [condition, true value, false value]")
+	}
+	name, ok := parts[0].(string)
+	if !ok || name == "" {
+		return "", fmt.Errorf("Fn::If condition must be a condition name")
+	}
+	condition, err := template.condition(name)
+	if err != nil {
+		return "", err
+	}
+	if condition {
+		return r.evaluate(parts[1], stack, resources, provisioned, template)
+	}
+	return r.evaluate(parts[2], stack, resources, provisioned, template)
+}
+
+func (r *Runner) resolveJoin(raw any, stack string, resources map[string]map[string]ResourceSpec, provisioned resourceValues, template templateContext) (string, error) {
 	parts, ok := raw.([]any)
 	if !ok || len(parts) != 2 {
 		return "", fmt.Errorf("Fn::Join must be [delimiter, parts]")
@@ -155,7 +195,7 @@ func (r *Runner) resolveJoin(raw any, stack string, resources map[string]map[str
 	}
 	values := make([]string, 0, len(items))
 	for _, item := range items {
-		value, err := r.evaluate(item, stack, resources, provisioned)
+		value, err := r.evaluate(item, stack, resources, provisioned, template)
 		if err != nil {
 			return "", err
 		}
@@ -164,7 +204,8 @@ func (r *Runner) resolveJoin(raw any, stack string, resources map[string]map[str
 	return strings.Join(values, delimiter), nil
 }
 
-func (r *Runner) resolveRef(id, stack string, resources map[string]map[string]ResourceSpec, provisioned resourceValues) (string, error) {
+//nolint:gocyclo // one branch per resource type.
+func (r *Runner) resolveRef(id, stack string, resources map[string]map[string]ResourceSpec, provisioned resourceValues, template templateContext) (string, error) {
 	switch id {
 	case "AWS::Partition":
 		return LocalPartition, nil
@@ -176,6 +217,17 @@ func (r *Runner) resolveRef(id, stack string, resources map[string]map[string]Re
 		return stack, nil
 	case "AWS::NoValue":
 		return "", nil
+	}
+	if _, ok := template.Parameters[id]; ok {
+		value, err := template.refValue(id)
+		if err != nil {
+			return "", err
+		}
+		text, ok := templateString(value)
+		if !ok {
+			return "", fmt.Errorf("parameter %s is not a string value", id)
+		}
+		return text, nil
 	}
 	resource, ok := resources[stack][id]
 	if !ok {

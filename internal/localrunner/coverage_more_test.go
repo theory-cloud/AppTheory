@@ -191,8 +191,8 @@ func TestRunnerBusAndDeliveryClients(t *testing.T) {
 		t.Fatalf("bus listeners: %d", len(runner.listeners))
 	}
 	address, ok := runner.listeners[0].Addr().(*net.TCPAddr)
-	if !ok || !address.IP.IsUnspecified() {
-		t.Fatalf("the bus must listen on every interface for host-gateway: %v", runner.listeners[0].Addr())
+	if !ok || !address.IP.IsLoopback() {
+		t.Fatalf("the bus must bind loopback, never the unspecified address: %v", runner.listeners[0].Addr())
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, runner.eventBusURL, nil)
 	if err != nil {

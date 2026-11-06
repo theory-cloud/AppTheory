@@ -53,6 +53,32 @@ type WebSocketServer struct {
 	// the management endpoint, so a handler that builds the management client
 	// from the request context reaches the local endpoint.
 	DomainName string
+
+	// surfaceMu guards the route table and invoker set a watch reload swaps.
+	surfaceMu sync.RWMutex
+}
+
+// currentAPI returns the WebSocket API the server routes now.
+func (s *WebSocketServer) currentAPI() WebSocketAPISpec {
+	s.surfaceMu.RLock()
+	defer s.surfaceMu.RUnlock()
+	return s.API
+}
+
+// invoker returns the running process for one function.
+func (s *WebSocketServer) invoker(id string) (Invoker, bool) {
+	s.surfaceMu.RLock()
+	defer s.surfaceMu.RUnlock()
+	invoker, ok := s.Invokers[id]
+	return invoker, ok
+}
+
+// SetSurface swaps the route table and invoker set after a watch reload.
+func (s *WebSocketServer) SetSurface(api WebSocketAPISpec, invokers map[string]Invoker) {
+	s.surfaceMu.Lock()
+	defer s.surfaceMu.Unlock()
+	s.API = api
+	s.Invokers = invokers
 }
 
 // webSocketConnection is one live connection.
@@ -82,7 +108,7 @@ func (c *webSocketConnection) requestClose() {
 func (s *WebSocketServer) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	accept, err := webSocketHandshake(request)
 	if err != nil {
-		s.logf("websocket %s: upgrade refused: %v", s.API.LogicalID, err)
+		s.logf("websocket %s: upgrade refused: %v", s.currentAPI().LogicalID, err)
 		writer.Header().Set("Sec-WebSocket-Version", "13")
 		http.Error(writer, "Bad Request", http.StatusBadRequest)
 		return
@@ -90,8 +116,8 @@ func (s *WebSocketServer) ServeHTTP(writer http.ResponseWriter, request *http.Re
 	now := s.now()
 	connection := &webSocketConnection{
 		id:             NewRequestID(),
-		apiID:          s.API.APIID,
-		stage:          s.API.Stage,
+		apiID:          s.currentAPI().APIID,
+		stage:          s.currentAPI().Stage,
 		connectedAt:    now,
 		lastActiveAt:   now,
 		sourceIP:       sourceIP(request.RemoteAddr),
@@ -99,31 +125,31 @@ func (s *WebSocketServer) ServeHTTP(writer http.ResponseWriter, request *http.Re
 		closeRequested: make(chan struct{}),
 	}
 
-	if s.API.Authorizer != nil {
+	if s.currentAPI().Authorizer != nil {
 		context, status, authorizeErr := s.authorize(request, connection)
 		if authorizeErr != nil {
-			s.logf("websocket %s: $connect authorizer failed: %v", s.API.LogicalID, authorizeErr)
+			s.logf("websocket %s: $connect authorizer failed: %v", s.currentAPI().LogicalID, authorizeErr)
 			http.Error(writer, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
 		if status != 0 {
-			s.logf("websocket %s: $connect refused with %d by the authorizer", s.API.LogicalID, status)
+			s.logf("websocket %s: $connect refused with %d by the authorizer", s.currentAPI().LogicalID, status)
 			http.Error(writer, http.StatusText(status), status)
 			return
 		}
 		connection.authorizerContext = context
 	}
 
-	if route, ok := s.API.Route(webSocketConnect); ok {
+	if route, ok := s.currentAPI().Route(webSocketConnect); ok {
 		event := s.buildEvent(connection, webSocketConnect, "CONNECT", "", nil, false, "")
 		response, invokeErr := s.invoke(request.Context(), route.Function, event)
 		if invokeErr != nil {
-			s.logf("websocket %s: $connect integration failed: %v", s.API.LogicalID, invokeErr)
+			s.logf("websocket %s: $connect integration failed: %v", s.currentAPI().LogicalID, invokeErr)
 			http.Error(writer, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
 		if response.StatusCode < 200 || response.StatusCode >= 300 {
-			s.logf("websocket %s: $connect returned %d; the connection is not established", s.API.LogicalID, response.StatusCode)
+			s.logf("websocket %s: $connect returned %d; the connection is not established", s.currentAPI().LogicalID, response.StatusCode)
 			http.Error(writer, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
@@ -137,7 +163,7 @@ func (s *WebSocketServer) ServeHTTP(writer http.ResponseWriter, request *http.Re
 
 	conn, buffered, err := hijackUpgrade(writer, request, accept)
 	if err != nil {
-		s.logf("websocket %s: upgrade failed: %v", s.API.LogicalID, err)
+		s.logf("websocket %s: upgrade failed: %v", s.currentAPI().LogicalID, err)
 		return
 	}
 	connection.conn = newWSConn(conn, buffered)
@@ -149,19 +175,19 @@ func (s *WebSocketServer) ServeHTTP(writer http.ResponseWriter, request *http.Re
 			s.Management.unregister(connection.id)
 		}
 	}()
-	s.logf("websocket %s: connection %s established", s.API.LogicalID, connection.id)
+	s.logf("websocket %s: connection %s established", s.currentAPI().LogicalID, connection.id)
 
 	reason, code := s.serveConnection(request.Context(), connection, idle, lifetime)
 	if err := connection.conn.closeWithCode(code, reason); err != nil {
 		_ = err // the peer may already have closed the transport
 	}
-	if route, ok := s.API.Route(webSocketDisconnect); ok {
+	if route, ok := s.currentAPI().Route(webSocketDisconnect); ok {
 		event := s.buildEvent(connection, webSocketDisconnect, "DISCONNECT", "", nil, false, reason)
 		if _, err := s.invoke(context.Background(), route.Function, event); err != nil {
-			s.logf("websocket %s: $disconnect integration failed: %v", s.API.LogicalID, err)
+			s.logf("websocket %s: $disconnect integration failed: %v", s.currentAPI().LogicalID, err)
 		}
 	}
-	s.logf("websocket %s: connection %s closed (%s)", s.API.LogicalID, connection.id, reason)
+	s.logf("websocket %s: connection %s closed (%s)", s.currentAPI().LogicalID, connection.id, reason)
 }
 
 // serveConnection reads frames until the client closes, the idle or lifetime
@@ -197,10 +223,10 @@ func (s *WebSocketServer) serveConnection(ctx context.Context, connection *webSo
 		case <-connection.closeRequested:
 			return webSocketDisconnectInternal, wsCloseGoingAway
 		case <-idle:
-			s.logf("websocket %s: connection %s idle for %s", s.API.LogicalID, connection.id, webSocketIdleTimeout)
+			s.logf("websocket %s: connection %s idle for %s", s.currentAPI().LogicalID, connection.id, webSocketIdleTimeout)
 			return webSocketDisconnectInternal, wsCloseGoingAway
 		case <-lifetime:
-			s.logf("websocket %s: connection %s reached the %s lifetime", s.API.LogicalID, connection.id, webSocketMaxConnectionDuration)
+			s.logf("websocket %s: connection %s reached the %s lifetime", s.currentAPI().LogicalID, connection.id, webSocketMaxConnectionDuration)
 			return webSocketDisconnectInternal, wsCloseGoingAway
 		case frame := <-frames:
 			if frame.err != nil {
@@ -210,7 +236,7 @@ func (s *WebSocketServer) serveConnection(ctx context.Context, connection *webSo
 				return webSocketDisconnectClient, wsCloseNormal
 			}
 			if frame.opcode == wsOpcodeBinary {
-				s.logf("websocket %s: connection %s sent a binary frame; binary media types are not supported", s.API.LogicalID, connection.id)
+				s.logf("websocket %s: connection %s sent a binary frame; binary media types are not supported", s.currentAPI().LogicalID, connection.id)
 				return webSocketDisconnectInternal, wsCloseUnsupportedData
 			}
 			connection.lastActiveAt = s.now()
@@ -228,7 +254,7 @@ func (s *WebSocketServer) frameErrorResult(connection *webSocketConnection, opco
 		return webSocketDisconnectClient, wsCloseNormal
 	}
 	if errors.Is(err, errWebSocketTooBig) {
-		s.logf("websocket %s: connection %s sent a frame or message over the documented limit", s.API.LogicalID, connection.id)
+		s.logf("websocket %s: connection %s sent a frame or message over the documented limit", s.currentAPI().LogicalID, connection.id)
 		return webSocketDisconnectInternal, wsCloseTooBig
 	}
 	return webSocketDisconnectInternal, wsCloseInternalError
@@ -237,27 +263,27 @@ func (s *WebSocketServer) frameErrorResult(connection *webSocketConnection, opco
 // routeMessage selects a route for one text message and invokes it.
 func (s *WebSocketServer) routeMessage(ctx context.Context, connection *webSocketConnection, body string) {
 	routeKey := s.selectRoute(body)
-	route, ok := s.API.Route(routeKey)
+	route, ok := s.currentAPI().Route(routeKey)
 	if !ok && routeKey != webSocketDefault {
 		routeKey = webSocketDefault
-		route, ok = s.API.Route(webSocketDefault)
+		route, ok = s.currentAPI().Route(webSocketDefault)
 	}
 	if !ok {
-		s.logf("websocket %s: message has no route (selected %q) and the API declares no $default", s.API.LogicalID, routeKey)
+		s.logf("websocket %s: message has no route (selected %q) and the API declares no $default", s.currentAPI().LogicalID, routeKey)
 		return
 	}
 	messageID := NewRequestID()
 	event := s.buildEvent(connection, route.RouteKey, "MESSAGE", messageID, []byte(body), false, "")
 	response, err := s.invoke(ctx, route.Function, event)
 	if err != nil {
-		s.logf("websocket %s: route %s integration failed: %v", s.API.LogicalID, route.RouteKey, err)
+		s.logf("websocket %s: route %s integration failed: %v", s.currentAPI().LogicalID, route.RouteKey, err)
 		return
 	}
 	if !route.TwoWay || response.StatusCode < 200 || response.StatusCode >= 300 || len(response.Body) == 0 {
 		return
 	}
 	if err := connection.conn.writeFrame(wsOpcodeText, response.Body); err != nil {
-		s.logf("websocket %s: writing the route response failed: %v", s.API.LogicalID, err)
+		s.logf("websocket %s: writing the route response failed: %v", s.currentAPI().LogicalID, err)
 	}
 }
 
@@ -267,7 +293,7 @@ func (s *WebSocketServer) routeMessage(ctx context.Context, connection *webSocke
 // implement was refused at derive time, and here it, a non-JSON message and a
 // missing field all select $default.
 func (s *WebSocketServer) selectRoute(body string) string {
-	expression := strings.TrimSpace(s.API.RouteSelectionExpression)
+	expression := strings.TrimSpace(s.currentAPI().RouteSelectionExpression)
 	if expression == "" {
 		expression = defaultWebSocketRouteSelectionExpression
 	}
@@ -304,7 +330,7 @@ func (s *WebSocketServer) buildEvent(
 		"extendedRequestId": NewRequestID(),
 		"requestTime":       s.now().UTC().Format("02/Jan/2006:15:04:05 -0700"),
 		"messageDirection":  "IN",
-		"stage":             s.API.Stage,
+		"stage":             s.currentAPI().Stage,
 		"connectedAt":       connection.connectedAt.UnixMilli(),
 		"requestTimeEpoch":  s.now().UnixMilli(),
 		"identity": map[string]any{
@@ -314,7 +340,7 @@ func (s *WebSocketServer) buildEvent(
 		"requestId":    NewRequestID(),
 		"domainName":   s.DomainName,
 		"connectionId": connection.id,
-		"apiId":        s.API.APIID,
+		"apiId":        s.currentAPI().APIID,
 	}
 	if messageID != "" {
 		requestContext["messageId"] = messageID
@@ -342,13 +368,13 @@ func (s *WebSocketServer) buildEvent(
 // Deny all refuse the connection; the status is 401 for a missing identity
 // source or a Deny and 0 when the request may connect.
 func (s *WebSocketServer) authorize(request *http.Request, connection *webSocketConnection) (map[string]any, int, error) {
-	authorizer := s.API.Authorizer
+	authorizer := s.currentAPI().Authorizer
 	missing, err := missingIdentitySource(request.Header, request.URL.RawQuery, authorizer.IdentitySources)
 	if err != nil {
 		return nil, 0, err
 	}
 	if missing != "" {
-		s.logf("websocket %s: identity source %s is missing; the authorizer was not invoked", s.API.LogicalID, missing)
+		s.logf("websocket %s: identity source %s is missing; the authorizer was not invoked", s.currentAPI().LogicalID, missing)
 		return nil, http.StatusUnauthorized, nil
 	}
 	event := s.buildAuthorizerEvent(request, connection)
@@ -360,7 +386,7 @@ func (s *WebSocketServer) authorize(request *http.Request, connection *webSocket
 	}
 	decision, context, err := evaluateAuthorizerPolicy(raw, authorizer.MethodARN)
 	if err != nil {
-		s.logf("websocket %s: the authorizer returned no usable policy: %v", s.API.LogicalID, err)
+		s.logf("websocket %s: the authorizer returned no usable policy: %v", s.currentAPI().LogicalID, err)
 		return nil, http.StatusUnauthorized, nil
 	}
 	if !decision {
@@ -390,7 +416,7 @@ func (s *WebSocketServer) buildAuthorizerEvent(request *http.Request, connection
 	}
 	event := map[string]any{
 		"type":                            "REQUEST",
-		"methodArn":                       s.API.Authorizer.MethodARN,
+		"methodArn":                       s.currentAPI().Authorizer.MethodARN,
 		"headers":                         headers,
 		"multiValueHeaders":               multi,
 		"queryStringParameters":           query,
@@ -402,14 +428,14 @@ func (s *WebSocketServer) buildAuthorizerEvent(request *http.Request, connection
 			"extendedRequestId": NewRequestID(),
 			"requestTime":       s.now().UTC().Format("02/Jan/2006:15:04:05 -0700"),
 			"messageDirection":  "IN",
-			"stage":             s.API.Stage,
+			"stage":             s.currentAPI().Stage,
 			"connectedAt":       connection.connectedAt.UnixMilli(),
 			"requestTimeEpoch":  s.now().UnixMilli(),
 			"identity":          map[string]any{"sourceIp": connection.sourceIP},
 			"requestId":         NewRequestID(),
 			"domainName":        s.DomainName,
 			"connectionId":      connection.id,
-			"apiId":             s.API.APIID,
+			"apiId":             s.currentAPI().APIID,
 		},
 	}
 	encoded, err := json.Marshal(event)
@@ -422,7 +448,7 @@ func (s *WebSocketServer) buildAuthorizerEvent(request *http.Request, connection
 // invoke sends one event to a function container under the shared concurrency
 // bound.
 func (s *WebSocketServer) invoke(ctx context.Context, function string, event []byte) (LambdaResponse, error) {
-	invoker, ok := s.Invokers[function]
+	invoker, ok := s.invoker(function)
 	if !ok {
 		return LambdaResponse{}, fmt.Errorf("no running container for function %s", function)
 	}
@@ -443,7 +469,7 @@ func (s *WebSocketServer) invoke(ctx context.Context, function string, event []b
 
 // invokeRaw sends one event and returns the function's raw result.
 func (s *WebSocketServer) invokeRaw(ctx context.Context, function string, event []byte) ([]byte, error) {
-	invoker, ok := s.Invokers[function]
+	invoker, ok := s.invoker(function)
 	if !ok {
 		return nil, fmt.Errorf("no running container for function %s", function)
 	}

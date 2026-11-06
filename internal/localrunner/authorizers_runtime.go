@@ -57,7 +57,7 @@ func (r *Runner) resolveRouteAuthorizers(spec *Spec) error {
 			case AuthorizerKindJWT:
 				issuer := route.JWTIssuer
 				if strings.TrimSpace(route.JWTIssuerExpression) != "" {
-					resolved, err := r.resolveTemplateString(route.JWTIssuerExpression, api.Stack, resources)
+					resolved, err := r.resolveTemplateString(route.JWTIssuerExpression, api.Stack, resources, spec.Templates[api.Stack])
 					if err != nil {
 						return fmt.Errorf("%s %s %s: resolve the JWT issuer: %w", api.LogicalID, route.Method, route.Path, err)
 					}
@@ -72,7 +72,7 @@ func (r *Runner) resolveRouteAuthorizers(spec *Spec) error {
 				route.JWKSURL = jwks
 				route.JWTAudience = nil
 				for _, expression := range route.JWTAudienceExpressions {
-					audience, err := r.resolveTemplateString(expression, api.Stack, resources)
+					audience, err := r.resolveTemplateString(expression, api.Stack, resources, spec.Templates[api.Stack])
 					if err != nil {
 						return fmt.Errorf("%s %s %s: resolve the JWT audience: %w", api.LogicalID, route.Method, route.Path, err)
 					}
@@ -81,7 +81,7 @@ func (r *Runner) resolveRouteAuthorizers(spec *Spec) error {
 					}
 				}
 			case AuthorizerKindCognito:
-				accepted, jwks, err := r.issuersForCognitoPools(route.CognitoPoolARNs, api.Stack, resources)
+				accepted, jwks, err := r.issuersForCognitoPools(route.CognitoPoolARNs, api.Stack, resources, spec.Templates[api.Stack])
 				if err != nil {
 					return fmt.Errorf("%s %s %s: %w", api.LogicalID, route.Method, route.Path, err)
 				}
@@ -102,12 +102,12 @@ func (r *Runner) resolveRouteAuthorizers(spec *Spec) error {
 }
 
 // resolveTemplateString evaluates one raw CloudFormation value.
-func (r *Runner) resolveTemplateString(raw, stack string, resources map[string]map[string]ResourceSpec) (string, error) {
+func (r *Runner) resolveTemplateString(raw, stack string, resources map[string]map[string]ResourceSpec, template templateContext) (string, error) {
 	var value any
 	if err := json.Unmarshal([]byte(raw), &value); err != nil {
 		return strings.TrimSpace(raw), nil
 	}
-	return r.evaluate(value, stack, resources, r.resourceValues)
+	return r.evaluate(value, stack, resources, r.resourceValues, template)
 }
 
 // issuerForURL maps a configured issuer to the accepted issuer values and the
@@ -140,14 +140,14 @@ func (r *Runner) issuerForURL(issuer string) ([]string, string, error) {
 
 // issuersForCognitoPools maps a REST authorizer's pool ARNs to the provisioned
 // pools' local issuers.
-func (r *Runner) issuersForCognitoPools(expressions []string, stack string, resources map[string]map[string]ResourceSpec) ([]string, string, error) {
+func (r *Runner) issuersForCognitoPools(expressions []string, stack string, resources map[string]map[string]ResourceSpec, template templateContext) ([]string, string, error) {
 	if len(expressions) == 0 {
 		return nil, "", fmt.Errorf("the Cognito authorizer names no pool")
 	}
 	var accepted []string
 	var jwks string
 	for _, expression := range expressions {
-		arn, err := r.resolveTemplateString(expression, stack, resources)
+		arn, err := r.resolveTemplateString(expression, stack, resources, template)
 		if err != nil {
 			return nil, "", fmt.Errorf("resolve the Cognito pool ARN: %w", err)
 		}

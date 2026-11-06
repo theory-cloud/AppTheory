@@ -217,7 +217,7 @@ shape is built from the example's own CDK definition.
 | `examples/cdk/sqs-queue/handlers/producer.mjs` | L2 | `producer.mjs` sends through the real SQS SDK to ElasticMQ; the received body carries `eventType`, `payload` and a timestamp, and its `messageId` matches the handler's response. Gap: ElasticMQ emulates SQS. |
 | `examples/cdk/sqs-queue/handlers/worker.mjs` | L2 | The delivery engine polls `events-queue`, invokes the CDK mapping's batch and deletes on success; `worker.mjs` reports only the simulated failure as a partial batch failure. Gap: ElasticMQ emulates SQS. |
 | `examples/cdk/sqs-queue/handlers/dlq-handler.mjs` | L2 | `events-queue` redrives a failing message to `events-queue-dlq` after `maxReceiveCount=5`; `dlq-handler.mjs` processes the message actually read from the DLQ and acknowledges it. Gap: ElasticMQ emulates SQS. |
-| `examples/cdk/import-pipeline/handlers/{ingest,worker}/main.go` | L3 | A real object is written to s3proxy and the CDK `IngestRule` EventBridge event is delivered by the runner from the bucket notification. Ingest writes the job META and three work messages; worker consumes the real messages through the SQS mapping and writes SUCCEEDED/FAILED records. The raw PAN is absent and the stored error is masked. Gap: CodeBuild (R8). |
+| `examples/cdk/import-pipeline/handlers/{ingest,worker}/main.go` | L3 | A real object is written to s3proxy and the CDK `IngestRule` EventBridge event is delivered by the runner from the bucket notification. Ingest writes the job META and three work messages; worker consumes the real messages through the SQS mapping and writes SUCCEEDED/FAILED records. The raw PAN is absent and the stored error is masked. Gap: IAM policy evaluation (docs/125); the CodeBuild step is proven by the codebuild-import row. |
 | `examples/cdk/kinesis-cloudwatch-logs/handlers/go/main.go` | L2 | The function's own log output is captured and delivered through the CloudWatch Logs subscription and the Kinesis mapping; a malformed Kinesis record is returned as its sequence-number partial failure. Gap: moto emulates Kinesis and CloudWatch Logs. |
 | `examples/cdk/microvm-controller/controller/main.go` | L3 | The CDK authorizer refuses missing, wrong and tenant-less credentials. `list` and `run` reach the managed provider boundary; `get`, `suspend`, `resume`, `terminate`, `auth-token`, `shell-auth-token` and `invoke` read the TableTheory registry on DynamoDB Local and refuse a missing session. Gap: managed MicroVM provider. |
 | `examples/cdk/microvm-controller/workloads/go/main.go`, `py/server.py`, `ts/server.js` | L1 | Each workload server runs as a host process and answers GET and POST with its HTTP contract. `server.ts` is covered by the built `server.js` the image ships. |
@@ -258,6 +258,37 @@ argument.
 | --- | --- | --- |
 | `examples/cdk/lambda-packaging/handlers/node/app.js` | L1 | The real runner extracts the Node and Python layers into `/opt`, builds the three images with `docker build` before serving, and serves one HTTP API. The Node handler imports `layer-greeting` from `/opt/nodejs/node_modules`, executes `/opt/bin/layer-tool` from `PATH` and reports `/opt/bin` and `/opt/lib`; the Python handler imports `layer_tool` from `/opt/python`, executes its own `/opt/bin/layer-tool` and reports `PYTHONPATH`, `PATH` and `LD_LIBRARY_PATH`; the Go, Node and Python image handlers return the value the Dockerfile wrote from `IMAGE_VALUE`, so a stale or missing image cannot pass. |
 | `examples/cdk/lambda-packaging/handlers/python/app.py`, `images/{go,node,python}`, `layers/python/python/layer_tool.py`, `Layers/*/bin/layer-tool` | L1 | Covered by the Node handler row: each is executed inside the same run. |
+
+### R7: dev loop
+
+The dev-loop rows edit a real handler, run the runner's own `cdk synth`, and
+prove the result on the real path; nothing is stubbed.
+
+| Row | Class | How it is verified |
+| --- | --- | --- |
+| `examples/cdk/multilang/scripts/watch-go.sh` | L2 | A real edit to `handlers/go/main.go` is followed by a `cdk synth` rebuild; the Go API answers the new response on the unchanged listener, the Go function's execution environment is replaced, and the TypeScript and Python functions keep their Runtime API listeners. The WebSocket authorizer's asset is the whole `handlers/` directory, so it is restarted too — its asset hash changed. The source is restored and rebuilt before shutdown. |
+| `examples/cdk/multilang/scripts/watch-ts.sh` | L2 | The same proof for `handlers/ts/handler.mjs`; the Go and Python functions are not restarted. |
+| `examples/cdk/multilang/scripts/watch-py.sh` | L2 | The same proof for `handlers/py/handler.py`; the Go and TypeScript functions are not restarted. |
+| `examples/cdk/lesser-parity/scripts/data-dir.sh` | L2 | An item is written through the API handler's real DynamoDB SDK in one session; a second session with the same `--data-dir` reads it from `shared-local-instance.db`; a third session without the flag answers 404. |
+| `examples/cdk/lambda-role/scripts/data-dir-s3.sh` | L2 | The custom handler writes an S3 object through the real SDK in one invoke; a second invoke with the same `--data-dir` reads it back through the handler, and s3proxy's filesystem base directory holds the object. |
+| `examples/cdk/sqs-queue/scripts/data-dir-sqs.sh` | L2 | A real ElasticMQ message is sent to an unconsumed queue in one session; a second session with the same `--data-dir` finds it visible and receives its body from the `messages-storage` H2 database. |
+| `examples/cdk/restv1-router/scripts/seed-local.sh` | L2 | The committed seed script runs after provisioning and before `local-run: ready`, uses `APPTHEORY_LOCAL_APIS` to PUT and GET through the real inventory handler, and the seeded item is visible; a failing seed fails the run with its output. |
+
+### R8: intrinsic limits, stage URLs and CodeBuild
+
+| Row | Class | How it is verified |
+| --- | --- | --- |
+| `examples/cdk/restv1-router/scripts/intrinsic-limits.sh` | L1 | The L1 `CfnFunction` escape hatch declares `MemorySize: Ref(parameter default 256)`, `Timeout: Fn::If(condition over that default, 10, 3)` and a `Fn::FindInMap` pair (512 MB / 30 s). `plan` resolves all three with no unresolved flags, the inventory handler answers, and `docker inspect` proves the resolved 256 MB reached the real container. |
+| `examples/cdk/restv1-router/scripts/stage-prefix.sh` | L1 | The REST API serves `/stage-probe` at the root and `/prod/stage-probe` under the named stage; the v1 event carries `path`/`resource` without the stage, `requestContext.path` with it and `stage=prod`. `plan` prints both forms. |
+| `examples/cdk/hello-world/handlers/stage-echo/handler.mjs` | L1 | An HTTP API with a named `dev` stage serves `/echo` at the root and `/dev/echo` under the stage; the payload-format-2.0 event carries `rawPath` and `requestContext.http.path` with the stage and `requestContext.stage=dev`. |
+| `examples/cdk/import-pipeline/scripts/codebuild-local.sh` | L2 | `StartBuild` runs the `BatchStep` project's buildspec through the published local CodeBuild agent and the profile-pinned build image; `BatchGetBuilds` reports BUILD and COMPLETED SUCCEEDED with the command log, `ListBuildsForProject` returns the id, and the state-change rule delivers the SUCCEEDED event to the real `import-build-events` SQS target. The agent's compose children and volumes are checked gone after shutdown. |
+
+The CodeBuild row pulls the agent and the curated build image. The aarch64 pair
+needs about 8 GB of colima disk, and the opt-in full-toolchain image adds about
+10.9 GB on disk. Colima's disk is not a fixed limit, so grow it before a pull
+when it is short ([colima](https://github.com/abiosoft/colima)); a pull that
+fails for capacity fails the row with the registry error rather than mocking the
+build.
 
 ## Runtime API conformance
 

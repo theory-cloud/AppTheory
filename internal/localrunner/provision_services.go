@@ -746,7 +746,7 @@ func (r *Runner) resolveProvisionString(raw json.RawMessage, stack string, spec 
 	if literal, ok := value.(string); ok {
 		return literal, nil
 	}
-	return r.evaluate(value, stack, spec.resourceIndex(), r.resourceValues)
+	return r.evaluate(value, stack, spec.resourceIndex(), r.resourceValues, spec.Templates[stack])
 }
 
 func secretAlreadyExists(err error) bool {

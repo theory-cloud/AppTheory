@@ -52,6 +52,33 @@ export class RestV1RouterStack extends cdk.Stack {
             description: "Inventory CRUD handler",
         });
 
+        // R8 intrinsic-limit proof. `lambda.Function` takes numbers for
+        // memorySize and timeout, so a CloudFormation expression must go through
+        // the L1 CfnFunction escape hatch. The local runner resolves Ref to a
+        // parameter Default, Fn::If over a condition evaluable from defaults,
+        // and Fn::FindInMap; this example exercises all three.
+        new cdk.CfnParameter(this, "RouterMemoryMb", {
+            type: "Number",
+            default: 256,
+            minValue: 128,
+            maxValue: 1024,
+            description: "Memory for the inventory function; the local runner resolves the Ref from this default",
+        });
+        new cdk.CfnCondition(this, "FastTimeouts", {
+            expression: cdk.Fn.conditionEquals(cdk.Fn.ref("RouterMemoryMb"), "256"),
+        });
+        new cdk.CfnMapping(this, "RouterLimits", {
+            mapping: {
+                prod: { memory: 512, timeout: 30 },
+            },
+        });
+        const inventoryCfn = inventoryFn.node.defaultChild as lambda.CfnFunction;
+        inventoryCfn.memorySize = cdk.Token.asNumber(cdk.Fn.ref("RouterMemoryMb"));
+        inventoryCfn.timeout = cdk.Token.asNumber(cdk.Fn.conditionIf("FastTimeouts", 10, 3));
+        const graphqlCfn = graphqlFn.node.defaultChild as lambda.CfnFunction;
+        graphqlCfn.memorySize = cdk.Token.asNumber(cdk.Fn.findInMap("RouterLimits", "prod", "memory"));
+        graphqlCfn.timeout = cdk.Token.asNumber(cdk.Fn.findInMap("RouterLimits", "prod", "timeout"));
+
         // Create the REST API router with stage configuration
         const router = new AppTheoryRestApiRouter(this, "Router", {
             apiName: "restv1-router-example",

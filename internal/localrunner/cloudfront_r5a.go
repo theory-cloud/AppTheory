@@ -98,37 +98,30 @@ func (r *Runner) startCloudFrontControl(ctx context.Context, spec *Spec) error {
 	if len(spec.ServableCloudFront()) == 0 || r.cloudFrontAPI == nil {
 		return nil
 	}
-	var listenConfig net.ListenConfig
-	// The listener binds every interface so a function container reaches it
-	// through host.docker.internal, like the @connections management listener.
-	listener, err := listenConfig.Listen(ctx, "tcp", "0.0.0.0:0")
+	listeners, err := r.listenControl(ctx, "CloudFront")
 	if err != nil {
-		return fmt.Errorf("bind the local CloudFront API listener: %w", err)
+		return err
 	}
-	tcpAddr, ok := listener.Addr().(*net.TCPAddr)
-	if !ok {
-		_ = listener.Close() //nolint:errcheck // the listener cannot be used without a TCP address
-		return fmt.Errorf("the CloudFront API listener has no TCP address")
-	}
-	port := tcpAddr.Port
-	hostURL := fmt.Sprintf("http://127.0.0.1:%d", port)
-	containerURL := fmt.Sprintf("http://host.docker.internal:%d", port)
 	server := &http.Server{
 		Handler:           r.cloudFrontAPI,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-	r.listeners = append(r.listeners, listener)
 	r.servers = append(r.servers, server)
-	r.cloudFrontAPIURL = hostURL
-	go func() {
-		if serveErr := server.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-			r.logf("cloudfront API listener stopped: %v", serveErr)
-		}
-	}()
-	r.endpoints = append(r.endpoints, Endpoint{Service: "cloudfront", URL: containerURL})
-	r.addRuntimeHostEntry()
-	r.logf("cloudfront API at %s (containers: %s)", hostURL, containerURL)
+	r.cloudFrontAPIURL = listeners.HostURL
+	serve := func(listener net.Listener) {
+		go func() {
+			if serveErr := server.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+				r.logf("cloudfront API listener stopped: %v", serveErr)
+			}
+		}()
+	}
+	serve(listeners.Loopback)
+	if listeners.Gateway != nil {
+		serve(listeners.Gateway)
+	}
+	r.endpoints = append(r.endpoints, Endpoint{Service: "cloudfront", URL: listeners.ContainerURL})
+	r.logf("cloudfront API at %s (containers: %s)", listeners.HostURL, listeners.ContainerURL)
 	return nil
 }
 

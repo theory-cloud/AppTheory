@@ -60,6 +60,51 @@
         }
       }
     },
+    "codeBuild": {
+      "agent": {
+        "aarch64": {
+          "tag": "public.ecr.aws/codebuild/local-builds:aarch64",
+          "digest": "sha256:7d7b5d35d2ac4e062ae7ba8c662ffed15229a52d09bd0d664a7816c439679192",
+          "pinned": "2026-11-05",
+          "license": "Amazon Software License 1.0 (aws/aws-codebuild-docker-images LICENSE.txt)",
+          "compressedBytes": 569100000
+        },
+        "x86_64": {
+          "tag": "public.ecr.aws/codebuild/local-builds:latest",
+          "digest": "sha256:ccb19bdd7af94e4dc761e4c58c267e9455c28ec68d938086b4dc1cf8fe6b0940",
+          "pinned": "2026-11-05",
+          "license": "Amazon Software License 1.0 (aws/aws-codebuild-docker-images LICENSE.txt)",
+          "compressedBytes": 1309700000
+        }
+      },
+      "images": {
+        "aws/codebuild/standard:7.0": {
+          "aarch64": {
+            "tag": "public.ecr.aws/codebuild/amazonlinux-aarch64-lambda-standard:nodejs24",
+            "digest": "sha256:56d1ee8b3216e09d67048793fb835dd75b8e367b812842ff6fe3c4edbeec3bdf",
+            "pinned": "2026-11-05",
+            "license": "Amazon Software License 1.0 (aws/aws-codebuild-docker-images LICENSE.txt)",
+            "compressedBytes": 1283010354
+          },
+          "x86_64": {
+            "tag": "public.ecr.aws/codebuild/amazonlinux-x86_64-lambda-standard:nodejs24",
+            "digest": "sha256:e198554f4a84c3c478f1755efcc342d2370228e40fa9e41132cbe43e1c959df9",
+            "pinned": "2026-11-05",
+            "license": "Amazon Software License 1.0 (aws/aws-codebuild-docker-images LICENSE.txt)",
+            "compressedBytes": 1357342127
+          }
+        },
+        "public.ecr.aws/codebuild/amazonlinux-aarch64-standard:3.0": {
+          "aarch64": {
+            "tag": "public.ecr.aws/codebuild/amazonlinux-aarch64-standard:3.0",
+            "digest": "sha256:af9a04646321922b7bc478b3a539eda2714f91148074233acbecf878c0f4fde8",
+            "pinned": "2026-11-05",
+            "license": "Amazon Software License 1.0 (aws/aws-codebuild-docker-images LICENSE.txt)",
+            "compressedBytes": 4677714403
+          }
+        }
+      }
+    },
     "endpoints": {
       "dynamodb": {
         "container": "dynamodb-local",
@@ -211,10 +256,73 @@
       "class": "L1",
       "description": "hello-world TypeScript handler: the app's synthesized CDK stack, the nodejs:24 container through the Runtime Interface Emulator, and four HTTP assertions over the derived HTTP API v2 transport."
     },
+    "examples/cdk/multilang/scripts/watch-go.sh": {
+      "run": "dev-loop-watch-go",
+      "class": "L2",
+      "gap": "The runner re-synthesizes with cdk synth and polls the app directory with a 500 ms debounce; a change it cannot apply live (a new API listener, a new WebSocket API, a changed CloudFront topology, a new backend) is reported by name and requires a restart.",
+      "description": "Dev-loop watch (Go): a real edit to handlers/go/main.go triggers the runner's own cdk synth; the new response arrives on the unchanged GoApi listener, the Go function's execution environment is replaced, and the TypeScript and Python functions keep their Runtime API listeners and still answer on their own API listeners (they were not restarted); the source is restored and rebuilt before shutdown."
+    },
+    "examples/cdk/multilang/scripts/watch-ts.sh": {
+      "run": "dev-loop-watch-ts",
+      "class": "L2",
+      "gap": "The runner re-synthesizes with cdk synth and polls the app directory with a 500 ms debounce; a change it cannot apply live (a new API listener, a new WebSocket API, a changed CloudFront topology, a new backend) is reported by name and requires a restart.",
+      "description": "Dev-loop watch (TypeScript): a real edit to handlers/ts/handler.mjs triggers the runner's own cdk synth; the new response arrives on the unchanged TsApi listener, the TypeScript function's execution environment is replaced, and the Go and Python functions keep their Runtime API listeners and still answer on their own API listeners (they were not restarted); the source is restored and rebuilt before shutdown."
+    },
+    "examples/cdk/multilang/scripts/watch-py.sh": {
+      "run": "dev-loop-watch-py",
+      "class": "L2",
+      "gap": "The runner re-synthesizes with cdk synth and polls the app directory with a 500 ms debounce; a change it cannot apply live (a new API listener, a new WebSocket API, a changed CloudFront topology, a new backend) is reported by name and requires a restart.",
+      "description": "Dev-loop watch (Python): a real edit to handlers/py/handler.py triggers the runner's own cdk synth; the new response arrives on the unchanged PyApi listener, the Python function's execution environment is replaced, and the Go and TypeScript functions keep their Runtime API listeners and still answer on their own API listeners (they were not restarted); the source is restored and rebuilt before shutdown."
+    },
+    "examples/cdk/lesser-parity/scripts/data-dir.sh": {
+      "run": "data-dir-dynamodb",
+      "class": "L2",
+      "gap": "DynamoDB Local persists through -dbPath; moto runtime state is memory-only (the docs/125 true limit). A table key-schema change cannot be applied by UpdateTable and fails closed by name.",
+      "description": "DynamoDB --data-dir: a real item was written through the API handler's DynamoDB SDK in one session; a second session with the same --data-dir read it back through the same handler from shared-local-instance.db; a third session without --data-dir answered 404 (the default stays ephemeral)."
+    },
+    "examples/cdk/lambda-role/scripts/data-dir-s3.sh": {
+      "run": "data-dir-s3",
+      "class": "L2",
+      "gap": "s3proxy's filesystem provider persists objects; bucket policies and server-side event hooks are not served by the store.",
+      "description": "S3 --data-dir: the custom handler wrote an object through the real S3 SDK in one invoke; a second invoke with the same --data-dir read the object back through the handler, and the s3proxy base directory holds the object file."
+    },
+    "examples/cdk/sqs-queue/scripts/data-dir-sqs.sh": {
+      "run": "data-dir-sqs",
+      "class": "L2",
+      "gap": "ElasticMQ 1.7.1 persists queues and messages through messages-storage (verified on the pinned image); IAM, KMS encryption and AWS-managed scaling are not emulated.",
+      "description": "SQS --data-dir: a real ElasticMQ message was sent to an unconsumed queue in one session; a second session with the same --data-dir found it visible and received its body; the messages-storage H2 database held it."
+    },
+    "examples/cdk/restv1-router/scripts/stage-prefix.sh": {
+      "run": "stage-prefixed-rest",
+      "class": "L1",
+      "description": "Stage-prefixed REST URL: the API is served at /stage-probe at the root and /prod/stage-probe under the named stage; the v1 event carries path/resource without the stage and requestContext.path with it, and requestContext.stage=prod. plan prints both forms."
+    },
+    "examples/cdk/hello-world/handlers/stage-echo/handler.mjs": {
+      "run": "stage-prefixed-http",
+      "class": "L1",
+      "description": "Stage-prefixed HTTP API URL: an HTTP API with a named (dev) stage served /echo at the root and /dev/echo under the stage; the payload-format-2.0 event carried rawPath=/dev/echo, requestContext.http.path=/dev/echo and requestContext.stage=dev."
+    },
+    "examples/cdk/restv1-router/scripts/intrinsic-limits.sh": {
+      "run": "intrinsic-limits",
+      "class": "L1",
+      "description": "CloudFormation-expression MemorySize/Timeout: the L1 CfnFunction escape hatch declares a Ref to a parameter Default (256 MB), an Fn::If over a condition evaluable from that default (10 s), and an Fn::FindInMap pair (512 MB / 30 s); plan resolves them with no unresolved flags, the inventory handler answers, and docker inspect proves the resolved 256 MB reached the real container."
+    },
+    "examples/cdk/restv1-router/scripts/seed-local.sh": {
+      "run": "seed-restv1",
+      "class": "L2",
+      "gap": "The seed command runs on the host with the run's dummy credentials and host endpoint URLs; it drives the app's own handler (HTTP here), never the backend directly.",
+      "description": "Seed hook: the committed seed script ran after provisioning and before `local-run: ready`, used APPTHEORY_LOCAL_APIS to PUT and GET through the real inventory handler, and the seeded item was visible; a failing seed failed the run with the script's output."
+    },
     "examples/cdk/hello-world/handlers/ts/app.mjs": {
       "coveredBy": "examples/cdk/hello-world/handlers/ts/handler.mjs",
       "class": "L1",
       "description": "hello-world TypeScript app module imported by the handler; exercised through the same HTTP assertions."
+    },
+    "examples/cdk/import-pipeline/scripts/codebuild-local.sh": {
+      "run": "codebuild-import",
+      "class": "L2",
+      "gap": "The local agent runs the build in a Docker container on its own compose network; there is no VPC, cache, artifact upload or report group, and the project's aws/codebuild/standard:7.0 image is mapped to the profile's digest-pinned aarch64 Lambda-standard image. The agent and image are the published AWS images, not a mock.",
+      "description": "CodeBuild through AWS's local agent: StartBuild on the synthesized BatchStep project ran its inline buildspec with the pinned agent and build image; BatchGetBuilds reported BUILD/COMPLETED SUCCEEDED and the command log; ListBuildsForProject returned the id; the state-change rule delivered the SUCCEEDED event to the import-build-events SQS target. No mock."
     },
     "examples/cdk/import-pipeline/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
@@ -224,13 +332,13 @@
     "examples/cdk/import-pipeline/handlers/ingest/main.go": {
       "run": "import-ingest",
       "class": "L3",
-      "gap": "CodeBuild (R8); the bucket's EventBridge notification is delivered by the runner from a real object PUT, and the WorkConsumer SQS mapping delivers automatically on ElasticMQ.",
+      "gap": "IAM policy evaluation is a docs/125 true limit; the bucket's EventBridge notification is delivered by the runner from a real object PUT, the WorkConsumer SQS mapping delivers automatically on ElasticMQ, and the CodeBuild step is proven by the codebuild-import row.",
       "description": "Import pipeline ingest handler: a real object is written to s3proxy, the runner's S3 notification watcher publishes the documented aws.s3 Object Created event to the local bus, and IngestRule invokes the handler with no harness PutEvents; the handler writes the job meta and three work messages that the WorkConsumer mapping delivers to the worker and deletes."
     },
     "examples/cdk/import-pipeline/handlers/worker/main.go": {
       "run": "import-worker",
       "class": "L3",
-      "gap": "CodeBuild (R8); the bucket's EventBridge notification is delivered by the runner from a real object PUT, and the WorkConsumer SQS mapping delivers automatically on ElasticMQ.",
+      "gap": "IAM policy evaluation is a docs/125 true limit; the bucket's EventBridge notification is delivered by the runner from a real object PUT, the WorkConsumer SQS mapping delivers automatically on ElasticMQ, and the CodeBuild step is proven by the codebuild-import row.",
       "description": "Import pipeline worker handler: the full ingest \u2192 worker flow runs on the CDK jobs table after the runner delivered the bucket's EventBridge notification; the WorkConsumer mapping delivers the three real work messages automatically and they produce SUCCEEDED/FAILED records and a sanitized error envelope."
     },
     "examples/cdk/kinesis-cloudwatch-logs/bin/app.ts": {

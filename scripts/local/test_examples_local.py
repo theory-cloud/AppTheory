@@ -107,7 +107,7 @@ class RealTreeTests(unittest.TestCase):
         # and rule target handlers, the wave-2 E4 S3 consumer, R1 WebSocket
         # authorizer, R2a authorizer echo, R2b policy authorizer and R4
         # lambda-packaging rows, and the R3a Runtime API conformance suite.
-        self.assertEqual(85, len(classified))
+        self.assertEqual(96, len(classified))
         by_key = {entry.key: entry for entry in entries}
         expected = {
             "examples/cdk/ssr-site/bin/apptheory-ssr-site.ts": "ssr-site-gateway",

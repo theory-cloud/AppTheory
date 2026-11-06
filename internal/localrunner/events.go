@@ -24,6 +24,10 @@ type InvokeRequest struct {
 	Method      string
 	Path        string
 	RawPath     string
+	// StagePrefix is the "/{stage}" prefix the request used, or empty for a
+	// root (custom-domain) request. The REST v1 requestContext.path and the
+	// HTTP API v2 requestContext.http.path carry it; path and resource do not.
+	StagePrefix string
 	RawQuery    string
 	Header      http.Header
 	Body        []byte
@@ -310,7 +314,7 @@ func restRequestContext(request InvokeRequest, apiID string) map[string]any {
 			"userArn":   "",
 			"requestId": request.RequestID,
 		},
-		"path":         request.Path,
+		"path":         request.StagePrefix + request.Path,
 		"protocol":     "HTTP/1.1",
 		"requestId":    request.RequestID,
 		"resourceId":   request.API.LogicalID,
@@ -379,7 +383,7 @@ func rawPath(request InvokeRequest) string {
 func httpDescription(request InvokeRequest) map[string]any {
 	return map[string]any{
 		"method":    strings.ToUpper(request.Method),
-		"path":      request.Path,
+		"path":      request.StagePrefix + request.Path,
 		"protocol":  "HTTP/1.1",
 		"sourceIp":  sourceIP(request.RemoteAddr),
 		"userAgent": request.Header.Get("User-Agent"),

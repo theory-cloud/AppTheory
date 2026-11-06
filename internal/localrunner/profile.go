@@ -39,6 +39,20 @@ type ContainerPin struct {
 	Command       []string          `json:"command,omitempty"`
 	ContainerPort int               `json:"containerPort"`
 	Environment   map[string]string `json:"environment,omitempty"`
+	// Mounts are profile-declared bind mounts (host:container[:ro]).
+	Mounts []string `json:"mounts,omitempty"`
+}
+
+// CodeBuildImagePin is one digest-pinned CodeBuild image (the local agent or a
+// curated build image). CompressedBytes is the public registry's compressed
+// size, recorded so the docs can state the colima disk requirement without a
+// pull.
+type CodeBuildImagePin struct {
+	Tag             string `json:"tag"`
+	Digest          string `json:"digest"`
+	Pinned          string `json:"pinned"`
+	License         string `json:"license,omitempty"`
+	CompressedBytes int64  `json:"compressedBytes,omitempty"`
 }
 
 // Profile is the checked-in local execution profile the repo's harness and the
@@ -58,6 +72,14 @@ type Profile struct {
 		Container string   `json:"container"`
 		Env       []string `json:"env"`
 	} `json:"endpoints"`
+	// CodeBuild pins the local agent and the curated build images. Images is
+	// keyed by the deployed Environment.Image and then by host architecture
+	// (aarch64 or x86_64), because AWS publishes different curated images per
+	// architecture.
+	CodeBuild struct {
+		Agent  map[string]CodeBuildImagePin            `json:"agent"`
+		Images map[string]map[string]CodeBuildImagePin `json:"images"`
+	} `json:"codeBuild"`
 	path string
 }
 
@@ -219,6 +241,78 @@ func (p *Profile) validateImagePin(class string, pin ImagePin) (string, error) {
 		)
 	}
 	return pin.Tag + "@" + pin.Digest, nil
+}
+
+// CodeBuildAgent returns the digest-pinned local CodeBuild agent for an
+// architecture. AWS publishes the x86_64 agent as :latest and the ARM agent as
+// :aarch64.
+func (p *Profile) CodeBuildAgent(arch string) (string, error) {
+	if p == nil {
+		return "", fmt.Errorf("no local profile was supplied; pass --profile to pin the CodeBuild agent")
+	}
+	if len(p.CodeBuild.Agent) == 0 {
+		return "", fmt.Errorf("local profile %s pins no CodeBuild agent", p.path)
+	}
+	pin, ok := p.CodeBuild.Agent[codeBuildArch(arch)]
+	if !ok {
+		return "", fmt.Errorf("local profile %s pins no %s CodeBuild agent", p.path, codeBuildArch(arch))
+	}
+	return validateCodeBuildPin(p.path, "CodeBuild agent", pin)
+}
+
+// CodeBuildImage maps a project's Environment.Image to the profile's pinned
+// local build image for the host architecture.
+func (p *Profile) CodeBuildImage(arch, image string) (string, error) {
+	if p == nil {
+		return "", fmt.Errorf("no local profile was supplied; pass --profile to pin the CodeBuild build image")
+	}
+	image = strings.TrimSpace(image)
+	if image == "" {
+		return "", fmt.Errorf("the CodeBuild project declares no Environment.Image")
+	}
+	byArch, ok := p.CodeBuild.Images[image]
+	if !ok {
+		return "", fmt.Errorf(
+			"local profile %s does not map the CodeBuild image %q; add a codeBuild.images entry with a digest per architecture",
+			p.path, image,
+		)
+	}
+	pin, ok := byArch[codeBuildArch(arch)]
+	if !ok {
+		return "", fmt.Errorf(
+			"local profile %s maps %q but pins no %s image; AWS publishes per-architecture curated images",
+			p.path, image, codeBuildArch(arch),
+		)
+	}
+	return validateCodeBuildPin(p.path, "CodeBuild image "+image, pin)
+}
+
+func validateCodeBuildPin(profilePath, label string, pin CodeBuildImagePin) (string, error) {
+	if strings.TrimSpace(pin.Tag) == "" {
+		return "", fmt.Errorf("local profile %s has no %s tag", profilePath, label)
+	}
+	if !strings.HasPrefix(pin.Tag, "public.ecr.aws/codebuild/") {
+		return "", fmt.Errorf(
+			"local profile %s pins %q for %s, which is not a public.ecr.aws/codebuild image",
+			profilePath, pin.Tag, label,
+		)
+	}
+	if !digestPattern.MatchString(pin.Digest) {
+		return "", fmt.Errorf(
+			"local profile %s pins %s %q without a digest (got %q)",
+			profilePath, label, pin.Tag, pin.Digest,
+		)
+	}
+	return pin.Tag + "@" + pin.Digest, nil
+}
+
+func codeBuildArch(arch string) string {
+	switch strings.ToLower(strings.TrimSpace(arch)) {
+	case "arm64", archARM64Alias:
+		return archARM64Alias
+	default:
+		return archAMD64Alias
+	}
 }
 
 // EndpointEnvNames returns the environment variable names the profile binds to

@@ -205,7 +205,7 @@ func TestWebSocketManagementTLS(t *testing.T) {
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	require.NoError(t, management.start(ctx))
+	require.NoError(t, management.startLoopback(ctx))
 	defer management.close()
 
 	// The TLS endpoint answers 410 for an unknown connection when trusted.

@@ -190,6 +190,21 @@ export class HelloWorldStack extends Stack {
       cors: true,
     });
 
+    // R8 stage-shape proof: an HTTP API with a named (non-$default) stage. The
+    // runner serves both the root URL and /{stage}/... and the handler sees the
+    // documented v2 fields (rawPath with the stage, requestContext.stage).
+    const stageEchoFn = new lambda.Function(this, "StageEchoFn", {
+      runtime: lambda.Runtime.NODEJS_24_X,
+      handler: "handler.handler",
+      code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers", "stage-echo")),
+      description: "HTTP API v2 named-stage event-shape probe",
+    });
+    new AppTheoryHttpApi(this, "StageEchoApi", {
+      apiName: "apptheory-hello-world-stage-echo",
+      handler: stageEchoFn,
+      stage: { stageName: "dev" },
+    });
+
     new CfnOutput(this, "Language", { value: lang });
     new CfnOutput(this, "ApiUrl", { value: api.api.apiEndpoint });
     new CfnOutput(this, "Curl", { value: `curl ${api.api.apiEndpoint}/hello/AppTheory` });
