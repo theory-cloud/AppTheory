@@ -1579,8 +1579,29 @@ def run_data_dir_s3(harness: Harness) -> str:
         read_body = _proxy_body(read, "data-dir S3 read")
         if (read_body.get("s3Object") or {}).get("content") != value:
             raise HarnessFailure(f"data-dir S3 read returned {read}")
-        stored = list((Path(data_dir) / "s3proxy").rglob("persisted.txt"))
-        if not stored:
+        # jclouds' filesystem provider creates the bucket and key directories
+        # 0700 and the object 0600 (its own process umask), so a host-side scan
+        # cannot traverse them when the container wrote as a different UID than
+        # the runner (a Linux bind mount keeps the host UID). Read the store
+        # through the same pinned image, which runs as root, to prove the file.
+        image = str(
+            json.loads((ROOT / LOCAL_PROFILE).read_text(encoding="utf-8"))["profile"]["containers"]["s3proxy"]["image"]
+        )
+        stored = harness.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "-v",
+                f"{Path(data_dir) / 's3proxy'}:/data",
+                "--entrypoint",
+                "sh",
+                image,
+                "-c",
+                "find /data -name persisted.txt -type f",
+            ]
+        ).stdout.strip()
+        if "persisted.txt" not in stored:
             raise HarnessFailure("data-dir S3 store has no persisted object file")
         return (
             "an S3 object written through the app handler was read back by a second invoke with the same "
