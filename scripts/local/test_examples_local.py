@@ -106,8 +106,9 @@ class RealTreeTests(unittest.TestCase):
         # sqs-event-targets row with its publisher, the covered Kinesis log tap
         # and rule target handlers, the wave-2 E4 S3 consumer, R1 WebSocket
         # authorizer, R2a authorizer echo, R2b policy authorizer and R4
-        # lambda-packaging rows, and the R3a Runtime API conformance suite.
-        self.assertEqual(96, len(classified))
+        # lambda-packaging rows, the R3a Runtime API conformance suite and the
+        # AD1 two-edit watch row.
+        self.assertEqual(97, len(classified))
         by_key = {entry.key: entry for entry in entries}
         expected = {
             "examples/cdk/ssr-site/bin/apptheory-ssr-site.ts": "ssr-site-gateway",

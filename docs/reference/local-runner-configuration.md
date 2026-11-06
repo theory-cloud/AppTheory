@@ -39,7 +39,7 @@ function the CDK definition targets and reads one JSON command per line.
 | `--add-host name=address` | none | Extra `/etc/hosts` entry inside function containers. Repeatable. |
 | `--backend NAME` | none | Start a profile emulator on the run network: `dynamodb`, `sqs`, or a profile container such as `moto` (KMS, STS, SSM, Secrets Manager, SNS, Kinesis, Cognito) or `s3proxy` (S3). Repeatable. |
 | `--port-base N` | ephemeral | Bind the API listeners at `N`, `N+1`, …; `0` asks the OS for free ports. |
-| `--name-prefix PREFIX` | derived from the app hash | Container, network and built-image names. Two concurrent runs of the same app share the default prefix (and an image tag), so set a unique prefix when they must not collide. |
+| `--name-prefix PREFIX` | derived from the app hash | Container and network names. Two concurrent runs of the same app share the default prefix (and container/network names), so set a unique prefix when they must not collide. Built-image tags also carry the run id, so concurrent runs never move each other's image tag. |
 | `--max-concurrency N` | 32 | In-flight invocations, `1..32`. Values above 32 are refused. |
 | `--delivery-concurrency N` | 4 | Concurrent handler invocations the delivery engine performs, `1..32`. The default is sized for the documented 4 CPU / ~6 GB Colima host. |
 | `--clock SPEC` | `real` | `run`/`session` time source: `real`, `test`, or `test=<RFC3339 start>`. A test clock starts at the given instant, or `2026-01-01T00:00:00Z` when omitted. |
@@ -190,6 +190,19 @@ wiring are re-derived. The listeners keep their ports and URLs.
 | A new/removed HTTP, REST, Function URL or WebSocket listener | Requires a restart; reported by name. |
 | A changed CloudFront distribution topology | Requires a restart; reported. |
 | A new resource needing a backend this run did not start | Requires a restart with `--backend`; reported. |
+
+A reload that fails after a function was replaced restores the previous
+definition. A container-image function is restored from the immutable image id
+recorded before the rebuild moved its tag, the tag is pointed back at that
+image, and the image this reload built is removed by id without `-f`. Docker
+refuses that removal while another tag or container still references the image,
+so a foreign, pinned or shared image is never removed; a tag-restore failure
+keeps the rebuilt image and logs it. The apply log names the branch it took:
+`rolled back ...; the previous assembly keeps serving` when every replaced
+function was restored, `no replaced function was restored` when none was, and
+`partially applied: ... restored, ... not` in between. A full rollback removes
+the new assembly directory; any rollback that leaves a function unrestored
+keeps it because a container may still mount it.
 
 ### `--data-dir` layout
 
@@ -1339,7 +1352,7 @@ before the token's `iat` refuses it.
 | --- | --- |
 | `Layers` on a zip function | Every entry must be an `AWS::Lambda::LayerVersion` in the function's stack with a local asset (`aws:asset:path`). The layer content is extracted into one `/opt` directory in the listed order; a later layer's file replaces an earlier one. A relative symlink whose target stays inside the layer is extracted as the same symlink (CDK's default `SymlinkFollowMode.NEVER` stores an asset's symlinks, and `npm install` leaves `node_modules/.bin` shims as symlinks); a symlink with an absolute target or one that escapes the layer root is refused by name. A layer asset that is a zip file rather than an extracted directory is refused because the runner needs the directory. More than five layers, a literal layer ARN, an `Fn::ImportValue` and any other unresolvable reference are refused by name. |
 | Layer runtime paths | `/opt/bin` is prepended to `PATH`, `/opt/lib` to `LD_LIBRARY_PATH`, `/opt/nodejs/node_modules` and `/opt/nodejs/node<major>/node_modules` to `NODE_PATH` (Node), and `/opt/python` plus `/opt/python/lib/python<major>.<minor>/site-packages` to `PYTHONPATH` (Python). The image's own values are read with `docker image inspect` and kept after the layer paths; a failed inspect falls back to a documented default `PATH`. |
-| `PackageType: Image` / `Code.ImageUri` | The `aws:asset:path`, `aws:asset:dockerfile-path`, `aws:asset:docker-build-args`, `aws:asset:docker-build-target` and `aws:asset:docker-platform` metadata are read from the function resource. `docker build` runs with the asset directory as the context, the image is tagged `<name-prefix>-<logical-id>-image` with the run label, and the container starts with the image's own entrypoint (no command, no code mount). The build runs before any listener serves. In the default mode the runner hosts the Runtime API the image's runtime client connects to; with `--rie` it starts the image's own Runtime Interface Emulator instead. The tag is per app hash by default, so two concurrent runs of one app share it and docker reuses the built image. |
+| `PackageType: Image` / `Code.ImageUri` | The `aws:asset:path`, `aws:asset:dockerfile-path`, `aws:asset:docker-build-args`, `aws:asset:docker-build-target` and `aws:asset:docker-platform` metadata are read from the function resource. `docker build` runs with the asset directory as the context, the image is tagged `<name-prefix>-<run-id>-<logical-id>-image` with the run label, and the container starts with the image's own entrypoint (no command, no code mount). The build runs before any listener serves. In the default mode the runner hosts the Runtime API the image's runtime client connects to; with `--rie` it starts the image's own Runtime Interface Emulator instead. The tag is per app hash plus the run id, so two concurrent runs of one app never move each other's image tag; docker's layer cache still reuses unchanged build steps. |
 | Refusals | An image without `aws:asset:path`, an image that declares `Layers`, and — under `--rie` — an image whose container never starts a Runtime Interface Emulator all fail by name (the last cites the images-create page). A zip function whose runtime image cannot be pinned fails in the image-resolution step. |
 
 Layer and image builds happen before `run` starts serving; the run shuts down

@@ -236,33 +236,82 @@ func TestSameGlobalSecondaryIndex(t *testing.T) {
 		KeySchema:  []types.KeySchemaElement{{AttributeName: aws.String("status"), KeyType: types.KeyTypeHash}},
 		Projection: &types.Projection{ProjectionType: types.ProjectionTypeInclude, NonKeyAttributes: []string{"a", "b"}},
 	}
+	actualTypes := map[string]string{"status": "S"}
 	wanted := dynamoGlobalSecondaryIndex{
 		KeySchema:  []dynamoKeySchemaElement{{AttributeName: "status", KeyType: "HASH"}},
 		Projection: dynamoProjection{ProjectionType: "INCLUDE", NonKeyAttributes: []string{"a", "b"}},
 	}
-	if !sameGlobalSecondaryIndex(actual, wanted) {
+	wantedTypes := map[string]string{"status": "S"}
+	if !sameGlobalSecondaryIndex(actual, wanted, actualTypes, wantedTypes) {
 		t.Fatal("a matching index was reported as changed")
 	}
 	changed := wanted
 	changed.Projection.NonKeyAttributes = []string{"a"}
-	if sameGlobalSecondaryIndex(actual, changed) {
+	if sameGlobalSecondaryIndex(actual, changed, actualTypes, wantedTypes) {
 		t.Fatal("a changed projection was reported as matching")
 	}
 	changed = wanted
 	changed.KeySchema = []dynamoKeySchemaElement{{AttributeName: "other", KeyType: "HASH"}}
-	if sameGlobalSecondaryIndex(actual, changed) {
+	if sameGlobalSecondaryIndex(actual, changed, actualTypes, wantedTypes) {
 		t.Fatal("a changed index key was reported as matching")
 	}
 	changed = wanted
 	changed.KeySchema = append(changed.KeySchema, dynamoKeySchemaElement{AttributeName: "sk", KeyType: "RANGE"})
-	if sameGlobalSecondaryIndex(actual, changed) {
+	if sameGlobalSecondaryIndex(actual, changed, actualTypes, wantedTypes) {
 		t.Fatal("an added index key was reported as matching")
 	}
-	if sameGlobalSecondaryIndex(types.GlobalSecondaryIndexDescription{}, wanted) {
+	// A type-only change keeps the attribute name and HASH role but changes
+	// the declared scalar type (S to N), which no UpdateTable call can apply.
+	changed = wanted
+	changedTypes := map[string]string{"status": "N"}
+	if sameGlobalSecondaryIndex(actual, changed, actualTypes, changedTypes) {
+		t.Fatal("a changed index key attribute type was reported as matching")
+	}
+	if sameGlobalSecondaryIndex(types.GlobalSecondaryIndexDescription{}, wanted, nil, wantedTypes) {
 		t.Fatal("a missing projection was reported as matching")
 	}
-	if !sameGlobalSecondaryIndex(types.GlobalSecondaryIndexDescription{}, dynamoGlobalSecondaryIndex{}) {
+	if !sameGlobalSecondaryIndex(types.GlobalSecondaryIndexDescription{}, dynamoGlobalSecondaryIndex{}, nil, nil) {
 		t.Fatal("two empty definitions were reported as different")
+	}
+}
+
+func TestReconcileTableDefinitionRefusesIndexAttributeTypeChange(t *testing.T) {
+	description := &types.TableDescription{
+		KeySchema: []types.KeySchemaElement{{AttributeName: aws.String("pk"), KeyType: types.KeyTypeHash}},
+		AttributeDefinitions: []types.AttributeDefinition{
+			{AttributeName: aws.String("pk"), AttributeType: types.ScalarAttributeTypeS},
+			{AttributeName: aws.String("status"), AttributeType: types.ScalarAttributeTypeS},
+		},
+		GlobalSecondaryIndexes: []types.GlobalSecondaryIndexDescription{{
+			IndexName:  aws.String("by-status"),
+			KeySchema:  []types.KeySchemaElement{{AttributeName: aws.String("status"), KeyType: types.KeyTypeHash}},
+			Projection: &types.Projection{ProjectionType: types.ProjectionTypeKeysOnly},
+		}},
+	}
+	props := dynamoTableProperties{
+		KeySchema: []dynamoKeySchemaElement{{AttributeName: "pk", KeyType: "HASH"}},
+		AttributeDefinitions: []dynamoAttributeDefinition{
+			{AttributeName: "pk", AttributeType: "S"},
+			{AttributeName: "status", AttributeType: "N"},
+		},
+		GlobalSecondaryIndexes: []dynamoGlobalSecondaryIndex{{
+			IndexName:  "by-status",
+			KeySchema:  []dynamoKeySchemaElement{{AttributeName: "status", KeyType: "HASH"}},
+			Projection: dynamoProjection{ProjectionType: "KEYS_ONLY"},
+		}},
+	}
+	err := reconcileTableDefinition(context.Background(), nil, "jobs", props, description)
+	if err == nil {
+		t.Fatal("an index key attribute type change was accepted")
+	}
+	for _, want := range []string{
+		"by-status",
+		"AttributeDefinition.html",
+		"different shape",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the refusal does not cite %q: %v", want, err)
+		}
 	}
 }
 

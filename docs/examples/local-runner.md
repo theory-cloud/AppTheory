@@ -1489,9 +1489,10 @@ is built before any listener serves a request, so a broken Dockerfile fails the
 run instead of failing the first request; the first build of an example takes
 roughly 10–60 seconds including the base-image pull, and rebuilds are cached by
 Docker's layer cache (a second build of the same asset is near-instant). The
-image tag is derived from the name prefix, which is the app hash by default, so
-two concurrent runs of one app share a tag and docker reuses the built image. The
-function container runs the image's own entrypoint. In the default mode the
+image tag carries the run id as well as the name prefix (the app hash by
+default), so two concurrent runs of one app never move each other's tag while
+the layer cache still reuses unchanged build steps. The function container runs
+the image's own entrypoint. In the default mode the
 runner hosts the Runtime API that the image's runtime client connects to, so an
 image built on an
 [AWS base image](https://docs.aws.amazon.com/lambda/latest/dg/images-create.html)
@@ -1734,6 +1735,12 @@ sources, rules, subscriptions and delivery wiring are re-derived, and every
 | A changed CloudFront distribution topology | No: reported; restart the session. |
 | Event sources, rules and subscriptions | Yes: the delivery engine is re-derived. |
 | A new resource that needs a backend this run did not start | No: reported by name with the backend; restart with `--backend`. |
+
+The `examples/cdk/multilang/scripts/watch-two-edit.sh` row proves two successive
+edits in one session: the first edit replaces the Go function, the second
+replaces the TypeScript function, and the already-restarted Go function keeps
+its Runtime API and keeps answering while the Python function answers
+throughout.
 
 ### Persistent data (`--data-dir`)
 

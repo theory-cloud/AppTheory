@@ -1335,12 +1335,12 @@ func (r *Runner) buildFunctionImage(ctx context.Context, function FunctionSpec) 
 	return tag, nil
 }
 
-// functionImageTag names one function's built image. The name is derived from
-// the run's name prefix (the app hash by default) and the function's logical
-// id, so two concurrent runs of the same app share a tag; docker caches and
-// reuses the image for both.
+// functionImageTag names one function's built image. The name carries the run
+// id, so two concurrent runs of the same app never move each other's tag; a
+// reload within one run keeps the same tag, and docker's layer cache still
+// reuses unchanged build steps.
 func (r *Runner) functionImageTag(function FunctionSpec) string {
-	return sanitizeName(r.namePrefix + "-" + function.LogicalID + "-image")
+	return sanitizeName(r.namePrefix + "-" + r.runID + "-" + function.LogicalID + "-image")
 }
 
 // networkGateway resolves the run network's gateway address.

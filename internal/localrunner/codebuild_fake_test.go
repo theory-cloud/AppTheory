@@ -354,7 +354,11 @@ type restartFakeDocker struct {
 	builds    int
 	runImages []string
 	removed   []string
-	tagErr    error
+	refused   []string
+	// sharedBuildID models the daemon's content-addressed build result: every
+	// build produces the same id, so several tags can name one image.
+	sharedBuildID string
+	tagErr        error
 }
 
 func (f *restartFakeDocker) imageStore() map[string]string {
@@ -362,6 +366,18 @@ func (f *restartFakeDocker) imageStore() map[string]string {
 		f.images = map[string]string{}
 	}
 	return f.images
+}
+
+// tagReferences reports whether any tag still names the image id. A real
+// `docker image rm <id>` refuses in that case; the runner relies on that
+// refusal (it never forces) to keep a foreign or shared image.
+func (f *restartFakeDocker) tagReferences(id string) bool {
+	for _, target := range f.imageStore() {
+		if target == id {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *restartFakeDocker) exec(ctx context.Context, argv []string) (string, string, error) {
@@ -376,6 +392,9 @@ func (f *restartFakeDocker) exec(ctx context.Context, argv []string) (string, st
 		f.mu.Lock()
 		f.builds++
 		id := fmt.Sprintf("sha256:built-%d", f.builds)
+		if f.sharedBuildID != "" {
+			id = f.sharedBuildID
+		}
 		for index, argument := range argv {
 			if argument == "-t" && index+1 < len(argv) {
 				f.imageStore()[argv[index+1]] = id
@@ -458,6 +477,10 @@ func (f *restartFakeDocker) exec(ctx context.Context, argv []string) (string, st
 		case "rm":
 			for _, reference := range argv[3:] {
 				f.removed = append(f.removed, reference)
+				if strings.HasPrefix(reference, "sha256:") && f.tagReferences(reference) {
+					f.refused = append(f.refused, reference)
+					continue
+				}
 				delete(f.imageStore(), reference)
 			}
 			return "", "", nil

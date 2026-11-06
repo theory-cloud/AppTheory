@@ -1508,6 +1508,123 @@ def run_dev_loop_watch_py(harness: Harness) -> str:
     return run_dev_loop_watch(harness, "py")
 
 
+def _one_function(prefix: str, functions: dict[str, str], label: str) -> str:
+    matches = [function for function in functions if function.startswith(prefix)]
+    if len(matches) != 1:
+        raise HarnessFailure(f"{label}: want one {prefix} function, got {matches}")
+    return matches[0]
+
+
+def run_dev_loop_watch_two_edit(harness: Harness) -> str:
+    """Two successive real edits on one watch session.
+
+    The first edit replaces the Go function. The second replaces the TypeScript
+    function, and the Go function the first edit restarted must keep its
+    Runtime API and keep answering; the Python function answers throughout.
+    """
+    go_case, ts_case = WATCH_DEV_LOOP["go"], WATCH_DEV_LOOP["ts"]
+    go_handler = ROOT / go_case["handler"]
+    ts_handler = ROOT / ts_case["handler"]
+    go_original = go_handler.read_text(encoding="utf-8")
+    ts_original = ts_handler.read_text(encoding="utf-8")
+    session = start_local_session(
+        harness,
+        "examples/cdk/multilang",
+        name="watch-two-edit",
+        backends=("dynamodb", "sqs", "moto"),
+        watch=True,
+    )
+    go_url = ts_url = py_url = ""
+    go_edited = False
+    ts_edited = False
+    try:
+        go_url = session_api_url(session.spec, session, go_case["api_suffix"])
+        ts_url = session_api_url(session.spec, session, ts_case["api_suffix"])
+        py_url = session_api_url(session.spec, session, WATCH_UNCHANGED_API_SUFFIX["PyHandler"])
+        for url, label, body in (
+            (go_url, "Go", "hello probe"),
+            (ts_url, "TypeScript", "hello probe"),
+            (py_url, "Python", "hello probe"),
+        ):
+            status, response, _ = http_request("GET", f"{url}/hello/probe")
+            expect_status(status, 200, f"two-edit initial {label} request", response)
+            if body not in response:
+                raise HarnessFailure(f"two-edit: initial {label} body is {response!r}")
+        before = _runtime_apis(session)
+        go_id = _one_function(go_case["function_prefix"], before, "two-edit")
+        ts_id = _one_function(ts_case["function_prefix"], before, "two-edit")
+        py_id = _one_function("PyHandler", before, "two-edit")
+        rebuilds = Path(session.log_path).read_text(encoding="utf-8", errors="replace").count("watch: rebuilt")
+
+        updated = go_original.replace(go_case["old"], go_case["new"], 1)
+        if updated == go_original:
+            raise HarnessFailure(f"two-edit: the Go edit marker {go_case['old']!r} was not found")
+        go_handler.write_text(updated, encoding="utf-8")
+        go_edited = True
+        _wait_for_body(f"{go_url}/hello/probe", "watch probe", 300, "two-edit Go rebuild")
+        _wait_for_log_count(session, "watch: rebuilt", rebuilds + 1, 120, "two-edit Go rebuild")
+        after_first = _runtime_apis(session)
+        if after_first.get(go_id) == before.get(go_id):
+            raise HarnessFailure(f"two-edit: {go_id} kept its Runtime API after the first edit")
+        for function, label, url in (
+            (ts_id, "TypeScript", ts_url),
+            (py_id, "Python", py_url),
+        ):
+            if after_first.get(function) != before.get(function):
+                raise HarnessFailure(
+                    f"two-edit: {function} restarted during the Go edit "
+                    f"({before.get(function)} -> {after_first.get(function)})"
+                )
+            status, response, _ = http_request("GET", f"{url}/hello/probe")
+            expect_status(status, 200, f"two-edit first-edit neighbour {label}", response)
+            if "hello probe" not in response:
+                raise HarnessFailure(f"two-edit: {label} answered {response!r} after the Go edit")
+
+        ts_updated = ts_original.replace(ts_case["old"], ts_case["new"], 1)
+        if ts_updated == ts_original:
+            raise HarnessFailure(f"two-edit: the TypeScript edit marker {ts_case['old']!r} was not found")
+        ts_handler.write_text(ts_updated, encoding="utf-8")
+        ts_edited = True
+        _wait_for_body(f"{ts_url}/hello/probe", "watch probe", 300, "two-edit TypeScript rebuild")
+        _wait_for_log_count(session, "watch: rebuilt", rebuilds + 2, 120, "two-edit TypeScript rebuild")
+        after_second = _runtime_apis(session)
+        if after_second.get(ts_id) == after_first.get(ts_id):
+            raise HarnessFailure(f"two-edit: {ts_id} kept its Runtime API after the second edit")
+        if after_second.get(go_id) != after_first.get(go_id):
+            raise HarnessFailure(
+                f"two-edit: the Go function restarted again during the TypeScript edit "
+                f"({after_first.get(go_id)} -> {after_second.get(go_id)})"
+            )
+        if after_second.get(py_id) != after_first.get(py_id):
+            raise HarnessFailure(
+                f"two-edit: the Python function restarted during the TypeScript edit "
+                f"({after_first.get(py_id)} -> {after_second.get(py_id)})"
+            )
+        status, response, _ = http_request("GET", f"{go_url}/hello/probe")
+        expect_status(status, 200, "two-edit neighbour Go after the second edit", response)
+        if "watch probe" not in response:
+            raise HarnessFailure(f"two-edit: the already-restarted Go function answered {response!r}")
+        status, response, _ = http_request("GET", f"{py_url}/hello/probe")
+        expect_status(status, 200, "two-edit neighbour Python after the second edit", response)
+        if "hello probe" not in response:
+            raise HarnessFailure(f"two-edit: the Python function answered {response!r}")
+    finally:
+        try:
+            if ts_edited:
+                ts_handler.write_text(ts_original, encoding="utf-8")
+                _wait_for_body(f"{ts_url}/hello/probe", "hello probe", 300, "two-edit TypeScript restore")
+            if go_edited:
+                go_handler.write_text(go_original, encoding="utf-8")
+                _wait_for_body(f"{go_url}/hello/probe", "hello probe", 300, "two-edit Go restore")
+        finally:
+            stop_local_session(harness, session)
+    return (
+        "two successive real edits in one watch session: the Go edit replaced the Go function, then the "
+        "TypeScript edit replaced the TypeScript function while the already-restarted Go function kept its "
+        "Runtime API and its new response, and the Python function answered throughout"
+    )
+
+
 def _data_dir(harness: Harness, name: str) -> str:
     """Create a data directory under $HOME so Docker can bind-mount it."""
     return tempfile.mkdtemp(prefix=f"apptheory-local-data-{name}-", dir=str(Path.home()))
@@ -7560,6 +7677,7 @@ RUNNERS: dict[str, Callable[[Harness], str]] = {
     "dev-loop-watch-go": run_dev_loop_watch_go,
     "dev-loop-watch-ts": run_dev_loop_watch_ts,
     "dev-loop-watch-py": run_dev_loop_watch_py,
+    "dev-loop-watch-two-edit": run_dev_loop_watch_two_edit,
     "data-dir-dynamodb": run_data_dir_dynamodb,
     "data-dir-s3": run_data_dir_s3,
     "data-dir-sqs": run_data_dir_sqs,

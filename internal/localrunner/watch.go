@@ -486,13 +486,14 @@ func newResourceBackends(current, next *Spec, r *Runner) []string {
 // watchedFunctionApply is one function a reload batch starts or replaces. The
 // image is resolved for every entry before the first container changes, so a
 // build or image failure restarts nothing. An image function also carries the
-// immutable id of the image it runs now: the rebuild moves the shared tag to
-// the new content, so only the id identifies the content a rollback restores.
+// immutable id of the image it runs now: the rebuild moves the function's tag
+// to the new content, so only the id identifies the content a rollback restores.
 type watchedFunctionApply struct {
 	function        FunctionSpec
 	previous        *FunctionProcess
 	image           string
 	previousImageID string
+	rebuiltImageID  string
 	reason          string
 }
 
@@ -504,6 +505,7 @@ type appliedWatchedFunction struct {
 	previous        FunctionSpec
 	image           string
 	previousImageID string
+	rebuiltImageID  string
 	added           bool
 }
 
@@ -515,6 +517,16 @@ type watchStateReported struct{ err error }
 func (e *watchStateReported) Error() string { return e.err.Error() }
 
 func (e *watchStateReported) Unwrap() error { return e.err }
+
+// watchedRestoreFailure marks a reload whose failed function did not start its
+// previous definition again. The new assembly may still be mounted by that
+// function's container, so the apply keeps it and reports that a restart is
+// required instead of claiming the previous assembly keeps serving.
+type watchedRestoreFailure struct{ err error }
+
+func (e *watchedRestoreFailure) Error() string { return e.err.Error() }
+
+func (e *watchedRestoreFailure) Unwrap() error { return e.err }
 
 // applyWatchedSpec provisions the new definitions, restarts the changed
 // functions and swaps the route tables and delivery sources.
@@ -637,7 +649,11 @@ func (r *Runner) startOrReplaceWatchedFunction(ctx context.Context, item watched
 			}
 			return appliedWatchedFunction{}, err
 		}
-		return appliedWatchedFunction{process: r.invokers[item.function.LogicalID], added: true}, nil
+		return appliedWatchedFunction{
+			process:        r.invokers[item.function.LogicalID],
+			rebuiltImageID: item.rebuiltImageID,
+			added:          true,
+		}, nil
 	}
 	r.logf("watch: function %s changed (%s); replacing its execution environment", item.function.LogicalID, item.reason)
 	previous := item.previous.Function
@@ -650,6 +666,7 @@ func (r *Runner) startOrReplaceWatchedFunction(ctx context.Context, item watched
 		previous:        previous,
 		image:           previousImage,
 		previousImageID: item.previousImageID,
+		rebuiltImageID:  item.rebuiltImageID,
 	}, nil
 }
 
@@ -670,7 +687,11 @@ func (r *Runner) planWatchedFunctions(ctx context.Context, next *Spec, targets [
 			if err != nil {
 				return nil, err
 			}
-			plan = append(plan, watchedFunctionApply{function: function, image: image})
+			rebuiltImageID, err := r.rebuiltImageID(ctx, function, image)
+			if err != nil {
+				return nil, err
+			}
+			plan = append(plan, watchedFunctionApply{function: function, image: image, rebuiltImageID: rebuiltImageID})
 			continue
 		}
 		reason := functionReloadReason(previous.Function, function)
@@ -688,11 +709,16 @@ func (r *Runner) planWatchedFunctions(ctx context.Context, next *Spec, targets [
 		if err != nil {
 			return nil, err
 		}
+		rebuiltImageID, err := r.rebuiltImageID(ctx, function, image)
+		if err != nil {
+			return nil, err
+		}
 		plan = append(plan, watchedFunctionApply{
 			function:        function,
 			previous:        previous,
 			image:           image,
 			previousImageID: previousImageID,
+			rebuiltImageID:  rebuiltImageID,
 			reason:          reason,
 		})
 	}
@@ -713,16 +739,40 @@ func (r *Runner) rollbackImageID(ctx context.Context, function FunctionSpec, ima
 	return id, nil
 }
 
+// rebuiltImageID resolves the immutable id of the image this reload built,
+// before a rollback moves the tag back to the previous content. Only that id
+// is removed after a successful rollback; the tag never identifies a foreign
+// image because the build wrote it in this run.
+func (r *Runner) rebuiltImageID(ctx context.Context, function FunctionSpec, image string) (string, error) {
+	if function.ImageAsset == nil {
+		return "", nil
+	}
+	id, err := r.docker.ImageID(ctx, image)
+	if err != nil {
+		return "", fmt.Errorf("function %s: resolve the image this rebuild produced: %w", function.LogicalID, err)
+	}
+	return id, nil
+}
+
 // failWatchedApply restores the previous assembly after a start or restart
 // failure. A successful rollback removes the new assembly directory, which no
 // running container mounts any more; a failed rollback keeps it, because a
 // container may still run from it, and the spec is set to what is serving. A
 // container-image function restarts from the immutable image id recorded at
-// plan time, and its tag is pointed back at that image.
+// plan time, and its tag is pointed back at that image; the image this reload
+// built is then removed by id, unforced, so a foreign or pinned image that
+// shares the id is never touched.
 func (r *Runner) failWatchedApply(ctx context.Context, next *Spec, targets []string, assemblyDir string, applied []appliedWatchedFunction, applyErr error) (bool, error) {
+	var restoreFailure *watchedRestoreFailure
+	restoreFailed := errors.As(applyErr, &restoreFailure)
 	if len(applied) == 0 {
+		if restoreFailed {
+			r.logf("watch: %v; no function was applied and the failed function's previous definition was not restored; a restart is required", applyErr)
+			return true, &watchStateReported{err: applyErr}
+		}
 		_ = os.RemoveAll(assemblyDir) //nolint:errcheck // no container mounts the assembly the apply never used
-		return false, applyErr
+		r.logf("watch: %v; no function was applied; the previous assembly keeps serving", applyErr)
+		return false, &watchStateReported{err: applyErr}
 	}
 	var rollbackFailures []string
 	for index := len(applied) - 1; index >= 0; index-- {
@@ -740,9 +790,22 @@ func (r *Runner) failWatchedApply(ctx context.Context, next *Spec, targets []str
 			rollbackFailures = append(rollbackFailures, fmt.Sprintf("function %s: %v", entry.previous.LogicalID, err))
 			continue
 		}
-		r.restoreFunctionImageTag(ctx, entry.previous, entry.previousImageID)
+		if entry.rebuiltImageID != "" && r.restoreFunctionImageTag(ctx, entry.previous, entry.previousImageID) {
+			// The tag no longer names the rebuild's image. Remove it by the id
+			// captured before the tag moved; docker refuses if anything else
+			// still references it.
+			r.docker.RemoveImageIfUnused(ctx, entry.rebuiltImageID)
+		}
 	}
 	if len(rollbackFailures) == 0 {
+		if restoreFailed {
+			r.specMu.Lock()
+			r.spec = r.servingWatchedSpec(next, targets)
+			r.specMu.Unlock()
+			r.logf("watch: %v; rolled back %d replaced function(s), but the failed function's previous definition was not restored; a restart is required",
+				applyErr, len(applied))
+			return true, &watchStateReported{err: applyErr}
+		}
 		_ = os.RemoveAll(assemblyDir) //nolint:errcheck // every replaced function is mounted from the previous assembly again
 		r.logf("watch: %v; rolled back %d replaced function(s); the previous assembly keeps serving", applyErr, len(applied))
 		return false, &watchStateReported{err: applyErr}
@@ -750,8 +813,14 @@ func (r *Runner) failWatchedApply(ctx context.Context, next *Spec, targets []str
 	r.specMu.Lock()
 	r.spec = r.servingWatchedSpec(next, targets)
 	r.specMu.Unlock()
-	r.logf("watch: %v; partially applied: %d restarted, %d not; a restart is required (%s)",
-		applyErr, len(rollbackFailures), len(targets)-len(rollbackFailures), strings.Join(rollbackFailures, "; "))
+	if len(rollbackFailures) == len(applied) {
+		r.logf("watch: %v; no replaced function was restored; a restart is required (%s)",
+			applyErr, strings.Join(rollbackFailures, "; "))
+		return true, &watchStateReported{err: applyErr}
+	}
+	restored := len(applied) - len(rollbackFailures)
+	r.logf("watch: %v; partially applied: %d replaced function(s) restored, %d not; a restart is required (%s)",
+		applyErr, restored, len(rollbackFailures), strings.Join(rollbackFailures, "; "))
 	return true, &watchStateReported{err: applyErr}
 }
 
@@ -801,11 +870,20 @@ func (r *Runner) restartFunction(ctx context.Context, process *FunctionProcess, 
 	}
 	if err := r.replaceFunctionEnvironment(ctx, process, function, image); err != nil {
 		r.logf("watch: function %s restart failed (%v); restoring the previous definition", function.LogicalID, err)
-		if restoreErr := r.replaceFunctionEnvironment(ctx, process, previous, restoreImage); restoreErr != nil {
-			return fmt.Errorf("function %s: restart failed (%v) and the previous definition could not start (%v)",
-				function.LogicalID, err, restoreErr)
+		rebuiltImageID := ""
+		if function.ImageAsset != nil {
+			// The tag still names the image this attempt built; capture it
+			// before the restore moves the tag.
+			rebuiltImageID, _ = r.docker.ImageID(ctx, image) //nolint:errcheck // best-effort cleanup; a missing id leaves the image
 		}
-		r.restoreFunctionImageTag(ctx, previous, previousImageID)
+		if restoreErr := r.replaceFunctionEnvironment(ctx, process, previous, restoreImage); restoreErr != nil {
+			return &watchedRestoreFailure{err: fmt.Errorf(
+				"function %s: restart failed (%v) and the previous definition could not start (%v)",
+				function.LogicalID, err, restoreErr)}
+		}
+		if rebuiltImageID != "" && r.restoreFunctionImageTag(ctx, previous, previousImageID) {
+			r.docker.RemoveImageIfUnused(ctx, rebuiltImageID)
+		}
 		return fmt.Errorf("function %s: %w", function.LogicalID, err)
 	}
 	return nil
@@ -815,22 +893,23 @@ func (r *Runner) restartFunction(ctx context.Context, process *FunctionProcess, 
 // image its rollback container runs. The rebuild moved the tag to the new
 // content; without this, the next plan would read the new image as the
 // function's previous content and a later rollback would restore it again.
-func (r *Runner) restoreFunctionImageTag(ctx context.Context, function FunctionSpec, imageID string) {
+func (r *Runner) restoreFunctionImageTag(ctx context.Context, function FunctionSpec, imageID string) bool {
 	if function.ImageAsset == nil || imageID == "" {
-		return
+		return true
 	}
 	tag := r.functionImageTag(function)
 	if tag == imageID {
-		return
+		return true
 	}
 	if err := r.docker.TagImage(ctx, imageID, tag); err != nil {
 		r.logf("watch: could not point image tag %s back at %s (%v); the rolled-back container runs that image by id",
 			tag, imageID, err)
-		return
+		return false
 	}
 	// The rebuild's tag is gone; a later imageFor must build under the tag
 	// again rather than trust a cached name that now names the old content.
 	delete(r.builtImages, function.LogicalID)
+	return true
 }
 
 // removeReplacedImages removes the image a replaced container-image function

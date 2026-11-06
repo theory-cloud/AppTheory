@@ -498,14 +498,24 @@ func reconcileTableDefinition(ctx context.Context, client *dynamodb.Client, name
 	for _, index := range description.GlobalSecondaryIndexes {
 		existing[aws.ToString(index.IndexName)] = index
 	}
+	actualTypes := map[string]string{}
+	for _, definition := range description.AttributeDefinitions {
+		actualTypes[aws.ToString(definition.AttributeName)] = string(definition.AttributeType)
+	}
+	wantedTypes := map[string]string{}
+	for _, definition := range props.AttributeDefinitions {
+		wantedTypes[definition.AttributeName] = definition.AttributeType
+	}
 	wanted := map[string]bool{}
 	for _, index := range props.GlobalSecondaryIndexes {
 		wanted[index.IndexName] = true
 		if current, ok := existing[index.IndexName]; ok {
-			if !sameGlobalSecondaryIndex(current, index) {
+			if !sameGlobalSecondaryIndex(current, index, actualTypes, wantedTypes) {
 				return fmt.Errorf(
 					"global secondary index %s already exists with a different shape; "+
-						"the local runner refuses to recreate the index over existing table data",
+						"a key attribute's type is part of the index definition "+
+						"(https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_AttributeDefinition.html), "+
+						"and the local runner refuses to recreate the index over existing table data",
 					index.IndexName,
 				)
 			}
@@ -580,13 +590,28 @@ func sameKeySchema(description *types.TableDescription, props dynamoTablePropert
 	return true
 }
 
-func sameGlobalSecondaryIndex(actual types.GlobalSecondaryIndexDescription, wanted dynamoGlobalSecondaryIndex) bool {
+// sameGlobalSecondaryIndex compares the index key attributes, their declared
+// types and the projection. A key attribute's type is part of the index
+// definition: the table's AttributeDefinitions describe the key schema for the
+// table and indexes, and UpdateTable changes indexes, not the type of an
+// existing key attribute
+// (https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_AttributeDefinition.html,
+// https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html).
+func sameGlobalSecondaryIndex(
+	actual types.GlobalSecondaryIndexDescription,
+	wanted dynamoGlobalSecondaryIndex,
+	actualTypes, wantedTypes map[string]string,
+) bool {
 	if len(actual.KeySchema) != len(wanted.KeySchema) {
 		return false
 	}
 	for index := range actual.KeySchema {
-		if aws.ToString(actual.KeySchema[index].AttributeName) != wanted.KeySchema[index].AttributeName ||
+		name := aws.ToString(actual.KeySchema[index].AttributeName)
+		if name != wanted.KeySchema[index].AttributeName ||
 			string(actual.KeySchema[index].KeyType) != wanted.KeySchema[index].KeyType {
+			return false
+		}
+		if actualTypes[name] != wantedTypes[wanted.KeySchema[index].AttributeName] {
 			return false
 		}
 	}

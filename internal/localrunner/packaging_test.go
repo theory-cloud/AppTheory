@@ -327,6 +327,14 @@ func TestFunctionImageTagIsUniquePerFunction(t *testing.T) {
 	}
 }
 
+func TestFunctionImageTagIsUniquePerRun(t *testing.T) {
+	one := (&Runner{namePrefix: "run-prefix", runID: "run-one"}).functionImageTag(FunctionSpec{LogicalID: "OneFn"})
+	two := (&Runner{namePrefix: "run-prefix", runID: "run-two"}).functionImageTag(FunctionSpec{LogicalID: "OneFn"})
+	if one == two {
+		t.Fatalf("two runs of one app share the image tag %q", one)
+	}
+}
+
 func TestImageFunctionWithoutAnAssetFailsClosed(t *testing.T) {
 	resources := httpAPIResources("GET /")
 	function := imageFunction(t, "asset.image", nil)
