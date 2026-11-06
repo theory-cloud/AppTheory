@@ -483,9 +483,9 @@ func (d *Docker) ImageReferences(ctx context.Context, image string) (ImageRefere
 		return ImageReferences{}, fmt.Errorf("inspect image %s: %s", image, firstNonEmpty(stderr, err.Error()))
 	}
 	references := ImageReferences{}
-	if raw := strings.TrimSpace(stdout); raw != "" && raw != "null" {
-		if err := json.Unmarshal([]byte(raw), &references.RepoTags); err != nil {
-			return ImageReferences{}, fmt.Errorf("inspect image %s: parse its repo tags: %w", image, err)
+	if raw := strings.TrimSpace(stdout); raw != "" && raw != jsonNull {
+		if parseErr := json.Unmarshal([]byte(raw), &references.RepoTags); parseErr != nil {
+			return ImageReferences{}, fmt.Errorf("inspect image %s: parse its repo tags: %w", image, parseErr)
 		}
 	}
 	stdout, stderr, err = d.exec(ctx, []string{

@@ -534,6 +534,19 @@ func reconcileTableDefinition(ctx context.Context, client *dynamodb.Client, name
 	if err := reconcileLocalSecondaryIndexes(description, props, actualTypes, wantedTypes); err != nil {
 		return err
 	}
+	return reconcileGlobalSecondaryIndexes(ctx, client, name, props, description, actualTypes, wantedTypes)
+}
+
+// reconcileGlobalSecondaryIndexes creates a missing global secondary index,
+// refuses one whose shape changed, and deletes one the app no longer declares.
+func reconcileGlobalSecondaryIndexes(
+	ctx context.Context,
+	client *dynamodb.Client,
+	name string,
+	props dynamoTableProperties,
+	description *types.TableDescription,
+	actualTypes, wantedTypes map[string]string,
+) error {
 	existing := map[string]types.GlobalSecondaryIndexDescription{}
 	for _, index := range description.GlobalSecondaryIndexes {
 		existing[aws.ToString(index.IndexName)] = index
@@ -639,34 +652,7 @@ func sameGlobalSecondaryIndex(
 	wanted dynamoGlobalSecondaryIndex,
 	actualTypes, wantedTypes map[string]string,
 ) bool {
-	if len(actual.KeySchema) != len(wanted.KeySchema) {
-		return false
-	}
-	for index := range actual.KeySchema {
-		name := aws.ToString(actual.KeySchema[index].AttributeName)
-		if name != wanted.KeySchema[index].AttributeName ||
-			string(actual.KeySchema[index].KeyType) != wanted.KeySchema[index].KeyType {
-			return false
-		}
-		if actualTypes[name] != wantedTypes[wanted.KeySchema[index].AttributeName] {
-			return false
-		}
-	}
-	if actual.Projection == nil {
-		return wanted.Projection.ProjectionType == ""
-	}
-	if string(actual.Projection.ProjectionType) != wanted.Projection.ProjectionType {
-		return false
-	}
-	if len(actual.Projection.NonKeyAttributes) != len(wanted.Projection.NonKeyAttributes) {
-		return false
-	}
-	for index := range actual.Projection.NonKeyAttributes {
-		if actual.Projection.NonKeyAttributes[index] != wanted.Projection.NonKeyAttributes[index] {
-			return false
-		}
-	}
-	return true
+	return sameIndexShape(actual.KeySchema, actual.Projection, wanted.KeySchema, wanted.Projection, actualTypes, wantedTypes)
 }
 
 // newIndexAttributeDefinitions builds the AttributeDefinitions an UpdateTable
@@ -767,30 +753,42 @@ func sameLocalSecondaryIndex(
 	wanted dynamoLocalSecondaryIndex,
 	actualTypes, wantedTypes map[string]string,
 ) bool {
-	if len(actual.KeySchema) != len(wanted.KeySchema) {
+	return sameIndexShape(actual.KeySchema, actual.Projection, wanted.KeySchema, wanted.Projection, actualTypes, wantedTypes)
+}
+
+// sameIndexShape is the comparison both index kinds share: the order-sensitive
+// key schema, each key attribute's declared type and the projection.
+func sameIndexShape(
+	actualKeySchema []types.KeySchemaElement,
+	actualProjection *types.Projection,
+	wantedKeySchema []dynamoKeySchemaElement,
+	wantedProjection dynamoProjection,
+	actualTypes, wantedTypes map[string]string,
+) bool {
+	if len(actualKeySchema) != len(wantedKeySchema) {
 		return false
 	}
-	for index := range actual.KeySchema {
-		name := aws.ToString(actual.KeySchema[index].AttributeName)
-		if name != wanted.KeySchema[index].AttributeName ||
-			string(actual.KeySchema[index].KeyType) != wanted.KeySchema[index].KeyType {
+	for index := range actualKeySchema {
+		name := aws.ToString(actualKeySchema[index].AttributeName)
+		if name != wantedKeySchema[index].AttributeName ||
+			string(actualKeySchema[index].KeyType) != wantedKeySchema[index].KeyType {
 			return false
 		}
-		if actualTypes[name] != wantedTypes[wanted.KeySchema[index].AttributeName] {
+		if actualTypes[name] != wantedTypes[wantedKeySchema[index].AttributeName] {
 			return false
 		}
 	}
-	if actual.Projection == nil {
-		return wanted.Projection.ProjectionType == ""
+	if actualProjection == nil {
+		return wantedProjection.ProjectionType == ""
 	}
-	if string(actual.Projection.ProjectionType) != wanted.Projection.ProjectionType {
+	if string(actualProjection.ProjectionType) != wantedProjection.ProjectionType {
 		return false
 	}
-	if len(actual.Projection.NonKeyAttributes) != len(wanted.Projection.NonKeyAttributes) {
+	if len(actualProjection.NonKeyAttributes) != len(wantedProjection.NonKeyAttributes) {
 		return false
 	}
-	for index := range actual.Projection.NonKeyAttributes {
-		if actual.Projection.NonKeyAttributes[index] != wanted.Projection.NonKeyAttributes[index] {
+	for index := range actualProjection.NonKeyAttributes {
+		if actualProjection.NonKeyAttributes[index] != wantedProjection.NonKeyAttributes[index] {
 			return false
 		}
 	}
