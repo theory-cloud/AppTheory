@@ -2,9 +2,12 @@ package localrunner
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -119,11 +122,25 @@ func TestDeriveCodeBuildProjectResolvesEnvironmentIntrinsics(t *testing.T) {
 // TestExampleCodeBuildJobRunnerPlans proves the plan succeeds on the
 // codebuild-job-runner example's own synthesized template, whose
 // EnvironmentVariables are Refs to the jobs table, the ingest bucket and the
-// secret. The assembly under testdata is that example's `npx cdk synth` output
-// with the manifest trimmed to the stack artifact; regenerate it from
-// examples/cdk/codebuild-job-runner when the example changes.
+// secret. The assembly under testdata holds that example's `npx cdk synth`
+// template byte for byte — the same template scripts/verify-cdk-synth.sh pins —
+// plus a manifest trimmed to the stack artifact. Regenerate both from
+// examples/cdk/codebuild-job-runner when the example changes; the pinned-hash
+// check below fails until the fixture matches the example's snapshot.
 func TestExampleCodeBuildJobRunnerPlans(t *testing.T) {
 	dir := filepath.Join("testdata", "codebuild-job-runner")
+	fixture, err := os.ReadFile(filepath.Join(dir, "AppTheoryCodeBuildJobRunnerExample.template.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned, err := os.ReadFile(filepath.Join("..", "..", "examples", "cdk", "codebuild-job-runner", "snapshots", "AppTheoryCodeBuildJobRunnerExample.template.sha256"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed := sha256.Sum256(fixture)
+	if got, want := hex.EncodeToString(observed[:]), strings.TrimSpace(string(pinned)); got != want {
+		t.Fatalf("fixture template hash = %s, want the example's pinned %s; refresh the fixture from a fresh `npx cdk synth`", got, want)
+	}
 	stacks, err := loadAssembly(dir)
 	if err != nil {
 		t.Fatal(err)
