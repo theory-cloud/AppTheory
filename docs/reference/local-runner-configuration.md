@@ -255,11 +255,27 @@ A new global secondary index sends its key attributes in the update's
 existing attribute whose declared type differs from the table's fails by name
 instead of creating the index over the existing type
 ([AttributeDefinition](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_AttributeDefinition.html)).
-Local secondary indexes are created with the table; a re-run whose local
-secondary indexes add, remove or change one fails by name, because a local
-secondary index is created when the table is created and UpdateTable cannot
-change one
-([local secondary indexes](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/LSI.html)).
+Local secondary indexes are created with the table. A re-run whose existing
+table differs in a local secondary index cannot reconcile the difference in
+place: a local secondary index is created when the table is created, and
+UpdateTable cannot add, modify or delete one
+([local secondary indexes](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/LSI.html),
+[UpdateTable](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html)).
+Startup continues, the stored table is kept, and the run logs one warning
+naming the table, the index and the difference, with the remedy: stop the run
+and remove `<data-dir>/dynamodb` to recreate the table, or start without
+`--data-dir`. That includes a table an earlier runner created without the local
+secondary index an app declares, because that runner ignored
+`LocalSecondaryIndexes`. An existing global secondary index whose key
+attribute's declared type differs from the table's stored type is reported and
+kept the same way, because the earlier runner treated a type-only change as
+unchanged. A new global secondary index whose declared key type differs from
+the table's existing type still fails by name: the API refuses an index whose
+key type differs from the table's `AttributeDefinitions`, and the stored table
+cannot change it in place
+([AttributeDefinition](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_AttributeDefinition.html)).
+A global secondary index whose key schema or projection changed still fails by
+name, as does a table key-schema change.
 s3proxy's `jclouds.filesystem.basedir` sentence and ElasticMQ's
 `messages-storage` section are the pages the configuration follows
 ([s3proxy](https://github.com/gaul/s3proxy),

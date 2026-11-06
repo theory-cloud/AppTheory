@@ -1791,10 +1791,15 @@ key attributes in the update's `AttributeDefinitions`
 and one keyed on an existing attribute whose declared type differs from the
 table's fails by name rather than creating the index over the existing type
 ([AttributeDefinition](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_AttributeDefinition.html)).
-Local secondary indexes are created with the table; a re-run that adds, removes
-or reshapes one fails by name, because a local secondary index is created when
-the table is created and UpdateTable cannot change one
+Local secondary indexes are created with a new table; an existing table that
+differs in one keeps starting and the run logs one warning naming the table,
+the index and the difference, with the remedy (recreate the table, for example
+by removing `<data-dir>/dynamodb`, or start without `--data-dir`), because a
+local secondary index is created when the table is created and UpdateTable
+cannot change one
 ([local secondary indexes](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/LSI.html)).
+An existing global secondary index whose key attribute type drifted is reported
+and kept the same way, instead of being treated as unchanged.
 The examples' `data-dir.sh`,
 `data-dir-s3.sh` and `data-dir-sqs.sh` scripts show the two-run pattern.
 

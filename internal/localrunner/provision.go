@@ -348,7 +348,11 @@ func (r *Runner) provisionTables(ctx context.Context, spec *Spec) error {
 			return fmt.Errorf("wait for local DynamoDB table %s: %w", name, err)
 		}
 		if existed && r.dataDir != "" {
-			if reconcileErr := reconcileTableDefinition(ctx, client, name, props, description); reconcileErr != nil {
+			warnings, reconcileErr := reconcileTableDefinition(ctx, client, name, props, description)
+			for _, warning := range warnings {
+				r.logf("warning: %s", warning)
+			}
+			if reconcileErr != nil {
 				return fmt.Errorf("reconcile local DynamoDB table %s for %s: %w", name, resource.LogicalID, reconcileErr)
 			}
 			description, err = waitForTableActive(ctx, client, name)
@@ -503,19 +507,25 @@ func waitForTableActive(ctx context.Context, client *dynamodb.Client, name strin
 }
 
 // reconcileTableDefinition applies a re-run's definition to a table that
-// already exists in --data-dir. Key-schema and local-secondary-index
-// differences fail closed because UpdateTable cannot apply them; missing or
-// changed global secondary indexes are created, deleted or refused by name.
-// Existing items are never dropped.
+// already exists in --data-dir and returns the warnings for differences it
+// cannot apply in place. A table this runner created without a declared local
+// secondary index (the earlier runner ignored LocalSecondaryIndexes) and a
+// global secondary index whose key attribute type drifted are reported and left
+// as stored, because the calls that produce them succeed today and a new
+// failure would break an existing --data-dir start. A table key-schema change
+// and a global secondary index whose key schema or projection changed fail
+// closed: UpdateTable cannot apply them. Missing global secondary indexes are
+// created and ones the app no longer declares are deleted. Existing items are
+// never dropped.
 //
 // https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html
 // https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/LSI.html
-func reconcileTableDefinition(ctx context.Context, client *dynamodb.Client, name string, props dynamoTableProperties, description *types.TableDescription) error {
+func reconcileTableDefinition(ctx context.Context, client *dynamodb.Client, name string, props dynamoTableProperties, description *types.TableDescription) ([]string, error) {
 	if description == nil {
-		return nil
+		return nil, nil
 	}
 	if !sameKeySchema(description, props) {
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"the table already exists with a different key schema; UpdateTable " +
 				"\"Modifies the provisioned throughput settings, global secondary indexes, " +
 				"DynamoDB Streams settings, or global table replica settings for a given table\", " +
@@ -531,14 +541,22 @@ func reconcileTableDefinition(ctx context.Context, client *dynamodb.Client, name
 	for _, definition := range props.AttributeDefinitions {
 		wantedTypes[definition.AttributeName] = definition.AttributeType
 	}
-	if err := reconcileLocalSecondaryIndexes(description, props, actualTypes, wantedTypes); err != nil {
-		return err
+	warnings := reconcileLocalSecondaryIndexes(name, description, props, actualTypes, wantedTypes)
+	indexWarnings, err := reconcileGlobalSecondaryIndexes(ctx, client, name, props, description, actualTypes, wantedTypes)
+	warnings = append(warnings, indexWarnings...)
+	if err != nil {
+		return warnings, err
 	}
-	return reconcileGlobalSecondaryIndexes(ctx, client, name, props, description, actualTypes, wantedTypes)
+	return warnings, nil
 }
 
 // reconcileGlobalSecondaryIndexes creates a missing global secondary index,
-// refuses one whose shape changed, and deletes one the app no longer declares.
+// refuses one whose key schema or projection changed, warns about and keeps one
+// whose only difference is a key attribute's declared type, and deletes one the
+// app no longer declares. The type comparison is newer than the calls it
+// guards: the earlier runner treated a type-only change as unchanged, so that
+// call succeeds today and the difference is reported rather than turned into a
+// new failure.
 func reconcileGlobalSecondaryIndexes(
 	ctx context.Context,
 	client *dynamodb.Client,
@@ -546,29 +564,41 @@ func reconcileGlobalSecondaryIndexes(
 	props dynamoTableProperties,
 	description *types.TableDescription,
 	actualTypes, wantedTypes map[string]string,
-) error {
+) ([]string, error) {
 	existing := map[string]types.GlobalSecondaryIndexDescription{}
 	for _, index := range description.GlobalSecondaryIndexes {
 		existing[aws.ToString(index.IndexName)] = index
 	}
+	var warnings []string
 	wanted := map[string]bool{}
 	for _, index := range props.GlobalSecondaryIndexes {
 		wanted[index.IndexName] = true
 		if current, ok := existing[index.IndexName]; ok {
 			if !sameGlobalSecondaryIndex(current, index, actualTypes, wantedTypes) {
-				return fmt.Errorf(
-					"global secondary index %s already exists with a different shape; "+
-						"a key attribute's type is part of the index definition "+
-						"(https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_AttributeDefinition.html), "+
-						"and the local runner refuses to recreate the index over existing table data",
+				if !sameIndexShapeIgnoringTypes(current.KeySchema, current.Projection, index.KeySchema, index.Projection) {
+					return warnings, fmt.Errorf(
+						"global secondary index %s already exists with a different key schema or projection; "+
+							"UpdateTable cannot change an existing index's key schema or projection "+
+							"(https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html), "+
+							"and the local runner refuses to recreate the index over existing table data",
+						index.IndexName,
+					)
+				}
+				warnings = append(warnings, indexKeptWarning(
+					name,
+					"global secondary index",
 					index.IndexName,
-				)
+					"already exists but "+describeIndexDifference(current.KeySchema, current.Projection, index.KeySchema, index.Projection, actualTypes, wantedTypes),
+					"a key attribute's type is part of the table and index definition and UpdateTable cannot change it "+
+						"(https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_AttributeDefinition.html, "+
+						"https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html)",
+				))
 			}
 			continue
 		}
 		attributeDefinitions, err := newIndexAttributeDefinitions(index, actualTypes, wantedTypes)
 		if err != nil {
-			return err
+			return warnings, err
 		}
 		create := &types.CreateGlobalSecondaryIndexAction{IndexName: aws.String(index.IndexName)}
 		for _, key := range index.KeySchema {
@@ -588,10 +618,10 @@ func reconcileGlobalSecondaryIndexes(
 				Create: create,
 			}},
 		}); err != nil {
-			return fmt.Errorf("create global secondary index %s: %w", index.IndexName, err)
+			return warnings, fmt.Errorf("create global secondary index %s: %w", index.IndexName, err)
 		}
 		if err := waitForIndexActive(ctx, client, name, index.IndexName); err != nil {
-			return err
+			return warnings, err
 		}
 	}
 	for indexName := range existing {
@@ -604,10 +634,10 @@ func reconcileGlobalSecondaryIndexes(
 				Delete: &types.DeleteGlobalSecondaryIndexAction{IndexName: aws.String(indexName)},
 			}},
 		}); err != nil {
-			return fmt.Errorf("delete global secondary index %s: %w", indexName, err)
+			return warnings, fmt.Errorf("delete global secondary index %s: %w", indexName, err)
 		}
 	}
-	return nil
+	return warnings, nil
 }
 
 // sameKeySchema compares the key attributes and their declared types. A type
@@ -687,13 +717,16 @@ func newIndexAttributeDefinitions(index dynamoGlobalSecondaryIndex, actualTypes,
 	return definitions, nil
 }
 
-// reconcileLocalSecondaryIndexes refuses any local-secondary-index difference.
-// A local secondary index is created with the table and UpdateTable cannot add,
-// modify or delete one, so an existing table whose indexes differ from the app's
-// definition cannot be reconciled without dropping the table's data.
+// reconcileLocalSecondaryIndexes reports every local-secondary-index difference
+// as a warning and leaves the stored table unchanged. A local secondary index
+// is created with the table and UpdateTable cannot add, modify or delete one,
+// so a difference cannot be reconciled without dropping the table's data. The
+// differences are not refused: one of them is produced by the earlier runner,
+// which ignored LocalSecondaryIndexes and created a table without the indexes an
+// app declares, and that --data-dir start succeeds today.
 // https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/LSI.html
 // https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html
-func reconcileLocalSecondaryIndexes(description *types.TableDescription, props dynamoTableProperties, actualTypes, wantedTypes map[string]string) error {
+func reconcileLocalSecondaryIndexes(table string, description *types.TableDescription, props dynamoTableProperties, actualTypes, wantedTypes map[string]string) []string {
 	existing := map[string]types.LocalSecondaryIndexDescription{}
 	for _, index := range description.LocalSecondaryIndexes {
 		existing[aws.ToString(index.IndexName)] = index
@@ -711,6 +744,10 @@ func reconcileLocalSecondaryIndexes(description *types.TableDescription, props d
 		}
 	}
 	sort.Strings(names)
+	const rule = "a local secondary index is created with the table and UpdateTable cannot add, modify or delete one " +
+		"(https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/LSI.html, " +
+		"https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html)"
+	var warnings []string
 	for _, name := range names {
 		if seen[name] {
 			continue
@@ -720,30 +757,17 @@ func reconcileLocalSecondaryIndexes(description *types.TableDescription, props d
 		definition, declared := wanted[name]
 		switch {
 		case exists && !declared:
-			return fmt.Errorf(
-				"local secondary index %s exists on the table but the app no longer declares it; "+
-					"a local secondary index is created when the table is created and UpdateTable cannot delete one "+
-					"(https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/LSI.html, "+
-					"https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html)",
-				name)
+			warnings = append(warnings, indexKeptWarning(table, "local secondary index", name,
+				"exists on the table but the app no longer declares it", rule))
 		case !exists && declared:
-			return fmt.Errorf(
-				"local secondary index %s is declared by the app but the existing table has none; "+
-					"a local secondary index is created when the table is created and cannot be added later "+
-					"(https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/LSI.html)",
-				name)
+			warnings = append(warnings, indexKeptWarning(table, "local secondary index", name,
+				"is declared by the app but the existing table has none", rule))
 		case exists && declared && !sameLocalSecondaryIndex(current, definition, actualTypes, wantedTypes):
-			return fmt.Errorf(
-				"local secondary index %s already exists with a different shape; "+
-					"a local secondary index is created when the table is created and UpdateTable cannot modify one, "+
-					"and a key attribute's type is part of the table and index definition "+
-					"(https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/LSI.html, "+
-					"https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html, "+
-					"https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_AttributeDefinition.html)",
-				name)
+			warnings = append(warnings, indexKeptWarning(table, "local secondary index", name,
+				"already exists but "+describeIndexDifference(current.KeySchema, current.Projection, definition.KeySchema, definition.Projection, actualTypes, wantedTypes), rule))
 		}
 	}
-	return nil
+	return warnings
 }
 
 // sameLocalSecondaryIndex compares a local secondary index's order-sensitive
@@ -765,18 +789,29 @@ func sameIndexShape(
 	wantedProjection dynamoProjection,
 	actualTypes, wantedTypes map[string]string,
 ) bool {
-	if len(actualKeySchema) != len(wantedKeySchema) {
+	if !sameIndexShapeIgnoringTypes(actualKeySchema, actualProjection, wantedKeySchema, wantedProjection) {
 		return false
 	}
-	for index := range actualKeySchema {
-		name := aws.ToString(actualKeySchema[index].AttributeName)
-		if name != wantedKeySchema[index].AttributeName ||
-			string(actualKeySchema[index].KeyType) != wantedKeySchema[index].KeyType {
+	for _, key := range wantedKeySchema {
+		if actualTypes[key.AttributeName] != wantedTypes[key.AttributeName] {
 			return false
 		}
-		if actualTypes[name] != wantedTypes[wantedKeySchema[index].AttributeName] {
-			return false
-		}
+	}
+	return true
+}
+
+// sameIndexShapeIgnoringTypes compares the key names and roles and the
+// projection, but not the declared key attribute types. It distinguishes a
+// type-only drift, which is reported and left as stored, from a shape change
+// UpdateTable cannot apply, which still fails by name.
+func sameIndexShapeIgnoringTypes(
+	actualKeySchema []types.KeySchemaElement,
+	actualProjection *types.Projection,
+	wantedKeySchema []dynamoKeySchemaElement,
+	wantedProjection dynamoProjection,
+) bool {
+	if !sameIndexKeySchemaShape(actualKeySchema, wantedKeySchema) {
+		return false
 	}
 	if actualProjection == nil {
 		return wantedProjection.ProjectionType == ""
@@ -793,6 +828,109 @@ func sameIndexShape(
 		}
 	}
 	return true
+}
+
+// describeIndexDifference names what differs between a stored index and the
+// app's declaration: the key schema, a key attribute's declared type or the
+// projection.
+func describeIndexDifference(
+	actualKeySchema []types.KeySchemaElement,
+	actualProjection *types.Projection,
+	wantedKeySchema []dynamoKeySchemaElement,
+	wantedProjection dynamoProjection,
+	actualTypes, wantedTypes map[string]string,
+) string {
+	if !sameIndexKeySchemaShape(actualKeySchema, wantedKeySchema) {
+		return fmt.Sprintf("the key schema differs (stored %s; declared %s)",
+			formatActualKeySchema(actualKeySchema), formatWantedKeySchema(wantedKeySchema))
+	}
+	for _, key := range wantedKeySchema {
+		actual, actualDefined := actualTypes[key.AttributeName]
+		wanted, wantedDefined := wantedTypes[key.AttributeName]
+		switch {
+		case !wantedDefined:
+			return fmt.Sprintf("the key attribute %s has no attribute definition in the app", key.AttributeName)
+		case !actualDefined:
+			return fmt.Sprintf("the key attribute %s is not defined by the existing table", key.AttributeName)
+		case actual != wanted:
+			return fmt.Sprintf("the key attribute %s is declared as %s while the index uses %s", key.AttributeName, wanted, actual)
+		}
+	}
+	if formatActualProjection(actualProjection) != formatWantedProjection(wantedProjection) {
+		return fmt.Sprintf("the projection differs (stored %s; declared %s)",
+			formatActualProjection(actualProjection), formatWantedProjection(wantedProjection))
+	}
+	return "the stored definition differs from the app's declaration"
+}
+
+// sameIndexKeySchemaShape compares the order-sensitive key names and roles.
+func sameIndexKeySchemaShape(actual []types.KeySchemaElement, wanted []dynamoKeySchemaElement) bool {
+	if len(actual) != len(wanted) {
+		return false
+	}
+	for index := range actual {
+		if aws.ToString(actual[index].AttributeName) != wanted[index].AttributeName ||
+			string(actual[index].KeyType) != wanted[index].KeyType {
+			return false
+		}
+	}
+	return true
+}
+
+const noIndexPart = "none"
+
+func formatActualKeySchema(schema []types.KeySchemaElement) string {
+	if len(schema) == 0 {
+		return noIndexPart
+	}
+	parts := make([]string, 0, len(schema))
+	for _, key := range schema {
+		parts = append(parts, fmt.Sprintf("%s %s", aws.ToString(key.AttributeName), key.KeyType))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func formatWantedKeySchema(schema []dynamoKeySchemaElement) string {
+	if len(schema) == 0 {
+		return noIndexPart
+	}
+	parts := make([]string, 0, len(schema))
+	for _, key := range schema {
+		parts = append(parts, fmt.Sprintf("%s %s", key.AttributeName, key.KeyType))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func formatActualProjection(projection *types.Projection) string {
+	if projection == nil {
+		return noIndexPart
+	}
+	if len(projection.NonKeyAttributes) == 0 {
+		return string(projection.ProjectionType)
+	}
+	return fmt.Sprintf("%s (%s)", projection.ProjectionType, strings.Join(projection.NonKeyAttributes, ", "))
+}
+
+func formatWantedProjection(projection dynamoProjection) string {
+	if projection.ProjectionType == "" {
+		return noIndexPart
+	}
+	if len(projection.NonKeyAttributes) == 0 {
+		return projection.ProjectionType
+	}
+	return fmt.Sprintf("%s (%s)", projection.ProjectionType, strings.Join(projection.NonKeyAttributes, ", "))
+}
+
+// indexKeptWarning is the one clear line a run logs when an existing table
+// keeps a stored definition the app declares differently: the table, the
+// index, what differs, the AWS rule that prevents an in-place change and how to
+// recreate the table so the declared definition applies.
+func indexKeptWarning(table, kind, index, difference, rule string) string {
+	return fmt.Sprintf(
+		"local DynamoDB table %s keeps its stored definition: %s %s %s; %s, so it cannot be reconciled in place; "+
+			"to apply the declared definition, recreate the table (for example, remove <data-dir>/dynamodb while the run is stopped, or start without --data-dir)",
+		table, kind, index, difference, rule,
+	)
 }
 
 func waitForIndexActive(ctx context.Context, client *dynamodb.Client, table, index string) error {

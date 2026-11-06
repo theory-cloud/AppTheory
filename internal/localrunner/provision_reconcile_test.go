@@ -1,6 +1,7 @@
 package localrunner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -123,12 +124,95 @@ func TestProvisionTablesReconcilesExistingTableInDataDir(t *testing.T) {
 	}
 }
 
+func TestProvisionTablesWarnsForALegacyTableWithoutItsLocalSecondaryIndex(t *testing.T) {
+	// A table the v7.0.0 runner created for an app that declares a local
+	// secondary index has none. Provisioning that app again must keep the
+	// table, log one warning naming the table and the index, and continue.
+	var mu sync.Mutex
+	updates := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		target := request.Header.Get("X-Amz-Target")
+		writer.Header().Set("content-type", "application/x-amz-json-1.0")
+		switch {
+		case strings.HasSuffix(target, "CreateTable"):
+			writer.Header().Set("x-amzn-errortype", "ResourceInUseException")
+			writer.WriteHeader(http.StatusBadRequest)
+			writeTestResponse(t, writer, `{"__type":"com.amazonaws.dynamodb.v20120810#ResourceInUseException","message":"Table already exists"}`)
+		case strings.HasSuffix(target, "DescribeTable"):
+			writeTestResponse(t, writer, `{"Table":{"TableName":"ad1-jobs","TableStatus":"ACTIVE",`+
+				`"TableArn":"arn:aws:dynamodb:us-east-1:123456789012:table/ad1-jobs",`+
+				`"AttributeDefinitions":[{"AttributeName":"pk","AttributeType":"S"},{"AttributeName":"created","AttributeType":"N"}],`+
+				`"KeySchema":[{"AttributeName":"pk","KeyType":"HASH"}]}}`)
+		case strings.HasSuffix(target, "UpdateTable"):
+			mu.Lock()
+			updates++
+			mu.Unlock()
+			writer.WriteHeader(http.StatusBadRequest)
+			writeTestResponse(t, writer, `{"__type":"com.amazonaws.dynamodb.v20120810#ValidationException","message":"unexpected update"}`)
+		default:
+			writer.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+
+	var log bytes.Buffer
+	runner := &Runner{
+		options: Options{Stdout: &log},
+		backends: map[string]backendProcess{
+			"dynamodb": {
+				HostURL:   server.URL,
+				Endpoints: []Endpoint{{Service: "dynamodb", URL: "http://dynamodb-local:8000"}},
+			},
+		},
+		dataDir:        testSharedDir(t),
+		resourceValues: resourceValues{},
+		tables:         map[string]tableInfo{},
+	}
+	spec := &Spec{Resources: []ResourceSpec{{
+		Stack: "Stack", LogicalID: "Jobs", Type: typeDynamoTable,
+		Properties: json.RawMessage(`{
+			"TableName":"ad1-jobs",
+			"BillingMode":"PAY_PER_REQUEST",
+			"AttributeDefinitions":[{"AttributeName":"pk","AttributeType":"S"},{"AttributeName":"created","AttributeType":"N"}],
+			"KeySchema":[{"AttributeName":"pk","KeyType":"HASH"}],
+			"LocalSecondaryIndexes":[{
+				"IndexName":"by-created",
+				"KeySchema":[{"AttributeName":"pk","KeyType":"HASH"},{"AttributeName":"created","KeyType":"RANGE"}],
+				"Projection":{"ProjectionType":"KEYS_ONLY"}
+			}]
+		}`),
+	}}}
+	if err := runner.provisionTables(context.Background(), spec); err != nil {
+		t.Fatalf("a legacy table without its declared local secondary index stopped the run: %v", err)
+	}
+	mu.Lock()
+	calls := updates
+	mu.Unlock()
+	if calls != 0 {
+		t.Fatalf("reconciling the local secondary index attempted %d UpdateTable call(s)", calls)
+	}
+	if got := runner.resourceValues["Stack/Jobs"].Name; got != "ad1-jobs" {
+		t.Fatalf("the existing table was not recorded: %q", got)
+	}
+	for _, want := range []string{
+		"warning: local DynamoDB table ad1-jobs",
+		"local secondary index by-created",
+		"declared by the app but the existing table has none",
+		"recreate the table",
+		"<data-dir>/dynamodb",
+	} {
+		if !strings.Contains(log.String(), want) {
+			t.Fatalf("the run log does not contain %q: %s", want, log.String())
+		}
+	}
+}
+
 func TestReconcileTableDefinitionRefusesKeySchemaChange(t *testing.T) {
 	description := &types.TableDescription{
 		KeySchema: []types.KeySchemaElement{{AttributeName: aws.String("id"), KeyType: types.KeyTypeHash}},
 	}
 	props := dynamoTableProperties{KeySchema: []dynamoKeySchemaElement{{AttributeName: "pk", KeyType: "HASH"}}}
-	err := reconcileTableDefinition(context.Background(), nil, "jobs", props, description)
+	_, err := reconcileTableDefinition(context.Background(), nil, "jobs", props, description)
 	if err == nil {
 		t.Fatal("a key-schema change was accepted")
 	}
@@ -156,9 +240,12 @@ func TestReconcileTableDefinitionRefusesIndexShapeChange(t *testing.T) {
 			Projection: dynamoProjection{ProjectionType: "ALL"},
 		}},
 	}
-	err := reconcileTableDefinition(context.Background(), nil, "jobs", props, description)
+	warnings, err := reconcileTableDefinition(context.Background(), nil, "jobs", props, description)
 	if err == nil || !strings.Contains(err.Error(), "by-status") {
 		t.Fatalf("an index shape change was not refused by name: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("a refused shape change also warned: %v", warnings)
 	}
 }
 
@@ -220,7 +307,7 @@ func TestReconcileTableDefinitionRefusesKeyAttributeTypeChange(t *testing.T) {
 		KeySchema:            []dynamoKeySchemaElement{{AttributeName: "pk", KeyType: "HASH"}},
 		AttributeDefinitions: []dynamoAttributeDefinition{{AttributeName: "pk", AttributeType: "N"}},
 	}
-	err := reconcileTableDefinition(context.Background(), nil, "jobs", props, description)
+	_, err := reconcileTableDefinition(context.Background(), nil, "jobs", props, description)
 	if err == nil {
 		t.Fatal("a key attribute type change was accepted")
 	}
@@ -275,7 +362,13 @@ func TestSameGlobalSecondaryIndex(t *testing.T) {
 	}
 }
 
-func TestReconcileTableDefinitionRefusesIndexAttributeTypeChange(t *testing.T) {
+func TestReconcileTableDefinitionWarnsAndKeepsAnExistingIndexWithADriftedKeyType(t *testing.T) {
+	// The earlier runner compared an existing global secondary index by its key
+	// names, roles and projection only, so an app whose key attribute type
+	// changed kept starting against the stored table. That call succeeds today,
+	// so the type comparison reports the difference and leaves the table as
+	// stored instead of adding a new failure. A nil client proves no UpdateTable
+	// call is attempted.
 	description := &types.TableDescription{
 		KeySchema: []types.KeySchemaElement{{AttributeName: aws.String("pk"), KeyType: types.KeyTypeHash}},
 		AttributeDefinitions: []types.AttributeDefinition{
@@ -300,17 +393,24 @@ func TestReconcileTableDefinitionRefusesIndexAttributeTypeChange(t *testing.T) {
 			Projection: dynamoProjection{ProjectionType: "KEYS_ONLY"},
 		}},
 	}
-	err := reconcileTableDefinition(context.Background(), nil, "jobs", props, description)
-	if err == nil {
-		t.Fatal("an index key attribute type change was accepted")
+	warnings, err := reconcileTableDefinition(context.Background(), nil, "jobs", props, description)
+	if err != nil {
+		t.Fatalf("a type-only index drift was refused: %v", err)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %v, want one warning", warnings)
 	}
 	for _, want := range []string{
-		"by-status",
-		"AttributeDefinition.html",
-		"different shape",
+		"local DynamoDB table jobs",
+		"global secondary index by-status",
+		"key attribute status is declared as N while the index uses S",
+		"https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_AttributeDefinition.html",
+		"cannot be reconciled in place",
+		"recreate the table",
+		"<data-dir>/dynamodb",
 	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("the refusal does not cite %q: %v", want, err)
+		if !strings.Contains(warnings[0], want) {
+			t.Fatalf("the warning does not contain %q: %s", want, warnings[0])
 		}
 	}
 }
@@ -356,7 +456,101 @@ func TestCreateTableInputIncludesLocalSecondaryIndexes(t *testing.T) {
 	}
 }
 
-func TestReconcileTableDefinitionRefusesLocalSecondaryIndexDifferences(t *testing.T) {
+func TestReconcileTableDefinitionWarnsAndKeepsALegacyTableWithoutItsDeclaredLocalSecondaryIndex(t *testing.T) {
+	// The v7.0.0 runner ignored LocalSecondaryIndexes, so a table it created for
+	// an app that declares one has none. That --data-dir start succeeds today;
+	// the stored table is kept and the declared index is reported, not refused.
+	description := &types.TableDescription{
+		KeySchema: []types.KeySchemaElement{{AttributeName: aws.String("pk"), KeyType: types.KeyTypeHash}},
+		AttributeDefinitions: []types.AttributeDefinition{
+			{AttributeName: aws.String("pk"), AttributeType: types.ScalarAttributeTypeS},
+			{AttributeName: aws.String("created"), AttributeType: types.ScalarAttributeTypeN},
+		},
+	}
+	props := dynamoTableProperties{
+		KeySchema: []dynamoKeySchemaElement{{AttributeName: "pk", KeyType: "HASH"}},
+		AttributeDefinitions: []dynamoAttributeDefinition{
+			{AttributeName: "pk", AttributeType: "S"},
+			{AttributeName: "created", AttributeType: "N"},
+		},
+		LocalSecondaryIndexes: []dynamoLocalSecondaryIndex{{
+			IndexName: "by-created",
+			KeySchema: []dynamoKeySchemaElement{
+				{AttributeName: "pk", KeyType: "HASH"},
+				{AttributeName: "created", KeyType: "RANGE"},
+			},
+			Projection: dynamoProjection{ProjectionType: "KEYS_ONLY"},
+		}},
+	}
+	warnings, err := reconcileTableDefinition(context.Background(), nil, "jobs", props, description)
+	if err != nil {
+		t.Fatalf("a legacy table without its declared local secondary index was refused: %v", err)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %v, want one warning", warnings)
+	}
+	for _, want := range []string{
+		"local DynamoDB table jobs",
+		"local secondary index by-created",
+		"declared by the app but the existing table has none",
+		"https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/LSI.html",
+		"cannot be reconciled in place",
+		"recreate the table",
+		"<data-dir>/dynamodb",
+	} {
+		if !strings.Contains(warnings[0], want) {
+			t.Fatalf("the warning does not contain %q: %s", want, warnings[0])
+		}
+	}
+}
+
+func TestReconcileTableDefinitionWarnsAndKeepsAnExistingLocalSecondaryIndexTheAppNoLongerDeclares(t *testing.T) {
+	description := &types.TableDescription{
+		KeySchema: []types.KeySchemaElement{{AttributeName: aws.String("pk"), KeyType: types.KeyTypeHash}},
+		AttributeDefinitions: []types.AttributeDefinition{
+			{AttributeName: aws.String("pk"), AttributeType: types.ScalarAttributeTypeS},
+			{AttributeName: aws.String("created"), AttributeType: types.ScalarAttributeTypeN},
+		},
+		LocalSecondaryIndexes: []types.LocalSecondaryIndexDescription{{
+			IndexName: aws.String("by-created"),
+			KeySchema: []types.KeySchemaElement{
+				{AttributeName: aws.String("pk"), KeyType: types.KeyTypeHash},
+				{AttributeName: aws.String("created"), KeyType: types.KeyTypeRange},
+			},
+			Projection: &types.Projection{ProjectionType: types.ProjectionTypeKeysOnly},
+		}},
+	}
+	props := dynamoTableProperties{
+		KeySchema: []dynamoKeySchemaElement{{AttributeName: "pk", KeyType: "HASH"}},
+		AttributeDefinitions: []dynamoAttributeDefinition{
+			{AttributeName: "pk", AttributeType: "S"},
+			{AttributeName: "created", AttributeType: "N"},
+		},
+	}
+	// A nil client proves the warning path never calls UpdateTable: a local
+	// secondary index cannot be deleted from an existing table.
+	warnings, err := reconcileTableDefinition(context.Background(), nil, "jobs", props, description)
+	if err != nil {
+		t.Fatalf("a stored local secondary index the app no longer declares was refused: %v", err)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %v, want one warning", warnings)
+	}
+	for _, want := range []string{
+		"local DynamoDB table jobs",
+		"local secondary index by-created",
+		"exists on the table but the app no longer declares it",
+		"cannot add, modify or delete one",
+		"https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html",
+		"recreate the table",
+	} {
+		if !strings.Contains(warnings[0], want) {
+			t.Fatalf("the warning does not contain %q: %s", want, warnings[0])
+		}
+	}
+}
+
+func TestReconcileTableDefinitionWarnsAndKeepsADifferentLocalSecondaryIndexShape(t *testing.T) {
 	description := &types.TableDescription{
 		KeySchema: []types.KeySchemaElement{{AttributeName: aws.String("pk"), KeyType: types.KeyTypeHash}},
 		AttributeDefinitions: []types.AttributeDefinition{
@@ -387,28 +581,9 @@ func TestReconcileTableDefinitionRefusesLocalSecondaryIndexDifferences(t *testin
 			Projection: dynamoProjection{ProjectionType: "KEYS_ONLY"},
 		}},
 	}
-	if err := reconcileTableDefinition(context.Background(), nil, "jobs", matching, description); err != nil {
-		t.Fatalf("an unchanged local secondary index was refused: %v", err)
-	}
-	removed := matching
-	removed.LocalSecondaryIndexes = nil
-	if err := reconcileTableDefinition(context.Background(), nil, "jobs", removed, description); err == nil ||
-		!strings.Contains(err.Error(), "by-created") || !strings.Contains(err.Error(), "cannot delete") ||
-		!strings.Contains(err.Error(), "LSI.html") {
-		t.Fatalf("a removed local secondary index was not refused by name with the creation-time rule: %v", err)
-	}
-	added := matching
-	added.AttributeDefinitions = append(append([]dynamoAttributeDefinition(nil), matching.AttributeDefinitions...),
-		dynamoAttributeDefinition{AttributeName: "updated", AttributeType: "S"})
-	added.LocalSecondaryIndexes = append(append([]dynamoLocalSecondaryIndex(nil), matching.LocalSecondaryIndexes...),
-		dynamoLocalSecondaryIndex{
-			IndexName:  "by-updated",
-			KeySchema:  []dynamoKeySchemaElement{{AttributeName: "pk", KeyType: "HASH"}, {AttributeName: "updated", KeyType: "RANGE"}},
-			Projection: dynamoProjection{ProjectionType: "KEYS_ONLY"},
-		})
-	if err := reconcileTableDefinition(context.Background(), nil, "jobs", added, description); err == nil ||
-		!strings.Contains(err.Error(), "by-updated") || !strings.Contains(err.Error(), "cannot be added later") {
-		t.Fatalf("an added local secondary index was not refused by name: %v", err)
+	warnings, err := reconcileTableDefinition(context.Background(), nil, "jobs", matching, description)
+	if err != nil || len(warnings) != 0 {
+		t.Fatalf("an unchanged local secondary index warned or failed: warnings=%v err=%v", warnings, err)
 	}
 	changed := matching
 	changed.LocalSecondaryIndexes = []dynamoLocalSecondaryIndex{{
@@ -419,21 +594,54 @@ func TestReconcileTableDefinitionRefusesLocalSecondaryIndexDifferences(t *testin
 		},
 		Projection: dynamoProjection{ProjectionType: "ALL"},
 	}}
-	if err := reconcileTableDefinition(context.Background(), nil, "jobs", changed, description); err == nil ||
-		!strings.Contains(err.Error(), "by-created") || !strings.Contains(err.Error(), "different shape") ||
-		!strings.Contains(err.Error(), "UpdateTable") {
-		t.Fatalf("a changed local secondary index was not refused by name: %v", err)
+	warnings, err = reconcileTableDefinition(context.Background(), nil, "jobs", changed, description)
+	if err != nil {
+		t.Fatalf("a different local secondary index shape was refused: %v", err)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %v, want one warning", warnings)
+	}
+	for _, want := range []string{
+		"local secondary index by-created",
+		"already exists but the projection differs (stored KEYS_ONLY; declared ALL)",
+		"https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/LSI.html",
+		"recreate the table",
+	} {
+		if !strings.Contains(warnings[0], want) {
+			t.Fatalf("the warning does not contain %q: %s", want, warnings[0])
+		}
 	}
 	// A type-only change on the index's own sort key is invisible to the table
-	// key-schema check; the index comparison must catch it.
+	// key-schema check; the index comparison must report it.
 	drifted := matching
 	drifted.AttributeDefinitions = []dynamoAttributeDefinition{
 		{AttributeName: "pk", AttributeType: "S"},
 		{AttributeName: "created", AttributeType: "S"},
 	}
-	if err := reconcileTableDefinition(context.Background(), nil, "jobs", drifted, description); err == nil ||
-		!strings.Contains(err.Error(), "by-created") || !strings.Contains(err.Error(), "AttributeDefinition.html") {
-		t.Fatalf("a local secondary index key type change was not refused: %v", err)
+	warnings, err = reconcileTableDefinition(context.Background(), nil, "jobs", drifted, description)
+	if err != nil {
+		t.Fatalf("a local secondary index key type change was refused: %v", err)
+	}
+	if len(warnings) != 1 ||
+		!strings.Contains(warnings[0], "key attribute created is declared as S while the index uses N") {
+		t.Fatalf("the type-only index drift was not reported: %v", warnings)
+	}
+	reshaped := matching
+	reshaped.LocalSecondaryIndexes = []dynamoLocalSecondaryIndex{{
+		IndexName: "by-created",
+		KeySchema: []dynamoKeySchemaElement{
+			{AttributeName: "pk", KeyType: "HASH"},
+			{AttributeName: "updated", KeyType: "RANGE"},
+		},
+		Projection: dynamoProjection{ProjectionType: "KEYS_ONLY"},
+	}}
+	warnings, err = reconcileTableDefinition(context.Background(), nil, "jobs", reshaped, description)
+	if err != nil {
+		t.Fatalf("a different local secondary index key schema was refused: %v", err)
+	}
+	if len(warnings) != 1 ||
+		!strings.Contains(warnings[0], "the key schema differs (stored pk HASH, created RANGE; declared pk HASH, updated RANGE)") {
+		t.Fatalf("the index key-schema difference was not reported: %v", warnings)
 	}
 }
 
@@ -489,7 +697,7 @@ func TestReconcileTableDefinitionAddsAttributeDefinitionsForANewIndex(t *testing
 			Projection: dynamoProjection{ProjectionType: "KEYS_ONLY"},
 		}},
 	}
-	if err := reconcileTableDefinition(context.Background(), newDynamoDBClient(server.URL), "jobs", props, description); err != nil {
+	if _, err := reconcileTableDefinition(context.Background(), newDynamoDBClient(server.URL), "jobs", props, description); err != nil {
 		t.Fatalf("reconcile a table with a new index: %v", err)
 	}
 	mu.Lock()
@@ -527,9 +735,12 @@ func TestReconcileTableDefinitionRefusesANewIndexOverADriftedAttributeType(t *te
 		}},
 	}
 	// A nil client proves the refusal happens before any UpdateTable call.
-	err := reconcileTableDefinition(context.Background(), nil, "jobs", props, description)
+	warnings, err := reconcileTableDefinition(context.Background(), nil, "jobs", props, description)
 	if err == nil {
 		t.Fatal("a new index over a drifted key attribute type was accepted")
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("the refusal also warned: %v", warnings)
 	}
 	for _, want := range []string{"by-status", "status", "AttributeDefinition.html", "UpdateTable.html"} {
 		if !strings.Contains(err.Error(), want) {
@@ -650,6 +861,10 @@ func TestReconcileTableDefinitionReportsIndexFailures(t *testing.T) {
 	client := newDynamoDBClient(server.URL)
 	description := &types.TableDescription{
 		KeySchema: []types.KeySchemaElement{{AttributeName: aws.String("pk"), KeyType: types.KeyTypeHash}},
+		AttributeDefinitions: []types.AttributeDefinition{
+			{AttributeName: aws.String("pk"), AttributeType: types.ScalarAttributeTypeS},
+			{AttributeName: aws.String("old"), AttributeType: types.ScalarAttributeTypeS},
+		},
 		GlobalSecondaryIndexes: []types.GlobalSecondaryIndexDescription{{
 			IndexName:  aws.String("stale"),
 			KeySchema:  []types.KeySchemaElement{{AttributeName: aws.String("old"), KeyType: types.KeyTypeHash}},
@@ -658,22 +873,29 @@ func TestReconcileTableDefinitionReportsIndexFailures(t *testing.T) {
 	}
 	addProps := dynamoTableProperties{
 		KeySchema: []dynamoKeySchemaElement{{AttributeName: "pk", KeyType: "HASH"}},
+		AttributeDefinitions: []dynamoAttributeDefinition{
+			{AttributeName: "pk", AttributeType: "S"},
+			{AttributeName: "added", AttributeType: "S"},
+		},
 		GlobalSecondaryIndexes: []dynamoGlobalSecondaryIndex{{
 			IndexName:  "new",
 			KeySchema:  []dynamoKeySchemaElement{{AttributeName: "added", KeyType: "HASH"}},
 			Projection: dynamoProjection{ProjectionType: "ALL"},
 		}},
 	}
-	if err := reconcileTableDefinition(context.Background(), client, "jobs", addProps, description); err == nil ||
+	if _, err := reconcileTableDefinition(context.Background(), client, "jobs", addProps, description); err == nil ||
 		!strings.Contains(err.Error(), "new") {
 		t.Fatalf("a failed index create = %v", err)
 	}
-	removeProps := dynamoTableProperties{KeySchema: []dynamoKeySchemaElement{{AttributeName: "pk", KeyType: "HASH"}}}
-	if err := reconcileTableDefinition(context.Background(), client, "jobs", removeProps, description); err == nil ||
+	removeProps := dynamoTableProperties{
+		KeySchema:            []dynamoKeySchemaElement{{AttributeName: "pk", KeyType: "HASH"}},
+		AttributeDefinitions: []dynamoAttributeDefinition{{AttributeName: "pk", AttributeType: "S"}},
+	}
+	if _, err := reconcileTableDefinition(context.Background(), client, "jobs", removeProps, description); err == nil ||
 		!strings.Contains(err.Error(), "stale") {
 		t.Fatalf("a failed index delete = %v", err)
 	}
-	if err := reconcileTableDefinition(context.Background(), client, "jobs", removeProps, nil); err != nil {
+	if _, err := reconcileTableDefinition(context.Background(), client, "jobs", removeProps, nil); err != nil {
 		t.Fatalf("a missing description = %v", err)
 	}
 }
