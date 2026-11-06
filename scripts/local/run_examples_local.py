@@ -1336,6 +1336,10 @@ def run_local_runner(harness: Harness, lang: str) -> str:
 # data back through the app's own handler. The seed row drives the app after
 # provisioning and before the session reports ready.
 
+# Each language's handler is served by its own API listener, so the watch row
+# probes every function it did not restart through that language's URL.
+WATCH_UNCHANGED_API_SUFFIX = {"GoHandler": "-go", "TsHandler": "-ts", "PyHandler": "-py"}
+
 WATCH_DEV_LOOP = {
     "go": {
         "handler": "examples/cdk/multilang/handlers/go/main.go",
@@ -1455,6 +1459,16 @@ def run_dev_loop_watch(harness: Harness, lang: str) -> str:
                     raise HarnessFailure(
                         f"watch {lang}: unaffected function {unaffected[0]} restarted "
                         f"({before[unaffected[0]]} -> {after.get(unaffected[0])})"
+                    )
+                # An untouched function keeps serving from the assembly it
+                # already mounts; a cleanup that removed that directory would
+                # leave the container's /var/task empty.
+                unaffected_url = session_api_url(session.spec, session, WATCH_UNCHANGED_API_SUFFIX[prefix])
+                status, body, _ = http_request("GET", f"{unaffected_url}/hello/probe")
+                expect_status(status, 200, f"watch {lang} unaffected {prefix} request", body)
+                if "hello probe" not in body:
+                    raise HarnessFailure(
+                        f"watch {lang}: unaffected {prefix} answered {body!r}, not its unchanged handler body"
                     )
             # The WebSocket authorizer's CDK asset is the whole handlers/
             # directory, so every handler edit changes its asset hash; the

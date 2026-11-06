@@ -260,19 +260,19 @@
       "run": "dev-loop-watch-go",
       "class": "L2",
       "gap": "The runner re-synthesizes with cdk synth and polls the app directory with a 500 ms debounce; a change it cannot apply live (a new API listener, a new WebSocket API, a changed CloudFront topology, a new backend) is reported by name and requires a restart.",
-      "description": "Dev-loop watch (Go): a real edit to handlers/go/main.go triggers the runner's own cdk synth; the new response arrives on the unchanged GoApi listener, the Go function's execution environment is replaced, and the TypeScript and Python functions keep their Runtime API listeners (they were not restarted); the source is restored and rebuilt before shutdown."
+      "description": "Dev-loop watch (Go): a real edit to handlers/go/main.go triggers the runner's own cdk synth; the new response arrives on the unchanged GoApi listener, the Go function's execution environment is replaced, and the TypeScript and Python functions keep their Runtime API listeners and still answer on their own API listeners (they were not restarted); the source is restored and rebuilt before shutdown."
     },
     "examples/cdk/multilang/scripts/watch-ts.sh": {
       "run": "dev-loop-watch-ts",
       "class": "L2",
       "gap": "The runner re-synthesizes with cdk synth and polls the app directory with a 500 ms debounce; a change it cannot apply live (a new API listener, a new WebSocket API, a changed CloudFront topology, a new backend) is reported by name and requires a restart.",
-      "description": "Dev-loop watch (TypeScript): a real edit to handlers/ts/handler.mjs triggers the runner's own cdk synth; the new response arrives on the unchanged TsApi listener, the TypeScript function's execution environment is replaced, and the Go and Python functions keep their Runtime API listeners (they were not restarted); the source is restored and rebuilt before shutdown."
+      "description": "Dev-loop watch (TypeScript): a real edit to handlers/ts/handler.mjs triggers the runner's own cdk synth; the new response arrives on the unchanged TsApi listener, the TypeScript function's execution environment is replaced, and the Go and Python functions keep their Runtime API listeners and still answer on their own API listeners (they were not restarted); the source is restored and rebuilt before shutdown."
     },
     "examples/cdk/multilang/scripts/watch-py.sh": {
       "run": "dev-loop-watch-py",
       "class": "L2",
       "gap": "The runner re-synthesizes with cdk synth and polls the app directory with a 500 ms debounce; a change it cannot apply live (a new API listener, a new WebSocket API, a changed CloudFront topology, a new backend) is reported by name and requires a restart.",
-      "description": "Dev-loop watch (Python): a real edit to handlers/py/handler.py triggers the runner's own cdk synth; the new response arrives on the unchanged PyApi listener, the Python function's execution environment is replaced, and the Go and TypeScript functions keep their Runtime API listeners (they were not restarted); the source is restored and rebuilt before shutdown."
+      "description": "Dev-loop watch (Python): a real edit to handlers/py/handler.py triggers the runner's own cdk synth; the new response arrives on the unchanged PyApi listener, the Python function's execution environment is replaced, and the Go and TypeScript functions keep their Runtime API listeners and still answer on their own API listeners (they were not restarted); the source is restored and rebuilt before shutdown."
     },
     "examples/cdk/lesser-parity/scripts/data-dir.sh": {
       "run": "data-dir-dynamodb",
