@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v7/runtime"
 )
 
 // Session holds per-session state for an MCP connection.

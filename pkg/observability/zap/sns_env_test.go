@@ -8,7 +8,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/sns"
 
-	"github.com/theory-cloud/apptheory/v6/pkg/observability"
+	"github.com/theory-cloud/apptheory/v7/pkg/observability"
 )
 
 type fakeSNSClient struct {

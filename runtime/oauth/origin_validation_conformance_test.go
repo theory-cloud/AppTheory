@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/theory-cloud/apptheory/v6/runtime/oauth"
+	"github.com/theory-cloud/apptheory/v7/runtime/oauth"
 )
 
 const originValidationFixture = "../../contract-tests/fixtures/routing/mcp-auth-facade/facade-origin-validation.v1.json"

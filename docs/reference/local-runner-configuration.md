@@ -249,11 +249,11 @@ AppTheory checkout; the flags and generated events are the same in all cases.
 
 ```bash
 # From a released module; <version> must contain the command (v6.5.0 or later).
-go run github.com/theory-cloud/apptheory/v6/cmd/apptheory-local@<version> \
+go run github.com/theory-cloud/apptheory/v7/cmd/apptheory-local@<version> \
   --app ~/code/my-app --profile ~/code/my-app/local-profile.json
 
 # Or install it once.
-go install github.com/theory-cloud/apptheory/v6/cmd/apptheory-local@<version>
+go install github.com/theory-cloud/apptheory/v7/cmd/apptheory-local@<version>
 
 # Before a release, run or build from a sibling AppTheory checkout.
 go run -C ~/code/AppTheory ./cmd/apptheory-local \

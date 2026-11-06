@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	oauthruntime "github.com/theory-cloud/apptheory/v6/runtime/oauth"
-	"github.com/theory-cloud/apptheory/v6/testkit/oauthprovider"
+	oauthruntime "github.com/theory-cloud/apptheory/v7/runtime/oauth"
+	"github.com/theory-cloud/apptheory/v7/testkit/oauthprovider"
 )
 
 // providerConformanceFixture is the shared provider conformance table. From

@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/theory-cloud/apptheory/v6/internal/localcloudfront"
+	"github.com/theory-cloud/apptheory/v7/internal/localcloudfront"
 )
 
 // fakeStreamInvoker is an Invoker that answers through the streaming path.

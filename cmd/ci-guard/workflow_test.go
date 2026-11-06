@@ -275,9 +275,12 @@ func TestGuardRejectsPushOnlyJob(t *testing.T) {
 
 func TestGuardRejectsUnmodeledTriggerFilters(t *testing.T) {
 	cases := map[string]string{
-		"pull_request branches filter": strings.Replace(baseWorkflow,
+		"pull_request branches filter that omits staging": strings.Replace(baseWorkflow,
 			"  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\n",
-			"  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\n    branches: [staging]\n", 1),
+			"  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\n    branches: [premain]\n", 1),
+		"pull_request branches filter with an empty list": strings.Replace(baseWorkflow,
+			"  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\n",
+			"  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\n    branches: []\n", 1),
 		"unknown trigger":       strings.Replace(baseWorkflow, "  workflow_dispatch:\n", "  schedule:\n    - cron: '0 0 * * *'\n  workflow_dispatch:\n", 1),
 		"missing synchronize":   strings.Replace(baseWorkflow, "types: [opened, synchronize, reopened, ready_for_review]", "types: [opened]", 1),
 		"push branches missing": strings.Replace(baseWorkflow, "      - premain\n", "", 1),
@@ -289,6 +292,59 @@ func TestGuardRejectsUnmodeledTriggerFilters(t *testing.T) {
 		if _, err := evaluateText(t, text); err == nil {
 			t.Fatalf("%s: unmodeled wiring must fail closed", label)
 		}
+	}
+}
+
+// TestGuardAcceptsStagingPullRequestFilter pins the one branch filter the
+// operator ruling of 2026-11-06 allows: a pull_request trigger scoped to
+// staging. The filter is modeled and narrows the workflow's classified PR bases
+// to staging, so a staging-scoped workflow parses, classifies, and passes parity
+// while a filter that omits staging fails closed (TestGuardRejectsUnmodeledTriggerFilters).
+func TestGuardAcceptsStagingPullRequestFilter(t *testing.T) {
+	text := `name: Examples
+on:
+  pull_request:
+    branches: [staging]
+  workflow_dispatch: {}
+jobs:
+  harness:
+    name: Harness
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo ok
+`
+	root := t.TempDir()
+	rel := ".github/workflows/examples.yml"
+	full := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(full, []byte(text), 0o600); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+	workflow, err := loadWorkflow(full, rel)
+	if err != nil {
+		t.Fatalf("load workflow: %v", err)
+	}
+	if got := strings.Join(workflow.ctx.prBranches, ","); got != stagingBranch {
+		t.Fatalf("prBranches = %q, want %q", got, stagingBranch)
+	}
+	jobs, err := classifyWorkflow(root, workflow, workflow.ctx, "", 0)
+	if err != nil {
+		t.Fatalf("classify workflow: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("classified %d jobs, want 1", len(jobs))
+	}
+	class := jobs[0].class
+	if !class.prBases[stagingBranch] {
+		t.Fatal("staging-scoped job must run on pull requests to staging")
+	}
+	if class.prBases[premainBranch] || class.prBases[mainBranch] {
+		t.Fatalf("staging-scoped job must not run on promotion pull requests: %v", class.prBases)
+	}
+	if failures := checkParity(jobs, false); len(failures) > 0 {
+		t.Fatalf("staging-scoped workflow must pass parity, got: %v", failures)
 	}
 }
 

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v7/runtime"
 )
 
 func TestStreamErrorCode_Variants(t *testing.T) {

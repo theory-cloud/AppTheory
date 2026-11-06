@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	oauthstore "github.com/theory-cloud/apptheory/v6/runtime/oauth/store"
+	oauthstore "github.com/theory-cloud/apptheory/v7/runtime/oauth/store"
 )
 
 // RouteRefreshPolicy is the encoded static policy of the brokered route refresh

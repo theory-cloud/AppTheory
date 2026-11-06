@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/theory-cloud/apptheory/v6/internal/localcloudfront"
+	"github.com/theory-cloud/apptheory/v7/internal/localcloudfront"
 )
 
 // Lambda@Edge, CloudFront KeyValueStore and the viewer-country run option.

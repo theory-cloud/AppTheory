@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/theory-cloud/apptheory/v6/pkg/vectorstore"
-	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
-	"github.com/theory-cloud/apptheory/v6/testkit"
+	"github.com/theory-cloud/apptheory/v7/pkg/vectorstore"
+	apptheory "github.com/theory-cloud/apptheory/v7/runtime"
+	"github.com/theory-cloud/apptheory/v7/testkit"
 )
 
 const testToken = "example-test-token"

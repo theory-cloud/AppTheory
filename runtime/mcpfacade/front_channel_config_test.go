@@ -8,10 +8,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
-	"github.com/theory-cloud/apptheory/v6/runtime/mcproutes"
-	"github.com/theory-cloud/apptheory/v6/runtime/oauth"
-	oauthstore "github.com/theory-cloud/apptheory/v6/runtime/oauth/store"
+	apptheory "github.com/theory-cloud/apptheory/v7/runtime"
+	"github.com/theory-cloud/apptheory/v7/runtime/mcproutes"
+	"github.com/theory-cloud/apptheory/v7/runtime/oauth"
+	oauthstore "github.com/theory-cloud/apptheory/v7/runtime/oauth/store"
 )
 
 // stubProvider is a no-op oauth.Provider used to declare a front channel in

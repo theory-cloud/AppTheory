@@ -40,11 +40,17 @@
 # classifies every job by its effective triggers (workflow `on:` x job `if:` x
 # `needs:`). A job condition the classifier does not model -- a negated or `!=`
 # predicate over an unknown ref, a folded/continuation scalar, a YAML alias or
-# merge key, a `pull_request` branch filter, a remote reusable workflow -- fails
-# closed rather than passing: matching the raw text let
+# merge key, a `pull_request` branch filter that omits staging, a remote reusable
+# workflow -- fails closed rather than passing: matching the raw text let
 # `|| (github.event_name != 'pull_request')`,
 # `|| (github.ref == 'refs/heads/staging')` and a continuation-line clause
 # broaden the rubric while the guard passed.
+#
+# Operator ruling 2026-11-06: the examples harness runs only for pull requests
+# targeting staging, because premain and main derive from staging. The classifier
+# models that one filter -- `pull_request.branches` that keeps staging -- and
+# scopes the workflow's classified PR bases to staging; any filter that omits
+# staging still fails closed.
 #
 # Exit codes: 0 PASS, 1 FAIL, 2 BLOCKED.
 set -euo pipefail

@@ -17,6 +17,16 @@ or deprecation posture must add or update a section here before the release is p
 
 ### Unreleased
 
+- **Go module import paths move to `github.com/theory-cloud/apptheory/v7`.** This is the import-path half of the v7
+  major release: every Go consumer must rewrite its AppTheory runtime imports from
+  `github.com/theory-cloud/apptheory/v6/...` to `github.com/theory-cloud/apptheory/v7/...`, and CDK Go consumers move
+  to `github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v7`. Pin the exact tag you are moving to with
+  `go get github.com/theory-cloud/apptheory/v7@v7.0.0` (or the matching v7 RC tag), then run `go mod tidy` in each
+  module. Runtime and CDK module tags continue to target the same immutable release commit; do not mix major lines.
+  The Go API surface is unchanged beyond import paths: the api-snapshot diff between the two lines is header-path-only,
+  so Go code that compiles on v6 compiles on v7 after the import rewrite. The TypeScript and Python runtimes carry no
+  module-path change.
+
 - **The `*Strict` route registrars are supported again; they are no longer deprecated.** Go `HandleStrict` /
   `GetStrict` / `PostStrict` / `PutStrict` / `PatchStrict` / `DeleteStrict` / `OptionsStrict`, TypeScript
   `handleStrict`, and Python `handle_strict` are the supported error-returning registration API for callers that

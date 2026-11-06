@@ -45,7 +45,7 @@ TAG="v${VERSION}"
 REPO="theory-cloud/AppTheory"
 PYTHON_VERSION="${VERSION/-rc/rc0}"
 
-go get "github.com/theory-cloud/apptheory/v6@${TAG}"
+go get "github.com/theory-cloud/apptheory/v7@${TAG}"
 gh release download "${TAG}" --repo "${REPO}" \
   --pattern "theory-cloud-apptheory-${VERSION}.tgz" \
   --pattern "apptheory-${PYTHON_VERSION}-py3-none-any.whl" \
@@ -69,8 +69,8 @@ package mysvc
 import (
 	"context"
 
-	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
-	"github.com/theory-cloud/apptheory/v6/testkit"
+	apptheory "github.com/theory-cloud/apptheory/v7/runtime"
+	"github.com/theory-cloud/apptheory/v7/testkit"
 )
 
 func Example() {

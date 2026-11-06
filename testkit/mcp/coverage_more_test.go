@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
-	mcpruntime "github.com/theory-cloud/apptheory/v6/runtime/mcp"
-	"github.com/theory-cloud/apptheory/v6/testkit"
+	apptheory "github.com/theory-cloud/apptheory/v7/runtime"
+	mcpruntime "github.com/theory-cloud/apptheory/v7/runtime/mcp"
+	"github.com/theory-cloud/apptheory/v7/testkit"
 )
 
 func TestHelperFunctionsAndErrorBranches(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	oauthruntime "github.com/theory-cloud/apptheory/v6/runtime/oauth"
+	oauthruntime "github.com/theory-cloud/apptheory/v7/runtime/oauth"
 )
 
 // issuerPinConformanceFixture is the shared RFC 9207 issuer-pin table. From

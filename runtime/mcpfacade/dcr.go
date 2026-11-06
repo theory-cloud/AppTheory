@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
-	"github.com/theory-cloud/apptheory/v6/runtime/mcproutes"
-	"github.com/theory-cloud/apptheory/v6/runtime/oauth"
-	oauthstore "github.com/theory-cloud/apptheory/v6/runtime/oauth/store"
+	apptheory "github.com/theory-cloud/apptheory/v7/runtime"
+	"github.com/theory-cloud/apptheory/v7/runtime/mcproutes"
+	"github.com/theory-cloud/apptheory/v7/runtime/oauth"
+	oauthstore "github.com/theory-cloud/apptheory/v7/runtime/oauth/store"
 )
 
 // DCR framework defaults (DESIGN §8.3 / THREAT_MODEL T5). They are constants, so

@@ -61,16 +61,16 @@ runtime images:
 
 ```bash
 # Run a released module without checking out AppTheory.
-go run github.com/theory-cloud/apptheory/v6/cmd/apptheory-local@<version> \
+go run github.com/theory-cloud/apptheory/v7/cmd/apptheory-local@<version> \
   --app ~/code/my-app --profile ~/code/my-app/local-profile.json
 
 # Or install the command once.
-go install github.com/theory-cloud/apptheory/v6/cmd/apptheory-local@<version>
+go install github.com/theory-cloud/apptheory/v7/cmd/apptheory-local@<version>
 apptheory-local --app ~/code/my-app --profile ~/code/my-app/local-profile.json
 ```
 
 `<version>` is a release that contains the command (v6.5.0 or later);
-`go list -m -versions github.com/theory-cloud/apptheory/v6` lists released
+`go list -m -versions github.com/theory-cloud/apptheory/v7` lists released
 versions.
 
 Before that release, run the command from a sibling AppTheory checkout (the

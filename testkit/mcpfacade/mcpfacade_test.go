@@ -6,11 +6,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
-	runtimemcpfacade "github.com/theory-cloud/apptheory/v6/runtime/mcpfacade"
-	"github.com/theory-cloud/apptheory/v6/runtime/mcproutes"
-	"github.com/theory-cloud/apptheory/v6/runtime/oauth"
-	"github.com/theory-cloud/apptheory/v6/testkit"
+	apptheory "github.com/theory-cloud/apptheory/v7/runtime"
+	runtimemcpfacade "github.com/theory-cloud/apptheory/v7/runtime/mcpfacade"
+	"github.com/theory-cloud/apptheory/v7/runtime/mcproutes"
+	"github.com/theory-cloud/apptheory/v7/runtime/oauth"
+	"github.com/theory-cloud/apptheory/v7/testkit"
 )
 
 func TestCredentialFreeTransportRequestIsDeniedAndTokenReachesTheHandler(t *testing.T) {

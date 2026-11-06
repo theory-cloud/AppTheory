@@ -28,7 +28,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v7/runtime"
 )
 
 // mcpAuthFacadeFixtureDir is the shared acceptance fixture directory. The cases

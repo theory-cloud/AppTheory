@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v7/runtime"
 )
 
 func TestValidatePOSTRequestProtocol20260728(t *testing.T) {
