@@ -141,21 +141,30 @@ func TestFunctionProcessRejectsErrorStatus(t *testing.T) {
 	}
 }
 
-func TestPortAccepts(t *testing.T) {
-	listener := listenLoopback(t)
-	ready, err := portAccepts(context.Background(), listenerPort(t, listener))
+func TestRIEServing(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+	ready, err := rieServing(context.Background(), serverPort(t, server.URL))
 	if err != nil || !ready {
-		t.Fatalf("expected the listener to accept: %v %v", ready, err)
+		t.Fatalf("expected the emulator endpoint to answer: %v %v", ready, err)
 	}
 	closed := &net.TCPAddr{}
-	if ready, err := portAccepts(context.Background(), closed.Port); ready || err == nil {
+	if ready, err := rieServing(context.Background(), closed.Port); ready || err == nil {
 		t.Fatalf("expected a closed port to fail: %v %v", ready, err)
+	}
+	if ready, err := rieServing(nil, 1); ready || err == nil {
+		t.Fatalf("expected a nil context to fail: %v %v", ready, err)
 	}
 }
 
 func TestWaitForContainerReady(t *testing.T) {
-	listener := listenLoopback(t)
-	port := listenerPort(t, listener)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+	port := serverPort(t, server.URL)
 	docker := fakeDocker(map[string]string{
 		"docker inspect --format {{.State.Running}} fn": "true\n",
 		"docker port fn 8080":                           "127.0.0.1:" + strconv.Itoa(port) + "\n",

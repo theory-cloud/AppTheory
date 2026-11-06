@@ -179,7 +179,10 @@ func newTestRunner(t *testing.T, base string) *Runner {
 func TestRunnerLifecycle(t *testing.T) {
 	base := testBase(t)
 	runner := newTestRunner(t, base)
-	listener := listenLoopback(t)
+	rie := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusNotFound)
+	}))
+	defer rie.Close()
 	backend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("content-type", "application/x-amz-json-1.0")
 		if _, err := writer.Write([]byte(`{"TableNames":[]}`)); err != nil {
@@ -188,7 +191,7 @@ func TestRunnerLifecycle(t *testing.T) {
 	}))
 	defer backend.Close()
 	var calls []string
-	runner.docker = fakeRunnerDocker(t, listenerPort(t, listener), serverPort(t, backend.URL), &calls)
+	runner.docker = fakeRunnerDocker(t, serverPort(t, rie.URL), serverPort(t, backend.URL), &calls)
 	// This lifecycle test models the embedded emulator container; the Runtime
 	// API path is exercised by its own tests and the example harness.
 	runner.options.RIEMode = true
@@ -245,7 +248,10 @@ func TestRunnerLifecycle(t *testing.T) {
 func TestRunnerSessionLifecycle(t *testing.T) {
 	base := testBase(t)
 	runner := newTestRunner(t, base)
-	listener := listenLoopback(t)
+	rie := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusNotFound)
+	}))
+	defer rie.Close()
 	backend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("content-type", "application/x-amz-json-1.0")
 		if _, err := writer.Write([]byte(`{"TableNames":[]}`)); err != nil {
@@ -254,7 +260,7 @@ func TestRunnerSessionLifecycle(t *testing.T) {
 	}))
 	defer backend.Close()
 	var calls []string
-	runner.docker = fakeRunnerDocker(t, listenerPort(t, listener), serverPort(t, backend.URL), &calls)
+	runner.docker = fakeRunnerDocker(t, serverPort(t, rie.URL), serverPort(t, backend.URL), &calls)
 	runner.options.RIEMode = true
 
 	commands := strings.NewReader(`{"op":"describe"}` + "\n" + `{"op":"clock.now"}` + "\n" + `{"op":"shutdown"}` + "\n")

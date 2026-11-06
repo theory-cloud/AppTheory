@@ -218,8 +218,11 @@ func TestRunnerRemovesEveryResourceOnRepeatedTermination(t *testing.T) {
 		t.Run(fmt.Sprintf("iteration-%d", iteration), func(t *testing.T) {
 			base := testBase(t)
 			runner := newTestRunner(t, base)
-			listener := listenLoopback(t)
-			docker := newCleanupDocker(listenerPort(t, listener), serverPort(t, newBackendStub(t).URL))
+			rie := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.WriteHeader(http.StatusNotFound)
+			}))
+			defer rie.Close()
+			docker := newCleanupDocker(serverPort(t, rie.URL), serverPort(t, newBackendStub(t).URL))
 			runner.docker = docker.docker()
 			runner.options.RIEMode = true
 
@@ -273,7 +276,11 @@ func TestRunnerCleanupDoesNotWaitForInFlightRequest(t *testing.T) {
 	releaseRequest := func() { releaseOnce.Do(func() { close(release) }) }
 	started := make(chan struct{})
 	var startedOnce sync.Once
-	rie := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+	rie := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != invocationPath {
+			writer.WriteHeader(http.StatusNotFound)
+			return
+		}
 		startedOnce.Do(func() { close(started) })
 		<-release
 		if _, err := writer.Write([]byte(`{"statusCode":200,"headers":{"content-type":"application/json"},"body":"{}"}`)); err != nil {

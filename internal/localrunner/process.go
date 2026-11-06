@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -250,16 +249,22 @@ func (p *FunctionProcess) invokeRIE(ctx context.Context, payload []byte) ([]byte
 	return body, nil
 }
 
-// portAccepts reports whether a loopback port accepts a TCP connection.
-func portAccepts(ctx context.Context, port int) (bool, error) {
-	dialer := net.Dialer{Timeout: time.Second}
-	connection, err := dialer.DialContext(ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", port))
+// rieServing reports whether a loopback port answers the emulator's HTTP
+// server. A TCP dial alone is not enough on Linux: Docker's userland proxy
+// accepts the host connection before the container's port is listening and
+// then resets it, so a first invocation could race the emulator. Any HTTP
+// response, including the emulator's 404 for an unknown path, proves it serves.
+func rieServing(ctx context.Context, port int) (bool, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/", port), nil)
 	if err != nil {
 		return false, err
 	}
-	if closeErr := connection.Close(); closeErr != nil {
-		return true, closeErr
+	client := &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{Proxy: nil}}
+	response, err := client.Do(request) //nolint:gosec // URL is a loopback RIE port the runner published
+	if err != nil {
+		return false, err
 	}
+	_ = response.Body.Close() //nolint:errcheck // the probe only needs the response headers
 	return true, nil
 }
 
@@ -284,7 +289,7 @@ func waitForContainerReady(ctx context.Context, docker *Docker, name string) (in
 		case port == 0:
 			lastErr = fmt.Errorf("the runtime interface emulator port is not published yet")
 		default:
-			ready, dialErr := portAccepts(ctx, port)
+			ready, dialErr := rieServing(ctx, port)
 			if ready {
 				return port, nil
 			}
