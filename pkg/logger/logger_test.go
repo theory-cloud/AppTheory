@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/theory-cloud/apptheory/v6/pkg/observability"
-	obszap "github.com/theory-cloud/apptheory/v6/pkg/observability/zap"
+	"github.com/theory-cloud/apptheory/v7/pkg/observability"
+	obszap "github.com/theory-cloud/apptheory/v7/pkg/observability/zap"
 )
 
 type stubLogger struct{}

@@ -4,8 +4,12 @@ name: Examples (Local)
 # service container. The job carries no AWS secrets. The harness supplies its
 # own endpoint overrides and static dummy credentials, and its preflight fails
 # when a DynamoDB client would resolve anywhere else.
+# It runs only for PRs targeting `staging`: `premain` and `main` derive from
+# `staging`, so the harness has already run on the same tree before promotion
+# and a second run there only repeats it.
 on:
   pull_request:
+    branches: ["staging"]
   workflow_dispatch: {}
 
 permissions:

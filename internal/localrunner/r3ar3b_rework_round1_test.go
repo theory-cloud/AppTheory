@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/theory-cloud/apptheory/v6/internal/localcloudfront"
+	"github.com/theory-cloud/apptheory/v7/internal/localcloudfront"
 )
 
 // Round-1 rework tests for the LOCAL-W2-R3a/R3b PR.

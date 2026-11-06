@@ -3,7 +3,7 @@ package jobs
 import (
 	"errors"
 
-	"github.com/theory-cloud/apptheory/v6/pkg/sanitization"
+	"github.com/theory-cloud/apptheory/v7/pkg/sanitization"
 )
 
 const unknownErrorMessage = "unknown error"

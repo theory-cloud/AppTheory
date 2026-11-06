@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/theory-cloud/apptheory/v6/internal/localcloudfront"
+	"github.com/theory-cloud/apptheory/v7/internal/localcloudfront"
 )
 
 func TestValidateOriginOverridesRefusesNonLoopback(t *testing.T) {

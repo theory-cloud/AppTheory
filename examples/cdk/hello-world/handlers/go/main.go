@@ -7,7 +7,7 @@ import (
 
 	"github.com/aws/aws-lambda-go/lambda"
 
-	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v7/runtime"
 )
 
 func envOr(name string, fallback string) string {

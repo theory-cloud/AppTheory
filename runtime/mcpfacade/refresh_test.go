@@ -12,11 +12,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
-	"github.com/theory-cloud/apptheory/v6/runtime/mcproutes"
-	"github.com/theory-cloud/apptheory/v6/runtime/oauth"
-	oauthstore "github.com/theory-cloud/apptheory/v6/runtime/oauth/store"
-	"github.com/theory-cloud/apptheory/v6/testkit/oauthprovider"
+	apptheory "github.com/theory-cloud/apptheory/v7/runtime"
+	"github.com/theory-cloud/apptheory/v7/runtime/mcproutes"
+	"github.com/theory-cloud/apptheory/v7/runtime/oauth"
+	oauthstore "github.com/theory-cloud/apptheory/v7/runtime/oauth/store"
+	"github.com/theory-cloud/apptheory/v7/testkit/oauthprovider"
 )
 
 const (

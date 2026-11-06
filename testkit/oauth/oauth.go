@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	oauthruntime "github.com/theory-cloud/apptheory/v6/runtime/oauth"
+	oauthruntime "github.com/theory-cloud/apptheory/v7/runtime/oauth"
 )
 
 // ClaudePublicClient is an OAuth test client that emulates Claude connector behavior.

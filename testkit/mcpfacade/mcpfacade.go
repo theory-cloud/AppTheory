@@ -17,9 +17,9 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 
-	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
-	"github.com/theory-cloud/apptheory/v6/runtime/oauth"
-	"github.com/theory-cloud/apptheory/v6/testkit"
+	apptheory "github.com/theory-cloud/apptheory/v7/runtime"
+	"github.com/theory-cloud/apptheory/v7/runtime/oauth"
+	"github.com/theory-cloud/apptheory/v7/testkit"
 )
 
 // Handler is a counting MCP transport handler. Every request is counted and

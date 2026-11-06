@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v7/runtime"
 )
 
 // Env is a deterministic local test environment for AppTheory apps.

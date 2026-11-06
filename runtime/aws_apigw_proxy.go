@@ -11,7 +11,7 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 
-	"github.com/theory-cloud/apptheory/v6/runtime/internal/streamjoin"
+	"github.com/theory-cloud/apptheory/v7/runtime/internal/streamjoin"
 )
 
 const apigatewayProxyStreamingRouteStageVariablePrefix = "APPTHEORYSTREAMINGV1"

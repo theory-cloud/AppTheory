@@ -13,7 +13,7 @@ formatters:
       simplify: true
     goimports:
       local-prefixes:
-        - github.com/theory-cloud/apptheory/v6
+        - github.com/theory-cloud/apptheory/v7
 
 linters:
   default: none

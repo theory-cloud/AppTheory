@@ -15,7 +15,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/theory-cloud/apptheory/v6/pkg/objectstore"
+	"github.com/theory-cloud/apptheory/v7/pkg/objectstore"
 )
 
 const (
