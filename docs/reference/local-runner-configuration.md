@@ -198,7 +198,13 @@ wiring are re-derived. The listeners keep their ports and URLs.
 
 moto is memory-only and is not persisted ([moto server mode](https://docs.getmoto.org/en/latest/docs/server_mode.html)).
 The data directory must be under `$HOME` or the working directory so Docker can
-bind-mount it. Definitions are re-provisioned from the assembly on every start;
+bind-mount it. The pinned emulator images run as their own non-root users
+(DynamoDB Local as `dynamodblocal`, ElasticMQ as `elasticmq`). Colima maps a
+bind mount's ownership to the container user, but a Linux bind mount keeps the
+host UID, so the runner makes the root traversable (`0755`) and each backend
+directory writable (`0777`); the ElasticMQ configuration file is `0644`
+(container-readable, and it holds no secret). Definitions are re-provisioned
+from the assembly on every start;
 existing tables, buckets, queues, topics, streams, parameters, secrets, pools
 and keys are reconciled, never dropped. A DynamoDB key-schema change fails at
 start with the table named and the UpdateTable rule that a table update cannot

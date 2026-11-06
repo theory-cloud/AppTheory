@@ -1738,6 +1738,11 @@ one directory per backend:
 | ElasticMQ | Queues and messages | `messages-storage` with the H2 file `/data/elasticmq` on `<dir>/sqs`. Verified on the pinned 1.7.1 image: a message survived a restart. |
 | moto | Nothing | Server-mode state lives in the process; there is no persistence option ([moto server mode](https://docs.getmoto.org/en/latest/docs/server_mode.html)). This is the docs/125 memory-only limit, named rather than hidden. |
 
+The runner widens the data root to `0755` and each backend directory to `0777`
+because the pinned emulator images run as their own non-root users, and a Linux
+bind mount keeps the host UID (colima maps it to the container user instead).
+The ElasticMQ config file is `0644` and holds no secret.
+
 The DynamoDB Local page owns the options: `-dbPath` is "The directory where
 DynamoDB writes its database file"; `-inMemory` writes no database file and
 cannot be combined with `-dbPath`; and "If you use the -sharedDb option,

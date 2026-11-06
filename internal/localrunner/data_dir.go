@@ -27,6 +27,12 @@ import (
 
 // normalizeDataDir resolves and validates an explicit data directory. It must
 // live under $HOME or the working directory so Docker can bind-mount it.
+//
+// The root is made traversable for other users (0755). The pinned emulator
+// images run as their own non-root users (DynamoDB Local as dynamodblocal,
+// ElasticMQ as elasticmq). Colima maps a bind mount's ownership to the
+// container user, but a Linux bind mount keeps the host UID, so a private
+// 0750 root would make every backend unable to open its store.
 func normalizeDataDir(raw string) (string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -41,8 +47,13 @@ func normalizeDataDir(raw string) (string, error) {
 	} else if statErr != nil && !os.IsNotExist(statErr) {
 		return "", fmt.Errorf("stat --data-dir %s: %w", absolute, statErr)
 	}
-	if err := os.MkdirAll(absolute, 0o750); err != nil {
+	if err := os.MkdirAll(absolute, 0o755); err != nil { //nolint:gosec // the emulator containers run as non-root users; a Linux bind mount keeps the host UID
 		return "", fmt.Errorf("create --data-dir %s: %w", absolute, err)
+	}
+	// MkdirAll leaves an existing directory's mode alone; a directory made by
+	// an older run (or by the user) must still be traversable by the backends.
+	if err := os.Chmod(absolute, 0o755); err != nil { //nolint:gosec // the backends must traverse the root as their own non-root users
+		return "", fmt.Errorf("make --data-dir %s traversable: %w", absolute, err)
 	}
 	if err := ensureSharedPath(absolute); err != nil {
 		return "", fmt.Errorf("--data-dir: %w", err)
@@ -50,11 +61,16 @@ func normalizeDataDir(raw string) (string, error) {
 	return absolute, nil
 }
 
-// backendDataDir creates and returns one backend's persistent directory.
+// backendDataDir creates and returns one backend's persistent directory. The
+// directory is 0777 (sticky bit not set) so the container's own user can create
+// its store and the runner can still unlink it on cleanup.
 func (r *Runner) backendDataDir(name string) (string, error) {
 	dir := filepath.Join(r.dataDir, name)
-	if err := os.MkdirAll(dir, 0o750); err != nil {
+	if err := os.MkdirAll(dir, 0o777); err != nil { //nolint:gosec // the emulator's own user must write its store through the bind mount
 		return "", fmt.Errorf("create the %s data directory %s: %w", name, dir, err)
+	}
+	if err := os.Chmod(dir, 0o777); err != nil { //nolint:gosec // an existing private directory from an older run must be widened
+		return "", fmt.Errorf("make the %s data directory writable: %w", name, err)
 	}
 	if err := ensureSharedPath(dir); err != nil {
 		return "", fmt.Errorf("the %s data directory: %w", name, err)
@@ -145,10 +161,12 @@ func dynamoDBPersistentCommand(command []string) []string {
 
 // elasticMQDataConfig writes the ElasticMQ configuration that enables message
 // storage under the bind-mounted data directory. The image entrypoint reads
-// /opt/elasticmq.conf.
+// /opt/elasticmq.conf. The file is world-readable because the container runs as
+// its own non-root user and a Linux bind mount keeps the host UID; it contains
+// no secret (only the H2 path).
 func (r *Runner) elasticMQDataConfig() (string, error) {
 	dir := filepath.Join(r.scratch, "elasticmq")
-	if err := os.MkdirAll(dir, 0o750); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // the config directory only holds a world-readable path
 		return "", fmt.Errorf("create the ElasticMQ config directory: %w", err)
 	}
 	path := filepath.Join(dir, "elasticmq.conf")
@@ -159,7 +177,7 @@ func (r *Runner) elasticMQDataConfig() (string, error) {
 		"  enabled = true\n" +
 		"  uri = \"jdbc:h2:/data/elasticmq\"\n" +
 		"}\n"
-	if err := os.WriteFile(path, []byte(config), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(config), 0o644); err != nil { //nolint:gosec // the ElasticMQ container user must read the H2 path; no secret
 		return "", fmt.Errorf("write the ElasticMQ config %s: %w", path, err)
 	}
 	return path, nil

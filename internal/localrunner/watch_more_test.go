@@ -667,3 +667,46 @@ func TestStartFunctionClosesTheRuntimeAPIWhenTheContainerFails(t *testing.T) {
 		t.Fatal("the Runtime API leaked after a failed start")
 	}
 }
+
+func TestDataDirModesAllowTheContainerUsers(t *testing.T) {
+	root := filepath.Join(testSharedDir(t), "data")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	normalized, err := normalizeDataDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(normalized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode := info.Mode().Perm(); mode != 0o755 {
+		t.Fatalf("--data-dir mode = %o, want 755", mode)
+	}
+	runner := &Runner{dataDir: normalized, scratch: testSharedDir(t), options: Options{Stdout: io.Discard}}
+	dir, err := runner.backendDataDir("dynamodb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info, statErr := os.Stat(dir); statErr != nil || info.Mode().Perm() != 0o777 {
+		t.Fatalf("backend dir = %v, %v", info, statErr)
+	}
+	// A directory left private by an older run is widened again.
+	if tightenErr := os.Chmod(dir, 0o750); tightenErr != nil { //nolint:gosec // deliberately tighten the test directory to prove it is widened
+		t.Fatal(tightenErr)
+	}
+	if _, widenErr := runner.backendDataDir("dynamodb"); widenErr != nil {
+		t.Fatal(err)
+	}
+	if info, statErr := os.Stat(dir); statErr != nil || info.Mode().Perm() != 0o777 {
+		t.Fatalf("an existing backend dir was not widened: %v, %v", info, statErr)
+	}
+	config, err := runner.elasticMQDataConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info, statErr := os.Stat(config); statErr != nil || info.Mode().Perm() != 0o644 {
+		t.Fatalf("ElasticMQ config = %v, %v", info, statErr)
+	}
+}
