@@ -69,8 +69,10 @@ A handler that a CDK definition would connect to a cloud event source is L3
 when the harness invokes it with a generated event, because that event source is
 the named gap. A handler-only row has no deployment surface to emulate — the
 handler is its entire surface — so it is L1 unless a different named gap
-applies. `examples/mcp/resumable-sse` is handler-only and L3 for incremental SSE
-delivery, not for an event source.
+applies. `examples/mcp/resumable-sse` is handler-only and L2: it runs fully
+locally, and its named fidelity limit is that the local invoke transport
+forwards each chunk at the handler's pace instead of Lambda's streaming cap, not
+that it lacks an event source.
 
 Every classified example is verified by a real process, real HTTP behavior or a
 real synthesized template. There are no fake apps, fake repositories or mocked

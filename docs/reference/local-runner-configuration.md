@@ -66,16 +66,18 @@ Exit codes: `0` success, `1` a run/plan failure, `2` a usage error.
 Run output is stable enough to script:
 
 ```
-function HandlerFunction0D87A48C (provided.al2023, public.ecr.aws/lambda/provided:al2023@sha256:…) ready on 127.0.0.1:49xxx
+function HandlerFunction0D87A48C (provided.al2023, public.ecr.aws/lambda/provided:al2023@sha256:…) ready on the runner's Runtime API at http://127.0.0.1:49xxx
 serving httpv2 ApiCD79AAA0 at http://127.0.0.1:8131
 local-run: ready
 …
 shutting down: removing 1 container(s) and network …
 ```
 
-The address to call is on the `serving …` line. The `127.0.0.1:<port>` on the
-`function …` line is the internal Runtime Interface Emulator port, not the app
-URL.
+The address to call is on the `serving …` line. The `http://127.0.0.1:<port>` on
+the `function …` line is the runner's own Runtime API address for that function,
+not the app URL. Under `--rie` the runner starts the image's Runtime Interface
+Emulator instead and the line reads `ready on 127.0.0.1:<port> (Runtime
+Interface Emulator mode)`.
 
 `invoke` writes one result per event on stdout; progress goes to stderr:
 
@@ -1336,8 +1338,8 @@ before the token's `iat` refuses it.
 | --- | --- |
 | `Layers` on a zip function | Every entry must be an `AWS::Lambda::LayerVersion` in the function's stack with a local asset (`aws:asset:path`). The layer content is extracted into one `/opt` directory in the listed order; a later layer's file replaces an earlier one. A relative symlink whose target stays inside the layer is extracted as the same symlink (CDK's default `SymlinkFollowMode.NEVER` stores an asset's symlinks, and `npm install` leaves `node_modules/.bin` shims as symlinks); a symlink with an absolute target or one that escapes the layer root is refused by name. A layer asset that is a zip file rather than an extracted directory is refused because the runner needs the directory. More than five layers, a literal layer ARN, an `Fn::ImportValue` and any other unresolvable reference are refused by name. |
 | Layer runtime paths | `/opt/bin` is prepended to `PATH`, `/opt/lib` to `LD_LIBRARY_PATH`, `/opt/nodejs/node_modules` and `/opt/nodejs/node<major>/node_modules` to `NODE_PATH` (Node), and `/opt/python` plus `/opt/python/lib/python<major>.<minor>/site-packages` to `PYTHONPATH` (Python). The image's own values are read with `docker image inspect` and kept after the layer paths; a failed inspect falls back to a documented default `PATH`. |
-| `PackageType: Image` / `Code.ImageUri` | The `aws:asset:path`, `aws:asset:dockerfile-path`, `aws:asset:docker-build-args`, `aws:asset:docker-build-target` and `aws:asset:docker-platform` metadata are read from the function resource. `docker build` runs with the asset directory as the context, the image is tagged `<name-prefix>-<logical-id>-image` with the run label, and the container starts with the image's own entrypoint (no command, no code mount). The build runs before any listener serves. The tag is per app hash by default, so two concurrent runs of one app share it and docker reuses the built image. |
-| Refusals | An image without `aws:asset:path`, an image that declares `Layers`, and an image whose container never starts a Runtime Interface Emulator all fail by name (the last cites the images-create page). A zip function whose runtime image cannot be pinned fails in the image-resolution step. |
+| `PackageType: Image` / `Code.ImageUri` | The `aws:asset:path`, `aws:asset:dockerfile-path`, `aws:asset:docker-build-args`, `aws:asset:docker-build-target` and `aws:asset:docker-platform` metadata are read from the function resource. `docker build` runs with the asset directory as the context, the image is tagged `<name-prefix>-<logical-id>-image` with the run label, and the container starts with the image's own entrypoint (no command, no code mount). The build runs before any listener serves. In the default mode the runner hosts the Runtime API the image's runtime client connects to; with `--rie` it starts the image's own Runtime Interface Emulator instead. The tag is per app hash by default, so two concurrent runs of one app share it and docker reuses the built image. |
+| Refusals | An image without `aws:asset:path`, an image that declares `Layers`, and — under `--rie` — an image whose container never starts a Runtime Interface Emulator all fail by name (the last cites the images-create page). A zip function whose runtime image cannot be pinned fails in the image-resolution step. |
 
 Layer and image builds happen before `run` starts serving; the run shuts down
 its containers, its network and every image it built.
@@ -1417,7 +1419,11 @@ bus.
 Deviations: CodePipeline, VPC, EFS, secondary sources, cache, artifact upload,
 report groups, privileged mode and non-small compute types are not served; each
 is reported on the project's `skipped` entry (and in `plan`). Only `NO_SOURCE`
-buildspecs run. `CompressedBytes` is the public registry's compressed size. The
+buildspecs run. An `EnvironmentVariables` value that is a literal or a resolvable
+CloudFormation expression (a parameter/condition/`Fn::Join`, or a `Ref`/`Fn::GetAtt`
+naming a resource in the same stack) becomes the variable's value; one that still
+depends on the deployed stack is named as a deviation and the variable is left
+out. `CompressedBytes` is the public registry's compressed size. The
 aarch64 agent plus Lambda-standard image need about 8 GB of colima disk, and the
 opt-in full-toolchain image adds about 10.9 GB on disk; colima's disk is not a
 fixed limit, so grow it before a pull when it is short. A capacity failure fails

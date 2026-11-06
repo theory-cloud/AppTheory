@@ -239,7 +239,7 @@ The served URL is the address on the `serving …` line the runner prints before
 `local-run: ready`:
 
 ```
-function Handler… (nodejs24.x, public.ecr.aws/lambda/nodejs:24@sha256:…) ready on 127.0.0.1:49xxx
+function Handler… (nodejs24.x, public.ecr.aws/lambda/nodejs:24@sha256:…) ready on the runner's Runtime API at http://127.0.0.1:49xxx
 serving httpv2 Api… at http://127.0.0.1:18780
 local-run: ready
 ```
@@ -257,10 +257,13 @@ The response is:
 {"message":"hello from your local app","path":"/hello"}
 ```
 
-The `127.0.0.1:<port>` on the `function …` line is the internal Runtime
-Interface Emulator port, not the app URL. Stop the run with `Ctrl-C` (`SIGINT`)
-or `SIGTERM`; the command closes the listeners, removes its containers and
-network, deletes the scratch directory and exits 0.
+The `http://127.0.0.1:<port>` on the `function …` line is the runner's own
+Runtime API address for that function — how the container reaches the runner,
+not the app URL. Under `--rie` the runner starts the image's Runtime Interface
+Emulator instead and the same line reads `ready on 127.0.0.1:<port> (Runtime
+Interface Emulator mode)`; that port is the emulator's. Stop the run with
+`Ctrl-C` (`SIGINT`) or `SIGTERM`; the command closes the listeners, removes its
+containers and network, deletes the scratch directory and exits 0.
 
 A built binary replaces `go run -C` in the same commands:
 
@@ -1487,11 +1490,13 @@ roughly 10–60 seconds including the base-image pull, and rebuilds are cached b
 Docker's layer cache (a second build of the same asset is near-instant). The
 image tag is derived from the name prefix, which is the app hash by default, so
 two concurrent runs of one app share a tag and docker reuses the built image. The
-function container runs the image's own entrypoint, so the Runtime Interface
-Emulator the
-[AWS base images](https://docs.aws.amazon.com/lambda/latest/dg/images-create.html)
-ship serves the same invocation path as a zip function; an image that does not
-ship a Runtime Interface Emulator fails with that name and the page cited. Image
+function container runs the image's own entrypoint. In the default mode the
+runner hosts the Runtime API that the image's runtime client connects to, so an
+image built on an
+[AWS base image](https://docs.aws.amazon.com/lambda/latest/dg/images-create.html)
+serves the same invocation path as a zip function. With `--rie` the runner
+starts the image's own Runtime Interface Emulator instead, and an image that
+does not ship one fails with that name and the page cited. Image
 functions do not take layers, as the layers chapter states, and that combination
 is refused by name. The built image carries the run label and is removed when
 the run shuts down.
@@ -1560,6 +1565,7 @@ Deviations, named rather than hidden:
 | Source | Only `NO_SOURCE` buildspecs run locally; a source type that needs a repository is reported by name. |
 | Privileged mode | Reported, not enabled: the build container starts unprivileged. |
 | Compute type | `BUILD_GENERAL1_SMALL` only; an override is refused by name. |
+| `Environment.EnvironmentVariables` values | A literal, or a CloudFormation expression the plan can resolve, becomes the variable's value: parameters, conditions, `Fn::Join`, and a `Ref`/`Fn::GetAtt` that names a resource in the same stack resolve to the same local name the plan prints for that resource (a table name, a bucket name, a secret ARN). A value that still depends on the deployed stack — `Fn::ImportValue`, a generated key id, an SQS URL that carries the run's endpoint — is named as a deviation on the project and the variable is left out, rather than failing the plan. The `Value` property is a `String` in the AWS schema ([EnvironmentVariable](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-codebuild-project-environmentvariable.html)), which is why an intrinsic here is resolved before the agent sees it. |
 
 **Requirements.** The CodeBuild row pulls the agent and one curated build image.
 The aarch64 pair needs about 8 GB of colima disk (569 MB + 1.28 GB compressed;
