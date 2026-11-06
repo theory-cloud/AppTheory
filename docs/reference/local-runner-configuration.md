@@ -195,12 +195,18 @@ A reload that fails after a function was replaced restores the previous
 definition. A container-image function is restored from the immutable image id
 recorded before the rebuild moved its tag, and the tag is pointed back at that
 image. The image this reload built is then removed by id without `-f`, and only
-after an inspect proves nothing still names or uses it: no repo tag and no
-container, running or stopped. That is this run's dangling rebuild; an image a
-foreign tag, a pinned reference or a container still holds is left in place and
-the log names the reference. An image function the reload added and the rollback
-stops loses its built image under the same check, with this run's own build tag
-as the only reference it may still carry. The check comes first rather than
+after an inspect proves nothing still names or uses it: no repo tag, no repo
+digest and no container, running or stopped. That is this run's dangling
+rebuild; an image a foreign tag, a foreign digest reference or a container
+still holds is left in place and the log names the reference. A daemon using
+the containerd image store records a digest for each repository its repo tags
+name, so this run's rebuild reports one while its tag names it and none once
+the rollback points that tag back at the previous image; a digest entry under a
+repository no tag on the image carries is a reference outside the run, such as
+another repository's `repo@sha256:…` pin, and it keeps the image. An image
+function the reload added and the rollback stops loses its built image under
+the same check; this run's own build tag, and the digest the store derives from
+it, are the references it may still carry. The check comes first rather than
 relying on the daemon's refusal: Docker refuses an unforced `docker image rm
 <id>` while a container references the image or while two or more repo tags
 name it, and at exactly one tag it untags that tag and deletes the image
@@ -266,7 +272,16 @@ naming the table, the index and the difference, with the remedy: stop the run
 and remove `<data-dir>/dynamodb` to recreate the table, or start without
 `--data-dir`. That includes a table an earlier runner created without the local
 secondary index an app declares, because that runner ignored
-`LocalSecondaryIndexes`. An existing global secondary index whose key
+`LocalSecondaryIndexes`. A table with a hash-only key that declares a local
+secondary index is AWS-invalid, because a local secondary index "has the same
+partition key as the base table, but a different sort key"
+([local secondary indexes](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/LSI.html)):
+the pinned DynamoDB Local 3.1.0 refuses its `CreateTable` with `Local Secondary
+indices are not allowed on hash tables`, and checks that before it reports an
+existing table, so a re-run over an existing `--data-dir` table fails the same
+way; the CDK `Table` construct refuses it at synth with `a sort key of the
+table must be specified to add local secondary indexes` (aws-cdk-lib 2.275.0,
+`aws-dynamodb` `validateTable`). An existing global secondary index whose key
 attribute's declared type differs from the table's stored type is reported and
 kept the same way, because the earlier runner treated a type-only change as
 unchanged. A new global secondary index whose declared key type differs from

@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
 """Self-tests for the AppTheory local examples harness.
 
-These run before every ``make examples-local``. They pin the discovery
+They run before every ``make examples-local``. They pin the discovery
 conventions against the real tree and prove manifest validation fails closed
 when an entrypoint is unclassified, when a row names a file that does not
 exist, and when the local profile drifts onto a reserved port.
 
-They never touch Docker: every case is either pure validation over the real
-tree or a throwaway tree under the system temp directory.
+Every case is pure validation over the real tree or a throwaway tree under the
+system temp directory, except ``DockerImageStoreTests``: it reads the image
+store of a local daemon, skips when none answers, and removes what it builds.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -518,6 +521,94 @@ class AwsCLIRequirementTests(unittest.TestCase):
         with mock.patch.object(harness.shutil, "which", return_value="/opt/homebrew/bin/aws"):
             with mock.patch.object(harness.subprocess, "run", return_value=working):
                 self.assertEqual("/opt/homebrew/bin/aws", harness.require_aws_cli())
+
+
+class DockerImageStoreTests(unittest.TestCase):
+    """Report the daemon's image-reference shape, which the watch cleanup's
+    digest rule depends on.
+
+    ``internal/localrunner/watch.go`` removes a rebuilt image only while no
+    foreign tag, foreign digest or container names it. A daemon using the
+    containerd image store records a digest for each repository its tags name,
+    so a locally built image carries one even when nothing outside the run
+    references it; that digest must leave with its tag, or a rollback could not
+    remove the rebuild. This case prints what the daemon reports, so the CI log
+    records the store the harness ran against, and requires the tag-move
+    invariant. It skips when no daemon answers, so a machine without Docker
+    still runs the self-tests.
+    """
+
+    REFERENCE_FORMAT = "{{json .RepoTags}} {{json .RepoDigests}}"
+
+    def test_a_built_digest_is_derived_from_its_tag_and_leaves_with_it(self) -> None:
+        if shutil.which("docker") is None:
+            self.skipTest("docker is not installed")
+        probe = subprocess.run(
+            ["docker", "info", "--format", "{{.Driver}}"], capture_output=True, text=True, check=False
+        )
+        if probe.returncode != 0:
+            self.skipTest(f"no docker daemon: {probe.stderr.strip()}")
+
+        def docker(*args: str) -> str:
+            result = subprocess.run(["docker", *args], capture_output=True, text=True, check=False)
+            if result.returncode != 0:
+                self.fail(f"docker {' '.join(args)}: {result.stderr.strip()}")
+            return result.stdout
+
+        def references(reference: str) -> tuple[list[str], list[str]]:
+            raw = docker("image", "inspect", "--format", self.REFERENCE_FORMAT, reference)
+            decoder = json.JSONDecoder()
+            tags, offset = decoder.raw_decode(raw)
+            digests, _ = decoder.raw_decode(raw[offset:].lstrip())
+            return tags, digests
+
+        version = subprocess.run(
+            ["docker", "version", "--format", "client {{.Client.Version}} server {{.Server.Version}}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout.strip()
+        prefix = f"apptheory-local-imagerefs-{os.getpid()}"
+        old_tag, new_tag = f"{prefix}-old", f"{prefix}-new"
+        scratch = Path(tempfile.mkdtemp(prefix="apptheory-local-imagerefs-"))
+        old_id = new_id = ""
+        try:
+            for tag, revision in ((old_tag, "old"), (new_tag, "new")):
+                dockerfile = scratch / f"{revision}.Dockerfile"
+                dockerfile.write_text(
+                    f"FROM scratch\nLABEL apptheory.local.imagerefs={revision}\n", encoding="utf-8"
+                )
+                docker("build", "-q", "-t", tag, "-f", str(dockerfile), str(scratch))
+            old_id = docker("image", "inspect", "--format", "{{.Id}}", old_tag).strip()
+            new_id = docker("image", "inspect", "--format", "{{.Id}}", new_tag).strip()
+            tags, digests = references(new_tag)
+            print(
+                f"docker: {version}; store {probe.stdout.strip()}; "
+                f"built {new_tag} -> tags {tags} digests {digests}"
+            )
+            self.assertEqual([f"{new_tag}:latest"], tags)
+            repositories = {tag.rsplit(":", 1)[0] for tag in tags}
+            for digest in digests:
+                self.assertIn(
+                    digest.split("@", 1)[0],
+                    repositories,
+                    f"digest {digest} was not derived from a tag on the image",
+                )
+            docker("tag", old_id, new_tag)
+            moved_tags, moved_digests = references(new_id)
+            print(
+                f"docker: after moving {new_tag} back to {old_id}, the rebuilt image "
+                f"reports tags {moved_tags} digests {moved_digests}"
+            )
+            self.assertEqual([], moved_tags)
+            self.assertEqual([], moved_digests)
+        finally:
+            for reference in (old_tag, new_tag, new_id, old_id):
+                if reference:
+                    subprocess.run(
+                        ["docker", "image", "rm", "-f", reference], capture_output=True, text=True, check=False
+                    )
+            shutil.rmtree(scratch, ignore_errors=True)
 
 
 if __name__ == "__main__":

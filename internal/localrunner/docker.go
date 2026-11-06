@@ -463,30 +463,42 @@ func (d *Docker) RemoveImage(ctx context.Context, tag string) {
 	_, _, _ = d.exec(ctx, []string{"docker", "image", "rm", "-f", tag}) //nolint:errcheck // best-effort cleanup
 }
 
-// ImageReferences is what still names or uses an image: the repo tags that
-// point at it and the containers (running or stopped) that run it.
+// ImageReferences is what still names or uses an image: the repo tags and repo
+// digests that point at it and the containers (running or stopped) that run it.
 type ImageReferences struct {
-	RepoTags   []string
-	Containers []string
+	RepoTags    []string
+	RepoDigests []string
+	Containers  []string
 }
 
-// ImageReferences reports the repo tags that name an image and the containers
-// that run it, so a cleanup can tell the dangling image a reload built from an
-// image a foreign tag, a pinned reference or a container still holds. Docker
-// exposes no reference count; these are the two references its removal rule
-// consults (https://docs.docker.com/reference/cli/docker/image/rm/).
+// ImageReferences reports the repo tags and repo digests that name an image and
+// the containers that run it, so a cleanup can tell the dangling image a reload
+// built from an image a foreign tag, a digest reference or a container still
+// holds. Docker exposes no reference count; these are the references its
+// removal rule consults (https://docs.docker.com/reference/cli/docker/image/rm/).
+//
+// A daemon using the containerd image store records one RepoDigest for each
+// repository its RepoTags name: a fresh build with one tag reports
+// "<tag repository>@sha256:<image id>", and moving the tag away removes the
+// digest with it (observed on docker 29.5.2; two tags in one repository share
+// one entry). A digest entry whose repository no tag on the image carries is
+// therefore a reference that outlives the run, such as a foreign
+// "repository@sha256:<digest>" pin with no tag of its own.
+// removeDanglingImage is where that distinction is made.
 func (d *Docker) ImageReferences(ctx context.Context, image string) (ImageReferences, error) {
 	stdout, stderr, err := d.exec(ctx, []string{
-		"docker", "image", "inspect", "--format", "{{json .RepoTags}}", image,
+		"docker", "image", "inspect", "--format", "{{json .RepoTags}} {{json .RepoDigests}}", image,
 	})
 	if err != nil {
 		return ImageReferences{}, fmt.Errorf("inspect image %s: %s", image, firstNonEmpty(stderr, err.Error()))
 	}
 	references := ImageReferences{}
-	if raw := strings.TrimSpace(stdout); raw != "" && raw != jsonNull {
-		if parseErr := json.Unmarshal([]byte(raw), &references.RepoTags); parseErr != nil {
-			return ImageReferences{}, fmt.Errorf("inspect image %s: parse its repo tags: %w", image, parseErr)
-		}
+	decoder := json.NewDecoder(strings.NewReader(strings.TrimSpace(stdout)))
+	if parseErr := decoder.Decode(&references.RepoTags); parseErr != nil {
+		return ImageReferences{}, fmt.Errorf("inspect image %s: parse its repo tags: %w", image, parseErr)
+	}
+	if parseErr := decoder.Decode(&references.RepoDigests); parseErr != nil {
+		return ImageReferences{}, fmt.Errorf("inspect image %s: parse its repo digests: %w", image, parseErr)
 	}
 	stdout, stderr, err = d.exec(ctx, []string{
 		"docker", "ps", "-a", "--filter", "ancestor=" + image, "--format", "{{.ID}}",
@@ -496,6 +508,46 @@ func (d *Docker) ImageReferences(ctx context.Context, image string) (ImageRefere
 	}
 	references.Containers = splitLines(stdout)
 	return references, nil
+}
+
+// imageReferenceTagRepository returns the repository of a "repository:tag"
+// reference. A digest reference ("repository@sha256:...") and a bare repository
+// name report false: neither is a tag the run wrote.
+func imageReferenceTagRepository(reference string) (string, bool) {
+	if strings.Contains(reference, "@") {
+		return "", false
+	}
+	index := strings.LastIndex(reference, ":")
+	if index <= 0 || index < strings.LastIndex(reference, "/") {
+		return "", false
+	}
+	return reference[:index], true
+}
+
+// imageTagReference names the reference docker records for a tag this run
+// wrote. A repository with no tag defaults to :latest, and docker reports that
+// form in RepoTags: a build with "-t run-fn-image" reports
+// ["run-fn-image:latest"] (observed on docker 29.5.2). A cleanup compares an
+// owned tag against this form rather than the bare name it passed to docker.
+func imageTagReference(reference string) string {
+	if reference == "" || strings.Contains(reference, "@") {
+		return reference
+	}
+	if _, ok := imageReferenceTagRepository(reference); ok {
+		return reference
+	}
+	return reference + ":latest"
+}
+
+// imageReferenceDigestRepository returns the repository of a
+// "repository@sha256:..." reference. Anything else reports false, and the
+// caller leaves the image in place rather than guess at a malformed reference.
+func imageReferenceDigestRepository(reference string) (string, bool) {
+	repository, digest, found := strings.Cut(reference, "@")
+	if !found || repository == "" || !strings.HasPrefix(digest, "sha256:") {
+		return "", false
+	}
+	return repository, true
 }
 
 // RemoveImageByID removes an image by its immutable id without forcing. Docker

@@ -799,7 +799,7 @@ func (r *Runner) failWatchedApply(ctx context.Context, next *Spec, targets []str
 		if r.restoreFunctionImageTag(ctx, entry.previous, entry.previousImageID) {
 			// The tag names the restored image again, so the rebuild has no tag
 			// left. Remove it by the id captured before the tag moved; the
-			// inspect keeps a foreign tag or a container's image.
+			// inspect keeps a foreign tag, a foreign digest or a container.
 			r.removeDanglingImage(ctx, entry.rebuiltImageID, "", "the rebuilt image")
 		}
 	}
@@ -921,8 +921,8 @@ func (r *Runner) restoreFunctionImageTag(ctx context.Context, function FunctionS
 // removeReplacedImages removes the image a replaced container-image function
 // ran before the reload, once the new assembly is fully serving. The rebuild
 // moved this run's tag to the new content, so the replaced image normally has
-// no tag; the inspect leaves it when a foreign tag or a container still names
-// it. See removeDanglingImage for the removal rule.
+// no tag; the inspect leaves it when a foreign tag, a foreign digest or a
+// container still names it. See removeDanglingImage for the removal rule.
 func (r *Runner) removeReplacedImages(ctx context.Context, applied []appliedWatchedFunction) {
 	for _, entry := range applied {
 		if entry.previousImageID == "" {
@@ -933,14 +933,24 @@ func (r *Runner) removeReplacedImages(ctx context.Context, applied []appliedWatc
 }
 
 // removeDanglingImage removes one image this run built and no longer serves,
-// but only when an inspect proves nothing names or uses it: no repo tag other
-// than ownedTag (the tag this run's build wrote and has not moved yet) and no
-// container, running or stopped. Docker's rule is that an unforced removal by
-// id is refused while a container references the image or while two or more
+// but only when an inspect proves nothing outside this run names or uses it: no
+// repo tag other than ownedTag (the tag this run's build wrote and has not
+// moved yet, compared in the ":latest" form docker records for a bare name),
+// no repo digest whose repository no tag on the image carries, and no
+// container, running or stopped. Docker's rule is that an unforced removal
+// by id is refused while a container references the image or while two or more
 // repo tags name it, and that it untags the last tag and deletes the image
 // when that is the only reference; the inspect is what tells this run's
-// dangling rebuild from a foreign, pinned or shared image
+// dangling rebuild from a foreign, digest-pinned or shared image
 // (https://docs.docker.com/reference/cli/docker/image/rm/).
+//
+// A daemon using the containerd image store records a digest for each
+// repository a repo tag names, so a rebuild this run still tags reports one;
+// its repository matches that tag, and the rollback that moves the tag away
+// removes the digest with it. That is why this rule still removes the rebuild a
+// --watch rollback leaves. A digest entry whose repository no tag carries is a
+// reference outside this run, such as another repository's sha256 pin, and
+// keeps the image.
 //
 // The sequence is inspect, then remove, and the Docker Engine API offers no
 // conditional delete: DELETE /images/{name} takes only force and noprune, so
@@ -960,16 +970,11 @@ func (r *Runner) removeDanglingImage(ctx context.Context, imageID, ownedTag, wha
 		r.logf("watch: %s: could not inspect image %s (%v); leaving it in place", what, imageID, err)
 		return
 	}
-	var foreignTags []string
-	for _, tag := range references.RepoTags {
-		if ownedTag != "" && tag == ownedTag {
-			continue
-		}
-		foreignTags = append(foreignTags, tag)
-	}
-	if len(foreignTags) > 0 || len(references.Containers) > 0 {
+	foreignTags := foreignImageTags(references.RepoTags, ownedTag)
+	foreignDigests := foreignImageDigests(references.RepoDigests, ownedImageRepositories(references.RepoTags, ownedTag))
+	if len(foreignTags) > 0 || len(foreignDigests) > 0 || len(references.Containers) > 0 {
 		r.logf("watch: %s: image %s is still referenced by %s; leaving it in place",
-			what, imageID, describeImageReferences(foreignTags, references.Containers))
+			what, imageID, describeImageReferences(foreignTags, foreignDigests, references.Containers))
 		return
 	}
 	if err := r.docker.RemoveImageByID(ctx, imageID); err != nil {
@@ -979,11 +984,61 @@ func (r *Runner) removeDanglingImage(ctx context.Context, imageID, ownedTag, wha
 	r.logf("watch: %s: removed image %s", what, imageID)
 }
 
+// foreignImageTags lists the repo tags that name an image besides the tag this
+// run wrote, compared both as written and in the ":latest" form docker records
+// for a bare name.
+func foreignImageTags(tags []string, ownedTag string) []string {
+	ownedReference := imageTagReference(ownedTag)
+	var foreign []string
+	for _, tag := range tags {
+		if ownedTag != "" && (tag == ownedTag || tag == ownedReference) {
+			continue
+		}
+		foreign = append(foreign, tag)
+	}
+	return foreign
+}
+
+// ownedImageRepositories lists the repositories whose digest entries are this
+// run's own: the repositories of the tags the image carries, plus the tag this
+// run wrote. A daemon using the containerd image store derives one digest per
+// repository from exactly these.
+func ownedImageRepositories(tags []string, ownedTag string) map[string]bool {
+	repositories := map[string]bool{}
+	for _, tag := range tags {
+		if repository, ok := imageReferenceTagRepository(tag); ok {
+			repositories[repository] = true
+		}
+	}
+	if repository, ok := imageReferenceTagRepository(imageTagReference(ownedTag)); ok {
+		repositories[repository] = true
+	}
+	return repositories
+}
+
+// foreignImageDigests lists the digest references whose repository no tag on
+// the image carries: references that outlive this run, such as another
+// repository's sha256 pin. A malformed entry counts as foreign, so the image is
+// left in place rather than guessed at.
+func foreignImageDigests(digests []string, ownRepositories map[string]bool) []string {
+	var foreign []string
+	for _, digest := range digests {
+		if repository, ok := imageReferenceDigestRepository(digest); ok && ownRepositories[repository] {
+			continue
+		}
+		foreign = append(foreign, digest)
+	}
+	return foreign
+}
+
 // describeImageReferences names what still holds an image, for the cleanup log.
-func describeImageReferences(tags, containers []string) string {
-	parts := make([]string, 0, len(tags)+len(containers))
+func describeImageReferences(tags, digests, containers []string) string {
+	parts := make([]string, 0, len(tags)+len(digests)+len(containers))
 	for _, tag := range tags {
 		parts = append(parts, "tag "+tag)
+	}
+	for _, digest := range digests {
+		parts = append(parts, "digest "+digest)
 	}
 	for _, container := range containers {
 		parts = append(parts, "container "+container)

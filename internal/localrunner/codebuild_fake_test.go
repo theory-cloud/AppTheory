@@ -347,6 +347,9 @@ func TestDeliveryEngineRestart(t *testing.T) {
 // container references the image or while two or more repo tags name it,
 // untags the last tag and deletes the image when exactly one does, and deletes
 // a dangling image (https://docs.docker.com/reference/cli/docker/image/rm/).
+// The store also reports a repo digest derived from every tag, as the
+// containerd image store does, and records any foreign digest pin a test
+// injects, so the cleanup's digest check runs against the observed shape.
 type restartFakeDocker struct {
 	mu        sync.Mutex
 	runs      int
@@ -362,6 +365,9 @@ type restartFakeDocker struct {
 	// so the removal rule can refuse while a container (even a stopped one)
 	// uses the image.
 	containers map[string]string
+	// pinnedDigests maps an image id to the foreign digest references that name
+	// it, such as another repository's "repo@sha256:<id>" pin with no tag.
+	pinnedDigests map[string][]string
 	// sharedBuildID models the daemon's content-addressed build result: every
 	// build produces the same id, so several tags can name one image.
 	sharedBuildID string
@@ -382,10 +388,14 @@ func (f *restartFakeDocker) containerStore() map[string]string {
 	return f.containers
 }
 
-// resolve maps a tag or id reference to the image id it names. A dangling id
-// resolves to itself, as the daemon does.
+// resolve maps a tag or id reference to the image id it names. A bare
+// repository resolves through the ":latest" form docker records, and a dangling
+// id resolves to itself, as the daemon does.
 func (f *restartFakeDocker) resolve(reference string) string {
 	if id, ok := f.imageStore()[reference]; ok {
+		return id
+	}
+	if id, ok := f.imageStore()[imageTagReference(reference)]; ok {
 		return id
 	}
 	if strings.HasPrefix(reference, "sha256:") {
@@ -404,6 +414,33 @@ func (f *restartFakeDocker) tagsFor(id string) []string {
 	}
 	sort.Strings(tags)
 	return tags
+}
+
+// digestsFor lists the digest references that name an image id: one derived
+// from each repository a tag names, as the containerd image store reports, plus
+// any foreign pin a test injected. A tag's derived digest is
+// "<repository>@<id>": it appears with the tag and is gone when the tag moves
+// away, which is the behaviour removeDanglingImage's rule relies on.
+func (f *restartFakeDocker) digestsFor(id string) []string {
+	seen := map[string]bool{}
+	digests := make([]string, 0, len(f.imageStore())+len(f.pinnedDigests[id]))
+	derive := func(digest string) {
+		if digest == "" || seen[digest] {
+			return
+		}
+		seen[digest] = true
+		digests = append(digests, digest)
+	}
+	for _, tag := range f.tagsFor(id) {
+		if repository, ok := imageReferenceTagRepository(tag); ok {
+			derive(repository + "@" + id)
+		}
+	}
+	for _, digest := range f.pinnedDigests[id] {
+		derive(digest)
+	}
+	sort.Strings(digests)
+	return digests
 }
 
 // containersFor lists the containers that run an image id.
@@ -435,7 +472,9 @@ func (f *restartFakeDocker) exec(ctx context.Context, argv []string) (string, st
 		}
 		for index, argument := range argv {
 			if argument == "-t" && index+1 < len(argv) {
-				f.imageStore()[argv[index+1]] = id
+				// docker records a bare repository under :latest, and that is
+				// the form RepoTags reports.
+				f.imageStore()[imageTagReference(argv[index+1])] = id
 			}
 		}
 		f.mu.Unlock()
@@ -450,7 +489,7 @@ func (f *restartFakeDocker) exec(ctx context.Context, argv []string) (string, st
 			if argument == "--name" && index+1 < len(argv) {
 				name = argv[index+1]
 			}
-			if _, known := f.imageStore()[argument]; known || strings.HasPrefix(argument, "sha256:") {
+			if f.resolve(argument) != "" {
 				image = argument
 			}
 		}
@@ -499,7 +538,7 @@ func (f *restartFakeDocker) exec(ctx context.Context, argv []string) (string, st
 		}
 		f.mu.Lock()
 		source := f.resolve(argv[2])
-		f.imageStore()[argv[3]] = source
+		f.imageStore()[imageTagReference(argv[3])] = source
 		f.mu.Unlock()
 		return "", "", nil
 	case "rm":
@@ -529,6 +568,17 @@ func (f *restartFakeDocker) exec(ctx context.Context, argv []string) (string, st
 			id := f.resolve(reference)
 			if id == "" {
 				return "", "no such image", fmt.Errorf("no such image: %s", reference)
+			}
+			if strings.Contains(format, "RepoDigests") {
+				tags, err := json.Marshal(f.tagsFor(id)) // a nil slice encodes as null, as docker prints
+				if err != nil {
+					return "", "encode repo tags", err
+				}
+				digests, err := json.Marshal(f.digestsFor(id))
+				if err != nil {
+					return "", "encode repo digests", err
+				}
+				return string(tags) + " " + string(digests), "", nil
 			}
 			if strings.Contains(format, "RepoTags") {
 				tags := f.tagsFor(id)
@@ -568,6 +618,7 @@ func (f *restartFakeDocker) exec(ctx context.Context, argv []string) (string, st
 				// Removing by tag deletes only that tag; the image survives
 				// while another tag still names it.
 				delete(f.imageStore(), reference)
+				delete(f.imageStore(), imageTagReference(reference))
 			}
 			return "", "", nil
 		case "ls":
