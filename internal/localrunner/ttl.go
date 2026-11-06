@@ -61,6 +61,21 @@ func (t *ttlTracker) mark(table string, keys map[string]any, now time.Time) {
 	t.deleted[key] = now
 }
 
+// unmark drops a marker whose delete did not happen, so a later manual delete
+// of the same key is not mislabelled as the TTL delete.
+func (t *ttlTracker) unmark(table string, keys map[string]any) {
+	if t == nil {
+		return
+	}
+	key := ttlKeySignature(table, keys)
+	if key == "" {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.deleted, key)
+}
+
 // take reports whether a REMOVE record is the TTL delete of that key and
 // consumes the marker.
 func (t *ttlTracker) take(table string, keys map[string]any, now time.Time) bool {
@@ -151,16 +166,22 @@ func (r *Runner) sweepTTL(ctx context.Context, client *dynamodb.Client, table tt
 			continue
 		}
 		keysJSON := attributeMapJSON(key)
+		// Record the marker before the delete: the stream reader can observe the
+		// REMOVE as soon as DeleteItem returns, and it attaches the service
+		// userIdentity only while the marker exists. Marking first is the
+		// ordering invariant that gives every sweep REMOVE its userIdentity.
+		// https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/time-to-live-ttl-streams.html
+		r.ttl.mark(table.Name, keysJSON, now)
 		if _, err := client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
 			TableName: aws.String(table.Name),
 			Key:       key,
 		}); err != nil {
+			r.ttl.unmark(table.Name, keysJSON)
 			if ctx.Err() == nil {
 				r.logf("TTL sweep for %s: delete %s failed: %v", table.Name, tableKeyString(key), err)
 			}
 			continue
 		}
-		r.ttl.mark(table.Name, keysJSON, now)
 		r.logf("TTL expired item %s in %s at %s", tableKeyString(key), table.Name, now.UTC().Format(time.RFC3339))
 	}
 }
