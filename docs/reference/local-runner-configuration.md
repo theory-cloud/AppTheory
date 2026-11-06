@@ -147,6 +147,7 @@ values:
 | `Fn::If` | The named condition, evaluated from parameter defaults (`Fn::Equals`, `Fn::And`, `Fn::Or`, `Fn::Not`, `Fn::Contains`, and a nested `Condition`). |
 | `Fn::FindInMap` | The template's `Mappings` entry. |
 | `Fn::Join` | The joined evaluated parts (a numeric string is accepted for a limit). |
+| `Fn::If` selecting `AWS::NoValue` | Property omitted: "Removes the corresponding resource property when specified as a return value in the `Fn::If` intrinsic function" ([pseudo parameters](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/pseudo-parameter-reference.html)); the limit takes the Lambda default (128 MB, 3 s). |
 
 The resolved value is validated against the `AWS::Lambda::Function` page:
 `MemorySize` is 128..32768 MB ("The default value is 128 MB. The value can be

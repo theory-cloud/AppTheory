@@ -82,6 +82,15 @@ func resolveTemplateInt(raw json.RawMessage, ctx templateContext, fallback int) 
 		}
 		return 0, false, intExpression(raw), err
 	}
+	if resolved == nil {
+		// An Fn::If that selects AWS::NoValue removes the property:
+		// "Removes the corresponding resource property when specified as a
+		// return value in the Fn::If intrinsic function"
+		// (https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/pseudo-parameter-reference.html).
+		// The property takes the same default the runner applies to an omitted
+		// property.
+		return fallback, true, "", nil
+	}
 	converted, err := templateInt(resolved)
 	if err != nil {
 		return 0, false, intExpression(raw), err

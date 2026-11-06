@@ -43,6 +43,8 @@ func TestResolveTemplateIntForms(t *testing.T) {
 		{"ref parameter default", `{"Ref":"MemorySize"}`, 512, true},
 		{"fn if true", `{"Fn::If":["IsProd",1024,256]}`, 1024, true},
 		{"fn if false", `{"Fn::If":["IsDev",1024,256]}`, 256, true},
+		{"fn if no value true", `{"Fn::If":["IsProd",{"Ref":"AWS::NoValue"},1024]}`, 128, true},
+		{"fn if no value false", `{"Fn::If":["IsDev",{"Ref":"AWS::NoValue"},1024]}`, 1024, true},
 		{"find in map number", `{"Fn::FindInMap":["Sizes","small","memory"]}`, 256, true},
 		{"find in map string", `{"Fn::FindInMap":["Sizes","large","memory"]}`, 1024, true},
 		{"join", `{"Fn::Join":["",["51","2"]]}`, 512, true},
@@ -154,6 +156,39 @@ func TestParseFunctionResolvesTemplateLimits(t *testing.T) {
 	}
 	if function.MemoryMB != 512 || function.Timeout != 5 {
 		t.Fatalf("limits = %d/%d, want 512/5", function.MemoryMB, function.Timeout)
+	}
+}
+
+func TestParseFunctionAppliesDefaultsWhenFnIfSelectsNoValue(t *testing.T) {
+	stack := assemblyStack{
+		Name: "Stack",
+		Template: template{
+			Parameters: testTemplateContext().Parameters,
+			Conditions: testTemplateContext().Conditions,
+		},
+	}
+	resource := templateResource{
+		Type: typeLambdaFunction,
+		Properties: json.RawMessage(`{
+			"Runtime":"nodejs24.x",
+			"Handler":"index.handler",
+			"MemorySize":{"Fn::If":["IsProd",{"Ref":"AWS::NoValue"},2048]},
+			"Timeout":{"Fn::If":["IsProd",{"Ref":"AWS::NoValue"},60]},
+			"Code":{"ZipFile":"exports.handler = async () => ({statusCode: 200});"}
+		}`),
+	}
+	function, err := parseFunction("", stack, "Fn", resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if function.UnresolvedMemorySize || function.UnresolvedTimeout || function.MemorySizeExpression != "" || function.TimeoutExpression != "" {
+		t.Fatalf("an AWS::NoValue limit stayed unresolved: %+v", function)
+	}
+	if function.MemoryMB != 128 || function.Timeout != 3 {
+		t.Fatalf("limits = %d/%d, want the documented defaults 128/3", function.MemoryMB, function.Timeout)
+	}
+	if err := unresolvedLimitsError(function); err != nil {
+		t.Fatalf("a resolved default failed the served-function check: %v", err)
 	}
 }
 
