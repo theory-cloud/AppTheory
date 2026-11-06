@@ -1785,7 +1785,17 @@ DynamoDB Streams settings, or global table replica settings for a given table"
 ([UpdateTable](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html)).
 Missing or changed global secondary indexes are created or deleted, and an
 existing queue's visibility, retention, wait and delay attributes are updated
-without deleting its messages. The examples' `data-dir.sh`,
+without deleting its messages. A newly added global secondary index carries its
+key attributes in the update's `AttributeDefinitions`
+([UpdateTable](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html)),
+and one keyed on an existing attribute whose declared type differs from the
+table's fails by name rather than creating the index over the existing type
+([AttributeDefinition](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_AttributeDefinition.html)).
+Local secondary indexes are created with the table; a re-run that adds, removes
+or reshapes one fails by name, because a local secondary index is created when
+the table is created and UpdateTable cannot change one
+([local secondary indexes](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/LSI.html)).
+The examples' `data-dir.sh`,
 `data-dir-s3.sh` and `data-dir-sqs.sh` scripts show the two-run pattern.
 
 ### Seed hooks (`--seed`)

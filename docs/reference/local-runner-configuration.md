@@ -248,6 +248,16 @@ and keys are reconciled, never dropped. A DynamoDB key-schema change fails at
 start with the table named and the UpdateTable rule that a table update cannot
 change its key schema
 ([UpdateTable](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html)).
+A new global secondary index sends its key attributes in the update's
+`AttributeDefinitions`, which the API requires, and a new index keyed on an
+existing attribute whose declared type differs from the table's fails by name
+instead of creating the index over the existing type
+([AttributeDefinition](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_AttributeDefinition.html)).
+Local secondary indexes are created with the table; a re-run whose local
+secondary indexes add, remove or change one fails by name, because a local
+secondary index is created when the table is created and UpdateTable cannot
+change one
+([local secondary indexes](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/LSI.html)).
 s3proxy's `jclouds.filesystem.basedir` sentence and ElasticMQ's
 `messages-storage` section are the pages the configuration follows
 ([s3proxy](https://github.com/gaul/s3proxy),

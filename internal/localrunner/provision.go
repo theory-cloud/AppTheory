@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -281,6 +282,15 @@ type dynamoGlobalSecondaryIndex struct {
 	ProvisionedThroughput dynamoProvisionedThroughput `json:"ProvisionedThroughput"`
 }
 
+// dynamoLocalSecondaryIndex mirrors AWS::DynamoDB::Table's
+// LocalSecondaryIndexes entry. A local secondary index has no throughput of
+// its own: it shares the table's capacity.
+type dynamoLocalSecondaryIndex struct {
+	IndexName  string                   `json:"IndexName"`
+	KeySchema  []dynamoKeySchemaElement `json:"KeySchema"`
+	Projection dynamoProjection         `json:"Projection"`
+}
+
 type dynamoStreamSpecification struct {
 	StreamEnabled  bool   `json:"StreamEnabled"`
 	StreamViewType string `json:"StreamViewType"`
@@ -295,6 +305,7 @@ type dynamoTableProperties struct {
 	AttributeDefinitions    []dynamoAttributeDefinition  `json:"AttributeDefinitions"`
 	KeySchema               []dynamoKeySchemaElement     `json:"KeySchema"`
 	GlobalSecondaryIndexes  []dynamoGlobalSecondaryIndex `json:"GlobalSecondaryIndexes"`
+	LocalSecondaryIndexes   []dynamoLocalSecondaryIndex  `json:"LocalSecondaryIndexes"`
 	BillingMode             string                       `json:"BillingMode"`
 	ProvisionedThroughput   dynamoProvisionedThroughput  `json:"ProvisionedThroughput"`
 	StreamSpecification     dynamoStreamSpecification    `json:"StreamSpecification"`
@@ -440,6 +451,22 @@ func createTableInput(name string, props dynamoTableProperties) *dynamodb.Create
 		}
 		input.GlobalSecondaryIndexes = append(input.GlobalSecondaryIndexes, converted)
 	}
+	for _, index := range props.LocalSecondaryIndexes {
+		converted := types.LocalSecondaryIndex{
+			IndexName: aws.String(index.IndexName),
+			Projection: &types.Projection{
+				ProjectionType:   types.ProjectionType(index.Projection.ProjectionType),
+				NonKeyAttributes: append([]string(nil), index.Projection.NonKeyAttributes...),
+			},
+		}
+		for _, key := range index.KeySchema {
+			converted.KeySchema = append(converted.KeySchema, types.KeySchemaElement{
+				AttributeName: aws.String(key.AttributeName),
+				KeyType:       types.KeyType(key.KeyType),
+			})
+		}
+		input.LocalSecondaryIndexes = append(input.LocalSecondaryIndexes, converted)
+	}
 	if props.StreamSpecification.StreamEnabled || strings.TrimSpace(props.StreamSpecification.StreamViewType) != "" {
 		input.StreamSpecification = &types.StreamSpecification{
 			StreamEnabled:  aws.Bool(true),
@@ -476,11 +503,13 @@ func waitForTableActive(ctx context.Context, client *dynamodb.Client, name strin
 }
 
 // reconcileTableDefinition applies a re-run's definition to a table that
-// already exists in --data-dir. Key-schema changes fail closed because
-// UpdateTable cannot apply them; missing or changed global secondary indexes
-// are created, deleted or refused by name. Existing items are never dropped.
+// already exists in --data-dir. Key-schema and local-secondary-index
+// differences fail closed because UpdateTable cannot apply them; missing or
+// changed global secondary indexes are created, deleted or refused by name.
+// Existing items are never dropped.
 //
 // https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html
+// https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/LSI.html
 func reconcileTableDefinition(ctx context.Context, client *dynamodb.Client, name string, props dynamoTableProperties, description *types.TableDescription) error {
 	if description == nil {
 		return nil
@@ -494,10 +523,6 @@ func reconcileTableDefinition(ctx context.Context, client *dynamodb.Client, name
 				"(https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html)",
 		)
 	}
-	existing := map[string]types.GlobalSecondaryIndexDescription{}
-	for _, index := range description.GlobalSecondaryIndexes {
-		existing[aws.ToString(index.IndexName)] = index
-	}
 	actualTypes := map[string]string{}
 	for _, definition := range description.AttributeDefinitions {
 		actualTypes[aws.ToString(definition.AttributeName)] = string(definition.AttributeType)
@@ -505,6 +530,13 @@ func reconcileTableDefinition(ctx context.Context, client *dynamodb.Client, name
 	wantedTypes := map[string]string{}
 	for _, definition := range props.AttributeDefinitions {
 		wantedTypes[definition.AttributeName] = definition.AttributeType
+	}
+	if err := reconcileLocalSecondaryIndexes(description, props, actualTypes, wantedTypes); err != nil {
+		return err
+	}
+	existing := map[string]types.GlobalSecondaryIndexDescription{}
+	for _, index := range description.GlobalSecondaryIndexes {
+		existing[aws.ToString(index.IndexName)] = index
 	}
 	wanted := map[string]bool{}
 	for _, index := range props.GlobalSecondaryIndexes {
@@ -521,6 +553,10 @@ func reconcileTableDefinition(ctx context.Context, client *dynamodb.Client, name
 			}
 			continue
 		}
+		attributeDefinitions, err := newIndexAttributeDefinitions(index, actualTypes, wantedTypes)
+		if err != nil {
+			return err
+		}
 		create := &types.CreateGlobalSecondaryIndexAction{IndexName: aws.String(index.IndexName)}
 		for _, key := range index.KeySchema {
 			create.KeySchema = append(create.KeySchema, types.KeySchemaElement{
@@ -533,7 +569,8 @@ func reconcileTableDefinition(ctx context.Context, client *dynamodb.Client, name
 			NonKeyAttributes: append([]string(nil), index.Projection.NonKeyAttributes...),
 		}
 		if _, err := client.UpdateTable(ctx, &dynamodb.UpdateTableInput{
-			TableName: aws.String(name),
+			TableName:            aws.String(name),
+			AttributeDefinitions: attributeDefinitions,
 			GlobalSecondaryIndexUpdates: []types.GlobalSecondaryIndexUpdate{{
 				Create: create,
 			}},
@@ -600,6 +637,134 @@ func sameKeySchema(description *types.TableDescription, props dynamoTablePropert
 func sameGlobalSecondaryIndex(
 	actual types.GlobalSecondaryIndexDescription,
 	wanted dynamoGlobalSecondaryIndex,
+	actualTypes, wantedTypes map[string]string,
+) bool {
+	if len(actual.KeySchema) != len(wanted.KeySchema) {
+		return false
+	}
+	for index := range actual.KeySchema {
+		name := aws.ToString(actual.KeySchema[index].AttributeName)
+		if name != wanted.KeySchema[index].AttributeName ||
+			string(actual.KeySchema[index].KeyType) != wanted.KeySchema[index].KeyType {
+			return false
+		}
+		if actualTypes[name] != wantedTypes[wanted.KeySchema[index].AttributeName] {
+			return false
+		}
+	}
+	if actual.Projection == nil {
+		return wanted.Projection.ProjectionType == ""
+	}
+	if string(actual.Projection.ProjectionType) != wanted.Projection.ProjectionType {
+		return false
+	}
+	if len(actual.Projection.NonKeyAttributes) != len(wanted.Projection.NonKeyAttributes) {
+		return false
+	}
+	for index := range actual.Projection.NonKeyAttributes {
+		if actual.Projection.NonKeyAttributes[index] != wanted.Projection.NonKeyAttributes[index] {
+			return false
+		}
+	}
+	return true
+}
+
+// newIndexAttributeDefinitions builds the AttributeDefinitions an UpdateTable
+// call must carry when it creates a global secondary index: the API requires
+// the key element(s) of the new index. A key attribute whose declared type
+// differs from the existing table's definition is refused by name, because the
+// index is built over the attribute's existing type and AWS refuses the
+// mismatch rather than changing the table's key definition.
+// https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html
+// https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_AttributeDefinition.html
+func newIndexAttributeDefinitions(index dynamoGlobalSecondaryIndex, actualTypes, wantedTypes map[string]string) ([]types.AttributeDefinition, error) {
+	definitions := make([]types.AttributeDefinition, 0, len(index.KeySchema))
+	for _, key := range index.KeySchema {
+		wanted, defined := wantedTypes[key.AttributeName]
+		if !defined {
+			return nil, fmt.Errorf("global secondary index %s key %s has no attribute definition", index.IndexName, key.AttributeName)
+		}
+		if actual, exists := actualTypes[key.AttributeName]; exists && actual != wanted {
+			return nil, fmt.Errorf(
+				"global secondary index %s key %s is declared as %s but the existing table defines it as %s; "+
+					"a key attribute's type is part of the table and index definition, and AWS refuses an index "+
+					"whose key type differs from AttributeDefinitions "+
+					"(https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_AttributeDefinition.html, "+
+					"https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html)",
+				index.IndexName, key.AttributeName, wanted, actual)
+		}
+		definitions = append(definitions, types.AttributeDefinition{
+			AttributeName: aws.String(key.AttributeName),
+			AttributeType: types.ScalarAttributeType(wanted),
+		})
+	}
+	return definitions, nil
+}
+
+// reconcileLocalSecondaryIndexes refuses any local-secondary-index difference.
+// A local secondary index is created with the table and UpdateTable cannot add,
+// modify or delete one, so an existing table whose indexes differ from the app's
+// definition cannot be reconciled without dropping the table's data.
+// https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/LSI.html
+// https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html
+func reconcileLocalSecondaryIndexes(description *types.TableDescription, props dynamoTableProperties, actualTypes, wantedTypes map[string]string) error {
+	existing := map[string]types.LocalSecondaryIndexDescription{}
+	for _, index := range description.LocalSecondaryIndexes {
+		existing[aws.ToString(index.IndexName)] = index
+	}
+	wanted := map[string]dynamoLocalSecondaryIndex{}
+	names := make([]string, 0, len(existing)+len(props.LocalSecondaryIndexes))
+	for _, index := range props.LocalSecondaryIndexes {
+		wanted[index.IndexName] = index
+		names = append(names, index.IndexName)
+	}
+	seen := map[string]bool{}
+	for name := range existing {
+		if _, declared := wanted[name]; !declared {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		current, exists := existing[name]
+		definition, declared := wanted[name]
+		switch {
+		case exists && !declared:
+			return fmt.Errorf(
+				"local secondary index %s exists on the table but the app no longer declares it; "+
+					"a local secondary index is created when the table is created and UpdateTable cannot delete one "+
+					"(https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/LSI.html, "+
+					"https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html)",
+				name)
+		case !exists && declared:
+			return fmt.Errorf(
+				"local secondary index %s is declared by the app but the existing table has none; "+
+					"a local secondary index is created when the table is created and cannot be added later "+
+					"(https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/LSI.html)",
+				name)
+		case exists && declared && !sameLocalSecondaryIndex(current, definition, actualTypes, wantedTypes):
+			return fmt.Errorf(
+				"local secondary index %s already exists with a different shape; "+
+					"a local secondary index is created when the table is created and UpdateTable cannot modify one, "+
+					"and a key attribute's type is part of the table and index definition "+
+					"(https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/LSI.html, "+
+					"https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html, "+
+					"https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_AttributeDefinition.html)",
+				name)
+		}
+	}
+	return nil
+}
+
+// sameLocalSecondaryIndex compares a local secondary index's order-sensitive
+// key schema, its key attributes' declared types and its projection.
+func sameLocalSecondaryIndex(
+	actual types.LocalSecondaryIndexDescription,
+	wanted dynamoLocalSecondaryIndex,
 	actualTypes, wantedTypes map[string]string,
 ) bool {
 	if len(actual.KeySchema) != len(wanted.KeySchema) {

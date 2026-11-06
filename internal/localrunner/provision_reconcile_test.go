@@ -315,6 +315,229 @@ func TestReconcileTableDefinitionRefusesIndexAttributeTypeChange(t *testing.T) {
 	}
 }
 
+func TestCreateTableInputIncludesLocalSecondaryIndexes(t *testing.T) {
+	// A CDK table that declares LocalSecondaryIndexes must create them with the
+	// table: a local secondary index cannot be added later.
+	var props dynamoTableProperties
+	if err := json.Unmarshal([]byte(`{
+		"TableName":"jobs",
+		"BillingMode":"PAY_PER_REQUEST",
+		"AttributeDefinitions":[
+			{"AttributeName":"pk","AttributeType":"S"},
+			{"AttributeName":"created","AttributeType":"N"}
+		],
+		"KeySchema":[{"AttributeName":"pk","KeyType":"HASH"}],
+		"LocalSecondaryIndexes":[{
+			"IndexName":"by-created",
+			"KeySchema":[
+				{"AttributeName":"pk","KeyType":"HASH"},
+				{"AttributeName":"created","KeyType":"RANGE"}
+			],
+			"Projection":{"ProjectionType":"KEYS_ONLY"}
+		}]
+	}`), &props); err != nil {
+		t.Fatal(err)
+	}
+	input := createTableInput("jobs", props)
+	if len(input.LocalSecondaryIndexes) != 1 {
+		t.Fatalf("the table's local secondary index was dropped: %+v", input.LocalSecondaryIndexes)
+	}
+	index := input.LocalSecondaryIndexes[0]
+	if aws.ToString(index.IndexName) != "by-created" {
+		t.Fatalf("index name = %q", aws.ToString(index.IndexName))
+	}
+	if len(index.KeySchema) != 2 ||
+		aws.ToString(index.KeySchema[0].AttributeName) != "pk" || index.KeySchema[0].KeyType != types.KeyTypeHash ||
+		aws.ToString(index.KeySchema[1].AttributeName) != "created" || index.KeySchema[1].KeyType != types.KeyTypeRange {
+		t.Fatalf("index key schema = %+v", index.KeySchema)
+	}
+	if index.Projection == nil || index.Projection.ProjectionType != types.ProjectionTypeKeysOnly {
+		t.Fatalf("index projection = %+v", index.Projection)
+	}
+}
+
+func TestReconcileTableDefinitionRefusesLocalSecondaryIndexDifferences(t *testing.T) {
+	description := &types.TableDescription{
+		KeySchema: []types.KeySchemaElement{{AttributeName: aws.String("pk"), KeyType: types.KeyTypeHash}},
+		AttributeDefinitions: []types.AttributeDefinition{
+			{AttributeName: aws.String("pk"), AttributeType: types.ScalarAttributeTypeS},
+			{AttributeName: aws.String("created"), AttributeType: types.ScalarAttributeTypeN},
+		},
+		LocalSecondaryIndexes: []types.LocalSecondaryIndexDescription{{
+			IndexName: aws.String("by-created"),
+			KeySchema: []types.KeySchemaElement{
+				{AttributeName: aws.String("pk"), KeyType: types.KeyTypeHash},
+				{AttributeName: aws.String("created"), KeyType: types.KeyTypeRange},
+			},
+			Projection: &types.Projection{ProjectionType: types.ProjectionTypeKeysOnly},
+		}},
+	}
+	matching := dynamoTableProperties{
+		KeySchema: []dynamoKeySchemaElement{{AttributeName: "pk", KeyType: "HASH"}},
+		AttributeDefinitions: []dynamoAttributeDefinition{
+			{AttributeName: "pk", AttributeType: "S"},
+			{AttributeName: "created", AttributeType: "N"},
+		},
+		LocalSecondaryIndexes: []dynamoLocalSecondaryIndex{{
+			IndexName: "by-created",
+			KeySchema: []dynamoKeySchemaElement{
+				{AttributeName: "pk", KeyType: "HASH"},
+				{AttributeName: "created", KeyType: "RANGE"},
+			},
+			Projection: dynamoProjection{ProjectionType: "KEYS_ONLY"},
+		}},
+	}
+	if err := reconcileTableDefinition(context.Background(), nil, "jobs", matching, description); err != nil {
+		t.Fatalf("an unchanged local secondary index was refused: %v", err)
+	}
+	removed := matching
+	removed.LocalSecondaryIndexes = nil
+	if err := reconcileTableDefinition(context.Background(), nil, "jobs", removed, description); err == nil ||
+		!strings.Contains(err.Error(), "by-created") || !strings.Contains(err.Error(), "cannot delete") ||
+		!strings.Contains(err.Error(), "LSI.html") {
+		t.Fatalf("a removed local secondary index was not refused by name with the creation-time rule: %v", err)
+	}
+	added := matching
+	added.AttributeDefinitions = append(append([]dynamoAttributeDefinition(nil), matching.AttributeDefinitions...),
+		dynamoAttributeDefinition{AttributeName: "updated", AttributeType: "S"})
+	added.LocalSecondaryIndexes = append(append([]dynamoLocalSecondaryIndex(nil), matching.LocalSecondaryIndexes...),
+		dynamoLocalSecondaryIndex{
+			IndexName:  "by-updated",
+			KeySchema:  []dynamoKeySchemaElement{{AttributeName: "pk", KeyType: "HASH"}, {AttributeName: "updated", KeyType: "RANGE"}},
+			Projection: dynamoProjection{ProjectionType: "KEYS_ONLY"},
+		})
+	if err := reconcileTableDefinition(context.Background(), nil, "jobs", added, description); err == nil ||
+		!strings.Contains(err.Error(), "by-updated") || !strings.Contains(err.Error(), "cannot be added later") {
+		t.Fatalf("an added local secondary index was not refused by name: %v", err)
+	}
+	changed := matching
+	changed.LocalSecondaryIndexes = []dynamoLocalSecondaryIndex{{
+		IndexName: "by-created",
+		KeySchema: []dynamoKeySchemaElement{
+			{AttributeName: "pk", KeyType: "HASH"},
+			{AttributeName: "created", KeyType: "RANGE"},
+		},
+		Projection: dynamoProjection{ProjectionType: "ALL"},
+	}}
+	if err := reconcileTableDefinition(context.Background(), nil, "jobs", changed, description); err == nil ||
+		!strings.Contains(err.Error(), "by-created") || !strings.Contains(err.Error(), "different shape") ||
+		!strings.Contains(err.Error(), "UpdateTable") {
+		t.Fatalf("a changed local secondary index was not refused by name: %v", err)
+	}
+	// A type-only change on the index's own sort key is invisible to the table
+	// key-schema check; the index comparison must catch it.
+	drifted := matching
+	drifted.AttributeDefinitions = []dynamoAttributeDefinition{
+		{AttributeName: "pk", AttributeType: "S"},
+		{AttributeName: "created", AttributeType: "S"},
+	}
+	if err := reconcileTableDefinition(context.Background(), nil, "jobs", drifted, description); err == nil ||
+		!strings.Contains(err.Error(), "by-created") || !strings.Contains(err.Error(), "AttributeDefinition.html") {
+		t.Fatalf("a local secondary index key type change was not refused: %v", err)
+	}
+}
+
+func TestReconcileTableDefinitionAddsAttributeDefinitionsForANewIndex(t *testing.T) {
+	var mu sync.Mutex
+	var updates []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Errorf("read request: %v", err)
+			return
+		}
+		writer.Header().Set("content-type", "application/x-amz-json-1.0")
+		switch {
+		case strings.HasSuffix(request.Header.Get("X-Amz-Target"), "UpdateTable"):
+			var payload map[string]any
+			if decodeErr := json.Unmarshal(body, &payload); decodeErr != nil {
+				t.Errorf("decode update table: %v", decodeErr)
+			}
+			mu.Lock()
+			updates = append(updates, payload)
+			mu.Unlock()
+			writeTestResponse(t, writer, `{"TableDescription":{"TableName":"jobs","TableStatus":"ACTIVE"}}`)
+		case strings.HasSuffix(request.Header.Get("X-Amz-Target"), "DescribeTable"):
+			writeTestResponse(t, writer, `{"Table":{"TableName":"jobs","TableStatus":"ACTIVE",`+
+				`"KeySchema":[{"AttributeName":"pk","KeyType":"HASH"}],`+
+				`"AttributeDefinitions":[{"AttributeName":"pk","AttributeType":"S"},{"AttributeName":"status","AttributeType":"S"}],`+
+				`"GlobalSecondaryIndexes":[{"IndexName":"by-number","IndexStatus":"ACTIVE",`+
+				`"KeySchema":[{"AttributeName":"num","KeyType":"HASH"}],`+
+				`"Projection":{"ProjectionType":"KEYS_ONLY"}}]}}`)
+		default:
+			writer.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+
+	description := &types.TableDescription{
+		KeySchema: []types.KeySchemaElement{{AttributeName: aws.String("pk"), KeyType: types.KeyTypeHash}},
+		AttributeDefinitions: []types.AttributeDefinition{
+			{AttributeName: aws.String("pk"), AttributeType: types.ScalarAttributeTypeS},
+			{AttributeName: aws.String("status"), AttributeType: types.ScalarAttributeTypeS},
+		},
+	}
+	props := dynamoTableProperties{
+		KeySchema: []dynamoKeySchemaElement{{AttributeName: "pk", KeyType: "HASH"}},
+		AttributeDefinitions: []dynamoAttributeDefinition{
+			{AttributeName: "pk", AttributeType: "S"},
+			{AttributeName: "num", AttributeType: "N"},
+		},
+		GlobalSecondaryIndexes: []dynamoGlobalSecondaryIndex{{
+			IndexName:  "by-number",
+			KeySchema:  []dynamoKeySchemaElement{{AttributeName: "num", KeyType: "HASH"}},
+			Projection: dynamoProjection{ProjectionType: "KEYS_ONLY"},
+		}},
+	}
+	if err := reconcileTableDefinition(context.Background(), newDynamoDBClient(server.URL), "jobs", props, description); err != nil {
+		t.Fatalf("reconcile a table with a new index: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(updates) != 1 {
+		t.Fatalf("update calls = %d, want 1", len(updates))
+	}
+	raw, _ := json.Marshal(updates[0]) //nolint:errcheck // test fixture
+	if !strings.Contains(string(raw), `"AttributeDefinitions":[{"AttributeName":"num","AttributeType":"N"}]`) {
+		t.Fatalf("the new index's attribute definition was not sent: %s", raw)
+	}
+	if !strings.Contains(string(raw), `"IndexName":"by-number"`) {
+		t.Fatalf("the new index was not created: %s", raw)
+	}
+}
+
+func TestReconcileTableDefinitionRefusesANewIndexOverADriftedAttributeType(t *testing.T) {
+	description := &types.TableDescription{
+		KeySchema: []types.KeySchemaElement{{AttributeName: aws.String("pk"), KeyType: types.KeyTypeHash}},
+		AttributeDefinitions: []types.AttributeDefinition{
+			{AttributeName: aws.String("pk"), AttributeType: types.ScalarAttributeTypeS},
+			{AttributeName: aws.String("status"), AttributeType: types.ScalarAttributeTypeS},
+		},
+	}
+	props := dynamoTableProperties{
+		KeySchema: []dynamoKeySchemaElement{{AttributeName: "pk", KeyType: "HASH"}},
+		AttributeDefinitions: []dynamoAttributeDefinition{
+			{AttributeName: "pk", AttributeType: "S"},
+			{AttributeName: "status", AttributeType: "N"},
+		},
+		GlobalSecondaryIndexes: []dynamoGlobalSecondaryIndex{{
+			IndexName:  "by-status",
+			KeySchema:  []dynamoKeySchemaElement{{AttributeName: "status", KeyType: "HASH"}},
+			Projection: dynamoProjection{ProjectionType: "KEYS_ONLY"},
+		}},
+	}
+	// A nil client proves the refusal happens before any UpdateTable call.
+	err := reconcileTableDefinition(context.Background(), nil, "jobs", props, description)
+	if err == nil {
+		t.Fatal("a new index over a drifted key attribute type was accepted")
+	}
+	for _, want := range []string{"by-status", "status", "AttributeDefinition.html", "UpdateTable.html"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the refusal does not cite %q: %v", want, err)
+		}
+	}
+}
+
 func TestWaitForTableActiveHonoursCancellation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("content-type", "application/x-amz-json-1.0")
