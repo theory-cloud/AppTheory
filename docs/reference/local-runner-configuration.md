@@ -198,10 +198,12 @@ image. The image this reload built is then removed by id without `-f`, and only
 after an inspect proves nothing still names or uses it: no repo tag and no
 container, running or stopped. That is this run's dangling rebuild; an image a
 foreign tag, a pinned reference or a container still holds is left in place and
-the log names the reference. The check comes first rather than relying on the
-daemon's refusal: Docker refuses an unforced `docker image rm <id>` while a
-container references the image or while two or more repo tags name it, and at
-exactly one tag it untags that tag and deletes the image
+the log names the reference. An image function the reload added and the rollback
+stops loses its built image under the same check, with this run's own build tag
+as the only reference it may still carry. The check comes first rather than
+relying on the daemon's refusal: Docker refuses an unforced `docker image rm
+<id>` while a container references the image or while two or more repo tags
+name it, and at exactly one tag it untags that tag and deletes the image
 ([docker image rm](https://docs.docker.com/reference/cli/docker/image/rm/)).
 Docker's Engine API has no conditional delete (only `force` and `noprune`), so a
 tag added between the inspect and the remove is the one window the check cannot
