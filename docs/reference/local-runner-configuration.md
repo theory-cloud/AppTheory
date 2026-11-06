@@ -203,7 +203,10 @@ bind-mount it. The pinned emulator images run as their own non-root users
 bind mount's ownership to the container user, but a Linux bind mount keeps the
 host UID, so the runner makes the root traversable (`0755`) and each backend
 directory writable (`0777`); the ElasticMQ configuration file is `0644`
-(container-readable, and it holds no secret). Definitions are re-provisioned
+(container-readable, and it holds no secret). These modes assume a single-user
+development machine: the backend directories are `0777` without the sticky bit,
+so another user of the same host could write to or delete the emulator store.
+Definitions are re-provisioned
 from the assembly on every start;
 existing tables, buckets, queues, topics, streams, parameters, secrets, pools
 and keys are reconciled, never dropped. A DynamoDB key-schema change fails at

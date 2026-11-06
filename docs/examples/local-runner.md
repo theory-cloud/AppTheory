@@ -1745,7 +1745,10 @@ one directory per backend:
 The runner widens the data root to `0755` and each backend directory to `0777`
 because the pinned emulator images run as their own non-root users, and a Linux
 bind mount keeps the host UID (colima maps it to the container user instead).
-The ElasticMQ config file is `0644` and holds no secret.
+The ElasticMQ config file is `0644` and holds no secret. These modes assume a
+single-user development machine: the backend directories are `0777` without the
+sticky bit, so another user of the same host could write to or delete the
+emulator store.
 
 The DynamoDB Local page owns the options: `-dbPath` is "The directory where
 DynamoDB writes its database file"; `-inMemory` writes no database file and
