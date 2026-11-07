@@ -143,7 +143,8 @@ scan_python() {
   for requirement in \
     "py/requirements-build.txt" \
     "py/requirements-lint.txt" \
-    "cdk/requirements-build.txt"; do
+    "cdk/requirements-build.txt" \
+    "scripts/local/requirements-examples.txt"; do
     if [[ -f "${requirement}" ]]; then
       requirement_args+=("-r" "${requirement}")
     fi
