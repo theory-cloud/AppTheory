@@ -584,10 +584,10 @@ func TestTLSPathsFailClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newLocalTLS: %v", err)
 	}
-	if err := os.Remove(certOnly.caKeyPath); err != nil {
-		t.Fatalf("remove the CA key: %v", err)
+	if removeErr := os.Remove(certOnly.caKeyPath); removeErr != nil {
+		t.Fatalf("remove the CA key: %v", removeErr)
 	}
-	if _, err := newLocalTLS(filepath.Join(base, "cert-only"), "app.localhost"); err == nil {
+	if _, lookupErr := newLocalTLS(filepath.Join(base, "cert-only"), "app.localhost"); lookupErr == nil {
 		t.Fatal("a CA certificate without its key must fail")
 	}
 
@@ -595,18 +595,18 @@ func TestTLSPathsFailClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newLocalTLS: %v", err)
 	}
-	if err := os.Remove(keyOnly.caPath); err != nil {
-		t.Fatalf("remove the CA certificate: %v", err)
+	if removeErr := os.Remove(keyOnly.caPath); removeErr != nil {
+		t.Fatalf("remove the CA certificate: %v", removeErr)
 	}
-	if _, err := newLocalTLS(filepath.Join(base, "key-only"), "app.localhost"); err == nil {
+	if _, lookupErr := newLocalTLS(filepath.Join(base, "key-only"), "app.localhost"); lookupErr == nil {
 		t.Fatal("a CA key without its certificate must fail")
 	}
 
-	if _, _, err := parseCA([]byte("not pem"), []byte("not pem")); err == nil {
+	if _, _, parseErr := parseCA([]byte("not pem"), []byte("not pem")); parseErr == nil {
 		t.Fatal("a non-PEM CA must fail")
 	}
 	keyPEM := secondKeyPEM(t, keyOnly)
-	if _, _, err := parseCA(keyOnly.publicLeafPEM, keyPEM); err == nil {
+	if _, _, parseErr := parseCA(keyOnly.publicLeafPEM, keyPEM); parseErr == nil {
 		t.Fatal("a server certificate must not be accepted as the CA")
 	}
 	certPEM, err := os.ReadFile(certOnly.caPath) //nolint:gosec // the test owns the path
@@ -626,11 +626,11 @@ func TestTLSPathsFailClosed(t *testing.T) {
 	if _, err := runner.writeTLSTrustBundle(); err == nil {
 		t.Fatal("an unwritable trust-bundle directory must fail")
 	}
-	if err := writePrivateFile(filepath.Join(base, "missing", "key.pem"), []byte("k")); err == nil {
+	if writeErr := writePrivateFile(filepath.Join(base, "missing", "key.pem"), []byte("k")); writeErr == nil {
 		t.Fatal("a key in a missing directory must fail")
 	}
-	if err := writePrivateFile(filepath.Join(base, "key.pem"), []byte("k")); err != nil {
-		t.Fatalf("write a private file: %v", err)
+	if writeErr := writePrivateFile(filepath.Join(base, "key.pem"), []byte("k")); writeErr != nil {
+		t.Fatalf("write a private file: %v", writeErr)
 	}
 }
 
@@ -671,7 +671,7 @@ func TestTLSEdgeFailures(t *testing.T) {
 	if err := os.MkdirAll(locked, 0o500); err != nil {
 		t.Fatalf("create the locked directory: %v", err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) }) //nolint:errcheck,gosec // test cleanup restores the directory mode
 	if _, err := lockTLSDirectory(locked); err == nil {
 		t.Fatal("a lock file that cannot be created must fail")
 	}
