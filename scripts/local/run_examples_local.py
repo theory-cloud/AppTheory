@@ -3740,6 +3740,55 @@ def run_lambda_role_custom(harness: Harness) -> str:
     return run_lambda_role(harness, "custom")
 
 
+def run_s3_sse(harness: Harness) -> str:
+    """SSE-S3 through the real S3 SDK: the CDK bucket has no encryption
+    configuration, so the put names AES256; s3proxy refuses the header and the
+    runner's S3 front is what stores and reports it."""
+    spec = plan_local_app(harness, LAMBDA_ROLE_APP, allow_no_surface=True)
+    function = None
+    for candidate in spec.get("functions") or []:
+        if candidate.get("handler") == "custom.handler":
+            function = candidate
+            break
+    if function is None:
+        raise HarnessFailure("s3-sse: plan has no custom.handler function")
+    session = start_local_session(
+        harness,
+        LAMBDA_ROLE_APP,
+        name="s3-sse",
+        backends=("moto", "s3proxy"),
+        targets=(function["logicalId"],),
+        allow_no_surface=True,
+    )
+    try:
+        key = "sse/probe.txt"
+        value = "sse-value"
+        write = session.invoke(function["logicalId"], {
+            "queryStringParameters": {"key": key, "write": "1", "value": value, "sse": "1"},
+        })
+        write_body = _proxy_body(write, "s3-sse write")
+        write_object = write_body.get("s3Object") or {}
+        if write_object.get("serverSideEncryption") != "AES256":
+            raise HarnessFailure(f"s3-sse write: the put did not report AES256: {write}")
+        read = session.invoke(function["logicalId"], {
+            "queryStringParameters": {"key": key, "read": "1", "sse": "1"},
+        })
+        read_body = _proxy_body(read, "s3-sse read")
+        read_object = read_body.get("s3Object") or {}
+        if (
+            read_object.get("content") != value
+            or read_object.get("headServerSideEncryption") != "AES256"
+            or read_object.get("getServerSideEncryption") != "AES256"
+        ):
+            raise HarnessFailure(f"s3-sse read: unexpected result: {read}")
+        return (
+            "a real SDK PutObject with x-amz-server-side-encryption: AES256 through the compiled Node "
+            "handler succeeded and reported AES256; HeadObject and GetObject through the same handler "
+            "returned the SSE-S3 header and the stored body"
+        )
+    finally:
+        stop_local_session(harness, session)
+
 
 def _assert_derived_surface(spec: dict, lang: str) -> None:
     functions = spec.get("functions") or []
@@ -7720,6 +7769,7 @@ RUNNERS: dict[str, Callable[[Harness], str]] = {
     "lambda-role-index": run_lambda_role_index,
     "lambda-role-encrypted": run_lambda_role_encrypted,
     "lambda-role-custom": run_lambda_role_custom,
+    "s3-sse": run_s3_sse,
     "lambda-role-authorizers": run_lambda_role_authorizers,
     "sqs-producer": run_sqs_producer,
     "sqs-sns-publisher": run_sqs_sns_publisher,

@@ -199,6 +199,10 @@ type Runner struct {
 	// MessageType DIGEST, and the symmetric and signing keys --data-dir must
 	// keep stable); nil when the run has no moto KMS backend.
 	kmsFront *kmsFront
+	// s3Front accepts SSE-S3 on PutObject and reports it on HeadObject and
+	// GetObject, which the pinned s3proxy refuses; nil when the run has no
+	// s3proxy backend.
+	s3Front *s3Front
 	// transports and webSocketServers are the live listeners a watch reload
 	// updates in place. The net.Listener and the server stay; only the route
 	// table and the invoker set swap.
@@ -709,6 +713,9 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 	if err = r.startKMSFront(ctx); err != nil {
 		return nil, err
 	}
+	if err = r.startS3Front(ctx); err != nil {
+		return nil, err
+	}
 	if err = r.startEventBridgeBus(ctx); err != nil {
 		return nil, err
 	}
@@ -739,6 +746,9 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 	}
 	for _, check := range sortedKeys(preflight.Checks) {
 		r.logf("preflight %s: %s", check, preflight.Checks[check])
+	}
+	if err := r.wireS3FrontEndpoint(preflight.HostGateway); err != nil {
+		return nil, err
 	}
 	if err := r.startFunctions(ctx, spec, targets); err != nil {
 		return nil, err

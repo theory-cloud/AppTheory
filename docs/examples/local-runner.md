@@ -345,11 +345,13 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
    `ListQueues` for ElasticMQ. A service with no native probe is checked with a
    plain HTTP request. On timeout the run fails with the backend, its image and
    the last error, before any resource is provisioned. A backend with no
-   published host port is reported ready without this wait. When moto is up, the
-   runner also starts its KMS front (the key families it owns, DIGEST signing
-   and `--data-dir` material) on a loopback listener the function containers
-   reach through `host.docker.internal`; see
-   [KMS signing and key material](#kms-signing-and-key-material).
+   published host port is reported ready without this wait. When moto and
+   s3proxy are up, the runner also starts its two service fronts: the KMS front
+   (the key families it owns, DIGEST signing and `--data-dir` material) and the
+   S3 front (SSE-S3), both on loopback listeners the function containers reach
+   through `host.docker.internal`; see
+   [KMS signing and key material](#kms-signing-and-key-material) and
+   [S3 objects and server-side encryption](#s3-objects-and-server-side-encryption).
 6. **Provision resources.** When the backend is ready, the runner creates every
    resource the assembly declares, in this order: S3 buckets; each
    `Custom::CDKBucketDeployment` source copied into its bucket with the declared
@@ -1842,7 +1844,7 @@ one directory per backend:
 | Backend | What persists | Option and path |
 | --- | --- | --- |
 | DynamoDB Local | Tables and items | `-dbPath /data` on `<dir>/dynamodb`; the pinned command's `-sharedDb` is kept, so the single database file is `shared-local-instance.db`. |
-| s3proxy | Buckets and objects | The filesystem jclouds provider with `JCLOUDS_FILESYSTEM_BASEDIR=/data` on `<dir>/s3proxy`. |
+| s3proxy | Buckets and objects, plus each object's SSE-S3 record | The filesystem jclouds provider with `JCLOUDS_FILESYSTEM_BASEDIR=/data` on `<dir>/s3proxy`; the runner records the objects written with SSE-S3 in `<dir>/s3sse/index.json`. |
 | ElasticMQ | Queues and messages | `messages-storage` with the H2 file `/data/elasticmq` on `<dir>/sqs`. Verified on the pinned 1.7.1 image: a message survived a restart. |
 | moto | Nothing, except the runner's KMS key material | Server-mode state lives in the process; there is no persistence option ([moto server mode](https://docs.getmoto.org/en/latest/docs/server_mode.html)). This is the docs/125 memory-only limit, named rather than hidden. The runner's KMS front keeps the material of the key families it owns in `<dir>/kms/keys.json`, so ciphertext written in one run decrypts in the next; see [KMS signing and key material](#kms-signing-and-key-material). |
 
@@ -1871,8 +1873,9 @@ exists in the data directory is reconciled, never dropped or recreated. A KMS
 key is the one shape where moto's metadata is re-created: its key id and ARN
 change on every start, while the runner's KMS front reuses the material
 persisted for the same `stack/logicalId`, so ciphertext and `GetPublicKey`
-remain valid. The KMS material is the runner-owned file under the data
-directory; it is mode `0600` and contains no AWS credential. A
+remain valid. The S3 front's SSE-S3 records and the KMS material are the only
+runner-owned files under the data directory; both are mode `0600` and contain
+no AWS credential. A
 DynamoDB key-schema change cannot be applied to existing state: the runner
 fails at start with the table named and the UpdateTable page's rule,
 "Modifies the provisioned throughput settings, global secondary indexes,
@@ -1925,6 +1928,63 @@ run's dummy values are present. The committed
 reads `APPTHEORY_LOCAL_APIS`, PUTs an inventory item through the app's real
 handler and reads it back; the harness row proves the seeded item is visible
 through the same handler.
+
+## S3 objects and server-side encryption
+
+`--backend s3proxy` starts the profile's digest-pinned s3proxy and injects its
+endpoint into every function. The runner puts a small S3 front at the injected
+`AWS_ENDPOINT_URL_S3`; it proxies every object operation to s3proxy and serves
+the SSE-S3 answer the store itself refuses. The endpoint is the front's
+`host.docker.internal` IP literal, so SDK clients keep path-style addressing
+(`bucket` in the path, as s3proxy serves it); an ordinary request is forwarded
+byte-for-byte, including the SigV4-signed `Host` header.
+
+**SSE-S3 (`x-amz-server-side-encryption: AES256`).** AWS accepts SSE-S3 on
+`PutObject`, applies it, and returns the algorithm on the put and on later
+`HeadObject`/`GetObject` calls
+([PutObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html),
+[SSE-S3](https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingServerSideEncryption.html)).
+s3proxy's filesystem backend refuses every server-side-encryption header by
+design (reporting AES256 over plaintext on a real disk would be a false claim),
+and current releases still refuse it on that store
+([s3proxy limitations](https://github.com/gaul/s3proxy)). The front therefore:
+
+- accepts `AES256` on `PutObject`, strips the header before s3proxy sees it,
+  and records the object as SSE-S3 only after the put succeeds;
+- adds `x-amz-server-side-encryption: AES256` to the `PutObject` response;
+- answers `HeadObject` and `GetObject` with the same header for an object stored
+  with it;
+- clears the record when the same key is overwritten by a put without the
+  header, and on `DeleteObject`, `DeleteObjects` and `DeleteBucket`.
+
+With `--data-dir`, the record lives in `<dir>/s3sse/index.json` (mode `0600`)
+so it survives a restart; without the flag it is in memory.
+
+**SSE-KMS and SSE-C stay refused.** A `aws:kms` or customer-key request is
+passed through unchanged and keeps s3proxy's `501 NotImplemented`. The runner
+has no way to bind an object to a KMS key or a customer key (the store would
+write plaintext), and reporting `aws:kms` plus a key id without that binding
+would be exactly the false claim the store refuses to make. Model those paths
+against real AWS or a store that performs the encryption.
+
+**Documented local deviations.**
+
+- Only `PutObject` applies the record. `CopyObject`, multipart uploads and
+  `POST` form uploads keep s3proxy's behavior and refuse an SSE header.
+- A `PutObject` with a streaming (`aws-chunked`) SigV4 payload cannot be
+  re-signed after the signed SSE header is stripped; the front refuses it with
+  a clear 400 rather than forwarding a broken signature. A normal SDK put (the
+  audit sink's and the proving row's form) is signed over the payload hash and
+  is accepted.
+- The account-wide S3 default encryption (SSE-S3 applied to objects written
+  without a header) is not modelled: an object reports `AES256` only when its
+  put named it.
+- The store writes plaintext; `AES256` is the observable S3 answer, not
+  at-rest encryption of the local file. Do not use a `--data-dir` containing
+  sensitive data on a shared host.
+- An object written by a runner-internal path that bypasses the front (the
+  session's `s3.put`, a bucket deployment) has no SSE-S3 record, as it named no
+  algorithm.
 
 ## Event delivery
 
@@ -2534,6 +2594,7 @@ target path as an observed SDK publish.
 | The observation cannot tell which S3 API made the change | An observed create is reported as `ObjectCreated:Put` (multipart complete and copy included) and an observed delete as `ObjectRemoved:Delete`. |
 | An object created and deleted inside one 250 ms poll is invisible | The poll interval is documented; a row that needs both changes separates them in time. |
 | The listing carries no request id or source IP | The runner generates the request id and reports its own loopback source address, the way S3 generates them for its own record. |
+| The filesystem store refuses every server-side-encryption header with `501 NotImplemented` | The runner's S3 front accepts `AES256` on `PutObject`, records it and returns the documented header on the put and on `HeadObject`/`GetObject`; `aws:kms` and customer keys stay refused. See [S3 objects and server-side encryption](#s3-objects-and-server-side-encryption). |
 
 ### S3 event notification delivery
 
@@ -2730,7 +2791,7 @@ class and named limit is in the [harness fidelity table](/examples/local-harness
 | DynamoDB Local | Supported (L2) | `--backend dynamodb` starts the profile's digest-pinned `amazon/dynamodb-local` on the run network; SDK clients resolve through `AWS_ENDPOINT_URL_DYNAMODB`. Tables are created from the CDK key schema, GSIs, streams and TTL. SSE, PITR and deletion protection are not provisioned. |
 | SQS (ElasticMQ) | Supported (L2) | `--backend sqs` starts the digest-pinned `softwaremill/elasticmq-native` container, creates the CDK queues with visibility, retention and redrive policy, and resolves `QueueUrl`/`Arn` from the created queues. Every SQS event-source mapping polls automatically with batching, visibility, delete-on-success, partial batch failure, FIFO group ordering, redrive, filter criteria and maximum concurrency; see [SQS event-source delivery](#sqs-event-source-delivery). A session also exposes `sqs.send`, `sqs.receive`, `sqs.event` and `sqs.attributes` for explicit work. |
 | KMS and STS (moto) | Supported (L2) | `--backend moto` starts the profile's digest-pinned moto container and injects `AWS_ENDPOINT_URL_KMS`/`_STS` (and the profile's aliases). Symmetric, RSA (2048/3072/4096) and ECC (P256/P384/P521) `SIGN_VERIFY` keys declared by the assembly are created, with aliases; `Ref`/`Fn::GetAtt Arn` resolve to the created key and alias. The runner's KMS front serves the owned key families' crypto (see [KMS signing and key material](#kms-signing-and-key-material)): `Sign`/`Verify` honour `MessageType: DIGEST`, and `--data-dir` keeps the material. No HSM, key policies or grants. |
-| S3 (s3proxy) | Supported (L2) | `--backend s3proxy` starts the digest-pinned s3proxy container, creates the assembly's buckets, and injects the S3 endpoint as the container address so the SDK uses path-style addressing. No bucket policies or IAM. A bucket notification configuration is delivered from the real object state; see [S3 event notification delivery](#s3-event-notification-delivery). |
+| S3 (s3proxy) | Supported (L2) | `--backend s3proxy` starts the digest-pinned s3proxy container, creates the assembly's buckets, and injects the front's IP endpoint so the SDK uses path-style addressing. No bucket policies or IAM. SSE-S3 is accepted and reported (see [S3 objects and server-side encryption](#s3-objects-and-server-side-encryption)); SSE-KMS and SSE-C are refused by the store. A bucket notification configuration is delivered from the real object state; see [S3 event notification delivery](#s3-event-notification-delivery). |
 | SSM Parameter Store (moto) | Supported (L2) | `AWS::SSM::Parameter` String, StringList and SecureString are created; `Ref` returns the name and `Fn::GetAtt Type`/`Value` the declared type and value. `AWS_ENDPOINT_URL_SSM` is injected. SecureString is stored in moto's memory without envelope encryption. |
 | Secrets Manager (moto) | Supported (L2) | `AWS::SecretsManager::Secret` with `SecretString` or `GenerateSecretString` is created; `Ref` is the ARN and runtime `GetSecretValue` works. A `ResourcePolicy` is reported skipped (IAM is a docs/125 true limit). `AWS_ENDPOINT_URL_SECRETS_MANAGER` is injected. |
 | SNS topics and subscriptions (moto) | Supported (L2) | Standard and FIFO `AWS::SNS::Topic` are created with `FifoTopic`/`ContentBasedDeduplication`; `Ref` is the ARN and `GetAtt TopicName`/`TopicArn` resolve. `AWS::SNS::Subscription` and inline `Subscription` entries are delivered automatically to Lambda, SQS and loopback HTTP targets, with filter policies, raw message delivery and FIFO ordering/deduplication; see [SNS subscription delivery](#sns-subscription-delivery). `TopicPolicy` is reported skipped (IAM is a docs/125 true limit). |

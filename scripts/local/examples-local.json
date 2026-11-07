@@ -292,6 +292,12 @@
       "gap": "s3proxy's filesystem provider persists objects; bucket policies and server-side event hooks are not served by the store.",
       "description": "S3 --data-dir: the custom handler wrote an object through the real S3 SDK in one invoke; a second invoke with the same --data-dir read the object back through the handler, and the s3proxy base directory holds the object file."
     },
+    "examples/cdk/lambda-role/scripts/s3-sse.sh": {
+      "run": "s3-sse",
+      "class": "L2",
+      "gap": "s3proxy's filesystem store refuses server-side encryption by design; the runner's S3 front records SSE-S3. SSE-KMS and SSE-C remain refused (the runner cannot honour a key binding or customer key). Bucket policies and server-side notification hooks are not served by the store.",
+      "description": "SSE-S3 through the real SDK: the compiled Node handler put an object with x-amz-server-side-encryption: AES256 and the PutObject response reported AES256; HeadObject and GetObject through the same handler returned the SSE-S3 header and the stored body."
+    },
     "examples/cdk/sqs-queue/scripts/data-dir-sqs.sh": {
       "run": "data-dir-sqs",
       "class": "L2",

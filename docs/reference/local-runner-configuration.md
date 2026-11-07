@@ -58,7 +58,7 @@ function the CDK definition targets and reads one JSON command per line.
 | `--memory MB` | 128 | `invoke --handler-dir`: function memory. |
 | `--timeout SECONDS` | 3 | `invoke --handler-dir`: function timeout. |
 | `--watch` | off | `run`/`session`: follow `cdk.json`'s `watch` include/exclude (or the app directory), re-synthesize on a change and apply the new surface without restarting the listeners. See [Dev loop](#dev-loop). |
-| `--data-dir DIR` | none (ephemeral) | `run`/`session`/`invoke`: keep DynamoDB Local, s3proxy and ElasticMQ state under `DIR`, plus the runner's KMS key material; moto stays in memory. See [Dev loop](#dev-loop). |
+| `--data-dir DIR` | none (ephemeral) | `run`/`session`/`invoke`: keep DynamoDB Local, s3proxy and ElasticMQ state under `DIR`, plus the runner's KMS key material and S3 SSE-S3 records; moto stays in memory. See [Dev loop](#dev-loop). |
 | `--seed COMMAND` | none | `run`/`session`: run `sh -c COMMAND` after provisioning and before `local-run: ready`. See [Dev loop](#dev-loop). |
 
 Exit codes: `0` success, `1` a run/plan failure, `2` a usage error.
@@ -236,15 +236,20 @@ label=apptheory.local.run`).
 ```
 <data-dir>/dynamodb/shared-local-instance.db   DynamoDB Local -dbPath /data (the pinned -sharedDb is kept)
 <data-dir>/s3proxy/<bucket>/<key>              s3proxy jclouds filesystem provider, JCLOUDS_FILESYSTEM_BASEDIR=/data
+<data-dir>/s3sse/index.json                    the objects written with SSE-S3 (0600)
 <data-dir>/sqs/elasticmq.mv.db                 ElasticMQ messages-storage (H2), verified on the pinned 1.7.1 image
 <data-dir>/kms/keys.json                       the runner's KMS key material (0600)
 ```
 
 moto is memory-only and is not persisted ([moto server mode](https://docs.getmoto.org/en/latest/docs/server_mode.html)).
-The runner-owned exception is `kms/keys.json`: it keeps the material of the
-key families the KMS front owns so ciphertext written in one run decrypts in
-the next. It is `0600` and holds no AWS credential; see
-[KMS signing and key material](/examples/local-runner/#kms-signing-and-key-material).
+The two runner-owned files are the exception the runner adds for its
+fronts: `kms/keys.json` keeps the material of the key families the KMS front
+owns so ciphertext written in one run decrypts in the next, and
+`s3sse/index.json` keeps each object's SSE-S3 answer. Both are `0600` and hold
+no AWS credential; see
+[KMS signing and key material](/examples/local-runner/#kms-signing-and-key-material)
+and
+[S3 objects and server-side encryption](/examples/local-runner/#s3-objects-and-server-side-encryption).
 The data directory must be under `$HOME` or the working directory so Docker can
 bind-mount it. The pinned emulator images run as their own non-root users
 (DynamoDB Local as `dynamodblocal`, ElasticMQ as `elasticmq`). Colima maps a
@@ -454,10 +459,10 @@ endpoints: `dynamodb` maps to the `dynamodb-local` container (the
 provides `s3`, and `sqs` provides `sqs` (ElasticMQ). The runner also binds its
 own EventBridge `PutEvents` endpoint as `events` at start; it is not a profile
 container and is injected as `AWS_ENDPOINT_URL_EVENTS`. When a profile endpoint
-names a service the runner fronts (`kms` from moto), the endpoint injected into
-functions points at the front while the profile entry still names the upstream
-container; a caller-supplied `--endpoint` for the same service wins and is
-never fronted. A backend with no endpoint fails before any
+names a service the runner fronts (`kms` from moto, `s3` from s3proxy), the
+endpoint injected into functions points at the front while the profile entry
+still names the upstream container; a caller-supplied `--endpoint` for the same
+service wins and is never fronted. A backend with no endpoint fails before any
 container starts.
 
 After a started backend publishes its loopback port, the runner waits up to 60
@@ -1381,10 +1386,10 @@ its visibility, retention, FIFO and redrive attributes; every
 template keeps the v7.0.0 value and is reported as a warning), `AWS::SNS::Topic`
 (standard and FIFO),
 `AWS::Kinesis::Stream` and `AWS::Cognito::UserPool`/`UserPoolClient` in moto.
-Table SSE, PITR and deletion protection, SQS KMS/SSE, IAM resource policies and
-the Cognito hosted UI are not provisioned; they are not part of the local
-contract. KMS `Sign`/`Verify` is served by the runner's KMS front; see the
-examples guide. An unresolvable
+Table SSE, PITR and deletion protection, SQS KMS/SSE, IAM resource policies,
+S3 SSE-KMS and SSE-C, and the Cognito hosted UI are not provisioned; they are
+not part of the local contract. SSE-S3 is served by the runner's S3 front and
+KMS `Sign`/`Verify` by its KMS front; see the examples guide. An unresolvable
 expression fails before any function container starts, with the function and
 variable named.
 
