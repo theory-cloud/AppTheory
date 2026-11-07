@@ -2070,6 +2070,12 @@ against real AWS or a store that performs the encryption.
   subresource delete. Replace the object with a plain `PutObject`, a plain
   `CopyObject` or a successful `CompleteMultipartUpload` to make its record
   match it.
+- The record is per bucket/key, not per version, so a read naming
+  `?versionId=` is answered without the header even though AWS returns it for
+  a version stored with SSE-S3
+  ([GetObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html)).
+  The runner keeps one record per key and does not claim per-version
+  encryption.
 - A `DeleteObjects` body above 1 MiB is forwarded to the store unchanged, as
   the v7.0.0 path did, so its keys are not read and their SSE-S3 records are
   left in place until a later clearing write (a plain `PutObject`, a plain
