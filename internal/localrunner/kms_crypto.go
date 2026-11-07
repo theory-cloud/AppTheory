@@ -256,7 +256,7 @@ func (f *kmsFront) handleSign(ctx context.Context, writer http.ResponseWriter, b
 		return
 	}
 	writeKMSJSON(writer, map[string]any{
-		"KeyId":            run.arn,
+		"KeyId":            f.responseKeyARN(run.record),
 		"Signature":        base64.StdEncoding.EncodeToString(signature),
 		"SigningAlgorithm": request.SigningAlgorithm,
 	})
@@ -311,7 +311,7 @@ func (f *kmsFront) handleVerify(ctx context.Context, writer http.ResponseWriter,
 	}
 	valid := verifyKMSDigest(run.record.material, family, digestHash, digest, signature)
 	writeKMSJSON(writer, map[string]any{
-		"KeyId":            run.arn,
+		"KeyId":            f.responseKeyARN(run.record),
 		"SignatureValid":   valid,
 		"SigningAlgorithm": request.SigningAlgorithm,
 	})
@@ -354,6 +354,9 @@ func (f *kmsFront) handleGetPublicKey(ctx context.Context, writer http.ResponseW
 		return
 	}
 	response["PublicKey"] = encoded
+	// The key id is part of the identity a caller may pin (Autheory derives
+	// its JWKS kid from it), so report the persisted one under --data-dir.
+	response["KeyId"], _ = json.Marshal(f.responseKeyID(run.record)) //nolint:errcheck // a string never fails to marshal
 	updated, err := json.Marshal(response)
 	if err != nil {
 		writeKMSError(writer, http.StatusInternalServerError, "KMSInternalException", err.Error())
@@ -404,7 +407,7 @@ func (f *kmsFront) handleEncrypt(ctx context.Context, writer http.ResponseWriter
 	}
 	writeKMSJSON(writer, map[string]any{
 		"CiphertextBlob": base64.StdEncoding.EncodeToString(blob),
-		"KeyId":          run.arn,
+		"KeyId":          f.responseKeyARN(run.record),
 	})
 }
 
@@ -452,10 +455,7 @@ func (f *kmsFront) handleDecrypt(ctx context.Context, writer http.ResponseWriter
 			"The ciphertext refers to a customer master key that does not exist, does not exist in this region, or you are not allowed to access.")
 		return
 	}
-	keyARN := stableARN(record)
-	if run := f.store.runFor(record); run != nil {
-		keyARN = run.arn
-	}
+	keyARN := f.responseKeyARN(record)
 	if strings.TrimSpace(request.KeyID) != "" {
 		run, owned, resolveErr := f.resolveOwned(ctx, request.KeyID)
 		if resolveErr != nil {
@@ -467,7 +467,7 @@ func (f *kmsFront) handleDecrypt(ctx context.Context, writer http.ResponseWriter
 				"The ciphertext refers to a customer master key that does not exist, does not exist in this region, or you are not allowed to access.")
 			return
 		}
-		keyARN = run.arn
+		keyARN = f.responseKeyARN(run.record)
 	}
 	writeKMSJSON(writer, map[string]any{
 		"Plaintext": base64.StdEncoding.EncodeToString(plaintext),
@@ -539,7 +539,7 @@ func (f *kmsFront) handleGenerateDataKey(ctx context.Context, writer http.Respon
 	}
 	response := map[string]any{
 		"CiphertextBlob": base64.StdEncoding.EncodeToString(blob),
-		"KeyId":          run.arn,
+		"KeyId":          f.responseKeyARN(run.record),
 	}
 	if includePlaintext {
 		response["Plaintext"] = base64.StdEncoding.EncodeToString(dataKey)
@@ -603,8 +603,8 @@ func (f *kmsFront) handleReEncrypt(ctx context.Context, writer http.ResponseWrit
 	}
 	writeKMSJSON(writer, map[string]any{
 		"CiphertextBlob": base64.StdEncoding.EncodeToString(reencrypted),
-		"KeyId":          destination.arn,
-		"SourceKeyId":    stableARN(source),
+		"KeyId":          f.responseKeyARN(destination.record),
+		"SourceKeyId":    f.responseKeyARN(source),
 	})
 }
 

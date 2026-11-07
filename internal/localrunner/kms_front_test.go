@@ -113,7 +113,19 @@ func (f *fakeMotoKMS) ServeHTTP(writer http.ResponseWriter, request *http.Reques
 		writeKMSFixtureError(writer, "KMSInternalException", "the front must not delegate an owned verification to moto")
 	case "ListKeys":
 		f.listCalls++
-		writeJSONFixture(writer, map[string]any{"Keys": []any{}, "Truncated": false})
+		keys := make([]any, 0, len(f.keys))
+		for id, key := range f.keys {
+			keys = append(keys, map[string]any{"KeyId": id, "KeyArn": key.arn})
+		}
+		writeJSONFixture(writer, map[string]any{"Keys": keys, "Truncated": false})
+	case "ListAliases":
+		aliases := make([]any, 0, len(f.aliases))
+		for name, target := range f.aliases {
+			aliases = append(aliases, map[string]any{
+				"AliasName": name, "AliasArn": "arn:aws:kms:us-east-1:123456789012:" + name, "TargetKeyId": target,
+			})
+		}
+		writeJSONFixture(writer, map[string]any{"Aliases": aliases, "Truncated": false})
 	case "GenerateRandom":
 		writeJSONFixture(writer, map[string]any{"Plaintext": base64.StdEncoding.EncodeToString([]byte("random"))})
 	default:
@@ -336,31 +348,47 @@ func TestKMSFrontECDSADigest(t *testing.T) {
 	}
 }
 
-// TestKMSFrontPersistsMaterialAcrossRestart is the G2 proof at the front
-// level: run 1 creates the key and encrypts/signs, run 2 re-creates the key
-// from the same identity and decrypts/verifies with the same public key.
+// TestKMSFrontPersistsMaterialAcrossRestart is the G2/G8 proof at the front
+// level: run 1 creates the keys, encrypts, signs and aliases; run 2 re-creates
+// them from the same identity, sees the same KeyId/ARN, decrypts, resolves the
+// alias and verifies the run-1 signature through KMS addressed by the run-1 id.
 func TestKMSFrontPersistsMaterialAcrossRestart(t *testing.T) {
 	dataDir := t.TempDir()
 	first, _, firstServer := newFrontForTest(t, dataDir)
 	_ = first
 	client := kmsClientFor(t, firstServer.URL)
+	ctx := context.Background()
 	keyID := createOwnedKey(t, client, "Stack/DataKey", "SYMMETRIC_DEFAULT", kmstypes.KeyUsageTypeEncryptDecrypt)
-	encrypted, err := client.Encrypt(context.Background(), &kms.EncryptInput{
+	keyMetadata, err := client.DescribeKey(ctx, &kms.DescribeKeyInput{KeyId: aws.String(keyID)})
+	if err != nil {
+		t.Fatalf("describe the data key in run 1: %v", err)
+	}
+	encrypted, err := client.Encrypt(ctx, &kms.EncryptInput{
 		KeyId: aws.String(keyID), Plaintext: []byte("persisted secret"),
 	})
 	if err != nil {
 		t.Fatalf("encrypt: %v", err)
 	}
-	generated, err := client.GenerateDataKey(context.Background(), &kms.GenerateDataKeyInput{
+	generated, err := client.GenerateDataKey(ctx, &kms.GenerateDataKeyInput{
 		KeyId: aws.String(keyID), KeySpec: kmstypes.DataKeySpecAes256,
 	})
 	if err != nil {
 		t.Fatalf("generate data key: %v", err)
 	}
 	signingID := createOwnedKey(t, client, "Stack/SigningKey", "RSA_2048", kmstypes.KeyUsageTypeSignVerify)
+	signingMetadata, err := client.DescribeKey(ctx, &kms.DescribeKeyInput{KeyId: aws.String(signingID)})
+	if err != nil {
+		t.Fatalf("describe the signing key in run 1: %v", err)
+	}
+	alias := "alias/apptheory-data-dir-signing"
+	if _, aliasErr := client.CreateAlias(ctx, &kms.CreateAliasInput{
+		AliasName: aws.String(alias), TargetKeyId: aws.String(signingID),
+	}); aliasErr != nil {
+		t.Fatalf("create alias: %v", aliasErr)
+	}
 	message := []byte("stable across restarts")
 	digest := sha256.Sum256(message)
-	signed, err := client.Sign(context.Background(), &kms.SignInput{
+	signed, err := client.Sign(ctx, &kms.SignInput{
 		KeyId: aws.String(signingID), Message: digest[:], MessageType: kmstypes.MessageTypeDigest,
 		SigningAlgorithm: kmstypes.SigningAlgorithmSpecRsassaPkcs1V15Sha256,
 	})
@@ -374,20 +402,27 @@ func TestKMSFrontPersistsMaterialAcrossRestart(t *testing.T) {
 	_ = second
 	client2 := kmsClientFor(t, secondServer.URL)
 	keyID2 := createOwnedKey(t, client2, "Stack/DataKey", "SYMMETRIC_DEFAULT", kmstypes.KeyUsageTypeEncryptDecrypt)
-	if keyID2 == keyID {
-		t.Fatal("the moto key id was not re-created on the second run")
+	if keyID2 != keyID {
+		t.Fatalf("the key id changed across restarts: %s -> %s", keyID, keyID2)
 	}
-	decrypted, err := client2.Decrypt(context.Background(), &kms.DecryptInput{
-		CiphertextBlob: encrypted.CiphertextBlob, KeyId: aws.String(keyID2),
+	keyMetadata2, err := client2.DescribeKey(ctx, &kms.DescribeKeyInput{KeyId: aws.String(keyID2)})
+	if err != nil {
+		t.Fatalf("describe the data key in run 2: %v", err)
+	}
+	if got, want := aws.ToString(keyMetadata2.KeyMetadata.Arn), aws.ToString(keyMetadata.KeyMetadata.Arn); got != want {
+		t.Fatalf("the key ARN changed across restarts: %s -> %s", want, got)
+	}
+	decrypted, err := client2.Decrypt(ctx, &kms.DecryptInput{
+		CiphertextBlob: encrypted.CiphertextBlob, KeyId: aws.String(keyID),
 	})
 	if err != nil {
-		t.Fatalf("decrypt after restart: %v", err)
+		t.Fatalf("decrypt after restart by the run-1 key id: %v", err)
 	}
 	if string(decrypted.Plaintext) != "persisted secret" {
 		t.Fatalf("decrypted %q", decrypted.Plaintext)
 	}
-	dataKey, err := client2.Decrypt(context.Background(), &kms.DecryptInput{
-		CiphertextBlob: generated.CiphertextBlob, KeyId: aws.String(keyID2),
+	dataKey, err := client2.Decrypt(ctx, &kms.DecryptInput{
+		CiphertextBlob: generated.CiphertextBlob, KeyId: aws.String(keyID),
 	})
 	if err != nil {
 		t.Fatalf("decrypt data key: %v", err)
@@ -396,9 +431,40 @@ func TestKMSFrontPersistsMaterialAcrossRestart(t *testing.T) {
 		t.Fatalf("data key length %d", len(dataKey.Plaintext))
 	}
 	signingID2 := createOwnedKey(t, client2, "Stack/SigningKey", "RSA_2048", kmstypes.KeyUsageTypeSignVerify)
-	secondPublic := publicKeyFromGet(t, client2, signingID2)
+	if signingID2 != signingID {
+		t.Fatalf("the signing key id changed across restarts: %s -> %s", signingID, signingID2)
+	}
+	// The runner re-provisions aliases on every start; the re-created alias
+	// must resolve to the same persisted key.
+	if _, aliasErr := client2.CreateAlias(ctx, &kms.CreateAliasInput{
+		AliasName: aws.String(alias), TargetKeyId: aws.String(signingID2),
+	}); aliasErr != nil {
+		t.Fatalf("re-create the alias in run 2: %v", aliasErr)
+	}
+	aliased, err := client2.DescribeKey(ctx, &kms.DescribeKeyInput{KeyId: aws.String(alias)})
+	if err != nil {
+		t.Fatalf("describe the alias in run 2: %v", err)
+	}
+	if got, want := aws.ToString(aliased.KeyMetadata.KeyId), signingID; got != want {
+		t.Fatalf("the alias resolves to key id %s, want %s", got, want)
+	}
+	secondPublic := publicKeyFromGet(t, client2, alias)
 	if !publicKeysEqual(firstPublic, secondPublic) {
 		t.Fatal("the signing key's public key changed across the restart")
+	}
+	// KMS Verify in run 2 addressed by the raw key id and by the ARN recorded
+	// in run 1, the app-level check Autheory's pinned kid needs.
+	for name, keyRef := range map[string]string{
+		"run-1 key id":  signingID,
+		"run-1 key ARN": aws.ToString(signingMetadata.KeyMetadata.Arn),
+	} {
+		verified, verifyErr := client2.Verify(ctx, &kms.VerifyInput{
+			KeyId: aws.String(keyRef), Message: digest[:], MessageType: kmstypes.MessageTypeDigest,
+			Signature: signed.Signature, SigningAlgorithm: kmstypes.SigningAlgorithmSpecRsassaPkcs1V15Sha256,
+		})
+		if verifyErr != nil || !verified.SignatureValid {
+			t.Fatalf("KMS Verify by the %s failed: valid=%v err=%v", name, verified != nil && verified.SignatureValid, verifyErr)
+		}
 	}
 	rsaPublic := secondPublic.(*rsa.PublicKey) //nolint:errcheck,forcetypeassert // fixture
 	if signatureErr := rsa.VerifyPKCS1v15(rsaPublic, crypto.SHA256, digest[:], signed.Signature); signatureErr != nil {
@@ -411,6 +477,101 @@ func TestKMSFrontPersistsMaterialAcrossRestart(t *testing.T) {
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("the persisted key file mode is %v, want 0600", info.Mode().Perm())
 	}
+}
+
+// TestKMSFrontIdentityResponsesUseTheStableID proves DescribeKey, ListKeys and
+// ListAliases expose the persisted id and ARN, never the id moto generated for
+// the current run.
+func TestKMSFrontIdentityResponsesUseTheStableID(t *testing.T) {
+	dataDir := t.TempDir()
+	first, firstMoto, firstServer := newFrontForTest(t, dataDir)
+	_ = first
+	client := kmsClientFor(t, firstServer.URL)
+	ctx := context.Background()
+	stableID := createOwnedKey(t, client, "Stack/ListedKey", "RSA_2048", kmstypes.KeyUsageTypeSignVerify)
+	alias := "alias/apptheory-listed"
+	if _, err := client.CreateAlias(ctx, &kms.CreateAliasInput{
+		AliasName: aws.String(alias), TargetKeyId: aws.String(stableID),
+	}); err != nil {
+		t.Fatalf("create alias: %v", err)
+	}
+	firstMotoID := onlyFakeMotoKeyID(t, firstMoto)
+	if firstMotoID == stableID {
+		t.Fatalf("the fixture reused the stable id %s as moto's id", stableID)
+	}
+	metadata, err := client.DescribeKey(ctx, &kms.DescribeKeyInput{KeyId: aws.String(stableID)})
+	if err != nil {
+		t.Fatalf("describe in run 1: %v", err)
+	}
+	stableARN := aws.ToString(metadata.KeyMetadata.Arn)
+
+	// Run 2: a new front and a new moto id behind the same --data-dir.
+	second, secondMoto, secondServer := newFrontForTest(t, dataDir)
+	_ = second
+	client2 := kmsClientFor(t, secondServer.URL)
+	got := createOwnedKey(t, client2, "Stack/ListedKey", "RSA_2048", kmstypes.KeyUsageTypeSignVerify)
+	if got != stableID {
+		t.Fatalf("CreateKey returned %s in run 2, want the run-1 id %s", got, stableID)
+	}
+	if _, aliasErr := client2.CreateAlias(ctx, &kms.CreateAliasInput{
+		AliasName: aws.String(alias), TargetKeyId: aws.String(got),
+	}); aliasErr != nil {
+		t.Fatalf("re-create the alias in run 2: %v", aliasErr)
+	}
+	secondMotoID := onlyFakeMotoKeyID(t, secondMoto)
+	if secondMotoID == firstMotoID {
+		t.Fatal("the fixture reused moto's id; the run-2 mapping is not exercised")
+	}
+	described, err := client2.DescribeKey(ctx, &kms.DescribeKeyInput{KeyId: aws.String(secondMotoID)})
+	if err != nil {
+		t.Fatalf("describe by the current moto id: %v", err)
+	}
+	if aws.ToString(described.KeyMetadata.KeyId) != stableID || aws.ToString(described.KeyMetadata.Arn) != stableARN {
+		t.Fatalf("DescribeKey exposed moto's identity: %+v", described.KeyMetadata)
+	}
+	listed, err := client2.ListKeys(ctx, &kms.ListKeysInput{})
+	if err != nil {
+		t.Fatalf("list keys: %v", err)
+	}
+	if len(listed.Keys) != 1 || aws.ToString(listed.Keys[0].KeyId) != stableID || aws.ToString(listed.Keys[0].KeyArn) != stableARN {
+		t.Fatalf("ListKeys exposed moto's identity: %+v", listed.Keys)
+	}
+	aliases, err := client2.ListAliases(ctx, &kms.ListAliasesInput{})
+	if err != nil {
+		t.Fatalf("list aliases: %v", err)
+	}
+	if len(aliases.Aliases) != 1 || aws.ToString(aliases.Aliases[0].TargetKeyId) != stableID {
+		t.Fatalf("ListAliases exposed moto's identity: %+v", aliases.Aliases)
+	}
+	// The alias still signs with the persisted material.
+	digest := sha256.Sum256([]byte("listed alias"))
+	signed, err := client2.Sign(ctx, &kms.SignInput{
+		KeyId: aws.String(alias), Message: digest[:], MessageType: kmstypes.MessageTypeDigest,
+		SigningAlgorithm: kmstypes.SigningAlgorithmSpecRsassaPkcs1V15Sha256,
+	})
+	if err != nil {
+		t.Fatalf("sign with the alias in run 2: %v", err)
+	}
+	verified, err := client2.Verify(ctx, &kms.VerifyInput{
+		KeyId: aws.String(stableID), Message: digest[:], MessageType: kmstypes.MessageTypeDigest,
+		Signature: signed.Signature, SigningAlgorithm: kmstypes.SigningAlgorithmSpecRsassaPkcs1V15Sha256,
+	})
+	if err != nil || !verified.SignatureValid {
+		t.Fatalf("verify the alias signature by the run-1 id: valid=%v err=%v", verified != nil && verified.SignatureValid, err)
+	}
+}
+
+func onlyFakeMotoKeyID(t *testing.T, moto *fakeMotoKMS) string {
+	t.Helper()
+	moto.mu.Lock()
+	defer moto.mu.Unlock()
+	if len(moto.keys) != 1 {
+		t.Fatalf("the fixture has %d moto keys, want 1", len(moto.keys))
+	}
+	for id := range moto.keys {
+		return id
+	}
+	return ""
 }
 
 // TestKMSFrontEphemeralStaysEphemeral proves the default has not changed: no
@@ -604,5 +765,106 @@ func TestKMSFrontEncryptionContextIsBound(t *testing.T) {
 		CiphertextBlob: encrypted.CiphertextBlob, EncryptionContext: map[string]string{"tenant": "a"},
 	}); err != nil {
 		t.Fatalf("the matching encryption context did not decrypt: %v", err)
+	}
+}
+
+// TestKMSFrontIdentityRewriteEdges covers the no-op and malformed shapes of
+// the identity rewriting, so an unknown key or body passes through unchanged
+// rather than inventing an identity.
+func TestKMSFrontIdentityRewriteEdges(t *testing.T) {
+	front, err := newKMSFront(t.TempDir(), "http://127.0.0.1:1", nil)
+	if err != nil {
+		t.Fatalf("new KMS front: %v", err)
+	}
+	record := &kmsKeyRecord{
+		Identity: "Stack/Edge", StableID: "11111111-1111-4111-8111-111111111111",
+		KeySpec: kmsSpecSymmetricDefault, KeyUsage: kmsUsageEncryptDecrypt,
+	}
+	if addErr := front.store.add(record); addErr != nil {
+		t.Fatalf("add the record: %v", addErr)
+	}
+	motoARN := "arn:aws:kms:us-east-1:123456789012:key/moto-edge"
+	front.store.bind("moto-edge", motoARN, record)
+
+	for _, field := range []string{"KeyId", "TargetKeyId", "DestinationKeyId", "SourceKeyId"} {
+		body := []byte(`{"` + field + `":"` + record.StableID + `","Other":1}`)
+		if got := front.rewriteRequestIdentity(body); !strings.Contains(string(got), `"moto-edge"`) {
+			t.Fatalf("%s was not mapped to the current run id: %s", field, got)
+		}
+	}
+	for _, body := range []string{
+		`{"KeyId":"alias/example"}`,
+		`{"KeyId":"unknown"}`,
+		`{"KeyId":""}`,
+		`not json`,
+		`{"Other":1}`,
+	} {
+		if got := front.rewriteRequestIdentity([]byte(body)); string(got) != body {
+			t.Fatalf("the request body changed: %q -> %q", body, got)
+		}
+	}
+	if got := kmsOperationName("TrentService.DescribeKey"); got != "DescribeKey" {
+		t.Fatalf("operation name %q", got)
+	}
+	if got := kmsOperationName("DescribeKey"); got != "DescribeKey" {
+		t.Fatalf("unprefixed operation name %q", got)
+	}
+	for _, test := range []struct {
+		operation string
+		payload   string
+	}{
+		{"DescribeKey", `not json`},
+		{"DescribeKey", `{}`},
+		{"DescribeKey", `{"KeyMetadata":42}`},
+		{"DescribeKey", `{"KeyMetadata":{}}`},
+		{"DescribeKey", `{"KeyMetadata":{"KeyId":"unknown"}}`},
+		{"ListKeys", `{"Keys":42}`},
+		{"ListKeys", `{"Keys":[{"KeyId":42},{"Other":1}]}`},
+		{"ListKeys", `{"Keys":[]}`},
+		{"ListAliases", `{"Aliases":42}`},
+		{"ListAliases", `{"Aliases":[{"TargetKeyId":42}]}`},
+		{"ListAliases", `{"Aliases":[]}`},
+		{"Unknown", `{"KeyMetadata":{"KeyId":"moto-edge"}}`},
+	} {
+		if got := front.rewriteResponseIdentity(test.operation, []byte(test.payload)); string(got) != test.payload {
+			t.Fatalf("%s response changed: %q -> %q", test.operation, test.payload, got)
+		}
+	}
+	described := front.rewriteResponseIdentity("DescribeKey",
+		[]byte(`{"KeyMetadata":{"KeyId":"moto-edge","Arn":"`+motoARN+`","KeySpec":"SYMMETRIC_DEFAULT"}}`))
+	if !strings.Contains(string(described), `"KeyId":"`+record.StableID+`"`) || !strings.Contains(string(described), `"Arn":"`+stableARN(record)+`"`) {
+		t.Fatalf("DescribeKey did not use the stable identity: %s", described)
+	}
+	listed := front.rewriteResponseIdentity("ListKeys",
+		[]byte(`{"Keys":[{"KeyId":"moto-edge","KeyArn":"`+motoARN+`"}]}`))
+	if !strings.Contains(string(listed), record.StableID) || !strings.Contains(string(listed), stableARN(record)) {
+		t.Fatalf("ListKeys did not use the stable identity: %s", listed)
+	}
+	if _, createErr := front.rewriteCreateKeyPayload([]byte(`{}`), record); createErr == nil {
+		t.Fatal("a CreateKey payload without KeyMetadata was accepted")
+	}
+	if got, rewriteErr := front.rewriteCreateKeyPayload([]byte(`{"KeyMetadata":{"KeyId":"moto-edge"}}`), record); rewriteErr != nil ||
+		!strings.Contains(string(got), record.StableID) {
+		t.Fatalf("CreateKey was not rewritten: %s (%v)", got, rewriteErr)
+	}
+
+	// Without --data-dir nothing is rewritten, and an unbound record falls
+	// back to its own stable identity.
+	ephemeral, err := newKMSFront("", "http://127.0.0.1:1", nil)
+	if err != nil {
+		t.Fatalf("new ephemeral KMS front: %v", err)
+	}
+	if got := ephemeral.rewriteRequestIdentity([]byte(`{"KeyId":"x"}`)); string(got) != `{"KeyId":"x"}` {
+		t.Fatalf("the ephemeral request body changed: %s", got)
+	}
+	if got := ephemeral.responseKeyID(record); got != record.StableID {
+		t.Fatalf("the unbound ephemeral key id is %q", got)
+	}
+	if got := ephemeral.responseKeyARN(record); got != stableARN(record) {
+		t.Fatalf("the unbound ephemeral key ARN is %q", got)
+	}
+	payload := `{"KeyMetadata":{"KeyId":"x"}}`
+	if got, err := ephemeral.rewriteCreateKeyPayload([]byte(payload), record); err != nil || string(got) != payload {
+		t.Fatalf("the ephemeral CreateKey payload changed: %s (%v)", got, err)
 	}
 }

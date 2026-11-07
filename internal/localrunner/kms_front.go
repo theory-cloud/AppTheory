@@ -170,6 +170,10 @@ func (s *kmsKeyStore) stable(id string) *kmsKeyRecord {
 	return s.byStable[id]
 }
 
+// persistent reports whether records are written to disk (--data-dir). Only a
+// persistent store keeps a key's public identity across runs.
+func (s *kmsKeyStore) persistent() bool { return s.path != "" }
+
 // runKey returns the material mapped to one run's moto key.
 func (s *kmsKeyStore) runKey(keyID string) *kmsRunKey {
 	s.mu.RLock()
@@ -413,6 +417,16 @@ func (f *kmsFront) handleCreateKey(ctx context.Context, writer http.ResponseWrit
 					return
 				}
 			}
+			// With --data-dir the caller sees the persisted key identity, not
+			// the id moto generated for this run: a KMS key's id and ARN are
+			// permanent for the key's lifetime, and a caller that pins either
+			// (a JWKS kid, for example) must keep working after a restart.
+			// https://docs.aws.amazon.com/kms/latest/developerguide/concepts.html#key-id
+			if rewritten, rewriteErr := f.rewriteCreateKeyPayload(payload, record); rewriteErr == nil {
+				payload = rewritten
+			} else {
+				f.logf("local KMS front: keep moto's CreateKey metadata: %v", rewriteErr)
+			}
 			f.logf("local KMS key %s for %s (%s/%s)", response.KeyMetadata.KeyID, recordLabel(record), record.KeySpec, record.KeyUsage)
 		}
 	}
@@ -421,6 +435,7 @@ func (f *kmsFront) handleCreateKey(ctx context.Context, writer http.ResponseWrit
 
 // proxy forwards one operation to moto and returns its response.
 func (f *kmsFront) proxy(ctx context.Context, target string, body []byte) (int, http.Header, []byte, error) {
+	body = f.rewriteRequestIdentity(body)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, f.upstream.Scheme+"://"+f.upstream.Host+"/", bytes.NewReader(body))
 	if err != nil {
 		return 0, nil, nil, fmt.Errorf("build the %s request: %w", target, err)
@@ -453,7 +468,225 @@ func (f *kmsFront) forward(ctx context.Context, writer http.ResponseWriter, targ
 		writeKMSError(writer, http.StatusInternalServerError, "KMSInternalException", err.Error())
 		return
 	}
+	payload = f.rewriteResponseIdentity(kmsOperationName(target), payload)
 	writeRawResponse(writer, status, headers, payload)
+}
+
+// kmsOperationName strips the JSON protocol prefix ("TrentService.DescribeKey"
+// -> "DescribeKey") so response rewriting can switch on the operation.
+func kmsOperationName(target string) string {
+	if prefix, name, ok := strings.Cut(strings.TrimSpace(target), "."); ok && prefix == kmsFrontTarget {
+		return name
+	}
+	return strings.TrimSpace(target)
+}
+
+// rewriteRequestIdentity maps a persisted key's public id or ARN to the key id
+// moto created for the current run. A caller may keep using the id or ARN it
+// recorded in an earlier run; aliases are left for moto to resolve. Without
+// --data-dir there is no persisted public id, so the body is unchanged.
+func (f *kmsFront) rewriteRequestIdentity(body []byte) []byte {
+	if !f.store.persistent() {
+		return body
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return body
+	}
+	changed := false
+	for _, name := range [...]string{"KeyId", "TargetKeyId", "DestinationKeyId", "SourceKeyId"} {
+		raw, ok := fields[name]
+		if !ok {
+			continue
+		}
+		var value string
+		if err := json.Unmarshal(raw, &value); err != nil {
+			continue
+		}
+		mapped, ok := f.currentRunKeyID(value)
+		if !ok {
+			continue
+		}
+		encoded, err := json.Marshal(mapped)
+		if err != nil {
+			continue
+		}
+		fields[name] = encoded
+		changed = true
+	}
+	if !changed {
+		return body
+	}
+	updated, err := json.Marshal(fields)
+	if err != nil {
+		return body
+	}
+	return updated
+}
+
+// currentRunKeyID resolves a public raw id or key ARN to this run's moto key
+// id. Aliases and unknown values report false so the request passes through.
+func (f *kmsFront) currentRunKeyID(value string) (string, bool) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || strings.HasPrefix(trimmed, "alias/") || strings.Contains(trimmed, ":alias/") {
+		return "", false
+	}
+	record := f.store.stable(kmsRawKeyID(trimmed))
+	if record == nil {
+		return "", false
+	}
+	run := f.store.runFor(record)
+	if run == nil {
+		return "", false
+	}
+	return kmsRawKeyID(run.arn), true
+}
+
+// responseKeyID is the key id a caller sees: the persisted public id under
+// --data-dir, otherwise the current moto id exactly as v7.0.0 returned it.
+func (f *kmsFront) responseKeyID(record *kmsKeyRecord) string {
+	if f.store.persistent() {
+		return record.StableID
+	}
+	if run := f.store.runFor(record); run != nil {
+		return kmsRawKeyID(run.arn)
+	}
+	return record.StableID
+}
+
+// responseKeyARN is the key ARN a caller sees, stable under --data-dir.
+func (f *kmsFront) responseKeyARN(record *kmsKeyRecord) string {
+	if f.store.persistent() {
+		return stableARN(record)
+	}
+	if run := f.store.runFor(record); run != nil {
+		return run.arn
+	}
+	return stableARN(record)
+}
+
+// rewriteResponseIdentity replaces the current run's moto key id and ARN with
+// the persisted public identity. The shapes are the members AWS returns key
+// identifiers in: DescribeKey's KeyMetadata, ListKeys' Keys and ListAliases'
+// TargetKeyId.
+func (f *kmsFront) rewriteResponseIdentity(operation string, payload []byte) []byte {
+	if !f.store.persistent() {
+		return payload
+	}
+	switch operation {
+	case "DescribeKey":
+		return f.rewriteKeyMetadataPayload(payload, "KeyMetadata")
+	case "ListKeys":
+		return f.rewriteKeyArrayPayload(payload, "Keys", "KeyId", "KeyArn")
+	case "ListAliases":
+		return f.rewriteKeyArrayPayload(payload, "Aliases", "TargetKeyId")
+	}
+	return payload
+}
+
+// rewriteCreateKeyPayload makes a CreateKey response name the persisted key.
+func (f *kmsFront) rewriteCreateKeyPayload(payload []byte, record *kmsKeyRecord) ([]byte, error) {
+	if !f.store.persistent() {
+		return payload, nil
+	}
+	return f.rewriteKeyMetadataPayloadWithError(payload, "KeyMetadata", record)
+}
+
+func (f *kmsFront) rewriteKeyMetadataPayload(payload []byte, member string) []byte {
+	updated, err := f.rewriteKeyMetadataPayloadWithError(payload, member, nil)
+	if err != nil {
+		return payload
+	}
+	return updated
+}
+
+// rewriteKeyMetadataPayloadWithError rewrites one KeyMetadata object. A nil
+// record means "look the returned KeyId up in this run's bindings".
+func (f *kmsFront) rewriteKeyMetadataPayloadWithError(payload []byte, member string, record *kmsKeyRecord) ([]byte, error) {
+	var response map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &response); err != nil {
+		return nil, fmt.Errorf("decode the %s response: %w", member, err)
+	}
+	raw, ok := response[member]
+	if !ok {
+		return nil, fmt.Errorf("the response has no %s", member)
+	}
+	var metadata map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &metadata); err != nil {
+		return nil, fmt.Errorf("decode %s: %w", member, err)
+	}
+	if record == nil {
+		var keyID string
+		if rawID, exists := metadata["KeyId"]; !exists || json.Unmarshal(rawID, &keyID) != nil {
+			return nil, fmt.Errorf("the %s has no key id", member)
+		}
+		run := f.store.runKey(kmsRawKeyID(keyID))
+		if run == nil {
+			return payload, nil
+		}
+		record = run.record
+	}
+	metadata["KeyId"], _ = json.Marshal(record.StableID) //nolint:errcheck // a string never fails to marshal
+	metadata["Arn"], _ = json.Marshal(stableARN(record)) //nolint:errcheck // a string never fails to marshal
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, fmt.Errorf("encode %s: %w", member, err)
+	}
+	response[member] = encoded
+	updated, err := json.Marshal(response)
+	if err != nil {
+		return nil, fmt.Errorf("encode the response: %w", err)
+	}
+	return updated, nil
+}
+
+// rewriteKeyArrayPayload rewrites the identity fields of a response array.
+func (f *kmsFront) rewriteKeyArrayPayload(payload []byte, member string, idField string, arnFields ...string) []byte {
+	var response map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &response); err != nil {
+		return payload
+	}
+	raw, ok := response[member]
+	if !ok {
+		return payload
+	}
+	var entries []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return payload
+	}
+	changed := false
+	for _, entry := range entries {
+		rawID, exists := entry[idField]
+		if !exists {
+			continue
+		}
+		var keyID string
+		if json.Unmarshal(rawID, &keyID) != nil {
+			continue
+		}
+		run := f.store.runKey(kmsRawKeyID(keyID))
+		if run == nil {
+			continue
+		}
+		entry[idField], _ = json.Marshal(run.record.StableID) //nolint:errcheck // a string never fails to marshal
+		for _, name := range arnFields {
+			entry[name], _ = json.Marshal(stableARN(run.record)) //nolint:errcheck // a string never fails to marshal
+		}
+		changed = true
+	}
+	if !changed {
+		return payload
+	}
+	encoded, err := json.Marshal(entries)
+	if err != nil {
+		return payload
+	}
+	response[member] = encoded
+	updated, err := json.Marshal(response)
+	if err != nil {
+		return payload
+	}
+	return updated
 }
 
 // resolveOwned maps any accepted KeyId form to the material the front owns. A
@@ -478,6 +711,9 @@ func (f *kmsFront) resolveOwned(ctx context.Context, keyID string) (*kmsRunKey, 
 		}
 		if run := f.store.runKey(metadata.KeyID); run != nil {
 			return run, true, nil
+		}
+		if record := f.store.stable(kmsRawKeyID(metadata.KeyID)); record != nil {
+			return &kmsRunKey{record: record, arn: stableARN(record)}, true, nil
 		}
 	}
 	return nil, false, nil

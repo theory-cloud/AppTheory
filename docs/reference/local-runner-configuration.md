@@ -263,9 +263,10 @@ Definitions are re-provisioned
 from the assembly on every start;
 existing tables, buckets, queues, topics, streams, parameters, secrets, pools
 and keys are reconciled, never dropped. A KMS key is the one shape whose moto
-metadata is re-created: the key id and ARN change on every start, while the
-runner's KMS front reuses the material persisted for the same `stack/logicalId`
-so ciphertext and `GetPublicKey` remain valid. A DynamoDB key-schema change
+metadata is re-created: the runner's KMS front reuses the material persisted
+for the same `stack/logicalId` and reports the persisted `KeyId`/`Arn`, so
+ciphertext, `GetPublicKey` and a caller's pinned key id remain valid; the rest
+of moto's metadata, notably `CreationDate`, is the current run's. A DynamoDB key-schema change
 fails at start with the table named and the UpdateTable rule that a table
 update cannot change its key schema
 ([UpdateTable](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html)).

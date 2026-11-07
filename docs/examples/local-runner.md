@@ -778,7 +778,8 @@ unchanged:
 
 `CreateKey`, `DescribeKey`, aliases, tags, key policy, rotation, grants and
 every operation on a key the front does not own still go to moto, so
-`KeyMetadata` is byte-for-byte what v7.0.0 returned.
+`KeyMetadata` is what v7.0.0 returned; under `--data-dir` the front substitutes
+the persisted `KeyId` and `Arn` for an owned key (see below).
 
 **`MessageType: DIGEST`.** AWS defines `DIGEST` as "the message is a digest,
 and KMS signs it as-is", and `RAW` as a message KMS hashes with the signing
@@ -794,21 +795,27 @@ message exactly as before. It covers `RSASSA_PKCS1_V1_5_SHA_256/384/512`,
 pairs with each digest. A `DIGEST` of the wrong length is a
 `ValidationException`.
 
-**`--data-dir` key material.** Ciphertext is bound to the key that produced it,
-and a KMS key's material is part of the key; AWS never rotates it implicitly
+**`--data-dir` key material and identity.** Ciphertext is bound to the key that
+produced it, and a KMS key's material is part of the key; AWS never rotates it
+implicitly
 ([Decrypt](https://docs.aws.amazon.com/kms/latest/APIReference/API_Decrypt.html),
 [key material](https://docs.aws.amazon.com/kms/latest/developerguide/concepts.html#key-material)).
 moto is memory-only, so without help a key re-created from the CDK definition
 on the next start would have new material and the previous run's ciphertext
 could not be decrypted. With `--data-dir`, the front persists the material
 under `<dir>/kms/keys.json` (mode `0600`) and reuses it for the same
-`stack/logicalId`; the key id and ARN are still re-created on every start
-(moto's metadata is memory-only), the material and `GetPublicKey` are not.
-Without `--data-dir` the front keeps the material in memory, exactly as before.
-The ciphertext envelope binds the stable key id and the encryption context, so
-a ciphertext written in run 1 decrypts in run 2 and a different context does
-not. Deleting the data directory discards the material and makes old ciphertext
-unreadable, as deleting a key would.
+`stack/logicalId`. It also keeps the key's public identity: moto re-creates the
+key, but the front reports the `KeyId` and `Arn` recorded in run 1, because a
+KMS key's id and ARN are permanent for the key's lifetime
+([key identifiers](https://docs.aws.amazon.com/kms/latest/developerguide/concepts.html#key-id)).
+A caller that pins either (Autheory derives its JWKS `kid` from the key) keeps
+working after a restart. The material, `GetPublicKey`, `KeyId` and `Arn` are
+stable; the rest of moto's metadata, notably `CreationDate`, reflects the
+current run. Without `--data-dir` the front keeps the material in memory,
+exactly as before. The ciphertext envelope binds the stable key id and the
+encryption context, so a ciphertext written in run 1 decrypts in run 2 and a
+different context does not. Deleting the data directory discards the material
+and makes old ciphertext unreadable, as deleting a key would.
 
 The runner tags each key it provisions with the reserved local tag
 `apptheory-local:key-identity`; the front consumes it before moto sees the
@@ -823,11 +830,13 @@ request, so `ListResourceTags` and the template's own tags are unchanged.
   `RSA_*` with `ENCRYPT_DECRYPT`, and `ECC_SECG_P256K1`/`SM2` signing keys keep
   moto's behavior. Their material is not persisted, and `DIGEST` is not served
   for them.
-- `KeyId` and `Arn` change on every start, because moto re-creates the key
-  metadata; only the material and the public key are stable. `Decrypt` accepts
-  no `KeyId` (the ciphertext names the stable key) or the current run's key,
-  which resolves to the same stable key; a stale ARN from an earlier run is
-  not a valid identifier in the new run.
+- A persisted key keeps its `KeyId` and `Arn`, so the run-1 id or ARN is a
+  valid identifier in a later run; `Decrypt` also accepts no `KeyId` (the
+  ciphertext names the stable key). moto's own per-run id is an internal
+  detail and is not a supported cross-run identifier. The remaining moto
+  metadata, notably `CreationDate`, still reflects the current run. A key
+  created at runtime (no CDK definition) is memory-only and is not persisted,
+  as docs/125 records.
 - A `--data-dir` that names a key with a different `KeySpec` or `KeyUsage` than
   the definition now fails at start with the identity and both pairs named,
   rather than silently reusing incompatible material.
@@ -1870,10 +1879,11 @@ restores them on startup ([Persisting queues and messages](https://github.com/so
 Definitions are re-provisioned from the CDK definition on every start. A table,
 bucket, queue, topic, stream, parameter, secret, pool or key that already
 exists in the data directory is reconciled, never dropped or recreated. A KMS
-key is the one shape where moto's metadata is re-created: its key id and ARN
-change on every start, while the runner's KMS front reuses the material
-persisted for the same `stack/logicalId`, so ciphertext and `GetPublicKey`
-remain valid. The S3 front's SSE-S3 records and the KMS material are the only
+key is the one shape where moto's metadata is re-created: the runner's KMS
+front reuses the material persisted for the same `stack/logicalId` and reports
+the persisted `KeyId`/`Arn`, so ciphertext, `GetPublicKey` and a caller's pinned
+key id remain valid; the remaining metadata, notably `CreationDate`, is the
+current run's. The S3 front's SSE-S3 records and the KMS material are the only
 runner-owned files under the data directory; both are mode `0600` and contain
 no AWS credential. A
 DynamoDB key-schema change cannot be applied to existing state: the runner

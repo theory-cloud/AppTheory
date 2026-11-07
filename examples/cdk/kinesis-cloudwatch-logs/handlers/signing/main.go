@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 	kmstypes "github.com/aws/aws-sdk-go-v2/service/kms/types"
@@ -36,6 +37,13 @@ type event struct {
 	Signature         string `json:"signature"`
 	Message           string `json:"message"`
 	PublicKey         string `json:"publicKey"`
+	// The identities run 1 observed: a KMS key's id and ARN are permanent for
+	// the key's lifetime, so run 2 must see the same ones and a signature made
+	// in run 1 must Verify under the run-1 key id.
+	SigningKeyID  string `json:"signingKeyId"`
+	SigningKeyARN string `json:"signingKeyArn"`
+	DataKeyID     string `json:"dataKeyId"`
+	DataKeyARN    string `json:"dataKeyArn"`
 }
 
 type result struct {
@@ -185,6 +193,14 @@ func dataDirWrite(ctx context.Context) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	signingKey, err := client.DescribeKey(ctx, &kms.DescribeKeyInput{KeyId: &alias})
+	if err != nil {
+		return nil, fmt.Errorf("describe the signing key for --data-dir: %w", err)
+	}
+	dataKeyMetadata, err := client.DescribeKey(ctx, &kms.DescribeKeyInput{KeyId: &dataKeyARN})
+	if err != nil {
+		return nil, fmt.Errorf("describe the data key for --data-dir: %w", err)
+	}
 	encrypted, err := client.Encrypt(ctx, &kms.EncryptInput{
 		KeyId:     &dataKeyARN,
 		Plaintext: []byte(dataDirPlaintext),
@@ -220,15 +236,34 @@ func dataDirWrite(ctx context.Context) (any, error) {
 		"signature":         base64.StdEncoding.EncodeToString(signature.Signature),
 		"message":           dataDirMessage,
 		"publicKey":         base64.StdEncoding.EncodeToString(publicKey.PublicKey),
+		"signingKeyId":      aws.ToString(signingKey.KeyMetadata.KeyId),
+		"signingKeyArn":     aws.ToString(signingKey.KeyMetadata.Arn),
+		"dataKeyId":         aws.ToString(dataKeyMetadata.KeyMetadata.KeyId),
+		"dataKeyArn":        aws.ToString(dataKeyMetadata.KeyMetadata.Arn),
 	}, nil
 }
 
 // dataDirRead runs in run 2 with the same --data-dir: it decrypts the run 1
-// ciphertexts and verifies the run 1 signature with the run 2 public key.
+// ciphertexts by the run-1 key id and verifies the run 1 signature through KMS
+// with the run-1 key id and ARN, then with the run 2 public key.
 func dataDirRead(ctx context.Context, request event) (any, error) {
 	client, alias, dataKeyARN, err := dataDirClient(ctx)
 	if err != nil {
 		return nil, err
+	}
+	signingKey, err := client.DescribeKey(ctx, &kms.DescribeKeyInput{KeyId: &alias})
+	if err != nil {
+		return nil, fmt.Errorf("describe the signing key in run 2: %w", err)
+	}
+	dataKeyMetadata, err := client.DescribeKey(ctx, &kms.DescribeKeyInput{KeyId: &dataKeyARN})
+	if err != nil {
+		return nil, fmt.Errorf("describe the data key in run 2: %w", err)
+	}
+	// The run-1 key id is what a caller recorded (Autheory pins its JWKS kid
+	// from it); decrypting and verifying by it is the restart proof.
+	decryptKey := request.DataKeyID
+	if decryptKey == "" {
+		decryptKey = dataKeyARN
 	}
 	ciphertext, err := base64.StdEncoding.DecodeString(request.Ciphertext)
 	if err != nil {
@@ -236,7 +271,7 @@ func dataDirRead(ctx context.Context, request event) (any, error) {
 	}
 	decrypted, err := client.Decrypt(ctx, &kms.DecryptInput{
 		CiphertextBlob: ciphertext,
-		KeyId:          &dataKeyARN,
+		KeyId:          &decryptKey,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("decrypt across --data-dir: %w", err)
@@ -247,7 +282,7 @@ func dataDirRead(ctx context.Context, request event) (any, error) {
 	}
 	dataKey, err := client.Decrypt(ctx, &kms.DecryptInput{
 		CiphertextBlob: dataKeyCiphertext,
-		KeyId:          &dataKeyARN,
+		KeyId:          &decryptKey,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("decrypt the data key across --data-dir: %w", err)
@@ -271,12 +306,31 @@ func dataDirRead(ctx context.Context, request event) (any, error) {
 	}
 	digest := sha256.Sum256([]byte(request.Message))
 	signatureVerified := rsa.VerifyPKCS1v15(rsaPublic, crypto.SHA256, digest[:], signature) == nil
+	verifyWith := func(keyID string) bool {
+		if keyID == "" {
+			return false
+		}
+		verified, verifyErr := client.Verify(ctx, &kms.VerifyInput{
+			KeyId:            aws.String(keyID),
+			Message:          digest[:],
+			MessageType:      kmstypes.MessageTypeDigest,
+			Signature:        signature,
+			SigningAlgorithm: signingAlgorithm,
+		})
+		return verifyErr == nil && verified.SignatureValid
+	}
 	return map[string]any{
-		"mode":              "data-dir-read",
-		"plaintext":         string(decrypted.Plaintext),
-		"dataKeyLength":     len(dataKey.Plaintext),
-		"publicKeyStable":   publicKeyStable,
-		"signatureVerified": signatureVerified,
+		"mode":               "data-dir-read",
+		"plaintext":          string(decrypted.Plaintext),
+		"dataKeyLength":      len(dataKey.Plaintext),
+		"publicKeyStable":    publicKeyStable,
+		"signatureVerified":  signatureVerified,
+		"keyIdStable":        aws.ToString(signingKey.KeyMetadata.KeyId) == request.SigningKeyID,
+		"keyArnStable":       aws.ToString(signingKey.KeyMetadata.Arn) == request.SigningKeyARN,
+		"dataKeyIdStable":    aws.ToString(dataKeyMetadata.KeyMetadata.KeyId) == request.DataKeyID,
+		"dataKeyArnStable":   aws.ToString(dataKeyMetadata.KeyMetadata.Arn) == request.DataKeyARN,
+		"run1KeyIdVerified":  verifyWith(request.SigningKeyID),
+		"run1KeyArnVerified": verifyWith(request.SigningKeyARN),
 	}, nil
 }
 

@@ -5725,7 +5725,10 @@ def run_data_dir_kms(harness: Harness) -> str:
         write_raw = written.get("raw")
         if not isinstance(write_raw, dict):
             raise HarnessFailure(f"data-dir KMS write: the handler did not return JSON: {written}")
-        for field in ("ciphertext", "dataKeyCiphertext", "signature", "message", "publicKey"):
+        for field in (
+            "ciphertext", "dataKeyCiphertext", "signature", "message", "publicKey",
+            "signingKeyId", "signingKeyArn", "dataKeyId", "dataKeyArn",
+        ):
             if not write_raw.get(field):
                 raise HarnessFailure(f"data-dir KMS write: missing {field}: {write_raw}")
         read, _ = invoke_local_function(
@@ -5739,6 +5742,10 @@ def run_data_dir_kms(harness: Harness) -> str:
                 "signature": write_raw["signature"],
                 "message": write_raw["message"],
                 "publicKey": write_raw["publicKey"],
+                "signingKeyId": write_raw["signingKeyId"],
+                "signingKeyArn": write_raw["signingKeyArn"],
+                "dataKeyId": write_raw["dataKeyId"],
+                "dataKeyArn": write_raw["dataKeyArn"],
             },
             name="data-dir-kms-read",
             backends=("moto",),
@@ -5752,12 +5759,19 @@ def run_data_dir_kms(harness: Harness) -> str:
             or read_raw.get("dataKeyLength") != 32
             or read_raw.get("publicKeyStable") is not True
             or read_raw.get("signatureVerified") is not True
+            or read_raw.get("keyIdStable") is not True
+            or read_raw.get("keyArnStable") is not True
+            or read_raw.get("dataKeyIdStable") is not True
+            or read_raw.get("dataKeyArnStable") is not True
+            or read_raw.get("run1KeyIdVerified") is not True
+            or read_raw.get("run1KeyArnVerified") is not True
         ):
             raise HarnessFailure(f"data-dir KMS read: unexpected result: {read_raw}")
         return (
             "with one --data-dir, run 1 encrypted under the CDK symmetric key, generated a 32-byte data "
-            "key and signed a precomputed digest with the CDK RSA_2048 key; run 2 decrypted both "
-            "ciphertexts, read the same public key, and verified the run-1 signature outside KMS"
+            "key and signed a precomputed digest with the CDK RSA_2048 key; run 2 saw the same KeyId/ARN "
+            "for both keys, decrypted both ciphertexts by the run-1 key id, read the same public key, "
+            "and verified the run-1 signature through KMS by the run-1 key id and ARN and outside KMS"
         )
     finally:
         _remove_data_dir(data_dir)
