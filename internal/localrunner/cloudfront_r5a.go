@@ -22,7 +22,11 @@ import (
 // CloudFront caching, invalidation and external origin overrides.
 
 // validateOriginOverrides refuses an origin mapping that is not loopback. A
-// mapped origin's requests must never leave this machine.
+// mapped origin's requests must never leave this machine. A `*.localhost` name
+// is the other accepted form: RFC 6761 section 6.3 says resolvers should map
+// it to loopback, and the run already uses that namespace for every public
+// listener and certificate.
+// https://www.rfc-editor.org/rfc/rfc6761#section-6.3
 func validateOriginOverrides(origins map[string]string) error {
 	for domain, raw := range origins {
 		if strings.TrimSpace(domain) == "" {
@@ -37,9 +41,9 @@ func validateOriginOverrides(origins map[string]string) error {
 		}
 		host := parsed.Hostname()
 		ip := net.ParseIP(host)
-		if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		if host != tlsLocalhostHost && (ip == nil || !ip.IsLoopback()) && validateTLSHost(host) != nil {
 			return fmt.Errorf(
-				"origin override %s=%s is not a loopback URL; the local gateway must not reach the network",
+				"origin override %s=%s is not a loopback URL; the local gateway must not reach the network (map it to 127.0.0.1, ::1, localhost or a *.localhost name)",
 				domain, raw,
 			)
 		}
