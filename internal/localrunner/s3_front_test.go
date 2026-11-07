@@ -83,6 +83,15 @@ func (f *fakeS3Proxy) ServeHTTP(writer http.ResponseWriter, request *http.Reques
 		f.listCalls++
 		writer.Header().Set("Content-Type", "application/xml")
 		_, _ = writer.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><ListAllMyBucketsResult><Buckets></Buckets></ListAllMyBucketsResult>`)) //nolint:errcheck // fixture
+	case request.Method == http.MethodPut && bucket != "" && key != "" && request.Header.Get("x-amz-copy-source") != "":
+		sourceBucket, sourceKey := splitS3Path(strings.TrimPrefix(request.Header.Get("x-amz-copy-source"), "/"))
+		body := f.objects[sourceBucket][sourceKey]
+		if f.objects[bucket] == nil {
+			f.objects[bucket] = map[string][]byte{}
+		}
+		f.objects[bucket][key] = body
+		writer.Header().Set("Content-Type", "application/xml")
+		_, _ = writer.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><CopyObjectResult><ETag>"fixture"</ETag></CopyObjectResult>`)) //nolint:errcheck // fixture
 	case request.Method == http.MethodPut && bucket != "" && key != "":
 		body, _ := io.ReadAll(request.Body) //nolint:errcheck // fixture
 		if f.objects[bucket] == nil {
@@ -286,8 +295,10 @@ func TestS3FrontResignSignsTheForwardedPath(t *testing.T) {
 				Host:   "front.invalid",
 				Header: http.Header{},
 			}
-			request.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=stale")
 			request.Header.Set("X-Amz-Content-Sha256", payloadHash)
+			if signErr := newS3Signer().SignHTTP(context.Background(), front.credentials, request, payloadHash, "s3", LocalRegion, time.Now().UTC()); signErr != nil {
+				t.Fatalf("sign the incoming request: %v", signErr)
+			}
 			if resignErr := front.resign(request); resignErr != nil {
 				t.Fatalf("resign: %v", resignErr)
 			}
@@ -559,6 +570,100 @@ func TestS3FrontDeleteObjectsForwardsBodiesAboveTheBuffer(t *testing.T) {
 	}
 	if !front.index.has(bucket, staleKey) {
 		t.Fatal("the front parsed an over-buffer body; the record clear is documented best-effort")
+	}
+}
+
+// TestS3FrontVerifiesTheCallerSignature is the Adv-1 proof: the front re-signs
+// an SSE put as the local identity after stripping the signed SSE header, so it
+// checks the caller's own SigV4 against that identity first. A request s3proxy
+// would answer 403 to is refused here and never reaches the store.
+//
+// https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html
+func TestS3FrontVerifiesTheCallerSignature(t *testing.T) {
+	backend := newFakeS3Proxy()
+	front, server := newS3FrontForTest(t, "", backend)
+	for name, credentials := range map[string]aws.Credentials{
+		"wrong secret":     {AccessKeyID: "dummy", SecretAccessKey: "not-dummy", Source: "static"},
+		"foreign identity": {AccessKeyID: "other", SecretAccessKey: "dummy", Source: "static"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			client := s3.New(s3.Options{
+				Region: LocalRegion,
+				Credentials: aws.CredentialsProviderFunc(func(context.Context) (aws.Credentials, error) {
+					return credentials, nil
+				}),
+				BaseEndpoint: aws.String(server.URL),
+				UsePathStyle: true,
+			})
+			_, err := client.PutObject(context.Background(), &s3.PutObjectInput{
+				Bucket: aws.String("bucket"), Key: aws.String("key"), Body: strings.NewReader("x"),
+				ServerSideEncryption: s3types.ServerSideEncryptionAes256,
+			})
+			if err == nil {
+				t.Fatal("an SSE put signed with other credentials was accepted")
+			}
+			if !strings.Contains(err.Error(), "SignatureDoesNotMatch") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+	// A malformed Authorization header is refused the same way.
+	request := httptest.NewRequestWithContext(context.Background(), http.MethodPut, "http://front/bucket/key", strings.NewReader("x"))
+	request.Header.Set(s3SSEAlgorithmHeader, "AES256")
+	request.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=stale")
+	recorder := httptest.NewRecorder()
+	front.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden || !strings.Contains(recorder.Body.String(), "SignatureDoesNotMatch") {
+		t.Fatalf("malformed Authorization: status %d body %s", recorder.Code, recorder.Body.String())
+	}
+	backend.mu.Lock()
+	forwarded := len(backend.signedPaths) + backend.refusals
+	backend.mu.Unlock()
+	if forwarded != 0 {
+		t.Fatalf("a refused request reached the backend (%d)", forwarded)
+	}
+}
+
+// TestS3FrontCopyObjectClearsTheRecord is the Adv-3 proof: a plain CopyObject
+// writes the destination without naming an encryption algorithm, so a previous
+// SSE-S3 record no longer describes it. AWS reports no SSE header for that
+// write; the front must not keep claiming AES256.
+//
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_CopyObject.html
+func TestS3FrontCopyObjectClearsTheRecord(t *testing.T) {
+	backend := newFakeS3Proxy()
+	_, server := newS3FrontForTest(t, "", backend)
+	client := s3ClientFor(t, server.URL)
+	ctx := context.Background()
+	if _, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String("bucket"), Key: aws.String("source"), Body: strings.NewReader("plain"),
+	}); err != nil {
+		t.Fatalf("put source: %v", err)
+	}
+	if _, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String("bucket"), Key: aws.String("target"), Body: strings.NewReader("sse"),
+		ServerSideEncryption: s3types.ServerSideEncryptionAes256,
+	}); err != nil {
+		t.Fatalf("put target with SSE-S3: %v", err)
+	}
+	head, err := client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String("bucket"), Key: aws.String("target")})
+	if err != nil {
+		t.Fatalf("head before the copy: %v", err)
+	}
+	if head.ServerSideEncryption != s3types.ServerSideEncryptionAes256 {
+		t.Fatalf("head before the copy reports %q", head.ServerSideEncryption)
+	}
+	if _, err := client.CopyObject(ctx, &s3.CopyObjectInput{
+		Bucket: aws.String("bucket"), Key: aws.String("target"), CopySource: aws.String("bucket/source"),
+	}); err != nil {
+		t.Fatalf("copy: %v", err)
+	}
+	head, err = client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String("bucket"), Key: aws.String("target")})
+	if err != nil {
+		t.Fatalf("head after the copy: %v", err)
+	}
+	if head.ServerSideEncryption != "" {
+		t.Fatalf("a plain copy kept the AES256 record: %q", head.ServerSideEncryption)
 	}
 }
 

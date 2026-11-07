@@ -3,6 +3,7 @@ package localrunner
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -17,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -283,7 +285,19 @@ func (f *s3Front) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		// s3proxy refuses the header on its filesystem store; the front is
 		// where the object's AES256 record lives. The SDK signed the header
 		// (SigV4 lists it in SignedHeaders), so the forwarded request must be
-		// re-signed as the same dummy local identity.
+		// re-signed as the same dummy local identity. The caller's own
+		// signature is checked first, over the request as it arrived, because
+		// the SSE header cannot be forwarded.
+		if err := s3StreamingPayloadError(request); err != nil {
+			f.logf("local S3 front: %v", err)
+			http.Error(writer, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := f.verifySigV4(request); err != nil {
+			f.logf("local S3 front: %v", err)
+			writeS3FrontError(writer, http.StatusForbidden, "SignatureDoesNotMatch", err.Error())
+			return
+		}
 		clone := request.Clone(request.Context())
 		clone.Header.Del(s3SSEAlgorithmHeader)
 		if err := f.resign(clone); err != nil {
@@ -335,16 +349,17 @@ func newS3Signer() *v4.Signer {
 
 // resign replaces the caller's SigV4 signature after a signed header was
 // removed. The local credentials are the profile's static dummy pair; s3proxy
-// verifies the new signature against the headers it receives. A streaming
-// (aws-chunked) payload signs its chunks with the original seed signature and
-// cannot be re-signed here, so it is refused with a clear error.
+// verifies the new signature against the headers it receives. The caller's own
+// signature is checked by ServeHTTP before the signed SSE header is stripped;
+// a streaming (aws-chunked) payload signs its chunks with the original seed
+// signature and cannot be re-signed here, so it is refused with a clear error.
 func (f *s3Front) resign(request *http.Request) error {
 	if request.Header.Get("Authorization") == "" {
 		return nil
 	}
 	payloadHash := strings.TrimSpace(request.Header.Get("X-Amz-Content-Sha256"))
-	if strings.HasPrefix(payloadHash, "STREAMING-") {
-		return fmt.Errorf("the local S3 front cannot strip a signed SSE header from a streaming (aws-chunked) PutObject")
+	if err := s3StreamingPayloadError(request); err != nil {
+		return err
 	}
 	if payloadHash == "" {
 		if request.Body == nil {
@@ -383,6 +398,219 @@ func (f *s3Front) resign(request *http.Request) error {
 		return fmt.Errorf("re-sign the PutObject: %w", err)
 	}
 	return nil
+}
+
+// s3SignatureMismatch is an incoming signature the local identity does not
+// vouch for. The front answers it with the S3 SignatureDoesNotMatch document,
+// as s3proxy would.
+type s3SignatureMismatch struct{ reason string }
+
+func (e *s3SignatureMismatch) Error() string { return e.reason }
+
+// s3StreamingPayloadError names the aws-chunked put the front cannot re-sign:
+// each chunk is signed with the seed signature over the original headers,
+// which include the SSE header the front must strip.
+func s3StreamingPayloadError(request *http.Request) error {
+	if strings.HasPrefix(strings.TrimSpace(request.Header.Get("X-Amz-Content-Sha256")), "STREAMING-") {
+		return fmt.Errorf("the local S3 front cannot strip a signed SSE header from a streaming (aws-chunked) PutObject")
+	}
+	return nil
+}
+
+// verifySigV4 checks the caller's header-based SigV4 signature against the
+// local dummy identity before the front re-signs the request. The front strips
+// the SSE header the caller signed, so it must sign again; verifying first
+// keeps the store's answer for a request signed with other credentials. The
+// SSE path is new (s3proxy refused every SSE header with 501 at v7.0.0), so no
+// request that succeeded before can be refused by this check.
+//
+// https://docs.aws.amazon.com/IAM/latest/UserGuide/create-signed-request.html
+// https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html
+func (f *s3Front) verifySigV4(request *http.Request) error {
+	authorization := request.Header.Get("Authorization")
+	if authorization == "" {
+		// Unsigned and presigned requests are forwarded as they arrived; the
+		// store answers them exactly as it did at v7.0.0.
+		return nil
+	}
+	const algorithm = "AWS4-HMAC-SHA256 "
+	if !strings.HasPrefix(authorization, algorithm) {
+		return &s3SignatureMismatch{reason: "the local S3 front only re-signs Signature Version 4 header authentication"}
+	}
+	fields := map[string]string{}
+	for _, field := range strings.Split(strings.TrimPrefix(authorization, algorithm), ",") {
+		name, value, ok := strings.Cut(strings.TrimSpace(field), "=")
+		if !ok {
+			return &s3SignatureMismatch{reason: "the Authorization header is malformed"}
+		}
+		fields[strings.TrimSpace(name)] = strings.TrimSpace(value)
+	}
+	scope := strings.Split(fields["Credential"], "/")
+	if len(scope) != 5 || scope[0] != f.credentials.AccessKeyID || scope[4] != "aws4_request" {
+		return &s3SignatureMismatch{reason: "the request is not signed for the local identity"}
+	}
+	date, region, service := scope[1], scope[2], scope[3]
+	if service != "s3" {
+		return &s3SignatureMismatch{reason: "the request is not signed for the s3 service"}
+	}
+	signedHeaders := strings.Split(fields["SignedHeaders"], ";")
+	if len(signedHeaders) == 0 || signedHeaders[0] == "" {
+		return &s3SignatureMismatch{reason: "the request has no SignedHeaders list"}
+	}
+	amzDate := request.Header.Get("X-Amz-Date")
+	if amzDate == "" {
+		return &s3SignatureMismatch{reason: "the request has no X-Amz-Date header"}
+	}
+	canonicalRequest := strings.Join([]string{
+		request.Method,
+		s3CanonicalURI(request.URL),
+		s3CanonicalQuery(request.URL.Query()),
+		s3CanonicalHeaders(request, signedHeaders),
+		strings.Join(signedHeaders, ";"),
+		request.Header.Get("X-Amz-Content-Sha256"),
+	}, "\n")
+	scopeLine := strings.Join([]string{date, region, service, "aws4_request"}, "/")
+	stringToSign := strings.Join([]string{
+		"AWS4-HMAC-SHA256",
+		amzDate,
+		scopeLine,
+		hex.EncodeToString(s3Hash(canonicalRequest)),
+	}, "\n")
+	signature, err := hex.DecodeString(fields["Signature"])
+	if err != nil {
+		return &s3SignatureMismatch{reason: "the Authorization signature is not hexadecimal"}
+	}
+	expected := s3Signature(f.credentials.SecretAccessKey, date, region, service, stringToSign)
+	if !hmac.Equal(expected, signature) {
+		return &s3SignatureMismatch{reason: "the request signature does not match the local credentials"}
+	}
+	return nil
+}
+
+func s3Hash(value string) []byte {
+	sum := sha256.Sum256([]byte(value))
+	return sum[:]
+}
+
+// s3Signature derives the SigV4 signing key from the request's own credential
+// scope, so the check verifies the caller's secret without imposing a region
+// the store itself does not impose.
+func s3Signature(secret, date, region, service, stringToSign string) []byte {
+	key := []byte("AWS4" + secret)
+	for _, part := range []string{date, region, service, "aws4_request"} {
+		mac := hmac.New(sha256.New, key)
+		_, _ = mac.Write([]byte(part))
+		key = mac.Sum(nil)
+	}
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write([]byte(stringToSign))
+	return mac.Sum(nil)
+}
+
+// s3CanonicalURI is S3's canonical URI: the URI-encoded path encoded exactly
+// once, with no normalization.
+func s3CanonicalURI(parsed *url.URL) string {
+	escaped := parsed.EscapedPath()
+	if escaped == "" {
+		return "/"
+	}
+	return escaped
+}
+
+// s3CanonicalQuery sorts the query's encoded names and values as SigV4
+// requires. url.Values has already decoded them, so a space is %20 here, not
+// '+'.
+func s3CanonicalQuery(values url.Values) string {
+	type pair struct{ name, value string }
+	pairs := make([]pair, 0, len(values))
+	for name, list := range values {
+		for _, value := range list {
+			pairs = append(pairs, pair{name: s3URIEncode(name), value: s3URIEncode(value)})
+		}
+	}
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i].name != pairs[j].name {
+			return pairs[i].name < pairs[j].name
+		}
+		return pairs[i].value < pairs[j].value
+	})
+	var builder strings.Builder
+	for index, item := range pairs {
+		if index > 0 {
+			builder.WriteByte('&')
+		}
+		builder.WriteString(item.name)
+		builder.WriteByte('=')
+		builder.WriteString(item.value)
+	}
+	return builder.String()
+}
+
+// s3URIEncode is SigV4's UriEncode: unreserved bytes stay, every other byte is
+// percent-encoded with uppercase hex.
+func s3URIEncode(value string) string {
+	var builder strings.Builder
+	const hexDigits = "0123456789ABCDEF"
+	for index := 0; index < len(value); index++ {
+		char := value[index]
+		switch {
+		case char >= 'A' && char <= 'Z', char >= 'a' && char <= 'z',
+			char >= '0' && char <= '9', char == '-', char == '.', char == '_', char == '~':
+			builder.WriteByte(char)
+		default:
+			builder.WriteByte('%')
+			builder.WriteByte(hexDigits[char>>4])
+			builder.WriteByte(hexDigits[char&0x0f])
+		}
+	}
+	return builder.String()
+}
+
+// s3CanonicalHeaders rebuilds the canonical headers from the signed-header
+// list the caller sent. Go keeps the request's Content-Length outside Header,
+// so that name reads the parsed length.
+func s3CanonicalHeaders(request *http.Request, names []string) string {
+	var builder strings.Builder
+	for _, name := range names {
+		builder.WriteString(name)
+		builder.WriteByte(':')
+		switch name {
+		case "host":
+			builder.WriteString(s3StripSpaces(request.Host))
+		case "content-length":
+			if value := request.Header.Get("Content-Length"); value != "" {
+				builder.WriteString(s3StripSpaces(value))
+			} else if request.ContentLength >= 0 {
+				builder.WriteString(strconv.FormatInt(request.ContentLength, 10))
+			}
+		default:
+			values := request.Header.Values(name)
+			for index, value := range values {
+				if index > 0 {
+					builder.WriteByte(',')
+				}
+				builder.WriteString(s3StripSpaces(strings.TrimSpace(value)))
+			}
+		}
+		builder.WriteByte('\n')
+	}
+	return builder.String()
+}
+
+// s3StripSpaces trims a header value's leading and trailing spaces and
+// collapses each run of spaces to one, as SigV4 requires.
+func s3StripSpaces(value string) string {
+	return strings.Join(strings.FieldsFunc(value, func(char rune) bool { return char == ' ' }), " ")
+}
+
+// writeS3FrontError answers with the S3 error document shape, so S3 SDKs map
+// the status to the documented error code.
+func writeS3FrontError(writer http.ResponseWriter, status int, code, message string) {
+	var escaped bytes.Buffer
+	_ = xml.EscapeText(&escaped, []byte(message)) //nolint:errcheck // a bytes.Buffer cannot fail
+	writer.Header().Set("Content-Type", "application/xml")
+	writer.WriteHeader(status)
+	_, _ = fmt.Fprintf(writer, `<?xml version="1.0" encoding="UTF-8"?><Error><Code>%s</Code><Message>%s</Message></Error>`, code, escaped.String()) //nolint:errcheck // the response is committed
 }
 
 // recordResponse applies the operation to the index and the response headers.
@@ -441,8 +669,17 @@ func s3Operation(request *http.Request) s3ObjectOperation {
 	query := request.URL.Query()
 	switch request.Method {
 	case http.MethodPut:
-		if bucket == "" || key == "" || request.Header.Get("x-amz-copy-source") != "" {
+		if bucket == "" || key == "" {
 			return s3ObjectOperation{}
+		}
+		if request.Header.Get("x-amz-copy-source") != "" {
+			// CopyObject writes the destination without naming an algorithm,
+			// so a previous SSE-S3 record no longer describes it. An SSE
+			// header on the copy still passes through and keeps the store's
+			// 501; only a successful copy clears the record.
+			// https://docs.aws.amazon.com/AmazonS3/latest/API/API_CopyObject.html
+			operation.overwrite = true
+			return operation
 		}
 		if s3HasSubresource(query, "acl", "tagging", "uploads", "uploadId", "partNumber", "versionId", "restore", "legal-hold", "retention", "torrent", "encryption") {
 			return s3ObjectOperation{}

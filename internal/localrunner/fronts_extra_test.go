@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/kms"
@@ -580,6 +582,34 @@ func TestS3FrontRemoveBucketClearsRecords(t *testing.T) {
 	}
 }
 
+// signWithoutPayloadHeader signs a request the way a client that omits
+// x-amz-content-sha256 does: the canonical request's payload line is empty.
+// The front's re-sign then has to hash the body itself.
+func signWithoutPayloadHeader(t *testing.T, front *s3Front, request *http.Request) {
+	t.Helper()
+	request.Header.Set("X-Amz-Date", time.Now().UTC().Format("20060102T150405Z"))
+	date := request.Header.Get("X-Amz-Date")[:8]
+	names := "content-length;host;x-amz-date"
+	canonical := strings.Join([]string{
+		request.Method,
+		s3CanonicalURI(request.URL),
+		s3CanonicalQuery(request.URL.Query()),
+		s3CanonicalHeaders(request, strings.Split(names, ";")),
+		names,
+		"",
+	}, "\n")
+	scope := date + "/" + LocalRegion + "/s3/aws4_request"
+	stringToSign := strings.Join([]string{
+		"AWS4-HMAC-SHA256",
+		request.Header.Get("X-Amz-Date"),
+		scope,
+		hex.EncodeToString(s3Hash(canonical)),
+	}, "\n")
+	signature := hex.EncodeToString(s3Signature(front.credentials.SecretAccessKey, date, LocalRegion, "s3", stringToSign))
+	request.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential="+front.credentials.AccessKeyID+"/"+scope+
+		", SignedHeaders="+names+", Signature="+signature)
+}
+
 // TestS3FrontResignPaths covers the re-sign helper's branches directly.
 func TestS3FrontResignPaths(t *testing.T) {
 	front, err := newS3Front("", "http://127.0.0.1:1", func(string, ...any) {})
@@ -597,9 +627,9 @@ func TestS3FrontResignPaths(t *testing.T) {
 		t.Fatalf("streaming resign: %v", err)
 	}
 	unhashed := httptest.NewRequestWithContext(context.Background(), http.MethodPut, "http://front/b/k", strings.NewReader("payload"))
-	unhashed.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=dummy")
 	unhashed.Header.Set("Connection", "x-hop")
 	unhashed.Header.Set("x-hop", "value")
+	signWithoutPayloadHeader(t, front, unhashed)
 	if err := front.resign(unhashed); err != nil {
 		t.Fatalf("unhashed resign: %v", err)
 	}

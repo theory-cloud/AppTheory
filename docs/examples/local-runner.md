@@ -1947,7 +1947,10 @@ endpoint into every function. The runner puts a small S3 front at the injected
 the SSE-S3 answer the store itself refuses. The endpoint is the front's
 `host.docker.internal` IP literal, so SDK clients keep path-style addressing
 (`bucket` in the path, as s3proxy serves it); an ordinary request is forwarded
-byte-for-byte, including the SigV4-signed `Host` header.
+byte-for-byte, including the SigV4-signed `Host` header. The front therefore
+needs `host.docker.internal` to resolve to the run network's gateway; the
+preflight resolves it before provisioning, and a host where it does not resolve
+fails the run naming the front instead of serving a broken endpoint.
 
 **SSE-S3 (`x-amz-server-side-encryption: AES256`).** AWS accepts SSE-S3 on
 `PutObject`, applies it, and returns the algorithm on the put and on later
@@ -1978,6 +1981,16 @@ space, `+`, `%`, unicode or `/` segments get the same signature s3proxy
 recomputes; encoding the escaped path a second time would turn `%3D` into
 `%253D` and earn a `403 SignatureDoesNotMatch`.
 
+The store never sees the caller's signature on this path: the stripped header
+was part of it. Before re-signing, the front therefore checks the caller's own
+header-based `SigV4` against the profile's static dummy credentials, so an SSE
+put signed with any other credentials is answered `403 SignatureDoesNotMatch`
+the way s3proxy answers it, instead of being re-signed as the runner identity.
+Only a header-signed request is verified; an unsigned or presigned SSE put is
+forwarded without re-signing and keeps the store's refusal (a presigned URL
+signs the header being stripped, and a Signature Version 2 request is refused
+because the front only re-signs Version 4).
+
 With `--data-dir`, the record lives in `<dir>/s3sse/index.json` (mode `0600`)
 so it survives a restart; without the flag it is in memory.
 
@@ -1990,8 +2003,10 @@ against real AWS or a store that performs the encryption.
 
 **Documented local deviations.**
 
-- Only `PutObject` applies the record. `CopyObject`, multipart uploads and
-  `POST` form uploads keep s3proxy's behavior and refuse an SSE header.
+- Only `PutObject` sets the record. A successful plain `CopyObject` clears the
+  destination's previous record, because the copy names no algorithm; an
+  `CopyObject` with an SSE header keeps the store's `501`, and multipart and
+  `POST` form uploads keep the store's behavior.
 - A `DeleteObjects` body above 1 MiB is forwarded to the store unchanged, as
   the v7.0.0 path did, so its keys are not read and their SSE-S3 records are
   left in place for a later write to clear. AWS allows 1000 keys of up to 1024
@@ -2007,6 +2022,13 @@ against real AWS or a store that performs the encryption.
   is accepted, including keys that need URI escaping (`=`, spaces, `+`, `%`,
   unicode and `/` segments); the front signs the same once-encoded path it
   forwards.
+- The re-signed put authenticates as the runner identity: the front verifies
+  the caller's header-based `SigV4` against the profile's static dummy
+  credentials before stripping the SSE header and re-signing. A request signed
+  with other credentials gets `403 SignatureDoesNotMatch`. An unsigned or
+  presigned SSE put is forwarded without re-signing and keeps the store's
+  refusal, and a Signature Version 2 request is refused because only Version 4
+  can be re-signed.
 - The account-wide S3 default encryption (SSE-S3 applied to objects written
   without a header) is not modelled: an object reports `AES256` only when its
   put named it.
