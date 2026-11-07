@@ -804,6 +804,16 @@ func s3Operation(request *http.Request) s3ObjectOperation {
 			operation.deleteObjects = true
 			return operation
 		}
+		if bucket != "" && key != "" && query.Has("uploadId") {
+			// CompleteMultipartUpload writes the destination without naming an
+			// encryption algorithm; the upload's CreateMultipartUpload names it,
+			// and the store refuses an SSE-headed create on its filesystem
+			// backend, so a successful completion here is a plain write. It
+			// clears a previous SSE-S3 record like a plain PutObject does.
+			// https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html
+			operation.overwrite = true
+			return operation
+		}
 	}
 	return operation
 }
@@ -846,8 +856,9 @@ func splitS3Path(path string) (string, string) {
 // AWS allows 1000 keys of up to 1024 bytes, a body of about 1.05 MiB, so a body
 // above the buffer is a valid request the v7.0.0 path carried to s3proxy. It is
 // replayed unchanged without being parsed, and its records are left for a later
-// plain write to clear; refusing it would add a failure the released runner did
-// not have.
+// clearing write (a plain PutObject, a plain CopyObject or a successful
+// CompleteMultipartUpload); refusing it would add a failure the released runner
+// did not have.
 //
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjects.html
 // https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-keys.html
