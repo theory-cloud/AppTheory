@@ -1977,13 +1977,16 @@ design (reporting AES256 over plaintext on a real disk would be a false claim),
 and current releases still refuse it on that store
 ([s3proxy limitations](https://github.com/gaul/s3proxy)). The front therefore:
 
-- accepts `AES256` on `PutObject`, strips the header before s3proxy sees it,
-  and records the object as SSE-S3 only after the put succeeds;
+- accepts `AES256` on a `PutObject` whose verified header-based SigV4
+  signature covers the header (below), strips the header before s3proxy sees
+  it, and records the object as SSE-S3 only after the put succeeds;
 - adds `x-amz-server-side-encryption: AES256` to the `PutObject` response;
 - answers `HeadObject` and `GetObject` with the same header for an object stored
   with it;
-- clears the record when the same key is overwritten by a put without the
-  header, and on `DeleteObject`, `DeleteObjects` and `DeleteBucket`.
+- clears the record when the same key is overwritten by a write that names no
+  algorithm (a `PutObject` without the header, a plain `CopyObject`, or a
+  successful `CompleteMultipartUpload`), and on `DeleteObject`, `DeleteObjects`
+  and `DeleteBucket`.
 
 The SSE header is part of the SDK's SigV4 signature, so the front re-signs the
 put after stripping it. S3's canonical URI is the URI-encoded path encoded
@@ -1998,13 +2001,33 @@ recomputes; encoding the escaped path a second time would turn `%3D` into
 
 The store never sees the caller's signature on this path: the stripped header
 was part of it. Before re-signing, the front therefore checks the caller's own
-header-based `SigV4` against the profile's static dummy credentials, so an SSE
-put signed with any other credentials is answered `403 SignatureDoesNotMatch`
-the way s3proxy answers it, instead of being re-signed as the runner identity.
-Only a header-signed request is verified; an unsigned or presigned SSE put is
-forwarded without re-signing and keeps the store's refusal (a presigned URL
-signs the header being stripped, and a Signature Version 2 request is refused
-because the front only re-signs Version 4).
+header-based `SigV4` against the profile's static dummy credentials, and it
+strips the header only when that signature verifies and its `SignedHeaders`
+names `x-amz-server-side-encryption`. Removing a signed header invalidates the
+caller's signature, and only a signature the local credentials vouch for may be
+replaced by the runner's own. Every other SSE put is forwarded unchanged, so
+the store answers it exactly as it did at v7.0.0:
+
+- an unsigned raw SSE put, and a presigned put whose URL signed the SSE header,
+  keep the store's `501 NotImplemented`: the filesystem store refuses the
+  header itself;
+- a presigned plain-PUT URL with the SSE header added at send time keeps the
+  store's `403 AccessDenied`, because the query string signs only the headers
+  listed in `X-Amz-SignedHeaders` and every `x-amz-*` header present in the
+  request must be signed
+  ([SigV4 query-string authentication](https://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-query-string-auth.html));
+- a header-signed put that adds the SSE header after signing keeps the store's
+  `403` for the same reason.
+
+A header-signed put whose `SignedHeaders` names the SSE header but whose
+signature does not verify against the profile's credentials is answered
+`403 SignatureDoesNotMatch` before the store sees it, because the front cannot
+re-sign it as the runner identity. The front also applies AWS's 15-minute
+window for a header-signed request, refusing an `X-Amz-Date` more than 15
+minutes from the local clock
+([SigV4 header-based authentication](https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html)).
+A Signature Version 2 or other non-SigV4 request has no header signature to
+verify, so its SSE put is forwarded unchanged like the cases above.
 
 With `--data-dir`, the record lives in `<dir>/s3sse/index.json` (mode `0600`)
 so it survives a restart; without the flag it is in memory.
@@ -2018,14 +2041,16 @@ against real AWS or a store that performs the encryption.
 
 **Documented local deviations.**
 
-- Only `PutObject` sets the record. A successful plain `CopyObject` clears the
-  destination's previous record, because the copy names no algorithm; an
-  `CopyObject` with an SSE header keeps the store's `501`, and multipart and
-  `POST` form uploads keep the store's behavior.
+- Only a verified header-signed `PutObject` sets the record. A successful plain
+  `CopyObject` or `CompleteMultipartUpload` clears the destination's previous
+  record, because neither names a new algorithm; a `CopyObject` with an SSE
+  header keeps the store's `501`, an SSE-headed `CreateMultipartUpload` keeps
+  it too, and a failed completion clears nothing.
 - A `DeleteObjects` body above 1 MiB is forwarded to the store unchanged, as
   the v7.0.0 path did, so its keys are not read and their SSE-S3 records are
-  left in place for a later write to clear. AWS allows 1000 keys of up to 1024
-  bytes, about 1.05 MiB of XML
+  left in place until a later clearing write (a plain `PutObject`, a plain
+  `CopyObject` or a successful `CompleteMultipartUpload`). AWS allows 1000 keys
+  of up to 1024 bytes, about 1.05 MiB of XML
   ([DeleteObjects](https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjects.html),
   [object key names](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-keys.html));
   refusing or truncating that shape would add a failure the released runner did
@@ -2035,20 +2060,20 @@ against real AWS or a store that performs the encryption.
   gets the store's own `500`, as it did before the front; the request still
   reaches it unchanged. The proving row uses 1024-byte keys split into short
   segments, which AWS allows and the store serves.
-- A `PutObject` with a streaming (`aws-chunked`) SigV4 payload cannot be
-  re-signed after the signed SSE header is stripped; the front refuses it with
-  a clear 400 rather than forwarding a broken signature. A normal SDK put (the
-  audit sink's and the proving row's form) is signed over the payload hash and
-  is accepted, including keys that need URI escaping (`=`, spaces, `+`, `%`,
-  unicode and `/` segments); the front signs the same once-encoded path it
-  forwards.
+- A verified header-signed `PutObject` with a streaming (`aws-chunked`) SigV4
+  payload cannot be re-signed after the signed SSE header is stripped; the
+  front refuses it with a clear 400 rather than forwarding a broken signature.
+  An unsigned or presigned streaming SSE put is forwarded unchanged. A normal
+  SDK put (the audit sink's and the proving row's form) is signed over the
+  payload hash and is accepted, including keys that need URI escaping (`=`,
+  spaces, `+`, `%`, unicode and `/` segments); the front signs the same
+  once-encoded path it forwards.
 - The re-signed put authenticates as the runner identity: the front verifies
   the caller's header-based `SigV4` against the profile's static dummy
-  credentials before stripping the SSE header and re-signing. A request signed
-  with other credentials gets `403 SignatureDoesNotMatch`. An unsigned or
-  presigned SSE put is forwarded without re-signing and keeps the store's
-  refusal, and a Signature Version 2 request is refused because only Version 4
-  can be re-signed.
+  credentials before stripping the SSE header and re-signing, and a request
+  signed with other credentials gets `403 SignatureDoesNotMatch`. Every SSE put
+  the front does not verify (unsigned, presigned, or with the header unsigned)
+  is forwarded unchanged and keeps the store's refusal.
 - The account-wide S3 default encryption (SSE-S3 applied to objects written
   without a header) is not modelled: an object reports `AES256` only when its
   put named it.

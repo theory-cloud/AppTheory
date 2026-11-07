@@ -296,7 +296,7 @@
       "run": "s3-sse",
       "class": "L2",
       "gap": "s3proxy's filesystem store refuses server-side encryption by design; the runner's S3 front records SSE-S3. SSE-KMS and SSE-C remain refused (the runner cannot honour a key binding or customer key). A DeleteObjects body above the front's 1 MiB record buffer is forwarded unchanged and its SSE-S3 records are left in place. Bucket policies and server-side notification hooks are not served by the store.",
-      "description": "SSE-S3 through the real SDK: the compiled Node handler put an object with x-amz-server-side-encryption: AES256 and the PutObject response reported AES256; HeadObject and GetObject through the same handler returned the SSE-S3 header and the stored body. One DeleteObjects request at AWS's maximum shape (1000 keys of 1024 bytes, about 1.05 MiB, above the front's buffer) was forwarded to s3proxy and deleted the object."
+      "description": "SSE-S3 through the real SDK: the compiled Node handler put an object with x-amz-server-side-encryption: AES256 and the PutObject response reported AES256; HeadObject and GetObject through the same handler returned the SSE-S3 header and the stored body. One DeleteObjects request at AWS's maximum shape (999 keys of 1024 bytes plus the short recorded key, about 1.05 MiB, above the front's buffer) was forwarded to s3proxy and deleted the object."
     },
     "examples/cdk/sqs-queue/scripts/data-dir-sqs.sh": {
       "run": "data-dir-sqs",

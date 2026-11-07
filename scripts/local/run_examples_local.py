@@ -3809,7 +3809,8 @@ def run_s3_sse(harness: Harness) -> str:
             "handler succeeded and reported AES256 for a key containing '=' and a space; the put was "
             "re-signed over the forwarded path and HeadObject and GetObject through the same handler "
             "returned the SSE-S3 header and the stored body; one DeleteObjects request with AWS's "
-            "maximum shape (1000 keys of 1024 bytes, about 1.05 MiB) was forwarded to s3proxy with "
+            "maximum shape (999 keys of 1024 bytes plus the short recorded key, about 1.05 MiB) was "
+            "forwarded to s3proxy with "
             "HTTP 200 and deleted the object, where a 1 MiB front cap would have answered 400"
         )
     finally:

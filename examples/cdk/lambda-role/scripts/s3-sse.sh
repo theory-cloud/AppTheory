@@ -1,7 +1,7 @@
 #!/bin/sh
 # Write and read one object with SSE-S3, then delete it with one DeleteObjects
-# request at AWS's maximum shape (1000 keys of 1024 bytes, about 1.05 MiB of
-# XML, above the runner's S3 front buffer). Run from the repository root; the
+# request at AWS's maximum shape (999 keys of 1024 bytes plus the short recorded
+# key, about 1.05 MiB of XML, above the runner's S3 front buffer). Run from the repository root; the
 # harness row runs a session and invokes the custom handler with sse=1, write,
 # then sse=1, read, then deleteBatch=1.
 #   sh examples/cdk/lambda-role/scripts/s3-sse.sh
