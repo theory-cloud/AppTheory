@@ -329,6 +329,17 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def create_tls_context(cafile: str | None = None) -> ssl.SSLContext:
+    """Build an HTTPS client context with a modern protocol floor.
+
+    The local runner serves TLS 1.2 or newer; setting the floor explicitly
+    keeps a client from negotiating an obsolete protocol.
+    """
+    context = ssl.create_default_context(cafile=cafile)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    return context
+
+
 def http_request(
     method: str,
     url: str,
@@ -2235,7 +2246,7 @@ class WebSocketClient:
         parsed = urllib.parse.urlsplit(url)
         self.sock = socket.create_connection((parsed.hostname, parsed.port), timeout=timeout)
         if parsed.scheme == "wss":
-            context = tls_context if tls_context is not None else ssl.create_default_context()
+            context = tls_context if tls_context is not None else create_tls_context()
             self.sock = context.wrap_socket(self.sock, server_hostname=parsed.hostname)
         self.sock.settimeout(timeout)
         key = base64.b64encode(os.urandom(16)).decode("ascii")
@@ -2322,7 +2333,7 @@ def _web_socket_api(session: LocalSession, lang: str) -> dict:
 
 
 def _management_request(api: dict, method: str, connection_id: str) -> tuple[int, bytes]:
-    context = ssl.create_default_context(cafile=api["managementCa"])
+    context = create_tls_context(api["managementCa"])
     request = urllib.request.Request(
         f"{api['managementEndpoint']}/@connections/{connection_id}", method=method
     )
@@ -7881,7 +7892,7 @@ def _tls_host(session: LocalSession) -> str:
 
 
 def _tls_context(session: LocalSession) -> ssl.SSLContext:
-    return ssl.create_default_context(cafile=_tls_ca(session))
+    return create_tls_context(_tls_ca(session))
 
 
 def _tls_served(session: LocalSession, api_class: str) -> str:
@@ -7979,6 +7990,7 @@ def _start_tls_idp(cert_path: str, key_path: str) -> tuple[http.server.Threading
 
     server = http.server.ThreadingHTTPServer(("0.0.0.0", 0), Handler)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(cert_path, key_path)
     server.socket = context.wrap_socket(server.socket, server_side=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -8035,7 +8047,7 @@ def run_local_tls_surfaces(harness: Harness) -> str:
         finally:
             client.close()
 
-        alpn = ssl.create_default_context(cafile=_tls_ca(session))
+        alpn = create_tls_context(_tls_ca(session))
         alpn.set_alpn_protocols(["h2", "http/1.1"])
         parsed = urlsplit(http_url)
         with socket.create_connection((parsed.hostname, parsed.port), timeout=10) as raw:
