@@ -44,6 +44,9 @@ type fakeS3Proxy struct {
 	// signedPaths records every forwarded request path that carried a
 	// signature, so a test can assert what the backend actually saw.
 	signedPaths []string
+	// lastDeleteBody is the body of the last DeleteObjects request the
+	// backend received, so a test can assert the front forwarded it whole.
+	lastDeleteBody []byte
 }
 
 func newFakeS3Proxy() *fakeS3Proxy {
@@ -117,6 +120,7 @@ func (f *fakeS3Proxy) ServeHTTP(writer http.ResponseWriter, request *http.Reques
 		writer.WriteHeader(http.StatusNoContent)
 	case request.Method == http.MethodPost && request.URL.Query().Has("delete"):
 		payload, _ := io.ReadAll(request.Body) //nolint:errcheck // fixture
+		f.lastDeleteBody = payload
 		var body struct {
 			Objects []struct {
 				Key string `xml:"Key"`
@@ -497,6 +501,64 @@ func TestS3FrontDeleteObjectsClearsTheRecord(t *testing.T) {
 	}
 	if head.ServerSideEncryption != "" {
 		t.Fatalf("a deleted key kept its AES256 record: %q", head.ServerSideEncryption)
+	}
+}
+
+// TestS3FrontDeleteObjectsForwardsBodiesAboveTheBuffer is the B1 proof: AWS
+// allows 1000 keys of up to 1024 bytes, a DeleteObjects body of about 1.05 MiB
+// that v7.0.0 carried straight to s3proxy. The front forwards it byte-identical
+// instead of answering 400, giving up only the best-effort SSE-S3 record clear.
+//
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjects.html
+// https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-keys.html
+func TestS3FrontDeleteObjectsForwardsBodiesAboveTheBuffer(t *testing.T) {
+	backend := newFakeS3Proxy()
+	front, server := newS3FrontForTest(t, "", backend)
+	client := s3ClientFor(t, server.URL)
+	ctx := context.Background()
+	const bucket = "bucket"
+	staleKey := "stale-object"
+	if _, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(bucket), Key: aws.String(staleKey), Body: strings.NewReader("x"),
+		ServerSideEncryption: s3types.ServerSideEncryptionAes256,
+	}); err != nil {
+		t.Fatalf("put with SSE-S3: %v", err)
+	}
+	if !front.index.has(bucket, staleKey) {
+		t.Fatal("the SSE-S3 record was not set")
+	}
+	objects := make([]s3types.ObjectIdentifier, 0, 1000)
+	objects = append(objects, s3types.ObjectIdentifier{Key: aws.String(staleKey)})
+	for index := 1; index < 1000; index++ {
+		objects = append(objects, s3types.ObjectIdentifier{
+			Key: aws.String(fmt.Sprintf("%s%08d", strings.Repeat("k", 1016), index)),
+		})
+	}
+	if _, err := client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+		Bucket: aws.String(bucket), Delete: &s3types.Delete{Objects: objects},
+	}); err != nil {
+		t.Fatalf("DeleteObjects with 1000 keys of 1024 bytes: %v", err)
+	}
+	backend.mu.Lock()
+	received := append([]byte(nil), backend.lastDeleteBody...)
+	backend.mu.Unlock()
+	if len(received) <= s3FrontMaxBody {
+		t.Fatalf("the backend received %d bytes, want the over-buffer body", len(received))
+	}
+	var sent struct {
+		Objects []struct {
+			Key string `xml:"Key"`
+		} `xml:"Object"`
+	}
+	if err := xml.Unmarshal(received, &sent); err != nil {
+		t.Fatalf("the forwarded DeleteObjects body is not whole: %v", err)
+	}
+	if len(sent.Objects) != 1000 || sent.Objects[0].Key != staleKey || len(sent.Objects[999].Key) != 1024 {
+		t.Fatalf("forwarded %d keys, first %q, last of length %d",
+			len(sent.Objects), sent.Objects[0].Key, len(sent.Objects[999].Key))
+	}
+	if !front.index.has(bucket, staleKey) {
+		t.Fatal("the front parsed an over-buffer body; the record clear is documented best-effort")
 	}
 }
 

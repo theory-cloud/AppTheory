@@ -59,9 +59,13 @@ const (
 	s3SSECAlgorithm      = "x-amz-server-side-encryption-customer-algorithm"
 	s3SSECKey            = "x-amz-server-side-encryption-customer-key"
 	s3SSECKeyMD5         = "x-amz-server-side-encryption-customer-key-md5"
-	s3FrontMaxBody       = 1 << 20
-	s3FrontIndexFile     = "index.json"
-	s3FrontMaxFlush      = 100 * time.Millisecond
+	// s3FrontMaxBody is the largest request body the front buffers: a
+	// DeleteObjects body it parses for SSE-S3 records, or a PutObject body it
+	// must hash to re-sign. A DeleteObjects body above it is streamed through
+	// unchanged, as the v7.0.0 path did.
+	s3FrontMaxBody   = 1 << 20
+	s3FrontIndexFile = "index.json"
+	s3FrontMaxFlush  = 100 * time.Millisecond
 )
 
 // s3SSEIndex records which objects the front stored with SSE-S3.
@@ -290,11 +294,14 @@ func (f *s3Front) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		proxyRequest = clone
 	}
 	if operation.deleteObjects {
-		proxy, keys, err := bufferDeleteObjects(request)
+		proxy, keys, parsed, err := bufferDeleteObjects(request)
 		if err != nil {
 			f.logf("local S3 front: %v", err)
 			http.Error(writer, err.Error(), http.StatusBadRequest)
 			return
+		}
+		if !parsed {
+			f.logf("local S3 front: the DeleteObjects body is larger than %d bytes; it is forwarded unchanged and its SSE-S3 records are left in place", s3FrontMaxBody)
 		}
 		proxyRequest = proxy
 		operation.removeKeys = keys
@@ -502,22 +509,36 @@ func splitS3Path(path string) (string, string) {
 	return bucket, key
 }
 
-// bufferDeleteObjects reads a DeleteObjects body once, preserves it for the
-// upstream request, and returns the keys it names. SigV4 signed the unchanged
-// payload, so the forwarded body stays byte-identical.
-func bufferDeleteObjects(request *http.Request) (*http.Request, []string, error) {
+// bufferDeleteObjects preserves a DeleteObjects body for the upstream request
+// and, when the body fits the front's buffer, returns the keys it names so the
+// SSE-S3 records can be cleared. The forwarded body is always byte-identical:
+// SigV4 signed the unchanged payload.
+//
+// AWS allows 1000 keys of up to 1024 bytes, a body of about 1.05 MiB, so a body
+// above the buffer is a valid request the v7.0.0 path carried to s3proxy. It is
+// replayed unchanged without being parsed, and its records are left for a later
+// plain write to clear; refusing it would add a failure the released runner did
+// not have.
+//
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjects.html
+// https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-keys.html
+func bufferDeleteObjects(request *http.Request) (*http.Request, []string, bool, error) {
 	if request.Body == nil {
-		return request, nil, nil
+		return request, nil, true, nil
 	}
-	payload, err := io.ReadAll(io.LimitReader(request.Body, s3FrontMaxBody))
+	payload, err := io.ReadAll(io.LimitReader(request.Body, s3FrontMaxBody+1))
 	if err != nil {
-		return nil, nil, fmt.Errorf("read the DeleteObjects body: %w", err)
+		return nil, nil, false, fmt.Errorf("read the DeleteObjects body: %w", err)
 	}
-	if len(payload) >= s3FrontMaxBody {
-		return nil, nil, fmt.Errorf("the DeleteObjects body is too large for the local S3 front")
+	clone := request.Clone(request.Context())
+	if len(payload) > s3FrontMaxBody {
+		clone.Body = &s3ReplayBody{
+			Reader: io.MultiReader(bytes.NewReader(payload), request.Body),
+			closer: request.Body,
+		}
+		return clone, nil, false, nil
 	}
 	_ = request.Body.Close() //nolint:errcheck // the body is already read
-	clone := request.Clone(request.Context())
 	clone.Body = io.NopCloser(bytes.NewReader(payload))
 	clone.ContentLength = int64(len(payload))
 	var body struct {
@@ -533,8 +554,18 @@ func bufferDeleteObjects(request *http.Request) (*http.Request, []string, error)
 			}
 		}
 	}
-	return clone, keys, nil
+	return clone, keys, true, nil
 }
+
+// s3ReplayBody replays the bytes the front read before deciding a body was too
+// large to parse, then streams the rest unchanged; Close releases the original
+// request body.
+type s3ReplayBody struct {
+	io.Reader
+	closer io.Closer
+}
+
+func (b *s3ReplayBody) Close() error { return b.closer.Close() }
 
 // startS3Front starts the front when the run's S3 endpoint is the profile's
 // s3proxy container. A caller-supplied --endpoint s3=... is left alone.

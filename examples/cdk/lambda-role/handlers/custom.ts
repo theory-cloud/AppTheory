@@ -1,4 +1,4 @@
-import { S3Client, GetObjectCommand, HeadObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import { DeleteObjectsCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
 import { SSMClient, GetParameterCommand } from "@aws-sdk/client-ssm";
 
@@ -38,6 +38,43 @@ export async function handler(event: unknown): Promise<{ statusCode: number; bod
     // A deterministic key/value mode for the local --data-dir row: one run
     // writes an object through this handler, a second run reads it back.
     const query = ((event as { queryStringParameters?: Record<string, string> } | null)?.queryStringParameters ?? {});
+    // deleteBatch=1 sends one DeleteObjects request with AWS's maximum of 1000
+    // keys, each at the maximum key length of 1024 bytes, so the serialized body
+    // is about 1.05 MiB: above the runner's S3 front buffer and a shape v7.0.0
+    // forwarded to s3proxy. It proves the front still carries it.
+    // https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjects.html
+    // https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-keys.html
+    if (query.deleteBatch === "1") {
+        const objects = Array.from({ length: 1000 }, (_, index) => ({
+            Key: index === 0 ? (query.key ?? "batch/object") : `${"k".repeat(1016)}${String(index).padStart(8, "0")}`,
+        }));
+        try {
+            const deleted = await s3.send(
+                new DeleteObjectsCommand({
+                    Bucket: bucketName,
+                    Delete: { Objects: objects },
+                }),
+            );
+            return {
+                statusCode: 200,
+                body: JSON.stringify({
+                    deleteBatch: {
+                        requested: objects.length,
+                        deleted: deleted.Deleted?.length ?? 0,
+                        errors: deleted.Errors?.length ?? 0,
+                    },
+                }),
+            };
+        } catch (error) {
+            return {
+                statusCode: 500,
+                body: JSON.stringify({
+                    deleteBatch: { requested: objects.length },
+                    error: error instanceof Error ? error.message : String(error),
+                }),
+            };
+        }
+    }
     if (query.key && (query.read === "1" || query.write === "1")) {
         // sse=1 writes and reads the object with SSE-S3 (AES256), the form the
         // runner's S3 front serves because s3proxy's filesystem store refuses

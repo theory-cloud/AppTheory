@@ -3784,11 +3784,33 @@ def run_s3_sse(harness: Harness) -> str:
             or read_object.get("getServerSideEncryption") != "AES256"
         ):
             raise HarnessFailure(f"s3-sse read: unexpected result: {read}")
+        # AWS allows a DeleteObjects request with 1000 keys of up to 1024 bytes,
+        # about 1.05 MiB of XML. That body is above the front's record-parsing
+        # buffer and v7.0.0 carried it straight to s3proxy, so the front must
+        # forward it instead of answering 400.
+        # https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjects.html
+        # https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-keys.html
+        batch = session.invoke(function["logicalId"], {
+            "queryStringParameters": {"key": key, "deleteBatch": "1"},
+        })
+        if batch.get("statusCode") != 200:
+            raise HarnessFailure(f"s3-sse delete batch: unexpected result: {batch}")
+        batch_body = _proxy_body(batch, "s3-sse delete batch")
+        batch_result = batch_body.get("deleteBatch") or {}
+        if batch_result.get("requested") != 1000 or batch_result.get("error"):
+            raise HarnessFailure(f"s3-sse delete batch: {batch}")
+        gone = session.invoke(function["logicalId"], {
+            "queryStringParameters": {"key": key, "read": "1", "sse": "1"},
+        })
+        if gone.get("statusCode") != 404:
+            raise HarnessFailure(f"s3-sse delete batch: the object survived: {gone}")
         return (
             "a real SDK PutObject with x-amz-server-side-encryption: AES256 through the compiled Node "
             "handler succeeded and reported AES256 for a key containing '=' and a space; the put was "
             "re-signed over the forwarded path and HeadObject and GetObject through the same handler "
-            "returned the SSE-S3 header and the stored body"
+            "returned the SSE-S3 header and the stored body; one DeleteObjects request with AWS's "
+            "maximum shape (1000 keys of 1024 bytes, about 1.05 MiB) was forwarded to s3proxy with "
+            "HTTP 200 and deleted the object, where a 1 MiB front cap would have answered 400"
         )
     finally:
         stop_local_session(harness, session)

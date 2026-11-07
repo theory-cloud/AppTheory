@@ -1992,6 +1992,14 @@ against real AWS or a store that performs the encryption.
 
 - Only `PutObject` applies the record. `CopyObject`, multipart uploads and
   `POST` form uploads keep s3proxy's behavior and refuse an SSE header.
+- A `DeleteObjects` body above 1 MiB is forwarded to the store unchanged, as
+  the v7.0.0 path did, so its keys are not read and their SSE-S3 records are
+  left in place for a later write to clear. AWS allows 1000 keys of up to 1024
+  bytes, about 1.05 MiB of XML
+  ([DeleteObjects](https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjects.html),
+  [object key names](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-keys.html));
+  refusing or truncating that shape would add a failure the released runner did
+  not have.
 - A `PutObject` with a streaming (`aws-chunked`) SigV4 payload cannot be
   re-signed after the signed SSE header is stripped; the front refuses it with
   a clear 400 rather than forwarding a broken signature. A normal SDK put (the

@@ -81,21 +81,47 @@ func TestKMSFrontReEncryptForwarding(t *testing.T) {
 	}
 }
 
-// TestS3FrontBodyTooLarge covers the DeleteObjects body limit.
-func TestS3FrontBodyTooLarge(t *testing.T) {
-	backend := newFakeS3Proxy()
-	upstream := httptest.NewServer(backend)
-	defer upstream.Close()
-	front, err := newS3Front("", upstream.URL, func(string, ...any) {})
-	if err != nil {
-		t.Fatalf("new front: %v", err)
-	}
-	body := bytes.Repeat([]byte("x"), s3FrontMaxBody)
-	request := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "http://front/bucket?delete", bytes.NewReader(body))
-	recorder := httptest.NewRecorder()
-	front.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("oversized DeleteObjects status %d", recorder.Code)
+// TestS3FrontDeleteObjectsBufferBoundary pins the buffer boundary: a body that
+// fits is parsed and its SSE-S3 record cleared; one byte more is forwarded
+// unchanged, because the v7.0.0 path accepted any body s3proxy accepted.
+func TestS3FrontDeleteObjectsBufferBoundary(t *testing.T) {
+	const (
+		bucket = "bucket"
+		key    = "at-the-boundary"
+	)
+	xmlBody := []byte(`<?xml version="1.0" encoding="UTF-8"?><Delete><Object><Key>` + key + `</Key></Object></Delete>`)
+	for name, size := range map[string]int{
+		"exactly the buffer": s3FrontMaxBody,
+		"one byte above":     s3FrontMaxBody + 1,
+	} {
+		t.Run(name, func(t *testing.T) {
+			backend := newFakeS3Proxy()
+			front, server := newS3FrontForTest(t, "", backend)
+			if err := front.index.set(bucket, key); err != nil {
+				t.Fatalf("set the SSE-S3 record: %v", err)
+			}
+			body := append([]byte(nil), xmlBody...)
+			body = append(body, bytes.Repeat([]byte(" "), size-len(body))...)
+			request := httptest.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/"+bucket+"?delete", bytes.NewReader(body))
+			request.RequestURI = ""
+			response, err := http.DefaultClient.Do(request)
+			if err != nil {
+				t.Fatalf("DeleteObjects: %v", err)
+			}
+			defer func() { _ = response.Body.Close() }() //nolint:errcheck // fixture
+			if response.StatusCode != http.StatusOK {
+				t.Fatalf("a %d-byte DeleteObjects body got status %d", size, response.StatusCode)
+			}
+			backend.mu.Lock()
+			received := len(backend.lastDeleteBody)
+			backend.mu.Unlock()
+			if received != size {
+				t.Fatalf("the backend received %d bytes, want %d", received, size)
+			}
+			if cleared := !front.index.has(bucket, key); cleared != (size == s3FrontMaxBody) {
+				t.Fatalf("cleared=%v for a %d-byte body", cleared, size)
+			}
+		})
 	}
 }
 
