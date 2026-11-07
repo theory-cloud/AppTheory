@@ -127,10 +127,11 @@ def build_app():
 
     def event_time_handler(ctx):
         # The harness supplies an instant as whole seconds and nanoseconds so
-        # the real SDK carries the Time and the rule delivers it back. boto3's
-        # JSON serializer sends whole epoch seconds. boto3 is imported lazily:
-        # the Lambda Python image provides it, and a host-side handler test
-        # imports this module without it.
+        # the real SDK carries the Time and the rule delivers it back. The
+        # pinned Lambda image's botocore 1.42.97 sends a timestamp as whole
+        # epoch seconds; botocore 1.43.124 on a developer host sends the
+        # fraction. boto3 is imported lazily: the Lambda Python image provides
+        # it, and a host-side handler test imports this module without it.
         import boto3  # noqa: PLC0415
 
         seconds = int(ctx.param("seconds"))

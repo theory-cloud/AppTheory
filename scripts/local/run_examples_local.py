@@ -4518,9 +4518,10 @@ def _run_multilang_eventbridge(
         timeout=120,
     )
     # aws-sdk-go-v2 keeps nanoseconds and the AWS SDK for JavaScript v3 keeps
-    # milliseconds; botocore's JSON timestamp serializer sends whole epoch
-    # seconds (botocore 1.42.97: 1794068000), so the boto3 leg carries the
-    # second only.
+    # milliseconds. The pinned Python 3.14 Lambda image's botocore 1.42.97
+    # sends a timestamp as whole epoch seconds, so the boto3 leg carries the
+    # second only; botocore 1.43.124 on a developer host sends the fraction
+    # (.125Z). The assertion follows the pinned image.
     expected_time = "2026-11-07T16:13:20.125Z" if lang != "py" else "2026-11-07T16:13:20Z"
     if sdk_delivered.get("time") != expected_time:
         raise HarnessFailure(

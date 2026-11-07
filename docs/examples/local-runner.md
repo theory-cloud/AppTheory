@@ -2135,6 +2135,11 @@ precision per form:
 - the run clock (an omitted, empty or `null` `Time`) keeps v7.0.0's
   whole-second output.
 
+Timestamp serialization is SDK-version dependent: botocore 1.42.97 in the
+pinned Python 3.14 Lambda image sends a numeric `Time` as whole epoch seconds,
+while botocore 1.43.124 on a developer host sends the fraction. Both are the
+numeric form above, and the endpoint keeps whatever it receives.
+
 An entry whose `Time` is a value the runner cannot read fails that entry, not
 the request. See
 [PutEventsRequestEntry.Time](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutEventsRequestEntry.html)
