@@ -4500,10 +4500,39 @@ def _run_multilang_eventbridge(
         # AWS; keep the rule identity in the message only if the runtime exposes
         # it. The plan lookup above already proves the rule exists.
         pass
+    # The handler itself calls PutEvents through its real SDK with a fractional
+    # Time; the pattern rule delivers the event back and the handler records
+    # the documented envelope.
+    sdk_seconds, sdk_nanos = 1794068000, 125000000
+    status, payload, _ = _json_request(
+        "POST", f"{http_base}/event-time/{sdk_seconds}/{sdk_nanos}"
+    )
+    expect_status(status, 200, f"multilang {lang} SDK PutEvents", json.dumps(payload))
+    if payload.get("failed") != 0 or not payload.get("event_id"):
+        raise HarnessFailure(f"multilang {lang}: the handler's PutEvents failed: {payload}")
+    sdk_delivered = _wait_for_eventbridge_record(
+        http_base,
+        lambda record: record.get("kind") == "rule"
+        and (record.get("detail") or {}).get("item") == f"{lang}-sdk-time",
+        label=f"multilang {lang} SDK PutEvents rule",
+        timeout=120,
+    )
+    # aws-sdk-go-v2 keeps nanoseconds and the AWS SDK for JavaScript v3 keeps
+    # milliseconds; botocore's JSON timestamp serializer sends whole epoch
+    # seconds (botocore 1.42.97: 1794068000), so the boto3 leg carries the
+    # second only.
+    expected_time = "2026-11-07T16:13:20.125Z" if lang != "py" else "2026-11-07T16:13:20Z"
+    if sdk_delivered.get("time") != expected_time:
+        raise HarnessFailure(
+            f"multilang {lang}: the delivered envelope time {sdk_delivered.get('time')!r} "
+            f"!= the instant the SDK sent {expected_time}"
+        )
+    supplied = f"{sdk_seconds}.{sdk_nanos:09d}" if lang != "py" else str(sdk_seconds)
     return (
         "the rate(5 minute) schedule fired on the test clock and delivered the documented Scheduled Event "
         "with the CDK rule ARN, and a real SDK PutEvents reached the pattern rule's handler with its source, "
-        "detail-type and detail"
+        "detail-type and detail; the handler's own real SDK PutEvents with Time "
+        f"{supplied} reached the rule and the delivered envelope time was {expected_time}"
     )
 
 

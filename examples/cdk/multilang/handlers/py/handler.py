@@ -1,3 +1,4 @@
+import datetime
 import json as jsonlib
 import os
 
@@ -124,6 +125,38 @@ def build_app():
     def eventbridge_records_handler(_ctx):
         return json(200, {"records": list(eventbridge_records)})
 
+    def event_time_handler(ctx):
+        # The harness supplies an instant as whole seconds and nanoseconds so
+        # the real SDK call carries a fractional Time and the rule delivers it
+        # back. boto3 is imported lazily: the Lambda Python image provides it,
+        # and a host-side handler test imports this module without it.
+        import boto3  # noqa: PLC0415
+
+        seconds = int(ctx.param("seconds"))
+        nanos = int(ctx.param("nanos"))
+        instant = datetime.datetime.fromtimestamp(
+            seconds + nanos / 1_000_000_000, tz=datetime.timezone.utc
+        )
+        output = boto3.client("events").put_events(
+            Entries=[
+                {
+                    "Source": event_source,
+                    "DetailType": event_detail_type,
+                    "Detail": jsonlib.dumps({"item": f"{lang}-sdk-time"}),
+                    "Time": instant,
+                }
+            ]
+        )
+        entry = (output.get("Entries") or [{}])[0]
+        return json(
+            200,
+            {
+                "event_id": entry.get("EventId", ""),
+                "failed": output.get("FailedEntryCount", 0),
+                "time": instant.isoformat(),
+            },
+        )
+
     app.event_bridge(
         event_bridge_pattern(event_source, event_detail_type), eventbridge_rule_handler
     )
@@ -133,6 +166,7 @@ def build_app():
     app.dynamodb(table_name, dynamodb_handler)
     app.get("/stream-records", stream_records_handler)
     app.get("/eventbridge-records", eventbridge_records_handler)
+    app.post("/event-time/{seconds}/{nanos}", event_time_handler)
 
     sns_topic_name = os.getenv("APPTHEORY_DEMO_SNS_NAME", "")
     sns_state = {"record": None}

@@ -5,13 +5,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/apigatewaymanagementapi"
+	"github.com/aws/aws-sdk-go-v2/service/eventbridge"
+	eventbridgetypes "github.com/aws/aws-sdk-go-v2/service/eventbridge/types"
 
 	apptheory "github.com/theory-cloud/apptheory/v7/runtime"
 )
@@ -352,6 +356,47 @@ func buildApp() *apptheory.App {
 		eventBridgeMu.Lock()
 		defer eventBridgeMu.Unlock()
 		return apptheory.MustJSON(200, map[string]any{"records": append([]map[string]any(nil), eventBridgeRecords...)}), nil
+	})
+	// The harness supplies an instant as whole seconds and nanoseconds so the
+	// real SDK call carries a fractional Time and the rule delivers it back.
+	app.Post("/event-time/{seconds}/{nanos}", func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		seconds, err := strconv.ParseInt(ctx.Param("seconds"), 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("seconds: %w", err)
+		}
+		nanos, err := strconv.ParseInt(ctx.Param("nanos"), 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("nanos: %w", err)
+		}
+		instant := time.Unix(seconds, nanos).UTC()
+		detail, err := json.Marshal(map[string]string{"item": lang + "-sdk-time"})
+		if err != nil {
+			return nil, err
+		}
+		cfg, err := awsconfig.LoadDefaultConfig(ctx.Context())
+		if err != nil {
+			return nil, err
+		}
+		output, err := eventbridge.NewFromConfig(cfg).PutEvents(ctx.Context(), &eventbridge.PutEventsInput{
+			Entries: []eventbridgetypes.PutEventsRequestEntry{{
+				Source:     aws.String(eventSource),
+				DetailType: aws.String(eventDetailType),
+				Detail:     aws.String(string(detail)),
+				Time:       &instant,
+			}},
+		})
+		if err != nil {
+			return nil, err
+		}
+		eventID := ""
+		if len(output.Entries) > 0 {
+			eventID = aws.ToString(output.Entries[0].EventId)
+		}
+		return apptheory.MustJSON(200, map[string]any{
+			"event_id": eventID,
+			"failed":   output.FailedEntryCount,
+			"time":     instant.Format(time.RFC3339Nano),
+		}), nil
 	})
 
 	snsTopicName := os.Getenv("APPTHEORY_DEMO_SNS_NAME")

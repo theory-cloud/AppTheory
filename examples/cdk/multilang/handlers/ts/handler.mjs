@@ -144,6 +144,38 @@ app.get("/stream-records", () => json(200, { records: streamRecords.slice() }));
 
 app.get("/eventbridge-records", () => json(200, { records: eventBridgeRecords.slice() }));
 
+// The harness supplies an instant as whole seconds and nanoseconds so the real
+// SDK call carries a fractional Time and the rule delivers it back. The Lambda
+// Node.js runtime ships the AWS SDK v3 on NODE_PATH; the lazy import keeps the
+// host-side handler test free of the package.
+app.post("/event-time/{seconds}/{nanos}", async (ctx) => {
+  const { EventBridgeClient, PutEventsCommand } = await import("@aws-sdk/client-eventbridge");
+  const seconds = Number(ctx.param("seconds"));
+  const nanos = Number(ctx.param("nanos"));
+  if (!Number.isFinite(seconds) || !Number.isFinite(nanos)) {
+    return json(400, { error: "seconds and nanos must be numbers" });
+  }
+  const instant = new Date(seconds * 1000 + Math.floor(nanos / 1e6));
+  const output = await new EventBridgeClient({}).send(
+    new PutEventsCommand({
+      Entries: [
+        {
+          Source: eventSource,
+          DetailType: eventDetailType,
+          Detail: JSON.stringify({ item: `${lang}-sdk-time` }),
+          Time: instant,
+        },
+      ],
+    }),
+  );
+  return json(200, {
+    event_id: output.Entries?.[0]?.EventId ?? "",
+    failed: output.FailedEntryCount ?? 0,
+    time: instant.toISOString(),
+  });
+});
+
+
 app.sns(snsTopicName, (_ctx, record) => {
   lastSNSRecord = recordSNSEvent(record);
   return lastSNSRecord;
