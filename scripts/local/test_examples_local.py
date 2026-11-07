@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
 """Self-tests for the AppTheory local examples harness.
 
-These run before every ``make examples-local``. They pin the discovery
+They run before every ``make examples-local``. They pin the discovery
 conventions against the real tree and prove manifest validation fails closed
 when an entrypoint is unclassified, when a row names a file that does not
 exist, and when the local profile drifts onto a reserved port.
 
-They never touch Docker: every case is either pure validation over the real
-tree or a throwaway tree under the system temp directory.
+Every case is pure validation over the real tree or a throwaway tree under the
+system temp directory, except ``DockerImageStoreTests``: it reads the image
+store of a local daemon, skips when none answers, and removes what it builds.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -32,6 +35,49 @@ def write(root: Path, relative: str, content: str = "") -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     return path
+
+
+FIDELITY_CLASSES = ("L1", "L2", "L3", "I")
+
+
+def fidelity_table_errors(document: str, entries: list[harness.Entry]) -> list[str]:
+    """Check the fidelity table against the manifest, row by row.
+
+    Every classified entrypoint must appear exactly once in the table, under the
+    class the manifest gives it. The table is the document a developer trusts for
+    a row's class, so a missing, duplicated or misclassified row is an error.
+    """
+    stated: dict[str, list[str]] = {}
+    in_table = False
+    for line in document.splitlines():
+        if line.startswith("### ") and "rows" in line:
+            in_table = True
+            continue
+        if line.startswith("## ") or (line.startswith("### ") and "rows" not in line):
+            in_table = False
+            continue
+        if not in_table or not line.startswith("| `"):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) < 2 or cells[1] not in FIDELITY_CLASSES:
+            continue
+        for path in re.findall(r"`([^`]+)`", cells[0]):
+            stated.setdefault(path, []).append(cells[1])
+
+    errors = []
+    for entry in entries:
+        if entry.kind != "entrypoint" or not entry.class_name:
+            continue
+        classes = stated.get(entry.key, [])
+        if not classes:
+            errors.append(f"{entry.key}: missing from the fidelity table")
+        elif len(classes) > 1:
+            errors.append(f"{entry.key}: listed {len(classes)} times ({', '.join(classes)})")
+        elif classes[0] != entry.class_name:
+            errors.append(
+                f"{entry.key}: listed as {classes[0]}, but the manifest class is {entry.class_name}"
+            )
+    return errors
 
 
 class RealTreeTests(unittest.TestCase):
@@ -79,6 +125,30 @@ class RealTreeTests(unittest.TestCase):
                     f"{path}: the row must state class {klass}: {stated!r}",
                 )
 
+    def test_fidelity_table_matches_the_manifest(self) -> None:
+        _, entries = harness.load_manifest(harness.MANIFEST_PATH)
+        document = (harness.ROOT / "docs" / "examples" / "local-harness.md").read_text(encoding="utf-8")
+        self.assertEqual([], fidelity_table_errors(document, entries))
+
+    def test_fidelity_table_checker_fails_closed(self) -> None:
+        entry = harness.Entry(key="examples/a/main.go", kind="entrypoint", data={"class": "L2", "run": "row"})
+        misclassified = "### L1 rows\n\n| `examples/a/main.go` | L1 | proof | — |\n"
+        self.assertEqual(
+            ["examples/a/main.go: listed as L1, but the manifest class is L2"],
+            fidelity_table_errors(misclassified, [entry]),
+        )
+        missing = fidelity_table_errors("### L1 rows\n\n", [entry])
+        self.assertEqual(["examples/a/main.go: missing from the fidelity table"], missing)
+        duplicated = (
+            "### L2 rows\n\n"
+            "| `examples/a/main.go` | L2 | proof | — |\n"
+            "| `examples/a/main.go` | L2 | proof | — |\n"
+        )
+        self.assertEqual(
+            ["examples/a/main.go: listed 2 times (L2, L2)"],
+            fidelity_table_errors(duplicated, [entry]),
+        )
+
     def test_documented_exclusions_hold_in_the_real_tree(self) -> None:
         discovered = harness.discover(harness.ROOT)
         self.assertIn("examples/cdk/hello-world/bin/apptheory-hello-world.ts", discovered)
@@ -106,8 +176,9 @@ class RealTreeTests(unittest.TestCase):
         # sqs-event-targets row with its publisher, the covered Kinesis log tap
         # and rule target handlers, the wave-2 E4 S3 consumer, R1 WebSocket
         # authorizer, R2a authorizer echo, R2b policy authorizer and R4
-        # lambda-packaging rows, and the R3a Runtime API conformance suite.
-        self.assertEqual(96, len(classified))
+        # lambda-packaging rows, the R3a Runtime API conformance suite and the
+        # AD1 two-edit watch row.
+        self.assertEqual(97, len(classified))
         by_key = {entry.key: entry for entry in entries}
         expected = {
             "examples/cdk/ssr-site/bin/apptheory-ssr-site.ts": "ssr-site-gateway",
@@ -450,6 +521,94 @@ class AwsCLIRequirementTests(unittest.TestCase):
         with mock.patch.object(harness.shutil, "which", return_value="/opt/homebrew/bin/aws"):
             with mock.patch.object(harness.subprocess, "run", return_value=working):
                 self.assertEqual("/opt/homebrew/bin/aws", harness.require_aws_cli())
+
+
+class DockerImageStoreTests(unittest.TestCase):
+    """Report the daemon's image-reference shape, which the watch cleanup's
+    digest rule depends on.
+
+    ``internal/localrunner/watch.go`` removes a rebuilt image only while no
+    foreign tag, foreign digest or container names it. A daemon using the
+    containerd image store records a digest for each repository its tags name,
+    so a locally built image carries one even when nothing outside the run
+    references it; that digest must leave with its tag, or a rollback could not
+    remove the rebuild. This case prints what the daemon reports, so the CI log
+    records the store the harness ran against, and requires the tag-move
+    invariant. It skips when no daemon answers, so a machine without Docker
+    still runs the self-tests.
+    """
+
+    REFERENCE_FORMAT = "{{json .RepoTags}} {{json .RepoDigests}}"
+
+    def test_a_built_digest_is_derived_from_its_tag_and_leaves_with_it(self) -> None:
+        if shutil.which("docker") is None:
+            self.skipTest("docker is not installed")
+        probe = subprocess.run(
+            ["docker", "info", "--format", "{{.Driver}}"], capture_output=True, text=True, check=False
+        )
+        if probe.returncode != 0:
+            self.skipTest(f"no docker daemon: {probe.stderr.strip()}")
+
+        def docker(*args: str) -> str:
+            result = subprocess.run(["docker", *args], capture_output=True, text=True, check=False)
+            if result.returncode != 0:
+                self.fail(f"docker {' '.join(args)}: {result.stderr.strip()}")
+            return result.stdout
+
+        def references(reference: str) -> tuple[list[str], list[str]]:
+            raw = docker("image", "inspect", "--format", self.REFERENCE_FORMAT, reference)
+            decoder = json.JSONDecoder()
+            tags, offset = decoder.raw_decode(raw)
+            digests, _ = decoder.raw_decode(raw[offset:].lstrip())
+            return tags, digests
+
+        version = subprocess.run(
+            ["docker", "version", "--format", "client {{.Client.Version}} server {{.Server.Version}}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout.strip()
+        prefix = f"apptheory-local-imagerefs-{os.getpid()}"
+        old_tag, new_tag = f"{prefix}-old", f"{prefix}-new"
+        scratch = Path(tempfile.mkdtemp(prefix="apptheory-local-imagerefs-"))
+        old_id = new_id = ""
+        try:
+            for tag, revision in ((old_tag, "old"), (new_tag, "new")):
+                dockerfile = scratch / f"{revision}.Dockerfile"
+                dockerfile.write_text(
+                    f"FROM scratch\nLABEL apptheory.local.imagerefs={revision}\n", encoding="utf-8"
+                )
+                docker("build", "-q", "-t", tag, "-f", str(dockerfile), str(scratch))
+            old_id = docker("image", "inspect", "--format", "{{.Id}}", old_tag).strip()
+            new_id = docker("image", "inspect", "--format", "{{.Id}}", new_tag).strip()
+            tags, digests = references(new_tag)
+            print(
+                f"docker: {version}; store {probe.stdout.strip()}; "
+                f"built {new_tag} -> tags {tags} digests {digests}"
+            )
+            self.assertEqual([f"{new_tag}:latest"], tags)
+            repositories = {tag.rsplit(":", 1)[0] for tag in tags}
+            for digest in digests:
+                self.assertIn(
+                    digest.split("@", 1)[0],
+                    repositories,
+                    f"digest {digest} was not derived from a tag on the image",
+                )
+            docker("tag", old_id, new_tag)
+            moved_tags, moved_digests = references(new_id)
+            print(
+                f"docker: after moving {new_tag} back to {old_id}, the rebuilt image "
+                f"reports tags {moved_tags} digests {moved_digests}"
+            )
+            self.assertEqual([], moved_tags)
+            self.assertEqual([], moved_digests)
+        finally:
+            for reference in (old_tag, new_tag, new_id, old_id):
+                if reference:
+                    subprocess.run(
+                        ["docker", "image", "rm", "-f", reference], capture_output=True, text=True, check=False
+                    )
+            shutil.rmtree(scratch, ignore_errors=True)
 
 
 if __name__ == "__main__":

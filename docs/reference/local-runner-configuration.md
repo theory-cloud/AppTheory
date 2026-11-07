@@ -39,7 +39,7 @@ function the CDK definition targets and reads one JSON command per line.
 | `--add-host name=address` | none | Extra `/etc/hosts` entry inside function containers. Repeatable. |
 | `--backend NAME` | none | Start a profile emulator on the run network: `dynamodb`, `sqs`, or a profile container such as `moto` (KMS, STS, SSM, Secrets Manager, SNS, Kinesis, Cognito) or `s3proxy` (S3). Repeatable. |
 | `--port-base N` | ephemeral | Bind the API listeners at `N`, `N+1`, …; `0` asks the OS for free ports. |
-| `--name-prefix PREFIX` | derived from the app hash | Container, network and built-image names. Two concurrent runs of the same app share the default prefix (and an image tag), so set a unique prefix when they must not collide. |
+| `--name-prefix PREFIX` | derived from the app hash | Container and network names. Two concurrent runs of the same app share the default prefix (and container/network names), so set a unique prefix when they must not collide. Built-image tags also carry the run id, so concurrent runs never move each other's image tag. |
 | `--max-concurrency N` | 32 | In-flight invocations, `1..32`. Values above 32 are refused. |
 | `--delivery-concurrency N` | 4 | Concurrent handler invocations the delivery engine performs, `1..32`. The default is sized for the documented 4 CPU / ~6 GB Colima host. |
 | `--clock SPEC` | `real` | `run`/`session` time source: `real`, `test`, or `test=<RFC3339 start>`. A test clock starts at the given instant, or `2026-01-01T00:00:00Z` when omitted. |
@@ -191,6 +191,46 @@ wiring are re-derived. The listeners keep their ports and URLs.
 | A changed CloudFront distribution topology | Requires a restart; reported. |
 | A new resource needing a backend this run did not start | Requires a restart with `--backend`; reported. |
 
+A reload that fails after a function was replaced restores the previous
+definition. A container-image function is restored from the immutable image id
+recorded before the rebuild moved its tag, and the tag is pointed back at that
+image. The image this reload built is then removed by id without `-f`, and only
+after an inspect proves nothing still names or uses it: no repo tag, no repo
+digest and no container, running or stopped. That is this run's dangling
+rebuild; an image a foreign tag, a foreign digest reference or a container
+still holds is left in place and the log names the reference. A daemon using
+the containerd image store records a digest for each repository its repo tags
+name, so this run's rebuild reports one while its tag names it and none once
+the rollback points that tag back at the previous image; a digest entry under a
+repository no tag on the image carries is a reference outside the run, such as
+another repository's `repo@sha256:…` pin, and it keeps the image. An image
+function the reload added and the rollback stops loses its built image under
+the same check; this run's own build tag, and the digest the store derives from
+it, are the references it may still carry. The check comes first rather than
+relying on the daemon's refusal: Docker refuses an unforced `docker image rm
+<id>` while a container references the image or while two or more repo tags
+name it, and at exactly one tag it untags that tag and deletes the image
+([docker image rm](https://docs.docker.com/reference/cli/docker/image/rm/)).
+Docker's Engine API has no conditional delete (only `force` and `noprune`), so a
+tag added between the inspect and the remove is the one window the check cannot
+close; the remove is still refused while two tags exist. A tag-restore failure
+keeps the rebuilt image and logs it. The apply log names the branch it took:
+`rolled back ...; the previous assembly keeps serving` when every replaced
+function was restored, `no replaced function was restored` when none was,
+`partially applied: ... restored, ... not` in between, and `no function was
+applied; the previous assembly keeps serving` when the failure stopped the
+batch before any function was replaced. A branch that leaves any function
+unrestored ends with `a restart is required`. A full rollback removes
+the new assembly directory; any rollback that leaves a function unrestored
+keeps it because a container may still mount it.
+
+The shutdown sweep removes every image the run built, but it runs only on a
+clean exit: a signal-killed run can leave its run-labelled images behind
+(`apptheory.local.run=<run-id>`), and a tagged image survives a plain
+`docker image prune`. Remove them with `docker image rm` on the tags the run
+printed, or list them by label (`docker image ls --filter
+label=apptheory.local.run`).
+
 ### `--data-dir` layout
 
 ```
@@ -216,6 +256,41 @@ and keys are reconciled, never dropped. A DynamoDB key-schema change fails at
 start with the table named and the UpdateTable rule that a table update cannot
 change its key schema
 ([UpdateTable](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html)).
+A new global secondary index sends its key attributes in the update's
+`AttributeDefinitions`, which the API requires, and a new index keyed on an
+existing attribute whose declared type differs from the table's fails by name
+instead of creating the index over the existing type
+([AttributeDefinition](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_AttributeDefinition.html)).
+Local secondary indexes are created with the table. A re-run whose existing
+table differs in a local secondary index cannot reconcile the difference in
+place: a local secondary index is created when the table is created, and
+UpdateTable cannot add, modify or delete one
+([local secondary indexes](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/LSI.html),
+[UpdateTable](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html)).
+Startup continues, the stored table is kept, and the run logs one warning
+naming the table, the index and the difference, with the remedy: stop the run
+and remove `<data-dir>/dynamodb` to recreate the table, or start without
+`--data-dir`. That includes a table an earlier runner created without the local
+secondary index an app declares, because that runner ignored
+`LocalSecondaryIndexes`. A table with a hash-only key that declares a local
+secondary index is AWS-invalid, because a local secondary index "has the same
+partition key as the base table, but a different sort key"
+([local secondary indexes](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/LSI.html)):
+the pinned DynamoDB Local 3.1.0 refuses its `CreateTable` with `Local Secondary
+indices are not allowed on hash tables`, and checks that before it reports an
+existing table, so a re-run over an existing `--data-dir` table fails the same
+way; the CDK `Table` construct refuses it at synth with `a sort key of the
+table must be specified to add local secondary indexes` (aws-cdk-lib 2.275.0,
+`aws-dynamodb` `validateTable`). An existing global secondary index whose key
+attribute's declared type differs from the table's stored type is reported and
+kept the same way, because the earlier runner treated a type-only change as
+unchanged. A new global secondary index whose declared key type differs from
+the table's existing type still fails by name: the API refuses an index whose
+key type differs from the table's `AttributeDefinitions`, and the stored table
+cannot change it in place
+([AttributeDefinition](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_AttributeDefinition.html)).
+A global secondary index whose key schema or projection changed still fails by
+name, as does a table key-schema change.
 s3proxy's `jclouds.filesystem.basedir` sentence and ElasticMQ's
 `messages-storage` section are the pages the configuration follows
 ([s3proxy](https://github.com/gaul/s3proxy),
@@ -246,16 +321,19 @@ script output. The committed
 `apptheory-local` runs any CDK app, not only the examples in this repository.
 The app can come from a released module, an installed binary or a sibling
 AppTheory checkout; the flags and generated events are the same in all cases.
+The example harness's row-level classes and named limits are in the
+[fidelity table](/examples/local-harness/#fidelity-table).
 
 ```bash
-# From a released module; <version> must contain the command (v6.5.0 or later).
+# From a released module; <version> must contain the command (v7.0.0 or later;
+# the module path is /v7).
 go run github.com/theory-cloud/apptheory/v7/cmd/apptheory-local@<version> \
   --app ~/code/my-app --profile ~/code/my-app/local-profile.json
 
 # Or install it once.
 go install github.com/theory-cloud/apptheory/v7/cmd/apptheory-local@<version>
 
-# Before a release, run or build from a sibling AppTheory checkout.
+# When developing the runner itself, run or build from a sibling AppTheory checkout.
 go run -C ~/code/AppTheory ./cmd/apptheory-local \
   --app ~/code/my-app --profile ~/code/my-app/local-profile.json
 go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
@@ -1338,7 +1416,7 @@ before the token's `iat` refuses it.
 | --- | --- |
 | `Layers` on a zip function | Every entry must be an `AWS::Lambda::LayerVersion` in the function's stack with a local asset (`aws:asset:path`). The layer content is extracted into one `/opt` directory in the listed order; a later layer's file replaces an earlier one. A relative symlink whose target stays inside the layer is extracted as the same symlink (CDK's default `SymlinkFollowMode.NEVER` stores an asset's symlinks, and `npm install` leaves `node_modules/.bin` shims as symlinks); a symlink with an absolute target or one that escapes the layer root is refused by name. A layer asset that is a zip file rather than an extracted directory is refused because the runner needs the directory. More than five layers, a literal layer ARN, an `Fn::ImportValue` and any other unresolvable reference are refused by name. |
 | Layer runtime paths | `/opt/bin` is prepended to `PATH`, `/opt/lib` to `LD_LIBRARY_PATH`, `/opt/nodejs/node_modules` and `/opt/nodejs/node<major>/node_modules` to `NODE_PATH` (Node), and `/opt/python` plus `/opt/python/lib/python<major>.<minor>/site-packages` to `PYTHONPATH` (Python). The image's own values are read with `docker image inspect` and kept after the layer paths; a failed inspect falls back to a documented default `PATH`. |
-| `PackageType: Image` / `Code.ImageUri` | The `aws:asset:path`, `aws:asset:dockerfile-path`, `aws:asset:docker-build-args`, `aws:asset:docker-build-target` and `aws:asset:docker-platform` metadata are read from the function resource. `docker build` runs with the asset directory as the context, the image is tagged `<name-prefix>-<logical-id>-image` with the run label, and the container starts with the image's own entrypoint (no command, no code mount). The build runs before any listener serves. In the default mode the runner hosts the Runtime API the image's runtime client connects to; with `--rie` it starts the image's own Runtime Interface Emulator instead. The tag is per app hash by default, so two concurrent runs of one app share it and docker reuses the built image. |
+| `PackageType: Image` / `Code.ImageUri` | The `aws:asset:path`, `aws:asset:dockerfile-path`, `aws:asset:docker-build-args`, `aws:asset:docker-build-target` and `aws:asset:docker-platform` metadata are read from the function resource. `docker build` runs with the asset directory as the context, the image is tagged `<name-prefix>-<run-id>-<logical-id>-image` with the run label, and the container starts with the image's own entrypoint (no command, no code mount). The build runs before any listener serves. In the default mode the runner hosts the Runtime API the image's runtime client connects to; with `--rie` it starts the image's own Runtime Interface Emulator instead. The tag is per app hash plus the run id, so two concurrent runs of one app never move each other's image tag; docker's layer cache still reuses unchanged build steps. |
 | Refusals | An image without `aws:asset:path`, an image that declares `Layers`, and — under `--rie` — an image whose container never starts a Runtime Interface Emulator all fail by name (the last cites the images-create page). A zip function whose runtime image cannot be pinned fails in the image-resolution step. |
 
 Layer and image builds happen before `run` starts serving; the run shuts down

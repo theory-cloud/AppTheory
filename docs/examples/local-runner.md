@@ -69,12 +69,13 @@ go install github.com/theory-cloud/apptheory/v7/cmd/apptheory-local@<version>
 apptheory-local --app ~/code/my-app --profile ~/code/my-app/local-profile.json
 ```
 
-`<version>` is a release that contains the command (v6.5.0 or later);
-`go list -m -versions github.com/theory-cloud/apptheory/v7` lists released
-versions.
+`<version>` is a release that contains the command (v7.0.0 or later; the module
+path is `/v7`); `go list -m -versions github.com/theory-cloud/apptheory/v7`
+lists released versions. v7.0.0 is the first release that contains
+`apptheory-local`.
 
-Before that release, run the command from a sibling AppTheory checkout (the
-same model as FaceTheory Phase 3):
+Run the command from a sibling AppTheory checkout when developing the runner
+itself (the same model as FaceTheory Phase 3):
 
 ```bash
 # Run from the checkout without installing anything.
@@ -1488,9 +1489,10 @@ is built before any listener serves a request, so a broken Dockerfile fails the
 run instead of failing the first request; the first build of an example takes
 roughly 10–60 seconds including the base-image pull, and rebuilds are cached by
 Docker's layer cache (a second build of the same asset is near-instant). The
-image tag is derived from the name prefix, which is the app hash by default, so
-two concurrent runs of one app share a tag and docker reuses the built image. The
-function container runs the image's own entrypoint. In the default mode the
+image tag carries the run id as well as the name prefix (the app hash by
+default), so two concurrent runs of one app never move each other's tag while
+the layer cache still reuses unchanged build steps. The function container runs
+the image's own entrypoint. In the default mode the
 runner hosts the Runtime API that the image's runtime client connects to, so an
 image built on an
 [AWS base image](https://docs.aws.amazon.com/lambda/latest/dg/images-create.html)
@@ -1734,6 +1736,12 @@ sources, rules, subscriptions and delivery wiring are re-derived, and every
 | Event sources, rules and subscriptions | Yes: the delivery engine is re-derived. |
 | A new resource that needs a backend this run did not start | No: reported by name with the backend; restart with `--backend`. |
 
+The `examples/cdk/multilang/scripts/watch-two-edit.sh` row proves two successive
+edits in one session: the first edit replaces the Go function, the second
+replaces the TypeScript function, and the already-restarted Go function keeps
+its Runtime API and keeps answering while the Python function answers
+throughout.
+
 ### Persistent data (`--data-dir`)
 
 `run`, `session` and `invoke` accept `--data-dir <dir>`. The default is still
@@ -1777,7 +1785,22 @@ DynamoDB Streams settings, or global table replica settings for a given table"
 ([UpdateTable](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html)).
 Missing or changed global secondary indexes are created or deleted, and an
 existing queue's visibility, retention, wait and delay attributes are updated
-without deleting its messages. The examples' `data-dir.sh`,
+without deleting its messages. A newly added global secondary index carries its
+key attributes in the update's `AttributeDefinitions`
+([UpdateTable](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html)),
+and one keyed on an existing attribute whose declared type differs from the
+table's fails by name rather than creating the index over the existing type
+([AttributeDefinition](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_AttributeDefinition.html)).
+Local secondary indexes are created with a new table; an existing table that
+differs in one keeps starting and the run logs one warning naming the table,
+the index and the difference, with the remedy (recreate the table, for example
+by removing `<data-dir>/dynamodb`, or start without `--data-dir`), because a
+local secondary index is created when the table is created and UpdateTable
+cannot change one
+([local secondary indexes](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/LSI.html)).
+An existing global secondary index whose key attribute type drifted is reported
+and kept the same way, instead of being treated as unchanged.
+The examples' `data-dir.sh`,
 `data-dir-s3.sh` and `data-dir-sqs.sh` scripts show the two-run pattern.
 
 ### Seed hooks (`--seed`)
@@ -2590,10 +2613,11 @@ gone.
 ## Capability matrix
 
 Classes follow the repository's local-execution convention: **L1** runs fully
-locally, **L2** runs locally with an emulator and documented limits, and **L3**
-is exercised as fully as possible with a named cloud gap. `apptheory local`
-serving a surface is not by itself a class: the class belongs to an example, and
-the harness records it.
+locally, **L2** runs locally with an emulator and a named fidelity limit, and
+**L3** is exercised as fully as possible with a named cloud gap from the
+docs/125 true-limit list. `apptheory local` serving a surface is not by itself a
+class: the class belongs to an example, and the harness records it. Every row's
+class and named limit is in the [harness fidelity table](/examples/local-harness/#fidelity-table).
 
 | Capability | Local runner | Notes |
 | --- | --- | --- |
@@ -2722,10 +2746,11 @@ the harness records it.
   `ObjectRemoved:Delete`; a create and a delete inside one 250 ms poll is not
   observed. S3 → EventBridge emission is delivered by the runner and proven by
   the import-pipeline row.
-- **Managed services** remain L3 gaps where the examples use them: the MicroVM
-  provider in the controller and conformance rows, and S3 Vectors/Bedrock in
-  the semantic-search row. The runner stops at those boundaries; it never fakes
-  a success.
+- **Managed services** are L3 gaps where the examples use them: the MicroVM
+  managed provider in the controller and conformance rows, and S3
+  Vectors/Bedrock in the semantic-search row. Both are AWS-only services with
+  no emulator in the docs/125 true-limit list. The runner stops at those
+  boundaries; it never fakes a success.
 - **One container per function.** In-flight invocations are bounded to 32 and
   queue behind the function's container; delivery batches for the same
   function also serialize there, even when a mapping's `MaximumConcurrency`
