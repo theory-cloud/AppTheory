@@ -212,7 +212,7 @@ func TestGenerateSecretValueAcceptsTheBareForm(t *testing.T) {
 		!strings.Contains(err.Error(), "SecretStringTemplate") {
 		t.Fatalf("GenerateStringKey without SecretStringTemplate must fail: %v", err)
 	}
-	if _, err := generateSecretValue(generateSecretString{SecretStringTemplate: `{"username":"u"}`}, "seed"); err == nil ||
+	if _, err := generateSecretValue(generateSecretString{SecretStringTemplate: `{}`}, "seed"); err == nil ||
 		!strings.Contains(err.Error(), "GenerateStringKey") {
 		t.Fatalf("SecretStringTemplate without GenerateStringKey must fail: %v", err)
 	}

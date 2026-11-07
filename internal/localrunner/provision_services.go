@@ -205,7 +205,7 @@ func (r *Runner) provisionSecrets(ctx context.Context, spec *Spec) error {
 		// KmsKeyId is a CloudFormation string property, so it may be a literal
 		// or a Ref/Fn::GetAtt the assembly uses to name a provisioned key
 		// (https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-secretsmanager-secret.html).
-		if raw := strings.TrimSpace(string(props.KmsKeyID)); raw != "" && raw != "null" {
+		if raw := strings.TrimSpace(string(props.KmsKeyID)); raw != "" && raw != jsonNull {
 			keyID, err := r.resolveProvisionString(props.KmsKeyID, resource.Stack, spec)
 			if err != nil {
 				return fmt.Errorf("resolve Secrets Manager secret %s KmsKeyId: %w", resource.LogicalID, err)
@@ -265,7 +265,7 @@ func (r *Runner) provisionSecrets(ctx context.Context, spec *Spec) error {
 // whole secret string. Each half of the pair is refused rather than guessed.
 // https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-properties-secretsmanager-secret-generatesecretstring.html
 //
-//nolint:gocyclo // one branch per documented generation option.
+//nolint:gocognit,gocyclo // one branch per documented generation option.
 func generateSecretValue(props generateSecretString, seed string) (string, error) {
 	length := props.PasswordLength
 	if length == 0 {
