@@ -653,10 +653,10 @@ func TestS3FrontCopyObjectClearsTheRecord(t *testing.T) {
 	if head.ServerSideEncryption != s3types.ServerSideEncryptionAes256 {
 		t.Fatalf("head before the copy reports %q", head.ServerSideEncryption)
 	}
-	if _, err := client.CopyObject(ctx, &s3.CopyObjectInput{
+	if _, copyErr := client.CopyObject(ctx, &s3.CopyObjectInput{
 		Bucket: aws.String("bucket"), Key: aws.String("target"), CopySource: aws.String("bucket/source"),
-	}); err != nil {
-		t.Fatalf("copy: %v", err)
+	}); copyErr != nil {
+		t.Fatalf("copy: %v", copyErr)
 	}
 	head, err = client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String("bucket"), Key: aws.String("target")})
 	if err != nil {

@@ -53,6 +53,7 @@ const (
 	kmsFrontIdentityTag = "apptheory-local:key-identity"
 	kmsFrontTarget      = "TrentService"
 	kmsFrontJSONType    = "application/x-amz-json-1.1"
+	kmsServiceName      = "kms"
 	kmsFrontMaxBody     = 1 << 20
 	kmsFrontTimeout     = 30 * time.Second
 	kmsFrontKeyFile     = "keys.json"
@@ -885,7 +886,7 @@ func kmsLocalRawKeyID(keyID string) (string, bool) {
 		return trimmed, true
 	}
 	parts := strings.SplitN(trimmed, ":", 6)
-	if len(parts) != 6 || parts[1] != LocalPartition || parts[2] != "kms" ||
+	if len(parts) != 6 || parts[1] != LocalPartition || parts[2] != kmsServiceName ||
 		parts[3] != LocalRegion || parts[4] != LocalAccountID || !strings.HasPrefix(parts[5], "key/") {
 		return "", false
 	}
