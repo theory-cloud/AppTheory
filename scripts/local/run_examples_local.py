@@ -3761,7 +3761,10 @@ def run_s3_sse(harness: Harness) -> str:
         allow_no_surface=True,
     )
     try:
-        key = "sse/probe.txt"
+        # The key carries '=' and a space: the front re-signs the put after
+        # stripping the SSE header, and S3's canonical URI is the path encoded
+        # once, so a double-escaped canonical URI fails with 403 here.
+        key = "sse/environment=local/probe file.txt"
         value = "sse-value"
         write = session.invoke(function["logicalId"], {
             "queryStringParameters": {"key": key, "write": "1", "value": value, "sse": "1"},
@@ -3783,7 +3786,8 @@ def run_s3_sse(harness: Harness) -> str:
             raise HarnessFailure(f"s3-sse read: unexpected result: {read}")
         return (
             "a real SDK PutObject with x-amz-server-side-encryption: AES256 through the compiled Node "
-            "handler succeeded and reported AES256; HeadObject and GetObject through the same handler "
+            "handler succeeded and reported AES256 for a key containing '=' and a space; the put was "
+            "re-signed over the forwarded path and HeadObject and GetObject through the same handler "
             "returned the SSE-S3 header and the stored body"
         )
     finally:

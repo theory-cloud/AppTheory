@@ -1957,6 +1957,17 @@ and current releases still refuse it on that store
 - clears the record when the same key is overwritten by a put without the
   header, and on `DeleteObject`, `DeleteObjects` and `DeleteBucket`.
 
+The SSE header is part of the SDK's SigV4 signature, so the front re-signs the
+put after stripping it. S3's canonical URI is the URI-encoded path encoded
+exactly once, and S3 does not normalize the path; every other service encodes
+the already-encoded path a second time
+([S3 SigV4](https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html),
+[create a signed request](https://docs.aws.amazon.com/IAM/latest/UserGuide/create-signed-request.html)).
+The front signs the exact path it forwards, so object keys containing `=`, a
+space, `+`, `%`, unicode or `/` segments get the same signature s3proxy
+recomputes; encoding the escaped path a second time would turn `%3D` into
+`%253D` and earn a `403 SignatureDoesNotMatch`.
+
 With `--data-dir`, the record lives in `<dir>/s3sse/index.json` (mode `0600`)
 so it survives a restart; without the flag it is in memory.
 
@@ -1975,7 +1986,9 @@ against real AWS or a store that performs the encryption.
   re-signed after the signed SSE header is stripped; the front refuses it with
   a clear 400 rather than forwarding a broken signature. A normal SDK put (the
   audit sink's and the proving row's form) is signed over the payload hash and
-  is accepted.
+  is accepted, including keys that need URI escaping (`=`, spaces, `+`, `%`,
+  unicode and `/` segments); the front signs the same once-encoded path it
+  forwards.
 - The account-wide S3 default encryption (SSE-S3 applied to objects written
   without a header) is not modelled: an object reports `AES256` only when its
   put named it.

@@ -3,17 +3,21 @@ package localrunner
 import (
 	"context"
 	"encoding/xml"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
@@ -32,6 +36,14 @@ type fakeS3Proxy struct {
 	// names the SSE header, which s3proxy rejects (the real failure the
 	// re-sign fixes).
 	signedSSE int
+	// signatureMismatches counts forwarded requests whose signature does not
+	// cover the path and headers the backend received. s3proxy answers 403
+	// SignatureDoesNotMatch; modeling it here catches a double-escaped
+	// canonical URI.
+	signatureMismatches int
+	// signedPaths records every forwarded request path that carried a
+	// signature, so a test can assert what the backend actually saw.
+	signedPaths []string
 }
 
 func newFakeS3Proxy() *fakeS3Proxy {
@@ -41,8 +53,17 @@ func newFakeS3Proxy() *fakeS3Proxy {
 func (f *fakeS3Proxy) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if auth := request.Header.Get("Authorization"); auth != "" && strings.Contains(auth, s3SSEAlgorithmHeader) {
-		f.signedSSE++
+	if auth := request.Header.Get("Authorization"); auth != "" {
+		if strings.Contains(auth, s3SSEAlgorithmHeader) {
+			f.signedSSE++
+		}
+		f.signedPaths = append(f.signedPaths, request.URL.EscapedPath())
+		if err := verifyForwardedS3Signature(request); err != nil {
+			f.signatureMismatches++
+			writer.WriteHeader(http.StatusForbidden)
+			writeS3Error(writer, "SignatureDoesNotMatch", err.Error())
+			return
+		}
 	}
 	if request.Header.Get(s3SSEAlgorithmHeader) != "" ||
 		request.Header.Get(s3SSEKMSKeyHeader) != "" ||
@@ -111,6 +132,34 @@ func (f *fakeS3Proxy) ServeHTTP(writer http.ResponseWriter, request *http.Reques
 		writer.WriteHeader(http.StatusBadRequest)
 		writeS3Error(writer, "InvalidRequest", request.Method+" "+request.URL.Path)
 	}
+}
+
+// verifyForwardedS3Signature models s3proxy's SigV4 check at the backend: the
+// signature must cover the path and headers as received, with S3's canonical
+// URI rule (the URI-encoded path, encoded once). A double-escaped canonical
+// URI is the real 403 SignatureDoesNotMatch Autheory observed.
+func verifyForwardedS3Signature(request *http.Request) error {
+	payloadHash := request.Header.Get("X-Amz-Content-Sha256")
+	if payloadHash == "" {
+		return fmt.Errorf("the forwarded request has no x-amz-content-sha256")
+	}
+	signedAt, err := time.Parse("20060102T150405Z", request.Header.Get("X-Amz-Date"))
+	if err != nil {
+		return fmt.Errorf("parse x-amz-date: %w", err)
+	}
+	clone := request.Clone(request.Context())
+	clone.Header.Del("Authorization")
+	clone.Body = nil
+	signer := newS3Signer()
+	if err := signer.SignHTTP(request.Context(), aws.Credentials{
+		AccessKeyID: "dummy", SecretAccessKey: "dummy",
+	}, clone, payloadHash, "s3", LocalRegion, signedAt); err != nil {
+		return fmt.Errorf("re-sign the received request: %w", err)
+	}
+	if got, want := clone.Header.Get("Authorization"), request.Header.Get("Authorization"); got != want {
+		return fmt.Errorf("the signature does not cover the received path %q", request.URL.EscapedPath())
+	}
+	return nil
 }
 
 func writeS3Error(writer http.ResponseWriter, code, message string) {
@@ -188,6 +237,131 @@ func TestS3FrontSSES3PutHeadGet(t *testing.T) {
 	}
 	if get.ServerSideEncryption != s3types.ServerSideEncryptionAes256 {
 		t.Fatalf("GetObject algorithm %q", get.ServerSideEncryption)
+	}
+}
+
+// s3EscapedKeyPath escapes one object key the way a path-style S3 request
+// carries it: every segment is URI-encoded, and the '/' separators stay.
+func s3EscapedKeyPath(key string) string {
+	segments := strings.Split(key, "/")
+	for index, segment := range segments {
+		segments[index] = url.PathEscape(segment)
+	}
+	return strings.Join(segments, "/")
+}
+
+// TestS3FrontResignSignsTheForwardedPath is the G7 unit proof: the re-signed
+// canonical URI is the URI-encoded path encoded once, so it matches the path
+// the backend receives for keys with '=', spaces, '+', '%', unicode and '/'
+// segments. The generic signer (which escapes the path a second time) does not
+// match for every escaping shape, which is the defect the test pins.
+func TestS3FrontResignSignsTheForwardedPath(t *testing.T) {
+	front, err := newS3Front("", "http://127.0.0.1:1", nil)
+	if err != nil {
+		t.Fatalf("new S3 front: %v", err)
+	}
+	keys := []string{
+		"events/one.json",
+		"environment=local/organization=acme/tenant_id=acme/event.json",
+		"audit logs/with space.txt",
+		"plus+sign.txt",
+		"percent%.txt",
+		"ünïcode/日本語.txt",
+		"segments/with/slashes.txt",
+	}
+	payloadHash := strings.Repeat("a", 64)
+	for _, key := range keys {
+		t.Run(key, func(t *testing.T) {
+			parsed, parseErr := url.Parse("http://front.invalid/audit-bucket/" + s3EscapedKeyPath(key))
+			if parseErr != nil {
+				t.Fatalf("parse the object URL: %v", parseErr)
+			}
+			request := &http.Request{
+				Method: http.MethodPut,
+				URL:    parsed,
+				Host:   "front.invalid",
+				Header: http.Header{},
+			}
+			request.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=stale")
+			request.Header.Set("X-Amz-Content-Sha256", payloadHash)
+			if resignErr := front.resign(request); resignErr != nil {
+				t.Fatalf("resign: %v", resignErr)
+			}
+			signedAt, parseErr := time.Parse("20060102T150405Z", request.Header.Get("X-Amz-Date"))
+			if parseErr != nil {
+				t.Fatalf("parse x-amz-date: %v", parseErr)
+			}
+			if got, want := resignWith(t, front, request, payloadHash, signedAt, newS3Signer()), request.Header.Get("Authorization"); got != want {
+				t.Fatalf("the S3 signer does not reproduce the forwarded signature for %q", request.URL.EscapedPath())
+			}
+			// A path with no byte the second pass escapes is identical under
+			// both signers; every escaping shape must differ.
+			if strings.ContainsAny(request.URL.EscapedPath(), "%+") &&
+				resignWith(t, front, request, payloadHash, signedAt, v4.NewSigner()) == request.Header.Get("Authorization") {
+				t.Fatalf("the double-escaping signer unexpectedly matched %q; the test no longer pins the defect", request.URL.EscapedPath())
+			}
+		})
+	}
+}
+
+func resignWith(t *testing.T, front *s3Front, request *http.Request, payloadHash string, signedAt time.Time, signer *v4.Signer) string {
+	t.Helper()
+	clone := request.Clone(context.Background())
+	clone.Body = nil
+	clone.Header.Del("Authorization")
+	if err := signer.SignHTTP(context.Background(), front.credentials, clone, payloadHash, "s3", LocalRegion, signedAt); err != nil {
+		t.Fatalf("re-sign: %v", err)
+	}
+	return clone.Header.Get("Authorization")
+}
+
+// TestS3FrontSSES3AcceptsEscapedKeys is the G7 real-path proof: keys that
+// carry '=' (the audit sink's form), spaces, '+', '%', unicode and '/'
+// segments go through the SDK, the front re-signs after stripping the SSE
+// header, and the backend's SigV4 check accepts every one.
+func TestS3FrontSSES3AcceptsEscapedKeys(t *testing.T) {
+	backend := newFakeS3Proxy()
+	_, server := newS3FrontForTest(t, "", backend)
+	client := s3ClientFor(t, server.URL)
+	ctx := context.Background()
+	keys := []string{
+		"events/one.json",
+		"environment=local/organization=acme/tenant_id=acme/event_type=audit/date=2026-11-07/x.json",
+		"audit logs/with space.txt",
+		"plus+sign.txt",
+		"percent%.txt",
+		"ünïcode/日本語.txt",
+		"segments/with/slashes.txt",
+	}
+	for _, key := range keys {
+		body := "body:" + key
+		if _, err := client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket:               aws.String("audit-bucket"),
+			Key:                  aws.String(key),
+			Body:                 strings.NewReader(body),
+			ServerSideEncryption: s3types.ServerSideEncryptionAes256,
+		}); err != nil {
+			t.Fatalf("put %q with SSE-S3: %v", key, err)
+		}
+		head, err := client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String("audit-bucket"), Key: aws.String(key)})
+		if err != nil {
+			t.Fatalf("head %q: %v", key, err)
+		}
+		if head.ServerSideEncryption != s3types.ServerSideEncryptionAes256 {
+			t.Fatalf("head %q algorithm %q", key, head.ServerSideEncryption)
+		}
+		get, err := client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String("audit-bucket"), Key: aws.String(key)})
+		if err != nil {
+			t.Fatalf("get %q: %v", key, err)
+		}
+		stored, _ := io.ReadAll(get.Body) //nolint:errcheck // fixture
+		_ = get.Body.Close()              //nolint:errcheck // fixture
+		if string(stored) != body {
+			t.Fatalf("get %q body %q", key, stored)
+		}
+	}
+	if backend.signatureMismatches != 0 {
+		t.Fatalf("the backend rejected %d forwarded signature(s); paths seen: %v", backend.signatureMismatches, backend.signedPaths)
 	}
 }
 

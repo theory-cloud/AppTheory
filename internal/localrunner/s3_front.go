@@ -224,7 +224,7 @@ func newS3Front(dataDir, upstream string, logf func(string, ...any)) (*s3Front, 
 		upstream:    parsed,
 		index:       index,
 		logf:        logf,
-		signer:      v4.NewSigner(),
+		signer:      newS3Signer(),
 		credentials: aws.Credentials{AccessKeyID: "dummy", SecretAccessKey: "dummy"},
 	}
 	front.proxy = &httputil.ReverseProxy{
@@ -305,6 +305,25 @@ func (f *s3Front) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		return nil
 	}
 	proxy.ServeHTTP(writer, proxyRequest)
+}
+
+// newS3Signer builds the SigV4 signer S3's canonical request requires. For S3
+// the canonical URI is the URI-encoded path encoded exactly once, and the path
+// is not normalized; every other service encodes the already-encoded path a
+// second time. The SDK's own S3 client therefore sets
+// DisableURIPathEscaping (service/s3/api_client.go, newDefaultV4Signer), and
+// the front must sign the same path it forwards:
+//
+// https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html
+// https://docs.aws.amazon.com/IAM/latest/UserGuide/create-signed-request.html
+//
+// Without the option, a key containing '=' is signed as %253D while the
+// forwarded request line carries %3D, and s3proxy answers 403
+// SignatureDoesNotMatch.
+func newS3Signer() *v4.Signer {
+	return v4.NewSigner(func(options *v4.SignerOptions) {
+		options.DisableURIPathEscaping = true
+	})
 }
 
 // resign replaces the caller's SigV4 signature after a signed header was
