@@ -378,8 +378,8 @@
     "examples/cdk/kinesis-cloudwatch-logs/scripts/data-dir-kms.sh": {
       "run": "data-dir-kms",
       "class": "L2",
-      "gap": "KMS key material is persisted by the runner's KMS front (the pinned moto is memory-only); key ids and ARNs are re-created per run, the material and public key are not. No HSM, key policies or grants.",
-      "description": "KMS --data-dir: run 1 encrypted under the CDK symmetric key, generated a 32-byte data key and signed a precomputed digest with the CDK RSA_2048 key; run 2 with the same --data-dir decrypted both ciphertexts, read the same public key and verified the run-1 signature outside KMS."
+      "gap": "KMS key material and the key identity (KeyId/Arn) are persisted by the runner's KMS front (moto is memory-only, so the front re-creates the key and reports the persisted identity); the remaining metadata, notably CreationDate, is the current run's. No HSM, key policies or grants.",
+      "description": "KMS --data-dir: run 1 encrypted under the CDK symmetric key, generated a 32-byte data key and signed a precomputed digest with the CDK RSA_2048 key; run 2 with the same --data-dir saw the same KeyId/ARN for both keys, decrypted both ciphertexts by the run-1 key id, read the same public key, and verified the run-1 signature through KMS by the run-1 key id and ARN and outside KMS."
     },
     "examples/cdk/lambda-role/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
