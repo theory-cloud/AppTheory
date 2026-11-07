@@ -187,8 +187,10 @@ func validateTLSHost(host string) error {
 
 // newLocalTLS loads the CA in dir, creating it on first use, and issues the
 // public leaf. A CA that exists is reused byte for byte, so a browser or an
-// identity provider that trusted run 1 still trusts run 2.
-func newLocalTLS(dir, host string) (*localTLS, error) {
+// identity provider that trusted run 1 still trusts run 2. originNames are the
+// distribution origins a CloudFront hop has to verify against the declared
+// origin domain name, which is the name CloudFront's certificate rule uses.
+func newLocalTLS(dir, host string, originNames ...string) (*localTLS, error) {
 	if err := validateTLSHost(host); err != nil {
 		return nil, err
 	}
@@ -197,7 +199,7 @@ func newLocalTLS(dir, host string) (*localTLS, error) {
 		return nil, err
 	}
 	state.host = host
-	if err := state.issuePublicLeaf(); err != nil {
+	if err := state.issuePublicLeaf(originNames); err != nil {
 		return nil, err
 	}
 	return state, nil
@@ -373,14 +375,33 @@ func lockTLSDirectory(dir string) (func(), error) {
 }
 
 // issuePublicLeaf issues the certificate the run's public listeners present.
-// It names the run host and both loopback addresses, so a browser, curl and a
-// Go, Node or Python client all verify the same chain.
-func (s *localTLS) issuePublicLeaf() error {
+// It names the run host, every declared CloudFront origin domain that is a
+// local name, and both loopback addresses, so a browser, curl, a Go, Node or
+// Python client, and the runner's own CloudFront origin hop all verify the
+// same chain.
+func (s *localTLS) issuePublicLeaf(originNames []string) error {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return fmt.Errorf("generate the local TLS leaf key: %w", err)
 	}
-	certPEM, keyPEM, err := s.issueLeaf(key, []string{s.host}, []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")})
+	names := []string{s.host}
+	seen := map[string]bool{s.host: true}
+	for _, name := range originNames {
+		name = strings.ToLower(strings.TrimSpace(name))
+		if name == "" || seen[name] {
+			continue
+		}
+		if err := validateTLSHost(name); err != nil {
+			// An origin domain outside the local name space keeps the run
+			// certificate it has; the origin hop verifies the mapped host
+			// instead. Signing an arbitrary public name with a local CA is not
+			// something this runner does.
+			continue
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+	certPEM, keyPEM, err := s.issueLeaf(key, names, []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")})
 	if err != nil {
 		return err
 	}

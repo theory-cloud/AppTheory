@@ -3,12 +3,16 @@ package localrunner
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,9 +47,51 @@ func validateOriginOverrides(origins map[string]string) error {
 	return nil
 }
 
-// applyOriginOverrides maps every external custom origin to its loopback URL and
-// refuses a distribution whose external origin has no mapping. It runs at plan
-// time, before any listener or container starts.
+// tlsOriginNames is every custom-origin domain name a distribution declares,
+// mapped to a loopback URL and valid as a local TLS name. The run certificate
+// names them so the origin hop can verify the declared origin domain, which is
+// the name CloudFront's certificate rule compares against:
+// "one of the domain names in the certificate must match the domain name that
+// you specify for Origin Domain Name".
+// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/DownloadDistValuesOrigin.html#DownloadDistValuesOriginProtocolPolicy
+func tlsOriginNames(spec *Spec) []string {
+	if spec == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var names []string
+	for _, distribution := range spec.CloudFront {
+		for _, origin := range distribution.Origins {
+			if origin.Kind != localcloudfront.OriginCustom || origin.LocalURL == "" {
+				continue
+			}
+			name := strings.ToLower(strings.TrimSpace(origin.DomainName))
+			if name == "" || seen[name] || validateTLSHost(name) != nil {
+				continue
+			}
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// originServerName is the TLS name the origin hop verifies. CloudFront
+// requires the certificate to name the origin's declared domain, so a local
+// origin whose declared domain is a local name is verified against it. Any
+// other declared domain (a real host name the local branch kept) falls back to
+// the mapped host, which is the only name a local certificate can carry.
+func originServerName(origin *localcloudfront.DistributionOrigin, base *url.URL) string {
+	if name := strings.ToLower(strings.TrimSpace(origin.DomainName)); name != "" && validateTLSHost(name) == nil {
+		return name
+	}
+	return base.Hostname()
+}
+
+// applyOriginOverrides maps every external custom origin to its loopback URL
+// and refuses a distribution whose external origin has no mapping. It runs at
+// plan time, before any listener or container starts.
 func (r *Runner) applyOriginOverrides(spec *Spec) error {
 	for _, distribution := range spec.CloudFront {
 		servableBefore := distribution.Servable()
@@ -131,11 +177,18 @@ type httpOrigin struct {
 	originID      string
 	base          *url.URL
 	host          string
+	serverName    string
+	client        *http.Client
 	customHeaders map[string]string
-	logf          func(format string, args ...any)
 }
 
-func newHTTPOrigin(origin *localcloudfront.DistributionOrigin, logf func(string, ...any)) (*httpOrigin, error) {
+// newHTTPOrigin builds the client one mapped origin is fetched with. A plain
+// http mapping keeps the historical client byte for byte. An https mapping
+// verifies the origin certificate: against the run's CA when the run opted in
+// to local TLS (the runner's own listeners and an auxiliary service both chain
+// to it), and against the declared origin domain name when that name is a
+// local name, which is the comparison CloudFront documents.
+func newHTTPOrigin(origin *localcloudfront.DistributionOrigin, tlsState *localTLS) (*httpOrigin, error) {
 	base, err := url.Parse(origin.LocalURL)
 	if err != nil || base.Host == "" {
 		return nil, fmt.Errorf("origin %q has no usable local URL (%q)", origin.ID, origin.LocalURL)
@@ -143,12 +196,30 @@ func newHTTPOrigin(origin *localcloudfront.DistributionOrigin, logf func(string,
 	if base.Scheme != schemeHTTP && base.Scheme != schemeHTTPS {
 		return nil, fmt.Errorf("origin %q local URL %q is not http(s)", origin.ID, origin.LocalURL)
 	}
+	transport := &http.Transport{Proxy: nil}
+	serverName := ""
+	if base.Scheme == schemeHTTPS {
+		serverName = originServerName(origin, base)
+		tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, ServerName: serverName}
+		if tlsState != nil {
+			pool, poolErr := x509.SystemCertPool()
+			if poolErr != nil || pool == nil {
+				pool = x509.NewCertPool()
+			}
+			if !pool.AppendCertsFromPEM(tlsState.caPEM) {
+				return nil, fmt.Errorf("origin %q: the run CA is not a PEM certificate", origin.ID)
+			}
+			tlsConfig.RootCAs = pool
+		}
+		transport.TLSClientConfig = tlsConfig
+	}
 	return &httpOrigin{
 		originID:      origin.ID,
 		base:          base,
 		host:          origin.DomainName,
+		serverName:    serverName,
+		client:        &http.Client{Timeout: 30 * time.Second, Transport: transport},
 		customHeaders: origin.CustomHeaders,
-		logf:          logf,
 	}, nil
 }
 
@@ -183,10 +254,7 @@ func (o *httpOrigin) Fetch(ctx context.Context, request localcloudfront.OriginRe
 	if host != "" {
 		httpRequest.Host = host
 	}
-	client := &http.Client{
-		Timeout:   30 * time.Second,
-		Transport: &http.Transport{Proxy: nil},
-	}
+	client := o.client
 	response, err := client.Do(httpRequest) //nolint:gosec // the URL is a validated loopback override
 	if err != nil {
 		return localcloudfront.OriginResponse{}, &localcloudfront.OriginUnavailableError{
@@ -199,12 +267,78 @@ func (o *httpOrigin) Fetch(ctx context.Context, request localcloudfront.OriginRe
 	if readErr != nil {
 		return localcloudfront.OriginResponse{}, fmt.Errorf("read the mapped origin response: %w", readErr)
 	}
+	// A plain-HTTP request to a TLS listener is answered by Go's own server
+	// with this 400. Report the mismatch as a configuration error instead of
+	// passing a bare 400 to the viewer.
+	if response.StatusCode == http.StatusBadRequest && isPlainRequestToTLSListener(payload) {
+		return localcloudfront.OriginResponse{}, &localcloudfront.OriginUnavailableError{
+			OriginID: o.originID,
+			Reason: fmt.Sprintf(
+				"the mapped local origin %s answered %q: that listener is served over https, but this origin is mapped with plain http. %s",
+				target.Host, plainRequestToTLSMessage, originTLSMappingHint(o.host),
+			),
+		}
+	}
 	return localcloudfront.OriginResponse{
 		StatusCode:        response.StatusCode,
 		StatusDescription: response.Status,
 		Header:            response.Header,
 		Body:              payload,
 	}, nil
+}
+
+// plainRequestToTLSMessage is what Go's http.Server writes when a plain HTTP
+// request reaches a TLS listener: "Client sent an HTTP request to an HTTPS
+// server." It is the signal that an origin mapping points at a TLS-only
+// listener over http.
+const plainRequestToTLSMessage = "Client sent an HTTP request to an HTTPS server."
+
+// isPlainRequestToTLSListener reports whether a response body is Go's
+// plain-request-to-a-TLS-listener refusal.
+func isPlainRequestToTLSListener(payload []byte) bool {
+	return strings.HasPrefix(strings.TrimSpace(string(payload)), plainRequestToTLSMessage)
+}
+
+// originTLSMappingHint is the recovery text for an origin mapped with plain
+// http to a TLS listener.
+func originTLSMappingHint(domain string) string {
+	return fmt.Sprintf(
+		"Declare OriginProtocolPolicy HTTPS_ONLY in the app's local CDK branch and map the origin with --origin %s=https://<run host>:<port> (for example https://%s:<port>).",
+		domain, tlsDefaultHost,
+	)
+}
+
+// validateOriginMapping refuses an origin mapping that cannot work: a plain
+// http mapping to one of the run's own listeners, which an opted-in run serves
+// over https only. The check runs once every public listener before the
+// distribution has started, so the failure names the origin and the fix
+// instead of leaving a 400 for the first viewer request.
+func (r *Runner) validateOriginMapping(origin *localcloudfront.DistributionOrigin) error {
+	if r.tls == nil || origin.LocalURL == "" {
+		return nil
+	}
+	parsed, err := url.Parse(origin.LocalURL)
+	if err != nil || parsed.Scheme != schemeHTTP {
+		return nil
+	}
+	port, err := strconv.Atoi(parsed.Port())
+	if err != nil || !r.tlsListenerPort(port) {
+		return nil
+	}
+	declared := ""
+	if origin.Custom != nil && origin.Custom.ProtocolPolicy != "" {
+		declared = fmt.Sprintf(" The distribution declares OriginProtocolPolicy %q.", origin.Custom.ProtocolPolicy)
+	}
+	return fmt.Errorf(
+		"origin %q (%s) is mapped to %s, but this run serves every public listener over https (local TLS is on) and port %d is one of them.%s %s",
+		origin.ID, origin.DomainName, origin.LocalURL, port, declared, originTLSMappingHint(origin.DomainName),
+	)
+}
+
+// tlsListenerPort reports whether port is one of the run's own public
+// listeners.
+func (r *Runner) tlsListenerPort(port int) bool {
+	return r.publicPorts[port]
 }
 
 func containsAddHost(hosts []string, wanted string) bool {

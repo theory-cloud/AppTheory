@@ -221,7 +221,7 @@ func TestInitTLSAddsTheHostEntryAndTrustBundle(t *testing.T) {
 		options: Options{TLS: true, TLSHost: "app.localhost", TLSAuxHosts: []string{"idp.localhost"}},
 		scratch: t.TempDir(),
 	}
-	if err := runner.initTLS(); err != nil {
+	if err := runner.initTLS(nil); err != nil {
 		t.Fatalf("initTLS: %v", err)
 	}
 	if runner.tls == nil {
@@ -252,7 +252,7 @@ func TestInitTLSPersistsUnderDataDir(t *testing.T) {
 		scratch: t.TempDir(),
 		dataDir: dataDir,
 	}
-	if err := first.initTLS(); err != nil {
+	if err := first.initTLS(nil); err != nil {
 		t.Fatalf("initTLS: %v", err)
 	}
 	second := &Runner{
@@ -260,7 +260,7 @@ func TestInitTLSPersistsUnderDataDir(t *testing.T) {
 		scratch: t.TempDir(),
 		dataDir: dataDir,
 	}
-	if err := second.initTLS(); err != nil {
+	if err := second.initTLS(nil); err != nil {
 		t.Fatalf("initTLS: %v", err)
 	}
 	if string(first.tls.caPEM) != string(second.tls.caPEM) {
@@ -273,7 +273,7 @@ func TestInitTLSPersistsUnderDataDir(t *testing.T) {
 
 func TestInitTLSIsOffByDefault(t *testing.T) {
 	runner := &Runner{options: Options{}, scratch: t.TempDir()}
-	if err := runner.initTLS(); err != nil {
+	if err := runner.initTLS(nil); err != nil {
 		t.Fatalf("initTLS: %v", err)
 	}
 	if runner.tls != nil || len(runner.options.AddHosts) != 0 {
@@ -286,7 +286,7 @@ func TestInitTLSRefusesABadAuxName(t *testing.T) {
 		options: Options{TLS: true, TLSHost: "app.localhost", TLSAuxHosts: []string{"example.com"}},
 		scratch: t.TempDir(),
 	}
-	if err := runner.initTLS(); err == nil {
+	if err := runner.initTLS(nil); err == nil {
 		t.Fatal("an auxiliary name outside *.localhost must be refused")
 	}
 }

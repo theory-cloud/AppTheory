@@ -237,6 +237,10 @@ type Runner struct {
 	// in. tlsBundlePath is the host-side trust bundle the session reports.
 	tls           *localTLS
 	tlsBundlePath string
+	// publicPorts is every port this run serves a public listener on, so an
+	// origin mapping that speaks plain http to one of them fails at start with
+	// the fix instead of a 400 on the first request.
+	publicPorts map[int]bool
 }
 
 // NewRunner validates the options and prepares the run. It contacts no Docker
@@ -736,7 +740,7 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 	}
 	r.logf("network %s", r.network)
 	r.chooseRuntimeAPIAddress(ctx)
-	if err = r.initTLS(); err != nil {
+	if err = r.initTLS(spec); err != nil {
 		return nil, err
 	}
 	if err = r.startBackends(ctx); err != nil {
@@ -812,7 +816,7 @@ func (r *Runner) CurrentSpec() *Spec {
 // container through the one add-host helper, so a handler reaches the same
 // https URL a browser uses. A run that did not opt in starts no CA, adds no
 // host entry and changes no listener.
-func (r *Runner) initTLS() error {
+func (r *Runner) initTLS(spec *Spec) error {
 	if !r.options.TLS {
 		return nil
 	}
@@ -828,7 +832,7 @@ func (r *Runner) initTLS() error {
 	if persistent {
 		dir = filepath.Join(r.dataDir, tlsCADirName)
 	}
-	state, err := newLocalTLS(dir, host)
+	state, err := newLocalTLS(dir, host, tlsOriginNames(spec)...)
 	if err != nil {
 		return err
 	}
@@ -1811,6 +1815,10 @@ func (r *Runner) startPublicListener(ctx context.Context, index int, server *htt
 	if err != nil {
 		return 0, err
 	}
+	if r.publicPorts == nil {
+		r.publicPorts = map[int]bool{}
+	}
+	r.publicPorts[port] = true
 	tlsConfig := r.serverTLSConfig()
 	if tlsConfig != nil {
 		server.TLSConfig = tlsConfig
