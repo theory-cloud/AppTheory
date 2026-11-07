@@ -2124,13 +2124,23 @@ The own bus was chosen over the pinned moto events service after probing
 including the timestamp form they use: `PutEventsRequestEntry.Time` as epoch
 seconds in a JSON number, integer or fractional (the protocol's default
 timestamp encoding). The RFC3339 string form v7.0.0 accepted is still accepted,
-and an omitted, empty or `null` `Time` keeps the run clock's instant. A numeric
-`Time` keeps the instant it names, printed in the delivered envelope as an
-RFC3339 `time` with the fraction the caller supplied; the string form keeps
-v7.0.0's whole-second output. An entry whose `Time` is a value the runner
-cannot read fails that entry, not the request. See [Event
+and an omitted, empty or `null` `Time` takes the time of the PutEvents call from
+the run clock, as the API documents. The delivered envelope's `time` keeps one
+precision per form:
+
+- a numeric `Time` keeps the instant it names, printed as RFC3339 with the
+  fraction it supplied (whole seconds for an integer, up to nine fractional
+  digits);
+- an RFC3339 string keeps v7.0.0's whole-second output;
+- the run clock (an omitted, empty or `null` `Time`) keeps v7.0.0's
+  whole-second output.
+
+An entry whose `Time` is a value the runner cannot read fails that entry, not
+the request. See
+[PutEventsRequestEntry.Time](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutEventsRequestEntry.html)
+for the fallback rule, [Event
 structure](https://docs.aws.amazon.com/eventbridge/latest/ref/events-structure.html)
-for the envelope's `time` field and [AWS JSON 1.1
+for the envelope's `time` field, and [AWS JSON 1.1
 timestamps](https://smithy.io/2.0/aws/protocols/aws-json-1_1-protocol.html#shape-serialization)
 for the wire encoding.
 
@@ -2151,6 +2161,53 @@ codes](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutEvents
 and [Common Error
 Types](https://docs.aws.amazon.com/eventbridge/latest/APIReference/CommonErrors.html)
 for the protocol errors.
+
+**Status and placement choices.** AWS documents the error codes and statuses
+but not where a member whose JSON type does not match the model is reported.
+The first response below is a stated deviation; the second is pinned by
+citations:
+
+- A `Time` whose JSON type is neither a number nor a string fails the whole
+  request with `400 ValidationError` instead of refusing the entry. [Smithy
+  shape
+  serialization](https://smithy.io/2.0/aws/protocols/aws-json-1_1-protocol.html#shape-serialization)
+  defines a timestamp as a JSON number, so the member cannot be decoded at all,
+  and [Common Error
+  Types](https://docs.aws.amazon.com/eventbridge/latest/APIReference/CommonErrors.html)
+  documents `ValidationError` as 400 for input that does not meet the required
+  format. A value that decodes but names no usable instant (for example
+  `"not-a-time"` or an out-of-range number) stays a per-entry `InvalidArgument`.
+- An `X-Amz-Target` other than `AWSEvents.PutEvents` is `404
+  UnknownOperationException`. The [AWS JSON 1.1 identification
+  rule](https://smithy.io/2.0/aws/protocols/aws-json-1_1-protocol.html#identification-for-claiming)
+  makes `X-Amz-Target` the `{serviceName}.{operationName}` of the request, and
+  [Common Error
+  Types](https://docs.aws.amazon.com/eventbridge/latest/APIReference/CommonErrors.html)
+  documents `UnknownOperationException` as HTTP 404 for an operation that is not
+  recognized. The endpoint's exact-match target check is how it applies that
+  rule locally.
+
+**Compatibility with v7.0.0.** Every request in this table was refused at
+v7.0.0 too, so no accepted call newly fails; the bytes a caller observes can
+change, and a release note should carry the codes and statuses:
+
+| Request | v7.0.0 | This release |
+| --- | --- | --- |
+| a non-POST method | `405` plain text | `400 MalformedHttpRequestException` |
+| an `X-Amz-Target` other than `AWSEvents.PutEvents` | `400` plain text | `404 UnknownOperationException` |
+| a body that is not JSON | `400` plain text | `400 MalformedHttpRequestException` |
+| a body read failure | `400` plain text | `400 MalformedHttpRequestException` |
+| an `Entries` count outside 1..10 | `400` plain text | `400 ValidationError` |
+| a member whose JSON type does not decode (`Time` included) | `400` plain text | `400 ValidationError` |
+| an entry missing `Source` or `DetailType` | `200`, entry `MalformedDetail` | `200`, entry `InvalidArgument` |
+| an entry whose `Time` cannot be read | `200`, entry `MalformedDetail` | `200`, entry `InvalidArgument` |
+| an unencodable response | `500` plain text | `500 InternalFailure` |
+
+A request that succeeded at v7.0.0 keeps succeeding with the same delivered
+data: the string-form and run-clock `time` stay whole-second RFC3339, the
+envelope's other members are unchanged, and the numeric `Time` form (which
+failed the v7.0.0 decode) is additive. A malformed `Detail` keeps its
+per-entry `MalformedDetail`.
 
 **Schedules.** A `ScheduleExpression` of the form `rate(value unit)` or
 `cron(minutes hours day-of-month month day-of-week year)` fires on `env.Clock`.
@@ -2185,8 +2242,9 @@ is matched against every enabled rule on its bus. Matching is the documented
 EventBridge pattern grammar over top-level fields and `detail`, including
 `prefix`, `suffix`, `anything-but`, `numeric`, `exists`,
 `equals-ignore-case` and `$or`. A `State: DISABLED` rule registers paused and
-never fires. A malformed entry is reported in the PutEvents response with
-`ErrorCode` `MalformedDetail` and does not reach a rule.
+never fires. An entry that fails validation is reported in the PutEvents
+response with `ErrorCode` `InvalidArgument` or `MalformedDetail` and does not
+reach a rule.
 
 **Targets and input shaping.** A rule target may be a Lambda function, an SQS
 queue or an SNS topic:
