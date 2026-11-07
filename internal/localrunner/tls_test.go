@@ -565,3 +565,114 @@ func TestProfileTLSKeyIsTheCommittedOptIn(t *testing.T) {
 		t.Fatalf("--tls-host was overridden by the profile: %q", override.options.TLSHost)
 	}
 }
+
+func TestTLSPathsFailClosed(t *testing.T) {
+	base := testBase(t)
+
+	filePath := filepath.Join(base, "not-a-directory")
+	if err := os.WriteFile(filePath, []byte("x"), 0o600); err != nil { //nolint:gosec // a test fixture
+		t.Fatalf("write the file: %v", err)
+	}
+	if _, _, err := TLSCA(filePath); err == nil {
+		t.Fatal("a data directory that is a file must fail")
+	}
+	if _, err := newLocalCASigner(filePath); err == nil {
+		t.Fatal("a TLS directory that is a file must fail")
+	}
+
+	certOnly, err := newLocalTLS(filepath.Join(base, "cert-only"), "app.localhost")
+	if err != nil {
+		t.Fatalf("newLocalTLS: %v", err)
+	}
+	if err := os.Remove(certOnly.caKeyPath); err != nil {
+		t.Fatalf("remove the CA key: %v", err)
+	}
+	if _, err := newLocalTLS(filepath.Join(base, "cert-only"), "app.localhost"); err == nil {
+		t.Fatal("a CA certificate without its key must fail")
+	}
+
+	keyOnly, err := newLocalTLS(filepath.Join(base, "key-only"), "app.localhost")
+	if err != nil {
+		t.Fatalf("newLocalTLS: %v", err)
+	}
+	if err := os.Remove(keyOnly.caPath); err != nil {
+		t.Fatalf("remove the CA certificate: %v", err)
+	}
+	if _, err := newLocalTLS(filepath.Join(base, "key-only"), "app.localhost"); err == nil {
+		t.Fatal("a CA key without its certificate must fail")
+	}
+
+	if _, _, err := parseCA([]byte("not pem"), []byte("not pem")); err == nil {
+		t.Fatal("a non-PEM CA must fail")
+	}
+	keyPEM := secondKeyPEM(t, keyOnly)
+	if _, _, err := parseCA(keyOnly.publicLeafPEM, keyPEM); err == nil {
+		t.Fatal("a server certificate must not be accepted as the CA")
+	}
+	certPEM, err := os.ReadFile(certOnly.caPath) //nolint:gosec // the test owns the path
+	if err != nil {
+		t.Fatalf("read the CA certificate: %v", err)
+	}
+	keyBlock, _ := pem.Decode(keyPEM)
+	if keyBlock == nil {
+		t.Fatal("the CA key is not PEM")
+	}
+	notAKey := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: keyBlock.Bytes})
+	if _, _, err := parseCA(certPEM, notAKey); err == nil {
+		t.Fatal("a non-key PEM block must fail")
+	}
+
+	runner := &Runner{tls: &localTLS{dir: filepath.Join(base, "missing"), caPEM: []byte("ca")}}
+	if _, err := runner.writeTLSTrustBundle(); err == nil {
+		t.Fatal("an unwritable trust-bundle directory must fail")
+	}
+	if err := writePrivateFile(filepath.Join(base, "missing", "key.pem"), []byte("k")); err == nil {
+		t.Fatal("a key in a missing directory must fail")
+	}
+	if err := writePrivateFile(filepath.Join(base, "key.pem"), []byte("k")); err != nil {
+		t.Fatalf("write a private file: %v", err)
+	}
+}
+
+func TestLockTLSDirectoryReclaimsAStaleLock(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, tlsLockFile)
+	if err := os.WriteFile(path, nil, 0o600); err != nil { //nolint:gosec // a test fixture
+		t.Fatalf("write the lock: %v", err)
+	}
+	stale := time.Now().Add(-5 * time.Minute)
+	if err := os.Chtimes(path, stale, stale); err != nil {
+		t.Fatalf("age the lock: %v", err)
+	}
+	unlock, err := lockTLSDirectory(dir)
+	if err != nil {
+		t.Fatalf("a stale lock must be reclaimed: %v", err)
+	}
+	unlock()
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("the lock was not released: %v", err)
+	}
+}
+
+func TestTLSEdgeFailures(t *testing.T) {
+	base := testBase(t)
+	filePath := filepath.Join(base, "a-file")
+	if err := os.WriteFile(filePath, []byte("x"), 0o600); err != nil { //nolint:gosec // a test fixture
+		t.Fatalf("write the file: %v", err)
+	}
+	if _, err := newLocalTLS(filePath, "app.localhost"); err == nil {
+		t.Fatal("newLocalTLS must fail when the directory cannot be created")
+	}
+	if _, _, err := TLSLeaf(base, []string{"idp.localhost"}, filePath); err == nil {
+		t.Fatal("TLSLeaf must fail when --out is a file")
+	}
+
+	locked := filepath.Join(base, "locked")
+	if err := os.MkdirAll(locked, 0o500); err != nil {
+		t.Fatalf("create the locked directory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+	if _, err := lockTLSDirectory(locked); err == nil {
+		t.Fatal("a lock file that cannot be created must fail")
+	}
+}
