@@ -489,6 +489,25 @@ func TestKMSIdentityTagAndDefaults(t *testing.T) {
 	if kmsRawKeyID("arn:aws:kms:us-east-1:123456789012:key/abc") != "abc" || kmsRawKeyID("abc") != "abc" {
 		t.Fatal("kmsRawKeyID")
 	}
+	for value, want := range map[string]struct {
+		raw string
+		ok  bool
+	}{
+		"abc": {"abc", true},
+		"":    {"", false},
+		"arn:aws:kms:us-east-1:123456789012:key/abc":    {"abc", true},
+		"arn:aws:kms:eu-west-1:123456789012:key/abc":    {"", false},
+		"arn:aws:kms:us-east-1:999999999999:key/abc":    {"", false},
+		"arn:aws-cn:kms:us-east-1:123456789012:key/abc": {"", false},
+		"arn:aws:kms:us-east-1:123456789012:alias/abc":  {"", false},
+		"arn:aws:kms:us-east-1:123456789012:key/":       {"", false},
+		"arn:aws:kms:us-east-1:123456789012":            {"", false},
+	} {
+		raw, ok := kmsLocalRawKeyID(value)
+		if raw != want.raw || ok != want.ok {
+			t.Fatalf("kmsLocalRawKeyID(%q) = %q, %v", value, raw, ok)
+		}
+	}
 	if recordLabel(&kmsKeyRecord{StableID: "stable"}) != "stable" || recordLabel(&kmsKeyRecord{Identity: "Stack/Key"}) != "Stack/Key" {
 		t.Fatal("recordLabel")
 	}

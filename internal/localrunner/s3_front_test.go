@@ -689,3 +689,110 @@ func TestS3FrontNonSSEPutHasNoAnswer(t *testing.T) {
 		t.Fatalf("a plain object reported %q", head.ServerSideEncryption)
 	}
 }
+
+// replaceS3Signature swaps the hex signature in an Authorization header.
+func replaceS3Signature(authorization, signature string) string {
+	index := strings.LastIndex(authorization, "Signature=")
+	if index < 0 {
+		return authorization
+	}
+	return authorization[:index+len("Signature=")] + signature
+}
+
+// TestS3FrontVerifySigV4 covers every refusal the caller check makes and the
+// canonical-request helpers, so a malformed or foreign signature never reaches
+// the store.
+func TestS3FrontVerifySigV4(t *testing.T) {
+	front, err := newS3Front("", "http://127.0.0.1:1", nil)
+	if err != nil {
+		t.Fatalf("new S3 front: %v", err)
+	}
+	newRequest := func() *http.Request {
+		request := httptest.NewRequestWithContext(context.Background(), http.MethodPut, "http://front/bucket/key?x-id=PutObject", strings.NewReader("x"))
+		request.Header.Set("X-Amz-Content-Sha256", strings.Repeat("a", 64))
+		request.Header.Set("X-Amz-Server-Side-Encryption", "AES256")
+		if err := newS3Signer().SignHTTP(context.Background(), front.credentials, request, strings.Repeat("a", 64), "s3", LocalRegion, time.Now().UTC()); err != nil {
+			t.Fatalf("sign the request: %v", err)
+		}
+		return request
+	}
+	if err := front.verifySigV4(newRequest()); err != nil {
+		t.Fatalf("a valid signature was refused: %v", err)
+	}
+	unsigned := newRequest()
+	unsigned.Header.Del("Authorization")
+	if err := front.verifySigV4(unsigned); err != nil {
+		t.Fatalf("an unsigned request was refused: %v", err)
+	}
+	for name, mutate := range map[string]func(*http.Request){
+		"not version 4": func(r *http.Request) { r.Header.Set("Authorization", "AWS access:signature") },
+		"malformed field": func(r *http.Request) {
+			r.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential")
+		},
+		"short scope": func(r *http.Request) {
+			r.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=dummy/20261107/us-east-1/s3, SignedHeaders=host, Signature=00")
+		},
+		"foreign identity": func(r *http.Request) {
+			r.Header.Set("Authorization", strings.Replace(r.Header.Get("Authorization"), "Credential=dummy/", "Credential=other/", 1))
+		},
+		"foreign scope terminator": func(r *http.Request) {
+			r.Header.Set("Authorization", strings.Replace(r.Header.Get("Authorization"), "/aws4_request,", "/aws4_request-x,", 1))
+		},
+		"non-s3 service": func(r *http.Request) {
+			r.Header.Set("Authorization", strings.Replace(r.Header.Get("Authorization"), "/s3/aws4_request", "/kms/aws4_request", 1))
+		},
+		"no signed headers": func(r *http.Request) {
+			r.Header.Set("Authorization", strings.Replace(r.Header.Get("Authorization"), "SignedHeaders=", "SignedHeaders=;", 1))
+		},
+		"no date": func(r *http.Request) { r.Header.Del("X-Amz-Date") },
+		"bad hex": func(r *http.Request) {
+			r.Header.Set("Authorization", replaceS3Signature(r.Header.Get("Authorization"), "zz"))
+		},
+		"mismatch": func(r *http.Request) {
+			r.URL.Path = "/bucket/other"
+			r.URL.RawPath = ""
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			request := newRequest()
+			mutate(request)
+			if err := front.verifySigV4(request); err == nil {
+				t.Fatalf("%s was accepted", name)
+			}
+		})
+	}
+}
+
+// TestS3FrontCanonicalHelpers pins the SigV4 canonical shapes.
+func TestS3FrontCanonicalHelpers(t *testing.T) {
+	if got := s3CanonicalURI(&url.URL{}); got != "/" {
+		t.Fatalf("empty canonical URI %q", got)
+	}
+	if got := s3CanonicalURI(&url.URL{Path: "/a b/key=1"}); got != "/a%20b/key=1" {
+		t.Fatalf("canonical URI %q", got)
+	}
+	query := url.Values{"b": {"2", "1"}, "a": {"x y", "plus+", "ü"}}
+	if got, want := s3CanonicalQuery(query), "a=%C3%BC&a=plus%2B&a=x%20y&b=1&b=2"; got != want {
+		t.Fatalf("canonical query %q, want %q", got, want)
+	}
+	if got, want := s3URIEncode("A-z 0/9+~"), "A-z%200%2F9%2B~"; got != want {
+		t.Fatalf("URI encode %q, want %q", got, want)
+	}
+	request := &http.Request{Host: "front", Header: http.Header{"X-Multi": {"a  b", "c"}}}
+	if got, want := s3CanonicalHeaders(request, []string{"host", "x-multi"}), "host:front\nx-multi:a b,c\n"; got != want {
+		t.Fatalf("canonical headers %q, want %q", got, want)
+	}
+	length := &http.Request{Host: "front", ContentLength: 12, Header: http.Header{}}
+	if got, want := s3CanonicalHeaders(length, []string{"content-length"}), "content-length:12\n"; got != want {
+		t.Fatalf("content-length canonical header %q, want %q", got, want)
+	}
+	length.Header.Set("Content-Length", "7")
+	if got, want := s3CanonicalHeaders(length, []string{"content-length"}), "content-length:7\n"; got != want {
+		t.Fatalf("header content-length %q, want %q", got, want)
+	}
+	recorder := httptest.NewRecorder()
+	writeS3FrontError(recorder, http.StatusForbidden, "SignatureDoesNotMatch", "a < b")
+	if recorder.Code != http.StatusForbidden || !strings.Contains(recorder.Body.String(), "a &lt; b") {
+		t.Fatalf("error document %d %q", recorder.Code, recorder.Body.String())
+	}
+}
