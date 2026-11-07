@@ -378,6 +378,10 @@ func localResourceValueFor(resource ResourceSpec, provisioned resourceValues, qu
 		value.ARN = "arn:" + LocalPartition + ":logs:" + LocalRegion + ":" + LocalAccountID + ":log-group:" + name + ":*"
 	case typeEventsRule:
 		value.ARN = "arn:" + LocalPartition + ":events:" + LocalRegion + ":" + LocalAccountID + ":rule/" + name
+	case typeEventsBus:
+		// Ref returns the bus name and Fn::GetAtt Arn the bus ARN.
+		// https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-events-eventbus.html
+		value.ARN = "arn:" + LocalPartition + ":events:" + LocalRegion + ":" + LocalAccountID + ":event-bus/" + name
 	case typeKinesisStream:
 		value.ARN = "arn:" + LocalPartition + ":kinesis:" + LocalRegion + ":" + LocalAccountID + ":stream/" + name
 	case typeSecretsSecret:

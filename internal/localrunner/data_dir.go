@@ -127,7 +127,8 @@ func (r *Runner) configureBackendDataDir(_ string, container string, pin Contain
 		}
 		return pin, []string{config + ":/opt/elasticmq.conf:ro", dir + ":/data"}, nil
 	case "moto":
-		r.logf("backend moto: --data-dir keeps no moto state; the pinned moto server holds it in memory (the docs/125 true limit)")
+		r.logf("backend moto: --data-dir keeps no moto state; the pinned moto server holds it in memory (the docs/125 true limit); the runner's KMS front persists the key material it owns under %s",
+			filepath.Join(r.dataDir, "kms", kmsFrontKeyFile))
 		return pin, nil, nil
 	default:
 		return pin, nil, nil

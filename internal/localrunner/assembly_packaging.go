@@ -233,7 +233,7 @@ func imageURIHash(properties json.RawMessage) string {
 // hasImageURI reports whether Code.ImageUri is present and not null.
 func hasImageURI(raw json.RawMessage) bool {
 	trimmed := strings.TrimSpace(string(raw))
-	return trimmed != "" && trimmed != "null"
+	return trimmed != "" && trimmed != jsonNull
 }
 
 func metadataStringMap(metadata map[string]json.RawMessage, key string) (map[string]string, error) {

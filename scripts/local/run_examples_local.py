@@ -2846,6 +2846,9 @@ def run_lambda_role(harness: Harness, kind: str) -> str:
                 or secrets.get("generatedUsername") != "generated-user"
                 or secrets.get("generatedPasswordLength") != 24
                 or secrets.get("generatedPunctuation") is not False
+                or secrets.get("bareSecretLength") != 20
+                or secrets.get("bareSecretJson") is not False
+                or secrets.get("bareSecretPunctuation") is not False
             ):
                 raise HarnessFailure(f"lambda-role custom: Secrets Manager resolution failed: {secrets}")
             pool_id = str(cognito.get("poolId") or "")
@@ -2874,7 +2877,7 @@ def run_lambda_role(harness: Harness, kind: str) -> str:
                 raise HarnessFailure(f"lambda-role custom: the discovery document is inconsistent: {discovery}")
             return (
                 "custom.handler read String/SecureString/StringList SSM parameters (Ref, GetAtt Type/Value), "
-                "both Secrets Manager secrets through GetSecretValue, and the Cognito pool/client; "
+                "the literal, keyed and bare Secrets Manager secrets through GetSecretValue, and the Cognito pool/client; "
                 f"the local issuer {issuer} served the pool JWKS and discovery document; S3 round-trip passed"
             )
         finally:
@@ -3735,6 +3738,84 @@ def run_lambda_role_encrypted(harness: Harness) -> str:
 
 def run_lambda_role_custom(harness: Harness) -> str:
     return run_lambda_role(harness, "custom")
+
+
+def run_s3_sse(harness: Harness) -> str:
+    """SSE-S3 through the real S3 SDK: the CDK bucket has no encryption
+    configuration, so the put names AES256; s3proxy refuses the header and the
+    runner's S3 front is what stores and reports it."""
+    spec = plan_local_app(harness, LAMBDA_ROLE_APP, allow_no_surface=True)
+    function = None
+    for candidate in spec.get("functions") or []:
+        if candidate.get("handler") == "custom.handler":
+            function = candidate
+            break
+    if function is None:
+        raise HarnessFailure("s3-sse: plan has no custom.handler function")
+    session = start_local_session(
+        harness,
+        LAMBDA_ROLE_APP,
+        name="s3-sse",
+        backends=("moto", "s3proxy"),
+        targets=(function["logicalId"],),
+        allow_no_surface=True,
+    )
+    try:
+        # The key carries '=' and a space: the front re-signs the put after
+        # stripping the SSE header, and S3's canonical URI is the path encoded
+        # once, so a double-escaped canonical URI fails with 403 here.
+        key = "sse/environment=local/probe file.txt"
+        value = "sse-value"
+        write = session.invoke(function["logicalId"], {
+            "queryStringParameters": {"key": key, "write": "1", "value": value, "sse": "1"},
+        })
+        write_body = _proxy_body(write, "s3-sse write")
+        write_object = write_body.get("s3Object") or {}
+        if write_object.get("serverSideEncryption") != "AES256":
+            raise HarnessFailure(f"s3-sse write: the put did not report AES256: {write}")
+        read = session.invoke(function["logicalId"], {
+            "queryStringParameters": {"key": key, "read": "1", "sse": "1"},
+        })
+        read_body = _proxy_body(read, "s3-sse read")
+        read_object = read_body.get("s3Object") or {}
+        if (
+            read_object.get("content") != value
+            or read_object.get("headServerSideEncryption") != "AES256"
+            or read_object.get("getServerSideEncryption") != "AES256"
+        ):
+            raise HarnessFailure(f"s3-sse read: unexpected result: {read}")
+        # AWS allows a DeleteObjects request with 1000 keys of up to 1024 bytes,
+        # about 1.05 MiB of XML. The handler sends 999 keys of exactly 1024
+        # bytes. That body is above the front's record-parsing buffer and
+        # v7.0.0 carried it straight to s3proxy, so the front must forward it
+        # instead of answering 400.
+        # https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjects.html
+        # https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-keys.html
+        batch = session.invoke(function["logicalId"], {
+            "queryStringParameters": {"key": key, "deleteBatch": "1"},
+        })
+        if batch.get("statusCode") != 200:
+            raise HarnessFailure(f"s3-sse delete batch: unexpected result: {batch}")
+        batch_body = _proxy_body(batch, "s3-sse delete batch")
+        batch_result = batch_body.get("deleteBatch") or {}
+        if batch_result.get("requested") != 1000 or batch_result.get("error"):
+            raise HarnessFailure(f"s3-sse delete batch: {batch}")
+        gone = session.invoke(function["logicalId"], {
+            "queryStringParameters": {"key": key, "read": "1", "sse": "1"},
+        })
+        if gone.get("statusCode") != 404:
+            raise HarnessFailure(f"s3-sse delete batch: the object survived: {gone}")
+        return (
+            "a real SDK PutObject with x-amz-server-side-encryption: AES256 through the compiled Node "
+            "handler succeeded and reported AES256 for a key containing '=' and a space; the put was "
+            "re-signed over the forwarded path and HeadObject and GetObject through the same handler "
+            "returned the SSE-S3 header and the stored body; one DeleteObjects request with AWS's "
+            "maximum shape (999 keys of exactly 1024 bytes plus the short recorded key, about 1.05 MiB) was "
+            "forwarded to s3proxy with "
+            "HTTP 200 and deleted the object, where a 1 MiB front cap would have answered 400"
+        )
+    finally:
+        stop_local_session(harness, session)
 
 
 def _assert_derived_surface(spec: dict, lang: str) -> None:
@@ -5624,6 +5705,9 @@ def run_kinesis_signing(harness: Harness) -> str:
     if (
         raw.get("aliasVerified") is not True
         or raw.get("arnVerified") is not True
+        or raw.get("digestVerified") is not True
+        or raw.get("digestKMSValid") is not True
+        or raw.get("doubleHashBlocked") is not True
         or raw.get("aliasSignatureLength", 0) <= 0
         or raw.get("arnSignatureLength", 0) <= 0
         or raw.get("publicKeyBytes", 0) <= 0
@@ -5633,8 +5717,88 @@ def run_kinesis_signing(harness: Harness) -> str:
         raise HarnessFailure(f"kinesis signing: unexpected result: {raw}")
     return (
         "the RSA_2048 SIGN_VERIFY key and its alias were provisioned on moto; the handler signed and "
-        "verified with the alias (usable as KeyId) and the key ARN, and read the public key"
+        "verified with the alias (usable as KeyId) and the key ARN, read the public key, signed a "
+        "precomputed SHA-256 digest with MessageType=DIGEST and verified it outside KMS with the public "
+        "key from GetPublicKey; the double hash did not verify"
     )
+
+
+def run_data_dir_kms(harness: Harness) -> str:
+    """KMS material persistence: encrypt and sign in run 1, decrypt and verify
+    in run 2 with the same --data-dir. This is the Autheory restart failure:
+    a fresh moto key made persisted ciphertext undecryptable."""
+    plan = plan_local_app(harness, KINESIS_APP)
+    matches = [
+        function for function in plan.get("functions") or []
+        if (function.get("environment") or {}).get("SIGNING_KEY_ALIAS")
+    ]
+    if len(matches) != 1:
+        raise HarnessFailure(f"data-dir KMS: want one signing function, got {matches}")
+    function = matches[0]["logicalId"]
+    data_dir = _data_dir(harness, "kms")
+    try:
+        written, _ = invoke_local_function(
+            harness,
+            app=KINESIS_APP,
+            function=function,
+            event={"mode": "data-dir-write"},
+            name="data-dir-kms-write",
+            backends=("moto",),
+            data_dir=data_dir,
+        )
+        write_raw = written.get("raw")
+        if not isinstance(write_raw, dict):
+            raise HarnessFailure(f"data-dir KMS write: the handler did not return JSON: {written}")
+        for field in (
+            "ciphertext", "dataKeyCiphertext", "signature", "message", "publicKey",
+            "signingKeyId", "signingKeyArn", "dataKeyId", "dataKeyArn",
+        ):
+            if not write_raw.get(field):
+                raise HarnessFailure(f"data-dir KMS write: missing {field}: {write_raw}")
+        read, _ = invoke_local_function(
+            harness,
+            app=KINESIS_APP,
+            function=function,
+            event={
+                "mode": "data-dir-read",
+                "ciphertext": write_raw["ciphertext"],
+                "dataKeyCiphertext": write_raw["dataKeyCiphertext"],
+                "signature": write_raw["signature"],
+                "message": write_raw["message"],
+                "publicKey": write_raw["publicKey"],
+                "signingKeyId": write_raw["signingKeyId"],
+                "signingKeyArn": write_raw["signingKeyArn"],
+                "dataKeyId": write_raw["dataKeyId"],
+                "dataKeyArn": write_raw["dataKeyArn"],
+            },
+            name="data-dir-kms-read",
+            backends=("moto",),
+            data_dir=data_dir,
+        )
+        read_raw = read.get("raw")
+        if not isinstance(read_raw, dict):
+            raise HarnessFailure(f"data-dir KMS read: the handler did not return JSON: {read}")
+        if (
+            read_raw.get("plaintext") != "apptheory-data-dir-plaintext"
+            or read_raw.get("dataKeyLength") != 32
+            or read_raw.get("publicKeyStable") is not True
+            or read_raw.get("signatureVerified") is not True
+            or read_raw.get("keyIdStable") is not True
+            or read_raw.get("keyArnStable") is not True
+            or read_raw.get("dataKeyIdStable") is not True
+            or read_raw.get("dataKeyArnStable") is not True
+            or read_raw.get("run1KeyIdVerified") is not True
+            or read_raw.get("run1KeyArnVerified") is not True
+        ):
+            raise HarnessFailure(f"data-dir KMS read: unexpected result: {read_raw}")
+        return (
+            "with one --data-dir, run 1 encrypted under the CDK symmetric key, generated a 32-byte data "
+            "key and signed a precomputed digest with the CDK RSA_2048 key; run 2 saw the same KeyId/ARN "
+            "for both keys, decrypted both ciphertexts by the run-1 key id, read the same public key, "
+            "and verified the run-1 signature through KMS by the run-1 key id and ARN and outside KMS"
+        )
+    finally:
+        _remove_data_dir(data_dir)
 
 
 def _plan_function(plan: dict, handler: str) -> dict:
@@ -7647,6 +7811,7 @@ RUNNERS: dict[str, Callable[[Harness], str]] = {
     "lambda-role-index": run_lambda_role_index,
     "lambda-role-encrypted": run_lambda_role_encrypted,
     "lambda-role-custom": run_lambda_role_custom,
+    "s3-sse": run_s3_sse,
     "lambda-role-authorizers": run_lambda_role_authorizers,
     "sqs-producer": run_sqs_producer,
     "sqs-sns-publisher": run_sqs_sns_publisher,
@@ -7680,6 +7845,7 @@ RUNNERS: dict[str, Callable[[Harness], str]] = {
     "dev-loop-watch-two-edit": run_dev_loop_watch_two_edit,
     "data-dir-dynamodb": run_data_dir_dynamodb,
     "data-dir-s3": run_data_dir_s3,
+    "data-dir-kms": run_data_dir_kms,
     "data-dir-sqs": run_data_dir_sqs,
     "seed-restv1": run_seed_restv1,
     "intrinsic-limits": run_intrinsic_limits,

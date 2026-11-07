@@ -134,6 +134,12 @@ func (r *Runner) prepareInvoke(ctx context.Context, spec *Spec, functionID strin
 	if err = r.startBackends(ctx); err != nil {
 		return err
 	}
+	if err = r.startKMSFront(ctx); err != nil {
+		return err
+	}
+	if err = r.startS3Front(ctx); err != nil {
+		return err
+	}
 	if err = r.provisionResources(ctx, spec); err != nil {
 		return err
 	}
@@ -150,7 +156,7 @@ func (r *Runner) prepareInvoke(ctx context.Context, spec *Spec, functionID strin
 	for _, check := range sortedKeys(preflight.Checks) {
 		r.logf("preflight %s: %s", check, preflight.Checks[check])
 	}
-	return nil
+	return r.wireS3FrontEndpoint(preflight.HostGateway)
 }
 
 func (r *Runner) invokeSpec(ctx context.Context) (*Spec, error) {

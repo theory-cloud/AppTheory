@@ -212,7 +212,13 @@ func (r *Runner) provisionKeys(ctx context.Context, spec *Spec) error {
 	if backend.HostURL == "" {
 		return fmt.Errorf("the kms backend has no loopback endpoint for the runner to provision keys")
 	}
-	client := newKMSClient(backend.HostURL)
+	hostURL := backend.HostURL
+	fronted := false
+	if front := r.kmsFrontHostURL(); front != "" {
+		hostURL = front
+		fronted = true
+	}
+	client := newKMSClient(hostURL)
 	for _, resource := range spec.Resources {
 		if resource.Type != typeKMSKey {
 			continue
@@ -222,6 +228,17 @@ func (r *Runner) provisionKeys(ctx context.Context, spec *Spec) error {
 			return err
 		}
 		input := &kms.CreateKeyInput{Description: aws.String(description)}
+		if fronted {
+			// The local KMS front consumes this tag to find the material it
+			// persisted for the same stack/logical id, and strips it before
+			// moto sees the request, so ListResourceTags is unchanged. A
+			// caller-supplied --endpoint kms=... is never fronted, and v7.0.0
+			// stored no such tag there, so the tag is not sent.
+			input.Tags = []kmsTypes.Tag{{
+				TagKey:   aws.String(kmsFrontIdentityTag),
+				TagValue: aws.String(resource.Stack + "/" + resource.LogicalID),
+			}}
+		}
 		var props struct {
 			KeySpec  string `json:"KeySpec"`
 			KeyUsage string `json:"KeyUsage"`

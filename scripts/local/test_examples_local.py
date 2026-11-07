@@ -176,9 +176,10 @@ class RealTreeTests(unittest.TestCase):
         # sqs-event-targets row with its publisher, the covered Kinesis log tap
         # and rule target handlers, the wave-2 E4 S3 consumer, R1 WebSocket
         # authorizer, R2a authorizer echo, R2b policy authorizer and R4
-        # lambda-packaging rows, the R3a Runtime API conformance suite and the
-        # AD1 two-edit watch row.
-        self.assertEqual(97, len(classified))
+        # lambda-packaging rows, the R3a Runtime API conformance suite, the
+        # AD1 two-edit watch row, the KMS DIGEST/data-dir rows and the S3
+        # SSE-S3 row.
+        self.assertEqual(99, len(classified))
         by_key = {entry.key: entry for entry in entries}
         expected = {
             "examples/cdk/ssr-site/bin/apptheory-ssr-site.ts": "ssr-site-gateway",
@@ -189,6 +190,8 @@ class RealTreeTests(unittest.TestCase):
             "examples/cdk/ssr-site/scripts/generate-assets-manifest.mjs": "ssr-assets-manifest",
             "examples/cdk/ssr-site/scripts/upload-assets.sh": "ssr-assets-upload",
             "examples/cdk/kinesis-cloudwatch-logs/handlers/signing/main.go": "kinesis-signing",
+            "examples/cdk/kinesis-cloudwatch-logs/scripts/data-dir-kms.sh": "data-dir-kms",
+            "examples/cdk/lambda-role/scripts/s3-sse.sh": "s3-sse",
             "examples/cdk/sqs-queue/handlers/sns-publisher.mjs": "sqs-sns-publisher",
             "examples/cdk/sqs-queue/handlers/sns-scenario-publisher.mjs": "sqs-sns-targets",
             "examples/cdk/sqs-queue/handlers/rule-publisher.mjs": "sqs-event-targets",

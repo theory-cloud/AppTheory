@@ -292,6 +292,12 @@
       "gap": "s3proxy's filesystem provider persists objects; bucket policies and server-side event hooks are not served by the store.",
       "description": "S3 --data-dir: the custom handler wrote an object through the real S3 SDK in one invoke; a second invoke with the same --data-dir read the object back through the handler, and the s3proxy base directory holds the object file."
     },
+    "examples/cdk/lambda-role/scripts/s3-sse.sh": {
+      "run": "s3-sse",
+      "class": "L2",
+      "gap": "s3proxy's filesystem store refuses server-side encryption by design; the runner's S3 front records SSE-S3 for a verified header-signed put and forwards every other SSE put unchanged, so the store keeps its answer. SSE-KMS and SSE-C remain refused (the runner cannot honour a key binding or customer key). A DeleteObjects body above the front's 1 MiB record buffer is forwarded unchanged and its SSE-S3 records are left for a later plain PutObject, plain CopyObject, successful CompleteMultipartUpload, DeleteObject or plain DeleteBucket to clear; an aborted multipart upload and a metadata subresource read change nothing. Bucket policies and server-side notification hooks are not served by the store.",
+      "description": "SSE-S3 through the real SDK: the compiled Node handler put an object with x-amz-server-side-encryption: AES256 and the PutObject response reported AES256; HeadObject and GetObject through the same handler returned the SSE-S3 header and the stored body. One DeleteObjects request at AWS's maximum shape (999 keys of exactly 1024 bytes plus the short recorded key, about 1.05 MiB, above the front's buffer) was forwarded to s3proxy and deleted the object."
+    },
     "examples/cdk/sqs-queue/scripts/data-dir-sqs.sh": {
       "run": "data-dir-sqs",
       "class": "L2",
@@ -366,8 +372,14 @@
     "examples/cdk/kinesis-cloudwatch-logs/handlers/signing/main.go": {
       "run": "kinesis-signing",
       "class": "L2",
-      "gap": "KMS is emulated by moto (no HSM, key policies or grants); Sign, Verify and GetPublicKey are real.",
-      "description": "Kinesis signing handler: the CDK RSA_2048 SIGN_VERIFY key and alias are provisioned on moto; the handler signs and verifies with the alias (usable as KeyId) and the key ARN and reads the public key."
+      "gap": "KMS is emulated by the runner's KMS front over the pinned moto (no HSM, key policies or grants); Sign, Verify and GetPublicKey are real, including MessageType=DIGEST.",
+      "description": "Kinesis signing handler: the CDK RSA_2048 SIGN_VERIFY key and alias are provisioned through the runner's KMS front; the handler signs and verifies with the alias (usable as KeyId) and the key ARN, reads the public key, and signs a precomputed SHA-256 digest with MessageType=DIGEST that the handler verifies outside KMS with the GetPublicKey public key (the double hash does not verify)."
+    },
+    "examples/cdk/kinesis-cloudwatch-logs/scripts/data-dir-kms.sh": {
+      "run": "data-dir-kms",
+      "class": "L2",
+      "gap": "KMS key material and the key identity (KeyId/Arn) are persisted by the runner's KMS front (moto is memory-only, so the front re-creates the key and reports the persisted identity); the remaining metadata, notably CreationDate, is the current run's. No HSM, key policies or grants.",
+      "description": "KMS --data-dir: run 1 encrypted under the CDK symmetric key, generated a 32-byte data key and signed a precomputed digest with the CDK RSA_2048 key; run 2 with the same --data-dir saw the same KeyId/ARN for both keys, decrypted both ciphertexts by the run-1 key id, read the same public key, and verified the run-1 signature through KMS by the run-1 key id and ARN and outside KMS."
     },
     "examples/cdk/lambda-role/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
@@ -378,7 +390,7 @@
       "run": "lambda-role-custom",
       "class": "L2",
       "gap": "IAM policy evaluation is a docs/125 true limit; S3 is emulated by s3proxy (no bucket policies and no server-side notification hook; the runner delivers bucket notification configurations from observed object state). SSM parameters, Secrets Manager secrets and the Cognito user pool are real on moto.",
-      "description": "lambda-role custom handler: the compiled asset runs in nodejs:24 and reads String/SecureString/StringList SSM parameters through Ref and GetAtt, both Secrets Manager secrets through GetSecretValue, and the provisioned Cognito pool/client; the runner's local issuer serves the pool JWKS and discovery document; the S3 object round-trip stays real on s3proxy."
+      "description": "lambda-role custom handler: the compiled asset runs in nodejs:24 and reads String/SecureString/StringList SSM parameters through Ref and GetAtt, a literal SecretString plus the keyed and bare GenerateSecretString forms through GetSecretValue, and the provisioned Cognito pool/client; the runner's local issuer serves the pool JWKS and discovery document; the S3 object round-trip stays real on s3proxy."
     },
     "examples/cdk/lambda-role/handlers/authorizer.ts": {
       "run": "lambda-role-authorizers",
@@ -632,7 +644,7 @@
       "run": "sqs-event-targets",
       "class": "L2",
       "gap": "ElasticMQ emulates SQS and moto emulates SNS; the runner serves the EventBridge bus. IAM policy evaluation is a docs/125 true limit. The PutEvents calls, pattern matching, input shaping, target delivery, retries and DLQ are real.",
-      "description": "EventBridge rule targets: the publisher calls PutEvents through the real SDK for four rules on the default and a custom bus; an SQS target receives its InputPath body, an SNS target receives the input-transformer message, a Lambda target receives the static Input object, and a failing Lambda target exhausts two retries into the real DLQ with the documented error attributes."
+      "description": "EventBridge rule targets: the publisher calls PutEvents through the real SDK for four rules on the default and a custom bus; the transformed event names that bus by ARN (the Fn::GetAtt form PutEvents documents) while the others use its name; an SQS target receives its InputPath body, an SNS target receives the input-transformer message, a Lambda target receives the static Input object, and a failing Lambda target exhausts two retries into the real DLQ with the documented error attributes."
     },
     "examples/cdk/sqs-queue/handlers/rule-target.mjs": {
       "coveredBy": "examples/cdk/sqs-queue/handlers/rule-publisher.mjs",

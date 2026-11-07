@@ -126,6 +126,16 @@ export class KinesisCloudWatchLogsStack extends cdk.Stack {
       keyUsage: kms.KeyUsage.SIGN_VERIFY,
     });
 
+    // A symmetric data key proves the --data-dir material persistence: the
+    // runner's KMS front keeps the material across runs so ciphertext written
+    // in run 1 decrypts in run 2.
+    const dataKey = new AppTheoryKmsKey(this, "DataKey", {
+      description: "AppTheory local data encryption key",
+      aliasName: "alias/apptheory-local-data",
+      keySpec: kms.KeySpec.SYMMETRIC_DEFAULT,
+      keyUsage: kms.KeyUsage.ENCRYPT_DECRYPT,
+    });
+
     new AppTheoryFunction(this, "SigningFunction", {
       runtime: lambda.Runtime.PROVIDED_AL2023,
       handler: "bootstrap",
@@ -134,6 +144,7 @@ export class KinesisCloudWatchLogsStack extends cdk.Stack {
       environment: {
         SIGNING_KEY_ARN: signingKey.keyArn,
         SIGNING_KEY_ALIAS: signingKey.alias?.aliasName ?? "",
+        DATA_KEY_ARN: dataKey.keyArn,
       },
     });
 
