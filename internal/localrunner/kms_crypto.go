@@ -101,6 +101,9 @@ func generateKMSMaterial(keySpec, keyUsage string) (*kmsMaterial, []byte, error)
 		if err != nil {
 			return nil, nil, err
 		}
+		if bits < 2048 {
+			return nil, nil, fmt.Errorf("a local RSA key must be at least 2048 bits")
+		}
 		key, err := rsa.GenerateKey(rand.Reader, bits)
 		if err != nil {
 			return nil, nil, fmt.Errorf("generate the RSA KMS key: %w", err)
