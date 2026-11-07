@@ -95,6 +95,11 @@ func TestProvisionSecretsStoresSecretStringAndGeneratedValue(t *testing.T) {
 				`"SecretStringTemplate":"{\"username\":\"u\"}","GenerateStringKey":"password",` +
 				`"PasswordLength":20,"ExcludePunctuation":true}}`),
 		},
+		{
+			Stack: "Stack", LogicalID: "Bare", Type: typeSecretsSecret,
+			Properties: json.RawMessage(`{"Name":"app/bare","GenerateSecretString":{` +
+				`"PasswordLength":20,"ExcludePunctuation":true}}`),
+		},
 	}}
 	if err := runner.provisionSecrets(context.Background(), spec); err != nil {
 		t.Fatalf("provision secrets: %v", err)
@@ -117,6 +122,17 @@ func TestProvisionSecretsStoresSecretStringAndGeneratedValue(t *testing.T) {
 	}
 	if strings.ContainsAny(object["password"], `!"#$%&'()*+,-./:;<=>?@[\]^_`+"`"+`{|}~`) {
 		t.Fatalf("excluded punctuation appeared: %q", object["password"])
+	}
+	bare := runner.secretValues[runner.resourceValues["Stack/Bare"].ARN]
+	if len(bare) != 20 {
+		t.Fatalf("bare generated secret length %d != 20", len(bare))
+	}
+	var bareObject map[string]any
+	if json.Unmarshal([]byte(bare), &bareObject) == nil {
+		t.Fatalf("the bare form must store the password itself: %q", bare)
+	}
+	if strings.ContainsAny(bare, `!"#$%&'()*+,-./:;<=>?@[\]^_`+"`"+`{|}~`) {
+		t.Fatalf("excluded punctuation appeared in the bare secret: %q", bare)
 	}
 	mu.Lock()
 	defer mu.Unlock()
@@ -162,11 +178,43 @@ func TestGenerateSecretValueIsDeterministicAndHonoursClasses(t *testing.T) {
 	if !lower || !upper || !number {
 		t.Fatalf("RequireEachIncludedType was not honored: %q", value)
 	}
-	if _, err := generateSecretValue(generateSecretString{GenerateStringKey: "k", ExcludeCharacters: ""}, "seed"); err != nil {
-		t.Fatalf("default generation: %v", err)
+	if _, err := generateSecretValue(generateSecretString{GenerateStringKey: "k", SecretStringTemplate: "{}"}, "seed"); err != nil {
+		t.Fatalf("default keyed generation: %v", err)
 	}
-	if _, err := generateSecretValue(generateSecretString{PasswordLength: 8}, "seed"); err == nil {
-		t.Fatal("a missing GenerateStringKey must fail")
+}
+
+func TestGenerateSecretValueAcceptsTheBareForm(t *testing.T) {
+	props := generateSecretString{
+		PasswordLength:    32,
+		ExcludeCharacters: `"@/\`,
+	}
+	first, err := generateSecretValue(props, "Stack/Bare")
+	if err != nil {
+		t.Fatalf("generate bare secret: %v", err)
+	}
+	second, err := generateSecretValue(props, "Stack/Bare")
+	if err != nil || first != second {
+		t.Fatalf("bare generation is not deterministic: %q %q %v", first, second, err)
+	}
+	if len(first) != 32 {
+		t.Fatalf("bare secret length %d != 32", len(first))
+	}
+	var object map[string]any
+	if json.Unmarshal([]byte(first), &object) == nil {
+		t.Fatalf("the bare form must be the password itself, not a JSON object: %q", first)
+	}
+	if strings.ContainsAny(first, `"@/\`) {
+		t.Fatalf("excluded characters appeared in the bare secret: %q", first)
+	}
+	// The reference makes GenerateStringKey optional and requires it together
+	// with SecretStringTemplate; each half of the pair is refused.
+	if _, err := generateSecretValue(generateSecretString{GenerateStringKey: "password"}, "seed"); err == nil ||
+		!strings.Contains(err.Error(), "SecretStringTemplate") {
+		t.Fatalf("GenerateStringKey without SecretStringTemplate must fail: %v", err)
+	}
+	if _, err := generateSecretValue(generateSecretString{SecretStringTemplate: `{"username":"u"}`}, "seed"); err == nil ||
+		!strings.Contains(err.Error(), "GenerateStringKey") {
+		t.Fatalf("SecretStringTemplate without GenerateStringKey must fail: %v", err)
 	}
 }
 

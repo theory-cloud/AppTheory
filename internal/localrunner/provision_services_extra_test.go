@@ -251,8 +251,9 @@ func TestProvisionSecretsRejectsMissingAndIncompleteValues(t *testing.T) {
 	}
 	for _, props := range []string{
 		`{"Name":"app/none"}`,
-		`{"Name":"app/bad","GenerateSecretString":{"PasswordLength":8}}`,
-		`{"Name":"app/bad","GenerateSecretString":{"GenerateStringKey":"k","PasswordLength":2}}`,
+		`{"Name":"app/bad","GenerateSecretString":{"GenerateStringKey":"k","PasswordLength":8}}`,
+		`{"Name":"app/bad","GenerateSecretString":{"SecretStringTemplate":"{\"username\":\"u\"}"}}`,
+		`{"Name":"app/bad","GenerateSecretString":{"SecretStringTemplate":"not-json","GenerateStringKey":"k"}}`,
 	} {
 		if err := runner.provisionSecrets(context.Background(), &Spec{Resources: []ResourceSpec{{
 			Stack: "S", LogicalID: "Secret", Type: typeSecretsSecret, Properties: json.RawMessage(props),
@@ -261,7 +262,7 @@ func TestProvisionSecretsRejectsMissingAndIncompleteValues(t *testing.T) {
 		}
 	}
 	if _, err := generateSecretValue(generateSecretString{
-		PasswordLength: 1, GenerateStringKey: "k",
+		PasswordLength: 1, GenerateStringKey: "k", SecretStringTemplate: "{}",
 	}, "seed"); err == nil {
 		t.Fatal("a length shorter than the required classes must fail")
 	}

@@ -790,8 +790,14 @@ deterministic local value from the CDK definition and documents the difference:
 - The value is seeded from the stack and logical id, so the same definition
   always produces the same secret. Moto keeps only the current run's state
   (docs/125's memory-only limit); a restart re-provisions the same value.
-- `SecretStringTemplate` must be a JSON object; the generated string is stored
-  under `GenerateStringKey` and the resulting JSON is the secret string.
+- `SecretStringTemplate` and `GenerateStringKey` are optional
+  ([reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-properties-secretsmanager-secret-generatesecretstring.html)).
+  With both, the template must be a JSON object, the generated string is stored
+  under the key and the resulting JSON is the secret string. With neither, the
+  generated password is the whole secret string. A key without a template or a
+  template without a key is refused: the reference says that specifying
+  `GenerateStringKey` requires `SecretStringTemplate`, and the key is the name
+  of the pair added to that template, so neither half is guessed.
 
 A deploy-time `{{resolve:secretsmanager:…}}` reference to a secret the run
 provisioned resolves to that secret's value (the referenced JSON key), so the

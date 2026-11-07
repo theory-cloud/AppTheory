@@ -110,10 +110,22 @@ export async function handler(event: unknown): Promise<{ statusCode: number; bod
         }),
     );
 
-    // Secrets Manager: a literal SecretString and a GenerateSecretString
-    // secret, both read at runtime through GetSecretValue.
+    // Secrets Manager: a literal SecretString, a keyed GenerateSecretString
+    // secret, and a bare GenerateSecretString secret (the generated password is
+    // the whole secret string), all read at runtime through GetSecretValue.
     const literalSecret = await readSecret(process.env.SECRET_ARN ?? "");
     const generatedSecret = await readSecret(process.env.GENERATED_SECRET_ARN ?? "");
+    const bareSecret = await secrets.send(
+        new GetSecretValueCommand({ SecretId: process.env.BARE_SECRET_ARN ?? "" }),
+    );
+    const bareValue = bareSecret.SecretString ?? "";
+    let bareSecretIsJSON = false;
+    try {
+        JSON.parse(bareValue);
+        bareSecretIsJSON = true;
+    } catch {
+        bareSecretIsJSON = false;
+    }
 
     return {
         statusCode: 200,
@@ -138,6 +150,9 @@ export async function handler(event: unknown): Promise<{ statusCode: number; bod
                 generatedUsername: generatedSecret.username,
                 generatedPasswordLength: generatedSecret.password?.length ?? 0,
                 generatedPunctuation: /[^A-Za-z0-9]/.test(generatedSecret.password ?? ""),
+                bareSecretLength: bareValue.length,
+                bareSecretJson: bareSecretIsJSON,
+                bareSecretPunctuation: /[^A-Za-z0-9]/.test(bareValue),
             },
             cognito: {
                 poolId: process.env.COGNITO_POOL_ID,

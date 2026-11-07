@@ -378,7 +378,7 @@
       "run": "lambda-role-custom",
       "class": "L2",
       "gap": "IAM policy evaluation is a docs/125 true limit; S3 is emulated by s3proxy (no bucket policies and no server-side notification hook; the runner delivers bucket notification configurations from observed object state). SSM parameters, Secrets Manager secrets and the Cognito user pool are real on moto.",
-      "description": "lambda-role custom handler: the compiled asset runs in nodejs:24 and reads String/SecureString/StringList SSM parameters through Ref and GetAtt, both Secrets Manager secrets through GetSecretValue, and the provisioned Cognito pool/client; the runner's local issuer serves the pool JWKS and discovery document; the S3 object round-trip stays real on s3proxy."
+      "description": "lambda-role custom handler: the compiled asset runs in nodejs:24 and reads String/SecureString/StringList SSM parameters through Ref and GetAtt, a literal SecretString plus the keyed and bare GenerateSecretString forms through GetSecretValue, and the provisioned Cognito pool/client; the runner's local issuer serves the pool JWKS and discovery document; the S3 object round-trip stays real on s3proxy."
     },
     "examples/cdk/lambda-role/handlers/authorizer.ts": {
       "run": "lambda-role-authorizers",

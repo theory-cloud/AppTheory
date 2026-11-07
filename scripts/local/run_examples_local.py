@@ -2846,6 +2846,9 @@ def run_lambda_role(harness: Harness, kind: str) -> str:
                 or secrets.get("generatedUsername") != "generated-user"
                 or secrets.get("generatedPasswordLength") != 24
                 or secrets.get("generatedPunctuation") is not False
+                or secrets.get("bareSecretLength") != 20
+                or secrets.get("bareSecretJson") is not False
+                or secrets.get("bareSecretPunctuation") is not False
             ):
                 raise HarnessFailure(f"lambda-role custom: Secrets Manager resolution failed: {secrets}")
             pool_id = str(cognito.get("poolId") or "")

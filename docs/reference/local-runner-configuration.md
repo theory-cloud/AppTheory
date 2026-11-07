@@ -1363,8 +1363,9 @@ DynamoDB Local with its
 key schema, GSIs, streams and TTL; and every `AWS::SQS::Queue` in ElasticMQ with
 its visibility, retention, FIFO and redrive attributes; every
 `AWS::SSM::Parameter` (String, StringList, SecureString),
-`AWS::SecretsManager::Secret` (`SecretString` or a deterministic
-`GenerateSecretString`), `AWS::SNS::Topic` (standard and FIFO),
+`AWS::SecretsManager::Secret` (`SecretString`, or a deterministic
+`GenerateSecretString` in its bare, keyed and templated forms), `AWS::SNS::Topic`
+(standard and FIFO),
 `AWS::Kinesis::Stream` and `AWS::Cognito::UserPool`/`UserPoolClient` in moto.
 Table SSE, PITR and deletion protection, SQS KMS/SSE, IAM resource policies and
 the Cognito hosted UI are not provisioned; they are not part of the local

@@ -249,6 +249,13 @@ func (r *Runner) provisionSecrets(ctx context.Context, spec *Spec) error {
 // same secret (moto itself is memory-only). RequireEachIncludedType defaults to
 // true, as documented.
 //
+// GenerateStringKey is optional. The CloudFormation reference makes the pairing
+// one-way: "If you specify this parameter, then you must also specify
+// SecretStringTemplate" and the generated password is added to that template
+// under the key. With neither, Secrets Manager's generated password is the
+// whole secret string. Each half of the pair is refused rather than guessed.
+// https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-properties-secretsmanager-secret-generatesecretstring.html
+//
 //nolint:gocyclo // one branch per documented generation option.
 func generateSecretValue(props generateSecretString, seed string) (string, error) {
 	length := props.PasswordLength
@@ -258,16 +265,19 @@ func generateSecretValue(props generateSecretString, seed string) (string, error
 	if length < 1 || length > 4096 {
 		return "", fmt.Errorf("PasswordLength must be between 1 and 4096 (got %d)", length)
 	}
-	if strings.TrimSpace(props.GenerateStringKey) == "" {
-		return "", fmt.Errorf("GenerateStringKey is required")
-	}
+	key := strings.TrimSpace(props.GenerateStringKey)
 	template := strings.TrimSpace(props.SecretStringTemplate)
-	if template == "" {
-		template = "{}"
+	switch {
+	case key != "" && template == "":
+		return "", fmt.Errorf("GenerateStringKey requires SecretStringTemplate")
+	case key == "" && template != "":
+		return "", fmt.Errorf("SecretStringTemplate requires GenerateStringKey")
 	}
 	var object map[string]any
-	if err := json.Unmarshal([]byte(template), &object); err != nil || object == nil {
-		return "", fmt.Errorf("SecretStringTemplate must be a JSON object")
+	if key != "" {
+		if err := json.Unmarshal([]byte(template), &object); err != nil || object == nil {
+			return "", fmt.Errorf("SecretStringTemplate must be a JSON object")
+		}
 	}
 	requireEach := props.RequireEachIncludedType == nil || *props.RequireEachIncludedType
 	excluded := map[rune]bool{}
@@ -323,6 +333,10 @@ func generateSecretValue(props generateSecretString, seed string) (string, error
 	// generated passwords do not reserve positions.
 	password := []byte(builder.String()[:length])
 	rng.Shuffle(len(password), func(i, j int) { password[i], password[j] = password[j], password[i] })
+	if key == "" {
+		// No template and no key: the generated password is the secret string.
+		return string(password), nil
+	}
 	object[props.GenerateStringKey] = string(password)
 	encoded, err := json.Marshal(object)
 	if err != nil {

@@ -202,6 +202,18 @@ export class LambdaRoleStack extends cdk.Stack {
                 excludePunctuation: true,
             },
         });
+        // The bare form AWS documents: no SecretStringTemplate and no
+        // GenerateStringKey, so the generated password is the whole secret
+        // string. The handler reads it as a plain string, not JSON.
+        // https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-properties-secretsmanager-secret-generatesecretstring.html
+        const bareSecret = new secretsmanager.CfnSecret(this, "BareSecret", {
+            name: "apptheory/local/bare",
+            description: "Bare GenerateSecretString secret read by the custom handler",
+            generateSecretString: {
+                passwordLength: 20,
+                excludePunctuation: true,
+            },
+        });
         new secretsmanager.CfnResourcePolicy(this, "SecretResourcePolicy", {
             secretId: literalSecret.ref,
             resourcePolicy: { Version: "2012-10-17", Statement: [] },
@@ -234,6 +246,7 @@ export class LambdaRoleStack extends cdk.Stack {
                 SSM_LIST_NAME: listParameter.ref,
                 SECRET_ARN: literalSecret.ref,
                 GENERATED_SECRET_ARN: generatedSecret.ref,
+                BARE_SECRET_ARN: bareSecret.ref,
                 COGNITO_POOL_ID: cognitoPool.ref,
                 COGNITO_CLIENT_ID: cognitoClient.ref,
                 COGNITO_POOL_ARN: cdk.Fn.getAtt("CognitoPool", "Arn").toString(),
