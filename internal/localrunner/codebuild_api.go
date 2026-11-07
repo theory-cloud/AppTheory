@@ -652,8 +652,11 @@ func (s *codeBuildService) serveLog(writer http.ResponseWriter, request *http.Re
 func writeCodeBuildJSON(writer http.ResponseWriter, status int, payload any) {
 	encoded, err := json.Marshal(payload)
 	if err != nil {
-		http.Error(writer, "encode CodeBuild response", http.StatusInternalServerError)
-		return
+		// A response that cannot be encoded is a server failure; keep the AWS
+		// JSON error document so the SDK still decodes a typed error.
+		// https://smithy.io/2.0/aws/protocols/aws-json-1_1-protocol.html#operation-error-serialization
+		encoded = []byte(`{"__type":"InternalFailure","message":"encode the CodeBuild response"}`)
+		status = http.StatusInternalServerError
 	}
 	writer.Header().Set("Content-Type", "application/x-amz-json-1.1")
 	writer.WriteHeader(status)
