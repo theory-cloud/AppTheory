@@ -132,7 +132,7 @@ func (r *Runner) provisionSSMParameters(ctx context.Context, spec *Spec) error {
 type secretProperties struct {
 	Name                 string                `json:"Name"`
 	Description          string                `json:"Description"`
-	KmsKeyID             string                `json:"KmsKeyId"`
+	KmsKeyID             json.RawMessage       `json:"KmsKeyId"`
 	SecretString         string                `json:"SecretString"`
 	GenerateSecretString *generateSecretString `json:"GenerateSecretString"`
 }
@@ -202,8 +202,17 @@ func (r *Runner) provisionSecrets(ctx context.Context, spec *Spec) error {
 		if description := strings.TrimSpace(props.Description); description != "" {
 			input.Description = aws.String(description)
 		}
-		if keyID := strings.TrimSpace(props.KmsKeyID); keyID != "" {
-			input.KmsKeyId = aws.String(keyID)
+		// KmsKeyId is a CloudFormation string property, so it may be a literal
+		// or a Ref/Fn::GetAtt the assembly uses to name a provisioned key
+		// (https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-secretsmanager-secret.html).
+		if raw := strings.TrimSpace(string(props.KmsKeyID)); raw != "" && raw != "null" {
+			keyID, err := r.resolveProvisionString(props.KmsKeyID, resource.Stack, spec)
+			if err != nil {
+				return fmt.Errorf("resolve Secrets Manager secret %s KmsKeyId: %w", resource.LogicalID, err)
+			}
+			if keyID = strings.TrimSpace(keyID); keyID != "" {
+				input.KmsKeyId = aws.String(keyID)
+			}
 		}
 		created, err := client.CreateSecret(ctx, input)
 		arn := ""

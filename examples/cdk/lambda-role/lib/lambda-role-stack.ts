@@ -195,6 +195,11 @@ export class LambdaRoleStack extends cdk.Stack {
         const generatedSecret = new secretsmanager.CfnSecret(this, "GeneratedSecret", {
             name: "apptheory/local/generated",
             description: "GenerateSecretString secret read by the custom handler",
+            // KmsKeyId is a CloudFormation string property, so the assembly may
+            // name the provisioned key with Fn::GetAtt; the runner resolves it
+            // before CreateSecret.
+            // https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-secretsmanager-secret.html
+            kmsKeyId: dataKey.keyArn,
             generateSecretString: {
                 secretStringTemplate: JSON.stringify({ username: "generated-user" }),
                 generateStringKey: "password",

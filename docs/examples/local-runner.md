@@ -721,7 +721,10 @@ The values follow the CloudFormation reference for each resource:
   ([reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-secretsmanager-secret.html)).
   AWS appends a six-character suffix to the ARN; moto does the same, so the ARN
   is not byte-identical across runs even though the friendly name is. A runtime
-  `GetSecretValue` reads the secret the runner created.
+  `GetSecretValue` reads the secret the runner created. `KmsKeyId` is a
+  CloudFormation string property: a literal is passed through, and a `Ref` or
+  `Fn::GetAtt` naming a provisioned key is resolved to that key's ARN or id
+  before `CreateSecret`.
 - **SNS** (`AWS::SNS::Topic`): `Ref` is the topic ARN; `Fn::GetAtt TopicName`
   and `TopicArn` are the name and ARN
   ([reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-sns-topic.html)).
