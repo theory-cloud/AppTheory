@@ -345,7 +345,13 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
    `ListQueues` for ElasticMQ. A service with no native probe is checked with a
    plain HTTP request. On timeout the run fails with the backend, its image and
    the last error, before any resource is provisioned. A backend with no
-   published host port is reported ready without this wait.
+   published host port is reported ready without this wait. When moto and
+   s3proxy are up, the runner also starts its two service fronts: the KMS front
+   (the key families it owns, DIGEST signing and `--data-dir` material) and the
+   S3 front (SSE-S3), both on loopback listeners the function containers reach
+   through `host.docker.internal`; see
+   [KMS signing and key material](#kms-signing-and-key-material) and
+   [S3 objects and server-side encryption](#s3-objects-and-server-side-encryption).
 6. **Provision resources.** When the backend is ready, the runner creates every
    resource the assembly declares, in this order: S3 buckets; each
    `Custom::CDKBucketDeployment` source copied into its bucket with the declared
@@ -721,7 +727,10 @@ The values follow the CloudFormation reference for each resource:
   ([reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-secretsmanager-secret.html)).
   AWS appends a six-character suffix to the ARN; moto does the same, so the ARN
   is not byte-identical across runs even though the friendly name is. A runtime
-  `GetSecretValue` reads the secret the runner created.
+  `GetSecretValue` reads the secret the runner created. `KmsKeyId` is a
+  CloudFormation string property: a literal is passed through, and a `Ref` or
+  `Fn::GetAtt` naming a provisioned key is resolved to that key's ARN or id
+  before `CreateSecret`.
 - **SNS** (`AWS::SNS::Topic`): `Ref` is the topic ARN; `Fn::GetAtt TopicName`
   and `TopicArn` are the name and ARN
   ([reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-sns-topic.html)).
@@ -750,8 +759,102 @@ The values follow the CloudFormation reference for each resource:
   ([reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-kms-alias.html),
   [alias use](https://docs.aws.amazon.com/kms/latest/developerguide/alias-using.html)).
   `KeySpec` RSA_2048/3072/4096 and ECC_NIST_P256/P384/P521 with
-  `KeyUsage SIGN_VERIFY` support `Sign`, `Verify` and `GetPublicKey`; the wave-1
-  symmetric path is unchanged.
+  `KeyUsage SIGN_VERIFY` support `Sign`, `Verify` and `GetPublicKey`; symmetric
+  `SYMMETRIC_DEFAULT` keys support `Encrypt`, `Decrypt`, `GenerateDataKey` and
+  `ReEncrypt`. See [KMS signing and key material](#kms-signing-and-key-material)
+  for the DIGEST rule and `--data-dir` persistence.
+
+### KMS signing and key material
+
+The runner serves a small KMS front at the injected `AWS_ENDPOINT_URL_KMS`.
+It owns the material for the two key families applications create in practice
+and proxies every other operation, and every other key type, to moto
+unchanged:
+
+| Key family | Operations the front serves |
+| --- | --- |
+| `SYMMETRIC_DEFAULT` with `ENCRYPT_DECRYPT` | `CreateKey`, `Encrypt`, `Decrypt`, `ReEncrypt`, `GenerateDataKey`, `GenerateDataKeyWithoutPlaintext` |
+| `RSA_2048/3072/4096` and `ECC_NIST_P256/P384/P521` with `SIGN_VERIFY` | `CreateKey`, `Sign`, `Verify`, `GetPublicKey` |
+
+`CreateKey`, `DescribeKey`, aliases, tags, key policy, rotation, grants and
+every operation on a key the front does not own still go to moto, so
+`KeyMetadata` is what v7.0.0 returned; under `--data-dir` the front substitutes
+the persisted `KeyId` and `Arn` for an owned key (see below).
+
+**`MessageType: DIGEST`.** AWS defines `DIGEST` as "the message is a digest,
+and KMS signs it as-is", and `RAW` as a message KMS hashes with the signing
+algorithm's digest
+([Sign](https://docs.aws.amazon.com/kms/latest/APIReference/API_Sign.html),
+[Verify](https://docs.aws.amazon.com/kms/latest/APIReference/API_Verify.html)).
+The pinned moto 5.2.5 ignores `MessageType` in both calls and hashes the
+supplied value again; every moto release through master still does (its
+`verify` docstring says the parameter is "not yet implemented"), so no image
+bump can fix it. The front therefore signs the digest as-is and hashes a `RAW`
+message exactly as before. It covers `RSASSA_PKCS1_V1_5_SHA_256/384/512`,
+`RSASSA_PSS_SHA_256/384/512` and `ECDSA_SHA_256/384/512` with the curve AWS
+pairs with each digest. A `DIGEST` of the wrong length is a
+`ValidationException`.
+
+**`--data-dir` key material and identity.** Ciphertext is bound to the key that
+produced it, and a KMS key's material is part of the key; AWS never rotates it
+implicitly
+([Decrypt](https://docs.aws.amazon.com/kms/latest/APIReference/API_Decrypt.html),
+[key material](https://docs.aws.amazon.com/kms/latest/developerguide/concepts.html#key-material)).
+moto is memory-only, so without help a key re-created from the CDK definition
+on the next start would have new material and the previous run's ciphertext
+could not be decrypted. With `--data-dir`, the front persists the material
+under `<dir>/kms/keys.json` (mode `0600`) and reuses it for the same
+`stack/logicalId`. It also keeps the key's public identity: moto re-creates the
+key, but the front reports the `KeyId` and `Arn` recorded in run 1, because a
+KMS key's id and ARN are permanent for the key's lifetime
+([key identifiers](https://docs.aws.amazon.com/kms/latest/developerguide/concepts.html#key-id)).
+A caller that pins either (Autheory derives its JWKS `kid` from the key) keeps
+working after a restart. The material, `GetPublicKey`, `KeyId` and `Arn` are
+stable; the rest of moto's metadata, notably `CreationDate`, reflects the
+current run. Without `--data-dir` the front keeps the material in memory,
+exactly as before. The ciphertext envelope binds the stable key id and the
+encryption context, so a ciphertext written in run 1 decrypts in run 2 and a
+different context does not. Deleting the data directory discards the material
+and makes old ciphertext unreadable, as deleting a key would.
+
+The runner tags each key it provisions with the reserved local tag
+`apptheory-local:key-identity`; the front consumes it before moto sees the
+request, so `ListResourceTags` and the template's own tags are unchanged. With
+a caller-supplied `--endpoint kms=…` no front runs, so the tag is not sent and
+the endpoint stores exactly the template's tags, as v7.0.0 did.
+
+**Documented local deviations.**
+
+- The front's ciphertext is its own opaque envelope (magic, stable key id,
+  GCM nonce, tag and ciphertext). Callers pass it back to `Decrypt`; it is not
+  an AWS-format blob and cannot be decrypted by AWS.
+- Key types outside the two families above are not owned: `HMAC_*`,
+  `RSA_*` with `ENCRYPT_DECRYPT`, and `ECC_SECG_P256K1`/`SM2` signing keys keep
+  moto's behavior. Their material is not persisted, and `DIGEST` is not served
+  for them.
+- A persisted key keeps its `KeyId` and `Arn`, so the run-1 id or ARN is a
+  valid identifier in a later run; `Decrypt` also accepts no `KeyId` (the
+  ciphertext names the stable key). moto's own per-run id is an internal
+  detail and is not a supported cross-run identifier. The remaining moto
+  metadata, notably `CreationDate`, still reflects the current run. A key
+  created at runtime (no CDK definition) is memory-only and is not persisted,
+  as docs/125 records.
+- A `--data-dir` that names a key with a different `KeySpec` or `KeyUsage` than
+  the definition now fails at start with the identity and both pairs named,
+  rather than silently reusing incompatible material.
+- A persisted key resolves from its raw id or from a key ARN in the local
+  partition, Region and account
+  (`arn:aws:kms:us-east-1:123456789012:key/<id>`), as AWS accepts a key ARN
+  only for a key that exists in the named account and Region
+  ([key identifiers](https://docs.aws.amazon.com/kms/latest/developerguide/concepts.html#key-id)).
+  A foreign ARN with the same `:key/` suffix does not reach the persisted key.
+  The current run's moto keys keep moto's suffix-only ARN handling, which
+  v7.0.0 served.
+- `Sign` and `Verify` on an owned key whose `KeyUsage` is not `SIGN_VERIFY`
+  answer `InvalidKeyUsageException`, as AWS documents
+  ([Sign](https://docs.aws.amazon.com/kms/latest/APIReference/API_Sign.html),
+  [Verify](https://docs.aws.amazon.com/kms/latest/APIReference/API_Verify.html));
+  moto answered `ValidationException` for the same input.
 
 ### The local Cognito issuer
 
@@ -790,8 +893,16 @@ deterministic local value from the CDK definition and documents the difference:
 - The value is seeded from the stack and logical id, so the same definition
   always produces the same secret. Moto keeps only the current run's state
   (docs/125's memory-only limit); a restart re-provisions the same value.
-- `SecretStringTemplate` must be a JSON object; the generated string is stored
-  under `GenerateStringKey` and the resulting JSON is the secret string.
+- `SecretStringTemplate` and `GenerateStringKey` are optional
+  ([reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-properties-secretsmanager-secret-generatesecretstring.html)).
+  With both, the template must be a JSON object, the generated string is stored
+  under the key and the resulting JSON is the secret string. With neither, the
+  generated password is the whole secret string. A key without a template keeps
+  the v7.0.0 value (the template defaults to `{}`, so the generated password is
+  stored under the key) and is reported as one warning line naming the secret
+  and the AWS pairing rule: "If you specify this parameter, then you must also
+  specify `SecretStringTemplate`". A template without a key is refused, as
+  v7.0.0 did: the generated password would have no key to be stored under.
 
 A deploy-time `{{resolve:secretsmanager:…}}` reference to a secret the run
 provisioned resolves to that secret's value (the referenced JSON key), so the
@@ -806,6 +917,11 @@ provisioned secret the wave-1 deterministic placeholder is kept unchanged.
   is used for topics, the publish path and the runner's per-topic drain queue;
   the observed deviations and their normalization are listed under
   [SNS subscription delivery](#sns-subscription-delivery).
+- **KMS `MessageType`.** The pinned moto ignores `MessageType` in `Sign` and
+  `Verify` and hashes a supplied digest a second time; every release through
+  master still does. The runner's KMS front signs a `DIGEST` as-is and hashes a
+  `RAW` message exactly as before; the material it owns and the deviations are
+  listed under [KMS signing and key material](#kms-signing-and-key-material).
 - **Cognito JWKS path.** Only `/{poolId}/.well-known/jwks.json` is served; the
   runner's issuer listener is the path R2a uses.
 - **Kinesis on-demand describe.** Moto omits `StreamModeDetails` from
@@ -1752,9 +1868,9 @@ one directory per backend:
 | Backend | What persists | Option and path |
 | --- | --- | --- |
 | DynamoDB Local | Tables and items | `-dbPath /data` on `<dir>/dynamodb`; the pinned command's `-sharedDb` is kept, so the single database file is `shared-local-instance.db`. |
-| s3proxy | Buckets and objects | The filesystem jclouds provider with `JCLOUDS_FILESYSTEM_BASEDIR=/data` on `<dir>/s3proxy`. |
+| s3proxy | Buckets and objects, plus each object's SSE-S3 record | The filesystem jclouds provider with `JCLOUDS_FILESYSTEM_BASEDIR=/data` on `<dir>/s3proxy`; the runner records the objects written with SSE-S3 in `<dir>/s3sse/index.json`. |
 | ElasticMQ | Queues and messages | `messages-storage` with the H2 file `/data/elasticmq` on `<dir>/sqs`. Verified on the pinned 1.7.1 image: a message survived a restart. |
-| moto | Nothing | Server-mode state lives in the process; there is no persistence option ([moto server mode](https://docs.getmoto.org/en/latest/docs/server_mode.html)). This is the docs/125 memory-only limit, named rather than hidden. |
+| moto | Nothing, except the runner's KMS key material | Server-mode state lives in the process; there is no persistence option ([moto server mode](https://docs.getmoto.org/en/latest/docs/server_mode.html)). This is the docs/125 memory-only limit, named rather than hidden. The runner's KMS front keeps the material of the key families it owns in `<dir>/kms/keys.json`, so ciphertext written in one run decrypts in the next; see [KMS signing and key material](#kms-signing-and-key-material). |
 
 The runner widens the data root to `0755` and each backend directory to `0777`
 because the pinned emulator images run as their own non-root users, and a Linux
@@ -1777,7 +1893,14 @@ restores them on startup ([Persisting queues and messages](https://github.com/so
 
 Definitions are re-provisioned from the CDK definition on every start. A table,
 bucket, queue, topic, stream, parameter, secret, pool or key that already
-exists in the data directory is reconciled, never dropped or recreated. A
+exists in the data directory is reconciled, never dropped or recreated. A KMS
+key is the one shape where moto's metadata is re-created: the runner's KMS
+front reuses the material persisted for the same `stack/logicalId` and reports
+the persisted `KeyId`/`Arn`, so ciphertext, `GetPublicKey` and a caller's pinned
+key id remain valid; the remaining metadata, notably `CreationDate`, is the
+current run's. The S3 front's SSE-S3 records and the KMS material are the only
+runner-owned files under the data directory; both are mode `0600` and contain
+no AWS credential. A
 DynamoDB key-schema change cannot be applied to existing state: the runner
 fails at start with the table named and the UpdateTable page's rule,
 "Modifies the provisioned throughput settings, global secondary indexes,
@@ -1830,6 +1953,167 @@ run's dummy values are present. The committed
 reads `APPTHEORY_LOCAL_APIS`, PUTs an inventory item through the app's real
 handler and reads it back; the harness row proves the seeded item is visible
 through the same handler.
+
+## S3 objects and server-side encryption
+
+`--backend s3proxy` starts the profile's digest-pinned s3proxy and injects its
+endpoint into every function. The runner puts a small S3 front at the injected
+`AWS_ENDPOINT_URL_S3`; it proxies every object operation to s3proxy and serves
+the SSE-S3 answer the store itself refuses. The endpoint is the front's
+`host.docker.internal` IP literal, so SDK clients keep path-style addressing
+(`bucket` in the path, as s3proxy serves it); an ordinary request is forwarded
+byte-for-byte, including the SigV4-signed `Host` header. The front therefore
+needs `host.docker.internal` to resolve to the run network's gateway; the
+preflight resolves it before provisioning, and a host where it does not resolve
+fails the run naming the front instead of serving a broken endpoint.
+
+**SSE-S3 (`x-amz-server-side-encryption: AES256`).** AWS accepts SSE-S3 on
+`PutObject`, applies it, and returns the algorithm on the put and on later
+`HeadObject`/`GetObject` calls
+([PutObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html),
+[SSE-S3](https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingServerSideEncryption.html)).
+s3proxy's filesystem backend refuses every server-side-encryption header by
+design (reporting AES256 over plaintext on a real disk would be a false claim),
+and current releases still refuse it on that store
+([s3proxy limitations](https://github.com/gaul/s3proxy)). The front therefore:
+
+- accepts `AES256` on a `PutObject` whose verified header-based SigV4
+  signature covers the header (below), strips the header before s3proxy sees
+  it, and records the object as SSE-S3 only after the put succeeds;
+- adds `x-amz-server-side-encryption: AES256` to the `PutObject` response;
+- answers `HeadObject` and `GetObject` (including a part read with
+  `?partNumber=`) with the same header for an object stored with it; a metadata
+  subresource read (`?tagging`, `?acl`, `?attributes`, `?legal-hold`,
+  `?retention`, `?torrent` or `?uploadId` for `ListParts`) gets none, because
+  AWS returns none
+  ([GetObjectAttributes](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectAttributes.html),
+  [ListParts](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListParts.html));
+- clears the record when the same key is replaced by a write that names no
+  algorithm (a `PutObject` without the header, a plain `CopyObject`, or a
+  `CompleteMultipartUpload` that really completed), and on `DeleteObject`,
+  `DeleteObjects` and a plain `DeleteBucket`.
+
+The operations that do not replace the object keep the record:
+`CreateMultipartUpload`, `UploadPart` and `UploadPartCopy` act on the upload,
+not the object; `AbortMultipartUpload` frees the upload's parts and leaves the
+object in place
+([AbortMultipartUpload](https://docs.aws.amazon.com/AmazonS3/latest/API/API_AbortMultipartUpload.html));
+a `POST` form upload is forwarded to the store unclassified; and a bucket
+subresource delete (`?policy`, `?cors`, `?lifecycle`, ...) removes that
+configuration, not the bucket's objects. A `CompleteMultipartUpload` answered
+`2xx` with an `<Error>` body is a failed completion: the object and its record
+stay
+([CompleteMultipartUpload](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html)).
+
+The SSE header is part of the SDK's SigV4 signature, so the front re-signs the
+put after stripping it. S3's canonical URI is the URI-encoded path encoded
+exactly once, and S3 does not normalize the path; every other service encodes
+the already-encoded path a second time
+([S3 SigV4](https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html),
+[create a signed request](https://docs.aws.amazon.com/IAM/latest/UserGuide/create-signed-request.html)).
+The front signs the exact path it forwards, so object keys containing `=`, a
+space, `+`, `%`, unicode or `/` segments get the same signature s3proxy
+recomputes; encoding the escaped path a second time would turn `%3D` into
+`%253D` and earn a `403 SignatureDoesNotMatch`.
+
+The store never sees the caller's signature on this path: the stripped header
+was part of it. Before re-signing, the front therefore checks the caller's own
+header-based `SigV4` against the profile's static dummy credentials, and it
+strips the header only when that signature verifies and its `SignedHeaders`
+names `x-amz-server-side-encryption`. Removing a signed header invalidates the
+caller's signature, and only a signature the local credentials vouch for may be
+replaced by the runner's own. Every other SSE put is forwarded unchanged, so
+the store answers it exactly as it did at v7.0.0:
+
+- an unsigned raw SSE put, and a presigned put whose URL signed the SSE header,
+  keep the store's `501 NotImplemented`: the filesystem store refuses the
+  header itself;
+- a presigned plain-PUT URL with the SSE header added at send time keeps the
+  store's `403 AccessDenied`, because the query string signs only the headers
+  listed in `X-Amz-SignedHeaders` and every `x-amz-*` header present in the
+  request must be signed
+  ([SigV4 query-string authentication](https://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-query-string-auth.html));
+- a header-signed put that adds the SSE header after signing keeps the store's
+  `403` for the same reason.
+
+A header-signed put whose `SignedHeaders` names the SSE header but whose
+signature does not verify against the profile's credentials is answered
+`403 SignatureDoesNotMatch` before the store sees it, because the front cannot
+re-sign it as the runner identity. The front also applies AWS's 15-minute
+window for a header-signed request, refusing an `X-Amz-Date` more than 15
+minutes from the local clock
+([SigV4 header-based authentication](https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html)).
+A Signature Version 2 or other non-SigV4 request has no header signature to
+verify, so its SSE put is forwarded unchanged like the cases above.
+
+With `--data-dir`, the record lives in `<dir>/s3sse/index.json` (mode `0600`)
+so it survives a restart; without the flag it is in memory.
+
+**SSE-KMS and SSE-C stay refused.** A `aws:kms` or customer-key request is
+passed through unchanged and keeps s3proxy's `501 NotImplemented`. The runner
+has no way to bind an object to a KMS key or a customer key (the store would
+write plaintext), and reporting `aws:kms` plus a key id without that binding
+would be exactly the false claim the store refuses to make. Model those paths
+against real AWS or a store that performs the encryption.
+
+**Documented local deviations.**
+
+- Only a verified header-signed `PutObject` sets the record. A successful plain
+  `CopyObject` or `CompleteMultipartUpload` clears the destination's previous
+  record, because neither names a new algorithm; a `CopyObject` with an SSE
+  header keeps the store's `501`, an SSE-headed `CreateMultipartUpload` keeps
+  it too, and a failed completion clears nothing. A completion answered `200`
+  with an `<Error>` body is a failed completion too: the record stays.
+- The operations that do not replace the object keep the record: a plain
+  `POST` form upload (forwarded unclassified), `CreateMultipartUpload`,
+  `UploadPart`, `UploadPartCopy`, `AbortMultipartUpload` and a bucket
+  subresource delete. Replace the object with a plain `PutObject`, a plain
+  `CopyObject` or a successful `CompleteMultipartUpload` to make its record
+  match it.
+- The record is per bucket/key, not per version, so a read naming
+  `?versionId=` is answered without the header even though AWS returns it for
+  a version stored with SSE-S3
+  ([GetObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html)).
+  The runner keeps one record per key and does not claim per-version
+  encryption.
+- A `DeleteObjects` body above 1 MiB is forwarded to the store unchanged, as
+  the v7.0.0 path did, so its keys are not read and their SSE-S3 records are
+  left in place until a later clearing write (a plain `PutObject`, a plain
+  `CopyObject`, a successful `CompleteMultipartUpload`, a `DeleteObject` or a
+  plain `DeleteBucket`). AWS allows 1000 keys
+  of up to 1024 bytes, about 1.05 MiB of XML
+  ([DeleteObjects](https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjects.html),
+  [object key names](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-keys.html));
+  refusing or truncating that shape would add a failure the released runner did
+  not have.
+- The store maps each object-key segment to a file name, so a key with one
+  segment longer than the filesystem's name limit (255 bytes on ext4 and APFS)
+  gets the store's own `500`, as it did before the front; the request still
+  reaches it unchanged. The proving row uses keys of exactly 1024 bytes (AWS's
+  maximum) split into short segments, which AWS allows and the store serves.
+- A verified header-signed `PutObject` with a streaming (`aws-chunked`) SigV4
+  payload cannot be re-signed after the signed SSE header is stripped; the
+  front refuses it with a clear 400 rather than forwarding a broken signature.
+  An unsigned or presigned streaming SSE put is forwarded unchanged. A normal
+  SDK put (the audit sink's and the proving row's form) is signed over the
+  payload hash and is accepted, including keys that need URI escaping (`=`,
+  spaces, `+`, `%`, unicode and `/` segments); the front signs the same
+  once-encoded path it forwards.
+- The re-signed put authenticates as the runner identity: the front verifies
+  the caller's header-based `SigV4` against the profile's static dummy
+  credentials before stripping the SSE header and re-signing, and a request
+  signed with other credentials gets `403 SignatureDoesNotMatch`. Every SSE put
+  the front does not verify (unsigned, presigned, or with the header unsigned)
+  is forwarded unchanged and keeps the store's refusal.
+- The account-wide S3 default encryption (SSE-S3 applied to objects written
+  without a header) is not modelled: an object reports `AES256` only when its
+  put named it.
+- The store writes plaintext; `AES256` is the observable S3 answer, not
+  at-rest encryption of the local file. Do not use a `--data-dir` containing
+  sensitive data on a shared host.
+- An object written by a runner-internal path that bypasses the front (the
+  session's `s3.put`, a bucket deployment) has no SSE-S3 record, as it named no
+  algorithm.
 
 ## Event delivery
 
@@ -2240,8 +2524,13 @@ valid on the default bus, as AWS documents. The target receives:
 
 **Buses and rules.** Every `AWS::Events::Rule` with an `EventPattern` registers
 on its bus: the `default` bus when `EventBusName` is omitted, or the
-`AWS::Events::EventBus` the rule references. `PutEvents` accepts up to ten
-entries; each entry becomes the documented envelope (`version`, `id`,
+`AWS::Events::EventBus` the rule references. An `AWS::Events::EventBus`
+resolves like the CloudFormation reference documents: `Ref` is the bus name and
+`Fn::GetAtt Arn` the
+[bus ARN](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-events-eventbus.html).
+`PutEvents` accepts that ARN or the bus name as `EventBusName`, as the
+[API reference](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutEvents.html)
+states. It accepts up to ten entries; each entry becomes the documented envelope (`version`, `id`,
 `detail-type`, `source`, `account`, `time`, `region`, `resources`, `detail`) and
 is matched against every enabled rule on its bus. Matching is the documented
 EventBridge pattern grammar over top-level fields and `detail`, including
@@ -2529,6 +2818,7 @@ target path as an observed SDK publish.
 | The observation cannot tell which S3 API made the change | An observed create is reported as `ObjectCreated:Put` (multipart complete and copy included) and an observed delete as `ObjectRemoved:Delete`. |
 | An object created and deleted inside one 250 ms poll is invisible | The poll interval is documented; a row that needs both changes separates them in time. |
 | The listing carries no request id or source IP | The runner generates the request id and reports its own loopback source address, the way S3 generates them for its own record. |
+| The filesystem store refuses every server-side-encryption header with `501 NotImplemented` | The runner's S3 front accepts `AES256` on `PutObject`, records it and returns the documented header on the put and on `HeadObject`/`GetObject`; `aws:kms` and customer keys stay refused. See [S3 objects and server-side encryption](#s3-objects-and-server-side-encryption). |
 
 ### S3 event notification delivery
 
@@ -2724,7 +3014,8 @@ class and named limit is in the [harness fidelity table](/examples/local-harness
 | arm64 `provided.al2023` | Supported (L1) | Uses the host-arch image; a bootstrap built for the other architecture fails closed with a clear error. |
 | DynamoDB Local | Supported (L2) | `--backend dynamodb` starts the profile's digest-pinned `amazon/dynamodb-local` on the run network; SDK clients resolve through `AWS_ENDPOINT_URL_DYNAMODB`. Tables are created from the CDK key schema, GSIs, streams and TTL. SSE, PITR and deletion protection are not provisioned. |
 | SQS (ElasticMQ) | Supported (L2) | `--backend sqs` starts the digest-pinned `softwaremill/elasticmq-native` container, creates the CDK queues with visibility, retention and redrive policy, and resolves `QueueUrl`/`Arn` from the created queues. Every SQS event-source mapping polls automatically with batching, visibility, delete-on-success, partial batch failure, FIFO group ordering, redrive, filter criteria and maximum concurrency; see [SQS event-source delivery](#sqs-event-source-delivery). A session also exposes `sqs.send`, `sqs.receive`, `sqs.event` and `sqs.attributes` for explicit work. |
-| KMS and STS (moto) | Supported (L2) | `--backend moto` starts the profile's digest-pinned moto container and injects `AWS_ENDPOINT_URL_KMS`/`_STS` (and the profile's aliases). Symmetric, RSA (2048/3072/4096) and ECC (P256/P384/P521) `SIGN_VERIFY` keys declared by the assembly are created, with aliases; `Ref`/`Fn::GetAtt Arn` resolve to the created key and alias. No HSM, key policies or grants. |
+| KMS and STS (moto) | Supported (L2) | `--backend moto` starts the profile's digest-pinned moto container and injects `AWS_ENDPOINT_URL_KMS`/`_STS` (and the profile's aliases). Symmetric, RSA (2048/3072/4096) and ECC (P256/P384/P521) `SIGN_VERIFY` keys declared by the assembly are created, with aliases; `Ref`/`Fn::GetAtt Arn` resolve to the created key and alias. The runner's KMS front serves the owned key families' crypto (see [KMS signing and key material](#kms-signing-and-key-material)): `Sign`/`Verify` honour `MessageType: DIGEST`, and `--data-dir` keeps the material. No HSM, key policies or grants. |
+| S3 (s3proxy) | Supported (L2) | `--backend s3proxy` starts the digest-pinned s3proxy container, creates the assembly's buckets, and injects the front's IP endpoint so the SDK uses path-style addressing. No bucket policies or IAM. SSE-S3 is accepted and reported (see [S3 objects and server-side encryption](#s3-objects-and-server-side-encryption)); SSE-KMS and SSE-C are refused by the store. A bucket notification configuration is delivered from the real object state; see [S3 event notification delivery](#s3-event-notification-delivery). |
 | SSM Parameter Store (moto) | Supported (L2) | `AWS::SSM::Parameter` String, StringList and SecureString are created; `Ref` returns the name and `Fn::GetAtt Type`/`Value` the declared type and value. `AWS_ENDPOINT_URL_SSM` is injected. SecureString is stored in moto's memory without envelope encryption. |
 | Secrets Manager (moto) | Supported (L2) | `AWS::SecretsManager::Secret` with `SecretString` or `GenerateSecretString` is created; `Ref` is the ARN and runtime `GetSecretValue` works. A `ResourcePolicy` is reported skipped (IAM is a docs/125 true limit). `AWS_ENDPOINT_URL_SECRETS_MANAGER` is injected. |
 | SNS topics and subscriptions (moto) | Supported (L2) | Standard and FIFO `AWS::SNS::Topic` are created with `FifoTopic`/`ContentBasedDeduplication`; `Ref` is the ARN and `GetAtt TopicName`/`TopicArn` resolve. `AWS::SNS::Subscription` and inline `Subscription` entries are delivered automatically to Lambda, SQS and loopback HTTP targets, with filter policies, raw message delivery and FIFO ordering/deduplication; see [SNS subscription delivery](#sns-subscription-delivery). `TopicPolicy` is reported skipped (IAM is a docs/125 true limit). |

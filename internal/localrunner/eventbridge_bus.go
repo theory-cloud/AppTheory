@@ -230,10 +230,21 @@ func (b *eventBridgeBus) unregister(runtime *eventBridgeRuleRuntime) {
 	}
 }
 
+// normalizedBusName maps the name and ARN forms PutEvents accepts to the bus
+// key the rules are registered under. AWS documents EventBusName as "the name
+// or ARN of the event bus":
+// https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutEvents.html
 func normalizedBusName(name string) string {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
 		return defaultEventBus
+	}
+	if strings.HasPrefix(trimmed, "arn:") {
+		if _, bus, ok := strings.Cut(trimmed, ":event-bus/"); ok {
+			if trimmed = strings.TrimSpace(bus); trimmed != "" {
+				return trimmed
+			}
+		}
 	}
 	return trimmed
 }
