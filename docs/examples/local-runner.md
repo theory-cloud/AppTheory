@@ -332,7 +332,10 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
 4. **Prepare the run workspace.** Inline `Code.ZipFile` code is materialized
    under the run scratch directory, every function's layers are merged into one
    `/opt` directory in the template's listed order, then the run's private
-   Docker network is created.
+   Docker network is created. An opted-in run (`--tls`) then loads or creates
+   its local CA and prepares the public certificate it will serve; a run
+   without the opt-in starts no CA. See
+   [Local HTTPS, OIDC issuers and passkeys](#local-https-oidc-issuers-and-passkeys).
 5. **Start backends.** `--backend dynamodb`, `--backend moto`,
    `--backend s3proxy` and `--backend sqs` start the profile's digest-pinned
    emulators on the run's private network. Before it reports a backend ready,
@@ -460,6 +463,213 @@ handler sees carries exactly the documented fields:
 
 `plan` prints both forms on the route line, for example
 `GET /hello (also /prod/hello) -> Handler`.
+
+## Local HTTPS, OIDC issuers and passkeys
+
+An OAuth 2.0 authorization server's issuer identifier is "a URL that uses the
+`https` scheme and has no query or fragment components", and its JWK set URI
+must use `https` ([RFC 8414 §2](https://www.rfc-editor.org/rfc/rfc8414#section-2)).
+OpenID Connect Discovery publishes the same issuer in the metadata
+([OpenID Connect Discovery §3](https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderMetadata)).
+A WebAuthn RP ID is a valid domain string, and it must be equal to the caller
+origin's effective domain or a registrable suffix of it
+([WebAuthn Level 3 §5.1.3](https://www.w3.org/TR/webauthn-3/#rp-id)). Both rules
+are why a plain-HTTP listener cannot serve a real OIDC issuer or a passkey
+ceremony, and why Autheory (the first application consumer) correctly refuses a
+non-`https` issuer.
+
+`--tls` makes the runner serve every public listener over HTTPS. It is off by
+default: an existing caller keeps the same `http://127.0.0.1:<port>` URLs,
+ports, listeners and outputs.
+
+### Opt in
+
+The opt-in is committed configuration, never an operator environment variable:
+
+- `--tls` on `run` or `session`; or
+- `"tls": {"enabled": true}` in the checked-in local profile the run loads
+  (`scripts/local/examples-local.json` in this repository; an app can ship its
+  own profile). `"host"` sets the public name (default `app.localhost`).
+
+`--tls-host <name>` overrides the public name for one run. The name must be
+`localhost` or a single `*.localhost` label. It is the OIDC issuer host and the
+WebAuthn RP ID, so the runner refuses any other domain instead of producing a
+certificate a browser would not scope correctly.
+
+A `*.localhost` name is a potentially trustworthy origin by specification: the
+Secure Contexts algorithm treats `localhost` and names ending in `.localhost` as
+potentially trustworthy, and `https`/`wss` origins unconditionally
+([Secure Contexts §3.1](https://w3c.github.io/webappsec-secure-contexts/#is-origin-trustworthy)).
+Resolution is the operating system's job: macOS resolves the whole
+`.localhost` tree to loopback, and systems using systemd-resolved do the same on
+Linux ([RFC 6761 §6.3](https://www.rfc-editor.org/rfc/rfc6761#section-6.3)).
+Browsers resolve `.localhost` internally. Inside a function container the runner
+adds the public name to the container's hosts file through the same
+`host.docker.internal` helper it uses for every control endpoint.
+
+### What changes
+
+With the opt-in, every public listener serves HTTPS and reports an `https://`
+(or `wss://`) URL on its `serving …` line:
+
+| Surface | Opted-in URL |
+| --- | --- |
+| HTTP API v2 | `https://app.localhost:<port>` |
+| REST API v1 | `https://app.localhost:<port>` (and `/<stage>/…`) |
+| Function URL | `https://app.localhost:<port>` |
+| WebSocket API | `wss://app.localhost:<port>/<stage>` |
+| CloudFront distribution | `https://app.localhost:<port>` |
+
+The TLS listener offers HTTP/1.1 and, when the client offers it, HTTP/2 (ALPN
+`h2`); a WebSocket upgrade stays on HTTP/1.1 as RFC 6455 requires. The
+certificate names the run's public host and both loopback addresses, and the
+listener presents it for that host only: a client that connects with another
+name fails certificate verification, which is the SNI-correct behaviour. The
+runner's internal control endpoints (the EventBridge bus, the KMS and S3 fronts,
+the CloudFront invalidation API, the CodeBuild API) stay on loopback HTTP; the
+`@connections` management API was already TLS and now uses the run CA.
+
+### The CA and where it lives
+
+The runner generates an ECDSA P-256 key and a self-signed X.509 v3 CA on first
+use, then issues one server certificate per run:
+
+- the CA sets `basicConstraints` CA and `keyUsage` keyCertSign/cRLSign, as
+  RFC 5280 requires ([§4.2.1.9](https://www.rfc-editor.org/rfc/rfc5280#section-4.2.1.9),
+  [§4.2.1.3](https://www.rfc-editor.org/rfc/rfc5280#section-4.2.1.3));
+- the server certificate carries the DNS names and loopback IP addresses in
+  `subjectAltName` (browsers ignore a Common Name) and the `serverAuth` extended
+  key usage; Apple documents all three requirements for TLS server certificates
+  ([Apple support 103769](https://support.apple.com/en-us/103769));
+- the CA lives 825 days; the server certificate lives 197 days, under the
+  200-day cap the CA/Browser Forum Baseline Requirements set for subscriber
+  certificates from 2026-03-15
+  ([§6.3.2](https://cabforum.org/working-groups/server/baseline-requirements/requirements/)).
+
+Nothing prints private key material. The runner logs the CA path, the trust
+bundle path and whether the CA is persistent; a session reports the same values
+under `tls` in `describe`:
+
+```json
+"tls": {"enabled": true, "host": "app.localhost",
+        "caFile": "/…/tls/ca.pem", "trustBundle": "/…/tls/trust-bundle.pem"}
+```
+
+With `--data-dir`, the CA is persistent and byte-for-byte stable across runs:
+
+```
+<data-dir>/tls/ca.pem        0644
+<data-dir>/tls/ca-key.pem    0600
+<data-dir>/tls/trust-bundle.pem 0644
+```
+
+The `tls` directory is `0700`. A browser or identity provider that trusted run 1
+trusts run 2. Without `--data-dir` the CA lives under the run's scratch
+directory and is deleted with it, like every other piece of run state.
+
+### Trust it from the host
+
+A client verifies the run's certificate when it trusts the CA. Point the client
+at the CA (or at `trust-bundle.pem`, which contains it):
+
+```bash
+# curl
+curl --cacert <data-dir>/tls/ca.pem https://app.localhost:<port>/health
+# or: export CURL_CA_BUNDLE=<data-dir>/tls/ca.pem
+
+# Go: the default transport reads SSL_CERT_FILE through crypto/x509
+SSL_CERT_FILE=<data-dir>/tls/ca.pem go run ./client
+# https://pkg.go.dev/crypto/x509#SystemCertPool
+
+# Node: the extra CA is added to the default trust store at startup
+NODE_EXTRA_CA_CERTS=<data-dir>/tls/ca.pem node client.mjs
+# https://nodejs.org/api/cli.html#node_extra_ca_certsfile
+
+# Python: ssl.create_default_context() reads SSL_CERT_FILE; requests reads
+# REQUESTS_CA_BUNDLE
+SSL_CERT_FILE=<data-dir>/tls/ca.pem python3 client.py
+REQUESTS_CA_BUNDLE=<data-dir>/tls/ca.pem python3 requests_client.py
+# https://docs.python.org/3/library/ssl.html#ssl.create_default_context
+# https://requests.readthedocs.io/en/latest/user/advanced/#ssl-cert-verification
+```
+
+Playwright/Chromium needs no system trust-store change. Launch Chromium with
+the run leaf's SPKI allowlisted, which is Chromium's per-key certificate-error
+override
+([command-line flags](https://www.chromium.org/developers/how-tos/run-chromium-with-flags/)):
+
+```bash
+SPKI="$(openssl s_client -connect app.localhost:<port> -servername app.localhost </dev/null 2>/dev/null \
+  | openssl x509 -pubkey -noout | openssl pkey -pubin -outform der \
+  | openssl dgst -sha256 -binary | base64)"
+# Playwright: chromium.launch(args=[f"--ignore-certificate-errors-spki-list={SPKI}"])
+```
+
+The pin covers exactly the run's leaf key: another key still fails, and no
+store is modified. `ignoreHTTPSErrors` is a broader alternative; the harness's
+browser row uses the SPKI pin so the row proves the run's own certificate.
+
+### Inside the function containers
+
+Every function container mounts the run CA at
+`/etc/apptheory-local/ca.pem` and receives the variables each runtime reads:
+
+| Variable | Runtime |
+| --- | --- |
+| `SSL_CERT_FILE` | Go (`crypto/x509`) and Python (`ssl`) |
+| `NODE_EXTRA_CA_CERTS` | Node |
+| `REQUESTS_CA_BUNDLE` | Python `requests` |
+| `CURL_CA_BUNDLE` | curl subprocesses |
+| `AWS_CA_BUNDLE` | AWS SDKs |
+
+They point at the same mounted file, so a handler's own HTTPS client verifies
+the app's URL without the handler knowing where the CA is. The runner maps the
+public name into the container with the one add-host helper; on Linux, where the
+host owns the run network's gateway, the public listener also binds that
+gateway, so the container reaches the same `https://app.localhost:<port>` URL a
+browser uses. The TLS example's Go, Node and Python callers are the proving
+rows.
+
+### Auxiliary services
+
+An app-supplied auxiliary service, such as a local OIDC test IdP, can get its
+own certificate from the same CA with a documented command:
+
+```bash
+# Create or report the CA that `run --tls --data-dir <dir>` will use.
+apptheory-local tls ca --data-dir <data-dir>
+
+# Issue a server certificate for an auxiliary *.localhost name.
+apptheory-local tls leaf --data-dir <data-dir> --name idp.localhost --out <dir>/idp
+# cert: <dir>/idp/cert.pem
+# key:  <dir>/idp/key.pem   (0600)
+```
+
+Start the service with those files. The browser reaches it at
+`https://idp.localhost:<port>` and trusts it through the same CA; a function
+container reaches it when the run maps the name with
+`--tls-aux idp.localhost`. On Linux the service must listen on an address the
+container can reach: the run network's gateway, or all interfaces. A service
+bound to host loopback only is reachable from the host, not from the container.
+
+### Limits
+
+- **No public CA.** The certificate chains to the runner's CA, not a
+  publicly-trusted root. It verifies where you install or pin the CA, and
+  nowhere else.
+- **No edge TLS.** The local CloudFront gateway is not the edge network and has
+  no ACM certificate, security policy, minimum protocol version or viewer
+  protocol enforcement. Edge TLS certificates are a docs/125 "Real network
+  properties" limit; the opt-in secures the listener in front of you, not an
+  imagined edge.
+- **`*.localhost` resolution is the host's.** The specification says such a name
+  is potentially trustworthy and RFC 6761 says resolvers should map it to
+  loopback, but a host whose resolver does not do so needs an entry (the browser
+  and the function container are covered by the browser and the runner).
+- **The management and control endpoints keep their own contracts.** The
+  `@connections` API is TLS; the EventBridge, KMS, S3, CloudFront invalidation
+  and CodeBuild endpoints are loopback HTTP and are not exposed as public
+  listeners.
 
 ## Lambda Runtime API
 
@@ -3028,8 +3238,9 @@ class and named limit is in the [harness fidelity table](/examples/local-harness
 | Delivery engine and test clock | Supported | `run` and `session` start the engine; `plan` and `session describe` report per-source state, including an SNS subscription's `filtered` count. SQS batching windows, visibility deadlines, schedules, TTL expiry and the SNS FIFO deduplication window take their time from `--clock test[=<RFC3339>]`; the `clock.now`/`clock.advance` session commands read and move it. ElasticMQ's and moto's own wall-clock timers and the runtime images are not slowed. `--delivery-concurrency` bounds concurrent deliveries (default 4); an SQS mapping's `MaximumConcurrency` bounds its batches within that. |
 | Deploy-time Secrets Manager dynamic references | Supported | A `{{resolve:secretsmanager:…}}` environment value resolves to the provisioned secret's value (the same JSON key) when the assembly declares that secret, and otherwise keeps the wave-1 deterministic local placeholder. The session's `describe` returns it to the harness; `run` and `plan` never print it. No secret is created in a cloud. |
 | Other emulators | Endpoint injection only | Pass `--endpoint service=url` and `--add-host name=address`; the profile names the environment variables. The checked-in profile binds `ssm`, `secretsmanager`, `sns`, `kinesis` and `cognito-idp` to moto, and `kms`/`sts` as before. |
-| WebSocket APIs (`AWS::ApiGatewayV2::Api`, WEBSOCKET) | Served (L2) | A real RFC 6455 listener serves `$connect`, `$disconnect`, `$default` and custom routes selected by the route selection expression, with the documented proxy event, two-way route responses, the `$connect` policy authorizer, the `@connections` management API and the documented idle/lifetime close; see [WebSocket APIs](#websocket-apis). No custom domains and no IAM authorization. |
-| CloudFront distributions and CloudFront Functions | Served (L2) | The distribution is served on its own loopback URL. Cache behaviors, allowed methods, viewer-request/viewer-response functions, origin request policies and response headers policies are applied; the generated function code runs in a restricted Node sandbox. S3 origins read the app's deployments from s3proxy, Function URL origins invoke the real handler container, and origin groups fail over with CloudFront's rules. No edge network and no TLS. |
+| WebSocket APIs (`AWS::ApiGatewayV2::Api`, WEBSOCKET) | Served (L2) | A real RFC 6455 listener serves `$connect`, `$disconnect`, `$default` and custom routes selected by the route selection expression, with the documented proxy event, two-way route responses, the `$connect` policy authorizer, the `@connections` management API and the documented idle/lifetime close; see [WebSocket APIs](#websocket-apis). An opted-in run serves `wss://` at the public host. No custom domains and no IAM authorization. |
+| Local HTTPS (`--tls`) | Supported (L2) | Every public listener (HTTP API, REST API, Function URL, WebSocket, CloudFront) serves HTTPS from a certificate the run's local CA signs; HTTP/2 is negotiated, SNI names outside the certificate are refused, and every function container mounts the CA for its own clients. The cert chains to a local CA, not a public one, and there is no edge TLS policy; see [Local HTTPS, OIDC issuers and passkeys](#local-https-oidc-issuers-and-passkeys). |
+| CloudFront distributions and CloudFront Functions | Served (L2) | The distribution is served on its own loopback URL. Cache behaviors, allowed methods, viewer-request/viewer-response functions, origin request policies and response headers policies are applied; the generated function code runs in a restricted Node sandbox. S3 origins read the app's deployments from s3proxy, Function URL origins invoke the real handler container, and origin groups fail over with CloudFront's rules. No edge network and no edge TLS; an opted-in run serves the local listener over HTTPS from the run CA. |
 | CloudFront caching | Supported (L2) | The cache key (GET and HEAD share one key, OPTIONS is separate), `CachedMethods`, `CACHING_DISABLED`, the Expiration-page TTL rules, stale-while-revalidate, stale-if-error (including a 5xx origin response for an expired object) and the HTTPStatusCodes-page error caching table are applied; hits answer `x-cache`/`age`; `session describe` reports per-behavior hit/miss counts. A viewer Range request bypasses the local cache (documented deviation); a conditional request is answered 304 from the cached validators. See [Caching and invalidation](#caching-and-invalidation). |
 | CloudFront invalidation | Supported (L2) | `CreateInvalidation`, `GetInvalidation` and `ListInvalidations` are served on a control endpoint that binds loopback and, when the host owns the run gateway, that address too; it is injected as `AWS_ENDPOINT_URL_CLOUDFRONT`; the aws CLI and the SDK share it. Paths are matched against the cached path plus the selected query string, with a trailing `*` only, and `CallerReference` reuse follows the API reference. See [Caching and invalidation](#caching-and-invalidation). |
 | CloudFront custom error responses | Supported (L2) | `CustomErrorResponses` is served: the page is fetched through the first cache behavior that matches its path, from that behavior's origin and with its origin request policy, with the configured status; a matching behavior's TTL wins, and an unavailable page returns the pages origin's status. |
@@ -3057,17 +3268,23 @@ class and named limit is in the [harness fidelity table](/examples/local-harness
   The 6 MB buffered and 200 MB streamed payload limits are not enforced either,
   so a local call that works today keeps working.
 - **WebSocket domains and IAM authorization** are out of scope. The API is
-  served on a loopback `ws://` URL, so a custom domain name and its certificate
-  are not modelled; `AWS_IAM` route authorization and REST-style Lambda
-  authorizers on WebSocket routes fail closed. The `@connections` management
-  endpoint is TLS with a per-run self-signed certificate, which the runner
-  mounts into the function containers; a client outside those containers must
-  trust that certificate to call it. Binary media types are refused with 1003,
-  as API Gateway documents.
+  served on a loopback `ws://` URL by default; an opted-in run serves
+  `wss://app.localhost:<port>/<stage>` instead (see
+  [Local HTTPS, OIDC issuers and passkeys](#local-https-oidc-issuers-and-passkeys)).
+  A custom domain name is not modelled; `AWS_IAM` route authorization and
+  REST-style Lambda authorizers on WebSocket routes fail closed. The
+  `@connections` management endpoint is TLS with a per-run certificate: a
+  self-signed one by default, or one the run CA signs when `--tls` is set. The
+  runner mounts the trust bundle into the function containers; a client outside
+  those containers must trust that certificate to call it. Binary media types
+  are refused with 1003, as API Gateway documents.
 - **CloudFront is an edge-path gateway, not an emulator.** The distribution's
   cache behavior, generated CloudFront Functions, edge policies and origins are
   applied; the cache is a single in-memory store on the loopback listener, and
-  there is no edge network, no TLS and no viewer protocol enforcement.
+  there is no edge network and no edge TLS policy: no ACM certificate, security
+  policy, minimum protocol version or viewer protocol enforcement. An opted-in
+  run serves the listener in front of you over HTTPS from the run CA, which is
+  local TLS, not edge TLS (docs/125 "Real network properties").
   S3-origin bucket CORS rules and IAM/bucket policies are not
   emulated; the local S3 origin returns the S3 status the OAC/OAI access model
   produces. `If-Range` is not forwarded to the S3 origin (CloudFront forwards
@@ -3149,6 +3366,12 @@ class and named limit is in the [harness fidelity table](/examples/local-harness
 - Node.js 24+ when a served CloudFront distribution has CloudFront Functions.
   The function code runs in the host Node `vm`; the runner refuses to start that
   distribution if Node is not on `PATH`.
+- No browser is needed to run the runner. The examples harness's local-TLS
+  browser row drives headless Chromium through Playwright: install
+  `scripts/local/requirements-examples.txt`, then run
+  `python -m playwright install chromium`. The row pins the run's leaf key in
+  Chromium's certificate-error list, so no system or browser trust store is
+  changed.
 - Docker (on macOS, colima) with the daemon running. The runner creates one
   private network per run. In the default mode a function container reaches the
   Runtime API through `host.docker.internal:<port>` (the run network's closed

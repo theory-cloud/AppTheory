@@ -53,7 +53,15 @@ resolution.
   ```
 
   The field-level encryption row decrypts with the AWS Encryption SDK from that
-  file; without it the row fails with a named requirement error.
+  file; without it the row fails with a named requirement error. The local-TLS
+  rows also need Playwright's Chromium for the browser row:
+
+  ```bash
+  python3 -m playwright install chromium
+  ```
+
+  Without it the browser row fails with a named requirement error; the other
+  local-TLS rows run without a browser.
 
 ## Classes
 
@@ -162,9 +170,9 @@ these rules, so a validator that stops failing closed fails the harness.
 
 ## Fidelity table
 
-`scripts/local/examples-local.json` classifies 97 rows: 96 entrypoints plus the
-`runtime-api-conformance` suite. The classes are 34 L1, 41 L2, 10 L3 and 12 I;
-66 rows execute a runner (65 entrypoints and the suite) and 31 entrypoints are
+`scripts/local/examples-local.json` classifies 106 rows: 105 entrypoints plus the
+`runtime-api-conformance` suite. The classes are 34 L1, 50 L2, 10 L3 and 12 I;
+75 rows execute a runner (74 entrypoints and the suite) and 31 entrypoints are
 covered by another row's real run. The harness's `counts:` line reports every
 row as passed or failed; a covered row shares its target's result.
 
@@ -245,6 +253,13 @@ and hash-checked, has no runtime process, and fails closed to the synth proof.
 | `examples/cdk/ssr-site/bin/apptheory-ssr-site.ts` | L2 | SSR site: the origin group fails over from the S3 HTML primary (403 under OAC) to the real SSR handler; the SSR stream reaches the viewer through the gateway and directly on the Function URL as the handler writes it, the viewer-response function echoes the request id, and the assets and hydrate deployments, full and ranged HEAD, conditional If-None-Match GETs, OPTIONS and the missing-object 403 are asserted. Caching is real: the static-assets behavior answered a miss then a hit with x-cache and age, the CACHING_DISABLED SSR behavior never cached, an invalidation through the local API and through the aws CLI removed the object, and clock.advance past the TTL was a miss again. | CloudFront edge network (docs/125 true limit: real network properties); the gateway forwards a streamed response at the origin's pace and caches it in full after it completes (Lambda's 6 MB uncapped burst and 2 MBps streaming cap are not reproduced). |
 | `examples/cdk/ssr-site/scripts/generate-assets-manifest.mjs` | L2 | SSR site asset manifest generator: runs against the real assets directory, asserts hello.txt's sha256 and byte count, then matches the served asset through the gateway to the manifest. | CloudFront edge network (docs/125 true limit: real network properties); the manifest is matched against the gateway response, not a deployed bucket. |
 | `examples/cdk/edge-gateway/bin/app.ts`, `examples/cdk/edge-gateway/handlers/kvs.js`, `examples/cdk/edge-gateway/handlers/origin-request.js`, `examples/cdk/edge-gateway/handlers/origin-response.js`, `examples/cdk/edge-gateway/handlers/viewer-request.js`, `examples/cdk/edge-gateway/handlers/viewer-response.js` | L2 | Edge gateway: four Lambda@Edge associations run through the real Node containers (viewer-request uri rewrite, origin-request generated response cached without a second invocation, origin-response body replacement, viewer-response header), IncludeBody exposes the base64 body, an origin rewrite reaches the other declared origin, a runtime 2.0 CloudFront Function reads get/exists/meta from its key value store, geo restriction serves US, refuses JP and serves an undetermined location, and the origin decrypts the field-level encryption ciphertext with the real AWS Encryption SDK. | CloudFront edge network and edge TLS (docs/125 true limits: real network properties); viewer events run against the viewer's plain-HTTP connection, so ViewerProtocolPolicy is reported rather than enforced. The field-level encryption row needs the AWS Encryption SDK on the harness interpreter. |
+| `examples/cdk/local-tls/bin/app.ts` | L2 | Local TLS opt-in surfaces: with `--tls`, the HTTP API, REST API, Function URL, WebSocket API and CloudFront distribution all answer over verified https/wss at app.localhost; the listener negotiates HTTP/2, refuses an unserved SNI name, and every reported URL starts `https://` or `wss://`. | The certificate chains to a runner-generated local CA, not a public one, and the listener has no edge certificate or managed security policy (docs/125 real network properties: edge TLS certificates). |
+| `examples/cdk/local-tls/handlers/go/main.go` | L2 | Go caller: a provided.al2023 container reads SSL_CERT_FILE, fetches the app's OIDC discovery document and JWKS over verified https from the runner's own listener, and returns the issuer and key count. | The Go container verifies the runner's local CA, not a public certificate. |
+| `examples/cdk/local-tls/scripts/callback-node.sh` | L2 | Node caller: a nodejs24.x container reads NODE_EXTRA_CA_CERTS, fetches the app's OIDC discovery document and JWKS over verified https from the runner's own listener, and returns the issuer and key count. | The Node container verifies the runner's local CA, not a public certificate. |
+| `examples/cdk/local-tls/handlers/python/caller.py` | L2 | Python caller: a python3.14 container reads SSL_CERT_FILE through ssl.create_default_context, fetches the app's OIDC discovery document and JWKS over verified https from the runner's own listener, and returns the issuer and key count. | The Python container verifies the runner's local CA, not a public certificate. |
+| `examples/cdk/local-tls/scripts/oidc.sh` | L2 | OIDC-shaped row: the issuer's discovery document names the exact https URL it is served at, a host client fetches discovery then JWKS over verified TLS, and a Go container fetches both from its own container and reports the same issuer. | The issuer is a local Lambda behind the runner's listener; it is not a public OIDC provider and its certificate is not publicly trusted. |
+| `examples/cdk/local-tls/scripts/browser-webauthn.sh` | L2 | Browser row: headless Chromium loads the opted-in CloudFront page over https with the run leaf's SPKI allowlisted (a secure context), registers a WebAuthn credential with RP ID app.localhost through the CDP virtual authenticator, asserts it, and the authenticator holds exactly one credential. | Chromium is launched with the run leaf's SPKI allowlisted instead of installing the CA in a system trust store; the credential lives in a CDP virtual authenticator rather than a hardware or platform authenticator. |
+| `examples/cdk/local-tls/scripts/aux-cert.sh` | L2 | Auxiliary-service certificate: `tls leaf` issues a certificate from the run CA for idp.localhost, and a host client and a Python container fetch the service's discovery and JWKS over verified TLS. | The auxiliary identity provider is a local test service signed by the runner CA, not a third-party identity provider (docs/125 decision D3). |
 | `scripts/local/runtime_api_conformance.py` | L2 | Runtime API conformance: one handler set per language on the real digest-pinned runtime images, run once under the embedded Runtime Interface Emulator and once under the runner's Lambda Runtime API, comparing status, headers, body bytes, handler errors, timeouts and initialization failures. | The comparison runs this host's architecture; the Lambda service's Init-phase billing and its 10-second Init limit are not emulated. |
 
 The CodeBuild row pulls the agent and the curated build image. The aarch64 pair
