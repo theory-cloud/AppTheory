@@ -160,6 +160,29 @@ func TestResourceAttributeValues(t *testing.T) {
 	}
 }
 
+func TestEventsBusRefAndArnResolveLocally(t *testing.T) {
+	resource := ResourceSpec{
+		Stack: "Stack", LogicalID: "Bus", Type: typeEventsBus,
+		Properties: json.RawMessage(`{"Name":"app-events-local"}`),
+	}
+	value, err := localResourceValueFor(resource, resourceValues{}, nil)
+	if err != nil {
+		t.Fatalf("resolve event bus: %v", err)
+	}
+	if value.Name != "app-events-local" {
+		t.Fatalf("bus name %q", value.Name)
+	}
+	if want := "arn:aws:events:us-east-1:123456789012:event-bus/app-events-local"; value.ARN != want {
+		t.Fatalf("bus ARN %q != %q", value.ARN, want)
+	}
+	if got, ok := value.attribute("Arn"); !ok || got != value.ARN {
+		t.Fatalf("GetAtt Arn = %q, %v", got, ok)
+	}
+	if got, err := refString(resource, value); err != nil || got != "app-events-local" {
+		t.Fatalf("Ref = %q, %v", got, err)
+	}
+}
+
 func TestParseGetAttForms(t *testing.T) {
 	if id, attr, err := parseGetAtt([]any{"Fn", "Arn"}); err != nil || id != "Fn" || attr != "Arn" {
 		t.Fatalf("array form: %q %q %v", id, attr, err)

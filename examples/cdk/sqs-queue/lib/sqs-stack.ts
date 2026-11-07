@@ -456,6 +456,10 @@ export class SqsQueueStack extends cdk.Stack {
             timeout: cdk.Duration.seconds(30),
             environment: {
                 BUS_NAME: customRuleBus.eventBusName,
+                // PutEvents accepts the bus ARN as EventBusName; resolving the
+                // attribute proves Fn::GetAtt on AWS::Events::EventBus too.
+                // https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutEvents.html
+                BUS_ARN: customRuleBus.eventBusArn,
             },
         });
         customRuleBus.grantPutEventsTo(rulePublisherFn);

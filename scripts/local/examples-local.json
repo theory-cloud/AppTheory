@@ -632,7 +632,7 @@
       "run": "sqs-event-targets",
       "class": "L2",
       "gap": "ElasticMQ emulates SQS and moto emulates SNS; the runner serves the EventBridge bus. IAM policy evaluation is a docs/125 true limit. The PutEvents calls, pattern matching, input shaping, target delivery, retries and DLQ are real.",
-      "description": "EventBridge rule targets: the publisher calls PutEvents through the real SDK for four rules on the default and a custom bus; an SQS target receives its InputPath body, an SNS target receives the input-transformer message, a Lambda target receives the static Input object, and a failing Lambda target exhausts two retries into the real DLQ with the documented error attributes."
+      "description": "EventBridge rule targets: the publisher calls PutEvents through the real SDK for four rules on the default and a custom bus; the transformed event names that bus by ARN (the Fn::GetAtt form PutEvents documents) while the others use its name; an SQS target receives its InputPath body, an SNS target receives the input-transformer message, a Lambda target receives the static Input object, and a failing Lambda target exhausts two retries into the real DLQ with the documented error attributes."
     },
     "examples/cdk/sqs-queue/handlers/rule-target.mjs": {
       "coveredBy": "examples/cdk/sqs-queue/handlers/rule-publisher.mjs",

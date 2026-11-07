@@ -2155,8 +2155,13 @@ valid on the default bus, as AWS documents. The target receives:
 
 **Buses and rules.** Every `AWS::Events::Rule` with an `EventPattern` registers
 on its bus: the `default` bus when `EventBusName` is omitted, or the
-`AWS::Events::EventBus` the rule references. `PutEvents` accepts up to ten
-entries; each entry becomes the documented envelope (`version`, `id`,
+`AWS::Events::EventBus` the rule references. An `AWS::Events::EventBus`
+resolves like the CloudFormation reference documents: `Ref` is the bus name and
+`Fn::GetAtt Arn` the
+[bus ARN](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-events-eventbus.html).
+`PutEvents` accepts that ARN or the bus name as `EventBusName`, as the
+[API reference](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutEvents.html)
+states. It accepts up to ten entries; each entry becomes the documented envelope (`version`, `id`,
 `detail-type`, `source`, `account`, `time`, `region`, `resources`, `detail`) and
 is matched against every enabled rule on its bus. Matching is the documented
 EventBridge pattern grammar over top-level fields and `detail`, including
