@@ -59,12 +59,11 @@ func TestHTTPOriginVerifiesTheRunCAForADeclaredOriginName(t *testing.T) {
 	}
 	server, writtenSNI := tlsOriginTestServer(t, leaf, func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("x-origin-host", request.Host)
-		_, _ = writer.Write([]byte("origin ok"))
+		if _, writeErr := writer.Write([]byte("origin ok")); writeErr != nil {
+			t.Errorf("write the origin response: %v", writeErr)
+		}
 	})
-	parsed, err := url.Parse(server.URL)
-	if err != nil {
-		t.Fatalf("parse the test server URL: %v", err)
-	}
+	parsed := mustParseURL(t, server.URL)
 	origin, err := newHTTPOrigin(&localcloudfront.DistributionOrigin{
 		ID:         "api",
 		DomainName: "auth-api.localhost",
@@ -103,9 +102,11 @@ func TestHTTPOriginVerifiesTheMappedHostForANonLocalOriginName(t *testing.T) {
 		t.Fatalf("issue the origin leaf: %v", err)
 	}
 	server, writtenSNI := tlsOriginTestServer(t, leaf, func(writer http.ResponseWriter, _ *http.Request) {
-		_, _ = writer.Write([]byte("ok"))
+		if _, writeErr := writer.Write([]byte("ok")); writeErr != nil {
+			t.Errorf("write the origin response: %v", writeErr)
+		}
 	})
-	parsed, _ := url.Parse(server.URL)
+	parsed := mustParseURL(t, server.URL)
 	origin, err := newHTTPOrigin(&localcloudfront.DistributionOrigin{
 		ID:         "api",
 		DomainName: "api.example.com",
@@ -138,9 +139,11 @@ func TestHTTPOriginRefusesAnUntrustedOriginCertificate(t *testing.T) {
 		t.Fatalf("issue the origin leaf: %v", err)
 	}
 	server, _ := tlsOriginTestServer(t, leaf, func(writer http.ResponseWriter, _ *http.Request) {
-		_, _ = writer.Write([]byte("ok"))
+		if _, writeErr := writer.Write([]byte("ok")); writeErr != nil {
+			t.Errorf("write the origin response: %v", writeErr)
+		}
 	})
-	parsed, _ := url.Parse(server.URL)
+	parsed := mustParseURL(t, server.URL)
 	origin, err := newHTTPOrigin(&localcloudfront.DistributionOrigin{
 		ID:         "api",
 		DomainName: "auth-api.localhost",
@@ -162,10 +165,12 @@ func TestHTTPOriginRefusesAnUntrustedOriginCertificate(t *testing.T) {
 
 func TestHTTPOriginReportsPlainHTTPToATLSListener(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		_, _ = writer.Write([]byte("ok"))
+		if _, writeErr := writer.Write([]byte("ok")); writeErr != nil {
+			t.Errorf("write the origin response: %v", writeErr)
+		}
 	}))
 	defer server.Close()
-	parsed, _ := url.Parse(server.URL)
+	parsed := mustParseURL(t, server.URL)
 	origin, err := newHTTPOrigin(&localcloudfront.DistributionOrigin{
 		ID:         "api",
 		DomainName: "auth-api.localhost",

@@ -391,7 +391,7 @@ func (s *localTLS) issuePublicLeaf(originNames []string) error {
 		if name == "" || seen[name] {
 			continue
 		}
-		if err := validateTLSHost(name); err != nil {
+		if nameErr := validateTLSHost(name); nameErr != nil {
 			// An origin domain outside the local name space keeps the run
 			// certificate it has; the origin hop verifies the mapped host
 			// instead. Signing an arbitrary public name with a local CA is not
