@@ -2877,7 +2877,7 @@ def run_lambda_role(harness: Harness, kind: str) -> str:
                 raise HarnessFailure(f"lambda-role custom: the discovery document is inconsistent: {discovery}")
             return (
                 "custom.handler read String/SecureString/StringList SSM parameters (Ref, GetAtt Type/Value), "
-                "both Secrets Manager secrets through GetSecretValue, and the Cognito pool/client; "
+                "the literal, keyed and bare Secrets Manager secrets through GetSecretValue, and the Cognito pool/client; "
                 f"the local issuer {issuer} served the pool JWKS and discovery document; S3 round-trip passed"
             )
         finally:
