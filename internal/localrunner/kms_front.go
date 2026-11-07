@@ -696,7 +696,11 @@ func (r *Runner) startKMSFront(ctx context.Context) error {
 	front.containerURL = listeners.ContainerURL
 	r.kmsFront = front
 	r.replaceEndpoint("kms", listeners.ContainerURL)
-	r.logf("local KMS front at %s (containers: %s; moto upstream %s; ephemeral)", listeners.HostURL, listeners.ContainerURL, backend.HostURL)
+	persistence := "ephemeral"
+	if r.dataDir != "" {
+		persistence = "key material under " + filepath.Join(r.dataDir, "kms", kmsFrontKeyFile)
+	}
+	r.logf("local KMS front at %s (containers: %s; moto upstream %s; %s)", listeners.HostURL, listeners.ContainerURL, backend.HostURL, persistence)
 	return nil
 }
 

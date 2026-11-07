@@ -336,6 +336,9 @@ func TestKMSFrontECDSADigest(t *testing.T) {
 	}
 }
 
+// TestKMSFrontPersistsMaterialAcrossRestart is the G2 proof at the front
+// level: run 1 creates the key and encrypts/signs, run 2 re-creates the key
+// from the same identity and decrypts/verifies with the same public key.
 func TestKMSFrontPersistsMaterialAcrossRestart(t *testing.T) {
 	dataDir := t.TempDir()
 	first, _, firstServer := newFrontForTest(t, dataDir)
@@ -432,6 +435,8 @@ func TestKMSFrontEphemeralStaysEphemeral(t *testing.T) {
 	}
 }
 
+// TestKMSFrontStripsIdentityTag proves the runner's reserved tag never reaches
+// moto and other tags are preserved.
 func TestKMSFrontStripsIdentityTag(t *testing.T) {
 	_, moto, server := newFrontForTest(t, "")
 	client := kmsClientFor(t, server.URL)

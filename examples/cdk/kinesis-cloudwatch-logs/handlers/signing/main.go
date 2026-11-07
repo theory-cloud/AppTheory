@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -20,9 +21,22 @@ import (
 const (
 	signingKeyARNEnv   = "SIGNING_KEY_ARN"
 	signingKeyAliasEnv = "SIGNING_KEY_ALIAS"
+	dataKeyARNEnv      = "DATA_KEY_ARN"
+	dataDirPlaintext   = "apptheory-data-dir-plaintext"
+	dataDirMessage     = "apptheory-data-dir-signature"
 )
 
 var signingAlgorithm = kmstypes.SigningAlgorithmSpecRsassaPkcs1V15Sha256
+
+type event struct {
+	// Mode selects the --data-dir proof; an empty event keeps the wave-1 row.
+	Mode              string `json:"mode"`
+	Ciphertext        string `json:"ciphertext"`
+	DataKeyCiphertext string `json:"dataKeyCiphertext"`
+	Signature         string `json:"signature"`
+	Message           string `json:"message"`
+	PublicKey         string `json:"publicKey"`
+}
 
 type result struct {
 	Alias             string `json:"alias"`
@@ -40,8 +54,20 @@ type result struct {
 	DoubleHashBlocked bool `json:"doubleHashBlocked"`
 }
 
-func handler(ctx context.Context, event json.RawMessage) (any, error) {
-	_ = event
+func handler(ctx context.Context, raw json.RawMessage) (any, error) {
+	var request event
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &request); err != nil {
+			return nil, fmt.Errorf("decode the event: %w", err)
+		}
+	}
+	switch request.Mode {
+	case "data-dir-write":
+		return dataDirWrite(ctx)
+	case "data-dir-read":
+		return dataDirRead(ctx, request)
+	}
+
 	keyARN := strings.TrimSpace(os.Getenv(signingKeyARNEnv))
 	alias := strings.TrimSpace(os.Getenv(signingKeyAliasEnv))
 	if keyARN == "" || alias == "" {
@@ -149,6 +175,122 @@ func handler(ctx context.Context, event json.RawMessage) (any, error) {
 		DigestKMSValid:    digestInKMS.SignatureValid,
 		DoubleHashBlocked: doubleHashBlocked,
 	}, nil
+}
+
+// dataDirWrite runs in run 1 of the --data-dir KMS row: it encrypts under the
+// symmetric key, generates a data key, and signs a digest with the asymmetric
+// key. The harness passes the returned values to run 2.
+func dataDirWrite(ctx context.Context) (any, error) {
+	client, alias, dataKeyARN, err := dataDirClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	encrypted, err := client.Encrypt(ctx, &kms.EncryptInput{
+		KeyId:     &dataKeyARN,
+		Plaintext: []byte(dataDirPlaintext),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encrypt for --data-dir: %w", err)
+	}
+	generated, err := client.GenerateDataKey(ctx, &kms.GenerateDataKeyInput{
+		KeyId:   &dataKeyARN,
+		KeySpec: kmstypes.DataKeySpecAes256,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("generate a data key for --data-dir: %w", err)
+	}
+	digest := sha256.Sum256([]byte(dataDirMessage))
+	signature, err := client.Sign(ctx, &kms.SignInput{
+		KeyId:            &alias,
+		Message:          digest[:],
+		MessageType:      kmstypes.MessageTypeDigest,
+		SigningAlgorithm: signingAlgorithm,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("sign for --data-dir: %w", err)
+	}
+	publicKey, err := client.GetPublicKey(ctx, &kms.GetPublicKeyInput{KeyId: &alias})
+	if err != nil {
+		return nil, fmt.Errorf("get the public key for --data-dir: %w", err)
+	}
+	return map[string]any{
+		"mode":              "data-dir-write",
+		"ciphertext":        base64.StdEncoding.EncodeToString(encrypted.CiphertextBlob),
+		"dataKeyCiphertext": base64.StdEncoding.EncodeToString(generated.CiphertextBlob),
+		"signature":         base64.StdEncoding.EncodeToString(signature.Signature),
+		"message":           dataDirMessage,
+		"publicKey":         base64.StdEncoding.EncodeToString(publicKey.PublicKey),
+	}, nil
+}
+
+// dataDirRead runs in run 2 with the same --data-dir: it decrypts the run 1
+// ciphertexts and verifies the run 1 signature with the run 2 public key.
+func dataDirRead(ctx context.Context, request event) (any, error) {
+	client, alias, dataKeyARN, err := dataDirClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ciphertext, err := base64.StdEncoding.DecodeString(request.Ciphertext)
+	if err != nil {
+		return nil, fmt.Errorf("decode the ciphertext: %w", err)
+	}
+	decrypted, err := client.Decrypt(ctx, &kms.DecryptInput{
+		CiphertextBlob: ciphertext,
+		KeyId:          &dataKeyARN,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("decrypt across --data-dir: %w", err)
+	}
+	dataKeyCiphertext, err := base64.StdEncoding.DecodeString(request.DataKeyCiphertext)
+	if err != nil {
+		return nil, fmt.Errorf("decode the data key ciphertext: %w", err)
+	}
+	dataKey, err := client.Decrypt(ctx, &kms.DecryptInput{
+		CiphertextBlob: dataKeyCiphertext,
+		KeyId:          &dataKeyARN,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("decrypt the data key across --data-dir: %w", err)
+	}
+	publicKey, err := client.GetPublicKey(ctx, &kms.GetPublicKeyInput{KeyId: &alias})
+	if err != nil {
+		return nil, fmt.Errorf("get the public key in run 2: %w", err)
+	}
+	publicKeyStable := base64.StdEncoding.EncodeToString(publicKey.PublicKey) == request.PublicKey
+	signature, err := base64.StdEncoding.DecodeString(request.Signature)
+	if err != nil {
+		return nil, fmt.Errorf("decode the signature: %w", err)
+	}
+	public, err := x509.ParsePKIXPublicKey(publicKey.PublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("parse the public key in run 2: %w", err)
+	}
+	rsaPublic, ok := public.(*rsa.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("the public key is %T, want RSA", public)
+	}
+	digest := sha256.Sum256([]byte(request.Message))
+	signatureVerified := rsa.VerifyPKCS1v15(rsaPublic, crypto.SHA256, digest[:], signature) == nil
+	return map[string]any{
+		"mode":              "data-dir-read",
+		"plaintext":         string(decrypted.Plaintext),
+		"dataKeyLength":     len(dataKey.Plaintext),
+		"publicKeyStable":   publicKeyStable,
+		"signatureVerified": signatureVerified,
+	}, nil
+}
+
+func dataDirClient(ctx context.Context) (*kms.Client, string, string, error) {
+	alias := strings.TrimSpace(os.Getenv(signingKeyAliasEnv))
+	dataKeyARN := strings.TrimSpace(os.Getenv(dataKeyARNEnv))
+	if alias == "" || dataKeyARN == "" {
+		return nil, "", "", fmt.Errorf("%s and %s must be set", signingKeyAliasEnv, dataKeyARNEnv)
+	}
+	cfg, err := config.LoadDefaultConfig(ctx)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("load AWS config: %w", err)
+	}
+	return kms.NewFromConfig(cfg), alias, dataKeyARN, nil
 }
 
 func main() {

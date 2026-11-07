@@ -5646,6 +5646,69 @@ def run_kinesis_signing(harness: Harness) -> str:
     )
 
 
+def run_data_dir_kms(harness: Harness) -> str:
+    """KMS material persistence: encrypt and sign in run 1, decrypt and verify
+    in run 2 with the same --data-dir. This is the Autheory restart failure:
+    a fresh moto key made persisted ciphertext undecryptable."""
+    plan = plan_local_app(harness, KINESIS_APP)
+    matches = [
+        function for function in plan.get("functions") or []
+        if (function.get("environment") or {}).get("SIGNING_KEY_ALIAS")
+    ]
+    if len(matches) != 1:
+        raise HarnessFailure(f"data-dir KMS: want one signing function, got {matches}")
+    function = matches[0]["logicalId"]
+    data_dir = _data_dir(harness, "kms")
+    try:
+        written, _ = invoke_local_function(
+            harness,
+            app=KINESIS_APP,
+            function=function,
+            event={"mode": "data-dir-write"},
+            name="data-dir-kms-write",
+            backends=("moto",),
+            data_dir=data_dir,
+        )
+        write_raw = written.get("raw")
+        if not isinstance(write_raw, dict):
+            raise HarnessFailure(f"data-dir KMS write: the handler did not return JSON: {written}")
+        for field in ("ciphertext", "dataKeyCiphertext", "signature", "message", "publicKey"):
+            if not write_raw.get(field):
+                raise HarnessFailure(f"data-dir KMS write: missing {field}: {write_raw}")
+        read, _ = invoke_local_function(
+            harness,
+            app=KINESIS_APP,
+            function=function,
+            event={
+                "mode": "data-dir-read",
+                "ciphertext": write_raw["ciphertext"],
+                "dataKeyCiphertext": write_raw["dataKeyCiphertext"],
+                "signature": write_raw["signature"],
+                "message": write_raw["message"],
+                "publicKey": write_raw["publicKey"],
+            },
+            name="data-dir-kms-read",
+            backends=("moto",),
+            data_dir=data_dir,
+        )
+        read_raw = read.get("raw")
+        if not isinstance(read_raw, dict):
+            raise HarnessFailure(f"data-dir KMS read: the handler did not return JSON: {read}")
+        if (
+            read_raw.get("plaintext") != "apptheory-data-dir-plaintext"
+            or read_raw.get("dataKeyLength") != 32
+            or read_raw.get("publicKeyStable") is not True
+            or read_raw.get("signatureVerified") is not True
+        ):
+            raise HarnessFailure(f"data-dir KMS read: unexpected result: {read_raw}")
+        return (
+            "with one --data-dir, run 1 encrypted under the CDK symmetric key, generated a 32-byte data "
+            "key and signed a precomputed digest with the CDK RSA_2048 key; run 2 decrypted both "
+            "ciphertexts, read the same public key, and verified the run-1 signature outside KMS"
+        )
+    finally:
+        _remove_data_dir(data_dir)
+
 
 def _plan_function(plan: dict, handler: str) -> dict:
     matches = [function for function in plan.get("functions") or [] if function.get("handler") == handler]
@@ -7690,6 +7753,7 @@ RUNNERS: dict[str, Callable[[Harness], str]] = {
     "dev-loop-watch-two-edit": run_dev_loop_watch_two_edit,
     "data-dir-dynamodb": run_data_dir_dynamodb,
     "data-dir-s3": run_data_dir_s3,
+    "data-dir-kms": run_data_dir_kms,
     "data-dir-sqs": run_data_dir_sqs,
     "seed-restv1": run_seed_restv1,
     "intrinsic-limits": run_intrinsic_limits,

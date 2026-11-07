@@ -346,9 +346,9 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
    plain HTTP request. On timeout the run fails with the backend, its image and
    the last error, before any resource is provisioned. A backend with no
    published host port is reported ready without this wait. When moto is up, the
-   runner also starts its KMS front (the key families it owns and DIGEST
-   signing) on a loopback listener the function containers reach through
-   `host.docker.internal`; see
+   runner also starts its KMS front (the key families it owns, DIGEST signing
+   and `--data-dir` material) on a loopback listener the function containers
+   reach through `host.docker.internal`; see
    [KMS signing and key material](#kms-signing-and-key-material).
 6. **Provision resources.** When the backend is ready, the runner creates every
    resource the assembly declares, in this order: S3 buckets; each
@@ -760,7 +760,7 @@ The values follow the CloudFormation reference for each resource:
   `KeyUsage SIGN_VERIFY` support `Sign`, `Verify` and `GetPublicKey`; symmetric
   `SYMMETRIC_DEFAULT` keys support `Encrypt`, `Decrypt`, `GenerateDataKey` and
   `ReEncrypt`. See [KMS signing and key material](#kms-signing-and-key-material)
-  for the DIGEST rule.
+  for the DIGEST rule and `--data-dir` persistence.
 
 ### KMS signing and key material
 
@@ -792,6 +792,26 @@ message exactly as before. It covers `RSASSA_PKCS1_V1_5_SHA_256/384/512`,
 pairs with each digest. A `DIGEST` of the wrong length is a
 `ValidationException`.
 
+**`--data-dir` key material.** Ciphertext is bound to the key that produced it,
+and a KMS key's material is part of the key; AWS never rotates it implicitly
+([Decrypt](https://docs.aws.amazon.com/kms/latest/APIReference/API_Decrypt.html),
+[key material](https://docs.aws.amazon.com/kms/latest/developerguide/concepts.html#key-material)).
+moto is memory-only, so without help a key re-created from the CDK definition
+on the next start would have new material and the previous run's ciphertext
+could not be decrypted. With `--data-dir`, the front persists the material
+under `<dir>/kms/keys.json` (mode `0600`) and reuses it for the same
+`stack/logicalId`; the key id and ARN are still re-created on every start
+(moto's metadata is memory-only), the material and `GetPublicKey` are not.
+Without `--data-dir` the front keeps the material in memory, exactly as before.
+The ciphertext envelope binds the stable key id and the encryption context, so
+a ciphertext written in run 1 decrypts in run 2 and a different context does
+not. Deleting the data directory discards the material and makes old ciphertext
+unreadable, as deleting a key would.
+
+The runner tags each key it provisions with the reserved local tag
+`apptheory-local:key-identity`; the front consumes it before moto sees the
+request, so `ListResourceTags` and the template's own tags are unchanged.
+
 **Documented local deviations.**
 
 - The front's ciphertext is its own opaque envelope (magic, stable key id,
@@ -799,7 +819,16 @@ pairs with each digest. A `DIGEST` of the wrong length is a
   an AWS-format blob and cannot be decrypted by AWS.
 - Key types outside the two families above are not owned: `HMAC_*`,
   `RSA_*` with `ENCRYPT_DECRYPT`, and `ECC_SECG_P256K1`/`SM2` signing keys keep
-  moto's behavior. `DIGEST` is not served for them.
+  moto's behavior. Their material is not persisted, and `DIGEST` is not served
+  for them.
+- `KeyId` and `Arn` change on every start, because moto re-creates the key
+  metadata; only the material and the public key are stable. `Decrypt` accepts
+  no `KeyId` (the ciphertext names the stable key) or the current run's key,
+  which resolves to the same stable key; a stale ARN from an earlier run is
+  not a valid identifier in the new run.
+- A `--data-dir` that names a key with a different `KeySpec` or `KeyUsage` than
+  the definition now fails at start with the identity and both pairs named,
+  rather than silently reusing incompatible material.
 
 ### The local Cognito issuer
 
@@ -1815,7 +1844,7 @@ one directory per backend:
 | DynamoDB Local | Tables and items | `-dbPath /data` on `<dir>/dynamodb`; the pinned command's `-sharedDb` is kept, so the single database file is `shared-local-instance.db`. |
 | s3proxy | Buckets and objects | The filesystem jclouds provider with `JCLOUDS_FILESYSTEM_BASEDIR=/data` on `<dir>/s3proxy`. |
 | ElasticMQ | Queues and messages | `messages-storage` with the H2 file `/data/elasticmq` on `<dir>/sqs`. Verified on the pinned 1.7.1 image: a message survived a restart. |
-| moto | Nothing | Server-mode state lives in the process; there is no persistence option ([moto server mode](https://docs.getmoto.org/en/latest/docs/server_mode.html)). This is the docs/125 memory-only limit, named rather than hidden. |
+| moto | Nothing, except the runner's KMS key material | Server-mode state lives in the process; there is no persistence option ([moto server mode](https://docs.getmoto.org/en/latest/docs/server_mode.html)). This is the docs/125 memory-only limit, named rather than hidden. The runner's KMS front keeps the material of the key families it owns in `<dir>/kms/keys.json`, so ciphertext written in one run decrypts in the next; see [KMS signing and key material](#kms-signing-and-key-material). |
 
 The runner widens the data root to `0755` and each backend directory to `0777`
 because the pinned emulator images run as their own non-root users, and a Linux
@@ -1838,7 +1867,12 @@ restores them on startup ([Persisting queues and messages](https://github.com/so
 
 Definitions are re-provisioned from the CDK definition on every start. A table,
 bucket, queue, topic, stream, parameter, secret, pool or key that already
-exists in the data directory is reconciled, never dropped or recreated. A
+exists in the data directory is reconciled, never dropped or recreated. A KMS
+key is the one shape where moto's metadata is re-created: its key id and ARN
+change on every start, while the runner's KMS front reuses the material
+persisted for the same `stack/logicalId`, so ciphertext and `GetPublicKey`
+remain valid. The KMS material is the runner-owned file under the data
+directory; it is mode `0600` and contains no AWS credential. A
 DynamoDB key-schema change cannot be applied to existing state: the runner
 fails at start with the table named and the UpdateTable page's rule,
 "Modifies the provisioned throughput settings, global secondary indexes,
@@ -2695,7 +2729,7 @@ class and named limit is in the [harness fidelity table](/examples/local-harness
 | arm64 `provided.al2023` | Supported (L1) | Uses the host-arch image; a bootstrap built for the other architecture fails closed with a clear error. |
 | DynamoDB Local | Supported (L2) | `--backend dynamodb` starts the profile's digest-pinned `amazon/dynamodb-local` on the run network; SDK clients resolve through `AWS_ENDPOINT_URL_DYNAMODB`. Tables are created from the CDK key schema, GSIs, streams and TTL. SSE, PITR and deletion protection are not provisioned. |
 | SQS (ElasticMQ) | Supported (L2) | `--backend sqs` starts the digest-pinned `softwaremill/elasticmq-native` container, creates the CDK queues with visibility, retention and redrive policy, and resolves `QueueUrl`/`Arn` from the created queues. Every SQS event-source mapping polls automatically with batching, visibility, delete-on-success, partial batch failure, FIFO group ordering, redrive, filter criteria and maximum concurrency; see [SQS event-source delivery](#sqs-event-source-delivery). A session also exposes `sqs.send`, `sqs.receive`, `sqs.event` and `sqs.attributes` for explicit work. |
-| KMS and STS (moto) | Supported (L2) | `--backend moto` starts the profile's digest-pinned moto container and injects `AWS_ENDPOINT_URL_KMS`/`_STS` (and the profile's aliases). Symmetric, RSA (2048/3072/4096) and ECC (P256/P384/P521) `SIGN_VERIFY` keys declared by the assembly are created, with aliases; `Ref`/`Fn::GetAtt Arn` resolve to the created key and alias. The runner's KMS front serves the owned key families' crypto (see [KMS signing and key material](#kms-signing-and-key-material)): `Sign`/`Verify` honour `MessageType: DIGEST`. No HSM, key policies or grants. |
+| KMS and STS (moto) | Supported (L2) | `--backend moto` starts the profile's digest-pinned moto container and injects `AWS_ENDPOINT_URL_KMS`/`_STS` (and the profile's aliases). Symmetric, RSA (2048/3072/4096) and ECC (P256/P384/P521) `SIGN_VERIFY` keys declared by the assembly are created, with aliases; `Ref`/`Fn::GetAtt Arn` resolve to the created key and alias. The runner's KMS front serves the owned key families' crypto (see [KMS signing and key material](#kms-signing-and-key-material)): `Sign`/`Verify` honour `MessageType: DIGEST`, and `--data-dir` keeps the material. No HSM, key policies or grants. |
 | S3 (s3proxy) | Supported (L2) | `--backend s3proxy` starts the digest-pinned s3proxy container, creates the assembly's buckets, and injects the S3 endpoint as the container address so the SDK uses path-style addressing. No bucket policies or IAM. A bucket notification configuration is delivered from the real object state; see [S3 event notification delivery](#s3-event-notification-delivery). |
 | SSM Parameter Store (moto) | Supported (L2) | `AWS::SSM::Parameter` String, StringList and SecureString are created; `Ref` returns the name and `Fn::GetAtt Type`/`Value` the declared type and value. `AWS_ENDPOINT_URL_SSM` is injected. SecureString is stored in moto's memory without envelope encryption. |
 | Secrets Manager (moto) | Supported (L2) | `AWS::SecretsManager::Secret` with `SecretString` or `GenerateSecretString` is created; `Ref` is the ARN and runtime `GetSecretValue` works. A `ResourcePolicy` is reported skipped (IAM is a docs/125 true limit). `AWS_ENDPOINT_URL_SECRETS_MANAGER` is injected. |
