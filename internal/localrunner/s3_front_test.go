@@ -203,7 +203,7 @@ func (f *fakeS3Proxy) ServeHTTP(writer http.ResponseWriter, request *http.Reques
 		writer.Header().Set("Content-Length", strconv.Itoa(len(body)))
 		writer.Header().Set("Content-Type", "text/plain")
 		_, _ = writer.Write(body) //nolint:errcheck // fixture
-	case request.Method == http.MethodDelete && bucket != "" && key == "" && len(request.URL.Query()) > 0:
+	case request.Method == http.MethodDelete && bucket != "" && key == "" && !s3PlainBucketOperation(request.URL.Query()):
 		// A bucket subresource delete (?policy, ?cors, ...) removes that
 		// configuration; the bucket and its objects stay.
 		writer.WriteHeader(http.StatusNoContent)
@@ -1244,6 +1244,14 @@ func TestS3FrontDeleteBucketSubresourceKeepsTheRecord(t *testing.T) {
 	}
 	if !front.index.has(bucket, key) {
 		t.Fatal("DeleteBucketPolicy cleared the bucket's SSE-S3 records")
+	}
+	// The SDKs add x-id as an operation marker; it is not a subresource, so a
+	// plain DeleteBucket carrying it still clears. Any other parameter does not.
+	if !s3PlainBucketOperation(url.Values{"x-id": {"DeleteBucket"}}) {
+		t.Fatal("x-id was treated as a bucket subresource")
+	}
+	if s3PlainBucketOperation(url.Values{"policy": {""}}) {
+		t.Fatal("?policy was treated as a plain bucket delete")
 	}
 	head, err := client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)})
 	if err != nil {
