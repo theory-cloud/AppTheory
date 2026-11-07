@@ -26,6 +26,10 @@ func (r *Runner) functionRunOptions(ctx context.Context, function FunctionSpec, 
 			return nil, ContainerOptions{}, fmt.Errorf("function %s: %w", function.LogicalID, err)
 		}
 	}
+	class, err := RuntimeClass(function.Runtime)
+	if err != nil {
+		return nil, ContainerOptions{}, err
+	}
 	command, err := functionCommand(function)
 	if err != nil {
 		return nil, ContainerOptions{}, err
@@ -41,7 +45,7 @@ func (r *Runner) functionRunOptions(ctx context.Context, function FunctionSpec, 
 			api.bindGateway(r.runtimeAPIGateway)
 		}
 	}
-	env, overridden := r.functionEnvironment(function, api)
+	env, overridden := r.functionEnvironment(function, api, class)
 	if r.options.RIEMode {
 		// The emulator reads its timeout from AWS_LAMBDA_FUNCTION_TIMEOUT; the
 		// base image's entry script does not set it.

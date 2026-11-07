@@ -78,28 +78,56 @@ const (
 	tlsLeafValidity = 197 * 24 * time.Hour
 )
 
-// tlsTrustEnvironment is every variable the pinned Go, Node and Python
-// runtimes read for an additional trust anchor. Setting all of them means a
-// handler's own client verifies the runner's certificate whichever SDK or HTTP
-// library it uses.
+// tlsTrustEnvironment is the trust-anchor variables one runtime reads, chosen
+// per runtime instead of handed to every container. The set matters: the AWS
+// SDK for Go v2 reads AWS_CA_BUNDLE during config loading and applies it only
+// through its own buildable client, so a handler that supplies its own
+// *http.Client (the shape a table mapper such as DynamORM uses) fails to load
+// its config at all:
 //
-//   - Go: crypto/x509 loads SSL_CERT_FILE (and SSL_CERT_DIR) into the system
-//     pool. https://pkg.go.dev/crypto/x509#SystemCertPool
-//   - Node: NODE_EXTRA_CA_CERTS adds certificates to the default trust store.
-//     https://nodejs.org/api/cli.html#node_extra_ca_certsfile
-//   - Python: requests honors REQUESTS_CA_BUNDLE, and the standard library's
-//     ssl.create_default_context reads SSL_CERT_FILE through OpenSSL.
-//     https://requests.readthedocs.io/en/latest/user/advanced/#ssl-cert-verification
-//     https://docs.python.org/3/library/ssl.html#ssl.create_default_context
-//   - curl and most AWS SDKs honor CURL_CA_BUNDLE and AWS_CA_BUNDLE.
-//     https://curl.se/docs/manpage.html#--cacert
-//     https://docs.aws.amazon.com/sdkref/latest/guide/feature-custom-trust-store.html
-var tlsTrustEnvironment = []string{
-	"AWS_CA_BUNDLE",
-	"SSL_CERT_FILE",
-	"NODE_EXTRA_CA_CERTS",
-	"REQUESTS_CA_BUNDLE",
-	"CURL_CA_BUNDLE",
+//	unable to add custom RootCAs HTTPClient, has no WithTransportOptions, *http.Client
+//
+// See resolveCustomCABundle in the pinned SDK:
+// https://github.com/aws/aws-sdk-go-v2/blob/config/v1.33.13/config/resolve.go
+//
+// Go does not need that variable. crypto/x509 loads SSL_CERT_FILE into the
+// system pool, which is what a default transport (and therefore a
+// caller-supplied &http.Client{}) verifies against:
+// https://pkg.go.dev/crypto/x509#SystemCertPool
+//
+// Node reads NODE_EXTRA_CA_CERTS, which the process adds to its default trust
+// store at startup; the AWS SDK for JavaScript v3 uses Node's TLS stack and
+// reads no CA-bundle variable of its own.
+// https://nodejs.org/api/cli.html#node_extra_ca_certsfile
+//
+// Python's boto3/botocore read AWS_CA_BUNDLE and apply it through their own
+// HTTP session (there is no caller-supplied-client failure path), requests
+// reads REQUESTS_CA_BUNDLE, and ssl.create_default_context reads SSL_CERT_FILE
+// through OpenSSL.
+// https://docs.aws.amazon.com/sdkref/latest/guide/feature-custom-trust-store.html
+// https://requests.readthedocs.io/en/latest/user/advanced/#ssl-cert-verification
+// https://docs.python.org/3/library/ssl.html#ssl.create_default_context
+//
+// CURL_CA_BUNDLE is in every set because curl is a subprocess a handler can
+// start on any runtime. https://curl.se/docs/manpage.html#--cacert
+var (
+	tlsTrustGo     = []string{"SSL_CERT_FILE", "CURL_CA_BUNDLE"}
+	tlsTrustNode   = []string{"NODE_EXTRA_CA_CERTS", "CURL_CA_BUNDLE"}
+	tlsTrustPython = []string{"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "AWS_CA_BUNDLE", "CURL_CA_BUNDLE"}
+)
+
+// tlsTrustEnvironment returns the variables one image class receives. An
+// unknown class gets the Python set, which is the preflight image's class;
+// RuntimeClass refuses an unknown runtime before a container starts.
+func tlsTrustEnvironment(class string) []string {
+	switch class {
+	case imageClassGo:
+		return tlsTrustGo
+	case imageClassNode:
+		return tlsTrustNode
+	default:
+		return tlsTrustPython
+	}
 }
 
 // localTLS is one run's certificate authority and the leaf certificates the

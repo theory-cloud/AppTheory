@@ -97,7 +97,7 @@ func (r *Runner) Preflight(ctx context.Context, network string, addHosts []strin
 	if err != nil {
 		return PreflightResult{}, fmt.Errorf("encode preflight endpoints: %w", err)
 	}
-	env := r.securityEnvironment()
+	env := r.securityEnvironment(imageClassPython)
 	env["APPTHEORY_LOCAL_PROBE_ENDPOINTS"] = string(encoded)
 	options := ContainerOptions{
 		Name:       r.namePrefix + "-preflight",
@@ -125,8 +125,9 @@ func (r *Runner) Preflight(ctx context.Context, network string, addHosts []strin
 
 // securityEnvironment is the complete AWS environment every function container
 // receives. Template environment is applied first and these values override it,
-// so an app declaration can never redirect the container at real AWS.
-func (r *Runner) securityEnvironment() map[string]string {
+// so an app declaration can never redirect the container at real AWS. The
+// runtime class selects the trust-anchor variables the runtime actually reads.
+func (r *Runner) securityEnvironment(class string) map[string]string {
 	env := map[string]string{ //nolint:gosec // fixed dummy credentials, never used against real AWS
 		"AWS_REGION":                  LocalRegion,
 		"AWS_DEFAULT_REGION":          LocalRegion,
@@ -159,12 +160,13 @@ func (r *Runner) securityEnvironment() map[string]string {
 		env[webSocketManagementEndpointEnv] = r.webSocketManagement.ContainerURL
 	}
 	// An opted-in run serves every public listener over HTTPS. The same CA
-	// signs every leaf, so one mounted bundle is what every runtime verifies
-	// the app's own https URL with (Go reads SSL_CERT_FILE, Node reads
-	// NODE_EXTRA_CA_CERTS, Python's requests reads REQUESTS_CA_BUNDLE and its
-	// ssl module reads SSL_CERT_FILE, and the AWS SDKs read AWS_CA_BUNDLE).
+	// signs every leaf, so one mounted bundle is what each runtime verifies
+	// the app's own https URL with. The runtime class decides which variables
+	// carry it: a Go container must not receive AWS_CA_BUNDLE, because the Go
+	// SDK refuses to load a config that carries it together with a
+	// caller-supplied *http.Client.
 	if r.tls != nil {
-		for _, name := range tlsTrustEnvironment {
+		for _, name := range tlsTrustEnvironment(class) {
 			env[name] = tlsTrustBundlePath
 		}
 	} else if r.webSocketManagement != nil {
@@ -191,12 +193,12 @@ func (r *Runner) securityEnvironment() map[string]string {
 // silently replacing an app value.
 //
 // https://docs.aws.amazon.com/lambda/latest/dg/configuration-envvars.html#configuration-envvars-runtime
-func (r *Runner) functionEnvironment(function FunctionSpec, api *runtimeAPI) (map[string]string, []string) {
+func (r *Runner) functionEnvironment(function FunctionSpec, api *runtimeAPI, class string) (map[string]string, []string) {
 	env := map[string]string{}
 	for name, value := range function.Environment {
 		env[name] = value
 	}
-	owned := r.securityEnvironment()
+	owned := r.securityEnvironment(class)
 	for name, value := range runtimeEnvironment(function, api) {
 		owned[name] = value
 	}

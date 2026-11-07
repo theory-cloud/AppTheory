@@ -392,16 +392,82 @@ func TestStartPublicListenerServesHTTPS(t *testing.T) {
 
 func TestSecurityEnvironmentCarriesTheTLSTrust(t *testing.T) {
 	plain := &Runner{profile: &Profile{}}
-	for _, name := range tlsTrustEnvironment {
-		if _, ok := plain.securityEnvironment()[name]; ok {
-			t.Fatalf("a plain run set %s", name)
+	for _, class := range []string{imageClassGo, imageClassNode, imageClassPython} {
+		for _, name := range tlsTrustEnvironment(class) {
+			if _, ok := plain.securityEnvironment(class)[name]; ok {
+				t.Fatalf("a plain run set %s for the %s runtime", name, class)
+			}
 		}
 	}
 	secure := &Runner{tls: &localTLS{host: "app.localhost"}}
-	env := secure.securityEnvironment()
-	for _, name := range tlsTrustEnvironment {
-		if env[name] != tlsTrustBundlePath {
-			t.Fatalf("%s = %q, want %q", name, env[name], tlsTrustBundlePath)
+	for _, class := range []string{imageClassGo, imageClassNode, imageClassPython} {
+		env := secure.securityEnvironment(class)
+		for _, name := range tlsTrustEnvironment(class) {
+			if env[name] != tlsTrustBundlePath {
+				t.Fatalf("%s (%s) = %q, want %q", name, class, env[name], tlsTrustBundlePath)
+			}
+		}
+	}
+}
+
+// TestTLSTrustEnvironmentIsPerRuntime pins which runtime reads which trust
+// anchor. A Go container must never receive AWS_CA_BUNDLE: the AWS SDK for Go v2
+// refuses to load a config that carries the bundle together with a
+// caller-supplied *http.Client, which is the shape every table mapper uses.
+func TestTLSTrustEnvironmentIsPerRuntime(t *testing.T) {
+	want := map[string][]string{
+		imageClassGo:     {"SSL_CERT_FILE", "CURL_CA_BUNDLE"},
+		imageClassNode:   {"NODE_EXTRA_CA_CERTS", "CURL_CA_BUNDLE"},
+		imageClassPython: {"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "AWS_CA_BUNDLE", "CURL_CA_BUNDLE"},
+	}
+	for class, names := range want {
+		got := tlsTrustEnvironment(class)
+		if strings.Join(got, ",") != strings.Join(names, ",") {
+			t.Fatalf("%s trust environment = %v, want %v", class, got, names)
+		}
+	}
+	for _, name := range tlsTrustEnvironment(imageClassGo) {
+		if name == "AWS_CA_BUNDLE" {
+			t.Fatal("the Go runtime must not receive AWS_CA_BUNDLE")
+		}
+	}
+	if tlsTrustEnvironment("unknown")[0] != "SSL_CERT_FILE" {
+		t.Fatal("an unknown class must fall back to the preflight Python set")
+	}
+}
+
+// TestFunctionEnvironmentSelectsTheRuntimeTrust proves the class a function's
+// template declares decides its trust variables, not the run alone.
+func TestFunctionEnvironmentSelectsTheRuntimeTrust(t *testing.T) {
+	runner := &Runner{
+		profile:   &Profile{},
+		tls:       &localTLS{host: "app.localhost"},
+		endpoints: []Endpoint{{Service: backendDynamoDB, URL: "http://dynamodb-local:8000"}},
+	}
+	cases := map[string]struct {
+		runtime string
+		want    []string
+		absent  []string
+	}{
+		"go":     {runtime: "provided.al2023", want: tlsTrustGo, absent: []string{"AWS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS"}},
+		"node":   {runtime: "nodejs24.x", want: tlsTrustNode, absent: []string{"AWS_CA_BUNDLE", "SSL_CERT_FILE"}},
+		"python": {runtime: "python3.14", want: tlsTrustPython, absent: []string{"NODE_EXTRA_CA_CERTS"}},
+	}
+	for name, testCase := range cases {
+		class, err := RuntimeClass(testCase.runtime)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		env, _ := runner.functionEnvironment(FunctionSpec{LogicalID: "Fn", Runtime: testCase.runtime}, nil, class)
+		for _, variable := range testCase.want {
+			if env[variable] != tlsTrustBundlePath {
+				t.Fatalf("%s: %s = %q, want %q", name, variable, env[variable], tlsTrustBundlePath)
+			}
+		}
+		for _, variable := range testCase.absent {
+			if _, ok := env[variable]; ok {
+				t.Fatalf("%s: %s must not be set", name, variable)
+			}
 		}
 	}
 }
