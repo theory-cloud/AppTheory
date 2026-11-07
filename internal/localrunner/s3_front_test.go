@@ -50,6 +50,10 @@ type fakeS3Proxy struct {
 	lastDeleteBody []byte
 	// uploads are the multipart uploads the backend created.
 	uploads map[string]*fakeMultipartUpload
+	// completeErrors names the keys whose CompleteMultipartUpload answers 200
+	// with an embedded <Error> document, the failure shape AWS documents after
+	// the 200 header has been sent.
+	completeErrors map[string]string
 }
 
 // fakeMultipartUpload is one in-flight multipart upload.
@@ -60,7 +64,11 @@ type fakeMultipartUpload struct {
 }
 
 func newFakeS3Proxy() *fakeS3Proxy {
-	return &fakeS3Proxy{objects: map[string]map[string][]byte{}, uploads: map[string]*fakeMultipartUpload{}}
+	return &fakeS3Proxy{
+		objects:        map[string]map[string][]byte{},
+		uploads:        map[string]*fakeMultipartUpload{},
+		completeErrors: map[string]string{},
+	}
 }
 
 func (f *fakeS3Proxy) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
@@ -119,6 +127,15 @@ func (f *fakeS3Proxy) ServeHTTP(writer http.ResponseWriter, request *http.Reques
 			writeS3Error(writer, "NoSuchUpload", "The specified upload does not exist.")
 			return
 		}
+		if code, embedded := f.completeErrors[upload.key]; embedded {
+			// AWS can send the 200 header before the failure is known and embed
+			// an <Error> document in the 200 response body.
+			// https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html
+			writer.Header().Set("Content-Type", "application/xml")
+			writer.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprintf(writer, `<?xml version="1.0" encoding="UTF-8"?><Error><Code>%s</Code><Message>embedded failure</Message></Error>`, code) //nolint:errcheck,gosec // fixture
+			return
+		}
 		var completed struct {
 			Parts []struct {
 				PartNumber int    `xml:"PartNumber"`
@@ -166,6 +183,16 @@ func (f *fakeS3Proxy) ServeHTTP(writer http.ResponseWriter, request *http.Reques
 		writer.Header().Set("Content-Type", "text/plain")
 		writer.Header().Set("ETag", `"fixture"`)
 		writer.WriteHeader(http.StatusOK)
+	case request.Method == http.MethodGet && bucket != "" && key != "" && request.URL.Query().Has("uploadId"):
+		uploadID := request.URL.Query().Get("uploadId")
+		upload, ok := f.uploads[uploadID]
+		if !ok {
+			writer.WriteHeader(http.StatusNotFound)
+			writeS3Error(writer, "NoSuchUpload", "The specified upload does not exist.")
+			return
+		}
+		writer.Header().Set("Content-Type", "application/xml")
+		_, _ = fmt.Fprintf(writer, `<?xml version="1.0" encoding="UTF-8"?><ListPartsResult><Bucket>%s</Bucket><Key>%s</Key><UploadId>%s</UploadId><MaxParts>1000</MaxParts><IsTruncated>false</IsTruncated></ListPartsResult>`, upload.bucket, upload.key, uploadID) //nolint:errcheck,gosec // fixture
 	case request.Method == http.MethodGet && bucket != "" && key != "":
 		body, ok := f.objects[bucket][key]
 		if !ok {
@@ -176,8 +203,16 @@ func (f *fakeS3Proxy) ServeHTTP(writer http.ResponseWriter, request *http.Reques
 		writer.Header().Set("Content-Length", strconv.Itoa(len(body)))
 		writer.Header().Set("Content-Type", "text/plain")
 		_, _ = writer.Write(body) //nolint:errcheck // fixture
+	case request.Method == http.MethodDelete && bucket != "" && key == "" && len(request.URL.Query()) > 0:
+		// A bucket subresource delete (?policy, ?cors, ...) removes that
+		// configuration; the bucket and its objects stay.
+		writer.WriteHeader(http.StatusNoContent)
 	case request.Method == http.MethodDelete && bucket != "" && key == "":
 		delete(f.objects, bucket)
+		writer.WriteHeader(http.StatusNoContent)
+	case request.Method == http.MethodDelete && bucket != "" && request.URL.Query().Has("uploadId"):
+		// AbortMultipartUpload frees the upload's parts; the object stays.
+		delete(f.uploads, request.URL.Query().Get("uploadId"))
 		writer.WriteHeader(http.StatusNoContent)
 	case request.Method == http.MethodDelete && bucket != "":
 		delete(f.objects[bucket], key)
@@ -1077,6 +1112,271 @@ func TestS3FrontMultipartCompletionClearsTheRecord(t *testing.T) {
 	}
 	if backend.sawSSE == 0 {
 		t.Fatal("the store never saw the CreateMultipartUpload SSE header")
+	}
+}
+
+// TestS3FrontAbortMultipartUploadKeepsTheRecord is the round-6 residual-1
+// proof: AbortMultipartUpload frees the upload's parts and the object stays, so
+// the destination's SSE-S3 record must stay too.
+//
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_AbortMultipartUpload.html
+func TestS3FrontAbortMultipartUploadKeepsTheRecord(t *testing.T) {
+	backend := newFakeS3Proxy()
+	front, server := newS3FrontForTest(t, "", backend)
+	client := s3ClientFor(t, server.URL)
+	ctx := context.Background()
+	const bucket, key = "bucket", "abort/object"
+
+	if _, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(bucket), Key: aws.String(key), Body: strings.NewReader("original"),
+		ServerSideEncryption: s3types.ServerSideEncryptionAes256,
+	}); err != nil {
+		t.Fatalf("put with SSE-S3: %v", err)
+	}
+	create, err := client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+		Bucket: aws.String(bucket), Key: aws.String(key),
+	})
+	if err != nil {
+		t.Fatalf("create the multipart upload: %v", err)
+	}
+	if _, uploadErr := client.UploadPart(ctx, &s3.UploadPartInput{
+		Bucket: aws.String(bucket), Key: aws.String(key), UploadId: create.UploadId,
+		PartNumber: aws.Int32(1), Body: strings.NewReader("part"),
+	}); uploadErr != nil {
+		t.Fatalf("upload the part: %v", uploadErr)
+	}
+	if _, abortErr := client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
+		Bucket: aws.String(bucket), Key: aws.String(key), UploadId: create.UploadId,
+	}); abortErr != nil {
+		t.Fatalf("abort the multipart upload: %v", abortErr)
+	}
+	if !front.index.has(bucket, key) {
+		t.Fatal("aborting the upload cleared the destination's SSE-S3 record")
+	}
+	head, err := client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)})
+	if err != nil {
+		t.Fatalf("head after the abort: %v", err)
+	}
+	if head.ServerSideEncryption != s3types.ServerSideEncryptionAes256 {
+		t.Fatalf("after the abort HEAD reports %q, want AES256", head.ServerSideEncryption)
+	}
+	get, err := client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)})
+	if err != nil {
+		t.Fatalf("get after the abort: %v", err)
+	}
+	body, _ := io.ReadAll(get.Body) //nolint:errcheck // fixture
+	_ = get.Body.Close()            //nolint:errcheck // fixture
+	if string(body) != "original" {
+		t.Fatalf("the object body changed after the abort: %q", body)
+	}
+	if _, err := client.ListParts(ctx, &s3.ListPartsInput{
+		Bucket: aws.String(bucket), Key: aws.String(key), UploadId: create.UploadId,
+	}); err == nil {
+		t.Fatal("the aborted upload is still listable")
+	}
+}
+
+// TestS3FrontUploadPartCopyKeepsTheRecord proves an UploadPartCopy writes a
+// part of an in-flight upload, not the destination object: the object's SSE-S3
+// record must stay.
+//
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_UploadPartCopy.html
+func TestS3FrontUploadPartCopyKeepsTheRecord(t *testing.T) {
+	backend := newFakeS3Proxy()
+	front, server := newS3FrontForTest(t, "", backend)
+	client := s3ClientFor(t, server.URL)
+	ctx := context.Background()
+	const bucket, key = "bucket", "copypart/dest"
+
+	if _, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(bucket), Key: aws.String(key), Body: strings.NewReader("recorded"),
+		ServerSideEncryption: s3types.ServerSideEncryptionAes256,
+	}); err != nil {
+		t.Fatalf("put with SSE-S3: %v", err)
+	}
+	if _, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(bucket), Key: aws.String("copypart/source"), Body: strings.NewReader("source"),
+	}); err != nil {
+		t.Fatalf("put the copy source: %v", err)
+	}
+	create, err := client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+		Bucket: aws.String(bucket), Key: aws.String(key),
+	})
+	if err != nil {
+		t.Fatalf("create the multipart upload: %v", err)
+	}
+	if _, copyErr := client.UploadPartCopy(ctx, &s3.UploadPartCopyInput{
+		Bucket: aws.String(bucket), Key: aws.String(key), UploadId: create.UploadId,
+		PartNumber: aws.Int32(1), CopySource: aws.String(bucket + "/copypart/source"),
+	}); copyErr != nil {
+		t.Fatalf("copy the part: %v", copyErr)
+	}
+	if !front.index.has(bucket, key) {
+		t.Fatal("UploadPartCopy cleared the destination's SSE-S3 record")
+	}
+	head, err := client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)})
+	if err != nil {
+		t.Fatalf("head after the part copy: %v", err)
+	}
+	if head.ServerSideEncryption != s3types.ServerSideEncryptionAes256 {
+		t.Fatalf("after the part copy HEAD reports %q, want AES256", head.ServerSideEncryption)
+	}
+}
+
+// TestS3FrontDeleteBucketSubresourceKeepsTheRecord proves a bucket subresource
+// delete (?policy, ?cors, ...) removes that configuration, not the bucket or
+// its objects, so the objects' records stay.
+func TestS3FrontDeleteBucketSubresourceKeepsTheRecord(t *testing.T) {
+	backend := newFakeS3Proxy()
+	front, server := newS3FrontForTest(t, "", backend)
+	client := s3ClientFor(t, server.URL)
+	ctx := context.Background()
+	const bucket, key = "bucket", "policy/object"
+
+	if _, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(bucket), Key: aws.String(key), Body: strings.NewReader("kept"),
+		ServerSideEncryption: s3types.ServerSideEncryptionAes256,
+	}); err != nil {
+		t.Fatalf("put with SSE-S3: %v", err)
+	}
+	if _, err := client.DeleteBucketPolicy(ctx, &s3.DeleteBucketPolicyInput{Bucket: aws.String(bucket)}); err != nil {
+		t.Fatalf("delete the bucket policy: %v", err)
+	}
+	if !front.index.has(bucket, key) {
+		t.Fatal("DeleteBucketPolicy cleared the bucket's SSE-S3 records")
+	}
+	head, err := client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)})
+	if err != nil {
+		t.Fatalf("head after the policy delete: %v", err)
+	}
+	if head.ServerSideEncryption != s3types.ServerSideEncryptionAes256 {
+		t.Fatalf("after the policy delete HEAD reports %q, want AES256", head.ServerSideEncryption)
+	}
+}
+
+// TestS3FrontSubresourceReadsDoNotClaimSSE is the round-6 residual-2 proof:
+// AWS returns no x-amz-server-side-encryption header for a metadata subresource
+// read, so the front must not add the destination object's record to one.
+//
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectAttributes.html
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectLegalHold.html
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectRetention.html
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListParts.html
+func TestS3FrontSubresourceReadsDoNotClaimSSE(t *testing.T) {
+	backend := newFakeS3Proxy()
+	front, server := newS3FrontForTest(t, "", backend)
+	client := s3ClientFor(t, server.URL)
+	ctx := context.Background()
+	const bucket, key = "bucket", "read/object"
+
+	if _, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(bucket), Key: aws.String(key), Body: strings.NewReader("recorded"),
+		ServerSideEncryption: s3types.ServerSideEncryptionAes256,
+	}); err != nil {
+		t.Fatalf("put with SSE-S3: %v", err)
+	}
+	create, err := client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+		Bucket: aws.String(bucket), Key: aws.String(key),
+	})
+	if err != nil {
+		t.Fatalf("create the multipart upload: %v", err)
+	}
+	for name, query := range map[string]string{
+		"GetObjectTagging":    "tagging",
+		"GetObjectAcl":        "acl",
+		"GetObjectAttributes": "attributes",
+		"GetObjectLegalHold":  "legal-hold",
+		"GetObjectRetention":  "retention",
+		"ListParts":           "uploadId=" + aws.ToString(create.UploadId),
+		"GetObjectTorrent":    "torrent",
+	} {
+		t.Run(name, func(t *testing.T) {
+			target := "http://front/" + bucket + "/" + key + "?" + query
+			request := httptest.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+			recorder := httptest.NewRecorder()
+			front.ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("%s answered %d: %s", name, recorder.Code, recorder.Body.String())
+			}
+			if got := recorder.Header().Get(s3SSEAlgorithmHeader); got != "" {
+				t.Fatalf("%s answered x-amz-server-side-encryption: %q; AWS returns no SSE header", name, got)
+			}
+		})
+	}
+	// A plain GET and a part read of the object do return the header.
+	for _, query := range []string{"", "partNumber=1"} {
+		target := "http://front/" + bucket + "/" + key
+		if query != "" {
+			target += "?" + query
+		}
+		request := httptest.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+		recorder := httptest.NewRecorder()
+		front.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("GET ?%s answered %d", query, recorder.Code)
+		}
+		if got := recorder.Header().Get(s3SSEAlgorithmHeader); got != "AES256" {
+			t.Fatalf("GET ?%s reports %q, want AES256", query, got)
+		}
+	}
+}
+
+// TestS3FrontMultipartCompletionEmbeddedErrorKeepsTheRecord is the round-6
+// residual-4 proof: AWS can answer CompleteMultipartUpload with 200 and an
+// <Error> body, and such a completion did not write the object, so the record
+// must stay.
+//
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html
+func TestS3FrontMultipartCompletionEmbeddedErrorKeepsTheRecord(t *testing.T) {
+	backend := newFakeS3Proxy()
+	front, server := newS3FrontForTest(t, "", backend)
+	client := s3ClientFor(t, server.URL)
+	ctx := context.Background()
+	const bucket, key = "bucket", "multipart/embedded-error"
+
+	if _, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(bucket), Key: aws.String(key), Body: strings.NewReader("original"),
+		ServerSideEncryption: s3types.ServerSideEncryptionAes256,
+	}); err != nil {
+		t.Fatalf("put with SSE-S3: %v", err)
+	}
+	create, err := client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+		Bucket: aws.String(bucket), Key: aws.String(key),
+	})
+	if err != nil {
+		t.Fatalf("create the multipart upload: %v", err)
+	}
+	part, err := client.UploadPart(ctx, &s3.UploadPartInput{
+		Bucket: aws.String(bucket), Key: aws.String(key), UploadId: create.UploadId,
+		PartNumber: aws.Int32(1), Body: strings.NewReader("new-body"),
+	})
+	if err != nil {
+		t.Fatalf("upload the part: %v", err)
+	}
+	backend.mu.Lock()
+	backend.completeErrors[key] = "InternalError"
+	backend.mu.Unlock()
+	_, completeErr := client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+		Bucket: aws.String(bucket), Key: aws.String(key), UploadId: create.UploadId,
+		MultipartUpload: &s3types.CompletedMultipartUpload{Parts: []s3types.CompletedPart{
+			{ETag: part.ETag, PartNumber: aws.Int32(1)},
+		}},
+	})
+	if completeErr == nil {
+		t.Fatal("a 200 response carrying an <Error> body reported success")
+	}
+	if !strings.Contains(completeErr.Error(), "InternalError") {
+		t.Fatalf("unexpected completion error: %v", completeErr)
+	}
+	if !front.index.has(bucket, key) {
+		t.Fatal("a 200-with-error-body completion cleared the SSE-S3 record")
+	}
+	head, err := client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)})
+	if err != nil {
+		t.Fatalf("head after the failed completion: %v", err)
+	}
+	if head.ServerSideEncryption != s3types.ServerSideEncryptionAes256 {
+		t.Fatalf("after the failed completion HEAD reports %q, want AES256", head.ServerSideEncryption)
 	}
 }
 

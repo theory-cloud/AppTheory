@@ -74,6 +74,10 @@ const (
 	s3FrontMaxBody   = 1 << 20
 	s3FrontIndexFile = "index.json"
 	s3FrontMaxFlush  = 100 * time.Millisecond
+	// s3FrontErrorBodyLimit bounds the response prefix the front reads to find
+	// the <Error> document AWS embeds in a 2xx CompleteMultipartUpload or
+	// CopyObject response. Both result documents are small XML.
+	s3FrontErrorBodyLimit = 64 << 10
 	// s3SignatureWindow is AWS's tolerance between a header-signed request's
 	// X-Amz-Date and the service clock.
 	s3SignatureWindow = 15 * time.Minute
@@ -276,13 +280,15 @@ type s3ObjectOperation struct {
 	// put is set when the front applies SSE-S3 itself (it stripped the signed
 	// header and re-signed the request), so a successful response records it.
 	put bool
-	// overwrite is any write that names no algorithm (a plain PutObject, a
-	// plain CopyObject or a CompleteMultipartUpload): a success clears a
-	// previous SSE-S3 record.
+	// overwrite is any write that names no algorithm and replaces the object (a
+	// plain PutObject, a plain CopyObject or a successful
+	// CompleteMultipartUpload): a success clears a previous SSE-S3 record.
 	overwrite bool
-	// read is a HeadObject or GetObject.
+	// read is a HeadObject or GetObject, including a part read. A subresource
+	// read (tagging, ACL, attributes, legal hold, retention, a multipart part
+	// list) is not a read of the object and is not classified.
 	read bool
-	// remove is a DeleteObject.
+	// remove is a DeleteObject; an abort of a multipart upload is not.
 	remove bool
 	// removeKeys are the keys a DeleteObjects request named.
 	removeKeys []string
@@ -705,11 +711,40 @@ func writeS3FrontError(writer http.ResponseWriter, status int, code, message str
 	_, _ = fmt.Fprintf(writer, `<?xml version="1.0" encoding="UTF-8"?><Error><Code>%s</Code><Message>%s</Message></Error>`, code, escaped.String()) //nolint:errcheck // the response is committed
 }
 
+// s3ResponseCarriesError reports whether a successful write response carries
+// the <Error> document AWS documents for a CompleteMultipartUpload that fails
+// after the 200 header was sent. The body is read only up to
+// s3FrontErrorBodyLimit and put back for the client unchanged. A CopyObject
+// can use the same shape, so every object-overwriting write is checked.
+//
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html
+func s3ResponseCarriesError(response *http.Response) bool {
+	if response.Body == nil {
+		return false
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, s3FrontErrorBodyLimit))
+	response.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), response.Body))
+	if err != nil || len(body) == 0 {
+		return false
+	}
+	var root struct {
+		XMLName xml.Name
+	}
+	if err := xml.Unmarshal(body, &root); err != nil {
+		return false
+	}
+	return root.XMLName.Local == "Error"
+}
+
 // recordResponse applies the operation to the index and the response headers.
 //
 //nolint:gocognit,gocyclo // one branch per operation shape
 func (f *s3Front) recordResponse(operation s3ObjectOperation, response *http.Response) {
 	success := response.StatusCode >= 200 && response.StatusCode < 300
+	if success && (operation.put || operation.overwrite) && s3ResponseCarriesError(response) {
+		// The write did not happen; keep the record as it was.
+		success = false
+	}
 	switch {
 	case operation.put:
 		if success {
@@ -764,6 +799,13 @@ func s3Operation(request *http.Request) s3ObjectOperation {
 		if bucket == "" || key == "" {
 			return s3ObjectOperation{}
 		}
+		// A subresource write (tagging, ACL, a part upload or copy, an object
+		// lock setting) does not replace the object, so it must not change the
+		// record. UploadPartCopy also carries x-amz-copy-source, but it writes
+		// a part of an in-flight upload, not the destination object.
+		if s3HasSubresource(query, "acl", "tagging", "uploads", "uploadId", "partNumber", "versionId", "restore", "legal-hold", "retention", "torrent", "encryption") {
+			return s3ObjectOperation{}
+		}
 		if request.Header.Get("x-amz-copy-source") != "" {
 			// CopyObject writes the destination without naming an algorithm,
 			// so a previous SSE-S3 record no longer describes it. An SSE
@@ -772,9 +814,6 @@ func s3Operation(request *http.Request) s3ObjectOperation {
 			// https://docs.aws.amazon.com/AmazonS3/latest/API/API_CopyObject.html
 			operation.overwrite = true
 			return operation
-		}
-		if s3HasSubresource(query, "acl", "tagging", "uploads", "uploadId", "partNumber", "versionId", "restore", "legal-hold", "retention", "torrent", "encryption") {
-			return s3ObjectOperation{}
 		}
 		if request.Header.Get(s3SSEAlgorithmHeader) == "AES256" && !s3HasSSECompanion(request.Header) {
 			operation.ssePut = true
@@ -787,15 +826,31 @@ func s3Operation(request *http.Request) s3ObjectOperation {
 			operation.read = true
 		}
 	case http.MethodGet:
-		if bucket != "" && key != "" && !s3HasSubresource(query, "acl", "tagging", "versionId", "torrent") {
+		// A subresource read answers about metadata or an upload, not the
+		// object's stored representation, and AWS returns no SSE header for it:
+		// GetObjectAttributes, GetObjectLegalHold, GetObjectRetention,
+		// ListParts, GetObjectTagging, GetObjectAcl and GetObjectTorrent.
+		// A plain GetObject (including ?partNumber=) does return the header.
+		//
+		// https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectAttributes.html
+		// https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectLegalHold.html
+		// https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectRetention.html
+		// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListParts.html
+		if bucket != "" && key != "" && !s3HasSubresource(query, "acl", "tagging", "versionId", "torrent", "uploadId", "attributes", "legal-hold", "retention") {
 			operation.read = true
 		}
 	case http.MethodDelete:
-		if bucket != "" && key != "" && !s3HasSubresource(query, "tagging", "versionId") {
+		// An AbortMultipartUpload (?uploadId=) frees the upload's parts; it does
+		// not delete the object, so its record must stay.
+		// https://docs.aws.amazon.com/AmazonS3/latest/API/API_AbortMultipartUpload.html
+		if bucket != "" && key != "" && !s3HasSubresource(query, "tagging", "versionId", "uploadId") {
 			operation.remove = true
 			return operation
 		}
-		if bucket != "" && key == "" {
+		// Only a plain DeleteBucket removes the bucket's objects. A bucket
+		// subresource delete (?policy, ?cors, ?lifecycle, ...) removes that
+		// configuration and leaves every object in place.
+		if bucket != "" && key == "" && s3PlainBucketOperation(query) {
 			operation.removeBucket = true
 			return operation
 		}
@@ -834,6 +889,20 @@ func s3HasSubresource(query url.Values, names ...string) bool {
 		}
 	}
 	return false
+}
+
+// s3PlainBucketOperation reports whether a bucket-level request names no
+// subresource. The SDKs add x-id as an operation marker on the request line;
+// that is not a subresource. Any other query parameter names a bucket
+// subresource operation (policy, cors, lifecycle, encryption, tagging, ...),
+// whose success leaves the bucket and its objects in place.
+func s3PlainBucketOperation(query url.Values) bool {
+	for name := range query {
+		if name != "x-id" {
+			return false
+		}
+	}
+	return true
 }
 
 func splitS3Path(path string) (string, string) {
