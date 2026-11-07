@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/kms"
@@ -125,7 +126,10 @@ func TestS3FrontDeleteObjectsBufferBoundary(t *testing.T) {
 	}
 }
 
-// TestS3FrontStreamingPutRejected covers the re-sign refusal on ServeHTTP.
+// TestS3FrontStreamingPutRejected covers the re-sign refusal on ServeHTTP: a
+// verified header-signed streaming put was signed over the SSE header the front
+// must strip, and the chunk signatures cannot be replaced, so the front refuses
+// it with 400 instead of forwarding a broken signature.
 func TestS3FrontStreamingPutRejected(t *testing.T) {
 	backend := newFakeS3Proxy()
 	upstream := httptest.NewServer(backend)
@@ -136,8 +140,11 @@ func TestS3FrontStreamingPutRejected(t *testing.T) {
 	}
 	request := httptest.NewRequestWithContext(context.Background(), http.MethodPut, "http://front/bucket/key?x-id=PutObject", strings.NewReader("x"))
 	request.Header.Set(s3SSEAlgorithmHeader, "AES256")
-	request.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=dummy")
-	request.Header.Set("X-Amz-Content-Sha256", "STREAMING-AWS4-HMAC-SHA256-PAYLOAD")
+	payloadHash := "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
+	request.Header.Set("X-Amz-Content-Sha256", payloadHash)
+	if err := newS3Signer().SignHTTP(context.Background(), front.credentials, request, payloadHash, "s3", LocalRegion, time.Now().UTC()); err != nil {
+		t.Fatalf("sign the streaming put: %v", err)
+	}
 	recorder := httptest.NewRecorder()
 	front.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusBadRequest {

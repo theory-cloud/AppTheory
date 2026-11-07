@@ -2,6 +2,7 @@ package localrunner
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -764,6 +765,160 @@ func TestS3FrontVerifySigV4(t *testing.T) {
 }
 
 // TestS3FrontCanonicalHelpers pins the SigV4 canonical shapes.
+// TestS3FrontUnverifiedSSEPutsKeepTheStoreAnswer is the round-5 proof that the
+// front applies SSE-S3 only for a put whose verified header-based SigV4
+// signature covers the SSE header. Every other SSE put is forwarded unchanged,
+// so the store answers it as it did at v7.0.0. The fake store models the pinned
+// s3proxy: it refuses the SSE header itself (501) and rejects a forwarded
+// signature that does not cover an x-amz-* header added after signing (403).
+//
+// https://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-query-string-auth.html
+// https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html
+func TestS3FrontUnverifiedSSEPutsKeepTheStoreAnswer(t *testing.T) {
+	backend := newFakeS3Proxy()
+	front, server := newS3FrontForTest(t, "", backend)
+	client := s3ClientFor(t, server.URL)
+	ctx := context.Background()
+	presigner := s3.NewPresignClient(client)
+	const bucket = "bucket"
+
+	send := func(t *testing.T, target string, header http.Header) (int, string) {
+		t.Helper()
+		request, err := http.NewRequestWithContext(ctx, http.MethodPut, target, strings.NewReader("payload"))
+		if err != nil {
+			t.Fatalf("build the put: %v", err)
+		}
+		for name, values := range header {
+			for _, value := range values {
+				request.Header.Add(name, value)
+			}
+		}
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatalf("send the put: %v", err)
+		}
+		defer func() { _ = response.Body.Close() }() //nolint:errcheck // fixture
+		body, _ := io.ReadAll(response.Body)         //nolint:errcheck // fixture
+		return response.StatusCode, string(body)
+	}
+
+	t.Run("presigned URL with an unsigned SSE header", func(t *testing.T) {
+		presigned, err := presigner.PresignPutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(bucket), Key: aws.String("presigned/unsigned"),
+		})
+		if err != nil {
+			t.Fatalf("presign: %v", err)
+		}
+		before := backend.sawSSE
+		status, body := send(t, presigned.URL, http.Header{s3SSEAlgorithmHeader: {"AES256"}})
+		if status != http.StatusNotImplemented {
+			t.Fatalf("status %d body %s; the front stripped a header the presigned URL did not sign", status, body)
+		}
+		if backend.sawSSE != before+1 {
+			t.Fatal("the store never saw the SSE header; the front must forward it unchanged")
+		}
+		if front.index.has(bucket, "presigned/unsigned") {
+			t.Fatal("the front recorded an SSE-S3 object the store refused")
+		}
+	})
+
+	t.Run("presigned URL that signed the SSE header", func(t *testing.T) {
+		presigned, err := presigner.PresignPutObject(ctx, &s3.PutObjectInput{
+			Bucket:               aws.String(bucket),
+			Key:                  aws.String("presigned/signed"),
+			ServerSideEncryption: s3types.ServerSideEncryptionAes256,
+		})
+		if err != nil {
+			t.Fatalf("presign with SSE-S3: %v", err)
+		}
+		before := backend.sawSSE
+		status, body := send(t, presigned.URL, presigned.SignedHeader)
+		if status != http.StatusNotImplemented {
+			t.Fatalf("status %d body %s; the store's refusal must reach the caller unchanged", status, body)
+		}
+		if backend.sawSSE != before+1 {
+			t.Fatal("the store never saw the SSE header")
+		}
+		if front.index.has(bucket, "presigned/signed") {
+			t.Fatal("the front recorded an SSE-S3 object the store refused")
+		}
+	})
+
+	t.Run("unsigned raw SSE put", func(t *testing.T) {
+		before := backend.sawSSE
+		status, body := send(t, server.URL+"/"+bucket+"/unsigned", http.Header{s3SSEAlgorithmHeader: {"AES256"}})
+		if status != http.StatusNotImplemented {
+			t.Fatalf("status %d body %s; an unsigned SSE put must keep the store's refusal", status, body)
+		}
+		if backend.sawSSE != before+1 {
+			t.Fatal("the store never saw the SSE header")
+		}
+		if front.index.has(bucket, "unsigned") {
+			t.Fatal("the front recorded an SSE-S3 object for an unsigned put")
+		}
+	})
+
+	t.Run("header-signed put with an unsigned SSE header", func(t *testing.T) {
+		payloadHash := hex.EncodeToString(s3Hash("payload"))
+		request, err := http.NewRequestWithContext(ctx, http.MethodPut, server.URL+"/"+bucket+"/unsigned-header", strings.NewReader("payload"))
+		if err != nil {
+			t.Fatalf("build the put: %v", err)
+		}
+		request.Header.Set("X-Amz-Content-Sha256", payloadHash)
+		if signErr := newS3Signer().SignHTTP(ctx, front.credentials, request, payloadHash, "s3", LocalRegion, time.Now().UTC()); signErr != nil {
+			t.Fatalf("sign the put: %v", signErr)
+		}
+		// Add the SSE header after signing: the signature does not cover it, so
+		// the front must not strip it and the store must refuse the request.
+		request.Header.Set(s3SSEAlgorithmHeader, "AES256")
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatalf("send the put: %v", err)
+		}
+		defer func() { _ = response.Body.Close() }() //nolint:errcheck // fixture
+		if response.StatusCode != http.StatusForbidden {
+			t.Fatalf("status %d; the store must refuse an unsigned x-amz-* header", response.StatusCode)
+		}
+		if backend.signatureMismatches == 0 {
+			t.Fatal("the front stripped a signed request's SSE header and re-signed around it")
+		}
+		if front.index.has(bucket, "unsigned-header") {
+			t.Fatal("the front recorded an SSE-S3 object for an unsigned header")
+		}
+	})
+}
+
+// TestS3FrontVerifySigV4ClockWindow proves the front applies AWS's 15-minute
+// header-signing window: a signature more than 15 minutes from the local clock
+// is refused before the store sees it, so a replayed SSE put is not re-signed
+// with a fresh timestamp. Only the new SSE path reaches verifySigV4.
+//
+// https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html
+func TestS3FrontVerifySigV4ClockWindow(t *testing.T) {
+	front, err := newS3Front("", "http://127.0.0.1:1", nil)
+	if err != nil {
+		t.Fatalf("new S3 front: %v", err)
+	}
+	signed := func(at time.Time) *http.Request {
+		request := httptest.NewRequestWithContext(context.Background(), http.MethodPut, "http://front/bucket/key", strings.NewReader("x"))
+		request.Header.Set("X-Amz-Content-Sha256", strings.Repeat("a", 64))
+		request.Header.Set("X-Amz-Server-Side-Encryption", "AES256")
+		if err := newS3Signer().SignHTTP(context.Background(), front.credentials, request, strings.Repeat("a", 64), "s3", LocalRegion, at); err != nil {
+			t.Fatalf("sign the request at %s: %v", at, err)
+		}
+		return request
+	}
+	if err := front.verifySigV4(signed(time.Now().UTC())); err != nil {
+		t.Fatalf("a fresh signature was refused: %v", err)
+	}
+	if err := front.verifySigV4(signed(time.Now().UTC().Add(-15*time.Minute - time.Minute))); err == nil {
+		t.Fatal("a signature 16 minutes old was accepted")
+	}
+	if err := front.verifySigV4(signed(time.Now().UTC().Add(15*time.Minute + time.Minute))); err == nil {
+		t.Fatal("a signature 16 minutes in the future was accepted")
+	}
+}
+
 func TestS3FrontCanonicalHelpers(t *testing.T) {
 	if got := s3CanonicalURI(&url.URL{}); got != "/" {
 		t.Fatalf("empty canonical URI %q", got)

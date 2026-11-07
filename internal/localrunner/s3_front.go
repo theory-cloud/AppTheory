@@ -38,12 +38,18 @@ import (
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html
 // https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingServerSideEncryption.html
 //
-// The front therefore accepts x-amz-server-side-encryption: AES256, strips it
-// before s3proxy (which cannot store it), records the object's algorithm, adds
-// the documented response header, and echoes it on HeadObject and GetObject.
-// SSE-KMS and SSE-C are passed through unchanged: the runner cannot honor a
-// KMS key binding or a customer key, so those requests keep s3proxy's 501
-// rather than pretending to encrypt.
+// The front therefore applies SSE-S3 itself when, and only when, the put is a
+// header-based SigV4 request whose SignedHeaders names
+// x-amz-server-side-encryption and whose signature the front verified against
+// the local identity: it strips the header before s3proxy (which cannot store
+// it), records the object's algorithm, adds the documented response header,
+// and echoes it on HeadObject and GetObject. Every other SSE put is forwarded
+// unchanged, so the store answers it exactly as it did at v7.0.0 (s3proxy
+// refused every SSE header with 501 on its filesystem backend): only a signed
+// header the front removes has to be re-signed, and only a signature the local
+// credentials vouch for may be re-signed. SSE-KMS and SSE-C are passed through
+// unchanged: the runner cannot honor a KMS key binding or a customer key, so
+// those requests keep s3proxy's 501 rather than pretending to encrypt.
 //
 // The record is kept in <data-dir>/s3sse/index.json with --data-dir, and in
 // memory otherwise. The S3 endpoint injected into functions is the front's
@@ -68,6 +74,9 @@ const (
 	s3FrontMaxBody   = 1 << 20
 	s3FrontIndexFile = "index.json"
 	s3FrontMaxFlush  = 100 * time.Millisecond
+	// s3SignatureWindow is AWS's tolerance between a header-signed request's
+	// X-Amz-Date and the service clock.
+	s3SignatureWindow = 15 * time.Minute
 )
 
 // s3SSEIndex records which objects the front stored with SSE-S3.
@@ -260,9 +269,16 @@ func newS3Front(dataDir, upstream string, logf func(string, ...any)) (*s3Front, 
 type s3ObjectOperation struct {
 	bucket string
 	key    string
-	// put is a PutObject that named SSE-S3.
+	// ssePut is a PutObject that named SSE-S3 and no companion algorithm. The
+	// front applies it only when a verified header-based SigV4 signature signed
+	// the SSE header; otherwise the request passes through unchanged.
+	ssePut bool
+	// put is set when the front applies SSE-S3 itself (it stripped the signed
+	// header and re-signed the request), so a successful response records it.
 	put bool
-	// overwrite is any other PutObject: it clears a previous SSE-S3 record.
+	// overwrite is any write that names no algorithm (a plain PutObject, a
+	// plain CopyObject or a CompleteMultipartUpload): a success clears a
+	// previous SSE-S3 record.
 	overwrite bool
 	// read is a HeadObject or GetObject.
 	read bool
@@ -281,31 +297,37 @@ type s3ObjectOperation struct {
 func (f *s3Front) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	operation := s3Operation(request)
 	proxyRequest := request
-	if operation.put {
+	if operation.ssePut {
 		// s3proxy refuses the header on its filesystem store; the front is
-		// where the object's AES256 record lives. The SDK signed the header
-		// (SigV4 lists it in SignedHeaders), so the forwarded request must be
-		// re-signed as the same dummy local identity. The caller's own
-		// signature is checked first, over the request as it arrived, because
-		// the SSE header cannot be forwarded.
-		if err := s3StreamingPayloadError(request); err != nil {
-			f.logf("local S3 front: %v", err)
-			http.Error(writer, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if err := f.verifySigV4(request); err != nil {
+		// where the object's AES256 record lives. That is only sound when the
+		// caller's own header-based SigV4 signature signed the header and the
+		// front verified it: stripping a signed header invalidates the
+		// signature, which the front then replaces as the same dummy local
+		// identity. Every other SSE put (unsigned, presigned, or a header the
+		// caller did not sign) is forwarded unchanged, so the store answers it
+		// as it did at v7.0.0.
+		apply, err := f.applySSEPut(request)
+		if err != nil {
 			f.logf("local S3 front: %v", err)
 			writeS3FrontError(writer, http.StatusForbidden, "SignatureDoesNotMatch", err.Error())
 			return
 		}
-		clone := request.Clone(request.Context())
-		clone.Header.Del(s3SSEAlgorithmHeader)
-		if err := f.resign(clone); err != nil {
-			f.logf("local S3 front: %v", err)
-			http.Error(writer, err.Error(), http.StatusBadRequest)
-			return
+		if apply {
+			if err := s3StreamingPayloadError(request); err != nil {
+				f.logf("local S3 front: %v", err)
+				http.Error(writer, err.Error(), http.StatusBadRequest)
+				return
+			}
+			clone := request.Clone(request.Context())
+			clone.Header.Del(s3SSEAlgorithmHeader)
+			if err := f.resign(clone); err != nil {
+				f.logf("local S3 front: %v", err)
+				http.Error(writer, err.Error(), http.StatusBadRequest)
+				return
+			}
+			proxyRequest = clone
+			operation.put = true
 		}
-		proxyRequest = clone
 	}
 	if operation.deleteObjects {
 		proxy, keys, parsed, err := bufferDeleteObjects(request)
@@ -407,6 +429,39 @@ type s3SignatureMismatch struct{ reason string }
 
 func (e *s3SignatureMismatch) Error() string { return e.reason }
 
+// s3AuthorizationFields splits an AWS4-HMAC-SHA256 Authorization header into
+// its field map and signed-header list. Only the header form is understood: a
+// presigned (query-string) request carries no Authorization header.
+func s3AuthorizationFields(authorization string) (map[string]string, []string, error) {
+	const algorithm = "AWS4-HMAC-SHA256 "
+	if !strings.HasPrefix(authorization, algorithm) {
+		return nil, nil, fmt.Errorf("the local S3 front only re-signs Signature Version 4 header authentication")
+	}
+	fields := map[string]string{}
+	for _, field := range strings.Split(strings.TrimPrefix(authorization, algorithm), ",") {
+		name, value, ok := strings.Cut(strings.TrimSpace(field), "=")
+		if !ok {
+			return nil, nil, fmt.Errorf("the Authorization header is malformed")
+		}
+		fields[strings.TrimSpace(name)] = strings.TrimSpace(value)
+	}
+	signedHeaders := strings.Split(fields["SignedHeaders"], ";")
+	if len(signedHeaders) == 0 || signedHeaders[0] == "" {
+		return nil, nil, fmt.Errorf("the request has no SignedHeaders list")
+	}
+	return fields, signedHeaders, nil
+}
+
+// s3SignedHeaderListed reports whether a signed-header list names one header.
+func s3SignedHeaderListed(signedHeaders []string, name string) bool {
+	for _, signed := range signedHeaders {
+		if signed == name {
+			return true
+		}
+	}
+	return false
+}
+
 // s3StreamingPayloadError names the aws-chunked put the front cannot re-sign:
 // each chunk is signed with the seed signature over the original headers,
 // which include the SSE header the front must strip.
@@ -417,6 +472,41 @@ func s3StreamingPayloadError(request *http.Request) error {
 	return nil
 }
 
+// applySSEPut reports whether the front should apply SSE-S3 itself: strip the
+// SSE header, re-sign, and record the object. That is only sound when the
+// request is header-based SigV4 whose SignedHeaders names the SSE header and
+// whose signature the front verified against the local identity. Removing a
+// signed header invalidates the caller's signature, and only a signature the
+// local credentials vouch for can be replaced by the front's own. Every other
+// SSE put is forwarded unchanged, so the store answers it exactly as it did at
+// v7.0.0; s3proxy's filesystem backend refused every SSE header with 501.
+//
+// https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html
+// https://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-query-string-auth.html
+func (f *s3Front) applySSEPut(request *http.Request) (bool, error) {
+	authorization := request.Header.Get("Authorization")
+	if !strings.HasPrefix(authorization, "AWS4-HMAC-SHA256 ") {
+		// Unsigned, presigned (query-string authentication), or another scheme:
+		// there is no header signature to replace, so forward unchanged.
+		return false, nil
+	}
+	_, signedHeaders, err := s3AuthorizationFields(authorization)
+	if err != nil {
+		return false, err
+	}
+	if !s3SignedHeaderListed(signedHeaders, s3SSEAlgorithmHeader) {
+		// The caller sent the SSE header without signing it. AWS requires every
+		// x-amz-* header to be signed, so the store refuses the request as it
+		// did at v7.0.0; the front must not strip a header the signature does
+		// not cover.
+		return false, nil
+	}
+	if err := f.verifySigV4(request); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // verifySigV4 checks the caller's header-based SigV4 signature against the
 // local dummy identity before the front re-signs the request. The front strips
 // the SSE header the caller signed, so it must sign again; verifying first
@@ -424,8 +514,12 @@ func s3StreamingPayloadError(request *http.Request) error {
 // SSE path is new (s3proxy refused every SSE header with 501 at v7.0.0), so no
 // request that succeeded before can be refused by this check.
 //
-// https://docs.aws.amazon.com/IAM/latest/UserGuide/create-signed-request.html
+// The front also applies AWS's 15-minute window for header-signed requests: a
+// client timestamp more than 15 minutes from the service clock is refused, to
+// bound replay. Only the new SSE path reaches this check.
+//
 // https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html
+// https://docs.aws.amazon.com/IAM/latest/UserGuide/create-signed-request.html
 func (f *s3Front) verifySigV4(request *http.Request) error {
 	authorization := request.Header.Get("Authorization")
 	if authorization == "" {
@@ -433,17 +527,9 @@ func (f *s3Front) verifySigV4(request *http.Request) error {
 		// store answers them exactly as it did at v7.0.0.
 		return nil
 	}
-	const algorithm = "AWS4-HMAC-SHA256 "
-	if !strings.HasPrefix(authorization, algorithm) {
-		return &s3SignatureMismatch{reason: "the local S3 front only re-signs Signature Version 4 header authentication"}
-	}
-	fields := map[string]string{}
-	for _, field := range strings.Split(strings.TrimPrefix(authorization, algorithm), ",") {
-		name, value, ok := strings.Cut(strings.TrimSpace(field), "=")
-		if !ok {
-			return &s3SignatureMismatch{reason: "the Authorization header is malformed"}
-		}
-		fields[strings.TrimSpace(name)] = strings.TrimSpace(value)
+	fields, signedHeaders, err := s3AuthorizationFields(authorization)
+	if err != nil {
+		return &s3SignatureMismatch{reason: err.Error()}
 	}
 	scope := strings.Split(fields["Credential"], "/")
 	if len(scope) != 5 || scope[0] != f.credentials.AccessKeyID || scope[4] != "aws4_request" {
@@ -453,13 +539,19 @@ func (f *s3Front) verifySigV4(request *http.Request) error {
 	if service != "s3" {
 		return &s3SignatureMismatch{reason: "the request is not signed for the s3 service"}
 	}
-	signedHeaders := strings.Split(fields["SignedHeaders"], ";")
-	if len(signedHeaders) == 0 || signedHeaders[0] == "" {
-		return &s3SignatureMismatch{reason: "the request has no SignedHeaders list"}
-	}
 	amzDate := request.Header.Get("X-Amz-Date")
 	if amzDate == "" {
 		return &s3SignatureMismatch{reason: "the request has no X-Amz-Date header"}
+	}
+	signedAt, err := time.Parse("20060102T150405Z", amzDate)
+	if err != nil {
+		return &s3SignatureMismatch{reason: "the request has no valid X-Amz-Date header"}
+	}
+	if amzDate[:8] != date {
+		return &s3SignatureMismatch{reason: "the X-Amz-Date and the credential scope date disagree"}
+	}
+	if skew := time.Since(signedAt); skew > s3SignatureWindow || skew < -s3SignatureWindow {
+		return &s3SignatureMismatch{reason: "the request X-Amz-Date is outside the 15-minute signing window"}
 	}
 	canonicalRequest := strings.Join([]string{
 		request.Method,
@@ -685,7 +777,7 @@ func s3Operation(request *http.Request) s3ObjectOperation {
 			return s3ObjectOperation{}
 		}
 		if request.Header.Get(s3SSEAlgorithmHeader) == "AES256" && !s3HasSSECompanion(request.Header) {
-			operation.put = true
+			operation.ssePut = true
 			return operation
 		}
 		operation.overwrite = true
