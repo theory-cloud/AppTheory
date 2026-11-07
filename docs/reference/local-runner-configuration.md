@@ -1340,7 +1340,7 @@ Before a targeted function starts, these expressions resolve to local values:
 | `Fn::GetAtt [Queue, QueueName]` / `Arn` | The template's `QueueName` (or the deterministic local name) and the provider-shaped queue ARN. |
 | `Ref`/`Fn::GetAtt Name`/`Arn` on `AWS::Events::Rule` | The template's `Name` (or the deterministic local name) and the provider-shaped rule ARN. |
 | `Ref`/`Fn::GetAtt` on `AWS::S3::Bucket` | The bucket the runner created in s3proxy; `Arn` is built from that name. Requires `--backend s3proxy`. |
-| `Ref`/`Fn::GetAtt` on `AWS::KMS::Key` | The key id or ARN the runner created in moto. Requires `--backend moto`. |
+| `Ref`/`Fn::GetAtt` on `AWS::KMS::Key` | The key id or ARN the runner created through its KMS front (moto holds the metadata). Requires `--backend moto`. |
 | `Ref`/`Fn::GetAtt Arn` on `AWS::Kinesis::Stream` | The stream name and ARN the runner created in moto (the template's `Name`, or the deterministic local name). Requires `--backend moto`. |
 | `Ref`/`Fn::GetAtt Type`/`Value` on `AWS::SSM::Parameter` | The parameter name (provisioned with a leading `/`; AWS allows a bare name), declared type and declared value the runner created in moto. Requires `--backend moto`. |
 | `Ref`/`Fn::GetAtt` on `AWS::SecretsManager::Secret` | The ARN of the secret the runner created in moto (AWS appends a six-character suffix). A `{{resolve:secretsmanager:…}}` value resolves to the provisioned secret's value and JSON key, or keeps the deterministic placeholder when no provisioned secret matches; the session's `describe` returns it. Requires `--backend moto`. |
@@ -1358,7 +1358,8 @@ Before a targeted function starts, these expressions resolve to local values:
 When a backend answers its readiness probe, the runner provisions the resources
 for it: every `AWS::S3::Bucket` in s3proxy and every
 `Custom::CDKBucketDeployment` source copied into its bucket; every
-`AWS::KMS::Key` and `AWS::KMS::Alias` in moto; every `AWS::DynamoDB::Table` in
+`AWS::KMS::Key` and `AWS::KMS::Alias` through the runner's KMS front (moto
+holds the key metadata); every `AWS::DynamoDB::Table` in
 DynamoDB Local with its
 key schema, GSIs, streams and TTL; and every `AWS::SQS::Queue` in ElasticMQ with
 its visibility, retention, FIFO and redrive attributes; every

@@ -134,6 +134,9 @@ func (r *Runner) prepareInvoke(ctx context.Context, spec *Spec, functionID strin
 	if err = r.startBackends(ctx); err != nil {
 		return err
 	}
+	if err = r.startKMSFront(ctx); err != nil {
+		return err
+	}
 	if err = r.provisionResources(ctx, spec); err != nil {
 		return err
 	}

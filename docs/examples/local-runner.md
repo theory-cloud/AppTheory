@@ -345,7 +345,11 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
    `ListQueues` for ElasticMQ. A service with no native probe is checked with a
    plain HTTP request. On timeout the run fails with the backend, its image and
    the last error, before any resource is provisioned. A backend with no
-   published host port is reported ready without this wait.
+   published host port is reported ready without this wait. When moto is up, the
+   runner also starts its KMS front (the key families it owns and DIGEST
+   signing) on a loopback listener the function containers reach through
+   `host.docker.internal`; see
+   [KMS signing and key material](#kms-signing-and-key-material).
 6. **Provision resources.** When the backend is ready, the runner creates every
    resource the assembly declares, in this order: S3 buckets; each
    `Custom::CDKBucketDeployment` source copied into its bucket with the declared
@@ -753,8 +757,49 @@ The values follow the CloudFormation reference for each resource:
   ([reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-kms-alias.html),
   [alias use](https://docs.aws.amazon.com/kms/latest/developerguide/alias-using.html)).
   `KeySpec` RSA_2048/3072/4096 and ECC_NIST_P256/P384/P521 with
-  `KeyUsage SIGN_VERIFY` support `Sign`, `Verify` and `GetPublicKey`; the wave-1
-  symmetric path is unchanged.
+  `KeyUsage SIGN_VERIFY` support `Sign`, `Verify` and `GetPublicKey`; symmetric
+  `SYMMETRIC_DEFAULT` keys support `Encrypt`, `Decrypt`, `GenerateDataKey` and
+  `ReEncrypt`. See [KMS signing and key material](#kms-signing-and-key-material)
+  for the DIGEST rule.
+
+### KMS signing and key material
+
+The runner serves a small KMS front at the injected `AWS_ENDPOINT_URL_KMS`.
+It owns the material for the two key families applications create in practice
+and proxies every other operation, and every other key type, to moto
+unchanged:
+
+| Key family | Operations the front serves |
+| --- | --- |
+| `SYMMETRIC_DEFAULT` with `ENCRYPT_DECRYPT` | `CreateKey`, `Encrypt`, `Decrypt`, `ReEncrypt`, `GenerateDataKey`, `GenerateDataKeyWithoutPlaintext` |
+| `RSA_2048/3072/4096` and `ECC_NIST_P256/P384/P521` with `SIGN_VERIFY` | `CreateKey`, `Sign`, `Verify`, `GetPublicKey` |
+
+`CreateKey`, `DescribeKey`, aliases, tags, key policy, rotation, grants and
+every operation on a key the front does not own still go to moto, so
+`KeyMetadata` is byte-for-byte what v7.0.0 returned.
+
+**`MessageType: DIGEST`.** AWS defines `DIGEST` as "the message is a digest,
+and KMS signs it as-is", and `RAW` as a message KMS hashes with the signing
+algorithm's digest
+([Sign](https://docs.aws.amazon.com/kms/latest/APIReference/API_Sign.html),
+[Verify](https://docs.aws.amazon.com/kms/latest/APIReference/API_Verify.html)).
+The pinned moto 5.2.5 ignores `MessageType` in both calls and hashes the
+supplied value again; every moto release through master still does (its
+`verify` docstring says the parameter is "not yet implemented"), so no image
+bump can fix it. The front therefore signs the digest as-is and hashes a `RAW`
+message exactly as before. It covers `RSASSA_PKCS1_V1_5_SHA_256/384/512`,
+`RSASSA_PSS_SHA_256/384/512` and `ECDSA_SHA_256/384/512` with the curve AWS
+pairs with each digest. A `DIGEST` of the wrong length is a
+`ValidationException`.
+
+**Documented local deviations.**
+
+- The front's ciphertext is its own opaque envelope (magic, stable key id,
+  GCM nonce, tag and ciphertext). Callers pass it back to `Decrypt`; it is not
+  an AWS-format blob and cannot be decrypted by AWS.
+- Key types outside the two families above are not owned: `HMAC_*`,
+  `RSA_*` with `ENCRYPT_DECRYPT`, and `ECC_SECG_P256K1`/`SM2` signing keys keep
+  moto's behavior. `DIGEST` is not served for them.
 
 ### The local Cognito issuer
 
@@ -817,6 +862,11 @@ provisioned secret the wave-1 deterministic placeholder is kept unchanged.
   is used for topics, the publish path and the runner's per-topic drain queue;
   the observed deviations and their normalization are listed under
   [SNS subscription delivery](#sns-subscription-delivery).
+- **KMS `MessageType`.** The pinned moto ignores `MessageType` in `Sign` and
+  `Verify` and hashes a supplied digest a second time; every release through
+  master still does. The runner's KMS front signs a `DIGEST` as-is and hashes a
+  `RAW` message exactly as before; the material it owns and the deviations are
+  listed under [KMS signing and key material](#kms-signing-and-key-material).
 - **Cognito JWKS path.** Only `/{poolId}/.well-known/jwks.json` is served; the
   runner's issuer listener is the path R2a uses.
 - **Kinesis on-demand describe.** Moto omits `StreamModeDetails` from
@@ -2645,7 +2695,8 @@ class and named limit is in the [harness fidelity table](/examples/local-harness
 | arm64 `provided.al2023` | Supported (L1) | Uses the host-arch image; a bootstrap built for the other architecture fails closed with a clear error. |
 | DynamoDB Local | Supported (L2) | `--backend dynamodb` starts the profile's digest-pinned `amazon/dynamodb-local` on the run network; SDK clients resolve through `AWS_ENDPOINT_URL_DYNAMODB`. Tables are created from the CDK key schema, GSIs, streams and TTL. SSE, PITR and deletion protection are not provisioned. |
 | SQS (ElasticMQ) | Supported (L2) | `--backend sqs` starts the digest-pinned `softwaremill/elasticmq-native` container, creates the CDK queues with visibility, retention and redrive policy, and resolves `QueueUrl`/`Arn` from the created queues. Every SQS event-source mapping polls automatically with batching, visibility, delete-on-success, partial batch failure, FIFO group ordering, redrive, filter criteria and maximum concurrency; see [SQS event-source delivery](#sqs-event-source-delivery). A session also exposes `sqs.send`, `sqs.receive`, `sqs.event` and `sqs.attributes` for explicit work. |
-| KMS and STS (moto) | Supported (L2) | `--backend moto` starts the profile's digest-pinned moto container and injects `AWS_ENDPOINT_URL_KMS`/`_STS` (and the profile's aliases). Symmetric, RSA (2048/3072/4096) and ECC (P256/P384/P521) `SIGN_VERIFY` keys declared by the assembly are created, with aliases; `Ref`/`Fn::GetAtt Arn` resolve to the created key and alias. No HSM, key policies or grants. |
+| KMS and STS (moto) | Supported (L2) | `--backend moto` starts the profile's digest-pinned moto container and injects `AWS_ENDPOINT_URL_KMS`/`_STS` (and the profile's aliases). Symmetric, RSA (2048/3072/4096) and ECC (P256/P384/P521) `SIGN_VERIFY` keys declared by the assembly are created, with aliases; `Ref`/`Fn::GetAtt Arn` resolve to the created key and alias. The runner's KMS front serves the owned key families' crypto (see [KMS signing and key material](#kms-signing-and-key-material)): `Sign`/`Verify` honour `MessageType: DIGEST`. No HSM, key policies or grants. |
+| S3 (s3proxy) | Supported (L2) | `--backend s3proxy` starts the digest-pinned s3proxy container, creates the assembly's buckets, and injects the S3 endpoint as the container address so the SDK uses path-style addressing. No bucket policies or IAM. A bucket notification configuration is delivered from the real object state; see [S3 event notification delivery](#s3-event-notification-delivery). |
 | SSM Parameter Store (moto) | Supported (L2) | `AWS::SSM::Parameter` String, StringList and SecureString are created; `Ref` returns the name and `Fn::GetAtt Type`/`Value` the declared type and value. `AWS_ENDPOINT_URL_SSM` is injected. SecureString is stored in moto's memory without envelope encryption. |
 | Secrets Manager (moto) | Supported (L2) | `AWS::SecretsManager::Secret` with `SecretString` or `GenerateSecretString` is created; `Ref` is the ARN and runtime `GetSecretValue` works. A `ResourcePolicy` is reported skipped (IAM is a docs/125 true limit). `AWS_ENDPOINT_URL_SECRETS_MANAGER` is injected. |
 | SNS topics and subscriptions (moto) | Supported (L2) | Standard and FIFO `AWS::SNS::Topic` are created with `FifoTopic`/`ContentBasedDeduplication`; `Ref` is the ARN and `GetAtt TopicName`/`TopicArn` resolve. `AWS::SNS::Subscription` and inline `Subscription` entries are delivered automatically to Lambda, SQS and loopback HTTP targets, with filter policies, raw message delivery and FIFO ordering/deduplication; see [SNS subscription delivery](#sns-subscription-delivery). `TopicPolicy` is reported skipped (IAM is a docs/125 true limit). |

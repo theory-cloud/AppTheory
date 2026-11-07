@@ -737,7 +737,11 @@ func (r *Runner) provisionAliases(ctx context.Context, spec *Spec) error {
 	if backend.HostURL == "" {
 		return fmt.Errorf("the kms backend has no loopback endpoint for the runner to provision aliases")
 	}
-	client := newKMSClient(backend.HostURL)
+	hostURL := backend.HostURL
+	if front := r.kmsFrontHostURL(); front != "" {
+		hostURL = front
+	}
+	client := newKMSClient(hostURL)
 	for _, resource := range spec.Resources {
 		if resource.Type != typeKMSAlias {
 			continue

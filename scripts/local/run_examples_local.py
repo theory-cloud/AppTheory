@@ -3740,6 +3740,7 @@ def run_lambda_role_custom(harness: Harness) -> str:
     return run_lambda_role(harness, "custom")
 
 
+
 def _assert_derived_surface(spec: dict, lang: str) -> None:
     functions = spec.get("functions") or []
     language_functions = [
@@ -5627,6 +5628,9 @@ def run_kinesis_signing(harness: Harness) -> str:
     if (
         raw.get("aliasVerified") is not True
         or raw.get("arnVerified") is not True
+        or raw.get("digestVerified") is not True
+        or raw.get("digestKMSValid") is not True
+        or raw.get("doubleHashBlocked") is not True
         or raw.get("aliasSignatureLength", 0) <= 0
         or raw.get("arnSignatureLength", 0) <= 0
         or raw.get("publicKeyBytes", 0) <= 0
@@ -5636,8 +5640,11 @@ def run_kinesis_signing(harness: Harness) -> str:
         raise HarnessFailure(f"kinesis signing: unexpected result: {raw}")
     return (
         "the RSA_2048 SIGN_VERIFY key and its alias were provisioned on moto; the handler signed and "
-        "verified with the alias (usable as KeyId) and the key ARN, and read the public key"
+        "verified with the alias (usable as KeyId) and the key ARN, read the public key, signed a "
+        "precomputed SHA-256 digest with MessageType=DIGEST and verified it outside KMS with the public "
+        "key from GetPublicKey; the double hash did not verify"
     )
+
 
 
 def _plan_function(plan: dict, handler: str) -> dict:

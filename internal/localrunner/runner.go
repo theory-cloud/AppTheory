@@ -137,13 +137,17 @@ type Runner struct {
 	imageEnvs map[string]map[string]string
 	// builtImages maps a container-image function's logical id to the image the
 	// run built for it.
-	builtImages    map[string]string
-	endpoints      []Endpoint
-	invokers       map[string]*FunctionProcess
-	backends       map[string]backendProcess
-	resourceValues resourceValues
-	tables         map[string]tableInfo
-	localSecrets   map[string]string
+	builtImages map[string]string
+	endpoints   []Endpoint
+	// profileEndpointServices marks the endpoints that came from the local
+	// profile (rather than a caller's --endpoint), so the service fronts only
+	// wrap the runner's own backends.
+	profileEndpointServices map[string]bool
+	invokers                map[string]*FunctionProcess
+	backends                map[string]backendProcess
+	resourceValues          resourceValues
+	tables                  map[string]tableInfo
+	localSecrets            map[string]string
 	// secretValues holds the provisioned secret strings, keyed by ARN and
 	// friendly name. A deploy-time dynamic reference to the same secret resolves
 	// to this value instead of the wave-1 deterministic placeholder.
@@ -191,6 +195,10 @@ type Runner struct {
 	// AWS_ENDPOINT_URL_CODEBUILD.
 	codeBuild    *codeBuildService
 	codeBuildURL string
+	// kmsFront serves the KMS operations the run owns (Sign/Verify with
+	// MessageType DIGEST, and the symmetric and signing keys --data-dir must
+	// keep stable); nil when the run has no moto KMS backend.
+	kmsFront *kmsFront
 	// transports and webSocketServers are the live listeners a watch reload
 	// updates in place. The net.Listener and the server stay; only the route
 	// table and the invoker set swap.
@@ -222,29 +230,30 @@ func NewRunner(options Options) (*Runner, error) {
 	}
 
 	runner := &Runner{
-		options:            options,
-		docker:             NewDocker(),
-		appHash:            hashOf(options.AppDir),
-		runID:              shortID(),
-		invokers:           map[string]*FunctionProcess{},
-		backends:           map[string]backendProcess{},
-		tables:             map[string]tableInfo{},
-		localSecrets:       map[string]string{},
-		apiURLs:            map[string]string{},
-		endpoints:          append([]Endpoint(nil), options.Endpoints...),
-		images:             map[string]string{},
-		imageEnvs:          map[string]map[string]string{},
-		builtImages:        map[string]string{},
-		cloudFrontGateways: map[string]*localcloudfront.Gateway{},
-		cloudFrontIDs:      map[string]string{},
-		transports:         map[string]*Transport{},
-		webSocketServers:   map[string]*WebSocketServer{},
-		dataDir:            options.DataDir,
-		semaphore:          make(chan struct{}, options.MaxConcurrency),
-		clock:              clock,
-		ttl:                newTTLTracker(),
-		ttlTables:          map[string]ttlTable{},
-		eventBus:           newEventBridgeBus(clock),
+		options:                 options,
+		docker:                  NewDocker(),
+		appHash:                 hashOf(options.AppDir),
+		runID:                   shortID(),
+		invokers:                map[string]*FunctionProcess{},
+		backends:                map[string]backendProcess{},
+		tables:                  map[string]tableInfo{},
+		localSecrets:            map[string]string{},
+		apiURLs:                 map[string]string{},
+		endpoints:               append([]Endpoint(nil), options.Endpoints...),
+		profileEndpointServices: map[string]bool{},
+		images:                  map[string]string{},
+		imageEnvs:               map[string]map[string]string{},
+		builtImages:             map[string]string{},
+		cloudFrontGateways:      map[string]*localcloudfront.Gateway{},
+		cloudFrontIDs:           map[string]string{},
+		transports:              map[string]*Transport{},
+		webSocketServers:        map[string]*WebSocketServer{},
+		dataDir:                 options.DataDir,
+		semaphore:               make(chan struct{}, options.MaxConcurrency),
+		clock:                   clock,
+		ttl:                     newTTLTracker(),
+		ttlTables:               map[string]ttlTable{},
+		eventBus:                newEventBridgeBus(clock),
 	}
 	runner.namePrefix = sanitizeNamePrefix(options.NamePrefix, "apptheory-local-"+runner.appHash)
 	runner.network = runner.namePrefix + "-net"
@@ -526,6 +535,9 @@ func (r *Runner) validateBackends() error {
 				continue
 			}
 			r.endpoints = append(r.endpoints, endpoint)
+			if r.profileEndpointServices != nil {
+				r.profileEndpointServices[endpoint.Service] = true
+			}
 		}
 	}
 	sort.Slice(r.endpoints, func(i, j int) bool { return r.endpoints[i].Service < r.endpoints[j].Service })
@@ -692,6 +704,9 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 	r.logf("network %s", r.network)
 	r.chooseRuntimeAPIAddress(ctx)
 	if err = r.startBackends(ctx); err != nil {
+		return nil, err
+	}
+	if err = r.startKMSFront(ctx); err != nil {
 		return nil, err
 	}
 	if err = r.startEventBridgeBus(ctx); err != nil {

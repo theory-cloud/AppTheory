@@ -2,6 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -29,6 +33,11 @@ type result struct {
 	ARNVerified       bool   `json:"arnVerified"`
 	PublicKeyBytes    int    `json:"publicKeyBytes"`
 	SigningAlgorithms string `json:"signingAlgorithm"`
+	// The DIGEST leg: the signature must be over the supplied digest, and a
+	// second hash of it must not verify.
+	DigestVerified    bool `json:"digestVerified"`
+	DigestKMSValid    bool `json:"digestKMSValid"`
+	DoubleHashBlocked bool `json:"doubleHashBlocked"`
 }
 
 func handler(ctx context.Context, event json.RawMessage) (any, error) {
@@ -91,6 +100,41 @@ func handler(ctx context.Context, event json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get the public key: %w", err)
 	}
+	// DIGEST: the message is a digest and KMS signs it as-is. Verify it
+	// outside KMS with the public key from GetPublicKey, the check that caught
+	// moto's double hash.
+	// https://docs.aws.amazon.com/kms/latest/APIReference/API_Sign.html
+	digest := sha256.Sum256(message)
+	digestSignature, err := client.Sign(ctx, &kms.SignInput{
+		KeyId:            &alias,
+		Message:          digest[:],
+		MessageType:      kmstypes.MessageTypeDigest,
+		SigningAlgorithm: signingAlgorithm,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("sign the digest: %w", err)
+	}
+	public, err := x509.ParsePKIXPublicKey(publicKey.PublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("parse the public key: %w", err)
+	}
+	rsaPublic, ok := public.(*rsa.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("the public key is %T, want RSA", public)
+	}
+	digestVerified := rsa.VerifyPKCS1v15(rsaPublic, crypto.SHA256, digest[:], digestSignature.Signature) == nil
+	double := sha256.Sum256(digest[:])
+	doubleHashBlocked := rsa.VerifyPKCS1v15(rsaPublic, crypto.SHA256, double[:], digestSignature.Signature) != nil
+	digestInKMS, err := client.Verify(ctx, &kms.VerifyInput{
+		KeyId:            &alias,
+		Message:          digest[:],
+		MessageType:      kmstypes.MessageTypeDigest,
+		Signature:        digestSignature.Signature,
+		SigningAlgorithm: signingAlgorithm,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("verify the digest: %w", err)
+	}
 
 	return result{
 		Alias:             alias,
@@ -101,6 +145,9 @@ func handler(ctx context.Context, event json.RawMessage) (any, error) {
 		ARNVerified:       arnVerified.SignatureValid,
 		PublicKeyBytes:    len(publicKey.PublicKey),
 		SigningAlgorithms: string(signingAlgorithm),
+		DigestVerified:    digestVerified,
+		DigestKMSValid:    digestInKMS.SignatureValid,
+		DoubleHashBlocked: doubleHashBlocked,
 	}, nil
 }
 

@@ -113,6 +113,9 @@ func (r *Runner) seedEnvironment(spec *Spec) map[string]string {
 	if r.codeBuildURL != "" {
 		hostEndpoints[serviceCodeBuild] = r.codeBuildURL
 	}
+	if r.kmsFront != nil && r.kmsFront.hostURL != "" {
+		hostEndpoints["kms"] = r.kmsFront.hostURL
+	}
 	for service, url := range hostEndpoints {
 		env[seedEndpointEnvName(service)] = url
 		for _, name := range r.profile.EndpointEnvNames(service) {

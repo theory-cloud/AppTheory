@@ -366,8 +366,8 @@
     "examples/cdk/kinesis-cloudwatch-logs/handlers/signing/main.go": {
       "run": "kinesis-signing",
       "class": "L2",
-      "gap": "KMS is emulated by moto (no HSM, key policies or grants); Sign, Verify and GetPublicKey are real.",
-      "description": "Kinesis signing handler: the CDK RSA_2048 SIGN_VERIFY key and alias are provisioned on moto; the handler signs and verifies with the alias (usable as KeyId) and the key ARN and reads the public key."
+      "gap": "KMS is emulated by the runner's KMS front over the pinned moto (no HSM, key policies or grants); Sign, Verify and GetPublicKey are real, including MessageType=DIGEST.",
+      "description": "Kinesis signing handler: the CDK RSA_2048 SIGN_VERIFY key and alias are provisioned through the runner's KMS front; the handler signs and verifies with the alias (usable as KeyId) and the key ARN, reads the public key, and signs a precomputed SHA-256 digest with MessageType=DIGEST that the handler verifies outside KMS with the GetPublicKey public key (the double hash does not verify)."
     },
     "examples/cdk/lambda-role/bin/app.ts": {
       "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",

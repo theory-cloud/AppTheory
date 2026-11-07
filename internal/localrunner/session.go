@@ -471,9 +471,13 @@ func (s *localSession) describeEndpoints() []map[string]any {
 			continue
 		}
 		for _, endpoint := range backend.Endpoints {
+			url := backend.HostURL
+			if endpoint.Service == "kms" && s.runner.kmsFront != nil && s.runner.kmsFront.hostURL != "" {
+				url = s.runner.kmsFront.hostURL
+			}
 			endpoints = append(endpoints, map[string]any{
 				"service": endpoint.Service,
-				"url":     backend.HostURL,
+				"url":     url,
 			})
 		}
 	}
