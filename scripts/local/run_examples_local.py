@@ -3785,9 +3785,10 @@ def run_s3_sse(harness: Harness) -> str:
         ):
             raise HarnessFailure(f"s3-sse read: unexpected result: {read}")
         # AWS allows a DeleteObjects request with 1000 keys of up to 1024 bytes,
-        # about 1.05 MiB of XML. That body is above the front's record-parsing
-        # buffer and v7.0.0 carried it straight to s3proxy, so the front must
-        # forward it instead of answering 400.
+        # about 1.05 MiB of XML. The handler sends 999 keys of exactly 1024
+        # bytes. That body is above the front's record-parsing buffer and
+        # v7.0.0 carried it straight to s3proxy, so the front must forward it
+        # instead of answering 400.
         # https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjects.html
         # https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-keys.html
         batch = session.invoke(function["logicalId"], {
@@ -3809,7 +3810,7 @@ def run_s3_sse(harness: Harness) -> str:
             "handler succeeded and reported AES256 for a key containing '=' and a space; the put was "
             "re-signed over the forwarded path and HeadObject and GetObject through the same handler "
             "returned the SSE-S3 header and the stored body; one DeleteObjects request with AWS's "
-            "maximum shape (999 keys of 1024 bytes plus the short recorded key, about 1.05 MiB) was "
+            "maximum shape (999 keys of exactly 1024 bytes plus the short recorded key, about 1.05 MiB) was "
             "forwarded to s3proxy with "
             "HTTP 200 and deleted the object, where a 1 MiB front cap would have answered 400"
         )

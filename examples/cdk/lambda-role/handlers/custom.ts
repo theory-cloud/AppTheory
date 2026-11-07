@@ -39,11 +39,12 @@ export async function handler(event: unknown): Promise<{ statusCode: number; bod
     // writes an object through this handler, a second run reads it back.
     const query = ((event as { queryStringParameters?: Record<string, string> } | null)?.queryStringParameters ?? {});
     // deleteBatch=1 sends one DeleteObjects request with AWS's maximum of 1000
-    // keys: 999 at the maximum key length of 1024 bytes plus the short recorded
-    // key, so the serialized body is about 1.05 MiB: above the runner's S3 front
-    // buffer and a shape v7.0.0 forwarded to s3proxy. The key is split into
-    // short path segments because s3proxy's filesystem store maps each segment
-    // to a file name.
+    // keys: 999 at the maximum key length of exactly 1024 bytes plus the short
+    // recorded key, so the serialized body is about 1.05 MiB: above the runner's
+    // S3 front buffer and a shape v7.0.0 forwarded to s3proxy. Each generated
+    // key is 4 x 250-byte segments + 4 separating slashes + a 20-byte suffix
+    // (12 bytes + 8 digits) = 1024 bytes. The segments are short because
+    // s3proxy's filesystem store maps each segment to a file name.
     // https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjects.html
     // https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-keys.html
     if (query.deleteBatch === "1") {
