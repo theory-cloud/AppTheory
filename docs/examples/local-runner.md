@@ -2120,6 +2120,38 @@ The own bus was chosen over the pinned moto events service after probing
 | ElasticMQ target | moto's SQS is a different queue service | Sends to the application's ElasticMQ queue |
 | Schedules | Never fire | Fire on the run clock |
 
+**PutEvents.** The endpoint accepts the AWS JSON 1.1 body the SDKs send,
+including the timestamp form they use: `PutEventsRequestEntry.Time` as epoch
+seconds in a JSON number, integer or fractional (the protocol's default
+timestamp encoding). The RFC3339 string form v7.0.0 accepted is still accepted,
+and an omitted, empty or `null` `Time` keeps the run clock's instant. A numeric
+`Time` keeps the instant it names, printed in the delivered envelope as an
+RFC3339 `time` with the fraction the caller supplied; the string form keeps
+v7.0.0's whole-second output. An entry whose `Time` is a value the runner
+cannot read fails that entry, not the request. See [Event
+structure](https://docs.aws.amazon.com/eventbridge/latest/ref/events-structure.html)
+for the envelope's `time` field and [AWS JSON 1.1
+timestamps](https://smithy.io/2.0/aws/protocols/aws-json-1_1-protocol.html#shape-serialization)
+for the wire encoding.
+
+Protocol errors on the endpoint use the AWS JSON 1.1 error document the SDKs
+decode: an `application/x-amz-json-1.1` response whose body carries `__type`
+and `message`. A body that is not JSON is `400
+MalformedHttpRequestException`; an `Entries` count outside 1..10, or a `Time`
+whose JSON type is neither a number nor a string, is `400 ValidationError`; an
+`X-Amz-Target` other than `AWSEvents.PutEvents` is `404
+UnknownOperationException`; an unencodable response is `500 InternalFailure`.
+Entry-level refusals keep the documented `200` response and report
+`FailedEntryCount` plus a per-entry `ErrorCode`: `InvalidArgument` for a
+missing `Source`/`DetailType` or an unusable `Time`, and `MalformedDetail` for
+`Detail` that is not valid JSON. See the [PutEvents
+response](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutEvents.html)
+and [PutEventsResultEntry error
+codes](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutEventsResultEntry.html),
+and [Common Error
+Types](https://docs.aws.amazon.com/eventbridge/latest/APIReference/CommonErrors.html)
+for the protocol errors.
+
 **Schedules.** A `ScheduleExpression` of the form `rate(value unit)` or
 `cron(minutes hours day-of-month month day-of-week year)` fires on `env.Clock`.
 The test clock fires exactly the due occurrences: advancing 15 minutes over a
