@@ -45,6 +45,9 @@ Usage:
   apptheory-local invoke --handler-dir <dir> --runtime <runtime> --handler <name> [flags]
   apptheory-local session --app <cdk-app-dir> [flags]   run every target with a JSON command channel on stdin/stdout
   apptheory-local down   --app <cdk-app-dir> [flags]   remove this app's leftover containers and networks
+  apptheory-local tls ca   --data-dir <dir>            create or report the local CA the --tls opt-in uses
+  apptheory-local tls leaf --data-dir <dir> --name <host> --out <dir>
+                                                       issue an auxiliary service's certificate from that CA
 
 Invoke sends a Lambda event to one warm function container and prints one JSON
 result per event. Use --stdio to read newline-delimited events from stdin, which
@@ -66,13 +69,16 @@ func run(args []string) int {
 		args = args[1:]
 	}
 	switch command {
-	case commandRun, "plan", commandInvoke, commandSession, "down":
+	case commandRun, "plan", commandInvoke, commandSession, "down", "tls":
 	case "help", "-h", "--help":
 		fmt.Print(usageText)
 		return 0
 	default:
 		fmt.Fprintf(os.Stderr, "apptheory-local: unknown command %q\n\n%s", command, usageText)
 		return 2
+	}
+	if command == "tls" {
+		return runTLSCommand(args)
 	}
 
 	config := &commandConfig{}
@@ -96,6 +102,11 @@ func run(args []string) int {
 	}
 	if config.dataDir != "" && command != commandRun && command != commandSession && command != commandInvoke {
 		fmt.Fprintln(os.Stderr, "apptheory-local: --data-dir is only valid on run, session and invoke")
+		return 2
+	}
+	if (config.tls || config.tlsHost != "" || len(config.tlsAux) > 0) &&
+		command != commandRun && command != commandSession {
+		fmt.Fprintln(os.Stderr, "apptheory-local: --tls, --tls-host and --tls-aux are only valid on run and session")
 		return 2
 	}
 	if command == commandInvoke {
@@ -168,6 +179,9 @@ type commandConfig struct {
 	watch               bool
 	dataDir             string
 	seed                string
+	tls                 bool
+	tlsHost             string
+	tlsAux              stringList
 }
 
 func (c *commandConfig) register(flags *flag.FlagSet) {
@@ -205,6 +219,9 @@ func (c *commandConfig) register(flags *flag.FlagSet) {
 	flags.BoolVar(&c.watch, "watch", false, "run/session: re-synthesize when the app's sources change and apply the new surface without restarting the listeners")
 	flags.StringVar(&c.dataDir, "data-dir", "", "run/session/invoke: keep backend state across runs (DynamoDB Local, s3proxy, ElasticMQ, and the runner's <data-dir>/kms/keys.json and <data-dir>/s3sse/index.json; moto stays in memory)")
 	flags.StringVar(&c.seed, "seed", "", "run/session: shell command to run after provisioning and before the run reports ready")
+	flags.BoolVar(&c.tls, "tls", false, "run/session: serve every public listener over HTTPS from a certificate the runner's local CA signs (default off: plain HTTP, unchanged)")
+	flags.StringVar(&c.tlsHost, "tls-host", "", "run/session with --tls: the public host name (localhost or a *.localhost name; default app.localhost)")
+	flags.Var(&c.tlsAux, "tls-aux", "run/session with --tls: an auxiliary *.localhost name a function container must resolve to the runner (repeatable; issue its certificate with `apptheory-local tls leaf`)")
 }
 
 func (c *commandConfig) execute(command string) int {
@@ -532,6 +549,9 @@ func (c *commandConfig) options() (localrunner.Options, error) {
 		Watch:               c.watch,
 		DataDir:             c.dataDir,
 		Seed:                c.seed,
+		TLS:                 c.tls,
+		TLSHost:             c.tlsHost,
+		TLSAuxHosts:         append([]string(nil), c.tlsAux...),
 		Stdout:              os.Stdout,
 	}, nil
 }
@@ -573,4 +593,59 @@ func (l *stringList) String() string {
 func (l *stringList) Set(value string) error {
 	*l = append(*l, value)
 	return nil
+}
+
+const tlsUsageText = `apptheory-local tls manages the local certificate authority an opted-in run uses.
+
+Usage:
+  apptheory-local tls ca   --data-dir <dir>
+  apptheory-local tls leaf --data-dir <dir> --name <host> [--name <host>...] --out <dir>
+
+` + "ca" + ` creates the CA on first use and prints its certificate and key paths.
+` + "leaf" + ` issues a server certificate for an auxiliary service (for example a local
+OIDC test IdP) from the same CA. Both commands print paths only, never key
+material. The CA lives under <data-dir>/tls with the key at 0600 and the
+directory at 0700.
+`
+
+// runTLSCommand implements `apptheory-local tls ca|leaf`.
+func runTLSCommand(args []string) int {
+	if len(args) == 0 {
+		fmt.Fprint(os.Stderr, tlsUsageText)
+		return 2
+	}
+	subcommand := args[0]
+	flags := flag.NewFlagSet("apptheory-local tls "+subcommand, flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	dataDir := flags.String("data-dir", "", "directory that keeps the CA across runs")
+	switch subcommand {
+	case "ca":
+		if err := flags.Parse(args[1:]); err != nil {
+			return 2
+		}
+		certPath, keyPath, err := localrunner.TLSCA(*dataDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "apptheory-local tls ca: %v\n", err)
+			return 1
+		}
+		fmt.Printf("ca:  %s\nkey: %s\n", certPath, keyPath)
+		return 0
+	case "leaf":
+		var names stringList
+		flags.Var(&names, "name", "a localhost or *.localhost name the certificate must cover (repeatable)")
+		out := flags.String("out", "", "directory for cert.pem and key.pem")
+		if err := flags.Parse(args[1:]); err != nil {
+			return 2
+		}
+		certPath, keyPath, err := localrunner.TLSLeaf(*dataDir, names, *out)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "apptheory-local tls leaf: %v\n", err)
+			return 1
+		}
+		fmt.Printf("cert: %s\nkey:  %s\n", certPath, keyPath)
+		return 0
+	default:
+		fmt.Fprintf(os.Stderr, "apptheory-local tls: unknown subcommand %q\n\n%s", subcommand, tlsUsageText)
+		return 2
+	}
 }

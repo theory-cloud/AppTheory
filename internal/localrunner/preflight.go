@@ -157,6 +157,17 @@ func (r *Runner) securityEnvironment() map[string]string {
 	// https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-how-to-call-websocket-api-connections.html
 	if r.webSocketManagement != nil {
 		env[webSocketManagementEndpointEnv] = r.webSocketManagement.ContainerURL
+	}
+	// An opted-in run serves every public listener over HTTPS. The same CA
+	// signs every leaf, so one mounted bundle is what every runtime verifies
+	// the app's own https URL with (Go reads SSL_CERT_FILE, Node reads
+	// NODE_EXTRA_CA_CERTS, Python's requests reads REQUESTS_CA_BUNDLE and its
+	// ssl module reads SSL_CERT_FILE, and the AWS SDKs read AWS_CA_BUNDLE).
+	if r.tls != nil {
+		for _, name := range tlsTrustEnvironment {
+			env[name] = tlsTrustBundlePath
+		}
+	} else if r.webSocketManagement != nil {
 		env["AWS_CA_BUNDLE"] = webSocketManagementCACertPath
 		env["NODE_EXTRA_CA_CERTS"] = webSocketManagementCACertPath
 		env["SSL_CERT_FILE"] = webSocketManagementCACertPath

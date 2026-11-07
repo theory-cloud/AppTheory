@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -118,6 +119,19 @@ type Options struct {
 	// reports ready. It is how a seed script drives the app through its own
 	// code paths.
 	Seed string
+	// TLS serves every public listener over HTTPS from a certificate that
+	// chains to a runner-generated local CA. The default is off: an existing
+	// caller keeps plain HTTP URLs, ports and listeners. The profile's
+	// `tls.enabled` key is the committed form of the same opt-in.
+	TLS bool
+	// TLSHost is the public host name the opt-in serves, a `localhost` or
+	// `*.localhost` name. The default is app.localhost.
+	TLSHost string
+	// TLSAuxHosts are additional `*.localhost` names a function container must
+	// resolve to the runner's host, for an app-supplied auxiliary service (a
+	// local OIDC test IdP) whose own certificate the `apptheory-local tls leaf`
+	// command issues from the same CA.
+	TLSAuxHosts []string
 }
 
 // Runner owns one local run: the derived surface, the Docker network, the
@@ -219,6 +233,10 @@ type Runner struct {
 	watch *watchSupervisor
 	// watchAssembly counts watch syntheses so each gets a fresh directory.
 	watchAssembly int
+	// tls is the run's local CA and public leaf; nil when the run did not opt
+	// in. tlsBundlePath is the host-side trust bundle the session reports.
+	tls           *localTLS
+	tlsBundlePath string
 }
 
 // NewRunner validates the options and prepares the run. It contacts no Docker
@@ -267,6 +285,17 @@ func NewRunner(options Options) (*Runner, error) {
 	}
 	if err := runner.loadProfile(); err != nil {
 		return nil, err
+	}
+	// The profile is the committed form of the local-TLS opt-in. A command-line
+	// flag can enable it too; neither source is an operator environment
+	// variable.
+	if runner.profile != nil {
+		if runner.profile.TLS.Enabled {
+			runner.options.TLS = true
+		}
+		if strings.TrimSpace(runner.options.TLSHost) == "" {
+			runner.options.TLSHost = runner.profile.TLS.Host
+		}
 	}
 	if err := runner.validateEndpoints(); err != nil {
 		return nil, err
@@ -707,6 +736,9 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 	}
 	r.logf("network %s", r.network)
 	r.chooseRuntimeAPIAddress(ctx)
+	if err = r.initTLS(); err != nil {
+		return nil, err
+	}
 	if err = r.startBackends(ctx); err != nil {
 		return nil, err
 	}
@@ -775,6 +807,61 @@ func (r *Runner) CurrentSpec() *Spec {
 	return r.spec
 }
 
+// initTLS creates or reuses the run's local CA and prepares the public leaf
+// when the run opted in. It also maps the public host into every function
+// container through the one add-host helper, so a handler reaches the same
+// https URL a browser uses. A run that did not opt in starts no CA, adds no
+// host entry and changes no listener.
+func (r *Runner) initTLS() error {
+	if !r.options.TLS {
+		return nil
+	}
+	host := strings.ToLower(strings.TrimSpace(r.options.TLSHost))
+	if host == "" {
+		host = tlsDefaultHost
+	}
+	if err := validateTLSHost(host); err != nil {
+		return err
+	}
+	dir := filepath.Join(r.scratch, tlsCADirName)
+	persistent := r.dataDir != ""
+	if persistent {
+		dir = filepath.Join(r.dataDir, tlsCADirName)
+	}
+	state, err := newLocalTLS(dir, host)
+	if err != nil {
+		return err
+	}
+	r.tls = state
+	bundle, err := r.writeTLSTrustBundle()
+	if err != nil {
+		return err
+	}
+	r.tlsBundlePath = bundle
+	r.addHostEntry(host)
+	auxiliary := make([]string, 0, len(r.options.TLSAuxHosts))
+	for _, name := range r.options.TLSAuxHosts {
+		trimmed := strings.ToLower(strings.TrimSpace(name))
+		if trimmed == "" || trimmed == host {
+			continue
+		}
+		if err := validateTLSHost(trimmed); err != nil {
+			return fmt.Errorf("--tls-aux %q: %w", name, err)
+		}
+		r.addHostEntry(trimmed)
+		auxiliary = append(auxiliary, trimmed)
+	}
+	validity := "ephemeral"
+	if persistent {
+		validity = "persistent"
+	}
+	r.logf("local TLS: https://%s for every public listener; CA %s (%s); trust bundle %s", host, state.caPath, validity, bundle)
+	if len(auxiliary) > 0 {
+		r.logf("local TLS: auxiliary host names mapped into function containers: %s", strings.Join(auxiliary, ", "))
+	}
+	return nil
+}
+
 // startWebSocketManagement starts the @connections management API when the
 // assembly declares a WebSocket API. Every function then receives its endpoint
 // as the API Gateway Management API endpoint and the CA it must trust.
@@ -782,7 +869,7 @@ func (r *Runner) startWebSocketManagement(ctx context.Context, spec *Spec) error
 	if len(spec.WebSockets) == 0 {
 		return nil
 	}
-	management, err := newWebSocketManagement(r.scratch, r.logf)
+	management, err := newWebSocketManagement(r.scratch, r.tls, r.logf)
 	if err != nil {
 		return err
 	}
@@ -809,12 +896,11 @@ func (r *Runner) webSocketDomainName() string {
 }
 
 // webSocketCertificateMounts mounts the management CA into a function container
-// so its SDK client trusts the `@connections` TLS endpoint.
+// so its SDK client trusts the `@connections` TLS endpoint. An opted-in run's
+// CA signs the management certificate, so the run's shared trust mount covers
+// it and this returns nothing.
 func (r *Runner) webSocketCertificateMounts() []string {
-	if r.webSocketManagement == nil {
-		return nil
-	}
-	return []string{r.webSocketManagement.certificatePath + ":" + webSocketManagementCACertPath + ":ro"}
+	return r.webSocketManagement.certificateMounts()
 }
 
 // startEventBridgeBus serves the EventBridge PutEvents JSON protocol for the
@@ -1373,24 +1459,32 @@ func (r *Runner) networkGateway(ctx context.Context) (string, error) {
 	return r.docker.NetworkGateway(ctx, r.network)
 }
 
-// runtimeHostEntry is the container's host.docker.internal mapping. When the
-// host owns the run network's gateway (the Linux bridge case) the entry names
-// it and the listener binds it; otherwise Docker's host-gateway value is used,
-// which Colima and Docker Desktop forward to the host's loopback.
-func (r *Runner) runtimeHostEntry() string {
+// runtimeHostAddress is the address a container uses to reach the host: the
+// run network's gateway when the host owns it (the Linux bridge case), or
+// Docker's host-gateway value, which Colima and Docker Desktop forward to the
+// host's loopback.
+func (r *Runner) runtimeHostAddress() string {
 	if r.runtimeAPIGateway != "" {
-		return "host.docker.internal:" + r.runtimeAPIGateway
+		return r.runtimeAPIGateway
 	}
-	return "host.docker.internal:host-gateway"
+	return "host-gateway"
 }
 
 // addRuntimeHostEntry adds the host.docker.internal mapping once; an entry the
 // caller supplied through --add-host wins.
 func (r *Runner) addRuntimeHostEntry() {
-	if hasAddHostName(r.options.AddHosts, "host.docker.internal") {
+	r.addHostEntry("host.docker.internal")
+}
+
+// addHostEntry maps one name to the container-facing host address once. It is
+// the one helper every listener or host mapping the containers use goes
+// through.
+func (r *Runner) addHostEntry(name string) {
+	name = strings.TrimSpace(name)
+	if name == "" || hasAddHostName(r.options.AddHosts, name) {
 		return
 	}
-	r.options.AddHosts = append(r.options.AddHosts, r.runtimeHostEntry())
+	r.options.AddHosts = append(r.options.AddHosts, name+":"+r.runtimeHostAddress())
 }
 
 // runtimeAPIAddressOwner reports whether the host owns an address. Binding an
@@ -1583,11 +1677,6 @@ func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 	}
 	listenerIndex := 0
 	for _, target := range targets {
-		listener, err := r.listen(ctx, listenerIndex)
-		listenerIndex++
-		if err != nil {
-			return fmt.Errorf("bind %s listener: %w", target.LogicalID, err)
-		}
 		transport := NewTransport(target, invokers, r.semaphore, r.logf)
 		transport.Clock = r.clock
 		r.transports[target.LogicalID] = transport
@@ -1596,22 +1685,15 @@ func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 			ReadHeaderTimeout: 10 * time.Second,
 			IdleTimeout:       60 * time.Second,
 		}
-		r.listeners = append(r.listeners, listener)
-		r.servers = append(r.servers, server)
-		r.apiURLs[target.LogicalID] = "http://" + listener.Addr().String()
-		go func() {
-			if serveErr := server.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-				r.logf("listener for %s stopped: %v", target.LogicalID, serveErr)
-			}
-		}()
+		port, err := r.startPublicListener(ctx, listenerIndex, server, "listener for "+target.LogicalID)
+		listenerIndex++
+		if err != nil {
+			return fmt.Errorf("bind %s listener: %w", target.LogicalID, err)
+		}
+		r.apiURLs[target.LogicalID] = r.publicURL(port)
 		r.logf("serving %s %s at %s", target.Class, target.LogicalID, r.apiURLs[target.LogicalID])
 	}
 	for _, api := range spec.WebSockets {
-		listener, err := r.listen(ctx, listenerIndex)
-		listenerIndex++
-		if err != nil {
-			return fmt.Errorf("bind websocket %s listener: %w", api.LogicalID, err)
-		}
 		webSocketServer := &WebSocketServer{
 			API:        api,
 			Invokers:   invokers,
@@ -1628,14 +1710,12 @@ func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 			ReadHeaderTimeout: 10 * time.Second,
 			IdleTimeout:       60 * time.Second,
 		}
-		r.listeners = append(r.listeners, listener)
-		r.servers = append(r.servers, server)
-		r.apiURLs[api.LogicalID] = "ws://" + listener.Addr().String() + "/" + api.Stage
-		go func(apiID string, server *http.Server, listener net.Listener) {
-			if serveErr := server.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-				r.logf("websocket listener for %s stopped: %v", apiID, serveErr)
-			}
-		}(api.LogicalID, server, listener)
+		port, err := r.startPublicListener(ctx, listenerIndex, server, "websocket listener for "+api.LogicalID)
+		listenerIndex++
+		if err != nil {
+			return fmt.Errorf("bind websocket %s listener: %w", api.LogicalID, err)
+		}
+		r.apiURLs[api.LogicalID] = r.tlsWebSocketURL(port, api.Stage)
 		r.logf("serving %s %s at %s", api.Class, api.LogicalID, r.apiURLs[api.LogicalID])
 	}
 	for _, distribution := range spec.ServableCloudFront() {
@@ -1648,11 +1728,6 @@ func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 		origins, err := r.cloudFrontOrigins(spec, distribution)
 		if err != nil {
 			return err
-		}
-		listener, err := r.listen(ctx, listenerIndex)
-		listenerIndex++
-		if err != nil {
-			return fmt.Errorf("bind cloudfront %s listener: %w", distribution.LogicalID, err)
 		}
 		gateway := localcloudfront.NewGateway(distribution, spec.cloudFrontTopology, origins, executor, r.logf)
 		gateway.Now = r.clock.Now
@@ -1667,14 +1742,12 @@ func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 			ReadHeaderTimeout: 10 * time.Second,
 			IdleTimeout:       60 * time.Second,
 		}
-		r.listeners = append(r.listeners, listener)
-		r.servers = append(r.servers, server)
-		r.apiURLs[distribution.LogicalID] = "http://" + listener.Addr().String()
-		go func() {
-			if serveErr := server.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-				r.logf("cloudfront listener for %s stopped: %v", distribution.LogicalID, serveErr)
-			}
-		}()
+		port, err := r.startPublicListener(ctx, listenerIndex, server, "cloudfront listener for "+distribution.LogicalID)
+		listenerIndex++
+		if err != nil {
+			return fmt.Errorf("bind cloudfront %s listener: %w", distribution.LogicalID, err)
+		}
+		r.apiURLs[distribution.LogicalID] = r.publicURL(port)
 		r.logf("serving cloudfront %s at %s", distribution.LogicalID, r.apiURLs[distribution.LogicalID])
 	}
 	return nil
@@ -1699,6 +1772,65 @@ func (r *Runner) listen(ctx context.Context, index int) (net.Listener, error) {
 		return listenConfig.Listen(ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", r.options.PortBase+index))
 	}
 	return listenConfig.Listen(ctx, "tcp", "127.0.0.1:0")
+}
+
+// listenPublic binds one public listener. An opted-in run also binds the run
+// network's gateway on the same port when the host owns it (the Linux bridge
+// case), because a function container reaches the runner's https URL through
+// the one add-host entry. On Colima and Docker Desktop the gateway belongs to
+// the VM and that bind fails harmlessly: the container's host-gateway entry
+// forwards the name to the host loopback.
+func (r *Runner) listenPublic(ctx context.Context, index int) ([]net.Listener, int, error) {
+	loopback, err := r.listen(ctx, index)
+	if err != nil {
+		return nil, 0, err
+	}
+	address, ok := loopback.Addr().(*net.TCPAddr)
+	if !ok {
+		_ = loopback.Close() //nolint:errcheck // the listener cannot be used without a TCP address
+		return nil, 0, errors.New("the public listener has no TCP address")
+	}
+	listeners := []net.Listener{loopback}
+	if r.tls != nil && r.runtimeAPIGateway != "" {
+		var listenConfig net.ListenConfig
+		if gateway, listenErr := listenConfig.Listen(ctx, "tcp", net.JoinHostPort(r.runtimeAPIGateway, strconv.Itoa(address.Port))); listenErr == nil {
+			listeners = append(listeners, gateway)
+		} else {
+			r.logf("public listener: the run network gateway %s is not host-owned (%v); loopback only", r.runtimeAPIGateway, listenErr)
+		}
+	}
+	return listeners, address.Port, nil
+}
+
+// startPublicListener serves one public surface on every listener it bound and
+// returns the port the run reports. A TLS run serves HTTPS with HTTP/1.1 and,
+// when the client offers it, HTTP/2; a run without the opt-in serves the same
+// plain HTTP listener as before.
+func (r *Runner) startPublicListener(ctx context.Context, index int, server *http.Server, label string) (int, error) {
+	listeners, port, err := r.listenPublic(ctx, index)
+	if err != nil {
+		return 0, err
+	}
+	tlsConfig := r.serverTLSConfig()
+	if tlsConfig != nil {
+		server.TLSConfig = tlsConfig
+	}
+	r.servers = append(r.servers, server)
+	for _, listener := range listeners {
+		r.listeners = append(r.listeners, listener)
+		go func(listener net.Listener) {
+			var serveErr error
+			if tlsConfig != nil {
+				serveErr = server.ServeTLS(listener, "", "")
+			} else {
+				serveErr = server.Serve(listener)
+			}
+			if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) && !errors.Is(serveErr, net.ErrClosed) {
+				r.logf("%s stopped: %v", label, serveErr)
+			}
+		}(listener)
+	}
+	return port, nil
 }
 
 func (r *Runner) serve(ctx context.Context) error {

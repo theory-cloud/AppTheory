@@ -206,7 +206,7 @@ func TestRunnerWebSocketHelpers(t *testing.T) {
 	runner := &Runner{}
 	require.Empty(t, runner.webSocketDomainName())
 	require.Nil(t, runner.webSocketCertificateMounts())
-	management, err := newWebSocketManagement(t.TempDir(), nil)
+	management, err := newWebSocketManagement(t.TempDir(), nil, nil)
 	require.NoError(t, err)
 	manager := &webSocketManagement{URL: "https://127.0.0.1:1", ContainerURL: "https://host.docker.internal:1",
 		certificatePath: management.certificatePath}

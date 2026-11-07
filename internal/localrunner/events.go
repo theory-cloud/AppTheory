@@ -30,10 +30,16 @@ type InvokeRequest struct {
 	StagePrefix string
 	RawQuery    string
 	Header      http.Header
-	Body        []byte
-	RemoteAddr  string
-	RequestID   string
-	Now         time.Time
+	// Host is the request's Host authority. API Gateway and a Function URL
+	// carry it as the `host` header, which is how a handler reconstructs the
+	// public URL it was reached at. Go keeps Host out of http.Header, so the
+	// transport passes it separately.
+	// https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-develop-integrations-lambda.html
+	Host       string
+	Body       []byte
+	RemoteAddr string
+	RequestID  string
+	Now        time.Time
 	// AuthorizerContext is the context a CUSTOM authorizer returned for this
 	// request. It is carried as requestContext.authorizer.lambda, the same
 	// place API Gateway v2 puts a simple-response authorizer context.
@@ -80,7 +86,7 @@ func httpV2Event(request InvokeRequest) map[string]any {
 		"routeKey":       routeKey,
 		"rawPath":        rawPath(request),
 		"rawQueryString": request.RawQuery,
-		"headers":        v2Headers(request.Header),
+		"headers":        withHost(v2Headers(request.Header), request.Host),
 		"requestContext": map[string]any{
 			"accountId":    LocalAccountID,
 			"apiId":        apiID,
@@ -283,7 +289,7 @@ func restV1Event(request InvokeRequest) map[string]any {
 		"resource":          request.Route.Path,
 		"path":              request.Path,
 		"httpMethod":        strings.ToUpper(request.Method),
-		"headers":           multiValueHeaderFlat(request.Header),
+		"headers":           withHost(multiValueHeaderFlat(request.Header), request.Host),
 		"multiValueHeaders": cloneHeaderMap(request.Header),
 		"requestContext":    restRequestContext(request, apiID),
 		"body":              body,
@@ -344,7 +350,7 @@ func functionURLEvent(request InvokeRequest) map[string]any {
 		"routeKey":       "$default",
 		"rawPath":        rawPath(request),
 		"rawQueryString": request.RawQuery,
-		"headers":        v2Headers(request.Header),
+		"headers":        withHost(v2Headers(request.Header), request.Host),
 		"requestContext": map[string]any{
 			"accountId":    LocalAccountID,
 			"requestId":    request.RequestID,
@@ -412,6 +418,16 @@ func singleHeaders(header http.Header) map[string]string {
 		out[strings.ToLower(name)] = strings.Join(values, ",")
 	}
 	return out
+}
+
+// withHost adds the request's Host authority to a flat headers map, the way
+// API Gateway and a Function URL do. Go keeps Host outside http.Header, so the
+// transport passes it separately.
+func withHost(headers map[string]string, host string) map[string]string {
+	if host != "" {
+		headers["host"] = host
+	}
+	return headers
 }
 
 // v2Headers is the headers map of a v2-shaped event. API Gateway removes the
