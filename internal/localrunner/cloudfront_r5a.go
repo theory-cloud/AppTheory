@@ -203,7 +203,14 @@ func newHTTPOrigin(origin *localcloudfront.DistributionOrigin, tlsState *localTL
 	transport := &http.Transport{Proxy: nil}
 	serverName := ""
 	if base.Scheme == schemeHTTPS {
-		serverName = originServerName(origin, base)
+		serverName = base.Hostname()
+		if tlsState != nil {
+			// A run that owns a CA also owns the certificate the hop sees, so
+			// the name it verifies is the one CloudFront's rule names: the
+			// declared origin domain. A run without a CA keeps the historical
+			// behavior and verifies the mapped host against the system roots.
+			serverName = originServerName(origin, base)
+		}
 		tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, ServerName: serverName}
 		if tlsState != nil {
 			pool, poolErr := x509.SystemCertPool()
