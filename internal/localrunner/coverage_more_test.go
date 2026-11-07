@@ -398,7 +398,7 @@ func TestEventBridgeBusCustomAndDisabled(t *testing.T) {
 	if failed != 1 || malformed[0].ErrorCode != "MalformedDetail" {
 		t.Fatalf("malformed detail: %+v %d", malformed, failed)
 	}
-	if _, failed := bus.putEvents(context.Background(), []eventBridgeEntry{{Source: "app.test", DetailType: "Thing", Detail: "{}", Time: "not-time"}}); failed != 1 {
+	if _, failed := bus.putEvents(context.Background(), []eventBridgeEntry{{Source: "app.test", DetailType: "Thing", Detail: "{}", Time: eventBridgeTime{raw: json.RawMessage(`"not-time"`)}}}); failed != 1 {
 		t.Fatal("an invalid Time must fail")
 	}
 }

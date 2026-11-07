@@ -493,7 +493,7 @@ func (s *codeBuildService) publish(record *codeBuildRecord, status string) {
 		Detail:       string(detail),
 		EventBusName: defaultEventBus,
 		Resources:    []string{record.ARN},
-		Time:         s.runner.now().UTC().Format(time.RFC3339Nano),
+		Time:         eventBridgeTimeOf(s.runner.now()),
 	}})
 	if failed > 0 {
 		s.runner.logf("codebuild: %d state-change event(s) failed to publish", failed)

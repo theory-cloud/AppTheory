@@ -1,11 +1,15 @@
 package localrunner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,16 +33,133 @@ const (
 	eventBridgeTarget   = "AWSEvents.PutEvents"
 	eventBridgeJSONType = "application/x-amz-json-1.1"
 	eventBridgeMaxBatch = 10
+
+	// eventBridgeTimeFormat prints the envelope's time member. RFC3339Nano
+	// keeps a whole-second instant byte-identical to v7.0.0 and keeps the
+	// fraction when the caller supplies one.
+	// https://docs.aws.amazon.com/eventbridge/latest/ref/events-structure.html
+	eventBridgeTimeFormat = time.RFC3339Nano
+)
+
+// The error members the AWS JSON 1.1 protocol carries in a response body. The
+// SDKs resolve a typed error from __type and surface the message.
+// https://smithy.io/2.0/aws/protocols/aws-json-1_1-protocol.html#operation-error-serialization
+// https://docs.aws.amazon.com/eventbridge/latest/APIReference/CommonErrors.html
+const (
+	eventBridgeMalformedRequest = "MalformedHttpRequestException"
+	eventBridgeValidationError  = "ValidationError"
+	eventBridgeUnknownOperation = "UnknownOperationException"
+	eventBridgeInternalFailure  = "InternalFailure"
+
+	// eventBridgeInvalidArgument and eventBridgeMalformedDetail are the
+	// per-entry codes PutEventsResultEntry documents.
+	// https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutEventsResultEntry.html
+	eventBridgeInvalidArgument = "InvalidArgument"
+	eventBridgeMalformedDetail = "MalformedDetail"
 )
 
 // eventBridgeEntry is one PutEvents entry.
 type eventBridgeEntry struct {
-	Source       string   `json:"Source"`
-	DetailType   string   `json:"DetailType"`
-	Detail       string   `json:"Detail"`
-	EventBusName string   `json:"EventBusName"`
-	Resources    []string `json:"Resources"`
-	Time         string   `json:"Time"`
+	Source       string          `json:"Source"`
+	DetailType   string          `json:"DetailType"`
+	Detail       string          `json:"Detail"`
+	EventBusName string          `json:"EventBusName"`
+	Resources    []string        `json:"Resources"`
+	Time         eventBridgeTime `json:"Time"`
+}
+
+// eventBridgeTime is the PutEvents Time member. AWS JSON 1.1 sends a timestamp
+// as epoch seconds in a JSON number; v7.0.0 accepted an RFC3339 string, so both
+// forms stay valid.
+// https://smithy.io/2.0/aws/protocols/aws-json-1_1-protocol.html#shape-serialization
+type eventBridgeTime struct {
+	raw json.RawMessage
+}
+
+// UnmarshalJSON keeps the member's wire value so a value the bus cannot use is
+// reported against its entry instead of rejecting the whole request. A JSON
+// type the protocol does not define fails the decode.
+func (t *eventBridgeTime) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		t.raw = nil
+		return nil
+	}
+	if trimmed[0] != '"' && trimmed[0] != '-' && (trimmed[0] < '0' || trimmed[0] > '9') {
+		return fmt.Errorf("time must be epoch seconds or an RFC3339 string")
+	}
+	t.raw = append(json.RawMessage(nil), trimmed...)
+	return nil
+}
+
+// eventBridgeTimeOf builds the member from an instant the runner itself
+// generated.
+func eventBridgeTimeOf(when time.Time) eventBridgeTime {
+	return eventBridgeTime{raw: json.RawMessage(strconv.Quote(when.UTC().Format(time.RFC3339Nano)))}
+}
+
+// instant resolves the member, falling back to the supplied clock instant when
+// the caller omitted it.
+func (t eventBridgeTime) instant(now time.Time) (time.Time, error) {
+	trimmed := bytes.TrimSpace(t.raw)
+	if len(trimmed) == 0 {
+		return now, nil
+	}
+	if trimmed[0] == '"' {
+		var text string
+		if err := json.Unmarshal(trimmed, &text); err != nil {
+			return time.Time{}, fmt.Errorf("time is not a string: %w", err)
+		}
+		if strings.TrimSpace(text) == "" {
+			return now, nil
+		}
+		parsed, err := time.Parse(time.RFC3339, text)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("time is not RFC3339: %w", err)
+		}
+		// v7.0.0 printed an RFC3339 string at whole-second precision; keep
+		// that output byte-identical. The numeric form keeps its fraction.
+		return parsed.UTC().Truncate(time.Second), nil
+	}
+	return parseEventBridgeEpochSeconds(string(trimmed))
+}
+
+// parseEventBridgeEpochSeconds turns the JSON number the AWS SDKs send into the
+// instant it names. The decimal digits are read exactly instead of through
+// float64, so a millisecond Time keeps its millisecond.
+func parseEventBridgeEpochSeconds(text string) (time.Time, error) {
+	if strings.ContainsAny(text, "eE") {
+		value, err := strconv.ParseFloat(text, 64)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("time is not epoch seconds: %w", err)
+		}
+		if math.IsNaN(value) || math.IsInf(value, 0) || value < math.MinInt64 || value >= math.MaxInt64 {
+			return time.Time{}, fmt.Errorf("time is out of range: %q", text)
+		}
+		seconds, fraction := math.Modf(value)
+		return time.Unix(int64(seconds), int64(math.Round(fraction*float64(time.Second)))).UTC(), nil
+	}
+	negative := strings.HasPrefix(text, "-")
+	digits := strings.TrimPrefix(text, "-")
+	whole, fraction, _ := strings.Cut(digits, ".")
+	seconds, err := strconv.ParseInt(whole, 10, 64)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("time is not epoch seconds: %w", err)
+	}
+	nanos := int64(0)
+	if fraction != "" {
+		if len(fraction) > 9 {
+			fraction = fraction[:9]
+		}
+		nanos, err = strconv.ParseInt(fraction+strings.Repeat("0", 9-len(fraction)), 10, 64)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("time is not epoch seconds: %w", err)
+		}
+	}
+	if negative {
+		seconds, nanos = -seconds, -nanos
+	}
+	return time.Unix(seconds, nanos).UTC(), nil
 }
 
 // eventBridgeResult is one PutEvents result.
@@ -123,9 +244,9 @@ func (b *eventBridgeBus) putEvents(ctx context.Context, entries []eventBridgeEnt
 	results := make([]eventBridgeResult, len(entries))
 	failed := 0
 	for index, entry := range entries {
-		envelope, err := b.envelope(entry)
+		envelope, code, err := b.envelope(entry)
 		if err != nil {
-			results[index] = eventBridgeResult{ErrorCode: "MalformedDetail", ErrorMessage: err.Error()}
+			results[index] = eventBridgeResult{ErrorCode: code, ErrorMessage: err.Error()}
 			failed++
 			continue
 		}
@@ -158,15 +279,16 @@ func (b *eventBridgeBus) putEvents(ctx context.Context, entries []eventBridgeEnt
 	return results, failed
 }
 
-// envelope builds the documented EventBridge event.
-func (b *eventBridgeBus) envelope(entry eventBridgeEntry) (map[string]any, error) {
+// envelope builds the documented EventBridge event. The returned code names
+// the PutEventsResultEntry error when the entry is refused.
+func (b *eventBridgeBus) envelope(entry eventBridgeEntry) (map[string]any, string, error) {
 	source := strings.TrimSpace(entry.Source)
 	if source == "" {
-		return nil, fmt.Errorf("source is required")
+		return nil, eventBridgeInvalidArgument, fmt.Errorf("source is required")
 	}
 	detailType := strings.TrimSpace(entry.DetailType)
 	if detailType == "" {
-		return nil, fmt.Errorf("DetailType is required")
+		return nil, eventBridgeInvalidArgument, fmt.Errorf("DetailType is required")
 	}
 	detail := strings.TrimSpace(entry.Detail)
 	if detail == "" {
@@ -174,15 +296,11 @@ func (b *eventBridgeBus) envelope(entry eventBridgeEntry) (map[string]any, error
 	}
 	decoded, err := decodePatternValue([]byte(detail))
 	if err != nil {
-		return nil, fmt.Errorf("detail is not valid JSON: %w", err)
+		return nil, eventBridgeMalformedDetail, fmt.Errorf("detail is not valid JSON: %w", err)
 	}
-	instant := b.clock.Now().UTC()
-	if strings.TrimSpace(entry.Time) != "" {
-		parsed, err := time.Parse(time.RFC3339, entry.Time)
-		if err != nil {
-			return nil, fmt.Errorf("time is not RFC3339: %w", err)
-		}
-		instant = parsed.UTC()
+	instant, err := entry.Time.instant(b.clock.Now().UTC())
+	if err != nil {
+		return nil, eventBridgeInvalidArgument, err
 	}
 	resources := entry.Resources
 	if resources == nil {
@@ -194,11 +312,11 @@ func (b *eventBridgeBus) envelope(entry eventBridgeEntry) (map[string]any, error
 		"detail-type": detailType,
 		"source":      source,
 		"account":     LocalAccountID,
-		"time":        instant.Format(time.RFC3339),
+		"time":        instant.UTC().Format(eventBridgeTimeFormat),
 		"region":      LocalRegion,
 		"resources":   resources,
 		"detail":      decoded,
-	}, nil
+	}, "", nil
 }
 
 // serveEventBridgeHTTP serves the EventBridge PutEvents JSON protocol. A GET
@@ -210,31 +328,35 @@ func (b *eventBridgeBus) serveEventBridgeHTTP(ctx context.Context, writer http.R
 		return
 	}
 	if request.Method != http.MethodPost {
-		http.Error(writer, "method not allowed", http.StatusMethodNotAllowed)
+		writeEventBridgeError(writer, http.StatusBadRequest, eventBridgeMalformedRequest,
+			"the local EventBridge endpoint serves the PutEvents JSON protocol with POST")
 		return
 	}
 	if target := strings.TrimSpace(request.Header.Get("X-Amz-Target")); target != eventBridgeTarget {
-		http.Error(writer, "unsupported EventBridge operation "+target, http.StatusBadRequest)
+		writeEventBridgeError(writer, http.StatusNotFound, eventBridgeUnknownOperation,
+			"the local EventBridge endpoint serves "+eventBridgeTarget)
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(request.Body, 10<<20))
 	if err != nil {
-		http.Error(writer, "read request", http.StatusBadRequest)
+		writeEventBridgeError(writer, http.StatusBadRequest, eventBridgeMalformedRequest, "read the request body: "+err.Error())
 		return
 	}
 	var input struct {
 		Entries []eventBridgeEntry `json:"Entries"`
 	}
 	if decodeErr := json.Unmarshal(body, &input); decodeErr != nil {
-		http.Error(writer, "request is not valid JSON", http.StatusBadRequest)
+		code := eventBridgeValidationError
+		var syntax *json.SyntaxError
+		if errors.As(decodeErr, &syntax) {
+			code = eventBridgeMalformedRequest
+		}
+		writeEventBridgeError(writer, http.StatusBadRequest, code, decodeErr.Error())
 		return
 	}
-	if len(input.Entries) == 0 {
-		http.Error(writer, "Entries must not be empty", http.StatusBadRequest)
-		return
-	}
-	if len(input.Entries) > eventBridgeMaxBatch {
-		http.Error(writer, "Entries exceeds the PutEvents limit of 10", http.StatusBadRequest)
+	if len(input.Entries) == 0 || len(input.Entries) > eventBridgeMaxBatch {
+		writeEventBridgeError(writer, http.StatusBadRequest, eventBridgeValidationError,
+			fmt.Sprintf("Entries must contain between 1 and %d items", eventBridgeMaxBatch))
 		return
 	}
 	results, failed := b.putEvents(ctx, input.Entries)
@@ -242,8 +364,18 @@ func (b *eventBridgeBus) serveEventBridgeHTTP(ctx context.Context, writer http.R
 	writer.Header().Set("Content-Type", eventBridgeJSONType)
 	encoded, err := json.Marshal(response)
 	if err != nil {
-		http.Error(writer, "encode response", http.StatusInternalServerError)
+		writeEventBridgeError(writer, http.StatusInternalServerError, eventBridgeInternalFailure, "encode the PutEvents response: "+err.Error())
 		return
 	}
 	_, _ = writer.Write(encoded) //nolint:errcheck // the HTTP server reports a write failure
+}
+
+// writeEventBridgeError answers with the AWS JSON 1.1 error document the SDKs
+// decode: a __type member naming the error shape and a message.
+// https://smithy.io/2.0/aws/protocols/aws-json-1_1-protocol.html#operation-error-serialization
+func writeEventBridgeError(writer http.ResponseWriter, status int, code, message string) {
+	payload, _ := json.Marshal(map[string]string{"__type": code, "message": message}) //nolint:errcheck // a fixed shape
+	writer.Header().Set("Content-Type", eventBridgeJSONType)
+	writer.WriteHeader(status)
+	_, _ = writer.Write(payload) //nolint:errcheck // the response is already committed
 }

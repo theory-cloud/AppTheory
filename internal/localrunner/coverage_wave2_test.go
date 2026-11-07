@@ -319,10 +319,10 @@ func TestEventBridgeHTTPAndTargetEdges(t *testing.T) {
 	if code := handler(http.MethodGet, "", "").Code; code != http.StatusOK {
 		t.Fatalf("GET: %d", code)
 	}
-	if code := handler(http.MethodPut, "", "").Code; code != http.StatusMethodNotAllowed {
+	if code := handler(http.MethodPut, "", "").Code; code != http.StatusBadRequest {
 		t.Fatalf("PUT: %d", code)
 	}
-	if code := handler(http.MethodPost, "Wrong.Target", `{}`).Code; code != http.StatusBadRequest {
+	if code := handler(http.MethodPost, "Wrong.Target", `{}`).Code; code != http.StatusNotFound {
 		t.Fatalf("wrong target: %d", code)
 	}
 	if code := handler(http.MethodPost, eventBridgeTarget, `not-json`).Code; code != http.StatusBadRequest {
