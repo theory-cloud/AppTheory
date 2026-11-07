@@ -2,6 +2,7 @@ import { EventBridgeClient, PutEventsCommand } from "@aws-sdk/client-eventbridge
 
 const client = new EventBridgeClient({});
 const busName = process.env.BUS_NAME;
+const busArn = process.env.BUS_ARN;
 
 /**
  * Publishes one event for each rule-target shape through the real EventBridge
@@ -20,7 +21,8 @@ export const handler = async () => {
       Source: "apptheory.rule",
       DetailType: "transform",
       Detail: JSON.stringify({ item: "transform-value" }),
-      EventBusName: busName,
+      // The ARN form AWS documents, not the bus name.
+      EventBusName: busArn,
     },
     {
       Source: "apptheory.rule",

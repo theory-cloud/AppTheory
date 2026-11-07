@@ -1,4 +1,4 @@
-import { S3Client, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, GetObjectCommand, HeadObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
 import { SSMClient, GetParameterCommand } from "@aws-sdk/client-ssm";
 
@@ -39,26 +39,47 @@ export async function handler(event: unknown): Promise<{ statusCode: number; bod
     // writes an object through this handler, a second run reads it back.
     const query = ((event as { queryStringParameters?: Record<string, string> } | null)?.queryStringParameters ?? {});
     if (query.key && (query.read === "1" || query.write === "1")) {
+        // sse=1 writes and reads the object with SSE-S3 (AES256), the form the
+        // runner's S3 front serves because s3proxy's filesystem store refuses
+        // every server-side-encryption header.
+        const sse = query.sse === "1";
         if (query.write === "1") {
-            await s3.send(
+            const put = await s3.send(
                 new PutObjectCommand({
                     Bucket: bucketName,
                     Key: query.key,
                     Body: query.value ?? "",
                     ContentType: "text/plain",
+                    ...(sse ? { ServerSideEncryption: "AES256" as const } : {}),
                 }),
             );
             return {
                 statusCode: 200,
-                body: JSON.stringify({ s3Object: { bucket: bucketName, key: query.key, value: query.value ?? "" } }),
+                body: JSON.stringify({
+                    s3Object: {
+                        bucket: bucketName,
+                        key: query.key,
+                        value: query.value ?? "",
+                        serverSideEncryption: put.ServerSideEncryption,
+                    },
+                }),
             };
         }
         try {
+            const head = await s3.send(new HeadObjectCommand({ Bucket: bucketName, Key: query.key }));
             const stored = await s3.send(new GetObjectCommand({ Bucket: bucketName, Key: query.key }));
             const content = await stored.Body?.transformToString();
             return {
                 statusCode: 200,
-                body: JSON.stringify({ s3Object: { bucket: bucketName, key: query.key, content } }),
+                body: JSON.stringify({
+                    s3Object: {
+                        bucket: bucketName,
+                        key: query.key,
+                        content,
+                        headServerSideEncryption: head.ServerSideEncryption,
+                        getServerSideEncryption: stored.ServerSideEncryption,
+                    },
+                }),
             };
         } catch (error) {
             return {
@@ -110,10 +131,22 @@ export async function handler(event: unknown): Promise<{ statusCode: number; bod
         }),
     );
 
-    // Secrets Manager: a literal SecretString and a GenerateSecretString
-    // secret, both read at runtime through GetSecretValue.
+    // Secrets Manager: a literal SecretString, a keyed GenerateSecretString
+    // secret, and a bare GenerateSecretString secret (the generated password is
+    // the whole secret string), all read at runtime through GetSecretValue.
     const literalSecret = await readSecret(process.env.SECRET_ARN ?? "");
     const generatedSecret = await readSecret(process.env.GENERATED_SECRET_ARN ?? "");
+    const bareSecret = await secrets.send(
+        new GetSecretValueCommand({ SecretId: process.env.BARE_SECRET_ARN ?? "" }),
+    );
+    const bareValue = bareSecret.SecretString ?? "";
+    let bareSecretIsJSON = false;
+    try {
+        JSON.parse(bareValue);
+        bareSecretIsJSON = true;
+    } catch {
+        bareSecretIsJSON = false;
+    }
 
     return {
         statusCode: 200,
@@ -138,6 +171,9 @@ export async function handler(event: unknown): Promise<{ statusCode: number; bod
                 generatedUsername: generatedSecret.username,
                 generatedPasswordLength: generatedSecret.password?.length ?? 0,
                 generatedPunctuation: /[^A-Za-z0-9]/.test(generatedSecret.password ?? ""),
+                bareSecretLength: bareValue.length,
+                bareSecretJson: bareSecretIsJSON,
+                bareSecretPunctuation: /[^A-Za-z0-9]/.test(bareValue),
             },
             cognito: {
                 poolId: process.env.COGNITO_POOL_ID,

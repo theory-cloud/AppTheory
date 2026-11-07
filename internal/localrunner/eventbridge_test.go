@@ -100,6 +100,43 @@ func TestEventBridgeBusMatchesAndDispatches(t *testing.T) {
 	}
 }
 
+func TestEventBridgeBusAcceptsTheBusArn(t *testing.T) {
+	bus := newEventBridgeBus(NewTestClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)))
+	var mu sync.Mutex
+	var fired int
+	runtime := &eventBridgeRuleRuntime{
+		rule: RuleSpec{LogicalID: "Rule", BusName: "custom", EventPattern: json.RawMessage(`{"source":["app.test"]}`)},
+		fire: func(_ context.Context, _ map[string]any) {
+			mu.Lock()
+			fired++
+			mu.Unlock()
+		},
+	}
+	runtime.setActive(true)
+	bus.register(runtime)
+	if _, failed := bus.putEvents(context.Background(), []eventBridgeEntry{{
+		Source:       "app.test",
+		DetailType:   "Thing",
+		Detail:       `{}`,
+		EventBusName: "arn:aws:events:us-east-1:123456789012:event-bus/custom",
+	}}); failed != 0 {
+		t.Fatalf("the ARN form must be accepted")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		count := fired
+		mu.Unlock()
+		if count == 1 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	t.Fatalf("a rule on bus %q fired %d times for the ARN form", "custom", fired)
+}
+
 func TestEventBridgeScheduleFiresExactlyOnTheClock(t *testing.T) {
 	clock := NewTestClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	bus := newEventBridgeBus(clock)

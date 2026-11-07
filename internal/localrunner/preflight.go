@@ -61,6 +61,10 @@ func ValidateEndpoint(endpoint Endpoint) error {
 // PreflightResult is what the in-container probe proved.
 type PreflightResult struct {
 	Checks map[string]string
+	// HostGateway is the address host.docker.internal resolves to inside the
+	// function container. The S3 front's function-facing endpoint uses the IP
+	// literal so the SDK keeps path-style addressing.
+	HostGateway string
 }
 
 type probeOutput struct {
@@ -82,6 +86,12 @@ func (r *Runner) Preflight(ctx context.Context, network string, addHosts []strin
 	endpoints := map[string]string{}
 	for _, endpoint := range r.endpoints {
 		endpoints[endpoint.Service] = endpoint.URL
+	}
+	if r.s3Front != nil && r.s3Front.containerURL != "" {
+		// The function-facing S3 endpoint is the front's IP literal, which is
+		// only known once this probe resolves host.docker.internal; check the
+		// same listener through the host name first.
+		endpoints["s3-front"] = r.s3Front.containerURL
 	}
 	encoded, err := json.Marshal(endpoints)
 	if err != nil {
@@ -110,7 +120,7 @@ func (r *Runner) Preflight(ctx context.Context, network string, addHosts []strin
 	if !probe.OK {
 		return PreflightResult{}, fmt.Errorf("container preflight failed: %s", probe.Error)
 	}
-	return PreflightResult{Checks: probe.Checks}, nil
+	return PreflightResult{Checks: probe.Checks, HostGateway: probe.Checks["host_gateway"]}, nil
 }
 
 // securityEnvironment is the complete AWS environment every function container
@@ -272,6 +282,10 @@ if os.environ.get("AWS_ACCESS_KEY_ID") != "dummy" or os.environ.get("AWS_SECRET_
 if os.environ.get("AWS_SESSION_TOKEN"):
     fail("AWS_SESSION_TOKEN is set; the runner must not hand a session token to a function")
 checks["credentials"] = "dummy static"
+try:
+    checks["host_gateway"] = socket.gethostbyname("host.docker.internal")
+except OSError:
+    checks["host_gateway"] = ""
 
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 for service in sorted(endpoints):
