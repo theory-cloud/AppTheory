@@ -34,9 +34,9 @@ const (
 	eventBridgeJSONType = "application/x-amz-json-1.1"
 	eventBridgeMaxBatch = 10
 
-	// eventBridgeTimeFormat prints the envelope's time member. RFC3339Nano
-	// keeps a whole-second instant byte-identical to v7.0.0 and keeps the
-	// fraction when the caller supplies one.
+	// eventBridgeTimeFormat prints the envelope's time member. Every path is
+	// whole-second except a caller-supplied numeric instant, which keeps the
+	// fraction it names; RFC3339Nano prints a whole second byte-identically.
 	// https://docs.aws.amazon.com/eventbridge/latest/ref/events-structure.html
 	eventBridgeTimeFormat = time.RFC3339Nano
 )
@@ -99,11 +99,12 @@ func eventBridgeTimeOf(when time.Time) eventBridgeTime {
 }
 
 // instant resolves the member, falling back to the supplied clock instant when
-// the caller omitted it.
+// the caller omitted it. The clock fallback is truncated to the whole second
+// v7.0.0 printed; only a caller-supplied numeric instant keeps its fraction.
 func (t eventBridgeTime) instant(now time.Time) (time.Time, error) {
 	trimmed := bytes.TrimSpace(t.raw)
 	if len(trimmed) == 0 {
-		return now, nil
+		return now.Truncate(time.Second), nil
 	}
 	if trimmed[0] == '"' {
 		var text string
@@ -111,7 +112,7 @@ func (t eventBridgeTime) instant(now time.Time) (time.Time, error) {
 			return time.Time{}, fmt.Errorf("time is not a string: %w", err)
 		}
 		if strings.TrimSpace(text) == "" {
-			return now, nil
+			return now.Truncate(time.Second), nil
 		}
 		parsed, err := time.Parse(time.RFC3339, text)
 		if err != nil {

@@ -53,6 +53,90 @@ func TestEventBridgePutEventsAcceptsTheAWSTimestampForms(t *testing.T) {
 	}
 }
 
+func TestEventBridgePutEventsClockFallbackKeepsWholeSeconds(t *testing.T) {
+	clock := NewTestClock(time.Date(2026, 1, 1, 0, 0, 0, 123456789, time.UTC))
+	bus := newEventBridgeBus(clock)
+	cases := []struct{ name, member string }{
+		{"omitted", ""},
+		{"empty string", `,"Time":""`},
+		{"null", `,"Time":null`},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			body := `{"Entries":[{"Source":"app.test","DetailType":"Thing","Detail":"{}"` + testCase.member + `}]}`
+			entries := decodeEventBridgeEntries(t, body)
+			envelope, code, err := bus.envelope(entries[0])
+			if err != nil || code != "" {
+				t.Fatalf("envelope: %v (%s)", err, code)
+			}
+			if got := envelope["time"]; got != "2026-01-01T00:00:00Z" {
+				t.Fatalf("clock fallback time = %v, want v7.0.0's whole second 2026-01-01T00:00:00Z", got)
+			}
+		})
+	}
+	numeric := decodeEventBridgeEntries(t, `{"Entries":[{"Source":"app.test","DetailType":"Thing","Detail":"{}","Time":1794068000.125}]}`)
+	envelope, code, err := bus.envelope(numeric[0])
+	if err != nil || code != "" {
+		t.Fatalf("numeric envelope: %v (%s)", err, code)
+	}
+	if got := envelope["time"]; got != "2026-11-07T16:13:20.125Z" {
+		t.Fatalf("numeric time = %v, want the supplied fraction kept", got)
+	}
+}
+
+func TestEventBridgeInternalProducersKeepTheV700WholeSecondTime(t *testing.T) {
+	nanos := time.Date(2026, 11, 7, 16, 13, 20, 123456789, time.UTC)
+	bus := newEventBridgeBus(NewTestClock(nanos))
+	cases := []struct {
+		name  string
+		entry eventBridgeEntry
+	}{
+		{
+			name: "CodeBuild state change publish",
+			entry: eventBridgeEntry{
+				Source:     "aws.codebuild",
+				DetailType: "CodeBuild Build State Change",
+				Detail:     "{}",
+				Time:       eventBridgeTimeOf(nanos),
+			},
+		},
+		{
+			name: "S3 notification",
+			entry: s3EventBridgeEntry(S3ObjectEvent{
+				BucketARN: "arn:aws:s3:::bucket",
+				Key:       "key",
+				EventName: "ObjectCreated:Put",
+				Time:      nanos,
+			}),
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			envelope, code, err := bus.envelope(testCase.entry)
+			if err != nil || code != "" {
+				t.Fatalf("envelope: %v (%s)", err, code)
+			}
+			if got := envelope["time"]; got != "2026-11-07T16:13:20Z" {
+				t.Fatalf("producer time = %v, want v7.0.0's whole second", got)
+			}
+		})
+	}
+	scheduled, err := BuildEventBridgeEvent(
+		RuleSpec{LogicalID: "Rule", Schedule: "rate(5 minutes)", ARN: "arn:aws:events:us-east-1:123456789012:rule/Rule"},
+		json.RawMessage(`{}`), "", "", nanos,
+	)
+	if err != nil {
+		t.Fatalf("scheduled event: %v", err)
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal(scheduled, &envelope); err != nil {
+		t.Fatalf("decode the scheduled event: %v", err)
+	}
+	if got := envelope["time"]; got != "2026-11-07T16:13:20Z" {
+		t.Fatalf("scheduled time = %v, want v7.0.0's whole second", got)
+	}
+}
+
 func TestEventBridgePutEventsDeliversTheSuppliedInstant(t *testing.T) {
 	bus := newEventBridgeBus(NewTestClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)))
 	fired := make(chan map[string]any, 1)
