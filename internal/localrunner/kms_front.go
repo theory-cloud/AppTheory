@@ -524,14 +524,19 @@ func (f *kmsFront) rewriteRequestIdentity(body []byte) []byte {
 	return updated
 }
 
-// currentRunKeyID resolves a public raw id or key ARN to this run's moto key
-// id. Aliases and unknown values report false so the request passes through.
+// currentRunKeyID resolves a public raw id or local key ARN to this run's moto
+// key id. Aliases and unknown or foreign values report false so the request
+// passes through.
 func (f *kmsFront) currentRunKeyID(value string) (string, bool) {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" || strings.HasPrefix(trimmed, "alias/") || strings.Contains(trimmed, ":alias/") {
 		return "", false
 	}
-	record := f.store.stable(kmsRawKeyID(trimmed))
+	raw, local := kmsLocalRawKeyID(trimmed)
+	if !local {
+		return "", false
+	}
+	record := f.store.stable(raw)
 	if record == nil {
 		return "", false
 	}
@@ -700,9 +705,15 @@ func (f *kmsFront) resolveOwned(ctx context.Context, keyID string) (*kmsRunKey, 
 		return run, true, nil
 	}
 	// A stable id is the id the front persists across runs; a caller that
-	// stored a previous run's key ARN still names the same material.
-	if record := f.store.stable(kmsRawKeyID(trimmed)); record != nil {
-		return &kmsRunKey{record: record, arn: stableARN(record)}, true, nil
+	// stored a previous run's key ARN still names the same material. It is the
+	// front's own local identity, so only a local key ARN names it: AWS accepts
+	// a key ARN only for a key that exists in that account and Region, and the
+	// runner has one of each. moto resolved any ARN by its ":key/" suffix, so
+	// the current run's keys above keep that v7.0.0 behavior.
+	if raw, local := kmsLocalRawKeyID(trimmed); local {
+		if record := f.store.stable(raw); record != nil {
+			return &kmsRunKey{record: record, arn: stableARN(record)}, true, nil
+		}
 	}
 	if strings.HasPrefix(trimmed, "alias/") || strings.Contains(trimmed, ":alias/") {
 		metadata, err := f.describeKey(ctx, trimmed)
@@ -849,13 +860,40 @@ func withKMSKeyDefaults(body []byte, keySpec, keyUsage string) []byte {
 	return updated
 }
 
-// kmsRawKeyID extracts the raw key id from a raw id or an key ARN.
+// kmsRawKeyID extracts the raw key id from a raw id or an key ARN. It keeps
+// the suffix rule moto applies to every ARN (moto/kms/models.py get_key_id),
+// which v7.0.0 served for the current run's keys.
 func kmsRawKeyID(keyID string) string {
 	trimmed := strings.TrimSpace(keyID)
 	if index := strings.Index(trimmed, ":key/"); index >= 0 {
 		return trimmed[index+len(":key/"):]
 	}
 	return trimmed
+}
+
+// kmsLocalRawKeyID extracts the raw id only from a raw id or a key ARN in the
+// local partition, Region and account. The front's persisted stable identity
+// never existed at v7.0.0, and AWS accepts a key ARN only for a key that exists
+// in the named account and Region:
+// https://docs.aws.amazon.com/kms/latest/developerguide/concepts.html#key-id
+func kmsLocalRawKeyID(keyID string) (string, bool) {
+	trimmed := strings.TrimSpace(keyID)
+	if !strings.HasPrefix(trimmed, "arn:") {
+		if trimmed == "" {
+			return "", false
+		}
+		return trimmed, true
+	}
+	parts := strings.SplitN(trimmed, ":", 6)
+	if len(parts) != 6 || parts[1] != LocalPartition || parts[2] != "kms" ||
+		parts[3] != LocalRegion || parts[4] != LocalAccountID || !strings.HasPrefix(parts[5], "key/") {
+		return "", false
+	}
+	raw := strings.TrimPrefix(parts[5], "key/")
+	if raw == "" {
+		return "", false
+	}
+	return raw, true
 }
 
 func recordLabel(record *kmsKeyRecord) string {

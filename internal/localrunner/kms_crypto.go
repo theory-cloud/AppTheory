@@ -226,8 +226,11 @@ func (f *kmsFront) handleSign(ctx context.Context, writer http.ResponseWriter, b
 		return
 	}
 	if run.record.KeyUsage != kmsUsageSignVerify {
-		writeKMSError(writer, http.StatusBadRequest, "ValidationException", fmt.Sprintf(
-			"1 validation error detected: Value '%s' at 'KeyId' failed to satisfy constraint: Member must point to a key with usage: 'SIGN_VERIFY'", request.KeyID))
+		// AWS answers Sign on a key whose KeyUsage is not SIGN_VERIFY with
+		// InvalidKeyUsageException, not a ValidationException:
+		// https://docs.aws.amazon.com/kms/latest/APIReference/API_Sign.html
+		writeKMSError(writer, http.StatusBadRequest, "InvalidKeyUsageException",
+			"The request was rejected because the specified KMS key cannot be used for the requested operation: Sign requires a key with KeyUsage SIGN_VERIFY")
 		return
 	}
 	message, err := base64.StdEncoding.DecodeString(request.Message)
@@ -285,8 +288,11 @@ func (f *kmsFront) handleVerify(ctx context.Context, writer http.ResponseWriter,
 		return
 	}
 	if run.record.KeyUsage != kmsUsageSignVerify {
-		writeKMSError(writer, http.StatusBadRequest, "ValidationException", fmt.Sprintf(
-			"1 validation error detected: Value '%s' at 'KeyId' failed to satisfy constraint: Member must point to a key with usage: 'SIGN_VERIFY'", request.KeyID))
+		// AWS answers Verify on a key whose KeyUsage is not SIGN_VERIFY with
+		// InvalidKeyUsageException:
+		// https://docs.aws.amazon.com/kms/latest/APIReference/API_Verify.html
+		writeKMSError(writer, http.StatusBadRequest, "InvalidKeyUsageException",
+			"The request was rejected because the specified KMS key cannot be used for the requested operation: Verify requires a key with KeyUsage SIGN_VERIFY")
 		return
 	}
 	message, err := base64.StdEncoding.DecodeString(request.Message)

@@ -819,7 +819,9 @@ and makes old ciphertext unreadable, as deleting a key would.
 
 The runner tags each key it provisions with the reserved local tag
 `apptheory-local:key-identity`; the front consumes it before moto sees the
-request, so `ListResourceTags` and the template's own tags are unchanged.
+request, so `ListResourceTags` and the template's own tags are unchanged. With
+a caller-supplied `--endpoint kms=…` no front runs, so the tag is not sent and
+the endpoint stores exactly the template's tags, as v7.0.0 did.
 
 **Documented local deviations.**
 
@@ -840,6 +842,19 @@ request, so `ListResourceTags` and the template's own tags are unchanged.
 - A `--data-dir` that names a key with a different `KeySpec` or `KeyUsage` than
   the definition now fails at start with the identity and both pairs named,
   rather than silently reusing incompatible material.
+- A persisted key resolves from its raw id or from a key ARN in the local
+  partition, Region and account
+  (`arn:aws:kms:us-east-1:123456789012:key/<id>`), as AWS accepts a key ARN
+  only for a key that exists in the named account and Region
+  ([key identifiers](https://docs.aws.amazon.com/kms/latest/developerguide/concepts.html#key-id)).
+  A foreign ARN with the same `:key/` suffix does not reach the persisted key.
+  The current run's moto keys keep moto's suffix-only ARN handling, which
+  v7.0.0 served.
+- `Sign` and `Verify` on an owned key whose `KeyUsage` is not `SIGN_VERIFY`
+  answer `InvalidKeyUsageException`, as AWS documents
+  ([Sign](https://docs.aws.amazon.com/kms/latest/APIReference/API_Sign.html),
+  [Verify](https://docs.aws.amazon.com/kms/latest/APIReference/API_Verify.html));
+  moto answered `ValidationException` for the same input.
 
 ### The local Cognito issuer
 

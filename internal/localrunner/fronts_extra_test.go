@@ -132,6 +132,32 @@ func TestKMSFrontSignAndVerifyValidation(t *testing.T) {
 	}
 }
 
+// TestKMSFrontSignAndVerifyReturnInvalidKeyUsage is the Adv-7 proof: AWS
+// documents InvalidKeyUsageException for Sign and Verify on a key whose
+// KeyUsage is not SIGN_VERIFY.
+//
+// https://docs.aws.amazon.com/kms/latest/APIReference/API_Sign.html
+// https://docs.aws.amazon.com/kms/latest/APIReference/API_Verify.html
+func TestKMSFrontSignAndVerifyReturnInvalidKeyUsage(t *testing.T) {
+	_, _, server := newFrontForTest(t, "")
+	client := kmsClientFor(t, server.URL)
+	ctx := context.Background()
+	symmetric := createOwnedKey(t, client, "Stack/Symmetric", "SYMMETRIC_DEFAULT", kmstypes.KeyUsageTypeEncryptDecrypt)
+	digest := make([]byte, 32)
+	if _, err := client.Sign(ctx, &kms.SignInput{
+		KeyId: aws.String(symmetric), Message: digest, MessageType: kmstypes.MessageTypeDigest,
+		SigningAlgorithm: kmstypes.SigningAlgorithmSpecRsassaPkcs1V15Sha256,
+	}); err == nil || !strings.Contains(err.Error(), "InvalidKeyUsageException") {
+		t.Fatalf("Sign on a symmetric key: %v", err)
+	}
+	if _, err := client.Verify(ctx, &kms.VerifyInput{
+		KeyId: aws.String(symmetric), Message: digest, Signature: []byte("signature"),
+		MessageType: kmstypes.MessageTypeDigest, SigningAlgorithm: kmstypes.SigningAlgorithmSpecRsassaPkcs1V15Sha256,
+	}); err == nil || !strings.Contains(err.Error(), "InvalidKeyUsageException") {
+		t.Fatalf("Verify on a symmetric key: %v", err)
+	}
+}
+
 // TestKMSFrontPSSAndCurveValidation covers the PSS family and the ECC
 // algorithm/curve pairing.
 func TestKMSFrontPSSAndCurveValidation(t *testing.T) {

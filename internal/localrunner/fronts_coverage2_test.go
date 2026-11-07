@@ -180,6 +180,21 @@ func TestKMSFrontDecryptWithStableARN(t *testing.T) {
 	if err != nil || string(decrypted.Plaintext) != "x" {
 		t.Fatalf("decrypt with the stable ARN: %v", err)
 	}
+	// A foreign ARN with the same suffix must not resolve to the front's
+	// persisted key: AWS accepts a key ARN only for a key that exists in the
+	// named account and Region, and moto never had the stable id.
+	// https://docs.aws.amazon.com/kms/latest/developerguide/concepts.html#key-id
+	for name, foreign := range map[string]string{
+		"foreign region":    "arn:aws:kms:eu-west-1:123456789012:key/" + file.Keys[0].StableID,
+		"foreign account":   "arn:aws:kms:us-east-1:999999999999:key/" + file.Keys[0].StableID,
+		"foreign partition": "arn:aws-cn:kms:us-east-1:123456789012:key/" + file.Keys[0].StableID,
+	} {
+		if _, err := client.Decrypt(context.Background(), &kms.DecryptInput{
+			CiphertextBlob: encrypted.CiphertextBlob, KeyId: aws.String(foreign),
+		}); err == nil {
+			t.Fatalf("a %s ARN resolved to the local persisted key", name)
+		}
+	}
 }
 
 // TestS3FrontRecordWriteError covers the index write-error log path.
