@@ -8265,6 +8265,217 @@ def run_local_tls_aux_cert(harness: Harness) -> str:
         _remove_data_dir(data_dir)
 
 
+# The two compositions a real application uses that the LOCAL-W2-TLS rows did
+# not cover: an AWS SDK that carries its own HTTP client, and CloudFront in
+# front of the run's own API listener.
+
+_LOCAL_TLS_HOSTED_AUTH_ORIGIN = "auth-api.localhost"
+
+
+def _tls_http_api(plan: dict) -> dict:
+    """The HTTP API v2 the hosted-auth distribution fronts."""
+    for api in plan.get("apis") or []:
+        if api.get("class") == "httpv2" and (api.get("routes") or []):
+            return api
+    raise HarnessFailure("the local-tls plan serves no HTTP API v2")
+
+
+def _tls_listener_port(harness: Harness, plan: dict, logical_id: str) -> int:
+    """The port one public listener binds, from --port-base and the serve order.
+
+    A run binds its public listeners from --port-base upward: HTTP APIs (the
+    ones with routes), then Function URLs, then WebSocket APIs, then one per
+    distribution. A row that maps a CloudFront origin to the run's own API has
+    to name the port before the session starts, so it derives it the same way
+    the runner does and then asserts the served URL agrees.
+    """
+    index = 0
+    for api in plan.get("apis") or []:
+        if not (api.get("routes") or []):
+            continue
+        if str(api.get("logicalId")) == logical_id:
+            return harness.lease.http_port + index
+        index += 1
+    raise HarnessFailure(f"the local-tls plan serves no listener for {logical_id!r}")
+
+
+def _tls_origin_distribution(harness: Harness, session: LocalSession, domain: str) -> str:
+    """The served distribution whose origin domain is domain."""
+    logical_id = ""
+    for distribution in _tls_plan(harness).get("cloudFront") or []:
+        for origin in distribution.get("origins") or []:
+            if origin.get("domainName") == domain:
+                logical_id = str(distribution.get("logicalId"))
+                break
+        if logical_id:
+            break
+    if not logical_id:
+        raise HarnessFailure(f"the local-tls plan declares no distribution with origin {domain!r}")
+    for entry in session.info.get("cloudFront") or []:
+        if str(entry.get("logicalId")) == logical_id and entry.get("url"):
+            return str(entry["url"])
+    raise HarnessFailure(f"the session does not serve the distribution {logical_id} that fronts {domain}")
+
+
+def _run_local_tls_awssdk(harness: Harness, role: str) -> str:
+    """One runtime loads an AWS SDK with its own HTTP client under TLS.
+
+    The handler also fetches the app's discovery document and JWKS over
+    verified https, so one row proves both halves of the composition. The
+    @connections management API is the runner-served AWS endpoint that speaks
+    TLS; 410 GONE for an unknown connection is its documented answer, so
+    reaching it proves the SDK verified the run's certificate.
+    """
+    function = _tls_role_function(harness, role)
+    session = start_local_session(
+        harness,
+        LOCAL_TLS_APP,
+        name=f"tls-awssdk-{role}",
+        tls=True,
+        backends=("dynamodb",),
+        targets=(function,),
+    )
+    try:
+        base = _tls_served(session, "httpv2")
+        result = session.invoke(function, {"url": base, "aws": True})
+        raw = result.get("raw") or {}
+        if raw.get("ok") is not True or raw.get("issuer") != base:
+            raise HarnessFailure(f"the {role} caller did not verify the app URL: {result}")
+        if int(raw.get("keys") or 0) < 1:
+            raise HarnessFailure(f"the {role} caller fetched no JWKS key: {result}")
+        if int(raw.get("tables") or 0) < 1:
+            raise HarnessFailure(
+                f"the {role} caller's AWS SDK did not list a DynamoDB Local table: {result}"
+            )
+        if int(raw.get("management") or 0) != 410:
+            raise HarnessFailure(
+                f"the {role} caller's AWS SDK did not reach the TLS @connections endpoint: {result}"
+            )
+        return (
+            f"{role}: an AWS SDK client initialized in a TLS run, listed "
+            f"{int(raw['tables'])} DynamoDB Local table(s) through the runner's endpoint, got 410 GONE "
+            f"from the runner's TLS @connections endpoint, and fetched {base} discovery and JWKS over "
+            "verified https in the same invocation"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def run_local_tls_awssdk_go(harness: Harness) -> str:
+    return _run_local_tls_awssdk(harness, "caller-go")
+
+
+def run_local_tls_awssdk_node(harness: Harness) -> str:
+    return _run_local_tls_awssdk(harness, "caller-node")
+
+
+def run_local_tls_awssdk_py(harness: Harness) -> str:
+    return _run_local_tls_awssdk(harness, "caller-py")
+
+
+def run_local_tls_cloudfront_origin(harness: Harness) -> str:
+    """CloudFront in front of the run's own API listener, over TLS.
+
+    The origin is declared https-only and mapped to the run host, which is the
+    mapping a deployed distribution uses in front of an API Gateway endpoint:
+    CloudFront connects with TLS, verifies a certificate that names the
+    declared origin domain, and forwards the origin Host header.
+    """
+    plan = _tls_plan(harness)
+    api = _tls_http_api(plan)
+    port = _tls_listener_port(harness, plan, str(api["logicalId"]))
+    session = start_local_session(
+        harness,
+        LOCAL_TLS_APP,
+        name="tls-cf-origin",
+        tls=True,
+        origins=(f"{_LOCAL_TLS_HOSTED_AUTH_ORIGIN}=https://app.localhost:{port}",),
+    )
+    try:
+        context = _tls_context(session)
+        served_api = _tls_served(session, "httpv2")
+        if urlsplit(served_api).port != port:
+            raise HarnessFailure(
+                f"the row mapped the origin to port {port} but the HTTP API is served at {served_api}: "
+                "the public listener order changed"
+            )
+        distribution = _tls_origin_distribution(harness, session, _LOCAL_TLS_HOSTED_AUTH_ORIGIN).rstrip("/")
+
+        status, body, _ = http_request(
+            "GET", distribution + "/.well-known/oauth-authorization-server", context=context
+        )
+        expect_status(status, 200, "CloudFront origin GET", body)
+        discovery = json.loads(body)
+        if discovery.get("issuer") != "https://" + _LOCAL_TLS_HOSTED_AUTH_ORIGIN:
+            raise HarnessFailure(
+                f"the origin hop did not forward the declared origin Host header: {body[:300]!r}"
+            )
+        if not str(discovery.get("jwks_uri") or "").startswith("https://" + _LOCAL_TLS_HOSTED_AUTH_ORIGIN):
+            raise HarnessFailure(f"the origin hop changed the discovery document: {body[:300]!r}")
+
+        form = "grant_type=authorization_code&code=local-code&client_id=local-client"
+        status, body, _ = http_request(
+            "POST",
+            distribution + "/auth/token",
+            headers={"content-type": "application/x-www-form-urlencoded"},
+            body=form.encode("utf-8"),
+            context=context,
+        )
+        expect_status(status, 200, "CloudFront origin form POST", body)
+        echoed = json.loads(body)
+        if echoed.get("method") != "POST":
+            raise HarnessFailure(f"the origin hop did not forward the POST method: {body[:300]!r}")
+        if (echoed.get("form") or {}).get("code") != "local-code":
+            raise HarnessFailure(f"the origin hop did not forward the form body: {body[:300]!r}")
+        if echoed.get("host") != _LOCAL_TLS_HOSTED_AUTH_ORIGIN:
+            raise HarnessFailure(
+                f"the API saw Host {echoed.get('host')!r}, want the declared origin domain "
+                f"{_LOCAL_TLS_HOSTED_AUTH_ORIGIN!r}"
+            )
+        return (
+            f"the distribution verified the run CA against its declared origin domain "
+            f"{_LOCAL_TLS_HOSTED_AUTH_ORIGIN}, forwarded the origin Host header, and returned the API's "
+            "GET /.well-known/oauth-authorization-server and a form POST /auth/token body unchanged"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def run_local_tls_cloudfront_http_only_error(harness: Harness) -> str:
+    """A plain http mapping to a TLS-only listener fails loudly at start."""
+    plan = _tls_plan(harness)
+    api = _tls_http_api(plan)
+    port = _tls_listener_port(harness, plan, str(api["logicalId"]))
+    try:
+        session = start_local_session(
+            harness,
+            LOCAL_TLS_APP,
+            name="tls-cf-http-only",
+            tls=True,
+            origins=(f"{_LOCAL_TLS_HOSTED_AUTH_ORIGIN}=http://127.0.0.1:{port}",),
+        )
+    except HarnessFailure as failure:
+        output = failure.output or ""
+        for want in (
+            "serves every public listener over https",
+            "https-only",
+            "HTTPS_ONLY",
+            f"--origin {_LOCAL_TLS_HOSTED_AUTH_ORIGIN}=",
+        ):
+            if want not in output:
+                raise HarnessFailure(
+                    f"the refused start did not explain the mismatch with {want!r}", output
+                ) from failure
+        if "Client sent an HTTP request to an HTTPS server" in output:
+            raise HarnessFailure("the run surfaced the raw TLS-listener 400", output)
+        return (
+            "an http-only origin mapping to the run's TLS listener is refused before the distribution "
+            "starts, naming OriginProtocolPolicy HTTPS_ONLY and the https mapping to use instead of a 400"
+        )
+    stop_local_session(harness, session, strict=False)
+    raise HarnessFailure("a plain http mapping to a TLS-only listener must be refused at start")
+
+
 RUNNERS: dict[str, Callable[[Harness], str]] = {
     "testkit-ts": run_testkit_ts,
     "testkit-ts-streaming": run_testkit_ts_streaming,
@@ -8341,6 +8552,11 @@ RUNNERS: dict[str, Callable[[Harness], str]] = {
     "local-tls-oidc": run_local_tls_oidc,
     "local-tls-webauthn": run_local_tls_webauthn,
     "local-tls-aux-cert": run_local_tls_aux_cert,
+    "local-tls-awssdk-go": run_local_tls_awssdk_go,
+    "local-tls-awssdk-node": run_local_tls_awssdk_node,
+    "local-tls-awssdk-py": run_local_tls_awssdk_py,
+    "local-tls-cloudfront-origin": run_local_tls_cloudfront_origin,
+    "local-tls-cloudfront-http-only-error": run_local_tls_cloudfront_http_only_error,
 }
 
 

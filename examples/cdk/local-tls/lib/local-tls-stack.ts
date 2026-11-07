@@ -1,12 +1,13 @@
 import { execSync } from "node:child_process";
 import * as path from "node:path";
 
-import { CfnOutput, Duration, Stack } from "aws-cdk-lib";
+import { CfnOutput, Duration, RemovalPolicy, Stack } from "aws-cdk-lib";
 import * as apigateway from "aws-cdk-lib/aws-apigateway";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as apigwv2integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
+import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import type { Construct } from "constructs";
 
@@ -85,9 +86,16 @@ export class LocalTlsStack extends Stack {
     const callerNode = new lambda.Function(this, "CallerNode", {
       runtime: lambda.Runtime.NODEJS_24_X,
       handler: "index.handler",
-      description: "Node caller: fetches discovery and JWKS over verified TLS",
+      description: "Node caller: OIDC fetch over verified TLS and two AWS SDK calls",
       timeout: Duration.seconds(20),
-      environment: { APPTHEORY_LOCAL_TLS_ROLE: "caller-node" },
+      // The nodejs24.x image carries the AWS SDK for JavaScript v3 under
+      // /var/runtime/node_modules, which is not on the resolution path of a
+      // handler shipped in /var/task. NODE_PATH is how the image exposes it in
+      // Lambda too, so the handler imports the SDK the runtime ships.
+      environment: {
+        APPTHEORY_LOCAL_TLS_ROLE: "caller-node",
+        NODE_PATH: "/var/runtime/node_modules",
+      },
       code: lambda.Code.fromInline(callerNodeCode),
     });
 
@@ -100,6 +108,14 @@ export class LocalTlsStack extends Stack {
       code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers", "python"), {
         exclude: ["__pycache__", "**/__pycache__", "*.pyc", "**/*.pyc"],
       }),
+    });
+
+    // The AWS SDK rows read a table the run provisions, so the DynamoDB call
+    // proves runner-served state rather than an empty list.
+    new dynamodb.Table(this, "Probe", {
+      partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: RemovalPolicy.DESTROY,
     });
 
     const issuerApi = new apigwv2.HttpApi(this, "IssuerApi", {
@@ -154,11 +170,64 @@ export class LocalTlsStack extends Stack {
       },
     });
 
+    // A hosted-auth shape: the distribution forwards the discovery document,
+    // the authorization and token paths and their form POSTs to the app's own
+    // API origin. The origin declares HTTPS_ONLY, which is what a deployed
+    // CloudFront uses in front of an API Gateway endpoint, and its declared
+    // domain is the name the origin certificate must carry.
+    //
+    // The local stage maps that domain to the runner's own API listener:
+    //   --origin auth-api.localhost=https://app.localhost:<api port>
+    // https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/DownloadDistValuesOrigin.html#DownloadDistValuesOriginProtocolPolicy
+    // The hosted-auth origin receives its own declared domain as the Host
+    // header: CloudFront forwards the viewer Host only when the cache policy
+    // allows it, and an API origin routes by its own domain. A policy that
+    // allowed the viewer host here would make the API derive its issuer from
+    // the distribution's name instead of the origin's.
+    const hostedAuthCache = new cloudfront.CachePolicy(this, "HostedAuthNoCache", {
+      cachePolicyName: "apptheory-local-tls-hosted-auth-no-cache",
+      comment: "The local hosted-auth origin is always reached, and it sees its own domain",
+      defaultTtl: Duration.seconds(0),
+      minTtl: Duration.seconds(0),
+      maxTtl: Duration.seconds(1),
+      cookieBehavior: cloudfront.CacheCookieBehavior.none(),
+      headerBehavior: cloudfront.CacheHeaderBehavior.none(),
+      queryStringBehavior: cloudfront.CacheQueryStringBehavior.all(),
+      enableAcceptEncodingGzip: false,
+    });
+    const hostedAuthOrigin = new origins.HttpOrigin("auth-api.localhost", {
+      protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+    });
+    const hostedAuth = new cloudfront.Distribution(this, "HostedAuth", {
+      comment: "The local TLS hosted-auth surface",
+      defaultBehavior: {
+        origin: hostedAuthOrigin,
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        cachePolicy: hostedAuthCache,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+      },
+      additionalBehaviors: {
+        "/.well-known/*": {
+          origin: hostedAuthOrigin,
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          cachePolicy: hostedAuthCache,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+        },
+        "/auth/*": {
+          origin: hostedAuthOrigin,
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          cachePolicy: hostedAuthCache,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+        },
+      },
+    });
+
     new CfnOutput(this, "IssuerApiUrl", { value: issuerApi.apiEndpoint });
     new CfnOutput(this, "RestApiUrl", { value: restApi.url });
     new CfnOutput(this, "IssuerFunctionUrl", { value: issuerUrl.url });
     new CfnOutput(this, "WebSocketUrl", { value: webSocketApi.apiEndpoint });
     new CfnOutput(this, "SiteUrl", { value: `https://${site.distributionDomainName}` });
+    new CfnOutput(this, "HostedAuthUrl", { value: `https://${hostedAuth.distributionDomainName}` });
   }
 }
 
@@ -186,12 +255,14 @@ function json(statusCode, value) {
 }
 exports.handler = async (event) => {
   const path = event.rawPath || event.path || "/";
+  const method = (event.requestContext && event.requestContext.http && event.requestContext.http.method) || event.httpMethod || "GET";
   const base = baseUrl(event);
-  if (path === "/.well-known/openid-configuration") {
+  if (path === "/.well-known/openid-configuration" || path === "/.well-known/oauth-authorization-server") {
     return json(200, {
       issuer: base,
       jwks_uri: base + "/jwks",
       token_endpoint: base + "/token",
+      authorization_endpoint: base + "/authorize",
       response_types_supported: ["code"],
       subject_types_supported: ["public"],
       id_token_signing_alg_values_supported: ["RS256"],
@@ -205,6 +276,27 @@ exports.handler = async (event) => {
   }
   if (path === "/token") {
     return json(200, { token_type: "Bearer", access_token: "local-access-token" });
+  }
+  if (path === "/auth/token") {
+    // A hosted-auth form POST: the distribution must forward the method, the
+    // content type and the body unchanged. The answer echoes what the API
+    // parsed so the caller can assert the body survived the origin hop.
+    let body = event.body || "";
+    if (event.isBase64Encoded) {
+      body = Buffer.from(body, "base64").toString("utf8");
+    }
+    const form = new URLSearchParams(body);
+    const fields = {};
+    for (const [name, value] of form.entries()) {
+      fields[name] = value;
+    }
+    return json(200, {
+      ok: true,
+      method,
+      host: (event.headers && event.headers.host) || "",
+      contentType: (event.headers && event.headers["content-type"]) || "",
+      form: fields,
+    });
   }
   return { statusCode: 200, headers: { "content-type": "text/html; charset=utf-8" }, body: page };
 };
@@ -262,6 +354,12 @@ exports.handler = async (event) => {
 const callerNodeCode = `
 "use strict";
 const https = require("node:https");
+const { DynamoDBClient, ListTablesCommand } = require("@aws-sdk/client-dynamodb");
+const {
+  ApiGatewayManagementApiClient,
+  PostToConnectionCommand,
+} = require("@aws-sdk/client-apigatewaymanagementapi");
+
 function getJSON(url) {
   return new Promise((resolve, reject) => {
     const request = https.get(url, (response) => {
@@ -280,6 +378,28 @@ function getJSON(url) {
     request.setTimeout(10000, () => request.destroy(new Error("timeout")));
   });
 }
+
+// One SDK call per runner-served endpoint. The @connections endpoint is TLS,
+// so reaching 410 GONE for an unknown connection proves the SDK verified the
+// run CA presented by the management listener.
+async function exerciseAWS() {
+  const tables = await new DynamoDBClient({}).send(new ListTablesCommand({}));
+  const client = new ApiGatewayManagementApiClient({});
+  try {
+    await client.send(new PostToConnectionCommand({
+      ConnectionId: "apptheory-local-tls-probe",
+      Data: Buffer.from("probe"),
+    }));
+  } catch (error) {
+    const status = error && error.$metadata && error.$metadata.httpStatusCode;
+    if (status !== 410) {
+      throw new Error("the @connections call did not reach the run's TLS endpoint: " + error);
+    }
+    return { tables: (tables.TableNames || []).length, management: status };
+  }
+  throw new Error("the @connections call to an unknown connection must answer 410 GONE");
+}
+
 exports.handler = async (event) => {
   const base = String((event && event.url) || "");
   if (!base) { throw new Error("url is required"); }
@@ -287,6 +407,12 @@ exports.handler = async (event) => {
   if (discovery.issuer !== base) { throw new Error("issuer " + discovery.issuer + " != " + base); }
   const jwks = await getJSON(discovery.jwks_uri);
   if (!Array.isArray(jwks.keys) || jwks.keys.length === 0) { throw new Error("jwks has no keys"); }
-  return { ok: true, issuer: discovery.issuer, keys: jwks.keys.length };
+  const result = { ok: true, issuer: discovery.issuer, keys: jwks.keys.length };
+  if (event && event.aws) {
+    const aws = await exerciseAWS();
+    result.tables = aws.tables;
+    result.management = aws.management;
+  }
+  return result;
 };
 `;
