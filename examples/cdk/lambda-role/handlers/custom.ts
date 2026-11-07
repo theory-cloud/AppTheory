@@ -41,12 +41,16 @@ export async function handler(event: unknown): Promise<{ statusCode: number; bod
     // deleteBatch=1 sends one DeleteObjects request with AWS's maximum of 1000
     // keys, each at the maximum key length of 1024 bytes, so the serialized body
     // is about 1.05 MiB: above the runner's S3 front buffer and a shape v7.0.0
-    // forwarded to s3proxy. It proves the front still carries it.
+    // forwarded to s3proxy. The key is split into short path segments because
+    // s3proxy's filesystem store maps each segment to a file name.
     // https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjects.html
     // https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-keys.html
     if (query.deleteBatch === "1") {
+        const segment = "k".repeat(250);
         const objects = Array.from({ length: 1000 }, (_, index) => ({
-            Key: index === 0 ? (query.key ?? "batch/object") : `${"k".repeat(1016)}${String(index).padStart(8, "0")}`,
+            Key: index === 0
+                ? (query.key ?? "batch/object")
+                : `${segment}/${segment}/${segment}/${segment}/${"k".repeat(12)}${String(index).padStart(8, "0")}`,
         }));
         try {
             const deleted = await s3.send(

@@ -2030,6 +2030,11 @@ against real AWS or a store that performs the encryption.
   [object key names](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-keys.html));
   refusing or truncating that shape would add a failure the released runner did
   not have.
+- The store maps each object-key segment to a file name, so a key with one
+  segment longer than the filesystem's name limit (255 bytes on ext4 and APFS)
+  gets the store's own `500`, as it did before the front; the request still
+  reaches it unchanged. The proving row uses 1024-byte keys split into short
+  segments, which AWS allows and the store serves.
 - A `PutObject` with a streaming (`aws-chunked`) SigV4 payload cannot be
   re-signed after the signed SSE header is stripped; the front refuses it with
   a clear 400 rather than forwarding a broken signature. A normal SDK put (the
