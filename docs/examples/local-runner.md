@@ -1981,12 +1981,29 @@ and current releases still refuse it on that store
   signature covers the header (below), strips the header before s3proxy sees
   it, and records the object as SSE-S3 only after the put succeeds;
 - adds `x-amz-server-side-encryption: AES256` to the `PutObject` response;
-- answers `HeadObject` and `GetObject` with the same header for an object stored
-  with it;
-- clears the record when the same key is overwritten by a write that names no
+- answers `HeadObject` and `GetObject` (including a part read with
+  `?partNumber=`) with the same header for an object stored with it; a metadata
+  subresource read (`?tagging`, `?acl`, `?attributes`, `?legal-hold`,
+  `?retention`, `?torrent` or `?uploadId` for `ListParts`) gets none, because
+  AWS returns none
+  ([GetObjectAttributes](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectAttributes.html),
+  [ListParts](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListParts.html));
+- clears the record when the same key is replaced by a write that names no
   algorithm (a `PutObject` without the header, a plain `CopyObject`, or a
-  successful `CompleteMultipartUpload`), and on `DeleteObject`, `DeleteObjects`
-  and `DeleteBucket`.
+  `CompleteMultipartUpload` that really completed), and on `DeleteObject`,
+  `DeleteObjects` and a plain `DeleteBucket`.
+
+The operations that do not replace the object keep the record:
+`CreateMultipartUpload`, `UploadPart` and `UploadPartCopy` act on the upload,
+not the object; `AbortMultipartUpload` frees the upload's parts and leaves the
+object in place
+([AbortMultipartUpload](https://docs.aws.amazon.com/AmazonS3/latest/API/API_AbortMultipartUpload.html));
+a `POST` form upload is forwarded to the store unclassified; and a bucket
+subresource delete (`?policy`, `?cors`, `?lifecycle`, ...) removes that
+configuration, not the bucket's objects. A `CompleteMultipartUpload` answered
+`2xx` with an `<Error>` body is a failed completion: the object and its record
+stay
+([CompleteMultipartUpload](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html)).
 
 The SSE header is part of the SDK's SigV4 signature, so the front re-signs the
 put after stripping it. S3's canonical URI is the URI-encoded path encoded
@@ -2045,11 +2062,19 @@ against real AWS or a store that performs the encryption.
   `CopyObject` or `CompleteMultipartUpload` clears the destination's previous
   record, because neither names a new algorithm; a `CopyObject` with an SSE
   header keeps the store's `501`, an SSE-headed `CreateMultipartUpload` keeps
-  it too, and a failed completion clears nothing.
+  it too, and a failed completion clears nothing. A completion answered `200`
+  with an `<Error>` body is a failed completion too: the record stays.
+- The operations that do not replace the object keep the record: a plain
+  `POST` form upload (forwarded unclassified), `CreateMultipartUpload`,
+  `UploadPart`, `UploadPartCopy`, `AbortMultipartUpload` and a bucket
+  subresource delete. Replace the object with a plain `PutObject`, a plain
+  `CopyObject` or a successful `CompleteMultipartUpload` to make its record
+  match it.
 - A `DeleteObjects` body above 1 MiB is forwarded to the store unchanged, as
   the v7.0.0 path did, so its keys are not read and their SSE-S3 records are
   left in place until a later clearing write (a plain `PutObject`, a plain
-  `CopyObject` or a successful `CompleteMultipartUpload`). AWS allows 1000 keys
+  `CopyObject`, a successful `CompleteMultipartUpload`, a `DeleteObject` or a
+  plain `DeleteBucket`). AWS allows 1000 keys
   of up to 1024 bytes, about 1.05 MiB of XML
   ([DeleteObjects](https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjects.html),
   [object key names](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-keys.html));
@@ -2058,8 +2083,8 @@ against real AWS or a store that performs the encryption.
 - The store maps each object-key segment to a file name, so a key with one
   segment longer than the filesystem's name limit (255 bytes on ext4 and APFS)
   gets the store's own `500`, as it did before the front; the request still
-  reaches it unchanged. The proving row uses 1024-byte keys split into short
-  segments, which AWS allows and the store serves.
+  reaches it unchanged. The proving row uses keys of exactly 1024 bytes (AWS's
+  maximum) split into short segments, which AWS allows and the store serves.
 - A verified header-signed `PutObject` with a streaming (`aws-chunked`) SigV4
   payload cannot be re-signed after the signed SSE header is stripped; the
   front refuses it with a clear 400 rather than forwarding a broken signature.
