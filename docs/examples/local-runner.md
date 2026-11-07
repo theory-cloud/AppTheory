@@ -797,10 +797,12 @@ deterministic local value from the CDK definition and documents the difference:
   ([reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-properties-secretsmanager-secret-generatesecretstring.html)).
   With both, the template must be a JSON object, the generated string is stored
   under the key and the resulting JSON is the secret string. With neither, the
-  generated password is the whole secret string. A key without a template or a
-  template without a key is refused: the reference says that specifying
-  `GenerateStringKey` requires `SecretStringTemplate`, and the key is the name
-  of the pair added to that template, so neither half is guessed.
+  generated password is the whole secret string. A key without a template keeps
+  the v7.0.0 value (the template defaults to `{}`, so the generated password is
+  stored under the key) and is reported as one warning line naming the secret
+  and the AWS pairing rule: "If you specify this parameter, then you must also
+  specify `SecretStringTemplate`". A template without a key is refused, as
+  v7.0.0 did: the generated password would have no key to be stored under.
 
 A deploy-time `{{resolve:secretsmanager:…}}` reference to a secret the run
 provisioned resolves to that secret's value (the referenced JSON key), so the

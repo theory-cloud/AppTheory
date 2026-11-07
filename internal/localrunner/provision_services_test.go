@@ -207,10 +207,11 @@ func TestGenerateSecretValueAcceptsTheBareForm(t *testing.T) {
 		t.Fatalf("excluded characters appeared in the bare secret: %q", first)
 	}
 	// The reference makes GenerateStringKey optional and requires it together
-	// with SecretStringTemplate; each half of the pair is refused.
-	if _, err := generateSecretValue(generateSecretString{GenerateStringKey: "password"}, "seed"); err == nil ||
-		!strings.Contains(err.Error(), "SecretStringTemplate") {
-		t.Fatalf("GenerateStringKey without SecretStringTemplate must fail: %v", err)
+	// with SecretStringTemplate. A template without a key has no documented key
+	// for the generated password and is refused; a key without a template keeps
+	// the v7.0.0 value and is reported as a warning.
+	if _, err := generateSecretValue(generateSecretString{GenerateStringKey: "password"}, "seed"); err != nil {
+		t.Fatalf("GenerateStringKey without SecretStringTemplate must keep the v7.0.0 value: %v", err)
 	}
 	if _, err := generateSecretValue(generateSecretString{SecretStringTemplate: `{}`}, "seed"); err == nil ||
 		!strings.Contains(err.Error(), "GenerateStringKey") {

@@ -1364,7 +1364,8 @@ key schema, GSIs, streams and TTL; and every `AWS::SQS::Queue` in ElasticMQ with
 its visibility, retention, FIFO and redrive attributes; every
 `AWS::SSM::Parameter` (String, StringList, SecureString),
 `AWS::SecretsManager::Secret` (`SecretString`, or a deterministic
-`GenerateSecretString` in its bare, keyed and templated forms), `AWS::SNS::Topic`
+`GenerateSecretString` in its bare, keyed and templated forms; a key without a
+template keeps the v7.0.0 value and is reported as a warning), `AWS::SNS::Topic`
 (standard and FIFO),
 `AWS::Kinesis::Stream` and `AWS::Cognito::UserPool`/`UserPoolClient` in moto.
 Table SSE, PITR and deletion protection, SQS KMS/SSE, IAM resource policies and

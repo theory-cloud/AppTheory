@@ -251,7 +251,6 @@ func TestProvisionSecretsRejectsMissingAndIncompleteValues(t *testing.T) {
 	}
 	for _, props := range []string{
 		`{"Name":"app/none"}`,
-		`{"Name":"app/bad","GenerateSecretString":{"GenerateStringKey":"k","PasswordLength":8}}`,
 		`{"Name":"app/bad","GenerateSecretString":{"SecretStringTemplate":"{\"username\":\"u\"}"}}`,
 		`{"Name":"app/bad","GenerateSecretString":{"SecretStringTemplate":"not-json","GenerateStringKey":"k"}}`,
 	} {

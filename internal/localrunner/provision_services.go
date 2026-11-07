@@ -193,6 +193,9 @@ func (r *Runner) provisionSecrets(ctx context.Context, spec *Spec) error {
 			if err != nil {
 				return fmt.Errorf("secret %s GenerateSecretString: %w", resource.LogicalID, err)
 			}
+			if warning := generateSecretStringKeyOnlyWarning(resource, *props.GenerateSecretString); warning != "" {
+				r.logf("warning: %s", warning)
+			}
 			value = generated
 		}
 		input := &secretsmanager.CreateSecretInput{
@@ -262,7 +265,10 @@ func (r *Runner) provisionSecrets(ctx context.Context, spec *Spec) error {
 // one-way: "If you specify this parameter, then you must also specify
 // SecretStringTemplate" and the generated password is added to that template
 // under the key. With neither, Secrets Manager's generated password is the
-// whole secret string. Each half of the pair is refused rather than guessed.
+// whole secret string. A key without a template keeps the v7.0.0 value (the
+// template defaults to "{}") and is reported as a warning by provisionSecrets,
+// because v7.0.0 accepted that input. A template without a key is refused: the
+// generated password has no key to be stored under, and v7.0.0 failed it.
 // https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-properties-secretsmanager-secret-generatesecretstring.html
 //
 //nolint:gocognit,gocyclo // one branch per documented generation option.
@@ -278,7 +284,9 @@ func generateSecretValue(props generateSecretString, seed string) (string, error
 	template := strings.TrimSpace(props.SecretStringTemplate)
 	switch {
 	case key != "" && template == "":
-		return "", fmt.Errorf("GenerateStringKey requires SecretStringTemplate")
+		// v7.0.0 accepted this input and used an empty template, so keep that
+		// value byte-for-byte; provisionSecrets reports the AWS pairing rule.
+		template = "{}"
 	case key == "" && template != "":
 		return "", fmt.Errorf("SecretStringTemplate requires GenerateStringKey")
 	}
@@ -352,6 +360,27 @@ func generateSecretValue(props generateSecretString, seed string) (string, error
 		return "", err
 	}
 	return string(encoded), nil
+}
+
+// generateSecretStringKeyOnlyWarning reports the GenerateSecretString form that
+// v7.0.0 accepted without the template the CloudFormation reference pairs with
+// the key: "If you specify this parameter, then you must also specify
+// SecretStringTemplate". The generated value is unchanged (the template
+// defaults to "{}"), so the form warns instead of failing an existing caller.
+// https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-properties-secretsmanager-secret-generatesecretstring.html
+func generateSecretStringKeyOnlyWarning(resource ResourceSpec, props generateSecretString) string {
+	key := strings.TrimSpace(props.GenerateStringKey)
+	if key == "" || strings.TrimSpace(props.SecretStringTemplate) != "" {
+		return ""
+	}
+	return fmt.Sprintf(
+		"local Secrets Manager secret %s sets GenerateStringKey %q without SecretStringTemplate; "+
+			"CloudFormation requires the pairing: \"If you specify this parameter, then you must also specify "+
+			"SecretStringTemplate\" "+
+			"(https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-properties-secretsmanager-secret-generatesecretstring.html); "+
+			"the runner keeps the v7.0.0 value and defaults the template to {}",
+		resource.LogicalID, props.GenerateStringKey,
+	)
 }
 
 func secretSeed(value string) int64 {
