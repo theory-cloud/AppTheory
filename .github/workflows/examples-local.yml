@@ -62,6 +62,13 @@ jobs:
       - name: Install the harness Python dependencies
         run: python -m pip install -r scripts/local/requirements-examples.txt
 
+      # The local-TLS browser row loads the CloudFront page in headless
+      # Chromium and registers a WebAuthn credential through the CDP virtual
+      # authenticator. --with-deps installs the shared libraries Chromium needs
+      # on this runner image.
+      - name: Install the browser row's Chromium
+        run: python -m playwright install --with-deps chromium
+
       # The service container publishes the profile port; --external tells the
       # harness to wait for it instead of starting a compose container on the
       # same host port. --slot 0 pins the compose slot to that port.

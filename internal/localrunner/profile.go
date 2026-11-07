@@ -80,6 +80,14 @@ type Profile struct {
 		Agent  map[string]CodeBuildImagePin            `json:"agent"`
 		Images map[string]map[string]CodeBuildImagePin `json:"images"`
 	} `json:"codeBuild"`
+	// TLS is the committed opt-in for local HTTPS. `enabled` serves every
+	// public listener from a certificate the run's local CA signs; `host` is
+	// the `*.localhost` name a browser, an OIDC issuer and a WebAuthn RP ID
+	// use. The default is off, so an existing caller keeps plain HTTP.
+	TLS struct {
+		Enabled bool   `json:"enabled"`
+		Host    string `json:"host"`
+	} `json:"tls"`
 	path string
 }
 

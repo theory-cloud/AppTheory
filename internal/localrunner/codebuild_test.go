@@ -498,3 +498,24 @@ func TestCodeBuildBuildsSnapshotAndUnmappedImage(t *testing.T) {
 		t.Fatalf("an assembly with no project = %v", err)
 	}
 }
+
+func TestCodeBuildJSONEncodeFailureUsesTheAWSJSONShape(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	writeCodeBuildJSON(recorder, http.StatusOK, map[string]any{"bad": make(chan int)})
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusInternalServerError)
+	}
+	if contentType := recorder.Header().Get("Content-Type"); contentType != "application/x-amz-json-1.1" {
+		t.Fatalf("Content-Type = %q", contentType)
+	}
+	var payload struct {
+		Type    string `json:"__type"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("the body is not an AWS JSON error document: %v: %s", err, recorder.Body.String())
+	}
+	if payload.Type != "InternalFailure" || payload.Message == "" {
+		t.Fatalf("error document = %+v", payload)
+	}
+}

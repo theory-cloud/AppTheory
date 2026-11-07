@@ -329,6 +329,17 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def create_tls_context(cafile: str | None = None) -> ssl.SSLContext:
+    """Build an HTTPS client context with a modern protocol floor.
+
+    The local runner serves TLS 1.2 or newer; setting the floor explicitly
+    keeps a client from negotiating an obsolete protocol.
+    """
+    context = ssl.create_default_context(cafile=cafile)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    return context
+
+
 def http_request(
     method: str,
     url: str,
@@ -337,11 +348,17 @@ def http_request(
     body: bytes | None = None,
     timeout: float = 15,
     follow_redirects: bool = True,
+    context: ssl.SSLContext | None = None,
 ) -> tuple[int, str, dict]:
     request = urllib.request.Request(url, data=body, method=method)
     for key, value in (headers or {}).items():
         request.add_header(key, value)
-    opener = urllib.request.build_opener() if follow_redirects else urllib.request.build_opener(_NoRedirect)
+    handlers: list = []
+    if not follow_redirects:
+        handlers.append(_NoRedirect())
+    if context is not None:
+        handlers.append(urllib.request.HTTPSHandler(context=context))
+    opener = urllib.request.build_opener(*handlers) if handlers else urllib.request.build_opener()
     try:
         with opener.open(request, timeout=timeout) as response:
             return response.status, response.read().decode("utf-8", "replace"), normalized_headers(response.headers)
@@ -2219,9 +2236,18 @@ class WebSocketClient:
     involved, so the client speaks exactly the protocol the runner serves.
     """
 
-    def __init__(self, url: str, headers: dict[str, str] | None = None, timeout: float = 30) -> None:
+    def __init__(
+        self,
+        url: str,
+        headers: dict[str, str] | None = None,
+        timeout: float = 30,
+        tls_context: ssl.SSLContext | None = None,
+    ) -> None:
         parsed = urllib.parse.urlsplit(url)
         self.sock = socket.create_connection((parsed.hostname, parsed.port), timeout=timeout)
+        if parsed.scheme == "wss":
+            context = tls_context if tls_context is not None else create_tls_context()
+            self.sock = context.wrap_socket(self.sock, server_hostname=parsed.hostname)
         self.sock.settimeout(timeout)
         key = base64.b64encode(os.urandom(16)).decode("ascii")
         path = parsed.path or "/"
@@ -2307,7 +2333,7 @@ def _web_socket_api(session: LocalSession, lang: str) -> dict:
 
 
 def _management_request(api: dict, method: str, connection_id: str) -> tuple[int, bytes]:
-    context = ssl.create_default_context(cafile=api["managementCa"])
+    context = create_tls_context(api["managementCa"])
     request = urllib.request.Request(
         f"{api['managementEndpoint']}/@connections/{connection_id}", method=method
     )
@@ -4286,6 +4312,9 @@ def start_local_session(
     watch: bool = False,
     data_dir: str | None = None,
     seed: str | None = None,
+    tls: bool = False,
+    tls_host: str | None = None,
+    tls_aux: tuple[str, ...] = (),
 ) -> LocalSession:
     """Start one `apptheory-local session` and wait for its machine interface."""
     ensure_cdk_app(harness, app)
@@ -4324,6 +4353,12 @@ def start_local_session(
         argv.extend(["--data-dir", data_dir])
     if seed:
         argv.extend(["--seed", seed])
+    if tls:
+        argv.append("--tls")
+    if tls_host:
+        argv.extend(["--tls-host", tls_host])
+    for auxiliary in tls_aux:
+        argv.extend(["--tls-aux", auxiliary])
     process = subprocess.Popen(
         argv,
         cwd=str(ROOT),
@@ -4581,10 +4616,40 @@ def _run_multilang_eventbridge(
         # AWS; keep the rule identity in the message only if the runtime exposes
         # it. The plan lookup above already proves the rule exists.
         pass
+    # The handler itself calls PutEvents through its real SDK with a fractional
+    # Time; the pattern rule delivers the event back and the handler records
+    # the documented envelope.
+    sdk_seconds, sdk_nanos = 1794068000, 125000000
+    status, payload, _ = _json_request(
+        "POST", f"{http_base}/event-time/{sdk_seconds}/{sdk_nanos}"
+    )
+    expect_status(status, 200, f"multilang {lang} SDK PutEvents", json.dumps(payload))
+    if payload.get("failed") != 0 or not payload.get("event_id"):
+        raise HarnessFailure(f"multilang {lang}: the handler's PutEvents failed: {payload}")
+    sdk_delivered = _wait_for_eventbridge_record(
+        http_base,
+        lambda record: record.get("kind") == "rule"
+        and (record.get("detail") or {}).get("item") == f"{lang}-sdk-time",
+        label=f"multilang {lang} SDK PutEvents rule",
+        timeout=120,
+    )
+    # aws-sdk-go-v2 keeps nanoseconds and the AWS SDK for JavaScript v3 keeps
+    # milliseconds. The pinned Python 3.14 Lambda image's botocore 1.42.97
+    # sends a timestamp as whole epoch seconds, so the boto3 leg carries the
+    # second only; botocore 1.43.124 on a developer host sends the fraction
+    # (.125Z). The assertion follows the pinned image.
+    expected_time = "2026-11-07T16:13:20.125Z" if lang != "py" else "2026-11-07T16:13:20Z"
+    if sdk_delivered.get("time") != expected_time:
+        raise HarnessFailure(
+            f"multilang {lang}: the delivered envelope time {sdk_delivered.get('time')!r} "
+            f"!= the instant the SDK sent {expected_time}"
+        )
+    supplied = f"{sdk_seconds}.{sdk_nanos:09d}" if lang != "py" else str(sdk_seconds)
     return (
         "the rate(5 minute) schedule fired on the test clock and delivered the documented Scheduled Event "
         "with the CDK rule ARN, and a real SDK PutEvents reached the pattern rule's handler with its source, "
-        "detail-type and detail"
+        "detail-type and detail; the handler's own real SDK PutEvents with Time "
+        f"{supplied} reached the rule and the delivered envelope time was {expected_time}"
     )
 
 
@@ -7783,6 +7848,423 @@ def run_runtime_api_conformance(harness: Harness) -> str:
     )
 
 
+# --- local TLS rows ---------------------------------------------------------
+#
+# The opt-in is `--tls` (or the profile's `tls.enabled`). Every public listener
+# then serves HTTPS from a certificate the run's local CA signs, and every
+# function container mounts the same CA so a handler's own client verifies the
+# app's https URL. The rows below prove each requirement on the real path: a
+# browser, three runtime callers, an OIDC discovery client, and an auxiliary
+# service certificate.
+
+LOCAL_TLS_APP = "examples/cdk/local-tls"
+_TLS_PLAN_CACHE: dict[str, dict] = {}
+
+
+def _tls_plan(harness: Harness) -> dict:
+    if str(ROOT) not in _TLS_PLAN_CACHE:
+        _TLS_PLAN_CACHE[str(ROOT)] = plan_local_app(harness, LOCAL_TLS_APP)
+    return _TLS_PLAN_CACHE[str(ROOT)]
+
+
+def _tls_role_function(harness: Harness, role: str) -> str:
+    """Find the caller function the example names with a stable environment."""
+    for function in _tls_plan(harness).get("functions") or []:
+        environment = function.get("environment") or {}
+        if environment.get("APPTHEORY_LOCAL_TLS_ROLE") == role:
+            return str(function["logicalId"])
+    raise HarnessFailure(f"the local-tls plan has no function with APPTHEORY_LOCAL_TLS_ROLE={role!r}")
+
+
+def _tls_state(session: LocalSession) -> dict:
+    state = session.info.get("tls") or {}
+    if not state.get("enabled") or not state.get("caFile"):
+        raise HarnessFailure("the session did not opt in to local TLS", session.log_path)
+    return state
+
+
+def _tls_ca(session: LocalSession) -> str:
+    return str(_tls_state(session)["caFile"])
+
+
+def _tls_host(session: LocalSession) -> str:
+    return str(_tls_state(session)["host"])
+
+
+def _tls_context(session: LocalSession) -> ssl.SSLContext:
+    return create_tls_context(_tls_ca(session))
+
+
+def _tls_served(session: LocalSession, api_class: str) -> str:
+    served = {
+        str(entry.get("logicalId")): str(entry.get("url"))
+        for entry in session.info.get("apis") or []
+        if entry.get("url")
+    }
+    if api_class == "fnurl":
+        candidates = [str(entry.get("logicalId")) for entry in session.spec.get("functionUrls") or []]
+    elif api_class == "websocket":
+        candidates = [str(entry.get("logicalId")) for entry in session.spec.get("webSockets") or []]
+    else:
+        candidates = [
+            str(entry.get("logicalId"))
+            for entry in session.spec.get("apis") or []
+            if entry.get("class") == api_class
+        ]
+    for logical_id in candidates:
+        if logical_id in served:
+            return served[logical_id]
+    raise HarnessFailure(
+        f"the session serves no {api_class} listener; apis={sorted(served.items())}"
+    )
+
+
+def _tls_distribution(session: LocalSession) -> str:
+    for entry in session.info.get("cloudFront") or []:
+        url = entry.get("url")
+        if url:
+            return str(url)
+    raise HarnessFailure("the session serves no CloudFront distribution")
+
+
+def _tls_leaf_spki(url: str, context: ssl.SSLContext) -> str:
+    """Return the base64 SHA-256 of the leaf certificate's SPKI.
+
+    Chromium's --ignore-certificate-errors-spki-list accepts exactly this value
+    for one key, so the browser trusts the run's own leaf without installing a
+    root anywhere. https://www.chromium.org/developers/how-tos/run-chromium-with-flags/
+    """
+    from cryptography import x509
+    from cryptography.hazmat.primitives import serialization
+
+    parsed = urlsplit(url)
+    with socket.create_connection((parsed.hostname, parsed.port), timeout=15) as raw:
+        with context.wrap_socket(raw, server_hostname=parsed.hostname) as tls_socket:
+            der = tls_socket.getpeercert(binary_form=True)
+    if not der:
+        raise HarnessFailure(f"{url}: the listener presented no certificate")
+    certificate = x509.load_der_x509_certificate(der)
+    spki = certificate.public_key().public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    return base64.b64encode(hashlib.sha256(spki).digest()).decode("ascii")
+
+
+def _start_tls_idp(cert_path: str, key_path: str) -> tuple[http.server.ThreadingHTTPServer, int]:
+    """Start a minimal OIDC identity provider on https://idp.localhost:<port>.
+
+    It serves the two documents the callers fetch; the certificate is the
+    auxiliary leaf the `tls leaf` command issued from the run's CA.
+    """
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - http.server hook
+            issuer = f"https://idp.localhost:{self.server.server_address[1]}"
+            if self.path == "/.well-known/openid-configuration":
+                body = {"issuer": issuer, "jwks_uri": issuer + "/jwks"}
+            elif self.path == "/jwks":
+                body = {
+                    "keys": [
+                        {
+                            "kty": "RSA",
+                            "kid": "local-idp",
+                            "use": "sig",
+                            "alg": "RS256",
+                            "n": "c2VydmljZS1sb2NhbC1pZHAta2V5LW1vZHVsdXMtb25seS1ub3QtYS1yZWFsLWtleQ",
+                            "e": "AQAB",
+                        }
+                    ]
+                }
+            else:
+                self.send_error(404)
+                return
+            encoded = json.dumps(body).encode("utf-8")
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
+        def log_message(self, *_args) -> None:
+            pass
+
+    server = http.server.ThreadingHTTPServer(("0.0.0.0", 0), Handler)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.load_cert_chain(cert_path, key_path)
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, int(server.server_address[1])
+
+
+def run_local_tls_surfaces(harness: Harness) -> str:
+    session = start_local_session(harness, LOCAL_TLS_APP, name="tls-surfaces", tls=True)
+    try:
+        context = _tls_context(session)
+        host = _tls_host(session)
+        http_url = _tls_served(session, "httpv2")
+        rest_url = _tls_served(session, "restv1")
+        function_url = _tls_served(session, "fnurl")
+        web_socket_url = _tls_served(session, "websocket")
+        distribution = _tls_distribution(session)
+        for url in (http_url, rest_url, function_url, distribution):
+            if not url.startswith(f"https://{host}:"):
+                raise HarnessFailure(f"the public listener is not https at {host}: {url}")
+        if not web_socket_url.startswith(f"wss://{host}:"):
+            raise HarnessFailure(f"the WebSocket listener is not wss at {host}: {web_socket_url}")
+
+        status, body, _ = http_request("GET", http_url + "/health", context=context)
+        expect_status(status, 200, "local TLS HTTP API")
+        payload = json.loads(body)
+        if payload.get("host") != urlsplit(http_url).netloc:
+            raise HarnessFailure(f"the HTTP API handler saw host {payload.get('host')!r}, want {urlsplit(http_url).netloc!r}")
+
+        status, body, _ = http_request("GET", rest_url + "/echo", context=context)
+        expect_status(status, 200, "local TLS REST API")
+        if json.loads(body).get("surface") != "rest-v1":
+            raise HarnessFailure(f"the REST handler answered {body!r}")
+
+        status, body, _ = http_request("GET", function_url + "/health", context=context)
+        expect_status(status, 200, "local TLS Function URL")
+        if json.loads(body).get("surface") != "issuer":
+            raise HarnessFailure(f"the Function URL handler answered {body!r}")
+
+        status, body, _ = http_request("GET", distribution.rstrip("/") + "/", context=context)
+        expect_status(status, 200, "local TLS CloudFront")
+        if "AppTheory local TLS" not in body:
+            raise HarnessFailure(f"the CloudFront page is not the example's page: {body[:200]!r}")
+
+        client = WebSocketClient(web_socket_url, tls_context=context)
+        try:
+            client.send_text(json.dumps({"action": "chat", "message": "tls"}))
+            opcode, payload = client.receive(timeout=30)
+            if opcode != 0x1:
+                raise HarnessFailure(f"the WebSocket answered opcode {opcode}, want text")
+            message = json.loads(payload)
+            if message.get("route") != "chat" or message.get("ok") is not True:
+                raise HarnessFailure(f"the WebSocket echo is {message!r}")
+        finally:
+            client.close()
+
+        alpn = create_tls_context(_tls_ca(session))
+        alpn.set_alpn_protocols(["h2", "http/1.1"])
+        parsed = urlsplit(http_url)
+        with socket.create_connection((parsed.hostname, parsed.port), timeout=10) as raw:
+            with alpn.wrap_socket(raw, server_hostname=parsed.hostname) as tls_socket:
+                if tls_socket.selected_alpn_protocol() != "h2":
+                    raise HarnessFailure(
+                        f"the TLS listener negotiated {tls_socket.selected_alpn_protocol()!r}, want h2"
+                    )
+
+        with socket.create_connection((parsed.hostname, parsed.port), timeout=10) as raw:
+            try:
+                context.wrap_socket(raw, server_hostname="wrong.localhost")
+            except ssl.SSLCertVerificationError:
+                pass
+            else:
+                raise HarnessFailure("the listener presented a certificate for an unserved name")
+        return (
+            "HTTP API, REST API, Function URL, WebSocket (wss) and CloudFront all served over "
+            "verified https from the run CA; HTTP/2 negotiated; an unserved SNI name refused"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def _run_local_tls_callback(harness: Harness, role: str) -> str:
+    function = _tls_role_function(harness, role)
+    session = start_local_session(
+        harness, LOCAL_TLS_APP, name=f"tls-callback-{role}", tls=True, targets=(function,)
+    )
+    try:
+        base = _tls_served(session, "httpv2")
+        result = session.invoke(function, {"url": base})
+        raw = result.get("raw") or {}
+        if raw.get("ok") is not True:
+            raise HarnessFailure(f"the {role} caller did not verify the issuer: {result}")
+        if raw.get("issuer") != base:
+            raise HarnessFailure(f"the {role} caller reported issuer {raw.get('issuer')!r}, want {base!r}")
+        if int(raw.get("keys") or 0) < 1:
+            raise HarnessFailure(f"the {role} caller fetched no JWKS key: {result}")
+        return f"{role} Lambda fetched discovery and JWKS from {base} over verified TLS"
+    finally:
+        stop_local_session(harness, session)
+
+
+def run_local_tls_callback_go(harness: Harness) -> str:
+    return _run_local_tls_callback(harness, "caller-go")
+
+
+def run_local_tls_callback_node(harness: Harness) -> str:
+    return _run_local_tls_callback(harness, "caller-node")
+
+
+def run_local_tls_callback_py(harness: Harness) -> str:
+    return _run_local_tls_callback(harness, "caller-py")
+
+
+def run_local_tls_oidc(harness: Harness) -> str:
+    caller = _tls_role_function(harness, "caller-go")
+    session = start_local_session(
+        harness, LOCAL_TLS_APP, name="tls-oidc", tls=True, targets=(caller,)
+    )
+    try:
+        context = _tls_context(session)
+        base = _tls_served(session, "httpv2")
+        status, body, _ = http_request("GET", base + "/.well-known/openid-configuration", context=context)
+        expect_status(status, 200, "OIDC discovery over TLS")
+        discovery = json.loads(body)
+        if discovery.get("issuer") != base:
+            raise HarnessFailure(f"discovery issuer {discovery.get('issuer')!r} != {base!r}")
+        jwks_uri = str(discovery.get("jwks_uri") or "")
+        if not jwks_uri.startswith("https://"):
+            raise HarnessFailure(f"jwks_uri is not https: {jwks_uri!r}")
+        status, body, _ = http_request("GET", jwks_uri, context=context)
+        expect_status(status, 200, "JWKS over TLS")
+        keys = json.loads(body).get("keys") or []
+        if not keys or keys[0].get("kty") != "RSA":
+            raise HarnessFailure(f"JWKS has no RSA key: {body[:200]!r}")
+
+        result = session.invoke(caller, {"url": base})
+        raw = result.get("raw") or {}
+        if raw.get("ok") is not True or raw.get("issuer") != base:
+            raise HarnessFailure(f"the container's OIDC fetch failed: {result}")
+        return (
+            f"a host client and a Go container fetched {base}/.well-known/openid-configuration "
+            f"then {jwks_uri} over verified TLS; issuer matched the served URL"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def run_local_tls_webauthn(harness: Harness) -> str:
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as exc:  # pragma: no cover - reported as a row failure
+        raise HarnessFailure(
+            "the browser row needs playwright; install scripts/local/requirements-examples.txt "
+            "and run `python -m playwright install chromium`"
+        ) from exc
+
+    session = start_local_session(harness, LOCAL_TLS_APP, name="tls-webauthn", tls=True)
+    try:
+        context = _tls_context(session)
+        site = _tls_distribution(session).rstrip("/") + "/"
+        spki = _tls_leaf_spki(site, context)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(
+                headless=True, args=[f"--ignore-certificate-errors-spki-list={spki}"]
+            )
+            try:
+                browser_context = browser.new_context()
+                page = browser_context.new_page()
+                page.goto(site, wait_until="load", timeout=60000)
+                if "AppTheory local TLS" not in page.title():
+                    raise HarnessFailure(f"the CloudFront page title is {page.title()!r}")
+                if not page.evaluate("window.isSecureContext"):
+                    raise HarnessFailure("the CloudFront page is not a secure context")
+                cdp = browser_context.new_cdp_session(page)
+                cdp.send("WebAuthn.enable", {})
+                authenticator = cdp.send(
+                    "WebAuthn.addVirtualAuthenticator",
+                    {
+                        "options": {
+                            "protocol": "ctap2",
+                            "transport": "internal",
+                            "hasResidentKey": True,
+                            "hasUserVerification": True,
+                            "isUserVerified": True,
+                            "automaticPresenceSimulation": True,
+                        }
+                    },
+                )
+                result = page.evaluate("window.__apptheoryRegister()")
+                origin = site.rstrip("/")
+                if result.get("origin") != origin:
+                    raise HarnessFailure(f"WebAuthn ran at {result.get('origin')!r}, want {origin!r}")
+                if result.get("rpId") != urlsplit(site).hostname:
+                    raise HarnessFailure(f"WebAuthn RP ID is {result.get('rpId')!r}")
+                if not result.get("credentialId") or result.get("assertionId") != result.get("credentialId"):
+                    raise HarnessFailure(f"WebAuthn did not return one credential: {result}")
+                credentials = cdp.send(
+                    "WebAuthn.getCredentials", {"authenticatorId": authenticator["authenticatorId"]}
+                )
+                if len(credentials.get("credentials") or []) != 1:
+                    raise HarnessFailure(f"the virtual authenticator stored {credentials!r}")
+                browser_context.close()
+            finally:
+                browser.close()
+        return (
+            f"headless Chromium loaded {site} over TLS pinned to the run leaf, registered a WebAuthn "
+            f"credential with RP ID {urlsplit(site).hostname} through the CDP virtual authenticator "
+            "and asserted it"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def run_local_tls_aux_cert(harness: Harness) -> str:
+    data_dir = _data_dir(harness, "tls-aux")
+    server = None
+    try:
+        leaf = harness.run(
+            [
+                str(LOCAL_RUNNER_BIN),
+                "tls",
+                "leaf",
+                "--data-dir",
+                data_dir,
+                "--name",
+                "idp.localhost",
+                "--out",
+                str(Path(data_dir) / "aux-idp"),
+            ],
+            timeout=120,
+        )
+        cert_path = ""
+        key_path = ""
+        for line in leaf.stdout.splitlines():
+            if line.startswith("cert:"):
+                cert_path = line.split(":", 1)[1].strip()
+            elif line.startswith("key:"):
+                key_path = line.split(":", 1)[1].strip()
+        if not cert_path or not key_path:
+            raise HarnessFailure(f"tls leaf printed no paths: {leaf.stdout!r}")
+        server, port = _start_tls_idp(cert_path, key_path)
+        base = f"https://idp.localhost:{port}"
+        session = start_local_session(
+            harness,
+            LOCAL_TLS_APP,
+            name="tls-aux",
+            tls=True,
+            data_dir=data_dir,
+            tls_aux=("idp.localhost",),
+            targets=(_tls_role_function(harness, "caller-py"),),
+        )
+        try:
+            context = _tls_context(session)
+            status, body, _ = http_request("GET", base + "/.well-known/openid-configuration", context=context)
+            expect_status(status, 200, "auxiliary IdP discovery over TLS")
+            if json.loads(body).get("issuer") != base:
+                raise HarnessFailure(f"the auxiliary issuer is {body!r}")
+            result = session.invoke(_tls_role_function(harness, "caller-py"), {"url": base})
+            raw = result.get("raw") or {}
+            if raw.get("ok") is not True or raw.get("issuer") != base:
+                raise HarnessFailure(f"the container did not reach the auxiliary service: {result}")
+            return (
+                f"a certificate issued by `tls leaf` from the run CA served {base}; a host client and "
+                "a Python container fetched its discovery and JWKS over verified TLS"
+            )
+        finally:
+            stop_local_session(harness, session)
+    finally:
+        if server is not None:
+            server.shutdown()
+            server.server_close()
+        _remove_data_dir(data_dir)
+
+
 RUNNERS: dict[str, Callable[[Harness], str]] = {
     "testkit-ts": run_testkit_ts,
     "testkit-ts-streaming": run_testkit_ts_streaming,
@@ -7852,6 +8334,13 @@ RUNNERS: dict[str, Callable[[Harness], str]] = {
     "stage-prefixed-rest": run_stage_prefixed_rest,
     "stage-prefixed-http": run_stage_prefixed_http,
     "codebuild-import": run_codebuild_import,
+    "local-tls-surfaces": run_local_tls_surfaces,
+    "local-tls-callback-go": run_local_tls_callback_go,
+    "local-tls-callback-node": run_local_tls_callback_node,
+    "local-tls-callback-py": run_local_tls_callback_py,
+    "local-tls-oidc": run_local_tls_oidc,
+    "local-tls-webauthn": run_local_tls_webauthn,
+    "local-tls-aux-cert": run_local_tls_aux_cert,
 }
 
 

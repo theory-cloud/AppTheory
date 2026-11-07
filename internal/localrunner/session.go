@@ -373,6 +373,14 @@ func (s *localSession) describe() (map[string]any, error) { //nolint:gocognit //
 	if security := cloudFrontSecurityReport(s.spec); security != nil {
 		document["cloudFrontSecurity"] = security
 	}
+	if s.runner.tls != nil {
+		document["tls"] = map[string]any{
+			"enabled":     true,
+			"host":        s.runner.tls.host,
+			"caFile":      s.runner.tls.caPath,
+			"trustBundle": s.runner.tlsBundlePath,
+		}
+	}
 	if s.runner.codeBuild != nil {
 		document["codeBuild"] = s.runner.codeBuild.CodeBuildBuilds()
 	}

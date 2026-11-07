@@ -75,6 +75,7 @@ func (r *Runner) functionRunOptions(ctx context.Context, function FunctionSpec, 
 		r.addRuntimeHostEntry()
 	}
 	mounts := append(functionMounts(function), r.webSocketCertificateMounts()...)
+	mounts = append(mounts, r.tlsTrustMounts()...)
 	publish := 0
 	if r.options.RIEMode {
 		publish = riePort

@@ -23,7 +23,7 @@ func TestDocumentedRunStepOrderMatchesTheRunner(t *testing.T) {
 		{doc: "**Synthesize.**", calls: []string{"r.Plan("}},
 		{doc: "**Derive.**"},
 		{doc: "**Resolve images.**", calls: []string{"r.resolveImages("}},
-		{doc: "**Prepare the run workspace.**", calls: []string{"r.prepareScratch(", "r.docker.CreateNetwork("}},
+		{doc: "**Prepare the run workspace.**", calls: []string{"r.prepareScratch(", "r.docker.CreateNetwork(", "r.initTLS("}},
 		{doc: "**Start backends.**", calls: []string{"r.startBackends("}},
 		{doc: "**Provision resources.**", calls: []string{"r.provisionResources("}},
 		{doc: "**Resolve environment references.**", calls: []string{"r.resolveEnvironment("}},

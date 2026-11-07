@@ -177,9 +177,9 @@ class RealTreeTests(unittest.TestCase):
         # and rule target handlers, the wave-2 E4 S3 consumer, R1 WebSocket
         # authorizer, R2a authorizer echo, R2b policy authorizer and R4
         # lambda-packaging rows, the R3a Runtime API conformance suite, the
-        # AD1 two-edit watch row, the KMS DIGEST/data-dir rows and the S3
-        # SSE-S3 row.
-        self.assertEqual(99, len(classified))
+        # AD1 two-edit watch row, the KMS DIGEST/data-dir rows, the S3
+        # SSE-S3 row and the seven LOCAL-W2-TLS rows.
+        self.assertEqual(106, len(classified))
         by_key = {entry.key: entry for entry in entries}
         expected = {
             "examples/cdk/ssr-site/bin/apptheory-ssr-site.ts": "ssr-site-gateway",
@@ -195,6 +195,13 @@ class RealTreeTests(unittest.TestCase):
             "examples/cdk/sqs-queue/handlers/sns-publisher.mjs": "sqs-sns-publisher",
             "examples/cdk/sqs-queue/handlers/sns-scenario-publisher.mjs": "sqs-sns-targets",
             "examples/cdk/sqs-queue/handlers/rule-publisher.mjs": "sqs-event-targets",
+            "examples/cdk/local-tls/bin/app.ts": "local-tls-surfaces",
+            "examples/cdk/local-tls/handlers/go/main.go": "local-tls-callback-go",
+            "examples/cdk/local-tls/scripts/callback-node.sh": "local-tls-callback-node",
+            "examples/cdk/local-tls/handlers/python/caller.py": "local-tls-callback-py",
+            "examples/cdk/local-tls/scripts/oidc.sh": "local-tls-oidc",
+            "examples/cdk/local-tls/scripts/browser-webauthn.sh": "local-tls-webauthn",
+            "examples/cdk/local-tls/scripts/aux-cert.sh": "local-tls-aux-cert",
         }
         for key, runner in expected.items():
             self.assertEqual(runner, by_key[key].runner, key)

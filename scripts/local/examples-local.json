@@ -41,6 +41,10 @@
       "last": 8199,
       "stride": 10
     },
+    "tls": {
+      "enabled": false,
+      "host": "app.localhost"
+    },
     "lambda": {
       "images": {
         "go": {
@@ -538,7 +542,7 @@
       "run": "multilang-go",
       "class": "L3",
       "gap": "IAM policy evaluation is a docs/125 true limit. Backends are emulated (DynamoDB Local, ElasticMQ, moto); SQS delivery, DynamoDB Streams, EventBridge rules, WebSocket frames and incremental response streaming are real. The REST v1 surface is defined only for the Go handler in this stack.",
-      "description": "Multilang Go handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the Go REST API serves hello and the three SSE events written incrementally; three WebSocket APIs serve real frames through the $connect authorizer, the custom chat route, $default and the @connections management API; the CDK SQS mapping delivered a real message to the Go handler and deleted it; a real SDK-written table item reached the handler through the DynamoDB Streams mapping with the CDK stream ARN, the test clock expired a TTL item into the documented REMOVE record, and a poison record was bisected and discarded to the on-failure queue; both EventBridge rules are invoked."
+      "description": "Multilang Go handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the Go REST API serves hello and the three SSE events written incrementally; three WebSocket APIs serve real frames through the $connect authorizer, the custom chat route, $default and the @connections management API; the CDK SQS mapping delivered a real message to the Go handler and deleted it; a real SDK-written table item reached the handler through the DynamoDB Streams mapping with the CDK stream ARN, the test clock expired a TTL item into the documented REMOVE record, and a poison record was bisected and discarded to the on-failure queue; both EventBridge rules are invoked; the handler's own aws-sdk-go-v2 PutEvents with a fractional Time reached the pattern rule and the delivered envelope time was the supplied instant."
     },
     "examples/cdk/multilang/handlers/ws-authorizer.mjs": {
       "coveredBy": "examples/cdk/multilang/handlers/go/main.go",
@@ -549,13 +553,13 @@
       "run": "multilang-py",
       "class": "L3",
       "gap": "IAM policy evaluation is a docs/125 true limit. Backends are emulated (DynamoDB Local, ElasticMQ, moto); SQS delivery, DynamoDB Streams, EventBridge rules, WebSocket frames and incremental response streaming are real. The REST v1 surface is defined only for the Go handler in this stack.",
-      "description": "Multilang Python handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the CDK SQS mapping delivered a real message to the Python handler and deleted it; a real SDK-written table item reached the handler through the DynamoDB Streams mapping with the CDK stream ARN, and the test clock expired a TTL item into the documented REMOVE record; the rate schedule fired and a real SDK PutEvents reached the pattern rule; the Go-only REST surface is also asserted."
+      "description": "Multilang Python handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the CDK SQS mapping delivered a real message to the Python handler and deleted it; a real SDK-written table item reached the handler through the DynamoDB Streams mapping with the CDK stream ARN, and the test clock expired a TTL item into the documented REMOVE record; the rate schedule fired and a real SDK PutEvents reached the pattern rule; the handler's own boto3 PutEvents with a whole-second Time reached the pattern rule and the delivered envelope time was that instant; the Go-only REST surface is also asserted."
     },
     "examples/cdk/multilang/handlers/ts/handler.mjs": {
       "run": "multilang-ts",
       "class": "L3",
       "gap": "IAM policy evaluation is a docs/125 true limit. Backends are emulated (DynamoDB Local, ElasticMQ, moto); SQS delivery, DynamoDB Streams, EventBridge rules, WebSocket frames and incremental response streaming are real. The REST v1 surface is defined only for the Go handler in this stack.",
-      "description": "Multilang TypeScript handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the CDK SQS mapping delivered a real message to the TypeScript handler and deleted it; a real SDK-written table item reached the handler through the DynamoDB Streams mapping with the CDK stream ARN, and the test clock expired a TTL item into the documented REMOVE record; the rate schedule fired and a real SDK PutEvents reached the pattern rule; the Go-only REST surface is also asserted."
+      "description": "Multilang TypeScript handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the CDK SQS mapping delivered a real message to the TypeScript handler and deleted it; a real SDK-written table item reached the handler through the DynamoDB Streams mapping with the CDK stream ARN, and the test clock expired a TTL item into the documented REMOVE record; the rate schedule fired and a real SDK PutEvents reached the pattern rule; the handler's own AWS SDK for JavaScript v3 PutEvents with a fractional Time reached the pattern rule and the delivered envelope time was the supplied instant; the Go-only REST surface is also asserted."
     },
     "examples/cdk/path-routed-frontend/bin/app.ts": {
       "run": "path-routed-gateway",
@@ -721,6 +725,48 @@
       "coveredBy": "examples/cdk/edge-gateway/bin/app.ts",
       "class": "L2",
       "description": "CloudFront Function runtime 2.0 handler: get (string and json formats), exists and meta against the associated key value store."
+    },
+    "examples/cdk/local-tls/bin/app.ts": {
+      "run": "local-tls-surfaces",
+      "class": "L2",
+      "gap": "The certificate chains to a runner-generated local CA, not a public one, and the listener has no edge certificate or managed security policy (docs/125 real network properties: edge TLS certificates).",
+      "description": "Local TLS opt-in surfaces: the HTTP API, REST API, Function URL, WebSocket API and CloudFront distribution all answer over verified https/wss at app.localhost; the TLS listener negotiates HTTP/2 and refuses an unserved SNI name."
+    },
+    "examples/cdk/local-tls/handlers/go/main.go": {
+      "run": "local-tls-callback-go",
+      "class": "L2",
+      "gap": "The Go container verifies the runner's local CA, not a public certificate; no public CA or edge TLS policy is involved.",
+      "description": "Go caller: a provided.al2023 container fetches the app's OIDC discovery document and JWKS over verified https from the runner's own listener."
+    },
+    "examples/cdk/local-tls/scripts/callback-node.sh": {
+      "run": "local-tls-callback-node",
+      "class": "L2",
+      "gap": "The Node container verifies the runner's local CA, not a public certificate; no public CA or edge TLS policy is involved.",
+      "description": "Node caller: a nodejs24.x container fetches the app's OIDC discovery document and JWKS over verified https from the runner's own listener."
+    },
+    "examples/cdk/local-tls/handlers/python/caller.py": {
+      "run": "local-tls-callback-py",
+      "class": "L2",
+      "gap": "The Python container verifies the runner's local CA, not a public certificate; no public CA or edge TLS policy is involved.",
+      "description": "Python caller: a python3.14 container fetches the app's OIDC discovery document and JWKS over verified https from the runner's own listener."
+    },
+    "examples/cdk/local-tls/scripts/oidc.sh": {
+      "run": "local-tls-oidc",
+      "class": "L2",
+      "gap": "The issuer is a local Lambda behind the runner's listener with a locally trusted certificate; it is not a public OIDC provider and the certificate is not publicly trusted.",
+      "description": "OIDC-shaped row: the issuer's discovery document names the exact https URL it is served at, and a host client plus a Go container fetch discovery then JWKS over verified TLS."
+    },
+    "examples/cdk/local-tls/scripts/browser-webauthn.sh": {
+      "run": "local-tls-webauthn",
+      "class": "L2",
+      "gap": "Chromium is launched with the run leaf's SPKI allowlisted instead of installing the CA in a system trust store, and the credential lives in a CDP virtual authenticator rather than a hardware or platform authenticator.",
+      "description": "Browser row: headless Chromium loads the opted-in CloudFront page over https (a secure context), registers a WebAuthn credential with RP ID app.localhost through the CDP virtual authenticator and asserts it."
+    },
+    "examples/cdk/local-tls/scripts/aux-cert.sh": {
+      "run": "local-tls-aux-cert",
+      "class": "L2",
+      "gap": "The auxiliary identity provider is a local test service signed by the runner CA, not a third-party identity provider (docs/125 decision D3).",
+      "description": "Auxiliary-service certificate: `tls leaf` issues a certificate from the run CA for idp.localhost, and a host client and a Python container fetch the service's discovery and JWKS over verified TLS."
     }
   },
   "suites": {

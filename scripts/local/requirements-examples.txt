@@ -6,3 +6,9 @@
 # CloudFront-compatible, so the harness runs the real SDK rather than a local
 # reader. Everything else the harness uses is the Python standard library.
 aws-encryption-sdk==4.0.7
+# The local-TLS browser row drives headless Chromium through Playwright: the
+# CloudFront page must be a real secure context, and the WebAuthn registration
+# uses Chromium's CDP virtual authenticator. `python -m playwright install
+# chromium` fetches the browser build; scripts/verify-security-refresh.sh's
+# pip-audit pass covers this file's dependency tree.
+playwright==1.64.1
