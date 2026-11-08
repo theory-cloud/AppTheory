@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -194,9 +195,8 @@ func caller(ctx context.Context, role string, event json.RawMessage) (any, error
 	if err != nil {
 		return nil, err
 	}
-	// codeql[go/request-forgery] the target is restricted to the run's loopback
-	// listeners by localTargetURL: a row chooses a route, never a host.
-	httpRequest, err := http.NewRequestWithContext(ctx, method, target, bytes.NewReader(nil))
+	// codeql[go/request-forgery] localTargetURL pins the host to the loopback listener; a row chooses a route.
+	httpRequest, err := http.NewRequestWithContext(ctx, method, target.String(), bytes.NewReader(nil))
 	if err != nil {
 		return nil, err
 	}
@@ -233,19 +233,31 @@ func caller(ctx context.Context, role string, event json.RawMessage) (any, error
 
 // localTargetURL returns the URL to sign and call, or refuses a URL that does
 // not name one of the run's loopback listeners. A row hands the caller a URL to
-// sign; only these fixed prefixes are acceptable, so the example can never be
-// turned into a proxy for another host.
-func localTargetURL(raw string) (string, error) {
-	switch {
-	case strings.HasPrefix(raw, "http://127.0.0.1:"),
-		strings.HasPrefix(raw, "https://127.0.0.1:"),
-		strings.HasPrefix(raw, "http://localhost:"),
-		strings.HasPrefix(raw, "https://localhost:"),
-		strings.HasPrefix(raw, "http://host.docker.internal:"),
-		strings.HasPrefix(raw, "https://host.docker.internal:"):
-		return raw, nil
+// sign; the host is fixed to the loopback listener and only its numeric port,
+// path and query are taken from the row, so the example can never be turned
+// into a proxy for another host.
+func localTargetURL(raw string) (*url.URL, error) {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return nil, fmt.Errorf("the caller's url is not valid: %w", err)
 	}
-	return "", fmt.Errorf("the caller's url is not a local runner listener")
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return nil, fmt.Errorf("the caller's url must be http or https")
+	}
+	host := parsed.Hostname()
+	if host != "127.0.0.1" && host != "localhost" && host != "host.docker.internal" {
+		return nil, fmt.Errorf("the caller's url is not a local runner listener")
+	}
+	port := parsed.Port()
+	if port == "" || strings.Trim(port, "0123456789") != "" {
+		return nil, fmt.Errorf("the caller's url has no numeric port")
+	}
+	return &url.URL{
+		Scheme:   parsed.Scheme,
+		Host:     host + ":" + port,
+		Path:     parsed.Path,
+		RawQuery: parsed.RawQuery,
+	}, nil
 }
 
 // reportedCredentials is a credential the caller used, reported on request.
