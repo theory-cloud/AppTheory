@@ -194,6 +194,8 @@ func caller(ctx context.Context, role string, event json.RawMessage) (any, error
 	if err != nil {
 		return nil, err
 	}
+	// codeql[go/request-forgery] the target is restricted to the run's loopback
+	// listeners by localTargetURL: a row chooses a route, never a host.
 	httpRequest, err := http.NewRequestWithContext(ctx, method, target, bytes.NewReader(nil))
 	if err != nil {
 		return nil, err
