@@ -141,7 +141,7 @@ var problemResourceTypes = map[string]struct {
 }
 
 // bookkeepingResourceTypes are the types a template synthesizes that carry no
-// local runtime behaviour and that no component of the runner acts on. They are
+// local runtime behavior and that no component of the runner acts on. They are
 // reported so no synthesized type is silently ignored; each reason is a
 // docs/125 deploy-time-only limit.
 const (
