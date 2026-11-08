@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -431,8 +432,11 @@ func TestTLSTrustEnvironmentIsPerRuntime(t *testing.T) {
 			t.Fatal("the Go runtime must not receive AWS_CA_BUNDLE")
 		}
 	}
-	if tlsTrustEnvironment("unknown")[0] != "SSL_CERT_FILE" {
-		t.Fatal("an unknown class must fall back to the preflight Python set")
+	if strings.Join(tlsTrustEnvironment(""), ",") != strings.Join(tlsTrustImageFunction, ",") {
+		t.Fatal("a container-image function must get the union of every runtime's variables")
+	}
+	if !slices.Contains(tlsTrustEnvironment(""), "AWS_CA_BUNDLE") {
+		t.Fatal("a container-image function has no runtime to special-case")
 	}
 }
 
@@ -740,5 +744,39 @@ func TestTLSEdgeFailures(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) }) //nolint:errcheck,gosec // test cleanup restores the directory mode
 	if _, err := lockTLSDirectory(locked); err == nil {
 		t.Fatal("a lock file that cannot be created must fail")
+	}
+}
+
+// TestFunctionRunOptionsKeepsAnImageFunctionTrusted pins the container-image
+// case: such a function declares no Runtime, so the run must neither resolve a
+// runtime class for it nor drop the trust bundle. It keeps every variable the
+// pinned runtimes read, because the runner cannot know which runtime the image
+// speaks.
+func TestFunctionRunOptionsKeepsAnImageFunctionTrusted(t *testing.T) {
+	runner := &Runner{
+		profile:     &Profile{},
+		options:     Options{TLS: true, TLSHost: "app.localhost"},
+		scratch:     t.TempDir(),
+		namePrefix:  "test",
+		invokers:    map[string]*FunctionProcess{},
+		builtImages: map[string]string{},
+	}
+	state, err := newLocalTLS(filepath.Join(runner.scratch, tlsCADirName), "app.localhost")
+	if err != nil {
+		t.Fatalf("create the run CA: %v", err)
+	}
+	runner.tls = state
+	function := FunctionSpec{
+		LogicalID:  "ImageFn",
+		ImageAsset: &DockerImageAssetSpec{Directory: t.TempDir(), DockerFile: "Dockerfile"},
+	}
+	_, options, err := runner.functionRunOptions(context.Background(), function, "example/image:latest")
+	if err != nil {
+		t.Fatalf("a container-image function must start: %v", err)
+	}
+	for _, name := range tlsTrustImageFunction {
+		if options.Env[name] != tlsTrustBundlePath {
+			t.Fatalf("%s = %q, want %q", name, options.Env[name], tlsTrustBundlePath)
+		}
 	}
 }

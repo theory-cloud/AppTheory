@@ -114,19 +114,32 @@ var (
 	tlsTrustGo     = []string{"SSL_CERT_FILE", "CURL_CA_BUNDLE"}
 	tlsTrustNode   = []string{"NODE_EXTRA_CA_CERTS", "CURL_CA_BUNDLE"}
 	tlsTrustPython = []string{"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "AWS_CA_BUNDLE", "CURL_CA_BUNDLE"}
+	// tlsTrustImageFunction is the union a container-image function receives:
+	// it declares no runtime, so the runner keeps handing it every variable
+	// the pinned runtimes read, exactly as before the per-runtime split.
+	tlsTrustImageFunction = []string{
+		"AWS_CA_BUNDLE",
+		"SSL_CERT_FILE",
+		"NODE_EXTRA_CA_CERTS",
+		"REQUESTS_CA_BUNDLE",
+		"CURL_CA_BUNDLE",
+	}
 )
 
 // tlsTrustEnvironment returns the variables one image class receives. An
-// unknown class gets the Python set, which is the preflight image's class;
-// RuntimeClass refuses an unknown runtime before a container starts.
+// empty class is a container-image function, which declares no runtime: it gets
+// the union of every runtime's variables, because the runner cannot know which
+// runtime the image speaks.
 func tlsTrustEnvironment(class string) []string {
 	switch class {
 	case imageClassGo:
 		return tlsTrustGo
 	case imageClassNode:
 		return tlsTrustNode
-	default:
+	case imageClassPython:
 		return tlsTrustPython
+	default:
+		return tlsTrustImageFunction
 	}
 }
 
