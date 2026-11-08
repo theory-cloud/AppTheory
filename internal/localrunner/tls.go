@@ -198,6 +198,61 @@ func validateTLSHost(host string) error {
 	return nil
 }
 
+// initTLS creates or reuses the run's local CA and prepares the public leaf
+// when the run opted in. It also maps the public host into every function
+// container through the one add-host helper, so a handler reaches the same
+// https URL a browser uses. A run that did not opt in starts no CA, adds no
+// host entry and changes no listener.
+func (r *Runner) initTLS(spec *Spec) error {
+	if !r.options.TLS {
+		return nil
+	}
+	host := strings.ToLower(strings.TrimSpace(r.options.TLSHost))
+	if host == "" {
+		host = tlsDefaultHost
+	}
+	if err := validateTLSHost(host); err != nil {
+		return err
+	}
+	dir := filepath.Join(r.scratch, tlsCADirName)
+	persistent := r.dataDir != ""
+	if persistent {
+		dir = filepath.Join(r.dataDir, tlsCADirName)
+	}
+	state, err := newLocalTLS(dir, host, tlsOriginNames(spec)...)
+	if err != nil {
+		return err
+	}
+	r.tls = state
+	bundle, err := r.writeTLSTrustBundle()
+	if err != nil {
+		return err
+	}
+	r.tlsBundlePath = bundle
+	r.addHostEntry(host)
+	auxiliary := make([]string, 0, len(r.options.TLSAuxHosts))
+	for _, name := range r.options.TLSAuxHosts {
+		trimmed := strings.ToLower(strings.TrimSpace(name))
+		if trimmed == "" || trimmed == host {
+			continue
+		}
+		if err := validateTLSHost(trimmed); err != nil {
+			return fmt.Errorf("--tls-aux %q: %w", name, err)
+		}
+		r.addHostEntry(trimmed)
+		auxiliary = append(auxiliary, trimmed)
+	}
+	validity := "ephemeral"
+	if persistent {
+		validity = "persistent"
+	}
+	r.logf("local TLS: https://%s for every public listener; CA %s (%s); trust bundle %s", host, state.caPath, validity, bundle)
+	if len(auxiliary) > 0 {
+		r.logf("local TLS: auxiliary host names mapped into function containers: %s", strings.Join(auxiliary, ", "))
+	}
+	return nil
+}
+
 // newLocalTLS loads the CA in dir, creating it on first use, and issues the
 // public leaf. A CA that exists is reused byte for byte, so a browser or an
 // identity provider that trusted run 1 still trusts run 2. originNames are the
