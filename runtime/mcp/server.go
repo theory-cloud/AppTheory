@@ -280,18 +280,6 @@ func WithInitialSessionListenerEnabled(enabled bool) ServerOption {
 	}
 }
 
-// WithRefusalHook receives one structured, redacted event for every 400, 401,
-// 403, 404, and 405 the transport renders (POST/GET/DELETE /mcp), so a refusal
-// a real client hit is answerable from telemetry instead of being a bare status.
-// The event carries the status, a closed reason slug, the method, and the path;
-// never a credential, a session id, a request body, or a query string. A nil
-// hook emits nothing.
-func WithRefusalHook(hook refusal.Hook) ServerOption {
-	return func(s *Server) {
-		s.refusalHook = hook
-	}
-}
-
 // NewServer creates an MCP server with the given name, version, and options.
 func NewServer(name, version string, opts ...ServerOption) *Server {
 	s := &Server{
