@@ -60,8 +60,8 @@ func TestDocumentedRunStepOrderMatchesTheRunner(t *testing.T) {
 	if !strings.Contains(section, "read-only call native to the service") {
 		t.Fatalf("%s: the Start backends step must describe the readiness call", document)
 	}
-	startBackendBody := goFunctionBody(t, "runner.go", "func (r *Runner) startBackend(ctx context.Context, backend string) error {")
-	assertInOrder(t, "runner.go", startBackendBody, "backend start", []string{
+	startBackendBody := goFunctionBody(t, "backends.go", "func (r *Runner) startBackend(ctx context.Context, backend string) error {")
+	assertInOrder(t, "backends.go", startBackendBody, "backend start", []string{
 		"r.docker.PublishedPort(",
 		"r.waitForBackendReady(",
 		`r.logf("backend %s (%s) ready at %s"`,

@@ -11,7 +11,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -702,34 +701,6 @@ func (r *Runner) backendEndpoint(service string) (Endpoint, bool) {
 	return Endpoint{}, false
 }
 
-// validateCoResidence checks the co-residence options before any synthesis.
-func (r *Runner) validateCoResidence() error {
-	network := strings.TrimSpace(r.options.SharedNetwork)
-	if network != "" {
-		if strings.ContainsAny(network, " \t/") {
-			return fmt.Errorf("--shared-network %q is not a Docker network name", r.options.SharedNetwork)
-		}
-	}
-	seen := map[string]bool{}
-	for _, entry := range r.options.PeerHosts {
-		name := strings.ToLower(strings.TrimSpace(entry))
-		if name == "" {
-			continue
-		}
-		if err := validateTLSHost(name); err != nil {
-			return fmt.Errorf("--peer-host %q: %w", entry, err)
-		}
-		if seen[name] {
-			return fmt.Errorf("--peer-host %q is declared twice", entry)
-		}
-		seen[name] = true
-	}
-	if len(seen) > 0 && !r.options.TLS {
-		return errors.New("--peer-host needs --tls: a co-resident run's public name is only reachable over the verified HTTPS listener its shared CA signs")
-	}
-	return nil
-}
-
 func (r *Runner) validateEndpoints() error {
 	seen := map[string]struct{}{}
 	for _, endpoint := range r.endpoints {
@@ -1073,130 +1044,6 @@ func (r *Runner) runtimeFunctions(spec *Spec) ([]string, error) {
 	}
 	sort.Strings(out)
 	return out, nil
-}
-
-// backendProcess is a local emulator container the run owns.
-type backendProcess struct {
-	Container string
-	// Alias is the network name the profile's endpoints use, for example
-	// "dynamodb-local" or "moto".
-	Alias     string
-	Endpoints []Endpoint
-	// HostURL is the loopback base URL for the runner's own provisioning
-	// calls. It is never injected into a function container.
-	HostURL string
-}
-
-// startBackends starts every local emulator configured from the profile.
-func (r *Runner) startBackends(ctx context.Context) error {
-	for _, backend := range r.options.Backends {
-		if err := r.startBackend(ctx, backend); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// startBackend starts one emulator, resolves its network address for the
-// function containers' closed DNS and waits until its published host port
-// answers a read-only protocol call.
-//
-//nolint:gocyclo // one branch per backend shape.
-func (r *Runner) startBackend(ctx context.Context, backend string) error {
-	container := backendContainer(backend)
-	pin, err := r.profile.Container(container)
-	if err != nil {
-		return fmt.Errorf("backend %s: %w", backend, err)
-	}
-	name := r.backendsContainerName(backend)
-	// On a shared network two runs would otherwise publish the same "moto" (or
-	// "s3proxy") alias, and Docker's DNS would answer with either run's
-	// container. A run-scoped alias keeps every endpoint inside its own run.
-	alias := r.sharedAlias(container)
-	pin, dataMounts, err := r.configureBackendDataDir(backend, container, pin)
-	if err != nil {
-		return err
-	}
-	endpoints := r.profile.EndpointsForContainer(container)
-	if alias != container {
-		for index := range endpoints {
-			endpoints[index].URL = replaceURLHost(endpoints[index].URL, alias)
-		}
-	}
-	if backend == backendDynamoDB && !containsEndpointService(endpoints, backendDynamoDB) {
-		endpoints = append(endpoints, Endpoint{Service: backendDynamoDB, URL: "http://" + alias + ":8000"})
-	}
-	// Register the container before starting it, so a signal that lands
-	// while the start or the address lookup is in flight still cleans it up.
-	r.backends[backend] = backendProcess{
-		Container: name,
-		Alias:     alias,
-		Endpoints: endpoints,
-	}
-	options := ContainerOptions{
-		Name:    name,
-		Network: r.network,
-		Aliases: []string{alias},
-		Image:   pin.Image,
-		Command: pin.Command,
-		Env:     pin.Environment,
-		Mounts:  append(append([]string(nil), pin.Mounts...), dataMounts...),
-		Publish: pin.ContainerPort,
-		Labels:  r.labels(),
-		Detach:  true,
-	}
-	if _, startErr := r.docker.StartContainer(ctx, options); startErr != nil {
-		return startErr
-	}
-	address, err := r.docker.ContainerIP(ctx, name, r.network)
-	if err != nil {
-		return err
-	}
-	r.options.AddHosts = append(r.options.AddHosts, alias+":"+address)
-	// An S3 SDK picks virtual-hosted addressing for a named endpoint
-	// ("bucket.s3proxy") and path addressing for an IP endpoint. s3proxy
-	// only serves the latter, so the S3 endpoint uses the container address.
-	if container == "s3proxy" {
-		for index := range r.endpoints {
-			if r.endpoints[index].Service == "s3" {
-				r.endpoints[index].URL = fmt.Sprintf("http://%s:%d", address, pin.ContainerPort)
-			}
-		}
-	}
-	process := r.backends[backend]
-	if pin.ContainerPort > 0 {
-		hostPort, portErr := r.docker.PublishedPort(ctx, name, pin.ContainerPort)
-		if portErr != nil {
-			return portErr
-		}
-		if hostPort == 0 {
-			return fmt.Errorf("backend %s published no loopback port for container port %d", backend, pin.ContainerPort)
-		}
-		process.HostURL = fmt.Sprintf("http://127.0.0.1:%d", hostPort)
-	}
-	r.backends[backend] = process
-	// A backend with a published host port must answer a real request before
-	// the runner provisions against it or reports it ready. The container may
-	// already accept TCP connections while its HTTP server still resets the
-	// first request.
-	if process.HostURL != "" {
-		if err := r.waitForBackendReady(ctx, backend, pin.Image, process); err != nil {
-			return err
-		}
-	}
-	var urls []string
-	for _, endpoint := range endpoints {
-		urls = append(urls, endpoint.URL)
-	}
-	r.logf("backend %s (%s) ready at %s", backend, pin.Image, strings.Join(urls, ", "))
-	return nil
-}
-
-func (r *Runner) backendsContainerName(backend string) string {
-	if backend == backendDynamoDB {
-		return r.namePrefix + "-" + backendDynamoDB
-	}
-	return r.namePrefix + "-" + sanitizeName(backend)
 }
 
 // cleanupFunc removes everything the run created. It drains and stops the
@@ -1578,120 +1425,6 @@ func (r *Runner) networkGateway(ctx context.Context) (string, error) {
 	return r.docker.NetworkGateway(ctx, r.network)
 }
 
-// sharedAlias is the network name a backend publishes. A private network keeps
-// the profile's name; a shared network scopes it to this run, so two runs never
-// answer one Docker DNS name.
-func (r *Runner) sharedAlias(name string) string {
-	if !r.sharedNetwork {
-		return name
-	}
-	return sanitizeName(r.namePrefix + "-" + name)
-}
-
-// replaceURLHost rewrites a URL's host while keeping its scheme and port.
-func replaceURLHost(raw, host string) string {
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Host == "" {
-		return raw
-	}
-	if port := parsed.Port(); port != "" {
-		parsed.Host = net.JoinHostPort(host, port)
-	} else {
-		parsed.Host = host
-	}
-	return parsed.String()
-}
-
-// ensureNetwork creates the run's private network, or joins the declared shared
-// network. A shared network is created once by whichever run starts first and
-// removed only by an explicit `down`, so a second run never deletes the bridge
-// its sibling is using.
-func (r *Runner) ensureNetwork(ctx context.Context) error {
-	if !r.sharedNetwork {
-		return r.docker.CreateNetwork(ctx, r.network, r.labels())
-	}
-	exists, err := r.docker.NetworkExists(ctx, r.network)
-	if err != nil {
-		return err
-	}
-	if exists {
-		return nil
-	}
-	return r.docker.CreateNetwork(ctx, r.network, map[string]string{
-		labelSharedNetwork: "true",
-		labelManaged:       "true",
-	})
-}
-
-// runtimeHostAddress is the address a container uses to reach the host: the
-// run network's gateway when the host owns it (the Linux bridge case), or
-// Docker's host-gateway value, which Colima and Docker Desktop forward to the
-// host's loopback.
-func (r *Runner) runtimeHostAddress() string {
-	if r.runtimeAPIGateway != "" {
-		return r.runtimeAPIGateway
-	}
-	return "host-gateway"
-}
-
-// addRuntimeHostEntry adds the host.docker.internal mapping once; an entry the
-// caller supplied through --add-host wins.
-func (r *Runner) addRuntimeHostEntry() {
-	r.addHostEntry("host.docker.internal")
-}
-
-// addHostEntry maps one name to the container-facing host address once. It is
-// the one helper every listener or host mapping the containers use goes
-// through.
-func (r *Runner) addHostEntry(name string) {
-	name = strings.TrimSpace(name)
-	if name == "" || hasAddHostName(r.options.AddHosts, name) {
-		return
-	}
-	r.options.AddHosts = append(r.options.AddHosts, name+":"+r.runtimeHostAddress())
-}
-
-// runtimeAPIAddressOwner reports whether the host owns an address. Binding an
-// ephemeral port and closing it at once is the proof; an address that belongs
-// to the Docker VM (Colima, Docker Desktop) fails with EADDRNOTAVAIL.
-var runtimeAPIAddressOwner = func(gateway string) bool {
-	listener, err := net.Listen("tcp", net.JoinHostPort(gateway, "0"))
-	if err != nil {
-		return false
-	}
-	_ = listener.Close() //nolint:errcheck // the probe only proves ownership
-	return true
-}
-
-// chooseRuntimeAPIAddress decides whether the container reaches the host
-// through the run network's gateway. The host owns that address on Linux, so
-// the container's host entry can name it and the listener can bind it; on
-// Colima and Docker Desktop the address belongs to the VM, the bind fails, and
-// the container keeps Docker's host-gateway entry (forwarded to the host's
-// loopback). The probe binds an ephemeral port and closes it at once.
-func (r *Runner) chooseRuntimeAPIAddress(ctx context.Context) {
-	gateway, err := r.networkGateway(ctx)
-	if err != nil {
-		return
-	}
-	if !runtimeAPIAddressOwner(gateway) {
-		return
-	}
-	r.runtimeAPIGateway = gateway
-	r.logf("runtime API: the container host entry host.docker.internal -> %s (the run network's gateway)", gateway)
-}
-
-// rememberRuntimeAPIAddress keeps the gateway bind for later functions once a
-// container could not reach loopback.
-func (r *Runner) rememberRuntimeAPIAddress(process *FunctionProcess) {
-	if process == nil || process.api == nil {
-		return
-	}
-	if gateway := process.api.gatewayBound(); gateway != "" {
-		r.runtimeAPIGateway = gateway
-	}
-}
-
 // functionCommand is the container command: the handler for a zip function, or
 // none for a container image, which runs its own entrypoint.
 func functionCommand(function FunctionSpec) ([]string, error) {
@@ -1953,14 +1686,6 @@ func distributionHasFunctions(distribution *localcloudfront.Distribution) bool {
 		}
 	}
 	return false
-}
-
-func (r *Runner) listen(ctx context.Context, port int) (net.Listener, error) {
-	var listenConfig net.ListenConfig
-	if port > 0 {
-		return listenConfig.Listen(ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", port))
-	}
-	return listenConfig.Listen(ctx, "tcp", "127.0.0.1:0")
 }
 
 // listenPublic binds one public listener. An opted-in run also binds the run
