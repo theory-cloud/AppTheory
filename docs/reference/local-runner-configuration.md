@@ -527,7 +527,8 @@ TS_NODE_TRANSPILE_ONLY=1
 | `AWS::Lambda::Function` with `Code.ZipFile` | Materialized as `<module>.js` / `<module>.py` under `<scratch>/inline/<logicalId>/`. |
 | `AWS::ApiGatewayV2::Api` (`ProtocolType: HTTP`) + `Route` + `AWS_PROXY` `Integration` | Served as HTTP API v2. `$default` routes become a catch-all. |
 | `AWS::ApiGateway::RestApi` + `Resource` tree + `Method` + `AWS_PROXY` integration | Served as REST API v1 at the path reconstructed from the resource tree. `ResponseTransferMode: STREAM` and `/response-streaming-invocations` are marked streaming. |
-| `AWS::Lambda::Url` (`AuthType: NONE`) | Served as a Function URL listener. `InvokeMode: RESPONSE_STREAM` is marked streaming and forwarded incrementally. A URL with `AWS_IAM` is not served as a standalone URL; when a served CloudFront distribution targets it, the gateway invokes it through the signed local OAC origin instead. |
+| `AWS::Lambda::Url` (`AuthType: NONE`) | Served as a Function URL listener. `InvokeMode: RESPONSE_STREAM` is marked streaming and forwarded incrementally. |
+| `AWS::Lambda::Url` (`AuthType: AWS_IAM`) | Served as a Function URL listener with the IAM gate in front: every request must carry a verified SigV4 signature, and the resolved principal reaches `requestContext.authorizer.iam`. A CloudFront distribution that targets the URL still invokes it through the signed local OAC origin. Any other auth type is reported under `skipped`. |
 | `AWS::ApiGatewayV2::Authorizer` (`REQUEST`) | For an HTTP API route with simple responses, the transport sends a v2 REQUEST authorizer event and enforces `isAuthorized`. With `EnableSimpleResponses: false` it sends payload format 1.0 or 2.0 and matches the returned IAM policy against the route ARN. For a WebSocket `$connect` route, the transport sends the documented WebSocket authorizer event and matches the returned IAM policy against the `$connect` method ARN. A type the transport cannot run fails the route that references it closed. |
 | `AWS::ApiGateway::Authorizer` | Parsed; a `COGNITO_USER_POOLS` authorizer is run for the REST methods that reference it (R2a). A Lambda authorizer is R2b and fails closed. |
 | `AWS::Lambda::EventSourceMapping` (SQS, DynamoDB Streams, Kinesis) | Reported with its function, source, batch options, filter criteria and scaling configuration; the function is started and the mapping is delivered automatically: an SQS queue (see [SQS event-source delivery](/examples/local-runner/#sqs-event-source-delivery)), a DynamoDB stream (see [DynamoDB Streams delivery](/examples/local-runner/#dynamodb-streams-delivery)) or a Kinesis stream (see [Kinesis event-source delivery](/examples/local-runner/#kinesis-event-source-delivery)). A session can still build the provider event from real local messages or a real local write. |
@@ -1580,7 +1581,8 @@ runs on the same network with the same environment. Backend readiness above has
 already proven each published host port answers its service from the host; this
 probe proves the view from inside a function container. It must report:
 
-- credentials are the `dummy` static keys and no session token is present;
+- credentials are the access key the runner issued to the probe, no session
+  token is present, and the key is the one the runner recorded for this run;
 - every configured endpoint host resolves and answers an HTTP request (this
   includes the moto KMS/STS and s3proxy S3 endpoints when those backends are
   running);

@@ -279,10 +279,13 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
 
 ## What "locally" means
 
-- **No AWS credentials.** The runner sets static dummy keys and removes every
-  inherited `AWS_*`, `CDK_*`, proxy variable, and the `DYNAMODB_ENDPOINT`,
-  `DDB_ENDPOINT`, `TABLE_NAME` and `QUEUE_URL` aliases from the processes it
-  starts.
+- **No AWS credentials.** The runner mints its own access keys — one per
+  function container and one for the preflight probe, never an operator's — and
+  removes every inherited `AWS_*`, `CDK_*`, proxy variable, and the
+  `DYNAMODB_ENDPOINT`, `DDB_ENDPOINT`, `TABLE_NAME` and `QUEUE_URL` aliases from
+  the processes it starts. A run that serves no AWS_IAM surface still issues
+  them; a caller signs with an issued key exactly as it would with a deployed
+  role's credential.
 - **No real AWS.** Function containers get closed DNS (`127.0.0.2`) and only the
   `/etc/hosts` entries the runner adds. Every SDK endpoint is overridden to a
   local URL. A preflight probe inside the run network must prove that a real AWS
@@ -383,8 +386,8 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
    the run never prints it. An expression the runner cannot resolve fails
    closed with the function and variable named.
 8. **Preflight.** A probe container on the run's private network proves the
-   dummy credentials, every configured endpoint, the DynamoDB SDK endpoint when
-   one is configured, and closed DNS.
+   credential the runner issued it, every configured endpoint, the DynamoDB SDK
+   endpoint when one is configured, and closed DNS.
 9. **Run.** One container per function the CDK definition targets: HTTP routes,
    Function URLs, HTTP API authorizers, enabled event-source consumers, enabled
    EventBridge rule targets and Lambda log-subscription destinations. A zip
@@ -1467,9 +1470,10 @@ missing identity source is 401, an invalid response (including a missing
 `{"errorMessage":"Unauthorized"}` response is 401. The authorizer context
 reaches the integration as `requestContext.authorizer`.
 
-**Still refused.** IAM authorization (`AuthorizationType: AWS_IAM`), other
-`$context`/`$stageVariables` identity sources, and any authorizer kind the
-runner does not name above fail closed at plan time with the kind named.
+**Still refused.** Other `$context`/`$stageVariables` identity sources and any
+authorizer kind the runner does not name above fail closed at plan time with the
+kind named. IAM authorization (`AuthorizationType: AWS_IAM`) is served instead,
+by [the narrow IAM path](#the-narrow-iam-path).
 
 ## CloudFront distributions
 
@@ -3608,8 +3612,9 @@ run's own scratch directory, so a single run behaves exactly as before.
   HTTP API JWT authorizer and a REST Cognito user-pool authorizer validate the
   token against the issuer's JWKS; a REST TOKEN or REQUEST Lambda authorizer and
   an HTTP API IAM-policy Lambda authorizer run the real function and match its
-  returned policy against the method or route ARN. IAM authorization and
-  `$context`/`$stageVariables` identity sources fail closed rather than
+  returned policy against the method or route ARN. A sixth authorization type,
+  AWS_IAM, is served by the narrow IAM path rather than an authorizer resource.
+  Other `$context`/`$stageVariables` identity sources fail closed rather than
   bypassing a real authorization decision. Cognito's hosted UI/OAuth flows are
   not served, so a token must come from the pool's API (`InitiateAuth`) or a
   local test issuer.
