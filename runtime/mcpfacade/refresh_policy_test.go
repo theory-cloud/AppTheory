@@ -3,14 +3,17 @@ package mcpfacade
 import (
 	"context"
 	"encoding/json"
+	"net/url"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/theory-cloud/apptheory/v7/runtime/mcproutes"
 	"github.com/theory-cloud/apptheory/v7/runtime/oauth"
 	oauthstore "github.com/theory-cloud/apptheory/v7/runtime/oauth/store"
+	"github.com/theory-cloud/apptheory/v7/runtime/refusal"
 	"github.com/theory-cloud/apptheory/v7/testkit/oauthprovider"
 )
 
@@ -473,4 +476,40 @@ func requireFamilyActive(t *testing.T, harness *frontChannelHarness, handle stri
 	record, err := harness.stores.RouteRefreshBroker.Get(context.Background(), oauthstore.HashKey(handle))
 	require.NoError(t, err)
 	require.NotEqual(t, oauthstore.BrokerStatusRevoked, record.Status)
+}
+
+// TestFacadeRefusalsAreObservable pins the facade half of the refusal contract:
+// a 400 the front channel renders carries one structured event naming the
+// client-facing error code, and a served request carries none.
+func TestFacadeRefusalsAreObservable(t *testing.T) {
+	var events []refusal.Event
+	harness := newFrontChannelHarnessWith(t, frontChannelHarnessOptions{
+		refusalHook: func(_ context.Context, event refusal.Event) { events = append(events, event) },
+	})
+	handle := mintedRefreshHandle(t, harness)
+	unknown, err := newTestHandle()
+	require.NoError(t, err)
+
+	refused := harness.token(refreshTestForm(unknown))
+	require.Equal(t, 400, refused.Status)
+	require.Len(t, events, 1)
+	event := events[0]
+	require.Equal(t, refusal.ClassFacade, event.Class)
+	require.Equal(t, "invalid_grant", event.Reason)
+	require.Equal(t, 400, event.Status)
+	require.Equal(t, "invalid_grant", event.ErrorCode)
+	require.Equal(t, "POST", event.Method)
+	require.Equal(t, harness.path(mcproutes.EndpointPath.OAuthTokenPath), event.Path)
+
+	events = nil
+	require.Equal(t, 200, harness.token(refreshTestForm(handle)).Status)
+	require.Empty(t, events, "a served request must not report a refusal")
+
+	// The unsupported-grant class is attributed to its own code, not folded into
+	// invalid_grant.
+	form := url.Values{"grant_type": {"client_credentials"}, "client_id": {frontTestClientID}}
+	unsupported := harness.serve("POST", harness.path(mcproutes.EndpointPath.OAuthTokenPath), nil, []byte(form.Encode()))
+	require.Equal(t, 400, unsupported.Status)
+	require.Len(t, events, 1)
+	require.Equal(t, "unsupported_grant_type", events[0].Reason)
 }

@@ -100,8 +100,11 @@ func TestGET_NoLastEventID_InitialSessionListenerDisabled_Returns405(t *testing.
 }
 
 // TestGET_NoLastEventID_InitialSessionListenerDisabled_Precedence pins the
-// validation order: origin, session, and protocol failures keep their existing
-// statuses and are never turned into the 405.
+// validation order for a deployment that does not offer the common stream:
+// origin refusal (403) and an unsupported protocol version (400, which the spec
+// makes mandatory) keep their statuses, and every other plain GET is the 405
+// the MCP spec requires of a server with no SSE stream — including a GET whose
+// session is missing, unknown, or negotiated a different supported version,
 func TestGET_NoLastEventID_InitialSessionListenerDisabled_Precedence(t *testing.T) {
 	t.Parallel()
 
@@ -129,23 +132,23 @@ func TestGET_NoLastEventID_InitialSessionListenerDisabled_Precedence(t *testing.
 			body:    `{"error":"forbidden"}`,
 		},
 		{
-			name: "missing session stays 400",
+			name: "missing session is the 405 no-stream answer",
 			headers: map[string][]string{
 				"accept":               {"text/event-stream"},
 				"mcp-protocol-version": {protocolVersion},
 			},
-			status: 400,
-			body:   `{"error":"missing Mcp-Session-Id"}`,
+			status: 405,
+			body:   `{"error":"method not allowed"}`,
 		},
 		{
-			name: "unknown session stays 404",
+			name: "unknown session is the 405 no-stream answer",
 			headers: map[string][]string{
 				"accept":               {"text/event-stream"},
 				"mcp-session-id":       {"missing"},
 				"mcp-protocol-version": {protocolVersion},
 			},
-			status: 404,
-			body:   `{"error":"session not found"}`,
+			status: 405,
+			body:   `{"error":"method not allowed"}`,
 		},
 		{
 			name:    "unsupported protocol version stays 400",
@@ -154,10 +157,13 @@ func TestGET_NoLastEventID_InitialSessionListenerDisabled_Precedence(t *testing.
 			body:    `{"error":"unsupported MCP-Protocol-Version"}`,
 		},
 		{
-			name:    "protocol mismatch stays 400",
+			// A supported but mismatched version is not the invalid-or-unsupported
+			// case the spec makes 400; there is no stream to serve, so the GET is
+			// the same 405 every other plain GET gets.
+			name:    "a supported but mismatched version is the 405 no-stream answer",
 			headers: withHeader("mcp-protocol-version", protocolVersionPrior),
-			status:  400,
-			body:    `{"error":"MCP-Protocol-Version mismatch"}`,
+			status:  405,
+			body:    `{"error":"method not allowed"}`,
 		},
 	}
 

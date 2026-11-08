@@ -11,6 +11,7 @@ import (
 	"github.com/theory-cloud/apptheory/v7/runtime/mcproutes"
 	"github.com/theory-cloud/apptheory/v7/runtime/oauth"
 	oauthstore "github.com/theory-cloud/apptheory/v7/runtime/oauth/store"
+	"github.com/theory-cloud/apptheory/v7/runtime/refusal"
 )
 
 const (
@@ -238,6 +239,16 @@ type FacadeConfig struct {
 	// token, route refresh handle, ID token, cookie, or provider session id. The
 	// hook runs synchronously on the request path and a panic is recovered.
 	RouteRefreshEvents RouteRefreshEventHook
+
+	// RefusalHook optionally receives one structured, redacted event for every
+	// 400, 401, 403, 404, and 405 the facade renders on its own routes (authorize,
+	// callback, token, register, and the metadata documents), so a refusal a real
+	// client hit is answerable from telemetry instead of being a bare status. The
+	// MCP transport routes report through mcp.WithRefusalHook on the MCP handler,
+	// so one refusal is never reported twice. Events carry the status, a reason
+	// slug or the client-facing error code, the method, and the path; never a
+	// credential, a code, a handle, or a query string. A nil hook emits nothing.
+	RefusalHook refusal.Hook
 }
 
 // Route describes one endpoint-kind route family installed by the helper.
@@ -291,6 +302,7 @@ type normalizedConfig struct {
 	transportPosture        TransportPosture
 	requireBearerToken      *oauth.RequireBearerTokenOptions
 	frontChannel            *frontChannelConfig
+	refusalHook             refusal.Hook
 }
 
 type routeRegistration struct {
@@ -412,6 +424,7 @@ func normalizeConfig(config FacadeConfig) (normalizedConfig, error) {
 		return normalizedConfig{}, err
 	}
 	normalized.frontChannel = frontChannel
+	normalized.refusalHook = config.RefusalHook
 
 	if err := validatePostureSurfaceConfig(transportPosture, normalized.authorizeHandlers, normalized.registerHandlers, config.CallbackHandler, normalized.rootAuthorizationServer, normalized.frontChannel != nil); err != nil {
 		return normalizedConfig{}, err
@@ -650,10 +663,10 @@ func buildRegistrations(config normalizedConfig, inventory *RouteInventory) ([]r
 			continue
 		}
 		registrations = append(registrations,
-			routeRegistration{method: "GET", pattern: route.ProtectedResourcePattern, handler: protectedResourceHandler(config, route.Kind), posture: surfacePosture},
+			routeRegistration{method: "GET", pattern: route.ProtectedResourcePattern, handler: observeFacadeRefusal(config.refusalHook, protectedResourceHandler(config, route.Kind)), posture: surfacePosture},
 		)
 
-		discoveryHandler := authorizationServerHandler(config, route.Kind)
+		discoveryHandler := observeFacadeRefusal(config.refusalHook, authorizationServerHandler(config, route.Kind))
 		registrations = append(registrations,
 			routeRegistration{method: "GET", pattern: route.DiscoveryCanonicalPattern, handler: discoveryHandler, posture: surfacePosture},
 			routeRegistration{method: "GET", pattern: route.DiscoverySuffixPattern, handler: discoveryHandler, posture: surfacePosture},
@@ -661,24 +674,24 @@ func buildRegistrations(config normalizedConfig, inventory *RouteInventory) ([]r
 
 		if config.authorizeHandlers != nil {
 			registrations = append(registrations,
-				routeRegistration{method: "GET", pattern: route.AuthorizePattern, handler: checkedOAuthFacadeHandler(route.Kind, true, config.authorizeHandlers[route.Kind]), posture: surfacePosture},
-				routeRegistration{method: "POST", pattern: route.TokenPattern, handler: checkedOAuthFacadeHandler(route.Kind, false, config.tokenHandlers[route.Kind]), posture: surfacePosture},
+				routeRegistration{method: "GET", pattern: route.AuthorizePattern, handler: checkedOAuthFacadeHandler(route.Kind, true, config.refusalHook, config.authorizeHandlers[route.Kind]), posture: surfacePosture},
+				routeRegistration{method: "POST", pattern: route.TokenPattern, handler: checkedOAuthFacadeHandler(route.Kind, false, config.refusalHook, config.tokenHandlers[route.Kind]), posture: surfacePosture},
 			)
 		}
 		if config.frontChannel != nil {
 			registrations = append(registrations,
-				routeRegistration{method: "GET", pattern: route.AuthorizePattern, handler: checkedOAuthFacadeHandler(route.Kind, true, config.authorizeHandlerFor(route.Kind)), posture: surfacePosture},
-				routeRegistration{method: "POST", pattern: route.TokenPattern, handler: checkedOAuthFacadeHandler(route.Kind, false, config.tokenHandlerFor(route.Kind)), posture: surfacePosture},
+				routeRegistration{method: "GET", pattern: route.AuthorizePattern, handler: checkedOAuthFacadeHandler(route.Kind, true, config.refusalHook, config.authorizeHandlerFor(route.Kind)), posture: surfacePosture},
+				routeRegistration{method: "POST", pattern: route.TokenPattern, handler: checkedOAuthFacadeHandler(route.Kind, false, config.refusalHook, config.tokenHandlerFor(route.Kind)), posture: surfacePosture},
 				// The RFC 7591 registration route is part of the front channel,
 				// so it follows the same posture-derived mount: it is never
 				// reached under the none-public posture, where nothing of the
 				// OAuth surface registers.
-				routeRegistration{method: "POST", pattern: route.RegisterPattern, handler: checkedRegisterHandler(route.Kind, config.registerHandlerFor(route.Kind)), posture: surfacePosture},
+				routeRegistration{method: "POST", pattern: route.RegisterPattern, handler: checkedRegisterHandler(route.Kind, config.refusalHook, config.registerHandlerFor(route.Kind)), posture: surfacePosture},
 			)
 		}
 		if config.registerHandlers != nil {
 			registrations = append(registrations,
-				routeRegistration{method: "POST", pattern: route.RegisterPattern, handler: checkedRegisterHandler(route.Kind, config.registerHandlers[route.Kind]), posture: surfacePosture},
+				routeRegistration{method: "POST", pattern: route.RegisterPattern, handler: checkedRegisterHandler(route.Kind, config.refusalHook, config.registerHandlers[route.Kind]), posture: surfacePosture},
 			)
 		}
 	}
@@ -1104,7 +1117,8 @@ func checkedMCPHandler(kind mcproutes.EndpointKind, next apptheory.Handler) appt
 	}
 }
 
-func checkedOAuthFacadeHandler(kind mcproutes.EndpointKind, authorize bool, next apptheory.Handler) apptheory.Handler {
+func checkedOAuthFacadeHandler(kind mcproutes.EndpointKind, authorize bool, hook refusal.Hook, next apptheory.Handler) apptheory.Handler {
+	next = observeFacadeRefusal(hook, next)
 	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
 		endpoint, err := endpointFromRouteParams(ctx, kind)
 		if err != nil {
@@ -1124,7 +1138,8 @@ func checkedOAuthFacadeHandler(kind mcproutes.EndpointKind, authorize bool, next
 	}
 }
 
-func checkedRegisterHandler(kind mcproutes.EndpointKind, next apptheory.Handler) apptheory.Handler {
+func checkedRegisterHandler(kind mcproutes.EndpointKind, hook refusal.Hook, next apptheory.Handler) apptheory.Handler {
+	next = observeFacadeRefusal(hook, next)
 	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
 		endpoint, err := endpointFromRouteParams(ctx, kind)
 		if err != nil {

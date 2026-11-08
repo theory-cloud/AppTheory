@@ -15,6 +15,7 @@ import (
 
 	apptheory "github.com/theory-cloud/apptheory/v7/runtime"
 	"github.com/theory-cloud/apptheory/v7/runtime/internal/streamjoin"
+	"github.com/theory-cloud/apptheory/v7/runtime/refusal"
 )
 
 // protocolVersion is the latest session-ful MCP protocol version supported by this server.
@@ -107,6 +108,7 @@ type Server struct {
 
 	initialSessionListenerEnabled bool
 	initialSessionListenerBudget  *initialSessionListenerBudgetConfig
+	refusalHook                   refusal.Hook
 }
 
 // ServerOption configures a Server.
@@ -267,13 +269,26 @@ func WithInitialSessionListenerBudget(opts InitialSessionListenerBudgetOptions) 
 // response body, such as the buffered API Gateway HTTP API v2 adapter. MCP
 // permits a server to decline the optional common stream with
 // 405 Method Not Allowed ("Listening for Messages from the Server", MCP
-// 2025-03-26 and 2025-06-18); clients such as Codex rmcp treat that as
-// "no common stream" and continue over POST. The 405 is only returned after
-// origin, session, and protocol-version validation, and Last-Event-ID replay
-// requests keep their existing behavior.
+// 2025-06-18), and a plain GET gets exactly that 405 before the session checks —
+// the stream is absent either way, and a per-call client that probes GET first
+// treats 405 as "no common stream" while it may treat a session error as fatal.
+// Origin validation and an unsupported MCP-Protocol-Version (400) still precede
+// it, and Last-Event-ID replay requests keep their existing behavior.
 func WithInitialSessionListenerEnabled(enabled bool) ServerOption {
 	return func(s *Server) {
 		s.initialSessionListenerEnabled = enabled
+	}
+}
+
+// WithRefusalHook receives one structured, redacted event for every 400, 401,
+// 403, 404, and 405 the transport renders (POST/GET/DELETE /mcp), so a refusal
+// a real client hit is answerable from telemetry instead of being a bare status.
+// The event carries the status, a closed reason slug, the method, and the path;
+// never a credential, a session id, a request body, or a query string. A nil
+// hook emits nothing.
+func WithRefusalHook(hook refusal.Hook) ServerOption {
+	return func(s *Server) {
+		s.refusalHook = hook
 	}
 }
 
@@ -335,16 +350,24 @@ func (s *Server) Prompts() *PromptRegistry {
 //     decoupled from the connection and can be resumed with GET.
 func (s *Server) Handler() apptheory.Handler {
 	return func(c *apptheory.Context) (*apptheory.Response, error) {
-		switch strings.ToUpper(strings.TrimSpace(c.Request.Method)) {
-		case httpMethodPOST:
-			return s.handlePOST(c)
-		case httpMethodGET:
-			return s.handleGET(c)
-		case httpMethodDELETE:
-			return s.handleDELETE(c)
-		default:
-			return methodNotAllowed("DELETE, GET, POST"), nil
-		}
+		response, err := s.serve(c)
+		s.observeRefusal(c, response)
+		return response, err
+	}
+}
+
+// serve is the transport dispatch the exported handler wraps, so every refusal
+// the transport renders is observed exactly once.
+func (s *Server) serve(c *apptheory.Context) (*apptheory.Response, error) {
+	switch strings.ToUpper(strings.TrimSpace(c.Request.Method)) {
+	case httpMethodPOST:
+		return s.handlePOST(c)
+	case httpMethodGET:
+		return s.handleGET(c)
+	case httpMethodDELETE:
+		return s.handleDELETE(c)
+	default:
+		return methodNotAllowed("DELETE, GET, POST"), nil
 	}
 }
 
@@ -516,6 +539,22 @@ func (s *Server) handleGET(c *apptheory.Context) (*apptheory.Response, error) {
 	if DetectProtocolVersion(c.Request.Headers, nil) == ProtocolShape20260728 {
 		return methodNotAllowed("POST"), nil
 	}
+	// An unsupported MCP-Protocol-Version is 400 before anything else: the spec
+	// makes that response mandatory for an invalid or unsupported version.
+	if _, resp := requestProtocolVersion(c.Request.Headers, nil); resp != nil {
+		return resp, nil
+	}
+	// A server that does not offer an SSE stream must answer every plain GET with
+	// 405 ("Listening for Messages from the Server", MCP 2025-06-18: the server
+	// MUST either return text/event-stream or 405). This is decided before the
+	// session checks on purpose: a buffered deployment that cannot stream would
+	// otherwise answer a pre-session GET with 400, which a per-call client that
+	// probes GET first reads as a client error, and the stream is absent either
+	// way. Last-Event-ID replay keeps its own path below.
+	lastEventID := firstHeader(c.Request.Headers, headerLastEventID)
+	if !s.initialSessionListenerEnabled && lastEventID == "" {
+		return methodNotAllowed("DELETE, GET, POST"), nil
+	}
 	if resp := validateGETHeaders(c.Request.Headers); resp != nil {
 		return resp, nil
 	}
@@ -528,13 +567,7 @@ func (s *Server) handleGET(c *apptheory.Context) (*apptheory.Response, error) {
 		return pvResp, nil
 	}
 
-	lastEventID := firstHeader(c.Request.Headers, headerLastEventID)
 	if lastEventID == "" {
-		// A server may decline the optional common stream with 405 Method Not
-		// Allowed; GET stays allowed for Last-Event-ID replay.
-		if !s.initialSessionListenerEnabled {
-			return methodNotAllowed("DELETE, GET, POST"), nil
-		}
 		// No resumable stream requested. Keep the connection open as a session-level
 		// SSE listener (clients will reconnect in a tight loop if we return EOF).
 		return s.openSessionListener(ctx, sessionID, c.RemainingMS)
