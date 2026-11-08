@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -221,7 +222,7 @@ func TestInitTLSAddsTheHostEntryAndTrustBundle(t *testing.T) {
 		options: Options{TLS: true, TLSHost: "app.localhost", TLSAuxHosts: []string{"idp.localhost"}},
 		scratch: t.TempDir(),
 	}
-	if err := runner.initTLS(); err != nil {
+	if err := runner.initTLS(nil); err != nil {
 		t.Fatalf("initTLS: %v", err)
 	}
 	if runner.tls == nil {
@@ -252,7 +253,7 @@ func TestInitTLSPersistsUnderDataDir(t *testing.T) {
 		scratch: t.TempDir(),
 		dataDir: dataDir,
 	}
-	if err := first.initTLS(); err != nil {
+	if err := first.initTLS(nil); err != nil {
 		t.Fatalf("initTLS: %v", err)
 	}
 	second := &Runner{
@@ -260,7 +261,7 @@ func TestInitTLSPersistsUnderDataDir(t *testing.T) {
 		scratch: t.TempDir(),
 		dataDir: dataDir,
 	}
-	if err := second.initTLS(); err != nil {
+	if err := second.initTLS(nil); err != nil {
 		t.Fatalf("initTLS: %v", err)
 	}
 	if string(first.tls.caPEM) != string(second.tls.caPEM) {
@@ -273,7 +274,7 @@ func TestInitTLSPersistsUnderDataDir(t *testing.T) {
 
 func TestInitTLSIsOffByDefault(t *testing.T) {
 	runner := &Runner{options: Options{}, scratch: t.TempDir()}
-	if err := runner.initTLS(); err != nil {
+	if err := runner.initTLS(nil); err != nil {
 		t.Fatalf("initTLS: %v", err)
 	}
 	if runner.tls != nil || len(runner.options.AddHosts) != 0 {
@@ -286,7 +287,7 @@ func TestInitTLSRefusesABadAuxName(t *testing.T) {
 		options: Options{TLS: true, TLSHost: "app.localhost", TLSAuxHosts: []string{"example.com"}},
 		scratch: t.TempDir(),
 	}
-	if err := runner.initTLS(); err == nil {
+	if err := runner.initTLS(nil); err == nil {
 		t.Fatal("an auxiliary name outside *.localhost must be refused")
 	}
 }
@@ -392,16 +393,85 @@ func TestStartPublicListenerServesHTTPS(t *testing.T) {
 
 func TestSecurityEnvironmentCarriesTheTLSTrust(t *testing.T) {
 	plain := &Runner{profile: &Profile{}}
-	for _, name := range tlsTrustEnvironment {
-		if _, ok := plain.securityEnvironment()[name]; ok {
-			t.Fatalf("a plain run set %s", name)
+	for _, class := range []string{imageClassGo, imageClassNode, imageClassPython} {
+		for _, name := range tlsTrustEnvironment(class) {
+			if _, ok := plain.securityEnvironment(class)[name]; ok {
+				t.Fatalf("a plain run set %s for the %s runtime", name, class)
+			}
 		}
 	}
 	secure := &Runner{tls: &localTLS{host: "app.localhost"}}
-	env := secure.securityEnvironment()
-	for _, name := range tlsTrustEnvironment {
-		if env[name] != tlsTrustBundlePath {
-			t.Fatalf("%s = %q, want %q", name, env[name], tlsTrustBundlePath)
+	for _, class := range []string{imageClassGo, imageClassNode, imageClassPython} {
+		env := secure.securityEnvironment(class)
+		for _, name := range tlsTrustEnvironment(class) {
+			if env[name] != tlsTrustBundlePath {
+				t.Fatalf("%s (%s) = %q, want %q", name, class, env[name], tlsTrustBundlePath)
+			}
+		}
+	}
+}
+
+// TestTLSTrustEnvironmentIsPerRuntime pins which runtime reads which trust
+// anchor. A Go container must never receive AWS_CA_BUNDLE: the AWS SDK for Go v2
+// refuses to load a config that carries the bundle together with a
+// caller-supplied *http.Client, which is the shape every table mapper uses.
+func TestTLSTrustEnvironmentIsPerRuntime(t *testing.T) {
+	want := map[string][]string{
+		imageClassGo:     {"SSL_CERT_FILE", "CURL_CA_BUNDLE"},
+		imageClassNode:   {"NODE_EXTRA_CA_CERTS", "CURL_CA_BUNDLE"},
+		imageClassPython: {"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "AWS_CA_BUNDLE", "CURL_CA_BUNDLE"},
+	}
+	for class, names := range want {
+		got := tlsTrustEnvironment(class)
+		if strings.Join(got, ",") != strings.Join(names, ",") {
+			t.Fatalf("%s trust environment = %v, want %v", class, got, names)
+		}
+	}
+	for _, name := range tlsTrustEnvironment(imageClassGo) {
+		if name == "AWS_CA_BUNDLE" {
+			t.Fatal("the Go runtime must not receive AWS_CA_BUNDLE")
+		}
+	}
+	if strings.Join(tlsTrustEnvironment(""), ",") != strings.Join(tlsTrustImageFunction, ",") {
+		t.Fatal("a container-image function must get the union of every runtime's variables")
+	}
+	if !slices.Contains(tlsTrustEnvironment(""), "AWS_CA_BUNDLE") {
+		t.Fatal("a container-image function has no runtime to special-case")
+	}
+}
+
+// TestFunctionEnvironmentSelectsTheRuntimeTrust proves the class a function's
+// template declares decides its trust variables, not the run alone.
+func TestFunctionEnvironmentSelectsTheRuntimeTrust(t *testing.T) {
+	runner := &Runner{
+		profile:   &Profile{},
+		tls:       &localTLS{host: "app.localhost"},
+		endpoints: []Endpoint{{Service: backendDynamoDB, URL: "http://dynamodb-local:8000"}},
+	}
+	cases := map[string]struct {
+		runtime string
+		want    []string
+		absent  []string
+	}{
+		"go":     {runtime: "provided.al2023", want: tlsTrustGo, absent: []string{"AWS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS"}},
+		"node":   {runtime: "nodejs24.x", want: tlsTrustNode, absent: []string{"AWS_CA_BUNDLE", "SSL_CERT_FILE"}},
+		"python": {runtime: "python3.14", want: tlsTrustPython, absent: []string{"NODE_EXTRA_CA_CERTS"}},
+	}
+	for name, testCase := range cases {
+		class, err := RuntimeClass(testCase.runtime)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		env, _ := runner.functionEnvironment(FunctionSpec{LogicalID: "Fn", Runtime: testCase.runtime}, nil, class)
+		for _, variable := range testCase.want {
+			if env[variable] != tlsTrustBundlePath {
+				t.Fatalf("%s: %s = %q, want %q", name, variable, env[variable], tlsTrustBundlePath)
+			}
+		}
+		for _, variable := range testCase.absent {
+			if _, ok := env[variable]; ok {
+				t.Fatalf("%s: %s must not be set", name, variable)
+			}
 		}
 	}
 }
@@ -674,5 +744,39 @@ func TestTLSEdgeFailures(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) }) //nolint:errcheck,gosec // test cleanup restores the directory mode
 	if _, err := lockTLSDirectory(locked); err == nil {
 		t.Fatal("a lock file that cannot be created must fail")
+	}
+}
+
+// TestFunctionRunOptionsKeepsAnImageFunctionTrusted pins the container-image
+// case: such a function declares no Runtime, so the run must neither resolve a
+// runtime class for it nor drop the trust bundle. It keeps every variable the
+// pinned runtimes read, because the runner cannot know which runtime the image
+// speaks.
+func TestFunctionRunOptionsKeepsAnImageFunctionTrusted(t *testing.T) {
+	runner := &Runner{
+		profile:     &Profile{},
+		options:     Options{TLS: true, TLSHost: "app.localhost"},
+		scratch:     t.TempDir(),
+		namePrefix:  "test",
+		invokers:    map[string]*FunctionProcess{},
+		builtImages: map[string]string{},
+	}
+	state, err := newLocalTLS(filepath.Join(runner.scratch, tlsCADirName), "app.localhost")
+	if err != nil {
+		t.Fatalf("create the run CA: %v", err)
+	}
+	runner.tls = state
+	function := FunctionSpec{
+		LogicalID:  "ImageFn",
+		ImageAsset: &DockerImageAssetSpec{Directory: t.TempDir(), DockerFile: "Dockerfile"},
+	}
+	_, options, err := runner.functionRunOptions(context.Background(), function, "example/image:latest")
+	if err != nil {
+		t.Fatalf("a container-image function must start: %v", err)
+	}
+	for _, name := range tlsTrustImageFunction {
+		if options.Env[name] != tlsTrustBundlePath {
+			t.Fatalf("%s = %q, want %q", name, options.Env[name], tlsTrustBundlePath)
+		}
 	}
 }

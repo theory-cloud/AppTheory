@@ -767,6 +767,42 @@
       "class": "L2",
       "gap": "The auxiliary identity provider is a local test service signed by the runner CA, not a third-party identity provider (docs/125 decision D3).",
       "description": "Auxiliary-service certificate: `tls leaf` issues a certificate from the run CA for idp.localhost, and a host client and a Python container fetch the service's discovery and JWKS over verified TLS."
+    },
+    "examples/cdk/local-tls/scripts/awssdk-go.sh": {
+      "run": "local-tls-awssdk-go",
+      "class": "L2",
+      "gap": "The Go container verifies the runner's local CA, not a public certificate, and the @connections endpoint is the runner's own TLS listener; no public CA or edge TLS policy is involved.",
+      "description": "AWS SDK in a Go container: a caller-supplied *http.Client loads the aws-sdk-go-v2 config, lists DynamoDB Local tables, gets 410 GONE from the runner's TLS @connections endpoint, and the same invocation fetches the app's discovery document and JWKS over verified https."
+    },
+    "examples/cdk/local-tls/scripts/awssdk-node.sh": {
+      "run": "local-tls-awssdk-node",
+      "class": "L2",
+      "gap": "The Node container verifies the runner's local CA through NODE_EXTRA_CA_CERTS, not a public certificate; no public CA or edge TLS policy is involved.",
+      "description": "AWS SDK in a Node container: the SDK for JavaScript v3 the nodejs24.x image ships lists DynamoDB Local tables and gets 410 GONE from the runner's TLS @connections endpoint, and the same invocation fetches the app's discovery document and JWKS over verified https."
+    },
+    "examples/cdk/local-tls/scripts/awssdk-py.sh": {
+      "run": "local-tls-awssdk-py",
+      "class": "L2",
+      "gap": "The Python container verifies the runner's local CA through AWS_CA_BUNDLE and SSL_CERT_FILE, not a public certificate; no public CA or edge TLS policy is involved.",
+      "description": "AWS SDK in a Python container: boto3 lists DynamoDB Local tables and gets 410 GONE from the runner's TLS @connections endpoint, and the same invocation fetches the app's discovery document and JWKS over verified https."
+    },
+    "examples/cdk/local-tls/scripts/cloudfront-origin.sh": {
+      "run": "local-tls-cloudfront-origin",
+      "class": "L2",
+      "gap": "The origin certificate chains to the runner's CA and names the app's declared local origin domain, not a public origin certificate; the local edge is not the CloudFront network (docs/125 real network properties).",
+      "description": "CloudFront in front of the run's own API over TLS: the distribution declares an https-only custom origin, verifies the run CA against its declared origin domain, forwards the origin Host header, and returns the API's GET /.well-known/oauth-authorization-server and a form POST /auth/token unchanged."
+    },
+    "examples/cdk/local-tls/scripts/cloudfront-redirect.sh": {
+      "run": "local-tls-cloudfront-redirect",
+      "class": "L2",
+      "gap": "The identity provider the app redirects to is a local test service signed by the runner CA, not a third-party provider; the local edge is not the CloudFront network (docs/125 real network properties).",
+      "description": "CloudFront returns an origin redirect to the viewer: a form POST the auth-api answers with 303 See Other reaches the viewer with the exact Location at the auxiliary idp.localhost certificate and both Set-Cookie values, the hop never follows it, and headless Chromium then follows it to the IdP over TLS verified against the run CA."
+    },
+    "examples/cdk/local-tls/scripts/cloudfront-http-only-error.sh": {
+      "run": "local-tls-cloudfront-http-only-error",
+      "class": "L2",
+      "gap": "The refusal is a local runner check on a mapping the runner owns; a deployed distribution never maps an origin to the runner.",
+      "description": "A plain http origin mapping to the run's TLS-only API listener is refused before the distribution starts, naming OriginProtocolPolicy HTTPS_ONLY and the https mapping to use instead of surfacing the TLS listener's bare 400."
     }
   },
   "suites": {

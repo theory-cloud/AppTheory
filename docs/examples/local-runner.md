@@ -612,23 +612,117 @@ browser row uses the SPKI pin so the row proves the run's own certificate.
 ### Inside the function containers
 
 Every function container mounts the run CA at
-`/etc/apptheory-local/ca.pem` and receives the variables each runtime reads:
+`/etc/apptheory-local/ca.pem`. The runner exports only the variables the
+container's runtime actually reads, because one of them is not interchangeable:
 
-| Variable | Runtime |
-| --- | --- |
-| `SSL_CERT_FILE` | Go (`crypto/x509`) and Python (`ssl`) |
-| `NODE_EXTRA_CA_CERTS` | Node |
-| `REQUESTS_CA_BUNDLE` | Python `requests` |
-| `CURL_CA_BUNDLE` | curl subprocesses |
-| `AWS_CA_BUNDLE` | AWS SDKs |
+| Runtime | Variables | How the runtime reads them |
+| --- | --- | --- |
+| Go (`provided.al2023`) | `SSL_CERT_FILE`, `CURL_CA_BUNDLE` | `crypto/x509` loads `SSL_CERT_FILE` into the system pool, which is the pool a default transport — and therefore a handler's own `&http.Client{}` — verifies against ([`x509.SystemCertPool`](https://pkg.go.dev/crypto/x509#SystemCertPool)). |
+| Node (`nodejs24.x`) | `NODE_EXTRA_CA_CERTS`, `CURL_CA_BUNDLE` | Node adds `NODE_EXTRA_CA_CERTS` to its default trust store at startup ([Node CLI](https://nodejs.org/api/cli.html#node_extra_ca_certsfile)); the AWS SDK for JavaScript v3 uses Node's TLS stack and reads no CA-bundle variable of its own. |
+| Python (`python3.14`) | `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `AWS_CA_BUNDLE`, `CURL_CA_BUNDLE` | OpenSSL's default verify paths read `SSL_CERT_FILE` ([`ssl.create_default_context`](https://docs.python.org/3/library/ssl.html#ssl.create_default_context)), `requests` reads `REQUESTS_CA_BUNDLE`, and boto3/botocore read `AWS_CA_BUNDLE` and apply it through their own session ([custom trust store](https://docs.aws.amazon.com/sdkref/latest/guide/feature-custom-trust-store.html)). |
 
-They point at the same mounted file, so a handler's own HTTPS client verifies
-the app's URL without the handler knowing where the CA is. The runner maps the
-public name into the container with the one add-host helper; on Linux, where the
-host owns the run network's gateway, the public listener also binds that
+A **container-image function** declares no runtime — it brings its own — so it
+receives the union of those sets. The runner cannot know which runtime the image
+speaks, and handing every variable to an image that ignores some of them is the
+only fail-safe choice.
+
+**A Go container never receives `AWS_CA_BUNDLE`.** The AWS SDK for Go v2 reads
+that variable during config loading and can only apply it through its own
+`*awshttp.BuildableClient`. A handler that supplies its own `*http.Client` — the
+shape a table mapper such as TableTheory or DynamORM uses — fails before any
+call:
+
+```
+unable to add custom RootCAs HTTPClient, has no WithTransportOptions, *http.Client
+```
+
+That is `resolveCustomCABundle` in the SDK
+([`config/resolve.go`](https://github.com/aws/aws-sdk-go-v2/blob/config/v1.33.13/config/resolve.go)).
+Go does not need the variable: `SSL_CERT_FILE` is the mechanism Go reads, and the
+same file is already the bundle every other variable points at. A Go handler
+that builds an SDK client with its own `*http.Client` therefore initializes and
+verifies the app's https URL with no code of its own.
+
+`CURL_CA_BUNDLE` is in every set because curl is a subprocess a handler can
+start on any runtime
+([curl `--cacert`](https://curl.se/docs/manpage.html#--cacert)). The runner maps
+the public name into the container with the one add-host helper; on Linux, where
+the host owns the run network's gateway, the public listener also binds that
 gateway, so the container reaches the same `https://app.localhost:<port>` URL a
 browser uses. The TLS example's Go, Node and Python callers are the proving
-rows.
+rows, and each of them makes an AWS SDK call in the same invocation.
+
+### CloudFront in front of the run's own API
+
+A distribution in front of the app's own API origin is the second composition
+the listener rows do not cover on their own. Deployed CloudFront reaches a
+custom origin with the protocol its `OriginProtocolPolicy` declares, and with
+`https-only` — the policy an API Gateway origin uses, since API Gateway serves
+HTTPS only — **one of the domain names in the certificate must match the origin
+domain name**; otherwise CloudFront answers the viewer with 502
+([origin settings](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/DownloadDistValuesOrigin.html#DownloadDistValuesOriginProtocolPolicy)).
+The local runner reproduces that rule.
+
+Declare the origin in the app's local CDK branch as a `*.localhost` name and
+declare it https-only:
+
+```ts
+const apiOrigin = new origins.HttpOrigin("auth-api.localhost", {
+  protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+});
+new cloudfront.Distribution(this, "HostedAuth", {
+  defaultBehavior: { origin: apiOrigin, cachePolicy: noCache, allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL },
+  additionalBehaviors: {
+    "/.well-known/*": { origin: apiOrigin, cachePolicy: noCache, allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL },
+    "/auth/*": { origin: apiOrigin, cachePolicy: noCache, allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL },
+  },
+});
+```
+
+Map that domain to the run's own listener. The run's port is the one its
+`serving … at https://app.localhost:<port>` line reports:
+
+```bash
+apptheory-local run --tls --app ./cdk \
+  --origin auth-api.localhost=https://app.localhost:<port>
+```
+
+The origin hop then does exactly what the deployed edge does:
+
+- it dials the mapped address, presents the declared origin domain as the TLS
+  SNI name, and verifies the chain against the run CA (on top of the system
+  roots), so the name it verifies is the one the certificate carries;
+- it forwards `Host: auth-api.localhost` — the declared origin domain — unless
+  the behavior's cache policy forwards the viewer host, in which case the
+  viewer's host travels and the certificate must name it instead;
+- it returns an origin `3xx` to the viewer instead of following it, over TLS and
+  over plain `http`: CloudFront "caches the redirect and returns it to the
+  viewer. CloudFront does not follow the redirect", so a form POST the API
+  answers with `303 See Other` reaches the viewer with the origin's status, its
+  `Location` and its other headers (every `Set-Cookie` included), and the
+  browser makes the next request
+  ([redirects](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/RequestAndResponseBehaviorCustomOrigin.html));
+- the run certificate names every declared custom-origin domain that is a
+  `*.localhost` name, so `auth-api.localhost` verifies even though the listener
+  is `app.localhost`. A declared origin domain outside that namespace (a real
+  host name the local branch kept) is verified against the mapped host instead,
+  which is the only name a local certificate can carry.
+
+A plain `http://` mapping to a listener the run serves over TLS is refused
+before the distribution starts, naming the declared policy and the mapping to
+use, instead of leaving Go's bare `400 Client sent an HTTP request to an HTTPS
+server` for the first viewer. If such a request reaches an https listener
+anyway, the origin error names the same fix. Existing `http://` mappings to
+non-TLS local services keep working exactly as before.
+
+Declare `HTTPS_ONLY` and map `https://`: that is the pair a deployed
+distribution in front of an API Gateway endpoint uses, and the pair the runner
+verifies. A `HTTP_ONLY` declaration mapped over `http://` to the run's own
+listener is refused before the distribution starts — the case that used to
+answer a bare `400 Client sent an HTTP request to an HTTPS server` — with the
+`HTTPS_ONLY` recovery named. Mapping that declaration over `https://` connects,
+because the mapping names the scheme the local hop uses, but it no longer
+describes what would deploy.
 
 ### Auxiliary services
 
@@ -662,6 +756,22 @@ bound to host loopback only is reachable from the host, not from the container.
   protocol enforcement. Edge TLS certificates are a docs/125 "Real network
   properties" limit; the opt-in secures the listener in front of you, not an
   imagined edge.
+- **Origin names are local names.** The run certificate carries the run host,
+  the loopback addresses and every declared custom-origin domain that is a
+  `localhost` or `*.localhost` name. A distribution that declares a real origin
+  domain and maps it locally verifies the mapped host instead; a watch reload
+  that adds a new declared origin name keeps the leaf it started with, so
+  restart the run to pick it up.
+- **One trust set per runtime.** A Go container deliberately gets no
+  `AWS_CA_BUNDLE`, because the AWS SDK for Go v2 cannot apply that bundle to a
+  caller-supplied client. A Go handler that sets `AWS_CA_BUNDLE` itself, or a
+  custom client with its own `RootCAs`, is trusting on its own terms; use
+  `SSL_CERT_FILE` or add the run CA to that pool.
+- **`@connections` keeps its own certificate in a non-TLS run.** A run without
+  `--tls` that serves a WebSocket API still exports `AWS_CA_BUNDLE`,
+  `NODE_EXTRA_CA_CERTS` and `SSL_CERT_FILE` for the management endpoint's
+  self-signed certificate. That is the pre-existing behaviour and is unchanged
+  here; opting in to TLS replaces it with the per-runtime set above.
 - **`*.localhost` resolution is the host's.** The specification says such a name
   is potentially trustworthy and RFC 6761 says resolvers should map it to
   loopback, but a host whose resolver does not do so needs an entry (the browser
@@ -1599,7 +1709,11 @@ same assembly:
   and Host. Other methods go to the primary only. If both members fail, the
   secondary's response is returned.
 - **Other origins.** A literal external custom origin is refused with a named
-  503; the gateway never makes an external network request.
+  503; the gateway never makes an external network request. A mapped origin
+  reached over `https://` is verified against the run CA (plus the system roots)
+  and against the origin's declared domain when that domain is a local name; see
+  [CloudFront in front of the run's own
+  API](#cloudfront-in-front-of-the-runs-own-api).
 
 The `ssr-site`, `ssr-only-provided-assets-site`, `path-routed-frontend` and
 `media-cdn` example rows run through these origins in the harness; the private

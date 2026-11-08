@@ -237,6 +237,10 @@ type Runner struct {
 	// in. tlsBundlePath is the host-side trust bundle the session reports.
 	tls           *localTLS
 	tlsBundlePath string
+	// publicPorts is every port this run serves a public listener on, so an
+	// origin mapping that speaks plain http to one of them fails at start with
+	// the fix instead of a 400 on the first request.
+	publicPorts map[int]bool
 }
 
 // NewRunner validates the options and prepares the run. It contacts no Docker
@@ -736,7 +740,7 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 	}
 	r.logf("network %s", r.network)
 	r.chooseRuntimeAPIAddress(ctx)
-	if err = r.initTLS(); err != nil {
+	if err = r.initTLS(spec); err != nil {
 		return nil, err
 	}
 	if err = r.startBackends(ctx); err != nil {
@@ -805,61 +809,6 @@ func (r *Runner) CurrentSpec() *Spec {
 	r.specMu.RLock()
 	defer r.specMu.RUnlock()
 	return r.spec
-}
-
-// initTLS creates or reuses the run's local CA and prepares the public leaf
-// when the run opted in. It also maps the public host into every function
-// container through the one add-host helper, so a handler reaches the same
-// https URL a browser uses. A run that did not opt in starts no CA, adds no
-// host entry and changes no listener.
-func (r *Runner) initTLS() error {
-	if !r.options.TLS {
-		return nil
-	}
-	host := strings.ToLower(strings.TrimSpace(r.options.TLSHost))
-	if host == "" {
-		host = tlsDefaultHost
-	}
-	if err := validateTLSHost(host); err != nil {
-		return err
-	}
-	dir := filepath.Join(r.scratch, tlsCADirName)
-	persistent := r.dataDir != ""
-	if persistent {
-		dir = filepath.Join(r.dataDir, tlsCADirName)
-	}
-	state, err := newLocalTLS(dir, host)
-	if err != nil {
-		return err
-	}
-	r.tls = state
-	bundle, err := r.writeTLSTrustBundle()
-	if err != nil {
-		return err
-	}
-	r.tlsBundlePath = bundle
-	r.addHostEntry(host)
-	auxiliary := make([]string, 0, len(r.options.TLSAuxHosts))
-	for _, name := range r.options.TLSAuxHosts {
-		trimmed := strings.ToLower(strings.TrimSpace(name))
-		if trimmed == "" || trimmed == host {
-			continue
-		}
-		if err := validateTLSHost(trimmed); err != nil {
-			return fmt.Errorf("--tls-aux %q: %w", name, err)
-		}
-		r.addHostEntry(trimmed)
-		auxiliary = append(auxiliary, trimmed)
-	}
-	validity := "ephemeral"
-	if persistent {
-		validity = "persistent"
-	}
-	r.logf("local TLS: https://%s for every public listener; CA %s (%s); trust bundle %s", host, state.caPath, validity, bundle)
-	if len(auxiliary) > 0 {
-		r.logf("local TLS: auxiliary host names mapped into function containers: %s", strings.Join(auxiliary, ", "))
-	}
-	return nil
 }
 
 // startWebSocketManagement starts the @connections management API when the
@@ -1811,6 +1760,10 @@ func (r *Runner) startPublicListener(ctx context.Context, index int, server *htt
 	if err != nil {
 		return 0, err
 	}
+	if r.publicPorts == nil {
+		r.publicPorts = map[int]bool{}
+	}
+	r.publicPorts[port] = true
 	tlsConfig := r.serverTLSConfig()
 	if tlsConfig != nil {
 		server.TLSConfig = tlsConfig

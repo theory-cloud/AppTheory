@@ -26,6 +26,18 @@ func (r *Runner) functionRunOptions(ctx context.Context, function FunctionSpec, 
 			return nil, ContainerOptions{}, fmt.Errorf("function %s: %w", function.LogicalID, err)
 		}
 	}
+	// A container-image function declares no runtime: it brings its own. The
+	// class stays empty, and the trust environment falls back to the union of
+	// every runtime's variables because the runner cannot know which one the
+	// image speaks.
+	class := ""
+	if function.ImageAsset == nil {
+		resolved, resolveErr := RuntimeClass(function.Runtime)
+		if resolveErr != nil {
+			return nil, ContainerOptions{}, resolveErr
+		}
+		class = resolved
+	}
 	command, err := functionCommand(function)
 	if err != nil {
 		return nil, ContainerOptions{}, err
@@ -41,7 +53,7 @@ func (r *Runner) functionRunOptions(ctx context.Context, function FunctionSpec, 
 			api.bindGateway(r.runtimeAPIGateway)
 		}
 	}
-	env, overridden := r.functionEnvironment(function, api)
+	env, overridden := r.functionEnvironment(function, api, class)
 	if r.options.RIEMode {
 		// The emulator reads its timeout from AWS_LAMBDA_FUNCTION_TIMEOUT; the
 		// base image's entry script does not set it.

@@ -55,7 +55,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 try:  # The field-level encryption row decrypts with the real AWS Encryption SDK.
     import aws_encryption_sdk
@@ -7950,11 +7950,52 @@ def _tls_leaf_spki(url: str, context: ssl.SSLContext) -> str:
     return base64.b64encode(hashlib.sha256(spki).digest()).decode("ascii")
 
 
+def _issue_aux_leaf(harness: Harness, data_dir: str, name: str, out_dir: str) -> tuple[str, str]:
+    """Issue one auxiliary-service leaf from the run CA and return its paths."""
+    leaf = harness.run(
+        [
+            str(LOCAL_RUNNER_BIN),
+            "tls",
+            "leaf",
+            "--data-dir",
+            data_dir,
+            "--name",
+            name,
+            "--out",
+            out_dir,
+        ],
+        timeout=120,
+    )
+    cert_path = ""
+    key_path = ""
+    for line in leaf.stdout.splitlines():
+        if line.startswith("cert:"):
+            cert_path = line.split(":", 1)[1].strip()
+        elif line.startswith("key:"):
+            key_path = line.split(":", 1)[1].strip()
+    if not cert_path or not key_path:
+        raise HarnessFailure(f"tls leaf printed no paths: {leaf.stdout!r}")
+    return cert_path, key_path
+
+
+class _TLSIdPServer(http.server.ThreadingHTTPServer):
+    """The test IdP's server; authorize_hits counts its /authorize requests."""
+
+    authorize_hits = 0
+
+    def handle_error(self, request, client_address) -> None:
+        # A client that closes a kept-alive TLS connection leaves the handler
+        # reading a reset connection; that is not a row failure.
+        if not isinstance(sys.exc_info()[1], ConnectionResetError):
+            super().handle_error(request, client_address)
+
+
 def _start_tls_idp(cert_path: str, key_path: str) -> tuple[http.server.ThreadingHTTPServer, int]:
     """Start a minimal OIDC identity provider on https://idp.localhost:<port>.
 
-    It serves the two documents the callers fetch; the certificate is the
-    auxiliary leaf the `tls leaf` command issued from the run's CA.
+    It serves the two documents the callers fetch and the authorize page the
+    redirect row lands on; the certificate is the auxiliary leaf the
+    `tls leaf` command issued from the run's CA.
     """
 
     class Handler(http.server.BaseHTTPRequestHandler):
@@ -7975,6 +8016,19 @@ def _start_tls_idp(cert_path: str, key_path: str) -> tuple[http.server.Threading
                         }
                     ]
                 }
+            elif self.path.startswith("/authorize"):
+                self.server.authorize_hits += 1
+                page = (
+                    "<!doctype html><html><head><meta charset=\"utf-8\"><title>Local test IdP</title>"
+                    "</head><body><h1>Local test IdP</h1>"
+                    "<p id=\"authorize\">the browser followed the app's 303</p></body></html>"
+                ).encode("utf-8")
+                self.send_response(200)
+                self.send_header("content-type", "text/html; charset=utf-8")
+                self.send_header("content-length", str(len(page)))
+                self.end_headers()
+                self.wfile.write(page)
+                return
             else:
                 self.send_error(404)
                 return
@@ -7988,7 +8042,7 @@ def _start_tls_idp(cert_path: str, key_path: str) -> tuple[http.server.Threading
         def log_message(self, *_args) -> None:
             pass
 
-    server = http.server.ThreadingHTTPServer(("0.0.0.0", 0), Handler)
+    server = _TLSIdPServer(("0.0.0.0", 0), Handler)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(cert_path, key_path)
@@ -8208,29 +8262,9 @@ def run_local_tls_aux_cert(harness: Harness) -> str:
     data_dir = _data_dir(harness, "tls-aux")
     server = None
     try:
-        leaf = harness.run(
-            [
-                str(LOCAL_RUNNER_BIN),
-                "tls",
-                "leaf",
-                "--data-dir",
-                data_dir,
-                "--name",
-                "idp.localhost",
-                "--out",
-                str(Path(data_dir) / "aux-idp"),
-            ],
-            timeout=120,
+        cert_path, key_path = _issue_aux_leaf(
+            harness, data_dir, "idp.localhost", str(Path(data_dir) / "aux-idp")
         )
-        cert_path = ""
-        key_path = ""
-        for line in leaf.stdout.splitlines():
-            if line.startswith("cert:"):
-                cert_path = line.split(":", 1)[1].strip()
-            elif line.startswith("key:"):
-                key_path = line.split(":", 1)[1].strip()
-        if not cert_path or not key_path:
-            raise HarnessFailure(f"tls leaf printed no paths: {leaf.stdout!r}")
         server, port = _start_tls_idp(cert_path, key_path)
         base = f"https://idp.localhost:{port}"
         session = start_local_session(
@@ -8263,6 +8297,374 @@ def run_local_tls_aux_cert(harness: Harness) -> str:
             server.shutdown()
             server.server_close()
         _remove_data_dir(data_dir)
+
+
+# The two compositions a real application uses that the LOCAL-W2-TLS rows did
+# not cover: an AWS SDK that carries its own HTTP client, and CloudFront in
+# front of the run's own API listener.
+
+_LOCAL_TLS_HOSTED_AUTH_ORIGIN = "auth-api.localhost"
+
+
+def _tls_http_api(plan: dict) -> dict:
+    """The HTTP API v2 the hosted-auth distribution fronts."""
+    for api in plan.get("apis") or []:
+        if api.get("class") == "httpv2" and (api.get("routes") or []):
+            return api
+    raise HarnessFailure("the local-tls plan serves no HTTP API v2")
+
+
+def _tls_listener_port(harness: Harness, plan: dict, logical_id: str) -> int:
+    """The port one public listener binds, from --port-base and the serve order.
+
+    A run binds its public listeners from --port-base upward: HTTP APIs (the
+    ones with routes), then Function URLs, then WebSocket APIs, then one per
+    distribution. A row that maps a CloudFront origin to the run's own API has
+    to name the port before the session starts, so it derives it the same way
+    the runner does and then asserts the served URL agrees.
+    """
+    index = 0
+    for api in plan.get("apis") or []:
+        if not (api.get("routes") or []):
+            continue
+        if str(api.get("logicalId")) == logical_id:
+            return harness.lease.http_port + index
+        index += 1
+    raise HarnessFailure(f"the local-tls plan serves no listener for {logical_id!r}")
+
+
+def _tls_origin_distribution(harness: Harness, session: LocalSession, domain: str) -> str:
+    """The served distribution whose origin domain is domain."""
+    logical_id = ""
+    for distribution in _tls_plan(harness).get("cloudFront") or []:
+        for origin in distribution.get("origins") or []:
+            if origin.get("domainName") == domain:
+                logical_id = str(distribution.get("logicalId"))
+                break
+        if logical_id:
+            break
+    if not logical_id:
+        raise HarnessFailure(f"the local-tls plan declares no distribution with origin {domain!r}")
+    for entry in session.info.get("cloudFront") or []:
+        if str(entry.get("logicalId")) == logical_id and entry.get("url"):
+            return str(entry["url"])
+    raise HarnessFailure(f"the session does not serve the distribution {logical_id} that fronts {domain}")
+
+
+def _run_local_tls_awssdk(harness: Harness, role: str) -> str:
+    """One runtime loads an AWS SDK with its own HTTP client under TLS.
+
+    The handler also fetches the app's discovery document and JWKS over
+    verified https, so one row proves both halves of the composition. The
+    @connections management API is the runner-served AWS endpoint that speaks
+    TLS; 410 GONE for an unknown connection is its documented answer, so
+    reaching it proves the SDK verified the run's certificate.
+    """
+    function = _tls_role_function(harness, role)
+    session = start_local_session(
+        harness,
+        LOCAL_TLS_APP,
+        name=f"tls-awssdk-{role}",
+        tls=True,
+        backends=("dynamodb",),
+        targets=(function,),
+    )
+    try:
+        base = _tls_served(session, "httpv2")
+        result = session.invoke(function, {"url": base, "aws": True})
+        raw = result.get("raw") or {}
+        if raw.get("ok") is not True or raw.get("issuer") != base:
+            raise HarnessFailure(f"the {role} caller did not verify the app URL: {result}")
+        if int(raw.get("keys") or 0) < 1:
+            raise HarnessFailure(f"the {role} caller fetched no JWKS key: {result}")
+        if int(raw.get("tables") or 0) < 1:
+            raise HarnessFailure(
+                f"the {role} caller's AWS SDK did not list a DynamoDB Local table: {result}"
+            )
+        if int(raw.get("management") or 0) != 410:
+            raise HarnessFailure(
+                f"the {role} caller's AWS SDK did not reach the TLS @connections endpoint: {result}"
+            )
+        return (
+            f"{role}: an AWS SDK client initialized in a TLS run, listed "
+            f"{int(raw['tables'])} DynamoDB Local table(s) through the runner's endpoint, got 410 GONE "
+            f"from the runner's TLS @connections endpoint, and fetched {base} discovery and JWKS over "
+            "verified https in the same invocation"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def run_local_tls_awssdk_go(harness: Harness) -> str:
+    return _run_local_tls_awssdk(harness, "caller-go")
+
+
+def run_local_tls_awssdk_node(harness: Harness) -> str:
+    return _run_local_tls_awssdk(harness, "caller-node")
+
+
+def run_local_tls_awssdk_py(harness: Harness) -> str:
+    return _run_local_tls_awssdk(harness, "caller-py")
+
+
+def run_local_tls_cloudfront_origin(harness: Harness) -> str:
+    """CloudFront in front of the run's own API listener, over TLS.
+
+    The origin is declared https-only and mapped to the run host, which is the
+    mapping a deployed distribution uses in front of an API Gateway endpoint:
+    CloudFront connects with TLS, verifies a certificate that names the
+    declared origin domain, and forwards the origin Host header.
+    """
+    plan = _tls_plan(harness)
+    api = _tls_http_api(plan)
+    port = _tls_listener_port(harness, plan, str(api["logicalId"]))
+    session = start_local_session(
+        harness,
+        LOCAL_TLS_APP,
+        name="tls-cf-origin",
+        tls=True,
+        origins=(f"{_LOCAL_TLS_HOSTED_AUTH_ORIGIN}=https://app.localhost:{port}",),
+    )
+    try:
+        context = _tls_context(session)
+        served_api = _tls_served(session, "httpv2")
+        if urlsplit(served_api).port != port:
+            raise HarnessFailure(
+                f"the row mapped the origin to port {port} but the HTTP API is served at {served_api}: "
+                "the public listener order changed"
+            )
+        distribution = _tls_origin_distribution(harness, session, _LOCAL_TLS_HOSTED_AUTH_ORIGIN).rstrip("/")
+
+        status, body, _ = http_request(
+            "GET", distribution + "/.well-known/oauth-authorization-server", context=context
+        )
+        expect_status(status, 200, "CloudFront origin GET", body)
+        discovery = json.loads(body)
+        if discovery.get("issuer") != "https://" + _LOCAL_TLS_HOSTED_AUTH_ORIGIN:
+            raise HarnessFailure(
+                f"the origin hop did not forward the declared origin Host header: {body[:300]!r}"
+            )
+        if not str(discovery.get("jwks_uri") or "").startswith("https://" + _LOCAL_TLS_HOSTED_AUTH_ORIGIN):
+            raise HarnessFailure(f"the origin hop changed the discovery document: {body[:300]!r}")
+
+        form = "grant_type=authorization_code&code=local-code&client_id=local-client"
+        status, body, _ = http_request(
+            "POST",
+            distribution + "/auth/token",
+            headers={"content-type": "application/x-www-form-urlencoded"},
+            body=form.encode("utf-8"),
+            context=context,
+        )
+        expect_status(status, 200, "CloudFront origin form POST", body)
+        echoed = json.loads(body)
+        if echoed.get("method") != "POST":
+            raise HarnessFailure(f"the origin hop did not forward the POST method: {body[:300]!r}")
+        if (echoed.get("form") or {}).get("code") != "local-code":
+            raise HarnessFailure(f"the origin hop did not forward the form body: {body[:300]!r}")
+        if echoed.get("host") != _LOCAL_TLS_HOSTED_AUTH_ORIGIN:
+            raise HarnessFailure(
+                f"the API saw Host {echoed.get('host')!r}, want the declared origin domain "
+                f"{_LOCAL_TLS_HOSTED_AUTH_ORIGIN!r}"
+            )
+        return (
+            f"the distribution verified the run CA against its declared origin domain "
+            f"{_LOCAL_TLS_HOSTED_AUTH_ORIGIN}, forwarded the origin Host header, and returned the API's "
+            "GET /.well-known/oauth-authorization-server and a form POST /auth/token body unchanged"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+_LOCAL_TLS_REDIRECT_STATE = "local-state-303"
+
+
+def _https_request_without_following(
+    url: str, *, method: str, body: bytes, headers: dict, context: ssl.SSLContext
+) -> tuple[int, list[tuple[str, str]], bytes]:
+    """Send one request and return the answer as sent, without following a 3xx."""
+    parsed = urlsplit(url)
+    connection = http.client.HTTPSConnection(parsed.hostname, parsed.port, context=context, timeout=30)
+    try:
+        connection.request(method, parsed.path, body=body, headers=headers)
+        response = connection.getresponse()
+        return response.status, response.getheaders(), response.read()
+    finally:
+        connection.close()
+
+
+def run_local_tls_cloudfront_redirect(harness: Harness) -> str:
+    """CloudFront returns an origin 303 to the viewer instead of following it.
+
+    The hosted-auth distribution fronts the run's own API listener. The SSO
+    form POST to /auth/authorize is answered 303 See Other with a Location at
+    the auxiliary idp.localhost certificate. The viewer must receive that
+    status, the exact Location and both Set-Cookie values; the hop must not
+    reach the IdP; and a browser must then follow the redirect to the IdP over
+    verified TLS.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as exc:  # pragma: no cover - reported as a row failure
+        raise HarnessFailure(
+            "the redirect row needs playwright; install scripts/local/requirements-examples.txt "
+            "and run `python -m playwright install chromium`"
+        ) from exc
+
+    data_dir = _data_dir(harness, "tls-cf-redirect")
+    server = None
+    try:
+        cert_path, key_path = _issue_aux_leaf(
+            harness, data_dir, "idp.localhost", str(Path(data_dir) / "aux-idp")
+        )
+        server, idp_port = _start_tls_idp(cert_path, key_path)
+        idp_authorize = f"https://idp.localhost:{idp_port}/authorize?client_id=local-tls-example"
+
+        plan = _tls_plan(harness)
+        api = _tls_http_api(plan)
+        port = _tls_listener_port(harness, plan, str(api["logicalId"]))
+        session = start_local_session(
+            harness,
+            LOCAL_TLS_APP,
+            name="tls-cf-redirect",
+            tls=True,
+            data_dir=data_dir,
+            tls_aux=("idp.localhost",),
+            origins=(f"{_LOCAL_TLS_HOSTED_AUTH_ORIGIN}=https://app.localhost:{port}",),
+        )
+        try:
+            context = _tls_context(session)
+            served_api = _tls_served(session, "httpv2")
+            if urlsplit(served_api).port != port:
+                raise HarnessFailure(
+                    f"the row mapped the origin to port {port} but the HTTP API is served at {served_api}: "
+                    "the public listener order changed"
+                )
+            distribution = _tls_origin_distribution(harness, session, _LOCAL_TLS_HOSTED_AUTH_ORIGIN).rstrip("/")
+            form_fields = {
+                "action": "sso_local-oidc",
+                "idp_authorize": idp_authorize,
+                "state": _LOCAL_TLS_REDIRECT_STATE,
+                "redirect_uri": distribution + "/auth/callback",
+            }
+            expected_location = f"{idp_authorize}&state={_LOCAL_TLS_REDIRECT_STATE}&code=local-code"
+            status, headers, body = _https_request_without_following(
+                distribution + "/auth/authorize",
+                method="POST",
+                body=urlencode(form_fields).encode("utf-8"),
+                headers={"content-type": "application/x-www-form-urlencoded"},
+                context=context,
+            )
+            expect_status(status, 303, "CloudFront origin redirect", body.decode("utf-8", "replace"))
+            answered = [(name.lower(), value) for name, value in headers]
+            location = next((value for name, value in answered if name == "location"), "")
+            if location != expected_location:
+                raise HarnessFailure(
+                    f"the viewer received Location {location!r}, want the origin's exact {expected_location!r}"
+                )
+            cookies = [value for name, value in answered if name == "set-cookie"]
+            if cookies != ["sso=first; Path=/; HttpOnly", "sso=second; Path=/; SameSite=Lax"]:
+                raise HarnessFailure(
+                    f"the viewer received Set-Cookie {cookies!r}, want both origin values in order"
+                )
+            if body:
+                raise HarnessFailure(f"the 303 carried a body: {body[:200]!r}")
+            if server.authorize_hits != 0:
+                raise HarnessFailure(
+                    f"the redirect target received {server.authorize_hits} request(s) while the viewer saw the 303: "
+                    "the origin hop followed the redirect"
+                )
+
+            spki = ",".join(
+                [
+                    _tls_leaf_spki(distribution, context),
+                    _tls_leaf_spki(f"https://idp.localhost:{idp_port}", context),
+                ]
+            )
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(
+                    headless=True, args=[f"--ignore-certificate-errors-spki-list={spki}"]
+                )
+                try:
+                    page = browser.new_page()
+                    page.goto(distribution + "/", wait_until="load", timeout=60000)
+                    page.evaluate(
+                        """(fields) => {
+                          const form = document.createElement("form");
+                          form.method = "POST";
+                          form.action = "/auth/authorize";
+                          for (const [name, value] of Object.entries(fields)) {
+                            const input = document.createElement("input");
+                            input.type = "hidden";
+                            input.name = name;
+                            input.value = value;
+                            form.appendChild(input);
+                          }
+                          document.body.appendChild(form);
+                          setTimeout(() => form.submit(), 0);
+                        }""",
+                        form_fields,
+                    )
+                    page.wait_for_url(f"https://idp.localhost:{idp_port}/authorize*", timeout=60000)
+                    if page.url != expected_location:
+                        raise HarnessFailure(
+                            f"the browser landed on {page.url!r}, want the exact Location {expected_location!r}"
+                        )
+                    if "Local test IdP" not in page.title():
+                        raise HarnessFailure(f"the browser did not reach the IdP's page: {page.title()!r}")
+                finally:
+                    browser.close()
+            if server.authorize_hits != 1:
+                raise HarnessFailure(
+                    f"the auxiliary IdP served {server.authorize_hits} authorize request(s), "
+                    "want exactly the browser's one"
+                )
+            return (
+                "the distribution returned the API's 303 with the exact Location at idp.localhost and both "
+                "Set-Cookie values; no request reached the IdP until headless Chromium followed the redirect "
+                "over TLS verified against the run CA"
+            )
+        finally:
+            stop_local_session(harness, session)
+    finally:
+        if server is not None:
+            server.shutdown()
+            server.server_close()
+        _remove_data_dir(data_dir)
+
+
+def run_local_tls_cloudfront_http_only_error(harness: Harness) -> str:
+    """A plain http mapping to a TLS-only listener fails loudly at start."""
+    plan = _tls_plan(harness)
+    api = _tls_http_api(plan)
+    port = _tls_listener_port(harness, plan, str(api["logicalId"]))
+    try:
+        session = start_local_session(
+            harness,
+            LOCAL_TLS_APP,
+            name="tls-cf-http-only",
+            tls=True,
+            origins=(f"{_LOCAL_TLS_HOSTED_AUTH_ORIGIN}=http://127.0.0.1:{port}",),
+        )
+    except HarnessFailure as failure:
+        output = failure.output or ""
+        for want in (
+            "serves every public listener over https",
+            "https-only",
+            "HTTPS_ONLY",
+            f"--origin {_LOCAL_TLS_HOSTED_AUTH_ORIGIN}=",
+        ):
+            if want not in output:
+                raise HarnessFailure(
+                    f"the refused start did not explain the mismatch with {want!r}", output
+                ) from failure
+        if "Client sent an HTTP request to an HTTPS server" in output:
+            raise HarnessFailure("the run surfaced the raw TLS-listener 400", output)
+        return (
+            "an http-only origin mapping to the run's TLS listener is refused before the distribution "
+            "starts, naming OriginProtocolPolicy HTTPS_ONLY and the https mapping to use instead of a 400"
+        )
+    stop_local_session(harness, session, strict=False)
+    raise HarnessFailure("a plain http mapping to a TLS-only listener must be refused at start")
 
 
 RUNNERS: dict[str, Callable[[Harness], str]] = {
@@ -8341,6 +8743,12 @@ RUNNERS: dict[str, Callable[[Harness], str]] = {
     "local-tls-oidc": run_local_tls_oidc,
     "local-tls-webauthn": run_local_tls_webauthn,
     "local-tls-aux-cert": run_local_tls_aux_cert,
+    "local-tls-awssdk-go": run_local_tls_awssdk_go,
+    "local-tls-awssdk-node": run_local_tls_awssdk_node,
+    "local-tls-awssdk-py": run_local_tls_awssdk_py,
+    "local-tls-cloudfront-origin": run_local_tls_cloudfront_origin,
+    "local-tls-cloudfront-redirect": run_local_tls_cloudfront_redirect,
+    "local-tls-cloudfront-http-only-error": run_local_tls_cloudfront_http_only_error,
 }
 
 
