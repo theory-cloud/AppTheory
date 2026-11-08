@@ -44,6 +44,7 @@ examples=(
   "examples/cdk/restv1-router|RestV1RouterExample|"
   "examples/cdk/sqs-queue|SqsQueueExample|"
   "examples/cdk/local-tls|AppTheoryLocalTls|"
+  "examples/cdk/local-resources|local-resources|"
 )
 
 # Stacks whose template is also checked for the resources the example exists to
