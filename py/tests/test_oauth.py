@@ -151,7 +151,9 @@ class OAuthRuntimeTests(unittest.TestCase):
             },
         )
         self.assertEqual(
-            json.loads(authorization_server_metadata_handler(advertised)(_ctx()).body)["authorization_response_iss_parameter_supported"],
+            json.loads(authorization_server_metadata_handler(advertised)(_ctx()).body)[
+                "authorization_response_iss_parameter_supported"
+            ],
             True,
         )
 
@@ -499,3 +501,114 @@ class OAuthRuntimeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BearerRefusalTelemetryTests(unittest.TestCase):
+    """Pins the bearer half of the refusal contract: every 401 and 403 carries
+    one redacted event naming the reason, and an admitted request carries none."""
+
+    def test_bearer_refusals_are_observable(self) -> None:
+        from apptheory.oauth import (  # noqa: PLC0415 - local import keeps the module surface explicit
+            ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE,
+            ERR_BEARER_TOKEN_INVALID_AUDIENCE,
+            OAuthBearerError,
+            RequireBearerTokenOptions,
+            require_bearer_token_middleware,
+        )
+
+        def ctx(headers: dict[str, list[str]] | None = None) -> Any:
+            class _Request:
+                def __init__(self) -> None:
+                    self.headers = headers or {}
+                    self.method = "POST"
+                    self.path = "/mcp"
+
+            class _Context:
+                def __init__(self) -> None:
+                    self.request = _Request()
+                    self._values: dict[str, Any] = {}
+
+                def set(self, key: str, value: Any) -> None:
+                    self._values[key] = value
+
+                def get(self, key: str) -> Any:
+                    return self._values.get(key)
+
+                def now(self):
+                    return dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
+
+            return _Context()
+
+        cases = [
+            ("missing", None, None, 401, "missing_credential"),
+            (
+                "expired",
+                {"authorization": ["Bearer stale"]},
+                OAuthBearerError("bearer token expired"),
+                401,
+                "expired_credential",
+            ),
+            (
+                "audience",
+                {"authorization": ["Bearer other"]},
+                OAuthBearerError(ERR_BEARER_TOKEN_INVALID_AUDIENCE),
+                403,
+                "audience_mismatch",
+            ),
+            (
+                "scope",
+                {"authorization": ["Bearer narrow"]},
+                OAuthBearerError(ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE),
+                403,
+                "insufficient_scope",
+            ),
+        ]
+        for name, headers, failure, status, reason in cases:
+            events: list[Any] = []
+
+            def validator(_ctx, _token, failure=failure):
+                if failure is not None:
+                    raise failure
+                return None
+
+            middleware = require_bearer_token_middleware(
+                RequireBearerTokenOptions(validator=validator, refusal_hook=events.append)
+            )
+            response = middleware(ctx(headers), lambda _ctx: None)
+            self.assertEqual(status, response.status, name)
+            self.assertEqual(1, len(events), name)
+            self.assertEqual("bearer", events[0].event_class, name)
+            self.assertEqual(reason, events[0].reason, name)
+            self.assertEqual(status, events[0].status, name)
+
+    def test_admitted_request_emits_no_refusal(self) -> None:
+        from apptheory.oauth import (  # noqa: PLC0415 - local import keeps the module surface explicit
+            RequireBearerTokenOptions,
+            require_bearer_token_middleware,
+        )
+
+        events: list[Any] = []
+
+        class _Request:
+            headers = {"authorization": ["Bearer good"]}
+            method = "POST"
+            path = "/mcp"
+
+        class _Context:
+            request = _Request()
+
+            def set(self, key: str, value: Any) -> None:
+                return None
+
+            def now(self):
+                return dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
+
+        middleware = require_bearer_token_middleware(
+            RequireBearerTokenOptions(
+                validator=lambda _ctx, _token: None,
+                refusal_hook=events.append,
+            )
+        )
+        response = middleware(_Context(), lambda _ctx: None)
+        self.assertIsNone(response)
+        self.assertEqual([], events)
