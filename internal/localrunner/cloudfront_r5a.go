@@ -225,11 +225,22 @@ func newHTTPOrigin(origin *localcloudfront.DistributionOrigin, tlsState *localTL
 		transport.TLSClientConfig = tlsConfig
 	}
 	return &httpOrigin{
-		originID:      origin.ID,
-		base:          base,
-		host:          origin.DomainName,
-		serverName:    serverName,
-		client:        &http.Client{Timeout: 30 * time.Second, Transport: transport},
+		originID:   origin.ID,
+		base:       base,
+		host:       origin.DomainName,
+		serverName: serverName,
+		// CloudFront does not follow an origin redirect: it caches the
+		// redirect and returns it to the viewer. Go's client follows up to ten
+		// by default, which would re-issue the request with this origin's
+		// mapped host and hand the viewer the redirect target's answer.
+		// https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/RequestAndResponseBehaviorCustomOrigin.html
+		client: &http.Client{
+			Timeout:   30 * time.Second,
+			Transport: transport,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 		customHeaders: origin.CustomHeaders,
 	}, nil
 }
