@@ -180,8 +180,9 @@ class RealTreeTests(unittest.TestCase):
         # AD1 two-edit watch row, the KMS DIGEST/data-dir rows, the S3
         # SSE-S3 row, the seven LOCAL-W2-TLS rows, the five
         # LOCAL-W2-TLS-GAPS rows, the origin-redirect row, the six
-        # LOCAL-W3-M1 resource-type rows and the fourteen narrow-IAM rows.
-        self.assertEqual(126, len(classified))
+        # LOCAL-W3-M1 resource-type rows, the fourteen narrow-IAM rows, the
+        # five co-residence/declared-port rows and the two mail-surface rows.
+        self.assertEqual(133, len(classified))
         by_key = {entry.key: entry for entry in entries}
         expected = {
             "examples/cdk/ssr-site/bin/apptheory-ssr-site.ts": "ssr-site-gateway",
