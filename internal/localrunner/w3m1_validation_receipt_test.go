@@ -99,9 +99,9 @@ func TestRunReceiptRuleDeliversTheLambdaAndS3Actions(t *testing.T) {
 	// An unserved action kind is refused by name.
 	unserved := rule
 	unserved.Actions = []ReceiptAction{{Kind: "sns"}}
-	if _, err := session.runReceiptRule(context.Background(), unserved, message, "id", now, nil, nil); err == nil ||
-		!strings.Contains(err.Error(), "not served locally") {
-		t.Fatalf("an unserved action must be named: %v", err)
+	if _, unservedErr := session.runReceiptRule(context.Background(), unserved, message, "id", now, nil, nil); unservedErr == nil ||
+		!strings.Contains(unservedErr.Error(), "not served locally") {
+		t.Fatalf("an unserved action must be named: %v", unservedErr)
 	}
 
 	// The whole receive path delivers against the matching rule.

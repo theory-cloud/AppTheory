@@ -20,14 +20,14 @@ func TestS3SSEIndexPersistsAndRefusesACorruptFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newS3SSEIndex: %v", err)
 	}
-	if err := index.set("bucket", "key"); err != nil {
-		t.Fatalf("set: %v", err)
+	if setErr := index.set("bucket", "key"); setErr != nil {
+		t.Fatalf("set: %v", setErr)
 	}
 	if !index.has("bucket", "key") {
 		t.Fatal("the entry must be recorded")
 	}
-	if err := index.set("bucket", "key"); err != nil {
-		t.Fatalf("a repeated set is a no-op: %v", err)
+	if setErr := index.set("bucket", "key"); setErr != nil {
+		t.Fatalf("a repeated set is a no-op: %v", setErr)
 	}
 
 	// A new index over the same directory reads the persisted entries.
@@ -150,10 +150,10 @@ func TestS3SSEIndexFileShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newS3SSEIndex: %v", err)
 	}
-	if err := index.set("bucket", "key"); err != nil {
-		t.Fatalf("set: %v", err)
+	if setErr := index.set("bucket", "key"); setErr != nil {
+		t.Fatalf("set: %v", setErr)
 	}
-	payload, err := os.ReadFile(filepath.Join(dir, "s3sse", s3FrontIndexFile))
+	payload, err := os.ReadFile(filepath.Join(dir, "s3sse", s3FrontIndexFile)) //nolint:gosec // the test owns the directory
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}

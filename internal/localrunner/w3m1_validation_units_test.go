@@ -24,7 +24,7 @@ func TestPrepareNodeResponseShimWritesThePreload(t *testing.T) {
 	if !strings.HasSuffix(path, "cfn-response-port.cjs") {
 		t.Fatalf("the shim path is %q", path)
 	}
-	payload, err := os.ReadFile(path)
+	payload, err := os.ReadFile(path) //nolint:gosec // the path is the shim the test just wrote
 	if err != nil {
 		t.Fatalf("read the shim: %v", err)
 	}
@@ -75,9 +75,9 @@ func TestReceiptEventVariants(t *testing.T) {
 	}
 	runner.spec = spec
 	input := receiptEventInput{
-		rule:    ReceiptRuleSpec{LogicalID: "Rule", Stack: "Stack", RuleSetName: "mail", Name: "inbound"},
-		action:  ReceiptAction{Kind: receiptActionLambda, Function: "MailFn"},
-		message: receivedMessage{Raw: "From: a@b\r\nTo: c@d\r\n\r\nbody", Recipients: []string{"c@d"}, Source: ""},
+		rule:      ReceiptRuleSpec{LogicalID: "Rule", Stack: "Stack", RuleSetName: "mail", Name: "inbound"},
+		action:    ReceiptAction{Kind: receiptActionLambda, Function: "MailFn"},
+		message:   receivedMessage{Raw: "From: a@b\r\nTo: c@d\r\n\r\nbody", Recipients: []string{"c@d"}, Source: ""},
 		messageID: "id-1",
 	}
 	event, err := runner.receiptEvent(spec, input)

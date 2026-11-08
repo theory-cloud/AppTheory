@@ -155,7 +155,7 @@ func TestRESTRouteCarriesACustomAuthorizer(t *testing.T) {
 				"arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/",
 				map[string]any{"Fn::GetAtt": []any{"Fn", "Arn"}}, "/invocations",
 			}}},
-			"IdentitySource":            "method.request.header.Authorization",
+			"IdentitySource":               "method.request.header.Authorization",
 			"AuthorizerResultTtlInSeconds": 300,
 		}},
 		"Resource": map[string]any{"Type": "AWS::ApiGateway::Resource", "Properties": map[string]any{
