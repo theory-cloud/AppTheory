@@ -3515,6 +3515,13 @@ template declares:
 | `AWS_ENDPOINT_URL_STS` | the run's STS endpoint (https://docs.aws.amazon.com/sdkref/latest/guide/feature-ss-endpoints.html) |
 | `AWS_ENDPOINT_URL_LAMBDA` | the run's Lambda Invoke endpoint, when a handler invokes a function |
 
+A function container reaches a served API through its host-gateway entry
+(`host.docker.internal`), so every public listener also binds the run network's
+gateway on the same port when the host owns it; the printed URL stays
+`http://127.0.0.1:<port>` and nothing is exposed beyond the host's container
+interfaces. The IAM callers sign a call to the URL a row hands them, and that
+call is what the gateway verifies.
+
 The STS endpoint answers `AssumeRole` itself and proxies every other action to
 the configured STS backend, so `GetCallerIdentity` keeps working. `AssumeRole` is
 decided by the **role's trust policy alone** — a named local divergence: deployed
