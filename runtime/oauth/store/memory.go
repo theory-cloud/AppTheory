@@ -662,6 +662,7 @@ func (s *MemoryRouteRefreshBrokerStore) RotateFamily(
 	completed := recordCopy(presented)
 	completed.EncryptedGraceRefreshResponse = rotation.GraceRefreshResponse
 	completed.GraceExpiresAt = rotation.GraceExpiresAt
+	completed.GraceAccessTokenExpiresAt = rotation.GraceAccessTokenExpiresAt
 	completed.Status = BrokerStatusActive
 	completed.RefreshLockOwner = ""
 	completed.RefreshLockExpiresAt = time.Time{}

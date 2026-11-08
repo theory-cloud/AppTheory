@@ -66,6 +66,11 @@ const (
 	// A live-head refresh still validates its binding; a beyond-grace
 	// presentation is reuse and is refused uniformly before any serve.
 	RouteRefreshOutcomeBindingRejected = "binding_rejected"
+	// RouteRefreshOutcomeRotatedFromHead is the reuse outcome of a stale
+	// predecessor presentation served by rotating the family's live head. It is
+	// additive: the client receives fresh credentials and the family is not
+	// revoked.
+	RouteRefreshOutcomeRotatedFromHead = "rotated_from_head"
 )
 
 // Failure reasons. They are the `Reason` of a validation-rejected or state
@@ -100,6 +105,19 @@ const (
 	// RouteRefreshReasonFamilyStateUnavailable is a family-marked record whose
 	// required family state is missing or corrupt.
 	RouteRefreshReasonFamilyStateUnavailable = "family_state_unavailable"
+	// RouteRefreshReasonStalePredecessor is a presentation of a rotated-away
+	// handle beyond its grace window. Ordinary client behaviour — a restart with
+	// a stale stored copy, a second process on one login, a lost response —
+	// produces exactly this presentation, so it is served and never treated as
+	// theft.
+	RouteRefreshReasonStalePredecessor = "stale_predecessor"
+	// RouteRefreshReasonFamilyHeadAbsent is a family whose live head aged out,
+	// leaving no member that can rotate. The handle is unusable.
+	RouteRefreshReasonFamilyHeadAbsent = "family_head_absent"
+	// RouteRefreshReasonLegacyLineageAdopted is a family-less (pre-policy) record
+	// migrated in code onto a fresh generation-1 family. It is additive: the
+	// client keeps its session and no manual data operation is needed.
+	RouteRefreshReasonLegacyLineageAdopted = "legacy_lineage_adopted"
 )
 
 // Expiry signals. The store distinguishes an aged-out handle from one that

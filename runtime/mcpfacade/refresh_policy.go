@@ -23,18 +23,22 @@ import (
 //     one.
 //   - GraceWindow is the lost-response replay window measured from the winning
 //     rotation. Zero selects DefaultRefreshGraceWindow. Inside the window the
-//     rotated (previous) handle replays the full stored successor body,
-//     including its handle material, because that is the lost-response recovery
-//     path. At and beyond the window the presentation is reuse: the family is
-//     revoked and the client receives the uniform invalid_grant with no
-//     credential material. The window is bounded by MaxRefreshGraceWindow, and
-//     it is exclusive at its end: a presentation at exactly graceExpiresAt is
-//     beyond grace.
+//     rotated (previous) handle replays the stored successor body, including its
+//     handle material, because that is the lost-response recovery path; the
+//     replayed body reports only the access token's remaining lifetime, so a
+//     replayed credential is always accepted for as long as the response says.
+//     At and beyond the window the presentation is served by rotating the
+//     family's live head and handing back fresh credentials: the evidence from
+//     every real client that broke is exactly this presentation (a stale stored
+//     copy presented minutes to hours after a successful rotation), so it is
+//     ordinary client behaviour and never a reason to revoke the family. The
+//     window is bounded by MaxRefreshGraceWindow, and it is exclusive at its end.
 //   - ReuseRateCeiling is retained for configuration compatibility. It
 //     previously bounded the removed beyond-grace access-token-only serve; no
-//     refresh path uses it now, and no token is served beyond grace. The field
-//     and its validation stay so an existing configuration keeps registering
-//     unchanged, and the F20 limiter semantics are untouched.
+//     refresh path uses it now, because a stale predecessor presentation is
+//     served by rotating the head and the re-armed grace window bounds retries.
+//     The field and its validation stay so an existing configuration keeps
+//     registering unchanged, and the F20 limiter semantics are untouched.
 type RouteRefreshPolicy struct {
 	HandleTTL        time.Duration
 	GraceWindow      time.Duration

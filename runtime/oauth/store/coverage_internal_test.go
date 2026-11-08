@@ -177,6 +177,61 @@ func TestMemoryBrokerStoreEdges(t *testing.T) {
 	}
 }
 
+func TestMemoryBrokerStoreCarriesTheGraceAccessTokenDeadline(t *testing.T) {
+	ctx := context.Background()
+	clock := NewManualClock(ConformanceEpoch)
+	brokers := NewMemoryRouteRefreshBrokerStore(RouteRefreshBrokerStoreOptions{
+		Now:     clock.Now,
+		TTL:     10 * time.Minute,
+		LockTTL: DefaultRouteRefreshLockTTL,
+	})
+	root := &RouteRefreshBrokerRecord{
+		HandleHash:        "root-handle",
+		FamilyHash:        "root-handle",
+		ChainGeneration:   1,
+		Issuer:            "https://issuer.example",
+		CanonicalResource: "https://resource.example/mcp",
+		ClientIDHash:      "client",
+		SubjectIDHash:     "subject",
+		ScopeFingerprint:  "scope",
+		UpstreamClientID:  "upstream-client",
+	}
+	if _, err := brokers.CreateFamily(ctx, root); err != nil {
+		t.Fatalf("create family: %v", err)
+	}
+	locked, err := brokers.AcquireLock(ctx, root.HandleHash, "owner", 1)
+	if err != nil {
+		t.Fatalf("lock: %v", err)
+	}
+	accessDeadline := ConformanceEpoch.Add(15 * time.Minute)
+	successor := *root
+	successor.HandleHash = "successor-handle"
+	successor.ChainGeneration = 2
+	successor.EncryptedUpstreamRefreshToken = "rotated-material"
+	successor.UpstreamRefreshTokenHash = HashKey("rotated-material")
+	if _, err := brokers.RotateFamily(ctx, RouteRefreshFamilyRotation{
+		PresentedHandleHash:       locked.HandleHash,
+		LockOwner:                 locked.RefreshLockOwner,
+		ExpectedVersion:           locked.Version,
+		Successor:                 &successor,
+		GraceRefreshResponse:      `{"access_token":"a"}`,
+		GraceExpiresAt:            ConformanceEpoch.Add(2 * time.Minute),
+		GraceAccessTokenExpiresAt: accessDeadline,
+	}); err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+	stored, err := brokers.Get(ctx, root.HandleHash)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !stored.GraceAccessTokenExpiresAt.Equal(accessDeadline) {
+		t.Fatalf("grace access-token deadline = %v, want %v", stored.GraceAccessTokenExpiresAt, accessDeadline)
+	}
+	if stored.EncryptedGraceRefreshResponse != `{"access_token":"a"}` {
+		t.Fatalf("grace body = %q", stored.EncryptedGraceRefreshResponse)
+	}
+}
+
 func TestNewManualClockZeroStart(t *testing.T) {
 	clock := NewManualClock(time.Time{})
 	if got := clock.Now(); !got.Equal(time.Unix(0, 0).UTC()) {
