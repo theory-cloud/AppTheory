@@ -684,12 +684,12 @@ func refsIn(raw json.RawMessage) []logicalRef {
 func collectRefs(value any, out *[]logicalRef) {
 	switch typed := value.(type) {
 	case map[string]any:
-		if id, ok := typed["Ref"].(string); ok && id != "" {
+		if id, ok := typed[intrinsicRef].(string); ok && id != "" {
 			*out = append(*out, logicalRef{ID: id})
 		}
 		collectGetAtt(typed["Fn::GetAtt"], out)
 		for key, child := range typed {
-			if key == "Ref" || key == "Fn::GetAtt" {
+			if key == intrinsicRef || key == "Fn::GetAtt" {
 				continue
 			}
 			collectRefs(child, out)

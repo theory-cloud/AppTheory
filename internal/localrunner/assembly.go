@@ -73,8 +73,9 @@ type assemblyManifest struct {
 }
 
 type assemblyArtifact struct {
-	Type       string `json:"type"`
-	Properties struct {
+	Type        string `json:"type"`
+	Environment string `json:"environment"`
+	Properties  struct {
 		TemplateFile string `json:"templateFile"`
 	} `json:"properties"`
 }
@@ -251,6 +252,13 @@ type logicalRef struct {
 type assemblyStack struct {
 	Name     string
 	Template template
+	// Account is the AWS account the assembly environment names for this stack
+	// (`aws://<account>/<region>`), or empty when the environment is unresolved.
+	// A synthesized ARN carries it, so the IAM path resolves policy documents
+	// against the account the app deploys into rather than the runner's local
+	// identity.
+	Account string
+	Region  string
 }
 
 // LoadAssembly reads every CloudFormation stack template in a cloud assembly
@@ -283,13 +291,53 @@ func loadAssembly(dir string) ([]assemblyStack, error) {
 		if err := json.Unmarshal(body, &parsed); err != nil {
 			return nil, fmt.Errorf("parse stack template %s: %w", templatePath, err)
 		}
-		stacks = append(stacks, assemblyStack{Name: name, Template: parsed})
+		stacks = append(stacks, assemblyStack{
+			Name:     name,
+			Template: parsed,
+			Account:  assemblyEnvironmentAccount(artifact.Environment),
+			Region:   assemblyEnvironmentRegion(artifact.Environment),
+		})
 	}
 	if len(stacks) == 0 {
 		return nil, fmt.Errorf("cloud assembly %s contains no CloudFormation stacks", dir)
 	}
 	sort.Slice(stacks, func(i, j int) bool { return stacks[i].Name < stacks[j].Name })
 	return stacks, nil
+}
+
+// assemblyEnvironmentAccount returns the account an assembly artifact's
+// environment names, or empty for an unresolved environment ("aws://unknown-account/…").
+func assemblyEnvironmentAccount(environment string) string {
+	account, _ := splitAssemblyEnvironment(environment)
+	if account == "" || account == "unknown-account" || strings.ContainsAny(account, "${}") {
+		return ""
+	}
+	return account
+}
+
+// assemblyEnvironmentRegion returns the region an assembly artifact's
+// environment names, or empty when it names none.
+func assemblyEnvironmentRegion(environment string) string {
+	_, region := splitAssemblyEnvironment(environment)
+	if region == "" || region == "unknown-region" || strings.ContainsAny(region, "${}") {
+		return ""
+	}
+	return region
+}
+
+// splitAssemblyEnvironment splits the `aws://<account>/<region>` form a CDK
+// cloud assembly manifest records for a stack.
+func splitAssemblyEnvironment(environment string) (string, string) {
+	value := strings.TrimSpace(environment)
+	value = strings.TrimPrefix(value, "aws://")
+	if value == "" || value == environment {
+		return "", ""
+	}
+	parts := strings.SplitN(value, "/", 2)
+	if len(parts) != 2 {
+		return parts[0], ""
+	}
+	return parts[0], parts[1]
 }
 
 // deriveSpec turns a cloud assembly into the local runner's specification and
@@ -314,12 +362,20 @@ func deriveSpecInternal(dir string, stacks []assemblyStack) (*Spec, error) {
 		functionURLTargets: map[string]string{},
 		functionURLModes:   map[string]string{},
 		Templates:          map[string]templateContext{},
+		accounts:           map[string]string{},
+		regions:            map[string]string{},
 	}
 	for _, stack := range stacks {
 		spec.Templates[stack.Name] = templateContext{
 			Parameters: stack.Template.Parameters,
 			Conditions: stack.Template.Conditions,
 			Mappings:   stack.Template.Mappings,
+		}
+		if stack.Account != "" {
+			spec.accounts[stack.Name] = stack.Account
+		}
+		if stack.Region != "" {
+			spec.regions[stack.Name] = stack.Region
 		}
 		if err := deriveStack(spec, dir, stacks, stack); err != nil {
 			return nil, err
@@ -354,6 +410,9 @@ func deriveSpecInternal(dir string, stacks []assemblyStack) (*Spec, error) {
 			Reason:    strings.Join(distribution.Refusals, "; "),
 		})
 	}
+	deriveCustomResources(spec, stacks)
+	deriveReceiptRules(spec, stacks)
+	classifyProblemResources(spec)
 	deriveSkipped(spec)
 	deriveProvisioningSkips(spec, stacks)
 	spec.PlannedResources = plannedProvisionedResources(spec)
@@ -759,7 +818,7 @@ func intExpression(raw json.RawMessage) string {
 		return ""
 	}
 	for key := range expression {
-		if key == "Ref" || strings.HasPrefix(key, "Fn::") {
+		if key == intrinsicRef || strings.HasPrefix(key, "Fn::") {
 			return key
 		}
 	}

@@ -420,7 +420,7 @@ func (f *restartFakeDocker) tagsFor(id string) []string {
 // from each repository a tag names, as the containerd image store reports, plus
 // any foreign pin a test injected. A tag's derived digest is
 // "<repository>@<id>": it appears with the tag and is gone when the tag moves
-// away, which is the behaviour removeDanglingImage's rule relies on.
+// away, which is the behavior removeDanglingImage's rule relies on.
 func (f *restartFakeDocker) digestsFor(id string) []string {
 	seen := map[string]bool{}
 	digests := make([]string, 0, len(f.imageStore())+len(f.pinnedDigests[id]))

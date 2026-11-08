@@ -75,6 +75,14 @@ const (
 	boolTrue              = "true"
 	jsonNull              = "null"
 
+	// Pseudo parameters and the Ref key appear in several resolvers; one
+	// spelling keeps them from drifting.
+	pseudoPartition = "AWS::Partition"
+	pseudoRegion    = "AWS::Region"
+	pseudoAccountID = "AWS::AccountId"
+	pseudoNoValue   = "AWS::NoValue"
+	intrinsicRef    = "Ref"
+
 	streamEventInsert = "INSERT"
 	streamEventModify = "MODIFY"
 	streamEventRemove = "REMOVE"
@@ -431,6 +439,69 @@ type ResourceSpec struct {
 	Properties json.RawMessage `json:"-"`
 }
 
+// CustomResourceSpec is one CloudFormation custom resource the assembly
+// declares whose service token is a Lambda function the run starts. The runner
+// invokes the real provider handler at start with the documented request shape
+// and honors the response contract, so a handler that creates, migrates or
+// triggers something runs exactly as it does in a deployment.
+//
+// https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/crpg-ref-requests.html
+// https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/crpg-ref-responses.html
+type CustomResourceSpec struct {
+	LogicalID string `json:"logicalId"`
+	Stack     string `json:"stack"`
+	// Type is the template's resource type, which is also the ResourceType the
+	// handler receives: `Custom::<name>` or AWS::CloudFormation::CustomResource.
+	Type string `json:"type"`
+	// Function is the qualified service-token Lambda function.
+	Function string `json:"function"`
+	// PhysicalResourceID is the local physical id the create request carries
+	// when the assembly's properties determine it, or empty on a first create.
+	PhysicalResourceID string `json:"physicalResourceId,omitempty"`
+	// ServedBy names the runner component when the runner serves the type with
+	// its own implementation instead of invoking the handler.
+	ServedBy string `json:"servedBy,omitempty"`
+	// Refusal names why the runner refuses the resource, when it does. A
+	// refused custom resource never invokes its handler.
+	Refusal string `json:"refusal,omitempty"`
+	// Properties is the request's ResourceProperties document. It is resolved
+	// against the assembly at invocation time, after provisioning created the
+	// resources it references.
+	Properties json.RawMessage `json:"properties,omitempty"`
+}
+
+// ReceiptRuleSpec is one AWS::SES::ReceiptRule the run serves: a recipient set,
+// the rule set it belongs to, and its ordered actions.
+//
+// https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-ses-receiptrule.html
+type ReceiptRuleSpec struct {
+	LogicalID   string `json:"logicalId"`
+	Stack       string `json:"stack"`
+	RuleSetName string `json:"ruleSetName"`
+	Name        string `json:"name"`
+	// Recipients are the rule's Recipients, matched exactly against the
+	// message's envelope recipients.
+	Recipients []string `json:"recipients,omitempty"`
+	Enabled    bool     `json:"enabled"`
+	// Actions are the rule's actions in order. The runner serves the S3 and
+	// Lambda actions; any other action is reported by kind.
+	Actions []ReceiptAction `json:"actions,omitempty"`
+	// UnservedActions names action kinds the runner derives but does not run.
+	UnservedActions []string `json:"unservedActions,omitempty"`
+}
+
+// ReceiptAction is one action of an SES receipt rule. Kind is "s3", "lambda" or
+// the SES action name for a kind the runner does not run.
+type ReceiptAction struct {
+	Kind string `json:"kind"`
+	// Bucket and ObjectKeyPrefix are the S3Action's target.
+	Bucket          string `json:"bucket,omitempty"`
+	ObjectKeyPrefix string `json:"objectKeyPrefix,omitempty"`
+	// Function and InvocationType are the LambdaAction's target.
+	Function       string `json:"function,omitempty"`
+	InvocationType string `json:"invocationType,omitempty"`
+}
+
 // CodeBuildProjectSpec is one AWS::CodeBuild::Project the local runner serves.
 // It carries the deployed image name and the buildspec; the profile maps the
 // image to a digest-pinned local build image per architecture.
@@ -487,7 +558,12 @@ type Spec struct {
 	// CodeBuildProjects are the AWS::CodeBuild::Project resources the runner
 	// serves through AWS's local CodeBuild agent.
 	CodeBuildProjects []CodeBuildProjectSpec `json:"codeBuild,omitempty"`
-	Skipped           []Skipped              `json:"skipped"`
+	// CustomResources are the CloudFormation custom resources whose service
+	// token the run starts and invokes with the documented request shape.
+	CustomResources []CustomResourceSpec `json:"customResources,omitempty"`
+	// ReceiptRules are the SES receipt rules the run serves.
+	ReceiptRules []ReceiptRuleSpec `json:"receiptRules,omitempty"`
+	Skipped      []Skipped         `json:"skipped"`
 	// Delivery is the state the engine would register for every source. Plan
 	// fills it; a live session reports the engine's own state instead.
 	Delivery []DeliveryState `json:"delivery,omitempty"`
@@ -517,6 +593,13 @@ type Spec struct {
 	// functionURLModes maps a qualified AWS::Lambda::Url logical id to its
 	// InvokeMode: RESPONSE_STREAM or BUFFERED (the template default).
 	functionURLModes map[string]string
+	// accounts maps a stack name to the AWS account its assembly environment
+	// names. A synthesized ARN carries that account, so the IAM path resolves
+	// policy documents against it instead of the runner's local identity.
+	accounts map[string]string
+	// regions maps a stack name to the AWS region its assembly environment
+	// names, when it names one.
+	regions map[string]string
 }
 
 // RuntimeClass maps a Lambda runtime name to the image class the profile pins.
@@ -577,7 +660,7 @@ func (s *Spec) ServedFunctions() []string {
 // is the local run's function set.
 //
 //nolint:gocyclo // one explicit branch per supported provider value.
-func (s *Spec) RuntimeFunctions() []string { //nolint:gocyclo // one explicit loop per derived source kind.
+func (s *Spec) RuntimeFunctions() []string { //nolint:gocyclo,gocognit // one explicit loop per derived source kind.
 	seen := map[string]struct{}{}
 	for _, id := range s.ServedFunctions() {
 		seen[id] = struct{}{}
@@ -615,6 +698,18 @@ func (s *Spec) RuntimeFunctions() []string { //nolint:gocyclo // one explicit lo
 	}
 	for id := range webSocketRouteFunctionSet(s) {
 		seen[id] = struct{}{}
+	}
+	for _, resource := range s.CustomResources {
+		if resource.Function != "" && resource.Refusal == "" {
+			seen[resource.Function] = struct{}{}
+		}
+	}
+	for _, rule := range s.ReceiptRules {
+		for _, action := range rule.Actions {
+			if action.Kind == receiptActionLambda && action.Function != "" {
+				seen[action.Function] = struct{}{}
+			}
+		}
 	}
 	out := make([]string, 0, len(seen))
 	for id := range seen {

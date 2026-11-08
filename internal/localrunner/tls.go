@@ -198,30 +198,44 @@ func validateTLSHost(host string) error {
 	return nil
 }
 
-// initTLS creates or reuses the run's local CA and prepares the public leaf
-// when the run opted in. It also maps the public host into every function
+// initTLS creates or reuses the run's local CA. When the run opted in it also
+// prepares the public leaf and maps the public host into every function
 // container through the one add-host helper, so a handler reaches the same
-// https URL a browser uses. A run that did not opt in starts no CA, adds no
-// host entry and changes no listener.
+// https URL a browser uses. A run that needs only an internal HTTPS endpoint
+// (a CloudFormation custom resource reports its result over https) still gets
+// the CA and the mounted trust bundle, but its public listeners stay on plain
+// HTTP and no public host is mapped.
+//
+//nolint:gocyclo // one branch per opt-in combination.
 func (r *Runner) initTLS(spec *Spec) error {
-	if !r.options.TLS {
+	internal := specNeedsInternalHTTPS(spec)
+	public := r.options.TLS
+	if !public && !internal {
 		return nil
 	}
 	host := strings.ToLower(strings.TrimSpace(r.options.TLSHost))
 	if host == "" {
 		host = tlsDefaultHost
 	}
-	if err := validateTLSHost(host); err != nil {
-		return err
+	if public {
+		if err := validateTLSHost(host); err != nil {
+			return err
+		}
 	}
 	dir := filepath.Join(r.scratch, tlsCADirName)
 	persistent := r.dataDir != ""
 	if persistent {
 		dir = filepath.Join(r.dataDir, tlsCADirName)
 	}
-	state, err := newLocalTLS(dir, host, tlsOriginNames(spec)...)
+	state, err := newLocalCASigner(dir)
 	if err != nil {
 		return err
+	}
+	if public {
+		state.host = host
+		if leafErr := state.issuePublicLeaf(tlsOriginNames(spec)); leafErr != nil {
+			return leafErr
+		}
 	}
 	r.tls = state
 	bundle, err := r.writeTLSTrustBundle()
@@ -229,6 +243,14 @@ func (r *Runner) initTLS(spec *Spec) error {
 		return err
 	}
 	r.tlsBundlePath = bundle
+	validity := "ephemeral"
+	if persistent {
+		validity = "persistent"
+	}
+	if !public {
+		r.logf("local TLS: internal control endpoints only; CA %s (%s); trust bundle %s", state.caPath, validity, bundle)
+		return nil
+	}
 	r.addHostEntry(host)
 	auxiliary := make([]string, 0, len(r.options.TLSAuxHosts))
 	for _, name := range r.options.TLSAuxHosts {
@@ -241,10 +263,6 @@ func (r *Runner) initTLS(spec *Spec) error {
 		}
 		r.addHostEntry(trimmed)
 		auxiliary = append(auxiliary, trimmed)
-	}
-	validity := "ephemeral"
-	if persistent {
-		validity = "persistent"
 	}
 	r.logf("local TLS: https://%s for every public listener; CA %s (%s); trust bundle %s", host, state.caPath, validity, bundle)
 	if len(auxiliary) > 0 {

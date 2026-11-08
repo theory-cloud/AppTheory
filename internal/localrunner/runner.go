@@ -237,6 +237,19 @@ type Runner struct {
 	// in. tlsBundlePath is the host-side trust bundle the session reports.
 	tls           *localTLS
 	tlsBundlePath string
+	// internalTLS holds the leaf the runner's internal HTTPS endpoints
+	// present, issued on first use from the run CA.
+	internalTLS internalHTTPS
+	// customResources is the CloudFormation custom-resource response endpoint;
+	// customResourceData and customResourcePhysicalIDs keep what each handler
+	// reported so a GetAtt on the custom resource resolves.
+	customResources           *customResourceResponseServer
+	customResourceData        map[string]map[string]string
+	customResourcePhysicalIDs map[string]string
+	// lambdaInvocations is the local Lambda Invoke endpoint a handler reaches
+	// when it calls another function (a Custom::Trigger's provider, an
+	// AwsCustomResource invoking Lambda, or app code).
+	lambdaInvokeURL string
 	// publicPorts is every port this run serves a public listener on, so an
 	// origin mapping that speaks plain http to one of them fails at start with
 	// the fix instead of a 400 on the first request.
@@ -708,7 +721,7 @@ func (r *Runner) Run(ctx context.Context) error {
 // resolution, preflight, function containers and HTTP listeners. It does not
 // log the ready marker or wait; Run and RunSession own those steps.
 //
-//nolint:gocyclo // the startup order is documented and pinned by the docs-order test.
+//nolint:gocyclo,gocognit // the startup order is documented and pinned by the docs-order test.
 func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 	spec, err := r.Plan(ctx)
 	if err != nil {
@@ -764,6 +777,14 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 	if err = r.startWebSocketManagement(ctx, spec); err != nil {
 		return nil, err
 	}
+	if _, err = r.startLambdaInvokeFront(ctx); err != nil {
+		return nil, err
+	}
+	if specNeedsInternalHTTPS(spec) {
+		if err = r.startCustomResourceResponses(ctx); err != nil {
+			return nil, err
+		}
+	}
 	if err = r.resolveRouteAuthorizers(spec); err != nil {
 		return nil, err
 	}
@@ -790,6 +811,9 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 		return nil, err
 	}
 	r.startFunctionLogs(ctx, spec, targets)
+	if err := r.invokeCustomResources(ctx, spec); err != nil {
+		return nil, err
+	}
 	if err := r.startServers(ctx, spec); err != nil {
 		return nil, err
 	}

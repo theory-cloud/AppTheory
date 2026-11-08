@@ -335,6 +335,8 @@ func (c *commandConfig) plan(ctx context.Context, runner *localrunner.Runner) in
 	}
 	printProvisionedResources(spec)
 	printCodeBuildProjects(spec)
+	printCustomResources(spec)
+	printReceiptRules(spec)
 	printDerivedEvents(spec)
 	if len(spec.Skipped) > 0 {
 		fmt.Println()
@@ -386,6 +388,57 @@ func printCodeBuildProjects(spec *localrunner.Spec) {
 		for _, deviation := range project.Deviations {
 			fmt.Printf("    deviation: %s\n", deviation)
 		}
+	}
+}
+
+// printCustomResources prints every CloudFormation custom resource the run
+// serves, with the handler it invokes, the runner component that serves it, or
+// the reason it refuses it.
+func printCustomResources(spec *localrunner.Spec) {
+	if len(spec.CustomResources) == 0 {
+		return
+	}
+	fmt.Println()
+	fmt.Println("custom resources:")
+	for _, resource := range spec.CustomResources {
+		switch {
+		case resource.Refusal != "":
+			fmt.Printf("  %-40s %-42s refused: %s\n", resource.LogicalID, resource.Type, resource.Refusal)
+		case resource.ServedBy != "":
+			fmt.Printf("  %-40s %-42s served by the runner: %s\n", resource.LogicalID, resource.Type, resource.ServedBy)
+		default:
+			fmt.Printf("  %-40s %-42s handler=%s\n", resource.LogicalID, resource.Type, resource.Function)
+		}
+	}
+}
+
+// printReceiptRules prints every SES receipt rule the run serves, with the
+// recipients it accepts and the actions it applies in order.
+func printReceiptRules(spec *localrunner.Spec) {
+	if len(spec.ReceiptRules) == 0 {
+		return
+	}
+	fmt.Println()
+	fmt.Println("receipt rules:")
+	for _, rule := range spec.ReceiptRules {
+		actions := make([]string, 0, len(rule.Actions))
+		for _, action := range rule.Actions {
+			switch action.Kind {
+			case "s3":
+				actions = append(actions, "s3:"+action.Bucket+" prefix="+action.ObjectKeyPrefix)
+			case "lambda":
+				actions = append(actions, "lambda:"+action.Function+" invocation="+action.InvocationType)
+			default:
+				actions = append(actions, action.Kind)
+			}
+		}
+		line := strings.Join(actions, ", ")
+		if len(rule.UnservedActions) > 0 {
+			line += " (not served: " + strings.Join(rule.UnservedActions, ", ") + ")"
+		}
+		fmt.Printf("  %-40s rule-set=%s name=%s enabled=%t recipients=%s -> %s\n",
+			rule.LogicalID, rule.RuleSetName, rule.Name, rule.Enabled,
+			strings.Join(rule.Recipients, ","), line)
 	}
 }
 

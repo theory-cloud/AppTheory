@@ -190,6 +190,13 @@
           "AWS_ENDPOINT_URL_COGNITO_IDP",
           "COGNITO_ENDPOINT"
         ]
+      },
+      "ses": {
+        "container": "moto",
+        "env": [
+          "AWS_ENDPOINT_URL_SES",
+          "SES_ENDPOINT"
+        ]
       }
     }
   },

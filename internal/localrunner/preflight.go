@@ -159,6 +159,13 @@ func (r *Runner) securityEnvironment(class string) map[string]string {
 	if r.webSocketManagement != nil {
 		env[webSocketManagementEndpointEnv] = r.webSocketManagement.ContainerURL
 	}
+	// The local Lambda Invoke endpoint is how a custom-resource handler (a
+	// CDK trigger's provider, an AwsCustomResource, or app code) invokes
+	// another function. It is a plain-HTTP loopback control listener.
+	// https://docs.aws.amazon.com/lambda/latest/api/API_Invoke.html
+	if r.lambdaInvokeURL != "" {
+		env[lambdaEndpointEnv] = r.lambdaInvokeURL
+	}
 	// An opted-in run serves every public listener over HTTPS. The same CA
 	// signs every leaf, so one mounted bundle is what each runtime verifies
 	// the app's own https URL with. The runtime class decides which variables

@@ -76,6 +76,14 @@ type sessionRequest struct {
 	SequenceNumbers        []string             `json:"sequenceNumbers,omitempty"`
 	// Duration is a Go duration for clock.advance, for example "90m".
 	Duration string `json:"duration,omitempty"`
+	// Resource names one CloudFormation resource for a resource-scoped
+	// operation (customResource.delete).
+	Resource string `json:"resource,omitempty"`
+	// Recipients, RawMessage and MessageID describe one injected SES message
+	// for ses.receive.
+	Recipients []string `json:"recipients,omitempty"`
+	RawMessage string   `json:"rawMessage,omitempty"`
+	MessageID  string   `json:"messageId,omitempty"`
 }
 
 type sessionResponse struct {
@@ -212,14 +220,49 @@ func (s *localSession) execute(ctx context.Context, request sessionRequest) (any
 		return s.kinesisEvent(request)
 	case "kinesis.cloudwatch-event":
 		return s.kinesisCloudWatchEvent(request)
+	case "ses.receive":
+		return s.sesReceive(ctx, request)
+	case "customResource.delete":
+		return s.customResourceDeleteOp(ctx, request)
 	default:
 		return nil, fmt.Errorf("unknown session operation %q", request.Op)
 	}
 }
 
+// describeCustomResources reports each served custom resource with what the
+// runner did with it: the handler it invoked and the attributes it returned,
+// the runner component that serves it, or the reason it is refused.
+//
 //nolint:gocyclo // one reported section per derived resource family.
 //nolint:gocognit // one explicit branch per supported provider value.
-func (s *localSession) describe() (map[string]any, error) { //nolint:gocognit // one reported section per derived resource family.
+func (s *localSession) describeCustomResources() []map[string]any {
+	out := make([]map[string]any, 0, len(s.spec.CustomResources))
+	for _, resource := range s.spec.CustomResources {
+		entry := map[string]any{
+			"logicalId": resource.LogicalID,
+			"stack":     resource.Stack,
+			"type":      resource.Type,
+		}
+		switch {
+		case resource.Refusal != "":
+			entry["refused"] = resource.Refusal
+		case resource.ServedBy != "":
+			entry["servedBy"] = resource.ServedBy
+		default:
+			entry["function"] = resource.Function
+			if attributes, ok := s.runner.customResourceData[resource.Stack+"/"+resource.LogicalID]; ok {
+				entry["data"] = attributes
+			}
+			if physical, ok := s.runner.customResourcePhysicalIDs[resource.Stack+"/"+resource.LogicalID]; ok {
+				entry["physicalResourceId"] = physical
+			}
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+func (s *localSession) describe() (map[string]any, error) { //nolint:gocognit,gocyclo // one reported section per derived resource family.
 	functions := make([]map[string]any, 0)
 	targets, err := s.runner.runtimeFunctions(s.spec)
 	if err != nil {
@@ -357,18 +400,20 @@ func (s *localSession) describe() (map[string]any, error) { //nolint:gocognit //
 		delivery = s.runner.delivery.State()
 	}
 	document := map[string]any{
-		"runtimeMode":   s.runner.RuntimeMode(),
-		"functions":     functions,
-		"apis":          apis,
-		"cloudFront":    cloudFront,
-		"eventSources":  s.spec.EventSources,
-		"rules":         s.spec.Rules,
-		"subscriptions": s.spec.Subscriptions,
-		"notifications": s.describeNotifications(delivery),
-		"resources":     resources,
-		"secrets":       secrets,
-		"endpoints":     endpoints,
-		"delivery":      delivery,
+		"runtimeMode":     s.runner.RuntimeMode(),
+		"functions":       functions,
+		"apis":            apis,
+		"cloudFront":      cloudFront,
+		"eventSources":    s.spec.EventSources,
+		"rules":           s.spec.Rules,
+		"subscriptions":   s.spec.Subscriptions,
+		"notifications":   s.describeNotifications(delivery),
+		"resources":       resources,
+		"customResources": s.describeCustomResources(),
+		"receiptRules":    s.spec.ReceiptRules,
+		"secrets":         secrets,
+		"endpoints":       endpoints,
+		"delivery":        delivery,
 	}
 	if security := cloudFrontSecurityReport(s.spec); security != nil {
 		document["cloudFrontSecurity"] = security

@@ -175,13 +175,13 @@ func (c templateContext) resolve(value any) (any, error) {
 // a resource is a provisioning-time value and stays unresolved here.
 func (c templateContext) refValue(id string) (any, error) {
 	switch id {
-	case "AWS::Partition":
+	case pseudoPartition:
 		return LocalPartition, nil
-	case "AWS::Region":
+	case pseudoRegion:
 		return LocalRegion, nil
-	case "AWS::AccountId":
+	case pseudoAccountID:
 		return LocalAccountID, nil
-	case "AWS::NoValue":
+	case pseudoNoValue:
 		return nil, nil
 	}
 	parameter, ok := c.Parameters[id]
