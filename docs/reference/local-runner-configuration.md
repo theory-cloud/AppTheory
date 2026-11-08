@@ -60,6 +60,15 @@ function the CDK definition targets and reads one JSON command per line.
 | `--watch` | off | `run`/`session`: follow `cdk.json`'s `watch` include/exclude (or the app directory), re-synthesize on a change and apply the new surface without restarting the listeners. See [Dev loop](#dev-loop). |
 | `--data-dir DIR` | none (ephemeral) | `run`/`session`/`invoke`: keep DynamoDB Local, s3proxy and ElasticMQ state under `DIR`, plus the runner's KMS key material and S3 SSE-S3 records; moto stays in memory. See [Dev loop](#dev-loop). |
 | `--seed COMMAND` | none | `run`/`session`: run `sh -c COMMAND` after provisioning and before `local-run: ready`. See [Dev loop](#dev-loop). |
+| `--port LOGICALID=PORT` | none | `run`/`session`/`plan`: pin a served public surface (API, Function URL, WebSocket API or CloudFront distribution) to a declared port. Repeatable; needs `--port-base`. Pinned ports are reserved first and the counter skips them; a collision, an out-of-range port, a repeated surface or an unknown id fails closed. |
+| `--tls` | off | `run`/`session`: serve every public listener over HTTPS from a certificate the run's local CA signs. |
+| `--tls-host HOST` | `app.localhost` | `run`/`session` with `--tls`: the public `*.localhost` host name. |
+| `--tls-aux HOST` | none | `run`/`session` with `--tls`: an auxiliary `*.localhost` name a function container must reach (for example a local test IdP). Repeatable. |
+| `--shared-dir DIR` | none | `run`/`session`/`invoke`: the directory co-resident runs share: the IAM plane at `<DIR>/iam` and the CA at `<DIR>/ca`. |
+| `--shared-network NAME` | none | `run`/`session`: join every co-resident run's containers to one Docker bridge, so a run reaches a sibling's listener at the host address this run also binds. A run's cleanup leaves the network; remove it with `down --shared-network`. |
+| `--peer-host HOST` | none | `run`/`session` with `--tls`: map a co-resident run's public `*.localhost` name into this run's function containers. Repeatable. |
+| `--mail` | off | `run`/`session`: start the local mail surface: the profile's digest-pinned Mailpit sink, an SMTP ingress that runs the app's SES receipt rules, and the sink's HTTPS read API. |
+| `--mail-host HOST` | `mail.localhost` | `run`/`session` with `--mail`: the mail surface's public `*.localhost` name. |
 
 Exit codes: `0` success, `1` a run/plan failure, `2` a usage error.
 

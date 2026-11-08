@@ -334,11 +334,16 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
    class or a tag that is not pinned by digest fails here, after synthesis.
 4. **Prepare the run workspace.** Inline `Code.ZipFile` code is materialized
    under the run scratch directory, every function's layers are merged into one
-   `/opt` directory in the template's listed order, then the run's private
-   Docker network is created. An opted-in run (`--tls`) then loads or creates
-   its local CA and prepares the public certificate it will serve; a run
-   without the opt-in starts no CA. See
-   [Local HTTPS, OIDC issuers and passkeys](#local-https-oidc-issuers-and-passkeys).
+   `/opt` directory in the template's listed order, then the run's Docker
+   network is created: a private bridge, or the network named by
+   `--shared-network`, which several co-resident runs join. An opted-in run
+   (`--tls`), a run with `--mail`, or a run whose custom resources need the
+   internal HTTPS endpoint then loads or creates its local CA and prepares the
+   certificates it will serve; any other run starts no CA. A run with
+   `--shared-dir` uses the CA at `<shared-dir>/ca`, so co-resident runs verify
+   each other's leaves. See
+   [Local HTTPS, OIDC issuers and passkeys](#local-https-oidc-issuers-and-passkeys)
+   and [Co-resident runs](#co-resident-runs-one-ca-declared-ports-and-one-network).
 5. **Start backends.** `--backend dynamodb`, `--backend moto`,
    `--backend s3proxy` and `--backend sqs` start the profile's digest-pinned
    emulators on the run's private network. Before it reports a backend ready,
@@ -570,6 +575,22 @@ The `tls` directory is `0700`. A browser or identity provider that trusted run 1
 trusts run 2. Without `--data-dir` the CA lives under the run's scratch
 directory and is deleted with it, like every other piece of run state.
 
+With `--shared-dir`, the CA moves beside the shared IAM plane and several runs
+issue their leaves from it:
+
+```
+<shared-dir>/iam/...            the shared IAM plane
+<shared-dir>/ca/ca.pem          0644
+<shared-dir>/ca/ca-key.pem      0600
+<shared-dir>/ca/trust-bundle.pem 0644
+```
+
+The `ca` directory is `0700`, and creation stays serialized through the CA
+lock. A run without `--shared-dir` keeps exactly the location it had before.
+A half-written pair (one file present) fails closed under the lock instead of
+replacing a CA another run may already trust; remove the directory to create a
+new one.
+
 ### Trust it from the host
 
 A client verifies the run's certificate when it trusts the CA. Point the client
@@ -783,6 +804,190 @@ bound to host loopback only is reachable from the host, not from the container.
   `@connections` API is TLS; the EventBridge, KMS, S3, CloudFront invalidation
   and CodeBuild endpoints are loopback HTTP and are not exposed as public
   listeners.
+
+## Co-resident runs: one CA, declared ports and one network
+
+Two or more `apptheory local` runs of different CDK apps can run beside each
+other, call each other over verified HTTPS and use the narrow IAM path. Three
+pieces make that work, and each is opt-in: a run without them behaves exactly
+as before.
+
+### One shared directory
+
+`--shared-dir <dir>` carries both co-residence planes:
+
+```
+<shared-dir>/iam/...   the shared IAM plane (role definitions, issued
+                       credentials, assumed sessions, the STS endpoint)
+<shared-dir>/ca/       the shared CA (ca.pem 0644, ca-key.pem 0600,
+                       trust-bundle.pem 0644; the directory is 0700)
+```
+
+Each run issues its own leaf from that CA, and every function container mounts
+the same trust bundle, so a function in run A verifies the HTTPS listener run B
+serves. The CA layout, permissions and failure rule are in
+[The CA and where it lives](#the-ca-and-where-it-lives); the role and
+credential state is in [The shared IAM plane](#the-shared-iam-plane).
+
+### Per-run host names
+
+`--tls-host` gives each run its public name, for example `auth.localhost` for
+Autheory and `mcp.localhost` for TMS. A leaf carries the run's own host, so a
+client that connects to a sibling by name verifies the sibling's certificate
+against the shared CA. `--peer-host mcp.localhost` maps a sibling run's public
+name into this run's function containers through the same add-host helper the
+run's own host uses, and names it in `APPTHEORY_LOCAL_PEER_HOSTS` so a caller
+example can allow exactly that host.
+
+### One shared network
+
+`--shared-network <name>` joins every co-resident run's function, backend and
+auxiliary containers to one user-defined Docker bridge. The public listeners
+bind loopback and, when the host owns it, that bridge's gateway on the same
+port: nothing binds the unspecified address, so no listener is exposed beyond
+the host's container interfaces. On Colima and Docker Desktop the gateway
+belongs to the VM, so the bind fails harmlessly and the one add-host entry uses
+Docker's `host-gateway` value, which those runtimes forward to the host
+loopback. Docker documents the special value and its
+[motivation](https://docs.docker.com/engine/network/drivers/bridge/#use-the-host-gateway)
+([`--add-host`](https://docs.docker.com/reference/cli/docker/container/run/#add-host)).
+
+A backend alias on a shared network is scoped to its run (`<name-prefix>-moto`,
+not `moto`), so two runs never answer one Docker DNS name. The shared network is
+created once by the first run that starts and is removed only by an explicit
+`apptheory-local down --app <app> --shared-network <name>`; a run's own cleanup
+leaves it for its siblings.
+
+The Linux CI proof is the `local-co-residence-iam` harness row: run A's function
+resolves run B's host through the one add-host helper and reaches the listener
+on the shared bridge's host-owned gateway, over a leaf the shared CA signed.
+
+### Declared ports
+
+A run binds its public surfaces from one counter, `--port-base + index`, in a
+fixed order: HTTP and REST APIs, Function URLs, WebSocket APIs, then CloudFront
+distributions. That order is an implementation detail, so a co-resident app
+whose clients register exact URLs can pin a surface:
+
+```bash
+apptheory-local run --app <dir> --port-base 8270 \
+  --port PublicApiDistribution2C9B2239=8270 \
+  --port ControlPlaneSiteDistributionCA3ECE36=8271
+```
+
+- The selector is the served surface's CDK logical id: an API, a Function URL,
+  a WebSocket API or a CloudFront distribution. `plan` lists each one with its
+  class and port.
+- Pinned ports are reserved first and the counter skips them. Every unpinned
+  surface keeps exactly the port today's allocation gives it for the same base;
+  without `--port` nothing changes.
+- A pin needs `--port-base`: the run's range is one slot per served surface,
+  `[base, base + surface count)`. The mail surface, when enabled, takes the two
+  slots after that range.
+- A collision, a repeated surface, a port outside the range, an unknown logical
+  id and a pin without `--port-base` fail closed with a named error before any
+  container starts.
+- `plan`, `plan --json` (`listeners`) and `session describe` show every
+  surface's port, and the `pinned` and `automatic` flags.
+
+TMS's six surfaces, for example, are
+`McpHttpApi9E3BE292` (httpv2), `NamespaceVendingRouterApiFCE53473` and
+`RouterApi30C329D4` (restv1), `ControlPlaneSiteSsrUrl7B56CB4D` (fnurl),
+`ControlPlaneSiteDistributionCA3ECE36` and `PublicApiDistribution2C9B2239`
+(cloudfront). Pinning the two distributions to 8270 and 8271 at
+`--port-base 8270` gives the declared front door and control plane even though
+four listeners precede them.
+
+### Two runs calling each other
+
+`examples/cdk/local-iam` and `examples/cdk/local-iam-peer` are the two-app
+proof: run B (peer) starts with `--tls-host mcp.localhost`, a shared directory
+and a shared network; run A starts with `--tls-host auth.localhost`, the same
+directory and network, `--peer-host mcp.localhost` and pinned ports. A function
+in run A signs with the credential run A issued to it and calls run B's
+`AWS_IAM` route at `https://mcp.localhost:<pinned>/peer`; run B verifies the
+signature from the shared credential registry, evaluates its own resource
+policy and resolves run A's role. The row is `local-co-residence-iam`.
+
+## The local mail surface
+
+`--mail` starts the profile's digest-pinned SMTP sink (Mailpit), an SMTP
+ingress and the sink's HTTPS read API:
+
+```bash
+apptheory-local run --app <dir> --profile <profile> --mail
+```
+
+The profile pins the sink under `mail`:
+
+```json
+"mail": {
+  "image": "axllent/mailpit@sha256:…",
+  "version": "v1.33.1", "license": "MIT", "compressedBytes": 14456260,
+  "smtpPort": 1025, "httpPort": 8025
+}
+```
+
+The image is the smallest fit under the new-image rule: a single static Go
+binary (14.5 MB on disk for arm64, multi-arch), MIT-licensed, with SMTP and an
+HTTP read API in one process. MailHog, the older option, has had no release
+since 2020 and no arm64 line; Mailpit is its maintained multi-architecture
+successor ([image](https://hub.docker.com/r/axllent/mailpit),
+[API](https://mailpit.axllent.org/docs/api-v1/)). `docker pull` fetches it by
+digest, and the harness row asserts it answers.
+
+With `--port-base`, the SMTP ingress takes the first free slot after the public
+surfaces and the read API the next one; without a base both are ephemeral. The
+session reports both under `mail`, and every function container receives
+`APPTHEORY_LOCAL_SMTP_URL` and `APPTHEORY_LOCAL_MAIL_API_URL`.
+
+**SMTP ingress.** The runner listens for SMTP on `<mail-host>:<smtp-port>`
+(default host `mail.localhost`), with `EHLO`/`MAIL FROM`/`RCPT TO`/`DATA`,
+`RSET`, `NOOP`, `QUIT` and `STARTTLS`. The STARTTLS certificate is an auxiliary
+leaf the run (or shared) CA signs for the mail host, so a client verifies it
+with the same trust bundle as every other local surface. Every accepted message
+is relayed to the sink over a real SMTP conversation.
+
+**Inbound SES.** When the assembly declares `AWS::SES::ReceiptRule`, a
+recipient a rule accepts runs that rule's actions in order with SES's
+received-message record: the S3 action writes the raw message under its object
+key prefix and the Lambda action receives the documented `mail`/`receipt`
+record with no body
+([SES event](https://docs.aws.amazon.com/ses/latest/dg/receiving-email-action-lambda-event.html)).
+A recipient no rule accepts is outbound mail: the ingress accepts it and the
+sink stores it, because one SMTP surface serves both SES's receive path and a
+Migadu-shaped sender. The `ses.receive` session operation stays available for a
+row that wants to inject a message without SMTP.
+
+**Read API.** The sink's API is served over HTTPS at
+`https://<mail-host>:<api-port>/api/v1/` from an auxiliary leaf:
+
+```bash
+curl --cacert <shared-dir>/ca/ca.pem \
+  https://mail.localhost:8277/api/v1/messages
+curl --cacert <shared-dir>/ca/ca.pem \
+  https://mail.localhost:8277/api/v1/message/<ID>
+```
+
+`GET /api/v1/messages` lists stored messages and `GET /api/v1/message/{id}`
+returns one with its text, HTML and raw source
+([Mailpit API](https://mailpit.axllent.org/docs/api-v1/)); `DELETE
+/api/v1/messages` empties the mailbox.
+
+**Resend-shaped sending is app config.** Resend's API is not spoken by the
+runner. Point the app's provider base URL (TCA's `RESEND_BASE_URL` and key) at
+a committed local test server that translates `POST /emails` into SMTP to the
+mail ingress; the runner change is not needed because the SMTP path is real.
+The same config-only rule keeps the key in the app's local stage.
+
+**SES sending.** TMS at `83e660df` and TCA at `86789501` were checked from
+`git archive` copies: neither sends through SES (`SendEmail`, `SendRawEmail` or
+`sesv2`). No SES-send-shaped path is served, because no consumer needs one.
+
+**Limits.** The sink has no authentication, spam filtering or real provider
+delivery; its store is the pinned image's in-memory default, so a run restart
+starts empty; SMTP is exposed on the same loopback/container-interface rule as
+every other listener, never on an unspecified address.
 
 ## Lambda Runtime API
 
@@ -3378,10 +3583,13 @@ class and named limit is in the [harness fidelity table](/examples/local-harness
 | Stage-prefixed URLs (`/prod/...`) | Supported | A REST API is served at `/{stage}/...` in addition to the root; an HTTP API with a named (non-`$default`) stage is served at `/{stage}/...` in addition to the root. The `$default` stage keeps the root. The root stays the custom-domain form. The events carry the documented fields: REST v1 `path`/`resource` without the stage and `requestContext.path` with it; HTTP API v2 `rawPath` and `requestContext.http.path` with it; `requestContext.stage` in both. |
 | Multiple APIs in one stack | Supported | Each API gets its own listener and route table, so `ANY /` surfaces never shadow each other. |
 | CloudFormation custom resources | Served | `Custom::Trigger`, provider-framework resources, `Custom::AWS` and `Custom::S3AutoDeleteObjects` run their real handlers with the documented request and response documents; `Data` becomes the resource's attributes. See [custom resources](#cloudformation-custom-resources-ses-receipt-rules-and-resource-type-handling). |
-| SES receipt rules | Served | The rule, its recipients and its ordered S3, Lambda and Stop actions are derived; `ses.receive` delivers one injected message. See [SES receipt rules](#ses-receipt-rules). |
+| SES receipt rules | Served | The rule, its recipients and its ordered S3, Lambda and Stop actions are derived; a real SMTP message to an accepted recipient runs them, and `ses.receive` injects one for a row. See [SES receipt rules](#ses-receipt-rules) and [the local mail surface](#the-local-mail-surface). |
 | Deploy-time-only and refused types | Reported | Custom domains, ACM, Route 53, CloudWatch alarms and dashboards, network connectors, EC2 security groups and SES identities are reported with a docs/125 true-limit reason; the MicroVM types are refused by name. |
 | AWS_IAM authorization (REST, HTTP API, Function URL) | Served (L2) | SigV4 is verified against the credentials the run issued, the caller principal is resolved and the enumerated policy shapes are evaluated. See [the narrow IAM path](#the-narrow-iam-path). |
 | Shared IAM plane across runs | Supported | `--shared-dir` shares role definitions, issued credentials and the STS endpoint between co-resident runs. See [the shared IAM plane](#the-shared-iam-plane). |
+| Co-resident runs | Supported (L2) | A shared CA at `<shared-dir>/ca`, per-run `--tls-host` names, `--peer-host` mappings and one `--shared-network` bridge let two runs call each other over verified HTTPS and the narrow IAM path. The `local-co-residence-ca` and `local-co-residence-iam` rows prove it. See [co-resident runs](#co-resident-runs-one-ca-declared-ports-and-one-network). |
+| Declared ports | Supported | `--port <logicalId>=<port>` pins a public surface; pins are reserved first, the counter skips them, and plan/describe/run report every port. See [declared ports](#declared-ports). |
+| Local mail surface | Supported (L2) | `--mail` starts the profile's digest-pinned Mailpit sink, an SMTP ingress (with STARTTLS from an auxiliary leaf) that runs the SES receipt rules, and the sink's HTTPS read API. The `local-mail-send-read` and `local-mail-receipt` rows prove it. See [the local mail surface](#the-local-mail-surface). |
 
 ## CloudFormation custom resources, SES receipt rules and resource-type handling
 
@@ -3441,8 +3649,9 @@ Lambda action receives the documented received-message record — `eventSource`
 common headers, and `ses.receipt` with the recipients, verdicts and action —
 with no body, exactly as SES documents
 (https://docs.aws.amazon.com/ses/latest/dg/receiving-email-action-lambda-event.html).
-A message no enabled rule accepts is refused by name. Real SMTP ingress is the
-mail-surface work that follows; this is the rule and delivery path it feeds.
+A message no enabled rule accepts is refused by name. With `--mail`, a real
+SMTP message to an accepted recipient runs the same rule from the ingress; see
+[the local mail surface](#the-local-mail-surface).
 
 ### Reported as deploy-time-only
 
