@@ -4318,6 +4318,9 @@ def start_local_session(
     tls_aux: tuple[str, ...] = (),
     shared_dir: str | None = None,
     port_base: int | None = None,
+    ports: tuple[str, ...] = (),
+    shared_network: str | None = None,
+    peer_hosts: tuple[str, ...] = (),
 ) -> LocalSession:
     """Start one `apptheory-local session` and wait for its machine interface."""
     ensure_cdk_app(harness, app)
@@ -4364,6 +4367,12 @@ def start_local_session(
         argv.extend(["--tls-aux", auxiliary])
     if shared_dir:
         argv.extend(["--shared-dir", shared_dir])
+    for pin in ports:
+        argv.extend(["--port", pin])
+    if shared_network:
+        argv.extend(["--shared-network", shared_network])
+    for peer in peer_hosts:
+        argv.extend(["--peer-host", peer])
     process = subprocess.Popen(
         argv,
         cwd=str(ROOT),
@@ -9505,6 +9514,281 @@ def _signed_get(url: str, credentials: dict) -> tuple[int, str]:
 
 
 
+# --- LOCAL-W3-X3: co-residence and declared ports ---------------------------
+
+
+def _plan_api_id(plan: dict, api_class: str) -> str:
+    for api in plan.get("apis") or []:
+        if api.get("class") == api_class:
+            return str(api["logicalId"])
+    raise HarnessFailure(f"the plan serves no {api_class} API")
+
+
+def _session_api(session: LocalSession, logical_id: str) -> dict:
+    for api in session.info.get("apis") or []:
+        if api.get("logicalId") == logical_id:
+            return api
+    raise HarnessFailure(f"the session serves no surface {logical_id}")
+
+
+def _home_scratch(prefix: str) -> str:
+    """A scratch directory under $HOME, which Docker can bind-mount and which
+    the row deletes."""
+    return tempfile.mkdtemp(prefix=prefix, dir=str(Path.home()))
+
+
+def _down_shared_network(harness: Harness, app: str, network: str) -> None:
+    """Remove a shared network after every co-resident run has stopped."""
+    subprocess.run(
+        [str(LOCAL_RUNNER_BIN), "down", "--app", app, "--shared-network", network],
+        cwd=str(ROOT),
+        env=harness.env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _plan_refusal(harness: Harness, app: str, port_base: int, pins: tuple[str, ...], needle: str) -> None:
+    argv = [
+        str(LOCAL_RUNNER_BIN),
+        "plan",
+        "--app",
+        app,
+        "--profile",
+        str(ROOT / LOCAL_PROFILE),
+        "--port-base",
+        str(port_base),
+    ]
+    for pin in pins:
+        argv.extend(["--port", pin])
+    result = subprocess.run(argv, cwd=str(ROOT), env=harness.env, capture_output=True, text=True, check=False)
+    if result.returncode == 0:
+        raise HarnessFailure(f"plan accepted pins {pins}, want a named refusal", result.stdout)
+    output = result.stderr + result.stdout
+    if needle not in output:
+        raise HarnessFailure(f"the refusal for {pins} does not name {needle!r}", output)
+
+
+def run_local_port_pinning(harness: Harness) -> str:
+    base = harness.lease.http_port
+    plan = plan_local_app(harness, LOCAL_IAM_APP)
+    rest_id = _plan_api_id(plan, "restv1")
+    http_id = _plan_api_id(plan, "httpv2")
+    # The natural order is httpv2 at base, restv1 at base+1. Pin them the other
+    # way round: a surface served at its declared port proves the pin, not the
+    # order.
+    session = start_local_session(
+        harness,
+        LOCAL_IAM_APP,
+        name="port-pinning",
+        targets=_iam_targets(harness),
+        port_base=base,
+        ports=(f"{http_id}={base + 1}", f"{rest_id}={base}"),
+    )
+    try:
+        rest = _session_api(session, rest_id)
+        http = _session_api(session, http_id)
+        if rest.get("port") != base or not rest.get("pinned"):
+            raise HarnessFailure(f"the REST API is not at its pinned port {base}: {rest}")
+        if http.get("port") != base + 1 or not http.get("pinned"):
+            raise HarnessFailure(f"the HTTP API is not at its pinned port {base + 1}: {http}")
+        fn_url = next(
+            (api for api in session.info.get("apis") or [] if api.get("class") == "fnurl"),
+            {},
+        )
+        if fn_url.get("port") != base + 2:
+            raise HarnessFailure(f"the unpinned Function URL moved from {base + 2}: {fn_url}")
+        caller = _iam_caller(harness, "go")
+        rest_call = _caller_result(session, caller, {"url": _container_url(str(rest["url"])) + "/protected"})
+        if rest_call.get("status") != 200:
+            raise HarnessFailure(f"the pinned REST listener refused the signed call: {rest_call}")
+        http_call = _caller_result(session, caller, {"url": _container_url(str(http["url"])) + "/http-iam"})
+        if http_call.get("status") != 200:
+            raise HarnessFailure(f"the pinned HTTP listener refused the signed call: {http_call}")
+        return (
+            f"the HTTP API (index 0) was pinned to {base + 1} and the REST API (index 1) to {base}; "
+            "both listeners answered real signed calls at their declared ports, and the unpinned "
+            f"Function URL kept {base + 2}"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def run_local_port_unpinned(harness: Harness) -> str:
+    base = harness.lease.http_port
+    session = start_local_session(harness, LOCAL_IAM_APP, name="port-unpinned")
+    try:
+        apis = {api.get("class"): api for api in session.info.get("apis") or []}
+        want = {"httpv2": base, "restv1": base + 1, "fnurl": base + 2}
+        for api_class, port in want.items():
+            api = apis.get(api_class) or {}
+            if api.get("port") != port:
+                raise HarnessFailure(f"the unpinned {api_class} moved from {port}: {api}")
+            if api.get("pinned"):
+                raise HarnessFailure(f"the unpinned {api_class} reports pinned: {api}")
+        return f"without --port the run kept today's allocation exactly: httpv2 {base}, restv1 {base + 1}, fnurl {base + 2}"
+    finally:
+        stop_local_session(harness, session)
+
+
+def run_local_port_refusals(harness: Harness) -> str:
+    base = harness.lease.http_port
+    plan = plan_local_app(harness, LOCAL_IAM_APP)
+    rest_id = _plan_api_id(plan, "restv1")
+    http_id = _plan_api_id(plan, "httpv2")
+    _plan_refusal(harness, LOCAL_IAM_APP, base, (f"{rest_id}={base}", f"{http_id}={base}"), "collides with")
+    _plan_refusal(harness, LOCAL_IAM_APP, base, (f"{rest_id}={base + 40}",), "outside the run's range")
+    _plan_refusal(harness, LOCAL_IAM_APP, base, ("NoSuchSurface=8240",), "serves no public surface with that logical id")
+    _plan_refusal(harness, LOCAL_IAM_APP, 0, (f"{rest_id}={base}",), "--port-base")
+    return (
+        "a collision, a port outside the run's range, an unknown logical id and a pin without "
+        "--port-base were each refused by name before anything started"
+    )
+
+
+def run_local_co_residence_ca(harness: Harness) -> str:
+    shared = _home_scratch("a4-w3m1-ca-")
+    base = harness.lease.http_port
+    peer_plan = plan_local_app(harness, LOCAL_IAM_PEER_APP)
+    peer_rest_id = _plan_api_id(peer_plan, "restv1")
+    plan = plan_local_app(harness, LOCAL_IAM_APP)
+    rest_id = _plan_api_id(plan, "restv1")
+    peer = start_local_session(
+        harness,
+        LOCAL_IAM_PEER_APP,
+        name="co-residence-ca-peer",
+        tls=True,
+        tls_host="mcp.localhost",
+        shared_dir=shared,
+        port_base=base + 40,
+    )
+    try:
+        auth = start_local_session(
+            harness,
+            LOCAL_IAM_APP,
+            name="co-residence-ca-auth",
+            tls=True,
+            tls_host="auth.localhost",
+            shared_dir=shared,
+            port_base=base,
+        )
+        try:
+            peer_info, auth_info = peer.info, auth.info
+            if peer_info["tls"]["caFile"] != auth_info["tls"]["caFile"]:
+                raise HarnessFailure(
+                    f"the two runs have different CAs: {peer_info['tls']['caFile']} and {auth_info['tls']['caFile']}")
+            want_ca = str(Path(shared) / "ca" / "ca.pem")
+            if Path(auth_info["tls"]["caFile"]).resolve() != Path(want_ca).resolve():
+                raise HarnessFailure(f"the shared CA is not {want_ca}: {auth_info['tls']['caFile']}")
+            if peer_info["tls"]["host"] != "mcp.localhost" or auth_info["tls"]["host"] != "auth.localhost":
+                raise HarnessFailure(f"per-run host names are wrong: {peer_info['tls']} / {auth_info['tls']}")
+            context = create_tls_context(auth_info["tls"]["caFile"])
+            # Each run's leaf carries its own host name and verifies against the
+            # one shared CA. The open route answers 200; the peer's AWS_IAM route
+            # answers 403 after the TLS handshake verified.
+            rest_api = _session_api(auth, rest_id)
+            status, body, _ = http_request(
+                "GET", f"https://auth.localhost:{rest_api['port']}/open", context=context)
+            expect_status(status, 200, "auth.localhost over the shared CA", body)
+            peer_api = _session_api(peer, peer_rest_id)
+            status, body, _ = http_request(
+                "GET", f"https://mcp.localhost:{peer_api['port']}/peer", context=context)
+            if status not in (200, 403):
+                raise HarnessFailure(f"mcp.localhost did not verify over the shared CA: {status} {body}")
+            return (
+                f"two runs with hosts auth.localhost and mcp.localhost reused one CA at {want_ca}; each "
+                "leaf verified against it, and a client confused by either CA fails the handshake"
+            )
+        finally:
+            stop_local_session(harness, auth)
+    finally:
+        stop_local_session(harness, peer)
+        shutil.rmtree(shared, ignore_errors=True)
+
+
+def run_local_co_residence_iam(harness: Harness) -> str:
+    base = harness.lease.http_port
+    peer_base = base + 40
+    shared = _home_scratch("a4-w3m1-co-residence-")
+    network = f"a4-w3m1-x3-{os.getpid()}-{int(time.time() * 1000)}"
+    peer_plan = plan_local_app(harness, LOCAL_IAM_PEER_APP)
+    peer_rest_id = _plan_api_id(peer_plan, "restv1")
+    plan = plan_local_app(harness, LOCAL_IAM_APP)
+    rest_id = _plan_api_id(plan, "restv1")
+    http_id = _plan_api_id(plan, "httpv2")
+    peer = start_local_session(
+        harness,
+        LOCAL_IAM_PEER_APP,
+        name="co-residence-peer",
+        tls=True,
+        tls_host="mcp.localhost",
+        shared_dir=shared,
+        shared_network=network,
+        port_base=peer_base,
+        ports=(f"{peer_rest_id}={peer_base}",),
+    )
+    try:
+        peer_api = _session_api(peer, peer_rest_id)
+        if peer_api.get("port") != peer_base or not peer_api.get("pinned"):
+            raise HarnessFailure(f"the peer REST API is not at its pinned port {peer_base}: {peer_api}")
+        if peer.info.get("network") != {"name": network, "shared": True}:
+            raise HarnessFailure(f"the peer run did not join the shared network: {peer.info.get('network')}")
+        caller = start_local_session(
+            harness,
+            LOCAL_IAM_APP,
+            name="co-residence-caller",
+            targets=_iam_targets(harness),
+            tls=True,
+            tls_host="auth.localhost",
+            shared_dir=shared,
+            shared_network=network,
+            peer_hosts=("mcp.localhost",),
+            port_base=base,
+            ports=(f"{http_id}={base}", f"{rest_id}={base + 1}"),
+        )
+        try:
+            if caller.info.get("network") != {"name": network, "shared": True}:
+                raise HarnessFailure(f"the caller run did not join the shared network: {caller.info.get('network')}")
+            rest_api = _session_api(caller, rest_id)
+            http_api = _session_api(caller, http_id)
+            if http_api.get("port") != base or not http_api.get("pinned"):
+                raise HarnessFailure(f"the caller HTTP API is not at its pinned port {base}: {http_api}")
+            if rest_api.get("port") != base + 1 or not rest_api.get("pinned"):
+                raise HarnessFailure(f"the caller REST API is not at its pinned port {base + 1}: {rest_api}")
+            if caller.info["tls"]["caFile"] != peer.info["tls"]["caFile"]:
+                raise HarnessFailure("the co-resident runs do not share one CA")
+            # Run A's function signs with the credential run A issued to it and
+            # posts over verified HTTPS to run B's host and pinned port. Run B
+            # verifies the signature from the shared registry and evaluates its
+            # own resource policy against run A's principal.
+            caller_fn = _iam_caller(harness, "go")
+            outcome = _caller_result(
+                caller,
+                caller_fn,
+                {"url": f"https://mcp.localhost:{peer_base}/peer"},
+            )
+            if outcome.get("status") != 200:
+                raise HarnessFailure(f"run B refused run A's signed call: {outcome}")
+            identity = json.loads(outcome.get("body") or "{}")
+            if identity.get("userArn") != IAM_CALLER_ROLE:
+                raise HarnessFailure(f"run B resolved {identity.get('userArn')!r}, want {IAM_CALLER_ROLE!r}")
+            if not identity.get("accessKey"):
+                raise HarnessFailure(f"run B saw no access key for the call: {identity}")
+            return (
+                f"run A's function assumed no role and signed with the credential run A issued to it; run B "
+                f"verified it through the shared IAM registry over verified HTTPS at https://mcp.localhost:{peer_base}, "
+                f"evaluated its own resource policy, and resolved {IAM_CALLER_ROLE} with access key "
+                f"{identity['accessKey']}"
+            )
+        finally:
+            stop_local_session(harness, caller)
+    finally:
+        stop_local_session(harness, peer)
+        _down_shared_network(harness, LOCAL_IAM_PEER_APP, network)
+        shutil.rmtree(shared, ignore_errors=True)
+
+
 # The LOCAL-W3-M1 rows are registered here: their functions are defined below
 # the runner table, so the table is extended rather than literalled above.
 RUNNERS.update(
@@ -9519,6 +9803,11 @@ RUNNERS.update(
         "local-iam-caller-py": run_local_iam_caller_py,
         "local-iam-function-url": run_local_iam_function_url,
         "local-iam-shared-plane": run_local_iam_shared_plane,
+        "local-port-pinning": run_local_port_pinning,
+        "local-port-unpinned": run_local_port_unpinned,
+        "local-port-refusals": run_local_port_refusals,
+        "local-co-residence-ca": run_local_co_residence_ca,
+        "local-co-residence-iam": run_local_co_residence_iam,
     }
 )
 

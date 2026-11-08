@@ -494,6 +494,36 @@
       "gap": "The two runs share one directory on this host; they are not two deployments, and the session that signs the second call is minted by the first run's STS endpoint rather than by a container-to-container hop (that hop is the co-residence work).",
       "description": "Shared IAM plane: run A's function assumes a role run B's stack defined, through run A's STS endpoint; run B verifies the session's signature from the shared credential registry and grants the call against its own resource policy and the role's identity policy."
     },
+    "examples/cdk/local-iam/scripts/port-pinning.sh": {
+      "run": "local-port-pinning",
+      "class": "L2",
+      "description": "Declared ports: the HTTP API (index 0) is pinned to base+1 and the REST API (index 1) to base, and both pinned listeners answer real signed calls at their declared ports; the unpinned Function URL keeps base+2.",
+      "gap": "A pin reserves a slot inside the run's --port-base range; a port outside that range is refused rather than bound."
+    },
+    "examples/cdk/local-iam/scripts/port-unpinned.sh": {
+      "run": "local-port-unpinned",
+      "class": "L2",
+      "description": "Unpinned allocation: without --port, the same app keeps today's counter order exactly (httpv2 base, restv1 base+1, fnurl base+2).",
+      "gap": "The counter is per run; two co-resident runs use distinct --port-base values, as the fixed per-app port blocks require."
+    },
+    "examples/cdk/local-iam/scripts/port-refusals.sh": {
+      "run": "local-port-refusals",
+      "class": "L2",
+      "description": "Named port refusals: a collision, a port outside the run's range, an unknown logical id and a pin without --port-base each exit non-zero with a message naming the cause before anything starts.",
+      "gap": "These refusals are validated at plan time from the derived surface; a port another process holds is reported by the bind, not by the allocator."
+    },
+    "examples/cdk/local-iam/scripts/co-residence-ca.sh": {
+      "run": "local-co-residence-ca",
+      "class": "L2",
+      "description": "Shared CA and per-run host names: two runs (auth.localhost and mcp.localhost) reuse one CA at <shared-dir>/ca, each run's leaf carries its own host and verifies against that CA, and both hosts answer over verified HTTPS.",
+      "gap": "The CA is a runner-generated local root; the trust is installed per client (the mounted bundle or the harness context), not in a system store."
+    },
+    "examples/cdk/local-iam/scripts/co-residence-iam.sh": {
+      "run": "local-co-residence-iam",
+      "class": "L2",
+      "description": "Cross-run co-residence: two apps run in two sessions on one shared Docker network and one shared CA with pinned ports; a function in run A signs with run A's credential and calls run B's AWS_IAM route at https://mcp.localhost:<pinned>, and run B verifies it and resolves run A's role.",
+      "gap": "IAM policy evaluation is narrow (docs/127 W3-D1): only the enumerated statement shapes are evaluated. The two runs are processes on one host sharing a directory and a bridge, not two deployments."
+    },
     "examples/cdk/local-resources/bin/app.ts": {
       "class": "L2",
       "gap": "The reported types have no local runtime behavior (docs/125 true limit: deploy-time-only resources), and a MicroVM image is an AWS-only service with no emulator.",
