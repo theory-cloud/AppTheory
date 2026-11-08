@@ -2,7 +2,7 @@ import type { App } from "./app.js";
 import { SecureApp } from "./app.js";
 import type { Context, Handler } from "./context.js";
 import { type EndpointKind, type IssuerMode } from "./mcproutes.js";
-import { type Provider, type RequireBearerTokenOptions, type Stores } from "./oauth/index.js";
+import { type Provider, type RefusalHook, type RequireBearerTokenOptions, type Stores } from "./oauth/index.js";
 /**
  * URL mode selects the source of absolute URLs in facade metadata documents.
  *
@@ -190,6 +190,15 @@ export interface FacadeConfig {
      * handle, an authorization code, an ID token, or cookie material.
      */
     routeRefreshEvents?: RouteRefreshEventHook;
+    /**
+     * Optionally receives one structured, redacted event for every 400, 401,
+     * 403, 404, and 405 the facade renders on its own routes (authorize,
+     * callback, token, register, and the metadata documents), so a refusal a real
+     * client hit is answerable from telemetry instead of being a bare status. The
+     * MCP transport routes report through the MCP handler's own hook, so one
+     * refusal is never reported twice. A throwing hook is contained.
+     */
+    refusalHook?: RefusalHook;
 }
 /** One endpoint-kind route family installed by the helper. */
 export interface FacadeRoute {
@@ -311,6 +320,11 @@ export declare const ROUTE_REFRESH_OUTCOME_REVOKED_WALK: "revoked_walk";
 /** Retained for telemetry compatibility; the reuse budget no longer gates a serve. */
 export declare const ROUTE_REFRESH_OUTCOME_RATE_LIMITED: "rate_limited";
 export declare const ROUTE_REFRESH_OUTCOME_BINDING_REJECTED: "binding_rejected";
+/**
+ * A stale predecessor presentation served by rotating the family's live head.
+ * Additive: the client receives fresh credentials and the family is not revoked.
+ */
+export declare const ROUTE_REFRESH_OUTCOME_ROTATED_FROM_HEAD: "rotated_from_head";
 /** The failure or trigger reasons of a validation or state event. */
 export declare const ROUTE_REFRESH_REASON_HANDLE_MALFORMED: "handle_malformed";
 export declare const ROUTE_REFRESH_REASON_CLIENT_REJECTED: "client_rejected";
@@ -334,6 +348,17 @@ export declare const ROUTE_REFRESH_REASON_ACCESS_TOKEN_ONLY: "access_token_only"
 export declare const ROUTE_REFRESH_REASON_ROTATED_REUSE: "rotated_reuse";
 export declare const ROUTE_REFRESH_REASON_LEGACY_LINEAGE: "legacy_lineage_unsupported";
 export declare const ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE: "family_state_unavailable";
+/**
+ * A rotated-away handle presented beyond its grace window. Ordinary client
+ * behaviour - a restart with a stale stored copy, a second process on one login,
+ * a lost response - produces exactly this presentation, so it is served and
+ * never treated as theft.
+ */
+export declare const ROUTE_REFRESH_REASON_STALE_PREDECESSOR: "stale_predecessor";
+/** A family whose live head aged out, leaving no member that can rotate. */
+export declare const ROUTE_REFRESH_REASON_FAMILY_HEAD_ABSENT: "family_head_absent";
+/** A family-less pre-policy record migrated in code onto a fresh family. */
+export declare const ROUTE_REFRESH_REASON_LEGACY_LINEAGE_ADOPTED: "legacy_lineage_adopted";
 /** The store's absent-versus-expired signal; the client body stays uniform. */
 export declare const ROUTE_REFRESH_EXPIRY_SIGNAL_ABSENT: "absent";
 export declare const ROUTE_REFRESH_EXPIRY_SIGNAL_EXPIRED: "expired";

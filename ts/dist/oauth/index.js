@@ -9,6 +9,12 @@ export const ERR_BEARER_TOKEN_EXPIRED = "bearer token expired";
 export const ERR_BEARER_TOKEN_INVALID_AUDIENCE = "bearer token invalid audience";
 export const ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE = "bearer token insufficient scope";
 export const ERR_INVALID_URL = "invalid url";
+export const REFUSAL_REASON_UNCLASSIFIED = "unclassified";
+export const REFUSAL_REASON_MISSING_CREDENTIAL = "missing_credential";
+export const REFUSAL_REASON_INVALID_CREDENTIAL = "invalid_credential";
+export const REFUSAL_REASON_EXPIRED_CREDENTIAL = "expired_credential";
+export const REFUSAL_REASON_AUDIENCE_MISMATCH = "audience_mismatch";
+export const REFUSAL_REASON_INSUFFICIENT_SCOPE = "insufficient_scope";
 export class OAuthBearerError extends Error {
     oauthCode;
     constructor(oauthCode, message = oauthCode) {
@@ -249,7 +255,7 @@ async function authorizeBearerToken(ctx, options, resourceMetadataURLTemplate) {
         return null;
     }
     if (!options.validator) {
-        return await unauthorizedResponse(ctx, options, resourceMetadataURLTemplate);
+        return await unauthorizedResponse(ctx, options, resourceMetadataURLTemplate, REFUSAL_REASON_UNCLASSIFIED);
     }
     await options.validator(ctx, token);
     ctx.set(CONTEXT_KEY_BEARER_TOKEN, token);
@@ -575,7 +581,42 @@ function isSafeResourceMetadataURLTemplateValue(value) {
         return false;
     return RESOURCE_METADATA_URL_TEMPLATE_VALUE_PATTERN.test(value);
 }
-async function unauthorizedResponse(ctx, options, resourceMetadataURLTemplate) {
+/** Delivers one refusal event; a throwing hook never fails the request. */
+function emitRefusal(ctx, options, event) {
+    const hook = options.refusalHook;
+    if (!hook)
+        return;
+    try {
+        hook(ctx, {
+            at: typeof ctx.now === "function" ? ctx.now() : new Date(),
+            method: ctx.request.method,
+            path: ctx.request.path,
+            ...event,
+        });
+    }
+    catch {
+        return;
+    }
+}
+/** Maps a bearer failure to the closed refusal vocabulary. */
+function bearerRefusalReason(err) {
+    if (err instanceof OAuthBearerError) {
+        switch (err.oauthCode) {
+            case ERR_MISSING_BEARER_TOKEN:
+                return REFUSAL_REASON_MISSING_CREDENTIAL;
+            case ERR_BEARER_TOKEN_EXPIRED:
+                return REFUSAL_REASON_EXPIRED_CREDENTIAL;
+            case ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE:
+                return REFUSAL_REASON_INSUFFICIENT_SCOPE;
+            case ERR_BEARER_TOKEN_INVALID_AUDIENCE:
+                return REFUSAL_REASON_AUDIENCE_MISMATCH;
+            default:
+                return REFUSAL_REASON_INVALID_CREDENTIAL;
+        }
+    }
+    return REFUSAL_REASON_INVALID_CREDENTIAL;
+}
+async function unauthorizedResponse(ctx, options, resourceMetadataURLTemplate, reason = REFUSAL_REASON_INVALID_CREDENTIAL) {
     const metadataURL = await resolveResourceMetadataURL(ctx, options, resourceMetadataURLTemplate);
     const headers = {
         "content-type": ["application/json; charset=utf-8"],
@@ -583,6 +624,13 @@ async function unauthorizedResponse(ctx, options, resourceMetadataURLTemplate) {
     headers["www-authenticate"] = [
         metadataURL ? protectedResourceWWWAuthenticate(metadataURL) : "Bearer",
     ];
+    emitRefusal(ctx, options, {
+        class: "bearer",
+        reason,
+        status: 401,
+        errorCode: "app.unauthorized",
+        challenge: metadataURL ? "resource_metadata" : "bare",
+    });
     return {
         status: 401,
         headers,
@@ -604,6 +652,13 @@ async function insufficientScopeResponse(ctx, options, resourceMetadataURLTempla
         "content-type": ["application/json; charset=utf-8"],
         "www-authenticate": [insufficientScopeWWWAuthenticate(scopes, metadataURL)],
     };
+    emitRefusal(ctx, options, {
+        class: "bearer",
+        reason: REFUSAL_REASON_INSUFFICIENT_SCOPE,
+        status: 403,
+        errorCode: "app.insufficient_scope",
+        challenge: "insufficient_scope",
+    });
     return {
         status: 403,
         headers,
@@ -618,7 +673,13 @@ async function insufficientScopeResponse(ctx, options, resourceMetadataURLTempla
         isBase64: false,
     };
 }
-function forbiddenResponse() {
+function forbiddenResponse(ctx, options, reason) {
+    emitRefusal(ctx, options, {
+        class: "bearer",
+        reason,
+        status: 403,
+        errorCode: "app.forbidden",
+    });
     return {
         status: 403,
         headers: { "content-type": ["application/json; charset=utf-8"] },
@@ -634,15 +695,16 @@ function forbiddenResponse() {
     };
 }
 async function bearerErrorResponse(ctx, options, err, resourceMetadataURLTemplate) {
+    const reason = bearerRefusalReason(err);
     if (err instanceof OAuthBearerError) {
         if (err.oauthCode === ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE) {
             return await insufficientScopeResponse(ctx, options, resourceMetadataURLTemplate);
         }
         if (err.oauthCode === ERR_BEARER_TOKEN_INVALID_AUDIENCE) {
-            return forbiddenResponse();
+            return forbiddenResponse(ctx, options, reason);
         }
     }
-    return await unauthorizedResponse(ctx, options, resourceMetadataURLTemplate);
+    return await unauthorizedResponse(ctx, options, resourceMetadataURLTemplate, reason);
 }
 /**
  * Resolves the RFC 9728 protected-resource metadata URL for a challenge. A

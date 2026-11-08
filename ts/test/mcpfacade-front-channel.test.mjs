@@ -1113,6 +1113,10 @@ function refreshForm(handle, overrides = {}) {
 }
 
 /** Reads the framework handle a token response handed the client. */
+function responseExpiresIn(response) {
+  return JSON.parse(bodyString(response)).expires_in;
+}
+
 function responseHandle(response) {
   const payload = JSON.parse(bodyString(response));
   assert.ok(
@@ -1307,7 +1311,13 @@ test("refresh replays the same successor within the grace window", async (t) => 
   harness.clock.advance(120_000 - 1_000);
   const justInside = await harness.token(refreshForm(handle));
   assert.equal(justInside.status, 200);
-  assert.equal(bodyString(justInside), bodyString(first));
+  assert.equal(responseAccessToken(justInside), responseAccessToken(first));
+  assert.equal(responseHandle(justInside), responseHandle(first));
+  assert.ok(
+    responseExpiresIn(justInside) < responseExpiresIn(first),
+    "a replay must report the remaining lifetime, not the original one",
+  );
+  assert.ok(responseExpiresIn(justInside) > 0);
   assert.equal(harness.fake.refreshCallCount(), 1);
 });
 
@@ -2051,17 +2061,17 @@ async function refreshScenarioResponse(harness, scenario) {
       );
       return replayed;
     }
-    case "beyond_grace_first_presentation_revokes_family_without_tokens":
+    case "stale_predecessor_after_grace_is_served":
       assert.equal((await harness.token(refreshForm(handle))).status, 200);
       harness.clock.advance(120_000 + 1_000);
       return await harness.token(refreshForm(handle));
-    case "beyond_grace_repeated_presentation_is_invalid_grant": {
+    case "stale_predecessor_repeat_is_served_from_the_rearmed_window": {
       assert.equal((await harness.token(refreshForm(handle))).status, 200);
       harness.clock.advance(120_000 + 1_000);
-      assert.equal((await harness.token(refreshForm(handle))).status, 400);
+      assert.equal((await harness.token(refreshForm(handle))).status, 200);
       return await harness.token(refreshForm(handle));
     }
-    case "reuse_after_nine_rotations_revokes_whole_family": {
+    case "stale_predecessor_after_many_rotations_is_served": {
       let current = handle;
       for (let index = 0; index < 9; index += 1) {
         const rotated = await harness.token(refreshForm(current));
@@ -2069,10 +2079,10 @@ async function refreshScenarioResponse(harness, scenario) {
         current = responseHandle(rotated);
       }
       harness.clock.advance(120_000 + 1_000);
-      assert.equal((await harness.token(refreshForm(handle))).status, 400);
-      return await harness.token(refreshForm(current));
+      assert.equal((await harness.token(refreshForm(current))).status, 200);
+      return await harness.token(refreshForm(handle));
     }
-    case "legacy_lineage_refused_without_tokens":
+    case "legacy_lineage_is_adopted":
       await rewriteBrokerRecord(harness, handle, (record) => {
         record.familyHash = "";
         record.chainGeneration = 0;
@@ -3099,7 +3109,7 @@ test("front-channel routed metadata advertises the iss it sends", async (t) => {
   assert.equal(locationQuery(callback).get("iss"), document.issuer);
 });
 
-test("beyond-grace refresh revokes the family without serving tokens", async (t) => {
+test("a stale predecessor after grace is served by rotating the live head", async (t) => {
   const harness = await newFrontChannelHarness(t);
   const handle = await mintedRefreshHandle(harness);
   const rotated = await harness.token(refreshForm(handle));
@@ -3109,61 +3119,71 @@ test("beyond-grace refresh revokes the family without serving tokens", async (t)
 
   harness.clock.advance(120_000 + 1_000);
   const first = await harness.token(refreshForm(handle));
-  assert.equal(first.status, 400, bodyString(first));
-  const body = bodyString(first);
-  assert.match(body, /"error":"invalid_grant"/);
-  for (const absent of ["access_token", "refresh_token", "id_token"]) {
-    assert.ok(
-      !body.includes(absent),
-      `beyond-grace body must not carry ${absent}`,
-    );
-  }
-  assert.ok(!body.includes(UPSTREAM_REFRESH_TOKEN));
-  assert.equal(harness.tokenCalls(), beforeReuse);
-
-  await assert.rejects(
-    harness.stores.routeRefreshBroker.get(hashKey(handle)),
-    /revoked/,
-  );
-  await assert.rejects(
-    harness.stores.routeRefreshBroker.get(hashKey(successor)),
-    /revoked/,
+  assert.equal(first.status, 200, bodyString(first));
+  assert.notEqual(responseHandle(first), successor);
+  assert.notEqual(responseAccessToken(first), "");
+  assert.equal(
+    harness.tokenCalls(),
+    beforeReuse + 1,
+    "the stale presentation is one rotation of the live head",
   );
 
+  // The retry storm of the same stale handle inside one window is one stored
+  // body, not one upstream call per attempt.
   const second = await harness.token(refreshForm(handle));
-  assert.equal(second.status, 400);
-  assert.equal(bodyString(second), body);
+  assert.equal(second.status, 200, bodyString(second));
+  assert.equal(bodyString(second), bodyString(first));
+  assert.equal(harness.tokenCalls(), beforeReuse + 1);
+
+  // No member became unusable.
+  for (const live of [handle, successor, responseHandle(first)]) {
+    const record = await harness.stores.routeRefreshBroker.get(hashKey(live));
+    assert.notEqual(record.status, "revoked");
+  }
+  assert.equal((await harness.token(refreshForm(successor))).status, 200);
 });
 
-test("legacy refresh lineage fails closed without an upstream call", async (t) => {
+test("a legacy lineage is migrated in code without losing the session", async (t) => {
   const harness = await newFrontChannelHarness(t);
   const handle = await mintedRefreshHandle(harness);
-  assert.equal(harness.tokenCalls(), 1);
+  const rotated = await harness.token(refreshForm(handle));
+  assert.equal(rotated.status, 200, bodyString(rotated));
+  const successor = responseHandle(rotated);
+  assert.equal(harness.tokenCalls(), 2);
+
+  // Mark both records as pre-policy (v6.4.0 shape): no family, generation 0, and
+  // the rotated root keeps a stored successor link.
   await rewriteBrokerRecord(harness, handle, (record) => {
     record.familyHash = "";
     record.chainGeneration = 0;
   });
+  await rewriteBrokerRecord(harness, successor, (record) => {
+    record.familyHash = "";
+    record.chainGeneration = 0;
+  });
 
-  const refused = await harness.token(refreshForm(handle));
-  assert.equal(refused.status, 400, bodyString(refused));
-  const body = bodyString(refused);
-  assert.match(body, /"error":"invalid_grant"/);
-  for (const absent of ["access_token", "refresh_token", "id_token"]) {
-    assert.ok(!body.includes(absent));
-  }
-  assert.equal(
-    harness.tokenCalls(),
-    1,
-    "a legacy record must not reach the upstream",
+  harness.clock.advance(120_000 + 1_000);
+  const adopted = await harness.token(refreshForm(handle));
+  assert.equal(adopted.status, 200, bodyString(adopted));
+  const root = responseHandle(adopted);
+  const rootRecord = await harness.stores.routeRefreshBroker.get(hashKey(root));
+  assert.equal(rootRecord.familyHash, rootRecord.handleHash);
+  assert.equal(rootRecord.chainGeneration, 1);
+
+  // The new family rotates normally, and a sibling presentation of the same old
+  // handle lands on the same family rather than minting a second one.
+  const next = await harness.token(refreshForm(root));
+  assert.equal(next.status, 200, bodyString(next));
+  harness.clock.advance(120_000 + 1_000);
+  const sibling = await harness.token(refreshForm(handle));
+  assert.equal(sibling.status, 200, bodyString(sibling));
+  const siblingRecord = await harness.stores.routeRefreshBroker.get(
+    hashKey(responseHandle(sibling)),
   );
-
-  const record = await harness.stores.routeRefreshBroker.get(hashKey(handle));
-  assert.equal(record.familyHash, "", "a legacy record must not be normalized");
-  assert.equal(record.chainGeneration, 0);
-  assert.equal(record.status, "issued");
+  assert.equal(siblingRecord.familyHash, rootRecord.familyHash);
 });
 
-test("reuse after more than eight rotations revokes every family member", async (t) => {
+test("a stale predecessor eleven rotations behind the head is served", async (t) => {
   const harness = await newFrontChannelHarness(t);
   let current = await mintedRefreshHandle(harness);
   const handles = [current];
@@ -3174,22 +3194,22 @@ test("reuse after more than eight rotations revokes every family member", async 
     handles.push(current);
   }
   harness.clock.advance(120_000 + 1_000);
-  const reused = await harness.token(refreshForm(handles[0]));
-  assert.equal(reused.status, 400, bodyString(reused));
+  const served = await harness.token(refreshForm(handles[0]));
+  assert.equal(served.status, 200, bodyString(served));
+  assert.notEqual(responseAccessToken(served), "");
 
   for (const handle of handles) {
-    await assert.rejects(
-      harness.stores.routeRefreshBroker.get(hashKey(handle)),
-      /revoked/,
-    );
+    const record = await harness.stores.routeRefreshBroker.get(hashKey(handle));
+    assert.notEqual(record.status, "revoked");
   }
 });
 
-test("concurrent beyond-grace reuse never serves a token", async (t) => {
+test("concurrent stale presentations all end up with working credentials", async (t) => {
   const harness = await newFrontChannelHarness(t);
   const handle = await mintedRefreshHandle(harness);
   const rotated = await harness.token(refreshForm(handle));
   assert.equal(rotated.status, 200);
+  const successor = responseHandle(rotated);
   const beforeReuse = harness.tokenCalls();
   harness.clock.advance(120_000 + 1_000);
 
@@ -3205,11 +3225,55 @@ test("concurrent beyond-grace reuse never serves a token", async (t) => {
     ),
   );
   for (const response of responses) {
-    assert.equal(response.status, 400, bodyString(response));
-    const body = bodyString(response);
-    assert.match(body, /"error":"invalid_grant"/);
-    assert.ok(!body.includes("access_token"));
-    assert.ok(!body.includes("refresh_token"));
+    assert.equal(response.status, 200, bodyString(response));
+    assert.notEqual(responseAccessToken(response), "");
   }
-  assert.equal(harness.tokenCalls(), beforeReuse);
+  assert.ok(
+    harness.tokenCalls() <= beforeReuse + 16,
+    "each caller costs at most one rotation, and retries are served from the re-armed window",
+  );
+  for (const live of [handle, successor]) {
+    const record = await harness.stores.routeRefreshBroker.get(hashKey(live));
+    assert.notEqual(record.status, "revoked");
+  }
+  assert.equal((await harness.token(refreshForm(successor))).status, 200);
+});
+
+test("facade refusals are observable and served requests are not", async (t) => {
+  const events = [];
+  const harness = await newFrontChannelHarness(t, {
+    configExtra: {
+      refusalHook: (_ctx, event) => events.push(event),
+    },
+  });
+  const handle = await mintedRefreshHandle(harness);
+
+  const refused = await harness.token(refreshForm(unknownHandle()));
+  assert.equal(refused.status, 400, bodyString(refused));
+  assert.equal(events.length, 1);
+  assert.equal(events[0].class, "facade");
+  assert.equal(events[0].status, 400);
+  assert.equal(events[0].reason, "invalid_grant");
+  assert.equal(events[0].method, "POST");
+  assert.equal(events[0].path, oauthTokenPath(boundRouteEndpoint("namespace")));
+
+  events.length = 0;
+  assert.equal((await harness.token(refreshForm(handle))).status, 200);
+  assert.equal(events.length, 0, "a served request must not report a refusal");
+
+  const unsupported = await harness.serve(
+    "POST",
+    oauthTokenPath(boundRouteEndpoint("namespace")),
+    null,
+    Buffer.from(
+      new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: CLIENT_ID,
+      }).toString(),
+      "utf8",
+    ),
+  );
+  assert.equal(unsupported.status, 400);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].reason, "unsupported_grant_type");
 });
