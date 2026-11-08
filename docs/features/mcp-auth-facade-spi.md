@@ -171,20 +171,46 @@ The brokered refresh handle has three encoded policy values (see `FacadeConfig.R
   `RouteRefreshBrokerHandleTTLReporter` must agree with it, so a deployment cannot declare a long ceiling while its
   store silently keeps a short one. A missing or zero value is a registration error, never a fallback.
 - **`GraceWindow`** — the lost-response replay window measured from the winning rotation. Absent or zero selects
-  120 s; the maximum is 120 s. Inside the window the rotated (previous) handle replays the full stored successor
-  body, including handle material, because that is the lost-response recovery path. The boundary is exclusive: a
-  presentation at exactly the deadline is beyond grace.
+  120 s; the maximum is 120 s. Inside the window the rotated (previous) handle replays the stored successor body,
+  including handle material, because that is the lost-response recovery path. Only `expires_in` is recomputed, to
+  the lifetime the access token actually has left; a stored body below the five-second credential floor is not
+  replayed at all and the head is rotated instead, so a replayed credential is always accepted for the lifetime the
+  response states. The boundary is exclusive: a presentation at exactly the deadline is a stale predecessor.
 - **`ReuseRateCeiling`** — retained for configuration compatibility, required and bounded to `[9, 120]`. It
   previously budgeted the removed beyond-grace access-token-only serve; no refresh path uses it now.
 
-### Beyond-grace reuse
+### Reuse is served, never punished
 
-Every rotated-away handle presented at or after its grace deadline is reuse. The facade revokes the whole refresh
-family and returns the same non-oracle `invalid_grant` an unknown handle gets, with **no** access token, refresh
-handle, or ID token. There is no depth classification, no first-presentation carve-out, and no per-handle serve
-marker: the first and every later beyond-grace presentation are refused identically. A reuse telemetry event fires
-on **every** such presentation, with the `revoked_family` outcome. Within-grace grace-service responses replay the
-stored successor body byte-for-byte and are not budget-counted.
+A rotated-away handle presented at or after its grace deadline is a **stale predecessor**, and the evidence from
+every real client that broke is exactly that presentation: the predecessor of the live head, presented minutes to
+hours after a successful rotation, with the live head never presented, often at the same second on several routes of
+one login. Nothing distinguishes it from a stolen handle, so the facade does not treat it as theft. It rotates the
+family's **live head** — never the predecessor, whose upstream material has already been rotated and which an
+upstream that detects refresh-token reuse would revoke the grant over — and hands the client fresh credentials. The
+presented record is re-armed with the new body and a fresh grace window, so a retry storm inside one window costs one
+upstream call rather than one per attempt. Every member of the family stays live.
+
+A reuse telemetry event fires with the additive `rotated_from_head` outcome and the `stale_predecessor` reason; no
+family is revoked by reuse. The family is revoked only when the upstream terminally rejects the grant
+(`invalid_grant` or reauthorization required), when an operator revokes it through the incident surface, or when the
+authorization code that minted it is replayed. Each of those answers the uniform non-oracle `invalid_grant` an
+unknown handle gets, which is the token endpoint's re-authorize signal.
+
+Citations: [RFC 9700](https://www.rfc-editor.org/rfc/rfc9700) (OAuth 2.0 Security Best Current Practice) on
+refresh-token rotation and reuse detection; [OAuth 2.1 draft
+§4.3.1](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1) on public-client refresh tokens; [MCP
+authorization](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization); and comparable
+providers' reuse intervals ([Auth0](https://auth0.com/docs/secure/tokens/refresh-tokens/refresh-token-rotation),
+[Okta](https://developer.okta.com/docs/guides/refresh-tokens/main/)). RFC 9700 permits reuse detection; it does not
+require it, and it requires a public client to be able to recover from a lost rotation response, which is what the
+served path provides.
+
+**Residual risk.** A stolen route handle stays exchangeable for fresh credentials for the family's lifetime, which is
+bounded by the handle TTL (at most 30 days) and by the upstream refresh token's own validity. The protection this
+policy relies on instead is the bounded family lifetime, short access-token lifetimes, and the binding checks a real
+client satisfies (client registration, route resource, scope, subject). Detection is not attempted: the facade
+cannot distinguish a thief's presentation of a stolen handle from a restart holding a stale copy, and treating the
+latter as theft is what broke every real client.
 
 ### Family identity, tombstone, and migration
 
