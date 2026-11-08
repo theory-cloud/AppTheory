@@ -179,3 +179,26 @@ func TestWatchErrorWrappersPreserveTheirCause(t *testing.T) {
 		t.Fatalf("firstNonEmpty = %q", got)
 	}
 }
+
+func TestDescribeNotificationsReportsDeliveryState(t *testing.T) {
+	runner := iamTestRunner(t)
+	spec := &Spec{Notifications: []NotificationSpec{{
+		LogicalID: "Notify", Bucket: "Bucket", BucketName: "bucket",
+		DestinationType: "lambda", Destination: "Fn", Events: []string{"s3:ObjectCreated:*"},
+		FilterRules:     []NotificationFilterRule{{Name: "prefix", Value: "in/"}},
+		ConfigurationID: "config",
+	}}}
+	session := &localSession{runner: runner, spec: spec}
+	if session.describeNotifications(EngineState{}) == nil {
+		t.Fatal("a configuration with no delivery state must still be reported")
+	}
+	entries := session.describeNotifications(EngineState{Sources: []DeliveryState{{
+		ID: "Notify", State: DeliveryPhasePolling, Delivered: 2, Filtered: 1, Failed: 3,
+	}}})
+	if len(entries) != 1 || entries[0]["delivered"] != int64(2) || entries[0]["failed"] != int64(3) {
+		t.Fatalf("the delivery state is %+v", entries)
+	}
+	if (&localSession{spec: &Spec{}}).describeNotifications(EngineState{}) != nil {
+		t.Fatal("no configuration is reported as nil")
+	}
+}
