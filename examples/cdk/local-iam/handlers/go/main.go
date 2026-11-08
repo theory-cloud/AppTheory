@@ -190,7 +190,11 @@ func caller(ctx context.Context, role string, event json.RawMessage) (any, error
 			SessionToken:    credentials.SessionToken,
 		}
 	}
-	httpRequest, err := http.NewRequestWithContext(ctx, method, payload.URL, bytes.NewReader(nil))
+	target, err := localTargetURL(payload.URL)
+	if err != nil {
+		return nil, err
+	}
+	httpRequest, err := http.NewRequestWithContext(ctx, method, target, bytes.NewReader(nil))
 	if err != nil {
 		return nil, err
 	}
@@ -223,6 +227,26 @@ func caller(ctx context.Context, role string, event json.RawMessage) (any, error
 	outcome.Status = response.StatusCode
 	outcome.Body = string(body)
 	return respond(outcome), nil
+}
+
+// localTargetPrefixes are the loopback hosts the local runner serves a run's
+// APIs on. A row hands the caller a URL to sign; only one of these listeners is
+// acceptable, so the example can never be turned into a proxy for another host.
+var localTargetPrefixes = []string{
+	"http://127.0.0.1:", "https://127.0.0.1:",
+	"http://localhost:", "https://localhost:",
+	"http://host.docker.internal:", "https://host.docker.internal:",
+}
+
+// localTargetURL returns the URL to sign and call, or refuses a URL that does
+// not name one of the run's loopback listeners.
+func localTargetURL(raw string) (string, error) {
+	for _, prefix := range localTargetPrefixes {
+		if strings.HasPrefix(raw, prefix) {
+			return raw, nil
+		}
+	}
+	return "", fmt.Errorf("the caller's url is not a local runner listener")
 }
 
 // reportedCredentials is a credential the caller used, reported on request.
