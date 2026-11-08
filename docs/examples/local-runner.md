@@ -621,6 +621,11 @@ container's runtime actually reads, because one of them is not interchangeable:
 | Node (`nodejs24.x`) | `NODE_EXTRA_CA_CERTS`, `CURL_CA_BUNDLE` | Node adds `NODE_EXTRA_CA_CERTS` to its default trust store at startup ([Node CLI](https://nodejs.org/api/cli.html#node_extra_ca_certsfile)); the AWS SDK for JavaScript v3 uses Node's TLS stack and reads no CA-bundle variable of its own. |
 | Python (`python3.14`) | `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `AWS_CA_BUNDLE`, `CURL_CA_BUNDLE` | OpenSSL's default verify paths read `SSL_CERT_FILE` ([`ssl.create_default_context`](https://docs.python.org/3/library/ssl.html#ssl.create_default_context)), `requests` reads `REQUESTS_CA_BUNDLE`, and boto3/botocore read `AWS_CA_BUNDLE` and apply it through their own session ([custom trust store](https://docs.aws.amazon.com/sdkref/latest/guide/feature-custom-trust-store.html)). |
 
+A **container-image function** declares no runtime — it brings its own — so it
+receives the union of those sets. The runner cannot know which runtime the image
+speaks, and handing every variable to an image that ignores some of them is the
+only fail-safe choice.
+
 **A Go container never receives `AWS_CA_BUNDLE`.** The AWS SDK for Go v2 reads
 that variable during config loading and can only apply it through its own
 `*awshttp.BuildableClient`. A handler that supplies its own `*http.Client` — the
