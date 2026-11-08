@@ -96,7 +96,9 @@ func TestHTTPOriginReturnsAnOriginRedirectInsteadOfFollowingIt(t *testing.T) {
 				writer.Header().Add("Set-Cookie", "session=two; Path=/; SameSite=Lax")
 				writer.Header().Set("X-Origin-Marker", "kept")
 				writer.WriteHeader(status)
-				_, _ = writer.Write([]byte("redirect body"))
+				if _, writeErr := writer.Write([]byte("redirect body")); writeErr != nil {
+					t.Errorf("write the origin response: %v", writeErr)
+				}
 			}
 			origin := redirectTestOrigin(t, withTLS, handler)
 
