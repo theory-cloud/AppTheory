@@ -134,6 +134,14 @@ type Options struct {
 	// Nothing binds the unspecified address. An empty value keeps the run's own
 	// private network, exactly as before.
 	SharedNetwork string
+	// Mail starts the local mail surface: the profile's digest-pinned SMTP
+	// sink on the run network, an SMTP ingress that relays to it and runs the
+	// app's SES receipt rules, and the sink's HTTP read API over HTTPS from an
+	// auxiliary leaf. The default is off, so an existing caller is unchanged.
+	Mail bool
+	// MailHost is the public host name of the mail surface, a *.localhost name.
+	// The default is mail.localhost.
+	MailHost string
 	// PeerHosts are co-resident runs' public host names. Each is mapped in this
 	// run's function containers through the same add-host helper the run's own
 	// host uses, so a container reaches a sibling run's listener at the shared
@@ -199,6 +207,8 @@ type Runner struct {
 	// sharedNetwork is true when this run joined a --shared-network, so cleanup
 	// leaves the network for the other co-resident runs.
 	sharedNetwork bool
+	// mail is the started local mail surface, when --mail is on.
+	mail *mailSurface
 	// runtimeAPIGateway remembers the run network's gateway address once a
 	// container could not reach a loopback Runtime API listener, so later
 	// functions bind it before their container starts.
@@ -380,6 +390,9 @@ func NewRunner(options Options) (*Runner, error) {
 		}
 	}
 	if err := runner.validateCoResidence(); err != nil {
+		return nil, err
+	}
+	if err := runner.validateMail(); err != nil {
 		return nil, err
 	}
 	if err := runner.validateEndpoints(); err != nil {
@@ -857,6 +870,9 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 		return nil, err
 	}
 	if err = r.startBackends(ctx); err != nil {
+		return nil, err
+	}
+	if err = r.startMailSurface(ctx, spec); err != nil {
 		return nil, err
 	}
 	if err = r.startKMSFront(ctx); err != nil {

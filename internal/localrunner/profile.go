@@ -80,6 +80,16 @@ type Profile struct {
 		Agent  map[string]CodeBuildImagePin            `json:"agent"`
 		Images map[string]map[string]CodeBuildImagePin `json:"images"`
 	} `json:"codeBuild"`
+	// Mail pins the local mail sink: a digest-pinned SMTP sink with an HTTP
+	// read API the runner starts on the run network for --mail.
+	Mail struct {
+		Image           string `json:"image"`
+		Version         string `json:"version,omitempty"`
+		License         string `json:"license,omitempty"`
+		CompressedBytes int64  `json:"compressedBytes,omitempty"`
+		SMTPPort        int    `json:"smtpPort"`
+		HTTPPort        int    `json:"httpPort"`
+	} `json:"mail"`
 	// TLS is the committed opt-in for local HTTPS. `enabled` serves every
 	// public listener from a certificate the run's local CA signs; `host` is
 	// the `*.localhost` name a browser, an OIDC issuer and a WebAuthn RP ID
@@ -136,6 +146,24 @@ func (p *Profile) DynamoDBImage() (string, error) {
 		return "", fmt.Errorf("DynamoDB Local image %q is not pinned by digest", image)
 	}
 	return image, nil
+}
+
+// MailContainer returns the digest-pinned mail sink the --mail surface starts.
+func (p *Profile) MailContainer() (ContainerPin, error) {
+	if p == nil {
+		return ContainerPin{}, fmt.Errorf("no local profile was supplied; pass --profile to pin the mail sink")
+	}
+	if strings.TrimSpace(p.Mail.Image) == "" {
+		return ContainerPin{}, fmt.Errorf("local profile %s pins no mail image", p.path)
+	}
+	_, digest, hasDigest := strings.Cut(p.Mail.Image, "@")
+	if !hasDigest || !digestPattern.MatchString(digest) {
+		return ContainerPin{}, fmt.Errorf("mail image %q is not pinned by digest", p.Mail.Image)
+	}
+	if p.Mail.SMTPPort <= 0 || p.Mail.HTTPPort <= 0 {
+		return ContainerPin{}, fmt.Errorf("local profile %s must declare mail.smtpPort and mail.httpPort", p.path)
+	}
+	return ContainerPin{Image: p.Mail.Image, ContainerPort: p.Mail.SMTPPort}, nil
 }
 
 // Container returns the digest-pinned emulator container a --backend name

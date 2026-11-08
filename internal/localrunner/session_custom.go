@@ -13,7 +13,7 @@ import (
 //
 // https://docs.aws.amazon.com/ses/latest/dg/receiving-email.html
 func (s *localSession) sesReceive(ctx context.Context, request sessionRequest) (any, error) {
-	delivery, err := s.receiveMessage(ctx, receivedMessage{
+	delivery, err := s.runner.receiveMessage(ctx, s.spec, receivedMessage{
 		Source:     request.Source,
 		Recipients: request.Recipients,
 		Raw:        request.RawMessage,

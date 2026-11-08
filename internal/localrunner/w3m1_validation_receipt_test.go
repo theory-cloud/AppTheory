@@ -75,7 +75,7 @@ func TestRunReceiptRuleDeliversTheLambdaAndS3Actions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	outcome, err := session.runReceiptRule(context.Background(), rule, message, "message-1", now,
+	outcome, err := session.runner.runReceiptRule(context.Background(), session.spec, rule, message, "message-1", now,
 		parsed.headers, parsed.common)
 	if err != nil {
 		t.Fatalf("runReceiptRule: %v", err)
@@ -99,13 +99,13 @@ func TestRunReceiptRuleDeliversTheLambdaAndS3Actions(t *testing.T) {
 	// An unserved action kind is refused by name.
 	unserved := rule
 	unserved.Actions = []ReceiptAction{{Kind: "sns"}}
-	if _, unservedErr := session.runReceiptRule(context.Background(), unserved, message, "id", now, nil, nil); unservedErr == nil ||
+	if _, unservedErr := session.runner.runReceiptRule(context.Background(), session.spec, unserved, message, "id", now, nil, nil); unservedErr == nil ||
 		!strings.Contains(unservedErr.Error(), "not served locally") {
 		t.Fatalf("an unserved action must be named: %v", unservedErr)
 	}
 
 	// The whole receive path delivers against the matching rule.
-	delivery, err := session.receiveMessage(context.Background(), message)
+	delivery, err := session.runner.receiveMessage(context.Background(), session.spec, message)
 	if err != nil {
 		t.Fatalf("receiveMessage: %v", err)
 	}

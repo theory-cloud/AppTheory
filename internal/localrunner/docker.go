@@ -118,7 +118,11 @@ type ContainerOptions struct {
 	MemoryMB   int
 	Mounts     []string
 	Publish    int
-	Labels     map[string]string
+	// PublishPorts publishes additional container ports on a random loopback
+	// port, the same shape as Publish. The mail sink needs both its SMTP and
+	// HTTP ports.
+	PublishPorts []int
+	Labels       map[string]string
 	// Detach starts the container in the background (function containers).
 	Detach bool
 }
@@ -149,6 +153,11 @@ func ContainerArgv(options ContainerOptions) []string {
 	}
 	if options.Publish > 0 {
 		argv = append(argv, "-p", fmt.Sprintf("127.0.0.1::%d", options.Publish))
+	}
+	for _, port := range options.PublishPorts {
+		if port > 0 {
+			argv = append(argv, "-p", fmt.Sprintf("127.0.0.1::%d", port))
+		}
 	}
 	if options.MemoryMB > 0 {
 		argv = append(argv, "--memory", fmt.Sprintf("%dm", options.MemoryMB))

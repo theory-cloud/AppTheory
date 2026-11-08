@@ -421,13 +421,13 @@ func TestReceiptDeliveryRefusesBadInput(t *testing.T) {
 	session := &localSession{runner: runner, spec: spec}
 	ctx := context.Background()
 
-	if _, err := session.receiveMessage(ctx, receivedMessage{Raw: "", Recipients: []string{"a@b"}}); err == nil {
+	if _, err := session.runner.receiveMessage(ctx, session.spec, receivedMessage{Raw: "", Recipients: []string{"a@b"}}); err == nil {
 		t.Fatal("an empty message must be refused")
 	}
-	if _, err := session.receiveMessage(ctx, receivedMessage{Raw: "raw"}); err == nil {
+	if _, err := session.runner.receiveMessage(ctx, session.spec, receivedMessage{Raw: "raw"}); err == nil {
 		t.Fatal("a message with no recipient must be refused")
 	}
-	if _, err := session.receiveMessage(ctx, receivedMessage{Raw: "raw", Recipients: []string{"a@b"}}); err == nil ||
+	if _, err := session.runner.receiveMessage(ctx, session.spec, receivedMessage{Raw: "raw", Recipients: []string{"a@b"}}); err == nil ||
 		!strings.Contains(err.Error(), "no AWS::SES::ReceiptRule") {
 		t.Fatalf("an assembly with no rule must be refused by name: %v", err)
 	}
@@ -437,7 +437,7 @@ func TestReceiptDeliveryRefusesBadInput(t *testing.T) {
 		Actions: []ReceiptAction{{Kind: receiptActionStop}},
 	}}}
 	message := "From: sender@example.test\r\nTo: a@b\r\nSubject: test\r\n\r\nbody"
-	if _, err := session.receiveMessage(ctx, receivedMessage{Raw: message, Recipients: []string{"a@b"}}); err == nil ||
+	if _, err := session.runner.receiveMessage(ctx, session.spec, receivedMessage{Raw: message, Recipients: []string{"a@b"}}); err == nil ||
 		!strings.Contains(err.Error(), "has no enabled receipt rule") {
 		t.Fatalf("a non-matching recipient must be refused by name: %v", err)
 	}
@@ -449,7 +449,7 @@ func TestRunReceiptRuleStopsAndNamesAMissingTarget(t *testing.T) {
 	message := receivedMessage{Raw: "raw", Recipients: []string{"a@b"}}
 
 	stop := ReceiptRuleSpec{LogicalID: "Rule", Actions: []ReceiptAction{{Kind: receiptActionStop}}}
-	outcome, err := session.runReceiptRule(context.Background(), stop, message, "id", time.Now(), nil, nil)
+	outcome, err := session.runner.runReceiptRule(context.Background(), session.spec, stop, message, "id", time.Now(), nil, nil)
 	if err != nil {
 		t.Fatalf("a Stop action must succeed: %v", err)
 	}
@@ -460,7 +460,7 @@ func TestRunReceiptRuleStopsAndNamesAMissingTarget(t *testing.T) {
 	lambda := ReceiptRuleSpec{LogicalID: "Rule", Actions: []ReceiptAction{{
 		Kind: receiptActionLambda, Function: "Missing",
 	}}}
-	if _, err := session.runReceiptRule(context.Background(), lambda, message, "id", time.Now(), nil, nil); err == nil ||
+	if _, err := session.runner.runReceiptRule(context.Background(), session.spec, lambda, message, "id", time.Now(), nil, nil); err == nil ||
 		!strings.Contains(err.Error(), "not running") {
 		t.Fatalf("a missing Lambda target must be named: %v", err)
 	}
@@ -468,7 +468,7 @@ func TestRunReceiptRuleStopsAndNamesAMissingTarget(t *testing.T) {
 	s3 := ReceiptRuleSpec{LogicalID: "Rule", Actions: []ReceiptAction{{
 		Kind: receiptActionS3, Bucket: "Stack/Bucket", ObjectKeyPrefix: "mail/",
 	}}}
-	if _, err := session.runReceiptRule(context.Background(), s3, message, "id", time.Now(), nil, nil); err == nil {
+	if _, err := session.runner.runReceiptRule(context.Background(), session.spec, s3, message, "id", time.Now(), nil, nil); err == nil {
 		t.Fatal("an S3 action for an undeclared bucket must fail")
 	}
 }

@@ -229,11 +229,11 @@ func validateTLSHost(host string) error {
 // the CA and the mounted trust bundle, but its public listeners stay on plain
 // HTTP and no public host is mapped.
 //
-//nolint:gocyclo // one branch per opt-in combination.
+//nolint:gocyclo,gocognit // one branch per opt-in combination.
 func (r *Runner) initTLS(spec *Spec) error {
 	internal := specNeedsInternalHTTPS(spec)
 	public := r.options.TLS
-	if !public && !internal {
+	if !public && !internal && !r.options.Mail {
 		return nil
 	}
 	host := strings.ToLower(strings.TrimSpace(r.options.TLSHost))
@@ -287,7 +287,21 @@ func (r *Runner) initTLS(spec *Spec) error {
 		r.logf("local TLS: internal control endpoints only; CA %s (%s); trust bundle %s", state.caPath, validity, bundle)
 		return nil
 	}
-	r.addHostEntry(host)
+	if public {
+		r.addHostEntry(host)
+	}
+	if r.options.Mail {
+		mailHost, mailErr := r.mailHostName()
+		if mailErr != nil {
+			return mailErr
+		}
+		r.addHostEntry(mailHost)
+		if !public {
+			// The mail surface is the run's only HTTPS listener; reporting its
+			// host keeps describe honest without turning public TLS on.
+			state.host = mailHost
+		}
+	}
 	auxiliary := make([]string, 0, len(r.options.TLSAuxHosts))
 	for _, name := range r.options.TLSAuxHosts {
 		trimmed := strings.ToLower(strings.TrimSpace(name))
@@ -307,7 +321,11 @@ func (r *Runner) initTLS(spec *Spec) error {
 	for _, name := range peers {
 		r.addHostEntry(name)
 	}
-	r.logf("local TLS: https://%s for every public listener; CA %s (%s); trust bundle %s", host, state.caPath, validity, bundle)
+	if public {
+		r.logf("local TLS: https://%s for every public listener; CA %s (%s); trust bundle %s", host, state.caPath, validity, bundle)
+	} else {
+		r.logf("local TLS: CA %s (%s) for the mail surface; trust bundle %s", state.caPath, validity, bundle)
+	}
 	if len(auxiliary) > 0 {
 		r.logf("local TLS: auxiliary host names mapped into function containers: %s", strings.Join(auxiliary, ", "))
 	}

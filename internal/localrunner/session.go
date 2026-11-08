@@ -435,6 +435,9 @@ func (s *localSession) describe() (map[string]any, error) { //nolint:gocognit,go
 		"listeners":       s.runner.surfacePlans,
 		"network":         map[string]any{"name": s.runner.network, "shared": s.runner.sharedNetwork},
 	}
+	if mail := s.runner.mailDescription(); mail != nil {
+		document["mail"] = mail
+	}
 	if security := cloudFrontSecurityReport(s.spec); security != nil {
 		document["cloudFrontSecurity"] = security
 	}

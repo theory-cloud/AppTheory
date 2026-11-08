@@ -66,20 +66,20 @@ type receiptActionDone struct {
 // rule set does not accept.
 //
 // https://docs.aws.amazon.com/ses/latest/dg/receiving-email-concepts.html
-func (s *localSession) receiveMessage(ctx context.Context, message receivedMessage) (receiptDelivery, error) {
+func (r *Runner) receiveMessage(ctx context.Context, spec *Spec, message receivedMessage) (receiptDelivery, error) {
 	if strings.TrimSpace(message.Raw) == "" {
 		return receiptDelivery{}, fmt.Errorf("ses.receive needs the raw message")
 	}
 	if len(message.Recipients) == 0 {
 		return receiptDelivery{}, fmt.Errorf("ses.receive needs at least one recipient")
 	}
-	if len(s.spec.ReceiptRules) == 0 {
+	if len(spec.ReceiptRules) == 0 {
 		return receiptDelivery{}, fmt.Errorf("the assembly declares no AWS::SES::ReceiptRule, so no message can be received")
 	}
-	now := s.runner.clock.Now()
+	now := r.clock.Now()
 	messageID := message.MessageID
 	if messageID == "" {
-		messageID = fmt.Sprintf("%s-%s-000000", s.runner.runID, now.Format("20060102T150405Z"))
+		messageID = fmt.Sprintf("%s-%s-000000", r.runID, now.Format("20060102T150405Z"))
 	}
 	delivery := receiptDelivery{MessageID: messageID, Recipients: message.Recipients}
 	parsed, parseErr := parseReceiptMessage(message.Raw)
@@ -87,8 +87,8 @@ func (s *localSession) receiveMessage(ctx context.Context, message receivedMessa
 		return delivery, parseErr
 	}
 	headers, common := parsed.headers, parsed.common
-	for _, rule := range receiptRulesFor(s.spec.ReceiptRules, message.Recipients[0]) {
-		outcome, err := s.runReceiptRule(ctx, rule, message, messageID, now, headers, common)
+	for _, rule := range receiptRulesFor(spec.ReceiptRules, message.Recipients[0]) {
+		outcome, err := r.runReceiptRule(ctx, spec, rule, message, messageID, now, headers, common)
 		if err != nil {
 			return delivery, err
 		}
@@ -103,8 +103,9 @@ func (s *localSession) receiveMessage(ctx context.Context, message receivedMessa
 }
 
 // runReceiptRule applies one rule's actions in order.
-func (s *localSession) runReceiptRule(
+func (r *Runner) runReceiptRule(
 	ctx context.Context,
+	spec *Spec,
 	rule ReceiptRuleSpec,
 	message receivedMessage,
 	messageID string,
@@ -119,16 +120,16 @@ func (s *localSession) runReceiptRule(
 			return outcome, nil
 		case receiptActionS3:
 			key := receiptObjectKey(action.ObjectKeyPrefix, messageID)
-			if err := s.runner.writeReceiptObject(ctx, action.Bucket, key, message.Raw); err != nil {
+			if err := r.writeReceiptObject(ctx, action.Bucket, key, message.Raw); err != nil {
 				return outcome, err
 			}
 			outcome.Actions = append(outcome.Actions, receiptActionDone{Kind: receiptActionS3, Bucket: action.Bucket, Key: key})
 		case receiptActionLambda:
-			invoker, ok := s.runner.invokers[action.Function]
+			invoker, ok := r.invokers[action.Function]
 			if !ok {
 				return outcome, fmt.Errorf("the receipt rule's Lambda action targets %s, which is not running", action.Function)
 			}
-			event, err := s.runner.receiptEvent(s.spec, receiptEventInput{
+			event, err := r.receiptEvent(spec, receiptEventInput{
 				rule:       rule,
 				action:     action,
 				message:    message,

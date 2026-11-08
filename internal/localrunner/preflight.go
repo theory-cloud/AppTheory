@@ -128,6 +128,8 @@ func (r *Runner) Preflight(ctx context.Context, network string, addHosts []strin
 // receives. Template environment is applied first and these values override it,
 // so an app declaration can never redirect the container at real AWS. The
 // runtime class selects the trust-anchor variables the runtime actually reads.
+//
+//nolint:gocyclo // one control endpoint and trust family per branch.
 func (r *Runner) securityEnvironment(class string) map[string]string {
 	env := map[string]string{ //nolint:gosec // runner-issued credentials, never valid against real AWS
 		"AWS_REGION":                  LocalRegion,
@@ -204,6 +206,9 @@ func (r *Runner) securityEnvironment(class string) map[string]string {
 		env["AWS_CA_BUNDLE"] = webSocketManagementCACertPath
 		env["NODE_EXTRA_CA_CERTS"] = webSocketManagementCACertPath
 		env["SSL_CERT_FILE"] = webSocketManagementCACertPath
+	}
+	for name, value := range r.mailEnvironment() {
+		env[name] = value
 	}
 	if peers := r.peerHostNames(); len(peers) > 0 {
 		// The exact names this run declared as co-resident are the only

@@ -109,6 +109,11 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, "apptheory-local: --tls, --tls-host and --tls-aux are only valid on run and session")
 		return 2
 	}
+	if (config.mail || config.mailHost != "") &&
+		command != commandRun && command != commandSession {
+		fmt.Fprintln(os.Stderr, "apptheory-local: --mail and --mail-host are only valid on run and session")
+		return 2
+	}
 	if command == commandInvoke {
 		if err := validateInvokeConfig(config); err != nil {
 			fmt.Fprintf(os.Stderr, "apptheory-local: %v\n", err)
@@ -186,6 +191,8 @@ type commandConfig struct {
 	tls                 bool
 	tlsHost             string
 	tlsAux              stringList
+	mail                bool
+	mailHost            string
 }
 
 func (c *commandConfig) register(flags *flag.FlagSet) {
@@ -230,6 +237,8 @@ func (c *commandConfig) register(flags *flag.FlagSet) {
 	flags.BoolVar(&c.tls, "tls", false, "run/session: serve every public listener over HTTPS from a certificate the runner's local CA signs (default off: plain HTTP, unchanged)")
 	flags.StringVar(&c.tlsHost, "tls-host", "", "run/session with --tls: the public host name (localhost or a *.localhost name; default app.localhost)")
 	flags.Var(&c.tlsAux, "tls-aux", "run/session with --tls: an auxiliary *.localhost name a function container must resolve to the runner (repeatable; issue its certificate with `apptheory-local tls leaf`)")
+	flags.BoolVar(&c.mail, "mail", false, "run/session: start the local mail surface: the profile's digest-pinned SMTP sink, an SMTP ingress that runs the app's SES receipt rules, and the sink's HTTPS read API (default off)")
+	flags.StringVar(&c.mailHost, "mail-host", "", "run/session with --mail: the public host of the mail surface (a *.localhost name; default mail.localhost)")
 }
 
 func (c *commandConfig) execute(command string) int {
@@ -660,6 +669,8 @@ func (c *commandConfig) options() (localrunner.Options, error) {
 		TLS:                 c.tls,
 		TLSHost:             c.tlsHost,
 		TLSAuxHosts:         append([]string(nil), c.tlsAux...),
+		Mail:                c.mail,
+		MailHost:            c.mailHost,
 		Stdout:              os.Stdout,
 	}, nil
 }

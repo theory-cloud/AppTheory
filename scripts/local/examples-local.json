@@ -45,7 +45,15 @@
       "enabled": false,
       "host": "app.localhost"
     },
-    "lambda": {
+    "mail": {
+    "image": "axllent/mailpit@sha256:aef2aacc11f075ec0fb6874275ee4a421e688e11a96ebb296134d1735c7761ce",
+    "version": "v1.33.1",
+    "license": "MIT",
+    "compressedBytes": 14456260,
+    "smtpPort": 1025,
+    "httpPort": 8025
+  },
+  "lambda": {
       "images": {
         "go": {
           "tag": "public.ecr.aws/lambda/provided:al2023",
