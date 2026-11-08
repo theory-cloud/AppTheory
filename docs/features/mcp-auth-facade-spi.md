@@ -212,6 +212,14 @@ client satisfies (client registration, route resource, scope, subject). Detectio
 cannot distinguish a thief's presentation of a stolen handle from a restart holding a stale copy, and treating the
 latter as theft is what broke every real client.
 
+**What real clients actually do.** The local real-client target (`make local-clients`) drives Codex 0.166 and Claude
+Code 2.1 against the example app with an isolated home per client. With a 30-second access-token lifetime, Codex
+issued 34 route refreshes across two separate processes (a run and a restart) and Claude Code issued 6 in one run:
+every refresh was served, no refusal was emitted, no family was revoked, and the upstream never observed refresh-token
+reuse. Both clients keep the rotated handle across restarts; neither needed a manual re-login. The authoritative
+Autheory-path proof runs in TMS; the example's own rows (`examples/cdk/local-mcp-auth-facade`) replay the same
+sequences over real HTTP in CI.
+
 ### Family identity, tombstone, and migration
 
 Every record carries a chain-root/family hash and a chain-generation counter. A handle the facade mints is the root
@@ -228,14 +236,15 @@ successors minted before the tombstone, and no root creation or rotation can und
 family whose members have all aged out keeps its tombstone, so it cannot be recreated. Registration refuses a
 base-store-only, legacy-family-only, or partially duck-typed broker before routes, roots, or successors.
 
-**Pre-policy and partially backfilled records.** A family-less record (generation 0, empty family hash) is
-unsupported for ordinary rotation. It is refused before the upstream call and before any successor is minted; it is
-never normalized online, because an unknown-length lineage cannot be safely detached from ancestors whose later
-reuse must revoke it. Migration or reauthorization is required: quiesce legacy refresh traffic, then either backfill
-the complete lineage and family state under the store's transactional conformance proof and resume, or revoke/reject
-legacy handles and require a new authorization grant. A family-marked record whose required family state is
-missing/corrupt is likewise refused; an operator can inspect it through `ListFamily`, but ordinary rotation fails
-closed. There is no bounded-walk fallback and no eight-link success exit.
+**Pre-policy and partially backfilled records.** A family-less record (generation 0, empty family hash) predates the
+family policy, including a v6.4.0-era lineage. It is **migrated in code**, with no manual data operation: the facade
+follows the stored successor links to the lineage's live head — the only record whose upstream material is current,
+because every earlier link's material was rotated away when its successor was minted — bounds the walk at 64 links as
+a corruption guard, and mints a fresh generation-1 family root from that head's material. The legacy head is re-armed
+with the new body and a grace window, so a sibling migration lands on the family instead of minting a second one. A
+missing link, a cycle, a revoked member, or the walk limit fails the migration rather than guessing; the caller then
+gets the uniform `invalid_grant`. A family-marked record whose required family state is missing/corrupt is refused by
+`ListFamily` and ordinary rotation fails closed, exactly as before.
 
 ### Telemetry and the expiry signal
 
