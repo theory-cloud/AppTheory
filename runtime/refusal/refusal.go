@@ -37,10 +37,10 @@ const (
 	// It still makes the refusal visible, which is the point of the event.
 	ReasonUnclassified = "unclassified"
 
-	// Bearer reasons.
-	ReasonMissingCredential = "missing_credential"
-	ReasonInvalidCredential = "invalid_credential"
-	ReasonExpiredCredential = "expired_credential"
+	// Bearer reasons. These are closed telemetry slugs, not credentials.
+	ReasonMissingCredential = "missing_credential" //nolint:gosec // a reason slug, not a credential.
+	ReasonInvalidCredential = "invalid_credential" //nolint:gosec // a reason slug, not a credential.
+	ReasonExpiredCredential = "expired_credential" //nolint:gosec // a reason slug, not a credential.
 	ReasonAudienceMismatch  = "audience_mismatch"
 	ReasonInsufficientScope = "insufficient_scope"
 

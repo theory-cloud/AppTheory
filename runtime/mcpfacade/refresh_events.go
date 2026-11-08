@@ -106,7 +106,7 @@ const (
 	// required family state is missing or corrupt.
 	RouteRefreshReasonFamilyStateUnavailable = "family_state_unavailable"
 	// RouteRefreshReasonStalePredecessor is a presentation of a rotated-away
-	// handle beyond its grace window. Ordinary client behaviour — a restart with
+	// handle beyond its grace window. Ordinary client behavior — a restart with
 	// a stale stored copy, a second process on one login, a lost response —
 	// produces exactly this presentation, so it is served and never treated as
 	// theft.

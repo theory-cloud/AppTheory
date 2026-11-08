@@ -31,7 +31,7 @@ import (
 //     family's live head and handing back fresh credentials: the evidence from
 //     every real client that broke is exactly this presentation (a stale stored
 //     copy presented minutes to hours after a successful rotation), so it is
-//     ordinary client behaviour and never a reason to revoke the family. The
+//     ordinary client behavior and never a reason to revoke the family. The
 //     window is bounded by MaxRefreshGraceWindow, and it is exclusive at its end.
 //   - ReuseRateCeiling is retained for configuration compatibility. It
 //     previously bounded the removed beyond-grace access-token-only serve; no

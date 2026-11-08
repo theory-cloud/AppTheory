@@ -209,7 +209,7 @@ func TestMemoryBrokerStoreCarriesTheGraceAccessTokenDeadline(t *testing.T) {
 	successor.ChainGeneration = 2
 	successor.EncryptedUpstreamRefreshToken = "rotated-material"
 	successor.UpstreamRefreshTokenHash = HashKey("rotated-material")
-	if _, err := brokers.RotateFamily(ctx, RouteRefreshFamilyRotation{
+	if _, rotateErr := brokers.RotateFamily(ctx, RouteRefreshFamilyRotation{
 		PresentedHandleHash:       locked.HandleHash,
 		LockOwner:                 locked.RefreshLockOwner,
 		ExpectedVersion:           locked.Version,
@@ -217,8 +217,8 @@ func TestMemoryBrokerStoreCarriesTheGraceAccessTokenDeadline(t *testing.T) {
 		GraceRefreshResponse:      `{"access_token":"a"}`,
 		GraceExpiresAt:            ConformanceEpoch.Add(2 * time.Minute),
 		GraceAccessTokenExpiresAt: accessDeadline,
-	}); err != nil {
-		t.Fatalf("rotate: %v", err)
+	}); rotateErr != nil {
+		t.Fatalf("rotate: %v", rotateErr)
 	}
 	stored, err := brokers.Get(ctx, root.HandleHash)
 	if err != nil {

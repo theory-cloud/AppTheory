@@ -15,45 +15,51 @@ func transportRefusalReason(response *apptheory.Response) string {
 	if response == nil {
 		return refusal.ReasonUnclassified
 	}
-	message := responseErrorMessage(response.Body)
 	switch response.Status {
+	case 400:
+		return transportBadRequestReason(responseErrorMessage(response.Body))
 	case 403:
-		if message == "forbidden" {
+		if responseErrorMessage(response.Body) == "forbidden" {
 			return refusal.ReasonOriginRefused
 		}
 		return refusal.ReasonUnclassified
+	case 404:
+		return transportNotFoundReason(responseErrorMessage(response.Body))
 	case 405:
 		return refusal.ReasonMethodNotAllowed
-	case 404:
-		switch message {
-		case "session not found":
-			return refusal.ReasonUnknownSession
-		case "event not found":
-			return refusal.ReasonUnknownEvent
-		case "stream not found":
-			return refusal.ReasonUnknownStream
-		default:
-			return refusal.ReasonUnknownSession
-		}
-	case 400:
-		switch message {
-		case "missing Mcp-Session-Id":
-			return refusal.ReasonMissingSessionID
-		case "GET /mcp requires Accept: text/event-stream":
-			return refusal.ReasonMissingAccept
-		case "POST /mcp requires Accept: application/json and text/event-stream":
-			return refusal.ReasonMissingAccept
-		case "POST /mcp requires Content-Type: application/json":
-			return refusal.ReasonMissingContentType
-		case "unsupported MCP-Protocol-Version", "MCP-Protocol-Version mismatch":
-			return refusal.ReasonProtocolVersion
-		case "batch requests are only supported for MCP-Protocol-Version 2025-03-26":
-			return refusal.ReasonBatchUnsupported
-		case "invalid JSON-RPC message", "invalid JSON-RPC response":
-			return refusal.ReasonInvalidJSONRPC
-		default:
-			return refusal.ReasonUnclassified
-		}
+	default:
+		return refusal.ReasonUnclassified
+	}
+}
+
+// transportNotFoundReason maps the transport's 404 bodies.
+func transportNotFoundReason(message string) string {
+	switch message {
+	case "event not found":
+		return refusal.ReasonUnknownEvent
+	case "stream not found":
+		return refusal.ReasonUnknownStream
+	default:
+		return refusal.ReasonUnknownSession
+	}
+}
+
+// transportBadRequestReason maps the transport's 400 bodies.
+func transportBadRequestReason(message string) string {
+	switch message {
+	case "missing Mcp-Session-Id":
+		return refusal.ReasonMissingSessionID
+	case "GET /mcp requires Accept: text/event-stream",
+		"POST /mcp requires Accept: application/json and text/event-stream":
+		return refusal.ReasonMissingAccept
+	case "POST /mcp requires Content-Type: application/json":
+		return refusal.ReasonMissingContentType
+	case "unsupported MCP-Protocol-Version", "MCP-Protocol-Version mismatch":
+		return refusal.ReasonProtocolVersion
+	case "batch requests are only supported for MCP-Protocol-Version 2025-03-26":
+		return refusal.ReasonBatchUnsupported
+	case "invalid JSON-RPC message", "invalid JSON-RPC response":
+		return refusal.ReasonInvalidJSONRPC
 	default:
 		return refusal.ReasonUnclassified
 	}

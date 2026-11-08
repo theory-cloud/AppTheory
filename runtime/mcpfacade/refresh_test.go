@@ -245,7 +245,7 @@ func TestRefreshGrantMakesExactlyOneUpstreamCallPerRotation(t *testing.T) {
 // same client returns the same access token and the same successor handle with
 // no second upstream call, right up to the end of the window. The replayed body
 // reports only the lifetime the access token has left, so a replay never
-// advertises a lifetime the resource will not honour.
+// advertises a lifetime the resource will not honor.
 func TestRefreshGrantReplaysTheSameSuccessorWithinTheGraceWindow(t *testing.T) {
 	harness := newFrontChannelHarness(t)
 	handle := mintedRefreshHandle(t, harness)
@@ -275,7 +275,7 @@ func TestRefreshGrantReplaysTheSameSuccessorWithinTheGraceWindow(t *testing.T) {
 
 // TestRefreshGrantAfterTheGraceWindowRotatesTheHeadAndKeepsTheFamily pins the
 // replacement for the removed beyond-grace revocation. A stale stored copy
-// presented after the window is ordinary client behaviour: the facade rotates
+// presented after the window is ordinary client behavior: the facade rotates
 // the family's live head, hands back fresh credentials, keeps every member
 // usable, and never revokes. The stale handle's window is re-armed, so an
 // immediate retry of the same presentation is served from the stored body
@@ -317,7 +317,7 @@ func TestRefreshGrantAfterTheGraceWindowRotatesTheHeadAndKeepsTheFamily(t *testi
 
 // TestRefreshGrantDeepStalePredecessorServesTheLiveHead pins depth two and
 // beyond: a handle several rotations behind the head is still ordinary client
-// behaviour (a process that refreshed in memory while its stored copy stayed
+// behavior (a process that refreshed in memory while its stored copy stayed
 // behind), so it is served by rotating the live head rather than treated as
 // theft. No member of the family is revoked and every member stays usable.
 func TestRefreshGrantDeepStalePredecessorServesTheLiveHead(t *testing.T) {
@@ -408,7 +408,7 @@ func TestRefreshGrantCredentialLifetimeIsTruthful(t *testing.T) {
 }
 
 // TestRefreshGrantFamilyWithoutALiveHeadIsTerminal pins the one remaining
-// refresh refusal that is not a client-behaviour guess: a family whose head aged
+// refresh refusal that is not a client-behavior guess: a family whose head aged
 // out has no record whose material can rotate, so the handle is unusable and the
 // client is told invalid_grant to re-authorize.
 func TestRefreshGrantFamilyWithoutALiveHeadIsTerminal(t *testing.T) {

@@ -81,7 +81,7 @@ var errRouteRefreshBrokerFamilyCapabilityMissing = errors.New("mcpfacade: route 
 //
 // Reuse is served, never punished. A rotated-away handle inside its configured
 // grace window replays the stored successor body (the lost-response path). A
-// rotated-away handle beyond the window is ordinary client behaviour — a restart
+// rotated-away handle beyond the window is ordinary client behavior — a restart
 // holding a stale stored copy, a second process on one login, a lost response
 // whose client gave up — so the facade rotates the family's live head and hands
 // back fresh credentials. The stale presentation is never the trigger for a
@@ -90,6 +90,8 @@ var errRouteRefreshBrokerFamilyCapabilityMissing = errors.New("mcpfacade: route 
 // the request's scope and resource, and a handle is additionally bound to the
 // route it was minted for (DESIGN §7: the broker record binds resource, so a
 // handle is a route handle).
+//
+//nolint:gocognit,gocyclo // the validation order and the serve paths are the security contract.
 func (config normalizedConfig) handleRefreshTokenGrant(
 	ctx *apptheory.Context,
 	kind mcproutes.EndpointKind,
@@ -135,7 +137,7 @@ func (config normalizedConfig) handleRefreshTokenGrant(
 		// this is a stale predecessor: rotate the family's head, not the
 		// predecessor, so the upstream is never presented material that has
 		// already been rotated (an upstream that detects reuse would otherwise
-		// revoke the grant on ordinary client behaviour).
+		// revoke the grant on ordinary client behavior).
 		target := presented
 		stale := !presented.GraceExpiresAt.IsZero()
 		if stale {
@@ -446,7 +448,7 @@ func replayTokenBody(body []byte, remaining time.Duration) ([]byte, error) {
 		seconds = 1
 	}
 	payload.ExpiresIn = seconds
-	return json.Marshal(payload)
+	return json.Marshal(payload) // #nosec G117 -- the access token is deliberately returned to the client it was minted for, per DESIGN §8.4; only upstream refresh material and id_token are withheld.
 }
 
 // refreshFamilyHead resolves the live head of the family a rotated-away handle
@@ -454,7 +456,7 @@ func replayTokenBody(body []byte, remaining time.Duration) ([]byte, error) {
 // deadline: the only record whose recorded upstream material is current. A
 // predecessor is never presented to the upstream, because an upstream that
 // detects refresh-token reuse would then revoke the grant on ordinary client
-// behaviour. A family with no live head cannot rotate, so the handle is terminal.
+// behavior. A family with no live head cannot rotate, so the handle is terminal.
 func (config normalizedConfig) refreshFamilyHead(
 	ctx *apptheory.Context,
 	presented *oauthstore.RouteRefreshBrokerRecord,
@@ -525,7 +527,7 @@ func (config normalizedConfig) rotateRefreshGrant(
 // fresh grace window (best effort), so a retry storm inside one window is served
 // from the stored body instead of buying another upstream rotation; the family
 // is never revoked. The presentation is reported as reuse with the additive
-// rotated_from_head outcome: it is ordinary client behaviour, not theft.
+// rotated_from_head outcome: it is ordinary client behavior, not theft.
 func (config normalizedConfig) rotateStalePredecessor(
 	ctx *apptheory.Context,
 	presented *oauthstore.RouteRefreshBrokerRecord,
@@ -588,8 +590,8 @@ func (config normalizedConfig) performRefreshRotation(
 		UpstreamClientID: locked.UpstreamClientID,
 	})
 	if err != nil {
-		response, err := config.failedRefreshGrant(ctx, presented, locked, err)
-		return nil, response, err
+		response, failure := config.failedRefreshGrant(ctx, presented, locked, err)
+		return nil, response, failure
 	}
 	handle, err := oauth.NewOpaqueToken()
 	if err != nil {
