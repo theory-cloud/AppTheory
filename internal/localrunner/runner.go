@@ -63,6 +63,10 @@ type Options struct {
 	Backends []string
 	// PortBase pins the API listener ports; zero asks the OS for free ports.
 	PortBase int
+	// Ports pins named public surfaces to declared ports. Pinned ports are
+	// reserved first and the counter skips them, so unpinned surfaces keep
+	// today's allocation for the same base. A pin is only valid with PortBase.
+	Ports []PortPin
 	// NamePrefix names containers, the network and built images. The default
 	// is derived from the app hash, so concurrent runs of one app share names
 	// unless a unique prefix is set.
@@ -284,6 +288,12 @@ type Runner struct {
 	// origin mapping that speaks plain http to one of them fails at start with
 	// the fix instead of a 400 on the first request.
 	publicPorts map[int]bool
+	// surfacePlans is the resolved port allocation, in listener order. Both
+	// plan and describe report it, so a pinned port is visible before a
+	// listener binds.
+	surfacePlans []PublicSurfacePlan
+	// surfacePorts maps a served logical id to the port the run binds.
+	surfacePorts map[string]int
 }
 
 // NewRunner validates the options and prepares the run. It contacts no Docker
@@ -1689,6 +1699,22 @@ func (r *Runner) runtimeImageEnv(ctx context.Context, image string) (map[string]
 
 //nolint:gocyclo,gocognit // one explicit branch per supported provider and API kind.
 func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
+	plans, err := PlanPublicSurfaces(spec, r.options.PortBase, r.options.Ports)
+	if err != nil {
+		return err
+	}
+	r.surfacePlans = plans
+	r.surfacePorts = make(map[string]int, len(plans))
+	for _, plan := range plans {
+		r.surfacePorts[plan.LogicalID] = plan.Port
+	}
+	portFor := func(logicalID string) (int, error) {
+		port, ok := r.surfacePorts[logicalID]
+		if !ok {
+			return 0, fmt.Errorf("the surface plan has no listener for %s", logicalID)
+		}
+		return port, nil
+	}
 	targets := append([]APISpec(nil), spec.HTTPAPIs()...)
 	for _, url := range spec.FunctionURLs {
 		targets = append(targets, functionURLAPI(url))
@@ -1697,7 +1723,6 @@ func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 	for id, process := range r.invokers {
 		invokers[id] = process
 	}
-	listenerIndex := 0
 	for _, target := range targets {
 		transport := NewTransport(target, invokers, r.semaphore, r.logf)
 		transport.Clock = r.clock
@@ -1708,8 +1733,11 @@ func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 			ReadHeaderTimeout: 10 * time.Second,
 			IdleTimeout:       60 * time.Second,
 		}
-		port, err := r.startPublicListener(ctx, listenerIndex, server, "listener for "+target.LogicalID)
-		listenerIndex++
+		port, portErr := portFor(target.LogicalID)
+		if portErr != nil {
+			return portErr
+		}
+		port, err := r.startPublicListener(ctx, port, server, "listener for "+target.LogicalID)
 		if err != nil {
 			return fmt.Errorf("bind %s listener: %w", target.LogicalID, err)
 		}
@@ -1733,8 +1761,11 @@ func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 			ReadHeaderTimeout: 10 * time.Second,
 			IdleTimeout:       60 * time.Second,
 		}
-		port, err := r.startPublicListener(ctx, listenerIndex, server, "websocket listener for "+api.LogicalID)
-		listenerIndex++
+		port, portErr := portFor(api.LogicalID)
+		if portErr != nil {
+			return portErr
+		}
+		port, err := r.startPublicListener(ctx, port, server, "websocket listener for "+api.LogicalID)
 		if err != nil {
 			return fmt.Errorf("bind websocket %s listener: %w", api.LogicalID, err)
 		}
@@ -1765,8 +1796,11 @@ func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 			ReadHeaderTimeout: 10 * time.Second,
 			IdleTimeout:       60 * time.Second,
 		}
-		port, err := r.startPublicListener(ctx, listenerIndex, server, "cloudfront listener for "+distribution.LogicalID)
-		listenerIndex++
+		port, portErr := portFor(distribution.LogicalID)
+		if portErr != nil {
+			return portErr
+		}
+		port, err = r.startPublicListener(ctx, port, server, "cloudfront listener for "+distribution.LogicalID)
 		if err != nil {
 			return fmt.Errorf("bind cloudfront %s listener: %w", distribution.LogicalID, err)
 		}
@@ -1789,10 +1823,10 @@ func distributionHasFunctions(distribution *localcloudfront.Distribution) bool {
 	return false
 }
 
-func (r *Runner) listen(ctx context.Context, index int) (net.Listener, error) {
+func (r *Runner) listen(ctx context.Context, port int) (net.Listener, error) {
 	var listenConfig net.ListenConfig
-	if r.options.PortBase > 0 {
-		return listenConfig.Listen(ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", r.options.PortBase+index))
+	if port > 0 {
+		return listenConfig.Listen(ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	}
 	return listenConfig.Listen(ctx, "tcp", "127.0.0.1:0")
 }
@@ -1842,10 +1876,15 @@ func (r *Runner) Down(ctx context.Context) (int, error) {
 // PlanJSON renders the derived surface for machines (the examples harness and
 // future tooling).
 func (r *Runner) PlanJSON(spec *Spec) ([]byte, error) {
+	listeners, err := r.PublicSurfacePlans(spec)
+	if err != nil {
+		return nil, err
+	}
 	document := struct {
 		*Spec
-		RuntimeMode string `json:"runtimeMode"`
-	}{Spec: spec, RuntimeMode: r.RuntimeMode()}
+		RuntimeMode string              `json:"runtimeMode"`
+		Listeners   []PublicSurfacePlan `json:"listeners"`
+	}{Spec: spec, RuntimeMode: r.RuntimeMode(), Listeners: listeners}
 	return json.MarshalIndent(document, "", "  ")
 }
 

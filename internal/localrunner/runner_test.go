@@ -509,8 +509,7 @@ func TestNamingAndListeners(t *testing.T) {
 			t.Errorf("close blocked listener: %v", closeErr)
 		}
 	})
-	runner.options.PortBase = port
-	if _, err := runner.listen(ctx, 0); err == nil {
+	if _, err := runner.listen(ctx, port); err == nil {
 		t.Fatal("an occupied port must fail")
 	}
 }

@@ -151,6 +151,7 @@ type commandConfig struct {
 	scratchDir          string
 	profilePath         string
 	portBase            int
+	ports               stringList
 	namePrefix          string
 	maxConcurrency      int
 	deliveryConcurrency int
@@ -191,6 +192,7 @@ func (c *commandConfig) register(flags *flag.FlagSet) {
 	flags.StringVar(&c.scratchDir, "scratch", "", "scratch directory for synthesis and inline code (default: the user cache directory)")
 	flags.StringVar(&c.profilePath, "profile", "", "checked-in local execution profile with digest-pinned runtime images and endpoints")
 	flags.IntVar(&c.portBase, "port-base", 0, "bind API listeners at this port; 0 asks the OS for free ports")
+	flags.Var(&c.ports, "port", "run/session/plan: pin a public surface to a port: <logicalId>=<port> (repeatable; needs --port-base)")
 	flags.StringVar(&c.namePrefix, "name-prefix", "", "container and network name prefix (default: derived from the app path)")
 	flags.IntVar(&c.maxConcurrency, "max-concurrency", 32, "maximum in-flight invocations (1-32)")
 	flags.IntVar(&c.deliveryConcurrency, "delivery-concurrency", 0, "maximum concurrent delivery-engine invocations (default 4, max 32)")
@@ -321,6 +323,11 @@ func (c *commandConfig) plan(ctx context.Context, runner *localrunner.Runner) in
 		fmt.Println(string(document))
 		return 0
 	}
+	surfaces, err := runner.PublicSurfacePlans(spec)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "apptheory-local: %v\n", err)
+		return 1
+	}
 	fmt.Printf("app:      %s\n", c.app)
 	fmt.Printf("assembly: %s\n", spec.AssemblyDir)
 	fmt.Printf("runtime:  %s\n", runtimeModeLabel(runner.RuntimeMode()))
@@ -334,6 +341,19 @@ func (c *commandConfig) plan(ctx context.Context, runner *localrunner.Runner) in
 	fmt.Println("routes:")
 	for _, line := range localrunner.RouteTable(spec) {
 		fmt.Printf("  %s\n", line)
+	}
+	fmt.Println()
+	fmt.Println("public surfaces:")
+	for _, surface := range surfaces {
+		port := "auto"
+		if surface.Port > 0 {
+			port = fmt.Sprintf("%d", surface.Port)
+		}
+		note := ""
+		if surface.Pinned {
+			note = " (pinned)"
+		}
+		fmt.Printf("  %-12s %-44s %5s%s\n", surface.Class, surface.LogicalID, port, note)
 	}
 	printProvisionedResources(spec)
 	printCodeBuildProjects(spec)
@@ -589,6 +609,10 @@ func (c *commandConfig) options() (localrunner.Options, error) {
 	if originsErr != nil {
 		return localrunner.Options{}, originsErr
 	}
+	ports, portsErr := localrunner.ParsePortPins(c.ports, c.portBase)
+	if portsErr != nil {
+		return localrunner.Options{}, portsErr
+	}
 	var handler *localrunner.HandlerSpec
 	if strings.TrimSpace(c.handlerDir) != "" {
 		handler = &localrunner.HandlerSpec{
@@ -615,6 +639,7 @@ func (c *commandConfig) options() (localrunner.Options, error) {
 		Backends:            c.backends,
 		ExtraFunctions:      append([]string(nil), c.sessionTargets...),
 		PortBase:            c.portBase,
+		Ports:               ports,
 		NamePrefix:          c.namePrefix,
 		MaxConcurrency:      c.maxConcurrency,
 		DeliveryConcurrency: c.deliveryConcurrency,

@@ -293,12 +293,24 @@ func (s *localSession) describe() (map[string]any, error) { //nolint:gocognit,go
 	apis := make([]map[string]any, 0)
 	for _, api := range s.spec.APIs {
 		if url, ok := s.runner.apiURLs[api.LogicalID]; ok {
-			apis = append(apis, map[string]any{"class": api.Class, "logicalId": api.LogicalID, "url": url})
+			apis = append(apis, map[string]any{
+				"class":     api.Class,
+				"logicalId": api.LogicalID,
+				"url":       url,
+				"port":      s.runner.surfacePorts[api.LogicalID],
+				"pinned":    s.runner.surfacePinned(api.LogicalID),
+			})
 		}
 	}
 	for _, url := range s.spec.FunctionURLs {
 		if address, ok := s.runner.apiURLs[url.LogicalID]; ok {
-			apis = append(apis, map[string]any{"class": APIFunctionURL, "logicalId": url.LogicalID, "url": address})
+			apis = append(apis, map[string]any{
+				"class":     APIFunctionURL,
+				"logicalId": url.LogicalID,
+				"url":       address,
+				"port":      s.runner.surfacePorts[url.LogicalID],
+				"pinned":    s.runner.surfacePinned(url.LogicalID),
+			})
 		}
 	}
 	for _, api := range s.spec.WebSockets {
@@ -311,6 +323,8 @@ func (s *localSession) describe() (map[string]any, error) { //nolint:gocognit,go
 		}
 		if address, ok := s.runner.apiURLs[api.LogicalID]; ok {
 			entry["url"] = address
+			entry["port"] = s.runner.surfacePorts[api.LogicalID]
+			entry["pinned"] = s.runner.surfacePinned(api.LogicalID)
 		}
 		if api.Authorizer != nil {
 			entry["authorizer"] = api.Authorizer.Function
@@ -339,6 +353,8 @@ func (s *localSession) describe() (map[string]any, error) { //nolint:gocognit,go
 		}
 		if url, ok := s.runner.apiURLs[distribution.LogicalID]; ok {
 			entry["url"] = url
+			entry["port"] = s.runner.surfacePorts[distribution.LogicalID]
+			entry["pinned"] = s.runner.surfacePinned(distribution.LogicalID)
 		}
 		if id, ok := s.runner.cloudFrontIDs[distribution.LogicalID]; ok {
 			entry["distributionId"] = id
@@ -416,6 +432,7 @@ func (s *localSession) describe() (map[string]any, error) { //nolint:gocognit,go
 		"secrets":         secrets,
 		"endpoints":       endpoints,
 		"delivery":        delivery,
+		"listeners":       s.runner.surfacePlans,
 	}
 	if security := cloudFrontSecurityReport(s.spec); security != nil {
 		document["cloudFrontSecurity"] = security

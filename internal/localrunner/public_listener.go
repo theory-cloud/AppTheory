@@ -18,8 +18,8 @@ import (
 // Docker Desktop the gateway belongs to the VM and that bind fails harmlessly:
 // the container's host-gateway entry forwards the name to the host loopback.
 
-func (r *Runner) listenPublic(ctx context.Context, index int) ([]net.Listener, int, error) {
-	loopback, err := r.listen(ctx, index)
+func (r *Runner) listenPublic(ctx context.Context, port int) ([]net.Listener, int, error) {
+	loopback, err := r.listen(ctx, port)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -44,8 +44,8 @@ func (r *Runner) listenPublic(ctx context.Context, index int) ([]net.Listener, i
 // returns the port the run reports. A TLS run serves HTTPS with HTTP/1.1 and,
 // when the client offers it, HTTP/2; a run without the opt-in serves the same
 // plain HTTP listener as before.
-func (r *Runner) startPublicListener(ctx context.Context, index int, server *http.Server, label string) (int, error) {
-	listeners, port, err := r.listenPublic(ctx, index)
+func (r *Runner) startPublicListener(ctx context.Context, port int, server *http.Server, label string) (int, error) {
+	listeners, port, err := r.listenPublic(ctx, port)
 	if err != nil {
 		return 0, err
 	}
