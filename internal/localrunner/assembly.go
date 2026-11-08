@@ -15,6 +15,7 @@ import (
 // Resource types the assembly reader understands.
 const (
 	typeLambdaFunction      = "AWS::Lambda::Function"
+	typeLambdaPermission    = "AWS::Lambda::Permission"
 	typeDynamoTable         = "AWS::DynamoDB::Table"
 	typeSQSQueue            = "AWS::SQS::Queue"
 	typeS3Bucket            = "AWS::S3::Bucket"
@@ -37,6 +38,8 @@ const (
 	typeCognitoClient       = "AWS::Cognito::UserPoolClient"
 	typeCognitoDomain       = "AWS::Cognito::UserPoolDomain"
 	typeIAMRole             = "AWS::IAM::Role"
+	typeIAMPolicy           = "AWS::IAM::Policy"
+	typeIAMManagedPolicy    = "AWS::IAM::ManagedPolicy"
 	typeMicrovmImage        = "AWS::Lambda::MicrovmImage"
 	typeS3VectorsIndex      = "AWS::S3Vectors::Index"
 	typeHTTPAPI             = "AWS::ApiGatewayV2::Api"
@@ -52,6 +55,7 @@ const (
 	typeFunctionURL         = "AWS::Lambda::Url"
 	typeCodeBuildProject    = "AWS::CodeBuild::Project"
 	typeBucketDeploy        = "Custom::CDKBucketDeployment"
+	typeBucketAutoDelete    = "Custom::S3AutoDeleteObjects"
 	typeCloudFront          = "AWS::CloudFront::Distribution"
 	typeCloudFrontFn        = "AWS::CloudFront::Function"
 
@@ -147,6 +151,8 @@ type httpStageProperties struct {
 
 type restAPIProperties struct {
 	Name string `json:"Name"`
+	// Policy is the API's IAM resource policy document.
+	Policy json.RawMessage `json:"Policy"`
 }
 
 type restResourceProperties struct {
@@ -180,6 +186,20 @@ type restIntegrationResponse struct {
 type restStageProperties struct {
 	RestAPIID json.RawMessage `json:"RestApiId"`
 	StageName string          `json:"StageName"`
+}
+
+// lambdaPermissionProperties is the part of an AWS::Lambda::Permission the
+// derivation reads. It is how a Function URL's resource-based policy is
+// declared in a template.
+//
+// https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-lambda-permission.html
+type lambdaPermissionProperties struct {
+	Action       string          `json:"Action"`
+	FunctionName json.RawMessage `json:"FunctionName"`
+	Principal    json.RawMessage `json:"Principal"`
+	// FunctionURLAuthType pins the URL auth type a resource statement applies
+	// to. It is a plain string on the resource.
+	FunctionURLAuthType string `json:"FunctionUrlAuthType"`
 }
 
 type functionURLProperties struct {
@@ -410,6 +430,7 @@ func deriveSpecInternal(dir string, stacks []assemblyStack) (*Spec, error) {
 			Reason:    strings.Join(distribution.Refusals, "; "),
 		})
 	}
+	deriveIAMRoles(spec, stacks)
 	deriveCustomResources(spec, stacks)
 	deriveReceiptRules(spec, stacks)
 	classifyProblemResources(spec)

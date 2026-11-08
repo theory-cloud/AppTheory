@@ -38,7 +38,9 @@ const (
 
 // receiptRuleProperties is the part of an AWS::SES::ReceiptRule the runner reads.
 type receiptRuleProperties struct {
-	RuleSetName string `json:"RuleSetName"`
+	// RuleSetName is the rule set's name, or the Ref/GetAtt expression that
+	// names the AWS::SES::ReceiptRuleSet it belongs to.
+	RuleSetName json.RawMessage `json:"RuleSetName"`
 	Rule        struct {
 		Name        string   `json:"Name"`
 		Enabled     bool     `json:"Enabled"`
@@ -90,10 +92,19 @@ func deriveReceiptRules(spec *Spec, stacks []assemblyStack) {
 					continue
 				}
 			}
+			ruleSetName, err := receiptRuleSetName(stack, props.RuleSetName)
+			if err != nil {
+				spec.Skipped = append(spec.Skipped, Skipped{
+					LogicalID: id,
+					Kind:      typeSESReceiptRule,
+					Reason:    err.Error(),
+				})
+				continue
+			}
 			rule := ReceiptRuleSpec{
 				LogicalID:   id,
 				Stack:       stack.Name,
-				RuleSetName: props.RuleSetName,
+				RuleSetName: ruleSetName,
 				Name:        props.Rule.Name,
 				Recipients:  append([]string(nil), props.Rule.Recipients...),
 				Enabled:     props.Rule.Enabled,
@@ -162,8 +173,11 @@ func deriveReceiptRules(spec *Spec, stacks []assemblyStack) {
 	}
 }
 
-// typeSESReceiptRule is the receipt-rule resource type.
-const typeSESReceiptRule = "AWS::SES::ReceiptRule"
+// typeSESReceiptRule and typeSESReceiptRuleSet are the SES rule resource types.
+const (
+	typeSESReceiptRule    = "AWS::SES::ReceiptRule"
+	typeSESReceiptRuleSet = "AWS::SES::ReceiptRuleSet"
+)
 
 // receiptRulesFor returns the enabled rules whose Recipients name one address.
 // SES matches a recipient exactly and also accepts a domain that covers every
@@ -189,4 +203,33 @@ func receiptRulesFor(rules []ReceiptRuleSpec, recipient string) []ReceiptRuleSpe
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].LogicalID < out[j].LogicalID })
 	return out
+}
+
+// receiptRuleSetName resolves a receipt rule's RuleSetName: a literal string, or
+// the Ref of the AWS::SES::ReceiptRuleSet it belongs to.
+func receiptRuleSetName(stack assemblyStack, raw json.RawMessage) (string, error) {
+	if len(raw) == 0 {
+		return "", nil
+	}
+	var literal string
+	if err := json.Unmarshal(raw, &literal); err == nil {
+		return literal, nil
+	}
+	resourceID, ok := directRefID(raw)
+	if !ok {
+		return "", fmt.Errorf("the receipt rule's RuleSetName is neither a string nor a Ref")
+	}
+	resource, ok := stack.Template.Resources[resourceID]
+	if !ok || resource.Type != typeSESReceiptRuleSet {
+		return "", fmt.Errorf("the receipt rule's RuleSetName names %s, which is not an AWS::SES::ReceiptRuleSet", resourceID)
+	}
+	var props struct {
+		RuleSetName string `json:"RuleSetName"`
+	}
+	if len(resource.Properties) > 0 {
+		if err := json.Unmarshal(resource.Properties, &props); err != nil {
+			return "", fmt.Errorf("the receipt rule set %s has unreadable properties: %w", resourceID, err)
+		}
+	}
+	return props.RuleSetName, nil
 }

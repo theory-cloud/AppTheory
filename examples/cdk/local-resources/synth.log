@@ -1,0 +1,843 @@
+AI agent detected
+Bundling asset local-resources/MailHandler/Code/Stage...
+[Warning] Template validation found issues in your templates (reported as warnings).
+Set feature flag "@aws-cdk/core:validateAgainstDefaultRules" to true to turn these into errors.
+lib/local-resources-stack.ts:246:26
+WARNING Properties: 'AdditionalOsCapabilities' is a required property (CloudFormation Validate)
+   local-resources/RefusedMicrovmImage (RefusedMicrovmImage) aws-cdk-lib.CfnResource
+   Suggested fix: Add the required property 'AdditionalOsCapabilities'
+   Acknowledge with 'CloudFormation-Validate::F3003'
+
+lib/local-resources-stack.ts:246:26
+WARNING Properties: 'AdditionalOsCapabilities' is a required property (CloudFormation Validate)
+   local-resources/RefusedMicrovmImage (RefusedMicrovmImage) aws-cdk-lib.CfnResource
+   Suggested fix: Add the required property 'AdditionalOsCapabilities'
+   Acknowledge with 'CloudFormation-Validate::F3003'
+
+lib/local-resources-stack.ts:246:26
+WARNING Properties: 'AdditionalOsCapabilities' is a required property (CloudFormation Validate)
+   local-resources/RefusedMicrovmImage (RefusedMicrovmImage) aws-cdk-lib.CfnResource
+   Suggested fix: Add the required property 'AdditionalOsCapabilities'
+   Acknowledge with 'CloudFormation-Validate::F3003'
+
+lib/local-resources-stack.ts:246:26
+WARNING Properties: 'AdditionalOsCapabilities' is a required property (CloudFormation Validate)
+   local-resources/RefusedMicrovmImage (RefusedMicrovmImage) aws-cdk-lib.CfnResource
+   Suggested fix: Add the required property 'AdditionalOsCapabilities'
+   Acknowledge with 'CloudFormation-Validate::F3003'
+
+lib/local-resources-stack.ts:246:26
+WARNING Properties: 'AdditionalOsCapabilities' is a required property (CloudFormation Validate)
+   local-resources/RefusedMicrovmImage (RefusedMicrovmImage) aws-cdk-lib.CfnResource
+   Suggested fix: Add the required property 'AdditionalOsCapabilities'
+   Acknowledge with 'CloudFormation-Validate::F3003'
+
+lib/local-resources-stack.ts:246:26
+WARNING Properties: 'AdditionalOsCapabilities' is a required property (CloudFormation Validate)
+   local-resources/RefusedMicrovmImage (RefusedMicrovmImage) aws-cdk-lib.CfnResource
+   Suggested fix: Add the required property 'AdditionalOsCapabilities'
+   Acknowledge with 'CloudFormation-Validate::F3003'
+
+lib/local-resources-stack.ts:246:26
+WARNING Properties: 'AdditionalOsCapabilities' is a required property (CloudFormation Validate)
+   local-resources/RefusedMicrovmImage (RefusedMicrovmImage) aws-cdk-lib.CfnResource
+   Suggested fix: Add the required property 'AdditionalOsCapabilities'
+   Acknowledge with 'CloudFormation-Validate::F3003'
+
+lib/local-resources-stack.ts:246:26
+WARNING Properties: 'AdditionalOsCapabilities' is a required property (CloudFormation Validate)
+   local-resources/RefusedMicrovmImage (RefusedMicrovmImage) aws-cdk-lib.CfnResource
+   Suggested fix: Add the required property 'AdditionalOsCapabilities'
+   Acknowledge with 'CloudFormation-Validate::F3003'
+
+lib/local-resources-stack.ts:246:26
+WARNING Properties: 'AdditionalOsCapabilities' is a required property (CloudFormation Validate)
+   local-resources/RefusedMicrovmImage (RefusedMicrovmImage) aws-cdk-lib.CfnResource
+   Suggested fix: Add the required property 'AdditionalOsCapabilities'
+   Acknowledge with 'CloudFormation-Validate::F3003'
+
+lib/local-resources-stack.ts:246:26
+WARNING Properties: 'AdditionalOsCapabilities' is a required property (CloudFormation Validate)
+   local-resources/RefusedMicrovmImage (RefusedMicrovmImage) aws-cdk-lib.CfnResource
+   Suggested fix: Add the required property 'AdditionalOsCapabilities'
+   Acknowledge with 'CloudFormation-Validate::F3003'
+
+lib/local-resources-stack.ts:246:26
+WARNING Properties: 'AdditionalOsCapabilities' is a required property (CloudFormation Validate)
+   local-resources/RefusedMicrovmImage (RefusedMicrovmImage) aws-cdk-lib.CfnResource
+   Suggested fix: Add the required property 'AdditionalOsCapabilities'
+   Acknowledge with 'CloudFormation-Validate::F3003'
+
+lib/local-resources-stack.ts:246:26
+WARNING Properties: 'AdditionalOsCapabilities' is a required property (CloudFormation Validate)
+   local-resources/RefusedMicrovmImage (RefusedMicrovmImage) aws-cdk-lib.CfnResource
+   Suggested fix: Add the required property 'AdditionalOsCapabilities'
+   Acknowledge with 'CloudFormation-Validate::F3003'
+
+WARNING installLatestAwsSdk was not specified, and defaults to true. You probably do not want this. Set the global context flag '@aws-cdk/customresources:installLatestAwsSdkDefault' to false to switch this behavior off project-wide, or set the property explicitly to true if you know you need to call APIs that are not in Lambda's built-in SDK version. (Construct Annotations)
+   local-resources/EnsureRuleSet
+   Acknowledge with 'Construct-Annotations::@aws-cdk/custom-resources:installLatestAwsSdkNotSpecified'
+Resources:
+  AutoDeleteBucket93E032C1:
+    Type: AWS::S3::Bucket
+    Properties:
+      Tags:
+        - Key: aws-cdk:auto-delete-objects
+          Value: "true"
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+    Metadata:
+      aws:cdk:path: local-resources/AutoDeleteBucket/Resource
+  AutoDeleteBucketPolicy85D90797:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: AutoDeleteBucket93E032C1
+      PolicyDocument:
+        Statement:
+          - Action:
+              - s3:PutBucketPolicy
+              - s3:GetBucket*
+              - s3:List*
+              - s3:DeleteObject*
+            Effect: Allow
+            Principal:
+              AWS:
+                Fn::GetAtt:
+                  - CustomS3AutoDeleteObjectsCustomResourceProviderRole3B1BD092
+                  - Arn
+            Resource:
+              - Fn::GetAtt:
+                  - AutoDeleteBucket93E032C1
+                  - Arn
+              - Fn::Join:
+                  - ""
+                  - - Fn::GetAtt:
+                        - AutoDeleteBucket93E032C1
+                        - Arn
+                    - /*
+        Version: "2012-10-17"
+    Metadata:
+      aws:cdk:path: local-resources/AutoDeleteBucket/Policy/Resource
+  AutoDeleteBucketAutoDeleteObjectsCustomResourceE0861D85:
+    Type: Custom::S3AutoDeleteObjects
+    Properties:
+      ServiceToken:
+        Fn::GetAtt:
+          - CustomS3AutoDeleteObjectsCustomResourceProviderHandler9D90184F
+          - Arn
+      BucketName:
+        Ref: AutoDeleteBucket93E032C1
+    DependsOn:
+      - AutoDeleteBucketPolicy85D90797
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+    Metadata:
+      aws:cdk:path: local-resources/AutoDeleteBucket/AutoDeleteObjectsCustomResource/Default
+  CustomS3AutoDeleteObjectsCustomResourceProviderRole3B1BD092:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+      ManagedPolicyArns:
+        - Fn::Sub: arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+    Metadata:
+      aws:cdk:path: local-resources/Custom::S3AutoDeleteObjectsCustomResourceProvider/Role
+  CustomS3AutoDeleteObjectsCustomResourceProviderHandler9D90184F:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Bucket: cdk-hnb659fds-assets-123456789012-us-east-1
+        S3Key: faa95a81ae7d7373f3e1f242268f904eb748d8d0fdd306e8a6fe515a1905a7d6.zip
+      Timeout: 900
+      MemorySize: 128
+      Handler: index.handler
+      Role:
+        Fn::GetAtt:
+          - CustomS3AutoDeleteObjectsCustomResourceProviderRole3B1BD092
+          - Arn
+      Runtime: nodejs24.x
+      Description:
+        Fn::Join:
+          - ""
+          - - "Lambda function for auto-deleting objects in "
+            - Ref: AutoDeleteBucket93E032C1
+            - " S3 bucket."
+    DependsOn:
+      - CustomS3AutoDeleteObjectsCustomResourceProviderRole3B1BD092
+    Metadata:
+      aws:cdk:path: local-resources/Custom::S3AutoDeleteObjectsCustomResourceProvider/Handler
+      aws:asset:path: asset.faa95a81ae7d7373f3e1f242268f904eb748d8d0fdd306e8a6fe515a1905a7d6
+      aws:asset:property: Code
+  RawMailBucket41F42A42:
+    Type: AWS::S3::Bucket
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+    Metadata:
+      aws:cdk:path: local-resources/RawMailBucket/Resource
+  RawMailBucketPolicyF008D2A2:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: RawMailBucket41F42A42
+      PolicyDocument:
+        Statement:
+          - Action: s3:PutObject
+            Condition:
+              StringEquals:
+                aws:SourceAccount:
+                  Ref: AWS::AccountId
+            Effect: Allow
+            Principal:
+              Service: ses.amazonaws.com
+            Resource:
+              Fn::Join:
+                - ""
+                - - Fn::GetAtt:
+                      - RawMailBucket41F42A42
+                      - Arn
+                  - /mail/*
+        Version: "2012-10-17"
+    Metadata:
+      aws:cdk:path: local-resources/RawMailBucket/Policy/Resource
+  TriggerTargetServiceRoleE68F8833:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+        Version: "2012-10-17"
+      ManagedPolicyArns:
+        - Fn::Join:
+            - ""
+            - - "arn:"
+              - Ref: AWS::Partition
+              - :iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+    Metadata:
+      aws:cdk:path: local-resources/TriggerTarget/ServiceRole/Resource
+  TriggerTarget8DBEBC36:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: |
+          
+          exports.handler = async (event) => {
+            console.log(JSON.stringify({ trigger: "genome-propagation", payload: event || {} }));
+            return { propagated: true, at: new Date().toISOString() };
+          };
+      Description: "Custom::Trigger target: reports that the deploy-time trigger fired"
+      Handler: index.handler
+      Role:
+        Fn::GetAtt:
+          - TriggerTargetServiceRoleE68F8833
+          - Arn
+      Runtime: nodejs24.x
+      Timeout: 30
+    DependsOn:
+      - TriggerTargetServiceRoleE68F8833
+    Metadata:
+      aws:cdk:path: local-resources/TriggerTarget/Resource
+  TriggerTargetCurrentVersionD36B75A26f000f944ffa776c1dde71a4ece387c2:
+    Type: AWS::Lambda::Version
+    Properties:
+      FunctionName:
+        Ref: TriggerTarget8DBEBC36
+    Metadata:
+      aws:cdk:path: local-resources/TriggerTarget/CurrentVersion/Resource
+      aws:cdk:do-not-refactor: true
+  DeployTrigger:
+    Type: Custom::Trigger
+    Properties:
+      ServiceToken:
+        Fn::GetAtt:
+          - AWSCDKTriggerCustomResourceProviderCustomResourceProviderHandler97BECD91
+          - Arn
+      HandlerArn:
+        Ref: TriggerTargetCurrentVersionD36B75A26f000f944ffa776c1dde71a4ece387c2
+      InvocationType: RequestResponse
+      Timeout: "60000"
+      ExecuteOnHandlerChange: true
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+    Metadata:
+      aws:cdk:path: local-resources/DeployTrigger/Default/Default
+  AWSCDKTriggerCustomResourceProviderCustomResourceProviderRoleE18FAF0A:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+      ManagedPolicyArns:
+        - Fn::Sub: arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: Inline
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - Fn::Join:
+                      - ""
+                      - - Fn::GetAtt:
+                            - TriggerTarget8DBEBC36
+                            - Arn
+                        - :*
+    Metadata:
+      aws:cdk:path: local-resources/AWSCDK.TriggerCustomResourceProviderCustomResourceProvider/Role
+  AWSCDKTriggerCustomResourceProviderCustomResourceProviderHandler97BECD91:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Bucket: cdk-hnb659fds-assets-123456789012-us-east-1
+        S3Key: fae8b01d672b4358f1599a33d169a0c6f86e8d50677c9f50779567c206dcd285.zip
+      Timeout: 900
+      MemorySize: 128
+      Handler: __entrypoint__.handler
+      Role:
+        Fn::GetAtt:
+          - AWSCDKTriggerCustomResourceProviderCustomResourceProviderRoleE18FAF0A
+          - Arn
+      Runtime: nodejs24.x
+    DependsOn:
+      - AWSCDKTriggerCustomResourceProviderCustomResourceProviderRoleE18FAF0A
+    Metadata:
+      aws:cdk:path: local-resources/AWSCDK.TriggerCustomResourceProviderCustomResourceProvider/Handler
+      aws:asset:path: asset.fae8b01d672b4358f1599a33d169a0c6f86e8d50677c9f50779567c206dcd285
+      aws:asset:property: Code
+  MigrationProviderServiceRoleD5E29E63:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+        Version: "2012-10-17"
+      ManagedPolicyArns:
+        - Fn::Join:
+            - ""
+            - - "arn:"
+              - Ref: AWS::Partition
+              - :iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+    Metadata:
+      aws:cdk:path: local-resources/MigrationProvider/ServiceRole/Resource
+  MigrationProvider42572A8B:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: |
+          
+          const https = require("https");
+          const url = require("url");
+
+          exports.handler = async (event) => {
+            console.log(JSON.stringify({ requestType: event.RequestType, logicalId: event.LogicalResourceId }));
+            const version = event.ResourceProperties.MigrationVersion || "0";
+            const response = {
+              Status: "SUCCESS",
+              Reason: "the local provider framework handler ran",
+              PhysicalResourceId: event.PhysicalResourceId || "env-migration-" + version,
+              StackId: event.StackId,
+              RequestId: event.RequestId,
+              LogicalResourceId: event.LogicalResourceId,
+              Data: { MigrationVersion: version, RanAt: new Date().toISOString() },
+            };
+            await new Promise((resolve, reject) => {
+              const target = url.parse(event.ResponseURL);
+              const body = JSON.stringify(response);
+              const request = https.request(
+                {
+                  hostname: target.hostname,
+                  port: target.port,
+                  path: target.path,
+                  method: "PUT",
+                  headers: { "content-type": "", "content-length": Buffer.byteLength(body) },
+                },
+                (answer) => {
+                  answer.resume();
+                  answer.statusCode && answer.statusCode >= 400 ? reject(new Error("response status " + answer.statusCode)) : resolve();
+                },
+              );
+              request.on("error", reject);
+              request.write(body);
+              request.end();
+            });
+            return response;
+          };
+      Description: Provider-framework custom resource handler
+      Handler: index.handler
+      Role:
+        Fn::GetAtt:
+          - MigrationProviderServiceRoleD5E29E63
+          - Arn
+      Runtime: nodejs24.x
+      Timeout: 60
+    DependsOn:
+      - MigrationProviderServiceRoleD5E29E63
+    Metadata:
+      aws:cdk:path: local-resources/MigrationProvider/Resource
+  EnvMigration:
+    Type: Custom::EnvMigration
+    Properties:
+      ServiceToken:
+        Fn::GetAtt:
+          - MigrationProvider42572A8B
+          - Arn
+      MigrationVersion: "1"
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+    Metadata:
+      aws:cdk:path: local-resources/EnvMigration/Default
+  EnsureRuleSet29212476:
+    Type: Custom::AWS
+    Properties:
+      ServiceToken:
+        Fn::GetAtt:
+          - AWS679f53fac002430cb0da5b7982bd22872D164C4C
+          - Arn
+      Create: '{"service":"SES","action":"createReceiptRuleSet","parameters":{"RuleSetName":"local-resources-mail"},"physicalResourceId":{"id":"rule-set-local-resources-mail"},"ignoreErrorCodesMatching":".*AlreadyExists.*"}'
+      InstallLatestAwsSdk: true
+    DependsOn:
+      - EnsureRuleSetCustomResourcePolicy32092443
+      - MigrationProvider42572A8B
+      - MigrationProviderServiceRoleD5E29E63
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+    Metadata:
+      aws:cdk:path: local-resources/EnsureRuleSet/Resource/Default
+  EnsureRuleSetCustomResourcePolicy32092443:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action: ses:CreateReceiptRuleSet
+            Effect: Allow
+            Resource: "*"
+        Version: "2012-10-17"
+      PolicyName: EnsureRuleSetCustomResourcePolicy32092443
+      Roles:
+        - Ref: AWS679f53fac002430cb0da5b7982bd2287ServiceRoleC1EA0FF2
+    DependsOn:
+      - MigrationProvider42572A8B
+      - MigrationProviderServiceRoleD5E29E63
+    Metadata:
+      aws:cdk:path: local-resources/EnsureRuleSet/CustomResourcePolicy/Resource
+  AWS679f53fac002430cb0da5b7982bd2287ServiceRoleC1EA0FF2:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+        Version: "2012-10-17"
+      ManagedPolicyArns:
+        - Fn::Join:
+            - ""
+            - - "arn:"
+              - Ref: AWS::Partition
+              - :iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+    Metadata:
+      aws:cdk:path: local-resources/AWS679f53fac002430cb0da5b7982bd2287/ServiceRole/Resource
+  AWS679f53fac002430cb0da5b7982bd22872D164C4C:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Bucket: cdk-hnb659fds-assets-123456789012-us-east-1
+        S3Key: 9b8fce7ae7f25ef82fdbaf6b72523b99d0875c0c9c826642819fb51f11d9b125.zip
+      Handler: index.handler
+      Role:
+        Fn::GetAtt:
+          - AWS679f53fac002430cb0da5b7982bd2287ServiceRoleC1EA0FF2
+          - Arn
+      Runtime: nodejs24.x
+      Timeout: 120
+    DependsOn:
+      - AWS679f53fac002430cb0da5b7982bd2287ServiceRoleC1EA0FF2
+    Metadata:
+      aws:cdk:path: local-resources/AWS679f53fac002430cb0da5b7982bd2287/Resource
+      aws:asset:path: asset.9b8fce7ae7f25ef82fdbaf6b72523b99d0875c0c9c826642819fb51f11d9b125
+      aws:asset:is-bundled: false
+      aws:asset:property: Code
+  MailHandlerServiceRoleCC26BCB7:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+        Version: "2012-10-17"
+      ManagedPolicyArns:
+        - Fn::Join:
+            - ""
+            - - "arn:"
+              - Ref: AWS::Partition
+              - :iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+    Metadata:
+      aws:cdk:path: local-resources/MailHandler/ServiceRole/Resource
+  MailHandlerServiceRoleDefaultPolicy6039E5DA:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action:
+              - s3:ListBucket
+              - s3:GetObject
+              - s3:PutObject
+              - s3:DeleteObject
+            Effect: Allow
+            Resource:
+              - Fn::GetAtt:
+                  - AutoDeleteBucket93E032C1
+                  - Arn
+              - Fn::Join:
+                  - ""
+                  - - Fn::GetAtt:
+                        - AutoDeleteBucket93E032C1
+                        - Arn
+                    - /*
+              - Fn::GetAtt:
+                  - RawMailBucket41F42A42
+                  - Arn
+              - Fn::Join:
+                  - ""
+                  - - Fn::GetAtt:
+                        - RawMailBucket41F42A42
+                        - Arn
+                    - /*
+        Version: "2012-10-17"
+      PolicyName: MailHandlerServiceRoleDefaultPolicy6039E5DA
+      Roles:
+        - Ref: MailHandlerServiceRoleCC26BCB7
+    Metadata:
+      aws:cdk:path: local-resources/MailHandler/ServiceRole/DefaultPolicy/Resource
+  MailHandler1929B025:
+    Type: AWS::Lambda::Function
+    Properties:
+      Architectures:
+        - arm64
+      Code:
+        S3Bucket: cdk-hnb659fds-assets-123456789012-us-east-1
+        S3Key: d9916de870ab7b2ec40a98ab9e281f29a0f38db671306c8c7b937b981155639a.zip
+      Description: "SES receipt-rule Lambda action: renders the received-message record"
+      Environment:
+        Variables:
+          APPTHEORY_LOCAL_RESOURCES_ROLE: mail
+          RAW_MAIL_BUCKET:
+            Ref: RawMailBucket41F42A42
+          AUTO_DELETE_BUCKET:
+            Ref: AutoDeleteBucket93E032C1
+      Handler: bootstrap
+      Role:
+        Fn::GetAtt:
+          - MailHandlerServiceRoleCC26BCB7
+          - Arn
+      Runtime: provided.al2023
+      Timeout: 20
+    DependsOn:
+      - MailHandlerServiceRoleDefaultPolicy6039E5DA
+      - MailHandlerServiceRoleCC26BCB7
+    Metadata:
+      aws:cdk:path: local-resources/MailHandler/Resource
+      aws:asset:path: asset.d9916de870ab7b2ec40a98ab9e281f29a0f38db671306c8c7b937b981155639a
+      aws:asset:is-bundled: true
+      aws:asset:property: Code
+  MailHandlerAllowSesB90D749C:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName:
+        Fn::GetAtt:
+          - MailHandler1929B025
+          - Arn
+      Principal: ses.amazonaws.com
+      SourceAccount:
+        Ref: AWS::AccountId
+    Metadata:
+      aws:cdk:path: local-resources/MailHandler/AllowSes
+  ReceiptRuleSetD3CCC994:
+    Type: AWS::SES::ReceiptRuleSet
+    Properties:
+      RuleSetName: local-resources-mail
+    Metadata:
+      aws:cdk:path: local-resources/ReceiptRuleSet/Resource
+  ReceiptRuleSetInboundBB789768:
+    Type: AWS::SES::ReceiptRule
+    Properties:
+      Rule:
+        Actions:
+          - S3Action:
+              BucketName:
+                Ref: RawMailBucket41F42A42
+              ObjectKeyPrefix: mail/
+          - LambdaAction:
+              FunctionArn:
+                Fn::GetAtt:
+                  - MailHandler1929B025
+                  - Arn
+              InvocationType: Event
+        Enabled: true
+        Recipients:
+          - ingress.local-resources.test
+        ScanEnabled: true
+      RuleSetName:
+        Ref: ReceiptRuleSetD3CCC994
+    DependsOn:
+      - MailHandlerAllowSesB90D749C
+      - RawMailBucketPolicyF008D2A2
+    Metadata:
+      aws:cdk:path: local-resources/ReceiptRuleSet/Inbound/Resource
+  MailIdentity4365A1C5:
+    Type: AWS::SES::EmailIdentity
+    Properties:
+      EmailIdentity: local-resources.test
+    Metadata:
+      aws:cdk:path: local-resources/MailIdentity/Resource
+  StateApi66A04E8E:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: local-resources
+    Metadata:
+      aws:cdk:path: local-resources/StateApi/Resource
+  StateApiCloudWatchRole9DAF588A:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+        Version: "2012-10-17"
+      ManagedPolicyArns:
+        - Fn::Join:
+            - ""
+            - - "arn:"
+              - Ref: AWS::Partition
+              - :iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+    UpdateReplacePolicy: Retain
+    DeletionPolicy: Retain
+    Metadata:
+      aws:cdk:path: local-resources/StateApi/CloudWatchRole/Resource
+  StateApiAccount65240203:
+    Type: AWS::ApiGateway::Account
+    Properties:
+      CloudWatchRoleArn:
+        Fn::GetAtt:
+          - StateApiCloudWatchRole9DAF588A
+          - Arn
+    DependsOn:
+      - StateApi66A04E8E
+    UpdateReplacePolicy: Retain
+    DeletionPolicy: Retain
+    Metadata:
+      aws:cdk:path: local-resources/StateApi/Account
+  StateApiDeployment074B2D3Fe3f531cee41ad80e3aa7ce6723d55ae8:
+    Type: AWS::ApiGateway::Deployment
+    Properties:
+      Description: Automatically created by the RestApi construct
+      RestApiId:
+        Ref: StateApi66A04E8E
+    DependsOn:
+      - StateApistateGETF16E9FB4
+      - StateApistate249209F6
+    Metadata:
+      aws:cdk:path: local-resources/StateApi/Deployment/Resource
+      aws:cdk:do-not-refactor: true
+  StateApiDeploymentStageprodEC7808D8:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      DeploymentId:
+        Ref: StateApiDeployment074B2D3Fe3f531cee41ad80e3aa7ce6723d55ae8
+      RestApiId:
+        Ref: StateApi66A04E8E
+      StageName: prod
+    DependsOn:
+      - StateApiAccount65240203
+    Metadata:
+      aws:cdk:path: local-resources/StateApi/DeploymentStage.prod/Resource
+  StateApistate249209F6:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId:
+        Fn::GetAtt:
+          - StateApi66A04E8E
+          - RootResourceId
+      PathPart: state
+      RestApiId:
+        Ref: StateApi66A04E8E
+    Metadata:
+      aws:cdk:path: local-resources/StateApi/Default/state/Resource
+  StateApistateGETApiPermissionlocalresourcesStateApiFD8DEA2FGETstate66953DC9:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName:
+        Fn::GetAtt:
+          - MailHandler1929B025
+          - Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        Fn::Join:
+          - ""
+          - - "arn:"
+            - Ref: AWS::Partition
+            - ":execute-api:us-east-1:123456789012:"
+            - Ref: StateApi66A04E8E
+            - /
+            - Ref: StateApiDeploymentStageprodEC7808D8
+            - /GET/state
+    Metadata:
+      aws:cdk:path: local-resources/StateApi/Default/state/GET/ApiPermission.localresourcesStateApiFD8DEA2F.GET..state
+  StateApistateGETApiPermissionTestlocalresourcesStateApiFD8DEA2FGETstate58F675E2:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName:
+        Fn::GetAtt:
+          - MailHandler1929B025
+          - Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        Fn::Join:
+          - ""
+          - - "arn:"
+            - Ref: AWS::Partition
+            - ":execute-api:us-east-1:123456789012:"
+            - Ref: StateApi66A04E8E
+            - /test-invoke-stage/GET/state
+    Metadata:
+      aws:cdk:path: local-resources/StateApi/Default/state/GET/ApiPermission.Test.localresourcesStateApiFD8DEA2F.GET..state
+  StateApistateGETF16E9FB4:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: GET
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri:
+          Fn::Join:
+            - ""
+            - - "arn:"
+              - Ref: AWS::Partition
+              - :apigateway:us-east-1:lambda:path/2015-03-31/functions/
+              - Fn::GetAtt:
+                  - MailHandler1929B025
+                  - Arn
+              - /invocations
+      ResourceId:
+        Ref: StateApistate249209F6
+      RestApiId:
+        Ref: StateApi66A04E8E
+    Metadata:
+      aws:cdk:path: local-resources/StateApi/Default/state/GET/Resource
+  ReportedDomain:
+    Type: AWS::ApiGateway::DomainName
+    Properties:
+      DomainName: api.local-resources.test
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+    Metadata:
+      aws:cdk:path: local-resources/ReportedDomain
+  ReportedCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: api.local-resources.test
+      ValidationMethod: DNS
+    Metadata:
+      aws:cdk:path: local-resources/ReportedCertificate
+  ReportedRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneName: local-resources.test.
+      Name: api.local-resources.test.
+      Type: A
+      TTL: "60"
+      ResourceRecords:
+        - 127.0.0.1
+    Metadata:
+      aws:cdk:path: local-resources/ReportedRecord
+  ReportedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: local-resources-mail-handler-errors
+      ComparisonOperator: GreaterThanThreshold
+      EvaluationPeriods: 1
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Period: 300
+      Statistic: Sum
+      Threshold: 0
+    Metadata:
+      aws:cdk:path: local-resources/ReportedAlarm
+  RefusedMicrovmImage:
+    Type: AWS::Lambda::MicrovmImage
+    Properties:
+      Name: local-resources-refused
+    Metadata:
+      aws:cdk:path: local-resources/RefusedMicrovmImage
+  RefusedMicrovmPrune:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken:
+        Fn::GetAtt:
+          - MigrationProvider42572A8B
+          - Arn
+      MicrovmImageName:
+        Ref: RefusedMicrovmImage
+    Metadata:
+      aws:cdk:path: local-resources/RefusedMicrovmPrune
+  CDKMetadata:
+    Type: AWS::CDK::Metadata
+    Properties:
+      Analytics: v2:deflate64:H4sIAAAAAAAA/5VSwU7DMAz9FnrOAnRISNzKBhIHtGlDXBCastQUb21S1cnGVOXfSZqxdYMLJz/7+dnxa1Oe3g751YXY0kDm60GJS97OjZBr5kuLloa8vbdyDYaNPlREb21S4Req5C7py0K/b+8o4rE1s0aPoQQDk+UKpKHEvbNITXWJcnecGvN/zI4C/1YDFaj+6HtB4FgpqmUuePtolTSoVVh1wK/Q0L72A+eoCv9SrfqCKTQVUuAdQ1HxdqZLCEQXjzdE5BgNF4IIDPEsBEZAXgMSsDYzW8I8GnlW6aVnLHuoBJZPuT8QTbfppOCYqLHwDmzFLuwhk9UYRxxgJqW2yrAx1KXeBatCtZd5C4tubwReqm0jIbh4SPYzI34G86nzUIrIOTayZHT1Z/cpNW30BnNouumdR2Grt56ZBovCfwv+EgGTnXDR7JXe0i393jOxprbdSaecY0rnwFd0uUlveHrtf/IVIQ4a7wVWwGcxfgNvpuPuAQMAAA==
+    Metadata:
+      aws:cdk:path: local-resources/CDKMetadata/Default
+Outputs:
+  StateApiEndpointAD23CD7B:
+    Value:
+      Fn::Join:
+        - ""
+        - - https://
+          - Ref: StateApi66A04E8E
+          - .execute-api.us-east-1.
+          - Ref: AWS::URLSuffix
+          - /
+          - Ref: StateApiDeploymentStageprodEC7808D8
+          - /
+  AutoDeleteBucketName:
+    Value:
+      Ref: AutoDeleteBucket93E032C1
+  RawMailBucketName:
+    Value:
+      Ref: RawMailBucket41F42A42
+  StateApiId:
+    Value:
+      Ref: StateApi66A04E8E
+Parameters:
+  BootstrapVersion:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /cdk-bootstrap/hnb659fds/version
+    Description: Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]
+
+83 feature flags are not configured. Run 'cdk flags --unstable=flags' to learn more.

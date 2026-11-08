@@ -1,0 +1,266 @@
+AI agent detected
+Resources:
+  PeerIdentityFnServiceRole59605FAF:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+        Version: "2012-10-17"
+      ManagedPolicyArns:
+        - Fn::Join:
+            - ""
+            - - "arn:"
+              - Ref: AWS::Partition
+              - :iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+    Metadata:
+      aws:cdk:path: local-iam-peer/PeerIdentityFn/ServiceRole/Resource
+  PeerIdentityFn236A044E:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: |-
+          exports.handler = async (event) => {
+            const context = event.requestContext || {};
+            const identity = context.identity || {};
+            return {
+              statusCode: 200,
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                route: "peer",
+                caller: identity.caller || null,
+                userArn: identity.userArn || null,
+                accountId: identity.accountId || null,
+                accessKey: identity.accessKey || null,
+              }),
+            };
+          };
+      Description: "Peer identity echo: reports the caller this run's gateway resolved"
+      Handler: index.handler
+      Role:
+        Fn::GetAtt:
+          - PeerIdentityFnServiceRole59605FAF
+          - Arn
+      Runtime: nodejs24.x
+      Timeout: 10
+    DependsOn:
+      - PeerIdentityFnServiceRole59605FAF
+    Metadata:
+      aws:cdk:path: local-iam-peer/PeerIdentityFn/Resource
+  PeerVendingRoleD7ECA911:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              AWS:
+                Fn::Join:
+                  - ""
+                  - - "arn:"
+                    - Ref: AWS::Partition
+                    - :iam::123456789012:root
+        Version: "2012-10-17"
+      RoleName: local-iam-peer-vending
+    Metadata:
+      aws:cdk:path: local-iam-peer/PeerVendingRole/Resource
+  PeerVendingRoleDefaultPolicyFBB7D7ED:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action: execute-api:Invoke
+            Effect: Allow
+            Resource: arn:aws:execute-api:us-east-1:123456789012:*/*/GET/peer
+        Version: "2012-10-17"
+      PolicyName: PeerVendingRoleDefaultPolicyFBB7D7ED
+      Roles:
+        - Ref: PeerVendingRoleD7ECA911
+    Metadata:
+      aws:cdk:path: local-iam-peer/PeerVendingRole/DefaultPolicy/Resource
+  PeerApi4CDDD41F:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: local-iam-peer
+      Policy:
+        Statement:
+          - Action: execute-api:Invoke
+            Effect: Allow
+            Principal:
+              AWS:
+                Fn::Join:
+                  - ""
+                  - - "arn:"
+                    - Ref: AWS::Partition
+                    - :iam::123456789012:root
+            Resource: execute-api:/lab/GET/peer
+        Version: "2012-10-17"
+    Metadata:
+      aws:cdk:path: local-iam-peer/PeerApi/Resource
+  PeerApiCloudWatchRoleA28F24B7:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+        Version: "2012-10-17"
+      ManagedPolicyArns:
+        - Fn::Join:
+            - ""
+            - - "arn:"
+              - Ref: AWS::Partition
+              - :iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+    UpdateReplacePolicy: Retain
+    DeletionPolicy: Retain
+    Metadata:
+      aws:cdk:path: local-iam-peer/PeerApi/CloudWatchRole/Resource
+  PeerApiAccountBA2A5085:
+    Type: AWS::ApiGateway::Account
+    Properties:
+      CloudWatchRoleArn:
+        Fn::GetAtt:
+          - PeerApiCloudWatchRoleA28F24B7
+          - Arn
+    DependsOn:
+      - PeerApi4CDDD41F
+    UpdateReplacePolicy: Retain
+    DeletionPolicy: Retain
+    Metadata:
+      aws:cdk:path: local-iam-peer/PeerApi/Account
+  PeerApiDeployment0FFCCFA9648168a1f7c09f6748125111ccd897ed:
+    Type: AWS::ApiGateway::Deployment
+    Properties:
+      Description: Automatically created by the RestApi construct
+      RestApiId:
+        Ref: PeerApi4CDDD41F
+    DependsOn:
+      - PeerApipeerGET28215F6C
+      - PeerApipeer8FFEB36C
+    Metadata:
+      aws:cdk:path: local-iam-peer/PeerApi/Deployment/Resource
+      aws:cdk:do-not-refactor: true
+  PeerApiDeploymentStagelabDDFB3FA4:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      DeploymentId:
+        Ref: PeerApiDeployment0FFCCFA9648168a1f7c09f6748125111ccd897ed
+      RestApiId:
+        Ref: PeerApi4CDDD41F
+      StageName: lab
+    DependsOn:
+      - PeerApiAccountBA2A5085
+    Metadata:
+      aws:cdk:path: local-iam-peer/PeerApi/DeploymentStage.lab/Resource
+  PeerApipeer8FFEB36C:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId:
+        Fn::GetAtt:
+          - PeerApi4CDDD41F
+          - RootResourceId
+      PathPart: peer
+      RestApiId:
+        Ref: PeerApi4CDDD41F
+    Metadata:
+      aws:cdk:path: local-iam-peer/PeerApi/Default/peer/Resource
+  PeerApipeerGETApiPermissionlocaliampeerPeerApi3FF8B151GETpeerB8C67A15:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName:
+        Fn::GetAtt:
+          - PeerIdentityFn236A044E
+          - Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        Fn::Join:
+          - ""
+          - - "arn:"
+            - Ref: AWS::Partition
+            - ":execute-api:us-east-1:123456789012:"
+            - Ref: PeerApi4CDDD41F
+            - /
+            - Ref: PeerApiDeploymentStagelabDDFB3FA4
+            - /GET/peer
+    Metadata:
+      aws:cdk:path: local-iam-peer/PeerApi/Default/peer/GET/ApiPermission.localiampeerPeerApi3FF8B151.GET..peer
+  PeerApipeerGETApiPermissionTestlocaliampeerPeerApi3FF8B151GETpeerFB0AB517:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName:
+        Fn::GetAtt:
+          - PeerIdentityFn236A044E
+          - Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        Fn::Join:
+          - ""
+          - - "arn:"
+            - Ref: AWS::Partition
+            - ":execute-api:us-east-1:123456789012:"
+            - Ref: PeerApi4CDDD41F
+            - /test-invoke-stage/GET/peer
+    Metadata:
+      aws:cdk:path: local-iam-peer/PeerApi/Default/peer/GET/ApiPermission.Test.localiampeerPeerApi3FF8B151.GET..peer
+  PeerApipeerGET28215F6C:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: AWS_IAM
+      HttpMethod: GET
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri:
+          Fn::Join:
+            - ""
+            - - "arn:"
+              - Ref: AWS::Partition
+              - :apigateway:us-east-1:lambda:path/2015-03-31/functions/
+              - Fn::GetAtt:
+                  - PeerIdentityFn236A044E
+                  - Arn
+              - /invocations
+      ResourceId:
+        Ref: PeerApipeer8FFEB36C
+      RestApiId:
+        Ref: PeerApi4CDDD41F
+    Metadata:
+      aws:cdk:path: local-iam-peer/PeerApi/Default/peer/GET/Resource
+  CDKMetadata:
+    Type: AWS::CDK::Metadata
+    Properties:
+      Analytics: v2:deflate64:H4sIAAAAAAAA/02QSw7CMAxEz8I+DVCQWPMROwSCAyCTGjDkUzUJqKpyd9wUCVZ+Mx47VkpZLmZyMoK3L1T1LDRdZHcKoJ6CrXOnwVwqkN02WhXIWbG+2n8+YGPIe1ZJEBjZHZ3GvpHrwWlSbc5lSgJqukHAN7QcRR+WNeX0D5dKuWiD2GCtXWuQkd0/xdfd8hMD8KiLjcIV+J/47hx4h+Huqt4aKKWe9zHUMSRhXYXy4cevci7LKX/FwxMVDZ9ABuVxqB93GT8oJwEAAA==
+    Metadata:
+      aws:cdk:path: local-iam-peer/CDKMetadata/Default
+Outputs:
+  PeerApiEndpoint18D7B535:
+    Value:
+      Fn::Join:
+        - ""
+        - - https://
+          - Ref: PeerApi4CDDD41F
+          - .execute-api.us-east-1.
+          - Ref: AWS::URLSuffix
+          - /
+          - Ref: PeerApiDeploymentStagelabDDFB3FA4
+          - /
+  PeerVendingRoleArn:
+    Value:
+      Fn::GetAtt:
+        - PeerVendingRoleD7ECA911
+        - Arn
+Parameters:
+  BootstrapVersion:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /cdk-bootstrap/hnb659fds/version
+    Description: Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]
+
+83 feature flags are not configured. Run 'cdk flags --unstable=flags' to learn more.

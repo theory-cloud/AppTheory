@@ -138,7 +138,10 @@ func TestDeriveHTTPPolicyAuthorizerRequiresAFunction(t *testing.T) {
 	}
 }
 
-func TestDeriveRefusesIAMAuthorization(t *testing.T) {
+func TestDeriveServesIAMAuthorization(t *testing.T) {
+	// An AWS_IAM route is served, and the transport's gate decides every call.
+	// docs/127 W3-D1: the local runner verifies the SigV4 signature and
+	// evaluates the enumerated policy shapes instead of refusing the route.
 	resources := authorizerAssembly(map[string]any{
 		"Route": map[string]any{"Type": typeHTTPRoute, "Properties": map[string]any{
 			"ApiId":             map[string]any{"Ref": "Api"},
@@ -149,8 +152,57 @@ func TestDeriveRefusesIAMAuthorization(t *testing.T) {
 	})
 	dir := writeAssembly(t, resources)
 	mkdirAsset(t, dir)
-	_, err := deriveAssembly(t, dir)
-	if err == nil || !strings.Contains(err.Error(), "AWS_IAM") {
-		t.Fatalf("derive error = %v", err)
+	spec, err := deriveAssembly(t, dir)
+	if err != nil {
+		t.Fatalf("an AWS_IAM route must be served, got %v", err)
+	}
+	found := false
+	for _, api := range spec.APIs {
+		for _, route := range api.Routes {
+			if route.Path == "/protected" && route.AuthorizerKind == AuthorizerKindIAM {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("the route must carry the IAM authorizer kind: %+v", spec.APIs)
+	}
+}
+
+func TestDeriveServesAnIAMFunctionURL(t *testing.T) {
+	resources := map[string]any{
+		"Fn": withAsset(lambdaFunction(nil), "asset.deadbeef"),
+		"Url": map[string]any{
+			"Type": typeFunctionURL,
+			"Properties": map[string]any{
+				"AuthType":          authorizationTypeIAM,
+				"TargetFunctionArn": map[string]any{"Fn::GetAtt": []any{"Fn", "Arn"}},
+			},
+		},
+		"Permission": map[string]any{
+			"Type": typeLambdaPermission,
+			"Properties": map[string]any{
+				"Action":              iamActionInvokeFunctionURL,
+				"FunctionName":        map[string]any{"Fn::GetAtt": []any{"Fn", "Arn"}},
+				"Principal":           "123456789012",
+				"FunctionUrlAuthType": authorizationTypeIAM,
+			},
+		},
+	}
+	dir := writeAssembly(t, resources)
+	mkdirAsset(t, dir)
+	spec, err := deriveAssembly(t, dir)
+	if err != nil {
+		t.Fatalf("derive: %v", err)
+	}
+	if len(spec.FunctionURLs) != 1 || !spec.FunctionURLs[0].IAM {
+		t.Fatalf("an AWS_IAM Function URL must be served with the IAM flag: %+v", spec.FunctionURLs)
+	}
+	if len(spec.FunctionURLs[0].FunctionPolicy) == 0 {
+		t.Fatal("the Function URL must carry the function's resource policy")
+	}
+	api := functionURLAPI(spec.FunctionURLs[0])
+	if api.Routes[0].AuthorizerKind != AuthorizerKindIAM {
+		t.Fatalf("the Function URL route must carry the IAM authorizer kind: %+v", api.Routes[0])
 	}
 }

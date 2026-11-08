@@ -3332,7 +3332,7 @@ class and named limit is in the [harness fidelity table](/examples/local-harness
 | --- | --- | --- |
 | HTTP API v2 (`AWS::ApiGatewayV2::Api`, HTTP) | Supported (L1) | v2.0 events with `routeKey`, `rawPath`, `requestContext.http`, cookies and path parameters. The `cookie` header is removed when `cookies` is populated, as AWS does. |
 | REST API v1 (`AWS::ApiGateway::RestApi`) | Supported (L1) | v1 events with `resource`, `multiValueHeaders`, `multiValueQueryStringParameters` and the stage. |
-| Lambda Function URL | Supported (L1) | Function URL events carry `routeKey: "$default"` (top-level and in `requestContext`, with `requestContext.stage`) and a `.lambda-url.<region>.on.aws` domain, which the runtime uses to tell them apart from HTTP API v2. A `RESPONSE_STREAM` URL forwards the prelude and the payload incrementally; a `BUFFERED` URL (the template default) serves the complete response, and behind CloudFront it takes the buffered finish path. A URL with an auth type other than `NONE` is reported under `skipped`, not served as a standalone URL; a distribution can still reference it as an origin. |
+| Lambda Function URL | Supported (L1) | Function URL events carry `routeKey: "$default"` (top-level and in `requestContext`, with `requestContext.stage`) and a `.lambda-url.<region>.on.aws` domain, which the runtime uses to tell them apart from HTTP API v2. A `RESPONSE_STREAM` URL forwards the prelude and the payload incrementally; a `BUFFERED` URL (the template default) serves the complete response, and behind CloudFront it takes the buffered finish path. An `AWS_IAM` URL is served and every request must carry a verified SigV4 signature; a URL with any other auth type is reported under `skipped`. |
 | Response streaming (`awslambda.streamifyResponse`, SSE) | Supported (L2) | A chunked runtime response is forwarded to the Function URL, REST API proxy integration and CloudFront viewer as the runtime writes it; the Function URL and REST formats (metadata JSON, 8 null bytes, payload) and the midstream error trailers are implemented. Lambda's 6 MB uncapped burst and 2 MBps cap are not reproduced (documented deviation). |
 | Inline `Code.ZipFile` | Supported (Node, Python) | Materialized under the run scratch directory before the container starts. |
 | arm64 `provided.al2023` | Supported (L1) | Uses the host-arch image; a bootstrap built for the other architecture fails closed with a clear error. |
@@ -3373,6 +3373,179 @@ class and named limit is in the [harness fidelity table](/examples/local-harness
 | Every target, explicit commands (`session`) | Supported | Starts every CDK-targeted function, serves the HTTP surface, and answers a JSON-line command protocol for invocation, SQS, DynamoDB, S3, EventBridge and Kinesis operations. `--target` adds a function no route or event source targets. |
 | Stage-prefixed URLs (`/prod/...`) | Supported | A REST API is served at `/{stage}/...` in addition to the root; an HTTP API with a named (non-`$default`) stage is served at `/{stage}/...` in addition to the root. The `$default` stage keeps the root. The root stays the custom-domain form. The events carry the documented fields: REST v1 `path`/`resource` without the stage and `requestContext.path` with it; HTTP API v2 `rawPath` and `requestContext.http.path` with it; `requestContext.stage` in both. |
 | Multiple APIs in one stack | Supported | Each API gets its own listener and route table, so `ANY /` surfaces never shadow each other. |
+| CloudFormation custom resources | Served | `Custom::Trigger`, provider-framework resources, `Custom::AWS` and `Custom::S3AutoDeleteObjects` run their real handlers with the documented request and response documents; `Data` becomes the resource's attributes. See [custom resources](#cloudformation-custom-resources-ses-receipt-rules-and-resource-type-handling). |
+| SES receipt rules | Served | The rule, its recipients and its ordered S3, Lambda and Stop actions are derived; `ses.receive` delivers one injected message. See [SES receipt rules](#ses-receipt-rules). |
+| Deploy-time-only and refused types | Reported | Custom domains, ACM, Route 53, CloudWatch alarms and dashboards, network connectors, EC2 security groups and SES identities are reported with a docs/125 true-limit reason; the MicroVM types are refused by name. |
+| AWS_IAM authorization (REST, HTTP API, Function URL) | Served (L2) | SigV4 is verified against the credentials the run issued, the caller principal is resolved and the enumerated policy shapes are evaluated. See [the narrow IAM path](#the-narrow-iam-path). |
+| Shared IAM plane across runs | Supported | `--shared-dir` shares role definitions, issued credentials and the STS endpoint between co-resident runs. See [the shared IAM plane](#the-shared-iam-plane). |
+
+## CloudFormation custom resources, SES receipt rules and resource-type handling
+
+A real application synthesizes constructs whose local effect is a script, not an
+HTTP route: a deploy-time trigger, a provider-framework migration, an AWS SDK
+call, a bucket auto-delete handler, an SES receipt rule. The runner runs those
+handlers and reports everything else, so no synthesized type is silently
+ignored. `plan` and `session describe` list each one under `custom resources`,
+`receipt rules` and `not served locally`.
+
+### Served, through the real handler
+
+| Type | What the runner does |
+| --- | --- |
+| `Custom::Trigger` | Starts the trigger's provider function, sends it the CloudFormation request document, waits for the response document on the request's `ResponseURL`, and starts (and invokes through the local Lambda endpoint) the function its `HandlerArn` names. |
+| Provider-framework custom resources (`Custom::<name>`, `AWS::CloudFormation::CustomResource`) | The same request/response contract. The handler's `Data` becomes the custom resource's attributes, so a `Fn::GetAtt` on it resolves to what the handler returned. |
+| `Custom::AWS` | The same contract, with the handler's SDK calls reaching the local endpoints: an SES call reaches the pinned moto, which implements `createReceiptRuleSet` and `setActiveReceiptRuleSet`. |
+| `Custom::S3AutoDeleteObjects` | Served by the runner: the `customResource.delete` session operation empties the bucket with the S3 API the store implements and reports the handler's `SUCCESS` response. The CDK handler itself lists object *versions*, which s3proxy's store does not implement, so the runner performs the same effect natively. |
+| `AWS::SES::ReceiptRule` | The rule's rule set, recipients and ordered actions are derived; the `ses.receive` session operation delivers one injected message to them. |
+| `Custom::CDKBucketDeployment`, `Custom::S3BucketNotifications` | Served by the runner's own implementation (the asset copy and the observed notification configuration); the handler does not run. |
+
+The request document carries `RequestType`, `ResponseURL`, `StackId`,
+`RequestId`, `ResourceType`, `LogicalResourceId`, `ResourceProperties` and, on an
+update, `OldResourceProperties`
+(https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/crpg-ref-requests.html).
+The response document carries `Status`, `Reason`, `PhysicalResourceId`, `StackId`,
+`RequestId`, `LogicalResourceId` and `Data`
+(https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/crpg-ref-responses.html).
+A handler that reports `FAILED` fails the run with its `Reason`, and a handler
+that never answers fails the run with the timeout it was given.
+
+The response endpoint is **HTTPS from the run CA**: the pinned CDK provider
+framework always reports with `https.request`, whatever the URL's scheme, so a
+run that declares a handler-invoked custom resource creates the local CA even
+without `--tls` and mounts its bundle into every function container. Its public
+listeners stay on plain HTTP unless `--tls` is set.
+
+A function a handler invokes reaches the target through the local Lambda Invoke
+endpoint, injected as `AWS_ENDPOINT_URL_LAMBDA`
+(https://docs.aws.amazon.com/lambda/latest/api/API_Invoke.html,
+https://docs.aws.amazon.com/sdkref/latest/guide/feature-ss-endpoints.html).
+
+### SES receipt rules
+
+`ses.receive` takes `recipients`, `rawMessage` and an optional `source` and
+`messageId`, and runs the matching rule's actions in order:
+
+```json
+{"op":"ses.receive","recipients":["ingress@example.test"],"rawMessage":"From: a@b\r\nTo: ingress@example.test\r\n\r\nbody"}
+```
+
+The S3 action writes the raw message under the rule's `ObjectKeyPrefix` and the
+message id
+(https://docs.aws.amazon.com/ses/latest/dg/receiving-email-action-s3.html). The
+Lambda action receives the documented received-message record — `eventSource`
+`aws:ses`, `ses.mail` with the message id, source, destination, headers and
+common headers, and `ses.receipt` with the recipients, verdicts and action —
+with no body, exactly as SES documents
+(https://docs.aws.amazon.com/ses/latest/dg/receiving-email-action-lambda-event.html).
+A message no enabled rule accepts is refused by name. Real SMTP ingress is the
+mail-surface work that follows; this is the rule and delivery path it feeds.
+
+### Reported as deploy-time-only
+
+Each of these is listed under `not served locally` with a docs/125 true-limit
+reason whenever an assembly declares it:
+
+| Type | Why it has no local runtime behaviour |
+| --- | --- |
+| `AWS::ApiGateway::DomainName`, `AWS::ApiGateway::BasePathMapping`, `AWS::ApiGatewayV2::DomainName`, `AWS::ApiGatewayV2::ApiMapping` | an edge endpoint plus an ACM certificate and an API mapping |
+| `AWS::CertificateManager::Certificate` | ACM issues and validates through a DNS or email challenge AWS owns |
+| `AWS::Route53::RecordSet`, `RecordSetGroup`, `HostedZone` | public DNS state |
+| `AWS::CloudWatch::Alarm`, `CompositeAlarm`, `Dashboard` | AWS service metrics, which have no local source |
+| `AWS::Lambda::NetworkConnector` | binds MicroVM compute to a VPC subnet and security group |
+| `AWS::EC2::SecurityGroup`, `SecurityGroupIngress`, `SecurityGroupEgress` | VPC traffic filtering, with no local VPC |
+| `AWS::SES::EmailIdentity` | a DNS record or an email handshake owned by AWS |
+
+### Refused
+
+`AWS::Lambda::MicrovmImage`, and any custom resource whose properties target it,
+is refused with the docs/125 reason: the MicroVM managed provider is an AWS-only
+service with no emulator.
+
+## The narrow IAM path
+
+Every call between the applications the runner serves is IAM-authorized and
+signed with Signature Version 4. On an AWS_IAM REST method, HTTP API route or
+Function URL the runner:
+
+1. **verifies the SigV4 signature** against the credentials it issued;
+2. **resolves the caller principal** — the assumed-role ARN for a session;
+3. **evaluates the API's resource policy and the caller's identity policies**
+   under AWS's combination rule, plus the STS trust policy for `AssumeRole`;
+4. **puts the principal in the event identity**, so a handler that re-checks the
+   caller sees what a deployed API Gateway would give it.
+
+The evaluation is a **narrow, fully specified** one (docs/125 decision D2): a
+statement is evaluated only when it has one of the enumerated shapes below, and
+a statement that could reach the call but has another shape **fails closed with
+a named error** that says why. A statement whose action or resource cannot reach
+the call is skipped, so an unrelated statement never refuses a request.
+
+| Element | Accepted values |
+| --- | --- |
+| Action | `execute-api:Invoke`; `sts:AssumeRole` in a trust policy; `lambda:InvokeFunctionUrl` and `lambda:InvokeFunction` in a Function URL's policy |
+| Effect | `Allow` or `Deny` |
+| Principal | an exact role or user ARN, or an exact account-root ARN (`arn:aws:iam::<account>:root`); a wildcard is out of subset. An identity-policy statement carries no Principal. |
+| Resource | an exact execute-api ARN (`arn:aws:execute-api:<region>:<account>:<api-id>/<stage>/<METHOD>/<path>`) or the synthesized form `execute-api:/<stage>/<METHOD>/<path>`; the stage segment may be `*` and a trailing path segment may be `*`. A Function URL statement names the exact function ARN. |
+| Condition | none, or `StringEquals` on `aws:PrincipalArn` with exact non-wildcard ARNs; a Function URL policy may also pin `lambda:FunctionUrlAuthType`. |
+
+Combination follows the published evaluation logic
+(https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic.html):
+an explicit Deny refuses; within one account one Allow in either policy grants;
+across accounts both must allow. `aws:PrincipalArn` is compared against the base
+role ARN, never the assumed-role session ARN
+(https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_condition-keys.html).
+A Function URL needs both Lambda actions
+(https://docs.aws.amazon.com/lambda/latest/dg/urls-auth.html), and a REST
+`AWS_IAM` method's resource policy may name the two synthesized resource forms
+(https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-control-access-using-iam-policies-to-invoke-api.html).
+
+### Runner-issued credentials and the STS endpoint
+
+Each function container receives its own access key, bound to the role its
+template declares:
+
+| Variable | Value |
+| --- | --- |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | the run's own credential, never valid against real AWS |
+| `AWS_SESSION_TOKEN` | set only for a session credential |
+| `AWS_ENDPOINT_URL_STS` | the run's STS endpoint (https://docs.aws.amazon.com/sdkref/latest/guide/feature-ss-endpoints.html) |
+| `AWS_ENDPOINT_URL_LAMBDA` | the run's Lambda Invoke endpoint, when a handler invokes a function |
+
+The STS endpoint answers `AssumeRole` itself and proxies every other action to
+the configured STS backend, so `GetCallerIdentity` keeps working. `AssumeRole` is
+decided by the **role's trust policy alone** — a named local divergence: deployed
+AWS also requires an identity-side `sts:AssumeRole` grant on the caller, and the
+local evaluator never evaluates identity statements for `AssumeRole`.
+Session credentials carry the session token the SDK sends and the verifier
+requires (https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_temp_use-resources.html).
+
+The signature verifier implements the documented canonical request, signed
+headers, credential scope and the 15-minute clock window
+(https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-create-signed-request.html,
+https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-signing-elements.html).
+It also accepts a presigned URL (`X-Amz-Signature`) up to 7 days old.
+
+### The shared IAM plane
+
+`--shared-dir` is one directory every co-resident run shares. It holds:
+
+```text
+<shared-dir>/iam/
+  runs/<run-id>.json          the run's role, trust and identity-policy definitions
+  credentials/<key-id>.json   one issued credential or assumed session
+  sts/<run-id>.json           the STS endpoint the run serves
+```
+
+The co-residence work adds the shared CA beside `iam/`. Every file is written to
+a temporary name and renamed into place, so a reader never sees a partial
+document; a run removes its own files when it stops, and a run whose heartbeat is
+older than ten minutes is ignored.
+
+With `--shared-dir`, one run's function can assume a role another run defined and
+call that run's API: the callee verifies the session's signature from the shared
+credential registry and evaluates the call against its own resource policy and
+the role's identity policy. Without `--shared-dir` the plane lives inside the
+run's own scratch directory, so a single run behaves exactly as before.
 
 ## Known gaps
 
@@ -3440,11 +3613,24 @@ class and named limit is in the [harness fidelity table](/examples/local-harness
   bypassing a real authorization decision. Cognito's hosted UI/OAuth flows are
   not served, so a token must come from the pool's API (`InitiateAuth`) or a
   local test issuer.
-- **IAM policy evaluation** remains a docs/125 true limit. SSM parameters,
+- **IAM policy evaluation beyond the narrow path** remains a docs/125 true
+  limit. The three kinds the local stacks synthesize are evaluated on an AWS_IAM
+  call, over the enumerated shapes above; nothing else is. SSM parameters,
   Secrets Manager secrets and their resource policies, SNS topic policies,
-  Cognito user pools and KMS keys are provisioned, but a policy attached to
-  them is not evaluated. A `ResourcePolicy` or `TopicPolicy` is reported under
-  `skipped`.
+  Cognito user pools and KMS keys are provisioned, but a policy attached to them
+  is not evaluated. A `ResourcePolicy` or `TopicPolicy` is reported under
+  `skipped`. SCPs, permission boundaries, session policies and a general
+  condition language are not modelled; an out-of-subset statement on the call's
+  own scope fails closed by name.
+- **AssumeRole is decided by the trust policy alone locally**, which is the one
+  named divergence: deployed AWS also requires an identity-side
+  `sts:AssumeRole` grant, and the local evaluator never evaluates identity
+  statements for `AssumeRole`.
+- **A Function URL's policy** is built from the `AWS::Lambda::Permission`
+  resources that name the function; a permission that carries a condition other
+  than `lambda:FunctionUrlAuthType` is out of subset and fails closed.
+- **A custom resource whose handler code is not in the assembly** is refused by
+  name rather than started without code, and the run continues.
 - **Cognito hosted UI/OAuth domain** is not served. The runner serves the user
   pool issuer and JWKS (for JWT validation) but a `UserPoolDomain` is reported
   under `skipped`.

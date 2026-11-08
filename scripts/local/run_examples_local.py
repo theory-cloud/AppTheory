@@ -4150,7 +4150,7 @@ def start_local_app(
         "--profile",
         str(ROOT / LOCAL_PROFILE),
         "--port-base",
-        str(harness.lease.http_port),
+        str(port_base if port_base is not None else harness.lease.http_port),
         "--name-prefix",
         prefix,
     ]
@@ -4315,6 +4315,8 @@ def start_local_session(
     tls: bool = False,
     tls_host: str | None = None,
     tls_aux: tuple[str, ...] = (),
+    shared_dir: str | None = None,
+    port_base: int | None = None,
 ) -> LocalSession:
     """Start one `apptheory-local session` and wait for its machine interface."""
     ensure_cdk_app(harness, app)
@@ -4329,7 +4331,7 @@ def start_local_session(
         "--profile",
         str(ROOT / LOCAL_PROFILE),
         "--port-base",
-        str(harness.lease.http_port),
+        str(port_base if port_base is not None else harness.lease.http_port),
         "--name-prefix",
         prefix,
     ]
@@ -4359,6 +4361,8 @@ def start_local_session(
         argv.extend(["--tls-host", tls_host])
     for auxiliary in tls_aux:
         argv.extend(["--tls-aux", auxiliary])
+    if shared_dir:
+        argv.extend(["--shared-dir", shared_dir])
     process = subprocess.Popen(
         argv,
         cwd=str(ROOT),
@@ -7858,6 +7862,9 @@ def run_runtime_api_conformance(harness: Harness) -> str:
 # service certificate.
 
 LOCAL_TLS_APP = "examples/cdk/local-tls"
+LOCAL_RESOURCES_APP = "examples/cdk/local-resources"
+LOCAL_IAM_APP = "examples/cdk/local-iam"
+LOCAL_IAM_PEER_APP = "examples/cdk/local-iam-peer"
 _TLS_PLAN_CACHE: dict[str, dict] = {}
 
 
@@ -8966,6 +8973,553 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print("RESULT: PASS")
     return 0
+
+
+# LOCAL-W3-M1: the resource-type rows (X1) and the narrow IAM rows (X2).
+# ---------------------------------------------------------------------------
+
+IAM_CALLER_ROLE = "arn:aws:iam::123456789012:role/local-iam-caller"
+IAM_OTHER_ROLE = "arn:aws:iam::123456789012:role/local-iam-other"
+IAM_VENDING_ROLE = "arn:aws:iam::123456789012:role/local-iam-vending"
+IAM_PEER_VENDING_ROLE = "arn:aws:iam::123456789012:role/local-iam-peer-vending"
+
+
+def local_resources_plan(harness: Harness) -> dict:
+    return plan_local_app(harness, LOCAL_RESOURCES_APP)
+
+
+def _resources_classified(plan: dict) -> dict[str, dict]:
+    """Every reported or refused construct, keyed by logical id."""
+    return {entry["logicalId"]: entry for entry in plan.get("skipped") or []}
+
+
+def run_local_resources_inventory(harness: Harness) -> str:
+    plan = local_resources_plan(harness)
+    classified = _resources_classified(plan)
+    custom = {entry["logicalId"]: entry for entry in plan.get("customResources") or []}
+    # Served types are listed with the handler that serves them.
+    for logical_id, kind in (
+        ("DeployTrigger", "Custom::Trigger"),
+        ("EnvMigration", "Custom::EnvMigration"),
+        ("EnsureRuleSet29212476", "Custom::AWS"),
+    ):
+        entry = custom.get(logical_id)
+        if entry is None or entry.get("type") != kind:
+            raise HarnessFailure(f"the plan must report custom resource {logical_id} ({kind}): {custom}")
+        if not entry.get("function"):
+            raise HarnessFailure(f"{logical_id} must name the handler it invokes: {entry}")
+    auto_delete = [
+        entry for entry in custom.values()
+        if entry.get("type") == "Custom::S3AutoDeleteObjects"
+        and (entry.get("function") or entry.get("servedBy"))
+    ]
+    if not auto_delete:
+        raise HarnessFailure(f"the plan must report the bucket auto-delete resource: {custom}")
+    receipt = plan.get("receiptRules") or []
+    if len(receipt) != 1:
+        raise HarnessFailure(f"the plan must derive one SES receipt rule, got {receipt}")
+    rule = receipt[0]
+    if (rule.get("ruleSetName") != "local-resources-mail"
+            or rule.get("recipients") != ["ingress@local-resources.test"]):
+        raise HarnessFailure(f"unexpected receipt rule: {rule}")
+    kinds = [action.get("kind") for action in rule.get("actions") or []]
+    if kinds != ["s3", "lambda"]:
+        raise HarnessFailure(f"the receipt rule must keep its actions in order: {rule}")
+    # Deploy-time-only types carry a docs/125 true-limit reason; the MicroVM
+    # types are refused by name.
+    deploy_time_only = {
+        "ReportedDomain": "AWS::ApiGateway::DomainName",
+        "ReportedCertificate": "AWS::CertificateManager::Certificate",
+        "ReportedRecord": "AWS::Route53::RecordSet",
+        "ReportedAlarm": "AWS::CloudWatch::Alarm",
+        "MailIdentity4365A1C5": "AWS::SES::EmailIdentity",
+    }
+    for logical_id, kind in deploy_time_only.items():
+        entry = classified.get(logical_id)
+        if entry is None or entry.get("kind") != kind:
+            raise HarnessFailure(f"{logical_id} must be reported as {kind}: {classified}")
+        if "docs/125 true limit" not in entry.get("reason", ""):
+            raise HarnessFailure(f"{logical_id} must cite the true limit: {entry}")
+    for logical_id in ("RefusedMicrovmImage", "RefusedMicrovmPrune"):
+        entry = classified.get(logical_id)
+        if entry is None or "MicroVM" not in entry.get("reason", "") or "refused" not in entry.get("reason", ""):
+            raise HarnessFailure(f"{logical_id} must be refused by name: {classified}")
+    return (
+        "plan reports the trigger, provider-framework, Custom::AWS and auto-delete handlers as served, "
+        "derives the SES receipt rule with its S3-then-Lambda actions, reports every deploy-time-only type "
+        "with its docs/125 reason and refuses the MicroVM image and its prune handler"
+    )
+
+
+def _resources_session(harness: Harness, name: str, *, targets: tuple[str, ...] = ()) -> LocalSession:
+    return start_local_session(
+        harness,
+        LOCAL_RESOURCES_APP,
+        name=name,
+        backends=("s3proxy", "moto"),
+        targets=targets,
+    )
+
+
+def run_local_resources_custom(harness: Harness) -> str:
+    session = _resources_session(harness, "resources-custom")
+    try:
+        custom = {entry["logicalId"]: entry for entry in session.info.get("customResources") or []}
+        # The Custom::Trigger ran at start: its provider invoked the target
+        # function through the local Lambda endpoint.
+        trigger = custom.get("DeployTrigger") or {}
+        if trigger.get("function") and not trigger.get("data") and not trigger.get("physicalResourceId"):
+            raise HarnessFailure(f"the trigger's provider did not report a response: {trigger}")
+        # The provider-framework handler returned Data, which is what Fn::GetAtt
+        # on a custom resource reads.
+        migration = custom.get("EnvMigration") or {}
+        data = migration.get("data") or {}
+        if data.get("MigrationVersion") != "1" or not data.get("RanAt"):
+            raise HarnessFailure(f"the provider-framework handler did not report its Data: {migration}")
+        if migration.get("physicalResourceId") != "env-migration-1":
+            raise HarnessFailure(f"the provider framework's physical id is {migration.get('physicalResourceId')!r}")
+        # The Custom::AWS handler created the SES rule set on the pinned moto.
+        rule_set = custom.get("EnsureRuleSet29212476") or {}
+        if not rule_set.get("physicalResourceId"):
+            raise HarnessFailure(f"the Custom::AWS handler did not report a physical id: {rule_set}")
+        # The auto-delete handler's delete leg really empties the bucket.
+        bucket = session.resource(logical_prefix="AutoDeleteBucket", kind="AWS::S3::Bucket")
+        put = session.request("s3.put", bucket=bucket["logicalId"], objectKey="orphan.txt", body="orphan")
+        if not put.get("etag"):
+            raise HarnessFailure(f"the bucket did not accept the object: {put}")
+        deleted = session.request(
+            "customResource.delete",
+            resource="AutoDeleteBucketAutoDeleteObjectsCustomResourceE0861D85",
+        )
+        if deleted.get("status") != "SUCCESS":
+            raise HarnessFailure(f"the auto-delete delete leg did not succeed: {deleted}")
+        if deleted.get("physicalResourceId") != bucket["name"]:
+            raise HarnessFailure(f"the auto-delete delete leg reported {deleted.get('physicalResourceId')!r}")
+        listing = session.request("s3.list", bucket=bucket["logicalId"])
+        keys = [entry.get("key") for entry in listing.get("objects") or []]
+        if "orphan.txt" in keys:
+            raise HarnessFailure(f"the auto-delete handler left the object behind: {listing}")
+        return (
+            "the Custom::Trigger provider ran at start, the provider-framework handler returned its Data and "
+            "physical id, the Custom::AWS handler created the SES rule set on moto, and the bucket "
+            "auto-delete resource's delete leg emptied the bucket the row planted an object in"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def run_local_resources_ses_receipt(harness: Harness) -> str:
+    session = _resources_session(harness, "resources-ses")
+    try:
+        raw = "\r\n".join(
+            [
+                "Return-Path: <bounce@local-resources.test>",
+                "From: Sender <sender@local-resources.test>",
+                "To: ingress@local-resources.test",
+                "Subject: local receipt",
+                "Message-ID: <w3m1@local-resources.test>",
+                "Date: Mon, 5 Aug 2019 21:29:57 +0000",
+                "",
+                "the body lives in the bucket, not in the Lambda record",
+            ]
+        )
+        delivered = session.request(
+            "ses.receive",
+            recipients=["ingress@local-resources.test"],
+            source="bounce@local-resources.test",
+            rawMessage=raw,
+        )
+        rules = delivered.get("rules") or []
+        if len(rules) != 1:
+            raise HarnessFailure(f"the message must reach one rule: {delivered}")
+        actions = rules[0].get("actions") or []
+        if [action.get("kind") for action in actions] != ["s3", "lambda"]:
+            raise HarnessFailure(f"the rule's actions did not run in order: {actions}")
+        if not actions[0].get("key", "").startswith("mail/"):
+            raise HarnessFailure(f"the S3 action did not write under the rule's prefix: {actions[0]}")
+        if actions[1].get("statusCode") not in (None, 0, 200):
+            raise HarnessFailure(f"the Lambda action did not reach the handler: {actions[1]}")
+        api = session.info.get("apis") or []
+        rest = [entry for entry in api if entry.get("class") == "restv1"]
+        if not rest:
+            raise HarnessFailure(f"the session did not serve the state API: {api}")
+        status, body, _ = http_request("GET", rest[0]["url"] + "/state")
+        expect_status(status, 200, "local-resources state", body)
+        records = json.loads(body).get("records") or []
+        if len(records) != 1:
+            raise HarnessFailure(f"the mail handler recorded {records!r}")
+        record = records[0]
+        if record.get("messageId") != delivered.get("messageId"):
+            raise HarnessFailure(f"the record's message id is {record.get('messageId')!r}")
+        if record.get("subject") != "local receipt" or record.get("from") != ["Sender <sender@local-resources.test>"]:
+            raise HarnessFailure(f"the record's headers are wrong: {record}")
+        if record.get("actionType") != "Lambda" or record.get("invocationType") != "Event":
+            raise HarnessFailure(f"the record's action is wrong: {record}")
+        if not record.get("receiptTimestamp"):
+            raise HarnessFailure(f"the record has no receipt timestamp: {record}")
+        if "the body lives in the bucket" not in record.get("rawObject", ""):
+            raise HarnessFailure(f"the raw message did not reach the bucket: {record}")
+        return (
+            "ses.receive delivered the message to the derived rule: the S3 action wrote the raw body under "
+            "mail/, the Lambda action received the documented record (message id, headers, action, receipt "
+            "timestamp) with no body, and the handler read the body back from the bucket"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def _iam_plan(harness: Harness) -> dict:
+    return plan_local_app(harness, LOCAL_IAM_APP)
+
+
+def _iam_caller(harness: Harness, language: str) -> str:
+    marker = f"caller-{language}"
+    for function in _iam_plan(harness).get("functions") or []:
+        if (function.get("environment") or {}).get("APPTHEORY_LOCAL_IAM_ROLE") == marker:
+            return str(function["logicalId"])
+    raise HarnessFailure(f"the local-iam plan has no function with APPTHEORY_LOCAL_IAM_ROLE={marker!r}")
+
+
+def _iam_targets(harness: Harness) -> tuple[str, ...]:
+    return tuple(_iam_caller(harness, language) for language in ("go", "node", "py", "other"))
+
+
+def _iam_session(harness: Harness, name: str, *, shared_dir: str | None = None, app: str = LOCAL_IAM_APP) -> LocalSession:
+    return start_local_session(
+        harness,
+        app,
+        name=name,
+        targets=_iam_targets(harness) if app == LOCAL_IAM_APP else (),
+        shared_dir=shared_dir,
+    )
+
+
+def _container_url(url: str) -> str:
+    """Rewrite a loopback URL for a function container's own network view."""
+    return url.replace("127.0.0.1", "host.docker.internal")
+
+
+def _iam_rest(session: LocalSession) -> str:
+    for api in session.info.get("apis") or []:
+        if api.get("class") == "restv1":
+            return _container_url(str(api["url"]))
+    raise HarnessFailure("the session served no REST API")
+
+
+def _iam_http(session: LocalSession) -> str:
+    for api in session.info.get("apis") or []:
+        if api.get("class") == "httpv2":
+            return _container_url(str(api["url"]))
+    raise HarnessFailure("the session served no HTTP API")
+
+
+def _iam_function_url(session: LocalSession) -> str:
+    for api in session.info.get("apis") or []:
+        if api.get("class") == "fnurl":
+            return _container_url(str(api["url"]))
+    raise HarnessFailure("the session served no Function URL")
+
+
+def _caller_result(session: LocalSession, function: str, payload: dict) -> dict:
+    """Invoke a caller and decode the proxy response it returned."""
+    result = session.invoke(function, payload)
+    raw = result
+    if not raw.get("proxy"):
+        raw = result.get("raw")
+        if not isinstance(raw, dict):
+            text = result.get("rawText") or ""
+            try:
+                raw = json.loads(text)
+            except json.JSONDecodeError as exc:
+                raise HarnessFailure(f"the caller answered {result}", text) from exc
+    if raw.get("handlerError"):
+        raise HarnessFailure(f"the caller handler failed: {raw.get('handlerError')}")
+    body = raw.get("body") or "{}"
+    try:
+        return json.loads(body) if isinstance(body, str) else body
+    except json.JSONDecodeError as exc:
+        raise HarnessFailure(f"the caller's body is not JSON: {body}", body) from exc
+
+
+def _expect_refusal(outcome: dict, needle: str, label: str) -> None:
+    if int(outcome.get("status") or 0) != 403:
+        raise HarnessFailure(f"{label}: want 403, got {outcome}")
+    if needle not in str(outcome.get("body") or ""):
+        raise HarnessFailure(f"{label}: the refusal does not name {needle!r}: {outcome}")
+
+
+def run_local_iam_grants(harness: Harness) -> str:
+    caller = _iam_caller(harness, "go")
+    session = _iam_session(harness, "iam-grants")
+    try:
+        base = _iam_rest(session)
+        # The allowed call, and the handler's assertion of the principal the
+        # gateway resolved into the event identity.
+        allowed = _caller_result(session, caller, {"url": base + "/protected"})
+        if allowed.get("status") != 200:
+            raise HarnessFailure(f"the resource-policy allow did not grant the call: {allowed}")
+        identity = json.loads(allowed["body"])
+        if identity.get("userArn") != IAM_CALLER_ROLE:
+            raise HarnessFailure(f"the handler saw userArn {identity.get('userArn')!r}")
+        if identity.get("accountId") != "123456789012":
+            raise HarnessFailure(f"the handler saw accountId {identity.get('accountId')!r}")
+        if not identity.get("caller") or not identity.get("accessKey"):
+            raise HarnessFailure(f"the handler saw no caller identity: {identity}")
+        # An identity-policy-only route: the API has no resource statement for
+        # it, so the caller's role grant is the only allow.
+        identity_only = _caller_result(session, caller, {"url": base + "/identity-only"})
+        if identity_only.get("status") != 200:
+            raise HarnessFailure(f"the identity-policy allow did not grant the call: {identity_only}")
+        # An account-root principal statement.
+        root = _caller_result(session, caller, {"url": base + "/root"})
+        if root.get("status") != 200:
+            raise HarnessFailure(f"the account-root principal did not grant the call: {root}")
+        # An aws:PrincipalArn-conditioned statement.
+        conditioned = _caller_result(session, caller, {"url": base + "/conditioned"})
+        if conditioned.get("status") != 200:
+            raise HarnessFailure(f"the aws:PrincipalArn condition did not grant the call: {conditioned}")
+        # A trailing path wildcard.
+        wildcard = _caller_result(session, caller, {"url": base + "/path/42"})
+        if wildcard.get("status") != 200:
+            raise HarnessFailure(f"the path wildcard did not grant the call: {wildcard}")
+        # An HTTP API route with AWS_IAM, allowed by the caller's identity
+        # policy (an HTTP API carries no resource policy).
+        http_allowed = _caller_result(session, caller, {"url": _iam_http(session) + "/http-iam"})
+        if http_allowed.get("status") != 200:
+            raise HarnessFailure(f"the HTTP API AWS_IAM route refused the caller: {http_allowed}")
+        http_identity = json.loads(http_allowed["body"])
+        if http_identity.get("userArn") != IAM_CALLER_ROLE:
+            raise HarnessFailure(f"the HTTP API handler saw {http_identity}")
+        return (
+            "resource-policy allow, identity-policy-only allow, account-root principal, "
+            "aws:PrincipalArn-conditioned allow, trailing path wildcard and the HTTP API AWS_IAM route all "
+            "granted the signed call; the handler saw the resolved role ARN, account and access key in its "
+            "event identity"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def run_local_iam_refusals(harness: Harness) -> str:
+    caller = _iam_caller(harness, "go")
+    other = _iam_caller(harness, "other")
+    session = _iam_session(harness, "iam-refusals")
+    try:
+        base = _iam_rest(session)
+        unsigned = _caller_result(session, caller, {"url": base + "/protected", "unsigned": True})
+        _expect_refusal(unsigned, "not signed", "unsigned")
+        tampered = _caller_result(session, caller, {"url": base + "/protected", "tamperSignature": True})
+        _expect_refusal(tampered, "does not match the credential", "tampered signature")
+        # Another role signs the same route: the resource policy names the
+        # caller role, so this principal has no grant.
+        wrong = _caller_result(session, other, {"url": base + "/conditioned"})
+        _expect_refusal(wrong, "no identity policy", "wrong principal")
+        outside = _caller_result(session, caller, {"url": base + "/outside"})
+        _expect_refusal(outside, "outside the local IAM subset", "out-of-subset statement")
+        denied = _caller_result(session, caller, {"url": base + "/denied"})
+        _expect_refusal(denied, "Explicit".lower().replace("e", "e"), "explicit deny")
+        # A direct, unsigned request from the harness reaches the same refusal.
+        status, body, _ = http_request("GET", base.replace("host.docker.internal", "127.0.0.1") + "/protected")
+        expect_status(status, 403, "unsigned harness request", body)
+        if "not signed" not in body:
+            raise HarnessFailure(f"the harness refusal does not name the cause: {body}")
+        return (
+            "an unsigned request, a tampered signature, a wrong principal, an out-of-subset statement and "
+            "an explicit Deny were each refused with a named reason"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def _run_local_iam_caller(harness: Harness, language: str) -> str:
+    caller = _iam_caller(harness, language)
+    session = _iam_session(harness, f"iam-caller-{language}")
+    try:
+        base = _iam_rest(session)
+        outcome = _caller_result(session, caller, {"url": base + "/protected"})
+        if outcome.get("status") != 200:
+            raise HarnessFailure(f"the {language} caller was refused: {outcome}")
+        identity = json.loads(outcome["body"])
+        if identity.get("userArn") != IAM_CALLER_ROLE:
+            raise HarnessFailure(f"the {language} caller reached the handler as {identity.get('userArn')!r}")
+        if not outcome.get("signed"):
+            raise HarnessFailure(f"the {language} caller did not sign the request: {outcome}")
+        return (
+            f"the {language} caller signed the execute-api request with its SDK and the gateway resolved "
+            f"{IAM_CALLER_ROLE} from the signature"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def run_local_iam_caller_go(harness: Harness) -> str:
+    return _run_local_iam_caller(harness, "go")
+
+
+def run_local_iam_caller_node(harness: Harness) -> str:
+    return _run_local_iam_caller(harness, "node")
+
+
+def run_local_iam_caller_py(harness: Harness) -> str:
+    return _run_local_iam_caller(harness, "py")
+
+
+def run_local_iam_function_url(harness: Harness) -> str:
+    caller = _iam_caller(harness, "go")
+    session = _iam_session(harness, "iam-function-url")
+    try:
+        url = _iam_function_url(session)
+        allowed = _caller_result(session, caller, {"url": url})
+        if allowed.get("status") != 200:
+            raise HarnessFailure(f"the signed Function URL call was refused: {allowed}")
+        identity = json.loads(allowed["body"])
+        if identity.get("userArn") != IAM_CALLER_ROLE:
+            raise HarnessFailure(f"the Function URL handler saw {identity}")
+        unsigned = _caller_result(session, caller, {"url": url, "unsigned": True})
+        _expect_refusal(unsigned, "not signed", "unsigned Function URL")
+        return (
+            "the AWS_IAM Function URL served the signed call with the resolved principal in "
+            "requestContext.authorizer.iam and refused the unsigned one"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def run_local_iam_shared_plane(harness: Harness) -> str:
+    # Run A defines the caller role; run B defines the role A assumes and the API
+    # A calls. Both share one IAM plane, which is what makes the trust decision
+    # and the credential verification agree across processes.
+    shared = tempfile.mkdtemp(prefix="a4-w3m1-iam-plane-")
+    caller = _iam_caller(harness, "go")
+    peer = start_local_session(
+        harness,
+        LOCAL_IAM_PEER_APP,
+        name="iam-peer",
+        shared_dir=shared,
+        # Two co-resident runs of one row need two port blocks; the peer takes
+        # the next block above the harness slot.
+        port_base=harness.lease.http_port + 40,
+    )
+    try:
+        peer_rest = None
+        for api in peer.info.get("apis") or []:
+            if api.get("class") == "restv1":
+                peer_rest = _container_url(str(api["url"]))
+        if not peer_rest:
+            raise HarnessFailure("the peer run served no REST API")
+        session = _iam_session(harness, "iam-shared", shared_dir=shared)
+        try:
+            plan = _iam_plan(harness)
+            if not any(role.get("arn") == IAM_VENDING_ROLE for role in plan.get("iamRoles") or []):
+                raise HarnessFailure(f"run A's plan lost its vending role: {plan.get('iamRoles')}")
+            # Run A's function assumes run B's role through its STS endpoint.
+            base = _iam_rest(session)
+            assumed = _caller_result(session, caller, {"url": base + "/vending", "assumeRoleArn": IAM_PEER_VENDING_ROLE})
+            minted = assumed.get("principalArn") or ""
+            if not minted.startswith("arn:aws:sts::123456789012:assumed-role/local-iam-peer-vending/"):
+                raise HarnessFailure(f"run A did not assume run B's role: {assumed}")
+            session_id = minted.rsplit("/", 1)[-1]
+            # The session run A minted signs a call run B evaluates against its
+            # own resource policy and the role's identity policy.
+            session_creds = _session_credentials(session, caller, IAM_PEER_VENDING_ROLE)
+            status, body = _signed_get(peer_rest.replace("host.docker.internal", "127.0.0.1") + "/peer", session_creds)
+            expect_status(status, 200, "the peer's AWS_IAM route", body)
+            identity = json.loads(body)
+            if identity.get("userArn") != minted:
+                raise HarnessFailure(f"run B resolved {identity.get('userArn')!r}, want {minted!r}")
+            if identity.get("accountId") != "123456789012":
+                raise HarnessFailure(f"run B resolved account {identity.get('accountId')!r}")
+            # The peer's other role has no trust for run A, so the same call is
+            # refused by run B's trust policy.
+            refused = _caller_result(
+                session, caller, {"url": base + "/vending", "assumeRoleArn": "arn:aws:iam::123456789012:role/absent-role"}
+            )
+            if refused.get("status") != 403:
+                raise HarnessFailure(f"run A assumed a role neither run defines: {refused}")
+            return (
+                f"run A's function assumed {IAM_PEER_VENDING_ROLE} through its STS endpoint (session "
+                f"{session_id}), which run B published and its trust policy accepted; the session's signature "
+                "was verified by run B from the shared credential registry and evaluated against run B's "
+                "resource policy and the role's identity policy"
+            )
+        finally:
+            stop_local_session(harness, session)
+    finally:
+        stop_local_session(harness, peer)
+        shutil.rmtree(shared, ignore_errors=True)
+
+
+def _session_credentials(session: LocalSession, caller: str, role_arn: str) -> dict:
+    """Ask a caller to assume a role and report the session it minted.
+
+    The session is minted through the run's own STS endpoint, exactly as the
+    container's SDK call does; reporting it lets the harness sign a call to a
+    second run without a container-to-container hop.
+    """
+    result = session.invoke(caller, {
+        "url": "http://127.0.0.1:1/unused",
+        "assumeRoleArn": role_arn,
+        "returnCredentials": True,
+        "unsigned": True,
+    })
+    raw = result
+    if not raw.get("proxy"):
+        raw = result.get("raw")
+        if not isinstance(raw, dict):
+            raise HarnessFailure(f"the assume-role caller answered {result}")
+    if raw.get("handlerError") or raw.get("errorMessage"):
+        raise HarnessFailure(f"the assume-role caller failed: {raw.get('handlerError') or raw.get('errorMessage')}")
+    try:
+        outcome = json.loads(raw.get("body") or "{}")
+    except json.JSONDecodeError as exc:
+        raise HarnessFailure(f"the assume-role caller's body is not JSON: {raw.get('body')}") from exc
+    credentials = outcome.get("credentials") or {}
+    if not credentials.get("accessKeyId") or not credentials.get("sessionToken"):
+        raise HarnessFailure(f"the caller did not report its session credentials: {outcome}")
+    return credentials
+
+
+def _signed_get(url: str, credentials: dict) -> tuple[int, str]:
+    """Sign and send one execute-api GET with botocore's SigV4 signer."""
+    import urllib.request
+
+    from botocore.auth import SigV4Auth
+    from botocore.awsrequest import AWSRequest
+    from botocore.credentials import Credentials
+
+    parts = urlsplit(url)
+    request = AWSRequest(method="GET", url=url, headers={"host": parts.netloc})
+    frozen = Credentials(
+        credentials["accessKeyId"],
+        credentials["secretAccessKey"],
+        credentials.get("sessionToken"),
+    )
+    SigV4Auth(frozen, "execute-api", "us-east-1").add_auth(request)
+    signed = urllib.request.Request(url, method="GET", headers=dict(request.headers))
+    try:
+        with urllib.request.urlopen(signed, timeout=20) as response:  # noqa: S310 - a local loopback URL
+            return response.status, response.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as error:
+        return error.code, error.read().decode("utf-8", errors="replace")
+
+
+
+# The LOCAL-W3-M1 rows are registered here: their functions are defined below
+# the runner table, so the table is extended rather than literalled above.
+RUNNERS.update(
+    {
+        "local-resources-inventory": run_local_resources_inventory,
+        "local-resources-custom": run_local_resources_custom,
+        "local-resources-ses-receipt": run_local_resources_ses_receipt,
+        "local-iam-grants": run_local_iam_grants,
+        "local-iam-refusals": run_local_iam_refusals,
+        "local-iam-caller-go": run_local_iam_caller_go,
+        "local-iam-caller-node": run_local_iam_caller_node,
+        "local-iam-caller-py": run_local_iam_caller_py,
+        "local-iam-function-url": run_local_iam_function_url,
+        "local-iam-shared-plane": run_local_iam_shared_plane,
+    }
+)
 
 
 if __name__ == "__main__":

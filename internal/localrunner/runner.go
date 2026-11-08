@@ -115,6 +115,11 @@ type Options struct {
 	// DataDir keeps backend state across runs. An empty value keeps today's
 	// ephemeral behavior.
 	DataDir string
+	// SharedDir is the directory co-resident runs share. It holds the IAM plane
+	// (`<shared-dir>/iam`), and the co-residence work adds the shared CA beside
+	// it. An empty value keeps every run's IAM state inside its own scratch
+	// directory.
+	SharedDir string
 	// Seed is a shell command that runs after provisioning and before the run
 	// reports ready. It is how a seed script drives the app through its own
 	// code paths.
@@ -237,9 +242,35 @@ type Runner struct {
 	// in. tlsBundlePath is the host-side trust bundle the session reports.
 	tls           *localTLS
 	tlsBundlePath string
+	// publicTLS is true when the run opted in to HTTPS on its public
+	// listeners. The run CA also exists for a run whose only internal HTTPS
+	// endpoint is the custom-resource response endpoint; that run serves plain
+	// HTTP in front of a client.
+	publicTLS bool
 	// internalTLS holds the leaf the runner's internal HTTPS endpoints
 	// present, issued on first use from the run CA.
 	internalTLS internalHTTPS
+	// iam is the shared IAM plane this run publishes its role definitions and
+	// issued credentials into; iamSTSURL is the STS endpoint functions reach.
+	iam            *iamPlane
+	iamStartedAt   time.Time
+	iamSTSURL      string
+	iamCredentials map[string]iamCredentialRecord
+	// iamFunctionCredentials indexes the same records by the function they were
+	// issued to, which is what a container's environment resolves.
+	iamFunctionCredentials map[string]iamCredentialRecord
+	// iamMu guards iamCredentials: the STS endpoint mints sessions while the
+	// HTTP listeners verify signatures.
+	iamMu sync.RWMutex
+	// probeCredential is the credential the preflight container runs with; it
+	// proves the container's environment carries a runner-issued key.
+	probeCredential iamCredentialRecord
+	// cfnShimPath is the mounted response-URL port shim a Node container needs
+	// when the assembly declares a handler-invoked custom resource.
+	cfnShimPath string
+	// cfnResponsePort is the port the custom-resource response endpoint listens
+	// on, which the shim restores in a provider framework's response request.
+	cfnResponsePort string
 	// customResources is the CloudFormation custom-resource response endpoint;
 	// customResourceData and customResourcePhysicalIDs keep what each handler
 	// reported so a GetAtt on the custom resource resolves.
@@ -777,10 +808,28 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 	if err = r.startWebSocketManagement(ctx, spec); err != nil {
 		return nil, err
 	}
+	if err = r.startIAMPlane(spec); err != nil {
+		return nil, err
+	}
+	if err = r.issueCredentials(spec, targets); err != nil {
+		return nil, err
+	}
+	if err = r.startSTSFront(ctx); err != nil {
+		return nil, err
+	}
+	if err = r.publishIAMRun(spec); err != nil {
+		return nil, err
+	}
+	if ctx.Done() != nil {
+		go r.refreshIAMRun(ctx, spec)
+	}
 	if _, err = r.startLambdaInvokeFront(ctx); err != nil {
 		return nil, err
 	}
 	if specNeedsInternalHTTPS(spec) {
+		if r.cfnShimPath, err = r.prepareNodeResponseShim(); err != nil {
+			return nil, err
+		}
 		if err = r.startCustomResourceResponses(ctx); err != nil {
 			return nil, err
 		}
@@ -1086,6 +1135,7 @@ func (r *Runner) cleanupFunc() func() {
 		networkCtx, cancel := context.WithTimeout(context.Background(), cleanupStepTimeout)
 		r.docker.RemoveNetwork(networkCtx, r.network)
 		cancel()
+		r.stopIAMPlane()
 		_ = os.RemoveAll(r.scratch) //nolint:errcheck // scratch cleanup is best effort
 	}
 }
@@ -1652,6 +1702,7 @@ func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 	for _, target := range targets {
 		transport := NewTransport(target, invokers, r.semaphore, r.logf)
 		transport.Clock = r.clock
+		transport.IAMAuthorize = r.iamAuthorize
 		r.transports[target.LogicalID] = transport
 		server := &http.Server{
 			Handler:           transport,

@@ -307,7 +307,7 @@ func TestPublicURLsFollowTheOptIn(t *testing.T) {
 		t.Fatalf("plain trust bundle: %v", err)
 	}
 
-	secure := &Runner{tls: &localTLS{host: "app.localhost", caPath: "/tmp/ca.pem"}}
+	secure := &Runner{tls: &localTLS{host: "app.localhost", caPath: "/tmp/ca.pem"}, publicTLS: true}
 	if got := secure.publicURL(8123); got != "https://app.localhost:8123" {
 		t.Fatalf("TLS publicURL = %q", got)
 	}
@@ -332,7 +332,7 @@ func TestStartPublicListenerServesHTTPS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newLocalTLS: %v", err)
 	}
-	runner := &Runner{tls: state}
+	runner := &Runner{tls: state, publicTLS: true}
 	server := &http.Server{
 		Handler: http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 			_, _ = writer.Write([]byte("ok")) //nolint:errcheck // the test asserts the body below

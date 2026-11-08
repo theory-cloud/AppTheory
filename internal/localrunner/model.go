@@ -413,6 +413,10 @@ type APISpec struct {
 	Stage     string   `json:"stage"`
 	Routes    []Route  `json:"routes"`
 	Streaming bool     `json:"streaming"`
+	// ResourcePolicy is the API's IAM resource policy document, verbatim from
+	// the template (AWS::ApiGateway::RestApi.Policy). The IAM path resolves and
+	// evaluates it; a route with no resource policy has none.
+	ResourcePolicy json.RawMessage `json:"-"`
 }
 
 // FunctionURLSpec is one Lambda Function URL.
@@ -421,6 +425,13 @@ type FunctionURLSpec struct {
 	Stack     string `json:"stack"`
 	Function  string `json:"function"`
 	Streaming bool   `json:"streaming"`
+	// IAM is true for an AWS_IAM URL: every request must carry a verified
+	// Signature Version 4 signature.
+	IAM bool `json:"iam,omitempty"`
+	// FunctionPolicy is the function's resource-based policy, built from the
+	// AWS::Lambda::Permission resources that name it. An AWS_IAM URL evaluates
+	// lambda:InvokeFunctionUrl and lambda:InvokeFunction against it.
+	FunctionPolicy json.RawMessage `json:"-"`
 }
 
 // Skipped is a construct the assembly defines that the local transport does not
@@ -455,6 +466,9 @@ type CustomResourceSpec struct {
 	Type string `json:"type"`
 	// Function is the qualified service-token Lambda function.
 	Function string `json:"function"`
+	// Handler is the function a Custom::Trigger's HandlerArn names. The service
+	// token invokes it through the local Lambda endpoint, so the run starts it.
+	Handler string `json:"handler,omitempty"`
 	// PhysicalResourceID is the local physical id the create request carries
 	// when the assembly's properties determine it, or empty on a first create.
 	PhysicalResourceID string `json:"physicalResourceId,omitempty"`
@@ -563,7 +577,11 @@ type Spec struct {
 	CustomResources []CustomResourceSpec `json:"customResources,omitempty"`
 	// ReceiptRules are the SES receipt rules the run serves.
 	ReceiptRules []ReceiptRuleSpec `json:"receiptRules,omitempty"`
-	Skipped      []Skipped         `json:"skipped"`
+	// IAMRoles are the roles the assembly declares: the ARNs a caller has, the
+	// trust policies that decide AssumeRole and the identity policies attached
+	// to them. The IAM path evaluates them; nothing here is provisioned.
+	IAMRoles []iamRoleSpec `json:"iamRoles,omitempty"`
+	Skipped  []Skipped     `json:"skipped"`
 	// Delivery is the state the engine would register for every source. Plan
 	// fills it; a live session reports the engine's own state instead.
 	Delivery []DeliveryState `json:"delivery,omitempty"`
@@ -700,8 +718,14 @@ func (s *Spec) RuntimeFunctions() []string { //nolint:gocyclo,gocognit // one ex
 		seen[id] = struct{}{}
 	}
 	for _, resource := range s.CustomResources {
-		if resource.Function != "" && resource.Refusal == "" {
+		if resource.Refusal != "" {
+			continue
+		}
+		if resource.Function != "" {
 			seen[resource.Function] = struct{}{}
+		}
+		if resource.Handler != "" {
+			seen[resource.Handler] = struct{}{}
 		}
 	}
 	for _, rule := range s.ReceiptRules {

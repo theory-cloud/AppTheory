@@ -1106,17 +1106,22 @@ func (r *Runner) invokerSnapshot() map[string]Invoker {
 
 // functionURLAPI is the transport surface one Function URL serves.
 func functionURLAPI(url FunctionURLSpec) APISpec {
+	authorizer := AuthorizerKind("")
+	if url.IAM {
+		authorizer = AuthorizerKindIAM
+	}
 	return APISpec{
 		Class:     APIFunctionURL,
 		LogicalID: url.LogicalID,
 		Stack:     url.Stack,
 		Name:      url.LogicalID,
 		Routes: []Route{{
-			Class:     APIFunctionURL,
-			Method:    "ANY",
-			Path:      catchAllPath,
-			Function:  url.Function,
-			Streaming: url.Streaming,
+			Class:          APIFunctionURL,
+			Method:         "ANY",
+			Path:           catchAllPath,
+			Function:       url.Function,
+			Streaming:      url.Streaming,
+			AuthorizerKind: authorizer,
 		}},
 	}
 }

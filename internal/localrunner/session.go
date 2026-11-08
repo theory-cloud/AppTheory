@@ -214,6 +214,8 @@ func (s *localSession) execute(ctx context.Context, request sessionRequest) (any
 		return s.s3Put(ctx, request)
 	case "s3.delete":
 		return s.s3Delete(ctx, request)
+	case "s3.list":
+		return s.s3List(ctx, request)
 	case "eventbridge.event":
 		return s.eventBridgeEvent(request)
 	case "kinesis.event":
@@ -428,6 +430,9 @@ func (s *localSession) describe() (map[string]any, error) { //nolint:gocognit,go
 	}
 	if s.runner.codeBuild != nil {
 		document["codeBuild"] = s.runner.codeBuild.CodeBuildBuilds()
+	}
+	if s.runner.iam != nil {
+		document["iam"] = s.runner.iamDescription(s.spec)
 	}
 	return document, nil
 }

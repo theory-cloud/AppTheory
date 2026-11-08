@@ -36,6 +36,9 @@ Classes:
 | `examples/mcp/tools-only-ts` | Minimal Streamable HTTP MCP server using the TypeScript runtime and MCP testkit | L1 |
 | `examples/mcp/tools-only-py` | Minimal Streamable HTTP MCP server using the Python runtime and MCP testkit | L1 |
 | `examples/mcp/tools-resources-prompts` | MCP server exposing tools, resources and prompts (Go) | L1 |
+| `examples/cdk/local-resources` | CloudFormation custom resources (a `Custom::Trigger`, a provider-framework resource, a `Custom::AWS` SDK call, a bucket auto-delete handler) and an SES receipt rule with S3 and Lambda actions, beside the deploy-time-only and MicroVM types the runner reports and refuses | L2; the handlers run in their real containers and the SES message is injected through `ses.receive` |
+| `examples/cdk/local-iam` | AWS_IAM authorization on a REST API (resource policy and identity policy), an HTTP API route and a Function URL, with Go, Node and Python callers that sign through their SDKs | L2; the evaluation is the narrow, enumerated subset of docs/127 W3-D1 |
+| `examples/cdk/local-iam-peer` | The second app of the shared-IAM-plane row: the role one run assumes and the API its session calls, verified by the other run | L2; covered by the `local-iam-shared-plane` row |
 | `examples/mcp/resumable-sse` | Streaming MCP tool call with disconnect and `Last-Event-ID` resume (Go) | L2; the warm session, incremental chunk delivery, event ids and replay are asserted |
 | `examples/migration/rate-limited-http` | Lift `limited` → AppTheory `pkg/limited`: a real `net/http` server on DynamoDB Local with the allowed burst and the 429 refusal | L1 |
 | `examples/cdk/hello-world` | Minimal deployable HTTP API in Go, TypeScript and Python | I for the CDK app; handlers L1 through the local runner |

@@ -6,10 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	neturl "net/url"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 // CloudFormation custom resources.
@@ -98,6 +102,13 @@ func deriveCustomResources(spec *Spec, stacks []assemblyStack) {
 			if servedBy, ok := customResourceServedNatively[resource.Type]; ok {
 				entry.ServedBy = servedBy
 				spec.CustomResources = append(spec.CustomResources, entry)
+				if entry.Refusal != "" {
+					spec.Skipped = append(spec.Skipped, Skipped{
+						LogicalID: id,
+						Kind:      resource.Type,
+						Reason:    entry.Refusal,
+					})
+				}
 				continue
 			}
 			var props customResourceProperties
@@ -122,12 +133,20 @@ func deriveCustomResources(spec *Spec, stacks []assemblyStack) {
 				continue
 			}
 			entry.Function = qualify(stacks, stack.Name, functionID)
+			entry.Handler = customResourceHandlerTarget(stack, resource)
 			if reason := customResourceMicrovmRefusal(stack, resource); reason != "" {
 				entry.Refusal = reason
 			} else if reason := customResourceHandlerRefusal(spec, entry.Function); reason != "" {
 				entry.Refusal = reason
 			}
 			spec.CustomResources = append(spec.CustomResources, entry)
+			if entry.Refusal != "" {
+				spec.Skipped = append(spec.Skipped, Skipped{
+					LogicalID: id,
+					Kind:      resource.Type,
+					Reason:    entry.Refusal,
+				})
+			}
 		}
 	}
 }
@@ -196,6 +215,9 @@ func (r *Runner) startCustomResourceResponses(ctx context.Context) error {
 	}
 	server.containerURL = url
 	r.customResources = server
+	if parsed, err := neturl.Parse(url); err == nil {
+		r.cfnResponsePort = parsed.Port()
+	}
 	return nil
 }
 
@@ -529,6 +551,9 @@ func (r *Runner) customResourceDelete(ctx context.Context, spec *Spec, logicalID
 		return nil, fmt.Errorf("custom resource %s is refused: %s", logicalID, resource.Refusal)
 	}
 	if resource.ServedBy != "" {
+		if resource.Type == typeBucketAutoDelete {
+			return r.emptyAutoDeleteBucket(ctx, spec, resource)
+		}
 		return nil, fmt.Errorf("custom resource %s is served by the runner (%s) and has no handler to invoke", logicalID, resource.ServedBy)
 	}
 	key := resource.Stack + "/" + resource.LogicalID
@@ -558,4 +583,103 @@ func customResourceByLogicalID(spec *Spec, logicalID string) (CustomResourceSpec
 		}
 	}
 	return CustomResourceSpec{}, false
+}
+
+// customResourceHandlerTarget resolves the function a Custom::Trigger's
+// HandlerArn names. The trigger's provider invokes it through Lambda, so the run
+// must start it; a Lambda version's FunctionName names the function behind it.
+//
+// https://docs.aws.amazon.com/cdk/api/v2/docs/aws-cdk-lib.triggers-readme.html
+func customResourceHandlerTarget(stack assemblyStack, resource templateResource) string {
+	var props struct {
+		HandlerArn json.RawMessage `json:"HandlerArn"`
+	}
+	if len(resource.Properties) == 0 {
+		return ""
+	}
+	if err := json.Unmarshal(resource.Properties, &props); err != nil {
+		return ""
+	}
+	types := stack.resourceTypes()
+	if functionID, ok := findRefByType(props.HandlerArn, types, typeLambdaFunction, "Arn"); ok {
+		return qualify(nil, stack.Name, functionID)
+	}
+	versionID, ok := directRefID(props.HandlerArn)
+	if !ok {
+		return ""
+	}
+	version, ok := stack.Template.Resources[versionID]
+	if !ok || version.Type != "AWS::Lambda::Version" {
+		return ""
+	}
+	var versionProps struct {
+		FunctionName json.RawMessage `json:"FunctionName"`
+	}
+	if err := json.Unmarshal(version.Properties, &versionProps); err != nil {
+		return ""
+	}
+	if functionID, ok := findRefByType(versionProps.FunctionName, types, typeLambdaFunction, "Arn"); ok {
+		return qualify(nil, stack.Name, functionID)
+	}
+	return ""
+}
+
+// emptyAutoDeleteBucket serves a bucket auto-delete resource's delete leg. The
+// CDK handler empties the bucket by listing its object versions, and s3proxy's
+// store does not implement ListObjectVersions; the runner performs the same
+// effect with the S3 API the store does implement, and reports the response the
+// handler would have sent.
+//
+// https://docs.aws.amazon.com/cdk/api/v2/docs/aws-cdk-lib.aws_s3-readme.html#automatic-object-deletion
+func (r *Runner) emptyAutoDeleteBucket(ctx context.Context, spec *Spec, resource CustomResourceSpec) (map[string]any, error) {
+	properties, err := r.resolveCustomResourceProperties(spec, resource)
+	if err != nil {
+		return nil, err
+	}
+	bucket := ""
+	for _, key := range []string{"BucketName", "Bucket"} {
+		if value, ok := properties[key].(string); ok && value != "" {
+			bucket = value
+		}
+	}
+	if bucket == "" {
+		return nil, fmt.Errorf("the auto-delete resource names no bucket")
+	}
+	backend, ok := r.backendForService("s3")
+	if !ok || backend.HostURL == "" {
+		return nil, fmt.Errorf("the auto-delete resource needs the s3proxy backend (--backend s3proxy)")
+	}
+	client := newS3Client(backend.HostURL)
+	deleted := 0
+	var continuation *string
+	for {
+		listing, listErr := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+			Bucket:            aws.String(bucket),
+			ContinuationToken: continuation,
+		})
+		if listErr != nil {
+			return nil, fmt.Errorf("list the objects of bucket %s: %w", bucket, listErr)
+		}
+		for _, object := range listing.Contents {
+			if _, deleteErr := client.DeleteObject(ctx, &s3.DeleteObjectInput{
+				Bucket: aws.String(bucket),
+				Key:    object.Key,
+			}); deleteErr != nil {
+				return nil, fmt.Errorf("delete %s from bucket %s: %w", aws.ToString(object.Key), bucket, deleteErr)
+			}
+			deleted++
+		}
+		if listing.IsTruncated == nil || !*listing.IsTruncated || listing.NextContinuationToken == nil {
+			break
+		}
+		continuation = listing.NextContinuationToken
+	}
+	r.logf("custom resource %s: emptied bucket %s (%d object(s)) for its delete leg", resource.LogicalID, bucket, deleted)
+	return map[string]any{
+		"logicalId":          resource.LogicalID,
+		"status":             customResourceStatusSuccess,
+		"reason":             "the runner emptied the bucket for the auto-delete handler's delete leg",
+		"physicalResourceId": bucket,
+		"deletedObjects":     deleted,
+	}, nil
 }

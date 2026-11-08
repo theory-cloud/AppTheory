@@ -178,6 +178,7 @@ type commandConfig struct {
 	timeoutSeconds      int
 	watch               bool
 	dataDir             string
+	sharedDir           string
 	seed                string
 	tls                 bool
 	tlsHost             string
@@ -218,6 +219,7 @@ func (c *commandConfig) register(flags *flag.FlagSet) {
 	flags.IntVar(&c.timeoutSeconds, "timeout", 0, "invoke --handler-dir: function timeout in seconds (default 3)")
 	flags.BoolVar(&c.watch, "watch", false, "run/session: re-synthesize when the app's sources change and apply the new surface without restarting the listeners")
 	flags.StringVar(&c.dataDir, "data-dir", "", "run/session/invoke: keep backend state across runs (DynamoDB Local, s3proxy, ElasticMQ, and the runner's <data-dir>/kms/keys.json and <data-dir>/s3sse/index.json; moto stays in memory)")
+	flags.StringVar(&c.sharedDir, "shared-dir", "", "run/session/invoke: the directory co-resident runs share; it holds the local IAM plane at <shared-dir>/iam, and the co-residence work adds the shared CA beside it")
 	flags.StringVar(&c.seed, "seed", "", "run/session: shell command to run after provisioning and before the run reports ready")
 	flags.BoolVar(&c.tls, "tls", false, "run/session: serve every public listener over HTTPS from a certificate the runner's local CA signs (default off: plain HTTP, unchanged)")
 	flags.StringVar(&c.tlsHost, "tls-host", "", "run/session with --tls: the public host name (localhost or a *.localhost name; default app.localhost)")
@@ -337,6 +339,7 @@ func (c *commandConfig) plan(ctx context.Context, runner *localrunner.Runner) in
 	printCodeBuildProjects(spec)
 	printCustomResources(spec)
 	printReceiptRules(spec)
+	printIAMRoles(spec)
 	printDerivedEvents(spec)
 	if len(spec.Skipped) > 0 {
 		fmt.Println()
@@ -439,6 +442,26 @@ func printReceiptRules(spec *localrunner.Spec) {
 		fmt.Printf("  %-40s rule-set=%s name=%s enabled=%t recipients=%s -> %s\n",
 			rule.LogicalID, rule.RuleSetName, rule.Name, rule.Enabled,
 			strings.Join(rule.Recipients, ","), line)
+	}
+}
+
+// printIAMRoles prints every IAM role the assembly declares with the trust and
+// identity policies the narrow local IAM path evaluates.
+func printIAMRoles(spec *localrunner.Spec) {
+	if len(spec.IAMRoles) == 0 {
+		return
+	}
+	fmt.Println()
+	fmt.Println("iam roles:")
+	for _, role := range spec.IAMRoles {
+		fmt.Printf("  %-52s trust=%t identityPolicies=%d account=%s\n",
+			role.ARN, len(role.Trust) > 0, len(role.Identity), role.Account)
+	}
+	for _, api := range spec.APIs {
+		if len(api.ResourcePolicy) == 0 {
+			continue
+		}
+		fmt.Printf("  resource policy: %s\n", api.LogicalID)
 	}
 }
 
@@ -601,6 +624,7 @@ func (c *commandConfig) options() (localrunner.Options, error) {
 		StreamChunks:        c.streamChunks,
 		Watch:               c.watch,
 		DataDir:             c.dataDir,
+		SharedDir:           c.sharedDir,
 		Seed:                c.seed,
 		TLS:                 c.tls,
 		TLSHost:             c.tlsHost,

@@ -112,6 +112,8 @@ func (r *Runner) RunInvoke(ctx context.Context, functionID string, in io.Reader,
 
 // prepareInvoke creates the run's network, starts its backends, provisions the
 // local resources and proves the environment before the target starts.
+//
+//nolint:gocyclo // the startup order is documented and pinned by the docs-order test.
 func (r *Runner) prepareInvoke(ctx context.Context, spec *Spec, functionID string) error {
 	if err := r.docker.Available(ctx); err != nil {
 		return err
@@ -144,6 +146,21 @@ func (r *Runner) prepareInvoke(ctx context.Context, spec *Spec, functionID strin
 		return err
 	}
 	if err = r.startCognitoIssuer(ctx, spec); err != nil {
+		return err
+	}
+	// Invoke mode hands the container the same credential the session and run
+	// surfaces hand theirs: the preflight proves it, and a handler that signs a
+	// request has a principal the IAM gate can resolve.
+	if err = r.startIAMPlane(spec); err != nil {
+		return err
+	}
+	if err = r.issueCredentials(spec, []string{functionID}); err != nil {
+		return err
+	}
+	if err = r.startSTSFront(ctx); err != nil {
+		return err
+	}
+	if err = r.publishIAMRun(spec); err != nil {
 		return err
 	}
 	if err = r.resolveEnvironment(spec, []string{functionID}); err != nil {

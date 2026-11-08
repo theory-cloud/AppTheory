@@ -238,6 +238,7 @@ func (r *Runner) initTLS(spec *Spec) error {
 		}
 	}
 	r.tls = state
+	r.publicTLS = public
 	bundle, err := r.writeTLSTrustBundle()
 	if err != nil {
 		return err
@@ -557,7 +558,7 @@ func (s *localTLS) issueLeaf(key *ecdsa.PrivateKey, names []string, ips []net.IP
 
 // publicURL is the URL a person or a browser uses for one served listener.
 func (r *Runner) publicURL(port int) string {
-	if r.tls == nil {
+	if r.tls == nil || !r.publicTLS {
 		return fmt.Sprintf("http://127.0.0.1:%d", port)
 	}
 	return fmt.Sprintf("https://%s:%d", r.tls.host, port)
@@ -565,7 +566,7 @@ func (r *Runner) publicURL(port int) string {
 
 // tlsWebSocketURL is the ws/wss URL of one WebSocket API.
 func (r *Runner) tlsWebSocketURL(port int, stage string) string {
-	if r.tls == nil {
+	if r.tls == nil || !r.publicTLS {
 		return fmt.Sprintf("ws://127.0.0.1:%d/%s", port, stage)
 	}
 	return fmt.Sprintf("wss://%s:%d/%s", r.tls.host, port, stage)
@@ -575,7 +576,9 @@ func (r *Runner) tlsWebSocketURL(port int, stage string) string {
 // nil when the run did not opt in, which keeps the plain-HTTP listener
 // byte-for-byte identical.
 func (r *Runner) serverTLSConfig() *tls.Config {
-	if r.tls == nil {
+	if r.tls == nil || !r.publicTLS {
+		// A run that created the CA only for its internal HTTPS endpoints keeps
+		// every public listener on plain HTTP.
 		return nil
 	}
 	return &tls.Config{

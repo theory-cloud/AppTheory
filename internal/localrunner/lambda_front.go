@@ -61,11 +61,11 @@ func (f *lambdaInvokeFront) invoker(functionID string) (Invoker, bool) {
 	if f.invokerFor != nil {
 		return f.invokerFor(functionID)
 	}
-	invoker, ok := f.invoker(functionID)
+	process, ok := f.runner.invokers[functionID]
 	if !ok {
 		return nil, false
 	}
-	return invoker, true
+	return process, true
 }
 
 // startLambdaInvokeFront serves the invocation API through a control listener

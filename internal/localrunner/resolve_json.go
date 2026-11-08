@@ -236,7 +236,13 @@ func (r *Runner) resolveJSONRef(spec *Spec, stack, name string) (any, error) {
 				return nil, fmt.Errorf("parse version %s properties: %w", name, err)
 			}
 		}
-		target, ok := findRefByType(props.FunctionName, map[string]string{}, typeLambdaFunction, "Arn")
+		types := make(map[string]string, len(spec.Resources))
+		for _, candidate := range spec.Resources {
+			if candidate.Stack == stack {
+				types[candidate.LogicalID] = candidate.Type
+			}
+		}
+		target, ok := findRefByType(props.FunctionName, types, typeLambdaFunction, "Arn")
 		if !ok {
 			return nil, fmt.Errorf("version %s does not name a Lambda function", name)
 		}

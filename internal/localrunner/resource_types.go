@@ -202,4 +202,11 @@ var customResourceServedNatively = map[string]string{
 	typeBucketDeploy: "the runner copies the asset into the bucket itself instead of invoking the deployment handler",
 	typeBucketNotifications: "the runner derives the notification configuration from the bucket's real object " +
 		"state instead of invoking the notifications handler",
+	// The CDK auto-delete handler empties a bucket by listing its object
+	// VERSIONS, and s3proxy's filesystem store does not implement
+	// ListObjectVersions. The runner performs the same effect itself: the
+	// handler's delete leg is served by emptying the bucket, which is exactly
+	// what the handler would do.
+	typeBucketAutoDelete: "the runner empties the bucket on the handler's delete leg; the CDK handler " +
+		"itself lists object versions, which s3proxy does not implement",
 }

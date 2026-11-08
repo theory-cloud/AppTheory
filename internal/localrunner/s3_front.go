@@ -214,13 +214,20 @@ func (i *s3SSEIndex) saveLocked() error {
 
 // s3Front proxies object requests to s3proxy and carries the SSE-S3 answer.
 type s3Front struct {
-	upstream    *url.URL
-	index       *s3SSEIndex
-	logf        func(string, ...any)
-	proxy       *httputil.ReverseProxy
-	signer      *v4.Signer
+	upstream *url.URL
+	index    *s3SSEIndex
+	logf     func(string, ...any)
+	proxy    *httputil.ReverseProxy
+	signer   *v4.Signer
+	// credentials is the store's own static identity, which s3proxy verifies.
 	credentials aws.Credentials
-	hostURL     string
+	// issuedRecord resolves a request signed with a credential the run issued.
+	// s3proxy verifies only its own static pair, so the front adopts such a
+	// request: it verifies the caller's signature against the issued secret and
+	// re-signs the request with the store's identity. A request signed with
+	// anything else is forwarded unchanged, exactly as before.
+	issuedRecord func(accessKeyID string) (iamCredentialRecord, bool)
+	hostURL      string
 	// containerURL is the host.docker.internal address the preflight probe
 	// checks; port is what the function-facing IP endpoint uses.
 	containerURL string
@@ -246,6 +253,7 @@ func newS3Front(dataDir, upstream string, logf func(string, ...any)) (*s3Front, 
 		signer:      newS3Signer(),
 		credentials: aws.Credentials{AccessKeyID: "dummy", SecretAccessKey: "dummy"},
 	}
+	front.issuedRecord = func(string) (iamCredentialRecord, bool) { return iamCredentialRecord{}, false }
 	front.proxy = &httputil.ReverseProxy{
 		Rewrite: func(request *httputil.ProxyRequest) {
 			request.Out.URL.Scheme = parsed.Scheme
@@ -303,6 +311,17 @@ type s3ObjectOperation struct {
 func (f *s3Front) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	operation := s3Operation(request)
 	proxyRequest := request
+	if f.issuedRecord != nil {
+		adopted, err := f.adoptIssuedSignature(request)
+		if err != nil {
+			f.logf("local S3 front: %v", err)
+			writeS3FrontError(writer, http.StatusForbidden, "SignatureDoesNotMatch", err.Error())
+			return
+		}
+		if adopted {
+			proxyRequest = request
+		}
+	}
 	if operation.ssePut {
 		// s3proxy refuses the header on its filesystem store; the front is
 		// where the object's AES256 record lives. That is only sound when the
@@ -350,6 +369,9 @@ func (f *s3Front) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	}
 	proxy := *f.proxy
 	proxy.ModifyResponse = func(response *http.Response) error {
+		if response.StatusCode >= 400 {
+			f.logf("local S3 front: %s %s -> %d", request.Method, request.URL.Path, response.StatusCode)
+		}
 		f.recordResponse(operation, response)
 		return nil
 	}
@@ -409,6 +431,7 @@ func (f *s3Front) resign(request *http.Request) error {
 		}
 	}
 	request.Header.Del("Authorization")
+	stripUnimplementedStoreHeaders(request)
 	// Sign exactly the headers the proxy will forward: ReverseProxy drops the
 	// hop-by-hop family, and a header named by Connection goes with it.
 	for _, name := range strings.Split(request.Header.Get("Connection"), ",") {
@@ -419,6 +442,19 @@ func (f *s3Front) resign(request *http.Request) error {
 	for _, name := range []string{
 		"Connection", "Proxy-Connection", "Keep-Alive", "Proxy-Authenticate",
 		"Proxy-Authorization", "Te", "Trailer", "Transfer-Encoding", "Upgrade",
+	} {
+		request.Header.Del(name)
+	}
+	// The SDK for JavaScript v3 adds a trailing checksum to a DeleteObjects
+	// request by default, and s3proxy answers such a header with
+	// "A header you provided implies functionality that is not implemented".
+	// The store cannot verify a checksum it does not implement, and the front
+	// signs the request it forwards, so the header is dropped here.
+	// https://docs.aws.amazon.com/AmazonS3/latest/userguide/checking-object-integrity.html
+	for _, name := range []string{
+		"X-Amz-Sdk-Checksum-Algorithm", "X-Amz-Checksum-Crc32",
+		"X-Amz-Checksum-Crc32c", "X-Amz-Checksum-Sha1",
+		"X-Amz-Checksum-Sha256", "X-Amz-Checksum-Mode", "X-Amz-Trailer",
 	} {
 		request.Header.Del(name)
 	}
@@ -538,7 +574,7 @@ func (f *s3Front) verifySigV4(request *http.Request) error {
 		return &s3SignatureMismatch{reason: err.Error()}
 	}
 	scope := strings.Split(fields["Credential"], "/")
-	if len(scope) != 5 || scope[0] != f.credentials.AccessKeyID || scope[4] != "aws4_request" {
+	if len(scope) != 5 || scope[0] != f.credentials.AccessKeyID || scope[4] != sigV4Terminator {
 		return &s3SignatureMismatch{reason: "the request is not signed for the local identity"}
 	}
 	date, region, service := scope[1], scope[2], scope[3]
@@ -567,7 +603,7 @@ func (f *s3Front) verifySigV4(request *http.Request) error {
 		strings.Join(signedHeaders, ";"),
 		request.Header.Get("X-Amz-Content-Sha256"),
 	}, "\n")
-	scopeLine := strings.Join([]string{date, region, service, "aws4_request"}, "/")
+	scopeLine := strings.Join([]string{date, region, service, sigV4Terminator}, "/")
 	stringToSign := strings.Join([]string{
 		"AWS4-HMAC-SHA256",
 		amzDate,
@@ -595,7 +631,7 @@ func s3Hash(value string) []byte {
 // the store itself does not impose.
 func s3Signature(secret, date, region, service, stringToSign string) []byte {
 	key := []byte("AWS4" + secret)
-	for _, part := range []string{date, region, service, "aws4_request"} {
+	for _, part := range []string{date, region, service, sigV4Terminator} {
 		mac := hmac.New(sha256.New, key)
 		_, _ = mac.Write([]byte(part))
 		key = mac.Sum(nil)
@@ -1016,6 +1052,7 @@ func (r *Runner) startS3Front(ctx context.Context) error {
 	front.hostURL = listeners.HostURL
 	front.containerURL = listeners.ContainerURL
 	front.port = listeners.Port
+	front.issuedRecord = r.iamCredential
 	r.s3Front = front
 	persistence := "in memory"
 	if r.dataDir != "" {
@@ -1040,4 +1077,84 @@ func (r *Runner) wireS3FrontEndpoint(hostGateway string) error {
 	r.replaceEndpoint("s3", endpoint)
 	r.logf("local S3 endpoint for functions: %s (the front, path style)", endpoint)
 	return nil
+}
+
+// adoptIssuedSignature verifies a request signed with a credential the run
+// issued and re-signs it with the store's own identity, which s3proxy verifies.
+// It reports whether it adopted the request; a request signed with any other
+// key is left exactly as it arrived, so the store's answer does not change.
+//
+// https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html
+func (f *s3Front) adoptIssuedSignature(request *http.Request) (bool, error) {
+	authorization := request.Header.Get("Authorization")
+	if !strings.HasPrefix(authorization, "AWS4-HMAC-SHA256 ") {
+		return false, nil
+	}
+	fields, _, err := s3AuthorizationFields(authorization)
+	if err != nil {
+		return false, nil
+	}
+	scope := strings.Split(fields["Credential"], "/")
+	if len(scope) != 5 || scope[4] != sigV4Terminator {
+		return false, nil
+	}
+	record, ok := f.issuedRecord(scope[0])
+	if !ok {
+		// Not a credential this run issued: the store decides, as before.
+		return false, nil
+	}
+	body := bodyForSignature(request)
+	checker := &signatureChecker{
+		now:     time.Now(),
+		service: "s3",
+		records: func(accessKey string) (iamCredentialRecord, bool) {
+			if accessKey != scope[0] {
+				return iamCredentialRecord{}, false
+			}
+			return record, true
+		},
+	}
+	if _, verifyErr := checker.verify(request, body); verifyErr != nil {
+		return false, verifyErr
+	}
+	if err := f.resign(request); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// stripUnimplementedStoreHeaders removes the SDK checksum headers s3proxy
+// answers with "A header you provided implies functionality that is not
+// implemented". The store has no checksum support, so a checksum it cannot
+// verify is not forwarded; a request the front re-signs keeps a valid
+// signature, and one it forwards unchanged was never verified by the store
+// anyway.
+//
+// https://docs.aws.amazon.com/AmazonS3/latest/userguide/checking-object-integrity.html
+func stripUnimplementedStoreHeaders(request *http.Request) {
+	for _, name := range []string{
+		"X-Amz-Sdk-Checksum-Algorithm", "X-Amz-Checksum-Crc32",
+		"X-Amz-Checksum-Crc32c", "X-Amz-Checksum-Sha1",
+		"X-Amz-Checksum-Sha256", "X-Amz-Checksum-Mode", "X-Amz-Trailer",
+	} {
+		request.Header.Del(name)
+	}
+}
+
+// bodyForSignature returns the request body a signature check must hash. A
+// request that carries an X-Amz-Content-Sha256 header needs no body.
+func bodyForSignature(request *http.Request) []byte {
+	if strings.TrimSpace(request.Header.Get("X-Amz-Content-Sha256")) != "" {
+		return nil
+	}
+	if request.Body == nil {
+		return nil
+	}
+	body, err := io.ReadAll(io.LimitReader(request.Body, s3FrontMaxBody))
+	if err != nil {
+		return nil
+	}
+	_ = request.Body.Close() //nolint:errcheck // the body is already read
+	request.Body = io.NopCloser(bytes.NewReader(body))
+	return body
 }
