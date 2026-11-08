@@ -180,6 +180,8 @@ type commandConfig struct {
 	watch               bool
 	dataDir             string
 	sharedDir           string
+	sharedNetwork       string
+	peerHosts           stringList
 	seed                string
 	tls                 bool
 	tlsHost             string
@@ -222,6 +224,8 @@ func (c *commandConfig) register(flags *flag.FlagSet) {
 	flags.BoolVar(&c.watch, "watch", false, "run/session: re-synthesize when the app's sources change and apply the new surface without restarting the listeners")
 	flags.StringVar(&c.dataDir, "data-dir", "", "run/session/invoke: keep backend state across runs (DynamoDB Local, s3proxy, ElasticMQ, and the runner's <data-dir>/kms/keys.json and <data-dir>/s3sse/index.json; moto stays in memory)")
 	flags.StringVar(&c.sharedDir, "shared-dir", "", "run/session/invoke: the directory co-resident runs share; it holds the local IAM plane at <shared-dir>/iam and the shared CA at <shared-dir>/ca")
+	flags.StringVar(&c.sharedNetwork, "shared-network", "", "run/session: join every co-resident run's containers to this one Docker bridge network, so a run reaches a sibling's listener at the host address this run also binds")
+	flags.Var(&c.peerHosts, "peer-host", "run/session with --tls: a co-resident run's public host name to map into this run's function containers (repeatable)")
 	flags.StringVar(&c.seed, "seed", "", "run/session: shell command to run after provisioning and before the run reports ready")
 	flags.BoolVar(&c.tls, "tls", false, "run/session: serve every public listener over HTTPS from a certificate the runner's local CA signs (default off: plain HTTP, unchanged)")
 	flags.StringVar(&c.tlsHost, "tls-host", "", "run/session with --tls: the public host name (localhost or a *.localhost name; default app.localhost)")
@@ -315,9 +319,9 @@ func (c *commandConfig) plan(ctx context.Context, runner *localrunner.Runner) in
 		return 1
 	}
 	if c.jsonOutput {
-		document, err := runner.PlanJSON(spec)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "apptheory-local: %v\n", err)
+		document, jsonErr := runner.PlanJSON(spec)
+		if jsonErr != nil {
+			fmt.Fprintf(os.Stderr, "apptheory-local: %v\n", jsonErr)
 			return 1
 		}
 		fmt.Println(string(document))
@@ -650,6 +654,8 @@ func (c *commandConfig) options() (localrunner.Options, error) {
 		Watch:               c.watch,
 		DataDir:             c.dataDir,
 		SharedDir:           c.sharedDir,
+		SharedNetwork:       c.sharedNetwork,
+		PeerHosts:           append([]string(nil), c.peerHosts...),
 		Seed:                c.seed,
 		TLS:                 c.tls,
 		TLSHost:             c.tlsHost,

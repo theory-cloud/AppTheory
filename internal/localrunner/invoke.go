@@ -128,7 +128,7 @@ func (r *Runner) prepareInvoke(ctx context.Context, spec *Spec, functionID strin
 	if err = r.prepareScratch(spec); err != nil {
 		return err
 	}
-	if err = r.docker.CreateNetwork(ctx, r.network, r.labels()); err != nil {
+	if err = r.ensureNetwork(ctx); err != nil {
 		return err
 	}
 	r.logf("network %s", r.network)

@@ -245,7 +245,7 @@ func localTargetURL(raw string) (*url.URL, error) {
 		return nil, fmt.Errorf("the caller's url must be http or https")
 	}
 	host := parsed.Hostname()
-	if host != "127.0.0.1" && host != "localhost" && host != "host.docker.internal" {
+	if host != "127.0.0.1" && host != "localhost" && host != "host.docker.internal" && !declaredPeerHosts()[host] {
 		return nil, fmt.Errorf("the caller's url is not a local runner listener")
 	}
 	port := parsed.Port()
@@ -258,6 +258,20 @@ func localTargetURL(raw string) (*url.URL, error) {
 		Path:     parsed.Path,
 		RawQuery: parsed.RawQuery,
 	}, nil
+}
+
+// declaredPeerHosts returns the co-resident public host names the runner mapped
+// into this container with --peer-host. They are the only non-loopback names a
+// caller may sign a call to; every other host stays pinned to the run's own
+// loopback listener.
+func declaredPeerHosts() map[string]bool {
+	hosts := map[string]bool{}
+	for _, name := range strings.Split(os.Getenv("APPTHEORY_LOCAL_PEER_HOSTS"), ",") {
+		if trimmed := strings.TrimSpace(name); trimmed != "" {
+			hosts[trimmed] = true
+		}
+	}
+	return hosts
 }
 
 // reportedCredentials is a credential the caller used, reported on request.

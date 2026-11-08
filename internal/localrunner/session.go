@@ -433,6 +433,7 @@ func (s *localSession) describe() (map[string]any, error) { //nolint:gocognit,go
 		"endpoints":       endpoints,
 		"delivery":        delivery,
 		"listeners":       s.runner.surfacePlans,
+		"network":         map[string]any{"name": s.runner.network, "shared": s.runner.sharedNetwork},
 	}
 	if security := cloudFrontSecurityReport(s.spec); security != nil {
 		document["cloudFrontSecurity"] = security

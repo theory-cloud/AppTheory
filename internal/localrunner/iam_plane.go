@@ -132,12 +132,16 @@ func (r *Runner) startIAMPlane(spec *Spec) error {
 // publishIAMRun writes this run's definitions and refreshes them periodically so
 // a co-resident run can see the roles this run defines.
 func (r *Runner) publishIAMRun(spec *Spec) error {
+	roles, err := r.resolvedIAMRoles(spec)
+	if err != nil {
+		return err
+	}
 	document := iamRunDocument{
 		RunID:     r.runID,
 		PID:       os.Getpid(),
 		StartedAt: r.iamStartedAt,
 		Heartbeat: time.Now().UTC(),
-		Roles:     spec.IAMRoles,
+		Roles:     roles,
 		STSURL:    r.iamSTSURL,
 	}
 	path := filepath.Join(r.iam.dir, iamRunsDirName, r.runID+iamRunFileSuffix)
@@ -151,6 +155,47 @@ func (r *Runner) publishIAMRun(spec *Spec) error {
 		}
 	}
 	return nil
+}
+
+// resolvedIAMRoles renders this run's roles with every intrinsic resolved
+// against this run's own stack. A co-resident run evaluates another run's
+// identity and trust policies but does not hold that run's assembly, so a Ref
+// left in the published document would fail closed for a policy this run can no
+// longer explain. Resolution happens here, where the stack is known.
+func (r *Runner) resolvedIAMRoles(spec *Spec) ([]iamRoleSpec, error) {
+	out := make([]iamRoleSpec, 0, len(spec.IAMRoles))
+	for _, role := range spec.IAMRoles {
+		resolved := role
+		if len(role.Trust) > 0 {
+			if encoded, err := r.resolvedPolicy(spec, role.Stack, role.Trust); err == nil {
+				resolved.Trust = encoded
+			} else {
+				r.logf("local IAM plane: publishing %s's trust policy unresolved (%v); a co-resident run that evaluates it fails closed by name", role.ARN, err)
+			}
+		}
+		if len(role.Identity) > 0 {
+			resolved.Identity = make([]json.RawMessage, 0, len(role.Identity))
+			for index, raw := range role.Identity {
+				encoded, err := r.resolvedPolicy(spec, role.Stack, raw)
+				if err != nil {
+					r.logf("local IAM plane: publishing %s's identity policy %d unresolved (%v); a co-resident run that evaluates it fails closed by name", role.ARN, index, err)
+					encoded = raw
+				}
+				resolved.Identity = append(resolved.Identity, encoded)
+			}
+		}
+		out = append(out, resolved)
+	}
+	return out, nil
+}
+
+// resolvedPolicy resolves one policy document and re-encodes it.
+func (r *Runner) resolvedPolicy(spec *Spec, stack string, raw json.RawMessage) (json.RawMessage, error) {
+	document, err := r.resolvePolicyDocument(spec, stack, raw)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(document)
 }
 
 // refreshIAMRun rewrites this run's heartbeat. It runs until the context ends.

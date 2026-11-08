@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -34,6 +35,7 @@ const (
 	labelRun            = "apptheory.local.run"
 	labelApp            = "apptheory.local.app"
 	labelManaged        = "apptheory.local.managed"
+	labelSharedNetwork  = "apptheory.local.shared"
 	backendDynamoDB     = "dynamodb"
 	backendDynamoDBName = "dynamodb-local"
 )
@@ -118,11 +120,26 @@ type Options struct {
 	// DataDir keeps backend state across runs. An empty value keeps today's
 	// ephemeral behavior.
 	DataDir string
-	// SharedDir is the directory co-resident runs share. It holds the IAM plane
-	// (`<shared-dir>/iam`), and the co-residence work adds the shared CA beside
-	// it. An empty value keeps every run's IAM state inside its own scratch
-	// directory.
+	// SharedDir is the directory co-resident runs share. It holds the local IAM
+	// plane at `<shared-dir>/iam` and the shared CA at `<shared-dir>/ca`, so a
+	// function in one run verifies another run's leaves and trusts its roles.
+	// An empty value keeps every run's IAM state and CA inside its own scratch
+	// or data directory, exactly as before.
 	SharedDir string
+	// SharedNetwork joins every co-resident run's function containers to one
+	// user-defined Docker bridge network. The runner binds its public listeners
+	// on that network's gateway when the host owns it (native Linux) and every
+	// container reaches the host there; on Colima and Docker Desktop the
+	// gateway belongs to the VM and the one add-host entry uses host-gateway.
+	// Nothing binds the unspecified address. An empty value keeps the run's own
+	// private network, exactly as before.
+	SharedNetwork string
+	// PeerHosts are co-resident runs' public host names. Each is mapped in this
+	// run's function containers through the same add-host helper the run's own
+	// host uses, so a container reaches a sibling run's listener at the shared
+	// network's host address. It requires public TLS, because a peer's leaf is
+	// signed by the shared CA.
+	PeerHosts []string
 	// Seed is a shell command that runs after provisioning and before the run
 	// reports ready. It is how a seed script drives the app through its own
 	// code paths.
@@ -179,6 +196,9 @@ type Runner struct {
 	listeners    []net.Listener
 	semaphore    chan struct{}
 	network      string
+	// sharedNetwork is true when this run joined a --shared-network, so cleanup
+	// leaves the network for the other co-resident runs.
+	sharedNetwork bool
 	// runtimeAPIGateway remembers the run network's gateway address once a
 	// container could not reach a loopback Runtime API listener, so later
 	// functions bind it before their container starts.
@@ -335,7 +355,12 @@ func NewRunner(options Options) (*Runner, error) {
 		eventBus:                newEventBridgeBus(clock),
 	}
 	runner.namePrefix = sanitizeNamePrefix(options.NamePrefix, "apptheory-local-"+runner.appHash)
-	runner.network = runner.namePrefix + "-net"
+	runner.sharedNetwork = strings.TrimSpace(options.SharedNetwork) != ""
+	if runner.sharedNetwork {
+		runner.network = strings.TrimSpace(options.SharedNetwork)
+	} else {
+		runner.network = runner.namePrefix + "-net"
+	}
 	runner.scratch = filepath.Join(options.ScratchDir, "runs", runner.appHash+"-"+runner.runID)
 	if err := ensureSharedPath(runner.scratch); err != nil {
 		return nil, err
@@ -353,6 +378,9 @@ func NewRunner(options Options) (*Runner, error) {
 		if strings.TrimSpace(runner.options.TLSHost) == "" {
 			runner.options.TLSHost = runner.profile.TLS.Host
 		}
+	}
+	if err := runner.validateCoResidence(); err != nil {
+		return nil, err
 	}
 	if err := runner.validateEndpoints(); err != nil {
 		return nil, err
@@ -661,6 +689,34 @@ func (r *Runner) backendEndpoint(service string) (Endpoint, bool) {
 	return Endpoint{}, false
 }
 
+// validateCoResidence checks the co-residence options before any synthesis.
+func (r *Runner) validateCoResidence() error {
+	network := strings.TrimSpace(r.options.SharedNetwork)
+	if network != "" {
+		if strings.ContainsAny(network, " \t/") {
+			return fmt.Errorf("--shared-network %q is not a Docker network name", r.options.SharedNetwork)
+		}
+	}
+	seen := map[string]bool{}
+	for _, entry := range r.options.PeerHosts {
+		name := strings.ToLower(strings.TrimSpace(entry))
+		if name == "" {
+			continue
+		}
+		if err := validateTLSHost(name); err != nil {
+			return fmt.Errorf("--peer-host %q: %w", entry, err)
+		}
+		if seen[name] {
+			return fmt.Errorf("--peer-host %q is declared twice", entry)
+		}
+		seen[name] = true
+	}
+	if len(seen) > 0 && !r.options.TLS {
+		return errors.New("--peer-host needs --tls: a co-resident run's public name is only reachable over the verified HTTPS listener its shared CA signs")
+	}
+	return nil
+}
+
 func (r *Runner) validateEndpoints() error {
 	seen := map[string]struct{}{}
 	for _, endpoint := range r.endpoints {
@@ -788,10 +844,14 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 		return nil, err
 	}
 
-	if err = r.docker.CreateNetwork(ctx, r.network, r.labels()); err != nil {
+	if err = r.ensureNetwork(ctx); err != nil {
 		return nil, err
 	}
-	r.logf("network %s", r.network)
+	if r.sharedNetwork {
+		r.logf("network %s (shared with co-resident runs; this run does not remove it)", r.network)
+	} else {
+		r.logf("network %s", r.network)
+	}
 	r.chooseRuntimeAPIAddress(ctx)
 	if err = r.initTLS(spec); err != nil {
 		return nil, err
@@ -1033,25 +1093,34 @@ func (r *Runner) startBackend(ctx context.Context, backend string) error {
 		return fmt.Errorf("backend %s: %w", backend, err)
 	}
 	name := r.backendsContainerName(backend)
+	// On a shared network two runs would otherwise publish the same "moto" (or
+	// "s3proxy") alias, and Docker's DNS would answer with either run's
+	// container. A run-scoped alias keeps every endpoint inside its own run.
+	alias := r.sharedAlias(container)
 	pin, dataMounts, err := r.configureBackendDataDir(backend, container, pin)
 	if err != nil {
 		return err
 	}
 	endpoints := r.profile.EndpointsForContainer(container)
+	if alias != container {
+		for index := range endpoints {
+			endpoints[index].URL = replaceURLHost(endpoints[index].URL, alias)
+		}
+	}
 	if backend == backendDynamoDB && !containsEndpointService(endpoints, backendDynamoDB) {
-		endpoints = append(endpoints, Endpoint{Service: backendDynamoDB, URL: "http://" + backendDynamoDBName + ":8000"})
+		endpoints = append(endpoints, Endpoint{Service: backendDynamoDB, URL: "http://" + alias + ":8000"})
 	}
 	// Register the container before starting it, so a signal that lands
 	// while the start or the address lookup is in flight still cleans it up.
 	r.backends[backend] = backendProcess{
 		Container: name,
-		Alias:     container,
+		Alias:     alias,
 		Endpoints: endpoints,
 	}
 	options := ContainerOptions{
 		Name:    name,
 		Network: r.network,
-		Aliases: []string{container},
+		Aliases: []string{alias},
 		Image:   pin.Image,
 		Command: pin.Command,
 		Env:     pin.Environment,
@@ -1067,7 +1136,7 @@ func (r *Runner) startBackend(ctx context.Context, backend string) error {
 	if err != nil {
 		return err
 	}
-	r.options.AddHosts = append(r.options.AddHosts, container+":"+address)
+	r.options.AddHosts = append(r.options.AddHosts, alias+":"+address)
 	// An S3 SDK picks virtual-hosted addressing for a named endpoint
 	// ("bucket.s3proxy") and path addressing for an IP endpoint. s3proxy
 	// only serves the latter, so the S3 endpoint uses the container address.
@@ -1141,9 +1210,11 @@ func (r *Runner) cleanupFunc() func() {
 		for _, server := range r.servers {
 			_ = server.Close() //nolint:errcheck // abort connections whose containers are gone
 		}
-		networkCtx, cancel := context.WithTimeout(context.Background(), cleanupStepTimeout)
-		r.docker.RemoveNetwork(networkCtx, r.network)
-		cancel()
+		if !r.sharedNetwork {
+			networkCtx, cancel := context.WithTimeout(context.Background(), cleanupStepTimeout)
+			r.docker.RemoveNetwork(networkCtx, r.network)
+			cancel()
+		}
 		r.stopIAMPlane()
 		_ = os.RemoveAll(r.scratch) //nolint:errcheck // scratch cleanup is best effort
 	}
@@ -1489,6 +1560,51 @@ func (r *Runner) functionImageTag(function FunctionSpec) string {
 // networkGateway resolves the run network's gateway address.
 func (r *Runner) networkGateway(ctx context.Context) (string, error) {
 	return r.docker.NetworkGateway(ctx, r.network)
+}
+
+// sharedAlias is the network name a backend publishes. A private network keeps
+// the profile's name; a shared network scopes it to this run, so two runs never
+// answer one Docker DNS name.
+func (r *Runner) sharedAlias(name string) string {
+	if !r.sharedNetwork {
+		return name
+	}
+	return sanitizeName(r.namePrefix + "-" + name)
+}
+
+// replaceURLHost rewrites a URL's host while keeping its scheme and port.
+func replaceURLHost(raw, host string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" {
+		return raw
+	}
+	if port := parsed.Port(); port != "" {
+		parsed.Host = net.JoinHostPort(host, port)
+	} else {
+		parsed.Host = host
+	}
+	return parsed.String()
+}
+
+// ensureNetwork creates the run's private network, or joins the declared shared
+// network. A shared network is created once by whichever run starts first and
+// removed only by an explicit `down`, so a second run never deletes the bridge
+// its sibling is using.
+func (r *Runner) ensureNetwork(ctx context.Context) error {
+	if !r.sharedNetwork {
+		return r.docker.CreateNetwork(ctx, r.network, r.labels())
+	}
+	exists, err := r.docker.NetworkExists(ctx, r.network)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	return r.docker.CreateNetwork(ctx, r.network, map[string]string{
+		labelSharedNetwork: "true",
+		labelManaged:       "true",
+	})
 }
 
 // runtimeHostAddress is the address a container uses to reach the host: the
@@ -1869,6 +1985,14 @@ func (r *Runner) Down(ctx context.Context) (int, error) {
 	}
 	for _, image := range images {
 		r.docker.RemoveImage(ctx, image)
+	}
+	if r.sharedNetwork {
+		// A cleanup never removes a shared network; `down --shared-network` is
+		// the explicit last step once every co-resident run has stopped. Docker
+		// refuses while any container is still attached.
+		removeCtx, cancel := context.WithTimeout(ctx, cleanupStepTimeout)
+		r.docker.RemoveNetwork(removeCtx, r.network)
+		cancel()
 	}
 	return len(containers) + len(networks) + len(images), nil
 }

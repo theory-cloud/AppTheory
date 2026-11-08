@@ -146,6 +146,26 @@ func tlsTrustEnvironment(class string) []string {
 	}
 }
 
+// peerHostNames returns the normalized, deduplicated co-resident host names a
+// run maps into its function containers, without its own host.
+func (r *Runner) peerHostNames() []string {
+	host := strings.ToLower(strings.TrimSpace(r.options.TLSHost))
+	if host == "" {
+		host = tlsDefaultHost
+	}
+	seen := map[string]bool{host: true}
+	out := make([]string, 0, len(r.options.PeerHosts))
+	for _, entry := range r.options.PeerHosts {
+		name := strings.ToLower(strings.TrimSpace(entry))
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out
+}
+
 // localTLS is one run's certificate authority and the leaf certificates the
 // public listeners present.
 type localTLS struct {
@@ -280,9 +300,19 @@ func (r *Runner) initTLS(spec *Spec) error {
 		r.addHostEntry(trimmed)
 		auxiliary = append(auxiliary, trimmed)
 	}
+	// A co-resident run's public host is mapped exactly like the run's own: a
+	// container reaches it at the same host address, and the shared CA verifies
+	// the sibling's leaf.
+	peers := r.peerHostNames()
+	for _, name := range peers {
+		r.addHostEntry(name)
+	}
 	r.logf("local TLS: https://%s for every public listener; CA %s (%s); trust bundle %s", host, state.caPath, validity, bundle)
 	if len(auxiliary) > 0 {
 		r.logf("local TLS: auxiliary host names mapped into function containers: %s", strings.Join(auxiliary, ", "))
+	}
+	if len(peers) > 0 {
+		r.logf("local TLS: co-resident host names mapped into function containers: %s", strings.Join(peers, ", "))
 	}
 	return nil
 }

@@ -205,6 +205,12 @@ func (r *Runner) securityEnvironment(class string) map[string]string {
 		env["NODE_EXTRA_CA_CERTS"] = webSocketManagementCACertPath
 		env["SSL_CERT_FILE"] = webSocketManagementCACertPath
 	}
+	if peers := r.peerHostNames(); len(peers) > 0 {
+		// The exact names this run declared as co-resident are the only
+		// non-loopback hosts a handler may sign a call to; a caller example
+		// keeps its loopback pin for every other host.
+		env["APPTHEORY_LOCAL_PEER_HOSTS"] = strings.Join(peers, ",")
+	}
 	// The global override is the single local backend when there is exactly
 	// one, so SDK clients for other services also stay local; otherwise it
 	// points at a closed local port and fails closed. Service-specific
