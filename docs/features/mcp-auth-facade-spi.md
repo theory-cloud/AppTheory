@@ -216,7 +216,8 @@ latter as theft is what broke every real client.
 Code 2.1 against the example app with an isolated home per client. With a 30-second access-token lifetime, Codex
 issued 34 route refreshes across two separate processes (a run and a restart) and Claude Code issued 6 in one run:
 every refresh was served, no refusal was emitted, no family was revoked, and the upstream never observed refresh-token
-reuse. Both clients keep the rotated handle across restarts; neither needed a manual re-login. The authoritative
+reuse. Codex kept the rotated handle across a process restart and Claude Code persisted it within one run;
+neither needed a manual re-login. The authoritative
 Autheory-path proof runs in TMS; the example's own rows (`examples/cdk/local-mcp-auth-facade`) replay the same
 sequences over real HTTP in CI.
 
