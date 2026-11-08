@@ -341,6 +341,8 @@ const AWS_CDK_LOCKFILES = [
   "examples/cdk/lambda-role/package-lock.json",
   "examples/cdk/lesser-parity/package-lock.json",
   "examples/cdk/local-resources/package-lock.json",
+  "examples/cdk/local-iam/package-lock.json",
+  "examples/cdk/local-iam-peer/package-lock.json",
   "examples/cdk/local-tls/package-lock.json",
   "examples/cdk/media-cdn/package-lock.json",
   "examples/cdk/microvm-controller/package-lock.json",
