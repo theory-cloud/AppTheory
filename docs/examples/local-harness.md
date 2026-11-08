@@ -311,12 +311,21 @@ build.
 | `examples/cdk/local-iam/scripts/co-residence-iam.sh` | L2 | Cross-run co-residence: two apps run in two sessions on one shared Docker network and one shared CA with pinned ports; run A's function signs with run A's credential and calls run B's AWS_IAM route at https://mcp.localhost:<pinned>, and run B verifies it and resolves run A's role. | IAM policy evaluation is narrow (docs/127 W3-D1); the two runs are processes on one host sharing a directory and a bridge, not two deployments. |
 | `examples/cdk/local-resources/scripts/mail-send-read.sh` | L2 | Local mail surface: STARTTLS to the SMTP ingress verifies the aux leaf, an outbound message is accepted, and the sink's HTTPS read API returns it with its recipient and body. | The sink is a digest-pinned local test server, not Migadu or SES; the SMTP ingress is the runner's listener because it must reach both the sink and the receipt rules. |
 | `examples/cdk/local-resources/scripts/mail-receipt.sh` | L2 | Real SMTP ingress to the derived SES receipt rule: a message to ingress@local-resources.test runs the rule's S3 then Lambda actions with SES's received-message record (no body), and the sink's read API returns the same message. | The receipt record is built locally from the received SMTP message and verified against the SES event docs; the SMTP transport is local, not SES's. |
+| `examples/cdk/local-mcp-auth-facade/handlers/go/main.go` | L2 | The facade app the refresh rows run: the runtime-bearer MCP tool surface, the facade's front channel, the example-only state/legacy/revocation routes, and the in-process upstream. | The upstream authorization server is the example's own in-process OAuth 2.1 implementation (no local OIDC provider path ships with the runner); TMS proves the Autheory path. Each row runs one container on this host, not a deployment. |
+| `examples/cdk/local-mcp-auth-facade/scripts/rotation-chain.py` | L2 | Rotation chain: four generations of one family over real HTTP, one upstream rotation per refresh, the last access token initializing the MCP transport. | The upstream authorization server is the example's own in-process OAuth 2.1 implementation (no local OIDC provider path ships with the runner); TMS proves the Autheory path. Each row runs one container on this host, not a deployment. |
+| `examples/cdk/local-mcp-auth-facade/scripts/stale-predecessor.py` | L2 | The lab pattern: a predecessor presented past its grace window is served fresh credentials by rotating the family's live head; the family stays live and one upstream rotation happens. | The upstream authorization server is the example's own in-process OAuth 2.1 implementation (no local OIDC provider path ships with the runner); TMS proves the Autheory path. Each row runs one container on this host, not a deployment. |
+| `examples/cdk/local-mcp-auth-facade/scripts/concurrent-refresh.py` | L2 | Two processes refresh one handle at the same time: both are served, exactly one upstream rotation happens, and the family keeps one successor. | The upstream authorization server is the example's own in-process OAuth 2.1 implementation (no local OIDC provider path ships with the runner); TMS proves the Autheory path. Each row runs one container on this host, not a deployment. |
+| `examples/cdk/local-mcp-auth-facade/scripts/restart-mid-chain.py` | L2 | A client restarts holding the predecessor: the stored successor body is replayed without a second upstream call and the session continues from it. | The upstream authorization server is the example's own in-process OAuth 2.1 implementation (no local OIDC provider path ships with the runner); TMS proves the Autheory path. Each row runs one container on this host, not a deployment. |
+| `examples/cdk/local-mcp-auth-facade/scripts/retry-storm.py` | L2 | Twelve identical presentations of a dead predecessor: all served, the re-armed window costs one upstream rotation, the family stays live. | The upstream authorization server is the example's own in-process OAuth 2.1 implementation (no local OIDC provider path ships with the runner); TMS proves the Autheory path. Each row runs one container on this host, not a deployment. |
+| `examples/cdk/local-mcp-auth-facade/scripts/genuine-replay.py` | L2 | A replayed authorization code revokes its family, and the family's handle then answers 400 invalid_grant with no credentials — the token endpoint's re-authorize signal. | The upstream authorization server is the example's own in-process OAuth 2.1 implementation (no local OIDC provider path ships with the runner); TMS proves the Autheory path. Each row runs one container on this host, not a deployment. |
+| `examples/cdk/local-mcp-auth-facade/scripts/legacy-continuity.py` | L2 | A family-less pre-policy record is adopted in code onto a generation-1 family root, which the next refresh rotates to generation 2. | The upstream authorization server is the example's own in-process OAuth 2.1 implementation (no local OIDC provider path ships with the runner); TMS proves the Autheory path. Each row runs one container on this host, not a deployment. |
+| `examples/cdk/local-mcp-auth-facade/scripts/replay_lib.py` | L2 | Shared replay client and assertions for the seven sequences (discovery, DCR, PKCE authorize chain, code exchange, refresh, state document). | The upstream authorization server is the example's own in-process OAuth 2.1 implementation (no local OIDC provider path ships with the runner); TMS proves the Autheory path. Each row runs one container on this host, not a deployment. |
 
 ### I rows
 
 | Row | Class | How it is verified | Fail-closed reason |
 | --- | --- | --- | --- |
-| `examples/cdk/hello-world/bin/apptheory-hello-world.ts`, `examples/cdk/codebuild-job-runner/bin/app.ts`, `examples/cdk/import-pipeline/bin/app.ts`, `examples/cdk/kinesis-cloudwatch-logs/bin/app.ts`, `examples/cdk/lambda-packaging/bin/app.ts`, `examples/cdk/lambda-role/bin/app.ts`, `examples/cdk/lesser-parity/bin/app.ts`, `examples/cdk/microvm-controller/bin/app.ts`, `examples/cdk/multilang/bin/apptheory-multilang.ts`, `examples/cdk/restv1-router/bin/app.ts`, `examples/cdk/s3-vectors-semantic-search/bin/app.ts`, `examples/cdk/sqs-queue/bin/app.ts` | I | CDK app anchor for the synth row: every CDK example in the tree is synthesized and compared with its pinned template hash (plus focused construct assertions for the six once-uncovered examples, and an official Lambda runtime image invocation of the staged TypeScript and Python assets). | Infrastructure-only: the CDK app entrypoint is synthesized and hash-checked by this row; it has no runtime process to serve, so it is never invoked. |
+| `examples/cdk/hello-world/bin/apptheory-hello-world.ts`, `examples/cdk/codebuild-job-runner/bin/app.ts`, `examples/cdk/import-pipeline/bin/app.ts`, `examples/cdk/kinesis-cloudwatch-logs/bin/app.ts`, `examples/cdk/lambda-packaging/bin/app.ts`, `examples/cdk/lambda-role/bin/app.ts`, `examples/cdk/lesser-parity/bin/app.ts`, `examples/cdk/local-mcp-auth-facade/bin/local-mcp-auth-facade.ts`, `examples/cdk/microvm-controller/bin/app.ts`, `examples/cdk/multilang/bin/apptheory-multilang.ts`, `examples/cdk/restv1-router/bin/app.ts`, `examples/cdk/s3-vectors-semantic-search/bin/app.ts`, `examples/cdk/sqs-queue/bin/app.ts` | I | CDK app anchor for the synth row: every CDK example in the tree is synthesized and compared with its pinned template hash (plus focused construct assertions for the six once-uncovered examples, and an official Lambda runtime image invocation of the staged TypeScript and Python assets). | Infrastructure-only: the CDK app entrypoint is synthesized and hash-checked by this row; it has no runtime process to serve, so it is never invoked. |
 
 ## Runtime API conformance
 
@@ -413,3 +422,39 @@ MCP handler rows build the real Go binaries for linux/arm64 and run them in the
 same official runtime image; the moto, s3proxy and ElasticMQ rows start their
 profile containers on the CI host's Docker daemon, and the MicroVM workload rows
 run as host processes.
+
+## Real MCP clients (local target, never CI)
+
+The refresh policy exists for real clients, so the repository maintains a local
+target that drives them:
+
+```bash
+make local-clients                      # codex, claude_code, kimi_code, vibe
+make local-clients LOCAL_CLIENTS_ARGS="--clients codex,claude_code"
+```
+
+`scripts/local/local_clients.py` starts the MCP auth-facade example with a
+30-second access-token lifetime, then gives each client its own home under
+`$HOME/.cache/apptheory-local-clients/<run>/`, configures only the example's MCP
+entry, and runs two tool prompts separated by a restart. It asserts, from the
+app's own state document, that both tool calls succeeded, that refreshes were
+served, that no refusal was rendered, and that the upstream never detected
+refresh-token reuse.
+
+Isolation rules:
+
+- every home is created 0700 and deleted when the run ends (`--keep` retains it);
+- the operator's real client homes are never modified and never read for MCP
+  state: no MCP entry and no MCP OAuth store is copied;
+- exactly one model-provider credential per client is carried into that client's
+  isolated home (0600, deleted with the scratch). For Claude Code only the
+  keychain item's `claudeAiOauth` subtree is carried — its `mcpOAuth` store is
+  deliberately dropped; for Codex it is `auth.json`, which holds model auth only;
+- the credential is never printed.
+
+This target is not a CI job and not a harness row: CI must not depend on a
+client binary. A profile that cannot be exercised for an environmental reason
+(no model credential configured, no headless login surface) is reported
+`BLOCKED` with the exact reason and is not counted as proof; a profile that acts
+wrongly is a failure. A `BLOCKED` profile means the authoritative proof must come
+from TMS's real-client run, which exercises the same facade against Autheory.
