@@ -229,22 +229,19 @@ func caller(ctx context.Context, role string, event json.RawMessage) (any, error
 	return respond(outcome), nil
 }
 
-// localTargetPrefixes are the loopback hosts the local runner serves a run's
-// APIs on. A row hands the caller a URL to sign; only one of these listeners is
-// acceptable, so the example can never be turned into a proxy for another host.
-var localTargetPrefixes = []string{
-	"http://127.0.0.1:", "https://127.0.0.1:",
-	"http://localhost:", "https://localhost:",
-	"http://host.docker.internal:", "https://host.docker.internal:",
-}
-
 // localTargetURL returns the URL to sign and call, or refuses a URL that does
-// not name one of the run's loopback listeners.
+// not name one of the run's loopback listeners. A row hands the caller a URL to
+// sign; only these fixed prefixes are acceptable, so the example can never be
+// turned into a proxy for another host.
 func localTargetURL(raw string) (string, error) {
-	for _, prefix := range localTargetPrefixes {
-		if strings.HasPrefix(raw, prefix) {
-			return raw, nil
-		}
+	switch {
+	case strings.HasPrefix(raw, "http://127.0.0.1:"),
+		strings.HasPrefix(raw, "https://127.0.0.1:"),
+		strings.HasPrefix(raw, "http://localhost:"),
+		strings.HasPrefix(raw, "https://localhost:"),
+		strings.HasPrefix(raw, "http://host.docker.internal:"),
+		strings.HasPrefix(raw, "https://host.docker.internal:"):
+		return raw, nil
 	}
 	return "", fmt.Errorf("the caller's url is not a local runner listener")
 }
