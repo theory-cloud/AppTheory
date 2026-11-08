@@ -170,9 +170,9 @@ these rules, so a validator that stops failing closed fails the harness.
 
 ## Fidelity table
 
-`scripts/local/examples-local.json` classifies 111 rows: 110 entrypoints plus the
-`runtime-api-conformance` suite. The classes are 34 L1, 55 L2, 10 L3 and 12 I;
-80 rows execute a runner (79 entrypoints and the suite) and 31 entrypoints are
+`scripts/local/examples-local.json` classifies 112 rows: 111 entrypoints plus the
+`runtime-api-conformance` suite. The classes are 34 L1, 56 L2, 10 L3 and 12 I;
+81 rows execute a runner (80 entrypoints and the suite) and 31 entrypoints are
 covered by another row's real run. The harness's `counts:` line reports every
 row as passed or failed; a covered row shares its target's result.
 
