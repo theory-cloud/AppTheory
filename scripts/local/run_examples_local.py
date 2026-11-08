@@ -4137,6 +4137,7 @@ def start_local_app(
     context: dict | None = None,
     backends: tuple[str, ...] = (),
     origins: tuple[str, ...] = (),
+    port_base: int | None = None,
 ) -> LocalAppRun:
     ensure_cdk_app(harness, app)
     spec = plan_local_app(harness, app, context)
