@@ -158,6 +158,108 @@ func TestRelaySMTPRefusals(t *testing.T) {
 	}
 }
 
+// refusingSink answers every SMTP step with one configured refusal, so the
+// relay's error branches are exercised without a broken TCP connection.
+func refusingSink(t *testing.T, refuse string, code string) string {
+	t.Helper()
+	var listenConfig net.ListenConfig
+	listener, err := listenConfig.Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("refusing sink listener: %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() }) //nolint:errcheck // test cleanup
+	go func() {
+		for {
+			connection, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				defer func() { _ = conn.Close() }() //nolint:errcheck // test sink is done
+				reader := bufio.NewReader(conn)
+				writer := bufio.NewWriter(conn)
+				write := func(line string) {
+					_, _ = writer.WriteString(line + "\r\n") //nolint:errcheck // test sink writes
+					_ = writer.Flush()                       //nolint:errcheck // test sink writes
+				}
+				if refuse == "greeting" {
+					write(code + " refused")
+					return
+				}
+				write("220 refusing-sink ESMTP")
+				inData := false
+				for {
+					line, readErr := reader.ReadString('\n')
+					if readErr != nil {
+						return
+					}
+					command := strings.ToUpper(strings.TrimRight(line, "\r\n"))
+					if inData {
+						if command == "." {
+							inData = false
+							if refuse == "message" {
+								write(code + " refused")
+								return
+							}
+							write("250 OK")
+						}
+						continue
+					}
+					switch {
+					case strings.HasPrefix(command, "EHLO"):
+						if refuse == "ehlo" {
+							write(code + " refused")
+							return
+						}
+						write("250 OK")
+					case strings.HasPrefix(command, "MAIL"):
+						if refuse == "mail" {
+							write(code + " refused")
+							return
+						}
+						write("250 OK")
+					case strings.HasPrefix(command, "RCPT"):
+						if refuse == "rcpt" {
+							write(code + " refused")
+							return
+						}
+						write("250 OK")
+					case command == "DATA":
+						if refuse == "data" {
+							write(code + " refused")
+							return
+						}
+						write("354 go")
+						inData = true
+					case command == "QUIT":
+						write("221 bye")
+						return
+					default:
+						write("250 OK")
+					}
+				}
+			}(connection)
+		}
+	}()
+	return listener.Addr().String()
+}
+
+func TestRelaySMTPRefusesEveryStep(t *testing.T) {
+	for _, step := range []string{"greeting", "ehlo", "mail", "rcpt", "data", "message"} {
+		address := refusingSink(t, step, "550")
+		if err := relaySMTP(context.Background(), address, "a@b", []string{"c@d"}, "Subject: x\r\n\r\nbody\r\n"); err == nil {
+			t.Fatalf("the relay accepted a sink that refused %s", step)
+		}
+	}
+}
+
+func TestSMTPReadMessageEndsInsideData(t *testing.T) {
+	session := &smtpSession{reader: bufio.NewReader(strings.NewReader("Subject: x\r\n\r\nbody\r\n"))}
+	if _, err := session.readMessage(); err == nil {
+		t.Fatal("a connection that ends inside DATA must fail")
+	}
+}
+
 // TestPublishResolvedRoles covers the shared plane's resolved publication: a
 // resolvable policy is re-encoded without Refs, and an unresolvable one is
 // published verbatim so a consumer fails closed by name.
