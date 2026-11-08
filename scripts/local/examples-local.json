@@ -562,6 +562,18 @@
       "gap": "The message is injected through the documented session operation; real SMTP ingress is the mail-surface work that follows (docs/127 X4). The S3 action's store is s3proxy.",
       "description": "SES receipt rule: ses.receive injects one message at a recipient the derived rule accepts; the rule's S3 action writes the raw body under its prefix, and its Lambda action receives the documented received-message record (message id, headers, action, receipt timestamp, no body), which the handler reads back from the bucket."
     },
+    "examples/cdk/local-resources/scripts/mail-send-read.sh": {
+      "run": "local-mail-send-read",
+      "class": "L2",
+      "description": "Local mail surface: STARTTLS to the SMTP ingress verifies the aux leaf, an outbound message is accepted, and the sink's HTTPS read API returns it with its recipient and body.",
+      "gap": "The sink is a digest-pinned local test server, not Migadu or SES; the SMTP ingress is the runner's listener because it must reach both the sink and the receipt rules."
+    },
+    "examples/cdk/local-resources/scripts/mail-receipt.sh": {
+      "run": "local-mail-receipt",
+      "class": "L2",
+      "description": "Real SMTP ingress to the derived SES receipt rule: a message to ingress@local-resources.test runs the rule's S3 then Lambda actions with SES's received-message record (no body), and the sink's read API returns the same message.",
+      "gap": "The receipt record is built locally from the received SMTP message and verified against the SES event docs; the SMTP transport is local, not SES's."
+    },
     "examples/cdk/local-tls/bin/app.ts": {
       "run": "local-tls-surfaces",
       "class": "L2",

@@ -40,6 +40,7 @@ import os
 import re
 import select
 import shutil
+import smtplib
 import signal
 import socket
 import ssl
@@ -4321,6 +4322,8 @@ def start_local_session(
     ports: tuple[str, ...] = (),
     shared_network: str | None = None,
     peer_hosts: tuple[str, ...] = (),
+    mail: bool = False,
+    mail_host: str | None = None,
 ) -> LocalSession:
     """Start one `apptheory-local session` and wait for its machine interface."""
     ensure_cdk_app(harness, app)
@@ -4373,6 +4376,10 @@ def start_local_session(
         argv.extend(["--shared-network", shared_network])
     for peer in peer_hosts:
         argv.extend(["--peer-host", peer])
+    if mail:
+        argv.append("--mail")
+    if mail_host:
+        argv.extend(["--mail-host", mail_host])
     process = subprocess.Popen(
         argv,
         cwd=str(ROOT),
@@ -9789,6 +9796,148 @@ def run_local_co_residence_iam(harness: Harness) -> str:
         shutil.rmtree(shared, ignore_errors=True)
 
 
+# --- LOCAL-W3-X4: the local mail surface -----------------------------------
+
+
+def _mail_surface(session: LocalSession) -> dict:
+    mail = session.info.get("mail") or {}
+    if not mail.get("smtpUrl") or not mail.get("apiUrl"):
+        raise HarnessFailure(f"the session started no mail surface: {session.info.get('mail')}")
+    return mail
+
+
+def _send_mail(
+    mail: dict,
+    *,
+    subject: str,
+    sender: str,
+    recipient: str,
+    body: str,
+    ca_file: str | None = None,
+) -> None:
+    host, port = str(mail["smtpUrl"]).rsplit("://", 1)[-1].rsplit(":", 1)
+    message = "\r\n".join(
+        [
+            f"From: {sender}",
+            f"To: {recipient}",
+            f"Subject: {subject}",
+            "Message-ID: <w3m1-mail-surface@local.test>",
+            "Date: Mon, 5 Aug 2019 21:29:57 +0000",
+            "",
+            body,
+        ]
+    )
+    with smtplib.SMTP(host, int(port), timeout=60) as smtp:
+        if ca_file:
+            smtp.starttls(context=create_tls_context(ca_file))
+        smtp.sendmail(sender, [recipient], message)
+
+
+def _mail_messages(session: LocalSession, mail: dict) -> list[dict]:
+    context = create_tls_context(session.info["tls"]["caFile"])
+    status, body, _ = http_request("GET", str(mail["apiUrl"]) + "messages", context=context)
+    expect_status(status, 200, "the mail read API", body)
+    return json.loads(body).get("messages") or []
+
+
+def run_local_mail_send_read(harness: Harness) -> str:
+    session = start_local_session(
+        harness,
+        LOCAL_RESOURCES_APP,
+        name="mail-send-read",
+        backends=("s3proxy", "moto"),
+        mail=True,
+    )
+    try:
+        mail = _mail_surface(session)
+        surfaces = session.info.get("listeners") or []
+        if mail.get("smtpPort") != harness.lease.http_port + len(surfaces):
+            raise HarnessFailure(f"the SMTP port is not the first slot after the surfaces: {mail}")
+        if mail.get("apiPort") != harness.lease.http_port + len(surfaces) + 1:
+            raise HarnessFailure(f"the read API port is not the second slot after the surfaces: {mail}")
+        if mail.get("host") != "mail.localhost":
+            raise HarnessFailure(f"the mail host is {mail.get('host')!r}")
+        # A message whose recipient no receipt rule matches is outbound mail:
+        # the ingress accepts it and the sink stores it. STARTTLS verifies the
+        # run CA's auxiliary leaf.
+        _send_mail(
+            mail,
+            subject="local mail surface",
+            sender="sender@local-resources.test",
+            recipient="member@example.test",
+            body="read me back through the API",
+            ca_file=session.info["tls"]["caFile"],
+        )
+        messages = _mail_messages(session, mail)
+        if len(messages) != 1:
+            raise HarnessFailure(f"the read API returned {messages!r}")
+        entry = messages[0]
+        if entry.get("Subject") != "local mail surface":
+            raise HarnessFailure(f"the stored subject is {entry.get('Subject')!r}")
+        recipients = [address.get("Address") for address in entry.get("To") or []]
+        if "member@example.test" not in recipients:
+            raise HarnessFailure(f"the stored recipients are {recipients!r}")
+        context = create_tls_context(session.info["tls"]["caFile"])
+        status, body, _ = http_request(
+            "GET", str(mail["apiUrl"]) + "message/" + str(entry["ID"]), context=context)
+        expect_status(status, 200, "the mail message read", body)
+        detail = json.loads(body)
+        if "read me back through the API" not in str(detail.get("Text") or ""):
+            raise HarnessFailure(f"the message body is missing: {detail.get('Text')!r}")
+        return (
+            f"STARTTLS to {mail['smtpUrl']} verified the aux leaf, the ingress accepted outbound mail and "
+            f"the sink's HTTPS read API at {mail['apiUrl']} returned the message with its recipient and body"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def run_local_mail_receipt(harness: Harness) -> str:
+    session = start_local_session(
+        harness,
+        LOCAL_RESOURCES_APP,
+        name="mail-receipt",
+        backends=("s3proxy", "moto"),
+        mail=True,
+    )
+    try:
+        mail = _mail_surface(session)
+        # The rule accepts ingress@local-resources.test: the SMTP path must run
+        # its S3 then Lambda actions with SES's received-message record.
+        _send_mail(
+            mail,
+            subject="local receipt over smtp",
+            sender="bounce@local-resources.test",
+            recipient="ingress@local-resources.test",
+            body="the SMTP ingress runs the rule",
+        )
+        rest = [entry for entry in session.info.get("apis") or [] if entry.get("class") == "restv1"]
+        if not rest:
+            raise HarnessFailure(f"the session served no state API: {session.info.get('apis')}")
+        status, body, _ = http_request("GET", rest[0]["url"] + "/state")
+        expect_status(status, 200, "local-resources state", body)
+        records = json.loads(body).get("records") or []
+        if len(records) != 1:
+            raise HarnessFailure(f"the mail handler recorded {records!r}")
+        record = records[0]
+        if record.get("subject") != "local receipt over smtp":
+            raise HarnessFailure(f"the Lambda record's subject is {record.get('subject')!r}")
+        if record.get("actionType") != "Lambda" or record.get("invocationType") != "Event":
+            raise HarnessFailure(f"the Lambda record's action is {record.get('actionType')!r}")
+        if "the SMTP ingress runs the rule" not in str(record.get("rawObject") or ""):
+            raise HarnessFailure("the raw message did not reach the S3 action")
+        messages = _mail_messages(session, mail)
+        if not any(entry.get("Subject") == "local receipt over smtp" for entry in messages):
+            raise HarnessFailure("the sink did not store the inbound message")
+        return (
+            "a real SMTP message to ingress@local-resources.test ran the derived receipt rule: the S3 action "
+            "wrote the raw body, the Lambda action received SES's received-message record with no body, and "
+            "the sink's read API returned the same message"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
 # The LOCAL-W3-M1 rows are registered here: their functions are defined below
 # the runner table, so the table is extended rather than literalled above.
 RUNNERS.update(
@@ -9808,6 +9957,8 @@ RUNNERS.update(
         "local-port-refusals": run_local_port_refusals,
         "local-co-residence-ca": run_local_co_residence_ca,
         "local-co-residence-iam": run_local_co_residence_iam,
+        "local-mail-send-read": run_local_mail_send_read,
+        "local-mail-receipt": run_local_mail_receipt,
     }
 )
 
