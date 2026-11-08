@@ -60,10 +60,13 @@ const (
 	// https://docs.aws.amazon.com/lambda/latest/dg/configuration-envvars.html
 	tlsTrustBundlePath = "/etc/apptheory-local/ca.pem"
 
-	tlsCADirName  = "tls"
-	tlsCACertFile = "ca.pem"
-	tlsCAKeyFile  = "ca-key.pem"
-	tlsLockFile   = "ca.lock"
+	tlsCADirName = "tls"
+	// sharedCADirName is the CA's directory inside a --shared-dir, beside the
+	// IAM plane's "iam" directory.
+	sharedCADirName = "ca"
+	tlsCACertFile   = "ca.pem"
+	tlsCAKeyFile    = "ca-key.pem"
+	tlsLockFile     = "ca.lock"
 
 	// tlsCAValidity and tlsLeafValidity are the documented lifetimes. The leaf
 	// stays under the 200-day cap the CA/Browser Forum Baseline Requirements put
@@ -227,6 +230,18 @@ func (r *Runner) initTLS(spec *Spec) error {
 	if persistent {
 		dir = filepath.Join(r.dataDir, tlsCADirName)
 	}
+	// A co-resident run shares one CA with its peers, so a function in one run
+	// verifies the leaves another run serves. The shared directory is the same
+	// one the IAM plane uses, and the CA sits beside it:
+	//
+	//	<shared-dir>/iam/...   the shared IAM plane
+	//	<shared-dir>/ca/       the shared CA (ca.pem, ca-key.pem, trust-bundle.pem)
+	//
+	// A run without --shared-dir keeps today's location exactly.
+	if shared := strings.TrimSpace(r.options.SharedDir); shared != "" {
+		dir = filepath.Join(shared, sharedCADirName)
+		persistent = true
+	}
 	state, err := newLocalCASigner(dir)
 	if err != nil {
 		return err
@@ -322,22 +337,32 @@ func (s *localTLS) loadOrCreateCA() error {
 	keyPEM, keyErr := os.ReadFile(s.caKeyPath)
 	switch {
 	case certErr == nil && keyErr == nil:
-		caCert, caKey, err := parseCA(certPEM, keyPEM)
-		if err != nil {
-			return fmt.Errorf("load the local CA in %s: %w", s.dir, err)
-		}
-		if time.Now().After(caCert.NotAfter) {
-			return fmt.Errorf("the local CA in %s expired on %s; remove %s to create a new one", s.dir, caCert.NotAfter.UTC().Format(time.RFC3339), s.dir)
-		}
-		s.caPEM, s.caCert, s.caKey = certPEM, caCert, caKey
-		return nil
+		return s.loadCA(certPEM, keyPEM)
 	case os.IsNotExist(certErr) && os.IsNotExist(keyErr):
 		return s.createCA()
-	case certErr != nil:
+	case certErr != nil && !os.IsNotExist(certErr):
 		return fmt.Errorf("read the local CA certificate %s: %w", s.caPath, certErr)
-	default:
+	case keyErr != nil && !os.IsNotExist(keyErr):
 		return fmt.Errorf("read the local CA key %s: %w", s.caKeyPath, keyErr)
+	default:
+		// One file exists. A co-resident run may be in the middle of creating
+		// the shared CA, so serialize through the lock and re-read there
+		// instead of failing on a half-written pair.
+		return s.createCA()
 	}
+}
+
+// loadCA parses a complete pair and applies the CA's expiry rule.
+func (s *localTLS) loadCA(certPEM, keyPEM []byte) error {
+	caCert, caKey, err := parseCA(certPEM, keyPEM)
+	if err != nil {
+		return fmt.Errorf("load the local CA in %s: %w", s.dir, err)
+	}
+	if time.Now().After(caCert.NotAfter) {
+		return fmt.Errorf("the local CA in %s expired on %s; remove %s to create a new one", s.dir, caCert.NotAfter.UTC().Format(time.RFC3339), s.dir)
+	}
+	s.caPEM, s.caCert, s.caKey = certPEM, caCert, caKey
+	return nil
 }
 
 // parseCA parses the certificate and key and proves they belong together.
@@ -379,12 +404,16 @@ func (s *localTLS) createCA() error {
 	certPEM, certErr := os.ReadFile(s.caPath) //nolint:gosec // the caller owns the run directory
 	keyPEM, keyErr := os.ReadFile(s.caKeyPath)
 	if certErr == nil && keyErr == nil {
-		caCert, caKey, parseErr := parseCA(certPEM, keyPEM)
-		if parseErr != nil {
-			return fmt.Errorf("load the local CA in %s: %w", s.dir, parseErr)
-		}
-		s.caPEM, s.caCert, s.caKey = certPEM, caCert, caKey
-		return nil
+		return s.loadCA(certPEM, keyPEM)
+	}
+	// A half pair is not a creation race any more: the lock is held, so no
+	// sibling is writing. Replacing it would invalidate a trust decision the
+	// caller already made, so it fails closed.
+	if certErr == nil {
+		return fmt.Errorf("the local CA key %s is missing beside %s; remove %s to create a new CA", s.caKeyPath, s.caPath, s.dir)
+	}
+	if keyErr == nil {
+		return fmt.Errorf("the local CA certificate %s is missing beside %s; remove %s to create a new CA", s.caPath, s.caKeyPath, s.dir)
 	}
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -608,10 +637,32 @@ func (r *Runner) writeTLSTrustBundle() (string, error) {
 		return "", nil
 	}
 	path := filepath.Join(r.tls.dir, "trust-bundle.pem")
-	if err := os.WriteFile(path, r.tls.caPEM, 0o644); err != nil { //nolint:gosec // a CA certificate is public
+	if err := writePublicFileAtomic(path, r.tls.caPEM); err != nil {
 		return "", fmt.Errorf("write the local TLS trust bundle %s: %w", path, err)
 	}
 	return path, nil
+}
+
+// writePublicFileAtomic replaces a world-readable file through a rename, so a
+// co-resident run reading the shared trust bundle never sees a partial write.
+func writePublicFileAtomic(path string, contents []byte) error {
+	temp, err := os.CreateTemp(filepath.Dir(path), ".trust-bundle-*")
+	if err != nil {
+		return err
+	}
+	name := temp.Name()
+	defer func() { _ = os.Remove(name) }() //nolint:errcheck // best effort after a failed rename
+	if _, err := temp.Write(contents); err != nil {
+		_ = temp.Close() //nolint:errcheck // the write already failed
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(name, 0o644); err != nil { //nolint:gosec // a CA certificate is public
+		return err
+	}
+	return os.Rename(name, path)
 }
 
 // publicKeyID is the RFC 5280 section 4.2.1.2 method 1 key identifier: the

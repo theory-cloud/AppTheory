@@ -221,7 +221,7 @@ func (c *commandConfig) register(flags *flag.FlagSet) {
 	flags.IntVar(&c.timeoutSeconds, "timeout", 0, "invoke --handler-dir: function timeout in seconds (default 3)")
 	flags.BoolVar(&c.watch, "watch", false, "run/session: re-synthesize when the app's sources change and apply the new surface without restarting the listeners")
 	flags.StringVar(&c.dataDir, "data-dir", "", "run/session/invoke: keep backend state across runs (DynamoDB Local, s3proxy, ElasticMQ, and the runner's <data-dir>/kms/keys.json and <data-dir>/s3sse/index.json; moto stays in memory)")
-	flags.StringVar(&c.sharedDir, "shared-dir", "", "run/session/invoke: the directory co-resident runs share; it holds the local IAM plane at <shared-dir>/iam, and the co-residence work adds the shared CA beside it")
+	flags.StringVar(&c.sharedDir, "shared-dir", "", "run/session/invoke: the directory co-resident runs share; it holds the local IAM plane at <shared-dir>/iam and the shared CA at <shared-dir>/ca")
 	flags.StringVar(&c.seed, "seed", "", "run/session: shell command to run after provisioning and before the run reports ready")
 	flags.BoolVar(&c.tls, "tls", false, "run/session: serve every public listener over HTTPS from a certificate the runner's local CA signs (default off: plain HTTP, unchanged)")
 	flags.StringVar(&c.tlsHost, "tls-host", "", "run/session with --tls: the public host name (localhost or a *.localhost name; default app.localhost)")
