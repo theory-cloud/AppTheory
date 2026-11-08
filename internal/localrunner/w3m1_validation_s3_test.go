@@ -2,7 +2,10 @@ package localrunner
 
 import (
 	"context"
+	"crypto/md5" //nolint:gosec // the test compares the S3 integrity digest
+	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -166,5 +169,56 @@ func TestS3SSEIndexFileShape(t *testing.T) {
 	}
 	if document.Version != 1 || len(document.Objects) != 1 {
 		t.Fatalf("the index file is %+v", document)
+	}
+}
+
+func TestApplyDeleteObjectsDigestRestoresTheMD5Header(t *testing.T) {
+	body := "<Delete><Object><Key>a</Key></Object></Delete>"
+	request := httptest.NewRequestWithContext(context.Background(), http.MethodPost,
+		"http://127.0.0.1/bucket?delete", strings.NewReader(body))
+	request.Header.Set("X-Amz-Sdk-Checksum-Algorithm", "CRC32")
+	if err := applyDeleteObjectsDigest(request); err != nil {
+		t.Fatalf("applyDeleteObjectsDigest: %v", err)
+	}
+	sum := md5.Sum([]byte(body)) //nolint:gosec // the test compares the S3 integrity digest
+	if got := request.Header.Get("Content-Md5"); got != base64.StdEncoding.EncodeToString(sum[:]) {
+		t.Fatalf("Content-MD5 = %q", got)
+	}
+	restored, err := io.ReadAll(request.Body)
+	if err != nil {
+		t.Fatalf("read the restored body: %v", err)
+	}
+	if string(restored) != body || request.ContentLength != int64(len(body)) {
+		t.Fatalf("the body must be restored: %q length=%d", restored, request.ContentLength)
+	}
+
+	// An existing digest is left alone.
+	kept := httptest.NewRequestWithContext(context.Background(), http.MethodPost,
+		"http://127.0.0.1/bucket?delete", strings.NewReader(body))
+	kept.Header.Set("Content-Md5", "given")
+	if err := applyDeleteObjectsDigest(kept); err != nil {
+		t.Fatalf("an existing digest must be kept: %v", err)
+	}
+	if got := kept.Header.Get("Content-Md5"); got != "given" {
+		t.Fatalf("Content-MD5 = %q", got)
+	}
+
+	// Another operation and another method are untouched.
+	other := httptest.NewRequestWithContext(context.Background(), http.MethodPost,
+		"http://127.0.0.1/bucket", strings.NewReader(body))
+	if err := applyDeleteObjectsDigest(other); err != nil || other.Header.Get("Content-Md5") != "" {
+		t.Fatalf("a non-delete POST must be untouched: %v", err)
+	}
+	put := httptest.NewRequestWithContext(context.Background(), http.MethodPut,
+		"http://127.0.0.1/bucket?delete", strings.NewReader(body))
+	if err := applyDeleteObjectsDigest(put); err != nil || put.Header.Get("Content-Md5") != "" {
+		t.Fatalf("a PUT must be untouched: %v", err)
+	}
+
+	// A body over the digest bound is refused rather than truncated.
+	large := httptest.NewRequestWithContext(context.Background(), http.MethodPost,
+		"http://127.0.0.1/bucket?delete", strings.NewReader(strings.Repeat("x", s3FrontDeleteObjectsMaxBody+1)))
+	if err := applyDeleteObjectsDigest(large); err == nil || !strings.Contains(err.Error(), "larger than") {
+		t.Fatalf("an oversized body must be refused: %v", err)
 	}
 }

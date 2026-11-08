@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/hmac"
+	"crypto/md5" //nolint:gosec // S3's Content-MD5 is an integrity digest
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
@@ -74,6 +76,12 @@ const (
 	s3FrontMaxBody   = 1 << 20
 	s3FrontIndexFile = "index.json"
 	s3FrontMaxFlush  = 100 * time.Millisecond
+	// s3FrontDeleteObjectsMaxBody bounds the DeleteObjects body the front
+	// buffers to restore the Content-MD5 header the store requires. AWS caps the
+	// request at 1000 keys of 1024 bytes (about 1.05 MiB of XML), so 8 MiB leaves
+	// ample room while keeping the buffer bounded.
+	// https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjects.html
+	s3FrontDeleteObjectsMaxBody = 8 << 20
 	// s3FrontErrorBodyLimit bounds the response prefix the front reads to find
 	// the <Error> document AWS embeds in a 2xx CompleteMultipartUpload or
 	// CopyObject response. Both result documents are small XML.
@@ -457,6 +465,13 @@ func (f *s3Front) resign(request *http.Request) error {
 		"X-Amz-Checksum-Sha256", "X-Amz-Checksum-Mode", "X-Amz-Trailer",
 	} {
 		request.Header.Del(name)
+	}
+	// s3proxy requires an integrity header on a DeleteObjects request, and the
+	// SDK's flexible checksum was just removed, so the MD5 digest S3 accepts in
+	// its place is restored from the body.
+	// https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjects.html
+	if err := applyDeleteObjectsDigest(request); err != nil {
+		return err
 	}
 	if err := f.signer.SignHTTP(request.Context(), f.credentials, request, payloadHash, "s3", LocalRegion, time.Now().UTC()); err != nil {
 		return fmt.Errorf("re-sign the PutObject: %w", err)
@@ -1157,4 +1172,38 @@ func bodyForSignature(request *http.Request) []byte {
 	_ = request.Body.Close() //nolint:errcheck // the body is already read
 	request.Body = io.NopCloser(bytes.NewReader(body))
 	return body
+}
+
+// applyDeleteObjectsDigest restores the Content-MD5 header S3 requires on a
+// DeleteObjects request. The SDKs send a flexible checksum instead, which the
+// front removes because s3proxy does not implement it; the store then refuses
+// the request for the missing digest. The body is buffered, digested and
+// restored, and the header is set before the front signs the request.
+//
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjects.html
+func applyDeleteObjectsDigest(request *http.Request) error {
+	if request.Method != http.MethodPost || request.Body == nil {
+		return nil
+	}
+	if _, ok := request.URL.Query()["delete"]; !ok {
+		return nil
+	}
+	if request.Header.Get("Content-Md5") != "" {
+		return nil
+	}
+	body, err := io.ReadAll(io.LimitReader(request.Body, s3FrontDeleteObjectsMaxBody))
+	if err != nil {
+		return fmt.Errorf("read the DeleteObjects body to digest it: %w", err)
+	}
+	if len(body) >= s3FrontDeleteObjectsMaxBody {
+		return fmt.Errorf(
+			"the local S3 front cannot digest a DeleteObjects body larger than %d bytes",
+			s3FrontDeleteObjectsMaxBody)
+	}
+	_ = request.Body.Close() //nolint:errcheck // the body is already read
+	request.Body = io.NopCloser(bytes.NewReader(body))
+	request.ContentLength = int64(len(body))
+	sum := md5.Sum(body) //nolint:gosec // S3's Content-MD5 is an integrity digest, not a security hash
+	request.Header.Set("Content-Md5", base64.StdEncoding.EncodeToString(sum[:]))
+	return nil
 }
