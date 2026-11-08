@@ -703,11 +703,14 @@ server` for the first viewer. If such a request reaches an https listener
 anyway, the origin error names the same fix. Existing `http://` mappings to
 non-TLS local services keep working exactly as before.
 
-`HTTP_ONLY` with an `https://` mapping is not a supported combination: the
-declared policy is the statement of how the edge reaches the origin, and the
-local branch should declare `HTTPS_ONLY` for a runner listener. The runner uses
-the mapping's scheme to connect and reports the declared policy in the refusal
-text when the two cannot both be satisfied.
+Declare `HTTPS_ONLY` and map `https://`: that is the pair a deployed
+distribution in front of an API Gateway endpoint uses, and the pair the runner
+verifies. A `HTTP_ONLY` declaration mapped over `http://` to the run's own
+listener is refused before the distribution starts — the case that used to
+answer a bare `400 Client sent an HTTP request to an HTTPS server` — with the
+`HTTPS_ONLY` recovery named. Mapping that declaration over `https://` connects,
+because the mapping names the scheme the local hop uses, but it no longer
+describes what would deploy.
 
 ### Auxiliary services
 
