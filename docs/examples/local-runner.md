@@ -695,6 +695,13 @@ The origin hop then does exactly what the deployed edge does:
 - it forwards `Host: auth-api.localhost` — the declared origin domain — unless
   the behavior's cache policy forwards the viewer host, in which case the
   viewer's host travels and the certificate must name it instead;
+- it returns an origin `3xx` to the viewer instead of following it, over TLS and
+  over plain `http`: CloudFront "caches the redirect and returns it to the
+  viewer. CloudFront does not follow the redirect", so a form POST the API
+  answers with `303 See Other` reaches the viewer with the origin's status, its
+  `Location` and its other headers (every `Set-Cookie` included), and the
+  browser makes the next request
+  ([redirects](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/RequestAndResponseBehaviorCustomOrigin.html));
 - the run certificate names every declared custom-origin domain that is a
   `*.localhost` name, so `auth-api.localhost` verifies even though the listener
   is `app.localhost`. A declared origin domain outside that namespace (a real
