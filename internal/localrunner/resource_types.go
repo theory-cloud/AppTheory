@@ -140,12 +140,39 @@ var problemResourceTypes = map[string]struct {
 	},
 }
 
+// bookkeepingResourceTypes are the types a template synthesizes that carry no
+// local runtime behaviour and that no component of the runner acts on. They are
+// reported so no synthesized type is silently ignored; each reason is a
+// docs/125 deploy-time-only limit.
+const (
+	typeS3BucketPolicy     = "AWS::S3::BucketPolicy"
+	typeLogsResourcePolicy = "AWS::Logs::ResourcePolicy"
+	typeLogsMetricFilter   = "AWS::Logs::MetricFilter"
+	typeAPIGatewayAccount  = "AWS::ApiGateway::Account"
+	typeCDKMetadata        = "AWS::CDK::Metadata"
+)
+
+var bookkeepingResourceTypes = map[string]string{
+	typeLogsMetricFilter:  "a CloudWatch Logs metric filter publishes metrics from log events, and the runner has no metric source",
+	typeAPIGatewayAccount: "the account's API Gateway CloudWatch role is a deploy-time setting",
+	typeCDKMetadata:       "CDK assembly metadata tracks construct versions and creates no resource",
+}
+
 // classifyProblemResources reports every docs/127 Problem 4 type the assembly
-// declares. A served type is left to the component that serves it; a
-// deploy-time-only type and a refused type are reported so a run never gives the
-// impression that they were exercised.
+// declares, and every bookkeeping type as deploy-time-only. A served type is
+// left to the component that serves it; a deploy-time-only type and a refused
+// type are reported so a run never gives the impression that they were
+// exercised.
 func classifyProblemResources(spec *Spec) {
 	for _, resource := range spec.Resources {
+		if detail, ok := bookkeepingResourceTypes[resource.Type]; ok {
+			spec.Skipped = append(spec.Skipped, Skipped{
+				LogicalID: resource.LogicalID,
+				Kind:      resource.Type,
+				Reason:    detail + "; " + deployTimeOnlyReason,
+			})
+			continue
+		}
 		entry, ok := problemResourceTypes[resource.Type]
 		if !ok {
 			continue

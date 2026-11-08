@@ -472,6 +472,20 @@ func deriveProvisioningSkips(spec *Spec, stacks []assemblyStack) {
 				Reason: "the local runner serves the user pool issuer and JWKS for token validation " +
 					"but does not serve the Cognito hosted UI/OAuth domain",
 			})
+		case typeS3BucketPolicy:
+			spec.Skipped = append(spec.Skipped, Skipped{
+				LogicalID: logicalID,
+				Kind:      typeS3BucketPolicy,
+				Reason: "IAM bucket-policy evaluation is a docs/125 true limit; " +
+					"the bucket itself is provisioned and object operations work at runtime",
+			})
+		case typeLogsResourcePolicy:
+			spec.Skipped = append(spec.Skipped, Skipped{
+				LogicalID: logicalID,
+				Kind:      typeLogsResourcePolicy,
+				Reason: "IAM log-group policy evaluation is a docs/125 true limit; " +
+					"the runner captures function logs itself and evaluates no log policy",
+			})
 		}
 	}
 }
