@@ -3586,7 +3586,7 @@ export const ROUTE_REFRESH_REASON_FAMILY_REVOKE_UNAVAILABLE =
   "family_revoke_unavailable" as const;
 export const ROUTE_REFRESH_REASON_FAMILY_REVOKE_FAILED =
   "family_revoke_failed" as const;
-/** Retained for telemetry compatibility; reuse is reuse on first occurrence. */
+/** Retained for telemetry compatibility; a beyond-grace presentation reports stale_predecessor and is served. */
 export const ROUTE_REFRESH_REASON_ALREADY_SERVED = "already_served" as const;
 export const ROUTE_REFRESH_REASON_UPSTREAM_REJECTED =
   "upstream_rejected" as const;

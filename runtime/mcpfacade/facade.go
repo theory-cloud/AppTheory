@@ -229,8 +229,9 @@ type FacadeConfig struct {
 	//
 	// HandleTTL is applied by the broker store; a store that reports its local
 	// lifetime through oauthstore.RouteRefreshBrokerHandleTTLReporter must agree
-	// with it. GraceWindow and ReuseRateCeiling drive the facade's own serve
-	// classification.
+	// with it. GraceWindow drives the facade's own serve classification;
+	// ReuseRateCeiling is retained for configuration compatibility and no refresh
+	// path reads it.
 	RouteRefreshPolicy RouteRefreshPolicy
 
 	// RouteRefreshEvents optionally receives schema-redacted route refresh

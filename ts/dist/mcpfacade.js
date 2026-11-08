@@ -2559,7 +2559,7 @@ export const ROUTE_REFRESH_REASON_STORE_FAILURE = "store_failure";
 export const ROUTE_REFRESH_REASON_REWRITE_FAILURE = "rewrite_failure";
 export const ROUTE_REFRESH_REASON_FAMILY_REVOKE_UNAVAILABLE = "family_revoke_unavailable";
 export const ROUTE_REFRESH_REASON_FAMILY_REVOKE_FAILED = "family_revoke_failed";
-/** Retained for telemetry compatibility; reuse is reuse on first occurrence. */
+/** Retained for telemetry compatibility; a beyond-grace presentation reports stale_predecessor and is served. */
 export const ROUTE_REFRESH_REASON_ALREADY_SERVED = "already_served";
 export const ROUTE_REFRESH_REASON_UPSTREAM_REJECTED = "upstream_rejected";
 export const ROUTE_REFRESH_REASON_SUCCESSOR_BODY = "successor_body";

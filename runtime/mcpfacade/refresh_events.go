@@ -49,22 +49,25 @@ const (
 // uniform invalid_grant for every terminal outcome.
 const (
 	// RouteRefreshOutcomeAccessTokenOnly is retained for telemetry compatibility.
-	// The beyond-grace access-token-only serve was removed: every beyond-grace
-	// presentation revokes the family and returns no credential material.
+	// The beyond-grace access-token-only serve was removed; a beyond-grace
+	// presentation is served by rotating the family's live head and reports
+	// RouteRefreshOutcomeRotatedFromHead instead.
 	RouteRefreshOutcomeAccessTokenOnly = "access_token_only"
 	// RouteRefreshOutcomeRevokedFamily is a reuse presentation answered by
 	// revoking the whole family through the store's transactional tombstone.
 	RouteRefreshOutcomeRevokedFamily = "revoked_family"
-	// RouteRefreshOutcomeRevokedWalk is retained for telemetry compatibility. The
-	// bounded successor walk and its eight-link success exit were removed; a
-	// family-less lineage is refused rather than walked.
+	// RouteRefreshOutcomeRevokedWalk is retained for telemetry compatibility. A
+	// family-less lineage is now adopted by the bounded successor walk (see
+	// RouteRefreshReasonLegacyLineageAdopted), so no live path reports this
+	// outcome.
 	RouteRefreshOutcomeRevokedWalk = "revoked_walk"
 	// RouteRefreshOutcomeRateLimited is retained for telemetry compatibility. The
 	// per-family reuse budget no longer gates a token serve.
 	RouteRefreshOutcomeRateLimited = "rate_limited"
 	// RouteRefreshOutcomeBindingRejected is retained for telemetry compatibility.
-	// A live-head refresh still validates its binding; a beyond-grace
-	// presentation is reuse and is refused uniformly before any serve.
+	// A live-head refresh still validates its binding; the binding failure is a
+	// validation rejection, and a beyond-grace presentation is served rather than
+	// refused, so no live path reports this reuse outcome.
 	RouteRefreshOutcomeBindingRejected = "binding_rejected"
 	// RouteRefreshOutcomeRotatedFromHead is the reuse outcome of a stale
 	// predecessor presentation served by rotating the family's live head. It is
@@ -90,14 +93,17 @@ const (
 	RouteRefreshReasonFamilyRevokeUnavailable = "family_revoke_unavailable"
 	RouteRefreshReasonFamilyRevokeFailed      = "family_revoke_failed"
 	// RouteRefreshReasonAlreadyServed is retained for telemetry compatibility. A
-	// beyond-grace presentation is reuse on its first occurrence.
+	// beyond-grace presentation reports RouteRefreshReasonStalePredecessor and is
+	// served, so no live path emits this reason.
 	RouteRefreshReasonAlreadyServed    = "already_served"
 	RouteRefreshReasonUpstreamRejected = "upstream_rejected"
 	RouteRefreshReasonSuccessorBody    = "successor_body"
 	// RouteRefreshReasonAccessTokenOnly is retained for telemetry compatibility.
 	RouteRefreshReasonAccessTokenOnly = "access_token_only"
-	// RouteRefreshReasonRotatedReuse is the reason of a beyond-grace reuse
-	// presentation that revoked the family.
+	// RouteRefreshReasonRotatedReuse is retained for telemetry compatibility. It
+	// was the reason of a beyond-grace reuse presentation that revoked the
+	// family; the served path reports RouteRefreshReasonStalePredecessor with the
+	// rotated_from_head outcome and never revokes on reuse.
 	RouteRefreshReasonRotatedReuse = "rotated_reuse"
 	// RouteRefreshReasonLegacyLineage is a family-less (pre-policy) record
 	// presented for ordinary rotation: migration or reauthorization is required.
@@ -167,8 +173,8 @@ type RouteRefreshEvent struct {
 	// record that predates the policy.
 	ChainGeneration int
 	// ChainDepth is retained for telemetry compatibility. The removed depth-1
-	// serve no longer sets it; a beyond-grace presentation is reuse on its first
-	// occurrence and is reported without a depth classification.
+	// serve no longer sets it, and a beyond-grace stale predecessor is reported
+	// with its generation but without a depth classification.
 	ChainDepth int
 	// ExpirySignal is absent or expired for a record-state rejection.
 	ExpirySignal string
