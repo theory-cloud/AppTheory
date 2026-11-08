@@ -47,6 +47,7 @@ examples=(
   "examples/cdk/local-resources|local-resources|"
   "examples/cdk/local-iam|local-iam|"
   "examples/cdk/local-iam-peer|local-iam-peer|"
+  "examples/cdk/local-mcp-auth-facade|AppTheoryLocalMcpAuthFacade|"
 )
 
 # Stacks whose template is also checked for the resources the example exists to

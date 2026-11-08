@@ -1,957 +1,1015 @@
 {
-  "version": 1,
-  "profile": {
-    "name": "apptheory-examples-local",
-    "composeFile": "scripts/local/docker-compose.yml",
-    "dynamodbLocal": {
-      "image": "amazon/dynamodb-local@sha256:7ef4a2c45b58c2901e70a4f28e0953a422c2c631baaaf5e2c15e0805740c7752",
-      "port": 8130
-    },
-    "containers": {
-      "dynamodb-local": {
-        "image": "amazon/dynamodb-local@sha256:7ef4a2c45b58c2901e70a4f28e0953a422c2c631baaaf5e2c15e0805740c7752",
-        "command": [
-          "-jar",
-          "DynamoDBLocal.jar",
-          "-sharedDb",
-          "-inMemory"
-        ],
-        "containerPort": 8000
-      },
-      "moto": {
-        "image": "motoserver/moto@sha256:59a1965d845249b04def37a0e2565f9cc6c44543cb89b68e90f28f344b3b0d1a",
-        "containerPort": 5000
-      },
-      "s3proxy": {
-        "image": "andrewgaul/s3proxy@sha256:1f8915c2b4a8af22bf1fc191500f242974a458c457391b5788f9107544273dc3",
-        "containerPort": 80,
-        "environment": {
-          "S3PROXY_AUTHORIZATION": "aws-v2-or-v4",
-          "S3PROXY_IDENTITY": "dummy",
-          "S3PROXY_CREDENTIAL": "dummy"
-        }
-      },
-      "sqs": {
-        "image": "softwaremill/elasticmq-native@sha256:e4580ab9ad1bd5cd37b4ba04911bc5ccc8cd2d9ab4de56ece65acee71c24e05c",
-        "containerPort": 9324
-      }
-    },
-    "ports": {
-      "first": 8130,
-      "last": 8199,
-      "stride": 10
-    },
-    "tls": {
-      "enabled": false,
-      "host": "app.localhost"
-    },
-    "mail": {
-    "image": "axllent/mailpit@sha256:aef2aacc11f075ec0fb6874275ee4a421e688e11a96ebb296134d1735c7761ce",
-    "version": "v1.33.1",
-    "license": "MIT",
-    "compressedBytes": 14456260,
-    "smtpPort": 1025,
-    "httpPort": 8025
+ "version": 1,
+ "profile": {
+  "name": "apptheory-examples-local",
+  "composeFile": "scripts/local/docker-compose.yml",
+  "dynamodbLocal": {
+   "image": "amazon/dynamodb-local@sha256:7ef4a2c45b58c2901e70a4f28e0953a422c2c631baaaf5e2c15e0805740c7752",
+   "port": 8130
+  },
+  "containers": {
+   "dynamodb-local": {
+    "image": "amazon/dynamodb-local@sha256:7ef4a2c45b58c2901e70a4f28e0953a422c2c631baaaf5e2c15e0805740c7752",
+    "command": [
+     "-jar",
+     "DynamoDBLocal.jar",
+     "-sharedDb",
+     "-inMemory"
+    ],
+    "containerPort": 8000
+   },
+   "moto": {
+    "image": "motoserver/moto@sha256:59a1965d845249b04def37a0e2565f9cc6c44543cb89b68e90f28f344b3b0d1a",
+    "containerPort": 5000
+   },
+   "s3proxy": {
+    "image": "andrewgaul/s3proxy@sha256:1f8915c2b4a8af22bf1fc191500f242974a458c457391b5788f9107544273dc3",
+    "containerPort": 80,
+    "environment": {
+     "S3PROXY_AUTHORIZATION": "aws-v2-or-v4",
+     "S3PROXY_IDENTITY": "dummy",
+     "S3PROXY_CREDENTIAL": "dummy"
+    }
+   },
+   "sqs": {
+    "image": "softwaremill/elasticmq-native@sha256:e4580ab9ad1bd5cd37b4ba04911bc5ccc8cd2d9ab4de56ece65acee71c24e05c",
+    "containerPort": 9324
+   }
+  },
+  "ports": {
+   "first": 8130,
+   "last": 8199,
+   "stride": 10
+  },
+  "tls": {
+   "enabled": false,
+   "host": "app.localhost"
+  },
+  "mail": {
+   "image": "axllent/mailpit@sha256:aef2aacc11f075ec0fb6874275ee4a421e688e11a96ebb296134d1735c7761ce",
+   "version": "v1.33.1",
+   "license": "MIT",
+   "compressedBytes": 14456260,
+   "smtpPort": 1025,
+   "httpPort": 8025
   },
   "lambda": {
-      "images": {
-        "go": {
-          "tag": "public.ecr.aws/lambda/provided:al2023",
-          "digest": "sha256:2dc0f1f26731018b369932201d1dac295edd1730d1280f194486ae093ac39798",
-          "pinned": "2026-11-01"
-        },
-        "node": {
-          "tag": "public.ecr.aws/lambda/nodejs:24",
-          "digest": "sha256:8466f17dcfbec19afcfefff53964fac7bc3f7975fa132d5fd74dce53004827d0",
-          "pinned": "2026-11-01"
-        },
-        "python": {
-          "tag": "public.ecr.aws/lambda/python:3.14",
-          "digest": "sha256:51985f11b2fb1949619bda27d121f38ef7d4db64423ca6189ab1d7e632527d27",
-          "pinned": "2026-11-01"
-        }
-      }
+   "images": {
+    "go": {
+     "tag": "public.ecr.aws/lambda/provided:al2023",
+     "digest": "sha256:2dc0f1f26731018b369932201d1dac295edd1730d1280f194486ae093ac39798",
+     "pinned": "2026-11-01"
     },
-    "codeBuild": {
-      "agent": {
-        "aarch64": {
-          "tag": "public.ecr.aws/codebuild/local-builds:aarch64",
-          "digest": "sha256:7d7b5d35d2ac4e062ae7ba8c662ffed15229a52d09bd0d664a7816c439679192",
-          "pinned": "2026-11-05",
-          "license": "Amazon Software License 1.0 (aws/aws-codebuild-docker-images LICENSE.txt)",
-          "compressedBytes": 569100000
-        },
-        "x86_64": {
-          "tag": "public.ecr.aws/codebuild/local-builds:latest",
-          "digest": "sha256:ccb19bdd7af94e4dc761e4c58c267e9455c28ec68d938086b4dc1cf8fe6b0940",
-          "pinned": "2026-11-05",
-          "license": "Amazon Software License 1.0 (aws/aws-codebuild-docker-images LICENSE.txt)",
-          "compressedBytes": 1309700000
-        }
-      },
-      "images": {
-        "aws/codebuild/standard:7.0": {
-          "aarch64": {
-            "tag": "public.ecr.aws/codebuild/amazonlinux-aarch64-lambda-standard:nodejs24",
-            "digest": "sha256:56d1ee8b3216e09d67048793fb835dd75b8e367b812842ff6fe3c4edbeec3bdf",
-            "pinned": "2026-11-05",
-            "license": "Amazon Software License 1.0 (aws/aws-codebuild-docker-images LICENSE.txt)",
-            "compressedBytes": 1283010354
-          },
-          "x86_64": {
-            "tag": "public.ecr.aws/codebuild/amazonlinux-x86_64-lambda-standard:nodejs24",
-            "digest": "sha256:e198554f4a84c3c478f1755efcc342d2370228e40fa9e41132cbe43e1c959df9",
-            "pinned": "2026-11-05",
-            "license": "Amazon Software License 1.0 (aws/aws-codebuild-docker-images LICENSE.txt)",
-            "compressedBytes": 1357342127
-          }
-        },
-        "public.ecr.aws/codebuild/amazonlinux-aarch64-standard:3.0": {
-          "aarch64": {
-            "tag": "public.ecr.aws/codebuild/amazonlinux-aarch64-standard:3.0",
-            "digest": "sha256:af9a04646321922b7bc478b3a539eda2714f91148074233acbecf878c0f4fde8",
-            "pinned": "2026-11-05",
-            "license": "Amazon Software License 1.0 (aws/aws-codebuild-docker-images LICENSE.txt)",
-            "compressedBytes": 4677714403
-          }
-        }
-      }
+    "node": {
+     "tag": "public.ecr.aws/lambda/nodejs:24",
+     "digest": "sha256:8466f17dcfbec19afcfefff53964fac7bc3f7975fa132d5fd74dce53004827d0",
+     "pinned": "2026-11-01"
     },
-    "endpoints": {
-      "dynamodb": {
-        "container": "dynamodb-local",
-        "env": [
-          "AWS_ENDPOINT_URL",
-          "AWS_ENDPOINT_URL_DYNAMODB",
-          "DYNAMODB_ENDPOINT",
-          "DDB_ENDPOINT"
-        ]
-      },
-      "kms": {
-        "container": "moto",
-        "env": [
-          "AWS_ENDPOINT_URL_KMS",
-          "KMS_ENDPOINT"
-        ]
-      },
-      "sts": {
-        "container": "moto",
-        "env": [
-          "AWS_ENDPOINT_URL_STS",
-          "STS_ENDPOINT"
-        ]
-      },
-      "s3": {
-        "container": "s3proxy",
-        "env": [
-          "AWS_ENDPOINT_URL_S3",
-          "S3_ENDPOINT"
-        ]
-      },
-      "sqs": {
-        "container": "sqs",
-        "env": [
-          "AWS_ENDPOINT_URL_SQS",
-          "SQS_ENDPOINT"
-        ]
-      },
-      "ssm": {
-        "container": "moto",
-        "env": [
-          "AWS_ENDPOINT_URL_SSM",
-          "SSM_ENDPOINT"
-        ]
-      },
-      "secretsmanager": {
-        "container": "moto",
-        "env": [
-          "AWS_ENDPOINT_URL_SECRETS_MANAGER",
-          "SECRETS_MANAGER_ENDPOINT"
-        ]
-      },
-      "sns": {
-        "container": "moto",
-        "env": [
-          "AWS_ENDPOINT_URL_SNS",
-          "SNS_ENDPOINT"
-        ]
-      },
-      "kinesis": {
-        "container": "moto",
-        "env": [
-          "AWS_ENDPOINT_URL_KINESIS",
-          "KINESIS_ENDPOINT"
-        ]
-      },
-      "logs": {
-        "container": "moto",
-        "env": [
-          "AWS_ENDPOINT_URL_LOGS",
-          "AWS_ENDPOINT_URL_CLOUDWATCH_LOGS",
-          "CLOUDWATCH_LOGS_ENDPOINT"
-        ]
-      },
-      "cognito-idp": {
-        "container": "moto",
-        "env": [
-          "AWS_ENDPOINT_URL_COGNITO_IDENTITY_PROVIDER",
-          "AWS_ENDPOINT_URL_COGNITO_IDP",
-          "COGNITO_ENDPOINT"
-        ]
-      },
-      "ses": {
-        "container": "moto",
-        "env": [
-          "AWS_ENDPOINT_URL_SES",
-          "SES_ENDPOINT"
-        ]
-      }
+    "python": {
+     "tag": "public.ecr.aws/lambda/python:3.14",
+     "digest": "sha256:51985f11b2fb1949619bda27d121f38ef7d4db64423ca6189ab1d7e632527d27",
+     "pinned": "2026-11-01"
     }
+   }
   },
-  "entrypoints": {
-    "examples/cdk/codebuild-job-runner/bin/app.ts": {
-      "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
-      "class": "I",
-      "description": "CodeBuild job runner CDK app, synthesized and hash-checked with focused project, state-change-rule and grant assertions."
-    },
-    "examples/cdk/edge-gateway/bin/app.ts": {
-      "run": "edge-gateway",
-      "class": "L2",
-      "gap": "CloudFront edge network and edge TLS (docs/125 true limits); viewer events run against the viewer's plain-HTTP connection, so ViewerProtocolPolicy is reported rather than enforced. The field-level encryption row needs the AWS Encryption SDK on the harness interpreter.",
-      "description": "Edge gateway: four Lambda@Edge associations run through the real Node containers (viewer-request uri rewrite, origin-request generated response cached without a second invocation, origin-response body replacement, viewer-response header), IncludeBody exposes the base64 body, an origin rewrite reaches the other declared origin, a runtime 2.0 CloudFront Function reads get/exists/meta from its key value store, geo restriction serves US, refuses JP and serves an undetermined location, and the origin decrypts the field-level encryption ciphertext with the real AWS Encryption SDK."
-    },
-    "examples/cdk/edge-gateway/handlers/kvs.js": {
-      "coveredBy": "examples/cdk/edge-gateway/bin/app.ts",
-      "class": "L2",
-      "description": "CloudFront Function runtime 2.0 handler: get (string and json formats), exists and meta against the associated key value store."
-    },
-    "examples/cdk/edge-gateway/handlers/origin-request.js": {
-      "coveredBy": "examples/cdk/edge-gateway/bin/app.ts",
-      "class": "L2",
-      "description": "Lambda@Edge origin-request handler: a generated response with an invocation counter and an origin rewrite."
-    },
-    "examples/cdk/edge-gateway/handlers/origin-response.js": {
-      "coveredBy": "examples/cdk/edge-gateway/bin/app.ts",
-      "class": "L2",
-      "description": "Lambda@Edge origin-response handler: a header and a body replacement."
-    },
-    "examples/cdk/edge-gateway/handlers/viewer-request.js": {
-      "coveredBy": "examples/cdk/edge-gateway/bin/app.ts",
-      "class": "L2",
-      "description": "Lambda@Edge viewer-request handler: uri and query rewrite, a header returned without a key, an IncludeBody body header and a generated response."
-    },
-    "examples/cdk/edge-gateway/handlers/viewer-response.js": {
-      "coveredBy": "examples/cdk/edge-gateway/bin/app.ts",
-      "class": "L2",
-      "description": "Lambda@Edge viewer-response handler: a header on responses that may run it."
-    },
-    "examples/cdk/hello-world/bin/apptheory-hello-world.ts": {
-      "run": "cdk-synth-all",
-      "class": "I",
-      "description": "CDK app anchor for the synth row: every CDK example in the tree is synthesized and compared with its pinned template hash (plus focused construct assertions for the six once-uncovered examples, and an official Lambda runtime image invocation of the staged TypeScript and Python assets)."
-    },
-    "examples/cdk/hello-world/handlers/go/main.go": {
-      "run": "local-runner-go",
-      "class": "L1",
-      "description": "hello-world Go handler: the app's synthesized CDK stack, the provided.al2023 arm64 container through the runner's Lambda Runtime API, and four HTTP assertions over the derived HTTP API v2 transport (request id, root, 405, 404)."
-    },
-    "examples/cdk/hello-world/handlers/py/handler.py": {
-      "run": "local-runner-py",
-      "class": "L1",
-      "description": "hello-world Python handler: the app's synthesized CDK stack, the python:3.14 container through the runner's Lambda Runtime API, and four HTTP assertions over the derived HTTP API v2 transport."
-    },
-    "examples/cdk/hello-world/handlers/stage-echo/handler.mjs": {
-      "run": "stage-prefixed-http",
-      "class": "L1",
-      "description": "Stage-prefixed HTTP API URL: an HTTP API with a named (dev) stage served /echo at the root and /dev/echo under the stage; the payload-format-2.0 event carried rawPath=/dev/echo, requestContext.http.path=/dev/echo and requestContext.stage=dev."
-    },
-    "examples/cdk/hello-world/handlers/ts/app.mjs": {
-      "coveredBy": "examples/cdk/hello-world/handlers/ts/handler.mjs",
-      "class": "L1",
-      "description": "hello-world TypeScript app module imported by the handler; exercised through the same HTTP assertions."
-    },
-    "examples/cdk/hello-world/handlers/ts/handler.mjs": {
-      "run": "local-runner-ts",
-      "class": "L1",
-      "description": "hello-world TypeScript handler: the app's synthesized CDK stack, the nodejs:24 container through the runner's Lambda Runtime API, and four HTTP assertions over the derived HTTP API v2 transport."
-    },
-    "examples/cdk/import-pipeline/bin/app.ts": {
-      "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
-      "class": "I",
-      "description": "Import pipeline CDK app, synthesized and hash-checked with focused construct assertions."
-    },
-    "examples/cdk/import-pipeline/handlers/ingest/main.go": {
-      "run": "import-ingest",
-      "class": "L3",
-      "gap": "IAM policy evaluation is a docs/125 true limit; the bucket's EventBridge notification is delivered by the runner from a real object PUT, the WorkConsumer SQS mapping delivers automatically on ElasticMQ, and the CodeBuild step is proven by the codebuild-import row.",
-      "description": "Import pipeline ingest handler: a real object is written to s3proxy, the runner's S3 notification watcher publishes the documented aws.s3 Object Created event to the local bus, and IngestRule invokes the handler with no harness PutEvents; the handler writes the job meta and three work messages that the WorkConsumer mapping delivers to the worker and deletes."
-    },
-    "examples/cdk/import-pipeline/handlers/worker/main.go": {
-      "run": "import-worker",
-      "class": "L3",
-      "gap": "IAM policy evaluation is a docs/125 true limit; the bucket's EventBridge notification is delivered by the runner from a real object PUT, the WorkConsumer SQS mapping delivers automatically on ElasticMQ, and the CodeBuild step is proven by the codebuild-import row.",
-      "description": "Import pipeline worker handler: the full ingest \u2192 worker flow runs on the CDK jobs table after the runner delivered the bucket's EventBridge notification; the WorkConsumer mapping delivers the three real work messages automatically and they produce SUCCEEDED/FAILED records and a sanitized error envelope."
-    },
-    "examples/cdk/import-pipeline/scripts/codebuild-local.sh": {
-      "run": "codebuild-import",
-      "class": "L2",
-      "gap": "The local agent runs the build in a Docker container on its own compose network; there is no VPC, cache, artifact upload or report group, and the project's aws/codebuild/standard:7.0 image is mapped to the profile's digest-pinned aarch64 Lambda-standard image. The agent and image are the published AWS images, not a mock.",
-      "description": "CodeBuild through AWS's local agent: StartBuild on the synthesized BatchStep project ran its inline buildspec with the pinned agent and build image; BatchGetBuilds reported BUILD/COMPLETED SUCCEEDED and the command log; ListBuildsForProject returned the id; the state-change rule delivered the SUCCEEDED event to the import-build-events SQS target. No mock."
-    },
-    "examples/cdk/kinesis-cloudwatch-logs/bin/app.ts": {
-      "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
-      "class": "I",
-      "description": "Kinesis/CloudWatch Logs CDK app, synthesized and hash-checked with focused construct assertions."
-    },
-    "examples/cdk/kinesis-cloudwatch-logs/handlers/go/main.go": {
-      "run": "kinesis-handler",
-      "class": "L2",
-      "gap": "moto emulates Kinesis and CloudWatch Logs: sequence numbers are opaque and a stream never splits or merges. The subscription filter, the Kinesis mapping, partial failure and the function-log capture are real; IAM policy evaluation is a docs/125 true limit.",
-      "description": "Kinesis/CloudWatch Logs handler: the CDK stream is provisioned on moto; PutLogEvents through the real Logs SDK is forwarded by the subscription filter through its Logs destination to the stream and delivered to the consumer; the consumer's captured stdout is delivered to a Lambda-destination filter as awslogs.data; a direct PutRecords batch delivers its valid record and discards the malformed one after its retries."
-    },
-    "examples/cdk/kinesis-cloudwatch-logs/handlers/logtap/main.go": {
-      "coveredBy": "examples/cdk/kinesis-cloudwatch-logs/handlers/go/main.go",
-      "class": "L2",
-      "description": "CloudWatch Logs Lambda subscription target: it decodes the documented awslogs.data gzip payload delivered from the consumer's captured log group and writes the decoded log events to a real SQS receipt queue."
-    },
-    "examples/cdk/kinesis-cloudwatch-logs/handlers/signing/main.go": {
-      "run": "kinesis-signing",
-      "class": "L2",
-      "gap": "KMS is emulated by the runner's KMS front over the pinned moto (no HSM, key policies or grants); Sign, Verify and GetPublicKey are real, including MessageType=DIGEST.",
-      "description": "Kinesis signing handler: the CDK RSA_2048 SIGN_VERIFY key and alias are provisioned through the runner's KMS front; the handler signs and verifies with the alias (usable as KeyId) and the key ARN, reads the public key, and signs a precomputed SHA-256 digest with MessageType=DIGEST that the handler verifies outside KMS with the GetPublicKey public key (the double hash does not verify)."
-    },
-    "examples/cdk/kinesis-cloudwatch-logs/scripts/data-dir-kms.sh": {
-      "run": "data-dir-kms",
-      "class": "L2",
-      "gap": "KMS key material and the key identity (KeyId/Arn) are persisted by the runner's KMS front (moto is memory-only, so the front re-creates the key and reports the persisted identity); the remaining metadata, notably CreationDate, is the current run's. No HSM, key policies or grants.",
-      "description": "KMS --data-dir: run 1 encrypted under the CDK symmetric key, generated a 32-byte data key and signed a precomputed digest with the CDK RSA_2048 key; run 2 with the same --data-dir saw the same KeyId/ARN for both keys, decrypted both ciphertexts by the run-1 key id, read the same public key, and verified the run-1 signature through KMS by the run-1 key id and ARN and outside KMS."
-    },
-    "examples/cdk/lambda-packaging/bin/app.ts": {
-      "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
-      "class": "I",
-      "description": "CDK app anchor for the lambda-packaging example: the synth row synthesizes it and compares the pinned template hash and focused assertions (two layers declared by a Node and a Python function, three Docker image functions with their build arguments)."
-    },
-    "examples/cdk/lambda-packaging/handlers/node/app.js": {
-      "run": "lambda-packaging",
-      "class": "L1",
-      "description": "The Node zip function declares the CDK layer; the handler imports layer-greeting from /opt/nodejs/node_modules, executes /opt/bin/layer-tool from PATH and reports /opt/bin and /opt/lib in the runtime paths."
-    },
-    "examples/cdk/lambda-packaging/handlers/python/app.py": {
-      "coveredBy": "examples/cdk/lambda-packaging/handlers/node/app.js",
-      "class": "L1",
-      "description": "The Python zip function declares the CDK layer; the handler imports layer_tool from /opt/python, executes /opt/bin/layer-tool and reports PYTHONPATH, PATH and LD_LIBRARY_PATH."
-    },
-    "examples/cdk/lambda-packaging/images/go/main.go": {
-      "coveredBy": "examples/cdk/lambda-packaging/handlers/node/app.js",
-      "class": "L1",
-      "description": "Provided-runtime image handler; the runner builds it from the CDK DockerImageAsset and it returns the value the Dockerfile wrote from IMAGE_VALUE."
-    },
-    "examples/cdk/lambda-packaging/images/node/app.js": {
-      "coveredBy": "examples/cdk/lambda-packaging/handlers/node/app.js",
-      "class": "L1",
-      "description": "Node image handler; the runner builds it from the CDK DockerImageAsset and it returns the value the Dockerfile wrote from IMAGE_VALUE."
-    },
-    "examples/cdk/lambda-packaging/images/python/app.py": {
-      "coveredBy": "examples/cdk/lambda-packaging/handlers/node/app.js",
-      "class": "L1",
-      "description": "Python image handler; the runner builds it from the CDK DockerImageAsset and it returns the value the Dockerfile wrote from IMAGE_VALUE."
-    },
-    "examples/cdk/lambda-packaging/layers/node/bin/layer-tool": {
-      "coveredBy": "examples/cdk/lambda-packaging/handlers/node/app.js",
-      "class": "L1",
-      "description": "Executable extracted from the Node layer into /opt/bin; the handler runs it through PATH."
-    },
-    "examples/cdk/lambda-packaging/layers/python/bin/layer-tool": {
-      "coveredBy": "examples/cdk/lambda-packaging/handlers/node/app.js",
-      "class": "L1",
-      "description": "Executable extracted from the Python layer into /opt/bin; the handler runs it through PATH."
-    },
-    "examples/cdk/lambda-packaging/layers/python/python/layer_tool.py": {
-      "coveredBy": "examples/cdk/lambda-packaging/handlers/node/app.js",
-      "class": "L1",
-      "description": "Python module extracted from the layer into /opt/python; the handler imports it."
-    },
-    "examples/cdk/lambda-role/bin/app.ts": {
-      "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
-      "class": "I",
-      "description": "Lambda role CDK app, synthesized and hash-checked with focused IAM/KMS assertions, including the compiled handler asset."
-    },
-    "examples/cdk/lambda-role/handlers/authorizer.ts": {
-      "run": "lambda-role-authorizers",
-      "class": "L2",
-      "gap": "moto signs the user pool's tokens and serves the pool JWKS; the runner serves the local OIDC issuer the template's issuer resolves to. Token validation, audience and issuer matching, expiry on the run clock, scopes and the documented claims are real. IAM policy evaluation is a docs/125 true limit.",
-      "description": "HTTP API JWT, REST Cognito and Lambda policy authorizers: a real user was created in the moto pool and real id/access tokens were minted through the Cognito API; the JWT-protected route received requestContext.authorizer.jwt.claims and the Cognito-protected route received requestContext.authorizer.claims; a REST TOKEN authorizer, a REST REQUEST authorizer over a header and a query source, and an HTTP API IAM-policy authorizer ran the real policy function and carried its stringified context to the integration, Allow invoked the method, Deny was 403, the documented Unauthorized error was 401, an invalid policy was 500 and a missing identity source was 401 without invoking; a cached TOKEN and HTTP API decision did not invoke the function again until the run clock passed AuthorizerResultTtlInSeconds."
-    },
-    "examples/cdk/lambda-role/handlers/custom.ts": {
-      "run": "lambda-role-custom",
-      "class": "L2",
-      "gap": "IAM policy evaluation is a docs/125 true limit; S3 is emulated by s3proxy (no bucket policies and no server-side notification hook; the runner delivers bucket notification configurations from observed object state). SSM parameters, Secrets Manager secrets and the Cognito user pool are real on moto.",
-      "description": "lambda-role custom handler: the compiled asset runs in nodejs:24 and reads String/SecureString/StringList SSM parameters through Ref and GetAtt, a literal SecretString plus the keyed and bare GenerateSecretString forms through GetSecretValue, and the provisioned Cognito pool/client; the runner's local issuer serves the pool JWKS and discovery document; the S3 object round-trip stays real on s3proxy."
-    },
-    "examples/cdk/lambda-role/handlers/encrypted.ts": {
-      "run": "lambda-role-encrypted",
-      "class": "L2",
-      "gap": "KMS is emulated by moto (no HSM, key policies or grants); the encrypt/decrypt round-trip is real.",
-      "description": "lambda-role encrypted handler: the compiled asset runs in nodejs:24 and round-trips plaintext through the emulated KMS with match=true."
-    },
-    "examples/cdk/lambda-role/handlers/index.ts": {
-      "run": "lambda-role-index",
-      "class": "L1",
-      "description": "lambda-role baseline handler: the compiled asset serves the basic, tracing and dynamic functions and returns the expected 200 payload from each."
-    },
-    "examples/cdk/lambda-role/handlers/policy-authorizer.ts": {
-      "coveredBy": "examples/cdk/lambda-role/handlers/authorizer.ts",
-      "class": "L2",
-      "description": "IAM-policy authorizer function for the REST TOKEN, REST REQUEST and HTTP API authorizers; it counts its own invocations and returns the count in the authorizer context, which is how the row proves a cached policy was reused without invoking the function and was re-evaluated per method (GET /token-other is 403 because the cached policy names only GET /token)."
-    },
-    "examples/cdk/lambda-role/scripts/data-dir-s3.sh": {
-      "run": "data-dir-s3",
-      "class": "L2",
-      "gap": "s3proxy's filesystem provider persists objects; bucket policies and server-side event hooks are not served by the store.",
-      "description": "S3 --data-dir: the custom handler wrote an object through the real S3 SDK in one invoke; a second invoke with the same --data-dir read the object back through the handler, and the s3proxy base directory holds the object file."
-    },
-    "examples/cdk/lambda-role/scripts/s3-sse.sh": {
-      "run": "s3-sse",
-      "class": "L2",
-      "gap": "s3proxy's filesystem store refuses server-side encryption by design; the runner's S3 front records SSE-S3 for a verified header-signed put and forwards every other SSE put unchanged, so the store keeps its answer. SSE-KMS and SSE-C remain refused (the runner cannot honour a key binding or customer key). A DeleteObjects body above the front's 1 MiB record buffer is forwarded unchanged and its SSE-S3 records are left for a later plain PutObject, plain CopyObject, successful CompleteMultipartUpload, DeleteObject or plain DeleteBucket to clear; an aborted multipart upload and a metadata subresource read change nothing. Bucket policies and server-side notification hooks are not served by the store.",
-      "description": "SSE-S3 through the real SDK: the compiled Node handler put an object with x-amz-server-side-encryption: AES256 and the PutObject response reported AES256; HeadObject and GetObject through the same handler returned the SSE-S3 header and the stored body. One DeleteObjects request at AWS's maximum shape (999 keys of exactly 1024 bytes plus the short recorded key, about 1.05 MiB, above the front's buffer) was forwarded to s3proxy and deleted the object."
-    },
-    "examples/cdk/lesser-parity/bin/app.ts": {
-      "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
-      "class": "I",
-      "description": "Lesser-parity CDK app, synthesized and hash-checked with focused construct assertions."
-    },
-    "examples/cdk/lesser-parity/handlers/api.mjs": {
-      "run": "lesser-parity-api",
-      "class": "L1",
-      "description": "Lesser-parity catch-all REST handler: GET and POST assertions with resolved TABLE_NAME/QUEUE_URL values."
-    },
-    "examples/cdk/lesser-parity/handlers/graphql.mjs": {
-      "run": "lesser-parity-graphql",
-      "class": "L1",
-      "description": "Lesser-parity GraphQL handler: a dedicated POST route, the resolved table name, and GET falling through to the catch-all."
-    },
-    "examples/cdk/lesser-parity/handlers/sse.mjs": {
-      "run": "lesser-parity-sse",
-      "class": "L2",
-      "gap": "The local REST API integration forwards each chunk at the handler's pace; Lambda's 6 MB uncapped burst and 2 MBps streaming cap are not reproduced.",
-      "description": "Lesser-parity SSE handler: the streaming REST integration writes the three events incrementally (the row observes the first event 0.7s apart from the rest) and the declared CORS preflight is served from the same REST API."
-    },
-    "examples/cdk/lesser-parity/handlers/worker.mjs": {
-      "run": "lesser-parity-worker",
-      "class": "L2",
-      "gap": "ElasticMQ emulates SQS; IAM, KMS encryption and AWS-managed scaling are not emulated.",
-      "description": "Lesser-parity queue worker: two real ElasticMQ messages were delivered as the CDK mapping's batch; the handler returned the invalid record as its only partial failure, so exactly that message remained in the queue."
-    },
-    "examples/cdk/lesser-parity/scripts/data-dir.sh": {
-      "run": "data-dir-dynamodb",
-      "class": "L2",
-      "gap": "DynamoDB Local persists through -dbPath; moto runtime state is memory-only (the docs/125 true limit). A table key-schema change cannot be applied by UpdateTable and fails closed by name.",
-      "description": "DynamoDB --data-dir: a real item was written through the API handler's DynamoDB SDK in one session; a second session with the same --data-dir read it back through the same handler from shared-local-instance.db; a third session without --data-dir answered 404 (the default stays ephemeral)."
-    },
-    "examples/cdk/local-iam-peer/bin/app.ts": {
-      "coveredBy": "examples/cdk/local-iam/scripts/shared-plane.sh",
-      "description": "The second app of the shared-plane row: it defines the role the other run assumes and the REST API that run's session calls.",
-      "class": "L2"
-    },
-    "examples/cdk/local-iam/bin/app.ts": {
-      "class": "L2",
-      "gap": "IAM policy evaluation is narrow (docs/127 W3-D1): only the enumerated statement shapes are evaluated, and the STS trust policy alone decides AssumeRole locally.",
-      "description": "The local IAM app: a REST API with AWS_IAM methods and a resource policy, an HTTP API AWS_IAM route, an AWS_IAM Function URL, and the caller, other and vending roles the rows resolve.",
-      "coveredBy": "examples/cdk/local-iam/scripts/grants.sh"
-    },
-    "examples/cdk/local-iam/handlers/go/main.go": {
-      "run": "local-iam-caller-go",
-      "class": "L2",
-      "gap": "IAM policy evaluation is narrow (docs/127 W3-D1): only the enumerated shapes are evaluated, and the STS trust policy alone decides AssumeRole locally.",
-      "description": "Go caller: a provided.al2023 container signs an execute-api request with the AWS SDK for Go v2's SigV4 signer, using the credentials the runner issued to it, and the gateway resolves its role ARN from the signature."
-    },
-    "examples/cdk/local-iam/handlers/node/caller.js": {
-      "run": "local-iam-caller-node",
-      "class": "L2",
-      "gap": "IAM policy evaluation is narrow (docs/127 W3-D1): only the enumerated shapes are evaluated, and the STS trust policy alone decides AssumeRole locally.",
-      "description": "Node caller: a nodejs24.x container signs an execute-api request with the AWS SDK for JavaScript v3's SignatureV4 (the SDK the image ships under /var/runtime/node_modules), using the credentials the runner issued to it."
-    },
-    "examples/cdk/local-iam/handlers/python/caller.py": {
-      "run": "local-iam-caller-py",
-      "class": "L2",
-      "gap": "IAM policy evaluation is narrow (docs/127 W3-D1): only the enumerated shapes are evaluated, and the STS trust policy alone decides AssumeRole locally.",
-      "description": "Python caller: a python3.14 container signs an execute-api request with botocore's SigV4Auth, using the credentials the runner issued to it."
-    },
-    "examples/cdk/local-iam/scripts/function-url.sh": {
-      "run": "local-iam-function-url",
-      "class": "L2",
-      "gap": "The Function URL is served on a loopback URL by the local runner, not by the Lambda service; the trust store is the run CA when TLS is opted in.",
-      "description": "AWS_IAM Function URL: a signed call is served with the resolved principal in requestContext.authorizer.iam, and an unsigned call is refused with a named reason."
-    },
-    "examples/cdk/local-iam/scripts/grants.sh": {
-      "run": "local-iam-grants",
-      "class": "L2",
-      "gap": "IAM policy evaluation is a docs/125 true limit in general; the local runner evaluates only the enumerated statement shapes docs/127 W3-D1 defines and fails closed on anything else.",
-      "description": "Narrow IAM grants: a resource-policy allow, an identity-policy-only allow, an account-root principal, an aws:PrincipalArn-conditioned statement, a trailing path wildcard and an HTTP API AWS_IAM route each grant a real SigV4-signed call, and the handler sees the resolved role ARN, account and access key in its event identity."
-    },
-    "examples/cdk/local-iam/scripts/refusals.sh": {
-      "run": "local-iam-refusals",
-      "class": "L2",
-      "gap": "Only the enumerated statement shapes are evaluated (docs/125 true limit: IAM policy evaluation in general); an out-of-subset statement is refused by name instead of guessed.",
-      "description": "Narrow IAM refusals: an unsigned request, a tampered signature, a wrong principal, an out-of-subset condition and an explicit Deny are each refused with a named reason."
-    },
-    "examples/cdk/local-iam/scripts/shared-plane.sh": {
-      "run": "local-iam-shared-plane",
-      "class": "L2",
-      "gap": "The two runs share one directory on this host; they are not two deployments, and the session that signs the second call is minted by the first run's STS endpoint rather than by a container-to-container hop (that hop is the co-residence work).",
-      "description": "Shared IAM plane: run A's function assumes a role run B's stack defined, through run A's STS endpoint; run B verifies the session's signature from the shared credential registry and grants the call against its own resource policy and the role's identity policy."
-    },
-    "examples/cdk/local-iam/scripts/port-pinning.sh": {
-      "run": "local-port-pinning",
-      "class": "L2",
-      "description": "Declared ports: the HTTP API (index 0) is pinned to base+1 and the REST API (index 1) to base, and both pinned listeners answer real signed calls at their declared ports; the unpinned Function URL keeps base+2.",
-      "gap": "A pin reserves a slot inside the run's --port-base range; a port outside that range is refused rather than bound."
-    },
-    "examples/cdk/local-iam/scripts/port-unpinned.sh": {
-      "run": "local-port-unpinned",
-      "class": "L2",
-      "description": "Unpinned allocation: without --port, the same app keeps today's counter order exactly (httpv2 base, restv1 base+1, fnurl base+2).",
-      "gap": "The counter is per run; two co-resident runs use distinct --port-base values, as the fixed per-app port blocks require."
-    },
-    "examples/cdk/local-iam/scripts/port-refusals.sh": {
-      "run": "local-port-refusals",
-      "class": "L2",
-      "description": "Named port refusals: a collision, a port outside the run's range, an unknown logical id and a pin without --port-base each exit non-zero with a message naming the cause before anything starts.",
-      "gap": "These refusals are validated at plan time from the derived surface; a port another process holds is reported by the bind, not by the allocator."
-    },
-    "examples/cdk/local-iam/scripts/co-residence-ca.sh": {
-      "run": "local-co-residence-ca",
-      "class": "L2",
-      "description": "Shared CA and per-run host names: two runs (auth.localhost and mcp.localhost) reuse one CA at <shared-dir>/ca, each run's leaf carries its own host and verifies against that CA, and both hosts answer over verified HTTPS.",
-      "gap": "The CA is a runner-generated local root; the trust is installed per client (the mounted bundle or the harness context), not in a system store."
-    },
-    "examples/cdk/local-iam/scripts/co-residence-iam.sh": {
-      "run": "local-co-residence-iam",
-      "class": "L2",
-      "description": "Cross-run co-residence: two apps run in two sessions on one shared Docker network and one shared CA with pinned ports; a function in run A signs with run A's credential and calls run B's AWS_IAM route at https://mcp.localhost:<pinned>, and run B verifies it and resolves run A's role.",
-      "gap": "IAM policy evaluation is narrow (docs/127 W3-D1): only the enumerated statement shapes are evaluated. The two runs are processes on one host sharing a directory and a bridge, not two deployments."
-    },
-    "examples/cdk/local-resources/bin/app.ts": {
-      "class": "L2",
-      "gap": "The reported types have no local runtime behavior (docs/125 true limit: deploy-time-only resources), and a MicroVM image is an AWS-only service with no emulator.",
-      "description": "The resource-type app: a bucket with autoDeleteObjects, a Custom::Trigger, a provider-framework custom resource, a Custom::AWS SDK call, an SES receipt rule with S3 and Lambda actions, an SES identity, and the deploy-time-only and MicroVM types.",
-      "coveredBy": "examples/cdk/local-resources/scripts/inventory.sh"
-    },
-    "examples/cdk/local-resources/handlers/go/main.go": {
-      "class": "L2",
-      "gap": "The message is injected through the documented session operation; real SMTP ingress is the mail-surface work that follows (docs/127 X4). The S3 action's store is s3proxy.",
-      "description": "The receipt rule's Lambda action: the provided.al2023 handler renders the received-message record SES documents and reads the raw body the rule's S3 action wrote.",
-      "coveredBy": "examples/cdk/local-resources/scripts/ses-receipt.sh"
-    },
-    "examples/cdk/local-resources/scripts/custom-resources.sh": {
-      "run": "local-resources-custom",
-      "class": "L2",
-      "gap": "The provider handlers run in their real containers; the AWS SDK calls inside them reach the pinned moto, whose state is memory-only (docs/125 true limit).",
-      "description": "Served custom resources: the Custom::Trigger provider invokes its target through the local Lambda endpoint at start, the provider-framework handler returns its Data and physical id over the response URL, the Custom::AWS handler creates an SES rule set on moto, and the bucket auto-delete handler deletes a real object on its delete leg."
-    },
-    "examples/cdk/local-resources/scripts/inventory.sh": {
-      "run": "local-resources-inventory",
-      "class": "L2",
-      "gap": "The reported types have no local runtime behavior (docs/125 true limit: deploy-time-only resources), and a MicroVM image is an AWS-only service with no emulator.",
-      "description": "Resource-type inventory: a real synth declares a Custom::Trigger, a provider-framework custom resource, a Custom::AWS SDK call, a bucket auto-delete handler, an SES receipt rule, and the deploy-time-only and MicroVM types; plan reports each as served, deploy-time-only with its docs/125 reason, or refused by name."
-    },
-    "examples/cdk/local-resources/scripts/ses-receipt.sh": {
-      "run": "local-resources-ses-receipt",
-      "class": "L2",
-      "gap": "The message is injected through the documented session operation; real SMTP ingress is the mail-surface work that follows (docs/127 X4). The S3 action's store is s3proxy.",
-      "description": "SES receipt rule: ses.receive injects one message at a recipient the derived rule accepts; the rule's S3 action writes the raw body under its prefix, and its Lambda action receives the documented received-message record (message id, headers, action, receipt timestamp, no body), which the handler reads back from the bucket."
-    },
-    "examples/cdk/local-resources/scripts/mail-send-read.sh": {
-      "run": "local-mail-send-read",
-      "class": "L2",
-      "description": "Local mail surface: STARTTLS to the SMTP ingress verifies the aux leaf, an outbound message is accepted, and the sink's HTTPS read API returns it with its recipient and body.",
-      "gap": "The sink is a digest-pinned local test server, not Migadu or SES; the SMTP ingress is the runner's listener because it must reach both the sink and the receipt rules."
-    },
-    "examples/cdk/local-resources/scripts/mail-receipt.sh": {
-      "run": "local-mail-receipt",
-      "class": "L2",
-      "description": "Real SMTP ingress to the derived SES receipt rule: a message to ingress@local-resources.test runs the rule's S3 then Lambda actions with SES's received-message record (no body), and the sink's read API returns the same message.",
-      "gap": "The receipt record is built locally from the received SMTP message and verified against the SES event docs; the SMTP transport is local, not SES's."
-    },
-    "examples/cdk/local-tls/bin/app.ts": {
-      "run": "local-tls-surfaces",
-      "class": "L2",
-      "gap": "The certificate chains to a runner-generated local CA, not a public one, and the listener has no edge certificate or managed security policy (docs/125 real network properties: edge TLS certificates).",
-      "description": "Local TLS opt-in surfaces: the HTTP API, REST API, Function URL, WebSocket API and CloudFront distribution all answer over verified https/wss at app.localhost; the TLS listener negotiates HTTP/2 and refuses an unserved SNI name."
-    },
-    "examples/cdk/local-tls/handlers/go/main.go": {
-      "run": "local-tls-callback-go",
-      "class": "L2",
-      "gap": "The Go container verifies the runner's local CA, not a public certificate; no public CA or edge TLS policy is involved.",
-      "description": "Go caller: a provided.al2023 container fetches the app's OIDC discovery document and JWKS over verified https from the runner's own listener."
-    },
-    "examples/cdk/local-tls/handlers/python/caller.py": {
-      "run": "local-tls-callback-py",
-      "class": "L2",
-      "gap": "The Python container verifies the runner's local CA, not a public certificate; no public CA or edge TLS policy is involved.",
-      "description": "Python caller: a python3.14 container fetches the app's OIDC discovery document and JWKS over verified https from the runner's own listener."
-    },
-    "examples/cdk/local-tls/scripts/aux-cert.sh": {
-      "run": "local-tls-aux-cert",
-      "class": "L2",
-      "gap": "The auxiliary identity provider is a local test service signed by the runner CA, not a third-party identity provider (docs/125 decision D3).",
-      "description": "Auxiliary-service certificate: `tls leaf` issues a certificate from the run CA for idp.localhost, and a host client and a Python container fetch the service's discovery and JWKS over verified TLS."
-    },
-    "examples/cdk/local-tls/scripts/awssdk-go.sh": {
-      "run": "local-tls-awssdk-go",
-      "class": "L2",
-      "gap": "The Go container verifies the runner's local CA, not a public certificate, and the @connections endpoint is the runner's own TLS listener; no public CA or edge TLS policy is involved.",
-      "description": "AWS SDK in a Go container: a caller-supplied *http.Client loads the aws-sdk-go-v2 config, lists DynamoDB Local tables, gets 410 GONE from the runner's TLS @connections endpoint, and the same invocation fetches the app's discovery document and JWKS over verified https."
-    },
-    "examples/cdk/local-tls/scripts/awssdk-node.sh": {
-      "run": "local-tls-awssdk-node",
-      "class": "L2",
-      "gap": "The Node container verifies the runner's local CA through NODE_EXTRA_CA_CERTS, not a public certificate; no public CA or edge TLS policy is involved.",
-      "description": "AWS SDK in a Node container: the SDK for JavaScript v3 the nodejs24.x image ships lists DynamoDB Local tables and gets 410 GONE from the runner's TLS @connections endpoint, and the same invocation fetches the app's discovery document and JWKS over verified https."
-    },
-    "examples/cdk/local-tls/scripts/awssdk-py.sh": {
-      "run": "local-tls-awssdk-py",
-      "class": "L2",
-      "gap": "The Python container verifies the runner's local CA through AWS_CA_BUNDLE and SSL_CERT_FILE, not a public certificate; no public CA or edge TLS policy is involved.",
-      "description": "AWS SDK in a Python container: boto3 lists DynamoDB Local tables and gets 410 GONE from the runner's TLS @connections endpoint, and the same invocation fetches the app's discovery document and JWKS over verified https."
-    },
-    "examples/cdk/local-tls/scripts/browser-webauthn.sh": {
-      "run": "local-tls-webauthn",
-      "class": "L2",
-      "gap": "Chromium is launched with the run leaf's SPKI allowlisted instead of installing the CA in a system trust store, and the credential lives in a CDP virtual authenticator rather than a hardware or platform authenticator.",
-      "description": "Browser row: headless Chromium loads the opted-in CloudFront page over https (a secure context), registers a WebAuthn credential with RP ID app.localhost through the CDP virtual authenticator and asserts it."
-    },
-    "examples/cdk/local-tls/scripts/callback-node.sh": {
-      "run": "local-tls-callback-node",
-      "class": "L2",
-      "gap": "The Node container verifies the runner's local CA, not a public certificate; no public CA or edge TLS policy is involved.",
-      "description": "Node caller: a nodejs24.x container fetches the app's OIDC discovery document and JWKS over verified https from the runner's own listener."
-    },
-    "examples/cdk/local-tls/scripts/cloudfront-http-only-error.sh": {
-      "run": "local-tls-cloudfront-http-only-error",
-      "class": "L2",
-      "gap": "The refusal is a local runner check on a mapping the runner owns; a deployed distribution never maps an origin to the runner.",
-      "description": "A plain http origin mapping to the run's TLS-only API listener is refused before the distribution starts, naming OriginProtocolPolicy HTTPS_ONLY and the https mapping to use instead of surfacing the TLS listener's bare 400."
-    },
-    "examples/cdk/local-tls/scripts/cloudfront-origin.sh": {
-      "run": "local-tls-cloudfront-origin",
-      "class": "L2",
-      "gap": "The origin certificate chains to the runner's CA and names the app's declared local origin domain, not a public origin certificate; the local edge is not the CloudFront network (docs/125 real network properties).",
-      "description": "CloudFront in front of the run's own API over TLS: the distribution declares an https-only custom origin, verifies the run CA against its declared origin domain, forwards the origin Host header, and returns the API's GET /.well-known/oauth-authorization-server and a form POST /auth/token unchanged."
-    },
-    "examples/cdk/local-tls/scripts/cloudfront-redirect.sh": {
-      "run": "local-tls-cloudfront-redirect",
-      "class": "L2",
-      "gap": "The identity provider the app redirects to is a local test service signed by the runner CA, not a third-party provider; the local edge is not the CloudFront network (docs/125 real network properties).",
-      "description": "CloudFront returns an origin redirect to the viewer: a form POST the auth-api answers with 303 See Other reaches the viewer with the exact Location at the auxiliary idp.localhost certificate and both Set-Cookie values, the hop never follows it, and headless Chromium then follows it to the IdP over TLS verified against the run CA."
-    },
-    "examples/cdk/local-tls/scripts/oidc.sh": {
-      "run": "local-tls-oidc",
-      "class": "L2",
-      "gap": "The issuer is a local Lambda behind the runner's listener with a locally trusted certificate; it is not a public OIDC provider and the certificate is not publicly trusted.",
-      "description": "OIDC-shaped row: the issuer's discovery document names the exact https URL it is served at, and a host client plus a Go container fetch discovery then JWKS over verified TLS."
-    },
-    "examples/cdk/media-cdn/bin/app.ts": {
-      "run": "media-cdn-gateway",
-      "class": "L2",
-      "gap": "CloudFront edge network and edge TLS (docs/125 true limits); the private distribution's signed URLs and cookies are verified against the key group's real public keys, and the local S3 origin uses the OAC access model without bucket policies.",
-      "description": "Media CDN: the public distribution serves a probe object from the local S3 emulator with its metadata and a custom 403 error page; the private trusted-key-group distribution requires a signature: unsigned 403, a canned-policy SHA-256 URL, a custom-policy signed cookie, a query added after signing 403, an unknown Key-Pair-Id 403, OPTIONS exempt, and the expired URL 403 after clock.advance."
-    },
-    "examples/cdk/microvm-controller/bin/app.ts": {
-      "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
-      "class": "I",
-      "description": "MicroVM controller CDK app, synthesized and hash-checked with focused construct assertions."
-    },
-    "examples/cdk/microvm-controller/controller/main.go": {
-      "run": "microvm-controller",
-      "class": "L3",
-      "gap": "Managed MicroVM provider; the real CDK authorizer and controller routes run locally and every provider-backed operation stops at that boundary.",
-      "description": "MicroVM controller: the CDK authorizer refuses missing/wrong/tenant-less credentials; list/run reach the managed provider boundary; get/suspend/resume/terminate/auth-token/shell-auth-token/invoke read the TableTheory registry on DynamoDB Local and refuse a missing session."
-    },
-    "examples/cdk/microvm-controller/workloads/go/main.go": {
-      "run": "microvm-workload-go",
-      "class": "L1",
-      "description": "MicroVM Go workload: the built server runs as a host process and answers GET and POST with its HTTP contract."
-    },
-    "examples/cdk/microvm-controller/workloads/py/server.py": {
-      "run": "microvm-workload-py",
-      "class": "L1",
-      "description": "MicroVM Python workload: the stdlib server runs as a host process and answers GET and POST with its HTTP contract."
-    },
-    "examples/cdk/microvm-controller/workloads/ts/server.js": {
-      "run": "microvm-workload-ts",
-      "class": "L1",
-      "description": "MicroVM TypeScript workload (the built server.js shipped in the image): it runs as a host process and answers GET and POST with its HTTP contract."
-    },
-    "examples/cdk/microvm-controller/workloads/ts/server.ts": {
-      "coveredBy": "examples/cdk/microvm-controller/workloads/ts/server.js",
-      "class": "L1",
-      "description": "MicroVM TypeScript workload source; verified through the built server.js that the image ships and the harness runs."
-    },
-    "examples/cdk/multilang/bin/apptheory-multilang.ts": {
-      "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
-      "class": "I",
-      "description": "Multilang CDK app, synthesized and hash-checked with focused construct assertions; the TS Lambda asset is staged self-contained (A1 asset fix)."
-    },
-    "examples/cdk/multilang/handlers/go/main.go": {
-      "run": "multilang-go",
-      "class": "L3",
-      "gap": "IAM policy evaluation is a docs/125 true limit. Backends are emulated (DynamoDB Local, ElasticMQ, moto); SQS delivery, DynamoDB Streams, EventBridge rules, WebSocket frames and incremental response streaming are real. The REST v1 surface is defined only for the Go handler in this stack.",
-      "description": "Multilang Go handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the Go REST API serves hello and the three SSE events written incrementally; three WebSocket APIs serve real frames through the $connect authorizer, the custom chat route, $default and the @connections management API; the CDK SQS mapping delivered a real message to the Go handler and deleted it; a real SDK-written table item reached the handler through the DynamoDB Streams mapping with the CDK stream ARN, the test clock expired a TTL item into the documented REMOVE record, and a poison record was bisected and discarded to the on-failure queue; both EventBridge rules are invoked; the handler's own aws-sdk-go-v2 PutEvents with a fractional Time reached the pattern rule and the delivered envelope time was the supplied instant."
-    },
-    "examples/cdk/multilang/handlers/py/handler.py": {
-      "run": "multilang-py",
-      "class": "L3",
-      "gap": "IAM policy evaluation is a docs/125 true limit. Backends are emulated (DynamoDB Local, ElasticMQ, moto); SQS delivery, DynamoDB Streams, EventBridge rules, WebSocket frames and incremental response streaming are real. The REST v1 surface is defined only for the Go handler in this stack.",
-      "description": "Multilang Python handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the CDK SQS mapping delivered a real message to the Python handler and deleted it; a real SDK-written table item reached the handler through the DynamoDB Streams mapping with the CDK stream ARN, and the test clock expired a TTL item into the documented REMOVE record; the rate schedule fired and a real SDK PutEvents reached the pattern rule; the handler's own boto3 PutEvents with a whole-second Time reached the pattern rule and the delivered envelope time was that instant; the Go-only REST surface is also asserted."
-    },
-    "examples/cdk/multilang/handlers/ts/handler.mjs": {
-      "run": "multilang-ts",
-      "class": "L3",
-      "gap": "IAM policy evaluation is a docs/125 true limit. Backends are emulated (DynamoDB Local, ElasticMQ, moto); SQS delivery, DynamoDB Streams, EventBridge rules, WebSocket frames and incremental response streaming are real. The REST v1 surface is defined only for the Go handler in this stack.",
-      "description": "Multilang TypeScript handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the CDK SQS mapping delivered a real message to the TypeScript handler and deleted it; a real SDK-written table item reached the handler through the DynamoDB Streams mapping with the CDK stream ARN, and the test clock expired a TTL item into the documented REMOVE record; the rate schedule fired and a real SDK PutEvents reached the pattern rule; the handler's own AWS SDK for JavaScript v3 PutEvents with a fractional Time reached the pattern rule and the delivered envelope time was the supplied instant; the Go-only REST surface is also asserted."
-    },
-    "examples/cdk/multilang/handlers/ws-authorizer.mjs": {
-      "coveredBy": "examples/cdk/multilang/handlers/go/main.go",
-      "class": "L1",
-      "description": "WebSocket $connect REQUEST authorizer: the runner invokes it during the handshake and matches its returned policy against the $connect method ARN; a wrong token is refused with 401 and the correct one connects."
-    },
-    "examples/cdk/multilang/scripts/watch-go.sh": {
-      "run": "dev-loop-watch-go",
-      "class": "L2",
-      "gap": "The runner re-synthesizes with cdk synth and polls the app directory with a 500 ms debounce; a change it cannot apply live (a new API listener, a new WebSocket API, a changed CloudFront topology, a new backend) is reported by name and requires a restart.",
-      "description": "Dev-loop watch (Go): a real edit to handlers/go/main.go triggers the runner's own cdk synth; the new response arrives on the unchanged GoApi listener, the Go function's execution environment is replaced, and the TypeScript and Python functions keep their Runtime API listeners and still answer on their own API listeners (they were not restarted); the source is restored and rebuilt before shutdown."
-    },
-    "examples/cdk/multilang/scripts/watch-py.sh": {
-      "run": "dev-loop-watch-py",
-      "class": "L2",
-      "gap": "The runner re-synthesizes with cdk synth and polls the app directory with a 500 ms debounce; a change it cannot apply live (a new API listener, a new WebSocket API, a changed CloudFront topology, a new backend) is reported by name and requires a restart.",
-      "description": "Dev-loop watch (Python): a real edit to handlers/py/handler.py triggers the runner's own cdk synth; the new response arrives on the unchanged PyApi listener, the Python function's execution environment is replaced, and the Go and TypeScript functions keep their Runtime API listeners and still answer on their own API listeners (they were not restarted); the source is restored and rebuilt before shutdown."
-    },
-    "examples/cdk/multilang/scripts/watch-ts.sh": {
-      "run": "dev-loop-watch-ts",
-      "class": "L2",
-      "gap": "The runner re-synthesizes with cdk synth and polls the app directory with a 500 ms debounce; a change it cannot apply live (a new API listener, a new WebSocket API, a changed CloudFront topology, a new backend) is reported by name and requires a restart.",
-      "description": "Dev-loop watch (TypeScript): a real edit to handlers/ts/handler.mjs triggers the runner's own cdk synth; the new response arrives on the unchanged TsApi listener, the TypeScript function's execution environment is replaced, and the Go and Python functions keep their Runtime API listeners and still answer on their own API listeners (they were not restarted); the source is restored and rebuilt before shutdown."
-    },
-    "examples/cdk/multilang/scripts/watch-two-edit.sh": {
-      "run": "dev-loop-watch-two-edit",
-      "class": "L2",
-      "gap": "The runner re-synthesizes with cdk synth and polls the app directory with a 500 ms debounce; a change it cannot apply live (a new API listener, a new WebSocket API, a changed CloudFront topology, a new backend) is reported by name and requires a restart.",
-      "description": "Dev-loop watch (two successive edits): a real edit to handlers/go replaces the Go function and its new response arrives on the unchanged GoApi listener; a second real edit to handlers/ts replaces the TypeScript function while the already-restarted Go function keeps its Runtime API and still answers its new response, and the Python function answers throughout; both sources are restored and rebuilt before shutdown."
-    },
-    "examples/cdk/path-routed-frontend/bin/app.ts": {
-      "run": "path-routed-gateway",
-      "class": "L3",
-      "gap": "CloudFront edge network (docs/125 true limit: real network properties).",
-      "description": "Path-routed frontend: the generated SPA function rewrites /l and /auth to index.html, files are served unchanged, the external API origin is refused by name, POST is refused by AllowedMethods and a missing object is 403 under OAC. The example ships no SPA build output, so probe objects are written through the runner to the provisioned buckets. The external API origin is mapped with --origin to a loopback listener the row starts; the gateway sent the documented origin-request shape (origin path /prod, origin Host, method) and the CACHING_DISABLED behavior reported x-cache miss."
-    },
-    "examples/cdk/restv1-router/bin/app.ts": {
-      "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
-      "class": "I",
-      "description": "REST v1 router CDK app, synthesized and hash-checked with focused route, integration and stage assertions."
-    },
-    "examples/cdk/restv1-router/handlers/api.mjs": {
-      "run": "restv1-api",
-      "class": "L1",
-      "description": "REST v1 router catch-all handler: GET and POST assertions with the matched proxy path parameter."
-    },
-    "examples/cdk/restv1-router/handlers/graphql.mjs": {
-      "run": "restv1-graphql",
-      "class": "L1",
-      "description": "REST v1 router GraphQL handler: POST query handling and GET falling through to the catch-all route."
-    },
-    "examples/cdk/restv1-router/handlers/inventory.mjs": {
-      "run": "restv1-inventory",
-      "class": "L1",
-      "description": "REST v1 router inventory handler: GET/PUT/DELETE with path parameters, 404 refusals and the declared CORS preflight."
-    },
-    "examples/cdk/restv1-router/handlers/sse.mjs": {
-      "run": "restv1-sse",
-      "class": "L2",
-      "gap": "The local REST API integration forwards each chunk at the handler's pace; Lambda's 6 MB uncapped burst and 2 MBps streaming cap are not reproduced.",
-      "description": "REST v1 router SSE handler: the real streamifyResponse handler writes the 10 events and [DONE] incrementally; the row observes the first event before the stream ends."
-    },
-    "examples/cdk/restv1-router/scripts/intrinsic-limits.sh": {
-      "run": "intrinsic-limits",
-      "class": "L1",
-      "description": "CloudFormation-expression MemorySize/Timeout: the L1 CfnFunction escape hatch declares a Ref to a parameter Default (256 MB), an Fn::If over a condition evaluable from that default (10 s), and an Fn::FindInMap pair (512 MB / 30 s); plan resolves them with no unresolved flags, the inventory handler answers, and docker inspect proves the resolved 256 MB reached the real container."
-    },
-    "examples/cdk/restv1-router/scripts/seed-local.sh": {
-      "run": "seed-restv1",
-      "class": "L2",
-      "gap": "The seed command runs on the host with the run's dummy credentials and host endpoint URLs against DynamoDB Local (emulated); it drives the app's own handler (HTTP here), never the backend directly.",
-      "description": "Seed hook: the committed seed script ran after provisioning and before `local-run: ready`, used APPTHEORY_LOCAL_APIS to PUT and GET through the real inventory handler, and the seeded item was visible; a failing seed failed the run with the script's output."
-    },
-    "examples/cdk/restv1-router/scripts/stage-prefix.sh": {
-      "run": "stage-prefixed-rest",
-      "class": "L1",
-      "description": "Stage-prefixed REST URL: the API is served at /stage-probe at the root and /prod/stage-probe under the named stage; the v1 event carries path/resource without the stage and requestContext.path with it, and requestContext.stage=prod. plan prints both forms."
-    },
-    "examples/cdk/s3-vectors-semantic-search/bin/app.ts": {
-      "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
-      "class": "I",
-      "description": "S3 Vectors semantic search CDK app, synthesized and hash-checked with focused construct assertions."
-    },
-    "examples/cdk/s3-vectors-semantic-search/handler/main.go": {
-      "run": "s3-vectors",
-      "class": "L3",
-      "gap": "Managed S3 Vectors and Bedrock; the HTTP and auth surface runs locally, refusals are asserted, and authorized provider calls stop at the closed Bedrock endpoint.",
-      "description": "S3 Vectors semantic search handler: health reports the CDK vector index; missing/wrong auth, missing query and invalid top_k are refused; authorized seed/search reach the Bedrock boundary with vectorstore.embedding_failed."
-    },
-    "examples/cdk/sqs-queue/bin/app.ts": {
-      "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
-      "class": "I",
-      "description": "SQS queue CDK app, synthesized and hash-checked with focused queue, DLQ, redrive and event-source-mapping assertions."
-    },
-    "examples/cdk/sqs-queue/handlers/dlq-handler.mjs": {
-      "run": "sqs-dlq",
-      "class": "L2",
-      "gap": "ElasticMQ emulates SQS; IAM, KMS encryption and AWS-managed scaling are not emulated.",
-      "description": "SQS DLQ handler: the EventsConsumer mapping failed the real message five times on the test clock; ElasticMQ redrove it to events-queue-dlq after maxReceiveCount=5 and the DlqConsumer mapping delivered and deleted it."
-    },
-    "examples/cdk/sqs-queue/handlers/producer.mjs": {
-      "run": "sqs-producer",
-      "class": "L2",
-      "gap": "ElasticMQ emulates SQS; IAM, KMS encryption and AWS-managed scaling are not emulated.",
-      "description": "SQS producer handler: the real producer sends through the AWS SQS SDK to ElasticMQ; the ContractConsumer mapping delivered the message to worker.handler and deleted it, with no manual receive or invoke."
-    },
-    "examples/cdk/sqs-queue/handlers/rule-failing-target.mjs": {
-      "coveredBy": "examples/cdk/sqs-queue/handlers/rule-publisher.mjs",
-      "class": "L2",
-      "description": "EventBridge failing Lambda rule target; it always throws so the retry policy and DLQ are proven on the real path."
-    },
-    "examples/cdk/sqs-queue/handlers/rule-publisher.mjs": {
-      "run": "sqs-event-targets",
-      "class": "L2",
-      "gap": "ElasticMQ emulates SQS and moto emulates SNS; the runner serves the EventBridge bus. IAM policy evaluation is a docs/125 true limit. The PutEvents calls, pattern matching, input shaping, target delivery, retries and DLQ are real.",
-      "description": "EventBridge rule targets: the publisher calls PutEvents through the real SDK for four rules on the default and a custom bus; the transformed event names that bus by ARN (the Fn::GetAtt form PutEvents documents) while the others use its name; an SQS target receives its InputPath body, an SNS target receives the input-transformer message, a Lambda target receives the static Input object, and a failing Lambda target exhausts two retries into the real DLQ with the documented error attributes."
-    },
-    "examples/cdk/sqs-queue/handlers/rule-target.mjs": {
-      "coveredBy": "examples/cdk/sqs-queue/handlers/rule-publisher.mjs",
-      "class": "L2",
-      "description": "EventBridge Lambda rule target; it writes the received Input object to a real SQS receipt queue."
-    },
-    "examples/cdk/sqs-queue/handlers/s3-consumer.mjs": {
-      "run": "sqs-s3-notifications",
-      "class": "L2",
-      "gap": "s3proxy emulates S3 object storage and has no server-side event hook: the runner observes every object change with ListObjectsV2 and therefore reports an observed create as ObjectCreated:Put and an observed delete as ObjectRemoved:Delete; CloudFront caching and the edge network are not involved.",
-      "description": "S3 event notifications: the CDK bucket's Lambda, SQS and SNS configurations delivered the documented s3:TestEvent on configuration; the two ObjectCreated configurations share the incoming/ prefix with non-overlapping suffixes, and a real SDK PUT of incoming/a.json delivered ObjectCreated:Put to the Lambda function only (which wrote a real SQS receipt) while the SNS .csv suffix and the queue's event type filtered it; a real SDK PUT of incoming/b.csv delivered ObjectCreated:Put to the SNS topic only; ignored/a.txt was filtered by every prefix/suffix rule; a real SDK DELETE delivered ObjectRemoved:Delete to the queue; describe reported exact per-destination delivered/filtered counts (lambda 1/3, queue 2/3, topic 2/3)."
-    },
-    "examples/cdk/sqs-queue/handlers/sns-consumer.mjs": {
-      "coveredBy": "examples/cdk/sqs-queue/handlers/sns-publisher.mjs",
-      "class": "L2",
-      "description": "SNS consumer handler used by the standard, attribute-filtered and body-filtered Lambda subscriptions; it writes a real SQS receipt with the documented Lambda SNS record."
-    },
-    "examples/cdk/sqs-queue/handlers/sns-publisher.mjs": {
-      "run": "sqs-sns-publisher",
-      "class": "L2",
-      "gap": "moto emulates SNS (no managed delivery infrastructure); IAM policy evaluation is a docs/125 true limit. The topics, the publish call and the runner's fan-out are real.",
-      "description": "SQS queue SNS publisher: the standard and FIFO topics are provisioned on moto from the CDK definition; the handler publishes through the real SDK; the inline Lambda subscription receives the documented SNS record (message id, subject, timestamp, UnsubscribeUrl, String attributes); the FIFO topic delivers three ordered messages and collapses two identical content-based publishes to one; the FIFO queue carries MessageGroupId and the explicit or content SHA-256 MessageDeduplicationId."
-    },
-    "examples/cdk/sqs-queue/handlers/sns-scenario-publisher.mjs": {
-      "run": "sqs-sns-targets",
-      "class": "L2",
-      "gap": "moto emulates SNS (no managed delivery infrastructure) and ElasticMQ emulates SQS; IAM policy evaluation is a docs/125 true limit. The publishes, the runner's filter evaluation and every target delivery are real.",
-      "description": "SNS fan-out targets: an attribute-scope policy (AND across keys, OR within a key) and a body-scope policy (nested keys) each admit one message and filter two; an SQS raw subscription receives the body and native attributes while the envelope subscription receives the documented JSON notification; a loopback HTTP subscription receives the documented body and x-amz-sns-* headers."
-    },
-    "examples/cdk/sqs-queue/handlers/worker.mjs": {
-      "run": "sqs-worker",
-      "class": "L2",
-      "gap": "ElasticMQ emulates SQS; IAM, KMS encryption and AWS-managed scaling are not emulated.",
-      "description": "SQS worker handler: the EventsConsumer mapping batched two real ElasticMQ messages on the 10s window and left only the reported failure; FilteredConsumer deleted a non-matching message without invocation; FifoConsumer kept a failed group's records in order; ConcurrencyConsumer's live peak stayed at MaximumConcurrency=2."
-    },
-    "examples/cdk/sqs-queue/scripts/data-dir-sqs.sh": {
-      "run": "data-dir-sqs",
-      "class": "L2",
-      "gap": "ElasticMQ 1.7.1 persists queues and messages through messages-storage (verified on the pinned image); IAM, KMS encryption and AWS-managed scaling are not emulated.",
-      "description": "SQS --data-dir: a real ElasticMQ message was sent to an unconsumed queue in one session; a second session with the same --data-dir found it visible and received its body; the messages-storage H2 database held it."
-    },
-    "examples/cdk/ssr-only-provided-assets-site/bin/app.ts": {
-      "run": "ssr-only-gateway",
-      "class": "L2",
-      "gap": "CloudFront edge network (docs/125 true limit); the AWS_IAM Function URL is reached through local SigV4 OAC signing, but IAM policy evaluation is not emulated.",
-      "description": "SSR_ONLY provided assets: the real handler runs behind an AWS_IAM Function URL origin with local OAC signing and echoes the viewer request id; the provided bucket serves app.js, site.css and probe.txt; a missing object is 403 under OAC and OPTIONS is refused."
-    },
-    "examples/cdk/ssr-site/bin/apptheory-ssr-site.ts": {
-      "run": "ssr-site-gateway",
-      "class": "L2",
-      "gap": "CloudFront edge network (docs/125 true limit); the gateway forwards a streamed response at the origin's pace and caches it in full after it completes (Lambda's 6 MB uncapped burst and 2 MBps streaming cap are not reproduced).",
-      "description": "SSR site: the origin group fails over from the S3 HTML primary (403 under OAC) to the real SSR handler; the SSR stream reaches the viewer through the gateway and directly on the Function URL as the handler writes it, the viewer-response function echoes the request id, and the assets and hydrate deployments, full and ranged HEAD, conditional If-None-Match GETs, OPTIONS and the missing-object 403 are asserted. Caching is real: the static-assets behavior answered a miss then a hit with x-cache and age, the CACHING_DISABLED SSR behavior never cached, an invalidation through the local API and through the aws CLI removed the object, and clock.advance past the TTL was a miss again."
-    },
-    "examples/cdk/ssr-site/scripts/generate-assets-manifest.mjs": {
-      "run": "ssr-assets-manifest",
-      "class": "L2",
-      "gap": "CloudFront edge network (docs/125 true limit); the manifest is matched against the gateway response, not a deployed bucket.",
-      "description": "SSR site asset manifest generator: runs against the real assets directory, asserts hello.txt's sha256 and byte count, then matches the served asset through the gateway to the manifest."
-    },
-    "examples/cdk/ssr-site/scripts/upload-assets.sh": {
-      "run": "ssr-assets-upload",
-      "class": "L3",
-      "gap": "The edge network and IAM policy evaluation are docs/125 true limits (real network properties; IAM policy evaluation in general).",
-      "description": "SSR site asset uploader: the real AWS CLI syncs the assets and copies the generated manifest to the local s3proxy endpoint with dummy credentials; the gateway serves both with the script's cache-control and the uploaded manifest. The site's bucket declares no event notification; the notification destinations are proven by the sqs-queue row. s3proxy serves the objects without bucket policies or IAM."
-    },
-    "examples/mcp/resumable-sse/main.go": {
-      "run": "mcp-go-resumable-sse",
-      "class": "L2",
-      "gap": "The warm handler is driven over the local invoke transport, not a deployed API Gateway; the runner forwards each chunk at the handler's pace and does not reproduce Lambda's 6 MB uncapped burst and 2 MBps streaming cap (docs/125 streaming deviation).",
-      "description": "Go MCP resumable SSE server: a warm provided.al2023 container keeps the session, the tool-call stream is forwarded incrementally (the row observes the first chunk before the 0.5s-per-step countdown finishes), and Last-Event-ID replay returns the progress events and final result. Handler-only example: it ships no CDK definition, so no route table is synthesized."
-    },
-    "examples/mcp/tools-only-py/server.py": {
-      "run": "mcp-tools-only-py",
-      "class": "L1",
-      "description": "Python MCP Streamable HTTP server: initialize, tools/list, tools/call and the exported Lambda entry, driven by the real server and the MCP testkit."
-    },
-    "examples/mcp/tools-only-ts/server.mjs": {
-      "run": "mcp-tools-only-ts",
-      "class": "L1",
-      "description": "TypeScript MCP Streamable HTTP server: initialize, tools/list, tools/call and the exported Lambda entry, driven by the real server and the MCP testkit."
-    },
-    "examples/mcp/tools-only/main.go": {
-      "run": "mcp-go-tools-only",
-      "class": "L1",
-      "description": "Go MCP tools-only server: the real binary runs in a warm provided.al2023 container and is driven with explicit MCP HTTP API v2 events (initialize, tools/list, tools/call and two JSON-RPC refusals). Handler-only example: it ships no CDK definition, so no route table is synthesized."
-    },
-    "examples/mcp/tools-resources-prompts/main.go": {
-      "run": "mcp-go-tools-resources-prompts",
-      "class": "L1",
-      "description": "Go MCP server exposing tools, resources and prompts: the real binary runs in a warm provided.al2023 container and is driven with explicit MCP HTTP API v2 events (tools, resources/read, prompts/get and a refusal). Handler-only example: it ships no CDK definition."
-    },
-    "examples/microvm-conformance/run_local.py": {
-      "run": "microvm-conformance",
-      "class": "L3",
-      "gap": "Managed MicroVM provider; dry-run and leak-scan pass, and the live conformance run stops at the provider boundary. No EqualToAI/Host live proof is claimed.",
-      "description": "MicroVM conformance harness: the real dry-run and token-leak scanner pass; live mode runs against the local microvm-controller, passes its auth refusals, and stops at the managed provider boundary."
-    },
-    "examples/migration/rate-limited-http/main.go": {
-      "run": "rate-limited-http",
-      "class": "L1",
-      "description": "Lift-to-AppTheory migration server as a real net/http process on DynamoDB Local: real pkg/limited middleware, the rate-limits table provisioned from the real model, 60 allowed requests and the 429 refusal."
-    },
-    "examples/testkit/py.py": {
-      "run": "testkit-py",
-      "class": "L1",
-      "description": "Python testkit example: HTTP API v2 request/response, EventBridge workload envelopes and schedules, and DynamoDB stream normalization, all in process with no AWS."
-    },
-    "examples/testkit/ts-streaming.mjs": {
-      "run": "testkit-ts-streaming",
-      "class": "L1",
-      "description": "TypeScript testkit streaming example: Lambda Function URL streaming chunks, cookies, header mutation and late-error framing."
-    },
-    "examples/testkit/ts.mjs": {
-      "run": "testkit-ts",
-      "class": "L1",
-      "description": "TypeScript testkit example: HTTP API v2 request/response, EventBridge workload envelopes and schedules, and DynamoDB stream normalization, all in process with no AWS."
+  "codeBuild": {
+   "agent": {
+    "aarch64": {
+     "tag": "public.ecr.aws/codebuild/local-builds:aarch64",
+     "digest": "sha256:7d7b5d35d2ac4e062ae7ba8c662ffed15229a52d09bd0d664a7816c439679192",
+     "pinned": "2026-11-05",
+     "license": "Amazon Software License 1.0 (aws/aws-codebuild-docker-images LICENSE.txt)",
+     "compressedBytes": 569100000
+    },
+    "x86_64": {
+     "tag": "public.ecr.aws/codebuild/local-builds:latest",
+     "digest": "sha256:ccb19bdd7af94e4dc761e4c58c267e9455c28ec68d938086b4dc1cf8fe6b0940",
+     "pinned": "2026-11-05",
+     "license": "Amazon Software License 1.0 (aws/aws-codebuild-docker-images LICENSE.txt)",
+     "compressedBytes": 1309700000
     }
+   },
+   "images": {
+    "aws/codebuild/standard:7.0": {
+     "aarch64": {
+      "tag": "public.ecr.aws/codebuild/amazonlinux-aarch64-lambda-standard:nodejs24",
+      "digest": "sha256:56d1ee8b3216e09d67048793fb835dd75b8e367b812842ff6fe3c4edbeec3bdf",
+      "pinned": "2026-11-05",
+      "license": "Amazon Software License 1.0 (aws/aws-codebuild-docker-images LICENSE.txt)",
+      "compressedBytes": 1283010354
+     },
+     "x86_64": {
+      "tag": "public.ecr.aws/codebuild/amazonlinux-x86_64-lambda-standard:nodejs24",
+      "digest": "sha256:e198554f4a84c3c478f1755efcc342d2370228e40fa9e41132cbe43e1c959df9",
+      "pinned": "2026-11-05",
+      "license": "Amazon Software License 1.0 (aws/aws-codebuild-docker-images LICENSE.txt)",
+      "compressedBytes": 1357342127
+     }
+    },
+    "public.ecr.aws/codebuild/amazonlinux-aarch64-standard:3.0": {
+     "aarch64": {
+      "tag": "public.ecr.aws/codebuild/amazonlinux-aarch64-standard:3.0",
+      "digest": "sha256:af9a04646321922b7bc478b3a539eda2714f91148074233acbecf878c0f4fde8",
+      "pinned": "2026-11-05",
+      "license": "Amazon Software License 1.0 (aws/aws-codebuild-docker-images LICENSE.txt)",
+      "compressedBytes": 4677714403
+     }
+    }
+   }
   },
-  "suites": {
-    "scripts/local/runtime_api_conformance.py": {
-      "class": "L2",
-      "run": "runtime-api-conformance",
-      "script": "scripts/local/runtime_api_conformance.py",
-      "description": "Runtime API conformance: one handler set per language on the real digest-pinned runtime images, run once under the embedded Runtime Interface Emulator and once under the runner's Lambda Runtime API, comparing status, headers, body bytes, handler errors, timeouts and initialization failures.",
-      "gap": "The comparison runs this host's architecture; the Lambda service's Init-phase billing and its 10-second Init limit are not emulated."
-    }
+  "endpoints": {
+   "dynamodb": {
+    "container": "dynamodb-local",
+    "env": [
+     "AWS_ENDPOINT_URL",
+     "AWS_ENDPOINT_URL_DYNAMODB",
+     "DYNAMODB_ENDPOINT",
+     "DDB_ENDPOINT"
+    ]
+   },
+   "kms": {
+    "container": "moto",
+    "env": [
+     "AWS_ENDPOINT_URL_KMS",
+     "KMS_ENDPOINT"
+    ]
+   },
+   "sts": {
+    "container": "moto",
+    "env": [
+     "AWS_ENDPOINT_URL_STS",
+     "STS_ENDPOINT"
+    ]
+   },
+   "s3": {
+    "container": "s3proxy",
+    "env": [
+     "AWS_ENDPOINT_URL_S3",
+     "S3_ENDPOINT"
+    ]
+   },
+   "sqs": {
+    "container": "sqs",
+    "env": [
+     "AWS_ENDPOINT_URL_SQS",
+     "SQS_ENDPOINT"
+    ]
+   },
+   "ssm": {
+    "container": "moto",
+    "env": [
+     "AWS_ENDPOINT_URL_SSM",
+     "SSM_ENDPOINT"
+    ]
+   },
+   "secretsmanager": {
+    "container": "moto",
+    "env": [
+     "AWS_ENDPOINT_URL_SECRETS_MANAGER",
+     "SECRETS_MANAGER_ENDPOINT"
+    ]
+   },
+   "sns": {
+    "container": "moto",
+    "env": [
+     "AWS_ENDPOINT_URL_SNS",
+     "SNS_ENDPOINT"
+    ]
+   },
+   "kinesis": {
+    "container": "moto",
+    "env": [
+     "AWS_ENDPOINT_URL_KINESIS",
+     "KINESIS_ENDPOINT"
+    ]
+   },
+   "logs": {
+    "container": "moto",
+    "env": [
+     "AWS_ENDPOINT_URL_LOGS",
+     "AWS_ENDPOINT_URL_CLOUDWATCH_LOGS",
+     "CLOUDWATCH_LOGS_ENDPOINT"
+    ]
+   },
+   "cognito-idp": {
+    "container": "moto",
+    "env": [
+     "AWS_ENDPOINT_URL_COGNITO_IDENTITY_PROVIDER",
+     "AWS_ENDPOINT_URL_COGNITO_IDP",
+     "COGNITO_ENDPOINT"
+    ]
+   },
+   "ses": {
+    "container": "moto",
+    "env": [
+     "AWS_ENDPOINT_URL_SES",
+     "SES_ENDPOINT"
+    ]
+   }
   }
+ },
+ "entrypoints": {
+  "examples/cdk/codebuild-job-runner/bin/app.ts": {
+   "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
+   "class": "I",
+   "description": "CodeBuild job runner CDK app, synthesized and hash-checked with focused project, state-change-rule and grant assertions."
+  },
+  "examples/cdk/edge-gateway/bin/app.ts": {
+   "run": "edge-gateway",
+   "class": "L2",
+   "gap": "CloudFront edge network and edge TLS (docs/125 true limits); viewer events run against the viewer's plain-HTTP connection, so ViewerProtocolPolicy is reported rather than enforced. The field-level encryption row needs the AWS Encryption SDK on the harness interpreter.",
+   "description": "Edge gateway: four Lambda@Edge associations run through the real Node containers (viewer-request uri rewrite, origin-request generated response cached without a second invocation, origin-response body replacement, viewer-response header), IncludeBody exposes the base64 body, an origin rewrite reaches the other declared origin, a runtime 2.0 CloudFront Function reads get/exists/meta from its key value store, geo restriction serves US, refuses JP and serves an undetermined location, and the origin decrypts the field-level encryption ciphertext with the real AWS Encryption SDK."
+  },
+  "examples/cdk/edge-gateway/handlers/kvs.js": {
+   "coveredBy": "examples/cdk/edge-gateway/bin/app.ts",
+   "class": "L2",
+   "description": "CloudFront Function runtime 2.0 handler: get (string and json formats), exists and meta against the associated key value store."
+  },
+  "examples/cdk/edge-gateway/handlers/origin-request.js": {
+   "coveredBy": "examples/cdk/edge-gateway/bin/app.ts",
+   "class": "L2",
+   "description": "Lambda@Edge origin-request handler: a generated response with an invocation counter and an origin rewrite."
+  },
+  "examples/cdk/edge-gateway/handlers/origin-response.js": {
+   "coveredBy": "examples/cdk/edge-gateway/bin/app.ts",
+   "class": "L2",
+   "description": "Lambda@Edge origin-response handler: a header and a body replacement."
+  },
+  "examples/cdk/edge-gateway/handlers/viewer-request.js": {
+   "coveredBy": "examples/cdk/edge-gateway/bin/app.ts",
+   "class": "L2",
+   "description": "Lambda@Edge viewer-request handler: uri and query rewrite, a header returned without a key, an IncludeBody body header and a generated response."
+  },
+  "examples/cdk/edge-gateway/handlers/viewer-response.js": {
+   "coveredBy": "examples/cdk/edge-gateway/bin/app.ts",
+   "class": "L2",
+   "description": "Lambda@Edge viewer-response handler: a header on responses that may run it."
+  },
+  "examples/cdk/hello-world/bin/apptheory-hello-world.ts": {
+   "run": "cdk-synth-all",
+   "class": "I",
+   "description": "CDK app anchor for the synth row: every CDK example in the tree is synthesized and compared with its pinned template hash (plus focused construct assertions for the six once-uncovered examples, and an official Lambda runtime image invocation of the staged TypeScript and Python assets)."
+  },
+  "examples/cdk/hello-world/handlers/go/main.go": {
+   "run": "local-runner-go",
+   "class": "L1",
+   "description": "hello-world Go handler: the app's synthesized CDK stack, the provided.al2023 arm64 container through the runner's Lambda Runtime API, and four HTTP assertions over the derived HTTP API v2 transport (request id, root, 405, 404)."
+  },
+  "examples/cdk/hello-world/handlers/py/handler.py": {
+   "run": "local-runner-py",
+   "class": "L1",
+   "description": "hello-world Python handler: the app's synthesized CDK stack, the python:3.14 container through the runner's Lambda Runtime API, and four HTTP assertions over the derived HTTP API v2 transport."
+  },
+  "examples/cdk/hello-world/handlers/stage-echo/handler.mjs": {
+   "run": "stage-prefixed-http",
+   "class": "L1",
+   "description": "Stage-prefixed HTTP API URL: an HTTP API with a named (dev) stage served /echo at the root and /dev/echo under the stage; the payload-format-2.0 event carried rawPath=/dev/echo, requestContext.http.path=/dev/echo and requestContext.stage=dev."
+  },
+  "examples/cdk/hello-world/handlers/ts/app.mjs": {
+   "coveredBy": "examples/cdk/hello-world/handlers/ts/handler.mjs",
+   "class": "L1",
+   "description": "hello-world TypeScript app module imported by the handler; exercised through the same HTTP assertions."
+  },
+  "examples/cdk/hello-world/handlers/ts/handler.mjs": {
+   "run": "local-runner-ts",
+   "class": "L1",
+   "description": "hello-world TypeScript handler: the app's synthesized CDK stack, the nodejs:24 container through the runner's Lambda Runtime API, and four HTTP assertions over the derived HTTP API v2 transport."
+  },
+  "examples/cdk/import-pipeline/bin/app.ts": {
+   "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
+   "class": "I",
+   "description": "Import pipeline CDK app, synthesized and hash-checked with focused construct assertions."
+  },
+  "examples/cdk/import-pipeline/handlers/ingest/main.go": {
+   "run": "import-ingest",
+   "class": "L3",
+   "gap": "IAM policy evaluation is a docs/125 true limit; the bucket's EventBridge notification is delivered by the runner from a real object PUT, the WorkConsumer SQS mapping delivers automatically on ElasticMQ, and the CodeBuild step is proven by the codebuild-import row.",
+   "description": "Import pipeline ingest handler: a real object is written to s3proxy, the runner's S3 notification watcher publishes the documented aws.s3 Object Created event to the local bus, and IngestRule invokes the handler with no harness PutEvents; the handler writes the job meta and three work messages that the WorkConsumer mapping delivers to the worker and deletes."
+  },
+  "examples/cdk/import-pipeline/handlers/worker/main.go": {
+   "run": "import-worker",
+   "class": "L3",
+   "gap": "IAM policy evaluation is a docs/125 true limit; the bucket's EventBridge notification is delivered by the runner from a real object PUT, the WorkConsumer SQS mapping delivers automatically on ElasticMQ, and the CodeBuild step is proven by the codebuild-import row.",
+   "description": "Import pipeline worker handler: the full ingest \u2192 worker flow runs on the CDK jobs table after the runner delivered the bucket's EventBridge notification; the WorkConsumer mapping delivers the three real work messages automatically and they produce SUCCEEDED/FAILED records and a sanitized error envelope."
+  },
+  "examples/cdk/import-pipeline/scripts/codebuild-local.sh": {
+   "run": "codebuild-import",
+   "class": "L2",
+   "gap": "The local agent runs the build in a Docker container on its own compose network; there is no VPC, cache, artifact upload or report group, and the project's aws/codebuild/standard:7.0 image is mapped to the profile's digest-pinned aarch64 Lambda-standard image. The agent and image are the published AWS images, not a mock.",
+   "description": "CodeBuild through AWS's local agent: StartBuild on the synthesized BatchStep project ran its inline buildspec with the pinned agent and build image; BatchGetBuilds reported BUILD/COMPLETED SUCCEEDED and the command log; ListBuildsForProject returned the id; the state-change rule delivered the SUCCEEDED event to the import-build-events SQS target. No mock."
+  },
+  "examples/cdk/kinesis-cloudwatch-logs/bin/app.ts": {
+   "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
+   "class": "I",
+   "description": "Kinesis/CloudWatch Logs CDK app, synthesized and hash-checked with focused construct assertions."
+  },
+  "examples/cdk/kinesis-cloudwatch-logs/handlers/go/main.go": {
+   "run": "kinesis-handler",
+   "class": "L2",
+   "gap": "moto emulates Kinesis and CloudWatch Logs: sequence numbers are opaque and a stream never splits or merges. The subscription filter, the Kinesis mapping, partial failure and the function-log capture are real; IAM policy evaluation is a docs/125 true limit.",
+   "description": "Kinesis/CloudWatch Logs handler: the CDK stream is provisioned on moto; PutLogEvents through the real Logs SDK is forwarded by the subscription filter through its Logs destination to the stream and delivered to the consumer; the consumer's captured stdout is delivered to a Lambda-destination filter as awslogs.data; a direct PutRecords batch delivers its valid record and discards the malformed one after its retries."
+  },
+  "examples/cdk/kinesis-cloudwatch-logs/handlers/logtap/main.go": {
+   "coveredBy": "examples/cdk/kinesis-cloudwatch-logs/handlers/go/main.go",
+   "class": "L2",
+   "description": "CloudWatch Logs Lambda subscription target: it decodes the documented awslogs.data gzip payload delivered from the consumer's captured log group and writes the decoded log events to a real SQS receipt queue."
+  },
+  "examples/cdk/kinesis-cloudwatch-logs/handlers/signing/main.go": {
+   "run": "kinesis-signing",
+   "class": "L2",
+   "gap": "KMS is emulated by the runner's KMS front over the pinned moto (no HSM, key policies or grants); Sign, Verify and GetPublicKey are real, including MessageType=DIGEST.",
+   "description": "Kinesis signing handler: the CDK RSA_2048 SIGN_VERIFY key and alias are provisioned through the runner's KMS front; the handler signs and verifies with the alias (usable as KeyId) and the key ARN, reads the public key, and signs a precomputed SHA-256 digest with MessageType=DIGEST that the handler verifies outside KMS with the GetPublicKey public key (the double hash does not verify)."
+  },
+  "examples/cdk/kinesis-cloudwatch-logs/scripts/data-dir-kms.sh": {
+   "run": "data-dir-kms",
+   "class": "L2",
+   "gap": "KMS key material and the key identity (KeyId/Arn) are persisted by the runner's KMS front (moto is memory-only, so the front re-creates the key and reports the persisted identity); the remaining metadata, notably CreationDate, is the current run's. No HSM, key policies or grants.",
+   "description": "KMS --data-dir: run 1 encrypted under the CDK symmetric key, generated a 32-byte data key and signed a precomputed digest with the CDK RSA_2048 key; run 2 with the same --data-dir saw the same KeyId/ARN for both keys, decrypted both ciphertexts by the run-1 key id, read the same public key, and verified the run-1 signature through KMS by the run-1 key id and ARN and outside KMS."
+  },
+  "examples/cdk/lambda-packaging/bin/app.ts": {
+   "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
+   "class": "I",
+   "description": "CDK app anchor for the lambda-packaging example: the synth row synthesizes it and compares the pinned template hash and focused assertions (two layers declared by a Node and a Python function, three Docker image functions with their build arguments)."
+  },
+  "examples/cdk/lambda-packaging/handlers/node/app.js": {
+   "run": "lambda-packaging",
+   "class": "L1",
+   "description": "The Node zip function declares the CDK layer; the handler imports layer-greeting from /opt/nodejs/node_modules, executes /opt/bin/layer-tool from PATH and reports /opt/bin and /opt/lib in the runtime paths."
+  },
+  "examples/cdk/lambda-packaging/handlers/python/app.py": {
+   "coveredBy": "examples/cdk/lambda-packaging/handlers/node/app.js",
+   "class": "L1",
+   "description": "The Python zip function declares the CDK layer; the handler imports layer_tool from /opt/python, executes /opt/bin/layer-tool and reports PYTHONPATH, PATH and LD_LIBRARY_PATH."
+  },
+  "examples/cdk/lambda-packaging/images/go/main.go": {
+   "coveredBy": "examples/cdk/lambda-packaging/handlers/node/app.js",
+   "class": "L1",
+   "description": "Provided-runtime image handler; the runner builds it from the CDK DockerImageAsset and it returns the value the Dockerfile wrote from IMAGE_VALUE."
+  },
+  "examples/cdk/lambda-packaging/images/node/app.js": {
+   "coveredBy": "examples/cdk/lambda-packaging/handlers/node/app.js",
+   "class": "L1",
+   "description": "Node image handler; the runner builds it from the CDK DockerImageAsset and it returns the value the Dockerfile wrote from IMAGE_VALUE."
+  },
+  "examples/cdk/lambda-packaging/images/python/app.py": {
+   "coveredBy": "examples/cdk/lambda-packaging/handlers/node/app.js",
+   "class": "L1",
+   "description": "Python image handler; the runner builds it from the CDK DockerImageAsset and it returns the value the Dockerfile wrote from IMAGE_VALUE."
+  },
+  "examples/cdk/lambda-packaging/layers/node/bin/layer-tool": {
+   "coveredBy": "examples/cdk/lambda-packaging/handlers/node/app.js",
+   "class": "L1",
+   "description": "Executable extracted from the Node layer into /opt/bin; the handler runs it through PATH."
+  },
+  "examples/cdk/lambda-packaging/layers/python/bin/layer-tool": {
+   "coveredBy": "examples/cdk/lambda-packaging/handlers/node/app.js",
+   "class": "L1",
+   "description": "Executable extracted from the Python layer into /opt/bin; the handler runs it through PATH."
+  },
+  "examples/cdk/lambda-packaging/layers/python/python/layer_tool.py": {
+   "coveredBy": "examples/cdk/lambda-packaging/handlers/node/app.js",
+   "class": "L1",
+   "description": "Python module extracted from the layer into /opt/python; the handler imports it."
+  },
+  "examples/cdk/lambda-role/bin/app.ts": {
+   "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
+   "class": "I",
+   "description": "Lambda role CDK app, synthesized and hash-checked with focused IAM/KMS assertions, including the compiled handler asset."
+  },
+  "examples/cdk/lambda-role/handlers/authorizer.ts": {
+   "run": "lambda-role-authorizers",
+   "class": "L2",
+   "gap": "moto signs the user pool's tokens and serves the pool JWKS; the runner serves the local OIDC issuer the template's issuer resolves to. Token validation, audience and issuer matching, expiry on the run clock, scopes and the documented claims are real. IAM policy evaluation is a docs/125 true limit.",
+   "description": "HTTP API JWT, REST Cognito and Lambda policy authorizers: a real user was created in the moto pool and real id/access tokens were minted through the Cognito API; the JWT-protected route received requestContext.authorizer.jwt.claims and the Cognito-protected route received requestContext.authorizer.claims; a REST TOKEN authorizer, a REST REQUEST authorizer over a header and a query source, and an HTTP API IAM-policy authorizer ran the real policy function and carried its stringified context to the integration, Allow invoked the method, Deny was 403, the documented Unauthorized error was 401, an invalid policy was 500 and a missing identity source was 401 without invoking; a cached TOKEN and HTTP API decision did not invoke the function again until the run clock passed AuthorizerResultTtlInSeconds."
+  },
+  "examples/cdk/lambda-role/handlers/custom.ts": {
+   "run": "lambda-role-custom",
+   "class": "L2",
+   "gap": "IAM policy evaluation is a docs/125 true limit; S3 is emulated by s3proxy (no bucket policies and no server-side notification hook; the runner delivers bucket notification configurations from observed object state). SSM parameters, Secrets Manager secrets and the Cognito user pool are real on moto.",
+   "description": "lambda-role custom handler: the compiled asset runs in nodejs:24 and reads String/SecureString/StringList SSM parameters through Ref and GetAtt, a literal SecretString plus the keyed and bare GenerateSecretString forms through GetSecretValue, and the provisioned Cognito pool/client; the runner's local issuer serves the pool JWKS and discovery document; the S3 object round-trip stays real on s3proxy."
+  },
+  "examples/cdk/lambda-role/handlers/encrypted.ts": {
+   "run": "lambda-role-encrypted",
+   "class": "L2",
+   "gap": "KMS is emulated by moto (no HSM, key policies or grants); the encrypt/decrypt round-trip is real.",
+   "description": "lambda-role encrypted handler: the compiled asset runs in nodejs:24 and round-trips plaintext through the emulated KMS with match=true."
+  },
+  "examples/cdk/lambda-role/handlers/index.ts": {
+   "run": "lambda-role-index",
+   "class": "L1",
+   "description": "lambda-role baseline handler: the compiled asset serves the basic, tracing and dynamic functions and returns the expected 200 payload from each."
+  },
+  "examples/cdk/lambda-role/handlers/policy-authorizer.ts": {
+   "coveredBy": "examples/cdk/lambda-role/handlers/authorizer.ts",
+   "class": "L2",
+   "description": "IAM-policy authorizer function for the REST TOKEN, REST REQUEST and HTTP API authorizers; it counts its own invocations and returns the count in the authorizer context, which is how the row proves a cached policy was reused without invoking the function and was re-evaluated per method (GET /token-other is 403 because the cached policy names only GET /token)."
+  },
+  "examples/cdk/lambda-role/scripts/data-dir-s3.sh": {
+   "run": "data-dir-s3",
+   "class": "L2",
+   "gap": "s3proxy's filesystem provider persists objects; bucket policies and server-side event hooks are not served by the store.",
+   "description": "S3 --data-dir: the custom handler wrote an object through the real S3 SDK in one invoke; a second invoke with the same --data-dir read the object back through the handler, and the s3proxy base directory holds the object file."
+  },
+  "examples/cdk/lambda-role/scripts/s3-sse.sh": {
+   "run": "s3-sse",
+   "class": "L2",
+   "gap": "s3proxy's filesystem store refuses server-side encryption by design; the runner's S3 front records SSE-S3 for a verified header-signed put and forwards every other SSE put unchanged, so the store keeps its answer. SSE-KMS and SSE-C remain refused (the runner cannot honour a key binding or customer key). A DeleteObjects body above the front's 1 MiB record buffer is forwarded unchanged and its SSE-S3 records are left for a later plain PutObject, plain CopyObject, successful CompleteMultipartUpload, DeleteObject or plain DeleteBucket to clear; an aborted multipart upload and a metadata subresource read change nothing. Bucket policies and server-side notification hooks are not served by the store.",
+   "description": "SSE-S3 through the real SDK: the compiled Node handler put an object with x-amz-server-side-encryption: AES256 and the PutObject response reported AES256; HeadObject and GetObject through the same handler returned the SSE-S3 header and the stored body. One DeleteObjects request at AWS's maximum shape (999 keys of exactly 1024 bytes plus the short recorded key, about 1.05 MiB, above the front's buffer) was forwarded to s3proxy and deleted the object."
+  },
+  "examples/cdk/lesser-parity/bin/app.ts": {
+   "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
+   "class": "I",
+   "description": "Lesser-parity CDK app, synthesized and hash-checked with focused construct assertions."
+  },
+  "examples/cdk/lesser-parity/handlers/api.mjs": {
+   "run": "lesser-parity-api",
+   "class": "L1",
+   "description": "Lesser-parity catch-all REST handler: GET and POST assertions with resolved TABLE_NAME/QUEUE_URL values."
+  },
+  "examples/cdk/lesser-parity/handlers/graphql.mjs": {
+   "run": "lesser-parity-graphql",
+   "class": "L1",
+   "description": "Lesser-parity GraphQL handler: a dedicated POST route, the resolved table name, and GET falling through to the catch-all."
+  },
+  "examples/cdk/lesser-parity/handlers/sse.mjs": {
+   "run": "lesser-parity-sse",
+   "class": "L2",
+   "gap": "The local REST API integration forwards each chunk at the handler's pace; Lambda's 6 MB uncapped burst and 2 MBps streaming cap are not reproduced.",
+   "description": "Lesser-parity SSE handler: the streaming REST integration writes the three events incrementally (the row observes the first event 0.7s apart from the rest) and the declared CORS preflight is served from the same REST API."
+  },
+  "examples/cdk/lesser-parity/handlers/worker.mjs": {
+   "run": "lesser-parity-worker",
+   "class": "L2",
+   "gap": "ElasticMQ emulates SQS; IAM, KMS encryption and AWS-managed scaling are not emulated.",
+   "description": "Lesser-parity queue worker: two real ElasticMQ messages were delivered as the CDK mapping's batch; the handler returned the invalid record as its only partial failure, so exactly that message remained in the queue."
+  },
+  "examples/cdk/lesser-parity/scripts/data-dir.sh": {
+   "run": "data-dir-dynamodb",
+   "class": "L2",
+   "gap": "DynamoDB Local persists through -dbPath; moto runtime state is memory-only (the docs/125 true limit). A table key-schema change cannot be applied by UpdateTable and fails closed by name.",
+   "description": "DynamoDB --data-dir: a real item was written through the API handler's DynamoDB SDK in one session; a second session with the same --data-dir read it back through the same handler from shared-local-instance.db; a third session without --data-dir answered 404 (the default stays ephemeral)."
+  },
+  "examples/cdk/local-iam-peer/bin/app.ts": {
+   "coveredBy": "examples/cdk/local-iam/scripts/shared-plane.sh",
+   "description": "The second app of the shared-plane row: it defines the role the other run assumes and the REST API that run's session calls.",
+   "class": "L2"
+  },
+  "examples/cdk/local-iam/bin/app.ts": {
+   "class": "L2",
+   "gap": "IAM policy evaluation is narrow (docs/127 W3-D1): only the enumerated statement shapes are evaluated, and the STS trust policy alone decides AssumeRole locally.",
+   "description": "The local IAM app: a REST API with AWS_IAM methods and a resource policy, an HTTP API AWS_IAM route, an AWS_IAM Function URL, and the caller, other and vending roles the rows resolve.",
+   "coveredBy": "examples/cdk/local-iam/scripts/grants.sh"
+  },
+  "examples/cdk/local-iam/handlers/go/main.go": {
+   "run": "local-iam-caller-go",
+   "class": "L2",
+   "gap": "IAM policy evaluation is narrow (docs/127 W3-D1): only the enumerated shapes are evaluated, and the STS trust policy alone decides AssumeRole locally.",
+   "description": "Go caller: a provided.al2023 container signs an execute-api request with the AWS SDK for Go v2's SigV4 signer, using the credentials the runner issued to it, and the gateway resolves its role ARN from the signature."
+  },
+  "examples/cdk/local-iam/handlers/node/caller.js": {
+   "run": "local-iam-caller-node",
+   "class": "L2",
+   "gap": "IAM policy evaluation is narrow (docs/127 W3-D1): only the enumerated shapes are evaluated, and the STS trust policy alone decides AssumeRole locally.",
+   "description": "Node caller: a nodejs24.x container signs an execute-api request with the AWS SDK for JavaScript v3's SignatureV4 (the SDK the image ships under /var/runtime/node_modules), using the credentials the runner issued to it."
+  },
+  "examples/cdk/local-iam/handlers/python/caller.py": {
+   "run": "local-iam-caller-py",
+   "class": "L2",
+   "gap": "IAM policy evaluation is narrow (docs/127 W3-D1): only the enumerated shapes are evaluated, and the STS trust policy alone decides AssumeRole locally.",
+   "description": "Python caller: a python3.14 container signs an execute-api request with botocore's SigV4Auth, using the credentials the runner issued to it."
+  },
+  "examples/cdk/local-iam/scripts/function-url.sh": {
+   "run": "local-iam-function-url",
+   "class": "L2",
+   "gap": "The Function URL is served on a loopback URL by the local runner, not by the Lambda service; the trust store is the run CA when TLS is opted in.",
+   "description": "AWS_IAM Function URL: a signed call is served with the resolved principal in requestContext.authorizer.iam, and an unsigned call is refused with a named reason."
+  },
+  "examples/cdk/local-iam/scripts/grants.sh": {
+   "run": "local-iam-grants",
+   "class": "L2",
+   "gap": "IAM policy evaluation is a docs/125 true limit in general; the local runner evaluates only the enumerated statement shapes docs/127 W3-D1 defines and fails closed on anything else.",
+   "description": "Narrow IAM grants: a resource-policy allow, an identity-policy-only allow, an account-root principal, an aws:PrincipalArn-conditioned statement, a trailing path wildcard and an HTTP API AWS_IAM route each grant a real SigV4-signed call, and the handler sees the resolved role ARN, account and access key in its event identity."
+  },
+  "examples/cdk/local-iam/scripts/refusals.sh": {
+   "run": "local-iam-refusals",
+   "class": "L2",
+   "gap": "Only the enumerated statement shapes are evaluated (docs/125 true limit: IAM policy evaluation in general); an out-of-subset statement is refused by name instead of guessed.",
+   "description": "Narrow IAM refusals: an unsigned request, a tampered signature, a wrong principal, an out-of-subset condition and an explicit Deny are each refused with a named reason."
+  },
+  "examples/cdk/local-iam/scripts/shared-plane.sh": {
+   "run": "local-iam-shared-plane",
+   "class": "L2",
+   "gap": "The two runs share one directory on this host; they are not two deployments, and the session that signs the second call is minted by the first run's STS endpoint rather than by a container-to-container hop (that hop is the co-residence work).",
+   "description": "Shared IAM plane: run A's function assumes a role run B's stack defined, through run A's STS endpoint; run B verifies the session's signature from the shared credential registry and grants the call against its own resource policy and the role's identity policy."
+  },
+  "examples/cdk/local-iam/scripts/port-pinning.sh": {
+   "run": "local-port-pinning",
+   "class": "L2",
+   "description": "Declared ports: the HTTP API (index 0) is pinned to base+1 and the REST API (index 1) to base, and both pinned listeners answer real signed calls at their declared ports; the unpinned Function URL keeps base+2.",
+   "gap": "A pin reserves a slot inside the run's --port-base range; a port outside that range is refused rather than bound."
+  },
+  "examples/cdk/local-iam/scripts/port-unpinned.sh": {
+   "run": "local-port-unpinned",
+   "class": "L2",
+   "description": "Unpinned allocation: without --port, the same app keeps today's counter order exactly (httpv2 base, restv1 base+1, fnurl base+2).",
+   "gap": "The counter is per run; two co-resident runs use distinct --port-base values, as the fixed per-app port blocks require."
+  },
+  "examples/cdk/local-iam/scripts/port-refusals.sh": {
+   "run": "local-port-refusals",
+   "class": "L2",
+   "description": "Named port refusals: a collision, a port outside the run's range, an unknown logical id and a pin without --port-base each exit non-zero with a message naming the cause before anything starts.",
+   "gap": "These refusals are validated at plan time from the derived surface; a port another process holds is reported by the bind, not by the allocator."
+  },
+  "examples/cdk/local-iam/scripts/co-residence-ca.sh": {
+   "run": "local-co-residence-ca",
+   "class": "L2",
+   "description": "Shared CA and per-run host names: two runs (auth.localhost and mcp.localhost) reuse one CA at <shared-dir>/ca, each run's leaf carries its own host and verifies against that CA, and both hosts answer over verified HTTPS.",
+   "gap": "The CA is a runner-generated local root; the trust is installed per client (the mounted bundle or the harness context), not in a system store."
+  },
+  "examples/cdk/local-iam/scripts/co-residence-iam.sh": {
+   "run": "local-co-residence-iam",
+   "class": "L2",
+   "description": "Cross-run co-residence: two apps run in two sessions on one shared Docker network and one shared CA with pinned ports; a function in run A signs with run A's credential and calls run B's AWS_IAM route at https://mcp.localhost:<pinned>, and run B verifies it and resolves run A's role.",
+   "gap": "IAM policy evaluation is narrow (docs/127 W3-D1): only the enumerated statement shapes are evaluated. The two runs are processes on one host sharing a directory and a bridge, not two deployments."
+  },
+  "examples/cdk/local-resources/bin/app.ts": {
+   "class": "L2",
+   "gap": "The reported types have no local runtime behavior (docs/125 true limit: deploy-time-only resources), and a MicroVM image is an AWS-only service with no emulator.",
+   "description": "The resource-type app: a bucket with autoDeleteObjects, a Custom::Trigger, a provider-framework custom resource, a Custom::AWS SDK call, an SES receipt rule with S3 and Lambda actions, an SES identity, and the deploy-time-only and MicroVM types.",
+   "coveredBy": "examples/cdk/local-resources/scripts/inventory.sh"
+  },
+  "examples/cdk/local-resources/handlers/go/main.go": {
+   "class": "L2",
+   "gap": "The message is injected through the documented session operation; real SMTP ingress is the mail-surface work that follows (docs/127 X4). The S3 action's store is s3proxy.",
+   "description": "The receipt rule's Lambda action: the provided.al2023 handler renders the received-message record SES documents and reads the raw body the rule's S3 action wrote.",
+   "coveredBy": "examples/cdk/local-resources/scripts/ses-receipt.sh"
+  },
+  "examples/cdk/local-resources/scripts/custom-resources.sh": {
+   "run": "local-resources-custom",
+   "class": "L2",
+   "gap": "The provider handlers run in their real containers; the AWS SDK calls inside them reach the pinned moto, whose state is memory-only (docs/125 true limit).",
+   "description": "Served custom resources: the Custom::Trigger provider invokes its target through the local Lambda endpoint at start, the provider-framework handler returns its Data and physical id over the response URL, the Custom::AWS handler creates an SES rule set on moto, and the bucket auto-delete handler deletes a real object on its delete leg."
+  },
+  "examples/cdk/local-resources/scripts/inventory.sh": {
+   "run": "local-resources-inventory",
+   "class": "L2",
+   "gap": "The reported types have no local runtime behavior (docs/125 true limit: deploy-time-only resources), and a MicroVM image is an AWS-only service with no emulator.",
+   "description": "Resource-type inventory: a real synth declares a Custom::Trigger, a provider-framework custom resource, a Custom::AWS SDK call, a bucket auto-delete handler, an SES receipt rule, and the deploy-time-only and MicroVM types; plan reports each as served, deploy-time-only with its docs/125 reason, or refused by name."
+  },
+  "examples/cdk/local-resources/scripts/ses-receipt.sh": {
+   "run": "local-resources-ses-receipt",
+   "class": "L2",
+   "gap": "The message is injected through the documented session operation; real SMTP ingress is the mail-surface work that follows (docs/127 X4). The S3 action's store is s3proxy.",
+   "description": "SES receipt rule: ses.receive injects one message at a recipient the derived rule accepts; the rule's S3 action writes the raw body under its prefix, and its Lambda action receives the documented received-message record (message id, headers, action, receipt timestamp, no body), which the handler reads back from the bucket."
+  },
+  "examples/cdk/local-resources/scripts/mail-send-read.sh": {
+   "run": "local-mail-send-read",
+   "class": "L2",
+   "description": "Local mail surface: STARTTLS to the SMTP ingress verifies the aux leaf, an outbound message is accepted, and the sink's HTTPS read API returns it with its recipient and body.",
+   "gap": "The sink is a digest-pinned local test server, not Migadu or SES; the SMTP ingress is the runner's listener because it must reach both the sink and the receipt rules."
+  },
+  "examples/cdk/local-resources/scripts/mail-receipt.sh": {
+   "run": "local-mail-receipt",
+   "class": "L2",
+   "description": "Real SMTP ingress to the derived SES receipt rule: a message to ingress@local-resources.test runs the rule's S3 then Lambda actions with SES's received-message record (no body), and the sink's read API returns the same message.",
+   "gap": "The receipt record is built locally from the received SMTP message and verified against the SES event docs; the SMTP transport is local, not SES's."
+  },
+  "examples/cdk/local-tls/bin/app.ts": {
+   "run": "local-tls-surfaces",
+   "class": "L2",
+   "gap": "The certificate chains to a runner-generated local CA, not a public one, and the listener has no edge certificate or managed security policy (docs/125 real network properties: edge TLS certificates).",
+   "description": "Local TLS opt-in surfaces: the HTTP API, REST API, Function URL, WebSocket API and CloudFront distribution all answer over verified https/wss at app.localhost; the TLS listener negotiates HTTP/2 and refuses an unserved SNI name."
+  },
+  "examples/cdk/local-tls/handlers/go/main.go": {
+   "run": "local-tls-callback-go",
+   "class": "L2",
+   "gap": "The Go container verifies the runner's local CA, not a public certificate; no public CA or edge TLS policy is involved.",
+   "description": "Go caller: a provided.al2023 container fetches the app's OIDC discovery document and JWKS over verified https from the runner's own listener."
+  },
+  "examples/cdk/local-tls/handlers/python/caller.py": {
+   "run": "local-tls-callback-py",
+   "class": "L2",
+   "gap": "The Python container verifies the runner's local CA, not a public certificate; no public CA or edge TLS policy is involved.",
+   "description": "Python caller: a python3.14 container fetches the app's OIDC discovery document and JWKS over verified https from the runner's own listener."
+  },
+  "examples/cdk/local-tls/scripts/aux-cert.sh": {
+   "run": "local-tls-aux-cert",
+   "class": "L2",
+   "gap": "The auxiliary identity provider is a local test service signed by the runner CA, not a third-party identity provider (docs/125 decision D3).",
+   "description": "Auxiliary-service certificate: `tls leaf` issues a certificate from the run CA for idp.localhost, and a host client and a Python container fetch the service's discovery and JWKS over verified TLS."
+  },
+  "examples/cdk/local-tls/scripts/awssdk-go.sh": {
+   "run": "local-tls-awssdk-go",
+   "class": "L2",
+   "gap": "The Go container verifies the runner's local CA, not a public certificate, and the @connections endpoint is the runner's own TLS listener; no public CA or edge TLS policy is involved.",
+   "description": "AWS SDK in a Go container: a caller-supplied *http.Client loads the aws-sdk-go-v2 config, lists DynamoDB Local tables, gets 410 GONE from the runner's TLS @connections endpoint, and the same invocation fetches the app's discovery document and JWKS over verified https."
+  },
+  "examples/cdk/local-tls/scripts/awssdk-node.sh": {
+   "run": "local-tls-awssdk-node",
+   "class": "L2",
+   "gap": "The Node container verifies the runner's local CA through NODE_EXTRA_CA_CERTS, not a public certificate; no public CA or edge TLS policy is involved.",
+   "description": "AWS SDK in a Node container: the SDK for JavaScript v3 the nodejs24.x image ships lists DynamoDB Local tables and gets 410 GONE from the runner's TLS @connections endpoint, and the same invocation fetches the app's discovery document and JWKS over verified https."
+  },
+  "examples/cdk/local-tls/scripts/awssdk-py.sh": {
+   "run": "local-tls-awssdk-py",
+   "class": "L2",
+   "gap": "The Python container verifies the runner's local CA through AWS_CA_BUNDLE and SSL_CERT_FILE, not a public certificate; no public CA or edge TLS policy is involved.",
+   "description": "AWS SDK in a Python container: boto3 lists DynamoDB Local tables and gets 410 GONE from the runner's TLS @connections endpoint, and the same invocation fetches the app's discovery document and JWKS over verified https."
+  },
+  "examples/cdk/local-tls/scripts/browser-webauthn.sh": {
+   "run": "local-tls-webauthn",
+   "class": "L2",
+   "gap": "Chromium is launched with the run leaf's SPKI allowlisted instead of installing the CA in a system trust store, and the credential lives in a CDP virtual authenticator rather than a hardware or platform authenticator.",
+   "description": "Browser row: headless Chromium loads the opted-in CloudFront page over https (a secure context), registers a WebAuthn credential with RP ID app.localhost through the CDP virtual authenticator and asserts it."
+  },
+  "examples/cdk/local-tls/scripts/callback-node.sh": {
+   "run": "local-tls-callback-node",
+   "class": "L2",
+   "gap": "The Node container verifies the runner's local CA, not a public certificate; no public CA or edge TLS policy is involved.",
+   "description": "Node caller: a nodejs24.x container fetches the app's OIDC discovery document and JWKS over verified https from the runner's own listener."
+  },
+  "examples/cdk/local-tls/scripts/cloudfront-http-only-error.sh": {
+   "run": "local-tls-cloudfront-http-only-error",
+   "class": "L2",
+   "gap": "The refusal is a local runner check on a mapping the runner owns; a deployed distribution never maps an origin to the runner.",
+   "description": "A plain http origin mapping to the run's TLS-only API listener is refused before the distribution starts, naming OriginProtocolPolicy HTTPS_ONLY and the https mapping to use instead of surfacing the TLS listener's bare 400."
+  },
+  "examples/cdk/local-tls/scripts/cloudfront-origin.sh": {
+   "run": "local-tls-cloudfront-origin",
+   "class": "L2",
+   "gap": "The origin certificate chains to the runner's CA and names the app's declared local origin domain, not a public origin certificate; the local edge is not the CloudFront network (docs/125 real network properties).",
+   "description": "CloudFront in front of the run's own API over TLS: the distribution declares an https-only custom origin, verifies the run CA against its declared origin domain, forwards the origin Host header, and returns the API's GET /.well-known/oauth-authorization-server and a form POST /auth/token unchanged."
+  },
+  "examples/cdk/local-tls/scripts/cloudfront-redirect.sh": {
+   "run": "local-tls-cloudfront-redirect",
+   "class": "L2",
+   "gap": "The identity provider the app redirects to is a local test service signed by the runner CA, not a third-party provider; the local edge is not the CloudFront network (docs/125 real network properties).",
+   "description": "CloudFront returns an origin redirect to the viewer: a form POST the auth-api answers with 303 See Other reaches the viewer with the exact Location at the auxiliary idp.localhost certificate and both Set-Cookie values, the hop never follows it, and headless Chromium then follows it to the IdP over TLS verified against the run CA."
+  },
+  "examples/cdk/local-tls/scripts/oidc.sh": {
+   "run": "local-tls-oidc",
+   "class": "L2",
+   "gap": "The issuer is a local Lambda behind the runner's listener with a locally trusted certificate; it is not a public OIDC provider and the certificate is not publicly trusted.",
+   "description": "OIDC-shaped row: the issuer's discovery document names the exact https URL it is served at, and a host client plus a Go container fetch discovery then JWKS over verified TLS."
+  },
+  "examples/cdk/media-cdn/bin/app.ts": {
+   "run": "media-cdn-gateway",
+   "class": "L2",
+   "gap": "CloudFront edge network and edge TLS (docs/125 true limits); the private distribution's signed URLs and cookies are verified against the key group's real public keys, and the local S3 origin uses the OAC access model without bucket policies.",
+   "description": "Media CDN: the public distribution serves a probe object from the local S3 emulator with its metadata and a custom 403 error page; the private trusted-key-group distribution requires a signature: unsigned 403, a canned-policy SHA-256 URL, a custom-policy signed cookie, a query added after signing 403, an unknown Key-Pair-Id 403, OPTIONS exempt, and the expired URL 403 after clock.advance."
+  },
+  "examples/cdk/microvm-controller/bin/app.ts": {
+   "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
+   "class": "I",
+   "description": "MicroVM controller CDK app, synthesized and hash-checked with focused construct assertions."
+  },
+  "examples/cdk/microvm-controller/controller/main.go": {
+   "run": "microvm-controller",
+   "class": "L3",
+   "gap": "Managed MicroVM provider; the real CDK authorizer and controller routes run locally and every provider-backed operation stops at that boundary.",
+   "description": "MicroVM controller: the CDK authorizer refuses missing/wrong/tenant-less credentials; list/run reach the managed provider boundary; get/suspend/resume/terminate/auth-token/shell-auth-token/invoke read the TableTheory registry on DynamoDB Local and refuse a missing session."
+  },
+  "examples/cdk/microvm-controller/workloads/go/main.go": {
+   "run": "microvm-workload-go",
+   "class": "L1",
+   "description": "MicroVM Go workload: the built server runs as a host process and answers GET and POST with its HTTP contract."
+  },
+  "examples/cdk/microvm-controller/workloads/py/server.py": {
+   "run": "microvm-workload-py",
+   "class": "L1",
+   "description": "MicroVM Python workload: the stdlib server runs as a host process and answers GET and POST with its HTTP contract."
+  },
+  "examples/cdk/microvm-controller/workloads/ts/server.js": {
+   "run": "microvm-workload-ts",
+   "class": "L1",
+   "description": "MicroVM TypeScript workload (the built server.js shipped in the image): it runs as a host process and answers GET and POST with its HTTP contract."
+  },
+  "examples/cdk/microvm-controller/workloads/ts/server.ts": {
+   "coveredBy": "examples/cdk/microvm-controller/workloads/ts/server.js",
+   "class": "L1",
+   "description": "MicroVM TypeScript workload source; verified through the built server.js that the image ships and the harness runs."
+  },
+  "examples/cdk/multilang/bin/apptheory-multilang.ts": {
+   "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
+   "class": "I",
+   "description": "Multilang CDK app, synthesized and hash-checked with focused construct assertions; the TS Lambda asset is staged self-contained (A1 asset fix)."
+  },
+  "examples/cdk/multilang/handlers/go/main.go": {
+   "run": "multilang-go",
+   "class": "L3",
+   "gap": "IAM policy evaluation is a docs/125 true limit. Backends are emulated (DynamoDB Local, ElasticMQ, moto); SQS delivery, DynamoDB Streams, EventBridge rules, WebSocket frames and incremental response streaming are real. The REST v1 surface is defined only for the Go handler in this stack.",
+   "description": "Multilang Go handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the Go REST API serves hello and the three SSE events written incrementally; three WebSocket APIs serve real frames through the $connect authorizer, the custom chat route, $default and the @connections management API; the CDK SQS mapping delivered a real message to the Go handler and deleted it; a real SDK-written table item reached the handler through the DynamoDB Streams mapping with the CDK stream ARN, the test clock expired a TTL item into the documented REMOVE record, and a poison record was bisected and discarded to the on-failure queue; both EventBridge rules are invoked; the handler's own aws-sdk-go-v2 PutEvents with a fractional Time reached the pattern rule and the delivered envelope time was the supplied instant."
+  },
+  "examples/cdk/multilang/handlers/py/handler.py": {
+   "run": "multilang-py",
+   "class": "L3",
+   "gap": "IAM policy evaluation is a docs/125 true limit. Backends are emulated (DynamoDB Local, ElasticMQ, moto); SQS delivery, DynamoDB Streams, EventBridge rules, WebSocket frames and incremental response streaming are real. The REST v1 surface is defined only for the Go handler in this stack.",
+   "description": "Multilang Python handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the CDK SQS mapping delivered a real message to the Python handler and deleted it; a real SDK-written table item reached the handler through the DynamoDB Streams mapping with the CDK stream ARN, and the test clock expired a TTL item into the documented REMOVE record; the rate schedule fired and a real SDK PutEvents reached the pattern rule; the handler's own boto3 PutEvents with a whole-second Time reached the pattern rule and the delivered envelope time was that instant; the Go-only REST surface is also asserted."
+  },
+  "examples/cdk/multilang/handlers/ts/handler.mjs": {
+   "run": "multilang-ts",
+   "class": "L3",
+   "gap": "IAM policy evaluation is a docs/125 true limit. Backends are emulated (DynamoDB Local, ElasticMQ, moto); SQS delivery, DynamoDB Streams, EventBridge rules, WebSocket frames and incremental response streaming are real. The REST v1 surface is defined only for the Go handler in this stack.",
+   "description": "Multilang TypeScript handler: its own HTTP API v2 listener serves root, hello, 405 and 404; the CDK SQS mapping delivered a real message to the TypeScript handler and deleted it; a real SDK-written table item reached the handler through the DynamoDB Streams mapping with the CDK stream ARN, and the test clock expired a TTL item into the documented REMOVE record; the rate schedule fired and a real SDK PutEvents reached the pattern rule; the handler's own AWS SDK for JavaScript v3 PutEvents with a fractional Time reached the pattern rule and the delivered envelope time was the supplied instant; the Go-only REST surface is also asserted."
+  },
+  "examples/cdk/multilang/handlers/ws-authorizer.mjs": {
+   "coveredBy": "examples/cdk/multilang/handlers/go/main.go",
+   "class": "L1",
+   "description": "WebSocket $connect REQUEST authorizer: the runner invokes it during the handshake and matches its returned policy against the $connect method ARN; a wrong token is refused with 401 and the correct one connects."
+  },
+  "examples/cdk/multilang/scripts/watch-go.sh": {
+   "run": "dev-loop-watch-go",
+   "class": "L2",
+   "gap": "The runner re-synthesizes with cdk synth and polls the app directory with a 500 ms debounce; a change it cannot apply live (a new API listener, a new WebSocket API, a changed CloudFront topology, a new backend) is reported by name and requires a restart.",
+   "description": "Dev-loop watch (Go): a real edit to handlers/go/main.go triggers the runner's own cdk synth; the new response arrives on the unchanged GoApi listener, the Go function's execution environment is replaced, and the TypeScript and Python functions keep their Runtime API listeners and still answer on their own API listeners (they were not restarted); the source is restored and rebuilt before shutdown."
+  },
+  "examples/cdk/multilang/scripts/watch-py.sh": {
+   "run": "dev-loop-watch-py",
+   "class": "L2",
+   "gap": "The runner re-synthesizes with cdk synth and polls the app directory with a 500 ms debounce; a change it cannot apply live (a new API listener, a new WebSocket API, a changed CloudFront topology, a new backend) is reported by name and requires a restart.",
+   "description": "Dev-loop watch (Python): a real edit to handlers/py/handler.py triggers the runner's own cdk synth; the new response arrives on the unchanged PyApi listener, the Python function's execution environment is replaced, and the Go and TypeScript functions keep their Runtime API listeners and still answer on their own API listeners (they were not restarted); the source is restored and rebuilt before shutdown."
+  },
+  "examples/cdk/multilang/scripts/watch-ts.sh": {
+   "run": "dev-loop-watch-ts",
+   "class": "L2",
+   "gap": "The runner re-synthesizes with cdk synth and polls the app directory with a 500 ms debounce; a change it cannot apply live (a new API listener, a new WebSocket API, a changed CloudFront topology, a new backend) is reported by name and requires a restart.",
+   "description": "Dev-loop watch (TypeScript): a real edit to handlers/ts/handler.mjs triggers the runner's own cdk synth; the new response arrives on the unchanged TsApi listener, the TypeScript function's execution environment is replaced, and the Go and Python functions keep their Runtime API listeners and still answer on their own API listeners (they were not restarted); the source is restored and rebuilt before shutdown."
+  },
+  "examples/cdk/multilang/scripts/watch-two-edit.sh": {
+   "run": "dev-loop-watch-two-edit",
+   "class": "L2",
+   "gap": "The runner re-synthesizes with cdk synth and polls the app directory with a 500 ms debounce; a change it cannot apply live (a new API listener, a new WebSocket API, a changed CloudFront topology, a new backend) is reported by name and requires a restart.",
+   "description": "Dev-loop watch (two successive edits): a real edit to handlers/go replaces the Go function and its new response arrives on the unchanged GoApi listener; a second real edit to handlers/ts replaces the TypeScript function while the already-restarted Go function keeps its Runtime API and still answers its new response, and the Python function answers throughout; both sources are restored and rebuilt before shutdown."
+  },
+  "examples/cdk/path-routed-frontend/bin/app.ts": {
+   "run": "path-routed-gateway",
+   "class": "L3",
+   "gap": "CloudFront edge network (docs/125 true limit: real network properties).",
+   "description": "Path-routed frontend: the generated SPA function rewrites /l and /auth to index.html, files are served unchanged, the external API origin is refused by name, POST is refused by AllowedMethods and a missing object is 403 under OAC. The example ships no SPA build output, so probe objects are written through the runner to the provisioned buckets. The external API origin is mapped with --origin to a loopback listener the row starts; the gateway sent the documented origin-request shape (origin path /prod, origin Host, method) and the CACHING_DISABLED behavior reported x-cache miss."
+  },
+  "examples/cdk/restv1-router/bin/app.ts": {
+   "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
+   "class": "I",
+   "description": "REST v1 router CDK app, synthesized and hash-checked with focused route, integration and stage assertions."
+  },
+  "examples/cdk/restv1-router/handlers/api.mjs": {
+   "run": "restv1-api",
+   "class": "L1",
+   "description": "REST v1 router catch-all handler: GET and POST assertions with the matched proxy path parameter."
+  },
+  "examples/cdk/restv1-router/handlers/graphql.mjs": {
+   "run": "restv1-graphql",
+   "class": "L1",
+   "description": "REST v1 router GraphQL handler: POST query handling and GET falling through to the catch-all route."
+  },
+  "examples/cdk/restv1-router/handlers/inventory.mjs": {
+   "run": "restv1-inventory",
+   "class": "L1",
+   "description": "REST v1 router inventory handler: GET/PUT/DELETE with path parameters, 404 refusals and the declared CORS preflight."
+  },
+  "examples/cdk/restv1-router/handlers/sse.mjs": {
+   "run": "restv1-sse",
+   "class": "L2",
+   "gap": "The local REST API integration forwards each chunk at the handler's pace; Lambda's 6 MB uncapped burst and 2 MBps streaming cap are not reproduced.",
+   "description": "REST v1 router SSE handler: the real streamifyResponse handler writes the 10 events and [DONE] incrementally; the row observes the first event before the stream ends."
+  },
+  "examples/cdk/restv1-router/scripts/intrinsic-limits.sh": {
+   "run": "intrinsic-limits",
+   "class": "L1",
+   "description": "CloudFormation-expression MemorySize/Timeout: the L1 CfnFunction escape hatch declares a Ref to a parameter Default (256 MB), an Fn::If over a condition evaluable from that default (10 s), and an Fn::FindInMap pair (512 MB / 30 s); plan resolves them with no unresolved flags, the inventory handler answers, and docker inspect proves the resolved 256 MB reached the real container."
+  },
+  "examples/cdk/restv1-router/scripts/seed-local.sh": {
+   "run": "seed-restv1",
+   "class": "L2",
+   "gap": "The seed command runs on the host with the run's dummy credentials and host endpoint URLs against DynamoDB Local (emulated); it drives the app's own handler (HTTP here), never the backend directly.",
+   "description": "Seed hook: the committed seed script ran after provisioning and before `local-run: ready`, used APPTHEORY_LOCAL_APIS to PUT and GET through the real inventory handler, and the seeded item was visible; a failing seed failed the run with the script's output."
+  },
+  "examples/cdk/restv1-router/scripts/stage-prefix.sh": {
+   "run": "stage-prefixed-rest",
+   "class": "L1",
+   "description": "Stage-prefixed REST URL: the API is served at /stage-probe at the root and /prod/stage-probe under the named stage; the v1 event carries path/resource without the stage and requestContext.path with it, and requestContext.stage=prod. plan prints both forms."
+  },
+  "examples/cdk/s3-vectors-semantic-search/bin/app.ts": {
+   "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
+   "class": "I",
+   "description": "S3 Vectors semantic search CDK app, synthesized and hash-checked with focused construct assertions."
+  },
+  "examples/cdk/s3-vectors-semantic-search/handler/main.go": {
+   "run": "s3-vectors",
+   "class": "L3",
+   "gap": "Managed S3 Vectors and Bedrock; the HTTP and auth surface runs locally, refusals are asserted, and authorized provider calls stop at the closed Bedrock endpoint.",
+   "description": "S3 Vectors semantic search handler: health reports the CDK vector index; missing/wrong auth, missing query and invalid top_k are refused; authorized seed/search reach the Bedrock boundary with vectorstore.embedding_failed."
+  },
+  "examples/cdk/sqs-queue/bin/app.ts": {
+   "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
+   "class": "I",
+   "description": "SQS queue CDK app, synthesized and hash-checked with focused queue, DLQ, redrive and event-source-mapping assertions."
+  },
+  "examples/cdk/sqs-queue/handlers/dlq-handler.mjs": {
+   "run": "sqs-dlq",
+   "class": "L2",
+   "gap": "ElasticMQ emulates SQS; IAM, KMS encryption and AWS-managed scaling are not emulated.",
+   "description": "SQS DLQ handler: the EventsConsumer mapping failed the real message five times on the test clock; ElasticMQ redrove it to events-queue-dlq after maxReceiveCount=5 and the DlqConsumer mapping delivered and deleted it."
+  },
+  "examples/cdk/sqs-queue/handlers/producer.mjs": {
+   "run": "sqs-producer",
+   "class": "L2",
+   "gap": "ElasticMQ emulates SQS; IAM, KMS encryption and AWS-managed scaling are not emulated.",
+   "description": "SQS producer handler: the real producer sends through the AWS SQS SDK to ElasticMQ; the ContractConsumer mapping delivered the message to worker.handler and deleted it, with no manual receive or invoke."
+  },
+  "examples/cdk/sqs-queue/handlers/rule-failing-target.mjs": {
+   "coveredBy": "examples/cdk/sqs-queue/handlers/rule-publisher.mjs",
+   "class": "L2",
+   "description": "EventBridge failing Lambda rule target; it always throws so the retry policy and DLQ are proven on the real path."
+  },
+  "examples/cdk/sqs-queue/handlers/rule-publisher.mjs": {
+   "run": "sqs-event-targets",
+   "class": "L2",
+   "gap": "ElasticMQ emulates SQS and moto emulates SNS; the runner serves the EventBridge bus. IAM policy evaluation is a docs/125 true limit. The PutEvents calls, pattern matching, input shaping, target delivery, retries and DLQ are real.",
+   "description": "EventBridge rule targets: the publisher calls PutEvents through the real SDK for four rules on the default and a custom bus; the transformed event names that bus by ARN (the Fn::GetAtt form PutEvents documents) while the others use its name; an SQS target receives its InputPath body, an SNS target receives the input-transformer message, a Lambda target receives the static Input object, and a failing Lambda target exhausts two retries into the real DLQ with the documented error attributes."
+  },
+  "examples/cdk/sqs-queue/handlers/rule-target.mjs": {
+   "coveredBy": "examples/cdk/sqs-queue/handlers/rule-publisher.mjs",
+   "class": "L2",
+   "description": "EventBridge Lambda rule target; it writes the received Input object to a real SQS receipt queue."
+  },
+  "examples/cdk/sqs-queue/handlers/s3-consumer.mjs": {
+   "run": "sqs-s3-notifications",
+   "class": "L2",
+   "gap": "s3proxy emulates S3 object storage and has no server-side event hook: the runner observes every object change with ListObjectsV2 and therefore reports an observed create as ObjectCreated:Put and an observed delete as ObjectRemoved:Delete; CloudFront caching and the edge network are not involved.",
+   "description": "S3 event notifications: the CDK bucket's Lambda, SQS and SNS configurations delivered the documented s3:TestEvent on configuration; the two ObjectCreated configurations share the incoming/ prefix with non-overlapping suffixes, and a real SDK PUT of incoming/a.json delivered ObjectCreated:Put to the Lambda function only (which wrote a real SQS receipt) while the SNS .csv suffix and the queue's event type filtered it; a real SDK PUT of incoming/b.csv delivered ObjectCreated:Put to the SNS topic only; ignored/a.txt was filtered by every prefix/suffix rule; a real SDK DELETE delivered ObjectRemoved:Delete to the queue; describe reported exact per-destination delivered/filtered counts (lambda 1/3, queue 2/3, topic 2/3)."
+  },
+  "examples/cdk/sqs-queue/handlers/sns-consumer.mjs": {
+   "coveredBy": "examples/cdk/sqs-queue/handlers/sns-publisher.mjs",
+   "class": "L2",
+   "description": "SNS consumer handler used by the standard, attribute-filtered and body-filtered Lambda subscriptions; it writes a real SQS receipt with the documented Lambda SNS record."
+  },
+  "examples/cdk/sqs-queue/handlers/sns-publisher.mjs": {
+   "run": "sqs-sns-publisher",
+   "class": "L2",
+   "gap": "moto emulates SNS (no managed delivery infrastructure); IAM policy evaluation is a docs/125 true limit. The topics, the publish call and the runner's fan-out are real.",
+   "description": "SQS queue SNS publisher: the standard and FIFO topics are provisioned on moto from the CDK definition; the handler publishes through the real SDK; the inline Lambda subscription receives the documented SNS record (message id, subject, timestamp, UnsubscribeUrl, String attributes); the FIFO topic delivers three ordered messages and collapses two identical content-based publishes to one; the FIFO queue carries MessageGroupId and the explicit or content SHA-256 MessageDeduplicationId."
+  },
+  "examples/cdk/sqs-queue/handlers/sns-scenario-publisher.mjs": {
+   "run": "sqs-sns-targets",
+   "class": "L2",
+   "gap": "moto emulates SNS (no managed delivery infrastructure) and ElasticMQ emulates SQS; IAM policy evaluation is a docs/125 true limit. The publishes, the runner's filter evaluation and every target delivery are real.",
+   "description": "SNS fan-out targets: an attribute-scope policy (AND across keys, OR within a key) and a body-scope policy (nested keys) each admit one message and filter two; an SQS raw subscription receives the body and native attributes while the envelope subscription receives the documented JSON notification; a loopback HTTP subscription receives the documented body and x-amz-sns-* headers."
+  },
+  "examples/cdk/sqs-queue/handlers/worker.mjs": {
+   "run": "sqs-worker",
+   "class": "L2",
+   "gap": "ElasticMQ emulates SQS; IAM, KMS encryption and AWS-managed scaling are not emulated.",
+   "description": "SQS worker handler: the EventsConsumer mapping batched two real ElasticMQ messages on the 10s window and left only the reported failure; FilteredConsumer deleted a non-matching message without invocation; FifoConsumer kept a failed group's records in order; ConcurrencyConsumer's live peak stayed at MaximumConcurrency=2."
+  },
+  "examples/cdk/sqs-queue/scripts/data-dir-sqs.sh": {
+   "run": "data-dir-sqs",
+   "class": "L2",
+   "gap": "ElasticMQ 1.7.1 persists queues and messages through messages-storage (verified on the pinned image); IAM, KMS encryption and AWS-managed scaling are not emulated.",
+   "description": "SQS --data-dir: a real ElasticMQ message was sent to an unconsumed queue in one session; a second session with the same --data-dir found it visible and received its body; the messages-storage H2 database held it."
+  },
+  "examples/cdk/ssr-only-provided-assets-site/bin/app.ts": {
+   "run": "ssr-only-gateway",
+   "class": "L2",
+   "gap": "CloudFront edge network (docs/125 true limit); the AWS_IAM Function URL is reached through local SigV4 OAC signing, but IAM policy evaluation is not emulated.",
+   "description": "SSR_ONLY provided assets: the real handler runs behind an AWS_IAM Function URL origin with local OAC signing and echoes the viewer request id; the provided bucket serves app.js, site.css and probe.txt; a missing object is 403 under OAC and OPTIONS is refused."
+  },
+  "examples/cdk/ssr-site/bin/apptheory-ssr-site.ts": {
+   "run": "ssr-site-gateway",
+   "class": "L2",
+   "gap": "CloudFront edge network (docs/125 true limit); the gateway forwards a streamed response at the origin's pace and caches it in full after it completes (Lambda's 6 MB uncapped burst and 2 MBps streaming cap are not reproduced).",
+   "description": "SSR site: the origin group fails over from the S3 HTML primary (403 under OAC) to the real SSR handler; the SSR stream reaches the viewer through the gateway and directly on the Function URL as the handler writes it, the viewer-response function echoes the request id, and the assets and hydrate deployments, full and ranged HEAD, conditional If-None-Match GETs, OPTIONS and the missing-object 403 are asserted. Caching is real: the static-assets behavior answered a miss then a hit with x-cache and age, the CACHING_DISABLED SSR behavior never cached, an invalidation through the local API and through the aws CLI removed the object, and clock.advance past the TTL was a miss again."
+  },
+  "examples/cdk/ssr-site/scripts/generate-assets-manifest.mjs": {
+   "run": "ssr-assets-manifest",
+   "class": "L2",
+   "gap": "CloudFront edge network (docs/125 true limit); the manifest is matched against the gateway response, not a deployed bucket.",
+   "description": "SSR site asset manifest generator: runs against the real assets directory, asserts hello.txt's sha256 and byte count, then matches the served asset through the gateway to the manifest."
+  },
+  "examples/cdk/ssr-site/scripts/upload-assets.sh": {
+   "run": "ssr-assets-upload",
+   "class": "L3",
+   "gap": "The edge network and IAM policy evaluation are docs/125 true limits (real network properties; IAM policy evaluation in general).",
+   "description": "SSR site asset uploader: the real AWS CLI syncs the assets and copies the generated manifest to the local s3proxy endpoint with dummy credentials; the gateway serves both with the script's cache-control and the uploaded manifest. The site's bucket declares no event notification; the notification destinations are proven by the sqs-queue row. s3proxy serves the objects without bucket policies or IAM."
+  },
+  "examples/mcp/resumable-sse/main.go": {
+   "run": "mcp-go-resumable-sse",
+   "class": "L2",
+   "gap": "The warm handler is driven over the local invoke transport, not a deployed API Gateway; the runner forwards each chunk at the handler's pace and does not reproduce Lambda's 6 MB uncapped burst and 2 MBps streaming cap (docs/125 streaming deviation).",
+   "description": "Go MCP resumable SSE server: a warm provided.al2023 container keeps the session, the tool-call stream is forwarded incrementally (the row observes the first chunk before the 0.5s-per-step countdown finishes), and Last-Event-ID replay returns the progress events and final result. Handler-only example: it ships no CDK definition, so no route table is synthesized."
+  },
+  "examples/mcp/tools-only-py/server.py": {
+   "run": "mcp-tools-only-py",
+   "class": "L1",
+   "description": "Python MCP Streamable HTTP server: initialize, tools/list, tools/call and the exported Lambda entry, driven by the real server and the MCP testkit."
+  },
+  "examples/mcp/tools-only-ts/server.mjs": {
+   "run": "mcp-tools-only-ts",
+   "class": "L1",
+   "description": "TypeScript MCP Streamable HTTP server: initialize, tools/list, tools/call and the exported Lambda entry, driven by the real server and the MCP testkit."
+  },
+  "examples/mcp/tools-only/main.go": {
+   "run": "mcp-go-tools-only",
+   "class": "L1",
+   "description": "Go MCP tools-only server: the real binary runs in a warm provided.al2023 container and is driven with explicit MCP HTTP API v2 events (initialize, tools/list, tools/call and two JSON-RPC refusals). Handler-only example: it ships no CDK definition, so no route table is synthesized."
+  },
+  "examples/mcp/tools-resources-prompts/main.go": {
+   "run": "mcp-go-tools-resources-prompts",
+   "class": "L1",
+   "description": "Go MCP server exposing tools, resources and prompts: the real binary runs in a warm provided.al2023 container and is driven with explicit MCP HTTP API v2 events (tools, resources/read, prompts/get and a refusal). Handler-only example: it ships no CDK definition."
+  },
+  "examples/microvm-conformance/run_local.py": {
+   "run": "microvm-conformance",
+   "class": "L3",
+   "gap": "Managed MicroVM provider; dry-run and leak-scan pass, and the live conformance run stops at the provider boundary. No EqualToAI/Host live proof is claimed.",
+   "description": "MicroVM conformance harness: the real dry-run and token-leak scanner pass; live mode runs against the local microvm-controller, passes its auth refusals, and stops at the managed provider boundary."
+  },
+  "examples/migration/rate-limited-http/main.go": {
+   "run": "rate-limited-http",
+   "class": "L1",
+   "description": "Lift-to-AppTheory migration server as a real net/http process on DynamoDB Local: real pkg/limited middleware, the rate-limits table provisioned from the real model, 60 allowed requests and the 429 refusal."
+  },
+  "examples/testkit/py.py": {
+   "run": "testkit-py",
+   "class": "L1",
+   "description": "Python testkit example: HTTP API v2 request/response, EventBridge workload envelopes and schedules, and DynamoDB stream normalization, all in process with no AWS."
+  },
+  "examples/testkit/ts-streaming.mjs": {
+   "run": "testkit-ts-streaming",
+   "class": "L1",
+   "description": "TypeScript testkit streaming example: Lambda Function URL streaming chunks, cookies, header mutation and late-error framing."
+  },
+  "examples/testkit/ts.mjs": {
+   "run": "testkit-ts",
+   "class": "L1",
+   "description": "TypeScript testkit example: HTTP API v2 request/response, EventBridge workload envelopes and schedules, and DynamoDB stream normalization, all in process with no AWS."
+  },
+  "examples/cdk/local-mcp-auth-facade/bin/local-mcp-auth-facade.ts": {
+   "class": "I",
+   "coveredBy": "examples/cdk/hello-world/bin/apptheory-hello-world.ts",
+   "description": "CDK app anchor for the synth row: the MCP auth-facade example's HTTP API and Go facade handler with its pinned public base URL."
+  },
+  "examples/cdk/local-mcp-auth-facade/handlers/go/main.go": {
+   "class": "L2",
+   "coveredBy": "examples/cdk/local-mcp-auth-facade/scripts/rotation-chain.py",
+   "gap": "The upstream authorization server is the example's own in-process OAuth 2.1 implementation (no local OIDC provider path ships with the runner); TMS proves the Autheory path. Each row runs one container on this host, not a deployment.",
+   "description": "The Go facade app the refresh rows run: the framework MCP auth facade with its brokered route refresh, a runtime-bearer MCP tool surface, and a real local authorization server as the upstream."
+  },
+  "examples/cdk/local-mcp-auth-facade/scripts/replay_lib.py": {
+   "class": "L2",
+   "coveredBy": "examples/cdk/local-mcp-auth-facade/scripts/rotation-chain.py",
+   "description": "Shared replay client and assertions for the seven refresh sequences (discovery, DCR, PKCE authorize chain, code exchange, refresh, state document)."
+  },
+  "examples/cdk/local-mcp-auth-facade/scripts/rotation-chain.py": {
+   "run": "mcp-facade-rotation-chain",
+   "class": "L2",
+   "gap": "The upstream authorization server is the example's own in-process OAuth 2.1 implementation (no local OIDC provider path ships with the runner); TMS proves the Autheory path. Each row runs one container on this host, not a deployment.",
+   "description": "rotation chain: four generations of one family over real HTTP with one upstream rotation per refresh."
+  },
+  "examples/cdk/local-mcp-auth-facade/scripts/stale-predecessor.py": {
+   "run": "mcp-facade-stale-predecessor",
+   "class": "L2",
+   "gap": "The upstream authorization server is the example's own in-process OAuth 2.1 implementation (no local OIDC provider path ships with the runner); TMS proves the Autheory path. Each row runs one container on this host, not a deployment.",
+   "description": "the lab pattern: a predecessor presented past grace is served by rotating the family's live head."
+  },
+  "examples/cdk/local-mcp-auth-facade/scripts/concurrent-refresh.py": {
+   "run": "mcp-facade-concurrent-refresh",
+   "class": "L2",
+   "gap": "The upstream authorization server is the example's own in-process OAuth 2.1 implementation (no local OIDC provider path ships with the runner); TMS proves the Autheory path. Each row runs one container on this host, not a deployment.",
+   "description": "two processes refresh one handle at the same time: both are served and the upstream sees one rotation."
+  },
+  "examples/cdk/local-mcp-auth-facade/scripts/restart-mid-chain.py": {
+   "run": "mcp-facade-restart-mid-chain",
+   "class": "L2",
+   "gap": "The upstream authorization server is the example's own in-process OAuth 2.1 implementation (no local OIDC provider path ships with the runner); TMS proves the Autheory path. Each row runs one container on this host, not a deployment.",
+   "description": "a client restarts holding the predecessor: the stored successor body is replayed and the session continues."
+  },
+  "examples/cdk/local-mcp-auth-facade/scripts/retry-storm.py": {
+   "run": "mcp-facade-retry-storm",
+   "class": "L2",
+   "gap": "The upstream authorization server is the example's own in-process OAuth 2.1 implementation (no local OIDC provider path ships with the runner); TMS proves the Autheory path. Each row runs one container on this host, not a deployment.",
+   "description": "twelve identical presentations of a dead predecessor: all served, one upstream rotation, family stays live."
+  },
+  "examples/cdk/local-mcp-auth-facade/scripts/genuine-replay.py": {
+   "run": "mcp-facade-genuine-replay",
+   "class": "L2",
+   "gap": "The upstream authorization server is the example's own in-process OAuth 2.1 implementation (no local OIDC provider path ships with the runner); TMS proves the Autheory path. Each row runs one container on this host, not a deployment.",
+   "description": "a replayed authorization code revokes the family and the handle answers invalid_grant, the re-authorize signal."
+  },
+  "examples/cdk/local-mcp-auth-facade/scripts/legacy-continuity.py": {
+   "run": "mcp-facade-legacy-continuity",
+   "class": "L2",
+   "gap": "The upstream authorization server is the example's own in-process OAuth 2.1 implementation (no local OIDC provider path ships with the runner); TMS proves the Autheory path. Each row runs one container on this host, not a deployment.",
+   "description": "a family-less pre-policy record is adopted in code onto a generation-1 family with no manual data operation."
+  }
+ },
+ "suites": {
+  "scripts/local/runtime_api_conformance.py": {
+   "class": "L2",
+   "run": "runtime-api-conformance",
+   "script": "scripts/local/runtime_api_conformance.py",
+   "description": "Runtime API conformance: one handler set per language on the real digest-pinned runtime images, run once under the embedded Runtime Interface Emulator and once under the runner's Lambda Runtime API, comparing status, headers, body bytes, handler errors, timeouts and initialization failures.",
+   "gap": "The comparison runs this host's architecture; the Lambda service's Init-phase billing and its 10-second Init limit are not emulated."
+  }
+ }
 }

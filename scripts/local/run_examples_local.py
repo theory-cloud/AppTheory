@@ -9938,6 +9938,85 @@ def run_local_mail_receipt(harness: Harness) -> str:
         stop_local_session(harness, session)
 
 
+# --- LOCAL-W3-X5: the MCP auth-facade refresh rows --------------------------
+#
+# The example app (examples/cdk/local-mcp-auth-facade) mounts the framework's
+# MCP auth facade with the brokered route refresh and a real local authorization
+# server. Each row starts its own run over TLS at the run's port and executes
+# the example's own replay script, which drives the facade with real HTTP and
+# asserts the app's state document (family status, head, generations) as well as
+# every response. The scripts are maintained next to the example so a developer
+# can replay one sequence against a running app; this harness only owns the
+# session lifecycle.
+
+MCP_FACADE_APP = "examples/cdk/local-mcp-auth-facade"
+MCP_FACADE_TLS_HOST = "mcp.localhost"
+MCP_FACADE_REPLAY_DIR = "examples/cdk/local-mcp-auth-facade/scripts"
+MCP_FACADE_SEQUENCES = {
+    "mcp-facade-rotation-chain": "rotation-chain",
+    "mcp-facade-stale-predecessor": "stale-predecessor",
+    "mcp-facade-concurrent-refresh": "concurrent-refresh",
+    "mcp-facade-restart-mid-chain": "restart-mid-chain",
+    "mcp-facade-retry-storm": "retry-storm",
+    "mcp-facade-genuine-replay": "genuine-replay",
+    "mcp-facade-legacy-continuity": "legacy-continuity",
+}
+
+
+def run_mcp_facade_sequence(harness: Harness, sequence: str) -> str:
+    """Start one isolated run of the example and replay one sequence on it."""
+    base = harness.lease.http_port
+    base_url = f"https://{MCP_FACADE_TLS_HOST}:{base}"
+    session = start_local_session(
+        harness,
+        MCP_FACADE_APP,
+        name=f"mcp-facade-{sequence}",
+        tls=True,
+        tls_host=MCP_FACADE_TLS_HOST,
+        port_base=base,
+        context={"publicBaseUrl": base_url},
+    )
+    try:
+        api = next(
+            (entry for entry in session.info.get("apis") or [] if entry.get("class") == "httpv2"),
+            None,
+        )
+        if api is None:
+            raise HarnessFailure(f"the example run served no HTTP API: {session.info.get('apis')}")
+        if int(api.get("port") or -1) != base:
+            raise HarnessFailure(f"the example API is at {api.get('port')}, want the run's port {base}")
+        ca_file = str(session.info["tls"]["caFile"])
+        script = ROOT / MCP_FACADE_REPLAY_DIR / f"{sequence}.py"
+        if not script.is_file():
+            raise HarnessFailure(f"the replay script is missing: {script}")
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "--base-url",
+                base_url,
+                "--ca",
+                ca_file,
+            ],
+            cwd=str(ROOT),
+            env=harness.env,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        if completed.returncode != 0:
+            raise HarnessFailure(
+                f"the {sequence} replay failed with exit {completed.returncode}",
+                (completed.stdout + completed.stderr).strip(),
+            )
+        summary = completed.stdout.strip().splitlines()
+        if not summary:
+            raise HarnessFailure(f"the {sequence} replay printed no summary")
+        return summary[-1]
+    finally:
+        stop_local_session(harness, session)
+
+
 # The LOCAL-W3-M1 rows are registered here: their functions are defined below
 # the runner table, so the table is extended rather than literalled above.
 RUNNERS.update(
@@ -9959,6 +10038,15 @@ RUNNERS.update(
         "local-co-residence-iam": run_local_co_residence_iam,
         "local-mail-send-read": run_local_mail_send_read,
         "local-mail-receipt": run_local_mail_receipt,
+        "mcp-facade-rotation-chain": lambda harness: run_mcp_facade_sequence(harness, "rotation-chain"),
+        "mcp-facade-stale-predecessor": lambda harness: run_mcp_facade_sequence(harness, "stale-predecessor"),
+        "mcp-facade-concurrent-refresh": lambda harness: run_mcp_facade_sequence(
+            harness, "concurrent-refresh"
+        ),
+        "mcp-facade-restart-mid-chain": lambda harness: run_mcp_facade_sequence(harness, "restart-mid-chain"),
+        "mcp-facade-retry-storm": lambda harness: run_mcp_facade_sequence(harness, "retry-storm"),
+        "mcp-facade-genuine-replay": lambda harness: run_mcp_facade_sequence(harness, "genuine-replay"),
+        "mcp-facade-legacy-continuity": lambda harness: run_mcp_facade_sequence(harness, "legacy-continuity"),
     }
 )
 

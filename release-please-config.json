@@ -82,6 +82,11 @@
         },
         {
           "type": "json",
+          "path": "examples/cdk/local-mcp-auth-facade/package-lock.json",
+          "jsonpath": "$.packages['../../../cdk'].version"
+        },
+        {
+          "type": "json",
           "path": "examples/cdk/media-cdn/package-lock.json",
           "jsonpath": "$.packages['../../../cdk'].version"
         },
