@@ -189,6 +189,20 @@ func customResourceMicrovmRefusal(stack assemblyStack, resource templateResource
 			return "the resource targets " + target.Type + " (" + qualify(nil, stack.Name, ref.ID) + "); " + reason
 		}
 	}
+	// A provider-framework construct that manages MicroVM images carries its
+	// image properties inline (for example `MicrovmImageProperties`) and its
+	// handler calls the MicroVM control plane. The image and its prune handler
+	// are built and run by the MicroVM managed provider, which has no local
+	// emulator, so the resource is refused before its handler is started.
+	var properties map[string]any
+	if len(resource.Properties) > 0 && json.Unmarshal(resource.Properties, &properties) == nil {
+		for key := range properties {
+			if strings.Contains(strings.ToLower(key), "microvm") {
+				return "the resource's properties target the MicroVM managed provider (" + key + "); " +
+					refusedMicrovmReason
+			}
+		}
+	}
 	return ""
 }
 

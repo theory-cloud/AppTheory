@@ -202,3 +202,19 @@ func TestDescribeNotificationsReportsDeliveryState(t *testing.T) {
 		t.Fatal("no configuration is reported as nil")
 	}
 }
+
+func TestCustomResourceMicrovmRefusalCoversInlineImageProperties(t *testing.T) {
+	stack := assemblyStack{Name: "Stack", Template: template{Resources: map[string]templateResource{
+		"Prune": {Type: typeCloudFormationCustomResource,
+			Properties: json.RawMessage(`{"ServiceToken":{"Fn::GetAtt":["Provider","Arn"]},` +
+				`"MicrovmImageProperties":{"BaseImageArn":"arn:aws:lambda:us-east-1:aws:microvm-image:al2023-1"}}`)},
+		"Normal": {Type: "Custom::Migration", Properties: json.RawMessage(`{"Table":"items"}`)},
+	}}}
+	reason := customResourceMicrovmRefusal(stack, stack.Template.Resources["Prune"])
+	if !strings.Contains(reason, "MicroVM managed provider") || !strings.Contains(reason, "MicrovmImageProperties") {
+		t.Fatalf("an inline MicroVM image construct must be refused by name: %q", reason)
+	}
+	if reason := customResourceMicrovmRefusal(stack, stack.Template.Resources["Normal"]); reason != "" {
+		t.Fatalf("an unrelated custom resource must not be refused: %q", reason)
+	}
+}
