@@ -792,6 +792,12 @@
       "gap": "The origin certificate chains to the runner's CA and names the app's declared local origin domain, not a public origin certificate; the local edge is not the CloudFront network (docs/125 real network properties).",
       "description": "CloudFront in front of the run's own API over TLS: the distribution declares an https-only custom origin, verifies the run CA against its declared origin domain, forwards the origin Host header, and returns the API's GET /.well-known/oauth-authorization-server and a form POST /auth/token unchanged."
     },
+    "examples/cdk/local-tls/scripts/cloudfront-redirect.sh": {
+      "run": "local-tls-cloudfront-redirect",
+      "class": "L2",
+      "gap": "The identity provider the app redirects to is a local test service signed by the runner CA, not a third-party provider; the local edge is not the CloudFront network (docs/125 real network properties).",
+      "description": "CloudFront returns an origin redirect to the viewer: a form POST the auth-api answers with 303 See Other reaches the viewer with the exact Location at the auxiliary idp.localhost certificate and both Set-Cookie values, the hop never follows it, and headless Chromium then follows it to the IdP over TLS verified against the run CA."
+    },
     "examples/cdk/local-tls/scripts/cloudfront-http-only-error.sh": {
       "run": "local-tls-cloudfront-http-only-error",
       "class": "L2",

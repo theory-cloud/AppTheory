@@ -184,13 +184,18 @@ export class LocalTlsStack extends Stack {
     // allows it, and an API origin routes by its own domain. A policy that
     // allowed the viewer host here would make the API derive its issuer from
     // the distribution's name instead of the origin's.
+    //
+    // The policy forwards cookies because the hosted-auth face sets them:
+    // CloudFront forwards a Set-Cookie header to clients when the distribution
+    // forwards cookies.
+    // https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/RequestAndResponseBehaviorCustomOrigin.html
     const hostedAuthCache = new cloudfront.CachePolicy(this, "HostedAuthNoCache", {
       cachePolicyName: "apptheory-local-tls-hosted-auth-no-cache",
       comment: "The local hosted-auth origin is always reached, and it sees its own domain",
       defaultTtl: Duration.seconds(0),
       minTtl: Duration.seconds(0),
       maxTtl: Duration.seconds(1),
-      cookieBehavior: cloudfront.CacheCookieBehavior.none(),
+      cookieBehavior: cloudfront.CacheCookieBehavior.all(),
       headerBehavior: cloudfront.CacheHeaderBehavior.none(),
       queryStringBehavior: cloudfront.CacheQueryStringBehavior.all(),
       enableAcceptEncodingGzip: false,
@@ -297,6 +302,28 @@ exports.handler = async (event) => {
       contentType: (event.headers && event.headers["content-type"]) || "",
       form: fields,
     });
+  }
+  if (path === "/auth/authorize") {
+    // The hosted-auth SSO hand-off: the app answers the form POST with the 303
+    // See Other the SSO flow redirects the browser with. The example takes the
+    // identity provider's authorize URL from the form (idp_authorize) so the
+    // row can point it at the auxiliary idp.localhost certificate; a real app
+    // reads that URL from its configuration. Two Set-Cookie headers ride along
+    // so the row can prove their multiplicity survives the origin hop.
+    let body = event.body || "";
+    if (event.isBase64Encoded) {
+      body = Buffer.from(body, "base64").toString("utf8");
+    }
+    const form = new URLSearchParams(body);
+    const target = String(form.get("idp_authorize") || "");
+    const state = String(form.get("state") || "");
+    const separator = target.includes("?") ? "&" : "?";
+    return {
+      statusCode: 303,
+      headers: { location: target + separator + "state=" + encodeURIComponent(state) + "&code=local-code" },
+      cookies: ["sso=first; Path=/; HttpOnly", "sso=second; Path=/; SameSite=Lax"],
+      body: "",
+    };
   }
   return { statusCode: 200, headers: { "content-type": "text/html; charset=utf-8" }, body: page };
 };

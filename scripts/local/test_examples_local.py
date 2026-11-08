@@ -178,9 +178,9 @@ class RealTreeTests(unittest.TestCase):
         # authorizer, R2a authorizer echo, R2b policy authorizer and R4
         # lambda-packaging rows, the R3a Runtime API conformance suite, the
         # AD1 two-edit watch row, the KMS DIGEST/data-dir rows, the S3
-        # SSE-S3 row, the seven LOCAL-W2-TLS rows and the five
-        # LOCAL-W2-TLS-GAPS rows.
-        self.assertEqual(111, len(classified))
+        # SSE-S3 row, the seven LOCAL-W2-TLS rows, the five
+        # LOCAL-W2-TLS-GAPS rows and the origin-redirect row.
+        self.assertEqual(112, len(classified))
         by_key = {entry.key: entry for entry in entries}
         expected = {
             "examples/cdk/ssr-site/bin/apptheory-ssr-site.ts": "ssr-site-gateway",
@@ -207,6 +207,7 @@ class RealTreeTests(unittest.TestCase):
             "examples/cdk/local-tls/scripts/awssdk-node.sh": "local-tls-awssdk-node",
             "examples/cdk/local-tls/scripts/awssdk-py.sh": "local-tls-awssdk-py",
             "examples/cdk/local-tls/scripts/cloudfront-origin.sh": "local-tls-cloudfront-origin",
+            "examples/cdk/local-tls/scripts/cloudfront-redirect.sh": "local-tls-cloudfront-redirect",
             "examples/cdk/local-tls/scripts/cloudfront-http-only-error.sh": "local-tls-cloudfront-http-only-error",
         }
         for key, runner in expected.items():
