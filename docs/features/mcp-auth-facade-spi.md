@@ -205,12 +205,18 @@ providers' reuse intervals ([Auth0](https://auth0.com/docs/secure/tokens/refresh
 require it, and it requires a public client to be able to recover from a lost rotation response, which is what the
 served path provides.
 
-**Residual risk.** A stolen route handle stays exchangeable for fresh credentials for the family's lifetime, which is
-bounded by the handle TTL (at most 30 days) and by the upstream refresh token's own validity. The protection this
-policy relies on instead is the bounded family lifetime, short access-token lifetimes, and the binding checks a real
-client satisfies (client registration, route resource, scope, subject). Detection is not attempted: the facade
-cannot distinguish a thief's presentation of a stolen handle from a restart holding a stale copy, and treating the
-latter as theft is what broke every real client.
+**Residual risk.** A stolen route handle stays exchangeable for fresh credentials for as long as the thief keeps
+presenting the current handle and the upstream grant remains valid. Each rotation mints a successor and stores it
+with a fresh full handle-TTL window, and the family state carries no absolute deadline, so a thief who presents the
+newest handle at least once per window keeps the chain alive until the upstream grant ends. The 30-day handle TTL
+therefore bounds only a handle that is never presented again. The mitigations are short access-token lifetimes; the
+binding checks a real client satisfies (client registration, route resource, scope, subject); revocation when the
+upstream terminally rejects the grant, when an operator revokes the family on the incident surface, or when the
+authorization code that minted it is replayed; and, for a handle that is never presented, the handle TTL itself.
+Detection is not attempted: the facade cannot distinguish a thief's presentation of a stolen handle from a restart
+holding a stale copy, and treating the latter as theft is what broke every real client. The general treatment of
+refresh-token replay is in [RFC 6749 §10.4](https://www.rfc-editor.org/rfc/rfc6749#section-10.4) and [RFC 9700's
+refresh-token guidance](https://www.rfc-editor.org/rfc/rfc9700#section-4.14).
 
 **What real clients actually do.** The local real-client target (`make local-clients`) drives Codex 0.166,
 Claude Code 2.1.319, Kimi Code 2.4.0 and Vibe 3.0.4 against the example app with an isolated home per
