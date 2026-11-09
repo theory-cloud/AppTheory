@@ -3696,9 +3696,11 @@ explicit `DependsOn` edges plus the implicit edges `Ref` and `Fn::GetAtt`
 create, topologically sorted, with logical-id order as the only tie-break.
 Independent resources keep logical-id order, so a template that does not depend
 on the order keeps today's sequence; an edge that passes through a resource
-that is not itself a custom resource still orders its endpoints. A cycle fails
-the run with a named error that spells out the cycle, because CloudFormation
-could not order it either
+that is not itself a custom resource still orders its endpoints. A cycle that
+leaves a custom resource unordered fails the run with a named error that spells
+out the cycle, because CloudFormation could not order it either; a cycle among
+resources the runner does not order (CDK warns about such a template and still
+deploys it) leaves the derivation untouched
 ([DependsOn](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-attribute-dependson.html),
 [Ref](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/intrinsic-function-reference-ref.html),
 [Fn::GetAtt](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/intrinsic-function-reference-getatt.html)).
