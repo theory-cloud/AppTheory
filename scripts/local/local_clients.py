@@ -1454,15 +1454,22 @@ def main(argv: list[str] | None = None) -> int:
                 log(f"[codex/401] FAIL: {failure}")
     finally:
         # Runs on success, failure, timeout and Ctrl-C: remove every item Vibe
-        # wrote under the dedicated alias and prove none remains.
+        # wrote under the dedicated alias and prove none remains. A locked or
+        # prompting Keychain must fail this step closed (and still let the
+        # scratch be removed), never mask the run's own exception.
         if "vibe" in selected:
-            remaining = vibe_keychain_clear(VIBE_ALIAS)
-            if remaining:
+            try:
+                remaining = vibe_keychain_clear(VIBE_ALIAS)
+            except (OSError, subprocess.TimeoutExpired) as cleanup_error:
                 keychain_clean = False
-                for account in remaining:
-                    log(f"[vibe] keychain cleanup FAILED: {account} still exists")
+                log(f"[vibe] keychain cleanup could not run: {cleanup_error}")
             else:
-                log(f"[vibe] keychain clean: no mcp-oauth:{VIBE_ALIAS}:* item remains")
+                if remaining:
+                    keychain_clean = False
+                    for account in remaining:
+                        log(f"[vibe] keychain cleanup FAILED: {account} still exists")
+                else:
+                    log(f"[vibe] keychain clean: no mcp-oauth:{VIBE_ALIAS}:* item remains")
         if args.keep:
             log(f"scratch kept at {scratch}")
         else:
