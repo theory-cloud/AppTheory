@@ -24,9 +24,16 @@ import (
 // templateTopologicalOrder returns each template resource's position in its
 // stack's dependency order. The order is deterministic: independent resources
 // are emitted in logical-id order, which is the tie-break the assignment of
-// positions uses. A cycle fails closed with a named error naming the cycle.
+// positions uses.
 //
-//nolint:gocyclo // one branch per edge kind and one for the cycle report.
+// A cycle that leaves a deploy-time resource (a custom resource) without a
+// position fails closed with a named error: the runner cannot know which of
+// them CloudFormation would create first. A cycle among resources the runner
+// does not order is tolerated, because such a template still deploys — CDK
+// reports it as a warning — and refusing it would break a caller that never
+// depended on the order. Those resources take positions after the ordered ones.
+//
+//nolint:gocyclo,gocognit // one branch per edge kind and one per cycle outcome.
 func templateTopologicalOrder(stack assemblyStack) (map[string]int, error) {
 	resources := stack.Template.Resources
 	ids := sortedKeys(resources)
@@ -93,9 +100,26 @@ func templateTopologicalOrder(stack assemblyStack) (map[string]int, error) {
 		}
 	}
 	if position != len(ids) {
-		return nil, fmt.Errorf(
-			"the template dependency graph of stack %s has a cycle: %s",
-			stack.Name, templateCycle(resources, predecessors, indegree))
+		// Only a cycle that leaves a custom resource unordered changes what the
+		// runner invokes. A template whose cycle sits among resources the runner
+		// does not order (CDK warns about it) still deploys, so those resources
+		// take positions after the ordered ones and the derivation continues.
+		unplaced := make([]string, 0, len(ids)-position)
+		for _, id := range ids {
+			if _, placed := order[id]; placed {
+				continue
+			}
+			if customResourceType(resources[id].Type) {
+				return nil, fmt.Errorf(
+					"the template dependency graph of stack %s has a cycle: %s",
+					stack.Name, templateCycle(resources, predecessors, indegree))
+			}
+			unplaced = append(unplaced, id)
+		}
+		for _, id := range unplaced {
+			order[id] = position
+			position++
+		}
 	}
 	return order, nil
 }

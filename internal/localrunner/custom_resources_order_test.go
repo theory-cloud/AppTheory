@@ -111,6 +111,44 @@ func TestTemplateOrderCycleFailsClosed(t *testing.T) {
 	}
 }
 
+// TestTemplateOrderToleratesACycleAmongRuntimeResources pins the no-regression
+// half: multilang's template carries a CDK schedule-rule cycle between a
+// handler and its rule, and a template like it must still derive because no
+// deploy-time resource depends on the cycle.
+func TestTemplateOrderToleratesACycleAmongRuntimeResources(t *testing.T) {
+	handler := withAsset(lambdaFunction(nil), "asset.deadbeef")
+	handlerProperties, ok := handler["Properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("the lambda fixture has no properties: %v", handler)
+	}
+	handlerProperties["Role"] = map[string]any{"Fn::GetAtt": []any{"Schedule", "Arn"}}
+	resources := map[string]any{
+		"Fn":      servedFunction(),
+		"Alpha":   customResourceTemplate("Fn", nil, nil),
+		"Handler": handler,
+		"Schedule": map[string]any{
+			"Type": "AWS::Events::Rule",
+			"Properties": map[string]any{
+				"ScheduleExpression": "rate(1 hour)",
+				"Targets":            []any{map[string]any{"Arn": map[string]any{"Fn::GetAtt": []any{"Handler", "Arn"}}}},
+			},
+		},
+	}
+	dir := writeAssembly(t, resources)
+	mkdirAsset(t, dir)
+	spec, err := deriveAssembly(t, dir)
+	if err != nil {
+		t.Fatalf("a runtime-only cycle must not fail the derivation: %v", err)
+	}
+	ids := make([]string, 0, len(spec.CustomResources))
+	for _, resource := range dependencyOrder(spec.CustomResources) {
+		ids = append(ids, resource.LogicalID)
+	}
+	if len(ids) != 1 || ids[0] != "Alpha" {
+		t.Fatalf("custom resource order = %v, want [Alpha]", ids)
+	}
+}
+
 // TestTemplateDependsOnAcceptsAStringOrAList covers both CloudFormation shapes.
 func TestTemplateDependsOnAcceptsAStringOrAList(t *testing.T) {
 	if got := templateDependsOn(json.RawMessage(`"B"`)); len(got) != 1 || got[0] != "B" {
