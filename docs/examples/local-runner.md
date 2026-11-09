@@ -857,6 +857,13 @@ not `moto`), so two runs never answer one Docker DNS name. The shared network is
 created once by the first run that starts and is removed only by an explicit
 `apptheory-local down --app <app> --shared-network <name>`; a run's own cleanup
 leaves it for its siblings.
+The endpoint the runner injects names the same scoped alias: a profile endpoint
+for `moto` becomes `http://<name-prefix>-moto:<port>` in every function's
+environment and in the preflight probe, because that probe also runs on the
+shared network. Without it the preflight and the functions would ask Docker for
+a bare `moto` that only one run could own. `--name-prefix` must differ per
+co-resident run; it is what keeps the aliases, containers and injected names
+unique.
 
 The Linux CI proof is the `local-co-residence-iam` harness row: run A's function
 resolves run B's host through the one add-host helper and reaches the listener
@@ -2648,6 +2655,56 @@ against real AWS or a store that performs the encryption.
   session's `s3.put`, a bucket deployment) has no SSE-S3 record, as it named no
   algorithm.
 
+### Object versioning
+
+A bucket whose template sets `VersioningConfiguration: {Status: Enabled}` is
+served with S3's versioning semantics
+([Versioning](https://docs.aws.amazon.com/AmazonS3/latest/userguide/Versioning.html)).
+The pinned s3proxy implements no versioning at all: its filesystem backend has
+never kept a version history, and the container answers `PutBucketVersioning`
+and `ListObjectVersions` with `501 NotImplemented`
+([s3proxy #74](https://github.com/gaul/s3proxy/issues/74),
+[#1138](https://github.com/gaul/s3proxy/issues/1138)). The runner's S3 front
+therefore keeps the version log itself, beside the SSE-S3 records:
+
+- every successful `PutObject`, plain `CopyObject` and completed
+  `CompleteMultipartUpload` to a version-enabled bucket is copied out of the
+  store into `<data-dir>/s3versions` (in memory without `--data-dir`) and
+  answered with a new `x-amz-version-id`
+  ([PutObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html),
+  [CopyObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CopyObject.html),
+  [CompleteMultipartUpload](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html));
+- `GetObject` and `HeadObject` with `?versionId=` are served from that log,
+  with a single `Range` read supported, and a plain read names the current
+  version in `x-amz-version-id`
+  ([GetObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html));
+- a delete without a version id creates a delete marker; reads of the key then
+  answer `404` with `x-amz-delete-marker: true` and the marker's version id,
+  while the previous versions stay readable
+  ([DeleteObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObject.html),
+  [delete markers](https://docs.aws.amazon.com/AmazonS3/latest/userguide/DeleteMarker.html));
+- `ListObjectVersions` is synthesized from the log, keys ascending and each
+  key's versions newest first, with `IsLatest`, delete markers and the
+  `key-marker`/`version-id-marker` paging
+  ([ListObjectVersions](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectVersions.html));
+- `DeleteObjects` entries that name a `VersionId` remove those versions, and a
+  plain entry creates a marker; when a key's last version is gone the live
+  object is removed too, so a purge really empties the bucket. Deleting one
+  version reconciles the live object to what is now latest, restoring the
+  previous bytes when a delete marker was removed.
+
+A bucket whose template does not enable versioning takes exactly the v7.0.0
+path: no header is added, no byte is copied, and the store answers the
+versioning APIs as it always did.
+
+True limits of the front's store: `PUT ?versioning` with `Status: Suspended` is
+refused with a named `501` (only `Enabled` is served), a `CopyObject` whose
+source names a specific `versionId` is refused the same way, and versioning is a
+template property — a `PutBucketVersioning` against a bucket the template does
+not version stays on the store's path (the pinned s3proxy answers `501`), so an
+unversioned bucket is untouched by this front. The first two are docs/125 true
+limits; a template that only enables versioning at creation never reaches them.
+
 ## Event delivery
 
 `run` and `session` start a delivery engine. Every event-source mapping,
@@ -3607,7 +3664,7 @@ ignored. `plan` and `session describe` list each one under `custom resources`,
 | `Custom::Trigger` | Starts the trigger's provider function, sends it the CloudFormation request document, waits for the response document on the request's `ResponseURL`, and starts (and invokes through the local Lambda endpoint) the function its `HandlerArn` names. |
 | Provider-framework custom resources (`Custom::<name>`, `AWS::CloudFormation::CustomResource`) | The same request/response contract. The handler's `Data` becomes the custom resource's attributes, so a `Fn::GetAtt` on it resolves to what the handler returned. |
 | `Custom::AWS` | The same contract, with the handler's SDK calls reaching the local endpoints: an SES call reaches the pinned moto, which implements `createReceiptRuleSet` and `setActiveReceiptRuleSet`. |
-| `Custom::S3AutoDeleteObjects` | Served by the runner: the `customResource.delete` session operation empties the bucket with the S3 API the store implements and reports the handler's `SUCCESS` response. The CDK handler itself lists object *versions*, which s3proxy's store does not implement, so the runner performs the same effect natively. |
+| `Custom::S3AutoDeleteObjects` | Served by the runner: the `customResource.delete` session operation empties the bucket and reports the handler's `SUCCESS` response. For a versioned bucket it deletes every listed version, which is what the CDK handler itself does and what the S3 front now serves; for an unversioned bucket it uses the listing the store implements. |
 | `AWS::SES::ReceiptRule` | The rule's rule set, recipients and ordered actions are derived; the `ses.receive` session operation delivers one injected message to them. |
 | `Custom::CDKBucketDeployment`, `Custom::S3BucketNotifications` | Served by the runner's own implementation (the asset copy and the observed notification configuration); the handler does not run. |
 
@@ -3631,6 +3688,31 @@ A function a handler invokes reaches the target through the local Lambda Invoke
 endpoint, injected as `AWS_ENDPOINT_URL_LAMBDA`
 (https://docs.aws.amazon.com/lambda/latest/api/API_Invoke.html,
 https://docs.aws.amazon.com/sdkref/latest/guide/feature-ss-endpoints.html).
+
+### Dependency order and deploy-time functions
+
+The runner invokes served custom resources in the template's dependency order:
+explicit `DependsOn` edges plus the implicit edges `Ref` and `Fn::GetAtt`
+create, topologically sorted, with logical-id order as the only tie-break.
+Independent resources keep logical-id order, so a template that does not depend
+on the order keeps today's sequence; an edge that passes through a resource
+that is not itself a custom resource still orders its endpoints. A cycle fails
+the run with a named error that spells out the cycle, because CloudFormation
+could not order it either
+([DependsOn](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-attribute-dependson.html),
+[Ref](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/intrinsic-function-reference-ref.html),
+[Fn::GetAtt](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/intrinsic-function-reference-getatt.html)).
+
+A provider-framework custom resource does not call its user function directly:
+the framework's `onEvent` handler names it in its own environment
+(`USER_ON_EVENT_FUNCTION_ARN`), and the custom resource's properties mention
+only the service token. The run starts the transitive closure of those
+environment edges from every served custom resource, so a function the template
+invokes at deploy time runs even when `--target` does not name it and no route
+or event source targets it
+([Provider](https://docs.aws.amazon.com/cdk/api/v2/docs/aws-cdk-lib.custom_resources.Provider.html)).
+A function whose code the assembly does not carry is left out and fails by name
+when the provider reaches it, as before.
 
 ### SES receipt rules
 

@@ -9099,6 +9099,35 @@ def run_local_resources_custom(harness: Harness) -> str:
         rule_set = custom.get("EnsureRuleSet29212476") or {}
         if not rule_set.get("physicalResourceId"):
             raise HarnessFailure(f"the Custom::AWS handler did not report a physical id: {rule_set}")
+        # X6b: the activation's logical id sorts before the ensure that creates
+        # its rule set, so only the template's DependsOn edge can order them.
+        def bridge(resource: str) -> dict:
+            for logical_id, entry in custom.items():
+                if logical_id.startswith(resource):
+                    return entry
+            raise HarnessFailure(f"the plan served no {resource} custom resource: {sorted(custom)}")
+
+        ensure = bridge("EnsureBridge")
+        activate = bridge("ActivateBridge")
+        for label, entry in (("ensure", ensure), ("activate", activate)):
+            if entry.get("status") != "SUCCESS" and not entry.get("data"):
+                raise HarnessFailure(f"the {label} custom resource did not answer: {entry}")
+        if ensure.get("physicalResourceId") != "bridge-local-resources":
+            raise HarnessFailure(f"the ensure custom resource reported {ensure.get('physicalResourceId')!r}")
+        if activate.get("physicalResourceId") != "bridge-local-resources-active":
+            raise HarnessFailure(f"the activate custom resource reported {activate.get('physicalResourceId')!r}")
+        log = Path(session.log_path).read_text(encoding="utf-8", errors="replace")
+        ensure_at = log.find("custom resource EnsureBridge")
+        activate_at = log.find("custom resource ActivateBridge")
+        if ensure_at < 0 or activate_at < 0:
+            raise HarnessFailure(f"the run log does not name both bridge custom resources: {log[-4000:]}")
+        if not ensure_at < activate_at:
+            raise HarnessFailure("the activate custom resource ran before the ensure custom resource")
+        # X6d: the provider framework's user function is named only in its
+        # onEvent handler's environment, and no route targets it.
+        started = [str(entry.get("logicalId") or "") for entry in session.info.get("functions") or []]
+        if not any(logical_id.startswith("MigrationProvider") for logical_id in started):
+            raise HarnessFailure(f"the provider framework's user function did not start: {started}")
         # The auto-delete handler's delete leg really empties the bucket.
         bucket = session.resource(logical_prefix="AutoDeleteBucket", kind="AWS::S3::Bucket")
         put = session.request("s3.put", bucket=bucket["logicalId"], objectKey="orphan.txt", body="orphan")
@@ -9118,8 +9147,10 @@ def run_local_resources_custom(harness: Harness) -> str:
             raise HarnessFailure(f"the auto-delete handler left the object behind: {listing}")
         return (
             "the Custom::Trigger provider ran at start, the provider-framework handler returned its Data and "
-            "physical id, the Custom::AWS handler created the SES rule set on moto, and the bucket "
-            "auto-delete resource's delete leg emptied the bucket the row planted an object in"
+            "physical id, the Custom::AWS handler created the SES rule set on moto, the activation custom "
+            "resource ran after the ensure its DependsOn names although its logical id sorts first, the bucket "
+            "auto-delete resource's delete leg emptied the bucket the row planted an object in, and the provider "
+            "framework's untargeted user function started"
         )
     finally:
         stop_local_session(harness, session)
@@ -9796,6 +9827,245 @@ def run_local_co_residence_iam(harness: Harness) -> str:
         shutil.rmtree(shared, ignore_errors=True)
 
 
+# --- LOCAL-W3-X6: S3 versioning and shared-network backend scoping --------
+
+
+def _version_store_logical_id(plan: dict) -> str:
+    for function in plan.get("functions") or []:
+        if str(function.get("logicalId") or "").startswith("VersionStore"):
+            return str(function["logicalId"])
+    raise HarnessFailure("the app declares no VersionStore function")
+
+
+def _version_store_function(session: LocalSession) -> dict:
+    for function in session.info.get("functions") or []:
+        if str(function.get("logicalId") or "").startswith("VersionStore"):
+            return function
+    raise HarnessFailure(f"the session started no VersionStore function: {session.info.get('functions')}")
+
+
+def _version_call(session: LocalSession, function: dict, event: dict, label: str) -> tuple[int, dict]:
+    result = session.invoke(function["logicalId"], event)
+    body = _proxy_body(result, label)
+    status = result.get("statusCode")
+    if status is None:
+        raise HarnessFailure(f"{label}: handler returned no status code: {result}")
+    return int(status), body
+
+
+def run_local_s3_versioning(harness: Harness) -> str:
+    """X6a: a template-versioned bucket returns distinct version ids for a put,
+    a copy and a multipart completion, and every version reads back through the
+    real S3 SDK. X6d: the provider-framework custom resource's user function
+    starts even though --target names only the version store."""
+    plan = plan_local_app(harness, LOCAL_RESOURCES_APP)
+    target = _version_store_logical_id(plan)
+    session = start_local_session(
+        harness,
+        LOCAL_RESOURCES_APP,
+        name="s3-versioning",
+        backends=("moto", "s3proxy"),
+        targets=(target,),
+        allow_no_surface=True,
+    )
+    try:
+        function = _version_store_function(session)
+        key = "docs/soul.md"
+        status, first_body = _version_call(
+            session, function, {"action": "put", "key": key, "body": "soul body one"}, "version put 1")
+        if status != 200 or not first_body.get("versionId"):
+            raise HarnessFailure(f"the first versioned put carried no version id: {status} {first_body}")
+        status, second_body = _version_call(
+            session, function, {"action": "put", "key": key, "body": "soul body two"}, "version put 2")
+        if status != 200 or not second_body.get("versionId"):
+            raise HarnessFailure(f"the second versioned put carried no version id: {status} {second_body}")
+        first_id, second_id = first_body["versionId"], second_body["versionId"]
+        if first_id == second_id:
+            raise HarnessFailure(f"both puts returned version id {first_id!r}")
+        for version_id, want in ((first_id, "soul body one"), (second_id, "soul body two")):
+            status, body = _version_call(
+                session, function, {"action": "get", "key": key, "versionId": version_id}, f"get {version_id}")
+            if status != 200 or body.get("body") != want or body.get("versionId") != version_id:
+                raise HarnessFailure(f"get {version_id} = {status} {body}, want {want!r}")
+            status, head = _version_call(
+                session, function, {"action": "head", "key": key, "versionId": version_id}, f"head {version_id}")
+            if status != 200 or head.get("contentLength") != len(want):
+                raise HarnessFailure(f"head {version_id} = {status} {head}")
+        status, latest = _version_call(session, function, {"action": "get", "key": key}, "get latest")
+        if status != 200 or latest.get("body") != "soul body two" or latest.get("versionId") != second_id:
+            raise HarnessFailure(f"the latest read = {status} {latest}")
+        # CopyObject writes a new version of its destination.
+        status, copied = _version_call(
+            session, function, {"action": "copy", "key": "docs/copy.md", "sourceKey": key}, "copy object")
+        if status != 200 or not copied.get("versionId"):
+            raise HarnessFailure(f"the versioned copy carried no version id: {status} {copied}")
+        copy_id = copied["versionId"]
+        if copy_id in {first_id, second_id}:
+            raise HarnessFailure(f"the copy reused version id {copy_id!r}")
+        status, copy_read = _version_call(
+            session, function, {"action": "get", "key": "docs/copy.md", "versionId": copy_id}, "get copied version")
+        if status != 200 or copy_read.get("body") != "soul body two":
+            raise HarnessFailure(f"the copied version read = {status} {copy_read}")
+        # CompleteMultipartUpload writes a new version too.
+        status, multipart = _version_call(
+            session, function, {"action": "multipart", "key": "docs/multipart.md", "body": "multipart body"},
+            "complete multipart upload")
+        if status != 200 or not multipart.get("versionId"):
+            raise HarnessFailure(f"the completed multipart upload carried no version id: {status} {multipart}")
+        multipart_id = multipart["versionId"]
+        if multipart_id in {first_id, second_id, copy_id}:
+            raise HarnessFailure(f"the multipart upload reused version id {multipart_id!r}")
+        status, multipart_read = _version_call(
+            session, function, {"action": "get", "key": "docs/multipart.md", "versionId": multipart_id},
+            "get multipart version")
+        if status != 200 or multipart_read.get("body") != "multipart body":
+            raise HarnessFailure(f"the multipart version read = {status} {multipart_read}")
+        status, listed = _version_call(session, function, {"action": "list", "prefix": "docs/"}, "list versions")
+        if status != 200:
+            raise HarnessFailure(f"list versions = {status} {listed}")
+        versions = {entry.get("versionId"): entry for entry in listed.get("versions") or []}
+        want_ids = {first_id, second_id, copy_id, multipart_id}
+        if set(versions) != want_ids:
+            raise HarnessFailure(f"the listing returned {sorted(versions)}, want {sorted(want_ids)}")
+        latest_ids = {entry.get("versionId") for entry in listed.get("versions") or [] if entry.get("isLatest")}
+        if latest_ids != {second_id, copy_id, multipart_id}:
+            raise HarnessFailure(f"the listing marks {sorted(latest_ids)} latest, want one latest per key")
+        # X6d: EnvMigration is a provider-framework custom resource whose user
+        # function no route targets; it must still run, and the custom resource
+        # must answer, under a --target that names only the version store.
+        custom = {entry["logicalId"]: entry for entry in session.info.get("customResources") or []}
+        migration = custom.get("EnvMigration") or {}
+        data = migration.get("data") or {}
+        if data.get("MigrationVersion") != "1" or migration.get("physicalResourceId") != "env-migration-1":
+            raise HarnessFailure(f"the provider-framework custom resource did not answer: {migration}")
+        started = [str(entry.get("logicalId") or "") for entry in session.info.get("functions") or []]
+        if not any(logical_id.startswith("MigrationProvider") for logical_id in started):
+            raise HarnessFailure(
+                f"the deploy-time user function outside --target did not start: {started}")
+        return (
+            f"a bucket whose template sets VersioningConfiguration=Enabled returned distinct version ids for two puts "
+            f"({first_id}, {second_id}), a copy ({copy_id}) and a completed multipart upload ({multipart_id}), all "
+            "readable by id through the AWS SDK and all present in ListObjectVersions; with --target naming only the "
+            "version store, the provider framework's untargeted user function still started and its custom resource "
+            "answered"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def _endpoint_host(endpoint: str | None) -> str:
+    if not endpoint:
+        return ""
+    return str(urlsplit(endpoint).hostname or "")
+
+
+def run_local_co_residence_backends(harness: Harness) -> str:
+    """X6c: two co-resident runs on one shared network each resolve their own
+    scoped backend aliases, and neither sees the other's store."""
+    base = harness.lease.http_port
+    network = f"a4-w3m1-x6-{os.getpid()}-{int(time.time() * 1000)}"
+    plan = plan_local_app(harness, LOCAL_RESOURCES_APP)
+    target = _version_store_logical_id(plan)
+    left = start_local_session(
+        harness,
+        LOCAL_RESOURCES_APP,
+        name="backends-left",
+        backends=("moto", "s3proxy"),
+        targets=(target,),
+        allow_no_surface=True,
+        shared_network=network,
+        port_base=base,
+    )
+    try:
+        right = start_local_session(
+            harness,
+            LOCAL_RESOURCES_APP,
+            name="backends-right",
+            backends=("moto", "s3proxy"),
+            targets=(target,),
+            allow_no_surface=True,
+            shared_network=network,
+            port_base=base + 40,
+        )
+        try:
+            for label, session in (("left", left), ("right", right)):
+                if session.info.get("network") != {"name": network, "shared": True}:
+                    raise HarnessFailure(f"the {label} run did not join the shared network: {session.info.get('network')}")
+            left_function = _version_store_function(left)
+            right_function = _version_store_function(right)
+            status, left_env = _version_call(left, left_function, {"action": "env"}, "left env")
+            if status != 200:
+                raise HarnessFailure(f"left env = {status} {left_env}")
+            status, right_env = _version_call(right, right_function, {"action": "env"}, "right env")
+            if status != 200:
+                raise HarnessFailure(f"right env = {status} {right_env}")
+            # SSM is served by moto directly, so its injected host must be the
+            # run-scoped alias. KMS and S3 go through a per-run front, so their
+            # host is the shared gateway but each run's port is its own: the two
+            # runs must never name the same listener.
+            resolved_s3 = {}
+            for label, env, session in (("left", left_env, left), ("right", right_env, right)):
+                host = _endpoint_host(env.get("ssmEndpoint"))
+                want = f"{session.prefix}-moto"
+                if host != want:
+                    raise HarnessFailure(f"{label} ssmEndpoint host = {host!r}, want the run-scoped alias {want!r}")
+                # The preflight runs in a container on the same network, so it
+                # resolves the same scoped moto name a function receives. The S3
+                # endpoint is the run's own s3proxy container address (the S3
+                # SDK needs an IP for path-style addressing), so the two runs
+                # must resolve different addresses.
+                log = Path(session.log_path).read_text(encoding="utf-8", errors="replace")
+                needle = f"preflight ssm.dns: resolved {want}"
+                if needle not in log:
+                    raise HarnessFailure(f"{label} preflight did not log {needle!r}: {log[-4000:]}")
+                match = re.search(r"preflight s3\.dns: resolved (\S+)", log)
+                if match is None:
+                    raise HarnessFailure(f"{label} preflight did not resolve its S3 backend: {log[-4000:]}")
+                resolved_s3[label] = match.group(1)
+                for service in ("kmsEndpoint", "s3Endpoint"):
+                    if not env.get(service):
+                        raise HarnessFailure(f"{label} has no injected {service}: {env}")
+            if resolved_s3["left"] == resolved_s3["right"]:
+                raise HarnessFailure(f"both runs resolved the same s3proxy address: {resolved_s3['left']}")
+            for service in ("kmsEndpoint", "s3Endpoint"):
+                if left_env.get(service) == right_env.get(service):
+                    raise HarnessFailure(f"both runs resolve the same {service}: {left_env.get(service)}")
+            # Each run's function reaches its own s3proxy through its own front:
+            # a key written on the left is absent on the right and vice versa.
+            status, written = _version_call(
+                left, left_function, {"action": "put", "key": "shared/probe.md", "body": "left body"}, "left put")
+            if status != 200 or not written.get("versionId"):
+                raise HarnessFailure(f"left put = {status} {written}")
+            status, missing = _version_call(
+                right, right_function, {"action": "get", "key": "shared/probe.md"}, "right get")
+            if status != 404 or missing.get("error") != "NoSuchKey":
+                raise HarnessFailure(f"the right run saw the left run's object: {status} {missing}")
+            status, own = _version_call(
+                right, right_function, {"action": "put", "key": "shared/probe.md", "body": "right body"}, "right put")
+            if status != 200 or not own.get("versionId"):
+                raise HarnessFailure(f"right put = {status} {own}")
+            status, right_read = _version_call(
+                right, right_function,
+                {"action": "get", "key": "shared/probe.md", "versionId": own["versionId"]}, "right get own")
+            if status != 200 or right_read.get("body") != "right body":
+                raise HarnessFailure(f"the right run could not read its own object: {status} {right_read}")
+            status, left_read = _version_call(
+                left, left_function,
+                {"action": "get", "key": "shared/probe.md", "versionId": written["versionId"]}, "left get own")
+            if status != 200 or left_read.get("body") != "left body":
+                raise HarnessFailure(f"the left run could not read its own object: {status} {left_read}")
+            return (
+                f"two runs on shared network {network} injected their own scoped moto aliases "
+                f"({left.prefix}-moto and {right.prefix}-moto), both preflights resolved them, and each run's "
+                "function read only its own s3proxy object"
+            )
+        finally:
+            stop_local_session(harness, right)
+    finally:
+        stop_local_session(harness, left)
+        _down_shared_network(harness, LOCAL_RESOURCES_APP, network)
+
+
 # --- LOCAL-W3-X4: the local mail surface -----------------------------------
 
 
@@ -10036,6 +10306,8 @@ RUNNERS.update(
         "local-port-refusals": run_local_port_refusals,
         "local-co-residence-ca": run_local_co_residence_ca,
         "local-co-residence-iam": run_local_co_residence_iam,
+        "local-co-residence-backends": run_local_co_residence_backends,
+        "local-s3-versioning": run_local_s3_versioning,
         "local-mail-send-read": run_local_mail_send_read,
         "local-mail-receipt": run_local_mail_receipt,
         "mcp-facade-rotation-chain": lambda harness: run_mcp_facade_sequence(harness, "rotation-chain"),

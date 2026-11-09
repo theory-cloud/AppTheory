@@ -183,8 +183,9 @@ class RealTreeTests(unittest.TestCase):
         # LOCAL-W3-M1 resource-type rows, the fourteen narrow-IAM rows, the
         # five co-residence/declared-port rows, the two mail-surface rows and
         # the ten LOCAL-W3-X5 MCP refresh rows (three covered helpers, seven
-        # executing).
-        self.assertEqual(143, len(classified))
+        # executing), and the two LOCAL-W3-X6 rows with the versioning handler
+        # they cover.
+        self.assertEqual(146, len(classified))
         by_key = {entry.key: entry for entry in entries}
         expected = {
             "examples/cdk/ssr-site/bin/apptheory-ssr-site.ts": "ssr-site-gateway",

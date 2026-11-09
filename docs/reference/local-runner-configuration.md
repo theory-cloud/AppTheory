@@ -50,7 +50,7 @@ function the CDK definition targets and reads one JSON command per line.
 | `--stdio` | off | `invoke`: read newline-delimited JSON events from stdin and keep the container warm. |
 | `--stream-chunks` | off | `invoke`: with `--stdio`, write one `{"event":"chunk",…}` line per streamed response chunk before the result line. A buffered response still writes only the result, so the default one-result-per-event contract is unchanged. |
 | `--rie` | off | Run function containers under the image's embedded Runtime Interface Emulator instead of the runner's Lambda Runtime API. Reported by `plan`, `plan --json` (`runtimeMode`) and `session describe`. It cannot stream incrementally. |
-| `--target ID` | none | `session`: start this CDK function even though no route, event source or rule targets it. Repeatable. |
+| `--target ID` | none | `session`: start this CDK function even though no route, event source or rule targets it. Repeatable. It only adds functions: a served custom resource's deploy-time targets (a provider framework's `onEvent` function named in its environment) always start, so `--target` cannot narrow them away. |
 | `--handler-dir DIR` | none | `invoke`: built handler directory for an example with no CDK definition. Derives no routes. |
 | `--runtime RUNTIME` | none | `invoke --handler-dir`: Lambda runtime (`provided.al2023`, `nodejs24.x`, `python3.14`). |
 | `--handler NAME` | none | `invoke --handler-dir`: handler name (`bootstrap` for the provided runtime). |
@@ -58,14 +58,14 @@ function the CDK definition targets and reads one JSON command per line.
 | `--memory MB` | 128 | `invoke --handler-dir`: function memory. |
 | `--timeout SECONDS` | 3 | `invoke --handler-dir`: function timeout. |
 | `--watch` | off | `run`/`session`: follow `cdk.json`'s `watch` include/exclude (or the app directory), re-synthesize on a change and apply the new surface without restarting the listeners. See [Dev loop](#dev-loop). |
-| `--data-dir DIR` | none (ephemeral) | `run`/`session`/`invoke`: keep DynamoDB Local, s3proxy and ElasticMQ state under `DIR`, plus the runner's KMS key material and S3 SSE-S3 records; moto stays in memory. See [Dev loop](#dev-loop). |
+| `--data-dir DIR` | none (ephemeral) | `run`/`session`/`invoke`: keep DynamoDB Local, s3proxy and ElasticMQ state under `DIR`, plus the runner's KMS key material, S3 SSE-S3 records and the versioned buckets' version log; moto stays in memory. See [Dev loop](#dev-loop). |
 | `--seed COMMAND` | none | `run`/`session`: run `sh -c COMMAND` after provisioning and before `local-run: ready`. See [Dev loop](#dev-loop). |
 | `--port LOGICALID=PORT` | none | `run`/`session`/`plan`: pin a served public surface (API, Function URL, WebSocket API or CloudFront distribution) to a declared port. Repeatable; needs `--port-base`. Pinned ports are reserved first and the counter skips them; a collision, an out-of-range port, a repeated surface or an unknown id fails closed. |
 | `--tls` | off | `run`/`session`: serve every public listener over HTTPS from a certificate the run's local CA signs. |
 | `--tls-host HOST` | `app.localhost` | `run`/`session` with `--tls`: the public `*.localhost` host name. |
 | `--tls-aux HOST` | none | `run`/`session` with `--tls`: an auxiliary `*.localhost` name a function container must reach (for example a local test IdP). Repeatable. |
 | `--shared-dir DIR` | none | `run`/`session`/`invoke`: the directory co-resident runs share: the IAM plane at `<DIR>/iam` and the CA at `<DIR>/ca`. |
-| `--shared-network NAME` | none | `run`/`session`: join every co-resident run's containers to one Docker bridge, so a run reaches a sibling's listener at the host address this run also binds. A run's cleanup leaves the network; remove it with `down --shared-network`. |
+| `--shared-network NAME` | none | `run`/`session`: join every co-resident run's containers to one Docker bridge, so a run reaches a sibling's listener at the host address this run also binds. Backend aliases and the endpoints injected into functions carry the run's name prefix (`<prefix>-moto`), so two runs never resolve one Docker DNS name and the preflight resolves the same name a function sees. A run's cleanup leaves the network; remove it with `down --shared-network`. |
 | `--peer-host HOST` | none | `run`/`session` with `--tls`: map a co-resident run's public `*.localhost` name into this run's function containers. Repeatable. |
 | `--mail` | off | `run`/`session`: start the local mail surface: the profile's digest-pinned Mailpit sink, an SMTP ingress that runs the app's SES receipt rules, and the sink's HTTPS read API. |
 | `--mail-host HOST` | `mail.localhost` | `run`/`session` with `--mail`: the mail surface's public `*.localhost` name. |
@@ -246,19 +246,24 @@ label=apptheory.local.run`).
 <data-dir>/dynamodb/shared-local-instance.db   DynamoDB Local -dbPath /data (the pinned -sharedDb is kept)
 <data-dir>/s3proxy/<bucket>/<key>              s3proxy jclouds filesystem provider, JCLOUDS_FILESYSTEM_BASEDIR=/data
 <data-dir>/s3sse/index.json                    the objects written with SSE-S3 (0600)
+<data-dir>/s3versions/index.json               the version log of every version-enabled bucket (0600)
+<data-dir>/s3versions/blobs/<bucket>/<id>      the archived bytes of one version
 <data-dir>/sqs/elasticmq.mv.db                 ElasticMQ messages-storage (H2), verified on the pinned 1.7.1 image
 <data-dir>/kms/keys.json                       the runner's KMS key material (0600)
 ```
 
 moto is memory-only and is not persisted ([moto server mode](https://docs.getmoto.org/en/latest/docs/server_mode.html)).
-The two runner-owned files are the exception the runner adds for its
-fronts: `kms/keys.json` keeps the material of the key families the KMS front
-owns so ciphertext written in one run decrypts in the next, and
-`s3sse/index.json` keeps each object's SSE-S3 answer. Both are `0600` and hold
-no AWS credential; see
+The runner-owned files are the exception the runner adds for its fronts:
+`kms/keys.json` keeps the material of the key families the KMS front owns so
+ciphertext written in one run decrypts in the next, `s3sse/index.json` keeps
+each object's SSE-S3 answer, and `s3versions/` keeps the version log and bytes
+of a template-versioned bucket so a version id stays readable across a restart.
+They are `0600` and hold no AWS credential; see
 [KMS signing and key material](/examples/local-runner/#kms-signing-and-key-material)
 and
-[S3 objects and server-side encryption](/examples/local-runner/#s3-objects-and-server-side-encryption).
+[S3 objects and server-side encryption](/examples/local-runner/#s3-objects-and-server-side-encryption)
+and
+[object versioning](/examples/local-runner/#object-versioning).
 The data directory must be under `$HOME` or the working directory so Docker can
 bind-mount it. The pinned emulator images run as their own non-root users
 (DynamoDB Local as `dynamodblocal`, ElasticMQ as `elasticmq`). Colima maps a

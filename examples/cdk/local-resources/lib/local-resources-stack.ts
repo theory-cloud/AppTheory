@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import * as cdk from "aws-cdk-lib";
@@ -27,48 +28,19 @@ import { Construct } from "constructs";
  *     it refuses.
  */
 
-// The provider-framework handler: it reads the CloudFormation request, runs its
-// migration (a DynamoDB-free stand-in that records the version it saw) and
-// reports its result by PUTting the documented response document to the
-// request's ResponseURL.
-// https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/crpg-ref-responses.html
+// The provider-framework user handler: it reads the CloudFormation request and
+// runs its migration (a DynamoDB-free stand-in that records the version it
+// saw). The framework's onEvent handler invokes this function and builds the
+// response document itself, so the handler only returns its result.
+// https://docs.aws.amazon.com/cdk/api/v2/docs/aws-cdk-lib.custom_resources.Provider.html
 const migrationProviderCode = `
-const https = require("https");
-const url = require("url");
-
 exports.handler = async (event) => {
   console.log(JSON.stringify({ requestType: event.RequestType, logicalId: event.LogicalResourceId }));
   const version = event.ResourceProperties.MigrationVersion || "0";
-  const response = {
-    Status: "SUCCESS",
-    Reason: "the local provider framework handler ran",
+  return {
     PhysicalResourceId: event.PhysicalResourceId || "env-migration-" + version,
-    StackId: event.StackId,
-    RequestId: event.RequestId,
-    LogicalResourceId: event.LogicalResourceId,
     Data: { MigrationVersion: version, RanAt: new Date().toISOString() },
   };
-  await new Promise((resolve, reject) => {
-    const target = url.parse(event.ResponseURL);
-    const body = JSON.stringify(response);
-    const request = https.request(
-      {
-        hostname: target.hostname,
-        port: target.port,
-        path: target.path,
-        method: "PUT",
-        headers: { "content-type": "", "content-length": Buffer.byteLength(body) },
-      },
-      (answer) => {
-        answer.resume();
-        answer.statusCode && answer.statusCode >= 400 ? reject(new Error("response status " + answer.statusCode)) : resolve();
-      },
-    );
-    request.on("error", reject);
-    request.write(body);
-    request.end();
-  });
-  return response;
 };
 `;
 
@@ -92,6 +64,25 @@ export class LocalResourcesStack extends cdk.Stack {
     const rawMail = new s3.Bucket(this, "RawMailBucket", {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
+    // A bucket whose template enables versioning. The runner's S3 front stores
+    // the version history and answers x-amz-version-id, because the pinned
+    // s3proxy implements no versioning at all.
+    // https://docs.aws.amazon.com/AmazonS3/latest/userguide/Versioning.html
+    const versionedBucket = new s3.Bucket(this, "VersionedBucket", {
+      versioned: true,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+    const versionStore = new lambda.Function(this, "VersionStore", {
+      runtime: lambda.Runtime.NODEJS_24_X,
+      handler: "index.handler",
+      description: "S3 versioning probe: put, get by version id, head, list versions, and the injected endpoints",
+      timeout: cdk.Duration.seconds(30),
+      environment: { APPTHEORY_LOCAL_VERSIONED_BUCKET: versionedBucket.bucketName },
+      code: lambda.Code.fromInline(
+        readFileSync(path.join(__dirname, "..", "handlers", "node", "versioning.js"), "utf8"),
+      ),
+    });
+    versionedBucket.grantReadWrite(versionStore);
 
     const triggerTarget = new lambda.Function(this, "TriggerTarget", {
       runtime: lambda.Runtime.NODEJS_24_X,
@@ -112,13 +103,20 @@ export class LocalResourcesStack extends cdk.Stack {
     const provider = new lambda.Function(this, "MigrationProvider", {
       runtime: lambda.Runtime.NODEJS_24_X,
       handler: "index.handler",
-      description: "Provider-framework custom resource handler",
+      description: "Provider-framework user handler: reports its migration result",
       timeout: cdk.Duration.seconds(60),
       code: lambda.Code.fromInline(migrationProviderCode),
     });
+    // The provider framework, as TMS and Autheory use it: the custom resource's
+    // token is the framework's onEvent handler, and the user function above is
+    // named only in that handler's USER_ON_EVENT_FUNCTION_ARN environment. The
+    // runner starts that function even though no route targets it.
+    const migrationFramework = new customResources.Provider(this, "EnvMigrationProvider", {
+      onEventHandler: provider,
+    });
     new cdk.CustomResource(this, "EnvMigration", {
       resourceType: "Custom::EnvMigration",
-      serviceToken: provider.functionArn,
+      serviceToken: migrationFramework.serviceToken,
       properties: { MigrationVersion: "1" },
     });
 
@@ -139,6 +137,36 @@ export class LocalResourcesStack extends cdk.Stack {
       }),
     });
     ruleSet.node.addDependency(provider);
+
+    // Two custom resources whose logical-id order is the reverse of their
+    // dependency order: "ActivateBridge" sorts before "EnsureBridge", but the
+    // activation needs the rule set the ensure creates. CloudFormation orders
+    // them by the explicit DependsOn, and so must the local runner.
+    // https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-attribute-dependson.html
+    const ensureBridge = new customResources.AwsCustomResource(this, "EnsureBridge", {
+      onCreate: {
+        service: "SES",
+        action: "createReceiptRuleSet",
+        parameters: { RuleSetName: "local-resources-bridge" },
+        physicalResourceId: customResources.PhysicalResourceId.of("bridge-local-resources"),
+        ignoreErrorCodesMatching: ".*AlreadyExists.*",
+      },
+      policy: customResources.AwsCustomResourcePolicy.fromSdkCalls({
+        resources: customResources.AwsCustomResourcePolicy.ANY_RESOURCE,
+      }),
+    });
+    const activateBridge = new customResources.AwsCustomResource(this, "ActivateBridge", {
+      onCreate: {
+        service: "SES",
+        action: "setActiveReceiptRuleSet",
+        parameters: { RuleSetName: "local-resources-bridge" },
+        physicalResourceId: customResources.PhysicalResourceId.of("bridge-local-resources-active"),
+      },
+      policy: customResources.AwsCustomResourcePolicy.fromSdkCalls({
+        resources: customResources.AwsCustomResourcePolicy.ANY_RESOURCE,
+      }),
+    });
+    activateBridge.node.addDependency(ensureBridge);
 
     const mailHandler = new lambda.Function(this, "MailHandler", {
       runtime: lambda.Runtime.PROVIDED_AL2023,
@@ -248,11 +276,12 @@ export class LocalResourcesStack extends cdk.Stack {
       properties: { Name: "local-resources-refused" },
     });
     const prune = new cdk.CfnCustomResource(this, "RefusedMicrovmPrune", {
-      serviceToken: provider.functionArn,
+      serviceToken: migrationFramework.serviceToken,
     });
     prune.addPropertyOverride("MicrovmImageName", microvmImage.ref);
 
     new cdk.CfnOutput(this, "AutoDeleteBucketName", { value: bucket.bucketName });
+    new cdk.CfnOutput(this, "VersionedBucketName", { value: versionedBucket.bucketName });
     new cdk.CfnOutput(this, "RawMailBucketName", { value: rawMail.bucketName });
     new cdk.CfnOutput(this, "StateApiId", { value: api.restApiId });
 

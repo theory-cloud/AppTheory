@@ -547,8 +547,8 @@
   "examples/cdk/local-resources/scripts/custom-resources.sh": {
    "run": "local-resources-custom",
    "class": "L2",
-   "gap": "The provider handlers run in their real containers; the AWS SDK calls inside them reach the pinned moto, whose state is memory-only (docs/125 true limit).",
-   "description": "Served custom resources: the Custom::Trigger provider invokes its target through the local Lambda endpoint at start, the provider-framework handler returns its Data and physical id over the response URL, the Custom::AWS handler creates an SES rule set on moto, and the bucket auto-delete handler deletes a real object on its delete leg."
+   "gap": "The provider handlers run in their real containers; the AWS SDK calls inside them reach the pinned moto, whose state is memory-only (docs/125 true limit). The two bridge resources prove the ordering rule and the provider framework's user function proves the deploy-time closure; both are template shapes, not emulated CloudFormation.",
+   "description": "Served custom resources: the Custom::Trigger provider invokes its target through the local Lambda endpoint at start, the provider framework invokes its user function and returns its Data and physical id, the Custom::AWS handler creates an SES rule set on moto, the activation custom resource runs after the ensure its DependsOn names although its logical id sorts first, and the bucket auto-delete handler deletes a real object on its delete leg."
   },
   "examples/cdk/local-resources/scripts/inventory.sh": {
    "run": "local-resources-inventory",
@@ -573,6 +573,24 @@
    "class": "L2",
    "description": "Real SMTP ingress to the derived SES receipt rule: a message to ingress@local-resources.test runs the rule's S3 then Lambda actions with SES's received-message record (no body), and the sink's read API returns the same message.",
    "gap": "The receipt record is built locally from the received SMTP message and verified against the SES event docs; the SMTP transport is local, not SES's."
+  },
+  "examples/cdk/local-resources/scripts/s3-versioning.sh": {
+   "run": "local-s3-versioning",
+   "class": "L2",
+   "description": "S3 object versioning: a bucket whose template sets VersioningConfiguration=Enabled returns a distinct x-amz-version-id from each PutObject, CopyObject and CompleteMultipartUpload through the runner's S3 front, every version reads back by id through the AWS SDK, and ListObjectVersions reports them with one latest per key; the run's --target names only the version store, so the provider framework's untargeted user function also proves the deploy-time closure.",
+   "gap": "The pinned s3proxy implements no versioning (its filesystem backend has none: https://github.com/gaul/s3proxy/issues/74); the runner's S3 front stores the history, so a suspended-versioning bucket and a copy from a specific version are docs/125 true limits."
+  },
+  "examples/cdk/local-resources/scripts/backends-scoping.sh": {
+   "run": "local-co-residence-backends",
+   "class": "L2",
+   "description": "Shared-network endpoint scoping: two co-resident runs on one --shared-network each start their own moto and s3proxy, the injected endpoint names carry each run's scoped alias, both preflights resolve those aliases, and each run's function reads only its own store.",
+   "gap": "The two runs are processes on one host sharing a bridge; the aliases are scoped by --name-prefix, which co-resident runs must set distinctly."
+  },
+  "examples/cdk/local-resources/handlers/node/versioning.js": {
+   "class": "L2",
+   "gap": "The pinned s3proxy has no versioning; the runner's S3 front stores the history, so suspended versioning and a copy from a specific version are docs/125 true limits.",
+   "description": "The versioning probe handler: put, copy, complete multipart upload, get and head by version id, ListObjectVersions, and the injected endpoint environment, all through the AWS SDK the nodejs24 image ships.",
+   "coveredBy": "examples/cdk/local-resources/scripts/s3-versioning.sh"
   },
   "examples/cdk/local-tls/bin/app.ts": {
    "run": "local-tls-surfaces",
