@@ -579,6 +579,11 @@ type Spec struct {
 	// CustomResources are the CloudFormation custom resources whose service
 	// token the run starts and invokes with the documented request shape.
 	CustomResources []CustomResourceSpec `json:"customResources,omitempty"`
+	// DeployTimeFunctions is the transitive closure of functions a served
+	// custom resource invokes at deploy time (a provider framework's onEvent
+	// handler names its user function in its own environment). The run starts
+	// them even when --target omits them.
+	DeployTimeFunctions []string `json:"deployTimeFunctions,omitempty"`
 	// ReceiptRules are the SES receipt rules the run serves.
 	ReceiptRules []ReceiptRuleSpec `json:"receiptRules,omitempty"`
 	// IAMRoles are the roles the assembly declares: the ARNs a caller has, the
@@ -730,6 +735,16 @@ func (s *Spec) RuntimeFunctions() []string { //nolint:gocyclo,gocognit // one ex
 		}
 		if resource.Handler != "" {
 			seen[resource.Handler] = struct{}{}
+		}
+	}
+	// A served custom resource's provider invokes its user function through the
+	// framework's environment edge. That function is part of the run whether or
+	// not a route, event source or --target names it; a function whose code the
+	// assembly does not carry is left to fail by name when the provider calls
+	// it, exactly as before.
+	for _, id := range s.DeployTimeFunctions {
+		if function, ok := s.Function(id); ok && functionStartable(function) {
+			seen[id] = struct{}{}
 		}
 	}
 	for _, rule := range s.ReceiptRules {

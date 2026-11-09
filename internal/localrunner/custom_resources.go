@@ -160,6 +160,29 @@ func deriveCustomResources(spec *Spec, stacks []assemblyStack) error {
 			}
 		}
 	}
+	spec.DeployTimeFunctions = deployTimeClosure(stacks, deployTimeSeeds(spec, stacks))
+	return nil
+}
+
+// deployTimeSeeds collects the functions a served custom resource names
+// directly or through a Lambda reference in its properties; the closure
+// completes them through the provider framework's environment edges.
+func deployTimeSeeds(spec *Spec, stacks []assemblyStack) []string {
+	seeds := make([]string, 0, len(spec.CustomResources))
+	for _, entry := range spec.CustomResources {
+		if entry.Refusal != "" || entry.ServedBy != "" {
+			continue
+		}
+		seeds = append(seeds, entry.Function, entry.Handler)
+		for _, stack := range stacks {
+			if stack.Name != entry.Stack {
+				continue
+			}
+			seeds = append(seeds, lambdaFunctionRefs(entry.Properties, stack, stacks)...)
+			break
+		}
+	}
+	return seeds
 }
 
 // customResourceHandlerRefusal reports why a service-token function cannot run
@@ -171,7 +194,7 @@ func customResourceHandlerRefusal(spec *Spec, qualified string) string {
 	if !ok {
 		return "the service token function " + qualified + " is not a Lambda function the runner derived"
 	}
-	if function.AssetDir != "" || function.InlineCode != "" || function.ImageAsset != nil {
+	if functionStartable(function) {
 		return ""
 	}
 	reason := "the handler's code asset is not in the assembly, so no handler can run locally"
