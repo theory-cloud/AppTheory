@@ -215,26 +215,43 @@ latter as theft is what broke every real client.
 **What real clients actually do.** The local real-client target (`make local-clients`) drives Codex 0.166,
 Claude Code 2.1.319, Kimi Code 2.4.0 and Vibe 3.0.4 against the example app with an isolated home per
 client. With a 30-second access-token lifetime, Codex issued 34 route refreshes across two separate
-processes (a run and a restart), Claude Code 6 in one run and Kimi Code 1 across a restart: every refresh
-was served, no refusal was emitted, no family was revoked, and the upstream never observed refresh-token
-reuse. Codex and Kimi Code kept the rotated handle across a process restart and Claude Code persisted it
-within one run; none needed a re-login.
+processes (a run and a restart), Claude Code 6 in one run, Kimi Code 1 across a restart and Vibe 1 across
+a TUI login and a restarted `vibe -p` process: every refresh was served, no refusal was emitted, no family
+was revoked, and the upstream never observed refresh-token reuse. Codex and Kimi Code kept the rotated
+handle across a process restart, Claude Code persisted it within one run and Vibe persisted it across its
+restart; none needed a re-login.
 
 With the upstream grant revoked, each client made exactly one refresh, received the terminal
-`invalid_grant`, stopped, and called no tool; Kimi Code then waited for a new login instead of looping. A
-control endpoint tombstoned the family while an access token minted with a long lifetime was still valid,
-and Codex presented it: the resource server accepted it, because it accepts every credential the facade
-issued for the lifetime the token response stated. No client in this suite ever presents a refusable live
-access token, so the MCP-401 comparison does not arise; the refusal every client meets is the token
-endpoint's `400 invalid_grant`.
+`invalid_grant`, stopped, and called no tool. Kimi Code then waited for a new login instead of looping;
+Vibe stopped its turn with `mcp_authorization_required` and told the user the server needs
+re-authorization, without starting a login on its own. A control endpoint tombstoned the family while an
+access token minted with a long lifetime was still valid, and Codex presented it: the resource server
+accepted it, because it accepts every credential the facade issued for the lifetime the token response
+stated. No client in this suite ever presents a refusable live access token, so the MCP-401 comparison
+does not arise; the refusal every client meets is the token endpoint's `400 invalid_grant`, and Vibe's
+terminal row records exactly that status (`MCP [400]`), not a 401.
 
-Vibe's leg stops before it starts. On macOS Vibe 3.0.4 writes MCP OAuth tokens with
-`/usr/bin/security add-generic-password -s ai.mistral.vibe` straight to the Keychain
-(`vibe/utils/keyring.py`), bypassing the Python keyring library and any `PYTHON_KEYRING_BACKEND`, so the
-login cannot be confined to the run's scratch home and its item would outlive the run. The suite reports
-the leg BLOCKED with that path and proves it left no `ai.mistral.vibe` item for its alias. The
-authoritative Autheory-path proof runs in TMS; the example's own rows
-(`examples/cdk/local-mcp-auth-facade`) replay the same sequences over real HTTP in CI.
+Vibe is the one client whose login writes the operator's real Keychain. On macOS Vibe 3.0.4's
+`vibe/utils/keyring.py` sends every MCP OAuth write to `/usr/bin/security add-generic-password -s
+ai.mistral.vibe`, bypassing the Python keyring library and any `PYTHON_KEYRING_BACKEND`. The suite
+therefore logs in under a dedicated server alias, `apptheory-local-clients`, whose three accounts
+(`mcp-oauth:apptheory-local-clients:{tokens,client_info,fingerprint}`, exactly the `<kind>` values
+`vibe/core/auth/mcp_oauth.py::_kr_username` writes) are the only items it may create. The suite checks
+that prefix before the run, deletes every prefixed item in a `finally` path that also runs on failure,
+timeout and Ctrl-C, and proves none remains; it never reads, modifies or deletes another keychain item,
+and never reads a secret value. The login is the TUI's `/mcp login apptheory-local-clients`, the only
+surface that starts one; the suite drives it in a PTY, has the Rust TUI record the browser open in
+`VIBE_E2E_ACTION_LOG` instead of launching a browser, and plays the browser against the local server until
+Vibe's own loopback callback reports success. Each prompt is then a separate `vibe -p` process.
+
+One client-side limit is real and is adapted to, not worked around: MCP SDK 2.3.0 refreshes at
+`<origin>/token` whenever the process did not cache authorization-server metadata first — which every
+restart with stored tokens does — while route-issuer mode serves the token endpoint under the route. The
+example therefore mounts one small compatibility route, `POST /token`, in its own handler: it resolves the
+presented handle's broker record, rebuilds the route's token path, and re-dispatches through the app, so
+every binding check, rotation, refusal and telemetry event remains the facade's. Without it Vibe reports
+`mcp_invalid_result` and calls no tool. The authoritative Autheory-path proof still runs in TMS; the
+example's own rows (`examples/cdk/local-mcp-auth-facade`) replay the same sequences over real HTTP in CI.
 
 ### Family identity, tombstone, and migration
 

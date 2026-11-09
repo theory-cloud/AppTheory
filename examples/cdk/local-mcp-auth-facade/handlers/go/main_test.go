@@ -267,3 +267,80 @@ func pkceChallenge(verifier string) string {
 	digest := sha256.Sum256([]byte(verifier))
 	return base64.RawURLEncoding.EncodeToString(digest[:])
 }
+
+// TestRootTokenAliasServesTheRefreshGrantAtTheOrigin pins the compatibility
+// route MCP SDK 2.3.0 needs: its OAuth provider refreshes at <origin>/token
+// whenever the process did not cache authorization-server metadata first, which
+// a restarted client with stored tokens never does. The alias must answer that
+// request with the same rotation the route token endpoint performs, and must
+// refuse everything else with the uniform invalid_grant.
+func TestRootTokenAliasServesTheRefreshGrantAtTheOrigin(t *testing.T) {
+	cfg := exampleConfig{
+		publicBaseURL:  testBaseURL,
+		upstreamClient: "example-upstream-client",
+		subject:        "person-1",
+		handleTTL:      time.Hour,
+		graceWindow:    time.Second,
+		accessTTL:      time.Minute,
+	}
+	app, err := buildApp(cfg)
+	if err != nil {
+		t.Fatalf("build app: %v", err)
+	}
+	env := testkit.New()
+	clientID, tokens := authorizeAndExchange(t, env, app)
+
+	// An authorization_code grant has no handle to resolve a route from.
+	codeGrant := invoke(t, env, app, "POST", testBaseURL+"/token",
+		map[string]string{"content-type": "application/x-www-form-urlencoded"},
+		[]byte(url.Values{"grant_type": {"authorization_code"}, "client_id": {clientID}}.Encode()))
+	if codeGrant.StatusCode != 400 || !strings.Contains(codeGrant.Body, `"error":"unsupported_grant_type"`) {
+		t.Fatalf("authorization_code at the alias: %d %s", codeGrant.StatusCode, codeGrant.Body)
+	}
+
+	// An unknown handle gets the same uniform answer the route endpoint gives.
+	unknown := invoke(t, env, app, "POST", testBaseURL+"/token",
+		map[string]string{"content-type": "application/x-www-form-urlencoded"},
+		[]byte(url.Values{
+			"grant_type": {"refresh_token"}, "refresh_token": {"unknown-handle"}, "client_id": {clientID},
+		}.Encode()))
+	if unknown.StatusCode != 400 || !strings.Contains(unknown.Body, `"error":"invalid_grant"`) {
+		t.Fatalf("unknown handle at the alias: %d %s", unknown.StatusCode, unknown.Body)
+	}
+
+	before := stateDocument(t, env, app)
+	response := invoke(t, env, app, "POST", testBaseURL+"/token",
+		map[string]string{"content-type": "application/x-www-form-urlencoded"},
+		[]byte(url.Values{
+			"grant_type":    {"refresh_token"},
+			"refresh_token": {tokens["refresh_token"]},
+			"client_id":     {clientID},
+		}.Encode()))
+	if response.StatusCode != 200 {
+		t.Fatalf("refresh at the alias: %d %s", response.StatusCode, response.Body)
+	}
+	var rotated map[string]any
+	if err := json.Unmarshal([]byte(response.Body), &rotated); err != nil {
+		t.Fatalf("alias body: %v", err)
+	}
+	handle, _ := rotated["refresh_token"].(string)
+	if handle == "" || handle == tokens["refresh_token"] {
+		t.Fatalf("alias refresh did not rotate the route handle: %#v", rotated)
+	}
+	after := stateDocument(t, env, app)
+	beforeUpstream := before["upstream"].(map[string]any)
+	afterUpstream := after["upstream"].(map[string]any)
+	if afterUpstream["refreshed"].(float64) != beforeUpstream["refreshed"].(float64)+1 {
+		t.Fatalf("alias refresh did not reach the upstream: %#v -> %#v", beforeUpstream, afterUpstream)
+	}
+
+	// The rotated handle is a real route handle: the route token endpoint serves it.
+	atRoute := exchange(t, env, app, url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {handle},
+		"client_id":     {clientID},
+	})
+	if atRoute["refresh_token"] == "" || atRoute["refresh_token"] == handle {
+		t.Fatalf("route endpoint did not rotate the alias's handle: %#v", atRoute)
+	}
+}

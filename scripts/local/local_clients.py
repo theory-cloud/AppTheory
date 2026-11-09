@@ -26,15 +26,23 @@ credential configured for that client, or no headless login surface) is
 reported BLOCKED with the exact reason and is not counted as proof. A profile
 that acts wrongly is a FAILURE.
 
-Vibe's MCP OAuth store is checked before its leg starts: on macOS the client
+Vibe's MCP OAuth store is the one deliberate exception. On macOS the client
 bypasses the Python keyring library and writes the real Keychain through
-``/usr/bin/security``, so the leg stops rather than modify the operator's
-keychain. The check reads account metadata only, never a secret value.
+``/usr/bin/security``; the operator authorized that write only under the
+dedicated server alias ``apptheory-local-clients``, so every item Vibe creates
+for this suite lives under the account prefix ``mcp-oauth:apptheory-local-clients:``
+and is deleted in the run's ``finally`` path, on success or failure. The account
+names are the three ``<kind>`` values the installed source writes
+(``vibe/core/auth/mcp_oauth.py::_kr_username``): ``tokens``, ``client_info`` and
+``fingerprint``. Every check is metadata-only (``find-generic-password`` without
+``-w``); no item outside that prefix is read, modified or deleted, and no
+credential value is ever printed.
 """
 
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import pty
@@ -42,8 +50,10 @@ import re
 import select
 import shutil
 import ssl
+import struct
 import subprocess
 import sys
+import termios
 import time
 import urllib.error
 import urllib.request
@@ -65,6 +75,21 @@ TOOL_PROMPT = (
     "Call the example MCP server's echo tool with message 'hello-from-client' and reply with "
     "exactly its output."
 )
+# The dedicated Vibe server alias the operator authorized. It is the ``<alias>``
+# in every account Vibe writes: ``mcp-oauth:<alias>:<kind>``.
+VIBE_ALIAS = "apptheory-local-clients"
+VIBE_TUI_SETTLE_SECONDS = 0.03
+VIBE_CALLBACK_PREFIXES = ("http://127.0.0.1", "http://localhost")
+VIBE_PROMPTS = {
+    "first": (
+        "Call the example MCP server's echo tool with message 'hello-from-client' and reply with "
+        "exactly its output."
+    ),
+    "second": (
+        "Call the example MCP server's echo tool with message 'hello-after-refresh' and reply "
+        "with exactly its output."
+    ),
+}
 ANSI = re.compile(r"\x1b\]8;;.*?\x07|\x1b\[[0-9;?]*[A-Za-z]|\x07")
 
 
@@ -254,15 +279,35 @@ def run_prompt_pty(
     return subprocess.CompletedProcess(command, process.returncode, text, "")
 
 
+def remove_scratch(path: Path) -> None:
+    """Delete a scratch tree even when a client left read-only directories.
+
+    Vibe's plugin cache unpacks package directories mode 0555; unlinking their
+    contents then needs the directory writable again.
+    """
+    for root, _dirs, _files in os.walk(path):
+        try:
+            os.chmod(root, 0o700)
+        except OSError:
+            pass
+    shutil.rmtree(path, ignore_errors=True)
+
+
+def _seconds_from_ttl(value: str) -> int:
+    """The access-token lifetime the demo serves, in whole seconds."""
+    match = re.fullmatch(r"\s*(\d+)\s*s?\s*", value)
+    return int(match.group(1)) if match else 30
+
+
 class Demo:
     """The example app under the local runner."""
-
     def __init__(
         self, scratch: Path, *, port: int = PORT, access_ttl: str = "30s", prefix: str = "local-clients"
     ) -> None:
         self.scratch = scratch
         self.port = port
         self.access_ttl = access_ttl
+        self.ttl_seconds = _seconds_from_ttl(access_ttl)
         self.prefix = prefix
         self.process: subprocess.Popen | None = None
         self.log_path = scratch / "demo.log"
@@ -743,29 +788,164 @@ def vibe_uses_macos_security() -> bool:
     return result.stdout.strip() == "1"
 
 
-def vibe_mcp_login_block(alias: str) -> str | None:
-    """Why Vibe's MCP OAuth login cannot be confined, or None when it can.
+def vibe_keychain_delete(alias: str) -> None:
+    """Delete only ``alias``'s three accounts; never any other Vibe item.
 
-    The login surface is the TUI's ``/mcp login <alias>``; its storage is
-    ``vibe/app_server/_mcp_auth.py`` -> ``KeyringTokenStorage(alias)`` ->
-    ``vibe/core/auth/mcp_oauth.py`` -> ``set_api_key_in_keyring``. On macOS that
-    helper never calls the Python keyring library, so no
-    ``PYTHON_KEYRING_BACKEND`` can move the token out of the operator's real
-    Keychain.
+    ``delete-generic-password`` is given the exact service and account, so it
+    cannot match the operator's ``mcp-oauth:theorycloud:*`` or ``MISTRAL_API_KEY``
+    items. A missing item exits non-zero and is ignored.
     """
-    if not vibe_uses_macos_security():
-        return None
-    return (
-        "Vibe 3.0.4 stores MCP OAuth tokens in the OS Keychain directly, so the login cannot be "
-        "confined to the run's scratch home: vibe/utils/keyring.py::_should_use_macos_security() is "
-        "true on darwin and _set_password runs `/usr/bin/security add-generic-password -s "
-        f"{VIBE_KEYRING_SERVICE} -a mcp-oauth:{alias}:<kind>`, never the Python keyring library that "
-        "PYTHON_KEYRING_BACKEND redirects. The TUI `/mcp login` path (vibe/app_server/_mcp_auth.py -> "
-        "KeyringTokenStorage) would write the operator's real Keychain and its item would outlive the "
-        "run; a dedicated alias there is a separate operator decision, so this leg stops. `vibe -p` "
-        "also refuses to start MCP OAuth in headless mode."
-    )
+    if sys.platform != "darwin":
+        return
+    for kind in VIBE_KEYRING_KINDS:
+        subprocess.run(
+            [
+                "/usr/bin/security",
+                "delete-generic-password",
+                "-s",
+                VIBE_KEYRING_SERVICE,
+                "-a",
+                f"mcp-oauth:{alias}:{kind}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
 
+
+def vibe_keychain_clear(alias: str) -> list[str]:
+    """Delete the alias's accounts and return any that still exist."""
+    present = vibe_keychain_accounts(alias)
+    if present:
+        log(f"[vibe] removing {len(present)} keychain item(s) under mcp-oauth:{alias}:")
+        vibe_keychain_delete(alias)
+    return vibe_keychain_accounts(alias)
+
+
+def vibe_action_urls(action_log: Path) -> list[str]:
+    """Every ``open_url`` the Rust TUI recorded instead of opening a browser."""
+    try:
+        lines = action_log.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    urls: list[str] = []
+    for line in lines:
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(record, dict) and record.get("kind") == "open_url" and record.get("url"):
+            urls.append(str(record["url"]))
+    return urls
+
+
+class VibeTui:
+    """The installed Vibe TUI in a PTY: the only surface with ``/mcp login``.
+
+    ``vibe -p`` refuses to start an MCP OAuth login, so the one login runs here;
+    every prompt is then a separate ``vibe -p`` process, which is what proves the
+    restart row. The browser step is played by the harness: the Rust TUI records
+    ``open_url`` actions in ``VIBE_E2E_ACTION_LOG`` instead of launching a
+    browser, and the PATH shims the profile installs are a second guard, so no
+    browser window can open on the operator's desktop.
+    """
+
+    def __init__(self, work: Path, env: dict, action_log: Path) -> None:
+        self.work = work
+        self.env = env
+        self.action_log = action_log
+        self.buffer = b""
+        self.master = -1
+        self.process: subprocess.Popen | None = None
+
+    def __enter__(self) -> "VibeTui":
+        master, slave = pty.openpty()
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 160, 0, 0))
+        self.master = master
+        self.process = subprocess.Popen(
+            [str(CLIENTS["vibe"]), "--trust", "--auto-approve"],
+            cwd=str(self.work),
+            stdin=slave,
+            stdout=slave,
+            stderr=slave,
+            env=self.env,
+            close_fds=True,
+        )
+        os.close(slave)
+        if not self.wait(lambda: "state=idle:app=vibe" in self.raw(), 180):
+            raise Failed("the Vibe TUI did not become ready: " + self.visible()[-600:])
+        return self
+
+    def __exit__(self, *_exc) -> bool:
+        if self.process is not None and self.process.poll() is None:
+            self.send("/exit")
+            deadline = time.time() + 15
+            while time.time() < deadline and self.process.poll() is None:
+                self.pump(0.5)
+            if self.process.poll() is None:
+                self.process.kill()
+        try:
+            os.close(self.master)
+        except OSError:
+            pass
+        return False
+
+    def raw(self) -> str:
+        return self.buffer.decode("utf-8", "replace")
+
+    def visible(self) -> str:
+        return strip_ansi(self.raw())
+
+    def pump(self, seconds: float) -> None:
+        deadline = time.time() + seconds
+        while time.time() < deadline:
+            ready, _, _ = select.select([self.master], [], [], 0.2)
+            if not ready:
+                continue
+            try:
+                chunk = os.read(self.master, 65536)
+            except OSError:
+                return
+            if not chunk:
+                return
+            self.buffer += chunk
+
+    def wait(self, predicate, timeout: float) -> bool:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            self.pump(0.4)
+            if predicate():
+                return True
+            if self.process is not None and self.process.poll() is not None:
+                return False
+        return False
+
+    def send(self, text: str) -> None:
+        for character in text:
+            os.write(self.master, character.encode())
+            time.sleep(VIBE_TUI_SETTLE_SECONDS)
+        time.sleep(0.4)
+        os.write(self.master, b"\r")
+
+    def login(self, alias: str, ca_file: str) -> None:
+        """Send ``/mcp login <alias>`` and play the browser to Vibe's callback."""
+        self.send(f"/mcp login {alias}")
+        deadline = time.time() + 180
+        url = ""
+        while time.time() < deadline and not url:
+            self.pump(0.4)
+            urls = vibe_action_urls(self.action_log)
+            if urls:
+                url = urls[-1]
+        if not url:
+            raise Failed("the Vibe TUI never produced an authorization URL: " + self.visible()[-600:])
+        callback = follow_authorize(url, ca_file, VIBE_CALLBACK_PREFIXES)
+        status, _location = http_get(callback, ca_file)
+        if status != 200:
+            raise Failed(f"Vibe's loopback callback answered {status}")
+        if not self.wait(lambda: "authenticated" in self.visible(), 120):
+            raise Failed("Vibe never reported the MCP server authenticated: " + self.visible()[-600:])
+        self.pump(1)
 
 TERMINAL_PROMPT = (
     "Call the example MCP server's echo tool with message 'hello-after-revocation' and reply with "
@@ -791,9 +971,19 @@ def client_prompt_command(client: str, name: str, prompt: str) -> list[str]:
             "--dangerously-skip-permissions",
             prompt,
         ]
-    if client in {"kimi_code", "vibe"}:
+    if client == "kimi_code":
         return [str(CLIENTS[client]), "-p", prompt]
     raise ValueError(f"unknown client {client!r}")
+
+
+def vibe_prompt_command(prompt: str) -> list[str]:
+    """One ``vibe -p`` turn, trusted and auto-approved.
+
+    ``--trust`` accepts the isolated working directory for this invocation and
+    ``--auto-approve`` (``--yolo``) runs the MCP echo tool without the TUI's
+    approval prompt; headless mode has no keyboard to answer it.
+    """
+    return [str(CLIENTS["vibe"]), "-p", prompt, "--trust", "--auto-approve"]
 
 
 def profile_codex(demo: Demo, home: Path, name: str) -> dict:
@@ -987,25 +1177,80 @@ def profile_kimi(demo: Demo, home: Path, name: str) -> dict:
     return observe("kimi_code", "", before, middle, after, first, second, demo, terminal)
 
 
+def vibe_terminal_observation(output: str) -> str:
+    """Classify what Vibe did after the terminal ``invalid_grant``: observed only.
+
+    A terminal refresh rejection leaves Vibe's turn stopped: it reports
+    ``mcp_authorization_required`` and tells the user the server needs
+    re-authorization, but it never starts a login on its own and never loops.
+    """
+    text = output.lower()
+    markers = (
+        "/mcp login",
+        "requires authentication",
+        "re-authenticate",
+        "re-authorize",
+        "mcp_authorization_required",
+    )
+    if any(marker in text for marker in markers):
+        return "login"
+    if "waiting for the oauth callback" in text or "authorize?" in text:
+        return "waited"
+    return "none"
+
+
 def profile_vibe(demo: Demo, home: Path, name: str) -> dict:
-    # The block check comes first: it is the reason the leg cannot run, and it
-    # must not start a login that would write the operator's real Keychain.
-    before = vibe_keychain_accounts(name)
-    block = vibe_mcp_login_block(name)
-    if block:
-        after = vibe_keychain_accounts(name)
+    """Vibe 3.0.4: one TUI login, then real sessions in separate processes.
+
+    Rows: a tool call on the login's access token, a restarted ``vibe -p``
+    process that refreshes after the token expired (MCP SDK 2.3.0 asks the
+    origin-root ``/token``, which the example's own compatibility alias serves),
+    and then the revoked-upstream process. Every Vibe keychain item lives under
+    ``mcp-oauth:apptheory-local-clients:`` and is removed by the run's
+    ``finally`` path.
+    """
+    if sys.platform != "darwin":
         raise Blocked(
-            f"{block} This run's alias had no Keychain item before or after the check "
-            f"(before: {before or 'none'}; after: {after or 'none'})."
+            "Vibe's MCP OAuth login writes the OS keychain through /usr/bin/security; the "
+            "dedicated-alias authorization covers the macOS Keychain and no confined login "
+            "surface is proven on this platform"
+        )
+    if not vibe_uses_macos_security():
+        raise Blocked(
+            "the installed Vibe does not route its MCP OAuth store through /usr/bin/security, so "
+            "the dedicated-alias keychain rules would not cover it"
+        )
+    alias = VIBE_ALIAS
+    leftovers = vibe_keychain_clear(alias)
+    if leftovers:
+        raise Blocked(
+            f"a prefixed Keychain item could not be removed before the run: {', '.join(leftovers)}"
         )
     key = vibe_model_key()
     if not key:
         raise Blocked("no Mistral model API key is configured for Vibe")
+    work = home.parent / "work"
+    work.mkdir(exist_ok=True)
+    shim = home.parent / "browser-shims"
+    shim.mkdir(parents=True, exist_ok=True)
+    browser_calls = home.parent / "browser-calls.log"
+    browser_calls.write_text("", encoding="utf-8")
+    for tool in ("open", "osascript"):
+        script = shim / tool
+        script.write_text(
+            f'#!/bin/sh\nprintf "%s\\n" "$0 $*" >> "{browser_calls}"\nexit 0\n', encoding="utf-8"
+        )
+        script.chmod(0o755)
+    actions = home.parent / "vibe-actions.jsonl"
+    actions.write_text("", encoding="utf-8")
     env = os.environ.copy()
     env["VIBE_HOME"] = str(home)
     env["MISTRAL_API_KEY"] = key
     env["SSL_CERT_FILE"] = demo.ca
     env["REQUESTS_CA_BUNDLE"] = demo.ca
+    env["VIBE_E2E_ACTION_LOG"] = str(actions)
+    env["PATH"] = f"{shim}:{env.get('PATH', '')}"
+    env.pop("BROWSER", None)
     added = subprocess.run(
         [
             str(CLIENTS["vibe"]),
@@ -1016,7 +1261,7 @@ def profile_vibe(demo: Demo, home: Path, name: str) -> dict:
             "--scope",
             "mcp:tools",
             "--no-login",
-            name,
+            alias,
         ],
         env=env,
         capture_output=True,
@@ -1026,34 +1271,51 @@ def profile_vibe(demo: Demo, home: Path, name: str) -> dict:
     if added.returncode != 0:
         raise Failed(f"vibe mcp add failed: {added.stdout[-400:]} {added.stderr[-400:]}")
     before = demo.state()
-    work = home.parent / "work"
-    first = run_prompt_pty(
-        [str(CLIENTS["vibe"]), "-p", TOOL_PROMPT],
-        env,
-        demo.ca,
-        ("http://127.0.0.1", "http://localhost"),
-        cwd=work,
+    with VibeTui(work, env, actions) as tui:
+        tui.login(alias, demo.ca)
+    logged_in = demo.state()
+    stored = vibe_keychain_accounts(alias)
+    if set(stored) != {f"mcp-oauth:{alias}:{kind}" for kind in VIBE_KEYRING_KINDS}:
+        raise Failed(f"Vibe stored {stored or 'no items'}, want the three accounts its source writes")
+    first = subprocess.run(
+        vibe_prompt_command(VIBE_PROMPTS["first"]),
+        cwd=str(work),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=240,
     )
     middle = demo.state()
-    if int(middle.get("toolCalls") or 0) <= int(before.get("toolCalls") or 0):
-        detail = " ".join(first.stdout.strip().splitlines()[-3:])
-        raise Blocked(
-            "Vibe's headless `-p` mode does not start the MCP OAuth login it needs for this server "
-            f"(`/mcp login {name}` is TUI-only). Last output: {detail}"
-        )
-    second = run_prompt_pty(
-        [str(CLIENTS["vibe"]), "-p", TOOL_PROMPT.replace("hello-from-client", "hello-after-restart")],
-        env,
-        demo.ca,
-        ("http://127.0.0.1", "http://localhost"),
-        cwd=work,
+    # The token expires here. A restarted `vibe -p` process must refresh; MCP SDK
+    # 2.3.0 asks the origin-root /token, which the example's compatibility alias
+    # re-dispatches to the facade's route token handler.
+    time.sleep(demo.ttl_seconds + 6)
+    second = subprocess.run(
+        vibe_prompt_command(VIBE_PROMPTS["second"]),
+        cwd=str(work),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=240,
     )
     after = demo.state()
-    if int(after.get("toolCalls") or 0) <= int(middle.get("toolCalls") or 0):
-        detail = " ".join(second.stdout.strip().splitlines()[-3:])
-        raise Blocked(f"Vibe could not run its second prompt in its isolated home: {detail}")
-    terminal = terminal_probe(demo, client_prompt_command("vibe", name, TERMINAL_PROMPT), env, work)
-    return observe("vibe", "", before, middle, after, first, second, demo, terminal)
+    terminal = terminal_probe(demo, vibe_prompt_command(TERMINAL_PROMPT), env, work, timeout=120)
+    terminal["observed"] = vibe_terminal_observation(terminal.get("output") or "")
+    if len(vibe_action_urls(actions)) != 1:
+        raise Failed(
+            f"Vibe started {len(vibe_action_urls(actions))} authorization flows; want exactly one login"
+        )
+    if browser_calls.read_text(encoding="utf-8", errors="replace").strip():
+        raise Failed("a browser launcher ran; the authorization URL must only be recorded")
+    issued = int((logged_in.get("upstream") or {}).get("issued") or 0) - int(
+        (before.get("upstream") or {}).get("issued") or 0
+    )
+    if issued != 1:
+        raise Failed(f"the login minted {issued} upstream grants, want exactly one")
+    result = observe("vibe", "", before, middle, after, first, second, demo, terminal)
+    if result["refreshes"] != 1:
+        raise Failed(f"Vibe's expired-token turn produced {result['refreshes']} served refreshes, want one")
+    return result
 
 
 def observe(
@@ -1130,23 +1392,46 @@ def main(argv: list[str] | None = None) -> int:
     scratch.mkdir(parents=True, exist_ok=True)
     (scratch / "work").mkdir(exist_ok=True)
     results = []
+    keychain_clean = True
     try:
-        with Demo(scratch) as demo:
-            log(f"example app ready at {demo.base} (CA {demo.ca})")
-            for name in selected:
-                home = scratch / name / "home"
-                home.mkdir(parents=True)
-                (home.parent / "work").mkdir(exist_ok=True)
-                log(f"[{name}] starting")
-                try:
-                    results.append(PROFILES[name](demo, home, "example"))
-                    log(f"[{name}] PASS")
-                except Blocked as blocker:
-                    results.append({"client": name, "status": "BLOCKED", "reason": str(blocker)})
-                    log(f"[{name}] BLOCKED: {blocker}")
-                except (Failed, subprocess.TimeoutExpired) as failure:
-                    results.append({"client": name, "status": "FAIL", "reason": str(failure)})
-                    log(f"[{name}] FAIL: {failure}")
+        shared = [name for name in selected if name != "vibe"]
+        if shared:
+            with Demo(scratch) as demo:
+                log(f"example app ready at {demo.base} (CA {demo.ca})")
+                for name in shared:
+                    home = scratch / name / "home"
+                    home.mkdir(parents=True)
+                    (home.parent / "work").mkdir(exist_ok=True)
+                    log(f"[{name}] starting")
+                    try:
+                        results.append(PROFILES[name](demo, home, "example"))
+                        log(f"[{name}] PASS")
+                    except Blocked as blocker:
+                        results.append({"client": name, "status": "BLOCKED", "reason": str(blocker)})
+                        log(f"[{name}] BLOCKED: {blocker}")
+                    except (Failed, subprocess.TimeoutExpired) as failure:
+                        results.append({"client": name, "status": "FAIL", "reason": str(failure)})
+                        log(f"[{name}] FAIL: {failure}")
+        if "vibe" in selected:
+            # Vibe gets its own app so its one login and its keychain items stay
+            # scoped to this leg. The items are cleaned in the finally below, on
+            # success, failure, timeout and Ctrl-C alike.
+            vibe_root = scratch / "vibe-app"
+            vibe_root.mkdir()
+            home = vibe_root / "vibe" / "home"
+            home.mkdir(parents=True)
+            (home.parent / "work").mkdir(exist_ok=True)
+            log("[vibe] starting against its own app (30s access-token lifetime)")
+            try:
+                with Demo(vibe_root, port=PORT + 2, prefix="local-clients-vibe") as demo:
+                    results.append(profile_vibe(demo, home, VIBE_ALIAS))
+                log("[vibe] PASS")
+            except Blocked as blocker:
+                results.append({"client": "vibe", "status": "BLOCKED", "reason": str(blocker)})
+                log(f"[vibe] BLOCKED: {blocker}")
+            except (Failed, subprocess.TimeoutExpired) as failure:
+                results.append({"client": "vibe", "status": "FAIL", "reason": str(failure)})
+                log(f"[vibe] FAIL: {failure}")
         if args.verify_401 and "codex" in selected:
             # A second app with a long access-token lifetime: the tombstoned
             # family must be met by the resource server, not by a refresh.
@@ -1168,10 +1453,20 @@ def main(argv: list[str] | None = None) -> int:
                 results.append({"client": "codex/401", "status": "FAIL", "reason": str(failure)})
                 log(f"[codex/401] FAIL: {failure}")
     finally:
+        # Runs on success, failure, timeout and Ctrl-C: remove every item Vibe
+        # wrote under the dedicated alias and prove none remains.
+        if "vibe" in selected:
+            remaining = vibe_keychain_clear(VIBE_ALIAS)
+            if remaining:
+                keychain_clean = False
+                for account in remaining:
+                    log(f"[vibe] keychain cleanup FAILED: {account} still exists")
+            else:
+                log(f"[vibe] keychain clean: no mcp-oauth:{VIBE_ALIAS}:* item remains")
         if args.keep:
             log(f"scratch kept at {scratch}")
         else:
-            shutil.rmtree(scratch, ignore_errors=True)
+            remove_scratch(scratch)
 
     log("")
     log("local MCP client profiles")
@@ -1195,6 +1490,8 @@ def main(argv: list[str] | None = None) -> int:
                 f"MCP {terminal.get('mcpStatuses')}, family revoked {terminal.get('revoked')}, "
                 f"re-login {terminal.get('login')}"
             )
+            if terminal.get("observed"):
+                detail += f", next {terminal['observed']}"
         family = result.get("family") or {}
         if family:
             detail += (
@@ -1206,6 +1503,9 @@ def main(argv: list[str] | None = None) -> int:
     blocked = [result for result in results if result["status"] == "BLOCKED"]
     log("")
     log(f"result: {len(results) - len(failures) - len(blocked)} passed, {len(failures)} failed, {len(blocked)} blocked")
+    if not keychain_clean:
+        log(f"result: FAIL the keychain still holds an mcp-oauth:{VIBE_ALIAS}:* item")
+        return 1
     return 1 if failures else 0
 
 

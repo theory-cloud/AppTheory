@@ -61,9 +61,13 @@ examples-local-down:
 # Real MCP clients against the local MCP auth-facade example. LOCAL ONLY: never
 # a CI job. Each client runs with an isolated home under $HOME/.cache, carrying
 # only its model-provider credential (mode 0600, deleted with the scratch); the
-# operator's real homes and MCP OAuth stores are never read or modified.
-local-clients:
+# operator's real homes and MCP OAuth stores are never read or modified. Vibe's
+# dedicated-alias keychain items are deleted in the run's finally path.
+local-clients: local-clients-selftest
 	@python3 scripts/local/local_clients.py $(LOCAL_CLIENTS_ARGS)
+
+local-clients-selftest:
+	@python3 scripts/local/test_local_clients.py
 
 # Re-synthesizes every pinned CDK example from a copy under $HOME and requires
 # the same template hashes. The copy is source-only, so this proves the pins do

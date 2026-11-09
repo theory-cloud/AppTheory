@@ -19,11 +19,25 @@ status, live head, chain generation — not just a status code.
 | Protected-resource metadata | `/.well-known/oauth-protected-resource/acme/mcp` |
 | Authorization-server metadata | `/.well-known/oauth-authorization-server/acme/mcp` |
 | Authorize / token / register | `/.well-known/oauth-authorization-server/acme/mcp/{authorize,token,register}` |
+| Refresh compatibility alias | `POST /token` (refresh grant only) |
 | Upstream callback | `/_oauth/mcp/callback` |
 
 The facade is registered in **route issuer mode**, so each MCP route is its own
 authorization server and its RFC 8414 metadata lives at the route's own
 well-known path — the one a client derives from the advertised issuer.
+
+`POST /token` is a compatibility alias, not a second authorization server. MCP
+SDK 2.3.0's OAuth provider refreshes at `<origin>/token` whenever the process
+did not cache authorization-server metadata first — every restart with stored
+tokens — while route-issuer mode serves the token endpoint under the route.
+Without the alias, a real Vibe 3.0.4 session reports `mcp_invalid_result` after
+its access token expires and stops calling the tool. The alias resolves the
+presented handle's broker record, rebuilds that route's token path, and
+re-dispatches the unchanged request through the app, so the facade's own token
+handler performs every binding check, grace and rotation decision, refusal and
+telemetry event. It serves only `grant_type=refresh_token`; an unknown or
+unrouteable handle gets the same uniform `invalid_grant` the route endpoint
+gives. `handlers/go/main_test.go` pins both halves.
 
 The upstream is this example's own OAuth 2.1 authorization server
 (`handlers/go/upstream.go`): RS256 access tokens with a published JWKS,

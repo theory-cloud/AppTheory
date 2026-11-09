@@ -448,6 +448,17 @@ call. `--verify-401` adds the live-token comparison on a second app instance
 with a long access-token lifetime, where the revoked family is presented by an
 unexpired credential and the resource server's answer is recorded.
 
+Vibe needs two extra pieces. Its login surface is the TUI's `/mcp login` (the
+headless `vibe -p` mode refuses to start MCP OAuth), so the suite drives the TUI
+in a PTY, lets the Rust TUI record the browser open in `VIBE_E2E_ACTION_LOG`
+instead of launching a browser, and plays the browser against the local server
+until Vibe's loopback callback reports success; every prompt is then a separate
+`vibe -p` process, so the second call is both a refresh and a restart. And MCP
+SDK 2.3.0 refreshes at `<origin>/token` whenever the process has no cached
+authorization-server metadata (every restart), so the example mounts a small
+`POST /token` compatibility route that resolves the presented handle's route and
+re-dispatches to the facade's own token handler; see the example README.
+
 Isolation rules:
 
 - every home is created 0700 and deleted when the run ends (`--keep` retains it);
@@ -460,12 +471,15 @@ Isolation rules:
   for Kimi Code it is the provider/model settings parsed out of `config.toml`
   plus its credential file, never an `mcp_servers` entry;
 - the credential is never printed;
-- the Vibe profile stops before any login because Vibe 3.0.4 writes MCP OAuth
-  tokens with `/usr/bin/security` straight to the macOS Keychain
+- Vibe's MCP OAuth store is the one exception to home isolation: Vibe 3.0.4
+  writes it with `/usr/bin/security` straight to the macOS Keychain
   (`vibe/utils/keyring.py`), bypassing the Python keyring library and any
-  `PYTHON_KEYRING_BACKEND`; the suite checks the account metadata before and
-  after and reports that it left no `ai.mistral.vibe` item. A dedicated alias in
-  the real Keychain would need a separate operator decision.
+  `PYTHON_KEYRING_BACKEND`. Under operator authorization the suite uses a
+  dedicated server alias, `apptheory-local-clients`, checks that no
+  `mcp-oauth:apptheory-local-clients:*` item exists before the run, deletes every
+  prefixed item in a `finally` path that also runs on failure, timeout and
+  Ctrl-C, and proves none remains. It never reads, modifies or deletes another
+  keychain item, and never reads a secret value.
 
 This target is not a CI job and not a harness row: CI must not depend on a
 client binary. A profile that cannot be exercised for an environmental reason

@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -144,7 +145,65 @@ func buildApp(cfg exampleConfig) (*apptheory.App, error) {
 	app.Post("/_state/legacy", instance.seedLegacy)
 	app.Post("/_state/revoke-upstream-grant", instance.revokeUpstream)
 	app.Post("/_state/revoke-family", instance.revokeFamily)
+	app.Post("/token", instance.rootTokenAlias(app))
 	return app, nil
+}
+
+// rootTokenAlias serves the refresh grant at <origin>/token.
+//
+// MCP SDK 2.3.0's OAuth provider refreshes at <origin>/token whenever the
+// process did not cache authorization-server metadata first, and a restarted
+// client with stored tokens never does. A route-issuer facade's token endpoint
+// lives under the route, so without this alias that client cannot refresh at
+// all — Vibe 3.0.4 reports `mcp_invalid_result` after failing at /token.
+//
+// The alias resolves the presented handle's broker record, rebuilds the route's
+// own token path from it, and re-dispatches the unchanged request through the
+// app, so the facade's token handler performs every binding check, grace and
+// rotation decision, refusal and telemetry event exactly as it does for the
+// route endpoint. Only the refresh grant is served: an authorization_code
+// request has no handle to resolve a route from, and the code exchange always
+// follows a discovery that named the route.
+func (e *example) rootTokenAlias(app *apptheory.App) apptheory.Handler {
+	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		form, err := url.ParseQuery(string(ctx.Request.Body))
+		if err != nil || form.Get("grant_type") != "refresh_token" {
+			return apptheory.JSON(http.StatusBadRequest, map[string]string{
+				"error":             "unsupported_grant_type",
+				"error_description": "the root token alias serves the refresh_token grant only",
+			})
+		}
+		handle := strings.TrimSpace(form.Get("refresh_token"))
+		if handle == "" {
+			return rootTokenInvalidGrant()
+		}
+		record, err := e.broker.Get(ctx.Context(), oauthstore.HashKey(handle))
+		if err != nil {
+			return rootTokenInvalidGrant()
+		}
+		tokenPath, err := (mcproutes.EndpointPath{
+			Kind:            mcproutes.EndpointKind(record.EndpointKind),
+			ClientNamespace: record.ClientNamespace,
+			PartnerID:       record.PartnerID,
+			AgentID:         record.AgentID,
+		}).OAuthTokenPath()
+		if err != nil {
+			return rootTokenInvalidGrant()
+		}
+		inner := ctx.Request
+		inner.Path = tokenPath
+		response := app.Serve(ctx.Context(), inner)
+		return &response, nil
+	}
+}
+
+// rootTokenInvalidGrant is the same uniform answer an unknown route handle gets,
+// so the alias cannot be used to tell an unknown handle from an unrouteable one.
+func rootTokenInvalidGrant() (*apptheory.Response, error) {
+	return apptheory.JSON(http.StatusBadRequest, map[string]string{
+		"error":             "invalid_grant",
+		"error_description": "the grant is invalid, expired, or already used",
+	})
 }
 
 // newExample wires the stores, the upstream, and the facade's telemetry.
