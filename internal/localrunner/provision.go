@@ -194,14 +194,43 @@ func (r *Runner) provisionBuckets(ctx context.Context, spec *Spec) error {
 		if _, err := client.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(name)}); err != nil && !alreadyExists(err) {
 			return fmt.Errorf("create local bucket %s for %s: %w", name, resource.LogicalID, err)
 		}
+		versioned := bucketVersioningEnabled(resource.Properties)
+		switch {
+		case versioned && r.s3Front != nil:
+			if err := r.s3Front.versions.setEnabled(name, true); err != nil {
+				return fmt.Errorf("record versioning for local bucket %s: %w", name, err)
+			}
+			r.logf("provisioned s3 bucket %s for %s (versioning enabled; the runner's S3 front stores the version history)", name, resource.LogicalID)
+		case versioned:
+			r.logf("s3 bucket %s declares versioning, but no runner S3 front is serving this run's S3 endpoint; the store's own versioning semantics apply", name)
+		default:
+			r.logf("provisioned s3 bucket %s for %s", name, resource.LogicalID)
+		}
 		r.resourceValues[resource.Stack+"/"+resource.LogicalID] = resourceValue{
 			Type: typeS3Bucket,
 			Name: name,
 			ARN:  "arn:" + LocalPartition + ":s3:::" + name,
 		}
-		r.logf("provisioned s3 bucket %s for %s", name, resource.LogicalID)
 	}
 	return nil
+}
+
+// bucketVersioningEnabled reads the template's VersioningConfiguration.
+//
+// https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-s3-bucket.html
+func bucketVersioningEnabled(properties json.RawMessage) bool {
+	if len(properties) == 0 {
+		return false
+	}
+	var document struct {
+		VersioningConfiguration struct {
+			Status string `json:"Status"`
+		} `json:"VersioningConfiguration"`
+	}
+	if err := json.Unmarshal(properties, &document); err != nil {
+		return false
+	}
+	return document.VersioningConfiguration.Status == "Enabled"
 }
 
 func (r *Runner) provisionKeys(ctx context.Context, spec *Spec) error {

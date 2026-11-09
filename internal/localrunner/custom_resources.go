@@ -645,6 +645,8 @@ func customResourceHandlerTarget(stack assemblyStack, resource templateResource)
 // handler would have sent.
 //
 // https://docs.aws.amazon.com/cdk/api/v2/docs/aws-cdk-lib.aws_s3-readme.html#automatic-object-deletion
+//
+//nolint:gocyclo // one branch per listing page and per delete result.
 func (r *Runner) emptyAutoDeleteBucket(ctx context.Context, spec *Spec, resource CustomResourceSpec) (map[string]any, error) {
 	properties, err := r.resolveCustomResourceProperties(spec, resource)
 	if err != nil {
@@ -665,6 +667,10 @@ func (r *Runner) emptyAutoDeleteBucket(ctx context.Context, spec *Spec, resource
 	}
 	client := newS3Client(backend.HostURL)
 	deleted := 0
+	if r.s3Front != nil && r.s3Front.versions.enabled(bucket) {
+		verdict, emptyErr := r.emptyVersionedBucket(ctx, client, resource, bucket)
+		return verdict, emptyErr
+	}
 	var continuation *string
 	for {
 		listing, listErr := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
@@ -693,6 +699,63 @@ func (r *Runner) emptyAutoDeleteBucket(ctx context.Context, spec *Spec, resource
 		"logicalId":          resource.LogicalID,
 		"status":             customResourceStatusSuccess,
 		"reason":             "the runner emptied the bucket for the auto-delete handler's delete leg",
+		"physicalResourceId": bucket,
+		"deletedObjects":     deleted,
+	}, nil
+}
+
+// emptyVersionedBucket is the auto-delete leg for a version-enabled bucket. A
+// versioned bucket is emptied by deleting every version, the way the CDK
+// handler's own version listing does; a plain object delete would only add
+// delete markers and leave the versions behind, so RemoveBucket could never
+// succeed.
+func (r *Runner) emptyVersionedBucket(
+	ctx context.Context,
+	client *s3.Client,
+	resource CustomResourceSpec,
+	bucket string,
+) (map[string]any, error) {
+	deleted := 0
+	var keyMarker, versionMarker *string
+	for {
+		listing, listErr := client.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{
+			Bucket:          aws.String(bucket),
+			KeyMarker:       keyMarker,
+			VersionIdMarker: versionMarker,
+		})
+		if listErr != nil {
+			return nil, fmt.Errorf("list the versions of bucket %s: %w", bucket, listErr)
+		}
+		for _, version := range listing.Versions {
+			if _, deleteErr := client.DeleteObject(ctx, &s3.DeleteObjectInput{
+				Bucket:    aws.String(bucket),
+				Key:       version.Key,
+				VersionId: version.VersionId,
+			}); deleteErr != nil {
+				return nil, fmt.Errorf("delete version %s of %s from bucket %s: %w", aws.ToString(version.VersionId), aws.ToString(version.Key), bucket, deleteErr)
+			}
+			deleted++
+		}
+		for _, marker := range listing.DeleteMarkers {
+			if _, deleteErr := client.DeleteObject(ctx, &s3.DeleteObjectInput{
+				Bucket:    aws.String(bucket),
+				Key:       marker.Key,
+				VersionId: marker.VersionId,
+			}); deleteErr != nil {
+				return nil, fmt.Errorf("delete delete-marker %s of %s from bucket %s: %w", aws.ToString(marker.VersionId), aws.ToString(marker.Key), bucket, deleteErr)
+			}
+			deleted++
+		}
+		if listing.IsTruncated == nil || !*listing.IsTruncated || listing.NextKeyMarker == nil {
+			break
+		}
+		keyMarker, versionMarker = listing.NextKeyMarker, listing.NextVersionIdMarker
+	}
+	r.logf("custom resource %s: emptied versioned bucket %s (%d version(s)) for its delete leg", resource.LogicalID, bucket, deleted)
+	return map[string]any{
+		"logicalId":          resource.LogicalID,
+		"status":             customResourceStatusSuccess,
+		"reason":             "the runner emptied the versioned bucket for the auto-delete handler's delete leg",
 		"physicalResourceId": bucket,
 		"deletedObjects":     deleted,
 	}, nil

@@ -227,6 +227,14 @@ type s3Front struct {
 	logf     func(string, ...any)
 	proxy    *httputil.ReverseProxy
 	signer   *v4.Signer
+	// versions is the bucket version log: every successful write to a
+	// version-enabled bucket is archived here, and reads by version id, the
+	// version listing and delete markers are served from it.
+	versions *s3VersionStore
+	// client sends the front's own requests to the store: the archived-object
+	// read, a restore, and a version deletion's live-object reconciliation. One
+	// client per front keeps the timeout and the connection pool in one place.
+	client *http.Client
 	// credentials is the store's own static identity, which s3proxy verifies.
 	credentials aws.Credentials
 	// issuedRecord resolves a request signed with a credential the run issued.
@@ -251,12 +259,18 @@ func newS3Front(dataDir, upstream string, logf func(string, ...any)) (*s3Front, 
 	if err != nil {
 		return nil, err
 	}
+	versions, err := newS3VersionStore(dataDir)
+	if err != nil {
+		return nil, err
+	}
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
 	front := &s3Front{
 		upstream:    parsed,
 		index:       index,
+		versions:    versions,
+		client:      newS3UpstreamClient(),
 		logf:        logf,
 		signer:      newS3Signer(),
 		credentials: aws.Credentials{AccessKeyID: "dummy", SecretAccessKey: "dummy"},
@@ -308,6 +322,10 @@ type s3ObjectOperation struct {
 	remove bool
 	// removeKeys are the keys a DeleteObjects request named.
 	removeKeys []string
+	// removeIdentifiers are the key/version pairs a DeleteObjects request
+	// named; a versioned bucket deletes those versions instead of creating a
+	// marker for each key.
+	removeIdentifiers []s3RemoveIdentifier
 	// deleteObjects is a POST ?delete whose body names the keys.
 	deleteObjects bool
 	// removeBucket clears a deleted bucket's records.
@@ -329,6 +347,12 @@ func (f *s3Front) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		if adopted {
 			proxyRequest = request
 		}
+	}
+	// Versioned operations that only the version log can answer (a read by
+	// version id, the version listing, a versioning configuration, a delete of
+	// one version) never reach s3proxy, which has no versioning.
+	if f.versionedRequest(writer, request) {
+		return
 	}
 	if operation.ssePut {
 		// s3proxy refuses the header on its filesystem store; the front is
@@ -363,7 +387,7 @@ func (f *s3Front) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		}
 	}
 	if operation.deleteObjects {
-		proxy, keys, parsed, err := bufferDeleteObjects(request)
+		proxy, identifiers, parsed, err := bufferDeleteObjects(request)
 		if err != nil {
 			f.logf("local S3 front: %v", err)
 			http.Error(writer, err.Error(), http.StatusBadRequest)
@@ -373,15 +397,17 @@ func (f *s3Front) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			f.logf("local S3 front: the DeleteObjects body is larger than %d bytes; it is forwarded unchanged and its SSE-S3 records are left in place", s3FrontMaxBody)
 		}
 		proxyRequest = proxy
-		operation.removeKeys = keys
+		operation.removeIdentifiers = identifiers
+		for _, identifier := range identifiers {
+			operation.removeKeys = append(operation.removeKeys, identifier.Key)
+		}
 	}
 	proxy := *f.proxy
 	proxy.ModifyResponse = func(response *http.Response) error {
 		if response.StatusCode >= 400 {
 			f.logf("local S3 front: %s %s -> %d", request.Method, request.URL.Path, response.StatusCode)
 		}
-		f.recordResponse(operation, response)
-		return nil
+		return f.recordResponse(request.Context(), operation, response)
 	}
 	proxy.ServeHTTP(writer, proxyRequest)
 }
@@ -405,6 +431,17 @@ func newS3Signer() *v4.Signer {
 	})
 }
 
+// newS3UpstreamClient is the client the front uses for its own requests to the
+// store. The type assertion is intentionally checked: a test that replaced the
+// default transport must not turn a panic into a failed version write.
+func newS3UpstreamClient() *http.Client {
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		transport = &http.Transport{}
+	}
+	return &http.Client{Timeout: 2 * time.Minute, Transport: transport.Clone()}
+}
+
 // resign replaces the caller's SigV4 signature after a signed header was
 // removed. The local credentials are the profile's static dummy pair; s3proxy
 // verifies the new signature against the headers it receives. The caller's own
@@ -415,6 +452,15 @@ func (f *s3Front) resign(request *http.Request) error {
 	if request.Header.Get("Authorization") == "" {
 		return nil
 	}
+	return f.signRequest(request)
+}
+
+// signRequest signs one request with the store's identity, whether or not it
+// already carried a signature. The front uses it both to replace a caller's
+// signature after removing a signed header and to sign the request it sends to
+// the store itself (the archived-object read, a restore and the version
+// deletion's live-object reconciliation).
+func (f *s3Front) signRequest(request *http.Request) error {
 	payloadHash := strings.TrimSpace(request.Header.Get("X-Amz-Content-Sha256"))
 	if err := s3StreamingPayloadError(request); err != nil {
 		return err
@@ -435,9 +481,16 @@ func (f *s3Front) resign(request *http.Request) error {
 			payloadHash = hex.EncodeToString(sum[:])
 			request.Body = io.NopCloser(bytes.NewReader(body))
 			request.ContentLength = int64(len(body))
-			request.Header.Set("X-Amz-Content-Sha256", payloadHash)
 		}
 	}
+	// s3proxy authenticates a v4 request by hashing the body it received and
+	// comparing that digest with x-amz-content-sha256; a request without the
+	// header is rejected with XAmzContentSHA256Mismatch, not treated as an
+	// unsigned payload. A forwarded caller always sends it, but a request the
+	// front builds itself (the archived-object read, a restore, a version
+	// deletion's reconciliation) does not, so the digest just computed is
+	// always written back.
+	request.Header.Set("X-Amz-Content-Sha256", payloadHash)
 	request.Header.Del("Authorization")
 	stripUnimplementedStoreHeaders(request)
 	// Sign exactly the headers the proxy will forward: ReverseProxy drops the
@@ -787,10 +840,12 @@ func s3ResponseCarriesError(response *http.Response) bool {
 	return root.XMLName.Local == "Error"
 }
 
-// recordResponse applies the operation to the index and the response headers.
+// recordResponse applies the operation to the index and the response headers,
+// and, on a version-enabled bucket, archives a successful write or records the
+// version-shaped result AWS would return.
 //
 //nolint:gocognit,gocyclo // one branch per operation shape
-func (f *s3Front) recordResponse(operation s3ObjectOperation, response *http.Response) {
+func (f *s3Front) recordResponse(ctx context.Context, operation s3ObjectOperation, response *http.Response) error {
 	success := response.StatusCode >= 200 && response.StatusCode < 300
 	if success && (operation.put || operation.overwrite) && s3ResponseCarriesError(response) {
 		// The write did not happen; keep the record as it was.
@@ -835,6 +890,45 @@ func (f *s3Front) recordResponse(operation s3ObjectOperation, response *http.Res
 			}
 		}
 	}
+	return f.recordVersionedResponse(ctx, operation, response, success)
+}
+
+// recordVersionedResponse keeps the version log in step with a proxied
+// response. An unversioned bucket takes no action at all: that is the v7.0.0
+// path without a byte copied and without an added header.
+//
+//nolint:gocyclo // one branch per operation shape.
+func (f *s3Front) recordVersionedResponse(ctx context.Context, operation s3ObjectOperation, response *http.Response, success bool) error {
+	if f.versions == nil || operation.bucket == "" || !f.versions.enabled(operation.bucket) {
+		return nil
+	}
+	switch {
+	case (operation.put || operation.overwrite) && success:
+		if err := f.archiveWrite(ctx, operation.bucket, operation.key, response); err != nil {
+			return fmt.Errorf("archive %s/%s: %w", operation.bucket, operation.key, err)
+		}
+	case operation.read:
+		f.decorateVersionedRead(operation.bucket, operation.key, response)
+	case operation.remove && success:
+		if err := f.recordDeleteMarker(operation.bucket, operation.key, response); err != nil {
+			return fmt.Errorf("record the delete marker for %s/%s: %w", operation.bucket, operation.key, err)
+		}
+	case len(operation.removeKeys) > 0 && success:
+		identifiers := operation.removeIdentifiers
+		if len(identifiers) == 0 {
+			for _, key := range operation.removeKeys {
+				identifiers = append(identifiers, s3RemoveIdentifier{Key: key})
+			}
+		}
+		if err := f.applyVersionedDeleteObjects(ctx, operation.bucket, identifiers); err != nil {
+			return fmt.Errorf("record the versioned delete for bucket %s: %w", operation.bucket, err)
+		}
+	case operation.removeBucket && success:
+		if err := f.versions.removeBucket(operation.bucket); err != nil {
+			return fmt.Errorf("clear the version log for bucket %s: %w", operation.bucket, err)
+		}
+	}
+	return nil
 }
 
 // s3Operation classifies one request. Only the operations whose AWS shape the
@@ -968,10 +1062,17 @@ func splitS3Path(path string) (string, string) {
 	return bucket, key
 }
 
+// s3RemoveIdentifier is one Object entry of a DeleteObjects request. VersionId
+// is empty for a plain object delete.
+type s3RemoveIdentifier struct {
+	Key       string
+	VersionID string
+}
+
 // bufferDeleteObjects preserves a DeleteObjects body for the upstream request
-// and, when the body fits the front's buffer, returns the keys it names so the
-// SSE-S3 records can be cleared. The forwarded body is always byte-identical:
-// SigV4 signed the unchanged payload.
+// and, when the body fits the front's buffer, returns the keys and versions it
+// names so the SSE-S3 records and the version log stay in step. The forwarded
+// body is always byte-identical: SigV4 signed the unchanged payload.
 //
 // AWS allows 1000 keys of up to 1024 bytes, a body of about 1.05 MiB, so a body
 // above the buffer is a valid request the v7.0.0 path carried to s3proxy. It is
@@ -982,7 +1083,7 @@ func splitS3Path(path string) (string, string) {
 //
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjects.html
 // https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-keys.html
-func bufferDeleteObjects(request *http.Request) (*http.Request, []string, bool, error) {
+func bufferDeleteObjects(request *http.Request) (*http.Request, []s3RemoveIdentifier, bool, error) {
 	if request.Body == nil {
 		return request, nil, true, nil
 	}
@@ -1003,18 +1104,19 @@ func bufferDeleteObjects(request *http.Request) (*http.Request, []string, bool, 
 	clone.ContentLength = int64(len(payload))
 	var body struct {
 		Objects []struct {
-			Key string `xml:"Key"`
+			Key       string `xml:"Key"`
+			VersionID string `xml:"VersionId"`
 		} `xml:"Object"`
 	}
-	keys := []string(nil)
+	identifiers := []s3RemoveIdentifier(nil)
 	if err := xml.Unmarshal(payload, &body); err == nil {
 		for _, object := range body.Objects {
 			if object.Key != "" {
-				keys = append(keys, object.Key)
+				identifiers = append(identifiers, s3RemoveIdentifier{Key: object.Key, VersionID: object.VersionID})
 			}
 		}
 	}
-	return clone, keys, true, nil
+	return clone, identifiers, true, nil
 }
 
 // s3ReplayBody replays the bytes the front read before deciding a body was too
