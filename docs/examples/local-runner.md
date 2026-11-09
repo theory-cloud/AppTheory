@@ -823,6 +823,10 @@ as before.
                        trust-bundle.pem 0644; the directory is 0700)
 ```
 
+The directory is trusted local state: any process that can write to it can mint
+or edit IAM plane records, including credentials naming another run's roles (see
+[The shared IAM plane](#the-shared-iam-plane)).
+
 Each run issues its own leaf from that CA, and every function container mounts
 the same trust bundle, so a function in run A verifies the HTTPS listener run B
 serves. The CA layout, permissions and failure rule are in
@@ -2702,8 +2706,13 @@ refused with a named `501` (only `Enabled` is served), a `CopyObject` whose
 source names a specific `versionId` is refused the same way, and versioning is a
 template property — a `PutBucketVersioning` against a bucket the template does
 not version stays on the store's path (the pinned s3proxy answers `501`), so an
-unversioned bucket is untouched by this front. The first two are docs/125 true
-limits; a template that only enables versioning at creation never reaches them.
+unversioned bucket is untouched by this front. An object larger than 512 MiB
+also fails the write on a version-enabled bucket: the front archives a written
+object by copying it into the version log, refuses a copy above 512 MiB, and
+answers the put with its `502` backend error and no `x-amz-version-id`, where
+AWS accepts a single `PutObject` up to 5 GB. The suspended-versioning,
+copy-from-version and archive-cap limits are docs/125 true limits; a template
+that only enables versioning at creation never reaches them.
 
 ## Event delivery
 
@@ -3829,6 +3838,16 @@ headers, credential scope and the 15-minute clock window
 https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-signing-elements.html).
 It also accepts a presigned URL (`X-Amz-Signature`) up to 7 days old.
 
+A header-signed request that declares `x-amz-content-sha256: UNSIGNED-PAYLOAD`
+carries that literal in the canonical request and is verified over it: the body
+is not hashed and no digest is compared, so the request skips body-integrity
+checking (the same is true of any other value in that header — it enters the
+canonical request as written, never recomputed). A request that omits the
+header is hashed over the body the verifier read, so a changed body breaks its
+signature. `UNSIGNED-PAYLOAD` is the documented literal for a request that does
+not sign its payload
+([SigV4 canonical request](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-create-signed-request.html)).
+
 ### The shared IAM plane
 
 `--shared-dir` is one directory every co-resident run shares. It holds:
@@ -3844,6 +3863,14 @@ The co-residence work adds the shared CA beside `iam/`. Every file is written to
 a temporary name and renamed into place, so a reader never sees a partial
 document; a run removes its own files when it stops, and a run whose heartbeat is
 older than ten minutes is ignored.
+
+The directory is trusted local state. Any process that can write to
+`--shared-dir` can mint or edit IAM plane records — a run definition, a
+credential, an assumed session, or an STS endpoint — including a credential that
+names another run's roles, and the runs that read the plane accept what it says.
+Co-residence assumes every writer to that directory is trusted; it does not
+isolate co-resident runs from each other or from another local process that can
+reach the path.
 
 With `--shared-dir`, one run's function can assume a role another run defined and
 call that run's API: the callee verifies the session's signature from the shared
