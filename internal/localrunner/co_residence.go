@@ -28,6 +28,24 @@ func (r *Runner) sharedAlias(name string) string {
 	return sanitizeName(r.namePrefix + "-" + name)
 }
 
+// scopeBackendEndpoints rewrites every injected endpoint the backend provides
+// to the run-scoped alias. On a shared network the container publishes only
+// that alias, so an unscoped profile name ("moto") would not resolve for the
+// preflight probe or for a function; the URL a function receives and the alias
+// Docker answers must be the same run-scoped name.
+func (r *Runner) scopeBackendEndpoints(container, alias string) {
+	if alias == container {
+		return
+	}
+	for index := range r.endpoints {
+		parsed, err := url.Parse(r.endpoints[index].URL)
+		if err != nil || parsed.Hostname() != container {
+			continue
+		}
+		r.endpoints[index].URL = replaceURLHost(r.endpoints[index].URL, alias)
+	}
+}
+
 // replaceURLHost rewrites a URL's host while keeping its scheme and port.
 func replaceURLHost(raw, host string) string {
 	parsed, err := url.Parse(raw)

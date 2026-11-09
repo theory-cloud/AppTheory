@@ -50,6 +50,10 @@ func (r *Runner) startBackend(ctx context.Context, backend string) error {
 	// "s3proxy") alias, and Docker's DNS would answer with either run's
 	// container. A run-scoped alias keeps every endpoint inside its own run.
 	alias := r.sharedAlias(container)
+	// The profile's endpoint URLs name the container ("http://moto:5000"); on a
+	// shared network the container answers only the run-scoped alias, so the
+	// injected endpoints (preflight, function environment) must carry it too.
+	r.scopeBackendEndpoints(container, alias)
 	pin, dataMounts, err := r.configureBackendDataDir(backend, container, pin)
 	if err != nil {
 		return err

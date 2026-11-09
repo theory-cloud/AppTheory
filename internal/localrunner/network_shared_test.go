@@ -86,6 +86,40 @@ func TestSharedAliasAndURLRewrite(t *testing.T) {
 	}
 }
 
+// TestScopeBackendEndpoints pins X6c: the injected endpoint names a function
+// and the preflight probe receive must be the run-scoped alias the container
+// publishes on a shared network, and must not change otherwise.
+func TestScopeBackendEndpoints(t *testing.T) {
+	shared := &Runner{
+		sharedNetwork: true,
+		namePrefix:    "run-a",
+		endpoints: []Endpoint{
+			{Service: "kms", URL: "http://moto:5000"},
+			{Service: "dynamodb", URL: "http://dynamodb-local:8000"},
+			{Service: "sqs", URL: "http://run-a-sqs:9324"},
+			{Service: "cloudfront", URL: "https://cloudfront.localhost:8300"},
+		},
+	}
+	shared.scopeBackendEndpoints("moto", shared.sharedAlias("moto"))
+	shared.scopeBackendEndpoints(backendDynamoDBName, shared.sharedAlias(backendDynamoDBName))
+	want := []string{
+		"http://run-a-moto:5000",
+		"http://run-a-dynamodb-local:8000",
+		"http://run-a-sqs:9324",
+		"https://cloudfront.localhost:8300",
+	}
+	for index, endpoint := range shared.endpoints {
+		if endpoint.URL != want[index] {
+			t.Fatalf("endpoint %s = %q, want %q", endpoint.Service, endpoint.URL, want[index])
+		}
+	}
+	private := &Runner{endpoints: []Endpoint{{Service: "kms", URL: "http://moto:5000"}}}
+	private.scopeBackendEndpoints("moto", private.sharedAlias("moto"))
+	if private.endpoints[0].URL != "http://moto:5000" {
+		t.Fatalf("a private run rewrote its endpoint to %q", private.endpoints[0].URL)
+	}
+}
+
 // TestEnsureNetworkAttachesToAnExistingSharedNetwork covers the second run: it
 // must not try to create the bridge its sibling already created.
 func TestEnsureNetworkAttachesToAnExistingSharedNetwork(t *testing.T) {
