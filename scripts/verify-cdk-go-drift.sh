@@ -17,6 +17,12 @@ fi
 
 bash ./scripts/update-cdk-generated.sh
 
+# The tarball comparison is content-based: a host whose zlib produces a
+# different deflate stream for identical content must not report drift, while a
+# content change must still fail. Prove both directions before trusting the
+# status check below.
+python3 ./scripts/lib/canonicalize-jsii-tarballs.py --self-test
+
 drift_status="$(git status --porcelain=v1 --untracked-files=all -- cdk-go/)"
 if [[ -n "${drift_status}" ]]; then
   echo "cdk-go-drift: FAIL (cdk-go bindings are stale; run ./scripts/update-cdk-generated.sh and commit the diff)" >&2

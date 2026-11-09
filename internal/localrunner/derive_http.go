@@ -714,11 +714,14 @@ func collectRefs(value any, out *[]logicalRef) {
 			*out = append(*out, logicalRef{ID: id})
 		}
 		collectGetAtt(typed["Fn::GetAtt"], out)
-		for key, child := range typed {
+		// Visit the remaining keys in sorted order: a map's iteration order is
+		// random, and a caller that compares reference lists (a test, or a
+		// derivation that reports them) must see the same sequence twice.
+		for _, key := range sortedKeys(typed) {
 			if key == intrinsicRef || key == "Fn::GetAtt" {
 				continue
 			}
-			collectRefs(child, out)
+			collectRefs(typed[key], out)
 		}
 	case []any:
 		for _, child := range typed {
