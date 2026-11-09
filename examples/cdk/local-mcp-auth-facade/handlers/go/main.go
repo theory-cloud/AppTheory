@@ -143,6 +143,7 @@ func buildApp(cfg exampleConfig) (*apptheory.App, error) {
 	app.Get("/_state", instance.state)
 	app.Post("/_state/legacy", instance.seedLegacy)
 	app.Post("/_state/revoke-upstream-grant", instance.revokeUpstream)
+	app.Post("/_state/revoke-family", instance.revokeFamily)
 	return app, nil
 }
 
@@ -357,6 +358,30 @@ func (e *example) seedLegacy(ctx *apptheory.Context) (*apptheory.Response, error
 func (e *example) revokeUpstream(*apptheory.Context) (*apptheory.Response, error) {
 	e.upstream.revokeAllGrants()
 	return apptheory.JSON(http.StatusOK, map[string]any{"revoked": true})
+}
+
+// revokeFamily tombstones every facade family, the local stand-in for an
+// incident response that revokes the refresh families without touching the
+// upstream grants. A still-valid access token then meets the resource server's
+// revoked-record refusal (401) instead of a refresh answer.
+func (e *example) revokeFamily(*apptheory.Context) (*apptheory.Response, error) {
+	families := map[string]struct{}{}
+	e.broker.mu.Lock()
+	for _, record := range e.broker.records {
+		if record.FamilyHash != "" {
+			families[record.FamilyHash] = struct{}{}
+		}
+	}
+	e.broker.mu.Unlock()
+	revoked := 0
+	for family := range families {
+		records, err := e.broker.RevokeFamily(context.Background(), family)
+		if err != nil {
+			return nil, err
+		}
+		revoked += len(records)
+	}
+	return apptheory.JSON(http.StatusOK, map[string]any{"families": len(families), "revoked": revoked})
 }
 
 // buildMCPServer is the MCP surface the facade protects: one echo tool.

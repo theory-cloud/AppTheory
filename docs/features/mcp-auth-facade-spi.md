@@ -212,14 +212,29 @@ client satisfies (client registration, route resource, scope, subject). Detectio
 cannot distinguish a thief's presentation of a stolen handle from a restart holding a stale copy, and treating the
 latter as theft is what broke every real client.
 
-**What real clients actually do.** The local real-client target (`make local-clients`) drives Codex 0.166 and Claude
-Code 2.1 against the example app with an isolated home per client. With a 30-second access-token lifetime, Codex
-issued 34 route refreshes across two separate processes (a run and a restart) and Claude Code issued 6 in one run:
-every refresh was served, no refusal was emitted, no family was revoked, and the upstream never observed refresh-token
-reuse. Codex kept the rotated handle across a process restart and Claude Code persisted it within one run;
-neither needed a manual re-login. The authoritative
-Autheory-path proof runs in TMS; the example's own rows (`examples/cdk/local-mcp-auth-facade`) replay the same
-sequences over real HTTP in CI.
+**What real clients actually do.** The local real-client target (`make local-clients`) drives Codex 0.166,
+Claude Code 2.1.319, Kimi Code 2.4.0 and Vibe 3.0.4 against the example app with an isolated home per
+client. With a 30-second access-token lifetime, Codex issued 34 route refreshes across two separate
+processes (a run and a restart), Claude Code 6 in one run and Kimi Code 1 across a restart: every refresh
+was served, no refusal was emitted, no family was revoked, and the upstream never observed refresh-token
+reuse. Codex and Kimi Code kept the rotated handle across a process restart and Claude Code persisted it
+within one run; none needed a re-login.
+
+With the upstream grant revoked, each client made exactly one refresh, received the terminal
+`invalid_grant`, stopped, and called no tool; Kimi Code then waited for a new login instead of looping. A
+control endpoint tombstoned the family while an access token minted with a long lifetime was still valid,
+and Codex presented it: the resource server accepted it, because it accepts every credential the facade
+issued for the lifetime the token response stated. No client in this suite ever presents a refusable live
+access token, so the MCP-401 comparison does not arise; the refusal every client meets is the token
+endpoint's `400 invalid_grant`.
+
+Vibe's leg stops before it starts. On macOS Vibe 3.0.4 writes MCP OAuth tokens with
+`/usr/bin/security add-generic-password -s ai.mistral.vibe` straight to the Keychain
+(`vibe/utils/keyring.py`), bypassing the Python keyring library and any `PYTHON_KEYRING_BACKEND`, so the
+login cannot be confined to the run's scratch home and its item would outlive the run. The suite reports
+the leg BLOCKED with that path and proves it left no `ai.mistral.vibe` item for its alias. The
+authoritative Autheory-path proof runs in TMS; the example's own rows
+(`examples/cdk/local-mcp-auth-facade`) replay the same sequences over real HTTP in CI.
 
 ### Family identity, tombstone, and migration
 

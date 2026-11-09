@@ -442,7 +442,11 @@ make local-clients LOCAL_CLIENTS_ARGS="--clients codex,claude_code"
 entry, and runs two tool prompts separated by a restart. It asserts, from the
 app's own state document, that both tool calls succeeded, that refreshes were
 served, that no refusal was rendered, and that the upstream never detected
-refresh-token reuse.
+refresh-token reuse. It then revokes the upstream grant and asserts the terminal
+path: exactly one refresh, the `invalid_grant` answer, no retry loop and no tool
+call. `--verify-401` adds the live-token comparison on a second app instance
+with a long access-token lifetime, where the revoked family is presented by an
+unexpired credential and the resource server's answer is recorded.
 
 Isolation rules:
 
@@ -453,7 +457,15 @@ Isolation rules:
   isolated home (0600, deleted with the scratch). For Claude Code only the
   keychain item's `claudeAiOauth` subtree is carried — its `mcpOAuth` store is
   deliberately dropped; for Codex it is `auth.json`, which holds model auth only;
-- the credential is never printed.
+  for Kimi Code it is the provider/model settings parsed out of `config.toml`
+  plus its credential file, never an `mcp_servers` entry;
+- the credential is never printed;
+- the Vibe profile stops before any login because Vibe 3.0.4 writes MCP OAuth
+  tokens with `/usr/bin/security` straight to the macOS Keychain
+  (`vibe/utils/keyring.py`), bypassing the Python keyring library and any
+  `PYTHON_KEYRING_BACKEND`; the suite checks the account metadata before and
+  after and reports that it left no `ai.mistral.vibe` item. A dedicated alias in
+  the real Keychain would need a separate operator decision.
 
 This target is not a CI job and not a harness row: CI must not depend on a
 client binary. A profile that cannot be exercised for an environmental reason
