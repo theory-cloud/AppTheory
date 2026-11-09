@@ -86,8 +86,18 @@ type customResourceRequest struct {
 // deriveCustomResources records every custom resource the run can invoke. A
 // custom resource the runner serves with its own implementation, or refuses,
 // is reported in the same list so the type is never silently ignored.
-func deriveCustomResources(spec *Spec, stacks []assemblyStack) {
+//
+// Each entry also carries its position in the stack's template dependency
+// order. A template whose dependency graph is cyclic fails closed by name: the
+// runner cannot know which resource CloudFormation would create first.
+//
+//nolint:gocognit // one branch per skip reason the derived resource reports.
+func deriveCustomResources(spec *Spec, stacks []assemblyStack) error {
 	for _, stack := range stacks {
+		order, err := templateTopologicalOrder(stack)
+		if err != nil {
+			return err
+		}
 		for _, id := range sortedKeys(stack.Template.Resources) {
 			resource := stack.Template.Resources[id]
 			if !customResourceType(resource.Type) {
@@ -98,6 +108,7 @@ func deriveCustomResources(spec *Spec, stacks []assemblyStack) {
 				Stack:      stack.Name,
 				Type:       resource.Type,
 				Properties: resource.Properties,
+				Order:      order[id],
 			}
 			if servedBy, ok := customResourceServedNatively[resource.Type]; ok {
 				entry.ServedBy = servedBy
@@ -512,19 +523,21 @@ func (r *Runner) customResourceAttribute(stack, logicalID, attribute string) (st
 	return value, ok
 }
 
-// dependencyOrder sorts custom resources so a resource that references another
-// custom resource's attributes is invoked after it.
+// dependencyOrder sorts custom resources into their stacks' template
+// dependency order. The derived Order carries the topological position (an
+// explicit DependsOn chain through a non-custom resource counts); specs
+// without one fall back to a direct property reference and then to logical-id
+// order, which is the only tie-break.
 func dependencyOrder(resources []CustomResourceSpec) []CustomResourceSpec {
 	ordered := make([]CustomResourceSpec, len(resources))
 	copy(ordered, resources)
-	index := map[string]int{}
-	for position, resource := range ordered {
-		index[resource.Stack+"/"+resource.LogicalID] = position
-	}
 	sort.SliceStable(ordered, func(i, j int) bool {
 		left, right := ordered[i], ordered[j]
 		if left.Stack != right.Stack {
 			return left.Stack < right.Stack
+		}
+		if left.Order != right.Order {
+			return left.Order < right.Order
 		}
 		leftDepends := referencesLogicalID(left.Properties, right.LogicalID)
 		rightDepends := referencesLogicalID(right.Properties, left.LogicalID)

@@ -482,6 +482,10 @@ type CustomResourceSpec struct {
 	// against the assembly at invocation time, after provisioning created the
 	// resources it references.
 	Properties json.RawMessage `json:"properties,omitempty"`
+	// Order is the resource's position in its stack's topological dependency
+	// order (explicit DependsOn plus implicit Ref/Fn::GetAtt edges). Invocation
+	// order is this value; logical-id order only breaks a tie.
+	Order int `json:"order,omitempty"`
 }
 
 // ReceiptRuleSpec is one AWS::SES::ReceiptRule the run serves: a recipient set,

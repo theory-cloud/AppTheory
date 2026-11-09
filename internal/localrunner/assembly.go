@@ -105,6 +105,11 @@ type templateResource struct {
 	Type       string                     `json:"Type"`
 	Properties json.RawMessage            `json:"Properties"`
 	Metadata   map[string]json.RawMessage `json:"Metadata"`
+	// DependsOn is CloudFormation's explicit ordering edge: a logical id or a
+	// list of them. Together with the Refs and Fn::GetAtts in Properties it
+	// forms the template's dependency graph.
+	// https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-attribute-dependson.html
+	DependsOn json.RawMessage `json:"DependsOn"`
 }
 
 type lambdaFunctionProperties struct {
@@ -431,7 +436,9 @@ func deriveSpecInternal(dir string, stacks []assemblyStack) (*Spec, error) {
 		})
 	}
 	deriveIAMRoles(spec, stacks)
-	deriveCustomResources(spec, stacks)
+	if err := deriveCustomResources(spec, stacks); err != nil {
+		return nil, err
+	}
 	deriveReceiptRules(spec, stacks)
 	classifyProblemResources(spec)
 	deriveSkipped(spec)
