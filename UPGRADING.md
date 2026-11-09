@@ -13,6 +13,36 @@ for `CHANGELOG.md`:
 Every minor release line that changes runtime behavior, deployment constructs, generated artifacts, dependency floors,
 or deprecation posture must add or update a section here before the release is promoted.
 
+## v7.x line
+
+### 7.1.0
+
+- **MCP auth facade: a reused refresh route handle is served, not treated as theft.** A handle that was rotated
+  away and is presented after its grace window is now a stale predecessor: the facade rotates the family's live
+  head, answers with fresh credentials, re-arms the presented record with a fresh grace window, and keeps every
+  family member live. The family is revoked only when the upstream terminally rejects the grant, when an operator
+  revokes it through the incident surface, or when the authorization code that minted it is replayed. Telemetry
+  adds the `rotated_from_head` outcome and the `stale_predecessor` reason; the other outcomes and reasons are
+  unchanged. **No consumer action is required**, and no configuration key is removed: `ReuseRateCeiling` stays
+  accepted but no refresh path reads it.
+
+  This is a minor release, not a major, because no released consumer depended on the old behaviour: the change's
+  commit (`1165d66f`) is not in `v7.0.0` or any earlier tag, Autheory pins the v6 runtime at `v6.3.1`, TMS pins
+  `v6.4.0`, and FaceTheory pins `v7.0.0` only for its TypeScript and CDK infrastructure packages and has no
+  `mcpfacade` reference. The generated `7.1.0-rc` changelog still lists that commit under `⚠ BREAKING CHANGES`
+  because its subject keeps the `!` marker; [the release-note correction](./docs/release-notes-corrections.md)
+  records the intended classification.
+
+  The residual risk of serving reuse — a stolen handle stays exchangeable while the thief keeps presenting the
+  current handle and the upstream grant is valid — is stated in [MCP auth facade SPI, "Reuse is served, never
+  punished"](./docs/features/mcp-auth-facade-spi.md#reuse-is-served-never-punished), in its "Residual risk"
+  paragraph.
+
+### 7.0.0
+
+See the [v7.0.0 release notes](https://github.com/theory-cloud/AppTheory/releases/tag/v7.0.0); the Go import-path
+move is the mechanical part of that major.
+
 ## v6.x line
 
 ### Unreleased
