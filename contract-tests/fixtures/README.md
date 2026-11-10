@@ -213,6 +213,11 @@ error envelopes — rather than a runner-owned stand-in. Every field is optional
   - `required_scopes`: the route scope set a token must carry. A credential-free or unknown token is the `401` case
     (RFC 9728 `resource_metadata` challenge); a known token missing a required scope is the `403
     insufficient_scope` case (RFC 6750 `error`/`scope`/`resource_metadata` challenge).
+- `origin_reachability`: the declared direct-origin posture (`disabled`, `locked`, or `fronted`). `fronted` requires
+  `front_door_verification` (`header_name`, `secret_value`): the runtime then refuses every derived route — transport
+  and OAuth facade — with `403 app.forbidden` when the declared header is absent or wrong, and registration fails
+  closed when `fronted` is declared without it. The `mcp-facade-front-door-*` fixtures pin that fail-closed behavior,
+  including an OAuth facade document path and the unconfigured registration error.
 
 The mounted facade serves the client-facing route algebra, so a fixture asserts its real responses through
 `input.aws_event` with a greedy `ANY /{proxy+}` (or `ANY /`) route key. The `http-core` `mcp-facade-greedy-*`
