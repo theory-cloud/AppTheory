@@ -16,8 +16,9 @@ from pathlib import Path
 
 actual = int(os.environ["APPTHEORY_FIXTURE_COUNT_ACTUAL"])
 
-# Keep the root set intentionally explicit: these are user-facing root
-# documents. Agent bootstrap files and planning artifacts contain historical
+# Keep the root set intentionally explicit: user-facing root documents plus the
+# contract-tests tree, whose fixtures README is itself a public fixture-count
+# claim site. Agent bootstrap files and planning artifacts contain historical
 # review text and are not public fixture-count claims.
 scan_roots = [
     "README.md",
@@ -25,6 +26,7 @@ scan_roots = [
     "CHANGELOG.md",
     "CONTRIBUTING.md",
     "docs",
+    "contract-tests",
 ]
 tracked = subprocess.check_output(["git", "ls-files", "--", *scan_roots], text=True).splitlines()
 public_suffixes = {".md", ".markdown", ".html", ".yml", ".yaml"}
