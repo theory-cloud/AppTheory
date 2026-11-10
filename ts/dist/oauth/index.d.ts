@@ -139,7 +139,41 @@ export interface RequireBearerTokenOptions {
     requiredScopes?: string[] | ((ctx: Context) => string[] | Promise<string[]>);
     validator?: BearerTokenValidator;
     claimsValidator?: BearerTokenClaimsValidator;
+    /**
+     * Receives one structured, redacted event for every 401 and 403 this
+     * middleware renders, so a refusal is answerable from telemetry instead of
+     * being a bare status. The event carries the status, a closed reason slug, the
+     * method, the path, and the challenge shape - never the presented credential.
+     * A throwing hook is contained.
+     */
+    refusalHook?: RefusalHook;
 }
+/** The surface that rendered a refusal. */
+export type RefusalClass = "bearer" | "transport" | "facade";
+/**
+ * One schema-redacted refusal: the status, a closed reason slug, the request
+ * method and path (never the query string), the client-facing error code, and
+ * the challenge shape. It never carries a bearer token, an authorization code, a
+ * refresh handle, a cookie, or a request body.
+ */
+export interface RefusalEvent {
+    at: Date;
+    class: RefusalClass;
+    reason: string;
+    status: number;
+    method: string;
+    path: string;
+    errorCode?: string;
+    challenge?: string;
+}
+/** Receives one refusal event synchronously on the response path. */
+export type RefusalHook = (ctx: Context, event: RefusalEvent) => void;
+export declare const REFUSAL_REASON_UNCLASSIFIED = "unclassified";
+export declare const REFUSAL_REASON_MISSING_CREDENTIAL = "missing_credential";
+export declare const REFUSAL_REASON_INVALID_CREDENTIAL = "invalid_credential";
+export declare const REFUSAL_REASON_EXPIRED_CREDENTIAL = "expired_credential";
+export declare const REFUSAL_REASON_AUDIENCE_MISMATCH = "audience_mismatch";
+export declare const REFUSAL_REASON_INSUFFICIENT_SCOPE = "insufficient_scope";
 export declare class OAuthBearerError extends Error {
     readonly oauthCode: string;
     constructor(oauthCode: string, message?: string);

@@ -431,7 +431,11 @@ export class MultiLangStack extends Stack {
     const wsAuthorizerFn = new lambda.Function(this, "WsAuthorizerFn", {
       runtime: lambda.Runtime.NODEJS_24_X,
       handler: "ws-authorizer.handler",
-      code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers")),
+      code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers"), {
+        // A host-side Python run writes handlers/py/__pycache__ next to the
+        // source; without the exclude the in-place synth hash drifts.
+        exclude: assetExclude,
+      }),
       timeout: cdk.Duration.seconds(10),
       description: "WebSocket $connect REQUEST authorizer; returns an IAM policy",
     });

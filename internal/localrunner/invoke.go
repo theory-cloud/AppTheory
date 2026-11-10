@@ -112,6 +112,8 @@ func (r *Runner) RunInvoke(ctx context.Context, functionID string, in io.Reader,
 
 // prepareInvoke creates the run's network, starts its backends, provisions the
 // local resources and proves the environment before the target starts.
+//
+//nolint:gocyclo // the startup order is documented and pinned by the docs-order test.
 func (r *Runner) prepareInvoke(ctx context.Context, spec *Spec, functionID string) error {
 	if err := r.docker.Available(ctx); err != nil {
 		return err
@@ -126,7 +128,7 @@ func (r *Runner) prepareInvoke(ctx context.Context, spec *Spec, functionID strin
 	if err = r.prepareScratch(spec); err != nil {
 		return err
 	}
-	if err = r.docker.CreateNetwork(ctx, r.network, r.labels()); err != nil {
+	if err = r.ensureNetwork(ctx); err != nil {
 		return err
 	}
 	r.logf("network %s", r.network)
@@ -134,10 +136,31 @@ func (r *Runner) prepareInvoke(ctx context.Context, spec *Spec, functionID strin
 	if err = r.startBackends(ctx); err != nil {
 		return err
 	}
+	if err = r.startKMSFront(ctx); err != nil {
+		return err
+	}
+	if err = r.startS3Front(ctx); err != nil {
+		return err
+	}
 	if err = r.provisionResources(ctx, spec); err != nil {
 		return err
 	}
 	if err = r.startCognitoIssuer(ctx, spec); err != nil {
+		return err
+	}
+	// Invoke mode hands the container the same credential the session and run
+	// surfaces hand theirs: the preflight proves it, and a handler that signs a
+	// request has a principal the IAM gate can resolve.
+	if err = r.startIAMPlane(spec); err != nil {
+		return err
+	}
+	if err = r.issueCredentials(spec, []string{functionID}); err != nil {
+		return err
+	}
+	if err = r.startSTSFront(ctx); err != nil {
+		return err
+	}
+	if err = r.publishIAMRun(spec); err != nil {
 		return err
 	}
 	if err = r.resolveEnvironment(spec, []string{functionID}); err != nil {
@@ -150,7 +173,7 @@ func (r *Runner) prepareInvoke(ctx context.Context, spec *Spec, functionID strin
 	for _, check := range sortedKeys(preflight.Checks) {
 		r.logf("preflight %s: %s", check, preflight.Checks[check])
 	}
-	return nil
+	return r.wireS3FrontEndpoint(preflight.HostGateway)
 }
 
 func (r *Runner) invokeSpec(ctx context.Context) (*Spec, error) {

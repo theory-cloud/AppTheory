@@ -320,7 +320,9 @@ func TestDeriveFailsClosedOnUnsupportedConstructs(t *testing.T) {
 			"Url": map[string]any{
 				"Type": typeFunctionURL,
 				"Properties": map[string]any{
-					"AuthType":          "AWS_IAM",
+					// AWS_IAM is served; a URL with an auth type the runner
+					// cannot verify still fails closed.
+					"AuthType":          "SIGNED_COOKIE",
 					"TargetFunctionArn": map[string]any{"Fn::GetAtt": []any{"Fn", "Arn"}},
 				},
 			},

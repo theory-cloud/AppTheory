@@ -171,7 +171,7 @@ func s3EventBridgeEntry(event S3ObjectEvent) eventBridgeEntry {
 		DetailType: detailType,
 		Detail:     string(encoded),
 		Resources:  []string{event.BucketARN},
-		Time:       event.Time.UTC().Format(time.RFC3339),
+		Time:       eventBridgeTimeOf(event.Time),
 	}
 }
 

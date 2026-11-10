@@ -49,6 +49,26 @@ challenge](../UPGRADING.md#mcp-route-algebra-v2-route-aware-bearer-validation-an
 `unauthenticatedMcp` is removed in favour of `transportPosture: none-public`, which is never a default and carries the
 defense-in-depth floor.
 
+## v7.1.0 — served refresh reuse is wrongly listed under `⚠ BREAKING CHANGES`
+
+**Incorrect release note.** The generated `7.1.0-rc` section of `CHANGELOG.md` will list
+`feat(mcpfacade)!: serve refresh reuse instead of revoking the family` under `⚠ BREAKING CHANGES`. The commit keeps
+its `!` marker in git history, so Release Please renders it as a breaking change, but the release is a minor line:
+`7.1.0` follows `7.0.0`, not `8.0.0`.
+
+**Correct classification.** The change is the X5 refresh-reuse policy — commit
+[`1165d66f`](https://github.com/theory-cloud/AppTheory/commit/1165d66f46936f8d44faeff2b9547b2c6e467036), pull
+request [#1249](https://github.com/theory-cloud/AppTheory/pull/1249). It replaces revocation-on-reuse with a served
+rotation: a stale predecessor rotates the family's live head, the family stays live, and revocation happens only on
+an upstream terminal rejection, an incident `RevokeFamily`, or a replayed authorization code. No API, configuration
+key, or deployment default changes, and no released consumer depended on the removed behaviour: the commit is not in
+`v7.0.0` or any earlier tag, Autheory pins the v6 runtime at `v6.3.1`, TMS pins `v6.4.0`, and FaceTheory pins
+`v7.0.0` only for its TypeScript and CDK infrastructure packages and has no `mcpfacade` reference.
+
+**Consumer action.** None. Read the `7.1.0` entry in [`UPGRADING.md`](../UPGRADING.md#710) for the behaviour summary.
+A deployment that consumed the removed revocation-on-reuse telemetry should read the `rotated_from_head` outcome
+instead of a revocation event.
+
 ## What is deliberately *not* done here
 
 - The published `6.0.0` **tag and its assets are immutable** and are never rewritten.

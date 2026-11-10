@@ -16,9 +16,14 @@ func TestValidateOriginOverridesRefusesNonLoopback(t *testing.T) {
 	if err := validateOriginOverrides(map[string]string{"api.example.com": "https://example.com"}); err == nil {
 		t.Fatal("a non-loopback origin override must be refused")
 	}
-	for _, raw := range []string{"http://127.0.0.1:9000", "http://localhost:9000", "http://[::1]:9000"} {
+	for _, raw := range []string{"http://127.0.0.1:9000", "http://localhost:9000", "http://[::1]:9000", "https://app.localhost:9000", "https://auth-api.localhost"} {
 		if err := validateOriginOverrides(map[string]string{"api.example.com": raw}); err != nil {
 			t.Fatalf("%s: %v", raw, err)
+		}
+	}
+	for _, raw := range []string{"http://app.localhost.example.com:9000", "http://10.0.0.1:9000", "http://example.com"} {
+		if err := validateOriginOverrides(map[string]string{"api.example.com": raw}); err == nil {
+			t.Fatalf("%s: a non-loopback mapping must be refused", raw)
 		}
 	}
 	if err := validateOriginOverrides(map[string]string{"": "http://127.0.0.1:9000"}); err == nil {

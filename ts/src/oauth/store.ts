@@ -114,6 +114,14 @@ export interface RouteRefreshBrokerRecord {
   upstreamClientId: string;
   encryptedGraceRefreshResponse?: string;
   graceExpiresAt?: Date;
+  /**
+   * When the access token inside `encryptedGraceRefreshResponse` stops being
+   * accepted. A replay reports only the lifetime the credential has left, so a
+   * replayed credential is always accepted for at least the `expires_in` the
+   * client is given. Absent means the store did not persist it; the facade then
+   * refuses to replay the stored body and rotates a fresh one.
+   */
+  graceAccessTokenExpiresAt?: Date;
   status: RouteRefreshBrokerStatus;
   refreshLockOwner?: string;
   refreshLockExpiresAt?: Date;
@@ -253,6 +261,8 @@ export interface RouteRefreshFamilyRotation {
   successor: RouteRefreshBrokerRecord;
   graceRefreshResponse: string;
   graceExpiresAt: Date;
+  /** When the access token inside `graceRefreshResponse` stops being accepted. */
+  graceAccessTokenExpiresAt?: Date;
 }
 
 /**
@@ -892,6 +902,9 @@ export class MemoryRouteRefreshBrokerStore
       ...structuredClone(presented),
       encryptedGraceRefreshResponse: rotation.graceRefreshResponse,
       graceExpiresAt: rotation.graceExpiresAt,
+      ...(rotation.graceAccessTokenExpiresAt === undefined
+        ? {}
+        : { graceAccessTokenExpiresAt: rotation.graceAccessTokenExpiresAt }),
       status: "active",
       version: presented.version + 1,
     };

@@ -672,7 +672,7 @@ func (s *localOACSigner) verify(request *signedRequest) error {
 		return fmt.Errorf("authorization credential %q is not the local OAC access key", credential)
 	}
 	date, region, service, terminator := parts[1], parts[2], parts[3], parts[4]
-	if region != s.region || service != s.service || terminator != "aws4_request" {
+	if region != s.region || service != s.service || terminator != sigV4Terminator {
 		return fmt.Errorf("authorization scope %q is not the local OAC scope", strings.Join(parts[1:], "/"))
 	}
 	amzDate := request.Header.Get("X-Amz-Date")
@@ -755,7 +755,7 @@ func (s *localOACSigner) signingKey(date string) []byte {
 	key := hmacSHA256([]byte("AWS4"+s.secretKey), []byte(date))
 	key = hmacSHA256(key, []byte(s.region))
 	key = hmacSHA256(key, []byte(s.service))
-	return hmacSHA256(key, []byte("aws4_request"))
+	return hmacSHA256(key, []byte(sigV4Terminator))
 }
 
 func hmacSHA256(key, value []byte) []byte {

@@ -122,10 +122,9 @@ test("OAuth bearer middleware distinguishes unauthorized, forbidden, and insuffi
   );
   assert.equal(forbidden.status, 403);
   assert.equal(forbidden.headers["www-authenticate"], undefined);
-  assert.deepEqual(
-    JSON.parse(Buffer.from(forbidden.body).toString("utf8")),
-    { error: { code: "app.forbidden", message: "forbidden", status_code: 403 } },
-  );
+  assert.deepEqual(JSON.parse(Buffer.from(forbidden.body).toString("utf8")), {
+    error: { code: "app.forbidden", message: "forbidden", status_code: 403 },
+  });
   await assert.rejects(
     validator(ctx(), "scope-miss"),
     (err) =>
@@ -185,7 +184,10 @@ test("OAuth bearer validator honours route-derived audience and scope resolvers"
   );
   assert.deepEqual(claims.scopes, ["mcp:read", "mcp:write"]);
   await assert.rejects(
-    validator(ctx({ authorization: ["Bearer peer-token"] }, "/other/mcp"), "peer-token"),
+    validator(
+      ctx({ authorization: ["Bearer peer-token"] }, "/other/mcp"),
+      "peer-token",
+    ),
     (err) =>
       err instanceof OAuthBearerError &&
       err.oauthCode === ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE,
@@ -300,7 +302,9 @@ test("OAuth insufficient_scope challenge and resource indicator match are pinned
 });
 
 test("OAuth authorization server metadata supports opt-in revocation/device endpoints", () => {
-  const plain = newAuthorizationServerMetadata("https://auth.example.com/base/path");
+  const plain = newAuthorizationServerMetadata(
+    "https://auth.example.com/base/path",
+  );
   assert.equal(JSON.stringify(plain).includes("revocation_endpoint"), false);
   assert.equal(
     JSON.stringify(plain).includes("device_authorization_endpoint"),
@@ -322,7 +326,10 @@ test("OAuth authorization server metadata supports opt-in revocation/device endp
     "https://auth.example.com/base/path",
     { revocationEndpoint: true, deviceAuthorizationEndpoint: true },
   );
-  assert.equal(derived.revocation_endpoint, "https://auth.example.com/base/path/revoke");
+  assert.equal(
+    derived.revocation_endpoint,
+    "https://auth.example.com/base/path/revoke",
+  );
   assert.equal(
     derived.device_authorization_endpoint,
     "https://auth.example.com/base/path/device",
@@ -334,9 +341,13 @@ test("OAuth authorization server metadata supports opt-in revocation/device endp
 
   const explicit = newAuthorizationServerMetadata("https://auth.example.com", {
     revocationEndpoint: "https://auth.example.com/oauth/revoke",
-    deviceAuthorizationEndpoint: "https://device.example.com/device_authorization",
+    deviceAuthorizationEndpoint:
+      "https://device.example.com/device_authorization",
   });
-  assert.equal(explicit.revocation_endpoint, "https://auth.example.com/oauth/revoke");
+  assert.equal(
+    explicit.revocation_endpoint,
+    "https://auth.example.com/oauth/revoke",
+  );
   assert.equal(
     explicit.device_authorization_endpoint,
     "https://device.example.com/device_authorization",
@@ -361,14 +372,16 @@ test("OAuth authorization server metadata supports opt-in revocation/device endp
 test("OAuth authorization server metadata emits RFC 9207 iss parameter support only while true", async () => {
   const plain = newAuthorizationServerMetadata("https://auth.example.com");
   assert.equal(
-    JSON.stringify(plain).includes("authorization_response_iss_parameter_supported"),
+    JSON.stringify(plain).includes(
+      "authorization_response_iss_parameter_supported",
+    ),
     false,
   );
 
   const bodyOf = async (metadata) =>
-    Buffer.from((await authorizationServerMetadataHandler(metadata)()).body).toString(
-      "utf8",
-    );
+    Buffer.from(
+      (await authorizationServerMetadataHandler(metadata)()).body,
+    ).toString("utf8");
 
   // An explicit false is omitted, matching Go's omitempty and Python's
   // identity rule, so all three runtimes emit the same document.
@@ -471,4 +484,80 @@ test("the bearer challenge never derives from the MCP_ENDPOINT environment", asy
       process.env.MCP_ENDPOINT = previous;
     }
   }
+});
+
+test("bearer refusals are observable with a closed reason vocabulary", async () => {
+  const cases = [
+    {
+      name: "missing credential",
+      headers: {},
+      wantStatus: 401,
+      wantReason: "missing_credential",
+      wantChallenge: "resource_metadata",
+    },
+    {
+      name: "expired credential",
+      headers: { authorization: ["Bearer stale"] },
+      wantStatus: 401,
+      wantReason: "expired_credential",
+      wantChallenge: "resource_metadata",
+    },
+    {
+      name: "audience mismatch",
+      headers: { authorization: ["Bearer other"] },
+      wantStatus: 403,
+      wantReason: "audience_mismatch",
+      wantChallenge: undefined,
+    },
+    {
+      name: "insufficient scope",
+      headers: { authorization: ["Bearer narrow"] },
+      wantStatus: 403,
+      wantReason: "insufficient_scope",
+      wantChallenge: "insufficient_scope",
+    },
+  ];
+  for (const tc of cases) {
+    const events = [];
+    const mw = requireBearerTokenMiddleware({
+      resourceMetadataURL:
+        "https://mcp.example.com/.well-known/oauth-protected-resource",
+      claimsValidator: async () => {
+        if (tc.wantReason === "expired_credential") {
+          throw new OAuthBearerError("bearer token expired");
+        }
+        throw new OAuthBearerError(
+          tc.wantReason === "insufficient_scope"
+            ? ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE
+            : ERR_BEARER_TOKEN_INVALID_AUDIENCE,
+        );
+      },
+      refusalHook: (_ctx, event) => events.push(event),
+    });
+    const response = await mw(ctx(tc.headers), async () => ({ status: 200 }));
+    assert.equal(response.status, tc.wantStatus, tc.name);
+    assert.equal(events.length, 1, tc.name);
+    assert.equal(events[0].class, "bearer", tc.name);
+    assert.equal(events[0].reason, tc.wantReason, tc.name);
+    assert.equal(events[0].status, tc.wantStatus, tc.name);
+    assert.equal(events[0].challenge, tc.wantChallenge, tc.name);
+  }
+
+  const events = [];
+  const mw = requireBearerTokenMiddleware({
+    claimsValidator: async () => ({
+      subject: "user",
+      audience: "a",
+      scopes: [],
+    }),
+    refusalHook: (_ctx, event) => events.push(event),
+  });
+  const response = await mw(
+    ctx({ authorization: ["Bearer good"] }),
+    async () => ({
+      status: 200,
+    }),
+  );
+  assert.equal(response.status, 200);
+  assert.equal(events.length, 0);
 });

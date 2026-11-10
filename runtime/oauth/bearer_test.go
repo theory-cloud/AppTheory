@@ -7,6 +7,7 @@ import (
 	"time"
 
 	apptheory "github.com/theory-cloud/apptheory/v7/runtime"
+	"github.com/theory-cloud/apptheory/v7/runtime/refusal"
 
 	"github.com/stretchr/testify/require"
 )
@@ -352,4 +353,108 @@ func TestRequireBearerTokenMiddleware_DoesNotDeriveMetadataFromRequestHeaders(t 
 	require.NoError(t, err)
 	require.Equal(t, 401, resp.Status)
 	require.Equal(t, []string{"Bearer"}, resp.Headers["www-authenticate"])
+}
+
+// TestRequireBearerTokenMiddlewareEmitsStructuredRefusals pins the refusal
+// observability contract: every 401 and 403 the middleware renders produces one
+// redacted event naming the reason, and an admitted request produces none.
+func TestRequireBearerTokenMiddlewareEmitsStructuredRefusals(t *testing.T) {
+	cases := []struct {
+		name       string
+		headers    map[string][]string
+		validator  BearerTokenClaimsValidator
+		wantStat   int
+		wantReason string
+		wantChal   string
+	}{
+		{
+			name:       "missing_credential",
+			wantStat:   401,
+			wantReason: refusal.ReasonMissingCredential,
+			wantChal:   "resource_metadata",
+		},
+		{
+			name:       "invalid_credential",
+			headers:    map[string][]string{"authorization": {"Bearer nope"}},
+			validator:  func(*apptheory.Context, string) (*BearerTokenClaims, error) { return nil, ErrInvalidBearerToken },
+			wantStat:   401,
+			wantReason: refusal.ReasonInvalidCredential,
+			wantChal:   "resource_metadata",
+		},
+		{
+			name:       "expired_credential",
+			headers:    map[string][]string{"authorization": {"Bearer stale"}},
+			validator:  func(*apptheory.Context, string) (*BearerTokenClaims, error) { return nil, ErrBearerTokenExpired },
+			wantStat:   401,
+			wantReason: refusal.ReasonExpiredCredential,
+			wantChal:   "resource_metadata",
+		},
+		{
+			name:    "audience_mismatch",
+			headers: map[string][]string{"authorization": {"Bearer other"}},
+			validator: func(*apptheory.Context, string) (*BearerTokenClaims, error) {
+				return nil, ErrBearerTokenInvalidAudience
+			},
+			wantStat:   403,
+			wantReason: refusal.ReasonAudienceMismatch,
+		},
+		{
+			name:    "insufficient_scope",
+			headers: map[string][]string{"authorization": {"Bearer narrow"}},
+			validator: func(*apptheory.Context, string) (*BearerTokenClaims, error) {
+				return nil, ErrBearerTokenInsufficientScope
+			},
+			wantStat:   403,
+			wantReason: refusal.ReasonInsufficientScope,
+			wantChal:   "insufficient_scope",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var events []refusal.Event
+			mw := RequireBearerTokenMiddleware(RequireBearerTokenOptions{
+				ResourceMetadataURL: "https://mcp.example.com/.well-known/oauth-protected-resource",
+				ClaimsValidator:     tc.validator,
+				RefusalHook: func(_ context.Context, event refusal.Event) {
+					events = append(events, event)
+				},
+			})
+			handler := mw(func(*apptheory.Context) (*apptheory.Response, error) {
+				return &apptheory.Response{Status: 200}, nil
+			})
+			resp, err := handler(&apptheory.Context{
+				Request: apptheory.Request{Method: "POST", Path: "/mcp", Headers: tc.headers},
+			})
+			require.NoError(t, err)
+			require.Equal(t, tc.wantStat, resp.Status)
+			require.Len(t, events, 1)
+			event := events[0]
+			require.Equal(t, refusal.ClassBearer, event.Class)
+			require.Equal(t, tc.wantReason, event.Reason)
+			require.Equal(t, tc.wantStat, event.Status)
+			require.Equal(t, "POST", event.Method)
+			require.Equal(t, "/mcp", event.Path)
+			require.Equal(t, tc.wantChal, event.Challenge)
+			require.NotContains(t, event.Path, "?", "a refusal event never carries a query string")
+		})
+	}
+
+	t.Run("admitted_request_emits_nothing", func(t *testing.T) {
+		var events []refusal.Event
+		mw := RequireBearerTokenMiddleware(RequireBearerTokenOptions{
+			ClaimsValidator: func(*apptheory.Context, string) (*BearerTokenClaims, error) {
+				return &BearerTokenClaims{Subject: "user"}, nil
+			},
+			RefusalHook: func(_ context.Context, event refusal.Event) { events = append(events, event) },
+		})
+		handler := mw(func(*apptheory.Context) (*apptheory.Response, error) {
+			return &apptheory.Response{Status: 200}, nil
+		})
+		resp, err := handler(&apptheory.Context{
+			Request: apptheory.Request{Headers: map[string][]string{"authorization": {"Bearer good"}}},
+		})
+		require.NoError(t, err)
+		require.Equal(t, 200, resp.Status)
+		require.Empty(t, events)
+	})
 }

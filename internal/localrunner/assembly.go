@@ -15,6 +15,7 @@ import (
 // Resource types the assembly reader understands.
 const (
 	typeLambdaFunction      = "AWS::Lambda::Function"
+	typeLambdaPermission    = "AWS::Lambda::Permission"
 	typeDynamoTable         = "AWS::DynamoDB::Table"
 	typeSQSQueue            = "AWS::SQS::Queue"
 	typeS3Bucket            = "AWS::S3::Bucket"
@@ -37,6 +38,8 @@ const (
 	typeCognitoClient       = "AWS::Cognito::UserPoolClient"
 	typeCognitoDomain       = "AWS::Cognito::UserPoolDomain"
 	typeIAMRole             = "AWS::IAM::Role"
+	typeIAMPolicy           = "AWS::IAM::Policy"
+	typeIAMManagedPolicy    = "AWS::IAM::ManagedPolicy"
 	typeMicrovmImage        = "AWS::Lambda::MicrovmImage"
 	typeS3VectorsIndex      = "AWS::S3Vectors::Index"
 	typeHTTPAPI             = "AWS::ApiGatewayV2::Api"
@@ -52,6 +55,7 @@ const (
 	typeFunctionURL         = "AWS::Lambda::Url"
 	typeCodeBuildProject    = "AWS::CodeBuild::Project"
 	typeBucketDeploy        = "Custom::CDKBucketDeployment"
+	typeBucketAutoDelete    = "Custom::S3AutoDeleteObjects"
 	typeCloudFront          = "AWS::CloudFront::Distribution"
 	typeCloudFrontFn        = "AWS::CloudFront::Function"
 
@@ -73,8 +77,9 @@ type assemblyManifest struct {
 }
 
 type assemblyArtifact struct {
-	Type       string `json:"type"`
-	Properties struct {
+	Type        string `json:"type"`
+	Environment string `json:"environment"`
+	Properties  struct {
 		TemplateFile string `json:"templateFile"`
 	} `json:"properties"`
 }
@@ -100,6 +105,11 @@ type templateResource struct {
 	Type       string                     `json:"Type"`
 	Properties json.RawMessage            `json:"Properties"`
 	Metadata   map[string]json.RawMessage `json:"Metadata"`
+	// DependsOn is CloudFormation's explicit ordering edge: a logical id or a
+	// list of them. Together with the Refs and Fn::GetAtts in Properties it
+	// forms the template's dependency graph.
+	// https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-attribute-dependson.html
+	DependsOn json.RawMessage `json:"DependsOn"`
 }
 
 type lambdaFunctionProperties struct {
@@ -146,6 +156,8 @@ type httpStageProperties struct {
 
 type restAPIProperties struct {
 	Name string `json:"Name"`
+	// Policy is the API's IAM resource policy document.
+	Policy json.RawMessage `json:"Policy"`
 }
 
 type restResourceProperties struct {
@@ -179,6 +191,20 @@ type restIntegrationResponse struct {
 type restStageProperties struct {
 	RestAPIID json.RawMessage `json:"RestApiId"`
 	StageName string          `json:"StageName"`
+}
+
+// lambdaPermissionProperties is the part of an AWS::Lambda::Permission the
+// derivation reads. It is how a Function URL's resource-based policy is
+// declared in a template.
+//
+// https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-lambda-permission.html
+type lambdaPermissionProperties struct {
+	Action       string          `json:"Action"`
+	FunctionName json.RawMessage `json:"FunctionName"`
+	Principal    json.RawMessage `json:"Principal"`
+	// FunctionURLAuthType pins the URL auth type a resource statement applies
+	// to. It is a plain string on the resource.
+	FunctionURLAuthType string `json:"FunctionUrlAuthType"`
 }
 
 type functionURLProperties struct {
@@ -251,6 +277,13 @@ type logicalRef struct {
 type assemblyStack struct {
 	Name     string
 	Template template
+	// Account is the AWS account the assembly environment names for this stack
+	// (`aws://<account>/<region>`), or empty when the environment is unresolved.
+	// A synthesized ARN carries it, so the IAM path resolves policy documents
+	// against the account the app deploys into rather than the runner's local
+	// identity.
+	Account string
+	Region  string
 }
 
 // LoadAssembly reads every CloudFormation stack template in a cloud assembly
@@ -283,13 +316,53 @@ func loadAssembly(dir string) ([]assemblyStack, error) {
 		if err := json.Unmarshal(body, &parsed); err != nil {
 			return nil, fmt.Errorf("parse stack template %s: %w", templatePath, err)
 		}
-		stacks = append(stacks, assemblyStack{Name: name, Template: parsed})
+		stacks = append(stacks, assemblyStack{
+			Name:     name,
+			Template: parsed,
+			Account:  assemblyEnvironmentAccount(artifact.Environment),
+			Region:   assemblyEnvironmentRegion(artifact.Environment),
+		})
 	}
 	if len(stacks) == 0 {
 		return nil, fmt.Errorf("cloud assembly %s contains no CloudFormation stacks", dir)
 	}
 	sort.Slice(stacks, func(i, j int) bool { return stacks[i].Name < stacks[j].Name })
 	return stacks, nil
+}
+
+// assemblyEnvironmentAccount returns the account an assembly artifact's
+// environment names, or empty for an unresolved environment ("aws://unknown-account/…").
+func assemblyEnvironmentAccount(environment string) string {
+	account, _ := splitAssemblyEnvironment(environment)
+	if account == "" || account == "unknown-account" || strings.ContainsAny(account, "${}") {
+		return ""
+	}
+	return account
+}
+
+// assemblyEnvironmentRegion returns the region an assembly artifact's
+// environment names, or empty when it names none.
+func assemblyEnvironmentRegion(environment string) string {
+	_, region := splitAssemblyEnvironment(environment)
+	if region == "" || region == "unknown-region" || strings.ContainsAny(region, "${}") {
+		return ""
+	}
+	return region
+}
+
+// splitAssemblyEnvironment splits the `aws://<account>/<region>` form a CDK
+// cloud assembly manifest records for a stack.
+func splitAssemblyEnvironment(environment string) (string, string) {
+	value := strings.TrimSpace(environment)
+	value = strings.TrimPrefix(value, "aws://")
+	if value == "" || value == environment {
+		return "", ""
+	}
+	parts := strings.SplitN(value, "/", 2)
+	if len(parts) != 2 {
+		return parts[0], ""
+	}
+	return parts[0], parts[1]
 }
 
 // deriveSpec turns a cloud assembly into the local runner's specification and
@@ -314,12 +387,20 @@ func deriveSpecInternal(dir string, stacks []assemblyStack) (*Spec, error) {
 		functionURLTargets: map[string]string{},
 		functionURLModes:   map[string]string{},
 		Templates:          map[string]templateContext{},
+		accounts:           map[string]string{},
+		regions:            map[string]string{},
 	}
 	for _, stack := range stacks {
 		spec.Templates[stack.Name] = templateContext{
 			Parameters: stack.Template.Parameters,
 			Conditions: stack.Template.Conditions,
 			Mappings:   stack.Template.Mappings,
+		}
+		if stack.Account != "" {
+			spec.accounts[stack.Name] = stack.Account
+		}
+		if stack.Region != "" {
+			spec.regions[stack.Name] = stack.Region
 		}
 		if err := deriveStack(spec, dir, stacks, stack); err != nil {
 			return nil, err
@@ -354,6 +435,12 @@ func deriveSpecInternal(dir string, stacks []assemblyStack) (*Spec, error) {
 			Reason:    strings.Join(distribution.Refusals, "; "),
 		})
 	}
+	deriveIAMRoles(spec, stacks)
+	if err := deriveCustomResources(spec, stacks); err != nil {
+		return nil, err
+	}
+	deriveReceiptRules(spec, stacks)
+	classifyProblemResources(spec)
 	deriveSkipped(spec)
 	deriveProvisioningSkips(spec, stacks)
 	spec.PlannedResources = plannedProvisionedResources(spec)
@@ -391,6 +478,20 @@ func deriveProvisioningSkips(spec *Spec, stacks []assemblyStack) {
 				Kind:      typeCognitoDomain,
 				Reason: "the local runner serves the user pool issuer and JWKS for token validation " +
 					"but does not serve the Cognito hosted UI/OAuth domain",
+			})
+		case typeS3BucketPolicy:
+			spec.Skipped = append(spec.Skipped, Skipped{
+				LogicalID: logicalID,
+				Kind:      typeS3BucketPolicy,
+				Reason: "IAM bucket-policy evaluation is a docs/125 true limit; " +
+					"the bucket itself is provisioned and object operations work at runtime",
+			})
+		case typeLogsResourcePolicy:
+			spec.Skipped = append(spec.Skipped, Skipped{
+				LogicalID: logicalID,
+				Kind:      typeLogsResourcePolicy,
+				Reason: "IAM log-group policy evaluation is a docs/125 true limit; " +
+					"the runner captures function logs itself and evaluates no log policy",
 			})
 		}
 	}
@@ -759,7 +860,7 @@ func intExpression(raw json.RawMessage) string {
 		return ""
 	}
 	for key := range expression {
-		if key == "Ref" || strings.HasPrefix(key, "Fn::") {
+		if key == intrinsicRef || strings.HasPrefix(key, "Fn::") {
 			return key
 		}
 	}

@@ -13,6 +13,36 @@ for `CHANGELOG.md`:
 Every minor release line that changes runtime behavior, deployment constructs, generated artifacts, dependency floors,
 or deprecation posture must add or update a section here before the release is promoted.
 
+## v7.x line
+
+### 7.1.0
+
+- **MCP auth facade: a reused refresh route handle is served, not treated as theft.** A handle that was rotated
+  away and is presented after its grace window is now a stale predecessor: the facade rotates the family's live
+  head, answers with fresh credentials, re-arms the presented record with a fresh grace window, and keeps every
+  family member live. The family is revoked only when the upstream terminally rejects the grant, when an operator
+  revokes it through the incident surface, or when the authorization code that minted it is replayed. Telemetry
+  adds the `rotated_from_head` outcome and the `stale_predecessor` reason; the other outcomes and reasons are
+  unchanged. **No consumer action is required**, and no configuration key is removed: `ReuseRateCeiling` stays
+  accepted but no refresh path reads it.
+
+  This is a minor release, not a major, because no released consumer depended on the old behaviour: the change's
+  commit (`1165d66f`) is not in `v7.0.0` or any earlier tag, Autheory pins the v6 runtime at `v6.3.1`, TMS pins
+  `v6.4.0`, and FaceTheory pins `v7.0.0` only for its TypeScript and CDK infrastructure packages and has no
+  `mcpfacade` reference. The generated `7.1.0-rc` changelog still lists that commit under `⚠ BREAKING CHANGES`
+  because its subject keeps the `!` marker; [the release-note correction](./docs/release-notes-corrections.md)
+  records the intended classification.
+
+  The residual risk of serving reuse — a stolen handle stays exchangeable while the thief keeps presenting the
+  current handle and the upstream grant is valid — is stated in [MCP auth facade SPI, "Reuse is served, never
+  punished"](./docs/features/mcp-auth-facade-spi.md#reuse-is-served-never-punished), in its "Residual risk"
+  paragraph.
+
+### 7.0.0
+
+See the [v7.0.0 release notes](https://github.com/theory-cloud/AppTheory/releases/tag/v7.0.0); the Go import-path
+move is the mechanical part of that major.
+
 ## v6.x line
 
 ### Unreleased
@@ -157,6 +187,18 @@ or deprecation posture must add or update a section here before the release is p
     others), which are named there rather than hidden. The harness that exercises all of it is
     `make examples-local`; its classification manifest and runner profile are the same checked-in
     `scripts/local/examples-local.json`.
+
+- **Local runner: `--data-dir` tables get their local secondary indexes and keep starting when an index cannot be
+  reconciled in place.** `apptheory-local` now creates `AWS::DynamoDB::Table` resources with their
+  `LocalSecondaryIndexes`; the runner released as v7.0.0 ignored the property, so a table it created for an app that
+  declares a local secondary index has none. Re-running that app keeps working: the stored table is kept and the run
+  logs one warning naming the table, the index and the difference, with the remedy (recreate the table, for example by
+  removing `<data-dir>/dynamodb` while the run is stopped, or start without `--data-dir`). An existing global secondary
+  index whose key attribute type drifted is reported and kept the same way instead of being treated as unchanged. Not a
+  breaking change: a deployed stack is unaffected, no local call that succeeds today starts failing, and the change
+  only adds the index at create time and the warning for a stored difference. A local secondary index cannot be added
+  to or changed on an existing table
+  ([local secondary indexes](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/LSI.html)).
 
 AppTheory v6 moves the Go runtime and the generated CDK Go bindings onto the next semantic import version. The release
 range from the v5 line also carries other breaking runtime, CDK, TypeScript, and Python changes; read `CHANGELOG.md` and
@@ -1467,8 +1509,9 @@ pattern rather than wrapping it in a fallback router.
 Before the v1.15 strengthening work, some documentation and examples used strict helpers as the recommended way to
 catch bad route patterns. When moving from older v1 lines to v1.15 or later:
 
-1. Replace strict helper usage in ordinary app setup with normal fluent registration.
-2. Keep strict helpers only where a test deliberately asserts the compatibility shape.
+1. Use normal fluent registration for ordinary app setup.
+2. Keep strict helpers where route construction is conditional and you want a rejected route logged and skipped, as
+   described above, or where a test deliberately asserts that error-returning shape.
 3. Replace new framework-emitted `AppError` usage with `AppTheoryError`.
 4. Plan migration away from Go `JSONHandler` if you still have Lift-era handler adapters.
 5. Keep any temporary flat legacy HTTP error format opt-in isolated to migration boundaries.

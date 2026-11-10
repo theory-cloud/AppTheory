@@ -231,7 +231,7 @@ func TestWebSocketBinaryAndContextClose(t *testing.T) {
 }
 
 func TestManagementPostToAClosedConnection(t *testing.T) {
-	management, err := newWebSocketManagement(t.TempDir(), nil)
+	management, err := newWebSocketManagement(t.TempDir(), nil, nil)
 	require.NoError(t, err)
 	server := httptest.NewServer(management)
 	defer server.Close()

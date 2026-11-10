@@ -39,7 +39,7 @@ function the CDK definition targets and reads one JSON command per line.
 | `--add-host name=address` | none | Extra `/etc/hosts` entry inside function containers. Repeatable. |
 | `--backend NAME` | none | Start a profile emulator on the run network: `dynamodb`, `sqs`, or a profile container such as `moto` (KMS, STS, SSM, Secrets Manager, SNS, Kinesis, Cognito) or `s3proxy` (S3). Repeatable. |
 | `--port-base N` | ephemeral | Bind the API listeners at `N`, `N+1`, …; `0` asks the OS for free ports. |
-| `--name-prefix PREFIX` | derived from the app hash | Container, network and built-image names. Two concurrent runs of the same app share the default prefix (and an image tag), so set a unique prefix when they must not collide. |
+| `--name-prefix PREFIX` | derived from the app hash | Container and network names. Two concurrent runs of the same app share the default prefix (and container/network names), so set a unique prefix when they must not collide. Built-image tags also carry the run id, so concurrent runs never move each other's image tag. |
 | `--max-concurrency N` | 32 | In-flight invocations, `1..32`. Values above 32 are refused. |
 | `--delivery-concurrency N` | 4 | Concurrent handler invocations the delivery engine performs, `1..32`. The default is sized for the documented 4 CPU / ~6 GB Colima host. |
 | `--clock SPEC` | `real` | `run`/`session` time source: `real`, `test`, or `test=<RFC3339 start>`. A test clock starts at the given instant, or `2026-01-01T00:00:00Z` when omitted. |
@@ -50,7 +50,7 @@ function the CDK definition targets and reads one JSON command per line.
 | `--stdio` | off | `invoke`: read newline-delimited JSON events from stdin and keep the container warm. |
 | `--stream-chunks` | off | `invoke`: with `--stdio`, write one `{"event":"chunk",…}` line per streamed response chunk before the result line. A buffered response still writes only the result, so the default one-result-per-event contract is unchanged. |
 | `--rie` | off | Run function containers under the image's embedded Runtime Interface Emulator instead of the runner's Lambda Runtime API. Reported by `plan`, `plan --json` (`runtimeMode`) and `session describe`. It cannot stream incrementally. |
-| `--target ID` | none | `session`: start this CDK function even though no route, event source or rule targets it. Repeatable. |
+| `--target ID` | none | `session`: start this CDK function even though no route, event source or rule targets it. Repeatable. It only adds functions: a served custom resource's deploy-time targets (a provider framework's `onEvent` function named in its environment) always start, so `--target` cannot narrow them away. |
 | `--handler-dir DIR` | none | `invoke`: built handler directory for an example with no CDK definition. Derives no routes. |
 | `--runtime RUNTIME` | none | `invoke --handler-dir`: Lambda runtime (`provided.al2023`, `nodejs24.x`, `python3.14`). |
 | `--handler NAME` | none | `invoke --handler-dir`: handler name (`bootstrap` for the provided runtime). |
@@ -58,8 +58,17 @@ function the CDK definition targets and reads one JSON command per line.
 | `--memory MB` | 128 | `invoke --handler-dir`: function memory. |
 | `--timeout SECONDS` | 3 | `invoke --handler-dir`: function timeout. |
 | `--watch` | off | `run`/`session`: follow `cdk.json`'s `watch` include/exclude (or the app directory), re-synthesize on a change and apply the new surface without restarting the listeners. See [Dev loop](#dev-loop). |
-| `--data-dir DIR` | none (ephemeral) | `run`/`session`/`invoke`: keep DynamoDB Local, s3proxy and ElasticMQ state under `DIR`; moto stays in memory. See [Dev loop](#dev-loop). |
+| `--data-dir DIR` | none (ephemeral) | `run`/`session`/`invoke`: keep DynamoDB Local, s3proxy and ElasticMQ state under `DIR`, plus the runner's KMS key material, S3 SSE-S3 records and the versioned buckets' version log; moto stays in memory. See [Dev loop](#dev-loop). |
 | `--seed COMMAND` | none | `run`/`session`: run `sh -c COMMAND` after provisioning and before `local-run: ready`. See [Dev loop](#dev-loop). |
+| `--port LOGICALID=PORT` | none | `run`/`session`/`plan`: pin a served public surface (API, Function URL, WebSocket API or CloudFront distribution) to a declared port. Repeatable; needs `--port-base`. Pinned ports are reserved first and the counter skips them; a collision, an out-of-range port, a repeated surface or an unknown id fails closed. |
+| `--tls` | off | `run`/`session`: serve every public listener over HTTPS from a certificate the run's local CA signs. |
+| `--tls-host HOST` | `app.localhost` | `run`/`session` with `--tls`: the public `*.localhost` host name. |
+| `--tls-aux HOST` | none | `run`/`session` with `--tls`: an auxiliary `*.localhost` name a function container must reach (for example a local test IdP). Repeatable. |
+| `--shared-dir DIR` | none | `run`/`session`/`invoke`: the directory co-resident runs share: the IAM plane at `<DIR>/iam` and the CA at `<DIR>/ca`. |
+| `--shared-network NAME` | none | `run`/`session`: join every co-resident run's containers to one Docker bridge, so a run reaches a sibling's listener at the host address this run also binds. Backend aliases and the endpoints injected into functions carry the run's name prefix (`<prefix>-moto`), so two runs never resolve one Docker DNS name and the preflight resolves the same name a function sees. A run's cleanup leaves the network; remove it with `down --shared-network`. |
+| `--peer-host HOST` | none | `run`/`session` with `--tls`: map a co-resident run's public `*.localhost` name into this run's function containers. Repeatable. |
+| `--mail` | off | `run`/`session`: start the local mail surface: the profile's digest-pinned Mailpit sink, an SMTP ingress that runs the app's SES receipt rules, and the sink's HTTPS read API. |
+| `--mail-host HOST` | `mail.localhost` | `run`/`session` with `--mail`: the mail surface's public `*.localhost` name. |
 
 Exit codes: `0` success, `1` a run/plan failure, `2` a usage error.
 
@@ -191,15 +200,70 @@ wiring are re-derived. The listeners keep their ports and URLs.
 | A changed CloudFront distribution topology | Requires a restart; reported. |
 | A new resource needing a backend this run did not start | Requires a restart with `--backend`; reported. |
 
+A reload that fails after a function was replaced restores the previous
+definition. A container-image function is restored from the immutable image id
+recorded before the rebuild moved its tag, and the tag is pointed back at that
+image. The image this reload built is then removed by id without `-f`, and only
+after an inspect proves nothing still names or uses it: no repo tag, no repo
+digest and no container, running or stopped. That is this run's dangling
+rebuild; an image a foreign tag, a foreign digest reference or a container
+still holds is left in place and the log names the reference. A daemon using
+the containerd image store records a digest for each repository its repo tags
+name, so this run's rebuild reports one while its tag names it and none once
+the rollback points that tag back at the previous image; a digest entry under a
+repository no tag on the image carries is a reference outside the run, such as
+another repository's `repo@sha256:…` pin, and it keeps the image. An image
+function the reload added and the rollback stops loses its built image under
+the same check; this run's own build tag, and the digest the store derives from
+it, are the references it may still carry. The check comes first rather than
+relying on the daemon's refusal: Docker refuses an unforced `docker image rm
+<id>` while a container references the image or while two or more repo tags
+name it, and at exactly one tag it untags that tag and deletes the image
+([docker image rm](https://docs.docker.com/reference/cli/docker/image/rm/)).
+Docker's Engine API has no conditional delete (only `force` and `noprune`), so a
+tag added between the inspect and the remove is the one window the check cannot
+close; the remove is still refused while two tags exist. A tag-restore failure
+keeps the rebuilt image and logs it. The apply log names the branch it took:
+`rolled back ...; the previous assembly keeps serving` when every replaced
+function was restored, `no replaced function was restored` when none was,
+`partially applied: ... restored, ... not` in between, and `no function was
+applied; the previous assembly keeps serving` when the failure stopped the
+batch before any function was replaced. A branch that leaves any function
+unrestored ends with `a restart is required`. A full rollback removes
+the new assembly directory; any rollback that leaves a function unrestored
+keeps it because a container may still mount it.
+
+The shutdown sweep removes every image the run built, but it runs only on a
+clean exit: a signal-killed run can leave its run-labelled images behind
+(`apptheory.local.run=<run-id>`), and a tagged image survives a plain
+`docker image prune`. Remove them with `docker image rm` on the tags the run
+printed, or list them by label (`docker image ls --filter
+label=apptheory.local.run`).
+
 ### `--data-dir` layout
 
 ```
 <data-dir>/dynamodb/shared-local-instance.db   DynamoDB Local -dbPath /data (the pinned -sharedDb is kept)
 <data-dir>/s3proxy/<bucket>/<key>              s3proxy jclouds filesystem provider, JCLOUDS_FILESYSTEM_BASEDIR=/data
+<data-dir>/s3sse/index.json                    the objects written with SSE-S3 (0600)
+<data-dir>/s3versions/index.json               the version log of every version-enabled bucket (0600)
+<data-dir>/s3versions/blobs/<bucket>/<id>      the archived bytes of one version
 <data-dir>/sqs/elasticmq.mv.db                 ElasticMQ messages-storage (H2), verified on the pinned 1.7.1 image
+<data-dir>/kms/keys.json                       the runner's KMS key material (0600)
 ```
 
 moto is memory-only and is not persisted ([moto server mode](https://docs.getmoto.org/en/latest/docs/server_mode.html)).
+The runner-owned files are the exception the runner adds for its fronts:
+`kms/keys.json` keeps the material of the key families the KMS front owns so
+ciphertext written in one run decrypts in the next, `s3sse/index.json` keeps
+each object's SSE-S3 answer, and `s3versions/` keeps the version log and bytes
+of a template-versioned bucket so a version id stays readable across a restart.
+They are `0600` and hold no AWS credential; see
+[KMS signing and key material](/examples/local-runner/#kms-signing-and-key-material)
+and
+[S3 objects and server-side encryption](/examples/local-runner/#s3-objects-and-server-side-encryption)
+and
+[object versioning](/examples/local-runner/#object-versioning).
 The data directory must be under `$HOME` or the working directory so Docker can
 bind-mount it. The pinned emulator images run as their own non-root users
 (DynamoDB Local as `dynamodblocal`, ElasticMQ as `elasticmq`). Colima maps a
@@ -212,10 +276,49 @@ so another user of the same host could write to or delete the emulator store.
 Definitions are re-provisioned
 from the assembly on every start;
 existing tables, buckets, queues, topics, streams, parameters, secrets, pools
-and keys are reconciled, never dropped. A DynamoDB key-schema change fails at
-start with the table named and the UpdateTable rule that a table update cannot
-change its key schema
+and keys are reconciled, never dropped. A KMS key is the one shape whose moto
+metadata is re-created: the runner's KMS front reuses the material persisted
+for the same `stack/logicalId` and reports the persisted `KeyId`/`Arn`, so
+ciphertext, `GetPublicKey` and a caller's pinned key id remain valid; the rest
+of moto's metadata, notably `CreationDate`, is the current run's. A DynamoDB key-schema change
+fails at start with the table named and the UpdateTable rule that a table
+update cannot change its key schema
 ([UpdateTable](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html)).
+A new global secondary index sends its key attributes in the update's
+`AttributeDefinitions`, which the API requires, and a new index keyed on an
+existing attribute whose declared type differs from the table's fails by name
+instead of creating the index over the existing type
+([AttributeDefinition](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_AttributeDefinition.html)).
+Local secondary indexes are created with the table. A re-run whose existing
+table differs in a local secondary index cannot reconcile the difference in
+place: a local secondary index is created when the table is created, and
+UpdateTable cannot add, modify or delete one
+([local secondary indexes](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/LSI.html),
+[UpdateTable](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html)).
+Startup continues, the stored table is kept, and the run logs one warning
+naming the table, the index and the difference, with the remedy: stop the run
+and remove `<data-dir>/dynamodb` to recreate the table, or start without
+`--data-dir`. That includes a table an earlier runner created without the local
+secondary index an app declares, because that runner ignored
+`LocalSecondaryIndexes`. A table with a hash-only key that declares a local
+secondary index is AWS-invalid, because a local secondary index "has the same
+partition key as the base table, but a different sort key"
+([local secondary indexes](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/LSI.html)):
+the pinned DynamoDB Local 3.1.0 refuses its `CreateTable` with `Local Secondary
+indices are not allowed on hash tables`, and checks that before it reports an
+existing table, so a re-run over an existing `--data-dir` table fails the same
+way; the CDK `Table` construct refuses it at synth with `a sort key of the
+table must be specified to add local secondary indexes` (aws-cdk-lib 2.275.0,
+`aws-dynamodb` `validateTable`). An existing global secondary index whose key
+attribute's declared type differs from the table's stored type is reported and
+kept the same way, because the earlier runner treated a type-only change as
+unchanged. A new global secondary index whose declared key type differs from
+the table's existing type still fails by name: the API refuses an index whose
+key type differs from the table's `AttributeDefinitions`, and the stored table
+cannot change it in place
+([AttributeDefinition](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_AttributeDefinition.html)).
+A global secondary index whose key schema or projection changed still fails by
+name, as does a table key-schema change.
 s3proxy's `jclouds.filesystem.basedir` sentence and ElasticMQ's
 `messages-storage` section are the pages the configuration follows
 ([s3proxy](https://github.com/gaul/s3proxy),
@@ -246,16 +349,19 @@ script output. The committed
 `apptheory-local` runs any CDK app, not only the examples in this repository.
 The app can come from a released module, an installed binary or a sibling
 AppTheory checkout; the flags and generated events are the same in all cases.
+The example harness's row-level classes and named limits are in the
+[fidelity table](/examples/local-harness/#fidelity-table).
 
 ```bash
-# From a released module; <version> must contain the command (v6.5.0 or later).
+# From a released module; <version> must contain the command (v7.0.0 or later;
+# the module path is /v7).
 go run github.com/theory-cloud/apptheory/v7/cmd/apptheory-local@<version> \
   --app ~/code/my-app --profile ~/code/my-app/local-profile.json
 
 # Or install it once.
 go install github.com/theory-cloud/apptheory/v7/cmd/apptheory-local@<version>
 
-# Before a release, run or build from a sibling AppTheory checkout.
+# When developing the runner itself, run or build from a sibling AppTheory checkout.
 go run -C ~/code/AppTheory ./cmd/apptheory-local \
   --app ~/code/my-app --profile ~/code/my-app/local-profile.json
 go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
@@ -367,8 +473,12 @@ endpoints: `dynamodb` maps to the `dynamodb-local` container (the
 `secretsmanager`, `sns`, `kinesis`, `logs` and `cognito-idp`, `s3proxy`
 provides `s3`, and `sqs` provides `sqs` (ElasticMQ). The runner also binds its
 own EventBridge `PutEvents` endpoint as `events` at start; it is not a profile
-container and is injected as `AWS_ENDPOINT_URL_EVENTS`. A backend with no
-endpoint fails before any container starts.
+container and is injected as `AWS_ENDPOINT_URL_EVENTS`. When a profile endpoint
+names a service the runner fronts (`kms` from moto, `s3` from s3proxy), the
+endpoint injected into functions points at the front while the profile entry
+still names the upstream container; a caller-supplied `--endpoint` for the same
+service wins and is never fronted. A backend with no endpoint fails before any
+container starts.
 
 After a started backend publishes its loopback port, the runner waits up to 60
 seconds for every endpoint bound to that container to answer a read-only call
@@ -431,7 +541,8 @@ TS_NODE_TRANSPILE_ONLY=1
 | `AWS::Lambda::Function` with `Code.ZipFile` | Materialized as `<module>.js` / `<module>.py` under `<scratch>/inline/<logicalId>/`. |
 | `AWS::ApiGatewayV2::Api` (`ProtocolType: HTTP`) + `Route` + `AWS_PROXY` `Integration` | Served as HTTP API v2. `$default` routes become a catch-all. |
 | `AWS::ApiGateway::RestApi` + `Resource` tree + `Method` + `AWS_PROXY` integration | Served as REST API v1 at the path reconstructed from the resource tree. `ResponseTransferMode: STREAM` and `/response-streaming-invocations` are marked streaming. |
-| `AWS::Lambda::Url` (`AuthType: NONE`) | Served as a Function URL listener. `InvokeMode: RESPONSE_STREAM` is marked streaming and forwarded incrementally. A URL with `AWS_IAM` is not served as a standalone URL; when a served CloudFront distribution targets it, the gateway invokes it through the signed local OAC origin instead. |
+| `AWS::Lambda::Url` (`AuthType: NONE`) | Served as a Function URL listener. `InvokeMode: RESPONSE_STREAM` is marked streaming and forwarded incrementally. |
+| `AWS::Lambda::Url` (`AuthType: AWS_IAM`) | Served as a Function URL listener with the IAM gate in front: every request must carry a verified SigV4 signature, and the resolved principal reaches `requestContext.authorizer.iam`. A CloudFront distribution that targets the URL still invokes it through the signed local OAC origin. Any other auth type is reported under `skipped`. |
 | `AWS::ApiGatewayV2::Authorizer` (`REQUEST`) | For an HTTP API route with simple responses, the transport sends a v2 REQUEST authorizer event and enforces `isAuthorized`. With `EnableSimpleResponses: false` it sends payload format 1.0 or 2.0 and matches the returned IAM policy against the route ARN. For a WebSocket `$connect` route, the transport sends the documented WebSocket authorizer event and matches the returned IAM policy against the `$connect` method ARN. A type the transport cannot run fails the route that references it closed. |
 | `AWS::ApiGateway::Authorizer` | Parsed; a `COGNITO_USER_POOLS` authorizer is run for the REST methods that reference it (R2a). A Lambda authorizer is R2b and fails closed. |
 | `AWS::Lambda::EventSourceMapping` (SQS, DynamoDB Streams, Kinesis) | Reported with its function, source, batch options, filter criteria and scaling configuration; the function is started and the mapping is delivered automatically: an SQS queue (see [SQS event-source delivery](/examples/local-runner/#sqs-event-source-delivery)), a DynamoDB stream (see [DynamoDB Streams delivery](/examples/local-runner/#dynamodb-streams-delivery)) or a Kinesis stream (see [Kinesis event-source delivery](/examples/local-runner/#kinesis-event-source-delivery)). A session can still build the provider event from real local messages or a real local write. |
@@ -1262,7 +1373,7 @@ Before a targeted function starts, these expressions resolve to local values:
 | `Fn::GetAtt [Queue, QueueName]` / `Arn` | The template's `QueueName` (or the deterministic local name) and the provider-shaped queue ARN. |
 | `Ref`/`Fn::GetAtt Name`/`Arn` on `AWS::Events::Rule` | The template's `Name` (or the deterministic local name) and the provider-shaped rule ARN. |
 | `Ref`/`Fn::GetAtt` on `AWS::S3::Bucket` | The bucket the runner created in s3proxy; `Arn` is built from that name. Requires `--backend s3proxy`. |
-| `Ref`/`Fn::GetAtt` on `AWS::KMS::Key` | The key id or ARN the runner created in moto. Requires `--backend moto`. |
+| `Ref`/`Fn::GetAtt` on `AWS::KMS::Key` | The key id or ARN the runner created through its KMS front (moto holds the metadata). Requires `--backend moto`. |
 | `Ref`/`Fn::GetAtt Arn` on `AWS::Kinesis::Stream` | The stream name and ARN the runner created in moto (the template's `Name`, or the deterministic local name). Requires `--backend moto`. |
 | `Ref`/`Fn::GetAtt Type`/`Value` on `AWS::SSM::Parameter` | The parameter name (provisioned with a leading `/`; AWS allows a bare name), declared type and declared value the runner created in moto. Requires `--backend moto`. |
 | `Ref`/`Fn::GetAtt` on `AWS::SecretsManager::Secret` | The ARN of the secret the runner created in moto (AWS appends a six-character suffix). A `{{resolve:secretsmanager:…}}` value resolves to the provisioned secret's value and JSON key, or keeps the deterministic placeholder when no provisioned secret matches; the session's `describe` returns it. Requires `--backend moto`. |
@@ -1280,18 +1391,23 @@ Before a targeted function starts, these expressions resolve to local values:
 When a backend answers its readiness probe, the runner provisions the resources
 for it: every `AWS::S3::Bucket` in s3proxy and every
 `Custom::CDKBucketDeployment` source copied into its bucket; every
-`AWS::KMS::Key` and `AWS::KMS::Alias` in moto; every `AWS::DynamoDB::Table` in
+`AWS::KMS::Key` and `AWS::KMS::Alias` through the runner's KMS front (moto
+holds the key metadata); every `AWS::DynamoDB::Table` in
 DynamoDB Local with its
 key schema, GSIs, streams and TTL; and every `AWS::SQS::Queue` in ElasticMQ with
 its visibility, retention, FIFO and redrive attributes; every
 `AWS::SSM::Parameter` (String, StringList, SecureString),
-`AWS::SecretsManager::Secret` (`SecretString` or a deterministic
-`GenerateSecretString`), `AWS::SNS::Topic` (standard and FIFO),
+`AWS::SecretsManager::Secret` (`SecretString`, or a deterministic
+`GenerateSecretString` in its bare, keyed and templated forms; a key without a
+template keeps the v7.0.0 value and is reported as a warning), `AWS::SNS::Topic`
+(standard and FIFO),
 `AWS::Kinesis::Stream` and `AWS::Cognito::UserPool`/`UserPoolClient` in moto.
-Table SSE, PITR and deletion protection, SQS KMS/SSE, IAM resource policies and
-the Cognito hosted UI are not provisioned; they are not part of the local
-contract. An unresolvable expression fails before any function container
-starts, with the function and variable named.
+Table SSE, PITR and deletion protection, SQS KMS/SSE, IAM resource policies,
+S3 SSE-KMS and SSE-C, and the Cognito hosted UI are not provisioned; they are
+not part of the local contract. SSE-S3 is served by the runner's S3 front and
+KMS `Sign`/`Verify` by its KMS front; see the examples guide. An unresolvable
+expression fails before any function container starts, with the function and
+variable named.
 
 A provisioned Cognito pool gets a loopback issuer at
 `http://127.0.0.1:<port>/cognito-idp/<region>/<poolId>`; both
@@ -1338,7 +1454,7 @@ before the token's `iat` refuses it.
 | --- | --- |
 | `Layers` on a zip function | Every entry must be an `AWS::Lambda::LayerVersion` in the function's stack with a local asset (`aws:asset:path`). The layer content is extracted into one `/opt` directory in the listed order; a later layer's file replaces an earlier one. A relative symlink whose target stays inside the layer is extracted as the same symlink (CDK's default `SymlinkFollowMode.NEVER` stores an asset's symlinks, and `npm install` leaves `node_modules/.bin` shims as symlinks); a symlink with an absolute target or one that escapes the layer root is refused by name. A layer asset that is a zip file rather than an extracted directory is refused because the runner needs the directory. More than five layers, a literal layer ARN, an `Fn::ImportValue` and any other unresolvable reference are refused by name. |
 | Layer runtime paths | `/opt/bin` is prepended to `PATH`, `/opt/lib` to `LD_LIBRARY_PATH`, `/opt/nodejs/node_modules` and `/opt/nodejs/node<major>/node_modules` to `NODE_PATH` (Node), and `/opt/python` plus `/opt/python/lib/python<major>.<minor>/site-packages` to `PYTHONPATH` (Python). The image's own values are read with `docker image inspect` and kept after the layer paths; a failed inspect falls back to a documented default `PATH`. |
-| `PackageType: Image` / `Code.ImageUri` | The `aws:asset:path`, `aws:asset:dockerfile-path`, `aws:asset:docker-build-args`, `aws:asset:docker-build-target` and `aws:asset:docker-platform` metadata are read from the function resource. `docker build` runs with the asset directory as the context, the image is tagged `<name-prefix>-<logical-id>-image` with the run label, and the container starts with the image's own entrypoint (no command, no code mount). The build runs before any listener serves. In the default mode the runner hosts the Runtime API the image's runtime client connects to; with `--rie` it starts the image's own Runtime Interface Emulator instead. The tag is per app hash by default, so two concurrent runs of one app share it and docker reuses the built image. |
+| `PackageType: Image` / `Code.ImageUri` | The `aws:asset:path`, `aws:asset:dockerfile-path`, `aws:asset:docker-build-args`, `aws:asset:docker-build-target` and `aws:asset:docker-platform` metadata are read from the function resource. `docker build` runs with the asset directory as the context, the image is tagged `<name-prefix>-<run-id>-<logical-id>-image` with the run label, and the container starts with the image's own entrypoint (no command, no code mount). The build runs before any listener serves. In the default mode the runner hosts the Runtime API the image's runtime client connects to; with `--rie` it starts the image's own Runtime Interface Emulator instead. The tag is per app hash plus the run id, so two concurrent runs of one app never move each other's image tag; docker's layer cache still reuses unchanged build steps. |
 | Refusals | An image without `aws:asset:path`, an image that declares `Layers`, and — under `--rie` — an image whose container never starts a Runtime Interface Emulator all fail by name (the last cites the images-create page). A zip function whose runtime image cannot be pinned fails in the image-resolution step. |
 
 Layer and image builds happen before `run` starts serving; the run shuts down
@@ -1479,7 +1595,8 @@ runs on the same network with the same environment. Backend readiness above has
 already proven each published host port answers its service from the host; this
 probe proves the view from inside a function container. It must report:
 
-- credentials are the `dummy` static keys and no session token is present;
+- credentials are the access key the runner issued to the probe, no session
+  token is present, and the key is the one the runner recorded for this run;
 - every configured endpoint host resolves and answers an HTTP request (this
   includes the moto KMS/STS and s3proxy S3 endpoints when those backends are
   running);
