@@ -20,7 +20,31 @@ type actualResponseForCompare struct {
 	IsBase64 bool                `json:"is_base64"`
 }
 
+// fixtureRuntimeName selects this runner's entry in a fixture's
+// expect_by_runtime block. A fixture that carries per-runtime expectations must
+// name every runtime; a missing entry fails closed instead of falling back to a
+// shared expect.
+const fixtureRuntimeName = "go"
+
+// resolveFixtureExpectation replaces the shared expect with this runtime's
+// entry when a fixture declares per-runtime expectations.
+func resolveFixtureExpectation(f Fixture) (Fixture, error) {
+	if len(f.ExpectByRuntime) == 0 {
+		return f, nil
+	}
+	expect, ok := f.ExpectByRuntime[fixtureRuntimeName]
+	if !ok {
+		return f, fmt.Errorf("expect_by_runtime has no %q entry", fixtureRuntimeName)
+	}
+	f.Expect = expect
+	return f, nil
+}
+
 func runFixture(f Fixture) error {
+	f, err := resolveFixtureExpectation(f)
+	if err != nil {
+		return err
+	}
 	if len(f.Input.SecureSteps) > 0 || len(f.Expect.SecureSteps) > 0 {
 		return runFixtureSecure(f)
 	}

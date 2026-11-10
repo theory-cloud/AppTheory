@@ -630,7 +630,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>1283 exported top-level symbols</summary>
+<summary>1284 exported top-level symbols</summary>
 
 ```text
 AccountAssertion, AccountAssertionAssumeFailed, AccountAssertionMismatch, AccountAssertionNotConfigured, AccountAssertionState, AccountAssertionUnavailable,
@@ -810,7 +810,7 @@ ValidationRuleRequired, Vary, VectorRecord, VerifyVersionedArtifact, VersionedAr
 WebSocketEvent, WebSocketEventOptions, WebSocketHandler, WindowConfig, WindowLimit, WithAPI, WithAuthHook, WithAuthPrincipalHook, WithAWSConfig,
 WithAWSLambdaMicroVMClock, WithAWSLambdaMicroVMRegion, WithCacheableResultConfig, WithCapabilityConfig, WithClock, WithCompletionHooks, WithControllerClock,
 WithControllerDeploymentDefaults, WithControllerExecutionRoleArn, WithControllerID, WithControllerIDGenerator, WithControllerLogging,
-WithControllerProviderID, WithControllerSessionTTL, WithCORS, WithDeviceAuthorizationEndpoint, WithDynamoStreamSpillEncryption, WithEMFClock,
+WithControllerProviderID, WithControllerSessionTTL, WithCORS, WithDeclinedGETValidationFirst, WithDeviceAuthorizationEndpoint, WithDynamoStreamSpillEncryption, WithEMFClock,
 WithEMFNamespace, WithEMFService, WithEMFWriter, WithEnvironmentErrorNotifications, WithErrorNotifier, WithExtensionCapabilities, WithHTTPErrorFormat,
 WithIdentifier, WithIDGenerator, WithInitialSessionListenerBudget, WithInitialSessionListenerEnabled, WithLegacyHTTPErrorShape, WithLifecycleContract,
 WithLifecycleHandler, WithLimits, WithLogger, WithLoggingLevelHook, WithObservability, WithOriginValidator, WithPolicyHook, WithProfileClock,

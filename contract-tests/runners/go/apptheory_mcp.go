@@ -145,6 +145,9 @@ func appendFixtureMCPServerOptions(opts []mcp.ServerOption, config FixtureMCPSer
 	if config.InitialSessionListenerEnabled != nil {
 		opts = append(opts, mcp.WithInitialSessionListenerEnabled(*config.InitialSessionListenerEnabled))
 	}
+	if config.DeclinedGETValidationFirst != nil {
+		opts = append(opts, mcp.WithDeclinedGETValidationFirst(*config.DeclinedGETValidationFirst))
+	}
 	if config.CacheableResults != nil {
 		cache := config.CacheableResults
 		opts = append(opts, mcp.WithCacheableResultConfig(mcp.CacheableResultConfig{

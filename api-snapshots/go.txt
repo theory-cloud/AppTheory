@@ -3424,6 +3424,7 @@ type Server struct {
 
 	initialSessionListenerEnabled bool
 	initialSessionListenerBudget  *initialSessionListenerBudgetConfig
+	declinedGETValidationFirst    bool
 	refusalHook                   refusal.Hook
 }
 
@@ -3663,6 +3664,8 @@ func WithCapabilityConfig(CapabilityConfig) ServerOption
 func WithClock(apptheory.Clock) MemorySessionStoreOption
 
 func WithCompletionHooks(CompletionHook, CompletionHook) ServerOption
+
+func WithDeclinedGETValidationFirst(bool) ServerOption
 
 func WithDynamoStreamSpillEncryption(objectstore.S3EncryptionConfig) DynamoStreamStoreOption
 

@@ -11,12 +11,13 @@ import (
 )
 
 type Fixture struct {
-	ID     string        `json:"id"`
-	Tier   string        `json:"tier"`
-	Name   string        `json:"name"`
-	Setup  FixtureSetup  `json:"setup"`
-	Input  FixtureInput  `json:"input"`
-	Expect FixtureExpect `json:"expect"`
+	ID              string                   `json:"id"`
+	Tier            string                   `json:"tier"`
+	Name            string                   `json:"name"`
+	Setup           FixtureSetup             `json:"setup"`
+	Input           FixtureInput             `json:"input"`
+	Expect          FixtureExpect            `json:"expect"`
+	ExpectByRuntime map[string]FixtureExpect `json:"expect_by_runtime,omitempty"`
 }
 
 type FixtureSetup struct {
@@ -346,6 +347,7 @@ type FixtureMCPServer struct {
 	Version                       string                      `json:"version,omitempty"`
 	IncludeServerInfoMetadata     *bool                       `json:"include_server_info_metadata,omitempty"`
 	InitialSessionListenerEnabled *bool                       `json:"initial_session_listener_enabled,omitempty"`
+	DeclinedGETValidationFirst    *bool                       `json:"declined_get_validation_first,omitempty"`
 	ExtensionCapabilities         map[string]map[string]any   `json:"extension_capabilities,omitempty"`
 	CacheableResults              *FixtureMCPCacheableResults `json:"cacheable_results,omitempty"`
 }

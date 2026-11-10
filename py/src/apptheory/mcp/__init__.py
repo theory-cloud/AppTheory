@@ -489,6 +489,11 @@ class McpServerOptions:
     include_server_info_metadata: bool = True
     verbose_handler_errors: bool = False
     initial_session_listener_enabled: bool = True
+    # Go-parity option (mcp.WithDeclinedGETValidationFirst). Python validates
+    # origin, GET headers, session, and protocol version before the stream-less
+    # 405 in both modes, so accepting this option changes no response here; it
+    # exists so one transport configuration can serve every runtime.
+    declined_get_validation_first: bool = False
     logger: Any | None = None
 
 
