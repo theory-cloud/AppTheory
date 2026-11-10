@@ -282,8 +282,11 @@ func WithInitialSessionListenerEnabled(enabled bool) ServerOption {
 }
 
 // WithDeclinedGETValidationFirst restores validation-first ordering for a
-// stream-less plain GET /mcp. It has no effect unless the common stream is also
-// declined with WithInitialSessionListenerEnabled(false).
+// stream-less plain GET /mcp. Its full effect — session validation and the
+// sliding-TTL refresh before the 405 — needs the common stream declined with
+// WithInitialSessionListenerEnabled(false); with the listener enabled it still
+// moves the early unsupported-MCP-Protocol-Version 400 behind the session
+// checks.
 //
 // The default (false) answers a plain GET with the 405 no-stream response before
 // the session checks, so a per-call client probing GET first never reads a
