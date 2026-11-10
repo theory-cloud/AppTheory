@@ -272,8 +272,8 @@ func TestDeclinedGETValidationFirst_ReplayUnaffected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("append event: %v", err)
 	}
-	if err := store.Close(ctx, sessionID, streamID); err != nil {
-		t.Fatalf("close stream: %v", err)
+	if closeErr := store.Close(ctx, sessionID, streamID); closeErr != nil {
+		t.Fatalf("close stream: %v", closeErr)
 	}
 
 	headers := sseSessionHeaders(sessionID)
