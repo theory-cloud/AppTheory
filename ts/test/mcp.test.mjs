@@ -1225,6 +1225,33 @@ test("mcp initial session listener defaults to enabled and can be declined with 
   );
 });
 
+test("mcp declined GET validation-first option is accepted parity and changes nothing", async () => {
+  for (const enabled of [false, true]) {
+    const server = createMcpServer("Listener MCP", "1", {
+      idGenerator: sequenceIdGenerator([`sess-validation-first-${enabled}`]),
+      initialSessionListenerEnabled: false,
+      declinedGetValidationFirst: enabled,
+    });
+    const harness = createMcpTestHarness(server);
+    const sessionId = (await harness.initialize()).response.headers[
+      MCP_HEADER_SESSION_ID
+    ][0];
+
+    // TypeScript always validates before the stream-less 405, so both modes
+    // report the session failure and only a valid session reaches the 405.
+    assert.equal((await harness.invoke({ method: "GET" })).response.status, 400);
+    assert.equal(
+      (await harness.invoke({ method: "GET", sessionId: "missing" })).response
+        .status,
+      404,
+    );
+    const declined = await harness.invoke({ method: "GET", sessionId });
+    assert.equal(declined.response.status, 405);
+    assert.deepEqual(declined.response.headers.allow, ["DELETE, GET, POST"]);
+    assert.deepEqual(declined.bodyJson, { error: "method not allowed" });
+  }
+});
+
 test("mcp task runtime handles lifecycle and error paths", async () => {
   const taskStore = new MemoryMcpTaskStore({
     now: () => new Date("2026-07-03T00:00:02Z"),
