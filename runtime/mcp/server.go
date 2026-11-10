@@ -108,6 +108,7 @@ type Server struct {
 
 	initialSessionListenerEnabled bool
 	initialSessionListenerBudget  *initialSessionListenerBudgetConfig
+	declinedGETValidationFirst    bool
 	refusalHook                   refusal.Hook
 }
 
@@ -277,6 +278,30 @@ func WithInitialSessionListenerBudget(opts InitialSessionListenerBudgetOptions) 
 func WithInitialSessionListenerEnabled(enabled bool) ServerOption {
 	return func(s *Server) {
 		s.initialSessionListenerEnabled = enabled
+	}
+}
+
+// WithDeclinedGETValidationFirst restores validation-first ordering for a
+// stream-less plain GET /mcp. It has no effect unless the common stream is also
+// declined with WithInitialSessionListenerEnabled(false).
+//
+// The default (false) answers a plain GET with the 405 no-stream response before
+// the session checks, so a per-call client probing GET first never reads a
+// session error as fatal. Setting it to true instead validates in the order
+// origin, GET headers, session, protocol version, and only then answers 405 —
+// the order TypeScript and Python have always used. Because the session check
+// runs, a declined GET with a valid session refreshes that session's sliding
+// TTL, which keeps session-ful clients behind a buffering front door alive
+// while they poll. The trade-off is deliberate: a pre-session GET then reports
+// the session or protocol error (400/404) instead of 405, and an unsupported
+// MCP-Protocol-Version is reported only after the session check (a missing
+// session answers 400 first).
+//
+// The option applies only to GET /mcp without Last-Event-ID. Last-Event-ID
+// replay keeps its existing path in both modes.
+func WithDeclinedGETValidationFirst(enabled bool) ServerOption {
+	return func(s *Server) {
+		s.declinedGETValidationFirst = enabled
 	}
 }
 
@@ -516,74 +541,6 @@ func (s *Server) handlePOSTResponse(
 	// Server currently does not issue client-bound requests, but responses
 	// are part of the transport and must be accepted.
 	return &apptheory.Response{Status: 202}, nil
-}
-
-func (s *Server) handleGET(c *apptheory.Context) (*apptheory.Response, error) {
-	ctx := withCallerIdentity(c.Context(), callerIdentity(c))
-
-	if resp := s.validateOrigin(c.Request.Headers); resp != nil {
-		return resp, nil
-	}
-	if DetectProtocolVersion(c.Request.Headers, nil) == ProtocolShape20260728 {
-		return methodNotAllowed("POST"), nil
-	}
-	// An unsupported MCP-Protocol-Version is 400 before anything else: the spec
-	// makes that response mandatory for an invalid or unsupported version.
-	if _, resp := requestProtocolVersion(c.Request.Headers, nil); resp != nil {
-		return resp, nil
-	}
-	// A server that does not offer an SSE stream must answer every plain GET with
-	// 405 ("Listening for Messages from the Server", MCP 2025-06-18: the server
-	// MUST either return text/event-stream or 405). This is decided before the
-	// session checks on purpose: a buffered deployment that cannot stream would
-	// otherwise answer a pre-session GET with 400, which a per-call client that
-	// probes GET first reads as a client error, and the stream is absent either
-	// way. Last-Event-ID replay keeps its own path below.
-	lastEventID := firstHeader(c.Request.Headers, headerLastEventID)
-	if !s.initialSessionListenerEnabled && lastEventID == "" {
-		return methodNotAllowed("DELETE, GET, POST"), nil
-	}
-	if resp := validateGETHeaders(c.Request.Headers); resp != nil {
-		return resp, nil
-	}
-
-	sessionID, sess, errResp := s.requireSession(ctx, c.Request.Headers)
-	if errResp != nil {
-		return errResp, nil
-	}
-	if pvResp := s.requireProtocolVersion(c.Request.Headers, sess); pvResp != nil {
-		return pvResp, nil
-	}
-
-	if lastEventID == "" {
-		// No resumable stream requested. Keep the connection open as a session-level
-		// SSE listener (clients will reconnect in a tight loop if we return EOF).
-		return s.openSessionListener(ctx, sessionID, c.RemainingMS)
-	}
-
-	streamID, err := s.streamStore.StreamForEvent(ctx, sessionID, lastEventID)
-	if err != nil {
-		if errors.Is(err, ErrEventNotFound) {
-			return notFound("event not found"), nil
-		}
-		s.logger.ErrorContext(ctx, "stream store error", "error", err)
-		return internalServerError(), nil
-	}
-
-	// The replay body is produced by the store's subscription pump and the SSE
-	// writer; the scope keeps both joined to the response body.
-	scope := newStreamScope(ctx)
-	events, err := s.streamStore.Subscribe(scope.context(), sessionID, streamID, lastEventID)
-	if err != nil {
-		scope.stop()
-		if errors.Is(err, ErrStreamNotFound) {
-			return notFound("stream not found"), nil
-		}
-		s.logger.ErrorContext(ctx, "stream store error", "error", err)
-		return internalServerError(), nil
-	}
-
-	return s.streamToSSE(scope, sessionID, events)
 }
 
 func (s *Server) openSessionListener(ctx context.Context, sessionID string, remainingMS int) (*apptheory.Response, error) {

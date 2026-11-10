@@ -697,6 +697,8 @@ For streaming tool calls, AppTheory assigns SSE event ids and persists them in t
   `WithInitialSessionListenerBudget(...)`
 - if your HTTP adapter cannot deliver a streaming response body at all, decline the common stream with
   `WithInitialSessionListenerEnabled(false)`; clients then receive `405 Method Not Allowed` and continue over POST
+  (Go's default checks the stream-less 405 before session validation; the
+  [validation-first opt-in](#go-default-order-differs-from-typescript-and-python) restores the pre-v7.1.0 order)
 
 ### Declining the optional common stream with `405 Method Not Allowed`
 
@@ -729,8 +731,8 @@ server = create_mcp_server(
 )
 ```
 
-With the option set, a `GET /mcp` request **without** `last-event-id` returns an immediate, complete buffered
-response after origin, session, and protocol-version validation:
+With the option set in TypeScript or Python, a `GET /mcp` request **without** `last-event-id` returns an immediate,
+complete buffered response after origin, GET-header, session, and protocol-version validation:
 
 ```http
 HTTP/1.1 405 Method Not Allowed
@@ -744,10 +746,66 @@ Content-Type: application/json
 
 - the option is explicit opt-in; without it, AppTheory keeps the default keepalive listener
 - it applies only to `GET /mcp` without `last-event-id`
-- validation order is unchanged: a bad `Origin` stays `403`, a missing session `400`, an unknown session `404`, and a
-  bad or mismatched `mcp-protocol-version` `400`; the 405 is not reachable without a valid session
+- with a valid session the ordering is validation-first: a bad `Origin` stays `403`, bad GET headers `400`, a missing
+  session `400`, an unknown session `404`, and a bad or mismatched `mcp-protocol-version` `400` before the `405`
 - initialize/negotiation, POST, DELETE, replay, and the stateless `2026-07-28` `Allow: POST` rejection are unchanged
 - the response is a single buffered body, so it is complete before any adapter drain budget applies
+
+#### Go default order differs from TypeScript and Python
+
+The order of the stream-less `405` against session validation is **not** the same in every runtime at v7.1.0, and that
+difference is deliberate:
+
+| Runtime | Default declined-GET order | Opted-in order |
+|---|---|---|
+| Go | `405` before session validation | validation-first (the order in this section) |
+| TypeScript | validation-first | validation-first (unchanged) |
+| Python | validation-first | validation-first (unchanged) |
+
+The Go default answers a stream-less plain `GET /mcp` with `405` before the session check so a per-call client that
+probes `GET` first never reads a session error as fatal. The cost is that a declined GET cannot refresh the session's
+sliding TTL, so a session-ful client behind a buffering front door that keeps polling `GET` still expires on true idle.
+
+Go restores the validation-first order with an explicit opt-in:
+
+```go
+srv := mcp.NewServer("my-mcp-server", "dev",
+  mcp.WithInitialSessionListenerEnabled(false),
+  mcp.WithDeclinedGETValidationFirst(true),
+)
+```
+
+```ts
+const server = createMcpServer("my-mcp-server", "dev", {
+  initialSessionListenerEnabled: false,
+  declinedGetValidationFirst: true,
+});
+```
+
+```python
+server = create_mcp_server(
+    "my-mcp-server",
+    "dev",
+    {
+        "initial_session_listener_enabled": False,
+        "declined_get_validation_first": True,
+    },
+)
+```
+
+With the Go option set, a stream-less plain `GET /mcp` validates in the order origin, GET headers, session (which
+refreshes the sliding TTL), protocol version, and only then `405`. A valid session therefore receives `405` **and**
+stays alive; a pre-session GET reports the session or header failure instead of `405`. TypeScript and Python accept the
+option as interface parity only — they already validate first in both modes, so no response changes there.
+
+The opt-in also restores one deliberate v7.0.0 detail: the v7.1.0 early "unsupported `MCP-Protocol-Version` is `400`"
+check is not performed before the session check. With no session id, a request carrying an unsupported protocol version
+therefore reports `400 missing Mcp-Session-Id` first; with a valid session, the unsupported version still returns its
+`400`. Origin validation, the stateless `2026-07-28` `Allow: POST` rejection, and `Last-Event-ID` replay keep their
+positions in both orders.
+
+The default stays unchanged: a Go server that does not set the option behaves exactly as v7.1.0 did, and TypeScript and
+Python report the same validation-first order they always have. Existing consumers see no change without opting in.
 
 ### Keeping the initial keepalive path open for a bounded window on Lambda
 

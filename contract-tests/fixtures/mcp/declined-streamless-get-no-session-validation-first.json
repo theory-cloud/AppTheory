@@ -1,0 +1,106 @@
+{
+  "id": "mcp.declined_get.no_session_validation_first",
+  "tier": "mcp",
+  "name": "MCP stream-less GET without a session validates first when the opt-in is set",
+  "setup": {
+    "mcp": {
+      "server": {
+        "name": "ContractMCP",
+        "version": "sp09",
+        "initial_session_listener_enabled": false,
+        "declined_get_validation_first": true
+      }
+    }
+  },
+  "input": {
+    "mcp": {
+      "steps": [
+        {
+          "name": "declined_get_without_session",
+          "request": {
+            "method": "GET",
+            "path": "/mcp",
+            "headers": {
+              "accept": [
+                "text/event-stream"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": ""
+            },
+            "is_base64": false
+          }
+        }
+      ]
+    }
+  },
+  "expect_by_runtime": {
+    "go": {
+      "mcp": {
+        "steps": [
+          {
+            "status": 400,
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "x-request-id": [
+                "req_mcp_123"
+              ]
+            },
+            "cookies": [],
+            "is_base64": false,
+            "body_json": {
+              "error": "missing Mcp-Session-Id"
+            }
+          }
+        ]
+      }
+    },
+    "ts": {
+      "mcp": {
+        "steps": [
+          {
+            "status": 400,
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "x-request-id": [
+                "req_mcp_123"
+              ]
+            },
+            "cookies": [],
+            "is_base64": false,
+            "body_json": {
+              "error": "missing Mcp-Session-Id"
+            }
+          }
+        ]
+      }
+    },
+    "py": {
+      "mcp": {
+        "steps": [
+          {
+            "status": 400,
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "x-request-id": [
+                "req_mcp_123"
+              ]
+            },
+            "cookies": [],
+            "is_base64": false,
+            "body_json": {
+              "error": "missing Mcp-Session-Id"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

@@ -4,7 +4,8 @@
   "title": "AppTheory contract fixture",
   "description": "Internal meta-contract for AppTheory cross-language contract test fixtures.",
   "type": "object",
-  "required": ["id", "tier", "name", "expect"],
+  "required": ["id", "tier", "name"],
+  "anyOf": [{ "required": ["expect"] }, { "required": ["expect_by_runtime"] }],
   "additionalProperties": false,
   "properties": {
     "id": {
@@ -15,7 +16,18 @@
     "name": { "type": "string", "minLength": 1 },
     "setup": { "$ref": "#/$defs/setup" },
     "input": { "$ref": "#/$defs/input" },
-    "expect": { "$ref": "#/$defs/expect" }
+    "expect": { "$ref": "#/$defs/expect" },
+    "expect_by_runtime": {
+      "description": "Per-runtime expectations for a behavior whose correct response differs by runtime. Each runner selects its own entry instead of a shared expect; a fixture that carries this must name every runtime.",
+      "type": "object",
+      "required": ["go", "ts", "py"],
+      "additionalProperties": false,
+      "properties": {
+        "go": { "$ref": "#/$defs/expect" },
+        "ts": { "$ref": "#/$defs/expect" },
+        "py": { "$ref": "#/$defs/expect" }
+      }
+    }
   },
   "$defs": {
     "tier": {
@@ -370,6 +382,7 @@
             "version": { "type": "string", "minLength": 1 },
             "include_server_info_metadata": { "type": "boolean" },
             "initial_session_listener_enabled": { "type": "boolean" },
+            "declined_get_validation_first": { "type": "boolean" },
             "extension_capabilities": {
               "type": "object",
               "additionalProperties": {
