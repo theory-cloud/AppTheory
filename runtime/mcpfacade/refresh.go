@@ -49,6 +49,14 @@ const (
 	// holds the in-flight lock or because a store could not answer, and both are
 	// worth exactly one second of backoff.
 	refreshRetryAfterSeconds = 1
+
+	// refreshCredentialFloor is the shortest remaining access-token lifetime a
+	// replayed grace body may report. A stored body whose access token has less
+	// than this left is never replayed: the facade rotates a fresh one instead.
+	// It exists because the defect this policy replaces handed a client an
+	// access token 300 ms before the resource refused it, and a credential the
+	// facade issues must be accepted for at least the lifetime it reports.
+	refreshCredentialFloor = 5 * time.Second
 )
 
 // errRouteRefreshBrokerFamilyCapabilityMissing is the fail-closed class a broker
@@ -69,13 +77,21 @@ var errRouteRefreshBrokerFamilyCapabilityMissing = errors.New("mcpfacade: route 
 // nor the upstream call happens until the request is known valid. Concurrency is
 // ruling R2: exactly one upstream refresh call per rotation however many callers
 // present the same handle, and a bounded wait for a caller that loses the lock
-// race. A rotated-away handle inside its configured grace window replays the
-// successor tokens byte-for-byte (the lost-response path); every beyond-grace
-// presentation is reuse, revokes the family, and returns the uniform
-// invalid_grant with no credential material. Ruling R4 binds the request's scope
-// and resource, and a handle is additionally bound to the route it was minted
-// for (DESIGN §7: the broker record binds resource, so a handle is a route
-// handle).
+// race.
+//
+// Reuse is served, never punished. A rotated-away handle inside its configured
+// grace window replays the stored successor body (the lost-response path). A
+// rotated-away handle beyond the window is ordinary client behavior — a restart
+// holding a stale stored copy, a second process on one login, a lost response
+// whose client gave up — so the facade rotates the family's live head and hands
+// back fresh credentials. The stale presentation is never the trigger for a
+// family revocation: the evidence shows the same sequence on every real client
+// that broke, and nothing distinguishes it from a stolen handle. Ruling R4 binds
+// the request's scope and resource, and a handle is additionally bound to the
+// route it was minted for (DESIGN §7: the broker record binds resource, so a
+// handle is a route handle).
+//
+//nolint:gocognit,gocyclo // the validation order and the serve paths are the security contract.
 func (config normalizedConfig) handleRefreshTokenGrant(
 	ctx *apptheory.Context,
 	kind mcproutes.EndpointKind,
@@ -94,26 +110,54 @@ func (config normalizedConfig) handleRefreshTokenGrant(
 	// clock (ctx.Now()), which is what makes them deterministic and testable.
 	start := time.Now()
 	for {
-		record, response := config.frontChannel.resolveRefreshRecord(ctx, form, clientID, handle, routeResource)
+		presented, response := config.frontChannel.resolveRefreshRecord(ctx, form, clientID, handle, routeResource)
 		if response != nil {
 			return response, nil
 		}
-		// A record whose grace deadline has passed was already rotated away.
-		// resolveRefreshRecord only returns such a record; a live grace window is
-		// served there. Beyond grace every presentation is reuse: the family is
-		// revoked, and no path hands out access, refresh, or ID token material.
-		if !record.GraceExpiresAt.IsZero() {
-			return config.revokeRotatedRefreshFamily(ctx, record, RouteRefreshReasonRotatedReuse), nil
+		// A record minted before the family policy carries no family identity. It
+		// is migrated in code rather than refused: the client that holds it has a
+		// live upstream grant, and demanding a manual re-login would be a break,
+		// not a migration.
+		if presented.FamilyHash == "" {
+			effective, served, err := config.adoptLegacyLineage(ctx, presented)
+			if err != nil || served != nil {
+				return served, err
+			}
+			if effective == nil {
+				if time.Since(start) >= refreshCoalesceWaitCap {
+					return facadeTemporarilyUnavailablePage(), nil
+				}
+				time.Sleep(refreshCoalescePollInterval)
+				continue
+			}
+			presented = effective
+		}
+		// A presented record that carries a grace deadline was rotated away. The
+		// live grace replay was already served inside resolveRefreshRecord, so
+		// this is a stale predecessor: rotate the family's head, not the
+		// predecessor, so the upstream is never presented material that has
+		// already been rotated (an upstream that detects reuse would otherwise
+		// revoke the grant on ordinary client behavior).
+		target := presented
+		stale := !presented.GraceExpiresAt.IsZero()
+		if stale {
+			target, response = config.refreshFamilyHead(ctx, presented)
+			if response != nil {
+				return response, nil
+			}
 		}
 		lockOwner, lockOwnerErr := oauth.NewOpaqueToken()
 		if lockOwnerErr != nil {
 			return nil, lockOwnerErr
 		}
 		locked, lockErr := config.frontChannel.stores.RouteRefreshBroker.AcquireLock(
-			ctx.Context(), record.HandleHash, lockOwner, record.Version)
+			ctx.Context(), target.HandleHash, lockOwner, target.Version)
 		if lockErr == nil {
-			front.emitLockAcquired(ctx, record)
-			return config.rotateRefreshGrant(ctx, record, locked)
+			front.emitLockAcquired(ctx, target)
+			if stale {
+				return config.rotateStalePredecessor(ctx, presented, target, locked)
+			}
+			return config.rotateRefreshGrant(ctx, target, locked)
 		}
 		response, wait := refreshLockFailure(lockErr, time.Since(start))
 		if response != nil {
@@ -208,8 +252,8 @@ func refreshLockFailure(err error, elapsed time.Duration) (*apptheory.Response, 
 // resolveRefreshRecord applies validation steps 3 to 6 of ruling R1 to the
 // presented handle and returns the record whose lock may be acquired. A non-nil
 // response ends the request here, without a lock and without an upstream call.
-// A returned record with a non-zero GraceExpiresAt has been rotated away and its
-// grace window has closed: the caller classifies that presentation.
+// A returned record with a non-zero GraceExpiresAt has been rotated away: the
+// caller serves it by rotating the family's live head.
 //
 //nolint:gocyclo // the validation order is the security contract.
 func (front *frontChannelConfig) resolveRefreshRecord(
@@ -262,27 +306,22 @@ func (front *frontChannelConfig) resolveRefreshRecord(
 		front.emitRecordStateRejection(ctx, record, RouteRefreshReasonRecordRevoked, "")
 		return nil, facadeErrorPage(400, facadeErrorInvalidGrant)
 	}
-	// A family-less record predates the family policy and is unsupported for
-	// ordinary rotation: an unknown-length lineage cannot be normalized without
-	// detaching a suffix from ancestors whose later reuse must revoke it. A
-	// family-marked record with generation below the root is equally corrupt.
-	// Both fail closed before the lock and before any upstream call; they are
-	// migration or reauthorization, never a token path.
-	if record.FamilyHash == "" {
-		front.emitRecordStateRejection(ctx, record, RouteRefreshReasonLegacyLineage, "")
-		return nil, facadeErrorPage(400, facadeErrorInvalidGrant)
-	}
-	if record.ChainGeneration < refreshChainRootGeneration {
+	// A family-less record predates the family policy. It is not refused: the
+	// caller migrates it in code (adoptLegacyLineage) so a client that upgraded
+	// keeps working with no manual data operation. A family-marked record with a
+	// generation below the root is corrupt and fails closed before the lock and
+	// before any upstream call.
+	if record.FamilyHash != "" && record.ChainGeneration < refreshChainRootGeneration {
 		front.emitRecordStateRejection(ctx, record, RouteRefreshReasonFamilyStateUnavailable, "")
 		return nil, facadeErrorPage(400, facadeErrorInvalidGrant)
 	}
-	// R1.4 reuse: a non-zero grace deadline that has passed means the handle was
-	// already rotated and the window in which the successor response can be
-	// replayed has closed. The presentation is returned to the caller for depth
-	// classification; it is never served handle material from here.
-	if !record.GraceExpiresAt.IsZero() && !ctx.Now().Before(record.GraceExpiresAt) {
-		return record, nil
-	}
+	// R1.4 reuse: a record that carries a grace deadline was rotated away. The
+	// record is returned to the caller when the window has closed, and served
+	// here when it is still open and the stored body is still replayable. A
+	// non-replayable body falls through to the same stale-predecessor path, so a
+	// client never loses a rotation to a store that did not persist the access
+	// token's lifetime.
+	//
 	// R1.5 (ruling R4): scope and resource are validated on EVERY refresh
 	// request, including one that will be answered from the grace window, so a
 	// request that asks for something other than what the record grants is
@@ -292,9 +331,10 @@ func (front *frontChannelConfig) resolveRefreshRecord(
 		return nil, failure
 	}
 	// R1.6 grace: the rotation completed inside the window, so the successor
-	// response is replayed byte-for-byte. This is the idempotent lost-response
-	// path and also how a concurrent waiter is served.
-	if response, served := refreshGraceResponse(record, ctx.Now()); served {
+	// response is replayed. The body carries the same access token and the same
+	// successor handle; only expires_in is recomputed to what the credential
+	// actually has left.
+	if response, served := refreshGraceResponse(record, ctx.Now(), front.policy.GraceWindow); served {
 		event := eventFromRecord(record)
 		event.Class = RouteRefreshEventGraceServed
 		event.Reason = RouteRefreshReasonSuccessorBody
@@ -342,15 +382,20 @@ func presentFormValue(form url.Values, name string) (string, bool) {
 }
 
 // refreshGraceResponse renders the stored successor response when the rotation
-// is still inside its grace window (ruling R1.6). The body is the exact byte
-// sequence the winning caller received, so the replay is byte-identical. A
-// record that claims a live grace window but carries no stored response is an
-// internal inconsistency: it is answered with the retryable class rather than an
-// empty success or a false invalid_grant, and it self-heals when the window
-// closes and the request becomes reuse.
+// is still inside its grace window (ruling R1.6). The body carries the same
+// access token and the same successor handle the winning caller received, so a
+// lost response recovers without a second upstream call. Only expires_in is
+// recomputed, because a replayed credential must be accepted by the resource for
+// at least the lifetime the response states; a stored body whose access token
+// has less than refreshCredentialFloor left is not replayed at all, and the
+// caller rotates a fresh one instead. A record that claims a live grace window
+// but carries no stored response is an internal inconsistency: it is answered
+// with the retryable class rather than an empty success or a false
+// invalid_grant.
 func refreshGraceResponse(
 	record *oauthstore.RouteRefreshBrokerRecord,
 	now time.Time,
+	graceWindow time.Duration,
 ) (*apptheory.Response, bool) {
 	if record.GraceExpiresAt.IsZero() || !now.Before(record.GraceExpiresAt) {
 		return nil, false
@@ -358,30 +403,199 @@ func refreshGraceResponse(
 	if record.EncryptedGraceRefreshResponse == "" {
 		return facadeTemporarilyUnavailablePage(), true
 	}
-	return refreshTokenPage([]byte(record.EncryptedGraceRefreshResponse)), true
+	body := []byte(record.EncryptedGraceRefreshResponse)
+	expiresAt := record.GraceAccessTokenExpiresAt
+	if expiresAt.IsZero() {
+		// A record written before the field existed: the rotation instant is the
+		// grace deadline minus the window, and the stored body states the access
+		// token's lifetime. An unknown lifetime is zero, which refuses the replay.
+		expiresAt = record.GraceExpiresAt.Add(-graceWindow).Add(storedAccessTokenLifetime(body))
+	}
+	remaining := expiresAt.Sub(now)
+	if remaining < refreshCredentialFloor {
+		return nil, false
+	}
+	replayed, err := replayTokenBody(body, remaining)
+	if err != nil {
+		return nil, false
+	}
+	return refreshTokenPage(replayed), true
+}
+
+// storedAccessTokenLifetime returns the access-token lifetime the stored
+// successor body states, or zero when the body is unreadable or states none.
+func storedAccessTokenLifetime(body []byte) time.Duration {
+	var payload struct {
+		ExpiresIn int `json:"expires_in"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil || payload.ExpiresIn <= 0 {
+		return 0
+	}
+	return time.Duration(payload.ExpiresIn) * time.Second
+}
+
+// replayTokenBody rewrites the stored successor body's expires_in to what the
+// credential has left, so a replay never advertises a lifetime the access token
+// does not have. The access token, its type, the scope, and the successor handle
+// are unchanged.
+func replayTokenBody(body []byte, remaining time.Duration) ([]byte, error) {
+	payload := facadeTokenPayload{}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, err
+	}
+	seconds := int(remaining / time.Second)
+	if seconds < 1 {
+		seconds = 1
+	}
+	payload.ExpiresIn = seconds
+	return json.Marshal(payload) // #nosec G117 -- the access token is deliberately returned to the client it was minted for, per DESIGN §8.4; only upstream refresh material and id_token are withheld.
+}
+
+// refreshFamilyHead resolves the live head of the family a rotated-away handle
+// belongs to. The head is the highest-generation member that carries no grace
+// deadline: the only record whose recorded upstream material is current. A
+// predecessor is never presented to the upstream, because an upstream that
+// detects refresh-token reuse would then revoke the grant on ordinary client
+// behavior. A family with no live head cannot rotate, so the handle is terminal.
+func (config normalizedConfig) refreshFamilyHead(
+	ctx *apptheory.Context,
+	presented *oauthstore.RouteRefreshBrokerRecord,
+) (*oauthstore.RouteRefreshBrokerRecord, *apptheory.Response) {
+	front := config.frontChannel
+	familyStore, ok := front.stores.RouteRefreshBroker.(oauthstore.RouteRefreshBrokerTransactionalFamilyStore)
+	if !ok {
+		front.emitStateFailure(ctx, presented, RouteRefreshReasonFamilyStateUnavailable, "")
+		return nil, facadeTemporarilyUnavailablePage()
+	}
+	records, err := familyStore.ListFamily(ctx.Context(), presented.FamilyHash)
+	if err != nil {
+		front.emitStateFailure(ctx, presented, RouteRefreshReasonFamilyStateUnavailable, "")
+		return nil, facadeTemporarilyUnavailablePage()
+	}
+	var head *oauthstore.RouteRefreshBrokerRecord
+	for _, candidate := range records {
+		if candidate == nil || candidate.Status == oauthstore.BrokerStatusRevoked {
+			continue
+		}
+		if !candidate.GraceExpiresAt.IsZero() || candidate.ChainGeneration < refreshChainRootGeneration {
+			continue
+		}
+		if head == nil || candidate.ChainGeneration > head.ChainGeneration ||
+			(candidate.ChainGeneration == head.ChainGeneration && candidate.HandleHash > head.HandleHash) {
+			head = candidate
+		}
+	}
+	if head == nil {
+		event := eventFromRecord(presented)
+		event.Class = RouteRefreshEventReuse
+		event.Reason = RouteRefreshReasonFamilyHeadAbsent
+		event.ErrorCode = facadeErrorInvalidGrant
+		event.At = ctx.Now()
+		front.emitRouteRefresh(ctx.Context(), event)
+		return nil, facadeErrorPage(400, facadeErrorInvalidGrant)
+	}
+	return head, nil
+}
+
+// refreshRotation is one persisted rotation: the body the client receives, the
+// successor record, and the deadlines the presented record carries afterwards.
+type refreshRotation struct {
+	body            []byte
+	successor       *oauthstore.RouteRefreshBrokerRecord
+	graceExpiresAt  time.Time
+	accessExpiresAt time.Time
 }
 
 // rotateRefreshGrant performs the held-lock rotation of ruling R1 step 7. The
-// lock is held when this is called, and the returned record is the presented one
-// at version+1 with Status refreshing and the lock owner and expiry set.
+// lock is held on the presented live head when this is called.
 func (config normalizedConfig) rotateRefreshGrant(
 	ctx *apptheory.Context,
 	presented *oauthstore.RouteRefreshBrokerRecord,
 	locked *oauthstore.RouteRefreshBrokerRecord,
 ) (*apptheory.Response, error) {
+	rotation, response, err := config.performRefreshRotation(ctx, presented, locked)
+	if err != nil || response != nil {
+		return response, err
+	}
+	return refreshTokenPage(rotation.body), nil
+}
+
+// rotateStalePredecessor serves a rotated-away handle whose grace window has
+// closed. It rotates the family's live head — never the predecessor, whose
+// recorded material the upstream has already rotated — and hands the client
+// fresh credentials. The presented record is re-armed with the new body and a
+// fresh grace window (best effort), so a retry storm inside one window is served
+// from the stored body instead of buying another upstream rotation; the family
+// is never revoked. The presentation is reported as reuse with the additive
+// rotated_from_head outcome: it is ordinary client behavior, not theft.
+func (config normalizedConfig) rotateStalePredecessor(
+	ctx *apptheory.Context,
+	presented *oauthstore.RouteRefreshBrokerRecord,
+	head *oauthstore.RouteRefreshBrokerRecord,
+	locked *oauthstore.RouteRefreshBrokerRecord,
+) (*apptheory.Response, error) {
 	front := config.frontChannel
-	// The ONE upstream refresh call of this rotation is made under the lock, with
-	// the client that owns the recorded material.
+	rotation, response, err := config.performRefreshRotation(ctx, head, locked)
+	if err != nil || response != nil {
+		return response, err
+	}
+	front.rearmStalePredecessor(ctx, presented, rotation)
+	event := eventFromRecord(presented)
+	event.Class = RouteRefreshEventReuse
+	event.Reason = RouteRefreshReasonStalePredecessor
+	event.Outcome = RouteRefreshOutcomeRotatedFromHead
+	event.SuccessorHandleHash = rotation.successor.HandleHash
+	event.FamilyHash = rotation.successor.FamilyHash
+	event.StatusTo = oauthstore.BrokerStatusActive
+	event.At = ctx.Now()
+	front.emitRouteRefresh(ctx.Context(), event)
+	return refreshTokenPage(rotation.body), nil
+}
+
+// rearmStalePredecessor stores the rotation's body and deadlines on the
+// presented predecessor so a repeat presentation inside the grace window
+// replays it. It is best effort: a failed compare-and-swap only means the next
+// presentation rotates again, which is still a served request.
+func (front *frontChannelConfig) rearmStalePredecessor(
+	ctx *apptheory.Context,
+	presented *oauthstore.RouteRefreshBrokerRecord,
+	rotation *refreshRotation,
+) {
+	current, err := front.stores.RouteRefreshBroker.Get(ctx.Context(), presented.HandleHash)
+	if err != nil {
+		return
+	}
+	updated := *current
+	updated.EncryptedGraceRefreshResponse = string(rotation.body)
+	updated.GraceExpiresAt = rotation.graceExpiresAt
+	updated.GraceAccessTokenExpiresAt = rotation.accessExpiresAt
+	if _, err := front.stores.RouteRefreshBroker.CompareAndSwap(
+		ctx.Context(), &updated, current.Version,
+	); err != nil {
+		return
+	}
+}
+
+// performRefreshRotation makes the ONE upstream refresh call of a rotation under
+// the held lock, persists the successor transactionally, and reports it. Nothing
+// is minted unless every write landed.
+func (config normalizedConfig) performRefreshRotation(
+	ctx *apptheory.Context,
+	presented *oauthstore.RouteRefreshBrokerRecord,
+	locked *oauthstore.RouteRefreshBrokerRecord,
+) (*refreshRotation, *apptheory.Response, error) {
+	front := config.frontChannel
 	upstream, err := front.provider.Refresh(ctx.Context(), oauth.RefreshRequest{
 		RefreshMaterial:  locked.EncryptedUpstreamRefreshToken,
 		UpstreamClientID: locked.UpstreamClientID,
 	})
 	if err != nil {
-		return config.failedRefreshGrant(ctx, presented, locked, err)
+		response, failure := config.failedRefreshGrant(ctx, presented, locked, err)
+		return nil, response, failure
 	}
 	handle, err := oauth.NewOpaqueToken()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	successor := successorBrokerRecord(presented, handle, upstream)
 	// The successor response body is the token response the client receives and
@@ -390,26 +604,33 @@ func (config normalizedConfig) rotateRefreshGrant(
 	// upstream refresh material.
 	body, err := successorTokenBody(upstream, handle)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	familyStore, ok := front.stores.RouteRefreshBroker.(oauthstore.RouteRefreshBrokerTransactionalFamilyStore)
 	if !ok {
 		// Registration requires the capability; a store that lost it cannot hold
 		// the successor, so the rotation cannot complete and no successor handle
 		// may be handed out.
-		return nil, errRouteRefreshBrokerFamilyCapabilityMissing
+		return nil, nil, errRouteRefreshBrokerFamilyCapabilityMissing
+	}
+	rotation := &refreshRotation{
+		body:            body,
+		successor:       successor,
+		graceExpiresAt:  ctx.Now().Add(front.policy.GraceWindow),
+		accessExpiresAt: ctx.Now().Add(accessTokenLifetime(upstream)),
 	}
 	// One atomic transaction creates the successor and updates the presented
 	// record's grace response/status. There is deliberately no separate successor
 	// Put followed by a predecessor compare-and-swap: a crash between the two
 	// would leave a minted successor nothing can revoke.
 	if _, err = familyStore.RotateFamily(ctx.Context(), oauthstore.RouteRefreshFamilyRotation{
-		PresentedHandleHash:  locked.HandleHash,
-		LockOwner:            locked.RefreshLockOwner,
-		ExpectedVersion:      locked.Version,
-		Successor:            successor,
-		GraceRefreshResponse: string(body),
-		GraceExpiresAt:       ctx.Now().Add(front.policy.GraceWindow),
+		PresentedHandleHash:       locked.HandleHash,
+		LockOwner:                 locked.RefreshLockOwner,
+		ExpectedVersion:           locked.Version,
+		Successor:                 successor,
+		GraceRefreshResponse:      string(body),
+		GraceExpiresAt:            rotation.graceExpiresAt,
+		GraceAccessTokenExpiresAt: rotation.accessExpiresAt,
 	}); err != nil {
 		// Nothing was minted. A family revoked between the lock and the rotation is
 		// the uniform invalid_grant; every other failure is retryable, because a
@@ -423,17 +644,17 @@ func (config normalizedConfig) rotateRefreshGrant(
 			event.StatusTo = oauthstore.BrokerStatusRevoked
 			event.At = ctx.Now()
 			front.emitRouteRefresh(ctx.Context(), event)
-			return facadeErrorPage(400, facadeErrorInvalidGrant), nil
+			return nil, facadeErrorPage(400, facadeErrorInvalidGrant), nil
 		case errors.Is(err, oauthstore.ErrBrokerLegacyLineageUnsupported):
 			front.emitStateFailure(ctx, presented, RouteRefreshReasonLegacyLineage, "")
-			return facadeErrorPage(400, facadeErrorInvalidGrant), nil
+			return nil, facadeErrorPage(400, facadeErrorInvalidGrant), nil
 		case errors.Is(err, oauthstore.ErrBrokerFamilyStateUnavailable),
 			errors.Is(err, oauthstore.ErrBrokerFamilyMismatch):
 			front.emitStateFailure(ctx, presented, RouteRefreshReasonFamilyStateUnavailable, "")
-			return facadeTemporarilyUnavailablePage(), nil
+			return nil, facadeTemporarilyUnavailablePage(), nil
 		default:
 			front.emitStateFailure(ctx, presented, RouteRefreshReasonRewriteFailure, "")
-			return facadeTemporarilyUnavailablePage(), nil
+			return nil, facadeTemporarilyUnavailablePage(), nil
 		}
 	}
 	event := eventFromRecord(presented)
@@ -447,15 +668,26 @@ func (config normalizedConfig) rotateRefreshGrant(
 	event.UpstreamRefreshTokenHash = successor.UpstreamRefreshTokenHash
 	event.At = ctx.Now()
 	front.emitRouteRefresh(ctx.Context(), event)
-	return refreshTokenPage(body), nil
+	return rotation, nil, nil
+}
+
+// accessTokenLifetime is the lifetime an upstream token set states. An unknown
+// or non-positive lifetime is zero, which makes the stored body non-replayable
+// and every presentation rotate a fresh credential.
+func accessTokenLifetime(tokenSet *oauth.TokenSet) time.Duration {
+	if tokenSet == nil || tokenSet.ExpiresIn <= 0 {
+		return 0
+	}
+	return time.Duration(tokenSet.ExpiresIn) * time.Second
 }
 
 // failedRefreshGrant maps a failed upstream refresh call and unwinds the lock
 // (ruling R1 step 7's failure section). A terminal provider failure means the
-// recorded upstream material is dead, so the presented record is revoked and the
-// client is told invalid_grant. Every other failure releases the lock and
-// reports its typed response; a failure to release leaves the lock to expire and
-// never becomes a success.
+// recorded grant is dead upstream, so the family is revoked and the client is
+// told invalid_grant: that is the one re-authorize signal the token endpoint
+// sends, and it is a fact from the upstream, not a guess about the client. Every
+// other failure releases the lock and reports its typed response; a failure to
+// release leaves the lock to expire and never becomes a success.
 func (config normalizedConfig) failedRefreshGrant(
 	ctx *apptheory.Context,
 	presented *oauthstore.RouteRefreshBrokerRecord,
@@ -508,59 +740,6 @@ func (config normalizedConfig) failedRefreshGrant(
 		front.emitRouteRefresh(ctx.Context(), event)
 		return facadeTemporarilyUnavailablePage(), nil
 	}
-}
-
-// revokeRotatedRefreshFamily revokes the whole family a reused handle belongs to
-// and renders the uniform invalid_grant. A family-hashed record is revoked
-// through the store's transactional family tombstone, so a long-lived chain is
-// not limited by any walk budget. A family-less record cannot be revoked safely
-// because its true lineage is unknowable; it is answered with the same uniform
-// invalid_grant, and no revocation claim is made. A store failure is the
-// retryable class rather than invalid_grant: the client must not be allowed to
-// act on state the facade could not revoke.
-func (config normalizedConfig) revokeRotatedRefreshFamily(
-	ctx *apptheory.Context,
-	record *oauthstore.RouteRefreshBrokerRecord,
-	reason string,
-) *apptheory.Response {
-	front := config.frontChannel
-	if record.FamilyHash == "" {
-		event := eventFromRecord(record)
-		event.Class = RouteRefreshEventStateFailure
-		event.Reason = RouteRefreshReasonLegacyLineage
-		event.ErrorCode = facadeErrorInvalidGrant
-		event.At = ctx.Now()
-		front.emitRouteRefresh(ctx.Context(), event)
-		return facadeErrorPage(400, facadeErrorInvalidGrant)
-	}
-	familyStore, ok := front.stores.RouteRefreshBroker.(oauthstore.RouteRefreshBrokerTransactionalFamilyStore)
-	if !ok {
-		event := eventFromRecord(record)
-		event.Class = RouteRefreshEventStateFailure
-		event.Reason = RouteRefreshReasonFamilyRevokeUnavailable
-		event.At = ctx.Now()
-		front.emitRouteRefresh(ctx.Context(), event)
-		return facadeTemporarilyUnavailablePage()
-	}
-	records, err := familyStore.RevokeFamily(ctx.Context(), record.FamilyHash)
-	if err != nil {
-		event := eventFromRecord(record)
-		event.Class = RouteRefreshEventStateFailure
-		event.Reason = RouteRefreshReasonFamilyRevokeFailed
-		event.At = ctx.Now()
-		front.emitRouteRefresh(ctx.Context(), event)
-		return facadeTemporarilyUnavailablePage()
-	}
-	event := eventFromRecord(record)
-	event.Class = RouteRefreshEventReuse
-	event.Reason = reason
-	event.Outcome = RouteRefreshOutcomeRevokedFamily
-	event.RevokedRecords = len(records)
-	event.ErrorCode = facadeErrorInvalidGrant
-	event.StatusTo = oauthstore.BrokerStatusRevoked
-	event.At = ctx.Now()
-	front.emitRouteRefresh(ctx.Context(), event)
-	return facadeErrorPage(400, facadeErrorInvalidGrant)
 }
 
 // revokeFamilyForRecord revokes the family of a record whose upstream material

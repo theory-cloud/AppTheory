@@ -3424,6 +3424,7 @@ type Server struct {
 
 	initialSessionListenerEnabled bool
 	initialSessionListenerBudget  *initialSessionListenerBudgetConfig
+	refusalHook                   refusal.Hook
 }
 
 type ServerIdentity struct {
@@ -3677,6 +3678,8 @@ func WithLoggingLevelHook(LoggingLevelHook) ServerOption
 
 func WithOriginValidator(OriginValidator) ServerOption
 
+func WithRefusalHook(refusal.Hook) ServerOption
+
 func WithResourceSubscriptionHooks(ResourceSubscriptionHook, ResourceSubscriptionHook) ServerOption
 
 func WithServerIDGenerator(apptheory.IDGenerator) ServerOption
@@ -3868,6 +3871,8 @@ const RouteRefreshOutcomeRevokedFamily = "revoked_family"
 
 const RouteRefreshOutcomeRevokedWalk = "revoked_walk"
 
+const RouteRefreshOutcomeRotatedFromHead = "rotated_from_head"
+
 const RouteRefreshReasonAccessTokenOnly = "access_token_only"
 
 const RouteRefreshReasonAlreadyServed = "already_served"
@@ -3878,6 +3883,8 @@ const RouteRefreshReasonClientMismatch = "client_mismatch"
 
 const RouteRefreshReasonClientRejected = "client_rejected"
 
+const RouteRefreshReasonFamilyHeadAbsent = "family_head_absent"
+
 const RouteRefreshReasonFamilyRevokeFailed = "family_revoke_failed"
 
 const RouteRefreshReasonFamilyRevokeUnavailable = "family_revoke_unavailable"
@@ -3887,6 +3894,8 @@ const RouteRefreshReasonFamilyStateUnavailable = "family_state_unavailable"
 const RouteRefreshReasonHandleMalformed = "handle_malformed"
 
 const RouteRefreshReasonLegacyLineage = "legacy_lineage_unsupported"
+
+const RouteRefreshReasonLegacyLineageAdopted = "legacy_lineage_adopted"
 
 const RouteRefreshReasonLockContention = "lock_contention"
 
@@ -3901,6 +3910,8 @@ const RouteRefreshReasonResourceMismatch = "resource_mismatch"
 const RouteRefreshReasonRewriteFailure = "rewrite_failure"
 
 const RouteRefreshReasonRotatedReuse = "rotated_reuse"
+
+const RouteRefreshReasonStalePredecessor = "stale_predecessor"
 
 const RouteRefreshReasonStoreFailure = "store_failure"
 
@@ -3977,6 +3988,8 @@ type FacadeConfig struct {
 	RouteRefreshPolicy RouteRefreshPolicy
 
 	RouteRefreshEvents RouteRefreshEventHook
+
+	RefusalHook refusal.Hook
 }
 
 type HandlerFactory func(mcproutes.EndpointKind) apptheory.Handler
@@ -5524,6 +5537,8 @@ type RequireBearerTokenOptions struct {
 
 	RequiredScopesFunc func(*apptheory.Context) ([]string, error)
 
+	RefusalHook refusal.Hook
+
 	resourceMetadataURLTemplate *resourceMetadataURLTemplate
 }
 
@@ -5886,13 +5901,15 @@ type RouteRefreshBrokerRecord struct {
 	UpstreamClientID              string
 	EncryptedGraceRefreshResponse string
 	GraceExpiresAt                time.Time
-	Status                        string
-	RefreshLockOwner              string
-	RefreshLockExpiresAt          time.Time
-	ChainGeneration               int
-	FamilyHash                    string
-	DepthOneServedAt              time.Time
-	Version                       int
+
+	GraceAccessTokenExpiresAt time.Time
+	Status                    string
+	RefreshLockOwner          string
+	RefreshLockExpiresAt      time.Time
+	ChainGeneration           int
+	FamilyHash                string
+	DepthOneServedAt          time.Time
+	Version                   int
 }
 
 type RouteRefreshBrokerSeeder interface {
@@ -5937,6 +5954,8 @@ type RouteRefreshFamilyRotation struct {
 	Successor            *RouteRefreshBrokerRecord
 	GraceRefreshResponse string
 	GraceExpiresAt       time.Time
+
+	GraceAccessTokenExpiresAt time.Time
 }
 
 type RouteRefreshFamilyState struct {
@@ -6073,6 +6092,86 @@ func (*MemoryRouteRefreshBrokerStore) RouteRefreshBrokerHandleTTL() time.Duratio
 func (*MemoryTransactionStore) Consume(context.Context, string) (*TransactionRecord, error)
 
 func (*MemoryTransactionStore) Put(context.Context, *TransactionRecord) error
+
+## github.com/theory-cloud/apptheory/v7/runtime/refusal
+
+const ClassBearer Class = "bearer"
+
+const ClassFacade Class = "facade"
+
+const ClassTransport Class = "transport"
+
+const ReasonAudienceMismatch = "audience_mismatch"
+
+const ReasonBatchUnsupported = "batch_unsupported"
+
+const ReasonExpiredCredential = "expired_credential"
+
+const ReasonInsufficientScope = "insufficient_scope"
+
+const ReasonInternal = "internal_error"
+
+const ReasonInvalidCredential = "invalid_credential"
+
+const ReasonInvalidJSONRPC = "invalid_jsonrpc"
+
+const ReasonInvalidMessage = "invalid_message"
+
+const ReasonMethodNotAllowed = "method_not_allowed"
+
+const ReasonMissingAccept = "missing_accept"
+
+const ReasonMissingContentType = "missing_content_type"
+
+const ReasonMissingCredential = "missing_credential"
+
+const ReasonMissingRequiredClient = "missing_required_client_capability"
+
+const ReasonMissingSessionID = "missing_session_id"
+
+const ReasonOriginRefused = "origin_refused"
+
+const ReasonParseError = "parse_error"
+
+const ReasonProtocolVersion = "protocol_version"
+
+const ReasonSessionPrincipal = "session_principal_mismatch"
+
+const ReasonUnclassified = "unclassified"
+
+const ReasonUnknownEvent = "unknown_event"
+
+const ReasonUnknownSession = "unknown_session"
+
+const ReasonUnknownStream = "unknown_stream"
+
+const ReasonUnsupportedMethod = "unsupported_method"
+
+type Class string
+
+type Event struct {
+	At time.Time
+
+	Class Class
+
+	Reason string
+
+	Status int
+
+	Method string
+
+	Path string
+
+	ErrorCode string
+
+	Challenge string
+}
+
+type Hook func(context.Context, Event)
+
+func Emit(context.Context, Hook, Event)
+
+func IsRefusalStatus(int) bool
 
 ## github.com/theory-cloud/apptheory/v7/testkit
 

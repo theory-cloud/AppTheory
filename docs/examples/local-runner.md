@@ -69,12 +69,13 @@ go install github.com/theory-cloud/apptheory/v7/cmd/apptheory-local@<version>
 apptheory-local --app ~/code/my-app --profile ~/code/my-app/local-profile.json
 ```
 
-`<version>` is a release that contains the command (v6.5.0 or later);
-`go list -m -versions github.com/theory-cloud/apptheory/v7` lists released
-versions.
+`<version>` is a release that contains the command (v7.0.0 or later; the module
+path is `/v7`); `go list -m -versions github.com/theory-cloud/apptheory/v7`
+lists released versions. v7.0.0 is the first release that contains
+`apptheory-local`.
 
-Before that release, run the command from a sibling AppTheory checkout (the
-same model as FaceTheory Phase 3):
+Run the command from a sibling AppTheory checkout when developing the runner
+itself (the same model as FaceTheory Phase 3):
 
 ```bash
 # Run from the checkout without installing anything.
@@ -278,10 +279,13 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
 
 ## What "locally" means
 
-- **No AWS credentials.** The runner sets static dummy keys and removes every
-  inherited `AWS_*`, `CDK_*`, proxy variable, and the `DYNAMODB_ENDPOINT`,
-  `DDB_ENDPOINT`, `TABLE_NAME` and `QUEUE_URL` aliases from the processes it
-  starts.
+- **No AWS credentials.** The runner mints its own access keys — one per
+  function container and one for the preflight probe, never an operator's — and
+  removes every inherited `AWS_*`, `CDK_*`, proxy variable, and the
+  `DYNAMODB_ENDPOINT`, `DDB_ENDPOINT`, `TABLE_NAME` and `QUEUE_URL` aliases from
+  the processes it starts. A run that serves no AWS_IAM surface still issues
+  them; a caller signs with an issued key exactly as it would with a deployed
+  role's credential.
 - **No real AWS.** Function containers get closed DNS (`127.0.0.2`) and only the
   `/etc/hosts` entries the runner adds. Every SDK endpoint is overridden to a
   local URL. A preflight probe inside the run network must prove that a real AWS
@@ -330,8 +334,16 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
    class or a tag that is not pinned by digest fails here, after synthesis.
 4. **Prepare the run workspace.** Inline `Code.ZipFile` code is materialized
    under the run scratch directory, every function's layers are merged into one
-   `/opt` directory in the template's listed order, then the run's private
-   Docker network is created.
+   `/opt` directory in the template's listed order, then the run's Docker
+   network is created: a private bridge, or the network named by
+   `--shared-network`, which several co-resident runs join. An opted-in run
+   (`--tls`), a run with `--mail`, or a run whose custom resources need the
+   internal HTTPS endpoint then loads or creates its local CA and prepares the
+   certificates it will serve; any other run starts no CA. A run with
+   `--shared-dir` uses the CA at `<shared-dir>/ca`, so co-resident runs verify
+   each other's leaves. See
+   [Local HTTPS, OIDC issuers and passkeys](#local-https-oidc-issuers-and-passkeys)
+   and [Co-resident runs](#co-resident-runs-one-ca-declared-ports-and-one-network).
 5. **Start backends.** `--backend dynamodb`, `--backend moto`,
    `--backend s3proxy` and `--backend sqs` start the profile's digest-pinned
    emulators on the run's private network. Before it reports a backend ready,
@@ -344,7 +356,13 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
    `ListQueues` for ElasticMQ. A service with no native probe is checked with a
    plain HTTP request. On timeout the run fails with the backend, its image and
    the last error, before any resource is provisioned. A backend with no
-   published host port is reported ready without this wait.
+   published host port is reported ready without this wait. When moto and
+   s3proxy are up, the runner also starts its two service fronts: the KMS front
+   (the key families it owns, DIGEST signing and `--data-dir` material) and the
+   S3 front (SSE-S3), both on loopback listeners the function containers reach
+   through `host.docker.internal`; see
+   [KMS signing and key material](#kms-signing-and-key-material) and
+   [S3 objects and server-side encryption](#s3-objects-and-server-side-encryption).
 6. **Provision resources.** When the backend is ready, the runner creates every
    resource the assembly declares, in this order: S3 buckets; each
    `Custom::CDKBucketDeployment` source copied into its bucket with the declared
@@ -373,8 +391,8 @@ go build -C ~/code/AppTheory -o ~/bin/apptheory-local ./cmd/apptheory-local
    the run never prints it. An expression the runner cannot resolve fails
    closed with the function and variable named.
 8. **Preflight.** A probe container on the run's private network proves the
-   dummy credentials, every configured endpoint, the DynamoDB SDK endpoint when
-   one is configured, and closed DNS.
+   credential the runner issued it, every configured endpoint, the DynamoDB SDK
+   endpoint when one is configured, and closed DNS.
 9. **Run.** One container per function the CDK definition targets: HTTP routes,
    Function URLs, HTTP API authorizers, enabled event-source consumers, enabled
    EventBridge rule targets and Lambda log-subscription destinations. A zip
@@ -453,6 +471,534 @@ handler sees carries exactly the documented fields:
 
 `plan` prints both forms on the route line, for example
 `GET /hello (also /prod/hello) -> Handler`.
+
+## Local HTTPS, OIDC issuers and passkeys
+
+An OAuth 2.0 authorization server's issuer identifier is "a URL that uses the
+`https` scheme and has no query or fragment components", and its JWK set URI
+must use `https` ([RFC 8414 §2](https://www.rfc-editor.org/rfc/rfc8414#section-2)).
+OpenID Connect Discovery publishes the same issuer in the metadata
+([OpenID Connect Discovery §3](https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderMetadata)).
+A WebAuthn RP ID is a valid domain string, and it must be equal to the caller
+origin's effective domain or a registrable suffix of it
+([WebAuthn Level 3 §5.1.3](https://www.w3.org/TR/webauthn-3/#rp-id)). Both rules
+are why a plain-HTTP listener cannot serve a real OIDC issuer or a passkey
+ceremony, and why Autheory (the first application consumer) correctly refuses a
+non-`https` issuer.
+
+`--tls` makes the runner serve every public listener over HTTPS. It is off by
+default: an existing caller keeps the same `http://127.0.0.1:<port>` URLs,
+ports, listeners and outputs.
+
+### Opt in
+
+The opt-in is committed configuration, never an operator environment variable:
+
+- `--tls` on `run` or `session`; or
+- `"tls": {"enabled": true}` in the checked-in local profile the run loads
+  (`scripts/local/examples-local.json` in this repository; an app can ship its
+  own profile). `"host"` sets the public name (default `app.localhost`).
+
+`--tls-host <name>` overrides the public name for one run. The name must be
+`localhost` or a single `*.localhost` label. It is the OIDC issuer host and the
+WebAuthn RP ID, so the runner refuses any other domain instead of producing a
+certificate a browser would not scope correctly.
+
+A `*.localhost` name is a potentially trustworthy origin by specification: the
+Secure Contexts algorithm treats `localhost` and names ending in `.localhost` as
+potentially trustworthy, and `https`/`wss` origins unconditionally
+([Secure Contexts §3.1](https://w3c.github.io/webappsec-secure-contexts/#is-origin-trustworthy)).
+Resolution is the operating system's job: macOS resolves the whole
+`.localhost` tree to loopback, and systems using systemd-resolved do the same on
+Linux ([RFC 6761 §6.3](https://www.rfc-editor.org/rfc/rfc6761#section-6.3)).
+Browsers resolve `.localhost` internally. Inside a function container the runner
+adds the public name to the container's hosts file through the same
+`host.docker.internal` helper it uses for every control endpoint.
+
+### What changes
+
+With the opt-in, every public listener serves HTTPS and reports an `https://`
+(or `wss://`) URL on its `serving …` line:
+
+| Surface | Opted-in URL |
+| --- | --- |
+| HTTP API v2 | `https://app.localhost:<port>` |
+| REST API v1 | `https://app.localhost:<port>` (and `/<stage>/…`) |
+| Function URL | `https://app.localhost:<port>` |
+| WebSocket API | `wss://app.localhost:<port>/<stage>` |
+| CloudFront distribution | `https://app.localhost:<port>` |
+
+The TLS listener offers HTTP/1.1 and, when the client offers it, HTTP/2 (ALPN
+`h2`); a WebSocket upgrade stays on HTTP/1.1 as RFC 6455 requires. The
+certificate names the run's public host and both loopback addresses, and the
+listener presents it for that host only: a client that connects with another
+name fails certificate verification, which is the SNI-correct behaviour. The
+runner's internal control endpoints (the EventBridge bus, the KMS and S3 fronts,
+the CloudFront invalidation API, the CodeBuild API) stay on loopback HTTP; the
+`@connections` management API was already TLS and now uses the run CA.
+
+### The CA and where it lives
+
+The runner generates an ECDSA P-256 key and a self-signed X.509 v3 CA on first
+use, then issues one server certificate per run:
+
+- the CA sets `basicConstraints` CA and `keyUsage` keyCertSign/cRLSign, as
+  RFC 5280 requires ([§4.2.1.9](https://www.rfc-editor.org/rfc/rfc5280#section-4.2.1.9),
+  [§4.2.1.3](https://www.rfc-editor.org/rfc/rfc5280#section-4.2.1.3));
+- the server certificate carries the DNS names and loopback IP addresses in
+  `subjectAltName` (browsers ignore a Common Name) and the `serverAuth` extended
+  key usage; Apple documents all three requirements for TLS server certificates
+  ([Apple support 103769](https://support.apple.com/en-us/103769));
+- the CA lives 825 days; the server certificate lives 197 days, under the
+  200-day cap the CA/Browser Forum Baseline Requirements set for subscriber
+  certificates from 2026-03-15
+  ([§6.3.2](https://cabforum.org/working-groups/server/baseline-requirements/requirements/)).
+
+Nothing prints private key material. The runner logs the CA path, the trust
+bundle path and whether the CA is persistent; a session reports the same values
+under `tls` in `describe`:
+
+```json
+"tls": {"enabled": true, "host": "app.localhost",
+        "caFile": "/…/tls/ca.pem", "trustBundle": "/…/tls/trust-bundle.pem"}
+```
+
+With `--data-dir`, the CA is persistent and byte-for-byte stable across runs:
+
+```
+<data-dir>/tls/ca.pem        0644
+<data-dir>/tls/ca-key.pem    0600
+<data-dir>/tls/trust-bundle.pem 0644
+```
+
+The `tls` directory is `0700`. A browser or identity provider that trusted run 1
+trusts run 2. Without `--data-dir` the CA lives under the run's scratch
+directory and is deleted with it, like every other piece of run state.
+
+With `--shared-dir`, the CA moves beside the shared IAM plane and several runs
+issue their leaves from it:
+
+```
+<shared-dir>/iam/...            the shared IAM plane
+<shared-dir>/ca/ca.pem          0644
+<shared-dir>/ca/ca-key.pem      0600
+<shared-dir>/ca/trust-bundle.pem 0644
+```
+
+The `ca` directory is `0700`, and creation stays serialized through the CA
+lock. A run without `--shared-dir` keeps exactly the location it had before.
+A half-written pair (one file present) fails closed under the lock instead of
+replacing a CA another run may already trust; remove the directory to create a
+new one.
+
+### Trust it from the host
+
+A client verifies the run's certificate when it trusts the CA. Point the client
+at the CA (or at `trust-bundle.pem`, which contains it):
+
+```bash
+# curl
+curl --cacert <data-dir>/tls/ca.pem https://app.localhost:<port>/health
+# or: export CURL_CA_BUNDLE=<data-dir>/tls/ca.pem
+
+# Go: the default transport reads SSL_CERT_FILE through crypto/x509
+SSL_CERT_FILE=<data-dir>/tls/ca.pem go run ./client
+# https://pkg.go.dev/crypto/x509#SystemCertPool
+
+# Node: the extra CA is added to the default trust store at startup
+NODE_EXTRA_CA_CERTS=<data-dir>/tls/ca.pem node client.mjs
+# https://nodejs.org/api/cli.html#node_extra_ca_certsfile
+
+# Python: ssl.create_default_context() reads SSL_CERT_FILE; requests reads
+# REQUESTS_CA_BUNDLE
+SSL_CERT_FILE=<data-dir>/tls/ca.pem python3 client.py
+REQUESTS_CA_BUNDLE=<data-dir>/tls/ca.pem python3 requests_client.py
+# https://docs.python.org/3/library/ssl.html#ssl.create_default_context
+# https://requests.readthedocs.io/en/latest/user/advanced/#ssl-cert-verification
+```
+
+Playwright/Chromium needs no system trust-store change. Launch Chromium with
+the run leaf's SPKI allowlisted, which is Chromium's per-key certificate-error
+override
+([command-line flags](https://www.chromium.org/developers/how-tos/run-chromium-with-flags/)):
+
+```bash
+SPKI="$(openssl s_client -connect app.localhost:<port> -servername app.localhost </dev/null 2>/dev/null \
+  | openssl x509 -pubkey -noout | openssl pkey -pubin -outform der \
+  | openssl dgst -sha256 -binary | base64)"
+# Playwright: chromium.launch(args=[f"--ignore-certificate-errors-spki-list={SPKI}"])
+```
+
+The pin covers exactly the run's leaf key: another key still fails, and no
+store is modified. `ignoreHTTPSErrors` is a broader alternative; the harness's
+browser row uses the SPKI pin so the row proves the run's own certificate.
+
+### Inside the function containers
+
+Every function container mounts the run CA at
+`/etc/apptheory-local/ca.pem`. The runner exports only the variables the
+container's runtime actually reads, because one of them is not interchangeable:
+
+| Runtime | Variables | How the runtime reads them |
+| --- | --- | --- |
+| Go (`provided.al2023`) | `SSL_CERT_FILE`, `CURL_CA_BUNDLE` | `crypto/x509` loads `SSL_CERT_FILE` into the system pool, which is the pool a default transport — and therefore a handler's own `&http.Client{}` — verifies against ([`x509.SystemCertPool`](https://pkg.go.dev/crypto/x509#SystemCertPool)). |
+| Node (`nodejs24.x`) | `NODE_EXTRA_CA_CERTS`, `CURL_CA_BUNDLE` | Node adds `NODE_EXTRA_CA_CERTS` to its default trust store at startup ([Node CLI](https://nodejs.org/api/cli.html#node_extra_ca_certsfile)); the AWS SDK for JavaScript v3 uses Node's TLS stack and reads no CA-bundle variable of its own. |
+| Python (`python3.14`) | `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `AWS_CA_BUNDLE`, `CURL_CA_BUNDLE` | OpenSSL's default verify paths read `SSL_CERT_FILE` ([`ssl.create_default_context`](https://docs.python.org/3/library/ssl.html#ssl.create_default_context)), `requests` reads `REQUESTS_CA_BUNDLE`, and boto3/botocore read `AWS_CA_BUNDLE` and apply it through their own session ([custom trust store](https://docs.aws.amazon.com/sdkref/latest/guide/feature-custom-trust-store.html)). |
+
+A **container-image function** declares no runtime — it brings its own — so it
+receives the union of those sets. The runner cannot know which runtime the image
+speaks, and handing every variable to an image that ignores some of them is the
+only fail-safe choice.
+
+**A Go container never receives `AWS_CA_BUNDLE`.** The AWS SDK for Go v2 reads
+that variable during config loading and can only apply it through its own
+`*awshttp.BuildableClient`. A handler that supplies its own `*http.Client` — the
+shape a table mapper such as TableTheory or DynamORM uses — fails before any
+call:
+
+```
+unable to add custom RootCAs HTTPClient, has no WithTransportOptions, *http.Client
+```
+
+That is `resolveCustomCABundle` in the SDK
+([`config/resolve.go`](https://github.com/aws/aws-sdk-go-v2/blob/config/v1.33.13/config/resolve.go)).
+Go does not need the variable: `SSL_CERT_FILE` is the mechanism Go reads, and the
+same file is already the bundle every other variable points at. A Go handler
+that builds an SDK client with its own `*http.Client` therefore initializes and
+verifies the app's https URL with no code of its own.
+
+`CURL_CA_BUNDLE` is in every set because curl is a subprocess a handler can
+start on any runtime
+([curl `--cacert`](https://curl.se/docs/manpage.html#--cacert)). The runner maps
+the public name into the container with the one add-host helper; on Linux, where
+the host owns the run network's gateway, the public listener also binds that
+gateway, so the container reaches the same `https://app.localhost:<port>` URL a
+browser uses. The TLS example's Go, Node and Python callers are the proving
+rows, and each of them makes an AWS SDK call in the same invocation.
+
+### CloudFront in front of the run's own API
+
+A distribution in front of the app's own API origin is the second composition
+the listener rows do not cover on their own. Deployed CloudFront reaches a
+custom origin with the protocol its `OriginProtocolPolicy` declares, and with
+`https-only` — the policy an API Gateway origin uses, since API Gateway serves
+HTTPS only — **one of the domain names in the certificate must match the origin
+domain name**; otherwise CloudFront answers the viewer with 502
+([origin settings](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/DownloadDistValuesOrigin.html#DownloadDistValuesOriginProtocolPolicy)).
+The local runner reproduces that rule.
+
+Declare the origin in the app's local CDK branch as a `*.localhost` name and
+declare it https-only:
+
+```ts
+const apiOrigin = new origins.HttpOrigin("auth-api.localhost", {
+  protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+});
+new cloudfront.Distribution(this, "HostedAuth", {
+  defaultBehavior: { origin: apiOrigin, cachePolicy: noCache, allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL },
+  additionalBehaviors: {
+    "/.well-known/*": { origin: apiOrigin, cachePolicy: noCache, allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL },
+    "/auth/*": { origin: apiOrigin, cachePolicy: noCache, allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL },
+  },
+});
+```
+
+Map that domain to the run's own listener. The run's port is the one its
+`serving … at https://app.localhost:<port>` line reports:
+
+```bash
+apptheory-local run --tls --app ./cdk \
+  --origin auth-api.localhost=https://app.localhost:<port>
+```
+
+The origin hop then does exactly what the deployed edge does:
+
+- it dials the mapped address, presents the declared origin domain as the TLS
+  SNI name, and verifies the chain against the run CA (on top of the system
+  roots), so the name it verifies is the one the certificate carries;
+- it forwards `Host: auth-api.localhost` — the declared origin domain — unless
+  the behavior's cache policy forwards the viewer host, in which case the
+  viewer's host travels and the certificate must name it instead;
+- it returns an origin `3xx` to the viewer instead of following it, over TLS and
+  over plain `http`: CloudFront "caches the redirect and returns it to the
+  viewer. CloudFront does not follow the redirect", so a form POST the API
+  answers with `303 See Other` reaches the viewer with the origin's status, its
+  `Location` and its other headers (every `Set-Cookie` included), and the
+  browser makes the next request
+  ([redirects](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/RequestAndResponseBehaviorCustomOrigin.html));
+- the run certificate names every declared custom-origin domain that is a
+  `*.localhost` name, so `auth-api.localhost` verifies even though the listener
+  is `app.localhost`. A declared origin domain outside that namespace (a real
+  host name the local branch kept) is verified against the mapped host instead,
+  which is the only name a local certificate can carry.
+
+A plain `http://` mapping to a listener the run serves over TLS is refused
+before the distribution starts, naming the declared policy and the mapping to
+use, instead of leaving Go's bare `400 Client sent an HTTP request to an HTTPS
+server` for the first viewer. If such a request reaches an https listener
+anyway, the origin error names the same fix. Existing `http://` mappings to
+non-TLS local services keep working exactly as before.
+
+Declare `HTTPS_ONLY` and map `https://`: that is the pair a deployed
+distribution in front of an API Gateway endpoint uses, and the pair the runner
+verifies. A `HTTP_ONLY` declaration mapped over `http://` to the run's own
+listener is refused before the distribution starts — the case that used to
+answer a bare `400 Client sent an HTTP request to an HTTPS server` — with the
+`HTTPS_ONLY` recovery named. Mapping that declaration over `https://` connects,
+because the mapping names the scheme the local hop uses, but it no longer
+describes what would deploy.
+
+### Auxiliary services
+
+An app-supplied auxiliary service, such as a local OIDC test IdP, can get its
+own certificate from the same CA with a documented command:
+
+```bash
+# Create or report the CA that `run --tls --data-dir <dir>` will use.
+apptheory-local tls ca --data-dir <data-dir>
+
+# Issue a server certificate for an auxiliary *.localhost name.
+apptheory-local tls leaf --data-dir <data-dir> --name idp.localhost --out <dir>/idp
+# cert: <dir>/idp/cert.pem
+# key:  <dir>/idp/key.pem   (0600)
+```
+
+Start the service with those files. The browser reaches it at
+`https://idp.localhost:<port>` and trusts it through the same CA; a function
+container reaches it when the run maps the name with
+`--tls-aux idp.localhost`. On Linux the service must listen on an address the
+container can reach: the run network's gateway, or all interfaces. A service
+bound to host loopback only is reachable from the host, not from the container.
+
+### Limits
+
+- **No public CA.** The certificate chains to the runner's CA, not a
+  publicly-trusted root. It verifies where you install or pin the CA, and
+  nowhere else.
+- **No edge TLS.** The local CloudFront gateway is not the edge network and has
+  no ACM certificate, security policy, minimum protocol version or viewer
+  protocol enforcement. Edge TLS certificates are a docs/125 "Real network
+  properties" limit; the opt-in secures the listener in front of you, not an
+  imagined edge.
+- **Origin names are local names.** The run certificate carries the run host,
+  the loopback addresses and every declared custom-origin domain that is a
+  `localhost` or `*.localhost` name. A distribution that declares a real origin
+  domain and maps it locally verifies the mapped host instead; a watch reload
+  that adds a new declared origin name keeps the leaf it started with, so
+  restart the run to pick it up.
+- **One trust set per runtime.** A Go container deliberately gets no
+  `AWS_CA_BUNDLE`, because the AWS SDK for Go v2 cannot apply that bundle to a
+  caller-supplied client. A Go handler that sets `AWS_CA_BUNDLE` itself, or a
+  custom client with its own `RootCAs`, is trusting on its own terms; use
+  `SSL_CERT_FILE` or add the run CA to that pool.
+- **`@connections` keeps its own certificate in a non-TLS run.** A run without
+  `--tls` that serves a WebSocket API still exports `AWS_CA_BUNDLE`,
+  `NODE_EXTRA_CA_CERTS` and `SSL_CERT_FILE` for the management endpoint's
+  self-signed certificate. That is the pre-existing behaviour and is unchanged
+  here; opting in to TLS replaces it with the per-runtime set above.
+- **`*.localhost` resolution is the host's.** The specification says such a name
+  is potentially trustworthy and RFC 6761 says resolvers should map it to
+  loopback, but a host whose resolver does not do so needs an entry (the browser
+  and the function container are covered by the browser and the runner).
+- **The management and control endpoints keep their own contracts.** The
+  `@connections` API is TLS; the EventBridge, KMS, S3, CloudFront invalidation
+  and CodeBuild endpoints are loopback HTTP and are not exposed as public
+  listeners.
+
+## Co-resident runs: one CA, declared ports and one network
+
+Two or more `apptheory local` runs of different CDK apps can run beside each
+other, call each other over verified HTTPS and use the narrow IAM path. Three
+pieces make that work, and each is opt-in: a run without them behaves exactly
+as before.
+
+### One shared directory
+
+`--shared-dir <dir>` carries both co-residence planes:
+
+```
+<shared-dir>/iam/...   the shared IAM plane (role definitions, issued
+                       credentials, assumed sessions, the STS endpoint)
+<shared-dir>/ca/       the shared CA (ca.pem 0644, ca-key.pem 0600,
+                       trust-bundle.pem 0644; the directory is 0700)
+```
+
+The directory is trusted local state: any process that can write to it can mint
+or edit IAM plane records, including credentials naming another run's roles (see
+[The shared IAM plane](#the-shared-iam-plane)).
+
+Each run issues its own leaf from that CA, and every function container mounts
+the same trust bundle, so a function in run A verifies the HTTPS listener run B
+serves. The CA layout, permissions and failure rule are in
+[The CA and where it lives](#the-ca-and-where-it-lives); the role and
+credential state is in [The shared IAM plane](#the-shared-iam-plane).
+
+### Per-run host names
+
+`--tls-host` gives each run its public name, for example `auth.localhost` for
+Autheory and `mcp.localhost` for TMS. A leaf carries the run's own host, so a
+client that connects to a sibling by name verifies the sibling's certificate
+against the shared CA. `--peer-host mcp.localhost` maps a sibling run's public
+name into this run's function containers through the same add-host helper the
+run's own host uses, and names it in `APPTHEORY_LOCAL_PEER_HOSTS` so a caller
+example can allow exactly that host.
+
+### One shared network
+
+`--shared-network <name>` joins every co-resident run's function, backend and
+auxiliary containers to one user-defined Docker bridge. The public listeners
+bind loopback and, when the host owns it, that bridge's gateway on the same
+port: nothing binds the unspecified address, so no listener is exposed beyond
+the host's container interfaces. On Colima and Docker Desktop the gateway
+belongs to the VM, so the bind fails harmlessly and the one add-host entry uses
+Docker's `host-gateway` value, which those runtimes forward to the host
+loopback. Docker documents the special value and its
+[motivation](https://docs.docker.com/engine/network/drivers/bridge/#use-the-host-gateway)
+([`--add-host`](https://docs.docker.com/reference/cli/docker/container/run/#add-host)).
+
+A backend alias on a shared network is scoped to its run (`<name-prefix>-moto`,
+not `moto`), so two runs never answer one Docker DNS name. The shared network is
+created once by the first run that starts and is removed only by an explicit
+`apptheory-local down --app <app> --shared-network <name>`; a run's own cleanup
+leaves it for its siblings.
+The endpoint the runner injects names the same scoped alias: a profile endpoint
+for `moto` becomes `http://<name-prefix>-moto:<port>` in every function's
+environment and in the preflight probe, because that probe also runs on the
+shared network. Without it the preflight and the functions would ask Docker for
+a bare `moto` that only one run could own. `--name-prefix` must differ per
+co-resident run; it is what keeps the aliases, containers and injected names
+unique.
+
+The Linux CI proof is the `local-co-residence-iam` harness row: run A's function
+resolves run B's host through the one add-host helper and reaches the listener
+on the shared bridge's host-owned gateway, over a leaf the shared CA signed.
+
+### Declared ports
+
+A run binds its public surfaces from one counter, `--port-base + index`, in a
+fixed order: HTTP and REST APIs, Function URLs, WebSocket APIs, then CloudFront
+distributions. That order is an implementation detail, so a co-resident app
+whose clients register exact URLs can pin a surface:
+
+```bash
+apptheory-local run --app <dir> --port-base 8270 \
+  --port PublicApiDistribution2C9B2239=8270 \
+  --port ControlPlaneSiteDistributionCA3ECE36=8271
+```
+
+- The selector is the served surface's CDK logical id: an API, a Function URL,
+  a WebSocket API or a CloudFront distribution. `plan` lists each one with its
+  class and port.
+- Pinned ports are reserved first and the counter skips them. Every unpinned
+  surface keeps exactly the port today's allocation gives it for the same base;
+  without `--port` nothing changes.
+- A pin needs `--port-base`: the run's range is one slot per served surface,
+  `[base, base + surface count)`. The mail surface, when enabled, takes the two
+  slots after that range.
+- A collision, a repeated surface, a port outside the range, an unknown logical
+  id and a pin without `--port-base` fail closed with a named error before any
+  container starts.
+- `plan`, `plan --json` (`listeners`) and `session describe` show every
+  surface's port, and the `pinned` and `automatic` flags.
+
+TMS's six surfaces, for example, are
+`McpHttpApi9E3BE292` (httpv2), `NamespaceVendingRouterApiFCE53473` and
+`RouterApi30C329D4` (restv1), `ControlPlaneSiteSsrUrl7B56CB4D` (fnurl),
+`ControlPlaneSiteDistributionCA3ECE36` and `PublicApiDistribution2C9B2239`
+(cloudfront). Pinning the two distributions to 8270 and 8271 at
+`--port-base 8270` gives the declared front door and control plane even though
+four listeners precede them.
+
+### Two runs calling each other
+
+`examples/cdk/local-iam` and `examples/cdk/local-iam-peer` are the two-app
+proof: run B (peer) starts with `--tls-host mcp.localhost`, a shared directory
+and a shared network; run A starts with `--tls-host auth.localhost`, the same
+directory and network, `--peer-host mcp.localhost` and pinned ports. A function
+in run A signs with the credential run A issued to it and calls run B's
+`AWS_IAM` route at `https://mcp.localhost:<pinned>/peer`; run B verifies the
+signature from the shared credential registry, evaluates its own resource
+policy and resolves run A's role. The row is `local-co-residence-iam`.
+
+## The local mail surface
+
+`--mail` starts the profile's digest-pinned SMTP sink (Mailpit), an SMTP
+ingress and the sink's HTTPS read API:
+
+```bash
+apptheory-local run --app <dir> --profile <profile> --mail
+```
+
+The profile pins the sink under `mail`:
+
+```json
+"mail": {
+  "image": "axllent/mailpit@sha256:…",
+  "version": "v1.33.1", "license": "MIT", "compressedBytes": 14456260,
+  "smtpPort": 1025, "httpPort": 8025
+}
+```
+
+The image is the smallest fit under the new-image rule: a single static Go
+binary (14.5 MB on disk for arm64, multi-arch), MIT-licensed, with SMTP and an
+HTTP read API in one process. MailHog, the older option, has had no release
+since 2020 and no arm64 line; Mailpit is its maintained multi-architecture
+successor ([image](https://hub.docker.com/r/axllent/mailpit),
+[API](https://mailpit.axllent.org/docs/api-v1/)). `docker pull` fetches it by
+digest, and the harness row asserts it answers.
+
+With `--port-base`, the SMTP ingress takes the first free slot after the public
+surfaces and the read API the next one; without a base both are ephemeral. The
+session reports both under `mail`, and every function container receives
+`APPTHEORY_LOCAL_SMTP_URL` and `APPTHEORY_LOCAL_MAIL_API_URL`.
+
+**SMTP ingress.** The runner listens for SMTP on `<mail-host>:<smtp-port>`
+(default host `mail.localhost`), with `EHLO`/`MAIL FROM`/`RCPT TO`/`DATA`,
+`RSET`, `NOOP`, `QUIT` and `STARTTLS`. The STARTTLS certificate is an auxiliary
+leaf the run (or shared) CA signs for the mail host, so a client verifies it
+with the same trust bundle as every other local surface. Every accepted message
+is relayed to the sink over a real SMTP conversation.
+
+**Inbound SES.** When the assembly declares `AWS::SES::ReceiptRule`, a
+recipient a rule accepts runs that rule's actions in order with SES's
+received-message record: the S3 action writes the raw message under its object
+key prefix and the Lambda action receives the documented `mail`/`receipt`
+record with no body
+([SES event](https://docs.aws.amazon.com/ses/latest/dg/receiving-email-action-lambda-event.html)).
+A recipient no rule accepts is outbound mail: the ingress accepts it and the
+sink stores it, because one SMTP surface serves both SES's receive path and a
+Migadu-shaped sender. The `ses.receive` session operation stays available for a
+row that wants to inject a message without SMTP.
+
+**Read API.** The sink's API is served over HTTPS at
+`https://<mail-host>:<api-port>/api/v1/` from an auxiliary leaf:
+
+```bash
+curl --cacert <shared-dir>/ca/ca.pem \
+  https://mail.localhost:8277/api/v1/messages
+curl --cacert <shared-dir>/ca/ca.pem \
+  https://mail.localhost:8277/api/v1/message/<ID>
+```
+
+`GET /api/v1/messages` lists stored messages and `GET /api/v1/message/{id}`
+returns one with its text, HTML and raw source
+([Mailpit API](https://mailpit.axllent.org/docs/api-v1/)); `DELETE
+/api/v1/messages` empties the mailbox.
+
+**Resend-shaped sending is app config.** Resend's API is not spoken by the
+runner. Point the app's provider base URL (TCA's `RESEND_BASE_URL` and key) at
+a committed local test server that translates `POST /emails` into SMTP to the
+mail ingress; the runner change is not needed because the SMTP path is real.
+The same config-only rule keeps the key in the app's local stage.
+
+**SES sending.** TMS at `83e660df` and TCA at `86789501` were checked from
+`git archive` copies: neither sends through SES (`SendEmail`, `SendRawEmail` or
+`sesv2`). No SES-send-shaped path is served, because no consumer needs one.
+
+**Limits.** The sink has no authentication, spam filtering or real provider
+delivery; its store is the pinned image's in-memory default, so a run restart
+starts empty; SMTP is exposed on the same loopback/container-interface rule as
+every other listener, never on an unspecified address.
 
 ## Lambda Runtime API
 
@@ -720,7 +1266,10 @@ The values follow the CloudFormation reference for each resource:
   ([reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-secretsmanager-secret.html)).
   AWS appends a six-character suffix to the ARN; moto does the same, so the ARN
   is not byte-identical across runs even though the friendly name is. A runtime
-  `GetSecretValue` reads the secret the runner created.
+  `GetSecretValue` reads the secret the runner created. `KmsKeyId` is a
+  CloudFormation string property: a literal is passed through, and a `Ref` or
+  `Fn::GetAtt` naming a provisioned key is resolved to that key's ARN or id
+  before `CreateSecret`.
 - **SNS** (`AWS::SNS::Topic`): `Ref` is the topic ARN; `Fn::GetAtt TopicName`
   and `TopicArn` are the name and ARN
   ([reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-sns-topic.html)).
@@ -749,8 +1298,102 @@ The values follow the CloudFormation reference for each resource:
   ([reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-kms-alias.html),
   [alias use](https://docs.aws.amazon.com/kms/latest/developerguide/alias-using.html)).
   `KeySpec` RSA_2048/3072/4096 and ECC_NIST_P256/P384/P521 with
-  `KeyUsage SIGN_VERIFY` support `Sign`, `Verify` and `GetPublicKey`; the wave-1
-  symmetric path is unchanged.
+  `KeyUsage SIGN_VERIFY` support `Sign`, `Verify` and `GetPublicKey`; symmetric
+  `SYMMETRIC_DEFAULT` keys support `Encrypt`, `Decrypt`, `GenerateDataKey` and
+  `ReEncrypt`. See [KMS signing and key material](#kms-signing-and-key-material)
+  for the DIGEST rule and `--data-dir` persistence.
+
+### KMS signing and key material
+
+The runner serves a small KMS front at the injected `AWS_ENDPOINT_URL_KMS`.
+It owns the material for the two key families applications create in practice
+and proxies every other operation, and every other key type, to moto
+unchanged:
+
+| Key family | Operations the front serves |
+| --- | --- |
+| `SYMMETRIC_DEFAULT` with `ENCRYPT_DECRYPT` | `CreateKey`, `Encrypt`, `Decrypt`, `ReEncrypt`, `GenerateDataKey`, `GenerateDataKeyWithoutPlaintext` |
+| `RSA_2048/3072/4096` and `ECC_NIST_P256/P384/P521` with `SIGN_VERIFY` | `CreateKey`, `Sign`, `Verify`, `GetPublicKey` |
+
+`CreateKey`, `DescribeKey`, aliases, tags, key policy, rotation, grants and
+every operation on a key the front does not own still go to moto, so
+`KeyMetadata` is what v7.0.0 returned; under `--data-dir` the front substitutes
+the persisted `KeyId` and `Arn` for an owned key (see below).
+
+**`MessageType: DIGEST`.** AWS defines `DIGEST` as "the message is a digest,
+and KMS signs it as-is", and `RAW` as a message KMS hashes with the signing
+algorithm's digest
+([Sign](https://docs.aws.amazon.com/kms/latest/APIReference/API_Sign.html),
+[Verify](https://docs.aws.amazon.com/kms/latest/APIReference/API_Verify.html)).
+The pinned moto 5.2.5 ignores `MessageType` in both calls and hashes the
+supplied value again; every moto release through master still does (its
+`verify` docstring says the parameter is "not yet implemented"), so no image
+bump can fix it. The front therefore signs the digest as-is and hashes a `RAW`
+message exactly as before. It covers `RSASSA_PKCS1_V1_5_SHA_256/384/512`,
+`RSASSA_PSS_SHA_256/384/512` and `ECDSA_SHA_256/384/512` with the curve AWS
+pairs with each digest. A `DIGEST` of the wrong length is a
+`ValidationException`.
+
+**`--data-dir` key material and identity.** Ciphertext is bound to the key that
+produced it, and a KMS key's material is part of the key; AWS never rotates it
+implicitly
+([Decrypt](https://docs.aws.amazon.com/kms/latest/APIReference/API_Decrypt.html),
+[key material](https://docs.aws.amazon.com/kms/latest/developerguide/concepts.html#key-material)).
+moto is memory-only, so without help a key re-created from the CDK definition
+on the next start would have new material and the previous run's ciphertext
+could not be decrypted. With `--data-dir`, the front persists the material
+under `<dir>/kms/keys.json` (mode `0600`) and reuses it for the same
+`stack/logicalId`. It also keeps the key's public identity: moto re-creates the
+key, but the front reports the `KeyId` and `Arn` recorded in run 1, because a
+KMS key's id and ARN are permanent for the key's lifetime
+([key identifiers](https://docs.aws.amazon.com/kms/latest/developerguide/concepts.html#key-id)).
+A caller that pins either (Autheory derives its JWKS `kid` from the key) keeps
+working after a restart. The material, `GetPublicKey`, `KeyId` and `Arn` are
+stable; the rest of moto's metadata, notably `CreationDate`, reflects the
+current run. Without `--data-dir` the front keeps the material in memory,
+exactly as before. The ciphertext envelope binds the stable key id and the
+encryption context, so a ciphertext written in run 1 decrypts in run 2 and a
+different context does not. Deleting the data directory discards the material
+and makes old ciphertext unreadable, as deleting a key would.
+
+The runner tags each key it provisions with the reserved local tag
+`apptheory-local:key-identity`; the front consumes it before moto sees the
+request, so `ListResourceTags` and the template's own tags are unchanged. With
+a caller-supplied `--endpoint kms=…` no front runs, so the tag is not sent and
+the endpoint stores exactly the template's tags, as v7.0.0 did.
+
+**Documented local deviations.**
+
+- The front's ciphertext is its own opaque envelope (magic, stable key id,
+  GCM nonce, tag and ciphertext). Callers pass it back to `Decrypt`; it is not
+  an AWS-format blob and cannot be decrypted by AWS.
+- Key types outside the two families above are not owned: `HMAC_*`,
+  `RSA_*` with `ENCRYPT_DECRYPT`, and `ECC_SECG_P256K1`/`SM2` signing keys keep
+  moto's behavior. Their material is not persisted, and `DIGEST` is not served
+  for them.
+- A persisted key keeps its `KeyId` and `Arn`, so the run-1 id or ARN is a
+  valid identifier in a later run; `Decrypt` also accepts no `KeyId` (the
+  ciphertext names the stable key). moto's own per-run id is an internal
+  detail and is not a supported cross-run identifier. The remaining moto
+  metadata, notably `CreationDate`, still reflects the current run. A key
+  created at runtime (no CDK definition) is memory-only and is not persisted,
+  as docs/125 records.
+- A `--data-dir` that names a key with a different `KeySpec` or `KeyUsage` than
+  the definition now fails at start with the identity and both pairs named,
+  rather than silently reusing incompatible material.
+- A persisted key resolves from its raw id or from a key ARN in the local
+  partition, Region and account
+  (`arn:aws:kms:us-east-1:123456789012:key/<id>`), as AWS accepts a key ARN
+  only for a key that exists in the named account and Region
+  ([key identifiers](https://docs.aws.amazon.com/kms/latest/developerguide/concepts.html#key-id)).
+  A foreign ARN with the same `:key/` suffix does not reach the persisted key.
+  The current run's moto keys keep moto's suffix-only ARN handling, which
+  v7.0.0 served.
+- `Sign` and `Verify` on an owned key whose `KeyUsage` is not `SIGN_VERIFY`
+  answer `InvalidKeyUsageException`, as AWS documents
+  ([Sign](https://docs.aws.amazon.com/kms/latest/APIReference/API_Sign.html),
+  [Verify](https://docs.aws.amazon.com/kms/latest/APIReference/API_Verify.html));
+  moto answered `ValidationException` for the same input.
 
 ### The local Cognito issuer
 
@@ -789,8 +1432,16 @@ deterministic local value from the CDK definition and documents the difference:
 - The value is seeded from the stack and logical id, so the same definition
   always produces the same secret. Moto keeps only the current run's state
   (docs/125's memory-only limit); a restart re-provisions the same value.
-- `SecretStringTemplate` must be a JSON object; the generated string is stored
-  under `GenerateStringKey` and the resulting JSON is the secret string.
+- `SecretStringTemplate` and `GenerateStringKey` are optional
+  ([reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-properties-secretsmanager-secret-generatesecretstring.html)).
+  With both, the template must be a JSON object, the generated string is stored
+  under the key and the resulting JSON is the secret string. With neither, the
+  generated password is the whole secret string. A key without a template keeps
+  the v7.0.0 value (the template defaults to `{}`, so the generated password is
+  stored under the key) and is reported as one warning line naming the secret
+  and the AWS pairing rule: "If you specify this parameter, then you must also
+  specify `SecretStringTemplate`". A template without a key is refused, as
+  v7.0.0 did: the generated password would have no key to be stored under.
 
 A deploy-time `{{resolve:secretsmanager:…}}` reference to a secret the run
 provisioned resolves to that secret's value (the referenced JSON key), so the
@@ -805,6 +1456,11 @@ provisioned secret the wave-1 deterministic placeholder is kept unchanged.
   is used for topics, the publish path and the runner's per-topic drain queue;
   the observed deviations and their normalization are listed under
   [SNS subscription delivery](#sns-subscription-delivery).
+- **KMS `MessageType`.** The pinned moto ignores `MessageType` in `Sign` and
+  `Verify` and hashes a supplied digest a second time; every release through
+  master still does. The runner's KMS front signs a `DIGEST` as-is and hashes a
+  `RAW` message exactly as before; the material it owns and the deviations are
+  listed under [KMS signing and key material](#kms-signing-and-key-material).
 - **Cognito JWKS path.** Only `/{poolId}/.well-known/jwks.json` is served; the
   runner's issuer listener is the path R2a uses.
 - **Kinesis on-demand describe.** Moto omits `StreamModeDetails` from
@@ -1030,9 +1686,10 @@ missing identity source is 401, an invalid response (including a missing
 `{"errorMessage":"Unauthorized"}` response is 401. The authorizer context
 reaches the integration as `requestContext.authorizer`.
 
-**Still refused.** IAM authorization (`AuthorizationType: AWS_IAM`), other
-`$context`/`$stageVariables` identity sources, and any authorizer kind the
-runner does not name above fail closed at plan time with the kind named.
+**Still refused.** Other `$context`/`$stageVariables` identity sources and any
+authorizer kind the runner does not name above fail closed at plan time with the
+kind named. IAM authorization (`AuthorizationType: AWS_IAM`) is served instead,
+by [the narrow IAM path](#the-narrow-iam-path).
 
 ## CloudFront distributions
 
@@ -1272,7 +1929,11 @@ same assembly:
   and Host. Other methods go to the primary only. If both members fail, the
   secondary's response is returned.
 - **Other origins.** A literal external custom origin is refused with a named
-  503; the gateway never makes an external network request.
+  503; the gateway never makes an external network request. A mapped origin
+  reached over `https://` is verified against the run CA (plus the system roots)
+  and against the origin's declared domain when that domain is a local name; see
+  [CloudFront in front of the run's own
+  API](#cloudfront-in-front-of-the-runs-own-api).
 
 The `ssr-site`, `ssr-only-provided-assets-site`, `path-routed-frontend` and
 `media-cdn` example rows run through these origins in the harness; the private
@@ -1488,9 +2149,10 @@ is built before any listener serves a request, so a broken Dockerfile fails the
 run instead of failing the first request; the first build of an example takes
 roughly 10–60 seconds including the base-image pull, and rebuilds are cached by
 Docker's layer cache (a second build of the same asset is near-instant). The
-image tag is derived from the name prefix, which is the app hash by default, so
-two concurrent runs of one app share a tag and docker reuses the built image. The
-function container runs the image's own entrypoint. In the default mode the
+image tag carries the run id as well as the name prefix (the app hash by
+default), so two concurrent runs of one app never move each other's tag while
+the layer cache still reuses unchanged build steps. The function container runs
+the image's own entrypoint. In the default mode the
 runner hosts the Runtime API that the image's runtime client connects to, so an
 image built on an
 [AWS base image](https://docs.aws.amazon.com/lambda/latest/dg/images-create.html)
@@ -1734,6 +2396,12 @@ sources, rules, subscriptions and delivery wiring are re-derived, and every
 | Event sources, rules and subscriptions | Yes: the delivery engine is re-derived. |
 | A new resource that needs a backend this run did not start | No: reported by name with the backend; restart with `--backend`. |
 
+The `examples/cdk/multilang/scripts/watch-two-edit.sh` row proves two successive
+edits in one session: the first edit replaces the Go function, the second
+replaces the TypeScript function, and the already-restarted Go function keeps
+its Runtime API and keeps answering while the Python function answers
+throughout.
+
 ### Persistent data (`--data-dir`)
 
 `run`, `session` and `invoke` accept `--data-dir <dir>`. The default is still
@@ -1744,9 +2412,9 @@ one directory per backend:
 | Backend | What persists | Option and path |
 | --- | --- | --- |
 | DynamoDB Local | Tables and items | `-dbPath /data` on `<dir>/dynamodb`; the pinned command's `-sharedDb` is kept, so the single database file is `shared-local-instance.db`. |
-| s3proxy | Buckets and objects | The filesystem jclouds provider with `JCLOUDS_FILESYSTEM_BASEDIR=/data` on `<dir>/s3proxy`. |
+| s3proxy | Buckets and objects, plus each object's SSE-S3 record | The filesystem jclouds provider with `JCLOUDS_FILESYSTEM_BASEDIR=/data` on `<dir>/s3proxy`; the runner records the objects written with SSE-S3 in `<dir>/s3sse/index.json`. |
 | ElasticMQ | Queues and messages | `messages-storage` with the H2 file `/data/elasticmq` on `<dir>/sqs`. Verified on the pinned 1.7.1 image: a message survived a restart. |
-| moto | Nothing | Server-mode state lives in the process; there is no persistence option ([moto server mode](https://docs.getmoto.org/en/latest/docs/server_mode.html)). This is the docs/125 memory-only limit, named rather than hidden. |
+| moto | Nothing, except the runner's KMS key material | Server-mode state lives in the process; there is no persistence option ([moto server mode](https://docs.getmoto.org/en/latest/docs/server_mode.html)). This is the docs/125 memory-only limit, named rather than hidden. The runner's KMS front keeps the material of the key families it owns in `<dir>/kms/keys.json`, so ciphertext written in one run decrypts in the next; see [KMS signing and key material](#kms-signing-and-key-material). |
 
 The runner widens the data root to `0755` and each backend directory to `0777`
 because the pinned emulator images run as their own non-root users, and a Linux
@@ -1769,7 +2437,14 @@ restores them on startup ([Persisting queues and messages](https://github.com/so
 
 Definitions are re-provisioned from the CDK definition on every start. A table,
 bucket, queue, topic, stream, parameter, secret, pool or key that already
-exists in the data directory is reconciled, never dropped or recreated. A
+exists in the data directory is reconciled, never dropped or recreated. A KMS
+key is the one shape where moto's metadata is re-created: the runner's KMS
+front reuses the material persisted for the same `stack/logicalId` and reports
+the persisted `KeyId`/`Arn`, so ciphertext, `GetPublicKey` and a caller's pinned
+key id remain valid; the remaining metadata, notably `CreationDate`, is the
+current run's. The S3 front's SSE-S3 records and the KMS material are the only
+runner-owned files under the data directory; both are mode `0600` and contain
+no AWS credential. A
 DynamoDB key-schema change cannot be applied to existing state: the runner
 fails at start with the table named and the UpdateTable page's rule,
 "Modifies the provisioned throughput settings, global secondary indexes,
@@ -1777,7 +2452,22 @@ DynamoDB Streams settings, or global table replica settings for a given table"
 ([UpdateTable](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html)).
 Missing or changed global secondary indexes are created or deleted, and an
 existing queue's visibility, retention, wait and delay attributes are updated
-without deleting its messages. The examples' `data-dir.sh`,
+without deleting its messages. A newly added global secondary index carries its
+key attributes in the update's `AttributeDefinitions`
+([UpdateTable](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html)),
+and one keyed on an existing attribute whose declared type differs from the
+table's fails by name rather than creating the index over the existing type
+([AttributeDefinition](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_AttributeDefinition.html)).
+Local secondary indexes are created with a new table; an existing table that
+differs in one keeps starting and the run logs one warning naming the table,
+the index and the difference, with the remedy (recreate the table, for example
+by removing `<data-dir>/dynamodb`, or start without `--data-dir`), because a
+local secondary index is created when the table is created and UpdateTable
+cannot change one
+([local secondary indexes](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/LSI.html)).
+An existing global secondary index whose key attribute type drifted is reported
+and kept the same way, instead of being treated as unchanged.
+The examples' `data-dir.sh`,
 `data-dir-s3.sh` and `data-dir-sqs.sh` scripts show the two-run pattern.
 
 ### Seed hooks (`--seed`)
@@ -1807,6 +2497,222 @@ run's dummy values are present. The committed
 reads `APPTHEORY_LOCAL_APIS`, PUTs an inventory item through the app's real
 handler and reads it back; the harness row proves the seeded item is visible
 through the same handler.
+
+## S3 objects and server-side encryption
+
+`--backend s3proxy` starts the profile's digest-pinned s3proxy and injects its
+endpoint into every function. The runner puts a small S3 front at the injected
+`AWS_ENDPOINT_URL_S3`; it proxies every object operation to s3proxy and serves
+the SSE-S3 answer the store itself refuses. The endpoint is the front's
+`host.docker.internal` IP literal, so SDK clients keep path-style addressing
+(`bucket` in the path, as s3proxy serves it); an ordinary request is forwarded
+byte-for-byte, including the SigV4-signed `Host` header. The front therefore
+needs `host.docker.internal` to resolve to the run network's gateway; the
+preflight resolves it before provisioning, and a host where it does not resolve
+fails the run naming the front instead of serving a broken endpoint.
+
+**SSE-S3 (`x-amz-server-side-encryption: AES256`).** AWS accepts SSE-S3 on
+`PutObject`, applies it, and returns the algorithm on the put and on later
+`HeadObject`/`GetObject` calls
+([PutObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html),
+[SSE-S3](https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingServerSideEncryption.html)).
+s3proxy's filesystem backend refuses every server-side-encryption header by
+design (reporting AES256 over plaintext on a real disk would be a false claim),
+and current releases still refuse it on that store
+([s3proxy limitations](https://github.com/gaul/s3proxy)). The front therefore:
+
+- accepts `AES256` on a `PutObject` whose verified header-based SigV4
+  signature covers the header (below), strips the header before s3proxy sees
+  it, and records the object as SSE-S3 only after the put succeeds;
+- adds `x-amz-server-side-encryption: AES256` to the `PutObject` response;
+- answers `HeadObject` and `GetObject` (including a part read with
+  `?partNumber=`) with the same header for an object stored with it; a metadata
+  subresource read (`?tagging`, `?acl`, `?attributes`, `?legal-hold`,
+  `?retention`, `?torrent` or `?uploadId` for `ListParts`) gets none, because
+  AWS returns none
+  ([GetObjectAttributes](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectAttributes.html),
+  [ListParts](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListParts.html));
+- clears the record when the same key is replaced by a write that names no
+  algorithm (a `PutObject` without the header, a plain `CopyObject`, or a
+  `CompleteMultipartUpload` that really completed), and on `DeleteObject`,
+  `DeleteObjects` and a plain `DeleteBucket`.
+
+The operations that do not replace the object keep the record:
+`CreateMultipartUpload`, `UploadPart` and `UploadPartCopy` act on the upload,
+not the object; `AbortMultipartUpload` frees the upload's parts and leaves the
+object in place
+([AbortMultipartUpload](https://docs.aws.amazon.com/AmazonS3/latest/API/API_AbortMultipartUpload.html));
+a `POST` form upload is forwarded to the store unclassified; and a bucket
+subresource delete (`?policy`, `?cors`, `?lifecycle`, ...) removes that
+configuration, not the bucket's objects. A `CompleteMultipartUpload` answered
+`2xx` with an `<Error>` body is a failed completion: the object and its record
+stay
+([CompleteMultipartUpload](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html)).
+
+The SSE header is part of the SDK's SigV4 signature, so the front re-signs the
+put after stripping it. S3's canonical URI is the URI-encoded path encoded
+exactly once, and S3 does not normalize the path; every other service encodes
+the already-encoded path a second time
+([S3 SigV4](https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html),
+[create a signed request](https://docs.aws.amazon.com/IAM/latest/UserGuide/create-signed-request.html)).
+The front signs the exact path it forwards, so object keys containing `=`, a
+space, `+`, `%`, unicode or `/` segments get the same signature s3proxy
+recomputes; encoding the escaped path a second time would turn `%3D` into
+`%253D` and earn a `403 SignatureDoesNotMatch`.
+
+The store never sees the caller's signature on this path: the stripped header
+was part of it. Before re-signing, the front therefore checks the caller's own
+header-based `SigV4` against the profile's static dummy credentials, and it
+strips the header only when that signature verifies and its `SignedHeaders`
+names `x-amz-server-side-encryption`. Removing a signed header invalidates the
+caller's signature, and only a signature the local credentials vouch for may be
+replaced by the runner's own. Every other SSE put is forwarded unchanged, so
+the store answers it exactly as it did at v7.0.0:
+
+- an unsigned raw SSE put, and a presigned put whose URL signed the SSE header,
+  keep the store's `501 NotImplemented`: the filesystem store refuses the
+  header itself;
+- a presigned plain-PUT URL with the SSE header added at send time keeps the
+  store's `403 AccessDenied`, because the query string signs only the headers
+  listed in `X-Amz-SignedHeaders` and every `x-amz-*` header present in the
+  request must be signed
+  ([SigV4 query-string authentication](https://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-query-string-auth.html));
+- a header-signed put that adds the SSE header after signing keeps the store's
+  `403` for the same reason.
+
+A header-signed put whose `SignedHeaders` names the SSE header but whose
+signature does not verify against the profile's credentials is answered
+`403 SignatureDoesNotMatch` before the store sees it, because the front cannot
+re-sign it as the runner identity. The front also applies AWS's 15-minute
+window for a header-signed request, refusing an `X-Amz-Date` more than 15
+minutes from the local clock
+([SigV4 header-based authentication](https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html)).
+A Signature Version 2 or other non-SigV4 request has no header signature to
+verify, so its SSE put is forwarded unchanged like the cases above.
+
+With `--data-dir`, the record lives in `<dir>/s3sse/index.json` (mode `0600`)
+so it survives a restart; without the flag it is in memory.
+
+**SSE-KMS and SSE-C stay refused.** A `aws:kms` or customer-key request is
+passed through unchanged and keeps s3proxy's `501 NotImplemented`. The runner
+has no way to bind an object to a KMS key or a customer key (the store would
+write plaintext), and reporting `aws:kms` plus a key id without that binding
+would be exactly the false claim the store refuses to make. Model those paths
+against real AWS or a store that performs the encryption.
+
+**Documented local deviations.**
+
+- Only a verified header-signed `PutObject` sets the record. A successful plain
+  `CopyObject` or `CompleteMultipartUpload` clears the destination's previous
+  record, because neither names a new algorithm; a `CopyObject` with an SSE
+  header keeps the store's `501`, an SSE-headed `CreateMultipartUpload` keeps
+  it too, and a failed completion clears nothing. A completion answered `200`
+  with an `<Error>` body is a failed completion too: the record stays.
+- The operations that do not replace the object keep the record: a plain
+  `POST` form upload (forwarded unclassified), `CreateMultipartUpload`,
+  `UploadPart`, `UploadPartCopy`, `AbortMultipartUpload` and a bucket
+  subresource delete. Replace the object with a plain `PutObject`, a plain
+  `CopyObject` or a successful `CompleteMultipartUpload` to make its record
+  match it.
+- The record is per bucket/key, not per version, so a read naming
+  `?versionId=` is answered without the header even though AWS returns it for
+  a version stored with SSE-S3
+  ([GetObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html)).
+  The runner keeps one record per key and does not claim per-version
+  encryption.
+- A `DeleteObjects` body above 1 MiB is forwarded to the store unchanged, as
+  the v7.0.0 path did, so its keys are not read and their SSE-S3 records are
+  left in place until a later clearing write (a plain `PutObject`, a plain
+  `CopyObject`, a successful `CompleteMultipartUpload`, a `DeleteObject` or a
+  plain `DeleteBucket`). AWS allows 1000 keys
+  of up to 1024 bytes, about 1.05 MiB of XML
+  ([DeleteObjects](https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjects.html),
+  [object key names](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-keys.html));
+  refusing or truncating that shape would add a failure the released runner did
+  not have.
+- The store maps each object-key segment to a file name, so a key with one
+  segment longer than the filesystem's name limit (255 bytes on ext4 and APFS)
+  gets the store's own `500`, as it did before the front; the request still
+  reaches it unchanged. The proving row uses keys of exactly 1024 bytes (AWS's
+  maximum) split into short segments, which AWS allows and the store serves.
+- A verified header-signed `PutObject` with a streaming (`aws-chunked`) SigV4
+  payload cannot be re-signed after the signed SSE header is stripped; the
+  front refuses it with a clear 400 rather than forwarding a broken signature.
+  An unsigned or presigned streaming SSE put is forwarded unchanged. A normal
+  SDK put (the audit sink's and the proving row's form) is signed over the
+  payload hash and is accepted, including keys that need URI escaping (`=`,
+  spaces, `+`, `%`, unicode and `/` segments); the front signs the same
+  once-encoded path it forwards.
+- The re-signed put authenticates as the runner identity: the front verifies
+  the caller's header-based `SigV4` against the profile's static dummy
+  credentials before stripping the SSE header and re-signing, and a request
+  signed with other credentials gets `403 SignatureDoesNotMatch`. Every SSE put
+  the front does not verify (unsigned, presigned, or with the header unsigned)
+  is forwarded unchanged and keeps the store's refusal.
+- The account-wide S3 default encryption (SSE-S3 applied to objects written
+  without a header) is not modelled: an object reports `AES256` only when its
+  put named it.
+- The store writes plaintext; `AES256` is the observable S3 answer, not
+  at-rest encryption of the local file. Do not use a `--data-dir` containing
+  sensitive data on a shared host.
+- An object written by a runner-internal path that bypasses the front (the
+  session's `s3.put`, a bucket deployment) has no SSE-S3 record, as it named no
+  algorithm.
+
+### Object versioning
+
+A bucket whose template sets `VersioningConfiguration: {Status: Enabled}` is
+served with S3's versioning semantics
+([Versioning](https://docs.aws.amazon.com/AmazonS3/latest/userguide/Versioning.html)).
+The pinned s3proxy implements no versioning at all: its filesystem backend has
+never kept a version history, and the container answers `PutBucketVersioning`
+and `ListObjectVersions` with `501 NotImplemented`
+([s3proxy #74](https://github.com/gaul/s3proxy/issues/74),
+[#1138](https://github.com/gaul/s3proxy/issues/1138)). The runner's S3 front
+therefore keeps the version log itself, beside the SSE-S3 records:
+
+- every successful `PutObject`, plain `CopyObject` and completed
+  `CompleteMultipartUpload` to a version-enabled bucket is copied out of the
+  store into `<data-dir>/s3versions` (in memory without `--data-dir`) and
+  answered with a new `x-amz-version-id`
+  ([PutObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html),
+  [CopyObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CopyObject.html),
+  [CompleteMultipartUpload](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html));
+- `GetObject` and `HeadObject` with `?versionId=` are served from that log,
+  with a single `Range` read supported, and a plain read names the current
+  version in `x-amz-version-id`
+  ([GetObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html));
+- a delete without a version id creates a delete marker; reads of the key then
+  answer `404` with `x-amz-delete-marker: true` and the marker's version id,
+  while the previous versions stay readable
+  ([DeleteObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObject.html),
+  [delete markers](https://docs.aws.amazon.com/AmazonS3/latest/userguide/DeleteMarker.html));
+- `ListObjectVersions` is synthesized from the log, keys ascending and each
+  key's versions newest first, with `IsLatest`, delete markers and the
+  `key-marker`/`version-id-marker` paging
+  ([ListObjectVersions](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectVersions.html));
+- `DeleteObjects` entries that name a `VersionId` remove those versions, and a
+  plain entry creates a marker; when a key's last version is gone the live
+  object is removed too, so a purge really empties the bucket. Deleting one
+  version reconciles the live object to what is now latest, restoring the
+  previous bytes when a delete marker was removed.
+
+A bucket whose template does not enable versioning takes exactly the v7.0.0
+path: no header is added, no byte is copied, and the store answers the
+versioning APIs as it always did.
+
+True limits of the front's store: `PUT ?versioning` with `Status: Suspended` is
+refused with a named `501` (only `Enabled` is served), a `CopyObject` whose
+source names a specific `versionId` is refused the same way, and versioning is a
+template property — a `PutBucketVersioning` against a bucket the template does
+not version stays on the store's path (the pinned s3proxy answers `501`), so an
+unversioned bucket is untouched by this front. An object larger than 512 MiB
+also fails the write on a version-enabled bucket: the front archives a written
+object by copying it into the version log, refuses a copy above 512 MiB, and
+answers the put with its `502` backend error and no `x-amz-version-id`, where
+AWS accepts a single `PutObject` up to 5 GB. The suspended-versioning,
+copy-from-version and archive-cap limits are docs/125 true limits; a template
+that only enables versioning at creation never reaches them.
 
 ## Event delivery
 
@@ -2097,6 +3003,100 @@ The own bus was chosen over the pinned moto events service after probing
 | ElasticMQ target | moto's SQS is a different queue service | Sends to the application's ElasticMQ queue |
 | Schedules | Never fire | Fire on the run clock |
 
+**PutEvents.** The endpoint accepts the AWS JSON 1.1 body the SDKs send,
+including the timestamp form they use: `PutEventsRequestEntry.Time` as epoch
+seconds in a JSON number, integer or fractional (the protocol's default
+timestamp encoding). The RFC3339 string form v7.0.0 accepted is still accepted,
+and an omitted, empty or `null` `Time` takes the time of the PutEvents call from
+the run clock, as the API documents. The delivered envelope's `time` keeps one
+precision per form:
+
+- a numeric `Time` keeps the instant it names, printed as RFC3339 with the
+  fraction it supplied (whole seconds for an integer, up to nine fractional
+  digits);
+- an RFC3339 string keeps v7.0.0's whole-second output;
+- the run clock (an omitted, empty or `null` `Time`) keeps v7.0.0's
+  whole-second output.
+
+Timestamp serialization is SDK-version dependent: botocore 1.42.97 in the
+pinned Python 3.14 Lambda image sends a numeric `Time` as whole epoch seconds,
+while botocore 1.43.124 on a developer host sends the fraction. Both are the
+numeric form above, and the endpoint keeps whatever it receives.
+
+An entry whose `Time` is a value the runner cannot read fails that entry, not
+the request. See
+[PutEventsRequestEntry.Time](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutEventsRequestEntry.html)
+for the fallback rule, [Event
+structure](https://docs.aws.amazon.com/eventbridge/latest/ref/events-structure.html)
+for the envelope's `time` field, and [AWS JSON 1.1
+timestamps](https://smithy.io/2.0/aws/protocols/aws-json-1_1-protocol.html#shape-serialization)
+for the wire encoding.
+
+Protocol errors on the endpoint use the AWS JSON 1.1 error document the SDKs
+decode: an `application/x-amz-json-1.1` response whose body carries `__type`
+and `message`. A body that is not JSON is `400
+MalformedHttpRequestException`; an `Entries` count outside 1..10, or a `Time`
+whose JSON type is neither a number nor a string, is `400 ValidationError`; an
+`X-Amz-Target` other than `AWSEvents.PutEvents` is `404
+UnknownOperationException`; an unencodable response is `500 InternalFailure`.
+Entry-level refusals keep the documented `200` response and report
+`FailedEntryCount` plus a per-entry `ErrorCode`: `InvalidArgument` for a
+missing `Source`/`DetailType` or an unusable `Time`, and `MalformedDetail` for
+`Detail` that is not valid JSON. See the [PutEvents
+response](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutEvents.html)
+and [PutEventsResultEntry error
+codes](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutEventsResultEntry.html),
+and [Common Error
+Types](https://docs.aws.amazon.com/eventbridge/latest/APIReference/CommonErrors.html)
+for the protocol errors.
+
+**Status and placement choices.** AWS documents the error codes and statuses
+but not where a member whose JSON type does not match the model is reported.
+The first response below is a stated deviation; the second is pinned by
+citations:
+
+- A `Time` whose JSON type is neither a number nor a string fails the whole
+  request with `400 ValidationError` instead of refusing the entry. [Smithy
+  shape
+  serialization](https://smithy.io/2.0/aws/protocols/aws-json-1_1-protocol.html#shape-serialization)
+  defines a timestamp as a JSON number, so the member cannot be decoded at all,
+  and [Common Error
+  Types](https://docs.aws.amazon.com/eventbridge/latest/APIReference/CommonErrors.html)
+  documents `ValidationError` as 400 for input that does not meet the required
+  format. A value that decodes but names no usable instant (for example
+  `"not-a-time"` or an out-of-range number) stays a per-entry `InvalidArgument`.
+- An `X-Amz-Target` other than `AWSEvents.PutEvents` is `404
+  UnknownOperationException`. The [AWS JSON 1.1 identification
+  rule](https://smithy.io/2.0/aws/protocols/aws-json-1_1-protocol.html#identification-for-claiming)
+  makes `X-Amz-Target` the `{serviceName}.{operationName}` of the request, and
+  [Common Error
+  Types](https://docs.aws.amazon.com/eventbridge/latest/APIReference/CommonErrors.html)
+  documents `UnknownOperationException` as HTTP 404 for an operation that is not
+  recognized. The endpoint's exact-match target check is how it applies that
+  rule locally.
+
+**Compatibility with v7.0.0.** Every request in this table was refused at
+v7.0.0 too, so no accepted call newly fails; the bytes a caller observes can
+change, and a release note should carry the codes and statuses:
+
+| Request | v7.0.0 | This release |
+| --- | --- | --- |
+| a non-POST method | `405` plain text | `400 MalformedHttpRequestException` |
+| an `X-Amz-Target` other than `AWSEvents.PutEvents` | `400` plain text | `404 UnknownOperationException` |
+| a body that is not JSON | `400` plain text | `400 MalformedHttpRequestException` |
+| a body read failure | `400` plain text | `400 MalformedHttpRequestException` |
+| an `Entries` count outside 1..10 | `400` plain text | `400 ValidationError` |
+| a member whose JSON type does not decode (`Time` included) | `400` plain text | `400 ValidationError` |
+| an entry missing `Source` or `DetailType` | `200`, entry `MalformedDetail` | `200`, entry `InvalidArgument` |
+| an entry whose `Time` cannot be read | `200`, entry `MalformedDetail` | `200`, entry `InvalidArgument` |
+| an unencodable response | `500` plain text | `500 InternalFailure` |
+
+A request that succeeded at v7.0.0 keeps succeeding with the same delivered
+data: the string-form and run-clock `time` stay whole-second RFC3339, the
+envelope's other members are unchanged, and the numeric `Time` form (which
+failed the v7.0.0 decode) is additive. A malformed `Detail` keeps its
+per-entry `MalformedDetail`.
+
 **Schedules.** A `ScheduleExpression` of the form `rate(value unit)` or
 `cron(minutes hours day-of-month month day-of-week year)` fires on `env.Clock`.
 The test clock fires exactly the due occurrences: advancing 15 minutes over a
@@ -2123,15 +3123,21 @@ valid on the default bus, as AWS documents. The target receives:
 
 **Buses and rules.** Every `AWS::Events::Rule` with an `EventPattern` registers
 on its bus: the `default` bus when `EventBusName` is omitted, or the
-`AWS::Events::EventBus` the rule references. `PutEvents` accepts up to ten
-entries; each entry becomes the documented envelope (`version`, `id`,
+`AWS::Events::EventBus` the rule references. An `AWS::Events::EventBus`
+resolves like the CloudFormation reference documents: `Ref` is the bus name and
+`Fn::GetAtt Arn` the
+[bus ARN](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-events-eventbus.html).
+`PutEvents` accepts that ARN or the bus name as `EventBusName`, as the
+[API reference](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutEvents.html)
+states. It accepts up to ten entries; each entry becomes the documented envelope (`version`, `id`,
 `detail-type`, `source`, `account`, `time`, `region`, `resources`, `detail`) and
 is matched against every enabled rule on its bus. Matching is the documented
 EventBridge pattern grammar over top-level fields and `detail`, including
 `prefix`, `suffix`, `anything-but`, `numeric`, `exists`,
 `equals-ignore-case` and `$or`. A `State: DISABLED` rule registers paused and
-never fires. A malformed entry is reported in the PutEvents response with
-`ErrorCode` `MalformedDetail` and does not reach a rule.
+never fires. An entry that fails validation is reported in the PutEvents
+response with `ErrorCode` `InvalidArgument` or `MalformedDetail` and does not
+reach a rule.
 
 **Targets and input shaping.** A rule target may be a Lambda function, an SQS
 queue or an SNS topic:
@@ -2411,6 +3417,7 @@ target path as an observed SDK publish.
 | The observation cannot tell which S3 API made the change | An observed create is reported as `ObjectCreated:Put` (multipart complete and copy included) and an observed delete as `ObjectRemoved:Delete`. |
 | An object created and deleted inside one 250 ms poll is invisible | The poll interval is documented; a row that needs both changes separates them in time. |
 | The listing carries no request id or source IP | The runner generates the request id and reports its own loopback source address, the way S3 generates them for its own record. |
+| The filesystem store refuses every server-side-encryption header with `501 NotImplemented` | The runner's S3 front accepts `AES256` on `PutObject`, records it and returns the documented header on the put and on `HeadObject`/`GetObject`; `aws:kms` and customer keys stay refused. See [S3 objects and server-side encryption](#s3-objects-and-server-side-encryption). |
 
 ### S3 event notification delivery
 
@@ -2590,22 +3597,24 @@ gone.
 ## Capability matrix
 
 Classes follow the repository's local-execution convention: **L1** runs fully
-locally, **L2** runs locally with an emulator and documented limits, and **L3**
-is exercised as fully as possible with a named cloud gap. `apptheory local`
-serving a surface is not by itself a class: the class belongs to an example, and
-the harness records it.
+locally, **L2** runs locally with an emulator and a named fidelity limit, and
+**L3** is exercised as fully as possible with a named cloud gap from the
+docs/125 true-limit list. `apptheory local` serving a surface is not by itself a
+class: the class belongs to an example, and the harness records it. Every row's
+class and named limit is in the [harness fidelity table](/examples/local-harness/#fidelity-table).
 
 | Capability | Local runner | Notes |
 | --- | --- | --- |
 | HTTP API v2 (`AWS::ApiGatewayV2::Api`, HTTP) | Supported (L1) | v2.0 events with `routeKey`, `rawPath`, `requestContext.http`, cookies and path parameters. The `cookie` header is removed when `cookies` is populated, as AWS does. |
 | REST API v1 (`AWS::ApiGateway::RestApi`) | Supported (L1) | v1 events with `resource`, `multiValueHeaders`, `multiValueQueryStringParameters` and the stage. |
-| Lambda Function URL | Supported (L1) | Function URL events carry `routeKey: "$default"` (top-level and in `requestContext`, with `requestContext.stage`) and a `.lambda-url.<region>.on.aws` domain, which the runtime uses to tell them apart from HTTP API v2. A `RESPONSE_STREAM` URL forwards the prelude and the payload incrementally; a `BUFFERED` URL (the template default) serves the complete response, and behind CloudFront it takes the buffered finish path. A URL with an auth type other than `NONE` is reported under `skipped`, not served as a standalone URL; a distribution can still reference it as an origin. |
+| Lambda Function URL | Supported (L1) | Function URL events carry `routeKey: "$default"` (top-level and in `requestContext`, with `requestContext.stage`) and a `.lambda-url.<region>.on.aws` domain, which the runtime uses to tell them apart from HTTP API v2. A `RESPONSE_STREAM` URL forwards the prelude and the payload incrementally; a `BUFFERED` URL (the template default) serves the complete response, and behind CloudFront it takes the buffered finish path. An `AWS_IAM` URL is served and every request must carry a verified SigV4 signature; a URL with any other auth type is reported under `skipped`. |
 | Response streaming (`awslambda.streamifyResponse`, SSE) | Supported (L2) | A chunked runtime response is forwarded to the Function URL, REST API proxy integration and CloudFront viewer as the runtime writes it; the Function URL and REST formats (metadata JSON, 8 null bytes, payload) and the midstream error trailers are implemented. Lambda's 6 MB uncapped burst and 2 MBps cap are not reproduced (documented deviation). |
 | Inline `Code.ZipFile` | Supported (Node, Python) | Materialized under the run scratch directory before the container starts. |
 | arm64 `provided.al2023` | Supported (L1) | Uses the host-arch image; a bootstrap built for the other architecture fails closed with a clear error. |
 | DynamoDB Local | Supported (L2) | `--backend dynamodb` starts the profile's digest-pinned `amazon/dynamodb-local` on the run network; SDK clients resolve through `AWS_ENDPOINT_URL_DYNAMODB`. Tables are created from the CDK key schema, GSIs, streams and TTL. SSE, PITR and deletion protection are not provisioned. |
 | SQS (ElasticMQ) | Supported (L2) | `--backend sqs` starts the digest-pinned `softwaremill/elasticmq-native` container, creates the CDK queues with visibility, retention and redrive policy, and resolves `QueueUrl`/`Arn` from the created queues. Every SQS event-source mapping polls automatically with batching, visibility, delete-on-success, partial batch failure, FIFO group ordering, redrive, filter criteria and maximum concurrency; see [SQS event-source delivery](#sqs-event-source-delivery). A session also exposes `sqs.send`, `sqs.receive`, `sqs.event` and `sqs.attributes` for explicit work. |
-| KMS and STS (moto) | Supported (L2) | `--backend moto` starts the profile's digest-pinned moto container and injects `AWS_ENDPOINT_URL_KMS`/`_STS` (and the profile's aliases). Symmetric, RSA (2048/3072/4096) and ECC (P256/P384/P521) `SIGN_VERIFY` keys declared by the assembly are created, with aliases; `Ref`/`Fn::GetAtt Arn` resolve to the created key and alias. No HSM, key policies or grants. |
+| KMS and STS (moto) | Supported (L2) | `--backend moto` starts the profile's digest-pinned moto container and injects `AWS_ENDPOINT_URL_KMS`/`_STS` (and the profile's aliases). Symmetric, RSA (2048/3072/4096) and ECC (P256/P384/P521) `SIGN_VERIFY` keys declared by the assembly are created, with aliases; `Ref`/`Fn::GetAtt Arn` resolve to the created key and alias. The runner's KMS front serves the owned key families' crypto (see [KMS signing and key material](#kms-signing-and-key-material)): `Sign`/`Verify` honour `MessageType: DIGEST`, and `--data-dir` keeps the material. No HSM, key policies or grants. |
+| S3 (s3proxy) | Supported (L2) | `--backend s3proxy` starts the digest-pinned s3proxy container, creates the assembly's buckets, and injects the front's IP endpoint so the SDK uses path-style addressing. No bucket policies or IAM. SSE-S3 is accepted and reported (see [S3 objects and server-side encryption](#s3-objects-and-server-side-encryption)); SSE-KMS and SSE-C are refused by the store. A bucket notification configuration is delivered from the real object state; see [S3 event notification delivery](#s3-event-notification-delivery). |
 | SSM Parameter Store (moto) | Supported (L2) | `AWS::SSM::Parameter` String, StringList and SecureString are created; `Ref` returns the name and `Fn::GetAtt Type`/`Value` the declared type and value. `AWS_ENDPOINT_URL_SSM` is injected. SecureString is stored in moto's memory without envelope encryption. |
 | Secrets Manager (moto) | Supported (L2) | `AWS::SecretsManager::Secret` with `SecretString` or `GenerateSecretString` is created; `Ref` is the ARN and runtime `GetSecretValue` works. A `ResourcePolicy` is reported skipped (IAM is a docs/125 true limit). `AWS_ENDPOINT_URL_SECRETS_MANAGER` is injected. |
 | SNS topics and subscriptions (moto) | Supported (L2) | Standard and FIFO `AWS::SNS::Topic` are created with `FifoTopic`/`ContentBasedDeduplication`; `Ref` is the ARN and `GetAtt TopicName`/`TopicArn` resolve. `AWS::SNS::Subscription` and inline `Subscription` entries are delivered automatically to Lambda, SQS and loopback HTTP targets, with filter policies, raw message delivery and FIFO ordering/deduplication; see [SNS subscription delivery](#sns-subscription-delivery). `TopicPolicy` is reported skipped (IAM is a docs/125 true limit). |
@@ -2618,8 +3627,9 @@ the harness records it.
 | Delivery engine and test clock | Supported | `run` and `session` start the engine; `plan` and `session describe` report per-source state, including an SNS subscription's `filtered` count. SQS batching windows, visibility deadlines, schedules, TTL expiry and the SNS FIFO deduplication window take their time from `--clock test[=<RFC3339>]`; the `clock.now`/`clock.advance` session commands read and move it. ElasticMQ's and moto's own wall-clock timers and the runtime images are not slowed. `--delivery-concurrency` bounds concurrent deliveries (default 4); an SQS mapping's `MaximumConcurrency` bounds its batches within that. |
 | Deploy-time Secrets Manager dynamic references | Supported | A `{{resolve:secretsmanager:…}}` environment value resolves to the provisioned secret's value (the same JSON key) when the assembly declares that secret, and otherwise keeps the wave-1 deterministic local placeholder. The session's `describe` returns it to the harness; `run` and `plan` never print it. No secret is created in a cloud. |
 | Other emulators | Endpoint injection only | Pass `--endpoint service=url` and `--add-host name=address`; the profile names the environment variables. The checked-in profile binds `ssm`, `secretsmanager`, `sns`, `kinesis` and `cognito-idp` to moto, and `kms`/`sts` as before. |
-| WebSocket APIs (`AWS::ApiGatewayV2::Api`, WEBSOCKET) | Served (L2) | A real RFC 6455 listener serves `$connect`, `$disconnect`, `$default` and custom routes selected by the route selection expression, with the documented proxy event, two-way route responses, the `$connect` policy authorizer, the `@connections` management API and the documented idle/lifetime close; see [WebSocket APIs](#websocket-apis). No custom domains and no IAM authorization. |
-| CloudFront distributions and CloudFront Functions | Served (L2) | The distribution is served on its own loopback URL. Cache behaviors, allowed methods, viewer-request/viewer-response functions, origin request policies and response headers policies are applied; the generated function code runs in a restricted Node sandbox. S3 origins read the app's deployments from s3proxy, Function URL origins invoke the real handler container, and origin groups fail over with CloudFront's rules. No edge network and no TLS. |
+| WebSocket APIs (`AWS::ApiGatewayV2::Api`, WEBSOCKET) | Served (L2) | A real RFC 6455 listener serves `$connect`, `$disconnect`, `$default` and custom routes selected by the route selection expression, with the documented proxy event, two-way route responses, the `$connect` policy authorizer, the `@connections` management API and the documented idle/lifetime close; see [WebSocket APIs](#websocket-apis). An opted-in run serves `wss://` at the public host. No custom domains and no IAM authorization. |
+| Local HTTPS (`--tls`) | Supported (L2) | Every public listener (HTTP API, REST API, Function URL, WebSocket, CloudFront) serves HTTPS from a certificate the run's local CA signs; HTTP/2 is negotiated, SNI names outside the certificate are refused, and every function container mounts the CA for its own clients. The cert chains to a local CA, not a public one, and there is no edge TLS policy; see [Local HTTPS, OIDC issuers and passkeys](#local-https-oidc-issuers-and-passkeys). |
+| CloudFront distributions and CloudFront Functions | Served (L2) | The distribution is served on its own loopback URL. Cache behaviors, allowed methods, viewer-request/viewer-response functions, origin request policies and response headers policies are applied; the generated function code runs in a restricted Node sandbox. S3 origins read the app's deployments from s3proxy, Function URL origins invoke the real handler container, and origin groups fail over with CloudFront's rules. No edge network and no edge TLS; an opted-in run serves the local listener over HTTPS from the run CA. |
 | CloudFront caching | Supported (L2) | The cache key (GET and HEAD share one key, OPTIONS is separate), `CachedMethods`, `CACHING_DISABLED`, the Expiration-page TTL rules, stale-while-revalidate, stale-if-error (including a 5xx origin response for an expired object) and the HTTPStatusCodes-page error caching table are applied; hits answer `x-cache`/`age`; `session describe` reports per-behavior hit/miss counts. A viewer Range request bypasses the local cache (documented deviation); a conditional request is answered 304 from the cached validators. See [Caching and invalidation](#caching-and-invalidation). |
 | CloudFront invalidation | Supported (L2) | `CreateInvalidation`, `GetInvalidation` and `ListInvalidations` are served on a control endpoint that binds loopback and, when the host owns the run gateway, that address too; it is injected as `AWS_ENDPOINT_URL_CLOUDFRONT`; the aws CLI and the SDK share it. Paths are matched against the cached path plus the selected query string, with a trailing `*` only, and `CallerReference` reuse follows the API reference. See [Caching and invalidation](#caching-and-invalidation). |
 | CloudFront custom error responses | Supported (L2) | `CustomErrorResponses` is served: the page is fetched through the first cache behavior that matches its path, from that behavior's origin and with its origin request policy, with the configured status; a matching behavior's TTL wins, and an unavailable page returns the pages origin's status. |
@@ -2638,6 +3648,235 @@ the harness records it.
 | Every target, explicit commands (`session`) | Supported | Starts every CDK-targeted function, serves the HTTP surface, and answers a JSON-line command protocol for invocation, SQS, DynamoDB, S3, EventBridge and Kinesis operations. `--target` adds a function no route or event source targets. |
 | Stage-prefixed URLs (`/prod/...`) | Supported | A REST API is served at `/{stage}/...` in addition to the root; an HTTP API with a named (non-`$default`) stage is served at `/{stage}/...` in addition to the root. The `$default` stage keeps the root. The root stays the custom-domain form. The events carry the documented fields: REST v1 `path`/`resource` without the stage and `requestContext.path` with it; HTTP API v2 `rawPath` and `requestContext.http.path` with it; `requestContext.stage` in both. |
 | Multiple APIs in one stack | Supported | Each API gets its own listener and route table, so `ANY /` surfaces never shadow each other. |
+| CloudFormation custom resources | Served | `Custom::Trigger`, provider-framework resources, `Custom::AWS` and `Custom::S3AutoDeleteObjects` run their real handlers with the documented request and response documents; `Data` becomes the resource's attributes. See [custom resources](#cloudformation-custom-resources-ses-receipt-rules-and-resource-type-handling). |
+| SES receipt rules | Served | The rule, its recipients and its ordered S3, Lambda and Stop actions are derived; a real SMTP message to an accepted recipient runs them, and `ses.receive` injects one for a row. See [SES receipt rules](#ses-receipt-rules) and [the local mail surface](#the-local-mail-surface). |
+| Deploy-time-only and refused types | Reported | Custom domains, ACM, Route 53, CloudWatch alarms and dashboards, network connectors, EC2 security groups and SES identities are reported with a docs/125 true-limit reason; the MicroVM types are refused by name. |
+| AWS_IAM authorization (REST, HTTP API, Function URL) | Served (L2) | SigV4 is verified against the credentials the run issued, the caller principal is resolved and the enumerated policy shapes are evaluated. See [the narrow IAM path](#the-narrow-iam-path). |
+| Shared IAM plane across runs | Supported | `--shared-dir` shares role definitions, issued credentials and the STS endpoint between co-resident runs. See [the shared IAM plane](#the-shared-iam-plane). |
+| Co-resident runs | Supported (L2) | A shared CA at `<shared-dir>/ca`, per-run `--tls-host` names, `--peer-host` mappings and one `--shared-network` bridge let two runs call each other over verified HTTPS and the narrow IAM path. The `local-co-residence-ca` and `local-co-residence-iam` rows prove it. See [co-resident runs](#co-resident-runs-one-ca-declared-ports-and-one-network). |
+| Declared ports | Supported | `--port <logicalId>=<port>` pins a public surface; pins are reserved first, the counter skips them, and plan/describe/run report every port. See [declared ports](#declared-ports). |
+| Local mail surface | Supported (L2) | `--mail` starts the profile's digest-pinned Mailpit sink, an SMTP ingress (with STARTTLS from an auxiliary leaf) that runs the SES receipt rules, and the sink's HTTPS read API. The `local-mail-send-read` and `local-mail-receipt` rows prove it. See [the local mail surface](#the-local-mail-surface). |
+
+## CloudFormation custom resources, SES receipt rules and resource-type handling
+
+A real application synthesizes constructs whose local effect is a script, not an
+HTTP route: a deploy-time trigger, a provider-framework migration, an AWS SDK
+call, a bucket auto-delete handler, an SES receipt rule. The runner runs those
+handlers and reports everything else, so no synthesized type is silently
+ignored. `plan` and `session describe` list each one under `custom resources`,
+`receipt rules` and `not served locally`.
+
+### Served, through the real handler
+
+| Type | What the runner does |
+| --- | --- |
+| `Custom::Trigger` | Starts the trigger's provider function, sends it the CloudFormation request document, waits for the response document on the request's `ResponseURL`, and starts (and invokes through the local Lambda endpoint) the function its `HandlerArn` names. |
+| Provider-framework custom resources (`Custom::<name>`, `AWS::CloudFormation::CustomResource`) | The same request/response contract. The handler's `Data` becomes the custom resource's attributes, so a `Fn::GetAtt` on it resolves to what the handler returned. |
+| `Custom::AWS` | The same contract, with the handler's SDK calls reaching the local endpoints: an SES call reaches the pinned moto, which implements `createReceiptRuleSet` and `setActiveReceiptRuleSet`. |
+| `Custom::S3AutoDeleteObjects` | Served by the runner: the `customResource.delete` session operation empties the bucket and reports the handler's `SUCCESS` response. For a versioned bucket it deletes every listed version, which is what the CDK handler itself does and what the S3 front now serves; for an unversioned bucket it uses the listing the store implements. |
+| `AWS::SES::ReceiptRule` | The rule's rule set, recipients and ordered actions are derived; the `ses.receive` session operation delivers one injected message to them. |
+| `Custom::CDKBucketDeployment`, `Custom::S3BucketNotifications` | Served by the runner's own implementation (the asset copy and the observed notification configuration); the handler does not run. |
+
+The request document carries `RequestType`, `ResponseURL`, `StackId`,
+`RequestId`, `ResourceType`, `LogicalResourceId`, `ResourceProperties` and, on an
+update, `OldResourceProperties`
+(https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/crpg-ref-requests.html).
+The response document carries `Status`, `Reason`, `PhysicalResourceId`, `StackId`,
+`RequestId`, `LogicalResourceId` and `Data`
+(https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/crpg-ref-responses.html).
+A handler that reports `FAILED` fails the run with its `Reason`, and a handler
+that never answers fails the run with the timeout it was given.
+
+The response endpoint is **HTTPS from the run CA**: the pinned CDK provider
+framework always reports with `https.request`, whatever the URL's scheme, so a
+run that declares a handler-invoked custom resource creates the local CA even
+without `--tls` and mounts its bundle into every function container. Its public
+listeners stay on plain HTTP unless `--tls` is set.
+
+A function a handler invokes reaches the target through the local Lambda Invoke
+endpoint, injected as `AWS_ENDPOINT_URL_LAMBDA`
+(https://docs.aws.amazon.com/lambda/latest/api/API_Invoke.html,
+https://docs.aws.amazon.com/sdkref/latest/guide/feature-ss-endpoints.html).
+
+### Dependency order and deploy-time functions
+
+The runner invokes served custom resources in the template's dependency order:
+explicit `DependsOn` edges plus the implicit edges `Ref` and `Fn::GetAtt`
+create, topologically sorted, with logical-id order as the only tie-break.
+Independent resources keep logical-id order, so a template that does not depend
+on the order keeps today's sequence; an edge that passes through a resource
+that is not itself a custom resource still orders its endpoints. A cycle that
+leaves a custom resource unordered fails the run with a named error that spells
+out the cycle, because CloudFormation could not order it either; a cycle among
+resources the runner does not order (CDK warns about such a template and still
+deploys it) leaves the derivation untouched
+([DependsOn](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-attribute-dependson.html),
+[Ref](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/intrinsic-function-reference-ref.html),
+[Fn::GetAtt](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/intrinsic-function-reference-getatt.html)).
+
+A provider-framework custom resource does not call its user function directly:
+the framework's `onEvent` handler names it in its own environment
+(`USER_ON_EVENT_FUNCTION_ARN`), and the custom resource's properties mention
+only the service token. The run starts the transitive closure of those
+environment edges from every served custom resource, so a function the template
+invokes at deploy time runs even when `--target` does not name it and no route
+or event source targets it
+([Provider](https://docs.aws.amazon.com/cdk/api/v2/docs/aws-cdk-lib.custom_resources.Provider.html)).
+A function whose code the assembly does not carry is left out and fails by name
+when the provider reaches it, as before.
+
+### SES receipt rules
+
+`ses.receive` takes `recipients`, `rawMessage` and an optional `source` and
+`messageId`, and runs the matching rule's actions in order:
+
+```json
+{"op":"ses.receive","recipients":["ingress@example.test"],"rawMessage":"From: a@b\r\nTo: ingress@example.test\r\n\r\nbody"}
+```
+
+The S3 action writes the raw message under the rule's `ObjectKeyPrefix` and the
+message id
+(https://docs.aws.amazon.com/ses/latest/dg/receiving-email-action-s3.html). The
+Lambda action receives the documented received-message record — `eventSource`
+`aws:ses`, `ses.mail` with the message id, source, destination, headers and
+common headers, and `ses.receipt` with the recipients, verdicts and action —
+with no body, exactly as SES documents
+(https://docs.aws.amazon.com/ses/latest/dg/receiving-email-action-lambda-event.html).
+A message no enabled rule accepts is refused by name. With `--mail`, a real
+SMTP message to an accepted recipient runs the same rule from the ingress; see
+[the local mail surface](#the-local-mail-surface).
+
+### Reported as deploy-time-only
+
+Each of these is listed under `not served locally` with a docs/125 true-limit
+reason whenever an assembly declares it:
+
+| Type | Why it has no local runtime behaviour |
+| --- | --- |
+| `AWS::ApiGateway::DomainName`, `AWS::ApiGateway::BasePathMapping`, `AWS::ApiGatewayV2::DomainName`, `AWS::ApiGatewayV2::ApiMapping` | an edge endpoint plus an ACM certificate and an API mapping |
+| `AWS::CertificateManager::Certificate` | ACM issues and validates through a DNS or email challenge AWS owns |
+| `AWS::Route53::RecordSet`, `RecordSetGroup`, `HostedZone` | public DNS state |
+| `AWS::CloudWatch::Alarm`, `CompositeAlarm`, `Dashboard` | AWS service metrics, which have no local source |
+| `AWS::Lambda::NetworkConnector` | binds MicroVM compute to a VPC subnet and security group |
+| `AWS::EC2::SecurityGroup`, `SecurityGroupIngress`, `SecurityGroupEgress` | VPC traffic filtering, with no local VPC |
+| `AWS::SES::EmailIdentity` | a DNS record or an email handshake owned by AWS |
+
+### Refused
+
+`AWS::Lambda::MicrovmImage`, and any custom resource whose properties target it,
+is refused with the docs/125 reason: the MicroVM managed provider is an AWS-only
+service with no emulator.
+
+## The narrow IAM path
+
+Every call between the applications the runner serves is IAM-authorized and
+signed with Signature Version 4. On an AWS_IAM REST method, HTTP API route or
+Function URL the runner:
+
+1. **verifies the SigV4 signature** against the credentials it issued;
+2. **resolves the caller principal** — the assumed-role ARN for a session;
+3. **evaluates the API's resource policy and the caller's identity policies**
+   under AWS's combination rule, plus the STS trust policy for `AssumeRole`;
+4. **puts the principal in the event identity**, so a handler that re-checks the
+   caller sees what a deployed API Gateway would give it.
+
+The evaluation is a **narrow, fully specified** one (docs/125 decision D2): a
+statement is evaluated only when it has one of the enumerated shapes below, and
+a statement that could reach the call but has another shape **fails closed with
+a named error** that says why. A statement whose action or resource cannot reach
+the call is skipped, so an unrelated statement never refuses a request.
+
+| Element | Accepted values |
+| --- | --- |
+| Action | `execute-api:Invoke`; `sts:AssumeRole` in a trust policy; `lambda:InvokeFunctionUrl` and `lambda:InvokeFunction` in a Function URL's policy |
+| Effect | `Allow` or `Deny` |
+| Principal | an exact role or user ARN, or an exact account-root ARN (`arn:aws:iam::<account>:root`); a wildcard is out of subset. An identity-policy statement carries no Principal. |
+| Resource | an exact execute-api ARN (`arn:aws:execute-api:<region>:<account>:<api-id>/<stage>/<METHOD>/<path>`) or the synthesized form `execute-api:/<stage>/<METHOD>/<path>`; the stage segment may be `*` and a trailing path segment may be `*`. A Function URL statement names the exact function ARN. |
+| Condition | none, or `StringEquals` on `aws:PrincipalArn` with exact non-wildcard ARNs; a Function URL policy may also pin `lambda:FunctionUrlAuthType`. |
+
+Combination follows the published evaluation logic
+(https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic.html):
+an explicit Deny refuses; within one account one Allow in either policy grants;
+across accounts both must allow. `aws:PrincipalArn` is compared against the base
+role ARN, never the assumed-role session ARN
+(https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_condition-keys.html).
+A Function URL needs both Lambda actions
+(https://docs.aws.amazon.com/lambda/latest/dg/urls-auth.html), and a REST
+`AWS_IAM` method's resource policy may name the two synthesized resource forms
+(https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-control-access-using-iam-policies-to-invoke-api.html).
+
+### Runner-issued credentials and the STS endpoint
+
+Each function container receives its own access key, bound to the role its
+template declares:
+
+| Variable | Value |
+| --- | --- |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | the run's own credential, never valid against real AWS |
+| `AWS_SESSION_TOKEN` | set only for a session credential |
+| `AWS_ENDPOINT_URL_STS` | the run's STS endpoint (https://docs.aws.amazon.com/sdkref/latest/guide/feature-ss-endpoints.html) |
+| `AWS_ENDPOINT_URL_LAMBDA` | the run's Lambda Invoke endpoint, when a handler invokes a function |
+
+A function container reaches a served API through its host-gateway entry
+(`host.docker.internal`), so every public listener also binds the run network's
+gateway on the same port when the host owns it; the printed URL stays
+`http://127.0.0.1:<port>` and nothing is exposed beyond the host's container
+interfaces. The IAM callers sign a call to the URL a row hands them, and that
+call is what the gateway verifies.
+
+The STS endpoint answers `AssumeRole` itself and proxies every other action to
+the configured STS backend, so `GetCallerIdentity` keeps working. `AssumeRole` is
+decided by the **role's trust policy alone** — a named local divergence: deployed
+AWS also requires an identity-side `sts:AssumeRole` grant on the caller, and the
+local evaluator never evaluates identity statements for `AssumeRole`.
+Session credentials carry the session token the SDK sends and the verifier
+requires (https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_temp_use-resources.html).
+
+The signature verifier implements the documented canonical request, signed
+headers, credential scope and the 15-minute clock window
+(https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-create-signed-request.html,
+https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-signing-elements.html).
+It also accepts a presigned URL (`X-Amz-Signature`) up to 7 days old.
+
+A header-signed request that declares `x-amz-content-sha256: UNSIGNED-PAYLOAD`
+carries that literal in the canonical request and is verified over it: the body
+is not hashed and no digest is compared, so the request skips body-integrity
+checking (the same is true of any other value in that header — it enters the
+canonical request as written, never recomputed). A request that omits the
+header is hashed over the body the verifier read, so a changed body breaks its
+signature. `UNSIGNED-PAYLOAD` is the documented literal for a request that does
+not sign its payload
+([SigV4 canonical request](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-create-signed-request.html)).
+
+### The shared IAM plane
+
+`--shared-dir` is one directory every co-resident run shares. It holds:
+
+```text
+<shared-dir>/iam/
+  runs/<run-id>.json          the run's role, trust and identity-policy definitions
+  credentials/<key-id>.json   one issued credential or assumed session
+  sts/<run-id>.json           the STS endpoint the run serves
+```
+
+The co-residence work adds the shared CA beside `iam/`. Every file is written to
+a temporary name and renamed into place, so a reader never sees a partial
+document; a run removes its own files when it stops, and a run whose heartbeat is
+older than ten minutes is ignored.
+
+The directory is trusted local state. Any process that can write to
+`--shared-dir` can mint or edit IAM plane records — a run definition, a
+credential, an assumed session, or an STS endpoint — including a credential that
+names another run's roles, and the runs that read the plane accept what it says.
+Co-residence assumes every writer to that directory is trusted; it does not
+isolate co-resident runs from each other or from another local process that can
+reach the path.
+
+With `--shared-dir`, one run's function can assume a role another run defined and
+call that run's API: the callee verifies the session's signature from the shared
+credential registry and evaluates the call against its own resource policy and
+the role's identity policy. Without `--shared-dir` the plane lives inside the
+run's own scratch directory, so a single run behaves exactly as before.
 
 ## Known gaps
 
@@ -2647,17 +3886,23 @@ the harness records it.
   The 6 MB buffered and 200 MB streamed payload limits are not enforced either,
   so a local call that works today keeps working.
 - **WebSocket domains and IAM authorization** are out of scope. The API is
-  served on a loopback `ws://` URL, so a custom domain name and its certificate
-  are not modelled; `AWS_IAM` route authorization and REST-style Lambda
-  authorizers on WebSocket routes fail closed. The `@connections` management
-  endpoint is TLS with a per-run self-signed certificate, which the runner
-  mounts into the function containers; a client outside those containers must
-  trust that certificate to call it. Binary media types are refused with 1003,
-  as API Gateway documents.
+  served on a loopback `ws://` URL by default; an opted-in run serves
+  `wss://app.localhost:<port>/<stage>` instead (see
+  [Local HTTPS, OIDC issuers and passkeys](#local-https-oidc-issuers-and-passkeys)).
+  A custom domain name is not modelled; `AWS_IAM` route authorization and
+  REST-style Lambda authorizers on WebSocket routes fail closed. The
+  `@connections` management endpoint is TLS with a per-run certificate: a
+  self-signed one by default, or one the run CA signs when `--tls` is set. The
+  runner mounts the trust bundle into the function containers; a client outside
+  those containers must trust that certificate to call it. Binary media types
+  are refused with 1003, as API Gateway documents.
 - **CloudFront is an edge-path gateway, not an emulator.** The distribution's
   cache behavior, generated CloudFront Functions, edge policies and origins are
   applied; the cache is a single in-memory store on the loopback listener, and
-  there is no edge network, no TLS and no viewer protocol enforcement.
+  there is no edge network and no edge TLS policy: no ACM certificate, security
+  policy, minimum protocol version or viewer protocol enforcement. An opted-in
+  run serves the listener in front of you over HTTPS from the run CA, which is
+  local TLS, not edge TLS (docs/125 "Real network properties").
   S3-origin bucket CORS rules and IAM/bucket policies are not
   emulated; the local S3 origin returns the S3 status the OAC/OAI access model
   produces. `If-Range` is not forwarded to the S3 origin (CloudFront forwards
@@ -2694,16 +3939,30 @@ the harness records it.
   HTTP API JWT authorizer and a REST Cognito user-pool authorizer validate the
   token against the issuer's JWKS; a REST TOKEN or REQUEST Lambda authorizer and
   an HTTP API IAM-policy Lambda authorizer run the real function and match its
-  returned policy against the method or route ARN. IAM authorization and
-  `$context`/`$stageVariables` identity sources fail closed rather than
+  returned policy against the method or route ARN. A sixth authorization type,
+  AWS_IAM, is served by the narrow IAM path rather than an authorizer resource.
+  Other `$context`/`$stageVariables` identity sources fail closed rather than
   bypassing a real authorization decision. Cognito's hosted UI/OAuth flows are
   not served, so a token must come from the pool's API (`InitiateAuth`) or a
   local test issuer.
-- **IAM policy evaluation** remains a docs/125 true limit. SSM parameters,
+- **IAM policy evaluation beyond the narrow path** remains a docs/125 true
+  limit. The three kinds the local stacks synthesize are evaluated on an AWS_IAM
+  call, over the enumerated shapes above; nothing else is. SSM parameters,
   Secrets Manager secrets and their resource policies, SNS topic policies,
-  Cognito user pools and KMS keys are provisioned, but a policy attached to
-  them is not evaluated. A `ResourcePolicy` or `TopicPolicy` is reported under
-  `skipped`.
+  Cognito user pools and KMS keys are provisioned, but a policy attached to them
+  is not evaluated. A `ResourcePolicy` or `TopicPolicy` is reported under
+  `skipped`. SCPs, permission boundaries, session policies and a general
+  condition language are not modelled; an out-of-subset statement on the call's
+  own scope fails closed by name.
+- **AssumeRole is decided by the trust policy alone locally**, which is the one
+  named divergence: deployed AWS also requires an identity-side
+  `sts:AssumeRole` grant, and the local evaluator never evaluates identity
+  statements for `AssumeRole`.
+- **A Function URL's policy** is built from the `AWS::Lambda::Permission`
+  resources that name the function; a permission that carries a condition other
+  than `lambda:FunctionUrlAuthType` is out of subset and fails closed.
+- **A custom resource whose handler code is not in the assembly** is refused by
+  name rather than started without code, and the run continues.
 - **Cognito hosted UI/OAuth domain** is not served. The runner serves the user
   pool issuer and JWKS (for JWT validation) but a `UserPoolDomain` is reported
   under `skipped`.
@@ -2722,10 +3981,11 @@ the harness records it.
   `ObjectRemoved:Delete`; a create and a delete inside one 250 ms poll is not
   observed. S3 → EventBridge emission is delivered by the runner and proven by
   the import-pipeline row.
-- **Managed services** remain L3 gaps where the examples use them: the MicroVM
-  provider in the controller and conformance rows, and S3 Vectors/Bedrock in
-  the semantic-search row. The runner stops at those boundaries; it never fakes
-  a success.
+- **Managed services** are L3 gaps where the examples use them: the MicroVM
+  managed provider in the controller and conformance rows, and S3
+  Vectors/Bedrock in the semantic-search row. Both are AWS-only services with
+  no emulator in the docs/125 true-limit list. The runner stops at those
+  boundaries; it never fakes a success.
 - **One container per function.** In-flight invocations are bounded to 32 and
   queue behind the function's container; delivery batches for the same
   function also serialize there, even when a mapping's `MaximumConcurrency`
@@ -2738,6 +3998,12 @@ the harness records it.
 - Node.js 24+ when a served CloudFront distribution has CloudFront Functions.
   The function code runs in the host Node `vm`; the runner refuses to start that
   distribution if Node is not on `PATH`.
+- No browser is needed to run the runner. The examples harness's local-TLS
+  browser row drives headless Chromium through Playwright: install
+  `scripts/local/requirements-examples.txt`, then run
+  `python -m playwright install chromium`. The row pins the run's leaf key in
+  Chromium's certificate-error list, so no system or browser trust store is
+  changed.
 - Docker (on macOS, colima) with the daemon running. The runner creates one
   private network per run. In the default mode a function container reaches the
   Runtime API through `host.docker.internal:<port>` (the run network's closed

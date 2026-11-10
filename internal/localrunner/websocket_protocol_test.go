@@ -201,7 +201,7 @@ func TestWebSocketCloseWithCode(t *testing.T) {
 }
 
 func TestWebSocketManagementTLS(t *testing.T) {
-	management, err := newWebSocketManagement(t.TempDir(), nil)
+	management, err := newWebSocketManagement(t.TempDir(), nil, nil)
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -220,7 +220,7 @@ func TestWebSocketManagementTLS(t *testing.T) {
 }
 
 func TestWebSocketManagementOperations(t *testing.T) {
-	management, err := newWebSocketManagement(t.TempDir(), nil)
+	management, err := newWebSocketManagement(t.TempDir(), nil, nil)
 	require.NoError(t, err)
 	server := httptest.NewServer(management)
 	defer server.Close()

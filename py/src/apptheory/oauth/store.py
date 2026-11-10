@@ -202,6 +202,13 @@ class RouteRefreshBrokerRecord:
     upstream_client_id: str = ""
     encrypted_grace_refresh_response: str = ""
     grace_expires_at: datetime | None = None
+    # When the access token inside ``encrypted_grace_refresh_response`` stops
+    # being accepted. A replay reports only the lifetime the credential has
+    # left, so a replayed credential is always accepted for at least the
+    # ``expires_in`` the client is given. ``None`` means the store did not
+    # persist it; the facade then refuses to replay the stored body and rotates
+    # a fresh one.
+    grace_access_token_expires_at: datetime | None = None
     status: str = STATUS_ACTIVE
     refresh_lock_owner: str = ""
     refresh_lock_expires_at: datetime | None = None
@@ -239,6 +246,8 @@ class RouteRefreshFamilyRotation:
     successor: RouteRefreshBrokerRecord | None = None
     grace_refresh_response: str = ""
     grace_expires_at: datetime | None = None
+    # When the access token inside ``grace_refresh_response`` stops being accepted.
+    grace_access_token_expires_at: datetime | None = None
 
 
 @dataclass(slots=True)
@@ -752,6 +761,7 @@ class MemoryRouteRefreshBrokerStore:
                 stored,
                 encrypted_grace_refresh_response=rotation.grace_refresh_response,
                 grace_expires_at=rotation.grace_expires_at,
+                grace_access_token_expires_at=rotation.grace_access_token_expires_at,
                 status=STATUS_ACTIVE,
                 refresh_lock_owner="",
                 refresh_lock_expires_at=None,

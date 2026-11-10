@@ -7,6 +7,7 @@ import (
 	"time"
 
 	apptheory "github.com/theory-cloud/apptheory/v7/runtime"
+	"github.com/theory-cloud/apptheory/v7/runtime/refusal"
 )
 
 // ContextKeyBearerToken is set on apptheory.Context by RequireBearerTokenMiddleware.
@@ -117,6 +118,13 @@ type RequireBearerTokenOptions struct {
 	// validator reports ErrBearerTokenInsufficientScope.
 	RequiredScopesFunc func(*apptheory.Context) ([]string, error)
 
+	// RefusalHook receives one structured, redacted event for every 401 and 403
+	// this middleware renders, so a refusal is answerable from telemetry instead
+	// of being a bare status. It carries the status, a closed reason slug, the
+	// method, the path, and the challenge shape — never the presented credential.
+	// A nil hook emits nothing.
+	RefusalHook refusal.Hook
+
 	// resourceMetadataURLTemplate is the compiled ResourceMetadataURLTemplate.
 	// It is nil when no template is configured.
 	resourceMetadataURLTemplate *resourceMetadataURLTemplate
@@ -140,7 +148,7 @@ func prepareRequireBearerTokenOptions(opts RequireBearerTokenOptions) RequireBea
 func requireBearerTokenDecision(c *apptheory.Context, opts RequireBearerTokenOptions) *apptheory.Response {
 	token, err := BearerTokenFromHeaders(c.Request.Headers)
 	if err != nil {
-		return unauthorizedResponse(c, opts)
+		return unauthorizedResponse(c, opts, bearerCredentialReason(err))
 	}
 	if opts.ClaimsValidator != nil {
 		claims, err := opts.ClaimsValidator(c, token)
@@ -154,13 +162,37 @@ func requireBearerTokenDecision(c *apptheory.Context, opts RequireBearerTokenOpt
 		return nil
 	}
 	if opts.Validator == nil {
-		return unauthorizedResponse(c, opts)
+		return unauthorizedResponse(c, opts, refusal.ReasonUnclassified)
 	}
 	if err := opts.Validator(c, token); err != nil {
 		return bearerErrorResponse(c, opts, err)
 	}
 	c.Set(ContextKeyBearerToken, token)
 	return nil
+}
+
+// bearerCredentialReason maps a header-extraction failure to the closed refusal
+// vocabulary.
+func bearerCredentialReason(err error) string {
+	if errors.Is(err, ErrMissingBearerToken) {
+		return refusal.ReasonMissingCredential
+	}
+	return refusal.ReasonInvalidCredential
+}
+
+// bearerValidatorReason maps a validator failure to the closed refusal
+// vocabulary.
+func bearerValidatorReason(err error) string {
+	switch {
+	case errors.Is(err, ErrBearerTokenExpired):
+		return refusal.ReasonExpiredCredential
+	case errors.Is(err, ErrBearerTokenInsufficientScope):
+		return refusal.ReasonInsufficientScope
+	case errors.Is(err, ErrBearerTokenInvalidAudience):
+		return refusal.ReasonAudienceMismatch
+	default:
+		return refusal.ReasonInvalidCredential
+	}
 }
 
 // RequireBearerTokenMiddleware enforces `Authorization: Bearer <token>` and,
@@ -353,18 +385,27 @@ func resolvedResourceMetadataURL(c *apptheory.Context, opts RequireBearerTokenOp
 	return strings.TrimSpace(opts.ResourceMetadataURL)
 }
 
-func unauthorizedResponse(c *apptheory.Context, opts RequireBearerTokenOptions) *apptheory.Response {
+func unauthorizedResponse(c *apptheory.Context, opts RequireBearerTokenOptions, reason string) *apptheory.Response {
 	headers := map[string][]string{
 		"content-type": {"application/json; charset=utf-8"},
 	}
+	challenge := "bare"
 	// Only include resource_metadata when we have a URL; it is required for
 	// MCP auth (2025-06-18) discovery, but callers can also provide it via opts.
 	if metaURL := resolvedResourceMetadataURL(c, opts); metaURL != "" {
 		headers["www-authenticate"] = []string{ProtectedResourceWWWAuthenticate(metaURL)}
+		challenge = "resource_metadata"
 	} else {
 		headers["www-authenticate"] = []string{"Bearer"}
 	}
 
+	emitRefusal(c, opts, refusal.Event{
+		Class:     refusal.ClassBearer,
+		Reason:    reason,
+		Status:    401,
+		ErrorCode: "app.unauthorized",
+		Challenge: challenge,
+	})
 	return &apptheory.Response{
 		Status:  401,
 		Headers: headers,
@@ -372,7 +413,13 @@ func unauthorizedResponse(c *apptheory.Context, opts RequireBearerTokenOptions) 
 	}
 }
 
-func forbiddenResponse() *apptheory.Response {
+func forbiddenResponse(c *apptheory.Context, opts RequireBearerTokenOptions, reason string) *apptheory.Response {
+	emitRefusal(c, opts, refusal.Event{
+		Class:     refusal.ClassBearer,
+		Reason:    reason,
+		Status:    403,
+		ErrorCode: "app.forbidden",
+	})
 	return &apptheory.Response{
 		Status: 403,
 		Headers: map[string][]string{
@@ -398,6 +445,13 @@ func insufficientScopeResponse(c *apptheory.Context, opts RequireBearerTokenOpti
 			InsufficientScopeWWWAuthenticate(scopes, resolvedResourceMetadataURL(c, opts)),
 		},
 	}
+	emitRefusal(c, opts, refusal.Event{
+		Class:     refusal.ClassBearer,
+		Reason:    refusal.ReasonInsufficientScope,
+		Status:    403,
+		ErrorCode: "app.insufficient_scope",
+		Challenge: "insufficient_scope",
+	})
 	return &apptheory.Response{
 		Status:  403,
 		Headers: headers,
@@ -406,13 +460,37 @@ func insufficientScopeResponse(c *apptheory.Context, opts RequireBearerTokenOpti
 }
 
 func bearerErrorResponse(c *apptheory.Context, opts RequireBearerTokenOptions, err error) *apptheory.Response {
+	reason := bearerValidatorReason(err)
 	if errors.Is(err, ErrBearerTokenInsufficientScope) {
 		return insufficientScopeResponse(c, opts)
 	}
 	if errors.Is(err, ErrBearerTokenInvalidAudience) {
-		return forbiddenResponse()
+		return forbiddenResponse(c, opts, reason)
 	}
-	return unauthorizedResponse(c, opts)
+	return unauthorizedResponse(c, opts, reason)
+}
+
+// emitRefusal delivers one bearer refusal event with the request identity every
+// event carries. The path is the request path; the query string is never part
+// of an event.
+func emitRefusal(c *apptheory.Context, opts RequireBearerTokenOptions, event refusal.Event) {
+	if c == nil {
+		return
+	}
+	event.At = nowOrZero(c)
+	event.Method = c.Request.Method
+	event.Path = c.Request.Path
+	refusal.Emit(c.Context(), opts.RefusalHook, event)
+}
+
+// nowOrZero reads the framework clock, so a refusal event and the state change
+// it describes share one instant. A context without a clock reports the zero
+// time rather than the host clock.
+func nowOrZero(c *apptheory.Context) time.Time {
+	if c == nil {
+		return time.Time{}
+	}
+	return c.Now()
 }
 
 func scopeFields(scope string) []string {

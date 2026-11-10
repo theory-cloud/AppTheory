@@ -132,7 +132,7 @@ func (r *Runner) provisionSSMParameters(ctx context.Context, spec *Spec) error {
 type secretProperties struct {
 	Name                 string                `json:"Name"`
 	Description          string                `json:"Description"`
-	KmsKeyID             string                `json:"KmsKeyId"`
+	KmsKeyID             json.RawMessage       `json:"KmsKeyId"`
 	SecretString         string                `json:"SecretString"`
 	GenerateSecretString *generateSecretString `json:"GenerateSecretString"`
 }
@@ -193,6 +193,9 @@ func (r *Runner) provisionSecrets(ctx context.Context, spec *Spec) error {
 			if err != nil {
 				return fmt.Errorf("secret %s GenerateSecretString: %w", resource.LogicalID, err)
 			}
+			if warning := generateSecretStringKeyOnlyWarning(resource, *props.GenerateSecretString); warning != "" {
+				r.logf("warning: %s", warning)
+			}
 			value = generated
 		}
 		input := &secretsmanager.CreateSecretInput{
@@ -202,8 +205,17 @@ func (r *Runner) provisionSecrets(ctx context.Context, spec *Spec) error {
 		if description := strings.TrimSpace(props.Description); description != "" {
 			input.Description = aws.String(description)
 		}
-		if keyID := strings.TrimSpace(props.KmsKeyID); keyID != "" {
-			input.KmsKeyId = aws.String(keyID)
+		// KmsKeyId is a CloudFormation string property, so it may be a literal
+		// or a Ref/Fn::GetAtt the assembly uses to name a provisioned key
+		// (https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-secretsmanager-secret.html).
+		if raw := strings.TrimSpace(string(props.KmsKeyID)); raw != "" && raw != jsonNull {
+			keyID, err := r.resolveProvisionString(props.KmsKeyID, resource.Stack, spec)
+			if err != nil {
+				return fmt.Errorf("resolve Secrets Manager secret %s KmsKeyId: %w", resource.LogicalID, err)
+			}
+			if keyID = strings.TrimSpace(keyID); keyID != "" {
+				input.KmsKeyId = aws.String(keyID)
+			}
 		}
 		created, err := client.CreateSecret(ctx, input)
 		arn := ""
@@ -249,7 +261,17 @@ func (r *Runner) provisionSecrets(ctx context.Context, spec *Spec) error {
 // same secret (moto itself is memory-only). RequireEachIncludedType defaults to
 // true, as documented.
 //
-//nolint:gocyclo // one branch per documented generation option.
+// GenerateStringKey is optional. The CloudFormation reference makes the pairing
+// one-way: "If you specify this parameter, then you must also specify
+// SecretStringTemplate" and the generated password is added to that template
+// under the key. With neither, Secrets Manager's generated password is the
+// whole secret string. A key without a template keeps the v7.0.0 value (the
+// template defaults to "{}") and is reported as a warning by provisionSecrets,
+// because v7.0.0 accepted that input. A template without a key is refused: the
+// generated password has no key to be stored under, and v7.0.0 failed it.
+// https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-properties-secretsmanager-secret-generatesecretstring.html
+//
+//nolint:gocognit,gocyclo // one branch per documented generation option.
 func generateSecretValue(props generateSecretString, seed string) (string, error) {
 	length := props.PasswordLength
 	if length == 0 {
@@ -258,16 +280,21 @@ func generateSecretValue(props generateSecretString, seed string) (string, error
 	if length < 1 || length > 4096 {
 		return "", fmt.Errorf("PasswordLength must be between 1 and 4096 (got %d)", length)
 	}
-	if strings.TrimSpace(props.GenerateStringKey) == "" {
-		return "", fmt.Errorf("GenerateStringKey is required")
-	}
+	key := strings.TrimSpace(props.GenerateStringKey)
 	template := strings.TrimSpace(props.SecretStringTemplate)
-	if template == "" {
+	switch {
+	case key != "" && template == "":
+		// v7.0.0 accepted this input and used an empty template, so keep that
+		// value byte-for-byte; provisionSecrets reports the AWS pairing rule.
 		template = "{}"
+	case key == "" && template != "":
+		return "", fmt.Errorf("SecretStringTemplate requires GenerateStringKey")
 	}
 	var object map[string]any
-	if err := json.Unmarshal([]byte(template), &object); err != nil || object == nil {
-		return "", fmt.Errorf("SecretStringTemplate must be a JSON object")
+	if key != "" {
+		if err := json.Unmarshal([]byte(template), &object); err != nil || object == nil {
+			return "", fmt.Errorf("SecretStringTemplate must be a JSON object")
+		}
 	}
 	requireEach := props.RequireEachIncludedType == nil || *props.RequireEachIncludedType
 	excluded := map[rune]bool{}
@@ -323,12 +350,37 @@ func generateSecretValue(props generateSecretString, seed string) (string, error
 	// generated passwords do not reserve positions.
 	password := []byte(builder.String()[:length])
 	rng.Shuffle(len(password), func(i, j int) { password[i], password[j] = password[j], password[i] })
+	if key == "" {
+		// No template and no key: the generated password is the secret string.
+		return string(password), nil
+	}
 	object[props.GenerateStringKey] = string(password)
 	encoded, err := json.Marshal(object)
 	if err != nil {
 		return "", err
 	}
 	return string(encoded), nil
+}
+
+// generateSecretStringKeyOnlyWarning reports the GenerateSecretString form that
+// v7.0.0 accepted without the template the CloudFormation reference pairs with
+// the key: "If you specify this parameter, then you must also specify
+// SecretStringTemplate". The generated value is unchanged (the template
+// defaults to "{}"), so the form warns instead of failing an existing caller.
+// https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-properties-secretsmanager-secret-generatesecretstring.html
+func generateSecretStringKeyOnlyWarning(resource ResourceSpec, props generateSecretString) string {
+	key := strings.TrimSpace(props.GenerateStringKey)
+	if key == "" || strings.TrimSpace(props.SecretStringTemplate) != "" {
+		return ""
+	}
+	return fmt.Sprintf(
+		"local Secrets Manager secret %s sets GenerateStringKey %q without SecretStringTemplate; "+
+			"CloudFormation requires the pairing: \"If you specify this parameter, then you must also specify "+
+			"SecretStringTemplate\" "+
+			"(https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-properties-secretsmanager-secret-generatesecretstring.html); "+
+			"the runner keeps the v7.0.0 value and defaults the template to {}",
+		resource.LogicalID, props.GenerateStringKey,
+	)
 }
 
 func secretSeed(value string) int64 {
@@ -685,7 +737,11 @@ func (r *Runner) provisionAliases(ctx context.Context, spec *Spec) error {
 	if backend.HostURL == "" {
 		return fmt.Errorf("the kms backend has no loopback endpoint for the runner to provision aliases")
 	}
-	client := newKMSClient(backend.HostURL)
+	hostURL := backend.HostURL
+	if front := r.kmsFrontHostURL(); front != "" {
+		hostURL = front
+	}
+	client := newKMSClient(hostURL)
 	for _, resource := range spec.Resources {
 		if resource.Type != typeKMSAlias {
 			continue

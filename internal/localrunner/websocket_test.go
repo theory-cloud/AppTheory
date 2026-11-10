@@ -281,7 +281,7 @@ func TestWebSocketConnectionLifecycle(t *testing.T) {
 		}
 		return LambdaResponse{StatusCode: 200, Body: []byte(`{"ok":true}`)}
 	}}
-	management, err := newWebSocketManagement(t.TempDir(), nil)
+	management, err := newWebSocketManagement(t.TempDir(), nil, nil)
 	if err != nil {
 		t.Fatalf("management: %v", err)
 	}
@@ -549,7 +549,7 @@ func TestManagementConnectionIDPath(t *testing.T) {
 }
 
 func TestWebSocketManagementGone(t *testing.T) {
-	management, err := newWebSocketManagement(t.TempDir(), nil)
+	management, err := newWebSocketManagement(t.TempDir(), nil, nil)
 	if err != nil {
 		t.Fatalf("management: %v", err)
 	}
@@ -570,7 +570,7 @@ func TestWebSocketManagementGone(t *testing.T) {
 		}
 		require.NoError(t, response.Body.Close())
 	}
-	if _, err := newWebSocketManagement(t.TempDir(), nil); err != nil {
+	if _, err := newWebSocketManagement(t.TempDir(), nil, nil); err != nil {
 		t.Fatalf("management certificate: %v", err)
 	}
 	_ = fmt.Sprint(management.connectionCount())

@@ -49,6 +49,12 @@ type Transport struct {
 	// surfaceMu guards the live route table and invoker set a watch reload
 	// swaps. The listener and the server stay; only these values change.
 	surfaceMu sync.RWMutex
+
+	// IAMAuthorize runs the local IAM gate for an AWS_IAM route: it verifies
+	// the request's Signature Version 4 signature, resolves the caller
+	// principal and evaluates the policies. A nil hook refuses an AWS_IAM route
+	// by name instead of bypassing it.
+	IAMAuthorize func(request *http.Request, route Route, path string, stagePrefix string, body []byte) (authorizerResult, error)
 }
 
 // currentAPI returns the route table the transport serves now.
@@ -85,6 +91,12 @@ type authorizerResult struct {
 	Claims map[string]any
 	// PolicyContext is the stringified context a policy authorizer returned.
 	PolicyContext map[string]any
+	// Refusal is the named reason a gate refused the request. It is carried to
+	// the refusal body so a developer sees why, not only the status.
+	Refusal string
+	// Principal is the caller an AWS_IAM gate resolved. The event identity
+	// carries it.
+	Principal *iamPrincipal
 }
 
 // NewTransport builds a transport for an API surface.
@@ -169,7 +181,7 @@ func (t *Transport) ServeHTTP(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 	if authorizer.Status != 0 {
-		t.refuse(writer, request, path, requestID, authorizer.Status)
+		t.refuse(writer, request, path, requestID, authorizer.Status, authorizer.Refusal)
 		return
 	}
 
@@ -183,6 +195,7 @@ func (t *Transport) ServeHTTP(writer http.ResponseWriter, request *http.Request)
 		StagePrefix:             stagePrefix,
 		RawQuery:                request.URL.RawQuery,
 		Header:                  request.Header,
+		Host:                    request.Host,
 		Body:                    body,
 		RemoteAddr:              request.RemoteAddr,
 		RequestID:               requestID,
@@ -192,6 +205,7 @@ func (t *Transport) ServeHTTP(writer http.ResponseWriter, request *http.Request)
 		AuthorizerJWT:           authorizer.JWT,
 		AuthorizerScopes:        authorizer.Scopes,
 		AuthorizerClaims:        authorizer.Claims,
+		IAMPrincipal:            authorizer.Principal,
 	})
 	if err != nil {
 		t.fail(writer, http.StatusBadGateway, "Internal Server Error", requestID, err)
@@ -319,6 +333,11 @@ func (t *Transport) authorizeWithStage(
 	stagePrefix string,
 ) (authorizerResult, error) {
 	switch route.AuthorizerKind {
+	case AuthorizerKindIAM:
+		if t.IAMAuthorize == nil {
+			return authorizerResult{}, fmt.Errorf("route declares AWS_IAM authorization but no local IAM gate is configured")
+		}
+		return t.IAMAuthorize(request, route, path, stagePrefix, body)
 	case AuthorizerKindJWT:
 		return t.authorizeJWT(request, route)
 	case AuthorizerKindCognito:
@@ -401,6 +420,7 @@ func (t *Transport) authorizeRESTLambda(
 		StagePrefix: stagePrefix,
 		RawQuery:    request.URL.RawQuery,
 		Header:      request.Header,
+		Host:        request.Host,
 		RequestID:   requestID,
 		Now:         t.Now(),
 		RemoteAddr:  request.RemoteAddr,
@@ -497,6 +517,7 @@ func (t *Transport) authorizeHTTPLambdaPolicy(
 		StagePrefix: stagePrefix,
 		RawQuery:    request.URL.RawQuery,
 		Header:      request.Header,
+		Host:        request.Host,
 		Body:        body,
 		RemoteAddr:  request.RemoteAddr,
 		RequestID:   requestID,
@@ -687,6 +708,7 @@ func (t *Transport) authorizeRequest(
 		StagePrefix: stagePrefix,
 		RawQuery:    request.URL.RawQuery,
 		Header:      request.Header,
+		Host:        request.Host,
 		Body:        body,
 		RemoteAddr:  request.RemoteAddr,
 		RequestID:   requestID,
@@ -820,7 +842,7 @@ func (t *Transport) jwtVerifier(route Route) (*jwtVerifier, error) {
 }
 
 // refuse writes the status an authorizer denied with.
-func (t *Transport) refuse(writer http.ResponseWriter, request *http.Request, path, requestID string, status int) {
+func (t *Transport) refuse(writer http.ResponseWriter, request *http.Request, path, requestID string, status int, reason string) {
 	message := "Unauthorized"
 	if status == http.StatusForbidden {
 		message = "Forbidden"
@@ -828,7 +850,11 @@ func (t *Transport) refuse(writer http.ResponseWriter, request *http.Request, pa
 	t.logf("%s %s -> %d (authorizer refused; request %s)", request.Method, path, status, requestID)
 	writer.Header().Set("Content-Type", "application/json")
 	writer.WriteHeader(status)
-	_, _ = writer.Write([]byte(`{"message":"` + message + `"}`)) //nolint:errcheck // response already committed
+	body := `{"message":"` + message + `"}`
+	if reason != "" {
+		body = refusalMessage(reason)
+	}
+	_, _ = writer.Write([]byte(body)) //nolint:errcheck // response already committed
 }
 
 func readRequestBody(request *http.Request) ([]byte, error) {

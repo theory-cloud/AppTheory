@@ -346,7 +346,7 @@ func parseCloudWatchJSONValue(raw string) (any, error) {
 		return true, nil
 	case "false":
 		return false, nil
-	case "null":
+	case jsonNull:
 		return nil, nil
 	}
 	if _, err := strconv.ParseFloat(raw, 64); err == nil {

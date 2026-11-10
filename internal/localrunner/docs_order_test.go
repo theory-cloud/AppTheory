@@ -23,7 +23,7 @@ func TestDocumentedRunStepOrderMatchesTheRunner(t *testing.T) {
 		{doc: "**Synthesize.**", calls: []string{"r.Plan("}},
 		{doc: "**Derive.**"},
 		{doc: "**Resolve images.**", calls: []string{"r.resolveImages("}},
-		{doc: "**Prepare the run workspace.**", calls: []string{"r.prepareScratch(", "r.docker.CreateNetwork("}},
+		{doc: "**Prepare the run workspace.**", calls: []string{"r.prepareScratch(", "r.ensureNetwork(", "r.initTLS("}},
 		{doc: "**Start backends.**", calls: []string{"r.startBackends("}},
 		{doc: "**Provision resources.**", calls: []string{"r.provisionResources("}},
 		{doc: "**Resolve environment references.**", calls: []string{"r.resolveEnvironment("}},
@@ -60,8 +60,8 @@ func TestDocumentedRunStepOrderMatchesTheRunner(t *testing.T) {
 	if !strings.Contains(section, "read-only call native to the service") {
 		t.Fatalf("%s: the Start backends step must describe the readiness call", document)
 	}
-	startBackendBody := goFunctionBody(t, "runner.go", "func (r *Runner) startBackend(ctx context.Context, backend string) error {")
-	assertInOrder(t, "runner.go", startBackendBody, "backend start", []string{
+	startBackendBody := goFunctionBody(t, "backends.go", "func (r *Runner) startBackend(ctx context.Context, backend string) error {")
+	assertInOrder(t, "backends.go", startBackendBody, "backend start", []string{
 		"r.docker.PublishedPort(",
 		"r.waitForBackendReady(",
 		`r.logf("backend %s (%s) ready at %s"`,
@@ -71,7 +71,7 @@ func TestDocumentedRunStepOrderMatchesTheRunner(t *testing.T) {
 	assertInOrder(t, "invoke.go", invokeBody, "prepareInvoke call", []string{
 		"r.resolveImages(",
 		"r.prepareScratch(",
-		"r.docker.CreateNetwork(",
+		"r.ensureNetwork(",
 		"r.startBackends(",
 		"r.provisionResources(",
 		"r.resolveEnvironment(",

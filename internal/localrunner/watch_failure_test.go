@@ -119,7 +119,7 @@ func (f *watchBatchFixture) makeImageFunctions(t *testing.T, imageDir string) (m
 		ids[id] = "sha256:old-" + strings.TrimPrefix(id, "Fn")
 		f.runner.invokers[id].Function = previous
 		f.runner.invokers[id].Image = tag
-		f.fake.imageStore()[tag] = ids[id]
+		f.fake.imageStore()[imageTagReference(tag)] = ids[id]
 
 		next := f.next.Functions[index]
 		next.AssetDir = ""
@@ -246,18 +246,179 @@ func TestApplyWatchedSpecRollsBackAContainerImageFunctionByID(t *testing.T) {
 		t.Fatalf("the batch rollback started %q, want the old image id %q", got, oldIDs["Fn1"])
 	}
 	for id, tag := range tags {
-		if got := fake.images[tag]; got != oldIDs[id] {
+		if got := fake.images[imageTagReference(tag)]; got != oldIDs[id] {
 			t.Fatalf("tag %s names %q after the rollback, want the old image %q", tag, got, oldIDs[id])
 		}
 		if got := fixture.runner.invokers[id].Image; got != oldIDs[id] {
 			t.Fatalf("%s runs image %q, want the old image id %q", id, got, oldIDs[id])
 		}
 	}
-	if fake.images[tags["Fn1"]] == "sha256:built-1" || fake.images[tags["Fn2"]] == "sha256:built-2" {
+	if fake.images[imageTagReference(tags["Fn1"])] == "sha256:built-1" || fake.images[imageTagReference(tags["Fn2"])] == "sha256:built-2" {
 		t.Fatalf("a rebuilt image was left as the tag's target: %+v", fake.images)
+	}
+	removed := map[string]bool{}
+	for _, id := range fake.removed {
+		removed[id] = true
+	}
+	for _, id := range []string{"sha256:built-1", "sha256:built-2"} {
+		if !removed[id] {
+			t.Fatalf("the rebuilt image %s survived the rollback: %v", id, fake.removed)
+		}
+	}
+	if len(fake.refused) != 0 {
+		t.Fatalf("the daemon refused a removal of this run's own rebuild: %v", fake.refused)
 	}
 	if !strings.Contains(fixture.output.String(), "rolled back 1 replaced function(s); the previous assembly keeps serving") {
 		t.Fatalf("the log does not name the rollback: %s", fixture.output.String())
+	}
+}
+
+func TestApplyWatchedSpecKeepsAnImageAnotherTagUses(t *testing.T) {
+	// Both builds produce the same content id, and a foreign tag names it, as
+	// a concurrent run's tag could. After the rollback moves this run's tags
+	// back, the rebuilt image carries only that foreign tag, so the inspect must
+	// leave it alone without attempting an unforced removal (which the daemon
+	// would answer by untagging the foreign tag and deleting the image).
+	fake := &restartFakeDocker{sharedBuildID: "sha256:shared", failRuns: map[int]bool{2: true}}
+	fixture := newWatchBatchFixture(t, fake)
+	tags, oldIDs := fixture.makeImageFunctions(t, filepath.Join(fixture.newDir, "image"))
+	fake.imageStore()["other-run-image:latest"] = "sha256:shared"
+
+	applied, err := fixture.runner.applyWatchedSpec(context.Background(), fixture.next, []string{"Fn1", "Fn2"}, fixture.newDir)
+	if err == nil || applied {
+		t.Fatalf("a failed image function start was applied: applied=%v err=%v", applied, err)
+	}
+	if got := fake.imageStore()["other-run-image:latest"]; got != "sha256:shared" {
+		t.Fatalf("a foreign tag's image was removed: %q", got)
+	}
+	if len(fake.removed) != 0 || len(fake.refused) != 0 {
+		t.Fatalf("the cleanup touched an image a foreign tag names: removed=%v refused=%v", fake.removed, fake.refused)
+	}
+	if !strings.Contains(fixture.output.String(), "image sha256:shared is still referenced by tag other-run-image:latest; leaving it in place") {
+		t.Fatalf("the log does not explain why the image was kept: %s", fixture.output.String())
+	}
+	for id, tag := range tags {
+		if got := fake.images[imageTagReference(tag)]; got != oldIDs[id] {
+			t.Fatalf("tag %s names %q after the rollback, want the old image %q", tag, got, oldIDs[id])
+		}
+	}
+}
+
+func TestApplyWatchedSpecKeepsAnImageAContainerUses(t *testing.T) {
+	// A stopped container, here a concurrent run's, is the reference the daemon
+	// always refuses to remove an image under. The inspect must see it and skip
+	// the removal rather than rely on that refusal.
+	fake := &restartFakeDocker{sharedBuildID: "sha256:shared", failRuns: map[int]bool{2: true}}
+	fixture := newWatchBatchFixture(t, fake)
+	fixture.makeImageFunctions(t, filepath.Join(fixture.newDir, "image"))
+	fake.containerStore()["other-run-container"] = "sha256:shared"
+
+	applied, err := fixture.runner.applyWatchedSpec(context.Background(), fixture.next, []string{"Fn1", "Fn2"}, fixture.newDir)
+	if err == nil || applied {
+		t.Fatalf("a failed image function start was applied: applied=%v err=%v", applied, err)
+	}
+	if len(fake.removed) != 0 || len(fake.refused) != 0 {
+		t.Fatalf("the cleanup touched an image a container uses: removed=%v refused=%v", fake.removed, fake.refused)
+	}
+	if !strings.Contains(fixture.output.String(), "image sha256:shared is still referenced by container other-run-container; leaving it in place") {
+		t.Fatalf("the log does not explain why the image was kept: %s", fixture.output.String())
+	}
+}
+
+func TestApplyWatchedSpecKeepsAnImageADigestReferencePins(t *testing.T) {
+	// A repository outside the run pins the rebuild's content by digest with no
+	// tag of its own. After the rollback moves this run's tag back, only that
+	// digest names the rebuilt image, so the inspect must leave it and name the
+	// reference; the other rebuild still loses its dangling image.
+	fake := &restartFakeDocker{failRuns: map[int]bool{2: true}}
+	fixture := newWatchBatchFixture(t, fake)
+	fixture.makeImageFunctions(t, filepath.Join(fixture.newDir, "image"))
+	pin := "ghcr.io/other/app@sha256:" + strings.Repeat("d", 64)
+	fake.pinnedDigests = map[string][]string{"sha256:built-1": {pin}}
+
+	applied, err := fixture.runner.applyWatchedSpec(context.Background(), fixture.next, []string{"Fn1", "Fn2"}, fixture.newDir)
+	if err == nil || applied {
+		t.Fatalf("a failed image function start was applied: applied=%v err=%v", applied, err)
+	}
+	removed := map[string]bool{}
+	for _, id := range fake.removed {
+		removed[id] = true
+	}
+	if !removed["sha256:built-2"] {
+		t.Fatalf("the other rebuild survived the rollback: %v", fake.removed)
+	}
+	if removed["sha256:built-1"] {
+		t.Fatalf("the cleanup removed an image a digest reference pins: %v", fake.removed)
+	}
+	if len(fake.refused) != 0 {
+		t.Fatalf("the cleanup attempted a removal the daemon would refuse: %v", fake.refused)
+	}
+	if !strings.Contains(fixture.output.String(), "image sha256:built-1 is still referenced by digest "+pin+"; leaving it in place") {
+		t.Fatalf("the log does not name the pinned digest: %s", fixture.output.String())
+	}
+}
+
+func TestRemoveDanglingImageRemovesAnImageOnlyItsOwnTagNames(t *testing.T) {
+	// The added-function shape: the image still carries the tag this run wrote,
+	// which docker reports as "<tag>:latest", and the store derives a digest
+	// from it. Both are the run's own references, so the removal proceeds.
+	fake := &restartFakeDocker{}
+	fixture := newWatchBatchFixture(t, fake)
+	ownedTag := fixture.runner.functionImageTag(FunctionSpec{LogicalID: "Fn3"})
+	fake.imageStore()[imageTagReference(ownedTag)] = "sha256:added"
+	digests := fake.digestsFor("sha256:added")
+	if len(digests) != 1 || !strings.HasSuffix(digests[0], "@sha256:added") {
+		t.Fatalf("the fake does not model the digest derived from this run's tag: %v", digests)
+	}
+
+	fixture.runner.removeDanglingImage(context.Background(), "sha256:added", ownedTag, "the added function's image")
+	if len(fake.removed) != 1 || fake.removed[0] != "sha256:added" {
+		t.Fatalf("removed images = %v, want this run's own build", fake.removed)
+	}
+	if !strings.Contains(fixture.output.String(), "removed image sha256:added") {
+		t.Fatalf("the log does not name the removal: %s", fixture.output.String())
+	}
+	if strings.Contains(fixture.output.String(), "leaving it in place") {
+		t.Fatalf("the cleanup kept an image only this run names: %s", fixture.output.String())
+	}
+}
+
+func TestApplyWatchedSpecRemovesTheImageOfAnAddedFunctionItRollsBack(t *testing.T) {
+	// Fn3 is added by the reload and starts; Fn1's replacement then fails. The
+	// rollback stops Fn3; the image this run built for it has no previous
+	// content and would otherwise leak.
+	fake := &restartFakeDocker{failRuns: map[int]bool{2: true}}
+	fixture := newWatchBatchFixture(t, fake)
+	imageDir := filepath.Join(fixture.newDir, "image")
+	if err := os.MkdirAll(imageDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	added := FunctionSpec{
+		LogicalID:   "Fn3",
+		Runtime:     "nodejs24.x",
+		Handler:     "index.handler",
+		PackageType: "Image",
+		ImageAsset:  &DockerImageAssetSpec{Hash: "new", Directory: imageDir},
+		MemoryMB:    128,
+		Timeout:     3,
+	}
+	changed := fixture.previous["Fn1"]
+	changed.Environment = map[string]string{"A": "3"}
+	fixture.next.Functions = []FunctionSpec{added, changed}
+
+	applied, err := fixture.runner.applyWatchedSpec(context.Background(), fixture.next, []string{"Fn3", "Fn1"}, fixture.newDir)
+	if err == nil || applied {
+		t.Fatalf("a failed batch was applied: applied=%v err=%v", applied, err)
+	}
+	tag := fixture.runner.functionImageTag(added)
+	if _, ok := fake.imageStore()[imageTagReference(tag)]; ok {
+		t.Fatalf("the added function's tag survived the rollback: %+v", fake.imageStore())
+	}
+	if len(fake.removed) != 1 || fake.removed[0] != "sha256:built-1" {
+		t.Fatalf("removed images = %v, want the added function's rebuild", fake.removed)
+	}
+	if _, ok := fixture.runner.invokers["Fn3"]; ok {
+		t.Fatal("the rolled-back added function stayed in the invoker set")
 	}
 }
 
@@ -275,7 +436,7 @@ func TestApplyWatchedSpecRemovesTheReplacedImageAfterSuccess(t *testing.T) {
 	if fake.runs != 1 {
 		t.Fatalf("docker run calls = %d, want 1", fake.runs)
 	}
-	if got := fake.images[tags["Fn1"]]; got == "" || got == oldIDs["Fn1"] {
+	if got := fake.images[imageTagReference(tags["Fn1"])]; got == "" || got == oldIDs["Fn1"] {
 		t.Fatalf("the tag names %q after a successful apply, want the rebuilt image", got)
 	}
 	if len(fake.removed) != 1 || fake.removed[0] != oldIDs["Fn1"] {
@@ -335,13 +496,13 @@ func TestApplyWatchedSpecLogsATagRestoreFailure(t *testing.T) {
 	}
 }
 
-func TestApplyWatchedSpecKeepsTheNewAssemblyWhenTheRollbackFails(t *testing.T) {
+func TestApplyWatchedSpecKeepsTheNewAssemblyWhenEveryRollbackFails(t *testing.T) {
 	fake := &restartFakeDocker{failRuns: map[int]bool{2: true, 4: true}}
 	fixture := newWatchBatchFixture(t, fake)
 
 	applied, err := fixture.runner.applyWatchedSpec(context.Background(), fixture.next, []string{"Fn1", "Fn2"}, fixture.newDir)
 	if err == nil || !applied {
-		t.Fatalf("a partially applied batch was reported as rolled back: applied=%v err=%v", applied, err)
+		t.Fatalf("a batch whose only rollback failed was reported as rolled back: applied=%v err=%v", applied, err)
 	}
 	if fake.runs != 4 {
 		t.Fatalf("docker run calls = %d, want 4", fake.runs)
@@ -349,11 +510,60 @@ func TestApplyWatchedSpecKeepsTheNewAssemblyWhenTheRollbackFails(t *testing.T) {
 	if _, statErr := os.Stat(fixture.newDir); statErr != nil {
 		t.Fatalf("the new assembly directory a container may mount was removed: %v", statErr)
 	}
-	if !strings.Contains(fixture.output.String(), "partially applied: 1 restarted, 1 not; a restart is required") {
-		t.Fatalf("the log does not name the partial apply: %s", fixture.output.String())
+	log := fixture.output.String()
+	if !strings.Contains(log, "no replaced function was restored; a restart is required") {
+		t.Fatalf("the log does not report the total restore failure: %s", log)
 	}
-	if strings.Contains(fixture.output.String(), "the previous assembly keeps serving") {
-		t.Fatalf("the partial apply claimed the previous assembly keeps serving: %s", fixture.output.String())
+	for _, unwanted := range []string{"partially applied", "the previous assembly keeps serving"} {
+		if strings.Contains(log, unwanted) {
+			t.Fatalf("the total restore failure claimed %q: %s", unwanted, log)
+		}
+	}
+}
+
+func TestApplyWatchedSpecReportsNoApplyWhenTheFirstRestoreFails(t *testing.T) {
+	fake := &restartFakeDocker{failRuns: map[int]bool{1: true, 2: true}}
+	fixture := newWatchBatchFixture(t, fake)
+
+	applied, err := fixture.runner.applyWatchedSpec(context.Background(), fixture.next, []string{"Fn1", "Fn2"}, fixture.newDir)
+	if err == nil || !applied {
+		t.Fatalf("a failed first restore was reported as a clean rollback: applied=%v err=%v", applied, err)
+	}
+	if _, statErr := os.Stat(fixture.newDir); statErr != nil {
+		t.Fatalf("the new assembly directory a container may mount was removed: %v", statErr)
+	}
+	log := fixture.output.String()
+	if !strings.Contains(log, "no function was applied and the failed function's previous definition was not restored") {
+		t.Fatalf("the log does not report the failed restore: %s", log)
+	}
+	for _, unwanted := range []string{"partially applied", "the previous assembly keeps serving"} {
+		if strings.Contains(log, unwanted) {
+			t.Fatalf("the failed first restore claimed %q: %s", unwanted, log)
+		}
+	}
+}
+
+func TestFailWatchedApplyReportsAPartialRollback(t *testing.T) {
+	fake := &restartFakeDocker{failRun: 1}
+	fixture := newWatchBatchFixture(t, fake)
+	applied := []appliedWatchedFunction{
+		{process: fixture.runner.invokers["Fn1"], previous: fixture.previous["Fn1"]},
+		{process: fixture.runner.invokers["Fn2"], previous: fixture.previous["Fn2"]},
+	}
+	// The reverse rollback tries Fn2 first, so the first run it starts fails.
+	stillServing, err := fixture.runner.failWatchedApply(
+		context.Background(), fixture.next, []string{"Fn1", "Fn2"}, fixture.newDir, applied, errors.New("apply failed"))
+	if err == nil || !stillServing {
+		t.Fatalf("a partial rollback was reported as a clean rollback: applied=%v err=%v", stillServing, err)
+	}
+	log := fixture.output.String()
+	if !strings.Contains(log, "partially applied: 1 replaced function(s) restored, 1 not; a restart is required") {
+		t.Fatalf("the log does not name the partial rollback: %s", log)
+	}
+	for _, unwanted := range []string{"no replaced function was restored", "the previous assembly keeps serving"} {
+		if strings.Contains(log, unwanted) {
+			t.Fatalf("the partial rollback claimed %q: %s", unwanted, log)
+		}
 	}
 }
 

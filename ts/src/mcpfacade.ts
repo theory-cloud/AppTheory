@@ -40,7 +40,9 @@ import {
   BrokerLegacyLineageUnsupportedError,
   BrokerLockedError,
   BrokerNotFoundError,
+  BrokerFamilyExistsError,
   BrokerRevokedError,
+  BrokerSuccessorExistsError,
   BrokerVersionConflictError,
   canonicalizeIssuerURL,
   canonicalResourceURL,
@@ -51,24 +53,25 @@ import {
   protectedResourceMetadataHandler,
   ProviderError,
   requireBearerTokenGuard,
+  REFUSAL_REASON_UNCLASSIFIED,
   type AuthorizationCodeRecord,
   type AuthorizationServerMetadata,
   type ClientRecord,
   type ProtectedResourceMetadata,
   type Provider,
   type ProviderErrorClass,
+  type RefusalHook,
   type RequireBearerTokenOptions,
   type RouteRefreshBrokerHandleTTLReporter,
   type RouteRefreshBrokerRecord,
   type RouteRefreshBrokerTransactionalFamilyStore,
-  type RouteRefreshFamilyRotation,
   type Stores,
   type TokenClaims,
   type TokenSet,
   type TransactionRecord,
 } from "./oauth/index.js";
 import { originURL } from "./response.js";
-import type { Response } from "./types.js";
+import type { Headers, Response } from "./types.js";
 
 /**
  * URL mode selects the source of absolute URLs in facade metadata documents.
@@ -283,6 +286,15 @@ export interface FacadeConfig {
    * handle, an authorization code, an ID token, or cookie material.
    */
   routeRefreshEvents?: RouteRefreshEventHook;
+  /**
+   * Optionally receives one structured, redacted event for every 400, 401,
+   * 403, 404, and 405 the facade renders on its own routes (authorize,
+   * callback, token, register, and the metadata documents), so a refusal a real
+   * client hit is answerable from telemetry instead of being a bare status. The
+   * MCP transport routes report through the MCP handler's own hook, so one
+   * refusal is never reported twice. A throwing hook is contained.
+   */
+  refusalHook?: RefusalHook;
 }
 
 /** One endpoint-kind route family installed by the helper. */
@@ -344,6 +356,7 @@ interface NormalizedConfig {
   transportPosture: McpTransportPosture;
   requireBearerToken: RequireBearerTokenOptions | undefined;
   frontChannel: FrontChannelConfig | null;
+  refusalHook: RefusalHook | undefined;
 }
 
 /**
@@ -477,6 +490,7 @@ function normalizeConfig(config: FacadeConfig): NormalizedConfig {
   const normalized = normalizeDerivedConfig(config);
   normalized.transportPosture = transportPosture;
   normalized.requireBearerToken = config.requireBearerToken;
+  normalized.refusalHook = config.refusalHook;
   normalized.mcpHandler = config.mcpHandler;
   normalized.callbackHandler = config.callbackHandler ?? null;
 
@@ -550,6 +564,7 @@ function normalizeDerivedConfig(config: FacadeConfig): NormalizedConfig {
     issuerMode,
     urlMode: config.urlMode,
     publicBaseURL,
+    refusalHook: config.refusalHook,
     upstreamCallbackPath,
     allowedHostnames,
     scopes,
@@ -1083,12 +1098,18 @@ function buildRegistrations(
     registrations.push({
       method: "GET",
       pattern: route.protectedResourcePattern,
-      handler: protectedResourceHandler(config, route.kind),
+      handler: observeFacadeRefusal(
+        config.refusalHook,
+        protectedResourceHandler(config, route.kind),
+      ),
       authRequired: false,
       posture: surfacePosture,
     });
 
-    const discoveryHandler = authorizationServerHandler(config, route.kind);
+    const discoveryHandler = observeFacadeRefusal(
+      config.refusalHook,
+      authorizationServerHandler(config, route.kind),
+    );
     registrations.push(
       {
         method: "GET",
@@ -1114,6 +1135,7 @@ function buildRegistrations(
           handler: checkedOAuthFacadeHandler(
             route.kind,
             true,
+            config.refusalHook,
             config.authorizeHandlers[route.kind],
           ),
           authRequired: false,
@@ -1125,6 +1147,7 @@ function buildRegistrations(
           handler: checkedOAuthFacadeHandler(
             route.kind,
             false,
+            config.refusalHook,
             config.tokenHandlers[route.kind],
           ),
           authRequired: false,
@@ -1140,6 +1163,7 @@ function buildRegistrations(
           handler: checkedOAuthFacadeHandler(
             route.kind,
             true,
+            config.refusalHook,
             authorizeHandlerFor(config, route.kind),
           ),
           authRequired: false,
@@ -1151,6 +1175,7 @@ function buildRegistrations(
           handler: checkedOAuthFacadeHandler(
             route.kind,
             false,
+            config.refusalHook,
             tokenHandlerFor(config, route.kind),
           ),
           authRequired: false,
@@ -1164,6 +1189,7 @@ function buildRegistrations(
           pattern: route.registerPattern,
           handler: checkedRegisterHandler(
             route.kind,
+            config.refusalHook,
             registerHandlerFor(config, route.kind),
           ),
           authRequired: false,
@@ -1177,6 +1203,7 @@ function buildRegistrations(
         pattern: route.registerPattern,
         handler: checkedRegisterHandler(
           route.kind,
+          config.refusalHook,
           config.registerHandlers[route.kind],
         ),
         authRequired: false,
@@ -1700,6 +1727,72 @@ function normalizeNonEmptyList(label: string, values: string[]): string[] {
   return normalized;
 }
 
+const REFUSAL_STATUSES = new Set([400, 401, 403, 404, 405]);
+
+/**
+ * Wraps one facade route handler so every 400, 401, 403, 404, and 405 it renders
+ * produces exactly one structured refusal event. The MCP transport routes are
+ * not wrapped here: they report through the MCP handler's own hook.
+ */
+function observeFacadeRefusal(
+  hook: RefusalHook | undefined,
+  next: Handler,
+): Handler {
+  if (!hook) return next;
+  return async (ctx) => {
+    const response = await next(ctx);
+    try {
+      if (response && REFUSAL_STATUSES.has(response.status)) {
+        const code = facadeResponseErrorCode(response);
+        hook(ctx, {
+          at: typeof ctx.now === "function" ? ctx.now() : new Date(),
+          class: "facade",
+          reason: code === "" ? REFUSAL_REASON_UNCLASSIFIED : code,
+          status: response.status,
+          method: ctx.request.method,
+          path: ctx.request.path,
+          ...(code === "" ? {} : { errorCode: code }),
+          ...(responseChallenge(response.headers) === ""
+            ? {}
+            : { challenge: responseChallenge(response.headers) }),
+        });
+      }
+    } catch {
+      return response;
+    }
+    return response;
+  };
+}
+
+/** Reads the client-facing error code from either facade error body shape. */
+function facadeResponseErrorCode(response: Response): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(response.body ?? "").toString("utf8"));
+  } catch {
+    return "";
+  }
+  const envelope = parsed as { error?: unknown };
+  if (typeof envelope.error === "string") return envelope.error.trim();
+  if (envelope.error && typeof envelope.error === "object") {
+    const code = (envelope.error as { code?: unknown }).code;
+    if (typeof code === "string") return code.trim();
+  }
+  return "";
+}
+
+/** Names the WWW-Authenticate form a refusal carried. */
+function responseChallenge(headers: Headers | undefined): string {
+  for (const [name, values] of Object.entries(headers ?? {})) {
+    if (name.trim().toLowerCase() !== "www-authenticate") continue;
+    const challenge = String((values ?? [])[0] ?? "");
+    if (challenge.includes("insufficient_scope")) return "insufficient_scope";
+    if (challenge.includes("resource_metadata")) return "resource_metadata";
+    return "bare";
+  }
+  return "";
+}
+
 function checkedMCPHandler(kind: EndpointKind, next: Handler): Handler {
   return (ctx) => {
     let endpoint: EndpointPath;
@@ -1722,8 +1815,10 @@ function checkedMCPHandler(kind: EndpointKind, next: Handler): Handler {
 function checkedOAuthFacadeHandler(
   kind: EndpointKind,
   authorize: boolean,
+  hook: RefusalHook | undefined,
   next: Handler,
 ): Handler {
+  next = observeFacadeRefusal(hook, next);
   return (ctx) => {
     const endpoint = endpointFromRouteParams(ctx, kind);
     const expectedPath = authorize
@@ -1738,7 +1833,12 @@ function checkedOAuthFacadeHandler(
   };
 }
 
-function checkedRegisterHandler(kind: EndpointKind, next: Handler): Handler {
+function checkedRegisterHandler(
+  kind: EndpointKind,
+  hook: RefusalHook | undefined,
+  next: Handler,
+): Handler {
+  next = observeFacadeRefusal(hook, next);
   return (ctx) => {
     const endpoint = endpointFromRouteParams(ctx, kind);
     const expectedPath = oauthRegisterPath(endpoint);
@@ -3397,6 +3497,23 @@ export const REFRESH_CHAIN_ROOT_GENERATION = 1;
 const REFRESH_COALESCE_WAIT_CAP_MS = 3_000;
 
 /**
+ * The shortest remaining access-token lifetime a replayed grace body may
+ * report. A stored body whose access token has less than this left is never
+ * replayed: the facade rotates a fresh one instead. It exists because the defect
+ * this policy replaces handed a client an access token 300 ms before the
+ * resource refused it, and a credential the facade issues must be accepted for
+ * at least the lifetime it reports.
+ */
+const REFRESH_CREDENTIAL_FLOOR_MS = 5_000;
+
+/**
+ * How many stored successor links the legacy migration follows before giving up.
+ * A v6.4.0-era chain can be long, and the walk only ever follows server-written
+ * bodies, so the bound is a corruption guard rather than a security decision.
+ */
+const LEGACY_LINEAGE_WALK_LIMIT = 64;
+
+/**
  * How often a waiter re-reads the broker record while the lock is held, and how
  * long a version-conflict retry waits before re-reading. It is the granularity of
  * the wait, not a security decision, and it only has to be small enough that a
@@ -3443,6 +3560,12 @@ export const ROUTE_REFRESH_OUTCOME_REVOKED_WALK = "revoked_walk" as const;
 export const ROUTE_REFRESH_OUTCOME_RATE_LIMITED = "rate_limited" as const;
 export const ROUTE_REFRESH_OUTCOME_BINDING_REJECTED =
   "binding_rejected" as const;
+/**
+ * A stale predecessor presentation served by rotating the family's live head.
+ * Additive: the client receives fresh credentials and the family is not revoked.
+ */
+export const ROUTE_REFRESH_OUTCOME_ROTATED_FROM_HEAD =
+  "rotated_from_head" as const;
 
 /** The failure or trigger reasons of a validation or state event. */
 export const ROUTE_REFRESH_REASON_HANDLE_MALFORMED =
@@ -3463,7 +3586,7 @@ export const ROUTE_REFRESH_REASON_FAMILY_REVOKE_UNAVAILABLE =
   "family_revoke_unavailable" as const;
 export const ROUTE_REFRESH_REASON_FAMILY_REVOKE_FAILED =
   "family_revoke_failed" as const;
-/** Retained for telemetry compatibility; reuse is reuse on first occurrence. */
+/** Retained for telemetry compatibility; a beyond-grace presentation reports stale_predecessor and is served. */
 export const ROUTE_REFRESH_REASON_ALREADY_SERVED = "already_served" as const;
 export const ROUTE_REFRESH_REASON_UPSTREAM_REJECTED =
   "upstream_rejected" as const;
@@ -3476,6 +3599,20 @@ export const ROUTE_REFRESH_REASON_LEGACY_LINEAGE =
   "legacy_lineage_unsupported" as const;
 export const ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE =
   "family_state_unavailable" as const;
+/**
+ * A rotated-away handle presented beyond its grace window. Ordinary client
+ * behaviour - a restart with a stale stored copy, a second process on one login,
+ * a lost response - produces exactly this presentation, so it is served and
+ * never treated as theft.
+ */
+export const ROUTE_REFRESH_REASON_STALE_PREDECESSOR =
+  "stale_predecessor" as const;
+/** A family whose live head aged out, leaving no member that can rotate. */
+export const ROUTE_REFRESH_REASON_FAMILY_HEAD_ABSENT =
+  "family_head_absent" as const;
+/** A family-less pre-policy record migrated in code onto a fresh family. */
+export const ROUTE_REFRESH_REASON_LEGACY_LINEAGE_ADOPTED =
+  "legacy_lineage_adopted" as const;
 
 /** The store's absent-versus-expired signal; the client body stays uniform. */
 export const ROUTE_REFRESH_EXPIRY_SIGNAL_ABSENT = "absent" as const;
@@ -3724,28 +3861,52 @@ async function handleRefreshTokenGrant(
     if (resolved.response !== null) {
       return resolved.response;
     }
-    const record = resolved.record;
-    if (record === null) {
+    let presented = resolved.record;
+    if (presented === null) {
       throw new Error(`${ERROR_PREFIX} refresh record resolution is empty`);
     }
-    // A record whose grace deadline has passed was already rotated away.
-    // `resolveRefreshRecord` only returns such a record; a live grace window is
-    // served there. Beyond grace every presentation is reuse: the family is
-    // revoked, and no path hands out access, refresh, or ID token material.
-    if (record.graceExpiresAt !== undefined) {
-      return await revokeRotatedRefreshFamily(
-        config,
-        ctx,
-        record,
-        ROUTE_REFRESH_REASON_ROTATED_REUSE,
-      );
+    // A record minted before the family policy carries no family identity. It is
+    // migrated in code rather than refused: the client that holds it has a live
+    // upstream grant, and demanding a manual re-login would be a break, not a
+    // migration.
+    if ((presented.familyHash ?? "") === "") {
+      const adoption = await adoptLegacyLineage(config, ctx, presented);
+      if (adoption.response !== null) {
+        return adoption.response;
+      }
+      if (adoption.record === null) {
+        if (Date.now() - start >= REFRESH_COALESCE_WAIT_CAP_MS) {
+          return facadeTemporarilyUnavailablePage();
+        }
+        await sleep(REFRESH_COALESCE_POLL_INTERVAL_MS);
+        continue;
+      }
+      presented = adoption.record;
+    }
+    // A presented record that carries a grace deadline was rotated away. The
+    // live grace replay was already served inside resolveRefreshRecord, so this
+    // is a stale predecessor: rotate the family's head, not the predecessor, so
+    // the upstream is never presented material that has already been rotated.
+    const stale = presented.graceExpiresAt !== undefined;
+    let target = presented;
+    if (stale) {
+      const head = await refreshFamilyHead(config, ctx, presented);
+      if (head.response !== null) {
+        return head.response;
+      }
+      if (head.record === null) {
+        throw new Error(
+          `${ERROR_PREFIX} refresh family head resolution is empty`,
+        );
+      }
+      target = head.record;
     }
     let locked: RouteRefreshBrokerRecord;
     try {
       locked = await front.stores.routeRefreshBroker.acquireLock(
-        record.handleHash,
+        target.handleHash,
         newOpaqueToken(),
-        record.version,
+        target.version,
       );
     } catch (err) {
       const outcome = refreshLockFailure(err, Date.now() - start);
@@ -3760,11 +3921,14 @@ async function handleRefreshTokenGrant(
     const lockEvent = routeRefreshEventFor(
       ROUTE_REFRESH_EVENT_LOCK_ACQUIRED,
       ctx.now(),
-      record,
+      target,
     );
     lockEvent.statusTo = "refreshing";
     emitRouteRefresh(front, lockEvent);
-    return await rotateRefreshGrant(config, ctx, record, locked);
+    if (stale) {
+      return await rotateStalePredecessor(config, ctx, presented, locked);
+    }
+    return await rotateRefreshGrant(config, ctx, target, locked);
   }
 }
 
@@ -3928,22 +4092,14 @@ async function resolveRefreshRecord(
     );
     return { record: null, response: facadeErrorPage(400, "invalid_grant") };
   }
-  // A family-less record predates the family policy and is unsupported for
-  // ordinary rotation: an unknown-length lineage cannot be normalized without
-  // detaching a suffix from ancestors whose later reuse must revoke it. A
-  // family-marked record with generation below the root is equally corrupt.
-  // Both fail closed before the lock and before any upstream call.
-  if ((record.familyHash ?? "") === "") {
-    emitRecordStateRejection(
-      front,
-      ctx,
-      record,
-      ROUTE_REFRESH_REASON_LEGACY_LINEAGE,
-      "",
-    );
-    return { record: null, response: facadeErrorPage(400, "invalid_grant") };
-  }
-  if ((record.chainGeneration ?? 0) < REFRESH_CHAIN_ROOT_GENERATION) {
+  // A family-less record predates the family policy. It is not refused: the
+  // caller migrates it in code so a client that upgraded keeps working with no
+  // manual data operation. A family-marked record with a generation below the
+  // root is corrupt and fails closed before the lock and any upstream call.
+  if (
+    (record.familyHash ?? "") !== "" &&
+    (record.chainGeneration ?? 0) < REFRESH_CHAIN_ROOT_GENERATION
+  ) {
     emitRecordStateRejection(
       front,
       ctx,
@@ -3953,17 +4109,10 @@ async function resolveRefreshRecord(
     );
     return { record: null, response: facadeErrorPage(400, "invalid_grant") };
   }
-  // R1.4 reuse: a non-zero grace deadline that has passed means the handle was
-  // already rotated and the window in which the successor response can be
-  // replayed has closed. The presentation is returned to the caller for depth
-  // classification; it is never served handle material from here.
-  const graceExpiresAt = record.graceExpiresAt;
-  if (
-    graceExpiresAt !== undefined &&
-    !(ctx.now().getTime() < graceExpiresAt.getTime())
-  ) {
-    return { record, response: null };
-  }
+  // R1.4 reuse: a record that carries a grace deadline was rotated away. A live
+  // window is served below; a closed one, or a stored body that is no longer
+  // replayable, is returned to the caller as a stale predecessor and served by
+  // rotating the family's live head.
   // R1.5 (ruling R4): scope and resource are validated on EVERY refresh
   // request, including one that will be answered from the grace window, so a
   // request that asks for something other than what the record grants is
@@ -3979,9 +4128,13 @@ async function resolveRefreshRecord(
     return { record: null, response: bindingFailure.response };
   }
   // R1.6 grace: the rotation completed inside the window, so the successor
-  // response is replayed byte-for-byte. This is the idempotent lost-response
-  // path and also how a concurrent waiter is served.
-  const grace = refreshGraceResponse(record, ctx.now());
+  // response is replayed. The body carries the same access token and handle;
+  // only expires_in is recomputed to the lifetime the credential has left.
+  const grace = refreshGraceResponse(
+    record,
+    ctx.now(),
+    front.policy.graceWindowSeconds,
+  );
   if (grace.served) {
     const event = routeRefreshEventFor(
       ROUTE_REFRESH_EVENT_GRACE_SERVED,
@@ -4058,16 +4211,18 @@ function formPresentValue(
 
 /**
  * Renders the stored successor response when the rotation is still inside its
- * grace window (ruling R1.6). The body is the exact byte sequence the winning
- * caller received, so the replay is byte-identical. A record that claims a live
- * grace window but carries no stored response is an internal inconsistency: it is
- * answered with the retryable class rather than an empty success or a false
- * invalid_grant, and it self-heals when the window closes and the request becomes
- * reuse.
+ * grace window (ruling R1.6). The body carries the same access token and the
+ * same successor handle the winning caller received, so a lost response
+ * recovers without a second upstream call. Only `expires_in` is recomputed,
+ * because a replayed credential must be accepted by the resource for at least
+ * the lifetime the response states; a stored body whose access token has less
+ * than the credential floor left is not replayed at all, and the caller rotates
+ * a fresh one instead.
  */
 function refreshGraceResponse(
   record: RouteRefreshBrokerRecord,
   now: Date,
+  graceWindowSeconds: number,
 ): { response: Response | null; served: boolean } {
   const graceExpiresAt = record.graceExpiresAt;
   if (
@@ -4080,23 +4235,67 @@ function refreshGraceResponse(
   if (stored === "") {
     return { response: facadeTemporarilyUnavailablePage(), served: true };
   }
-  return {
-    response: refreshTokenPage(Buffer.from(stored, "utf8")),
-    served: true,
-  };
+  const body = Buffer.from(stored, "utf8");
+  const expiresAt =
+    record.graceAccessTokenExpiresAt ??
+    new Date(
+      graceExpiresAt.getTime() -
+        graceWindowSeconds * 1000 +
+        storedAccessTokenLifetimeSeconds(body) * 1000,
+    );
+  const remainingMS = expiresAt.getTime() - now.getTime();
+  if (remainingMS < REFRESH_CREDENTIAL_FLOOR_MS) {
+    return { response: null, served: false };
+  }
+  const replayed = replayTokenBody(body, remainingMS);
+  if (replayed === null) {
+    return { response: null, served: false };
+  }
+  return { response: refreshTokenPage(replayed), served: true };
+}
+
+/** The access-token lifetime a stored successor body states, or zero. */
+function storedAccessTokenLifetimeSeconds(body: Buffer): number {
+  try {
+    const parsed = JSON.parse(body.toString("utf8")) as {
+      expires_in?: unknown;
+    };
+    const value = parsed.expires_in;
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+      return value;
+    }
+  } catch {
+    return 0;
+  }
+  return 0;
 }
 
 /**
- * Performs the held-lock rotation of ruling R1 step 7. The lock is held when this
- * is called, and the returned record is the presented one at version+1 with
- * status refreshing and the lock owner and expiry set.
+ * Rewrites a stored successor body's `expires_in` to what the credential has
+ * left, so a replay never advertises a lifetime the access token does not have.
+ * The access token, its type, the scope, and the successor handle are unchanged.
  */
-async function rotateRefreshGrant(
+function replayTokenBody(body: Buffer, remainingMS: number): Buffer | null {
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(body.toString("utf8")) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  parsed["expires_in"] = Math.max(1, Math.floor(remainingMS / 1000));
+  return Buffer.from(JSON.stringify(parsed), "utf8");
+}
+
+/**
+ * Performs one persisted rotation. The lock is held on the presented live head
+ * when this is called; nothing is minted unless every write landed.
+ */
+async function performRefreshRotation(
   config: NormalizedConfig,
   ctx: Context,
   presented: RouteRefreshBrokerRecord,
   locked: RouteRefreshBrokerRecord,
-): Promise<Response> {
+): Promise<{ rotation: PersistedRotation | null; response: Response | null }> {
   const front = config.frontChannel;
   if (front === null) {
     throw new Error(`${ERROR_PREFIX} front channel is not configured`);
@@ -4110,7 +4309,10 @@ async function rotateRefreshGrant(
       upstreamClientId: locked.upstreamClientId,
     });
   } catch (err) {
-    return await failedRefreshGrant(config, ctx, presented, locked, err);
+    return {
+      rotation: null,
+      response: await failedRefreshGrant(config, ctx, presented, locked, err),
+    };
   }
   const handle = newOpaqueToken();
   const successor = successorBrokerRecord(presented, handle, upstream);
@@ -4129,22 +4331,30 @@ async function rotateRefreshGrant(
       `${ERROR_PREFIX} route refresh broker store lacks the transactional family capability`,
     );
   }
+  const rotation: PersistedRotation = {
+    body,
+    successor,
+    graceExpiresAt: new Date(
+      ctx.now().getTime() + front.policy.graceWindowSeconds * 1000,
+    ),
+    accessExpiresAt: new Date(
+      ctx.now().getTime() + accessTokenLifetimeMilliseconds(upstream),
+    ),
+  };
   // One atomic transaction creates the successor and updates the presented
   // record's grace response/status. There is deliberately no separate successor
   // put followed by a predecessor compare-and-swap: a crash between the two
   // would leave a minted successor nothing can revoke.
-  const rotation: RouteRefreshFamilyRotation = {
-    presentedHandleHash: locked.handleHash,
-    lockOwner: locked.refreshLockOwner ?? "",
-    expectedVersion: locked.version,
-    successor,
-    graceRefreshResponse: body.toString("utf8"),
-    graceExpiresAt: new Date(
-      ctx.now().getTime() + front.policy.graceWindowSeconds * 1000,
-    ),
-  };
   try {
-    await familyStore.rotateFamily(rotation);
+    await familyStore.rotateFamily({
+      presentedHandleHash: locked.handleHash,
+      lockOwner: locked.refreshLockOwner ?? "",
+      expectedVersion: locked.version,
+      successor,
+      graceRefreshResponse: body.toString("utf8"),
+      graceExpiresAt: rotation.graceExpiresAt,
+      graceAccessTokenExpiresAt: rotation.accessExpiresAt,
+    });
   } catch (err) {
     if (err instanceof BrokerRevokedError) {
       const event = routeRefreshEventFor(
@@ -4156,7 +4366,10 @@ async function rotateRefreshGrant(
       event.errorCode = "invalid_grant";
       event.statusTo = "revoked";
       emitRouteRefresh(front, event);
-      return facadeErrorPage(400, "invalid_grant");
+      return {
+        rotation: null,
+        response: facadeErrorPage(400, "invalid_grant"),
+      };
     }
     if (err instanceof BrokerLegacyLineageUnsupportedError) {
       emitStateFailure(
@@ -4165,7 +4378,10 @@ async function rotateRefreshGrant(
         presented,
         ROUTE_REFRESH_REASON_LEGACY_LINEAGE,
       );
-      return facadeErrorPage(400, "invalid_grant");
+      return {
+        rotation: null,
+        response: facadeErrorPage(400, "invalid_grant"),
+      };
     }
     if (
       err instanceof BrokerFamilyStateUnavailableError ||
@@ -4177,7 +4393,7 @@ async function rotateRefreshGrant(
         presented,
         ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE,
       );
-      return facadeTemporarilyUnavailablePage();
+      return { rotation: null, response: facadeTemporarilyUnavailablePage() };
     }
     emitStateFailure(
       front,
@@ -4185,7 +4401,7 @@ async function rotateRefreshGrant(
       presented,
       ROUTE_REFRESH_REASON_REWRITE_FAILURE,
     );
-    return facadeTemporarilyUnavailablePage();
+    return { rotation: null, response: facadeTemporarilyUnavailablePage() };
   }
   const event = routeRefreshEventFor(
     ROUTE_REFRESH_EVENT_REFRESHED,
@@ -4200,7 +4416,183 @@ async function rotateRefreshGrant(
   event.previousUpstreamRefreshTokenHash = presented.upstreamRefreshTokenHash;
   event.upstreamRefreshTokenHash = successor.upstreamRefreshTokenHash;
   emitRouteRefresh(front, event);
-  return refreshTokenPage(body);
+  return { rotation, response: null };
+}
+
+/** One persisted rotation: the body, the successor, and the deadlines it set. */
+interface PersistedRotation {
+  body: Buffer;
+  successor: RouteRefreshBrokerRecord;
+  graceExpiresAt: Date;
+  accessExpiresAt: Date;
+}
+
+/** The lifetime a token set states, in milliseconds; unknown is zero. */
+function accessTokenLifetimeMilliseconds(tokenSet: TokenSet): number {
+  const expiresIn = tokenSet.expiresIn ?? 0;
+  if (!Number.isFinite(expiresIn) || expiresIn <= 0) {
+    return 0;
+  }
+  return expiresIn * 1000;
+}
+
+/** Serves the live head's rotation to the caller (the ordinary path). */
+async function rotateRefreshGrant(
+  config: NormalizedConfig,
+  ctx: Context,
+  presented: RouteRefreshBrokerRecord,
+  locked: RouteRefreshBrokerRecord,
+): Promise<Response> {
+  const result = await performRefreshRotation(config, ctx, presented, locked);
+  if (result.response !== null) {
+    return result.response;
+  }
+  if (result.rotation === null) {
+    throw new Error(`${ERROR_PREFIX} refresh rotation is empty`);
+  }
+  return refreshTokenPage(result.rotation.body);
+}
+
+/**
+ * Serves a rotated-away handle whose grace window has closed. It rotates the
+ * family's live head - never the predecessor, whose recorded material the
+ * upstream has already rotated - and hands the client fresh credentials. The
+ * presented record is re-armed with the new body and a fresh grace window (best
+ * effort), so a retry storm inside one window is served from the stored body
+ * instead of buying another upstream rotation; the family is never revoked.
+ */
+async function rotateStalePredecessor(
+  config: NormalizedConfig,
+  ctx: Context,
+  presented: RouteRefreshBrokerRecord,
+  locked: RouteRefreshBrokerRecord,
+): Promise<Response> {
+  const front = config.frontChannel;
+  if (front === null) {
+    throw new Error(`${ERROR_PREFIX} front channel is not configured`);
+  }
+  const result = await performRefreshRotation(config, ctx, locked, locked);
+  if (result.response !== null) {
+    return result.response;
+  }
+  if (result.rotation === null) {
+    throw new Error(`${ERROR_PREFIX} refresh rotation is empty`);
+  }
+  await rearmStalePredecessor(front, presented, result.rotation);
+  const event = routeRefreshEventFor(
+    ROUTE_REFRESH_EVENT_REUSE,
+    ctx.now(),
+    presented,
+  );
+  event.reason = ROUTE_REFRESH_REASON_STALE_PREDECESSOR;
+  event.outcome = ROUTE_REFRESH_OUTCOME_ROTATED_FROM_HEAD;
+  event.successorHandleHash = result.rotation.successor.handleHash;
+  event.familyHash = result.rotation.successor.familyHash ?? "";
+  event.statusTo = "active";
+  emitRouteRefresh(front, event);
+  return refreshTokenPage(result.rotation.body);
+}
+
+/**
+ * Stores the rotation's body and deadlines on the presented predecessor so a
+ * repeat presentation inside the grace window replays it. Best effort: a failed
+ * compare-and-swap only means the next presentation rotates again.
+ */
+async function rearmStalePredecessor(
+  front: FrontChannelConfig,
+  presented: RouteRefreshBrokerRecord,
+  rotation: PersistedRotation,
+): Promise<void> {
+  const current = await front.stores.routeRefreshBroker.get(
+    presented.handleHash,
+  );
+  if (current === null) {
+    return;
+  }
+  const updated: RouteRefreshBrokerRecord = {
+    ...structuredClone(current),
+    encryptedGraceRefreshResponse: rotation.body.toString("utf8"),
+    graceExpiresAt: rotation.graceExpiresAt,
+    graceAccessTokenExpiresAt: rotation.accessExpiresAt,
+  };
+  try {
+    await front.stores.routeRefreshBroker.compareAndSwap(
+      updated,
+      current.version,
+    );
+  } catch {
+    return;
+  }
+}
+
+/**
+ * Resolves the live head of the family a rotated-away handle belongs to: the
+ * highest-generation member with no grace deadline, and therefore the only one
+ * whose recorded upstream material is current. A family with no live head cannot
+ * rotate, so the handle is terminal.
+ */
+async function refreshFamilyHead(
+  config: NormalizedConfig,
+  ctx: Context,
+  presented: RouteRefreshBrokerRecord,
+): Promise<{
+  record: RouteRefreshBrokerRecord | null;
+  response: Response | null;
+}> {
+  const front = config.frontChannel;
+  if (front === null) {
+    throw new Error(`${ERROR_PREFIX} front channel is not configured`);
+  }
+  const store = front.stores
+    .routeRefreshBroker as Partial<RouteRefreshBrokerTransactionalFamilyStore>;
+  if (typeof store.listFamily !== "function") {
+    emitStateFailure(
+      front,
+      ctx,
+      presented,
+      ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE,
+    );
+    return { record: null, response: facadeTemporarilyUnavailablePage() };
+  }
+  let members: RouteRefreshBrokerRecord[];
+  try {
+    members = await store.listFamily(presented.familyHash ?? "");
+  } catch {
+    emitStateFailure(
+      front,
+      ctx,
+      presented,
+      ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE,
+    );
+    return { record: null, response: facadeTemporarilyUnavailablePage() };
+  }
+  let head: RouteRefreshBrokerRecord | null = null;
+  for (const candidate of members) {
+    if (candidate.status === "revoked") continue;
+    if (candidate.graceExpiresAt !== undefined) continue;
+    if ((candidate.chainGeneration ?? 0) < REFRESH_CHAIN_ROOT_GENERATION)
+      continue;
+    if (
+      head === null ||
+      (candidate.chainGeneration ?? 0) > (head.chainGeneration ?? 0) ||
+      ((candidate.chainGeneration ?? 0) === (head.chainGeneration ?? 0) &&
+        candidate.handleHash > head.handleHash)
+    ) {
+      head = candidate;
+    }
+  }
+  if (head === null) {
+    const event = routeRefreshEventFor(
+      ROUTE_REFRESH_EVENT_REUSE,
+      ctx.now(),
+      presented,
+    );
+    event.reason = ROUTE_REFRESH_REASON_FAMILY_HEAD_ABSENT;
+    event.errorCode = "invalid_grant";
+    emitRouteRefresh(front, event);
+    return { record: null, response: facadeErrorPage(400, "invalid_grant") };
+  }
+  return { record: head, response: null };
 }
 
 /**
@@ -4281,73 +4673,341 @@ async function failedRefreshGrant(
 }
 
 /**
- * Revokes the whole family a reused handle belongs to and renders the uniform
- * invalid_grant. A family-hashed record is revoked through the store's
- * transactional family tombstone, so a long-lived chain is not limited by any
- * walk budget. A family-less record cannot be revoked safely because its true
- * lineage is unknowable; it is answered with the same uniform invalid_grant and
- * no revocation claim is made. A store failure is the retryable class rather
- * than invalid_grant: the client must not act on state the facade could not
- * revoke.
+ * Migrates a family-less record - a handle minted before the family policy,
+ * including a v6.4.0-era lineage - onto a fresh refresh family in code, with no
+ * manual data operation. It follows the stored successor links to the lineage's
+ * live head (the only record whose upstream material is current), then mints a
+ * generation-1 family root from that material and returns its token response. A
+ * sibling migration that already adopted the lineage is detected by finding a
+ * family-marked record at the end of the walk.
+ *
+ * A null record and a null response mean "retry the loop": another process holds
+ * the head's lock, or a concurrent migration won the family-create race.
  */
-async function revokeRotatedRefreshFamily(
+async function adoptLegacyLineage(
   config: NormalizedConfig,
   ctx: Context,
-  record: RouteRefreshBrokerRecord,
-  reason: string,
-): Promise<Response> {
+  presented: RouteRefreshBrokerRecord,
+): Promise<{
+  record: RouteRefreshBrokerRecord | null;
+  response: Response | null;
+}> {
   const front = config.frontChannel;
   if (front === null) {
     throw new Error(`${ERROR_PREFIX} front channel is not configured`);
   }
-  if ((record.familyHash ?? "") === "") {
+  const head = await legacyLineageHead(front, presented);
+  if (head === null) {
     const event = routeRefreshEventFor(
       ROUTE_REFRESH_EVENT_STATE_FAILURE,
       ctx.now(),
-      record,
+      presented,
     );
     event.reason = ROUTE_REFRESH_REASON_LEGACY_LINEAGE;
     event.errorCode = "invalid_grant";
     emitRouteRefresh(front, event);
-    return facadeErrorPage(400, "invalid_grant");
+    return { record: null, response: facadeErrorPage(400, "invalid_grant") };
   }
-  const familyStore = front.stores
-    .routeRefreshBroker as Partial<RouteRefreshBrokerTransactionalFamilyStore>;
-  if (typeof familyStore.revokeFamily !== "function") {
-    const event = routeRefreshEventFor(
-      ROUTE_REFRESH_EVENT_STATE_FAILURE,
-      ctx.now(),
-      record,
+  if ((head.familyHash ?? "") !== "") {
+    return { record: head, response: null };
+  }
+  if (head.status === "revoked") {
+    emitRecordStateRejection(
+      front,
+      ctx,
+      head,
+      ROUTE_REFRESH_REASON_RECORD_REVOKED,
+      "",
     );
-    event.reason = ROUTE_REFRESH_REASON_FAMILY_REVOKE_UNAVAILABLE;
-    emitRouteRefresh(front, event);
-    return facadeTemporarilyUnavailablePage();
+    return { record: null, response: facadeErrorPage(400, "invalid_grant") };
   }
-  let records: RouteRefreshBrokerRecord[];
+  const broker = front.stores.routeRefreshBroker;
+  let locked: RouteRefreshBrokerRecord;
   try {
-    records = await familyStore.revokeFamily(record.familyHash ?? "");
-  } catch {
-    const event = routeRefreshEventFor(
-      ROUTE_REFRESH_EVENT_STATE_FAILURE,
-      ctx.now(),
-      record,
+    locked = await broker.acquireLock(
+      head.handleHash,
+      newOpaqueToken(),
+      head.version,
     );
-    event.reason = ROUTE_REFRESH_REASON_FAMILY_REVOKE_FAILED;
-    emitRouteRefresh(front, event);
-    return facadeTemporarilyUnavailablePage();
+  } catch (err) {
+    if (
+      err instanceof BrokerLockedError ||
+      err instanceof BrokerVersionConflictError
+    ) {
+      return { record: null, response: null };
+    }
+    if (
+      err instanceof BrokerRevokedError ||
+      err instanceof BrokerNotFoundError ||
+      err instanceof BrokerExpiredError
+    ) {
+      emitRecordStateRejection(
+        front,
+        ctx,
+        head,
+        ROUTE_REFRESH_REASON_RECORD_EXPIRED,
+        "",
+      );
+      return { record: null, response: facadeErrorPage(400, "invalid_grant") };
+    }
+    emitStateFailure(front, ctx, head, ROUTE_REFRESH_REASON_STORE_FAILURE);
+    return { record: null, response: facadeTemporarilyUnavailablePage() };
   }
-  const event = routeRefreshEventFor(
-    ROUTE_REFRESH_EVENT_REUSE,
+  const lockEvent = routeRefreshEventFor(
+    ROUTE_REFRESH_EVENT_LOCK_ACQUIRED,
     ctx.now(),
-    record,
+    locked,
   );
-  event.reason = reason;
-  event.outcome = ROUTE_REFRESH_OUTCOME_REVOKED_FAMILY;
-  event.revokedRecords = records.length;
-  event.errorCode = "invalid_grant";
-  event.statusTo = "revoked";
+  lockEvent.statusTo = "refreshing";
+  emitRouteRefresh(front, lockEvent);
+  let upstream: TokenSet;
+  try {
+    upstream = await front.provider.refresh({
+      refreshMaterial: locked.encryptedUpstreamRefreshToken,
+      upstreamClientId: locked.upstreamClientId,
+    });
+  } catch (err) {
+    return failedLegacyAdoption(config, ctx, head, locked, err);
+  }
+  const handle = newOpaqueToken();
+  const material =
+    (upstream.refreshToken ?? "").trim() === ""
+      ? locked.encryptedUpstreamRefreshToken
+      : (upstream.refreshToken ?? "");
+  const root: RouteRefreshBrokerRecord = {
+    handleHash: hashKey(handle),
+    issuer: head.issuer,
+    stage: head.stage,
+    canonicalResource: head.canonicalResource,
+    clientNamespace: head.clientNamespace,
+    endpointKind: head.endpointKind,
+    partnerId: head.partnerId,
+    agentId: head.agentId,
+    clientIdHash: head.clientIdHash,
+    subjectIdHash: head.subjectIdHash,
+    scopes: [...head.scopes],
+    scopeFingerprint: head.scopeFingerprint,
+    encryptedUpstreamRefreshToken: material,
+    upstreamRefreshTokenHash: hashKey(material),
+    upstreamClientId: head.upstreamClientId,
+    status: "issued",
+    version: 0,
+    chainGeneration: REFRESH_CHAIN_ROOT_GENERATION,
+    familyHash: hashKey(handle),
+  };
+  const body = Buffer.from(
+    JSON.stringify(successorTokenPayload(upstream, handle)),
+    "utf8",
+  );
+  const familyStore =
+    broker as Partial<RouteRefreshBrokerTransactionalFamilyStore>;
+  if (typeof familyStore.createFamily !== "function") {
+    await releaseRefreshLock(front, head, locked);
+    throw new Error(
+      `${ERROR_PREFIX} route refresh broker store lacks the transactional family capability`,
+    );
+  }
+  let stored: RouteRefreshBrokerRecord;
+  try {
+    stored = await familyStore.createFamily(root);
+  } catch (err) {
+    await releaseRefreshLock(front, head, locked);
+    if (
+      err instanceof BrokerFamilyExistsError ||
+      err instanceof BrokerSuccessorExistsError
+    ) {
+      return { record: null, response: null };
+    }
+    emitStateFailure(front, ctx, head, ROUTE_REFRESH_REASON_REWRITE_FAILURE);
+    return { record: null, response: facadeTemporarilyUnavailablePage() };
+  }
+  await markLegacyHeadAdopted(front, ctx, head, body, upstream);
+  const issued = routeRefreshEventFor(
+    ROUTE_REFRESH_EVENT_ISSUED,
+    ctx.now(),
+    stored,
+  );
+  issued.statusTo = "issued";
+  emitRouteRefresh(front, issued);
+  const event = routeRefreshEventFor(
+    ROUTE_REFRESH_EVENT_REFRESHED,
+    ctx.now(),
+    head,
+  );
+  event.reason = ROUTE_REFRESH_REASON_LEGACY_LINEAGE_ADOPTED;
+  event.statusFrom = "active";
+  event.statusTo = "active";
+  event.successorHandleHash = stored.handleHash;
+  event.familyHash = stored.familyHash ?? "";
+  event.chainGeneration = stored.chainGeneration ?? 0;
+  event.previousUpstreamRefreshTokenHash = head.upstreamRefreshTokenHash;
+  event.upstreamRefreshTokenHash = stored.upstreamRefreshTokenHash;
   emitRouteRefresh(front, event);
-  return facadeErrorPage(400, "invalid_grant");
+  return { record: null, response: refreshTokenPage(body) };
+}
+
+/** Maps a failed upstream refresh during migration onto the retryable classes. */
+async function failedLegacyAdoption(
+  config: NormalizedConfig,
+  ctx: Context,
+  head: RouteRefreshBrokerRecord,
+  locked: RouteRefreshBrokerRecord,
+  upstreamErr: unknown,
+): Promise<{ record: null; response: Response }> {
+  const front = config.frontChannel;
+  if (front === null) {
+    throw new Error(`${ERROR_PREFIX} front channel is not configured`);
+  }
+  const errorClass: ProviderErrorClass =
+    upstreamErr instanceof ProviderError
+      ? upstreamErr.errorClass
+      : "temporarily_unavailable";
+  if (errorClass === "invalid_grant" || errorClass === "reauth_required") {
+    await releaseRefreshLock(front, head, locked);
+    try {
+      await front.stores.routeRefreshBroker.revoke(head.handleHash);
+    } catch {
+      emitStateFailure(
+        front,
+        ctx,
+        head,
+        ROUTE_REFRESH_REASON_STORE_FAILURE,
+        errorClass,
+      );
+      return { record: null, response: facadeTemporarilyUnavailablePage() };
+    }
+    const event = routeRefreshEventFor(
+      ROUTE_REFRESH_EVENT_UPSTREAM_REAUTH_REQUIRED,
+      ctx.now(),
+      head,
+    );
+    event.reason = ROUTE_REFRESH_REASON_UPSTREAM_REJECTED;
+    event.upstreamClass = errorClass;
+    event.errorCode = "invalid_grant";
+    event.statusTo = "revoked";
+    emitRouteRefresh(front, event);
+    return { record: null, response: facadeErrorPage(400, "invalid_grant") };
+  }
+  await releaseRefreshLock(front, head, locked);
+  const event = routeRefreshEventFor(
+    ROUTE_REFRESH_EVENT_STATE_FAILURE,
+    ctx.now(),
+    head,
+  );
+  event.reason = ROUTE_REFRESH_REASON_UPSTREAM_REJECTED;
+  event.upstreamClass = errorClass;
+  event.errorCode =
+    errorClass === "upstream_error"
+      ? "upstream_error"
+      : "temporarily_unavailable";
+  emitRouteRefresh(front, event);
+  return {
+    record: null,
+    response:
+      errorClass === "upstream_error"
+        ? facadeUpstreamErrorPage()
+        : facadeTemporarilyUnavailablePage(),
+  };
+}
+
+/**
+ * Follows the stored successor links of a family-less lineage to the only record
+ * whose upstream material can still be refreshed. A family-marked record ends
+ * the walk successfully; a missing link, a cycle, a revoked member, or the walk
+ * limit fails the migration rather than guessing which material is current.
+ */
+async function legacyLineageHead(
+  front: FrontChannelConfig,
+  presented: RouteRefreshBrokerRecord,
+): Promise<RouteRefreshBrokerRecord | null> {
+  let current: RouteRefreshBrokerRecord | null = presented;
+  const visited = new Set<string>();
+  for (let step = 0; step < LEGACY_LINEAGE_WALK_LIMIT; step += 1) {
+    if (current === null || visited.has(current.handleHash)) {
+      return null;
+    }
+    visited.add(current.handleHash);
+    if ((current.familyHash ?? "") !== "") {
+      return current;
+    }
+    if (current.status === "revoked") {
+      return null;
+    }
+    if (current.graceExpiresAt === undefined) {
+      return current;
+    }
+    const successorHandle = legacySuccessorHandle(
+      current.encryptedGraceRefreshResponse ?? "",
+    );
+    if (successorHandle === null) {
+      return null;
+    }
+    current = await front.stores.routeRefreshBroker.get(
+      hashKey(successorHandle),
+    );
+  }
+  return null;
+}
+
+/** Reads the successor handle a pre-policy rotation stored in its grace body. */
+function legacySuccessorHandle(body: string): string | null {
+  if (body.trim() === "") {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(body) as { refresh_token?: unknown };
+    const handle =
+      typeof parsed.refresh_token === "string"
+        ? parsed.refresh_token.trim()
+        : "";
+    if (
+      handle === "" ||
+      Buffer.byteLength(handle, "utf8") > FRONT_CHANNEL_MAX_REFRESH_HANDLE_BYTES
+    ) {
+      return null;
+    }
+    return handle;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Records the new family root in the legacy head's grace body, so a sibling walk
+ * lands on the family instead of minting a second one. Best effort.
+ */
+async function markLegacyHeadAdopted(
+  front: FrontChannelConfig,
+  ctx: Context,
+  head: RouteRefreshBrokerRecord,
+  body: Buffer,
+  upstream: TokenSet,
+): Promise<void> {
+  const current = await front.stores.routeRefreshBroker.get(head.handleHash);
+  if (current === null) {
+    return;
+  }
+  const updated: RouteRefreshBrokerRecord = {
+    ...structuredClone(current),
+    encryptedGraceRefreshResponse: body.toString("utf8"),
+    graceExpiresAt: new Date(
+      ctx.now().getTime() + front.policy.graceWindowSeconds * 1000,
+    ),
+    graceAccessTokenExpiresAt: new Date(
+      ctx.now().getTime() + accessTokenLifetimeMilliseconds(upstream),
+    ),
+    status: "active",
+  };
+  delete updated.refreshLockOwner;
+  delete updated.refreshLockExpiresAt;
+  try {
+    await front.stores.routeRefreshBroker.compareAndSwap(
+      updated,
+      current.version,
+    );
+  } catch {
+    return;
+  }
 }
 
 /**

@@ -714,9 +714,7 @@ osv_scan_lockfile() {
   local filter_status=0
   local exception_marker=""
   local expected_marker=""
-  if [[ "${checker_kind}" == "ts" ]]; then
-    expected_marker="exception-applied: ts-dev-import-x-minimatch "
-  else
+  if [[ "${checker_kind}" == "aws-cdk" ]]; then
     expected_marker="exception-applied: "
   fi
   set +e
@@ -732,18 +730,18 @@ osv_scan_lockfile() {
   set -e
   rm -f "${tmp_report}" "${tmp_marker}"
 
-  # Both checkers grant only reviewed, self-expiring exceptions that name the
-  # exact lockfile, package, version, node path / dependency chain, and advisory
-  # ids. The TypeScript checker (scripts/check-visible-ts-brace-finding.mjs)
-  # grants one dev-only lint-tool exception; the aws-cdk checker
-  # (scripts/check-visible-aws-cdk-finding.mjs) grants two AWS-published ones
-  # (operator rulings, scope, and automatic removal conditions are documented in
-  # each checker). osv-scanner exits exactly 1 when it reports findings, and a
-  # different status for an operational error (a timeout, a killed scan, or no
-  # scanner output at all). Only exit 1 is accepted, and only when the checker
-  # passed AND printed the machine marker proving an exact reviewed exception
-  # caused it; every other status, or a status-1 finding without that checker's
-  # marker, fails closed.
+  # The aws-cdk checker (scripts/check-visible-aws-cdk-finding.mjs) grants two
+  # reviewed, self-expiring AWS-published exceptions that name the exact
+  # lockfile, package, version, node path / dependency chain, and advisory ids.
+  # The TypeScript checker (scripts/check-visible-ts-brace-finding.mjs) grants
+  # none: E4 was retired on 2026-11-06 when eslint-plugin-import-x 4.18.0 began
+  # accepting minimatch >= 11.0.1, so ts/ carries no exception and a status-1
+  # scan can never be excused. osv-scanner exits exactly 1 when it reports
+  # findings, and a different status for an operational error (a timeout, a
+  # killed scan, or no scanner output at all). Only exit 1 is accepted, and only
+  # when the checker passed AND printed the machine marker proving an exact
+  # reviewed exception caused it; every other status, or a status-1 finding
+  # without that checker's marker, fails closed.
   if [[ "${filter_status}" -ne 0 ]]; then
     return "${filter_status}"
   fi
@@ -752,8 +750,8 @@ osv_scan_lockfile() {
       echo "FAIL: osv-scanner exited ${scan_status} for ${lf}; only exit 1 (findings) is accepted, and any other status is an operational error" >&2
       return 1
     fi
-    if ! grep -Fq "${expected_marker}" <<<"${exception_marker}"; then
-      echo "FAIL: osv-scanner exited ${scan_status} for ${lf} without the reviewed ${checker_kind} exception marker" >&2
+    if [[ -z "${expected_marker}" ]] || ! grep -Fq "${expected_marker}" <<<"${exception_marker}"; then
+      echo "FAIL: osv-scanner exited ${scan_status} for ${lf} without the reviewed ${checker_kind} exception marker (the TypeScript lockfile carries no exception)" >&2
       return 1
     fi
   fi
@@ -816,6 +814,11 @@ gov_cmd_vuln() {
     "examples/cdk/lambda-packaging/package-lock.json"
     "examples/cdk/lambda-role/package-lock.json"
     "examples/cdk/lesser-parity/package-lock.json"
+    "examples/cdk/local-resources/package-lock.json"
+    "examples/cdk/local-iam/package-lock.json"
+    "examples/cdk/local-iam-peer/package-lock.json"
+    "examples/cdk/local-mcp-auth-facade/package-lock.json"
+    "examples/cdk/local-tls/package-lock.json"
     "examples/cdk/media-cdn/package-lock.json"
     "examples/cdk/microvm-controller/package-lock.json"
     "examples/cdk/multilang/package-lock.json"

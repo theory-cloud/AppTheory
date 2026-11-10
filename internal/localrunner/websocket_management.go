@@ -55,22 +55,49 @@ type webSocketManagement struct {
 	// the URL a function container uses.
 	URL          string
 	ContainerURL string
-	// certificatePEM is the self-signed certificate every container must trust.
+	// certificate is the TLS key pair the management listener presents.
+	certificate tls.Certificate
+	// certificatePEM is the self-signed certificate every container must trust
+	// when the run did not opt in to local TLS. It is nil when the run's CA
+	// signs the management certificate instead.
 	certificatePEM []byte
-	// certificatePath is where the PEM is written for the container mount.
+	// certificatePath is where the self-signed PEM is written for the container
+	// mount. It is empty when the run's CA issues the certificate and the
+	// shared trust bundle covers it.
 	certificatePath string
 	logf            func(format string, args ...any)
 }
 
-// newWebSocketManagement builds the registry and a self-signed certificate for
-// the management endpoint.
-func newWebSocketManagement(scratch string, logf func(format string, args ...any)) (*webSocketManagement, error) {
+// newWebSocketManagement builds the registry and a certificate for the
+// management endpoint. An opted-in run issues the certificate from the run's
+// CA, so the one mounted trust bundle covers both the app's public URL and the
+// management endpoint; a run without the opt-in keeps the self-signed
+// certificate.
+func newWebSocketManagement(scratch string, state *localTLS, logf func(format string, args ...any)) (*webSocketManagement, error) {
 	if logf == nil {
 		logf = func(string, ...any) {}
+	}
+	if state != nil {
+		certificate, err := state.issueCertificate(
+			[]string{webSocketManagementCertDNS, tlsLocalhostHost},
+			[]net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
+		)
+		if err != nil {
+			return nil, fmt.Errorf("issue the management certificate: %w", err)
+		}
+		return &webSocketManagement{
+			connections: map[string]*webSocketConnection{},
+			certificate: certificate,
+			logf:        logf,
+		}, nil
 	}
 	certificatePEM, err := selfSignedManagementCertificate()
 	if err != nil {
 		return nil, err
+	}
+	certificate, err := tls.X509KeyPair(certificatePEM, certificatePEM)
+	if err != nil {
+		return nil, fmt.Errorf("load the management certificate: %w", err)
 	}
 	path := filepath.Join(scratch, "websocket-management-ca.pem")
 	if err := os.WriteFile(path, certificatePEM, 0o600); err != nil {
@@ -78,6 +105,7 @@ func newWebSocketManagement(scratch string, logf func(format string, args ...any
 	}
 	return &webSocketManagement{
 		connections:     map[string]*webSocketConnection{},
+		certificate:     certificate,
 		certificatePEM:  certificatePEM,
 		certificatePath: path,
 		logf:            logf,
@@ -97,17 +125,13 @@ func (m *webSocketManagement) startLoopback(ctx context.Context) error {
 // start serves the management API over TLS on the control listeners the
 // runner bound: loopback and, when the host owns it, the run network gateway.
 func (m *webSocketManagement) start(_ context.Context, listeners *controlListeners) error {
-	certificate, err := tls.X509KeyPair(m.certificatePEM, m.certificatePEM)
-	if err != nil {
-		return fmt.Errorf("load the management certificate: %w", err)
-	}
 	m.URL = "https://" + strings.TrimPrefix(listeners.HostURL, "http://")
 	m.ContainerURL = "https://" + strings.TrimPrefix(listeners.ContainerURL, "http://")
 	m.server = &http.Server{
 		Handler:           m,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       60 * time.Second,
-		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12},
+		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{m.certificate}, MinVersion: tls.VersionTLS12},
 	}
 	serve := func(listener net.Listener) {
 		go func() {
@@ -123,6 +147,16 @@ func (m *webSocketManagement) start(_ context.Context, listeners *controlListene
 	}
 	m.logf("serving the WebSocket management API at %s (containers: %s)", m.URL, m.ContainerURL)
 	return nil
+}
+
+// certificateMounts is the CA bundle a container mounts when the management
+// endpoint uses its own self-signed certificate. An opted-in run's CA signs the
+// management certificate instead, and the run's trust bundle covers it.
+func (m *webSocketManagement) certificateMounts() []string {
+	if m == nil || m.certificatePath == "" {
+		return nil
+	}
+	return []string{m.certificatePath + ":" + webSocketManagementCACertPath + ":ro"}
 }
 
 // ServeHTTP serves the three documented operations on /{connectionId}.
@@ -277,7 +311,7 @@ func selfSignedManagementCertificate() ([]byte, error) {
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		IsCA:                  true,
 		BasicConstraintsValid: true,
-		DNSNames:              []string{webSocketManagementCertDNS, "localhost"},
+		DNSNames:              []string{webSocketManagementCertDNS, tlsLocalhostHost},
 		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)

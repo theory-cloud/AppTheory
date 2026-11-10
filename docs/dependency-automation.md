@@ -65,11 +65,11 @@ Put this in `renovate.json` (or merge the same fields into your existing Renovat
 This config intentionally matches both direct release assets and Go module requirements:
 
 ```text
-github.com/theory-cloud/apptheory/v7 v4.0.0
-https://github.com/theory-cloud/AppTheory/releases/download/v4.0.0/theory-cloud-apptheory-4.0.0.tgz
-https://github.com/theory-cloud/AppTheory/releases/download/v4.0.0/theory-cloud-apptheory-cdk-4.0.0.tgz
-https://github.com/theory-cloud/AppTheory/releases/download/v4.0.0/apptheory-4.0.0-py3-none-any.whl
-https://github.com/theory-cloud/AppTheory/releases/download/v4.0.0/apptheory_cdk-4.0.0-py3-none-any.whl
+github.com/theory-cloud/apptheory/v7 v7.0.0
+https://github.com/theory-cloud/AppTheory/releases/download/v7.0.0/theory-cloud-apptheory-7.0.0.tgz
+https://github.com/theory-cloud/AppTheory/releases/download/v7.0.0/theory-cloud-apptheory-cdk-7.0.0.tgz
+https://github.com/theory-cloud/AppTheory/releases/download/v7.0.0/apptheory-7.0.0-py3-none-any.whl
+https://github.com/theory-cloud/AppTheory/releases/download/v7.0.0/apptheory_cdk-7.0.0-py3-none-any.whl
 ```
 
 Each release asset URL carries the version twice — once in the `download/v<version>` tag path and once in the file name.
@@ -90,7 +90,7 @@ Renovate can move URLs, but it cannot prove that your downloaded release assets 
 checksum verification step from the install docs in your CI or bootstrap script:
 
 ```bash
-VERSION=4.0.0
+VERSION=7.0.0
 TAG="v${VERSION}"
 PYTHON_VERSION="${VERSION/-rc/rc0}"
 gh release download "${TAG}" --repo theory-cloud/AppTheory --pattern "SHA256SUMS.txt" --clobber
@@ -123,12 +123,13 @@ passed `npm audit` with zero vulnerabilities. The removal rationale was:
   pin was no longer carrying a security fix.
 - `@eslint/eslintrc` / `eslint` → `ajv`: ESLint selects its compatible `ajv@6.14.0`; AppTheory does not override
   lint-tool internals without an active advisory.
-- `@eslint/config-array` / `eslint` / `eslint-plugin-import-x` → `minimatch`: the lint stack remains audit-clean on its
-  upstream-selected `minimatch` versions, and none of these packages are runtime dependencies. **Reinstated
-  2026-11-01** for `GHSA-g3hv-75wg-m249`: the fresh advisory affects every minimatch `< 11.0.1`, and the lint stack
-  cannot simply take 11 because `eslint-plugin-import-x` imports the removed `makeRe` export. The overrides now pin
-  `11.0.1` for every consumer except `eslint-plugin-import-x`, which keeps `10.2.6` under the reviewed dev-only
-  exception described above.
+- `@eslint/config-array` / `eslint` / `@typescript-eslint/typescript-estree` / `eslint-plugin-import-x` → `minimatch`:
+  the lint stack remains audit-clean on its upstream-selected `minimatch` versions, and none of these packages are
+  runtime dependencies. **Reinstated 2026-11-01** for `GHSA-g3hv-75wg-m249`: the fresh advisory affected every
+  minimatch `< 11.0.1`, and the lint stack could not simply take 11 because `eslint-plugin-import-x` imported the
+  removed `makeRe` export. **Simplified 2026-11-06:** `eslint-plugin-import-x` 4.18.0 accepts minimatch 11
+  (`^9.0.3 || ^10.1.2 || ^11.0.1`) and no longer imports `makeRe` (upstream #570), so the dev-only 10.2.6 override
+  and its exception were removed; the overrides now pin `11.0.1` for every consumer.
 - `fast-xml-parser` / `fast-xml-builder`: the regenerated TypeScript lockfile no longer contains those packages, so
   keeping orphan overrides would hide dependency graph drift instead of fixing it.
 - `flatted` / `js-yaml`: upstream-selected lint-tool transitive versions remain audit-clean; local pins were redundant.
@@ -149,31 +150,25 @@ from `2.273.0` to `2.275.0`; the newer tarball still bundles `minimatch 10.2.6` 
 fix), so the bundled-minimatch exception is unchanged in scope and its anchor now records `2.275.0` / `10.2.6`.
 Any vulnerable bundle, AWS CDK, minimatch, brace-expansion, package-path, or finding drift fails closed.
 
-The TypeScript lint graph carries one active `overrides` block and one dev-only exception. `ts/package.json`
+The TypeScript lint graph carries one active `overrides` block and no dependency-audit exception. `ts/package.json`
 overrides `minimatch` to the patched `11.0.1` for `eslint`, `@eslint/config-array`, and
-`@typescript-eslint/typescript-estree` (each override is explicit because npm may otherwise dedupe a consumer onto
-the exception copy), while `eslint-plugin-import-x` keeps `10.2.6`:
-minimatch 11 removed the `makeRe` export that `eslint-plugin-import-x` 4.17.1 imports at module load, so a
-minimatch 11 override there throws at ESLint config load and the plugin's rules stop evaluating. 4.17.1 is the
-latest published release and still declares `^9.0.3 || ^10.1.2`. The 2026-11-01 refresh let npm re-hoist the
-override target: the patched `11.0.1` now lives at the single hoisted `node_modules/minimatch` node, the three
-overridden consumers dedupe onto it, and the single remaining `minimatch@10.2.6` node sits at
-`node_modules/eslint-plugin-import-x/node_modules/minimatch`. That node is covered by the operator-ruled
-2026-11-01 **dev-only exception** (`GHSA-g3hv-75wg-m249`), recorded in
-`scripts/check-visible-ts-brace-finding.mjs` with `recheck_by` 2026-12-01 and the removal condition
-"`eslint-plugin-import-x` publishes a release compatible with `minimatch >= 11.0.1`". It is lint tooling only:
-every minimatch node is `dev: true`, the root package declares no minimatch runtime dependency,
-`npm ls --omit=dev --all` inside `ts/` reports none, and the published package ships only `dist`, `LICENSE`,
-`README.md`, and `package.json`. The checker requires the exact minimatch / brace-expansion / runner
-(`@isaacs/nonrecursive-glob-match`) graph, the exact minimatch parent set, and the exact reviewed override map, and
-any drift - or any other advisory, version, path, or lockfile - fails closed. The `ts/` brace-expansion path
-itself remains exception-free: the only instance (`5.0.12`) is past every recorded 5.x fix.
+`@typescript-eslint/typescript-estree`, and `eslint-plugin-import-x` 4.18.0 declares
+`^9.0.3 || ^10.1.2 || ^11.0.1`, so every consumer dedupes onto the single hoisted `node_modules/minimatch` node.
+The 2026-11-06 adoption of 4.18.0 retired the dev-only exception E4: upstream #570 replaced the
+`no-internal-modules` rule's `makeRe` import with `Minimatch#match`, which is what had blocked minimatch 11 under
+4.17.1. The 10.2.6 override, the exception, its registry-backed removal probe, and its `recheck_by` deadline were
+removed. It remains lint tooling only: every minimatch node is `dev: true`, the root package declares no minimatch
+runtime dependency, `npm ls --omit=dev --all` inside `ts/` reports none, and the published package ships only
+`dist`, `LICENSE`, `README.md`, and `package.json`. The checker requires the exact minimatch / brace-expansion /
+runner (`@isaacs/nonrecursive-glob-match`) graph, the exact minimatch parent set, and the exact override map; any
+minimatch below `11.0.1` at any node path, and any other advisory, version, path, or lockfile, fails closed. The
+`ts/` brace-expansion path is likewise exception-free: the only instance (`5.0.12`) is past every recorded 5.x fix.
 
 The 2026-11-06 `eslint` 10.13.0 -> 10.14.0 move (Dependabot #1222) is an in-family devDependency bump. eslint's own
-`minimatch` range moved `^10.2.5` -> `^10.2.6`, which the reviewed override still resolves onto the hoisted
-`11.0.1`, so the minimatch node set, the brace-expansion node, and the single reviewed `10.2.6` exception node are
-unchanged. Only the anchor's recorded `eslint` parent version and range moved with the package; no override was
-added, dropped, or loosened, and `@humanfs/node` re-resolved `0.16.6` -> `0.16.8` inside eslint's own range.
+`minimatch` range moved `^10.2.5` -> `^10.2.6`, which the override resolves onto the hoisted `11.0.1`, so the
+minimatch node set and the brace-expansion node are unchanged, and no exception node remains. Only the anchor's
+recorded `eslint` parent version and range moved with the package; no override was added, dropped, or loosened, and
+`@humanfs/node` re-resolved `0.16.6` -> `0.16.8` inside eslint's own range.
 
 ## Refresh register (2026-11-01, LOCAL-M0)
 
@@ -186,7 +181,7 @@ held.
 
 | Held item | Kept at | Reason | Re-check condition |
 | --- | --- | --- | --- |
-| `osv-scanner` v2.x | `v1.9.2` | `v2.7.0` cannot replace the gate's scanner yet. On `ts/package-lock.json` (which pins the TableTheory GitHub-release tarball by sha512) it exits `127` with `vulnmatch/osvdev ... 400 Bad Request ... invalid hash` and emits `{"results":[]}`. The rubric accepts only exit `0` (clean) or `1` (findings with the reviewed exception marker); `127` is an operational failure. On `cdk/package-lock.json` and example locks it exits `0` but returns zero packages, so it misses the reviewed bundled `minimatch` finding and would pass vacuously instead of proving the exception. | Retry when v2 parses `ts/package-lock.json` without the hash error and reproduces the v1.9.2 findings on `cdk/package-lock.json` and the example locks. |
+| `osv-scanner` v2.x | `v1.9.2` | `v2.7.0` cannot replace the gate's scanner yet. On `ts/package-lock.json` (which pins the TableTheory GitHub-release tarball by sha512) it exits `127` with `vulnmatch/osvdev ... 400 Bad Request ... invalid hash` and emits `{"results":[]}`. The rubric accepts only exit `0` (clean) or `1` (findings covered by a reviewed exception marker; `ts/` now carries no exception, so it must exit `0`); `127` is an operational failure. On `cdk/package-lock.json` and example locks it exits `0` but returns zero packages, so it misses the reviewed bundled `minimatch` finding and would pass vacuously instead of proving the exception. | Retry when v2 parses `ts/package-lock.json` without the hash error and reproduces the v1.9.2 findings on `cdk/package-lock.json` and the example locks. |
 
 ### Applied moves (ranges raised only where alignment required it)
 
@@ -206,9 +201,10 @@ held.
   condition is unmet; `recheck_by` stays 2026-12-01.
 - **E3 bundled `minimatch`**: keep. `aws-cdk-lib` 2.275.0 bundles `minimatch 10.2.6`, below the advisory's
   `11.0.1` fix; the anchor now records `2.275.0` / `10.2.6`, and `recheck_by` stays 2026-12-01.
-- **E4 `minimatch 10.2.6` for `eslint-plugin-import-x`**: keep. 4.17.1 is still the latest release and still
-  declares `^9.0.3 || ^10.1.2`; `recheck_by` stays 2026-12-01. The anchor now records the refreshed topology
-  (patched `11.0.1` at the hoisted root, the exception nested under `eslint-plugin-import-x`).
+- **E4 `minimatch 10.2.6` for `eslint-plugin-import-x`**: **retired 2026-11-06.** `eslint-plugin-import-x` 4.18.0
+  declares `^9.0.3 || ^10.1.2 || ^11.0.1` and no longer imports `makeRe` (upstream #570), meeting the removal
+  condition. The 10.2.6 override, the exception, and its probe were removed; `ts/package-lock.json` now resolves a
+  single `minimatch 11.0.1` for every consumer.
 
 ### Synth hashes
 

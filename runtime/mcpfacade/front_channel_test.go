@@ -19,6 +19,7 @@ import (
 	"github.com/theory-cloud/apptheory/v7/runtime/mcproutes"
 	"github.com/theory-cloud/apptheory/v7/runtime/oauth"
 	oauthstore "github.com/theory-cloud/apptheory/v7/runtime/oauth/store"
+	"github.com/theory-cloud/apptheory/v7/runtime/refusal"
 	"github.com/theory-cloud/apptheory/v7/testkit/oauthprovider"
 )
 
@@ -121,6 +122,10 @@ type frontChannelHarnessOptions struct {
 	// routeRefreshEvents, when set, receives the route refresh broker telemetry
 	// the facade emits, so a test can assert the event taxonomy.
 	routeRefreshEvents RouteRefreshEventHook
+
+	// refusalHook, when set, receives the structured refusals the facade
+	// renders, so a test can assert that a refusal is observable.
+	refusalHook refusal.Hook
 
 	// failAuthorizationURL makes the upstream provider's AuthorizationURL builder
 	// fail, so a test can drive the authorize leg's provider-call failure class.
@@ -376,6 +381,7 @@ func newFrontChannelHarnessWith(t *testing.T, options frontChannelHarnessOptions
 			ReuseRateCeiling: MinRefreshReuseRateCeiling,
 		},
 		RouteRefreshEvents: options.routeRefreshEvents,
+		RefusalHook:        options.refusalHook,
 
 		RootAuthorizationServer: options.rootAuthorizationServer,
 	}

@@ -34,6 +34,7 @@ const (
 	labelRun            = "apptheory.local.run"
 	labelApp            = "apptheory.local.app"
 	labelManaged        = "apptheory.local.managed"
+	labelSharedNetwork  = "apptheory.local.shared"
 	backendDynamoDB     = "dynamodb"
 	backendDynamoDBName = "dynamodb-local"
 )
@@ -63,6 +64,10 @@ type Options struct {
 	Backends []string
 	// PortBase pins the API listener ports; zero asks the OS for free ports.
 	PortBase int
+	// Ports pins named public surfaces to declared ports. Pinned ports are
+	// reserved first and the counter skips them, so unpinned surfaces keep
+	// today's allocation for the same base. A pin is only valid with PortBase.
+	Ports []PortPin
 	// NamePrefix names containers, the network and built images. The default
 	// is derived from the app hash, so concurrent runs of one app share names
 	// unless a unique prefix is set.
@@ -114,10 +119,51 @@ type Options struct {
 	// DataDir keeps backend state across runs. An empty value keeps today's
 	// ephemeral behavior.
 	DataDir string
+	// SharedDir is the directory co-resident runs share. It holds the local IAM
+	// plane at `<shared-dir>/iam` and the shared CA at `<shared-dir>/ca`, so a
+	// function in one run verifies another run's leaves and trusts its roles.
+	// An empty value keeps every run's IAM state and CA inside its own scratch
+	// or data directory, exactly as before.
+	SharedDir string
+	// SharedNetwork joins every co-resident run's function containers to one
+	// user-defined Docker bridge network. The runner binds its public listeners
+	// on that network's gateway when the host owns it (native Linux) and every
+	// container reaches the host there; on Colima and Docker Desktop the
+	// gateway belongs to the VM and the one add-host entry uses host-gateway.
+	// Nothing binds the unspecified address. An empty value keeps the run's own
+	// private network, exactly as before.
+	SharedNetwork string
+	// Mail starts the local mail surface: the profile's digest-pinned SMTP
+	// sink on the run network, an SMTP ingress that relays to it and runs the
+	// app's SES receipt rules, and the sink's HTTP read API over HTTPS from an
+	// auxiliary leaf. The default is off, so an existing caller is unchanged.
+	Mail bool
+	// MailHost is the public host name of the mail surface, a *.localhost name.
+	// The default is mail.localhost.
+	MailHost string
+	// PeerHosts are co-resident runs' public host names. Each is mapped in this
+	// run's function containers through the same add-host helper the run's own
+	// host uses, so a container reaches a sibling run's listener at the shared
+	// network's host address. It requires public TLS, because a peer's leaf is
+	// signed by the shared CA.
+	PeerHosts []string
 	// Seed is a shell command that runs after provisioning and before the run
 	// reports ready. It is how a seed script drives the app through its own
 	// code paths.
 	Seed string
+	// TLS serves every public listener over HTTPS from a certificate that
+	// chains to a runner-generated local CA. The default is off: an existing
+	// caller keeps plain HTTP URLs, ports and listeners. The profile's
+	// `tls.enabled` key is the committed form of the same opt-in.
+	TLS bool
+	// TLSHost is the public host name the opt-in serves, a `localhost` or
+	// `*.localhost` name. The default is app.localhost.
+	TLSHost string
+	// TLSAuxHosts are additional `*.localhost` names a function container must
+	// resolve to the runner's host, for an app-supplied auxiliary service (a
+	// local OIDC test IdP) whose own certificate the `apptheory-local tls leaf`
+	// command issues from the same CA.
+	TLSAuxHosts []string
 }
 
 // Runner owns one local run: the derived surface, the Docker network, the
@@ -137,13 +183,17 @@ type Runner struct {
 	imageEnvs map[string]map[string]string
 	// builtImages maps a container-image function's logical id to the image the
 	// run built for it.
-	builtImages    map[string]string
-	endpoints      []Endpoint
-	invokers       map[string]*FunctionProcess
-	backends       map[string]backendProcess
-	resourceValues resourceValues
-	tables         map[string]tableInfo
-	localSecrets   map[string]string
+	builtImages map[string]string
+	endpoints   []Endpoint
+	// profileEndpointServices marks the endpoints that came from the local
+	// profile (rather than a caller's --endpoint), so the service fronts only
+	// wrap the runner's own backends.
+	profileEndpointServices map[string]bool
+	invokers                map[string]*FunctionProcess
+	backends                map[string]backendProcess
+	resourceValues          resourceValues
+	tables                  map[string]tableInfo
+	localSecrets            map[string]string
 	// secretValues holds the provisioned secret strings, keyed by ARN and
 	// friendly name. A deploy-time dynamic reference to the same secret resolves
 	// to this value instead of the wave-1 deterministic placeholder.
@@ -153,6 +203,11 @@ type Runner struct {
 	listeners    []net.Listener
 	semaphore    chan struct{}
 	network      string
+	// sharedNetwork is true when this run joined a --shared-network, so cleanup
+	// leaves the network for the other co-resident runs.
+	sharedNetwork bool
+	// mail is the started local mail surface, when --mail is on.
+	mail *mailSurface
 	// runtimeAPIGateway remembers the run network's gateway address once a
 	// container could not reach a loopback Runtime API listener, so later
 	// functions bind it before their container starts.
@@ -191,6 +246,14 @@ type Runner struct {
 	// AWS_ENDPOINT_URL_CODEBUILD.
 	codeBuild    *codeBuildService
 	codeBuildURL string
+	// kmsFront serves the KMS operations the run owns (Sign/Verify with
+	// MessageType DIGEST, and the symmetric and signing keys --data-dir must
+	// keep stable); nil when the run has no moto KMS backend.
+	kmsFront *kmsFront
+	// s3Front accepts SSE-S3 on PutObject and reports it on HeadObject and
+	// GetObject, which the pinned s3proxy refuses; nil when the run has no
+	// s3proxy backend.
+	s3Front *s3Front
 	// transports and webSocketServers are the live listeners a watch reload
 	// updates in place. The net.Listener and the server stay; only the route
 	// table and the invoker set swap.
@@ -207,6 +270,59 @@ type Runner struct {
 	watch *watchSupervisor
 	// watchAssembly counts watch syntheses so each gets a fresh directory.
 	watchAssembly int
+	// tls is the run's local CA and public leaf; nil when the run did not opt
+	// in. tlsBundlePath is the host-side trust bundle the session reports.
+	tls           *localTLS
+	tlsBundlePath string
+	// publicTLS is true when the run opted in to HTTPS on its public
+	// listeners. The run CA also exists for a run whose only internal HTTPS
+	// endpoint is the custom-resource response endpoint; that run serves plain
+	// HTTP in front of a client.
+	publicTLS bool
+	// internalTLS holds the leaf the runner's internal HTTPS endpoints
+	// present, issued on first use from the run CA.
+	internalTLS internalHTTPS
+	// iam is the shared IAM plane this run publishes its role definitions and
+	// issued credentials into; iamSTSURL is the STS endpoint functions reach.
+	iam            *iamPlane
+	iamStartedAt   time.Time
+	iamSTSURL      string
+	iamCredentials map[string]iamCredentialRecord
+	// iamFunctionCredentials indexes the same records by the function they were
+	// issued to, which is what a container's environment resolves.
+	iamFunctionCredentials map[string]iamCredentialRecord
+	// iamMu guards iamCredentials: the STS endpoint mints sessions while the
+	// HTTP listeners verify signatures.
+	iamMu sync.RWMutex
+	// probeCredential is the credential the preflight container runs with; it
+	// proves the container's environment carries a runner-issued key.
+	probeCredential iamCredentialRecord
+	// cfnShimPath is the mounted response-URL port shim a Node container needs
+	// when the assembly declares a handler-invoked custom resource.
+	cfnShimPath string
+	// cfnResponsePort is the port the custom-resource response endpoint listens
+	// on, which the shim restores in a provider framework's response request.
+	cfnResponsePort string
+	// customResources is the CloudFormation custom-resource response endpoint;
+	// customResourceData and customResourcePhysicalIDs keep what each handler
+	// reported so a GetAtt on the custom resource resolves.
+	customResources           *customResourceResponseServer
+	customResourceData        map[string]map[string]string
+	customResourcePhysicalIDs map[string]string
+	// lambdaInvocations is the local Lambda Invoke endpoint a handler reaches
+	// when it calls another function (a Custom::Trigger's provider, an
+	// AwsCustomResource invoking Lambda, or app code).
+	lambdaInvokeURL string
+	// publicPorts is every port this run serves a public listener on, so an
+	// origin mapping that speaks plain http to one of them fails at start with
+	// the fix instead of a 400 on the first request.
+	publicPorts map[int]bool
+	// surfacePlans is the resolved port allocation, in listener order. Both
+	// plan and describe report it, so a pinned port is visible before a
+	// listener binds.
+	surfacePlans []PublicSurfacePlan
+	// surfacePorts maps a served logical id to the port the run binds.
+	surfacePorts map[string]int
 }
 
 // NewRunner validates the options and prepares the run. It contacts no Docker
@@ -222,37 +338,60 @@ func NewRunner(options Options) (*Runner, error) {
 	}
 
 	runner := &Runner{
-		options:            options,
-		docker:             NewDocker(),
-		appHash:            hashOf(options.AppDir),
-		runID:              shortID(),
-		invokers:           map[string]*FunctionProcess{},
-		backends:           map[string]backendProcess{},
-		tables:             map[string]tableInfo{},
-		localSecrets:       map[string]string{},
-		apiURLs:            map[string]string{},
-		endpoints:          append([]Endpoint(nil), options.Endpoints...),
-		images:             map[string]string{},
-		imageEnvs:          map[string]map[string]string{},
-		builtImages:        map[string]string{},
-		cloudFrontGateways: map[string]*localcloudfront.Gateway{},
-		cloudFrontIDs:      map[string]string{},
-		transports:         map[string]*Transport{},
-		webSocketServers:   map[string]*WebSocketServer{},
-		dataDir:            options.DataDir,
-		semaphore:          make(chan struct{}, options.MaxConcurrency),
-		clock:              clock,
-		ttl:                newTTLTracker(),
-		ttlTables:          map[string]ttlTable{},
-		eventBus:           newEventBridgeBus(clock),
+		options:                 options,
+		docker:                  NewDocker(),
+		appHash:                 hashOf(options.AppDir),
+		runID:                   shortID(),
+		invokers:                map[string]*FunctionProcess{},
+		backends:                map[string]backendProcess{},
+		tables:                  map[string]tableInfo{},
+		localSecrets:            map[string]string{},
+		apiURLs:                 map[string]string{},
+		endpoints:               append([]Endpoint(nil), options.Endpoints...),
+		profileEndpointServices: map[string]bool{},
+		images:                  map[string]string{},
+		imageEnvs:               map[string]map[string]string{},
+		builtImages:             map[string]string{},
+		cloudFrontGateways:      map[string]*localcloudfront.Gateway{},
+		cloudFrontIDs:           map[string]string{},
+		transports:              map[string]*Transport{},
+		webSocketServers:        map[string]*WebSocketServer{},
+		dataDir:                 options.DataDir,
+		semaphore:               make(chan struct{}, options.MaxConcurrency),
+		clock:                   clock,
+		ttl:                     newTTLTracker(),
+		ttlTables:               map[string]ttlTable{},
+		eventBus:                newEventBridgeBus(clock),
 	}
 	runner.namePrefix = sanitizeNamePrefix(options.NamePrefix, "apptheory-local-"+runner.appHash)
-	runner.network = runner.namePrefix + "-net"
+	runner.sharedNetwork = strings.TrimSpace(options.SharedNetwork) != ""
+	if runner.sharedNetwork {
+		runner.network = strings.TrimSpace(options.SharedNetwork)
+	} else {
+		runner.network = runner.namePrefix + "-net"
+	}
 	runner.scratch = filepath.Join(options.ScratchDir, "runs", runner.appHash+"-"+runner.runID)
 	if err := ensureSharedPath(runner.scratch); err != nil {
 		return nil, err
 	}
 	if err := runner.loadProfile(); err != nil {
+		return nil, err
+	}
+	// The profile is the committed form of the local-TLS opt-in. A command-line
+	// flag can enable it too; neither source is an operator environment
+	// variable.
+	if runner.profile != nil {
+		if runner.profile.TLS.Enabled {
+			runner.options.TLS = true
+		}
+		if strings.TrimSpace(runner.options.TLSHost) == "" {
+			runner.options.TLSHost = runner.profile.TLS.Host
+		}
+	}
+	if err := runner.validateCoResidence(); err != nil {
+		return nil, err
+	}
+	if err := runner.validateMail(); err != nil {
 		return nil, err
 	}
 	if err := runner.validateEndpoints(); err != nil {
@@ -526,6 +665,9 @@ func (r *Runner) validateBackends() error {
 				continue
 			}
 			r.endpoints = append(r.endpoints, endpoint)
+			if r.profileEndpointServices != nil {
+				r.profileEndpointServices[endpoint.Service] = true
+			}
 		}
 	}
 	sort.Slice(r.endpoints, func(i, j int) bool { return r.endpoints[i].Service < r.endpoints[j].Service })
@@ -659,7 +801,7 @@ func (r *Runner) Run(ctx context.Context) error {
 // resolution, preflight, function containers and HTTP listeners. It does not
 // log the ready marker or wait; Run and RunSession own those steps.
 //
-//nolint:gocyclo // the startup order is documented and pinned by the docs-order test.
+//nolint:gocyclo,gocognit // the startup order is documented and pinned by the docs-order test.
 func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 	spec, err := r.Plan(ctx)
 	if err != nil {
@@ -686,12 +828,28 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 		return nil, err
 	}
 
-	if err = r.docker.CreateNetwork(ctx, r.network, r.labels()); err != nil {
+	if err = r.ensureNetwork(ctx); err != nil {
 		return nil, err
 	}
-	r.logf("network %s", r.network)
+	if r.sharedNetwork {
+		r.logf("network %s (shared with co-resident runs; this run does not remove it)", r.network)
+	} else {
+		r.logf("network %s", r.network)
+	}
 	r.chooseRuntimeAPIAddress(ctx)
+	if err = r.initTLS(spec); err != nil {
+		return nil, err
+	}
 	if err = r.startBackends(ctx); err != nil {
+		return nil, err
+	}
+	if err = r.startMailSurface(ctx, spec); err != nil {
+		return nil, err
+	}
+	if err = r.startKMSFront(ctx); err != nil {
+		return nil, err
+	}
+	if err = r.startS3Front(ctx); err != nil {
 		return nil, err
 	}
 	if err = r.startEventBridgeBus(ctx); err != nil {
@@ -705,6 +863,32 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 	}
 	if err = r.startWebSocketManagement(ctx, spec); err != nil {
 		return nil, err
+	}
+	if err = r.startIAMPlane(spec); err != nil {
+		return nil, err
+	}
+	if err = r.issueCredentials(spec, targets); err != nil {
+		return nil, err
+	}
+	if err = r.startSTSFront(ctx); err != nil {
+		return nil, err
+	}
+	if err = r.publishIAMRun(spec); err != nil {
+		return nil, err
+	}
+	if ctx.Done() != nil {
+		go r.refreshIAMRun(ctx, spec)
+	}
+	if _, err = r.startLambdaInvokeFront(ctx); err != nil {
+		return nil, err
+	}
+	if specNeedsInternalHTTPS(spec) {
+		if r.cfnShimPath, err = r.prepareNodeResponseShim(); err != nil {
+			return nil, err
+		}
+		if err = r.startCustomResourceResponses(ctx); err != nil {
+			return nil, err
+		}
 	}
 	if err = r.resolveRouteAuthorizers(spec); err != nil {
 		return nil, err
@@ -725,10 +909,16 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 	for _, check := range sortedKeys(preflight.Checks) {
 		r.logf("preflight %s: %s", check, preflight.Checks[check])
 	}
+	if err := r.wireS3FrontEndpoint(preflight.HostGateway); err != nil {
+		return nil, err
+	}
 	if err := r.startFunctions(ctx, spec, targets); err != nil {
 		return nil, err
 	}
 	r.startFunctionLogs(ctx, spec, targets)
+	if err := r.invokeCustomResources(ctx, spec); err != nil {
+		return nil, err
+	}
 	if err := r.startServers(ctx, spec); err != nil {
 		return nil, err
 	}
@@ -757,7 +947,7 @@ func (r *Runner) startWebSocketManagement(ctx context.Context, spec *Spec) error
 	if len(spec.WebSockets) == 0 {
 		return nil
 	}
-	management, err := newWebSocketManagement(r.scratch, r.logf)
+	management, err := newWebSocketManagement(r.scratch, r.tls, r.logf)
 	if err != nil {
 		return err
 	}
@@ -784,12 +974,11 @@ func (r *Runner) webSocketDomainName() string {
 }
 
 // webSocketCertificateMounts mounts the management CA into a function container
-// so its SDK client trusts the `@connections` TLS endpoint.
+// so its SDK client trusts the `@connections` TLS endpoint. An opted-in run's
+// CA signs the management certificate, so the run's shared trust mount covers
+// it and this returns nothing.
 func (r *Runner) webSocketCertificateMounts() []string {
-	if r.webSocketManagement == nil {
-		return nil
-	}
-	return []string{r.webSocketManagement.certificatePath + ":" + webSocketManagementCACertPath + ":ro"}
+	return r.webSocketManagement.certificateMounts()
 }
 
 // startEventBridgeBus serves the EventBridge PutEvents JSON protocol for the
@@ -857,121 +1046,6 @@ func (r *Runner) runtimeFunctions(spec *Spec) ([]string, error) {
 	return out, nil
 }
 
-// backendProcess is a local emulator container the run owns.
-type backendProcess struct {
-	Container string
-	// Alias is the network name the profile's endpoints use, for example
-	// "dynamodb-local" or "moto".
-	Alias     string
-	Endpoints []Endpoint
-	// HostURL is the loopback base URL for the runner's own provisioning
-	// calls. It is never injected into a function container.
-	HostURL string
-}
-
-// startBackends starts every local emulator configured from the profile.
-func (r *Runner) startBackends(ctx context.Context) error {
-	for _, backend := range r.options.Backends {
-		if err := r.startBackend(ctx, backend); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// startBackend starts one emulator, resolves its network address for the
-// function containers' closed DNS and waits until its published host port
-// answers a read-only protocol call.
-//
-//nolint:gocyclo // one branch per backend shape.
-func (r *Runner) startBackend(ctx context.Context, backend string) error {
-	container := backendContainer(backend)
-	pin, err := r.profile.Container(container)
-	if err != nil {
-		return fmt.Errorf("backend %s: %w", backend, err)
-	}
-	name := r.backendsContainerName(backend)
-	pin, dataMounts, err := r.configureBackendDataDir(backend, container, pin)
-	if err != nil {
-		return err
-	}
-	endpoints := r.profile.EndpointsForContainer(container)
-	if backend == backendDynamoDB && !containsEndpointService(endpoints, backendDynamoDB) {
-		endpoints = append(endpoints, Endpoint{Service: backendDynamoDB, URL: "http://" + backendDynamoDBName + ":8000"})
-	}
-	// Register the container before starting it, so a signal that lands
-	// while the start or the address lookup is in flight still cleans it up.
-	r.backends[backend] = backendProcess{
-		Container: name,
-		Alias:     container,
-		Endpoints: endpoints,
-	}
-	options := ContainerOptions{
-		Name:    name,
-		Network: r.network,
-		Aliases: []string{container},
-		Image:   pin.Image,
-		Command: pin.Command,
-		Env:     pin.Environment,
-		Mounts:  append(append([]string(nil), pin.Mounts...), dataMounts...),
-		Publish: pin.ContainerPort,
-		Labels:  r.labels(),
-		Detach:  true,
-	}
-	if _, startErr := r.docker.StartContainer(ctx, options); startErr != nil {
-		return startErr
-	}
-	address, err := r.docker.ContainerIP(ctx, name, r.network)
-	if err != nil {
-		return err
-	}
-	r.options.AddHosts = append(r.options.AddHosts, container+":"+address)
-	// An S3 SDK picks virtual-hosted addressing for a named endpoint
-	// ("bucket.s3proxy") and path addressing for an IP endpoint. s3proxy
-	// only serves the latter, so the S3 endpoint uses the container address.
-	if container == "s3proxy" {
-		for index := range r.endpoints {
-			if r.endpoints[index].Service == "s3" {
-				r.endpoints[index].URL = fmt.Sprintf("http://%s:%d", address, pin.ContainerPort)
-			}
-		}
-	}
-	process := r.backends[backend]
-	if pin.ContainerPort > 0 {
-		hostPort, portErr := r.docker.PublishedPort(ctx, name, pin.ContainerPort)
-		if portErr != nil {
-			return portErr
-		}
-		if hostPort == 0 {
-			return fmt.Errorf("backend %s published no loopback port for container port %d", backend, pin.ContainerPort)
-		}
-		process.HostURL = fmt.Sprintf("http://127.0.0.1:%d", hostPort)
-	}
-	r.backends[backend] = process
-	// A backend with a published host port must answer a real request before
-	// the runner provisions against it or reports it ready. The container may
-	// already accept TCP connections while its HTTP server still resets the
-	// first request.
-	if process.HostURL != "" {
-		if err := r.waitForBackendReady(ctx, backend, pin.Image, process); err != nil {
-			return err
-		}
-	}
-	var urls []string
-	for _, endpoint := range endpoints {
-		urls = append(urls, endpoint.URL)
-	}
-	r.logf("backend %s (%s) ready at %s", backend, pin.Image, strings.Join(urls, ", "))
-	return nil
-}
-
-func (r *Runner) backendsContainerName(backend string) string {
-	if backend == backendDynamoDB {
-		return r.namePrefix + "-" + backendDynamoDB
-	}
-	return r.namePrefix + "-" + sanitizeName(backend)
-}
-
 // cleanupFunc removes everything the run created. It drains and stops the
 // delivery engine first, while the containers can still accept a delivery that
 // is in flight; then it stops accepting requests, then force-removes the
@@ -999,9 +1073,12 @@ func (r *Runner) cleanupFunc() func() {
 		for _, server := range r.servers {
 			_ = server.Close() //nolint:errcheck // abort connections whose containers are gone
 		}
-		networkCtx, cancel := context.WithTimeout(context.Background(), cleanupStepTimeout)
-		r.docker.RemoveNetwork(networkCtx, r.network)
-		cancel()
+		if !r.sharedNetwork {
+			networkCtx, cancel := context.WithTimeout(context.Background(), cleanupStepTimeout)
+			r.docker.RemoveNetwork(networkCtx, r.network)
+			cancel()
+		}
+		r.stopIAMPlane()
 		_ = os.RemoveAll(r.scratch) //nolint:errcheck // scratch cleanup is best effort
 	}
 }
@@ -1335,78 +1412,17 @@ func (r *Runner) buildFunctionImage(ctx context.Context, function FunctionSpec) 
 	return tag, nil
 }
 
-// functionImageTag names one function's built image. The name is derived from
-// the run's name prefix (the app hash by default) and the function's logical
-// id, so two concurrent runs of the same app share a tag; docker caches and
-// reuses the image for both.
+// functionImageTag names one function's built image. The name carries the run
+// id, so two concurrent runs of the same app never move each other's tag; a
+// reload within one run keeps the same tag, and docker's layer cache still
+// reuses unchanged build steps.
 func (r *Runner) functionImageTag(function FunctionSpec) string {
-	return sanitizeName(r.namePrefix + "-" + function.LogicalID + "-image")
+	return sanitizeName(r.namePrefix + "-" + r.runID + "-" + function.LogicalID + "-image")
 }
 
 // networkGateway resolves the run network's gateway address.
 func (r *Runner) networkGateway(ctx context.Context) (string, error) {
 	return r.docker.NetworkGateway(ctx, r.network)
-}
-
-// runtimeHostEntry is the container's host.docker.internal mapping. When the
-// host owns the run network's gateway (the Linux bridge case) the entry names
-// it and the listener binds it; otherwise Docker's host-gateway value is used,
-// which Colima and Docker Desktop forward to the host's loopback.
-func (r *Runner) runtimeHostEntry() string {
-	if r.runtimeAPIGateway != "" {
-		return "host.docker.internal:" + r.runtimeAPIGateway
-	}
-	return "host.docker.internal:host-gateway"
-}
-
-// addRuntimeHostEntry adds the host.docker.internal mapping once; an entry the
-// caller supplied through --add-host wins.
-func (r *Runner) addRuntimeHostEntry() {
-	if hasAddHostName(r.options.AddHosts, "host.docker.internal") {
-		return
-	}
-	r.options.AddHosts = append(r.options.AddHosts, r.runtimeHostEntry())
-}
-
-// runtimeAPIAddressOwner reports whether the host owns an address. Binding an
-// ephemeral port and closing it at once is the proof; an address that belongs
-// to the Docker VM (Colima, Docker Desktop) fails with EADDRNOTAVAIL.
-var runtimeAPIAddressOwner = func(gateway string) bool {
-	listener, err := net.Listen("tcp", net.JoinHostPort(gateway, "0"))
-	if err != nil {
-		return false
-	}
-	_ = listener.Close() //nolint:errcheck // the probe only proves ownership
-	return true
-}
-
-// chooseRuntimeAPIAddress decides whether the container reaches the host
-// through the run network's gateway. The host owns that address on Linux, so
-// the container's host entry can name it and the listener can bind it; on
-// Colima and Docker Desktop the address belongs to the VM, the bind fails, and
-// the container keeps Docker's host-gateway entry (forwarded to the host's
-// loopback). The probe binds an ephemeral port and closes it at once.
-func (r *Runner) chooseRuntimeAPIAddress(ctx context.Context) {
-	gateway, err := r.networkGateway(ctx)
-	if err != nil {
-		return
-	}
-	if !runtimeAPIAddressOwner(gateway) {
-		return
-	}
-	r.runtimeAPIGateway = gateway
-	r.logf("runtime API: the container host entry host.docker.internal -> %s (the run network's gateway)", gateway)
-}
-
-// rememberRuntimeAPIAddress keeps the gateway bind for later functions once a
-// container could not reach loopback.
-func (r *Runner) rememberRuntimeAPIAddress(process *FunctionProcess) {
-	if process == nil || process.api == nil {
-		return
-	}
-	if gateway := process.api.gatewayBound(); gateway != "" {
-		r.runtimeAPIGateway = gateway
-	}
 }
 
 // functionCommand is the container command: the handler for a zip function, or
@@ -1548,6 +1564,22 @@ func (r *Runner) runtimeImageEnv(ctx context.Context, image string) (map[string]
 
 //nolint:gocyclo,gocognit // one explicit branch per supported provider and API kind.
 func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
+	plans, err := PlanPublicSurfaces(spec, r.options.PortBase, r.options.Ports)
+	if err != nil {
+		return err
+	}
+	r.surfacePlans = plans
+	r.surfacePorts = make(map[string]int, len(plans))
+	for _, plan := range plans {
+		r.surfacePorts[plan.LogicalID] = plan.Port
+	}
+	portFor := func(logicalID string) (int, error) {
+		port, ok := r.surfacePorts[logicalID]
+		if !ok {
+			return 0, fmt.Errorf("the surface plan has no listener for %s", logicalID)
+		}
+		return port, nil
+	}
 	targets := append([]APISpec(nil), spec.HTTPAPIs()...)
 	for _, url := range spec.FunctionURLs {
 		targets = append(targets, functionURLAPI(url))
@@ -1556,37 +1588,28 @@ func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 	for id, process := range r.invokers {
 		invokers[id] = process
 	}
-	listenerIndex := 0
 	for _, target := range targets {
-		listener, err := r.listen(ctx, listenerIndex)
-		listenerIndex++
-		if err != nil {
-			return fmt.Errorf("bind %s listener: %w", target.LogicalID, err)
-		}
 		transport := NewTransport(target, invokers, r.semaphore, r.logf)
 		transport.Clock = r.clock
+		transport.IAMAuthorize = r.iamAuthorize
 		r.transports[target.LogicalID] = transport
 		server := &http.Server{
 			Handler:           transport,
 			ReadHeaderTimeout: 10 * time.Second,
 			IdleTimeout:       60 * time.Second,
 		}
-		r.listeners = append(r.listeners, listener)
-		r.servers = append(r.servers, server)
-		r.apiURLs[target.LogicalID] = "http://" + listener.Addr().String()
-		go func() {
-			if serveErr := server.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-				r.logf("listener for %s stopped: %v", target.LogicalID, serveErr)
-			}
-		}()
+		port, portErr := portFor(target.LogicalID)
+		if portErr != nil {
+			return portErr
+		}
+		port, err := r.startPublicListener(ctx, port, server, "listener for "+target.LogicalID)
+		if err != nil {
+			return fmt.Errorf("bind %s listener: %w", target.LogicalID, err)
+		}
+		r.apiURLs[target.LogicalID] = r.publicURL(port)
 		r.logf("serving %s %s at %s", target.Class, target.LogicalID, r.apiURLs[target.LogicalID])
 	}
 	for _, api := range spec.WebSockets {
-		listener, err := r.listen(ctx, listenerIndex)
-		listenerIndex++
-		if err != nil {
-			return fmt.Errorf("bind websocket %s listener: %w", api.LogicalID, err)
-		}
 		webSocketServer := &WebSocketServer{
 			API:        api,
 			Invokers:   invokers,
@@ -1603,14 +1626,15 @@ func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 			ReadHeaderTimeout: 10 * time.Second,
 			IdleTimeout:       60 * time.Second,
 		}
-		r.listeners = append(r.listeners, listener)
-		r.servers = append(r.servers, server)
-		r.apiURLs[api.LogicalID] = "ws://" + listener.Addr().String() + "/" + api.Stage
-		go func(apiID string, server *http.Server, listener net.Listener) {
-			if serveErr := server.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-				r.logf("websocket listener for %s stopped: %v", apiID, serveErr)
-			}
-		}(api.LogicalID, server, listener)
+		port, portErr := portFor(api.LogicalID)
+		if portErr != nil {
+			return portErr
+		}
+		port, err := r.startPublicListener(ctx, port, server, "websocket listener for "+api.LogicalID)
+		if err != nil {
+			return fmt.Errorf("bind websocket %s listener: %w", api.LogicalID, err)
+		}
+		r.apiURLs[api.LogicalID] = r.tlsWebSocketURL(port, api.Stage)
 		r.logf("serving %s %s at %s", api.Class, api.LogicalID, r.apiURLs[api.LogicalID])
 	}
 	for _, distribution := range spec.ServableCloudFront() {
@@ -1623,11 +1647,6 @@ func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 		origins, err := r.cloudFrontOrigins(spec, distribution)
 		if err != nil {
 			return err
-		}
-		listener, err := r.listen(ctx, listenerIndex)
-		listenerIndex++
-		if err != nil {
-			return fmt.Errorf("bind cloudfront %s listener: %w", distribution.LogicalID, err)
 		}
 		gateway := localcloudfront.NewGateway(distribution, spec.cloudFrontTopology, origins, executor, r.logf)
 		gateway.Now = r.clock.Now
@@ -1642,14 +1661,15 @@ func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 			ReadHeaderTimeout: 10 * time.Second,
 			IdleTimeout:       60 * time.Second,
 		}
-		r.listeners = append(r.listeners, listener)
-		r.servers = append(r.servers, server)
-		r.apiURLs[distribution.LogicalID] = "http://" + listener.Addr().String()
-		go func() {
-			if serveErr := server.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-				r.logf("cloudfront listener for %s stopped: %v", distribution.LogicalID, serveErr)
-			}
-		}()
+		port, portErr := portFor(distribution.LogicalID)
+		if portErr != nil {
+			return portErr
+		}
+		port, err = r.startPublicListener(ctx, port, server, "cloudfront listener for "+distribution.LogicalID)
+		if err != nil {
+			return fmt.Errorf("bind cloudfront %s listener: %w", distribution.LogicalID, err)
+		}
+		r.apiURLs[distribution.LogicalID] = r.publicURL(port)
 		r.logf("serving cloudfront %s at %s", distribution.LogicalID, r.apiURLs[distribution.LogicalID])
 	}
 	return nil
@@ -1668,13 +1688,12 @@ func distributionHasFunctions(distribution *localcloudfront.Distribution) bool {
 	return false
 }
 
-func (r *Runner) listen(ctx context.Context, index int) (net.Listener, error) {
-	var listenConfig net.ListenConfig
-	if r.options.PortBase > 0 {
-		return listenConfig.Listen(ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", r.options.PortBase+index))
-	}
-	return listenConfig.Listen(ctx, "tcp", "127.0.0.1:0")
-}
+// listenPublic binds one public listener. An opted-in run also binds the run
+// network's gateway on the same port when the host owns it (the Linux bridge
+// case), because a function container reaches the runner's https URL through
+// the one add-host entry. On Colima and Docker Desktop the gateway belongs to
+// the VM and that bind fails harmlessly: the container's host-gateway entry
+// forwards the name to the host loopback.
 
 func (r *Runner) serve(ctx context.Context) error {
 	<-ctx.Done()
@@ -1708,16 +1727,29 @@ func (r *Runner) Down(ctx context.Context) (int, error) {
 	for _, image := range images {
 		r.docker.RemoveImage(ctx, image)
 	}
+	if r.sharedNetwork {
+		// A cleanup never removes a shared network; `down --shared-network` is
+		// the explicit last step once every co-resident run has stopped. Docker
+		// refuses while any container is still attached.
+		removeCtx, cancel := context.WithTimeout(ctx, cleanupStepTimeout)
+		r.docker.RemoveNetwork(removeCtx, r.network)
+		cancel()
+	}
 	return len(containers) + len(networks) + len(images), nil
 }
 
 // PlanJSON renders the derived surface for machines (the examples harness and
 // future tooling).
 func (r *Runner) PlanJSON(spec *Spec) ([]byte, error) {
+	listeners, err := r.PublicSurfacePlans(spec)
+	if err != nil {
+		return nil, err
+	}
 	document := struct {
 		*Spec
-		RuntimeMode string `json:"runtimeMode"`
-	}{Spec: spec, RuntimeMode: r.RuntimeMode()}
+		RuntimeMode string              `json:"runtimeMode"`
+		Listeners   []PublicSurfacePlan `json:"listeners"`
+	}{Spec: spec, RuntimeMode: r.RuntimeMode(), Listeners: listeners}
 	return json.MarshalIndent(document, "", "  ")
 }
 

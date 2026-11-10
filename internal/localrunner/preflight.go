@@ -61,6 +61,10 @@ func ValidateEndpoint(endpoint Endpoint) error {
 // PreflightResult is what the in-container probe proved.
 type PreflightResult struct {
 	Checks map[string]string
+	// HostGateway is the address host.docker.internal resolves to inside the
+	// function container. The S3 front's function-facing endpoint uses the IP
+	// literal so the SDK keeps path-style addressing.
+	HostGateway string
 }
 
 type probeOutput struct {
@@ -70,10 +74,10 @@ type probeOutput struct {
 }
 
 // Preflight proves, from inside a function container, that the environment the
-// runner is about to hand the app cannot reach real AWS: the credentials are
-// the static dummy keys, every configured endpoint resolves and answers, the
-// DynamoDB SDK resolves to the local endpoint, and a real AWS hostname does not
-// resolve because the container has closed DNS.
+// runner is about to hand the app cannot reach real AWS: the credentials are the
+// ones the runner issued (never an operator's), every configured endpoint
+// resolves and answers, the DynamoDB SDK resolves to the local endpoint, and a
+// real AWS hostname does not resolve because the container has closed DNS.
 func (r *Runner) Preflight(ctx context.Context, network string, addHosts []string) (PreflightResult, error) {
 	image, err := r.profile.ImageForClass(imageClassPython)
 	if err != nil {
@@ -83,12 +87,19 @@ func (r *Runner) Preflight(ctx context.Context, network string, addHosts []strin
 	for _, endpoint := range r.endpoints {
 		endpoints[endpoint.Service] = endpoint.URL
 	}
+	if r.s3Front != nil && r.s3Front.containerURL != "" {
+		// The function-facing S3 endpoint is the front's IP literal, which is
+		// only known once this probe resolves host.docker.internal; check the
+		// same listener through the host name first.
+		endpoints["s3-front"] = r.s3Front.containerURL
+	}
 	encoded, err := json.Marshal(endpoints)
 	if err != nil {
 		return PreflightResult{}, fmt.Errorf("encode preflight endpoints: %w", err)
 	}
-	env := r.securityEnvironment()
+	env := r.securityEnvironment(imageClassPython)
 	env["APPTHEORY_LOCAL_PROBE_ENDPOINTS"] = string(encoded)
+	env["APPTHEORY_LOCAL_PROBE_ACCESS_KEY"] = r.probeCredential.AccessKeyID
 	options := ContainerOptions{
 		Name:       r.namePrefix + "-preflight",
 		Network:    network,
@@ -110,26 +121,34 @@ func (r *Runner) Preflight(ctx context.Context, network string, addHosts []strin
 	if !probe.OK {
 		return PreflightResult{}, fmt.Errorf("container preflight failed: %s", probe.Error)
 	}
-	return PreflightResult{Checks: probe.Checks}, nil
+	return PreflightResult{Checks: probe.Checks, HostGateway: probe.Checks["host_gateway"]}, nil
 }
 
 // securityEnvironment is the complete AWS environment every function container
 // receives. Template environment is applied first and these values override it,
-// so an app declaration can never redirect the container at real AWS.
-func (r *Runner) securityEnvironment() map[string]string {
-	env := map[string]string{ //nolint:gosec // fixed dummy credentials, never used against real AWS
+// so an app declaration can never redirect the container at real AWS. The
+// runtime class selects the trust-anchor variables the runtime actually reads.
+//
+//nolint:gocyclo // one control endpoint and trust family per branch.
+func (r *Runner) securityEnvironment(class string) map[string]string {
+	env := map[string]string{ //nolint:gosec // runner-issued credentials, never valid against real AWS
 		"AWS_REGION":                  LocalRegion,
 		"AWS_DEFAULT_REGION":          LocalRegion,
-		"AWS_ACCESS_KEY_ID":           "dummy",
-		"AWS_SECRET_ACCESS_KEY":       "dummy",
+		"AWS_ACCESS_KEY_ID":           r.probeCredential.AccessKeyID,
+		"AWS_SECRET_ACCESS_KEY":       r.probeCredential.Secret,
+		"AWS_SESSION_TOKEN":           r.probeCredential.SessionToken,
 		"AWS_EC2_METADATA_DISABLED":   "true",
 		"AWS_CONFIG_FILE":             "/dev/null",
 		"AWS_SHARED_CREDENTIALS_FILE": "/dev/null",
 		// S3 emulators do not implement the SDK's default flexible-checksum
 		// trailers. The SDK still validates checksums when a service requires
 		// them; it stops adding them to every request.
-		"AWS_REQUEST_CHECKSUM_CALCULATION": "WHEN_REQUIRED",
-		"AWS_RESPONSE_CHECKSUM_VALIDATION": "WHEN_REQUIRED",
+		// Both spellings are the documented values ("when_required"), and the
+		// SDKs that read them are case-insensitive; the lower-case form is the
+		// one the SDKs for JavaScript v3 and Python compare against.
+		// https://docs.aws.amazon.com/sdkref/latest/guide/feature-dataintegrity.html
+		"AWS_REQUEST_CHECKSUM_CALCULATION": "when_required",
+		"AWS_RESPONSE_CHECKSUM_VALIDATION": "when_required",
 	}
 	for _, endpoint := range r.endpoints {
 		for _, name := range r.profile.EndpointEnvNames(endpoint.Service) {
@@ -147,9 +166,55 @@ func (r *Runner) securityEnvironment() map[string]string {
 	// https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-how-to-call-websocket-api-connections.html
 	if r.webSocketManagement != nil {
 		env[webSocketManagementEndpointEnv] = r.webSocketManagement.ContainerURL
+	}
+	// The local Lambda Invoke endpoint is how a custom-resource handler (a
+	// CDK trigger's provider, an AwsCustomResource, or app code) invokes
+	// another function. It is a plain-HTTP loopback control listener.
+	// https://docs.aws.amazon.com/lambda/latest/api/API_Invoke.html
+	if r.lambdaInvokeURL != "" {
+		env[lambdaEndpointEnv] = r.lambdaInvokeURL
+	}
+	// The local STS endpoint decides AssumeRole and mints sessions. Every AWS
+	// SDK resolves the service-specific endpoint variable before the global
+	// one, so a handler's own STS client reaches it with no code change.
+	// https://docs.aws.amazon.com/sdkref/latest/guide/feature-ss-endpoints.html
+	if r.iamSTSURL != "" {
+		env[iamSTSEndpointEnv] = r.iamSTSURL
+	}
+	// A CloudFormation provider framework reports its response with a request
+	// that drops the URL's port, so a run with a handler-invoked custom resource
+	// mounts the response-URL shim and preloads it into every Node container.
+	// https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/crpg-ref-responses.html
+	if r.cfnShimPath != "" {
+		env["APPTHEORY_LOCAL_CFN_PORT"] = r.cfnResponsePort
+		env["APPTHEORY_LOCAL_CFN_HOST"] = controlLeafName
+		if class == imageClassNode || class == "" {
+			env["NODE_OPTIONS"] = "--require " + nodeResponseShimPath
+		}
+	}
+	// An opted-in run serves every public listener over HTTPS. The same CA
+	// signs every leaf, so one mounted bundle is what each runtime verifies
+	// the app's own https URL with. The runtime class decides which variables
+	// carry it: a Go container must not receive AWS_CA_BUNDLE, because the Go
+	// SDK refuses to load a config that carries it together with a
+	// caller-supplied *http.Client.
+	if r.tls != nil {
+		for _, name := range tlsTrustEnvironment(class) {
+			env[name] = tlsTrustBundlePath
+		}
+	} else if r.webSocketManagement != nil {
 		env["AWS_CA_BUNDLE"] = webSocketManagementCACertPath
 		env["NODE_EXTRA_CA_CERTS"] = webSocketManagementCACertPath
 		env["SSL_CERT_FILE"] = webSocketManagementCACertPath
+	}
+	for name, value := range r.mailEnvironment() {
+		env[name] = value
+	}
+	if peers := r.peerHostNames(); len(peers) > 0 {
+		// The exact names this run declared as co-resident are the only
+		// non-loopback hosts a handler may sign a call to; a caller example
+		// keeps its loopback pin for every other host.
+		env["APPTHEORY_LOCAL_PEER_HOSTS"] = strings.Join(peers, ",")
 	}
 	// The global override is the single local backend when there is exactly
 	// one, so SDK clients for other services also stay local; otherwise it
@@ -170,12 +235,27 @@ func (r *Runner) securityEnvironment() map[string]string {
 // silently replacing an app value.
 //
 // https://docs.aws.amazon.com/lambda/latest/dg/configuration-envvars.html#configuration-envvars-runtime
-func (r *Runner) functionEnvironment(function FunctionSpec, api *runtimeAPI) (map[string]string, []string) {
+func (r *Runner) functionEnvironment(function FunctionSpec, api *runtimeAPI, class string) (map[string]string, []string) {
 	env := map[string]string{}
 	for name, value := range function.Environment {
 		env[name] = value
 	}
-	owned := r.securityEnvironment()
+	owned := r.securityEnvironment(class)
+	// Each function gets its own credential, bound to the role its template
+	// declares. That binding is what lets the IAM gate resolve a caller
+	// principal from a signature.
+	r.iamMu.RLock()
+	credential, ok := r.iamFunctionCredentials[function.LogicalID]
+	r.iamMu.RUnlock()
+	if ok {
+		owned["AWS_ACCESS_KEY_ID"] = credential.AccessKeyID
+		owned["AWS_SECRET_ACCESS_KEY"] = credential.Secret
+		if credential.SessionToken != "" {
+			owned["AWS_SESSION_TOKEN"] = credential.SessionToken
+		} else {
+			delete(owned, "AWS_SESSION_TOKEN")
+		}
+	}
 	for name, value := range runtimeEnvironment(function, api) {
 		owned[name] = value
 	}
@@ -267,11 +347,17 @@ def fail(message):
 
 checks = {}
 endpoints = json.loads(os.environ.get("APPTHEORY_LOCAL_PROBE_ENDPOINTS") or "{}")
-if os.environ.get("AWS_ACCESS_KEY_ID") != "dummy" or os.environ.get("AWS_SECRET_ACCESS_KEY") != "dummy":
-    fail("credentials are not the runner dummy static keys")
+if os.environ.get("AWS_ACCESS_KEY_ID") != os.environ.get("APPTHEORY_LOCAL_PROBE_ACCESS_KEY"):
+    fail("credentials are not the runner-issued access key for this run")
+if not os.environ.get("AWS_SECRET_ACCESS_KEY"):
+    fail("the runner issued no secret key to this container")
 if os.environ.get("AWS_SESSION_TOKEN"):
-    fail("AWS_SESSION_TOKEN is set; the runner must not hand a session token to a function")
-checks["credentials"] = "dummy static"
+    fail("AWS_SESSION_TOKEN is set; a base-role credential carries no session token")
+checks["credentials"] = "runner-issued"
+try:
+    checks["host_gateway"] = socket.gethostbyname("host.docker.internal")
+except OSError:
+    checks["host_gateway"] = ""
 
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 for service in sorted(endpoints):
