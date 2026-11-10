@@ -82,7 +82,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/py.txt`.
 
 <details>
-<summary>821 exported top-level symbols</summary>
+<summary>823 exported top-level symbols</summary>
 
 ```text
 AGENT_MCP_PATTERN, App, AppError, AppSyncContext, AppSyncResolverEvent, AppSyncResolverInfo, AppSyncResolverRequest, AppTheoryError,
@@ -122,7 +122,8 @@ ERR_MISSING_BEARER_TOKEN, ERROR_INVALID_GRANT, ERROR_INVALID_REQUEST, ERROR_REAU
 event_bridge_pattern, event_bridge_rule, EventBridgeScheduledWorkloadResultSummary, EventBridgeScheduledWorkloadSummary, EventBridgeSelector,
 EventBridgeWorkloadEnvelope, EventContext, FacadeCapabilities, FacadeConfig, FacadeRoute, FakeEmbedder, FakeMicroVMClient, FakeMicroVMProvider,
 FakeObjectStore, FakeUpstreamProvider, FakeVectorStore, FakeWebSocketClientFactory, FakeWebSocketManagementClient, fixed_mcp_id_generator,
-FixedWindowStrategy, format_duration, format_rfc3339_nano, format_window_id, generate_openapi, generate_openapi_json, get_day_window, get_fixed_window,
+FixedWindowStrategy, format_duration, format_rfc3339_nano, format_window_id, FrontDoorVerification, generate_openapi, generate_openapi_json,
+get_day_window, get_fixed_window,
 get_hour_window, get_logger, get_minute_window, GetVectorsInput, HandlerFactory, hash_key, header, HOOK_FAILURE, HOOK_PREPARE_IMAGE, HOOK_READINESS,
 HOOK_READY, HOOK_RESUME, HOOK_RUN, HOOK_START, HOOK_STOP, HOOK_SUSPEND, HOOK_TEARDOWN, HOOK_TERMINATE, HOOK_VALIDATE, hooks_from_emf_metric_sink,
 hooks_from_logger, hooks_from_profile_logger, html, html_stream, HTTP_ERROR_FORMAT_FLAT_LEGACY, HTTP_ERROR_FORMAT_NESTED, IdGenerator, IDGenerator,
@@ -180,7 +181,8 @@ OBJECTSTORE_ERROR_OBJECT_TOO_LARGE, OBJECTSTORE_ERROR_UNSUPPORTED_OPERATION, Obj
 ObjectStoreGetOutput, ObjectStoreOperation, ObjectStorePresignPutInput, ObjectStorePresignPutOutput, ObjectStorePutInput, ObjectStoreUploadGranter,
 ObservabilityHooks, one_of, OpenAPIAuthSchemes, OpenAPIFieldSpec, OpenAPIRequestSpec, OpenAPIResponseSpec, OpenAPIRouteSpec, OpenAPISpec,
 OpenAPIValidationRule, OPERATION_AUTH_TOKEN, OPERATION_GET, OPERATION_INVOKE, OPERATION_LIST, OPERATION_RESUME, OPERATION_RUN, OPERATION_SHELL_AUTH_TOKEN,
-OPERATION_SHELL_TOKEN, OPERATION_SUSPEND, OPERATION_TERMINATE, optional, origin_url, original_host, original_uri, PARAM_AGENT_ID, PARAM_CLIENT_NAMESPACE,
+OPERATION_SHELL_TOKEN, OPERATION_SUSPEND, OPERATION_TERMINATE, optional, ORIGIN_REACHABILITIES, origin_url, original_host, original_uri,
+PARAM_AGENT_ID, PARAM_CLIENT_NAMESPACE,
 PARAM_PARTNER_ID, parse_mcp_path, parse_mcp_test_sse_frames, parse_object_ref, PARTNER_AGENT_MCP_PATTERN, PARTNER_NAMESPACE_MCP_PATTERN, path, pattern,
 payment_xml_patterns, pkce_challenge_s256, pkce_verify_s256, PolicyDecision, PrincipalAuthHook, PrincipalKind, ProfileLogger, ProfileLoggerOptions,
 protected_resource_metadata_handler, protected_resource_path_for_resource_path, protected_resource_path_from_mcp_path, PROTECTED_RESOURCE_PREFIX,
