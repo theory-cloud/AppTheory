@@ -179,8 +179,13 @@ class RealTreeTests(unittest.TestCase):
         # lambda-packaging rows, the R3a Runtime API conformance suite, the
         # AD1 two-edit watch row, the KMS DIGEST/data-dir rows, the S3
         # SSE-S3 row, the seven LOCAL-W2-TLS rows, the five
-        # LOCAL-W2-TLS-GAPS rows and the origin-redirect row.
-        self.assertEqual(112, len(classified))
+        # LOCAL-W2-TLS-GAPS rows, the origin-redirect row, the six
+        # LOCAL-W3-M1 resource-type rows, the fourteen narrow-IAM rows, the
+        # five co-residence/declared-port rows, the two mail-surface rows and
+        # the ten LOCAL-W3-X5 MCP refresh rows (three covered helpers, seven
+        # executing), and the two LOCAL-W3-X6 rows with the versioning handler
+        # they cover.
+        self.assertEqual(146, len(classified))
         by_key = {entry.key: entry for entry in entries}
         expected = {
             "examples/cdk/ssr-site/bin/apptheory-ssr-site.ts": "ssr-site-gateway",
@@ -197,6 +202,20 @@ class RealTreeTests(unittest.TestCase):
             "examples/cdk/sqs-queue/handlers/sns-scenario-publisher.mjs": "sqs-sns-targets",
             "examples/cdk/sqs-queue/handlers/rule-publisher.mjs": "sqs-event-targets",
             "examples/cdk/local-tls/bin/app.ts": "local-tls-surfaces",
+            "examples/cdk/local-resources/scripts/inventory.sh": "local-resources-inventory",
+            "examples/cdk/local-resources/scripts/custom-resources.sh": "local-resources-custom",
+            "examples/cdk/local-resources/scripts/ses-receipt.sh": "local-resources-ses-receipt",
+            "examples/cdk/local-iam/scripts/grants.sh": "local-iam-grants",
+            "examples/cdk/local-iam/scripts/refusals.sh": "local-iam-refusals",
+            "examples/cdk/local-iam/scripts/function-url.sh": "local-iam-function-url",
+            "examples/cdk/local-iam/scripts/shared-plane.sh": "local-iam-shared-plane",
+            "examples/cdk/local-mcp-auth-facade/scripts/rotation-chain.py": "mcp-facade-rotation-chain",
+            "examples/cdk/local-mcp-auth-facade/scripts/stale-predecessor.py": "mcp-facade-stale-predecessor",
+            "examples/cdk/local-mcp-auth-facade/scripts/concurrent-refresh.py": "mcp-facade-concurrent-refresh",
+            "examples/cdk/local-mcp-auth-facade/scripts/restart-mid-chain.py": "mcp-facade-restart-mid-chain",
+            "examples/cdk/local-mcp-auth-facade/scripts/retry-storm.py": "mcp-facade-retry-storm",
+            "examples/cdk/local-mcp-auth-facade/scripts/genuine-replay.py": "mcp-facade-genuine-replay",
+            "examples/cdk/local-mcp-auth-facade/scripts/legacy-continuity.py": "mcp-facade-legacy-continuity",
             "examples/cdk/local-tls/handlers/go/main.go": "local-tls-callback-go",
             "examples/cdk/local-tls/scripts/callback-node.sh": "local-tls-callback-node",
             "examples/cdk/local-tls/handlers/python/caller.py": "local-tls-callback-py",

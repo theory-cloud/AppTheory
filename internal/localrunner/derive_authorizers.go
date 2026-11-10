@@ -31,8 +31,12 @@ const (
 	authorizerTypeToken            = "TOKEN"
 	authorizerTypeCognitoUserPools = "COGNITO_USER_POOLS"
 	authorizationTypeCustom        = "CUSTOM"
-	authorizerPayloadFormatV2      = "2.0"
-	authorizerPayloadFormatV1      = "1.0"
+	// authorizationTypeIAM is API Gateway's AWS_IAM authorization: the caller
+	// signs the request with Signature Version 4 and the gateway evaluates IAM.
+	// https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-control-access-using-iam-policies-to-invoke-api.html
+	authorizationTypeIAM      = "AWS_IAM"
+	authorizerPayloadFormatV2 = "2.0"
+	authorizerPayloadFormatV1 = "1.0"
 )
 
 // AuthorizerKind names one authorizer implementation.
@@ -49,7 +53,88 @@ const (
 	AuthorizerKindLambdaRequest AuthorizerKind = "lambda-request-policy"
 	// AuthorizerKindCognito is a REST API COGNITO_USER_POOLS authorizer.
 	AuthorizerKindCognito AuthorizerKind = "rest-cognito-user-pools"
+	// AuthorizerKindIAM is API Gateway's AWS_IAM authorization on a REST
+	// method, an HTTP API route or a Function URL. The transport verifies the
+	// SigV4 signature, resolves the caller principal and evaluates the local
+	// subset of IAM before it invokes the handler.
+	AuthorizerKindIAM AuthorizerKind = "iam"
 )
+
+// functionResourcePolicy builds a function URL's resource-based policy from the
+// AWS::Lambda::Permission resources that name the function. A Function URL's
+// AWS_IAM authorization evaluates lambda:InvokeFunctionUrl and
+// lambda:InvokeFunction against that policy and the caller's identity policy.
+//
+// https://docs.aws.amazon.com/lambda/latest/dg/urls-auth.html
+// https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-lambda-permission.html
+func functionResourcePolicy(stack assemblyStack, functionID string) json.RawMessage {
+	var statements []map[string]any
+	types := stack.resourceTypes()
+	for _, id := range sortedKeys(stack.Template.Resources) {
+		resource := stack.Template.Resources[id]
+		if resource.Type != typeLambdaPermission {
+			continue
+		}
+		var props lambdaPermissionProperties
+		if len(resource.Properties) > 0 {
+			if err := json.Unmarshal(resource.Properties, &props); err != nil {
+				continue
+			}
+		}
+		target, ok := findRefByType(props.FunctionName, types, typeLambdaFunction, "Arn")
+		if !ok || target != functionID {
+			continue
+		}
+		if props.Action != "lambda:InvokeFunctionUrl" && props.Action != "lambda:InvokeFunction" {
+			continue
+		}
+		principal := lambdaPermissionPrincipal(props)
+		if principal == "" {
+			continue
+		}
+		statement := map[string]any{
+			"Effect":    iamEffectAllow,
+			"Action":    props.Action,
+			"Principal": map[string]any{"AWS": principal},
+			"Resource":  map[string]any{"Fn::GetAtt": []any{target, "Arn"}},
+		}
+		if props.FunctionURLAuthType != "" {
+			statement["Condition"] = map[string]any{
+				iamStringEquals: map[string]any{iamFunctionURLTypeKey: props.FunctionURLAuthType},
+			}
+		}
+		statements = append(statements, statement)
+	}
+	if len(statements) == 0 {
+		return nil
+	}
+	document := map[string]any{"Version": "2012-10-17", "Statement": statements}
+	encoded, err := json.Marshal(document)
+	if err != nil {
+		return nil
+	}
+	return encoded
+}
+
+// lambdaPermissionPrincipal renders the Principal an
+// AWS::Lambda::Permission declares. A bare account id becomes the account-root
+// ARN, which is what the policy evaluation compares.
+func lambdaPermissionPrincipal(props lambdaPermissionProperties) string {
+	var principal string
+	if len(props.Principal) > 0 {
+		if err := json.Unmarshal(props.Principal, &principal); err != nil {
+			return ""
+		}
+	}
+	principal = strings.TrimSpace(principal)
+	if principal == "" {
+		return ""
+	}
+	if len(principal) == 12 && !strings.Contains(principal, ":") {
+		return "arn:" + LocalPartition + ":iam::" + principal + ":root"
+	}
+	return principal
+}
 
 // apiAuthorizer is one authorizer resource a route can reference.
 type apiAuthorizer struct {

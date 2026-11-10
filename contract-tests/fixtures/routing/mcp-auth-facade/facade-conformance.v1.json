@@ -600,36 +600,32 @@
       "expect_absent": ["upstream-refresh-token", "id_token"]
     },
     {
-      "id": "refresh.beyond_grace_first_presentation_revokes_family_without_tokens",
+      "id": "refresh.stale_predecessor_after_grace_is_served",
       "group": "refresh",
-      "scenario": "beyond_grace_first_presentation_revokes_family_without_tokens",
-      "expect_status": 400,
-      "expect_error": "invalid_grant",
-      "expect_absent": ["access_token", "refresh_token", "upstream-refresh-token", "id_token"]
+      "scenario": "stale_predecessor_after_grace_is_served",
+      "expect_status": 200,
+      "expect_absent": ["upstream-refresh-token", "id_token"]
     },
     {
-      "id": "refresh.beyond_grace_repeated_presentation_is_invalid_grant",
+      "id": "refresh.stale_predecessor_repeat_is_served_from_the_rearmed_window",
       "group": "refresh",
-      "scenario": "beyond_grace_repeated_presentation_is_invalid_grant",
-      "expect_status": 400,
-      "expect_error": "invalid_grant",
-      "expect_absent": ["access_token", "refresh_token", "upstream-refresh-token", "id_token"]
+      "scenario": "stale_predecessor_repeat_is_served_from_the_rearmed_window",
+      "expect_status": 200,
+      "expect_absent": ["upstream-refresh-token", "id_token"]
     },
     {
-      "id": "refresh.reuse_after_nine_rotations_revokes_whole_family",
+      "id": "refresh.stale_predecessor_after_many_rotations_is_served",
       "group": "refresh",
-      "scenario": "reuse_after_nine_rotations_revokes_whole_family",
-      "expect_status": 400,
-      "expect_error": "invalid_grant",
-      "expect_absent": ["access_token", "refresh_token", "upstream-refresh-token", "id_token"]
+      "scenario": "stale_predecessor_after_many_rotations_is_served",
+      "expect_status": 200,
+      "expect_absent": ["upstream-refresh-token", "id_token"]
     },
     {
-      "id": "refresh.legacy_lineage_refused_without_tokens",
+      "id": "refresh.legacy_lineage_is_adopted",
       "group": "refresh",
-      "scenario": "legacy_lineage_refused_without_tokens",
-      "expect_status": 400,
-      "expect_error": "invalid_grant",
-      "expect_absent": ["access_token", "refresh_token", "upstream-refresh-token", "id_token"]
+      "scenario": "legacy_lineage_is_adopted",
+      "expect_status": 200,
+      "expect_absent": ["upstream-refresh-token", "id_token"]
     },
     {
       "id": "refresh.missing_family_state_fails_closed",

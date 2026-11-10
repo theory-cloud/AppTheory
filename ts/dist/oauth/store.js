@@ -504,6 +504,9 @@ export class MemoryRouteRefreshBrokerStore {
             ...structuredClone(presented),
             encryptedGraceRefreshResponse: rotation.graceRefreshResponse,
             graceExpiresAt: rotation.graceExpiresAt,
+            ...(rotation.graceAccessTokenExpiresAt === undefined
+                ? {}
+                : { graceAccessTokenExpiresAt: rotation.graceAccessTokenExpiresAt }),
             status: "active",
             version: presented.version + 1,
         };

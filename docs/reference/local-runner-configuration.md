@@ -50,7 +50,7 @@ function the CDK definition targets and reads one JSON command per line.
 | `--stdio` | off | `invoke`: read newline-delimited JSON events from stdin and keep the container warm. |
 | `--stream-chunks` | off | `invoke`: with `--stdio`, write one `{"event":"chunk",…}` line per streamed response chunk before the result line. A buffered response still writes only the result, so the default one-result-per-event contract is unchanged. |
 | `--rie` | off | Run function containers under the image's embedded Runtime Interface Emulator instead of the runner's Lambda Runtime API. Reported by `plan`, `plan --json` (`runtimeMode`) and `session describe`. It cannot stream incrementally. |
-| `--target ID` | none | `session`: start this CDK function even though no route, event source or rule targets it. Repeatable. |
+| `--target ID` | none | `session`: start this CDK function even though no route, event source or rule targets it. Repeatable. It only adds functions: a served custom resource's deploy-time targets (a provider framework's `onEvent` function named in its environment) always start, so `--target` cannot narrow them away. |
 | `--handler-dir DIR` | none | `invoke`: built handler directory for an example with no CDK definition. Derives no routes. |
 | `--runtime RUNTIME` | none | `invoke --handler-dir`: Lambda runtime (`provided.al2023`, `nodejs24.x`, `python3.14`). |
 | `--handler NAME` | none | `invoke --handler-dir`: handler name (`bootstrap` for the provided runtime). |
@@ -58,8 +58,17 @@ function the CDK definition targets and reads one JSON command per line.
 | `--memory MB` | 128 | `invoke --handler-dir`: function memory. |
 | `--timeout SECONDS` | 3 | `invoke --handler-dir`: function timeout. |
 | `--watch` | off | `run`/`session`: follow `cdk.json`'s `watch` include/exclude (or the app directory), re-synthesize on a change and apply the new surface without restarting the listeners. See [Dev loop](#dev-loop). |
-| `--data-dir DIR` | none (ephemeral) | `run`/`session`/`invoke`: keep DynamoDB Local, s3proxy and ElasticMQ state under `DIR`, plus the runner's KMS key material and S3 SSE-S3 records; moto stays in memory. See [Dev loop](#dev-loop). |
+| `--data-dir DIR` | none (ephemeral) | `run`/`session`/`invoke`: keep DynamoDB Local, s3proxy and ElasticMQ state under `DIR`, plus the runner's KMS key material, S3 SSE-S3 records and the versioned buckets' version log; moto stays in memory. See [Dev loop](#dev-loop). |
 | `--seed COMMAND` | none | `run`/`session`: run `sh -c COMMAND` after provisioning and before `local-run: ready`. See [Dev loop](#dev-loop). |
+| `--port LOGICALID=PORT` | none | `run`/`session`/`plan`: pin a served public surface (API, Function URL, WebSocket API or CloudFront distribution) to a declared port. Repeatable; needs `--port-base`. Pinned ports are reserved first and the counter skips them; a collision, an out-of-range port, a repeated surface or an unknown id fails closed. |
+| `--tls` | off | `run`/`session`: serve every public listener over HTTPS from a certificate the run's local CA signs. |
+| `--tls-host HOST` | `app.localhost` | `run`/`session` with `--tls`: the public `*.localhost` host name. |
+| `--tls-aux HOST` | none | `run`/`session` with `--tls`: an auxiliary `*.localhost` name a function container must reach (for example a local test IdP). Repeatable. |
+| `--shared-dir DIR` | none | `run`/`session`/`invoke`: the directory co-resident runs share: the IAM plane at `<DIR>/iam` and the CA at `<DIR>/ca`. |
+| `--shared-network NAME` | none | `run`/`session`: join every co-resident run's containers to one Docker bridge, so a run reaches a sibling's listener at the host address this run also binds. Backend aliases and the endpoints injected into functions carry the run's name prefix (`<prefix>-moto`), so two runs never resolve one Docker DNS name and the preflight resolves the same name a function sees. A run's cleanup leaves the network; remove it with `down --shared-network`. |
+| `--peer-host HOST` | none | `run`/`session` with `--tls`: map a co-resident run's public `*.localhost` name into this run's function containers. Repeatable. |
+| `--mail` | off | `run`/`session`: start the local mail surface: the profile's digest-pinned Mailpit sink, an SMTP ingress that runs the app's SES receipt rules, and the sink's HTTPS read API. |
+| `--mail-host HOST` | `mail.localhost` | `run`/`session` with `--mail`: the mail surface's public `*.localhost` name. |
 
 Exit codes: `0` success, `1` a run/plan failure, `2` a usage error.
 
@@ -237,19 +246,24 @@ label=apptheory.local.run`).
 <data-dir>/dynamodb/shared-local-instance.db   DynamoDB Local -dbPath /data (the pinned -sharedDb is kept)
 <data-dir>/s3proxy/<bucket>/<key>              s3proxy jclouds filesystem provider, JCLOUDS_FILESYSTEM_BASEDIR=/data
 <data-dir>/s3sse/index.json                    the objects written with SSE-S3 (0600)
+<data-dir>/s3versions/index.json               the version log of every version-enabled bucket (0600)
+<data-dir>/s3versions/blobs/<bucket>/<id>      the archived bytes of one version
 <data-dir>/sqs/elasticmq.mv.db                 ElasticMQ messages-storage (H2), verified on the pinned 1.7.1 image
 <data-dir>/kms/keys.json                       the runner's KMS key material (0600)
 ```
 
 moto is memory-only and is not persisted ([moto server mode](https://docs.getmoto.org/en/latest/docs/server_mode.html)).
-The two runner-owned files are the exception the runner adds for its
-fronts: `kms/keys.json` keeps the material of the key families the KMS front
-owns so ciphertext written in one run decrypts in the next, and
-`s3sse/index.json` keeps each object's SSE-S3 answer. Both are `0600` and hold
-no AWS credential; see
+The runner-owned files are the exception the runner adds for its fronts:
+`kms/keys.json` keeps the material of the key families the KMS front owns so
+ciphertext written in one run decrypts in the next, `s3sse/index.json` keeps
+each object's SSE-S3 answer, and `s3versions/` keeps the version log and bytes
+of a template-versioned bucket so a version id stays readable across a restart.
+They are `0600` and hold no AWS credential; see
 [KMS signing and key material](/examples/local-runner/#kms-signing-and-key-material)
 and
-[S3 objects and server-side encryption](/examples/local-runner/#s3-objects-and-server-side-encryption).
+[S3 objects and server-side encryption](/examples/local-runner/#s3-objects-and-server-side-encryption)
+and
+[object versioning](/examples/local-runner/#object-versioning).
 The data directory must be under `$HOME` or the working directory so Docker can
 bind-mount it. The pinned emulator images run as their own non-root users
 (DynamoDB Local as `dynamodblocal`, ElasticMQ as `elasticmq`). Colima maps a
@@ -527,7 +541,8 @@ TS_NODE_TRANSPILE_ONLY=1
 | `AWS::Lambda::Function` with `Code.ZipFile` | Materialized as `<module>.js` / `<module>.py` under `<scratch>/inline/<logicalId>/`. |
 | `AWS::ApiGatewayV2::Api` (`ProtocolType: HTTP`) + `Route` + `AWS_PROXY` `Integration` | Served as HTTP API v2. `$default` routes become a catch-all. |
 | `AWS::ApiGateway::RestApi` + `Resource` tree + `Method` + `AWS_PROXY` integration | Served as REST API v1 at the path reconstructed from the resource tree. `ResponseTransferMode: STREAM` and `/response-streaming-invocations` are marked streaming. |
-| `AWS::Lambda::Url` (`AuthType: NONE`) | Served as a Function URL listener. `InvokeMode: RESPONSE_STREAM` is marked streaming and forwarded incrementally. A URL with `AWS_IAM` is not served as a standalone URL; when a served CloudFront distribution targets it, the gateway invokes it through the signed local OAC origin instead. |
+| `AWS::Lambda::Url` (`AuthType: NONE`) | Served as a Function URL listener. `InvokeMode: RESPONSE_STREAM` is marked streaming and forwarded incrementally. |
+| `AWS::Lambda::Url` (`AuthType: AWS_IAM`) | Served as a Function URL listener with the IAM gate in front: every request must carry a verified SigV4 signature, and the resolved principal reaches `requestContext.authorizer.iam`. A CloudFront distribution that targets the URL still invokes it through the signed local OAC origin. Any other auth type is reported under `skipped`. |
 | `AWS::ApiGatewayV2::Authorizer` (`REQUEST`) | For an HTTP API route with simple responses, the transport sends a v2 REQUEST authorizer event and enforces `isAuthorized`. With `EnableSimpleResponses: false` it sends payload format 1.0 or 2.0 and matches the returned IAM policy against the route ARN. For a WebSocket `$connect` route, the transport sends the documented WebSocket authorizer event and matches the returned IAM policy against the `$connect` method ARN. A type the transport cannot run fails the route that references it closed. |
 | `AWS::ApiGateway::Authorizer` | Parsed; a `COGNITO_USER_POOLS` authorizer is run for the REST methods that reference it (R2a). A Lambda authorizer is R2b and fails closed. |
 | `AWS::Lambda::EventSourceMapping` (SQS, DynamoDB Streams, Kinesis) | Reported with its function, source, batch options, filter criteria and scaling configuration; the function is started and the mapping is delivered automatically: an SQS queue (see [SQS event-source delivery](/examples/local-runner/#sqs-event-source-delivery)), a DynamoDB stream (see [DynamoDB Streams delivery](/examples/local-runner/#dynamodb-streams-delivery)) or a Kinesis stream (see [Kinesis event-source delivery](/examples/local-runner/#kinesis-event-source-delivery)). A session can still build the provider event from real local messages or a real local write. |
@@ -1580,7 +1595,8 @@ runs on the same network with the same environment. Backend readiness above has
 already proven each published host port answers its service from the host; this
 probe proves the view from inside a function container. It must report:
 
-- credentials are the `dummy` static keys and no session token is present;
+- credentials are the access key the runner issued to the probe, no session
+  token is present, and the key is the one the runner recorded for this run;
 - every configured endpoint host resolves and answers an HTTP request (this
   includes the moto KMS/STS and s3proxy S3 endpoints when those backends are
   running);

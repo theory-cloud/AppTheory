@@ -31,7 +31,7 @@ resolution.
 | Rate-limit table provisioning | `scripts/local/cmd/rate-limit-table` |
 | Built-asset runtime proof | `scripts/local/verify-lambda-assets.py` |
 | Lambda runtime image pins | `scripts/local/examples-local.json` (`lambda.images`) |
-| Runner emulator pins | `scripts/local/examples-local.json` (`containers.moto`, `containers.s3proxy`, `containers.sqs` and their endpoints) |
+| Runner emulator pins | `scripts/local/examples-local.json` (`containers.moto`, `containers.s3proxy`, `containers.sqs` and their endpoints; `mail` pins the Mailpit sink, its SMTP and HTTP ports, version, licence and recorded size) |
 | Local runner | `cmd/apptheory-local` with `internal/localrunner`; `session` provides the JSON command channel |
 | Self-tests | `scripts/local/test_examples_local.py` |
 | Runtime API conformance | `scripts/local/runtime_api_conformance.py` (row `runtime-api-conformance`, L2) |
@@ -170,9 +170,9 @@ these rules, so a validator that stops failing closed fails the harness.
 
 ## Fidelity table
 
-`scripts/local/examples-local.json` classifies 112 rows: 111 entrypoints plus the
-`runtime-api-conformance` suite. The classes are 34 L1, 56 L2, 10 L3 and 12 I;
-81 rows execute a runner (80 entrypoints and the suite) and 31 entrypoints are
+`scripts/local/examples-local.json` classifies 146 rows: 145 entrypoints plus the
+`runtime-api-conformance` suite. The classes are 34 L1, 89 L2, 10 L3 and 13 I;
+107 rows execute a runner (106 entrypoints and the suite) and 39 entrypoints are
 covered by another row's real run. The harness's `counts:` line reports every
 row as passed or failed; a covered row shares its target's result.
 
@@ -290,11 +290,45 @@ build.
 | `examples/cdk/s3-vectors-semantic-search/handler/main.go` | L3 | S3 Vectors semantic search handler: health reports the CDK vector index; missing/wrong auth, missing query and invalid top_k are refused; authorized seed/search reach the Bedrock boundary with vectorstore.embedding_failed. | S3 Vectors and Bedrock (docs/125 true limit: AWS-only services with no emulator); the HTTP and auth surface runs locally, refusals are asserted, and authorized provider calls stop at the closed Bedrock endpoint. |
 | `examples/cdk/ssr-site/scripts/upload-assets.sh` | L3 | SSR site asset uploader: the real AWS CLI syncs the assets and copies the generated manifest to the local s3proxy endpoint with dummy credentials; the gateway serves both with the script's cache-control and the uploaded manifest. The site's bucket declares no event notification; the notification destinations are proven by the sqs-queue row. s3proxy serves the objects without bucket policies or IAM. | The edge network and IAM policy evaluation in general (docs/125 true limits: real network properties; IAM policy evaluation in general). |
 
+| `examples/cdk/local-iam-peer/bin/app.ts` | L2 | The second app of the shared-plane row: it defines the role the other run assumes and the REST API that run's session calls. | — |
+| `examples/cdk/local-iam/bin/app.ts` | L2 | The local IAM app: a REST API with AWS_IAM methods and a resource policy, an HTTP API AWS_IAM route, an AWS_IAM Function URL, and the caller, other and vending roles the rows resolve. | IAM policy evaluation is narrow (docs/127 W3-D1): only the enumerated statement shapes are evaluated, and the STS trust policy alone decides AssumeRole locally. |
+| `examples/cdk/local-iam/handlers/go/main.go` | L2 | Go caller: a provided.al2023 container signs an execute-api request with the AWS SDK for Go v2's SigV4 signer, using the credentials the runner issued to it, and the gateway resolves its role ARN from the signature. | IAM policy evaluation is narrow (docs/127 W3-D1): only the enumerated shapes are evaluated, and the STS trust policy alone decides AssumeRole locally. |
+| `examples/cdk/local-iam/handlers/node/caller.js` | L2 | Node caller: a nodejs24.x container signs an execute-api request with the AWS SDK for JavaScript v3's SignatureV4 (the SDK the image ships under /var/runtime/node_modules), using the credentials the runner issued to it. | IAM policy evaluation is narrow (docs/127 W3-D1): only the enumerated shapes are evaluated, and the STS trust policy alone decides AssumeRole locally. |
+| `examples/cdk/local-iam/handlers/python/caller.py` | L2 | Python caller: a python3.14 container signs an execute-api request with botocore's SigV4Auth, using the credentials the runner issued to it. | IAM policy evaluation is narrow (docs/127 W3-D1): only the enumerated shapes are evaluated, and the STS trust policy alone decides AssumeRole locally. |
+| `examples/cdk/local-iam/scripts/function-url.sh` | L2 | AWS_IAM Function URL: a signed call is served with the resolved principal in requestContext.authorizer.iam, and an unsigned call is refused with a named reason. | The Function URL is served on a loopback URL by the local runner, not by the Lambda service; the trust store is the run CA when TLS is opted in. |
+| `examples/cdk/local-iam/scripts/grants.sh` | L2 | Narrow IAM grants: a resource-policy allow, an identity-policy-only allow, an account-root principal, an aws:PrincipalArn-conditioned statement, a trailing path wildcard and an HTTP API AWS_IAM route each grant a real SigV4-signed call, and the handler sees the resolved role ARN, account and access key in its event identity. | IAM policy evaluation is a docs/125 true limit in general; the local runner evaluates only the enumerated statement shapes docs/127 W3-D1 defines and fails closed on anything else. |
+| `examples/cdk/local-iam/scripts/refusals.sh` | L2 | Narrow IAM refusals: an unsigned request, a tampered signature, a wrong principal, an out-of-subset condition and an explicit Deny are each refused with a named reason. | Only the enumerated statement shapes are evaluated (docs/125 true limit: IAM policy evaluation in general); an out-of-subset statement is refused by name instead of guessed. |
+| `examples/cdk/local-iam/scripts/shared-plane.sh` | L2 | Shared IAM plane: run A's function assumes a role run B's stack defined, through run A's STS endpoint; run B verifies the session's signature from the shared credential registry and grants the call against its own resource policy and the role's identity policy. | The two runs share one directory on this host; they are not two deployments, and the session that signs the second call is minted by the first run's STS endpoint rather than by a container-to-container hop (that hop is the co-residence work). |
+| `examples/cdk/local-resources/bin/app.ts` | L2 | The resource-type app: a bucket with autoDeleteObjects, a Custom::Trigger, a provider-framework custom resource, a Custom::AWS SDK call, an SES receipt rule with S3 and Lambda actions, an SES identity, and the deploy-time-only and MicroVM types. | The reported types have no local runtime behavior (docs/125 true limit: deploy-time-only resources), and a MicroVM image is an AWS-only service with no emulator. |
+| `examples/cdk/local-resources/handlers/go/main.go` | L2 | The receipt rule's Lambda action: the provided.al2023 handler renders the received-message record SES documents and reads the raw body the rule's S3 action wrote. | The message arrives through the local SMTP ingress (or the documented session operation); the S3 action's store is s3proxy. |
+| `examples/cdk/local-resources/handlers/node/versioning.js` | L2 | The versioning probe handler: put, copy, complete multipart upload, get and head by version id, ListObjectVersions, and the injected endpoint environment, all through the AWS SDK the nodejs24 image ships. | The pinned s3proxy has no versioning; the runner's S3 front stores the history, so suspended versioning and a copy from a specific version are docs/125 true limits. |
+| `examples/cdk/local-resources/scripts/s3-versioning.sh` | L2 | S3 object versioning: a bucket whose template sets VersioningConfiguration=Enabled returns a distinct x-amz-version-id from each PutObject, CopyObject and CompleteMultipartUpload through the runner's S3 front, every version reads back by id through the AWS SDK, and ListObjectVersions reports them with one latest per key. The run's `--target` names only the version store, so the provider framework's untargeted user function also proves the deploy-time closure. | The pinned s3proxy implements no versioning (its filesystem backend has none: https://github.com/gaul/s3proxy/issues/74); the runner's S3 front stores the history, so a suspended-versioning bucket and a copy from a specific version are docs/125 true limits. |
+| `examples/cdk/local-resources/scripts/backends-scoping.sh` | L2 | Shared-network endpoint scoping: two co-resident runs on one --shared-network each start their own moto and s3proxy, the injected endpoint names carry each run's scoped alias, both preflights resolve those aliases, and each run's function reads only its own store. | The two runs are processes on one host sharing a bridge; the aliases are scoped by --name-prefix, which co-resident runs must set distinctly. |
+| `examples/cdk/local-resources/scripts/custom-resources.sh` | L2 | Served custom resources: the Custom::Trigger provider invokes its target through the local Lambda endpoint at start, the provider framework invokes its user function and returns its Data and physical id, the Custom::AWS handler creates an SES rule set on moto, the activation custom resource runs after the ensure its `DependsOn` names although its logical id sorts first, and the bucket auto-delete handler deletes a real object on its delete leg. | The provider handlers run in their real containers; the AWS SDK calls inside them reach the pinned moto, whose state is memory-only (docs/125 true limit). The two bridge resources prove the ordering rule and the framework's user function proves the deploy-time closure; both are template shapes, not emulated CloudFormation. |
+| `examples/cdk/local-resources/scripts/inventory.sh` | L2 | Resource-type inventory: a real synth declares a Custom::Trigger, a provider-framework custom resource, a Custom::AWS SDK call, a bucket auto-delete handler, an SES receipt rule, and the deploy-time-only and MicroVM types; plan reports each as served, deploy-time-only with its docs/125 reason, or refused by name. | The reported types have no local runtime behavior (docs/125 true limit: deploy-time-only resources), and a MicroVM image is an AWS-only service with no emulator. |
+| `examples/cdk/local-resources/scripts/ses-receipt.sh` | L2 | SES receipt rule: ses.receive injects one message at a recipient the derived rule accepts; the rule's S3 action writes the raw body under its prefix, and its Lambda action receives the documented received-message record (message id, headers, action, receipt timestamp, no body), which the handler reads back from the bucket. | The message is injected through the documented session operation, which stays available beside the real SMTP ingress. The S3 action's store is s3proxy. |
+| `examples/cdk/local-iam/scripts/port-pinning.sh` | L2 | Declared ports: the HTTP API (index 0) is pinned to base+1 and the REST API (index 1) to base, both pinned listeners answer real signed calls at their declared ports, and the unpinned Function URL keeps base+2. | A pin reserves a slot inside the run's `--port-base` range; a port outside that range is refused rather than bound. |
+| `examples/cdk/local-iam/scripts/port-unpinned.sh` | L2 | Unpinned allocation: without `--port`, the same app keeps today's counter order exactly (httpv2 base, restv1 base+1, fnurl base+2). | The counter is per run; co-resident runs use distinct `--port-base` values. |
+| `examples/cdk/local-iam/scripts/port-refusals.sh` | L2 | Named port refusals: a collision, a port outside the run's range, an unknown logical id and a pin without `--port-base` each exit non-zero with a message naming the cause before anything starts. | Validated at plan time from the derived surface; a port another process holds is reported by the bind, not by the allocator. |
+| `examples/cdk/local-iam/scripts/co-residence-ca.sh` | L2 | Shared CA and per-run host names: two runs (auth.localhost and mcp.localhost) reuse one CA at `<shared-dir>/ca`, each leaf carries its own host and verifies against that CA, and both hosts answer over verified HTTPS. | The CA is a runner-generated local root; the trust is installed per client (the mounted bundle or the harness context), not in a system store. |
+| `examples/cdk/local-iam/scripts/co-residence-iam.sh` | L2 | Cross-run co-residence: two apps run in two sessions on one shared Docker network and one shared CA with pinned ports; run A's function signs with run A's credential and calls run B's AWS_IAM route at https://mcp.localhost:<pinned>, and run B verifies it and resolves run A's role. | IAM policy evaluation is narrow (docs/127 W3-D1); the two runs are processes on one host sharing a directory and a bridge, not two deployments. |
+| `examples/cdk/local-resources/scripts/mail-send-read.sh` | L2 | Local mail surface: STARTTLS to the SMTP ingress verifies the aux leaf, an outbound message is accepted, and the sink's HTTPS read API returns it with its recipient and body. | The sink is a digest-pinned local test server, not Migadu or SES; the SMTP ingress is the runner's listener because it must reach both the sink and the receipt rules. |
+| `examples/cdk/local-resources/scripts/mail-receipt.sh` | L2 | Real SMTP ingress to the derived SES receipt rule: a message to ingress@local-resources.test runs the rule's S3 then Lambda actions with SES's received-message record (no body), and the sink's read API returns the same message. | The receipt record is built locally from the received SMTP message and verified against the SES event docs; the SMTP transport is local, not SES's. |
+| `examples/cdk/local-mcp-auth-facade/handlers/go/main.go` | L2 | The facade app the refresh rows run: the runtime-bearer MCP tool surface, the facade's front channel, the example-only state/legacy/revocation routes, and the in-process upstream. | The upstream authorization server is the example's own in-process OAuth 2.1 implementation (no local OIDC provider path ships with the runner); TMS proves the Autheory path. Each row runs one container on this host, not a deployment. |
+| `examples/cdk/local-mcp-auth-facade/scripts/rotation-chain.py` | L2 | Rotation chain: four generations of one family over real HTTP, one upstream rotation per refresh, the last access token initializing the MCP transport. | The upstream authorization server is the example's own in-process OAuth 2.1 implementation (no local OIDC provider path ships with the runner); TMS proves the Autheory path. Each row runs one container on this host, not a deployment. |
+| `examples/cdk/local-mcp-auth-facade/scripts/stale-predecessor.py` | L2 | The lab pattern: a predecessor presented past its grace window is served fresh credentials by rotating the family's live head; the family stays live and one upstream rotation happens. | The upstream authorization server is the example's own in-process OAuth 2.1 implementation (no local OIDC provider path ships with the runner); TMS proves the Autheory path. Each row runs one container on this host, not a deployment. |
+| `examples/cdk/local-mcp-auth-facade/scripts/concurrent-refresh.py` | L2 | Two processes refresh one handle at the same time: both are served, exactly one upstream rotation happens, and the family keeps one successor. | The upstream authorization server is the example's own in-process OAuth 2.1 implementation (no local OIDC provider path ships with the runner); TMS proves the Autheory path. Each row runs one container on this host, not a deployment. |
+| `examples/cdk/local-mcp-auth-facade/scripts/restart-mid-chain.py` | L2 | A client restarts holding the predecessor: the stored successor body is replayed without a second upstream call and the session continues from it. | The upstream authorization server is the example's own in-process OAuth 2.1 implementation (no local OIDC provider path ships with the runner); TMS proves the Autheory path. Each row runs one container on this host, not a deployment. |
+| `examples/cdk/local-mcp-auth-facade/scripts/retry-storm.py` | L2 | Twelve identical presentations of a dead predecessor: all served, the re-armed window costs one upstream rotation, the family stays live. | The upstream authorization server is the example's own in-process OAuth 2.1 implementation (no local OIDC provider path ships with the runner); TMS proves the Autheory path. Each row runs one container on this host, not a deployment. |
+| `examples/cdk/local-mcp-auth-facade/scripts/genuine-replay.py` | L2 | A replayed authorization code revokes its family, and the family's handle then answers 400 invalid_grant with no credentials — the token endpoint's re-authorize signal. | The upstream authorization server is the example's own in-process OAuth 2.1 implementation (no local OIDC provider path ships with the runner); TMS proves the Autheory path. Each row runs one container on this host, not a deployment. |
+| `examples/cdk/local-mcp-auth-facade/scripts/legacy-continuity.py` | L2 | A family-less pre-policy record is adopted in code onto a generation-1 family root, which the next refresh rotates to generation 2. | The upstream authorization server is the example's own in-process OAuth 2.1 implementation (no local OIDC provider path ships with the runner); TMS proves the Autheory path. Each row runs one container on this host, not a deployment. |
+| `examples/cdk/local-mcp-auth-facade/scripts/replay_lib.py` | L2 | Shared replay client and assertions for the seven sequences (discovery, DCR, PKCE authorize chain, code exchange, refresh, state document). | The upstream authorization server is the example's own in-process OAuth 2.1 implementation (no local OIDC provider path ships with the runner); TMS proves the Autheory path. Each row runs one container on this host, not a deployment. |
+
 ### I rows
 
 | Row | Class | How it is verified | Fail-closed reason |
 | --- | --- | --- | --- |
-| `examples/cdk/hello-world/bin/apptheory-hello-world.ts`, `examples/cdk/codebuild-job-runner/bin/app.ts`, `examples/cdk/import-pipeline/bin/app.ts`, `examples/cdk/kinesis-cloudwatch-logs/bin/app.ts`, `examples/cdk/lambda-packaging/bin/app.ts`, `examples/cdk/lambda-role/bin/app.ts`, `examples/cdk/lesser-parity/bin/app.ts`, `examples/cdk/microvm-controller/bin/app.ts`, `examples/cdk/multilang/bin/apptheory-multilang.ts`, `examples/cdk/restv1-router/bin/app.ts`, `examples/cdk/s3-vectors-semantic-search/bin/app.ts`, `examples/cdk/sqs-queue/bin/app.ts` | I | CDK app anchor for the synth row: every CDK example in the tree is synthesized and compared with its pinned template hash (plus focused construct assertions for the six once-uncovered examples, and an official Lambda runtime image invocation of the staged TypeScript and Python assets). | Infrastructure-only: the CDK app entrypoint is synthesized and hash-checked by this row; it has no runtime process to serve, so it is never invoked. |
+| `examples/cdk/hello-world/bin/apptheory-hello-world.ts`, `examples/cdk/codebuild-job-runner/bin/app.ts`, `examples/cdk/import-pipeline/bin/app.ts`, `examples/cdk/kinesis-cloudwatch-logs/bin/app.ts`, `examples/cdk/lambda-packaging/bin/app.ts`, `examples/cdk/lambda-role/bin/app.ts`, `examples/cdk/lesser-parity/bin/app.ts`, `examples/cdk/local-mcp-auth-facade/bin/local-mcp-auth-facade.ts`, `examples/cdk/microvm-controller/bin/app.ts`, `examples/cdk/multilang/bin/apptheory-multilang.ts`, `examples/cdk/restv1-router/bin/app.ts`, `examples/cdk/s3-vectors-semantic-search/bin/app.ts`, `examples/cdk/sqs-queue/bin/app.ts` | I | CDK app anchor for the synth row: every CDK example in the tree is synthesized and compared with its pinned template hash (plus focused construct assertions for the six once-uncovered examples, and an official Lambda runtime image invocation of the staged TypeScript and Python assets). | Infrastructure-only: the CDK app entrypoint is synthesized and hash-checked by this row; it has no runtime process to serve, so it is never invoked. |
 
 ## Runtime API conformance
 
@@ -391,3 +425,65 @@ MCP handler rows build the real Go binaries for linux/arm64 and run them in the
 same official runtime image; the moto, s3proxy and ElasticMQ rows start their
 profile containers on the CI host's Docker daemon, and the MicroVM workload rows
 run as host processes.
+
+## Real MCP clients (local target, never CI)
+
+The refresh policy exists for real clients, so the repository maintains a local
+target that drives them:
+
+```bash
+make local-clients                      # codex, claude_code, kimi_code, vibe
+make local-clients LOCAL_CLIENTS_ARGS="--clients codex,claude_code"
+```
+
+`scripts/local/local_clients.py` starts the MCP auth-facade example with a
+30-second access-token lifetime, then gives each client its own home under
+`$HOME/.cache/apptheory-local-clients/<run>/`, configures only the example's MCP
+entry, and runs two tool prompts separated by a restart. It asserts, from the
+app's own state document, that both tool calls succeeded, that refreshes were
+served, that no refusal was rendered, and that the upstream never detected
+refresh-token reuse. It then revokes the upstream grant and asserts the terminal
+path: exactly one refresh, the `invalid_grant` answer, no retry loop and no tool
+call. `--verify-401` adds the live-token comparison on a second app instance
+with a long access-token lifetime, where the revoked family is presented by an
+unexpired credential and the resource server's answer is recorded.
+
+Vibe needs two extra pieces. Its login surface is the TUI's `/mcp login` (the
+headless `vibe -p` mode refuses to start MCP OAuth), so the suite drives the TUI
+in a PTY, lets the Rust TUI record the browser open in `VIBE_E2E_ACTION_LOG`
+instead of launching a browser, and plays the browser against the local server
+until Vibe's loopback callback reports success; every prompt is then a separate
+`vibe -p` process, so the second call is both a refresh and a restart. And MCP
+SDK 2.3.0 refreshes at `<origin>/token` whenever the process has no cached
+authorization-server metadata (every restart), so the example mounts a small
+`POST /token` compatibility route that resolves the presented handle's route and
+re-dispatches to the facade's own token handler; see the example README.
+
+Isolation rules:
+
+- every home is created 0700 and deleted when the run ends (`--keep` retains it);
+- the operator's real client homes are never modified and never read for MCP
+  state: no MCP entry and no MCP OAuth store is copied;
+- exactly one model-provider credential per client is carried into that client's
+  isolated home (0600, deleted with the scratch). For Claude Code only the
+  keychain item's `claudeAiOauth` subtree is carried — its `mcpOAuth` store is
+  deliberately dropped; for Codex it is `auth.json`, which holds model auth only;
+  for Kimi Code it is the provider/model settings parsed out of `config.toml`
+  plus its credential file, never an `mcp_servers` entry;
+- the credential is never printed;
+- Vibe's MCP OAuth store is the one exception to home isolation: Vibe 3.0.4
+  writes it with `/usr/bin/security` straight to the macOS Keychain
+  (`vibe/utils/keyring.py`), bypassing the Python keyring library and any
+  `PYTHON_KEYRING_BACKEND`. Under operator authorization the suite uses a
+  dedicated server alias, `apptheory-local-clients`, checks that no
+  `mcp-oauth:apptheory-local-clients:*` item exists before the run, deletes every
+  prefixed item in a `finally` path that also runs on failure, timeout and
+  Ctrl-C, and proves none remains. It never reads, modifies or deletes another
+  keychain item, and never reads a secret value.
+
+This target is not a CI job and not a harness row: CI must not depend on a
+client binary. A profile that cannot be exercised for an environmental reason
+(no model credential configured, no headless login surface) is reported
+`BLOCKED` with the exact reason and is not counted as proof; a profile that acts
+wrongly is a failure. A `BLOCKED` profile means the authoritative proof must come
+from TMS's real-client run, which exercises the same facade against Autheory.

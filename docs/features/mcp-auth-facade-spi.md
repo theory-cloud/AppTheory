@@ -171,20 +171,93 @@ The brokered refresh handle has three encoded policy values (see `FacadeConfig.R
   `RouteRefreshBrokerHandleTTLReporter` must agree with it, so a deployment cannot declare a long ceiling while its
   store silently keeps a short one. A missing or zero value is a registration error, never a fallback.
 - **`GraceWindow`** — the lost-response replay window measured from the winning rotation. Absent or zero selects
-  120 s; the maximum is 120 s. Inside the window the rotated (previous) handle replays the full stored successor
-  body, including handle material, because that is the lost-response recovery path. The boundary is exclusive: a
-  presentation at exactly the deadline is beyond grace.
+  120 s; the maximum is 120 s. Inside the window the rotated (previous) handle replays the stored successor body,
+  including handle material, because that is the lost-response recovery path. Only `expires_in` is recomputed, to
+  the lifetime the access token actually has left; a stored body below the five-second credential floor is not
+  replayed at all and the head is rotated instead, so a replayed credential is always accepted for the lifetime the
+  response states. The boundary is exclusive: a presentation at exactly the deadline is a stale predecessor.
 - **`ReuseRateCeiling`** — retained for configuration compatibility, required and bounded to `[9, 120]`. It
   previously budgeted the removed beyond-grace access-token-only serve; no refresh path uses it now.
 
-### Beyond-grace reuse
+### Reuse is served, never punished
 
-Every rotated-away handle presented at or after its grace deadline is reuse. The facade revokes the whole refresh
-family and returns the same non-oracle `invalid_grant` an unknown handle gets, with **no** access token, refresh
-handle, or ID token. There is no depth classification, no first-presentation carve-out, and no per-handle serve
-marker: the first and every later beyond-grace presentation are refused identically. A reuse telemetry event fires
-on **every** such presentation, with the `revoked_family` outcome. Within-grace grace-service responses replay the
-stored successor body byte-for-byte and are not budget-counted.
+A rotated-away handle presented at or after its grace deadline is a **stale predecessor**, and the evidence from
+every real client that broke is exactly that presentation: the predecessor of the live head, presented minutes to
+hours after a successful rotation, with the live head never presented, often at the same second on several routes of
+one login. Nothing distinguishes it from a stolen handle, so the facade does not treat it as theft. It rotates the
+family's **live head** — never the predecessor, whose upstream material has already been rotated and which an
+upstream that detects refresh-token reuse would revoke the grant over — and hands the client fresh credentials. The
+presented record is re-armed with the new body and a fresh grace window, so a retry storm inside one window costs one
+upstream call rather than one per attempt. Every member of the family stays live.
+
+A reuse telemetry event fires with the additive `rotated_from_head` outcome and the `stale_predecessor` reason; no
+family is revoked by reuse. The family is revoked only when the upstream terminally rejects the grant
+(`invalid_grant` or reauthorization required), when an operator revokes it through the incident surface, or when the
+authorization code that minted it is replayed. Each of those answers the uniform non-oracle `invalid_grant` an
+unknown handle gets, which is the token endpoint's re-authorize signal.
+
+Citations: [RFC 9700](https://www.rfc-editor.org/rfc/rfc9700) (OAuth 2.0 Security Best Current Practice) on
+refresh-token rotation and reuse detection; [OAuth 2.1 draft
+§4.3.1](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1) on public-client refresh tokens; [MCP
+authorization](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization); and comparable
+providers' reuse intervals ([Auth0](https://auth0.com/docs/secure/tokens/refresh-tokens/refresh-token-rotation),
+[Okta](https://developer.okta.com/docs/guides/refresh-tokens/main/)). RFC 9700 permits reuse detection; it does not
+require it, and it requires a public client to be able to recover from a lost rotation response, which is what the
+served path provides.
+
+**Residual risk.** A stolen route handle stays exchangeable for fresh credentials for as long as the thief keeps
+presenting the current handle and the upstream grant remains valid. Each rotation mints a successor and stores it
+with a fresh full handle-TTL window, and the family state carries no absolute deadline, so a thief who presents the
+newest handle at least once per window keeps the chain alive until the upstream grant ends. The 30-day handle TTL
+therefore bounds only a handle that is never presented again. The mitigations are short access-token lifetimes; the
+binding checks a real client satisfies (client registration, route resource, scope, subject); revocation when the
+upstream terminally rejects the grant, when an operator revokes the family on the incident surface, or when the
+authorization code that minted it is replayed; and, for a handle that is never presented, the handle TTL itself.
+Detection is not attempted: the facade cannot distinguish a thief's presentation of a stolen handle from a restart
+holding a stale copy, and treating the latter as theft is what broke every real client. The general treatment of
+refresh-token replay is in [RFC 6749 §10.4](https://www.rfc-editor.org/rfc/rfc6749#section-10.4) and [RFC 9700's
+refresh-token guidance](https://www.rfc-editor.org/rfc/rfc9700#section-4.14).
+
+**What real clients actually do.** The local real-client target (`make local-clients`) drives Codex 0.166,
+Claude Code 2.1.319, Kimi Code 2.4.0 and Vibe 3.0.4 against the example app with an isolated home per
+client. With a 30-second access-token lifetime, Codex issued 34 route refreshes across two separate
+processes (a run and a restart), Claude Code 6 in one run, Kimi Code 1 across a restart and Vibe 1 across
+a TUI login and a restarted `vibe -p` process: every refresh was served, no refusal was emitted, no family
+was revoked, and the upstream never observed refresh-token reuse. Codex and Kimi Code kept the rotated
+handle across a process restart, Claude Code persisted it within one run and Vibe persisted it across its
+restart; none needed a re-login.
+
+With the upstream grant revoked, each client made exactly one refresh, received the terminal
+`invalid_grant`, stopped, and called no tool. Kimi Code then waited for a new login instead of looping;
+Vibe stopped its turn with `mcp_authorization_required` and told the user the server needs
+re-authorization, without starting a login on its own. A control endpoint tombstoned the family while an
+access token minted with a long lifetime was still valid, and Codex presented it: the resource server
+accepted it, because it accepts every credential the facade issued for the lifetime the token response
+stated. No client in this suite ever presents a refusable live access token, so the MCP-401 comparison
+does not arise; the refusal every client meets is the token endpoint's `400 invalid_grant`, and Vibe's
+terminal row records exactly that status (`MCP [400]`), not a 401.
+
+Vibe is the one client whose login writes the operator's real Keychain. On macOS Vibe 3.0.4's
+`vibe/utils/keyring.py` sends every MCP OAuth write to `/usr/bin/security add-generic-password -s
+ai.mistral.vibe`, bypassing the Python keyring library and any `PYTHON_KEYRING_BACKEND`. The suite
+therefore logs in under a dedicated server alias, `apptheory-local-clients`, whose three accounts
+(`mcp-oauth:apptheory-local-clients:{tokens,client_info,fingerprint}`, exactly the `<kind>` values
+`vibe/core/auth/mcp_oauth.py::_kr_username` writes) are the only items it may create. The suite checks
+that prefix before the run, deletes every prefixed item in a `finally` path that also runs on failure,
+timeout and Ctrl-C, and proves none remains; it never reads, modifies or deletes another keychain item,
+and never reads a secret value. The login is the TUI's `/mcp login apptheory-local-clients`, the only
+surface that starts one; the suite drives it in a PTY, has the Rust TUI record the browser open in
+`VIBE_E2E_ACTION_LOG` instead of launching a browser, and plays the browser against the local server until
+Vibe's own loopback callback reports success. Each prompt is then a separate `vibe -p` process.
+
+One client-side limit is real and is adapted to, not worked around: MCP SDK 2.3.0 refreshes at
+`<origin>/token` whenever the process did not cache authorization-server metadata first — which every
+restart with stored tokens does — while route-issuer mode serves the token endpoint under the route. The
+example therefore mounts one small compatibility route, `POST /token`, in its own handler: it resolves the
+presented handle's broker record, rebuilds the route's token path, and re-dispatches through the app, so
+every binding check, rotation, refusal and telemetry event remains the facade's. Without it Vibe reports
+`mcp_invalid_result` and calls no tool. The authoritative Autheory-path proof still runs in TMS; the
+example's own rows (`examples/cdk/local-mcp-auth-facade`) replay the same sequences over real HTTP in CI.
 
 ### Family identity, tombstone, and migration
 
@@ -202,14 +275,15 @@ successors minted before the tombstone, and no root creation or rotation can und
 family whose members have all aged out keeps its tombstone, so it cannot be recreated. Registration refuses a
 base-store-only, legacy-family-only, or partially duck-typed broker before routes, roots, or successors.
 
-**Pre-policy and partially backfilled records.** A family-less record (generation 0, empty family hash) is
-unsupported for ordinary rotation. It is refused before the upstream call and before any successor is minted; it is
-never normalized online, because an unknown-length lineage cannot be safely detached from ancestors whose later
-reuse must revoke it. Migration or reauthorization is required: quiesce legacy refresh traffic, then either backfill
-the complete lineage and family state under the store's transactional conformance proof and resume, or revoke/reject
-legacy handles and require a new authorization grant. A family-marked record whose required family state is
-missing/corrupt is likewise refused; an operator can inspect it through `ListFamily`, but ordinary rotation fails
-closed. There is no bounded-walk fallback and no eight-link success exit.
+**Pre-policy and partially backfilled records.** A family-less record (generation 0, empty family hash) predates the
+family policy, including a v6.4.0-era lineage. It is **migrated in code**, with no manual data operation: the facade
+follows the stored successor links to the lineage's live head — the only record whose upstream material is current,
+because every earlier link's material was rotated away when its successor was minted — bounds the walk at 64 links as
+a corruption guard, and mints a fresh generation-1 family root from that head's material. The legacy head is re-armed
+with the new body and a grace window, so a sibling migration lands on the family instead of minting a second one. A
+missing link, a cycle, a revoked member, or the walk limit fails the migration rather than guessing; the caller then
+gets the uniform `invalid_grant`. A family-marked record whose required family state is missing/corrupt is refused by
+`ListFamily` and ordinary rotation fails closed, exactly as before.
 
 ### Telemetry and the expiry signal
 

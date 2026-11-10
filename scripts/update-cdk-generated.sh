@@ -51,6 +51,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Keep the checked-in jsii tarball's bytes when jsii-pacmak regenerates the
+# same content with a different deflate stream. npm gzips the reproducible tar
+# with the host zlib, so Linux and macOS produce different bytes for identical
+# content; the comparison below is content-based and the committed bytes stay
+# canonical on every host.
+mkdir -p "${tmp_dir}/jsii-reference"
+if [[ -d "cdk-go/apptheorycdk/jsii" ]]; then
+  find "cdk-go/apptheorycdk/jsii" -maxdepth 1 -type f -name '*.tgz' -exec cp {} "${tmp_dir}/jsii-reference/" \;
+fi
+
 ensure_cdk_runtime_deps_installed || exit $?
 (cd cdk && npm run build >/dev/null)
 (cd cdk && npx jsii-pacmak -t go --code-only -o "${tmp_dir}" --force-subdirectory false --force >/dev/null)
@@ -184,6 +194,8 @@ for handwritten_test in bindings_test.go generated_sync_test.go; do
     exit 1
   fi
 done
+
+python3 scripts/lib/canonicalize-jsii-tarballs.py "${destination}/jsii" "${tmp_dir}/jsii-reference"
 
 find "${destination}" -type f -name '*.go' -print0 | xargs -0 gofmt -w
 (cd "${module_root}" && go mod tidy >/dev/null)

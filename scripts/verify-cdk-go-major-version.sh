@@ -38,7 +38,7 @@ cp \
 # Copy the whole shared helper directory rather than a hand-maintained list: a
 # helper that exists in the repo but is missing from this fixture root fails
 # inside the fixture with no obvious cause (scripts/lib/retry.sh did).
-cp scripts/lib/*.sh "${fixture_root}/scripts/lib/"
+cp scripts/lib/* "${fixture_root}/scripts/lib/"
 
 python3 - "${fixture_root}" "${synthetic_version}" <<'PY'
 import json

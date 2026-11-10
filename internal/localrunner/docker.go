@@ -79,6 +79,24 @@ func (d *Docker) CreateNetwork(ctx context.Context, name string, labels map[stri
 	return nil
 }
 
+// NetworkExists reports whether a network with exactly this name exists. A
+// co-resident run attaches to a shared network another run created instead of
+// failing on a duplicate create.
+func (d *Docker) NetworkExists(ctx context.Context, name string) (bool, error) {
+	stdout, stderr, err := d.exec(ctx, []string{
+		"docker", "network", "ls", "--filter", "name=" + name, "--format", "{{.Name}}",
+	})
+	if err != nil {
+		return false, fmt.Errorf("list docker networks: %s", firstNonEmpty(stderr, err.Error()))
+	}
+	for _, line := range strings.Split(stdout, "\n") {
+		if strings.TrimSpace(line) == name {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // RemoveNetwork removes a network the runner created. A missing network is not
 // an error: cleanup runs after failures too.
 func (d *Docker) RemoveNetwork(ctx context.Context, name string) {
@@ -100,7 +118,11 @@ type ContainerOptions struct {
 	MemoryMB   int
 	Mounts     []string
 	Publish    int
-	Labels     map[string]string
+	// PublishPorts publishes additional container ports on a random loopback
+	// port, the same shape as Publish. The mail sink needs both its SMTP and
+	// HTTP ports.
+	PublishPorts []int
+	Labels       map[string]string
 	// Detach starts the container in the background (function containers).
 	Detach bool
 }
@@ -131,6 +153,11 @@ func ContainerArgv(options ContainerOptions) []string {
 	}
 	if options.Publish > 0 {
 		argv = append(argv, "-p", fmt.Sprintf("127.0.0.1::%d", options.Publish))
+	}
+	for _, port := range options.PublishPorts {
+		if port > 0 {
+			argv = append(argv, "-p", fmt.Sprintf("127.0.0.1::%d", port))
+		}
 	}
 	if options.MemoryMB > 0 {
 		argv = append(argv, "--memory", fmt.Sprintf("%dm", options.MemoryMB))

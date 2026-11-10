@@ -134,6 +134,10 @@ func httpRoutes(stack assemblyStack, types map[string]string, apiID string, auth
 					authorizer.Kind,
 				)
 			}
+		case authorizationTypeIAM:
+			// The route is served and the transport verifies the SigV4
+			// signature and evaluates IAM before invoking the handler.
+			route.AuthorizerKind = AuthorizerKindIAM
 		case "JWT":
 			authorizerID, ok := directRefID(props.AuthorizerID)
 			if !ok {
@@ -264,6 +268,10 @@ func deriveRESTAPIs(spec *Spec, stacks []assemblyStack, stack assemblyStack) err
 			Stack:     stack.Name,
 			Name:      props.Name,
 			Stage:     restStageName(stack, id),
+			// The API's IAM resource policy is a property of the REST API and
+			// authorizes every AWS_IAM method on it.
+			// https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-apigateway-restapi.html
+			ResourcePolicy: props.Policy,
 		}
 		if api.Name == "" {
 			api.Name = id
@@ -349,6 +357,9 @@ func restRoute(
 		if len(props.AuthorizerID) > 0 {
 			return Route{}, unsupported(stack.Name+"/"+id, "method has an authorizer id but authorization type NONE")
 		}
+	case authorizationTypeIAM:
+		// A REST AWS_IAM method: the transport verifies the SigV4 signature and
+		// evaluates IAM before it invokes the handler.
 	case authorizerTypeCognitoUserPools:
 		authorizerID, ok := directRefID(props.AuthorizerID)
 		if !ok {
@@ -428,6 +439,9 @@ func restRoute(
 		route.AuthorizationScopes = props.AuthorizationScopes
 		authorizerID, _ := directRefID(props.AuthorizerID)
 		route.CognitoPoolARNs = cognitoPoolARNExpressions(authorizers[authorizerID])
+	}
+	if authorization == authorizationTypeIAM {
+		route.AuthorizerKind = AuthorizerKindIAM
 	}
 	if authorization == authorizationTypeCustom {
 		authorizerID, _ := directRefID(props.AuthorizerID)
@@ -612,7 +626,14 @@ func deriveFunctionURLs(spec *Spec, stacks []assemblyStack, stack assemblyStack)
 			mode = bufferedInvokeMode
 		}
 		spec.functionURLModes[qualifiedURL] = mode
-		if props.AuthType != noneAuthorization {
+		switch props.AuthType {
+		case noneAuthorization:
+		case authorizationTypeIAM:
+			// An AWS_IAM URL is served: every request must carry a Signature
+			// Version 4 signature the run can verify, exactly as API Gateway
+			// requires.
+			// https://docs.aws.amazon.com/lambda/latest/dg/urls-auth.html
+		default:
 			spec.Skipped = append(spec.Skipped, Skipped{
 				LogicalID: qualifiedURL,
 				Kind:      typeFunctionURL,
@@ -623,12 +644,17 @@ func deriveFunctionURLs(spec *Spec, stacks []assemblyStack, stack assemblyStack)
 			})
 			continue
 		}
-		spec.FunctionURLs = append(spec.FunctionURLs, FunctionURLSpec{
+		url := FunctionURLSpec{
 			LogicalID: qualifiedURL,
 			Stack:     stack.Name,
 			Function:  qualifiedFunction,
 			Streaming: props.InvokeMode == responseStreamMode,
-		})
+			IAM:       props.AuthType == authorizationTypeIAM,
+		}
+		if url.IAM {
+			url.FunctionPolicy = functionResourcePolicy(stack, functionID)
+		}
+		spec.FunctionURLs = append(spec.FunctionURLs, url)
 	}
 	return nil
 }
@@ -684,15 +710,18 @@ func refsIn(raw json.RawMessage) []logicalRef {
 func collectRefs(value any, out *[]logicalRef) {
 	switch typed := value.(type) {
 	case map[string]any:
-		if id, ok := typed["Ref"].(string); ok && id != "" {
+		if id, ok := typed[intrinsicRef].(string); ok && id != "" {
 			*out = append(*out, logicalRef{ID: id})
 		}
 		collectGetAtt(typed["Fn::GetAtt"], out)
-		for key, child := range typed {
-			if key == "Ref" || key == "Fn::GetAtt" {
+		// Visit the remaining keys in sorted order: a map's iteration order is
+		// random, and a caller that compares reference lists (a test, or a
+		// derivation that reports them) must see the same sequence twice.
+		for _, key := range sortedKeys(typed) {
+			if key == intrinsicRef || key == "Fn::GetAtt" {
 				continue
 			}
-			collectRefs(child, out)
+			collectRefs(typed[key], out)
 		}
 	case []any:
 		for _, child := range typed {

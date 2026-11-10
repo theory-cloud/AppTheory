@@ -182,6 +182,13 @@ type RouteRefreshFamilyRotation struct {
 	Successor            *RouteRefreshBrokerRecord
 	GraceRefreshResponse string
 	GraceExpiresAt       time.Time
+	// GraceAccessTokenExpiresAt is when the access token inside
+	// GraceRefreshResponse stops being accepted by the resource, computed from
+	// the upstream's expires_in when the rotation was minted. A replay never
+	// reports a longer lifetime than the credential actually has left. A store
+	// that does not persist it is still correct: the facade then treats the
+	// stored body as not replayable and rotates a fresh one.
+	GraceAccessTokenExpiresAt time.Time
 }
 
 // RouteRefreshBrokerTransactionalFamilyStore is the mandatory family
@@ -329,13 +336,21 @@ type RouteRefreshBrokerRecord struct {
 	UpstreamClientID              string
 	EncryptedGraceRefreshResponse string
 	GraceExpiresAt                time.Time
-	Status                        string
-	RefreshLockOwner              string
-	RefreshLockExpiresAt          time.Time
-	ChainGeneration               int
-	FamilyHash                    string
-	DepthOneServedAt              time.Time
-	Version                       int
+	// GraceAccessTokenExpiresAt is when the access token carried inside
+	// EncryptedGraceRefreshResponse stops being accepted by the resource. The
+	// grace replay reports only the remaining lifetime, never the lifetime the
+	// rotation originally advertised, so a replayed credential is always
+	// accepted for at least the expires_in the client is given. Zero means the
+	// store did not persist it; the facade then refuses to replay the stored
+	// body and rotates a fresh one instead.
+	GraceAccessTokenExpiresAt time.Time
+	Status                    string
+	RefreshLockOwner          string
+	RefreshLockExpiresAt      time.Time
+	ChainGeneration           int
+	FamilyHash                string
+	DepthOneServedAt          time.Time
+	Version                   int
 }
 
 // Route refresh broker status values of the facade-store-spi.v1.json status

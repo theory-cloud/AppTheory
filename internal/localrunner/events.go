@@ -56,6 +56,12 @@ type InvokeRequest struct {
 	// IAM policy produced. It is stringified and carried as
 	// requestContext.authorizer for REST and HTTP API integrations.
 	AuthorizerPolicyContext map[string]any
+	// IAMPrincipal is the caller an AWS_IAM gate resolved. It is carried in the
+	// event's identity fields, which is how a handler that re-checks the caller
+	// (TMS's namespace-vending caller check, for example) sees the principal a
+	// deployed API Gateway would give it.
+	// https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-mapping-template-reference.html
+	IAMPrincipal *iamPrincipal
 }
 
 // BuildEvent serializes the provider payload the handler receives: an HTTP API
@@ -116,6 +122,11 @@ func httpV2Event(request InvokeRequest) map[string]any {
 	if len(request.AuthorizerContext) > 0 {
 		if context, ok := event["requestContext"].(map[string]any); ok {
 			context["authorizer"] = map[string]any{"lambda": request.AuthorizerContext}
+		}
+	}
+	if iam := v2IAMAuthorizer(request.IAMPrincipal); iam != nil {
+		if context, ok := event["requestContext"].(map[string]any); ok {
+			context["authorizer"] = map[string]any{"iam": iam}
 		}
 	}
 	if len(request.AuthorizerJWT) > 0 {
@@ -313,19 +324,13 @@ func restRequestContext(request InvokeRequest, apiID string) map[string]any {
 		"domainPrefix":      apiID,
 		"extendedRequestId": request.RequestID,
 		"httpMethod":        strings.ToUpper(request.Method),
-		"identity": map[string]any{
-			"accountId": "",
-			"sourceIp":  sourceIP(request.RemoteAddr),
-			"userAgent": request.Header.Get("User-Agent"),
-			"userArn":   "",
-			"requestId": request.RequestID,
-		},
-		"path":         request.StagePrefix + request.Path,
-		"protocol":     "HTTP/1.1",
-		"requestId":    request.RequestID,
-		"resourceId":   request.API.LogicalID,
-		"resourcePath": request.Route.Path,
-		"stage":        request.API.Stage,
+		"identity":          restIdentity(request),
+		"path":              request.StagePrefix + request.Path,
+		"protocol":          "HTTP/1.1",
+		"requestId":         request.RequestID,
+		"resourceId":        request.API.LogicalID,
+		"resourcePath":      request.Route.Path,
+		"stage":             request.API.Stage,
 	}
 	if len(request.AuthorizerClaims) > 0 {
 		// A REST API Cognito authorizer exposes the validated claims under
@@ -374,7 +379,56 @@ func functionURLEvent(request InvokeRequest) map[string]any {
 	if cookies := requestCookies(request.Header); len(cookies) > 0 {
 		event["cookies"] = cookies
 	}
+	if iam := v2IAMAuthorizer(request.IAMPrincipal); iam != nil {
+		if context, ok := event["requestContext"].(map[string]any); ok {
+			context["authorizer"] = map[string]any{"iam": iam}
+		}
+	}
 	return event
+}
+
+// restIdentity renders a REST API v1 requestContext.identity. An AWS_IAM call
+// carries the resolved principal; every other call keeps the empty fields the
+// wave-1 transport has always reported.
+//
+// https://docs.aws.amazon.com/apigateway/latest/developerguide/set-up-logging.html
+func restIdentity(request InvokeRequest) map[string]any {
+	identity := map[string]any{
+		"accountId": "",
+		"sourceIp":  sourceIP(request.RemoteAddr),
+		"userAgent": request.Header.Get("User-Agent"),
+		"userArn":   "",
+		"requestId": request.RequestID,
+	}
+	if request.IAMPrincipal == nil {
+		return identity
+	}
+	principal := request.IAMPrincipal
+	identity["accountId"] = principal.Account
+	identity["caller"] = principal.UserID
+	identity["userArn"] = principal.ARN
+	identity["accessKey"] = principal.AccessKeyID
+	return identity
+}
+
+// v2IAMAuthorizer renders the `authorizer.iam` object an HTTP API v2 event and a
+// Function URL event carry for an AWS_IAM call.
+//
+// https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-develop-integrations-lambda.html
+// https://docs.aws.amazon.com/lambda/latest/dg/urls-invocation.html
+func v2IAMAuthorizer(principal *iamPrincipal) map[string]any {
+	if principal == nil {
+		return nil
+	}
+	return map[string]any{
+		"accessKey":       principal.AccessKeyID,
+		"accountId":       principal.Account,
+		"callerId":        principal.UserID,
+		"cognitoIdentity": nil,
+		"principalOrgId":  nil,
+		"userArn":         principal.ARN,
+		"userId":          principal.UserID,
+	}
 }
 
 // rawPath is the request target as the client sent it, which is what API

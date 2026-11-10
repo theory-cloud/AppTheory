@@ -207,15 +207,15 @@ func (r *Runner) resolveJoin(raw any, stack string, resources map[string]map[str
 //nolint:gocyclo // one branch per resource type.
 func (r *Runner) resolveRef(id, stack string, resources map[string]map[string]ResourceSpec, provisioned resourceValues, template templateContext) (string, error) {
 	switch id {
-	case "AWS::Partition":
+	case pseudoPartition:
 		return LocalPartition, nil
-	case "AWS::Region":
+	case pseudoRegion:
 		return LocalRegion, nil
-	case "AWS::AccountId":
+	case pseudoAccountID:
 		return LocalAccountID, nil
 	case "AWS::StackName":
 		return stack, nil
-	case "AWS::NoValue":
+	case pseudoNoValue:
 		return "", nil
 	}
 	if _, ok := template.Parameters[id]; ok {
@@ -568,6 +568,9 @@ func literalPhysicalName(resource ResourceSpec) string {
 		UserPoolName string `json:"UserPoolName"`
 		ClientName   string `json:"ClientName"`
 		AliasName    string `json:"AliasName"`
+		// RoleName is an IAM role's physical name. A role that names one is
+		// the ARN a synthesized policy and an aws:PrincipalArn condition mean.
+		RoleName string `json:"RoleName"`
 	}
 	if len(resource.Properties) == 0 {
 		return ""
@@ -586,6 +589,7 @@ func literalPhysicalName(resource ResourceSpec) string {
 		props.UserPoolName,
 		props.ClientName,
 		props.AliasName,
+		props.RoleName,
 	} {
 		if strings.TrimSpace(candidate) != "" {
 			return candidate

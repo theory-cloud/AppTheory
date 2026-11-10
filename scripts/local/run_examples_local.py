@@ -40,6 +40,7 @@ import os
 import re
 import select
 import shutil
+import smtplib
 import signal
 import socket
 import ssl
@@ -4137,6 +4138,7 @@ def start_local_app(
     context: dict | None = None,
     backends: tuple[str, ...] = (),
     origins: tuple[str, ...] = (),
+    port_base: int | None = None,
 ) -> LocalAppRun:
     ensure_cdk_app(harness, app)
     spec = plan_local_app(harness, app, context)
@@ -4150,7 +4152,7 @@ def start_local_app(
         "--profile",
         str(ROOT / LOCAL_PROFILE),
         "--port-base",
-        str(harness.lease.http_port),
+        str(port_base if port_base is not None else harness.lease.http_port),
         "--name-prefix",
         prefix,
     ]
@@ -4315,6 +4317,13 @@ def start_local_session(
     tls: bool = False,
     tls_host: str | None = None,
     tls_aux: tuple[str, ...] = (),
+    shared_dir: str | None = None,
+    port_base: int | None = None,
+    ports: tuple[str, ...] = (),
+    shared_network: str | None = None,
+    peer_hosts: tuple[str, ...] = (),
+    mail: bool = False,
+    mail_host: str | None = None,
 ) -> LocalSession:
     """Start one `apptheory-local session` and wait for its machine interface."""
     ensure_cdk_app(harness, app)
@@ -4329,7 +4338,7 @@ def start_local_session(
         "--profile",
         str(ROOT / LOCAL_PROFILE),
         "--port-base",
-        str(harness.lease.http_port),
+        str(port_base if port_base is not None else harness.lease.http_port),
         "--name-prefix",
         prefix,
     ]
@@ -4359,6 +4368,18 @@ def start_local_session(
         argv.extend(["--tls-host", tls_host])
     for auxiliary in tls_aux:
         argv.extend(["--tls-aux", auxiliary])
+    if shared_dir:
+        argv.extend(["--shared-dir", shared_dir])
+    for pin in ports:
+        argv.extend(["--port", pin])
+    if shared_network:
+        argv.extend(["--shared-network", shared_network])
+    for peer in peer_hosts:
+        argv.extend(["--peer-host", peer])
+    if mail:
+        argv.append("--mail")
+    if mail_host:
+        argv.extend(["--mail-host", mail_host])
     process = subprocess.Popen(
         argv,
         cwd=str(ROOT),
@@ -7858,6 +7879,9 @@ def run_runtime_api_conformance(harness: Harness) -> str:
 # service certificate.
 
 LOCAL_TLS_APP = "examples/cdk/local-tls"
+LOCAL_RESOURCES_APP = "examples/cdk/local-resources"
+LOCAL_IAM_APP = "examples/cdk/local-iam"
+LOCAL_IAM_PEER_APP = "examples/cdk/local-iam-peer"
 _TLS_PLAN_CACHE: dict[str, dict] = {}
 
 
@@ -8966,6 +8990,1337 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print("RESULT: PASS")
     return 0
+
+
+# LOCAL-W3-M1: the resource-type rows (X1) and the narrow IAM rows (X2).
+# ---------------------------------------------------------------------------
+
+IAM_CALLER_ROLE = "arn:aws:iam::123456789012:role/local-iam-caller"
+IAM_OTHER_ROLE = "arn:aws:iam::123456789012:role/local-iam-other"
+IAM_VENDING_ROLE = "arn:aws:iam::123456789012:role/local-iam-vending"
+IAM_PEER_VENDING_ROLE = "arn:aws:iam::123456789012:role/local-iam-peer-vending"
+
+
+def local_resources_plan(harness: Harness) -> dict:
+    return plan_local_app(harness, LOCAL_RESOURCES_APP)
+
+
+def _resources_classified(plan: dict) -> dict[str, dict]:
+    """Every reported or refused construct, keyed by logical id."""
+    return {entry["logicalId"]: entry for entry in plan.get("skipped") or []}
+
+
+def run_local_resources_inventory(harness: Harness) -> str:
+    plan = local_resources_plan(harness)
+    classified = _resources_classified(plan)
+    custom = {entry["logicalId"]: entry for entry in plan.get("customResources") or []}
+    # Served types are listed with the handler that serves them.
+    for logical_id, kind in (
+        ("DeployTrigger", "Custom::Trigger"),
+        ("EnvMigration", "Custom::EnvMigration"),
+        ("EnsureRuleSet29212476", "Custom::AWS"),
+    ):
+        entry = custom.get(logical_id)
+        if entry is None or entry.get("type") != kind:
+            raise HarnessFailure(f"the plan must report custom resource {logical_id} ({kind}): {custom}")
+        if not entry.get("function"):
+            raise HarnessFailure(f"{logical_id} must name the handler it invokes: {entry}")
+    auto_delete = [
+        entry for entry in custom.values()
+        if entry.get("type") == "Custom::S3AutoDeleteObjects"
+        and (entry.get("function") or entry.get("servedBy"))
+    ]
+    if not auto_delete:
+        raise HarnessFailure(f"the plan must report the bucket auto-delete resource: {custom}")
+    receipt = plan.get("receiptRules") or []
+    if len(receipt) != 1:
+        raise HarnessFailure(f"the plan must derive one SES receipt rule, got {receipt}")
+    rule = receipt[0]
+    if (rule.get("ruleSetName") != "local-resources-mail"
+            or rule.get("recipients") != ["ingress@local-resources.test"]):
+        raise HarnessFailure(f"unexpected receipt rule: {rule}")
+    kinds = [action.get("kind") for action in rule.get("actions") or []]
+    if kinds != ["s3", "lambda"]:
+        raise HarnessFailure(f"the receipt rule must keep its actions in order: {rule}")
+    # Deploy-time-only types carry a docs/125 true-limit reason; the MicroVM
+    # types are refused by name.
+    deploy_time_only = {
+        "ReportedDomain": "AWS::ApiGateway::DomainName",
+        "ReportedCertificate": "AWS::CertificateManager::Certificate",
+        "ReportedRecord": "AWS::Route53::RecordSet",
+        "ReportedAlarm": "AWS::CloudWatch::Alarm",
+        "MailIdentity4365A1C5": "AWS::SES::EmailIdentity",
+    }
+    for logical_id, kind in deploy_time_only.items():
+        entry = classified.get(logical_id)
+        if entry is None or entry.get("kind") != kind:
+            raise HarnessFailure(f"{logical_id} must be reported as {kind}: {classified}")
+        if "docs/125 true limit" not in entry.get("reason", ""):
+            raise HarnessFailure(f"{logical_id} must cite the true limit: {entry}")
+    for logical_id in ("RefusedMicrovmImage", "RefusedMicrovmPrune"):
+        entry = classified.get(logical_id)
+        if entry is None or "MicroVM" not in entry.get("reason", "") or "refused" not in entry.get("reason", ""):
+            raise HarnessFailure(f"{logical_id} must be refused by name: {classified}")
+    return (
+        "plan reports the trigger, provider-framework, Custom::AWS and auto-delete handlers as served, "
+        "derives the SES receipt rule with its S3-then-Lambda actions, reports every deploy-time-only type "
+        "with its docs/125 reason and refuses the MicroVM image and its prune handler"
+    )
+
+
+def _resources_session(harness: Harness, name: str, *, targets: tuple[str, ...] = ()) -> LocalSession:
+    return start_local_session(
+        harness,
+        LOCAL_RESOURCES_APP,
+        name=name,
+        backends=("s3proxy", "moto"),
+        targets=targets,
+    )
+
+
+def run_local_resources_custom(harness: Harness) -> str:
+    session = _resources_session(harness, "resources-custom")
+    try:
+        custom = {entry["logicalId"]: entry for entry in session.info.get("customResources") or []}
+        # The Custom::Trigger ran at start: its provider invoked the target
+        # function through the local Lambda endpoint.
+        trigger = custom.get("DeployTrigger") or {}
+        if trigger.get("function") and not trigger.get("data") and not trigger.get("physicalResourceId"):
+            raise HarnessFailure(f"the trigger's provider did not report a response: {trigger}")
+        # The provider-framework handler returned Data, which is what Fn::GetAtt
+        # on a custom resource reads.
+        migration = custom.get("EnvMigration") or {}
+        data = migration.get("data") or {}
+        if data.get("MigrationVersion") != "1" or not data.get("RanAt"):
+            raise HarnessFailure(f"the provider-framework handler did not report its Data: {migration}")
+        if migration.get("physicalResourceId") != "env-migration-1":
+            raise HarnessFailure(f"the provider framework's physical id is {migration.get('physicalResourceId')!r}")
+        # The Custom::AWS handler created the SES rule set on the pinned moto.
+        rule_set = custom.get("EnsureRuleSet29212476") or {}
+        if not rule_set.get("physicalResourceId"):
+            raise HarnessFailure(f"the Custom::AWS handler did not report a physical id: {rule_set}")
+        # X6b: the activation's logical id sorts before the ensure that creates
+        # its rule set, so only the template's DependsOn edge can order them.
+        def bridge(resource: str) -> dict:
+            for logical_id, entry in custom.items():
+                if logical_id.startswith(resource):
+                    return entry
+            raise HarnessFailure(f"the plan served no {resource} custom resource: {sorted(custom)}")
+
+        ensure = bridge("EnsureBridge")
+        activate = bridge("ActivateBridge")
+        for label, entry in (("ensure", ensure), ("activate", activate)):
+            if entry.get("status") != "SUCCESS" and not entry.get("data"):
+                raise HarnessFailure(f"the {label} custom resource did not answer: {entry}")
+        if ensure.get("physicalResourceId") != "bridge-local-resources":
+            raise HarnessFailure(f"the ensure custom resource reported {ensure.get('physicalResourceId')!r}")
+        if activate.get("physicalResourceId") != "bridge-local-resources-active":
+            raise HarnessFailure(f"the activate custom resource reported {activate.get('physicalResourceId')!r}")
+        log = Path(session.log_path).read_text(encoding="utf-8", errors="replace")
+        ensure_at = log.find("custom resource EnsureBridge")
+        activate_at = log.find("custom resource ActivateBridge")
+        if ensure_at < 0 or activate_at < 0:
+            raise HarnessFailure(f"the run log does not name both bridge custom resources: {log[-4000:]}")
+        if not ensure_at < activate_at:
+            raise HarnessFailure("the activate custom resource ran before the ensure custom resource")
+        # X6d: the provider framework's user function is named only in its
+        # onEvent handler's environment, and no route targets it.
+        started = [str(entry.get("logicalId") or "") for entry in session.info.get("functions") or []]
+        if not any(logical_id.startswith("MigrationProvider") for logical_id in started):
+            raise HarnessFailure(f"the provider framework's user function did not start: {started}")
+        # The auto-delete handler's delete leg really empties the bucket.
+        bucket = session.resource(logical_prefix="AutoDeleteBucket", kind="AWS::S3::Bucket")
+        put = session.request("s3.put", bucket=bucket["logicalId"], objectKey="orphan.txt", body="orphan")
+        if not put.get("etag"):
+            raise HarnessFailure(f"the bucket did not accept the object: {put}")
+        deleted = session.request(
+            "customResource.delete",
+            resource="AutoDeleteBucketAutoDeleteObjectsCustomResourceE0861D85",
+        )
+        if deleted.get("status") != "SUCCESS":
+            raise HarnessFailure(f"the auto-delete delete leg did not succeed: {deleted}")
+        if deleted.get("physicalResourceId") != bucket["name"]:
+            raise HarnessFailure(f"the auto-delete delete leg reported {deleted.get('physicalResourceId')!r}")
+        listing = session.request("s3.list", bucket=bucket["logicalId"])
+        keys = [entry.get("key") for entry in listing.get("objects") or []]
+        if "orphan.txt" in keys:
+            raise HarnessFailure(f"the auto-delete handler left the object behind: {listing}")
+        return (
+            "the Custom::Trigger provider ran at start, the provider-framework handler returned its Data and "
+            "physical id, the Custom::AWS handler created the SES rule set on moto, the activation custom "
+            "resource ran after the ensure its DependsOn names although its logical id sorts first, the bucket "
+            "auto-delete resource's delete leg emptied the bucket the row planted an object in, and the provider "
+            "framework's untargeted user function started"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def run_local_resources_ses_receipt(harness: Harness) -> str:
+    session = _resources_session(harness, "resources-ses")
+    try:
+        raw = "\r\n".join(
+            [
+                "Return-Path: <bounce@local-resources.test>",
+                "From: Sender <sender@local-resources.test>",
+                "To: ingress@local-resources.test",
+                "Subject: local receipt",
+                "Message-ID: <w3m1@local-resources.test>",
+                "Date: Mon, 5 Aug 2019 21:29:57 +0000",
+                "",
+                "the body lives in the bucket, not in the Lambda record",
+            ]
+        )
+        delivered = session.request(
+            "ses.receive",
+            recipients=["ingress@local-resources.test"],
+            source="bounce@local-resources.test",
+            rawMessage=raw,
+        )
+        rules = delivered.get("rules") or []
+        if len(rules) != 1:
+            raise HarnessFailure(f"the message must reach one rule: {delivered}")
+        actions = rules[0].get("actions") or []
+        if [action.get("kind") for action in actions] != ["s3", "lambda"]:
+            raise HarnessFailure(f"the rule's actions did not run in order: {actions}")
+        if not actions[0].get("key", "").startswith("mail/"):
+            raise HarnessFailure(f"the S3 action did not write under the rule's prefix: {actions[0]}")
+        if actions[1].get("statusCode") not in (None, 0, 200):
+            raise HarnessFailure(f"the Lambda action did not reach the handler: {actions[1]}")
+        api = session.info.get("apis") or []
+        rest = [entry for entry in api if entry.get("class") == "restv1"]
+        if not rest:
+            raise HarnessFailure(f"the session did not serve the state API: {api}")
+        status, body, _ = http_request("GET", rest[0]["url"] + "/state")
+        expect_status(status, 200, "local-resources state", body)
+        records = json.loads(body).get("records") or []
+        if len(records) != 1:
+            raise HarnessFailure(f"the mail handler recorded {records!r}")
+        record = records[0]
+        if record.get("messageId") != delivered.get("messageId"):
+            raise HarnessFailure(f"the record's message id is {record.get('messageId')!r}")
+        if record.get("subject") != "local receipt" or record.get("from") != ["Sender <sender@local-resources.test>"]:
+            raise HarnessFailure(f"the record's headers are wrong: {record}")
+        if record.get("actionType") != "Lambda" or record.get("invocationType") != "Event":
+            raise HarnessFailure(f"the record's action is wrong: {record}")
+        if not record.get("receiptTimestamp"):
+            raise HarnessFailure(f"the record has no receipt timestamp: {record}")
+        if "the body lives in the bucket" not in record.get("rawObject", ""):
+            raise HarnessFailure(f"the raw message did not reach the bucket: {record}")
+        return (
+            "ses.receive delivered the message to the derived rule: the S3 action wrote the raw body under "
+            "mail/, the Lambda action received the documented record (message id, headers, action, receipt "
+            "timestamp) with no body, and the handler read the body back from the bucket"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def _iam_plan(harness: Harness) -> dict:
+    return plan_local_app(harness, LOCAL_IAM_APP)
+
+
+def _iam_caller(harness: Harness, language: str) -> str:
+    marker = f"caller-{language}"
+    for function in _iam_plan(harness).get("functions") or []:
+        if (function.get("environment") or {}).get("APPTHEORY_LOCAL_IAM_ROLE") == marker:
+            return str(function["logicalId"])
+    raise HarnessFailure(f"the local-iam plan has no function with APPTHEORY_LOCAL_IAM_ROLE={marker!r}")
+
+
+def _iam_targets(harness: Harness) -> tuple[str, ...]:
+    return tuple(_iam_caller(harness, language) for language in ("go", "node", "py", "other"))
+
+
+def _iam_session(harness: Harness, name: str, *, shared_dir: str | None = None, app: str = LOCAL_IAM_APP) -> LocalSession:
+    return start_local_session(
+        harness,
+        app,
+        name=name,
+        targets=_iam_targets(harness) if app == LOCAL_IAM_APP else (),
+        shared_dir=shared_dir,
+    )
+
+
+def _container_url(url: str) -> str:
+    """Rewrite a loopback URL for a function container's own network view."""
+    return url.replace("127.0.0.1", "host.docker.internal")
+
+
+def _iam_rest(session: LocalSession) -> str:
+    for api in session.info.get("apis") or []:
+        if api.get("class") == "restv1":
+            return _container_url(str(api["url"]))
+    raise HarnessFailure("the session served no REST API")
+
+
+def _iam_http(session: LocalSession) -> str:
+    for api in session.info.get("apis") or []:
+        if api.get("class") == "httpv2":
+            return _container_url(str(api["url"]))
+    raise HarnessFailure("the session served no HTTP API")
+
+
+def _iam_function_url(session: LocalSession) -> str:
+    for api in session.info.get("apis") or []:
+        if api.get("class") == "fnurl":
+            return _container_url(str(api["url"]))
+    raise HarnessFailure("the session served no Function URL")
+
+
+def _caller_result(session: LocalSession, function: str, payload: dict) -> dict:
+    """Invoke a caller and decode the proxy response it returned."""
+    result = session.invoke(function, payload)
+    raw = result
+    if not raw.get("proxy"):
+        raw = result.get("raw")
+        if not isinstance(raw, dict):
+            text = result.get("rawText") or ""
+            try:
+                raw = json.loads(text)
+            except json.JSONDecodeError as exc:
+                raise HarnessFailure(f"the caller answered {result}", text) from exc
+    if raw.get("handlerError"):
+        raise HarnessFailure(f"the caller handler failed: {raw.get('handlerError')}")
+    body = raw.get("body") or "{}"
+    try:
+        return json.loads(body) if isinstance(body, str) else body
+    except json.JSONDecodeError as exc:
+        raise HarnessFailure(f"the caller's body is not JSON: {body}", body) from exc
+
+
+def _expect_refusal(outcome: dict, needle: str, label: str) -> None:
+    if int(outcome.get("status") or 0) != 403:
+        raise HarnessFailure(f"{label}: want 403, got {outcome}")
+    if needle not in str(outcome.get("body") or ""):
+        raise HarnessFailure(f"{label}: the refusal does not name {needle!r}: {outcome}")
+
+
+def run_local_iam_grants(harness: Harness) -> str:
+    caller = _iam_caller(harness, "go")
+    session = _iam_session(harness, "iam-grants")
+    try:
+        base = _iam_rest(session)
+        # The allowed call, and the handler's assertion of the principal the
+        # gateway resolved into the event identity.
+        allowed = _caller_result(session, caller, {"url": base + "/protected"})
+        if allowed.get("status") != 200:
+            raise HarnessFailure(f"the resource-policy allow did not grant the call: {allowed}")
+        identity = json.loads(allowed["body"])
+        if identity.get("userArn") != IAM_CALLER_ROLE:
+            raise HarnessFailure(f"the handler saw userArn {identity.get('userArn')!r}")
+        if identity.get("accountId") != "123456789012":
+            raise HarnessFailure(f"the handler saw accountId {identity.get('accountId')!r}")
+        if not identity.get("caller") or not identity.get("accessKey"):
+            raise HarnessFailure(f"the handler saw no caller identity: {identity}")
+        # An identity-policy-only route: the API has no resource statement for
+        # it, so the caller's role grant is the only allow.
+        identity_only = _caller_result(session, caller, {"url": base + "/identity-only"})
+        if identity_only.get("status") != 200:
+            raise HarnessFailure(f"the identity-policy allow did not grant the call: {identity_only}")
+        # An account-root principal statement.
+        root = _caller_result(session, caller, {"url": base + "/root"})
+        if root.get("status") != 200:
+            raise HarnessFailure(f"the account-root principal did not grant the call: {root}")
+        # An aws:PrincipalArn-conditioned statement.
+        conditioned = _caller_result(session, caller, {"url": base + "/conditioned"})
+        if conditioned.get("status") != 200:
+            raise HarnessFailure(f"the aws:PrincipalArn condition did not grant the call: {conditioned}")
+        # A trailing path wildcard.
+        wildcard = _caller_result(session, caller, {"url": base + "/path/42"})
+        if wildcard.get("status") != 200:
+            raise HarnessFailure(f"the path wildcard did not grant the call: {wildcard}")
+        # An HTTP API route with AWS_IAM, allowed by the caller's identity
+        # policy (an HTTP API carries no resource policy).
+        http_allowed = _caller_result(session, caller, {"url": _iam_http(session) + "/http-iam"})
+        if http_allowed.get("status") != 200:
+            raise HarnessFailure(f"the HTTP API AWS_IAM route refused the caller: {http_allowed}")
+        http_identity = json.loads(http_allowed["body"])
+        if http_identity.get("userArn") != IAM_CALLER_ROLE:
+            raise HarnessFailure(f"the HTTP API handler saw {http_identity}")
+        return (
+            "resource-policy allow, identity-policy-only allow, account-root principal, "
+            "aws:PrincipalArn-conditioned allow, trailing path wildcard and the HTTP API AWS_IAM route all "
+            "granted the signed call; the handler saw the resolved role ARN, account and access key in its "
+            "event identity"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def run_local_iam_refusals(harness: Harness) -> str:
+    caller = _iam_caller(harness, "go")
+    other = _iam_caller(harness, "other")
+    session = _iam_session(harness, "iam-refusals")
+    try:
+        base = _iam_rest(session)
+        unsigned = _caller_result(session, caller, {"url": base + "/protected", "unsigned": True})
+        _expect_refusal(unsigned, "not signed", "unsigned")
+        tampered = _caller_result(session, caller, {"url": base + "/protected", "tamperSignature": True})
+        _expect_refusal(tampered, "does not match the credential", "tampered signature")
+        # Another role signs the same route: the resource policy names the
+        # caller role, so this principal has no grant.
+        wrong = _caller_result(session, other, {"url": base + "/conditioned"})
+        _expect_refusal(wrong, "no identity policy", "wrong principal")
+        outside = _caller_result(session, caller, {"url": base + "/outside"})
+        _expect_refusal(outside, "outside the local IAM subset", "out-of-subset statement")
+        denied = _caller_result(session, caller, {"url": base + "/denied"})
+        _expect_refusal(denied, "Explicit".lower().replace("e", "e"), "explicit deny")
+        # A direct, unsigned request from the harness reaches the same refusal.
+        status, body, _ = http_request("GET", base.replace("host.docker.internal", "127.0.0.1") + "/protected")
+        expect_status(status, 403, "unsigned harness request", body)
+        if "not signed" not in body:
+            raise HarnessFailure(f"the harness refusal does not name the cause: {body}")
+        return (
+            "an unsigned request, a tampered signature, a wrong principal, an out-of-subset statement and "
+            "an explicit Deny were each refused with a named reason"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def _run_local_iam_caller(harness: Harness, language: str) -> str:
+    caller = _iam_caller(harness, language)
+    session = _iam_session(harness, f"iam-caller-{language}")
+    try:
+        base = _iam_rest(session)
+        outcome = _caller_result(session, caller, {"url": base + "/protected"})
+        if outcome.get("status") != 200:
+            raise HarnessFailure(f"the {language} caller was refused: {outcome}")
+        identity = json.loads(outcome["body"])
+        if identity.get("userArn") != IAM_CALLER_ROLE:
+            raise HarnessFailure(f"the {language} caller reached the handler as {identity.get('userArn')!r}")
+        if not outcome.get("signed"):
+            raise HarnessFailure(f"the {language} caller did not sign the request: {outcome}")
+        return (
+            f"the {language} caller signed the execute-api request with its SDK and the gateway resolved "
+            f"{IAM_CALLER_ROLE} from the signature"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def run_local_iam_caller_go(harness: Harness) -> str:
+    return _run_local_iam_caller(harness, "go")
+
+
+def run_local_iam_caller_node(harness: Harness) -> str:
+    return _run_local_iam_caller(harness, "node")
+
+
+def run_local_iam_caller_py(harness: Harness) -> str:
+    return _run_local_iam_caller(harness, "py")
+
+
+def run_local_iam_function_url(harness: Harness) -> str:
+    caller = _iam_caller(harness, "go")
+    session = _iam_session(harness, "iam-function-url")
+    try:
+        url = _iam_function_url(session)
+        allowed = _caller_result(session, caller, {"url": url})
+        if allowed.get("status") != 200:
+            raise HarnessFailure(f"the signed Function URL call was refused: {allowed}")
+        identity = json.loads(allowed["body"])
+        if identity.get("userArn") != IAM_CALLER_ROLE:
+            raise HarnessFailure(f"the Function URL handler saw {identity}")
+        unsigned = _caller_result(session, caller, {"url": url, "unsigned": True})
+        _expect_refusal(unsigned, "not signed", "unsigned Function URL")
+        return (
+            "the AWS_IAM Function URL served the signed call with the resolved principal in "
+            "requestContext.authorizer.iam and refused the unsigned one"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def run_local_iam_shared_plane(harness: Harness) -> str:
+    # Run A defines the caller role; run B defines the role A assumes and the API
+    # A calls. Both share one IAM plane, which is what makes the trust decision
+    # and the credential verification agree across processes.
+    shared = tempfile.mkdtemp(prefix="a4-w3m1-iam-plane-")
+    caller = _iam_caller(harness, "go")
+    peer = start_local_session(
+        harness,
+        LOCAL_IAM_PEER_APP,
+        name="iam-peer",
+        shared_dir=shared,
+        # Two co-resident runs of one row need two port blocks; the peer takes
+        # the next block above the harness slot.
+        port_base=harness.lease.http_port + 40,
+    )
+    try:
+        peer_rest = None
+        for api in peer.info.get("apis") or []:
+            if api.get("class") == "restv1":
+                peer_rest = _container_url(str(api["url"]))
+        if not peer_rest:
+            raise HarnessFailure("the peer run served no REST API")
+        session = _iam_session(harness, "iam-shared", shared_dir=shared)
+        try:
+            plan = _iam_plan(harness)
+            if not any(role.get("arn") == IAM_VENDING_ROLE for role in plan.get("iamRoles") or []):
+                raise HarnessFailure(f"run A's plan lost its vending role: {plan.get('iamRoles')}")
+            # Run A's function assumes run B's role through its STS endpoint.
+            base = _iam_rest(session)
+            assumed = _caller_result(session, caller, {"url": base + "/vending", "assumeRoleArn": IAM_PEER_VENDING_ROLE})
+            minted = assumed.get("principalArn") or ""
+            if not minted.startswith("arn:aws:sts::123456789012:assumed-role/local-iam-peer-vending/"):
+                raise HarnessFailure(f"run A did not assume run B's role: {assumed}")
+            session_id = minted.rsplit("/", 1)[-1]
+            # The session run A minted signs a call run B evaluates against its
+            # own resource policy and the role's identity policy.
+            session_creds = _session_credentials(session, caller, IAM_PEER_VENDING_ROLE)
+            status, body = _signed_get(peer_rest.replace("host.docker.internal", "127.0.0.1") + "/peer", session_creds)
+            expect_status(status, 200, "the peer's AWS_IAM route", body)
+            identity = json.loads(body)
+            if identity.get("userArn") != minted:
+                raise HarnessFailure(f"run B resolved {identity.get('userArn')!r}, want {minted!r}")
+            if identity.get("accountId") != "123456789012":
+                raise HarnessFailure(f"run B resolved account {identity.get('accountId')!r}")
+            # The peer's other role has no trust for run A, so the same call is
+            # refused by run B's trust policy.
+            refused = _caller_result(
+                session, caller, {"url": base + "/vending", "assumeRoleArn": "arn:aws:iam::123456789012:role/absent-role"}
+            )
+            if refused.get("status") != 403:
+                raise HarnessFailure(f"run A assumed a role neither run defines: {refused}")
+            return (
+                f"run A's function assumed {IAM_PEER_VENDING_ROLE} through its STS endpoint (session "
+                f"{session_id}), which run B published and its trust policy accepted; the session's signature "
+                "was verified by run B from the shared credential registry and evaluated against run B's "
+                "resource policy and the role's identity policy"
+            )
+        finally:
+            stop_local_session(harness, session)
+    finally:
+        stop_local_session(harness, peer)
+        shutil.rmtree(shared, ignore_errors=True)
+
+
+def _session_credentials(session: LocalSession, caller: str, role_arn: str) -> dict:
+    """Ask a caller to assume a role and report the session it minted.
+
+    The session is minted through the run's own STS endpoint, exactly as the
+    container's SDK call does; reporting it lets the harness sign a call to a
+    second run without a container-to-container hop.
+    """
+    result = session.invoke(caller, {
+        "url": "http://127.0.0.1:1/unused",
+        "assumeRoleArn": role_arn,
+        "returnCredentials": True,
+        "unsigned": True,
+    })
+    raw = result
+    if not raw.get("proxy"):
+        raw = result.get("raw")
+        if not isinstance(raw, dict):
+            raise HarnessFailure(f"the assume-role caller answered {result}")
+    if raw.get("handlerError") or raw.get("errorMessage"):
+        raise HarnessFailure(f"the assume-role caller failed: {raw.get('handlerError') or raw.get('errorMessage')}")
+    try:
+        outcome = json.loads(raw.get("body") or "{}")
+    except json.JSONDecodeError as exc:
+        raise HarnessFailure(f"the assume-role caller's body is not JSON: {raw.get('body')}") from exc
+    credentials = outcome.get("credentials") or {}
+    if not credentials.get("accessKeyId") or not credentials.get("sessionToken"):
+        raise HarnessFailure(f"the caller did not report its session credentials: {outcome}")
+    return credentials
+
+
+def _signed_get(url: str, credentials: dict) -> tuple[int, str]:
+    """Sign and send one execute-api GET with botocore's SigV4 signer."""
+    import urllib.request
+
+    from botocore.auth import SigV4Auth
+    from botocore.awsrequest import AWSRequest
+    from botocore.credentials import Credentials
+
+    parts = urlsplit(url)
+    request = AWSRequest(method="GET", url=url, headers={"host": parts.netloc})
+    frozen = Credentials(
+        credentials["accessKeyId"],
+        credentials["secretAccessKey"],
+        credentials.get("sessionToken"),
+    )
+    SigV4Auth(frozen, "execute-api", "us-east-1").add_auth(request)
+    signed = urllib.request.Request(url, method="GET", headers=dict(request.headers))
+    try:
+        with urllib.request.urlopen(signed, timeout=20) as response:  # noqa: S310 - a local loopback URL
+            return response.status, response.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as error:
+        return error.code, error.read().decode("utf-8", errors="replace")
+
+
+
+# --- LOCAL-W3-X3: co-residence and declared ports ---------------------------
+
+
+def _plan_api_id(plan: dict, api_class: str) -> str:
+    for api in plan.get("apis") or []:
+        if api.get("class") == api_class:
+            return str(api["logicalId"])
+    raise HarnessFailure(f"the plan serves no {api_class} API")
+
+
+def _session_api(session: LocalSession, logical_id: str) -> dict:
+    for api in session.info.get("apis") or []:
+        if api.get("logicalId") == logical_id:
+            return api
+    raise HarnessFailure(f"the session serves no surface {logical_id}")
+
+
+def _home_scratch(prefix: str) -> str:
+    """A scratch directory under $HOME, which Docker can bind-mount and which
+    the row deletes."""
+    return tempfile.mkdtemp(prefix=prefix, dir=str(Path.home()))
+
+
+def _down_shared_network(harness: Harness, app: str, network: str) -> None:
+    """Remove a shared network after every co-resident run has stopped."""
+    subprocess.run(
+        [str(LOCAL_RUNNER_BIN), "down", "--app", app, "--shared-network", network],
+        cwd=str(ROOT),
+        env=harness.env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _plan_refusal(harness: Harness, app: str, port_base: int, pins: tuple[str, ...], needle: str) -> None:
+    argv = [
+        str(LOCAL_RUNNER_BIN),
+        "plan",
+        "--app",
+        app,
+        "--profile",
+        str(ROOT / LOCAL_PROFILE),
+        "--port-base",
+        str(port_base),
+    ]
+    for pin in pins:
+        argv.extend(["--port", pin])
+    result = subprocess.run(argv, cwd=str(ROOT), env=harness.env, capture_output=True, text=True, check=False)
+    if result.returncode == 0:
+        raise HarnessFailure(f"plan accepted pins {pins}, want a named refusal", result.stdout)
+    output = result.stderr + result.stdout
+    if needle not in output:
+        raise HarnessFailure(f"the refusal for {pins} does not name {needle!r}", output)
+
+
+def run_local_port_pinning(harness: Harness) -> str:
+    base = harness.lease.http_port
+    plan = plan_local_app(harness, LOCAL_IAM_APP)
+    rest_id = _plan_api_id(plan, "restv1")
+    http_id = _plan_api_id(plan, "httpv2")
+    # The natural order is httpv2 at base, restv1 at base+1. Pin them the other
+    # way round: a surface served at its declared port proves the pin, not the
+    # order.
+    session = start_local_session(
+        harness,
+        LOCAL_IAM_APP,
+        name="port-pinning",
+        targets=_iam_targets(harness),
+        port_base=base,
+        ports=(f"{http_id}={base + 1}", f"{rest_id}={base}"),
+    )
+    try:
+        rest = _session_api(session, rest_id)
+        http = _session_api(session, http_id)
+        if rest.get("port") != base or not rest.get("pinned"):
+            raise HarnessFailure(f"the REST API is not at its pinned port {base}: {rest}")
+        if http.get("port") != base + 1 or not http.get("pinned"):
+            raise HarnessFailure(f"the HTTP API is not at its pinned port {base + 1}: {http}")
+        fn_url = next(
+            (api for api in session.info.get("apis") or [] if api.get("class") == "fnurl"),
+            {},
+        )
+        if fn_url.get("port") != base + 2:
+            raise HarnessFailure(f"the unpinned Function URL moved from {base + 2}: {fn_url}")
+        caller = _iam_caller(harness, "go")
+        rest_call = _caller_result(session, caller, {"url": _container_url(str(rest["url"])) + "/protected"})
+        if rest_call.get("status") != 200:
+            raise HarnessFailure(f"the pinned REST listener refused the signed call: {rest_call}")
+        http_call = _caller_result(session, caller, {"url": _container_url(str(http["url"])) + "/http-iam"})
+        if http_call.get("status") != 200:
+            raise HarnessFailure(f"the pinned HTTP listener refused the signed call: {http_call}")
+        return (
+            f"the HTTP API (index 0) was pinned to {base + 1} and the REST API (index 1) to {base}; "
+            "both listeners answered real signed calls at their declared ports, and the unpinned "
+            f"Function URL kept {base + 2}"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def run_local_port_unpinned(harness: Harness) -> str:
+    base = harness.lease.http_port
+    session = start_local_session(harness, LOCAL_IAM_APP, name="port-unpinned")
+    try:
+        apis = {api.get("class"): api for api in session.info.get("apis") or []}
+        want = {"httpv2": base, "restv1": base + 1, "fnurl": base + 2}
+        for api_class, port in want.items():
+            api = apis.get(api_class) or {}
+            if api.get("port") != port:
+                raise HarnessFailure(f"the unpinned {api_class} moved from {port}: {api}")
+            if api.get("pinned"):
+                raise HarnessFailure(f"the unpinned {api_class} reports pinned: {api}")
+        return f"without --port the run kept today's allocation exactly: httpv2 {base}, restv1 {base + 1}, fnurl {base + 2}"
+    finally:
+        stop_local_session(harness, session)
+
+
+def run_local_port_refusals(harness: Harness) -> str:
+    base = harness.lease.http_port
+    plan = plan_local_app(harness, LOCAL_IAM_APP)
+    rest_id = _plan_api_id(plan, "restv1")
+    http_id = _plan_api_id(plan, "httpv2")
+    _plan_refusal(harness, LOCAL_IAM_APP, base, (f"{rest_id}={base}", f"{http_id}={base}"), "collides with")
+    _plan_refusal(harness, LOCAL_IAM_APP, base, (f"{rest_id}={base + 40}",), "outside the run's range")
+    _plan_refusal(harness, LOCAL_IAM_APP, base, ("NoSuchSurface=8240",), "serves no public surface with that logical id")
+    _plan_refusal(harness, LOCAL_IAM_APP, 0, (f"{rest_id}={base}",), "--port-base")
+    return (
+        "a collision, a port outside the run's range, an unknown logical id and a pin without "
+        "--port-base were each refused by name before anything started"
+    )
+
+
+def run_local_co_residence_ca(harness: Harness) -> str:
+    shared = _home_scratch("a4-w3m1-ca-")
+    base = harness.lease.http_port
+    peer_plan = plan_local_app(harness, LOCAL_IAM_PEER_APP)
+    peer_rest_id = _plan_api_id(peer_plan, "restv1")
+    plan = plan_local_app(harness, LOCAL_IAM_APP)
+    rest_id = _plan_api_id(plan, "restv1")
+    peer = start_local_session(
+        harness,
+        LOCAL_IAM_PEER_APP,
+        name="co-residence-ca-peer",
+        tls=True,
+        tls_host="mcp.localhost",
+        shared_dir=shared,
+        port_base=base + 40,
+    )
+    try:
+        auth = start_local_session(
+            harness,
+            LOCAL_IAM_APP,
+            name="co-residence-ca-auth",
+            tls=True,
+            tls_host="auth.localhost",
+            shared_dir=shared,
+            port_base=base,
+        )
+        try:
+            peer_info, auth_info = peer.info, auth.info
+            if peer_info["tls"]["caFile"] != auth_info["tls"]["caFile"]:
+                raise HarnessFailure(
+                    f"the two runs have different CAs: {peer_info['tls']['caFile']} and {auth_info['tls']['caFile']}")
+            want_ca = str(Path(shared) / "ca" / "ca.pem")
+            if Path(auth_info["tls"]["caFile"]).resolve() != Path(want_ca).resolve():
+                raise HarnessFailure(f"the shared CA is not {want_ca}: {auth_info['tls']['caFile']}")
+            if peer_info["tls"]["host"] != "mcp.localhost" or auth_info["tls"]["host"] != "auth.localhost":
+                raise HarnessFailure(f"per-run host names are wrong: {peer_info['tls']} / {auth_info['tls']}")
+            context = create_tls_context(auth_info["tls"]["caFile"])
+            # Each run's leaf carries its own host name and verifies against the
+            # one shared CA. The open route answers 200; the peer's AWS_IAM route
+            # answers 403 after the TLS handshake verified.
+            rest_api = _session_api(auth, rest_id)
+            status, body, _ = http_request(
+                "GET", f"https://auth.localhost:{rest_api['port']}/open", context=context)
+            expect_status(status, 200, "auth.localhost over the shared CA", body)
+            peer_api = _session_api(peer, peer_rest_id)
+            status, body, _ = http_request(
+                "GET", f"https://mcp.localhost:{peer_api['port']}/peer", context=context)
+            if status not in (200, 403):
+                raise HarnessFailure(f"mcp.localhost did not verify over the shared CA: {status} {body}")
+            return (
+                f"two runs with hosts auth.localhost and mcp.localhost reused one CA at {want_ca}; each "
+                "leaf verified against it, and a client confused by either CA fails the handshake"
+            )
+        finally:
+            stop_local_session(harness, auth)
+    finally:
+        stop_local_session(harness, peer)
+        shutil.rmtree(shared, ignore_errors=True)
+
+
+def run_local_co_residence_iam(harness: Harness) -> str:
+    base = harness.lease.http_port
+    peer_base = base + 40
+    shared = _home_scratch("a4-w3m1-co-residence-")
+    network = f"a4-w3m1-x3-{os.getpid()}-{int(time.time() * 1000)}"
+    peer_plan = plan_local_app(harness, LOCAL_IAM_PEER_APP)
+    peer_rest_id = _plan_api_id(peer_plan, "restv1")
+    plan = plan_local_app(harness, LOCAL_IAM_APP)
+    rest_id = _plan_api_id(plan, "restv1")
+    http_id = _plan_api_id(plan, "httpv2")
+    peer = start_local_session(
+        harness,
+        LOCAL_IAM_PEER_APP,
+        name="co-residence-peer",
+        tls=True,
+        tls_host="mcp.localhost",
+        shared_dir=shared,
+        shared_network=network,
+        port_base=peer_base,
+        ports=(f"{peer_rest_id}={peer_base}",),
+    )
+    try:
+        peer_api = _session_api(peer, peer_rest_id)
+        if peer_api.get("port") != peer_base or not peer_api.get("pinned"):
+            raise HarnessFailure(f"the peer REST API is not at its pinned port {peer_base}: {peer_api}")
+        if peer.info.get("network") != {"name": network, "shared": True}:
+            raise HarnessFailure(f"the peer run did not join the shared network: {peer.info.get('network')}")
+        caller = start_local_session(
+            harness,
+            LOCAL_IAM_APP,
+            name="co-residence-caller",
+            targets=_iam_targets(harness),
+            tls=True,
+            tls_host="auth.localhost",
+            shared_dir=shared,
+            shared_network=network,
+            peer_hosts=("mcp.localhost",),
+            port_base=base,
+            ports=(f"{http_id}={base}", f"{rest_id}={base + 1}"),
+        )
+        try:
+            if caller.info.get("network") != {"name": network, "shared": True}:
+                raise HarnessFailure(f"the caller run did not join the shared network: {caller.info.get('network')}")
+            rest_api = _session_api(caller, rest_id)
+            http_api = _session_api(caller, http_id)
+            if http_api.get("port") != base or not http_api.get("pinned"):
+                raise HarnessFailure(f"the caller HTTP API is not at its pinned port {base}: {http_api}")
+            if rest_api.get("port") != base + 1 or not rest_api.get("pinned"):
+                raise HarnessFailure(f"the caller REST API is not at its pinned port {base + 1}: {rest_api}")
+            if caller.info["tls"]["caFile"] != peer.info["tls"]["caFile"]:
+                raise HarnessFailure("the co-resident runs do not share one CA")
+            # Run A's function signs with the credential run A issued to it and
+            # posts over verified HTTPS to run B's host and pinned port. Run B
+            # verifies the signature from the shared registry and evaluates its
+            # own resource policy against run A's principal.
+            caller_fn = _iam_caller(harness, "go")
+            outcome = _caller_result(
+                caller,
+                caller_fn,
+                {"url": f"https://mcp.localhost:{peer_base}/peer"},
+            )
+            if outcome.get("status") != 200:
+                raise HarnessFailure(f"run B refused run A's signed call: {outcome}")
+            identity = json.loads(outcome.get("body") or "{}")
+            if identity.get("userArn") != IAM_CALLER_ROLE:
+                raise HarnessFailure(f"run B resolved {identity.get('userArn')!r}, want {IAM_CALLER_ROLE!r}")
+            if not identity.get("accessKey"):
+                raise HarnessFailure(f"run B saw no access key for the call: {identity}")
+            return (
+                f"run A's function assumed no role and signed with the credential run A issued to it; run B "
+                f"verified it through the shared IAM registry over verified HTTPS at https://mcp.localhost:{peer_base}, "
+                f"evaluated its own resource policy, and resolved {IAM_CALLER_ROLE} with access key "
+                f"{identity['accessKey']}"
+            )
+        finally:
+            stop_local_session(harness, caller)
+    finally:
+        stop_local_session(harness, peer)
+        _down_shared_network(harness, LOCAL_IAM_PEER_APP, network)
+        shutil.rmtree(shared, ignore_errors=True)
+
+
+# --- LOCAL-W3-X6: S3 versioning and shared-network backend scoping --------
+
+
+def _version_store_logical_id(plan: dict) -> str:
+    for function in plan.get("functions") or []:
+        if str(function.get("logicalId") or "").startswith("VersionStore"):
+            return str(function["logicalId"])
+    raise HarnessFailure("the app declares no VersionStore function")
+
+
+def _version_store_function(session: LocalSession) -> dict:
+    for function in session.info.get("functions") or []:
+        if str(function.get("logicalId") or "").startswith("VersionStore"):
+            return function
+    raise HarnessFailure(f"the session started no VersionStore function: {session.info.get('functions')}")
+
+
+def _version_call(session: LocalSession, function: dict, event: dict, label: str) -> tuple[int, dict]:
+    result = session.invoke(function["logicalId"], event)
+    body = _proxy_body(result, label)
+    status = result.get("statusCode")
+    if status is None:
+        raise HarnessFailure(f"{label}: handler returned no status code: {result}")
+    return int(status), body
+
+
+def run_local_s3_versioning(harness: Harness) -> str:
+    """X6a: a template-versioned bucket returns distinct version ids for a put,
+    a copy and a multipart completion, and every version reads back through the
+    real S3 SDK. X6d: the provider-framework custom resource's user function
+    starts even though --target names only the version store."""
+    plan = plan_local_app(harness, LOCAL_RESOURCES_APP)
+    target = _version_store_logical_id(plan)
+    session = start_local_session(
+        harness,
+        LOCAL_RESOURCES_APP,
+        name="s3-versioning",
+        backends=("moto", "s3proxy"),
+        targets=(target,),
+        allow_no_surface=True,
+    )
+    try:
+        function = _version_store_function(session)
+        key = "docs/soul.md"
+        status, first_body = _version_call(
+            session, function, {"action": "put", "key": key, "body": "soul body one"}, "version put 1")
+        if status != 200 or not first_body.get("versionId"):
+            raise HarnessFailure(f"the first versioned put carried no version id: {status} {first_body}")
+        status, second_body = _version_call(
+            session, function, {"action": "put", "key": key, "body": "soul body two"}, "version put 2")
+        if status != 200 or not second_body.get("versionId"):
+            raise HarnessFailure(f"the second versioned put carried no version id: {status} {second_body}")
+        first_id, second_id = first_body["versionId"], second_body["versionId"]
+        if first_id == second_id:
+            raise HarnessFailure(f"both puts returned version id {first_id!r}")
+        for version_id, want in ((first_id, "soul body one"), (second_id, "soul body two")):
+            status, body = _version_call(
+                session, function, {"action": "get", "key": key, "versionId": version_id}, f"get {version_id}")
+            if status != 200 or body.get("body") != want or body.get("versionId") != version_id:
+                raise HarnessFailure(f"get {version_id} = {status} {body}, want {want!r}")
+            status, head = _version_call(
+                session, function, {"action": "head", "key": key, "versionId": version_id}, f"head {version_id}")
+            if status != 200 or head.get("contentLength") != len(want):
+                raise HarnessFailure(f"head {version_id} = {status} {head}")
+        status, latest = _version_call(session, function, {"action": "get", "key": key}, "get latest")
+        if status != 200 or latest.get("body") != "soul body two" or latest.get("versionId") != second_id:
+            raise HarnessFailure(f"the latest read = {status} {latest}")
+        # CopyObject writes a new version of its destination.
+        status, copied = _version_call(
+            session, function, {"action": "copy", "key": "docs/copy.md", "sourceKey": key}, "copy object")
+        if status != 200 or not copied.get("versionId"):
+            raise HarnessFailure(f"the versioned copy carried no version id: {status} {copied}")
+        copy_id = copied["versionId"]
+        if copy_id in {first_id, second_id}:
+            raise HarnessFailure(f"the copy reused version id {copy_id!r}")
+        status, copy_read = _version_call(
+            session, function, {"action": "get", "key": "docs/copy.md", "versionId": copy_id}, "get copied version")
+        if status != 200 or copy_read.get("body") != "soul body two":
+            raise HarnessFailure(f"the copied version read = {status} {copy_read}")
+        # CompleteMultipartUpload writes a new version too.
+        status, multipart = _version_call(
+            session, function, {"action": "multipart", "key": "docs/multipart.md", "body": "multipart body"},
+            "complete multipart upload")
+        if status != 200 or not multipart.get("versionId"):
+            raise HarnessFailure(f"the completed multipart upload carried no version id: {status} {multipart}")
+        multipart_id = multipart["versionId"]
+        if multipart_id in {first_id, second_id, copy_id}:
+            raise HarnessFailure(f"the multipart upload reused version id {multipart_id!r}")
+        status, multipart_read = _version_call(
+            session, function, {"action": "get", "key": "docs/multipart.md", "versionId": multipart_id},
+            "get multipart version")
+        if status != 200 or multipart_read.get("body") != "multipart body":
+            raise HarnessFailure(f"the multipart version read = {status} {multipart_read}")
+        status, listed = _version_call(session, function, {"action": "list", "prefix": "docs/"}, "list versions")
+        if status != 200:
+            raise HarnessFailure(f"list versions = {status} {listed}")
+        versions = {entry.get("versionId"): entry for entry in listed.get("versions") or []}
+        want_ids = {first_id, second_id, copy_id, multipart_id}
+        if set(versions) != want_ids:
+            raise HarnessFailure(f"the listing returned {sorted(versions)}, want {sorted(want_ids)}")
+        latest_ids = {entry.get("versionId") for entry in listed.get("versions") or [] if entry.get("isLatest")}
+        if latest_ids != {second_id, copy_id, multipart_id}:
+            raise HarnessFailure(f"the listing marks {sorted(latest_ids)} latest, want one latest per key")
+        # X6d: EnvMigration is a provider-framework custom resource whose user
+        # function no route targets; it must still run, and the custom resource
+        # must answer, under a --target that names only the version store.
+        custom = {entry["logicalId"]: entry for entry in session.info.get("customResources") or []}
+        migration = custom.get("EnvMigration") or {}
+        data = migration.get("data") or {}
+        if data.get("MigrationVersion") != "1" or migration.get("physicalResourceId") != "env-migration-1":
+            raise HarnessFailure(f"the provider-framework custom resource did not answer: {migration}")
+        started = [str(entry.get("logicalId") or "") for entry in session.info.get("functions") or []]
+        if not any(logical_id.startswith("MigrationProvider") for logical_id in started):
+            raise HarnessFailure(
+                f"the deploy-time user function outside --target did not start: {started}")
+        return (
+            f"a bucket whose template sets VersioningConfiguration=Enabled returned distinct version ids for two puts "
+            f"({first_id}, {second_id}), a copy ({copy_id}) and a completed multipart upload ({multipart_id}), all "
+            "readable by id through the AWS SDK and all present in ListObjectVersions; with --target naming only the "
+            "version store, the provider framework's untargeted user function still started and its custom resource "
+            "answered"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def _endpoint_host(endpoint: str | None) -> str:
+    if not endpoint:
+        return ""
+    return str(urlsplit(endpoint).hostname or "")
+
+
+def run_local_co_residence_backends(harness: Harness) -> str:
+    """X6c: two co-resident runs on one shared network each resolve their own
+    scoped backend aliases, and neither sees the other's store."""
+    base = harness.lease.http_port
+    network = f"a4-w3m1-x6-{os.getpid()}-{int(time.time() * 1000)}"
+    plan = plan_local_app(harness, LOCAL_RESOURCES_APP)
+    target = _version_store_logical_id(plan)
+    left = start_local_session(
+        harness,
+        LOCAL_RESOURCES_APP,
+        name="backends-left",
+        backends=("moto", "s3proxy"),
+        targets=(target,),
+        allow_no_surface=True,
+        shared_network=network,
+        port_base=base,
+    )
+    try:
+        right = start_local_session(
+            harness,
+            LOCAL_RESOURCES_APP,
+            name="backends-right",
+            backends=("moto", "s3proxy"),
+            targets=(target,),
+            allow_no_surface=True,
+            shared_network=network,
+            port_base=base + 40,
+        )
+        try:
+            for label, session in (("left", left), ("right", right)):
+                if session.info.get("network") != {"name": network, "shared": True}:
+                    raise HarnessFailure(f"the {label} run did not join the shared network: {session.info.get('network')}")
+            left_function = _version_store_function(left)
+            right_function = _version_store_function(right)
+            status, left_env = _version_call(left, left_function, {"action": "env"}, "left env")
+            if status != 200:
+                raise HarnessFailure(f"left env = {status} {left_env}")
+            status, right_env = _version_call(right, right_function, {"action": "env"}, "right env")
+            if status != 200:
+                raise HarnessFailure(f"right env = {status} {right_env}")
+            # SSM is served by moto directly, so its injected host must be the
+            # run-scoped alias. KMS and S3 go through a per-run front, so their
+            # host is the shared gateway but each run's port is its own: the two
+            # runs must never name the same listener.
+            resolved_s3 = {}
+            for label, env, session in (("left", left_env, left), ("right", right_env, right)):
+                host = _endpoint_host(env.get("ssmEndpoint"))
+                want = f"{session.prefix}-moto"
+                if host != want:
+                    raise HarnessFailure(f"{label} ssmEndpoint host = {host!r}, want the run-scoped alias {want!r}")
+                # The preflight runs in a container on the same network, so it
+                # resolves the same scoped moto name a function receives. The S3
+                # endpoint is the run's own s3proxy container address (the S3
+                # SDK needs an IP for path-style addressing), so the two runs
+                # must resolve different addresses.
+                log = Path(session.log_path).read_text(encoding="utf-8", errors="replace")
+                needle = f"preflight ssm.dns: resolved {want}"
+                if needle not in log:
+                    raise HarnessFailure(f"{label} preflight did not log {needle!r}: {log[-4000:]}")
+                match = re.search(r"preflight s3\.dns: resolved (\S+)", log)
+                if match is None:
+                    raise HarnessFailure(f"{label} preflight did not resolve its S3 backend: {log[-4000:]}")
+                resolved_s3[label] = match.group(1)
+                for service in ("kmsEndpoint", "s3Endpoint"):
+                    if not env.get(service):
+                        raise HarnessFailure(f"{label} has no injected {service}: {env}")
+            if resolved_s3["left"] == resolved_s3["right"]:
+                raise HarnessFailure(f"both runs resolved the same s3proxy address: {resolved_s3['left']}")
+            for service in ("kmsEndpoint", "s3Endpoint"):
+                if left_env.get(service) == right_env.get(service):
+                    raise HarnessFailure(f"both runs resolve the same {service}: {left_env.get(service)}")
+            # Each run's function reaches its own s3proxy through its own front:
+            # a key written on the left is absent on the right and vice versa.
+            status, written = _version_call(
+                left, left_function, {"action": "put", "key": "shared/probe.md", "body": "left body"}, "left put")
+            if status != 200 or not written.get("versionId"):
+                raise HarnessFailure(f"left put = {status} {written}")
+            status, missing = _version_call(
+                right, right_function, {"action": "get", "key": "shared/probe.md"}, "right get")
+            if status != 404 or missing.get("error") != "NoSuchKey":
+                raise HarnessFailure(f"the right run saw the left run's object: {status} {missing}")
+            status, own = _version_call(
+                right, right_function, {"action": "put", "key": "shared/probe.md", "body": "right body"}, "right put")
+            if status != 200 or not own.get("versionId"):
+                raise HarnessFailure(f"right put = {status} {own}")
+            status, right_read = _version_call(
+                right, right_function,
+                {"action": "get", "key": "shared/probe.md", "versionId": own["versionId"]}, "right get own")
+            if status != 200 or right_read.get("body") != "right body":
+                raise HarnessFailure(f"the right run could not read its own object: {status} {right_read}")
+            status, left_read = _version_call(
+                left, left_function,
+                {"action": "get", "key": "shared/probe.md", "versionId": written["versionId"]}, "left get own")
+            if status != 200 or left_read.get("body") != "left body":
+                raise HarnessFailure(f"the left run could not read its own object: {status} {left_read}")
+            return (
+                f"two runs on shared network {network} injected their own scoped moto aliases "
+                f"({left.prefix}-moto and {right.prefix}-moto), both preflights resolved them, and each run's "
+                "function read only its own s3proxy object"
+            )
+        finally:
+            stop_local_session(harness, right)
+    finally:
+        stop_local_session(harness, left)
+        _down_shared_network(harness, LOCAL_RESOURCES_APP, network)
+
+
+# --- LOCAL-W3-X4: the local mail surface -----------------------------------
+
+
+def _mail_surface(session: LocalSession) -> dict:
+    mail = session.info.get("mail") or {}
+    if not mail.get("smtpUrl") or not mail.get("apiUrl"):
+        raise HarnessFailure(f"the session started no mail surface: {session.info.get('mail')}")
+    return mail
+
+
+def _send_mail(
+    mail: dict,
+    *,
+    subject: str,
+    sender: str,
+    recipient: str,
+    body: str,
+    ca_file: str | None = None,
+) -> None:
+    host, port = str(mail["smtpUrl"]).rsplit("://", 1)[-1].rsplit(":", 1)
+    message = "\r\n".join(
+        [
+            f"From: {sender}",
+            f"To: {recipient}",
+            f"Subject: {subject}",
+            "Message-ID: <w3m1-mail-surface@local.test>",
+            "Date: Mon, 5 Aug 2019 21:29:57 +0000",
+            "",
+            body,
+        ]
+    )
+    with smtplib.SMTP(host, int(port), timeout=60) as smtp:
+        if ca_file:
+            smtp.starttls(context=create_tls_context(ca_file))
+        smtp.sendmail(sender, [recipient], message)
+
+
+def _mail_messages(session: LocalSession, mail: dict) -> list[dict]:
+    context = create_tls_context(session.info["tls"]["caFile"])
+    status, body, _ = http_request("GET", str(mail["apiUrl"]) + "messages", context=context)
+    expect_status(status, 200, "the mail read API", body)
+    return json.loads(body).get("messages") or []
+
+
+def run_local_mail_send_read(harness: Harness) -> str:
+    session = start_local_session(
+        harness,
+        LOCAL_RESOURCES_APP,
+        name="mail-send-read",
+        backends=("s3proxy", "moto"),
+        mail=True,
+    )
+    try:
+        mail = _mail_surface(session)
+        surfaces = session.info.get("listeners") or []
+        if mail.get("smtpPort") != harness.lease.http_port + len(surfaces):
+            raise HarnessFailure(f"the SMTP port is not the first slot after the surfaces: {mail}")
+        if mail.get("apiPort") != harness.lease.http_port + len(surfaces) + 1:
+            raise HarnessFailure(f"the read API port is not the second slot after the surfaces: {mail}")
+        if mail.get("host") != "mail.localhost":
+            raise HarnessFailure(f"the mail host is {mail.get('host')!r}")
+        # A message whose recipient no receipt rule matches is outbound mail:
+        # the ingress accepts it and the sink stores it. STARTTLS verifies the
+        # run CA's auxiliary leaf.
+        _send_mail(
+            mail,
+            subject="local mail surface",
+            sender="sender@local-resources.test",
+            recipient="member@example.test",
+            body="read me back through the API",
+            ca_file=session.info["tls"]["caFile"],
+        )
+        messages = _mail_messages(session, mail)
+        if len(messages) != 1:
+            raise HarnessFailure(f"the read API returned {messages!r}")
+        entry = messages[0]
+        if entry.get("Subject") != "local mail surface":
+            raise HarnessFailure(f"the stored subject is {entry.get('Subject')!r}")
+        recipients = [address.get("Address") for address in entry.get("To") or []]
+        if "member@example.test" not in recipients:
+            raise HarnessFailure(f"the stored recipients are {recipients!r}")
+        context = create_tls_context(session.info["tls"]["caFile"])
+        status, body, _ = http_request(
+            "GET", str(mail["apiUrl"]) + "message/" + str(entry["ID"]), context=context)
+        expect_status(status, 200, "the mail message read", body)
+        detail = json.loads(body)
+        if "read me back through the API" not in str(detail.get("Text") or ""):
+            raise HarnessFailure(f"the message body is missing: {detail.get('Text')!r}")
+        return (
+            f"STARTTLS to {mail['smtpUrl']} verified the aux leaf, the ingress accepted outbound mail and "
+            f"the sink's HTTPS read API at {mail['apiUrl']} returned the message with its recipient and body"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+def run_local_mail_receipt(harness: Harness) -> str:
+    session = start_local_session(
+        harness,
+        LOCAL_RESOURCES_APP,
+        name="mail-receipt",
+        backends=("s3proxy", "moto"),
+        mail=True,
+    )
+    try:
+        mail = _mail_surface(session)
+        # The rule accepts ingress@local-resources.test: the SMTP path must run
+        # its S3 then Lambda actions with SES's received-message record.
+        _send_mail(
+            mail,
+            subject="local receipt over smtp",
+            sender="bounce@local-resources.test",
+            recipient="ingress@local-resources.test",
+            body="the SMTP ingress runs the rule",
+        )
+        rest = [entry for entry in session.info.get("apis") or [] if entry.get("class") == "restv1"]
+        if not rest:
+            raise HarnessFailure(f"the session served no state API: {session.info.get('apis')}")
+        status, body, _ = http_request("GET", rest[0]["url"] + "/state")
+        expect_status(status, 200, "local-resources state", body)
+        records = json.loads(body).get("records") or []
+        if len(records) != 1:
+            raise HarnessFailure(f"the mail handler recorded {records!r}")
+        record = records[0]
+        if record.get("subject") != "local receipt over smtp":
+            raise HarnessFailure(f"the Lambda record's subject is {record.get('subject')!r}")
+        if record.get("actionType") != "Lambda" or record.get("invocationType") != "Event":
+            raise HarnessFailure(f"the Lambda record's action is {record.get('actionType')!r}")
+        if "the SMTP ingress runs the rule" not in str(record.get("rawObject") or ""):
+            raise HarnessFailure("the raw message did not reach the S3 action")
+        messages = _mail_messages(session, mail)
+        if not any(entry.get("Subject") == "local receipt over smtp" for entry in messages):
+            raise HarnessFailure("the sink did not store the inbound message")
+        return (
+            "a real SMTP message to ingress@local-resources.test ran the derived receipt rule: the S3 action "
+            "wrote the raw body, the Lambda action received SES's received-message record with no body, and "
+            "the sink's read API returned the same message"
+        )
+    finally:
+        stop_local_session(harness, session)
+
+
+# --- LOCAL-W3-X5: the MCP auth-facade refresh rows --------------------------
+#
+# The example app (examples/cdk/local-mcp-auth-facade) mounts the framework's
+# MCP auth facade with the brokered route refresh and a real local authorization
+# server. Each row starts its own run over TLS at the run's port and executes
+# the example's own replay script, which drives the facade with real HTTP and
+# asserts the app's state document (family status, head, generations) as well as
+# every response. The scripts are maintained next to the example so a developer
+# can replay one sequence against a running app; this harness only owns the
+# session lifecycle.
+
+MCP_FACADE_APP = "examples/cdk/local-mcp-auth-facade"
+MCP_FACADE_TLS_HOST = "mcp.localhost"
+MCP_FACADE_REPLAY_DIR = "examples/cdk/local-mcp-auth-facade/scripts"
+MCP_FACADE_SEQUENCES = {
+    "mcp-facade-rotation-chain": "rotation-chain",
+    "mcp-facade-stale-predecessor": "stale-predecessor",
+    "mcp-facade-concurrent-refresh": "concurrent-refresh",
+    "mcp-facade-restart-mid-chain": "restart-mid-chain",
+    "mcp-facade-retry-storm": "retry-storm",
+    "mcp-facade-genuine-replay": "genuine-replay",
+    "mcp-facade-legacy-continuity": "legacy-continuity",
+}
+
+
+def run_mcp_facade_sequence(harness: Harness, sequence: str) -> str:
+    """Start one isolated run of the example and replay one sequence on it."""
+    base = harness.lease.http_port
+    base_url = f"https://{MCP_FACADE_TLS_HOST}:{base}"
+    session = start_local_session(
+        harness,
+        MCP_FACADE_APP,
+        name=f"mcp-facade-{sequence}",
+        tls=True,
+        tls_host=MCP_FACADE_TLS_HOST,
+        port_base=base,
+        context={"publicBaseUrl": base_url},
+    )
+    try:
+        api = next(
+            (entry for entry in session.info.get("apis") or [] if entry.get("class") == "httpv2"),
+            None,
+        )
+        if api is None:
+            raise HarnessFailure(f"the example run served no HTTP API: {session.info.get('apis')}")
+        if int(api.get("port") or -1) != base:
+            raise HarnessFailure(f"the example API is at {api.get('port')}, want the run's port {base}")
+        ca_file = str(session.info["tls"]["caFile"])
+        script = ROOT / MCP_FACADE_REPLAY_DIR / f"{sequence}.py"
+        if not script.is_file():
+            raise HarnessFailure(f"the replay script is missing: {script}")
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "--base-url",
+                base_url,
+                "--ca",
+                ca_file,
+            ],
+            cwd=str(ROOT),
+            env=harness.env,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        if completed.returncode != 0:
+            raise HarnessFailure(
+                f"the {sequence} replay failed with exit {completed.returncode}",
+                (completed.stdout + completed.stderr).strip(),
+            )
+        summary = completed.stdout.strip().splitlines()
+        if not summary:
+            raise HarnessFailure(f"the {sequence} replay printed no summary")
+        return summary[-1]
+    finally:
+        stop_local_session(harness, session)
+
+
+# The LOCAL-W3-M1 rows are registered here: their functions are defined below
+# the runner table, so the table is extended rather than literalled above.
+RUNNERS.update(
+    {
+        "local-resources-inventory": run_local_resources_inventory,
+        "local-resources-custom": run_local_resources_custom,
+        "local-resources-ses-receipt": run_local_resources_ses_receipt,
+        "local-iam-grants": run_local_iam_grants,
+        "local-iam-refusals": run_local_iam_refusals,
+        "local-iam-caller-go": run_local_iam_caller_go,
+        "local-iam-caller-node": run_local_iam_caller_node,
+        "local-iam-caller-py": run_local_iam_caller_py,
+        "local-iam-function-url": run_local_iam_function_url,
+        "local-iam-shared-plane": run_local_iam_shared_plane,
+        "local-port-pinning": run_local_port_pinning,
+        "local-port-unpinned": run_local_port_unpinned,
+        "local-port-refusals": run_local_port_refusals,
+        "local-co-residence-ca": run_local_co_residence_ca,
+        "local-co-residence-iam": run_local_co_residence_iam,
+        "local-co-residence-backends": run_local_co_residence_backends,
+        "local-s3-versioning": run_local_s3_versioning,
+        "local-mail-send-read": run_local_mail_send_read,
+        "local-mail-receipt": run_local_mail_receipt,
+        "mcp-facade-rotation-chain": lambda harness: run_mcp_facade_sequence(harness, "rotation-chain"),
+        "mcp-facade-stale-predecessor": lambda harness: run_mcp_facade_sequence(harness, "stale-predecessor"),
+        "mcp-facade-concurrent-refresh": lambda harness: run_mcp_facade_sequence(
+            harness, "concurrent-refresh"
+        ),
+        "mcp-facade-restart-mid-chain": lambda harness: run_mcp_facade_sequence(harness, "restart-mid-chain"),
+        "mcp-facade-retry-storm": lambda harness: run_mcp_facade_sequence(harness, "retry-storm"),
+        "mcp-facade-genuine-replay": lambda harness: run_mcp_facade_sequence(harness, "genuine-replay"),
+        "mcp-facade-legacy-continuity": lambda harness: run_mcp_facade_sequence(harness, "legacy-continuity"),
+    }
+)
 
 
 if __name__ == "__main__":

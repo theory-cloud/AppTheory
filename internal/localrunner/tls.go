@@ -60,10 +60,13 @@ const (
 	// https://docs.aws.amazon.com/lambda/latest/dg/configuration-envvars.html
 	tlsTrustBundlePath = "/etc/apptheory-local/ca.pem"
 
-	tlsCADirName  = "tls"
-	tlsCACertFile = "ca.pem"
-	tlsCAKeyFile  = "ca-key.pem"
-	tlsLockFile   = "ca.lock"
+	tlsCADirName = "tls"
+	// sharedCADirName is the CA's directory inside a --shared-dir, beside the
+	// IAM plane's "iam" directory.
+	sharedCADirName = "ca"
+	tlsCACertFile   = "ca.pem"
+	tlsCAKeyFile    = "ca-key.pem"
+	tlsLockFile     = "ca.lock"
 
 	// tlsCAValidity and tlsLeafValidity are the documented lifetimes. The leaf
 	// stays under the 200-day cap the CA/Browser Forum Baseline Requirements put
@@ -143,6 +146,26 @@ func tlsTrustEnvironment(class string) []string {
 	}
 }
 
+// peerHostNames returns the normalized, deduplicated co-resident host names a
+// run maps into its function containers, without its own host.
+func (r *Runner) peerHostNames() []string {
+	host := strings.ToLower(strings.TrimSpace(r.options.TLSHost))
+	if host == "" {
+		host = tlsDefaultHost
+	}
+	seen := map[string]bool{host: true}
+	out := make([]string, 0, len(r.options.PeerHosts))
+	for _, entry := range r.options.PeerHosts {
+		name := strings.ToLower(strings.TrimSpace(entry))
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out
+}
+
 // localTLS is one run's certificate authority and the leaf certificates the
 // public listeners present.
 type localTLS struct {
@@ -198,38 +221,87 @@ func validateTLSHost(host string) error {
 	return nil
 }
 
-// initTLS creates or reuses the run's local CA and prepares the public leaf
-// when the run opted in. It also maps the public host into every function
+// initTLS creates or reuses the run's local CA. When the run opted in it also
+// prepares the public leaf and maps the public host into every function
 // container through the one add-host helper, so a handler reaches the same
-// https URL a browser uses. A run that did not opt in starts no CA, adds no
-// host entry and changes no listener.
+// https URL a browser uses. A run that needs only an internal HTTPS endpoint
+// (a CloudFormation custom resource reports its result over https) still gets
+// the CA and the mounted trust bundle, but its public listeners stay on plain
+// HTTP and no public host is mapped.
+//
+//nolint:gocyclo,gocognit // one branch per opt-in combination.
 func (r *Runner) initTLS(spec *Spec) error {
-	if !r.options.TLS {
+	internal := specNeedsInternalHTTPS(spec)
+	public := r.options.TLS
+	if !public && !internal && !r.options.Mail {
 		return nil
 	}
 	host := strings.ToLower(strings.TrimSpace(r.options.TLSHost))
 	if host == "" {
 		host = tlsDefaultHost
 	}
-	if err := validateTLSHost(host); err != nil {
-		return err
+	if public {
+		if err := validateTLSHost(host); err != nil {
+			return err
+		}
 	}
 	dir := filepath.Join(r.scratch, tlsCADirName)
 	persistent := r.dataDir != ""
 	if persistent {
 		dir = filepath.Join(r.dataDir, tlsCADirName)
 	}
-	state, err := newLocalTLS(dir, host, tlsOriginNames(spec)...)
+	// A co-resident run shares one CA with its peers, so a function in one run
+	// verifies the leaves another run serves. The shared directory is the same
+	// one the IAM plane uses, and the CA sits beside it:
+	//
+	//	<shared-dir>/iam/...   the shared IAM plane
+	//	<shared-dir>/ca/       the shared CA (ca.pem, ca-key.pem, trust-bundle.pem)
+	//
+	// A run without --shared-dir keeps today's location exactly.
+	if shared := strings.TrimSpace(r.options.SharedDir); shared != "" {
+		dir = filepath.Join(shared, sharedCADirName)
+		persistent = true
+	}
+	state, err := newLocalCASigner(dir)
 	if err != nil {
 		return err
 	}
+	if public {
+		state.host = host
+		if leafErr := state.issuePublicLeaf(tlsOriginNames(spec)); leafErr != nil {
+			return leafErr
+		}
+	}
 	r.tls = state
+	r.publicTLS = public
 	bundle, err := r.writeTLSTrustBundle()
 	if err != nil {
 		return err
 	}
 	r.tlsBundlePath = bundle
-	r.addHostEntry(host)
+	validity := "ephemeral"
+	if persistent {
+		validity = "persistent"
+	}
+	if !public {
+		r.logf("local TLS: internal control endpoints only; CA %s (%s); trust bundle %s", state.caPath, validity, bundle)
+		return nil
+	}
+	if public {
+		r.addHostEntry(host)
+	}
+	if r.options.Mail {
+		mailHost, mailErr := r.mailHostName()
+		if mailErr != nil {
+			return mailErr
+		}
+		r.addHostEntry(mailHost)
+		if !public {
+			// The mail surface is the run's only HTTPS listener; reporting its
+			// host keeps describe honest without turning public TLS on.
+			state.host = mailHost
+		}
+	}
 	auxiliary := make([]string, 0, len(r.options.TLSAuxHosts))
 	for _, name := range r.options.TLSAuxHosts {
 		trimmed := strings.ToLower(strings.TrimSpace(name))
@@ -242,13 +314,23 @@ func (r *Runner) initTLS(spec *Spec) error {
 		r.addHostEntry(trimmed)
 		auxiliary = append(auxiliary, trimmed)
 	}
-	validity := "ephemeral"
-	if persistent {
-		validity = "persistent"
+	// A co-resident run's public host is mapped exactly like the run's own: a
+	// container reaches it at the same host address, and the shared CA verifies
+	// the sibling's leaf.
+	peers := r.peerHostNames()
+	for _, name := range peers {
+		r.addHostEntry(name)
 	}
-	r.logf("local TLS: https://%s for every public listener; CA %s (%s); trust bundle %s", host, state.caPath, validity, bundle)
+	if public {
+		r.logf("local TLS: https://%s for every public listener; CA %s (%s); trust bundle %s", host, state.caPath, validity, bundle)
+	} else {
+		r.logf("local TLS: CA %s (%s) for the mail surface; trust bundle %s", state.caPath, validity, bundle)
+	}
 	if len(auxiliary) > 0 {
 		r.logf("local TLS: auxiliary host names mapped into function containers: %s", strings.Join(auxiliary, ", "))
+	}
+	if len(peers) > 0 {
+		r.logf("local TLS: co-resident host names mapped into function containers: %s", strings.Join(peers, ", "))
 	}
 	return nil
 }
@@ -303,22 +385,32 @@ func (s *localTLS) loadOrCreateCA() error {
 	keyPEM, keyErr := os.ReadFile(s.caKeyPath)
 	switch {
 	case certErr == nil && keyErr == nil:
-		caCert, caKey, err := parseCA(certPEM, keyPEM)
-		if err != nil {
-			return fmt.Errorf("load the local CA in %s: %w", s.dir, err)
-		}
-		if time.Now().After(caCert.NotAfter) {
-			return fmt.Errorf("the local CA in %s expired on %s; remove %s to create a new one", s.dir, caCert.NotAfter.UTC().Format(time.RFC3339), s.dir)
-		}
-		s.caPEM, s.caCert, s.caKey = certPEM, caCert, caKey
-		return nil
+		return s.loadCA(certPEM, keyPEM)
 	case os.IsNotExist(certErr) && os.IsNotExist(keyErr):
 		return s.createCA()
-	case certErr != nil:
+	case certErr != nil && !os.IsNotExist(certErr):
 		return fmt.Errorf("read the local CA certificate %s: %w", s.caPath, certErr)
-	default:
+	case keyErr != nil && !os.IsNotExist(keyErr):
 		return fmt.Errorf("read the local CA key %s: %w", s.caKeyPath, keyErr)
+	default:
+		// One file exists. A co-resident run may be in the middle of creating
+		// the shared CA, so serialize through the lock and re-read there
+		// instead of failing on a half-written pair.
+		return s.createCA()
 	}
+}
+
+// loadCA parses a complete pair and applies the CA's expiry rule.
+func (s *localTLS) loadCA(certPEM, keyPEM []byte) error {
+	caCert, caKey, err := parseCA(certPEM, keyPEM)
+	if err != nil {
+		return fmt.Errorf("load the local CA in %s: %w", s.dir, err)
+	}
+	if time.Now().After(caCert.NotAfter) {
+		return fmt.Errorf("the local CA in %s expired on %s; remove %s to create a new one", s.dir, caCert.NotAfter.UTC().Format(time.RFC3339), s.dir)
+	}
+	s.caPEM, s.caCert, s.caKey = certPEM, caCert, caKey
+	return nil
 }
 
 // parseCA parses the certificate and key and proves they belong together.
@@ -360,12 +452,16 @@ func (s *localTLS) createCA() error {
 	certPEM, certErr := os.ReadFile(s.caPath) //nolint:gosec // the caller owns the run directory
 	keyPEM, keyErr := os.ReadFile(s.caKeyPath)
 	if certErr == nil && keyErr == nil {
-		caCert, caKey, parseErr := parseCA(certPEM, keyPEM)
-		if parseErr != nil {
-			return fmt.Errorf("load the local CA in %s: %w", s.dir, parseErr)
-		}
-		s.caPEM, s.caCert, s.caKey = certPEM, caCert, caKey
-		return nil
+		return s.loadCA(certPEM, keyPEM)
+	}
+	// A half pair is not a creation race any more: the lock is held, so no
+	// sibling is writing. Replacing it would invalidate a trust decision the
+	// caller already made, so it fails closed.
+	if certErr == nil {
+		return fmt.Errorf("the local CA key %s is missing beside %s; remove %s to create a new CA", s.caKeyPath, s.caPath, s.dir)
+	}
+	if keyErr == nil {
+		return fmt.Errorf("the local CA certificate %s is missing beside %s; remove %s to create a new CA", s.caPath, s.caKeyPath, s.dir)
 	}
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -539,7 +635,7 @@ func (s *localTLS) issueLeaf(key *ecdsa.PrivateKey, names []string, ips []net.IP
 
 // publicURL is the URL a person or a browser uses for one served listener.
 func (r *Runner) publicURL(port int) string {
-	if r.tls == nil {
+	if r.tls == nil || !r.publicTLS {
 		return fmt.Sprintf("http://127.0.0.1:%d", port)
 	}
 	return fmt.Sprintf("https://%s:%d", r.tls.host, port)
@@ -547,7 +643,7 @@ func (r *Runner) publicURL(port int) string {
 
 // tlsWebSocketURL is the ws/wss URL of one WebSocket API.
 func (r *Runner) tlsWebSocketURL(port int, stage string) string {
-	if r.tls == nil {
+	if r.tls == nil || !r.publicTLS {
 		return fmt.Sprintf("ws://127.0.0.1:%d/%s", port, stage)
 	}
 	return fmt.Sprintf("wss://%s:%d/%s", r.tls.host, port, stage)
@@ -557,7 +653,9 @@ func (r *Runner) tlsWebSocketURL(port int, stage string) string {
 // nil when the run did not opt in, which keeps the plain-HTTP listener
 // byte-for-byte identical.
 func (r *Runner) serverTLSConfig() *tls.Config {
-	if r.tls == nil {
+	if r.tls == nil || !r.publicTLS {
+		// A run that created the CA only for its internal HTTPS endpoints keeps
+		// every public listener on plain HTTP.
 		return nil
 	}
 	return &tls.Config{
@@ -587,10 +685,32 @@ func (r *Runner) writeTLSTrustBundle() (string, error) {
 		return "", nil
 	}
 	path := filepath.Join(r.tls.dir, "trust-bundle.pem")
-	if err := os.WriteFile(path, r.tls.caPEM, 0o644); err != nil { //nolint:gosec // a CA certificate is public
+	if err := writePublicFileAtomic(path, r.tls.caPEM); err != nil {
 		return "", fmt.Errorf("write the local TLS trust bundle %s: %w", path, err)
 	}
 	return path, nil
+}
+
+// writePublicFileAtomic replaces a world-readable file through a rename, so a
+// co-resident run reading the shared trust bundle never sees a partial write.
+func writePublicFileAtomic(path string, contents []byte) error {
+	temp, err := os.CreateTemp(filepath.Dir(path), ".trust-bundle-*")
+	if err != nil {
+		return err
+	}
+	name := temp.Name()
+	defer func() { _ = os.Remove(name) }() //nolint:errcheck // best effort after a failed rename
+	if _, err := temp.Write(contents); err != nil {
+		_ = temp.Close() //nolint:errcheck // the write already failed
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(name, 0o644); err != nil { //nolint:gosec // a CA certificate is public
+		return err
+	}
+	return os.Rename(name, path)
 }
 
 // publicKeyID is the RFC 5280 section 4.2.1.2 method 1 key identifier: the

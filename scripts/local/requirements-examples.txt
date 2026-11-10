@@ -12,3 +12,7 @@ aws-encryption-sdk==4.0.7
 # chromium` fetches the browser build; scripts/verify-security-refresh.sh's
 # pip-audit pass covers this file's dependency tree.
 playwright==1.64.1
+# The shared-IAM-plane row signs a call to a second run with botocore's own
+# SigV4Auth, so the verification is proved against the AWS SDK's signer rather
+# than a harness re-implementation.
+botocore==1.43.124

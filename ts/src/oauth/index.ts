@@ -164,7 +164,45 @@ export interface RequireBearerTokenOptions {
   requiredScopes?: string[] | ((ctx: Context) => string[] | Promise<string[]>);
   validator?: BearerTokenValidator;
   claimsValidator?: BearerTokenClaimsValidator;
+  /**
+   * Receives one structured, redacted event for every 401 and 403 this
+   * middleware renders, so a refusal is answerable from telemetry instead of
+   * being a bare status. The event carries the status, a closed reason slug, the
+   * method, the path, and the challenge shape - never the presented credential.
+   * A throwing hook is contained.
+   */
+  refusalHook?: RefusalHook;
 }
+
+/** The surface that rendered a refusal. */
+export type RefusalClass = "bearer" | "transport" | "facade";
+
+/**
+ * One schema-redacted refusal: the status, a closed reason slug, the request
+ * method and path (never the query string), the client-facing error code, and
+ * the challenge shape. It never carries a bearer token, an authorization code, a
+ * refresh handle, a cookie, or a request body.
+ */
+export interface RefusalEvent {
+  at: Date;
+  class: RefusalClass;
+  reason: string;
+  status: number;
+  method: string;
+  path: string;
+  errorCode?: string;
+  challenge?: string;
+}
+
+/** Receives one refusal event synchronously on the response path. */
+export type RefusalHook = (ctx: Context, event: RefusalEvent) => void;
+
+export const REFUSAL_REASON_UNCLASSIFIED = "unclassified";
+export const REFUSAL_REASON_MISSING_CREDENTIAL = "missing_credential";
+export const REFUSAL_REASON_INVALID_CREDENTIAL = "invalid_credential";
+export const REFUSAL_REASON_EXPIRED_CREDENTIAL = "expired_credential";
+export const REFUSAL_REASON_AUDIENCE_MISMATCH = "audience_mismatch";
+export const REFUSAL_REASON_INSUFFICIENT_SCOPE = "insufficient_scope";
 
 export class OAuthBearerError extends Error {
   readonly oauthCode: string;
@@ -454,6 +492,7 @@ async function authorizeBearerToken(
       ctx,
       options,
       resourceMetadataURLTemplate,
+      REFUSAL_REASON_UNCLASSIFIED,
     );
   }
   await options.validator(ctx, token);
@@ -872,10 +911,50 @@ function isSafeResourceMetadataURLTemplateValue(value: string): boolean {
   return RESOURCE_METADATA_URL_TEMPLATE_VALUE_PATTERN.test(value);
 }
 
+/** Delivers one refusal event; a throwing hook never fails the request. */
+function emitRefusal(
+  ctx: Context,
+  options: RequireBearerTokenOptions,
+  event: Omit<RefusalEvent, "at" | "method" | "path">,
+): void {
+  const hook = options.refusalHook;
+  if (!hook) return;
+  try {
+    hook(ctx, {
+      at: typeof ctx.now === "function" ? ctx.now() : new Date(),
+      method: ctx.request.method,
+      path: ctx.request.path,
+      ...event,
+    });
+  } catch {
+    return;
+  }
+}
+
+/** Maps a bearer failure to the closed refusal vocabulary. */
+function bearerRefusalReason(err: unknown): string {
+  if (err instanceof OAuthBearerError) {
+    switch (err.oauthCode) {
+      case ERR_MISSING_BEARER_TOKEN:
+        return REFUSAL_REASON_MISSING_CREDENTIAL;
+      case ERR_BEARER_TOKEN_EXPIRED:
+        return REFUSAL_REASON_EXPIRED_CREDENTIAL;
+      case ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE:
+        return REFUSAL_REASON_INSUFFICIENT_SCOPE;
+      case ERR_BEARER_TOKEN_INVALID_AUDIENCE:
+        return REFUSAL_REASON_AUDIENCE_MISMATCH;
+      default:
+        return REFUSAL_REASON_INVALID_CREDENTIAL;
+    }
+  }
+  return REFUSAL_REASON_INVALID_CREDENTIAL;
+}
+
 async function unauthorizedResponse(
   ctx: Context,
   options: RequireBearerTokenOptions,
   resourceMetadataURLTemplate: ResourceMetadataURLTemplate | null,
+  reason: string = REFUSAL_REASON_INVALID_CREDENTIAL,
 ): Promise<Response> {
   const metadataURL = await resolveResourceMetadataURL(
     ctx,
@@ -888,6 +967,13 @@ async function unauthorizedResponse(
   headers["www-authenticate"] = [
     metadataURL ? protectedResourceWWWAuthenticate(metadataURL) : "Bearer",
   ];
+  emitRefusal(ctx, options, {
+    class: "bearer",
+    reason,
+    status: 401,
+    errorCode: "app.unauthorized",
+    challenge: metadataURL ? "resource_metadata" : "bare",
+  });
   return {
     status: 401,
     headers,
@@ -921,6 +1007,13 @@ async function insufficientScopeResponse(
     "content-type": ["application/json; charset=utf-8"],
     "www-authenticate": [insufficientScopeWWWAuthenticate(scopes, metadataURL)],
   };
+  emitRefusal(ctx, options, {
+    class: "bearer",
+    reason: REFUSAL_REASON_INSUFFICIENT_SCOPE,
+    status: 403,
+    errorCode: "app.insufficient_scope",
+    challenge: "insufficient_scope",
+  });
   return {
     status: 403,
     headers,
@@ -939,7 +1032,17 @@ async function insufficientScopeResponse(
   };
 }
 
-function forbiddenResponse(): Response {
+function forbiddenResponse(
+  ctx: Context,
+  options: RequireBearerTokenOptions,
+  reason: string,
+): Response {
+  emitRefusal(ctx, options, {
+    class: "bearer",
+    reason,
+    status: 403,
+    errorCode: "app.forbidden",
+  });
   return {
     status: 403,
     headers: { "content-type": ["application/json; charset=utf-8"] },
@@ -964,6 +1067,7 @@ async function bearerErrorResponse(
   err: unknown,
   resourceMetadataURLTemplate: ResourceMetadataURLTemplate | null,
 ): Promise<Response> {
+  const reason = bearerRefusalReason(err);
   if (err instanceof OAuthBearerError) {
     if (err.oauthCode === ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE) {
       return await insufficientScopeResponse(
@@ -973,10 +1077,15 @@ async function bearerErrorResponse(
       );
     }
     if (err.oauthCode === ERR_BEARER_TOKEN_INVALID_AUDIENCE) {
-      return forbiddenResponse();
+      return forbiddenResponse(ctx, options, reason);
     }
   }
-  return await unauthorizedResponse(ctx, options, resourceMetadataURLTemplate);
+  return await unauthorizedResponse(
+    ctx,
+    options,
+    resourceMetadataURLTemplate,
+    reason,
+  );
 }
 
 /**

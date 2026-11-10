@@ -87,6 +87,9 @@ func (r *Runner) functionRunOptions(ctx context.Context, function FunctionSpec, 
 		r.addRuntimeHostEntry()
 	}
 	mounts := append(functionMounts(function), r.webSocketCertificateMounts()...)
+	if r.cfnShimPath != "" && (class == imageClassNode || class == "") {
+		mounts = append(mounts, r.cfnShimPath+":"+nodeResponseShimPath+":ro")
+	}
 	mounts = append(mounts, r.tlsTrustMounts()...)
 	publish := 0
 	if r.options.RIEMode {

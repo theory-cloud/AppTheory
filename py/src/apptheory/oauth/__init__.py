@@ -173,6 +173,10 @@ class BearerTokenValidationOptions:
     now: Callable[[], datetime] | None = None
     required_audience_func: Callable[[Context], str] | None = None
     required_scopes_func: Callable[[Context], list[str]] | None = None
+    # Optionally receives one structured, redacted event for every 401 and 403
+    # this middleware renders, so a refusal is answerable from telemetry instead
+    # of being a bare status. A raising hook is contained.
+    refusal_hook: RefusalHook | None = None
 
 
 BearerTokenValidator = Callable[[Context, str], None]
@@ -203,6 +207,10 @@ class RequireBearerTokenOptions:
     # it takes precedence over resource_metadata_url;
     # resource_metadata_url_func still takes precedence over it.
     resource_metadata_url_template: str = ""
+    # Optionally receives one structured, redacted event for every 401 and 403
+    # this middleware renders, so a refusal is answerable from telemetry instead
+    # of being a bare status. A raising hook is contained.
+    refusal_hook: RefusalHook | None = None
 
 
 def new_protected_resource_metadata(resource: str, authorization_servers: list[str]) -> ProtectedResourceMetadata:
@@ -385,6 +393,82 @@ def bearer_token_from_headers(headers: dict[str, Any] | None) -> str:
     return parts[1].strip()
 
 
+REFUSAL_REASON_UNCLASSIFIED = "unclassified"
+REFUSAL_REASON_MISSING_CREDENTIAL = "missing_credential"
+REFUSAL_REASON_INVALID_CREDENTIAL = "invalid_credential"
+REFUSAL_REASON_EXPIRED_CREDENTIAL = "expired_credential"
+REFUSAL_REASON_AUDIENCE_MISMATCH = "audience_mismatch"
+REFUSAL_REASON_INSUFFICIENT_SCOPE = "insufficient_scope"
+
+
+@dataclass(slots=True)
+class RefusalEvent:
+    """One schema-redacted bearer refusal.
+
+    It carries the status, a closed reason slug, the request method and path
+    (never the query string), and the challenge shape. It never carries a
+    bearer token, a cookie, or a request body.
+    """
+
+    at: datetime
+    event_class: str
+    reason: str
+    status: int
+    method: str
+    path: str
+    error_code: str = ""
+    challenge: str = ""
+
+
+RefusalHook = Callable[[RefusalEvent], None]
+
+
+def _emit_refusal(
+    opts: RequireBearerTokenOptions,
+    ctx: Context | None,
+    event_class: str,
+    reason: str,
+    status: int,
+    error_code: str,
+    challenge: str = "",
+) -> None:
+    """Delivers one refusal event; a raising hook never fails the request."""
+    hook = opts.refusal_hook
+    if hook is None:
+        return
+    try:
+        now = ctx.now() if ctx is not None and callable(getattr(ctx, "now", None)) else datetime.now(tz=UTC)
+        request = ctx.request if ctx is not None else None
+        hook(
+            RefusalEvent(
+                at=now,
+                event_class=event_class,
+                reason=reason,
+                status=status,
+                method=str(getattr(request, "method", "") or ""),
+                path=str(getattr(request, "path", "") or ""),
+                error_code=error_code,
+                challenge=challenge,
+            )
+        )
+    except Exception:  # noqa: BLE001 - telemetry can never fail a request
+        return
+
+
+def _bearer_refusal_reason(exc: Exception) -> str:
+    if isinstance(exc, OAuthBearerError):
+        if exc.oauth_code == ERR_MISSING_BEARER_TOKEN:
+            return REFUSAL_REASON_MISSING_CREDENTIAL
+        if exc.oauth_code == ERR_BEARER_TOKEN_EXPIRED:
+            return REFUSAL_REASON_EXPIRED_CREDENTIAL
+        if exc.oauth_code == ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE:
+            return REFUSAL_REASON_INSUFFICIENT_SCOPE
+        if exc.oauth_code == ERR_BEARER_TOKEN_INVALID_AUDIENCE:
+            return REFUSAL_REASON_AUDIENCE_MISMATCH
+        return REFUSAL_REASON_INVALID_CREDENTIAL
+    return REFUSAL_REASON_INVALID_CREDENTIAL
+
+
 def _prepare_bearer_options(
     options: RequireBearerTokenOptions | None,
 ) -> tuple[RequireBearerTokenOptions, _ResourceMetadataURLTemplate | None]:
@@ -408,7 +492,7 @@ def _authorize_bearer_token(
         ctx.set(CONTEXT_KEY_BEARER_CLAIMS, _clone_claims(claims))
         return None
     if opts.validator is None:
-        return _unauthorized_response(opts, ctx, template)
+        return _unauthorized_response(opts, ctx, template, REFUSAL_REASON_UNCLASSIFIED)
     opts.validator(ctx, token)
     ctx.set(CONTEXT_KEY_BEARER_TOKEN, token)
     return None
@@ -752,12 +836,22 @@ def _unauthorized_response(
     opts: RequireBearerTokenOptions,
     ctx: Context | None = None,
     template: _ResourceMetadataURLTemplate | None = None,
+    reason: str = REFUSAL_REASON_INVALID_CREDENTIAL,
 ) -> Response:
     metadata_url = _resolved_resource_metadata_url(opts, ctx, template)
     headers = {
         "content-type": ["application/json; charset=utf-8"],
         "www-authenticate": [protected_resource_www_authenticate(metadata_url) if metadata_url else "Bearer"],
     }
+    _emit_refusal(
+        opts,
+        ctx,
+        "bearer",
+        reason,
+        401,
+        "app.unauthorized",
+        "resource_metadata" if metadata_url else "bare",
+    )
     body = jsonlib.dumps(
         {"error": {"code": "app.unauthorized", "message": "unauthorized", "status_code": 401}},
         separators=(",", ":"),
@@ -771,7 +865,13 @@ def _unauthorized_response(
     )
 
 
-def _forbidden_response() -> Response:
+def _forbidden_response(
+    opts: RequireBearerTokenOptions | None = None,
+    ctx: Context | None = None,
+    reason: str = REFUSAL_REASON_INVALID_CREDENTIAL,
+) -> Response:
+    if opts is not None:
+        _emit_refusal(opts, ctx, "bearer", reason, 403, "app.forbidden")
     return Response(
         status=403,
         headers={"content-type": ["application/json; charset=utf-8"]},
@@ -800,6 +900,15 @@ def _insufficient_scope_response(
             insufficient_scope_www_authenticate(scopes, _resolved_resource_metadata_url(opts, ctx, template))
         ],
     }
+    _emit_refusal(
+        opts,
+        ctx,
+        "bearer",
+        REFUSAL_REASON_INSUFFICIENT_SCOPE,
+        403,
+        "app.insufficient_scope",
+        "insufficient_scope",
+    )
     body = jsonlib.dumps(
         {"error": {"code": "app.insufficient_scope", "message": "insufficient scope", "status_code": 403}},
         separators=(",", ":"),
@@ -819,12 +928,13 @@ def _bearer_error_response(
     ctx: Context | None = None,
     template: _ResourceMetadataURLTemplate | None = None,
 ) -> Response:
+    reason = _bearer_refusal_reason(exc)
     if isinstance(exc, OAuthBearerError):
         if exc.oauth_code == ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE:
             return _insufficient_scope_response(opts, ctx, template)
         if exc.oauth_code == ERR_BEARER_TOKEN_INVALID_AUDIENCE:
-            return _forbidden_response()
-    return _unauthorized_response(opts, ctx, template)
+            return _forbidden_response(opts, ctx, reason)
+    return _unauthorized_response(opts, ctx, template, reason)
 
 
 def _first_header(headers: dict[str, Any] | None, name: str) -> str:

@@ -109,6 +109,11 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, "apptheory-local: --tls, --tls-host and --tls-aux are only valid on run and session")
 		return 2
 	}
+	if (config.mail || config.mailHost != "") &&
+		command != commandRun && command != commandSession {
+		fmt.Fprintln(os.Stderr, "apptheory-local: --mail and --mail-host are only valid on run and session")
+		return 2
+	}
 	if command == commandInvoke {
 		if err := validateInvokeConfig(config); err != nil {
 			fmt.Fprintf(os.Stderr, "apptheory-local: %v\n", err)
@@ -151,6 +156,7 @@ type commandConfig struct {
 	scratchDir          string
 	profilePath         string
 	portBase            int
+	ports               stringList
 	namePrefix          string
 	maxConcurrency      int
 	deliveryConcurrency int
@@ -178,10 +184,15 @@ type commandConfig struct {
 	timeoutSeconds      int
 	watch               bool
 	dataDir             string
+	sharedDir           string
+	sharedNetwork       string
+	peerHosts           stringList
 	seed                string
 	tls                 bool
 	tlsHost             string
 	tlsAux              stringList
+	mail                bool
+	mailHost            string
 }
 
 func (c *commandConfig) register(flags *flag.FlagSet) {
@@ -190,6 +201,7 @@ func (c *commandConfig) register(flags *flag.FlagSet) {
 	flags.StringVar(&c.scratchDir, "scratch", "", "scratch directory for synthesis and inline code (default: the user cache directory)")
 	flags.StringVar(&c.profilePath, "profile", "", "checked-in local execution profile with digest-pinned runtime images and endpoints")
 	flags.IntVar(&c.portBase, "port-base", 0, "bind API listeners at this port; 0 asks the OS for free ports")
+	flags.Var(&c.ports, "port", "run/session/plan: pin a public surface to a port: <logicalId>=<port> (repeatable; needs --port-base)")
 	flags.StringVar(&c.namePrefix, "name-prefix", "", "container and network name prefix (default: derived from the app path)")
 	flags.IntVar(&c.maxConcurrency, "max-concurrency", 32, "maximum in-flight invocations (1-32)")
 	flags.IntVar(&c.deliveryConcurrency, "delivery-concurrency", 0, "maximum concurrent delivery-engine invocations (default 4, max 32)")
@@ -218,10 +230,15 @@ func (c *commandConfig) register(flags *flag.FlagSet) {
 	flags.IntVar(&c.timeoutSeconds, "timeout", 0, "invoke --handler-dir: function timeout in seconds (default 3)")
 	flags.BoolVar(&c.watch, "watch", false, "run/session: re-synthesize when the app's sources change and apply the new surface without restarting the listeners")
 	flags.StringVar(&c.dataDir, "data-dir", "", "run/session/invoke: keep backend state across runs (DynamoDB Local, s3proxy, ElasticMQ, and the runner's <data-dir>/kms/keys.json and <data-dir>/s3sse/index.json; moto stays in memory)")
+	flags.StringVar(&c.sharedDir, "shared-dir", "", "run/session/invoke: the directory co-resident runs share; it holds the local IAM plane at <shared-dir>/iam and the shared CA at <shared-dir>/ca")
+	flags.StringVar(&c.sharedNetwork, "shared-network", "", "run/session: join every co-resident run's containers to this one Docker bridge network, so a run reaches a sibling's listener at the host address this run also binds")
+	flags.Var(&c.peerHosts, "peer-host", "run/session with --tls: a co-resident run's public host name to map into this run's function containers (repeatable)")
 	flags.StringVar(&c.seed, "seed", "", "run/session: shell command to run after provisioning and before the run reports ready")
 	flags.BoolVar(&c.tls, "tls", false, "run/session: serve every public listener over HTTPS from a certificate the runner's local CA signs (default off: plain HTTP, unchanged)")
 	flags.StringVar(&c.tlsHost, "tls-host", "", "run/session with --tls: the public host name (localhost or a *.localhost name; default app.localhost)")
 	flags.Var(&c.tlsAux, "tls-aux", "run/session with --tls: an auxiliary *.localhost name a function container must resolve to the runner (repeatable; issue its certificate with `apptheory-local tls leaf`)")
+	flags.BoolVar(&c.mail, "mail", false, "run/session: start the local mail surface: the profile's digest-pinned SMTP sink, an SMTP ingress that runs the app's SES receipt rules, and the sink's HTTPS read API (default off)")
+	flags.StringVar(&c.mailHost, "mail-host", "", "run/session with --mail: the public host of the mail surface (a *.localhost name; default mail.localhost)")
 }
 
 func (c *commandConfig) execute(command string) int {
@@ -311,13 +328,18 @@ func (c *commandConfig) plan(ctx context.Context, runner *localrunner.Runner) in
 		return 1
 	}
 	if c.jsonOutput {
-		document, err := runner.PlanJSON(spec)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "apptheory-local: %v\n", err)
+		document, jsonErr := runner.PlanJSON(spec)
+		if jsonErr != nil {
+			fmt.Fprintf(os.Stderr, "apptheory-local: %v\n", jsonErr)
 			return 1
 		}
 		fmt.Println(string(document))
 		return 0
+	}
+	surfaces, err := runner.PublicSurfacePlans(spec)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "apptheory-local: %v\n", err)
+		return 1
 	}
 	fmt.Printf("app:      %s\n", c.app)
 	fmt.Printf("assembly: %s\n", spec.AssemblyDir)
@@ -333,8 +355,24 @@ func (c *commandConfig) plan(ctx context.Context, runner *localrunner.Runner) in
 	for _, line := range localrunner.RouteTable(spec) {
 		fmt.Printf("  %s\n", line)
 	}
+	fmt.Println()
+	fmt.Println("public surfaces:")
+	for _, surface := range surfaces {
+		port := "auto"
+		if surface.Port > 0 {
+			port = fmt.Sprintf("%d", surface.Port)
+		}
+		note := ""
+		if surface.Pinned {
+			note = " (pinned)"
+		}
+		fmt.Printf("  %-12s %-44s %5s%s\n", surface.Class, surface.LogicalID, port, note)
+	}
 	printProvisionedResources(spec)
 	printCodeBuildProjects(spec)
+	printCustomResources(spec)
+	printReceiptRules(spec)
+	printIAMRoles(spec)
 	printDerivedEvents(spec)
 	if len(spec.Skipped) > 0 {
 		fmt.Println()
@@ -386,6 +424,77 @@ func printCodeBuildProjects(spec *localrunner.Spec) {
 		for _, deviation := range project.Deviations {
 			fmt.Printf("    deviation: %s\n", deviation)
 		}
+	}
+}
+
+// printCustomResources prints every CloudFormation custom resource the run
+// serves, with the handler it invokes, the runner component that serves it, or
+// the reason it refuses it.
+func printCustomResources(spec *localrunner.Spec) {
+	if len(spec.CustomResources) == 0 {
+		return
+	}
+	fmt.Println()
+	fmt.Println("custom resources:")
+	for _, resource := range spec.CustomResources {
+		switch {
+		case resource.Refusal != "":
+			fmt.Printf("  %-40s %-42s refused: %s\n", resource.LogicalID, resource.Type, resource.Refusal)
+		case resource.ServedBy != "":
+			fmt.Printf("  %-40s %-42s served by the runner: %s\n", resource.LogicalID, resource.Type, resource.ServedBy)
+		default:
+			fmt.Printf("  %-40s %-42s handler=%s\n", resource.LogicalID, resource.Type, resource.Function)
+		}
+	}
+}
+
+// printReceiptRules prints every SES receipt rule the run serves, with the
+// recipients it accepts and the actions it applies in order.
+func printReceiptRules(spec *localrunner.Spec) {
+	if len(spec.ReceiptRules) == 0 {
+		return
+	}
+	fmt.Println()
+	fmt.Println("receipt rules:")
+	for _, rule := range spec.ReceiptRules {
+		actions := make([]string, 0, len(rule.Actions))
+		for _, action := range rule.Actions {
+			switch action.Kind {
+			case "s3":
+				actions = append(actions, "s3:"+action.Bucket+" prefix="+action.ObjectKeyPrefix)
+			case "lambda":
+				actions = append(actions, "lambda:"+action.Function+" invocation="+action.InvocationType)
+			default:
+				actions = append(actions, action.Kind)
+			}
+		}
+		line := strings.Join(actions, ", ")
+		if len(rule.UnservedActions) > 0 {
+			line += " (not served: " + strings.Join(rule.UnservedActions, ", ") + ")"
+		}
+		fmt.Printf("  %-40s rule-set=%s name=%s enabled=%t recipients=%s -> %s\n",
+			rule.LogicalID, rule.RuleSetName, rule.Name, rule.Enabled,
+			strings.Join(rule.Recipients, ","), line)
+	}
+}
+
+// printIAMRoles prints every IAM role the assembly declares with the trust and
+// identity policies the narrow local IAM path evaluates.
+func printIAMRoles(spec *localrunner.Spec) {
+	if len(spec.IAMRoles) == 0 {
+		return
+	}
+	fmt.Println()
+	fmt.Println("iam roles:")
+	for _, role := range spec.IAMRoles {
+		fmt.Printf("  %-52s trust=%t identityPolicies=%d account=%s\n",
+			role.ARN, len(role.Trust) > 0, len(role.Identity), role.Account)
+	}
+	for _, api := range spec.APIs {
+		if len(api.ResourcePolicy) == 0 {
+			continue
+		}
+		fmt.Printf("  resource policy: %s\n", api.LogicalID)
 	}
 }
 
@@ -513,6 +622,10 @@ func (c *commandConfig) options() (localrunner.Options, error) {
 	if originsErr != nil {
 		return localrunner.Options{}, originsErr
 	}
+	ports, portsErr := localrunner.ParsePortPins(c.ports, c.portBase)
+	if portsErr != nil {
+		return localrunner.Options{}, portsErr
+	}
 	var handler *localrunner.HandlerSpec
 	if strings.TrimSpace(c.handlerDir) != "" {
 		handler = &localrunner.HandlerSpec{
@@ -539,6 +652,7 @@ func (c *commandConfig) options() (localrunner.Options, error) {
 		Backends:            c.backends,
 		ExtraFunctions:      append([]string(nil), c.sessionTargets...),
 		PortBase:            c.portBase,
+		Ports:               ports,
 		NamePrefix:          c.namePrefix,
 		MaxConcurrency:      c.maxConcurrency,
 		DeliveryConcurrency: c.deliveryConcurrency,
@@ -548,10 +662,15 @@ func (c *commandConfig) options() (localrunner.Options, error) {
 		StreamChunks:        c.streamChunks,
 		Watch:               c.watch,
 		DataDir:             c.dataDir,
+		SharedDir:           c.sharedDir,
+		SharedNetwork:       c.sharedNetwork,
+		PeerHosts:           append([]string(nil), c.peerHosts...),
 		Seed:                c.seed,
 		TLS:                 c.tls,
 		TLSHost:             c.tlsHost,
 		TLSAuxHosts:         append([]string(nil), c.tlsAux...),
+		Mail:                c.mail,
+		MailHost:            c.mailHost,
 		Stdout:              os.Stdout,
 	}, nil
 }
