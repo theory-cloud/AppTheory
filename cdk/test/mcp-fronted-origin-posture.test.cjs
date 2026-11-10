@@ -288,6 +288,32 @@ test("FRONTED validates the declared header name and secret", () => {
   }
 });
 
+test("attach FRONTED is accepted with none-public alongside the other decisions", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "FrontedNonePublicStack");
+  const api = new apigwv2.HttpApi(stack, "Api");
+  new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: handler(stack),
+    api,
+    transportPosture: apptheory.AppTheoryMcpTransportPosture.NONE_PUBLIC,
+    originReachability: apptheory.AppTheoryMcpOriginReachability.FRONTED,
+    frontDoorVerification: frontDoorVerification(),
+    sessionState: { enabled: false },
+    owningApiDefense: { accessLogging: true, throttling: { rateLimit: 50, burstLimit: 100 } },
+  });
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const marker = postureMetadata(template);
+  assert.equal(marker.posture, "none-public");
+  assert.equal(marker.origin_reachability, "fronted");
+  assert.equal(marker.front_door_header_name, FRONT_DOOR_HEADER);
+  assert.equal(marker.front_door_secret_sha256, sha256Hex(FRONT_DOOR_SECRET));
+  assert.equal(
+    resourcesOfType(template, "AWS::ApiGatewayV2::DomainName").length,
+    0,
+    "FRONTED adds no custom domain under none-public either",
+  );
+});
+
 test("existing attach DISABLED keeps its posture marker byte-stable", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "AttachDisabledMarkerStack");
