@@ -15,6 +15,49 @@ or deprecation posture must add or update a section here before the release is p
 
 ## v7.x line
 
+### Unreleased
+
+- **CDK MCP fronted origins: `FRONTED` restores a synthesis-passing posture for an externally fronted attach-mode API.**
+  v7 removed the declaration-only attach `LOCKED` escape, so a topology with an app-owned HTTP API v2 whose
+  `execute-api` hostname is the origin of a public front door (for example CloudFront) had no expressible origin
+  posture: attach `LOCKED` throws, owned `LOCKED` needs mTLS on a custom domain, and attach `DISABLED` needs a custom
+  domain plus `DisableExecuteApiEndpoint`. `AppTheoryMcpOriginReachability.FRONTED` is that posture, and it synthesizes
+  with **no CloudFront or API change**.
+
+  What it requires and does:
+
+  - Attach mode only, accepted with `runtime-bearer` and `none-public` like `DISABLED`/`LOCKED`, and mandatory
+    `frontDoorVerification: { headerName, secretValue, asserted: true }`. `headerName` is 1–64 characters of
+    `[A-Za-z0-9-]` and must be a header a front door can set; `secretValue` is a literal 32–128 characters of
+    `[A-Za-z0-9._~-]`; `asserted` must be `true`. Synthesis refuses `FRONTED` without the prop, refuses `FRONTED` in
+    owned mode, and refuses the prop under every other decision. Owned front doors keep `DISABLED` or `LOCKED`.
+  - The `apptheory:mcp-transport-posture` marker gains `origin_reachability: "fronted"`, `front_door_header_name`, and
+    `front_door_secret_sha256` (SHA-256 of the declared secret). The literal secret never lands in the template or in
+    CloudFormation. `DISABLED` and `LOCKED` markers are byte-identical to before.
+  - Enforcement is the runtime's: registration fails closed when `FRONTED` is declared without
+    `FacadeConfig.FrontDoorVerification` (Go), `frontDoorVerification` (TypeScript), or `front_door_verification`
+    (Python), and every derived route then refuses a request whose declared header is absent or wrong with
+    `403 app.forbidden` before any credential work. That covers the MCP transport routes **and** the OAuth facade paths
+    (protected-resource metadata, both discovery documents, authorize, token, register, and the upstream callback), so
+    a direct-origin request that bypasses the front door is refused on every route — including the OAuth ones.
+
+  Migrate an existing v6 declaration-only attach `LOCKED` to `FRONTED`:
+
+  1. Replace `originReachability: LOCKED` with `FRONTED` and add `frontDoorVerification`, all from one
+     application-owned constant.
+  2. Wire that same header name and value into the distribution's origin custom-header configuration (this copy is
+     application-owned and necessarily carries the literal, since CloudFront origin custom headers are plain strings —
+     keep it out of committed source and inject it from your normal configuration source).
+  3. Wire the same constant into the runtime: `FacadeConfig.OriginReachability = mcpfacade.OriginReachabilityFronted`
+     with `FrontDoorVerification{HeaderName, SecretValue}` (or the TypeScript/Python equivalents) before
+     `RegisterMCPFacade` / `register_mcp_facade`.
+  4. Deploy, then confirm the direct-origin negative case: a request to the execute-api hostname **without** the header
+     is refused `403 app.forbidden` on a transport route and on an OAuth facade route.
+
+  `FRONTED` is a defense-in-depth declaration with runtime enforcement, not mutual-TLS assurance (that is `LOCKED`) and
+  not origin unreachability (that is `DISABLED`). An unwired `FRONTED` enforces nothing, and synthesis alone never
+  proves enforcement.
+
 ### 7.1.0
 
 - **MCP auth facade: a reused refresh route handle is served, not treated as theft.** A handle that was rotated

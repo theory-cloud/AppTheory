@@ -77,7 +77,72 @@ export declare enum AppTheoryMcpOriginReachability {
      * `mutualTlsAuthentication` is the concrete lock; an enum alone or an
      * external/attached front door never satisfies it.
      */
-    LOCKED = "locked"
+    LOCKED = "locked",
+    /**
+     * The origin stays directly reachable at its execute-api endpoint and is
+     * served only through an application-owned front door that injects
+     * `frontDoorVerification` on every origin request.
+     *
+     * This is the posture for an app-owned distribution whose origin is the
+     * execute-api hostname: the construct sees neither the distribution nor the
+     * API's endpoint configuration, so it cannot produce in-stack evidence the
+     * way `DISABLED` and `LOCKED` do. Valid only in attach mode, accepted with
+     * `RUNTIME_BEARER` and `NONE_PUBLIC` like the other decisions, and it
+     * requires the mandatory `frontDoorVerification` declaration.
+     *
+     * `FRONTED` is a defense-in-depth declaration with runtime enforcement, not
+     * mutual-TLS assurance and not origin unreachability. The enforcement is the
+     * runtime's front-door header check (`mcpfacade.FacadeConfig`
+     * `FrontDoorVerification` in Go, `frontDoorVerification` in TypeScript,
+     * `front_door_verification` in Python): it refuses every derived route when
+     * the declared header is absent or wrong, and fails registration when
+     * `FRONTED` is declared without it. An unwired runtime enforces nothing.
+     */
+    FRONTED = "fronted"
+}
+/**
+ * Front-door verification for `originReachability: FRONTED`.
+ *
+ * Attach mode means the front door is application-owned, so the construct
+ * cannot inject the header itself and cannot observe the distribution. The
+ * declaration therefore carries three independently wired copies that must come
+ * from one application-owned constant: this prop, the distribution's origin
+ * custom-header configuration, and the runtime's front-door verification
+ * config. The construct proves only its own copy, and the literal secret is
+ * consumed at synthesis for validation and the SHA-256 digest only.
+ */
+export interface AppTheoryMcpFrontDoorVerificationOptions {
+    /**
+     * The origin request header the front door injects on every request it sends
+     * to the origin.
+     *
+     * 1 to 64 characters of `[A-Za-z0-9-]`, and never a request header that
+     * rewrites the origin contract (`Host`, `Authorization`, `Cookie`,
+     * `Content-Length`, `Transfer-Encoding`, `Connection`, `WWW-Authenticate`,
+     * `X-Forwarded-For`), any `x-amz-*`/`x-amzn-*`/`cloudfront-*` name, or a
+     * hop-by-hop name.
+     */
+    readonly headerName: string;
+    /**
+     * The literal secret injected as the front-door header value.
+     *
+     * 32 to 128 characters of `[A-Za-z0-9._~-]`: a header-value-safe alphabet
+     * with no whitespace and no control characters. The value is consumed at
+     * synthesis for validation and the recorded SHA-256 digest only — the literal
+     * never lands in the synthesized template or in CloudFormation. It is not a
+     * credential store; rotation means changing the value and redeploying, and it
+     * must not be (or contain) a secret that protects anything else.
+     */
+    readonly secretValue: string;
+    /**
+     * The assertion that the runtime verifies the front-door header on every
+     * derived route.
+     *
+     * The construct cannot attach that verification to an application-owned front
+     * door or a runtime it does not own, so it refuses to synthesize until the
+     * caller records that the verification exists. Must be `true`.
+     */
+    readonly asserted: boolean;
 }
 /** Denial-telemetry declaration required under `runtime-bearer`. */
 export interface AppTheoryMcpDenialSignalOptions {
@@ -352,10 +417,22 @@ export interface AppTheoryMcpServerProps {
     readonly runtimePosture?: AppTheoryMcpRuntimePostureOptions;
     /**
      * Direct-origin reachability decision required under RUNTIME_BEARER and
-     * NONE_PUBLIC. A directly reachable origin is refused.
+     * NONE_PUBLIC. A directly reachable origin is refused unless it is declared
+     * `FRONTED`, which requires `frontDoorVerification`.
      * @default undefined
      */
     readonly originReachability?: AppTheoryMcpOriginReachability;
+    /**
+     * Front-door verification declaration, required with
+     * `originReachability: FRONTED` and refused under every other decision.
+     *
+     * The construct records the posture, the header name, and a SHA-256 digest of
+     * the declared secret in the `apptheory:mcp-transport-posture` metadata; it
+     * never emits the literal secret. Enforcement is the runtime's front-door
+     * header check, so an unwired runtime enforces nothing.
+     * @default undefined
+     */
+    readonly frontDoorVerification?: AppTheoryMcpFrontDoorVerificationOptions;
     /**
      * Denial-telemetry declaration required under RUNTIME_BEARER only.
      * @default undefined

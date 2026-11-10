@@ -1,0 +1,26 @@
+{
+  "id": "p0.mcp_facade.front_door_unconfigured",
+  "tier": "p0",
+  "name": "MCP facade: declaring FRONTED without the front-door verification config fails registration closed",
+  "setup": {
+    "mcp_facade": {
+      "issuer": "https://issuer.example.com/",
+      "jwks_uri": "https://issuer.example.com/jwks.json?set=active",
+      "public_base_url": "https://front.example.com/",
+      "resource_metadata_url": "https://front.example.com/.well-known/oauth-protected-resource/acme/mcp",
+      "scopes": ["namespace:use"],
+      "bearer": {
+        "accepted_tokens": [
+          { "token": "valid-token", "subject": "acme", "scopes": ["namespace:use"] }
+        ],
+        "required_scopes": ["namespace:use"]
+      },
+      "origin_reachability": "fronted"
+    }
+  },
+  "expect": {
+    "error": {
+      "message": "OriginReachability fronted requires FrontDoorVerification"
+    }
+  }
+}

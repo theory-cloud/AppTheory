@@ -261,6 +261,18 @@ type FixtureMCPFacadeSetup struct {
 	ResourceMetadataURL string                  `json:"resource_metadata_url,omitempty"`
 	Scopes              []string                `json:"scopes,omitempty"`
 	Bearer              *FixtureMCPFacadeBearer `json:"bearer,omitempty"`
+	// OriginReachability records the direct-origin posture the construct
+	// declared. Empty leaves it unrecorded; fronted requires
+	// FrontDoorVerification and registers the fail-closed header check.
+	OriginReachability    string                        `json:"origin_reachability,omitempty"`
+	FrontDoorVerification *FixtureFrontDoorVerification `json:"front_door_verification,omitempty"`
+}
+
+// FixtureFrontDoorVerification declares the app-owned front-door header the
+// runtime verifies under origin_reachability fronted.
+type FixtureFrontDoorVerification struct {
+	HeaderName  string `json:"header_name"`
+	SecretValue string `json:"secret_value"`
 }
 
 // FixtureMCPFacadeBearer selects the runtime-bearer transport posture and the

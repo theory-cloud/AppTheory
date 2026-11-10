@@ -6618,7 +6618,15 @@ def register_fixture_mcp_facade(runtime: Any, app: Any, setup: dict[str, Any]) -
             status=204, headers={}, cookies=[], body=b"", is_base64=False
         ),
         transport_posture="iam",
+        origin_reachability=str(setup.get("origin_reachability") or ""),
     )
+
+    verification = setup.get("front_door_verification") or None
+    if verification:
+        config.front_door_verification = runtime.FrontDoorVerification(
+            header_name=str(verification.get("header_name") or ""),
+            secret_value=str(verification.get("secret_value") or ""),
+        )
 
     bearer = setup.get("bearer") or None
     if bearer:

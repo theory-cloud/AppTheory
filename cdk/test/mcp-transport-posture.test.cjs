@@ -390,7 +390,7 @@ const failClosedCases = [
       ...runtimeBearerFloor,
       originReachability: undefined,
     },
-    error: /RUNTIME_BEARER requires originReachability to be AppTheoryMcpOriginReachability\.DISABLED or \.LOCKED/,
+    error: /RUNTIME_BEARER requires originReachability to be AppTheoryMcpOriginReachability\.DISABLED, \.LOCKED, or \.FRONTED/,
   },
   {
     name: "runtime bearer with a direct origin",
@@ -398,7 +398,7 @@ const failClosedCases = [
       ...runtimeBearerFloor,
       originReachability: "direct",
     },
-    error: /RUNTIME_BEARER requires originReachability to be AppTheoryMcpOriginReachability\.DISABLED or \.LOCKED/,
+    error: /RUNTIME_BEARER requires originReachability to be AppTheoryMcpOriginReachability\.DISABLED, \.LOCKED, or \.FRONTED/,
   },
   {
     name: "runtime bearer without a denial signal",
@@ -482,7 +482,7 @@ const failClosedCases = [
       transportPosture: posture.NONE_PUBLIC,
       ownedApi: { stage: { throttlingEnabled: true } },
     },
-    error: /NONE_PUBLIC requires originReachability to be AppTheoryMcpOriginReachability\.DISABLED or \.LOCKED/,
+    error: /NONE_PUBLIC requires originReachability to be AppTheoryMcpOriginReachability\.DISABLED, \.LOCKED, or \.FRONTED/,
   },
   {
     name: "none-public with root authorization server discovery",

@@ -30,8 +30,8 @@ File layout is organized by behavior domain. The historical tier/milestone label
 - `contract-tests/fixtures/objectstore/` — SP13 bounded object-store Put, capped Get, Delete, deterministic fake behavior, and forbidden operation errors
 - `contract-tests/fixtures/vectorstore/` — SP14 semantic vector-store, Bedrock Titan embedding, metadata filter, and deterministic fake behavior
 
-The current corpus contains 330 machine-readable contract vectors plus the internal schema file. <!-- apptheory-fixture-count: 330 -->
-Of those, 314 are single-envelope behavior fixtures executed by the Go, TypeScript, and Python runners. The sixteen
+The current corpus contains 335 machine-readable contract vectors plus the internal schema file. <!-- apptheory-fixture-count: 335 -->
+Of those, 319 are single-envelope behavior fixtures executed by the Go, TypeScript, and Python runners. The sixteen
 nested tables under `routing/` — `limiter/multi-window-cancellation.v1.json`, `mcp-route-algebra/expectations.json`, `mcp-route-algebra/facade-route-inventory.json`,
 `mcp-auth-facade/facade-transport-posture.v1.json`, `mcp-auth-facade/facade-route-model.v1.json`,
 `mcp-auth-facade/jwks-validator.v1.json`, `mcp-auth-facade/discovery-bootstrap.v1.json`,
@@ -213,6 +213,11 @@ error envelopes — rather than a runner-owned stand-in. Every field is optional
   - `required_scopes`: the route scope set a token must carry. A credential-free or unknown token is the `401` case
     (RFC 9728 `resource_metadata` challenge); a known token missing a required scope is the `403
     insufficient_scope` case (RFC 6750 `error`/`scope`/`resource_metadata` challenge).
+- `origin_reachability`: the declared direct-origin posture (`disabled`, `locked`, or `fronted`). `fronted` requires
+  `front_door_verification` (`header_name`, `secret_value`): the runtime then refuses every derived route — transport
+  and OAuth facade — with `403 app.forbidden` when the declared header is absent or wrong, and registration fails
+  closed when `fronted` is declared without it. The `mcp-facade-front-door-*` fixtures pin that fail-closed behavior,
+  including an OAuth facade document path and the unconfigured registration error.
 
 The mounted facade serves the client-facing route algebra, so a fixture asserts its real responses through
 `input.aws_event` with a greedy `ANY /{proxy+}` (or `ANY /`) route key. The `http-core` `mcp-facade-greedy-*`

@@ -230,7 +230,8 @@ supplying it with `iam`, `runtime-bearer`, or `none-public` fails synthesis.
 
 `runtime-bearer` and `none-public` carry a mandatory defense-in-depth floor and fail synthesis without it:
 
-- `originReachability` must be `disabled` or `locked`; a directly reachable origin is refused;
+- `originReachability` must be `disabled`, `locked`, or `fronted`; a directly reachable origin is refused unless it is
+  declared `fronted` with a runtime-enforced front-door verification (see [Fronted origins](#fronted-origins-fronted));
 - `runtime-bearer` requires `runtimePosture: { requireBearerToken: true }`, which asserts the runtime registers the
   transport routes with the runtime-validated bearer posture;
 - in owned mode the throttling decision must be explicit (`ownedApi.stage.throttlingEnabled: true`) and access logging
@@ -252,6 +253,55 @@ The origin decision is enforced, not asserted:
   execute-api origin templates, not public-authority declarations.
 - Supplying `ownedApi.domain.mutualTlsAuthentication` without owned `locked` fails as contradictory.
 
+### Fronted origins (`fronted`)
+
+`fronted` is the attach-mode posture for a topology the construct does not own: an application-owned HTTP API v2 whose
+`execute-api` hostname is the origin of a public front door (for example a CloudFront distribution), with the MCP
+server attached to that API. The construct sees neither the distribution nor the API's endpoint configuration, so —
+unlike `disabled` and `locked` — it cannot produce in-stack evidence. `fronted` therefore accepts only an explicit,
+runtime-enforced declaration:
+
+```ts
+new AppTheoryMcpServer(this, "TmsMcp", {
+  handler,
+  api,                                     // the app-owned HTTP API the distribution fronts
+  routeModel: AppTheoryMcpRouteModel.CONSOLIDATED,
+  transportPosture: AppTheoryMcpTransportPosture.RUNTIME_BEARER,
+  runtimePosture: { requireBearerToken: true },
+  originReachability: AppTheoryMcpOriginReachability.FRONTED,
+  frontDoorVerification: { headerName: FRONT_DOOR_HEADER, secretValue: FRONT_DOOR_SECRET, asserted: true },
+  denialSignal: {},
+  owningApiDefense: { accessLogging: true, throttling: { rateLimit: 50, burstLimit: 100 } },
+});
+```
+
+- `frontDoorVerification` is mandatory with `fronted` and refused under every other decision. `headerName` must be 1 to
+  64 characters of `[A-Za-z0-9-]` and a header the front door can set (reserved request headers, `x-amz-*`,
+  `x-amzn-*`, and `cloudfront-*` names are refused); `secretValue` must be 32 to 128 characters of `[A-Za-z0-9._~-]`;
+  `asserted` must be `true`. `fronted` is refused in owned mode, where `disabled` or `locked` wires the front door.
+- The synthesized `apptheory:mcp-transport-posture` marker records, in addition to the transport posture,
+  `origin_reachability: "fronted"`, `front_door_header_name`, and `front_door_secret_sha256` — a SHA-256 digest of the
+  declared secret. The literal secret never lands in the template or in CloudFormation: the prop value is consumed at
+  synthesis for validation and the digest only. `disabled` and `locked` markers are unchanged.
+- **Three copies, one constant.** Because the distribution is app-owned, the declaration is only as good as its
+  copies: the construct prop, the distribution's origin custom-header configuration, and the runtime's front-door
+  verification config must all come from one application-owned constant. The construct proves its own copy only. An
+  unwired `fronted` **enforces nothing**.
+- Enforcement lives in the runtime. `mcpfacade.FacadeConfig` (Go), `registerMcpFacade` (TypeScript), and
+  `register_mcp_facade` (Python) take `OriginReachability` / `originReachability` / `origin_reachability` plus
+  `FrontDoorVerification` / `frontDoorVerification` / `front_door_verification`. Registration fails closed when
+  `fronted` is declared without the verification. Under it, every derived route — the MCP transport routes **and** the
+  OAuth facade paths (protected-resource metadata, both discovery documents, authorize, token, register, and the
+  upstream callback) — refuses a request whose declared header is absent or wrong with `403 app.forbidden` before any
+  credential work. A direct-origin request that bypasses the front door is therefore refused on every route.
+- `fronted` is a **defense-in-depth declaration with runtime enforcement**. It is not mutual-TLS assurance (that is
+  `locked`), it does not make the origin unreachable (that is `disabled`), and it cannot be proven by synthesis. The
+  adoption-time proof is the receipted run: a request without the declared header is refused.
+- The distribution's own origin custom-header configuration necessarily carries the literal value in the application's
+  template, because CloudFront origin custom headers are plain strings. That copy is application-owned; keep the value
+  out of committed source (inject it from your normal configuration source), rotate by changing it and redeploying, and
+  never reuse a secret that protects anything else.
+
 Discovery, protected-resource metadata, authorize, and token routes stay explicitly `NONE` so a supplied API's default
 authorizer cannot intercept OAuth traffic: OAuth clients must fetch those documents before they hold a token. Scope
 policy and authorize/token behavior belong to the AppTheory runtime composition helper. Applications must call
@@ -267,7 +317,9 @@ initialize its explicit `FacadeConfig` successfully.
 
 The synthesized template records the resolved posture as CloudFormation `Metadata` under
 `apptheory:mcp-transport-posture` (`posture`, `contract_id`, `route_count`, `runtime_posture_declared`) so a
-conformance kit can compare a deployed posture with the runtime registration output.
+conformance kit can compare a deployed posture with the runtime registration output. A `fronted` decision adds
+`origin_reachability`, `front_door_header_name`, and `front_door_secret_sha256`; the other decisions keep the four-field
+marker unchanged.
 
 The v3.1.x `authorizationServerIssuer` and `jwksUri` props are deprecated together. They remain pair-validated for
 migration safety but no longer control facade wiring and no longer become environment variables. Move them into
@@ -294,8 +346,9 @@ stage rather than asking an attached child construct to mutate them.
 
 The construct and `runtime/mcpfacade` share routes, not configuration environment variables. `FacadeConfig` has no env
 reads. Issuer, JWKS, optional registration endpoint, URL mode, public base URL or hostname allowlist, per-kind scopes,
-capabilities, MCP handler, authorize/token factories, optional root discovery, and the transport posture
-(`FacadeConfig.TransportPosture` paired with `FacadeConfig.RequireBearerToken`) are app-owned values.
+capabilities, MCP handler, authorize/token factories, optional root discovery, the transport posture
+(`FacadeConfig.TransportPosture` paired with `FacadeConfig.RequireBearerToken`), and the direct-origin posture
+(`FacadeConfig.OriginReachability` paired with `FacadeConfig.FrontDoorVerification`) are app-owned values.
 
 The construct writes only environment variables consumed by existing runtime code:
 

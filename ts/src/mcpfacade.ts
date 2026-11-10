@@ -1,10 +1,11 @@
 import { Buffer } from "node:buffer";
-import { randomBytes } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { isIP } from "node:net";
 
 import type { App, AuthPosture, SecureRoute } from "./app.js";
 import { Authenticated, createApp, Public, SecureApp } from "./app.js";
 import type { Context, Handler, RouteGuard } from "./context.js";
+import { AppTheoryError } from "./errors.js";
 import {
   CONTRACT_VERSION,
   ISSUER_MODE_FAMILY,
@@ -102,6 +103,50 @@ export const TRANSPORT_POSTURES: readonly McpTransportPosture[] = [
   "runtime-bearer",
   "none-public",
 ];
+
+/**
+ * The declared direct-origin posture of the front door that fronts this facade.
+ *
+ * The value mirrors the CDK construct's `AppTheoryMcpOriginReachability`
+ * decision, so one application-owned constant can feed both the construct prop
+ * and this config. Only `fronted` changes runtime behavior: `disabled` and
+ * `locked` are enforced at the edge, where the construct proves them, and are
+ * recorded here so the runtime can refuse a contradictory front-door
+ * declaration instead of silently ignoring it.
+ */
+export type McpOriginReachability = "disabled" | "locked" | "fronted";
+
+export const ORIGIN_REACHABILITIES: readonly McpOriginReachability[] = [
+  "disabled",
+  "locked",
+  "fronted",
+];
+
+/**
+ * Declares the app-owned front-door header this runtime verifies on every
+ * derived route under `originReachability: "fronted"`.
+ *
+ * The front door (for example an application-owned CloudFront distribution
+ * whose origin is the execute-api hostname) injects `headerName: secretValue`
+ * on every origin request. Three copies of that value must come from one
+ * application-owned constant — the CDK construct prop (digest only), the
+ * distribution's origin custom-header configuration, and this config — because
+ * the runtime shares routes with the construct, never configuration environment
+ * variables.
+ */
+export interface FrontDoorVerification {
+  /**
+   * The origin request header the front door injects. 1 to 64 characters of
+   * `[A-Za-z0-9-]`, and never a request header that rewrites the origin
+   * contract.
+   */
+  headerName: string;
+  /**
+   * The literal header value. 32 to 128 characters of `[A-Za-z0-9._~-]`. It is
+   * compared in constant time on every request and never appears in a response.
+   */
+  secretValue: string;
+}
 
 /**
  * Returns an application-owned handler for one endpoint kind. Factories run
@@ -208,6 +253,24 @@ export interface FacadeConfig {
   transportPosture?: McpTransportPosture;
   /** Valid only with runtime-bearer; refused under every other posture. */
   requireBearerToken?: RequireBearerTokenOptions;
+
+  /**
+   * Records the direct-origin posture the CDK construct declared, so one
+   * application-owned constant can feed both surfaces. Omitted leaves the
+   * posture unrecorded; `disabled` and `locked` are edge-enforced and add no
+   * runtime check. `fronted` requires {@link FacadeConfig.frontDoorVerification}
+   * and refuses every derived route whose front-door header is absent or wrong.
+   */
+  originReachability?: McpOriginReachability;
+
+  /**
+   * The app-owned front-door header this runtime verifies on every derived
+   * route (transport and OAuth facade paths) under `originReachability:
+   * "fronted"`. Registration fails closed when `fronted` is declared without
+   * it, and it is rejected under every other posture: an undeclared or
+   * unenforced front door would be a silent no-op.
+   */
+  frontDoorVerification?: FrontDoorVerification;
 
   /**
    * Anchors the framework-owned front channel (DESIGN §8). When it is set,
@@ -355,6 +418,8 @@ interface NormalizedConfig {
   rootDiscoveryPath: string;
   transportPosture: McpTransportPosture;
   requireBearerToken: RequireBearerTokenOptions | undefined;
+  originReachability: McpOriginReachability | "";
+  frontDoorGuard: RouteGuard | null;
   frontChannel: FrontChannelConfig | null;
   refusalHook: RefusalHook | undefined;
 }
@@ -487,9 +552,15 @@ function normalizeConfig(config: FacadeConfig): NormalizedConfig {
     config.transportPosture,
     config.requireBearerToken,
   );
+  const { originReachability, frontDoorGuard } = normalizeFrontDoorVerification(
+    config.originReachability,
+    config.frontDoorVerification,
+  );
   const normalized = normalizeDerivedConfig(config);
   normalized.transportPosture = transportPosture;
   normalized.requireBearerToken = config.requireBearerToken;
+  normalized.originReachability = originReachability;
+  normalized.frontDoorGuard = frontDoorGuard;
   normalized.refusalHook = config.refusalHook;
   normalized.mcpHandler = config.mcpHandler;
   normalized.callbackHandler = config.callbackHandler ?? null;
@@ -578,6 +649,8 @@ function normalizeDerivedConfig(config: FacadeConfig): NormalizedConfig {
     rootDiscoveryPath,
     transportPosture: "iam",
     requireBearerToken: undefined,
+    originReachability: "",
+    frontDoorGuard: null,
     frontChannel: null,
   };
 }
@@ -962,6 +1035,140 @@ function normalizeTransportPosture(
   return resolved;
 }
 
+/**
+ * Resolves the declared origin posture and the front-door verification into the
+ * request-time guard.
+ *
+ * An empty posture stays valid (an application that does not share the
+ * construct's posture record keeps its current behavior), but `fronted` without
+ * the verification config fails registration: a declared front door the runtime
+ * does not enforce would be a silent no-op.
+ */
+function normalizeFrontDoorVerification(
+  posture: McpOriginReachability | undefined,
+  verification: FrontDoorVerification | undefined,
+): {
+  originReachability: McpOriginReachability | "";
+  frontDoorGuard: RouteGuard | null;
+} {
+  const resolved = posture ?? "";
+  if (resolved !== "") {
+    if (!ORIGIN_REACHABILITIES.includes(resolved)) {
+      throw new Error(
+        `${ERROR_PREFIX} OriginReachability must be disabled, locked, or fronted`,
+      );
+    }
+    if (resolved !== "fronted") {
+      if (isPresent(verification)) {
+        throw new Error(
+          `${ERROR_PREFIX} FrontDoorVerification is only valid with OriginReachability fronted`,
+        );
+      }
+      return { originReachability: resolved, frontDoorGuard: null };
+    }
+    if (!isPresent(verification)) {
+      throw new Error(
+        `${ERROR_PREFIX} OriginReachability fronted requires FrontDoorVerification`,
+      );
+    }
+    return {
+      originReachability: resolved,
+      frontDoorGuard: frontDoorGuard(verification as FrontDoorVerification),
+    };
+  }
+  if (isPresent(verification)) {
+    throw new Error(
+      `${ERROR_PREFIX} FrontDoorVerification is only valid with OriginReachability fronted`,
+    );
+  }
+  return { originReachability: "", frontDoorGuard: null };
+}
+
+const FRONT_DOOR_HEADER_NAME = /^[A-Za-z0-9-]{1,64}$/;
+const FRONT_DOOR_SECRET = /^[A-Za-z0-9._~-]{32,128}$/;
+
+const RESERVED_FRONT_DOOR_HEADERS = new Set([
+  "authorization",
+  "connection",
+  "content-length",
+  "cookie",
+  "host",
+  "transfer-encoding",
+  "www-authenticate",
+  "x-forwarded-for",
+]);
+
+/**
+ * Validates the front-door declaration and returns the guard that refuses every
+ * request whose front-door header is absent or wrong.
+ */
+function frontDoorGuard(verification: FrontDoorVerification): RouteGuard {
+  const headerName = String(verification.headerName ?? "")
+    .trim()
+    .toLowerCase();
+  if (!FRONT_DOOR_HEADER_NAME.test(headerName)) {
+    throw new Error(
+      `${ERROR_PREFIX} FrontDoorVerification header name must be 1 to 64 characters of [A-Za-z0-9-]`,
+    );
+  }
+  if (
+    RESERVED_FRONT_DOOR_HEADERS.has(headerName) ||
+    headerName.startsWith("x-amz-") ||
+    headerName.startsWith("x-amzn-") ||
+    headerName.startsWith("cloudfront-")
+  ) {
+    throw new Error(
+      `${ERROR_PREFIX} FrontDoorVerification header name must be a request header the front door can set`,
+    );
+  }
+  const secretValue = String(verification.secretValue ?? "");
+  if (!FRONT_DOOR_SECRET.test(secretValue)) {
+    throw new Error(
+      `${ERROR_PREFIX} FrontDoorVerification secret value must be 32 to 128 characters of [A-Za-z0-9._~-]`,
+    );
+  }
+  const expected = Buffer.from(secretValue, "utf8");
+  return (ctx: Context): null => {
+    const presented = Buffer.from(
+      firstHeaderValue(ctx.request?.headers, headerName),
+      "utf8",
+    );
+    if (
+      presented.length !== expected.length ||
+      !timingSafeEqual(presented, expected)
+    ) {
+      throw new AppTheoryError("app.forbidden", "forbidden", {
+        statusCode: 403,
+      });
+    }
+    return null;
+  };
+}
+
+/** The first value of a case-insensitively matched request header. */
+function firstHeaderValue(headers: Headers | undefined, name: string): string {
+  if (!headers) return "";
+  const key = name.trim().toLowerCase();
+  for (const [rawKey, values] of Object.entries(headers)) {
+    if (String(rawKey).trim().toLowerCase() !== key) continue;
+    return String((values ?? [])[0] ?? "");
+  }
+  return "";
+}
+
+/**
+ * Composes two pre-middleware guards: the first refusal wins, and a request
+ * both guards admit continues to the handler.
+ */
+function composeRouteGuards(
+  first: RouteGuard | null,
+  second: RouteGuard | null,
+): RouteGuard | null {
+  if (!first) return second;
+  if (!second) return first;
+  return async (ctx: Context) => (await first(ctx)) ?? (await second(ctx));
+}
+
 function buildInventory(config: NormalizedConfig): RouteInventory {
   const authorizationRoutesAttached = config.transportPosture !== "none-public";
   const endpoints = supportedEndpointTemplates();
@@ -1247,6 +1454,18 @@ function buildRegistrations(
       authRequired: false,
       posture: surfacePosture,
     });
+  }
+  if (config.frontDoorGuard) {
+    // The front-door check covers every derived route in the construct's
+    // inventory (transport and OAuth facade), and it runs before the transport
+    // credential guard: a request that did not arrive through the declared front
+    // door is refused before any other admission work.
+    for (const registration of registrations) {
+      registration.guard = composeRouteGuards(
+        config.frontDoorGuard,
+        registration.guard ?? null,
+      );
+    }
   }
   validateRouteRegistrations(registrations);
   return registrations;

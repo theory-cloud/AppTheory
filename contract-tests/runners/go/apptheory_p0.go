@@ -119,13 +119,21 @@ func registerFixtureMCPFacade(app *apptheory.App, setup FixtureMCPFacadeSetup) e
 	}
 
 	config := mcpfacade.FacadeConfig{
-		IssuerURL:        fixtureMCPFacadeValue(setup.Issuer, fixtureMCPFacadeDefaultIssuer),
-		JWKSURI:          fixtureMCPFacadeValue(setup.JWKSURI, fixtureMCPFacadeDefaultJWKSURI),
-		URLMode:          mcpfacade.URLModePublicBaseURL,
-		PublicBaseURL:    fixtureMCPFacadeValue(setup.PublicBaseURL, fixtureMCPFacadeDefaultPublicBaseURL),
-		Scopes:           scopeMap,
-		MCPHandler:       fixtureMCPFacadeHandler,
-		TransportPosture: mcpfacade.TransportPostureIAM,
+		IssuerURL:          fixtureMCPFacadeValue(setup.Issuer, fixtureMCPFacadeDefaultIssuer),
+		JWKSURI:            fixtureMCPFacadeValue(setup.JWKSURI, fixtureMCPFacadeDefaultJWKSURI),
+		URLMode:            mcpfacade.URLModePublicBaseURL,
+		PublicBaseURL:      fixtureMCPFacadeValue(setup.PublicBaseURL, fixtureMCPFacadeDefaultPublicBaseURL),
+		Scopes:             scopeMap,
+		MCPHandler:         fixtureMCPFacadeHandler,
+		TransportPosture:   mcpfacade.TransportPostureIAM,
+		OriginReachability: mcpfacade.OriginReachability(setup.OriginReachability),
+	}
+
+	if setup.FrontDoorVerification != nil {
+		config.FrontDoorVerification = &mcpfacade.FrontDoorVerification{
+			HeaderName:  setup.FrontDoorVerification.HeaderName,
+			SecretValue: setup.FrontDoorVerification.SecretValue,
+		}
 	}
 
 	if setup.Bearer != nil {

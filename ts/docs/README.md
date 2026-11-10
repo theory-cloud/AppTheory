@@ -93,7 +93,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/ts.txt`.
 
 <details>
-<summary>946 exported top-level symbols</summary>
+<summary>949 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, AGENT_MCP_PATTERN, ALBTargetGroupRequest, ALBTargetGroupResponse, APIGatewayProxyRequest,
@@ -136,8 +136,8 @@ ERR_INVALID_BEARER_TOKEN, ERR_INVALID_URL, ERR_MISSING_BEARER_TOKEN, ErrorEnvelo
 EventBridgeScheduledWorkloadResultSummary, EventBridgeScheduledWorkloadSummary, EventBridgeSelector, EventBridgeWorkloadEnvelope, EventContext, EventHandler,
 EventMiddleware, FacadeCapabilities, FacadeConfig, FacadeRoute, FakeAccessTokenClaims, FakeEmbedder, FakeMicroVMClient, FakeMicroVMProvider,
 FakeOAuthProvider, FakeOAuthProviderOptions, FakeObjectStore, FakeRefreshStage, FakeTokenRequest, FakeVectorStore, FakeWebSocketManagementClient,
-fixedIdGenerator, FixedWindowStrategy, formatRfc3339Nano, formatWindowId, generateOpenAPI, generateOpenAPIJSON, getDayWindow, getFixedWindow, getHourWindow,
-getLogger, getMinuteWindow, GetVectorsInput, Handler, HandlerFactory, hashKey, Headers, hooksFromEMFMetricSink, hooksFromLogger, hooksFromProfileLogger,
+fixedIdGenerator, FixedWindowStrategy, formatRfc3339Nano, formatWindowId, FrontDoorVerification, generateOpenAPI, generateOpenAPIJSON,
+getDayWindow, getFixedWindow, getHourWindow, getLogger, getMinuteWindow, GetVectorsInput, Handler, HandlerFactory, hashKey, Headers, hooksFromEMFMetricSink, hooksFromLogger, hooksFromProfileLogger,
 html, htmlStream, HTTP_ERROR_FORMAT_FLAT_LEGACY, HTTP_ERROR_FORMAT_NESTED, HTTPErrorFormat, IdempotencyCreateOutcome, IdempotencyStatus, IdGenerator,
 IDGenerator, InspectSemaphoreInput, insufficientScopeWWWAuthenticate, InternalOnly, isAppTheoryError, isMicroVMTerminalState, ISSUER_MODE_FAMILY,
 ISSUER_MODE_ROUTE, IssuerMode, isSupportedProfileOutputField, isWellFormedClientRequestId, JobLedgerError, JobLedgerErrorType, JobLock, jobLockSortKey,
@@ -157,8 +157,8 @@ MCP_CODE_PARSE_ERROR, MCP_CODE_SERVER_ERROR, MCP_CODE_UNSUPPORTED_PROTOCOL_VERSI
 MCP_HEADER_PROTOCOL_VERSION, MCP_HEADER_SESSION_ID, MCP_PROTOCOL_SHAPE_2025_11_25, MCP_PROTOCOL_SHAPE_2026_07_28, MCP_PROTOCOL_SHAPE_UNKNOWN,
 MCP_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION_2026_07_28, MCP_PROTOCOL_VERSION_LEGACY, MCP_PROTOCOL_VERSION_PRIOR, MCP_RESULT_TYPE_COMPLETE,
 MCP_RESULT_TYPE_INPUT_REQUIRED, McpCacheableResultConfig, McpCacheHint, McpCacheScope, McpContentBlock, McpDiscoverResult, McpEventNotFoundError,
-McpExtensionCapabilities, McpInputRequest, McpInputRequiredResult, McpJSONRecord, McpJSONValue, mcpPath, McpPromptArgument, McpPromptDef, McpPromptHandler,
-McpPromptMessage, McpPromptRegistry, McpPromptResult, McpProtocolShape, McpRequestID, McpResourceContent, McpResourceContext, McpResourceDef,
+McpExtensionCapabilities, McpInputRequest, McpInputRequiredResult, McpJSONRecord, McpJSONValue, McpOriginReachability, mcpPath, McpPromptArgument,
+McpPromptDef, McpPromptHandler, McpPromptMessage, McpPromptRegistry, McpPromptResult, McpProtocolShape, McpRequestID, McpResourceContent, McpResourceContext, McpResourceDef,
 McpResourceHandler, McpResourceRegistry, McpResourceTemplateDef, McpResultType, McpRPCError, McpRPCRequest, McpRPCResponse, McpServer, McpServerIdentity,
 McpServerOptions, McpSession, McpSessionCapacityError, McpSessionExpiredError, McpSessionNotFoundError, McpSessionStore, McpSSEEvent,
 McpStreamAggregateBackfillError, McpStreamAggregateCapacityError, McpStreamAppendConflictError, McpStreamEvent, McpStreamEventTooLargeError,
@@ -204,7 +204,8 @@ OBJECTSTORE_ERROR_INVALID_STORE_CONFIG, OBJECTSTORE_ERROR_NOT_FOUND, OBJECTSTORE
 ObjectStoreCall, ObjectStoreDeleteInput, ObjectStoreError, ObjectStoreGetInput, ObjectStoreGetOutput, ObjectStoreOperation, ObjectStorePresignPutInput,
 ObjectStorePresignPutOutput, ObjectStorePutInput, ObjectStoreUploadGranter, ObservabilityHooks, oneOf, OpenAPIAuthSchemes, OpenAPIDocument,
 OpenAPIFieldSource, OpenAPIFieldSpec, OpenAPIFieldType, OpenAPIRequestSpec, OpenAPIResponseSpec, OpenAPIRouteSpec, OpenAPISpec, OpenAPIValidationRuleSpec,
-Optional, originalHost, originalURI, originURL, PARAM_AGENT_ID, PARAM_CLIENT_NAMESPACE, PARAM_PARTNER_ID, parseMcpPath, parseMcpTestSSEFrames,
+Optional, ORIGIN_REACHABILITIES, originalHost, originalURI, originURL, PARAM_AGENT_ID, PARAM_CLIENT_NAMESPACE, PARAM_PARTNER_ID,
+parseMcpPath, parseMcpTestSSEFrames,
 parseObjectRef, PARTNER_AGENT_MCP_PATTERN, PARTNER_NAMESPACE_MCP_PATTERN, pattern, paymentXMLPatterns, pkceChallengeS256, pkceVerifyS256, PolicyDecision,
 PolicyHook, PrincipalAuthHook, PrincipalKind, ProfileLogger, ProfileLoggerOptions, PROTECTED_RESOURCE_PREFIX, ProtectedResourceMetadata,
 protectedResourceMetadataHandler, protectedResourcePath, protectedResourcePathForResourcePath, protectedResourcePathFromMcpPath,
