@@ -148,6 +148,21 @@ class FrontDoorRegistrationTests(unittest.TestCase):
                     register_mcp_facade(create_app(tier="p0"), config)
                 self.assertIn(message, str(raised.exception))
 
+    def test_front_door_secret_refuses_trailing_newline(self) -> None:
+        # Python's `$` matches before a trailing newline; the secret anchor must
+        # stay \Z so registration accepts exactly the construct/Go/TS alphabet.
+        config = base_config()
+        config.origin_reachability = "fronted"
+        config.front_door_verification = FrontDoorVerification(
+            header_name="x-front-door", secret_value=f"{FRONT_DOOR_SECRET}\n"
+        )
+        with self.assertRaises(ValueError) as raised:
+            register_mcp_facade(create_app(tier="p0"), config)
+        self.assertIn(
+            "FrontDoorVerification secret value must be 32 to 128 characters of [A-Za-z0-9._~-]",
+            str(raised.exception),
+        )
+
     def test_disabled_and_locked_stay_registration_valid(self) -> None:
         for posture in ("", "disabled", "locked"):
             with self.subTest(posture=posture):
