@@ -1,4 +1,5 @@
 import { RemovalPolicy, Stack, Token } from "aws-cdk-lib";
+import { createHash } from "node:crypto";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as apigwv2Authorizers from "aws-cdk-lib/aws-apigatewayv2-authorizers";
@@ -24,6 +25,29 @@ const MCP_TRANSPORT_POSTURE_METADATA_KEY = "apptheory:mcp-transport-posture";
 const MCP_TRANSPORT_POSTURE_CONTRACT_ID = "m17.mcp-transport-posture/v1";
 const MCP_DENIAL_METRIC_NAME = "apptheory.mcp.auth_denied";
 const MCP_DENIAL_DIMENSIONS = ["outcome", "route_family"];
+
+/** The front-door header name alphabet. */
+const FRONT_DOOR_HEADER_NAME_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
+
+/** The front-door secret alphabet: header-value-safe, no whitespace or controls. */
+const FRONT_DOOR_SECRET_PATTERN = /^[A-Za-z0-9._~-]{32,128}$/;
+
+/**
+ * Request headers a front door can never carry the verification in: they either
+ * rewrite the origin request contract or are platform-managed, so a declared
+ * value could not be verified the way the runtime reads it.
+ */
+const RESERVED_FRONT_DOOR_HEADERS = new Set([
+  "authorization",
+  "connection",
+  "content-length",
+  "cookie",
+  "host",
+  "transfer-encoding",
+  "www-authenticate",
+  "x-forwarded-for",
+]);
+
 
 /** Route-emission model for AppTheoryMcpServer. */
 export enum AppTheoryMcpRouteModel {
@@ -101,6 +125,74 @@ export enum AppTheoryMcpOriginReachability {
    * external/attached front door never satisfies it.
    */
   LOCKED = "locked",
+  /**
+   * The origin stays directly reachable at its execute-api endpoint and is
+   * served only through an application-owned front door that injects
+   * `frontDoorVerification` on every origin request.
+   *
+   * This is the posture for an app-owned distribution whose origin is the
+   * execute-api hostname: the construct sees neither the distribution nor the
+   * API's endpoint configuration, so it cannot produce in-stack evidence the
+   * way `DISABLED` and `LOCKED` do. Valid only in attach mode, accepted with
+   * `RUNTIME_BEARER` and `NONE_PUBLIC` like the other decisions, and it
+   * requires the mandatory `frontDoorVerification` declaration.
+   *
+   * `FRONTED` is a defense-in-depth declaration with runtime enforcement, not
+   * mutual-TLS assurance and not origin unreachability. The enforcement is the
+   * runtime's front-door header check (`mcpfacade.FacadeConfig`
+   * `FrontDoorVerification` in Go, `frontDoorVerification` in TypeScript,
+   * `front_door_verification` in Python): it refuses every derived route when
+   * the declared header is absent or wrong, and fails registration when
+   * `FRONTED` is declared without it. An unwired runtime enforces nothing.
+   */
+  FRONTED = "fronted",
+}
+
+/**
+ * Front-door verification for `originReachability: FRONTED`.
+ *
+ * Attach mode means the front door is application-owned, so the construct
+ * cannot inject the header itself and cannot observe the distribution. The
+ * declaration therefore carries three independently wired copies that must come
+ * from one application-owned constant: this prop, the distribution's origin
+ * custom-header configuration, and the runtime's front-door verification
+ * config. The construct proves only its own copy, and the literal secret is
+ * consumed at synthesis for validation and the SHA-256 digest only.
+ */
+export interface AppTheoryMcpFrontDoorVerificationOptions {
+  /**
+   * The origin request header the front door injects on every request it sends
+   * to the origin.
+   *
+   * 1 to 64 characters of `[A-Za-z0-9-]`, and never a request header that
+   * rewrites the origin contract (`Host`, `Authorization`, `Cookie`,
+   * `Content-Length`, `Transfer-Encoding`, `Connection`, `WWW-Authenticate`,
+   * `X-Forwarded-For`), any `x-amz-*`/`x-amzn-*`/`cloudfront-*` name, or a
+   * hop-by-hop name.
+   */
+  readonly headerName: string;
+
+  /**
+   * The literal secret injected as the front-door header value.
+   *
+   * 32 to 128 characters of `[A-Za-z0-9._~-]`: a header-value-safe alphabet
+   * with no whitespace and no control characters. The value is consumed at
+   * synthesis for validation and the recorded SHA-256 digest only — the literal
+   * never lands in the synthesized template or in CloudFormation. It is not a
+   * credential store; rotation means changing the value and redeploying, and it
+   * must not be (or contain) a secret that protects anything else.
+   */
+  readonly secretValue: string;
+
+  /**
+   * The assertion that the runtime verifies the front-door header on every
+   * derived route.
+   *
+   * The construct cannot attach that verification to an application-owned front
+   * door or a runtime it does not own, so it refuses to synthesize until the
+   * caller records that the verification exists. Must be `true`.
+   */
+  readonly asserted: boolean;
 }
 
 /** Denial-telemetry declaration required under `runtime-bearer`. */
@@ -413,10 +505,23 @@ export interface AppTheoryMcpServerProps {
 
   /**
    * Direct-origin reachability decision required under RUNTIME_BEARER and
-   * NONE_PUBLIC. A directly reachable origin is refused.
+   * NONE_PUBLIC. A directly reachable origin is refused unless it is declared
+   * `FRONTED`, which requires `frontDoorVerification`.
    * @default undefined
    */
   readonly originReachability?: AppTheoryMcpOriginReachability;
+
+  /**
+   * Front-door verification declaration, required with
+   * `originReachability: FRONTED` and refused under every other decision.
+   *
+   * The construct records the posture, the header name, and a SHA-256 digest of
+   * the declared secret in the `apptheory:mcp-transport-posture` metadata; it
+   * never emits the literal secret. Enforcement is the runtime's front-door
+   * header check, so an unwired runtime enforces nothing.
+   * @default undefined
+   */
+  readonly frontDoorVerification?: AppTheoryMcpFrontDoorVerificationOptions;
 
   /**
    * Denial-telemetry declaration required under RUNTIME_BEARER only.
@@ -738,6 +843,12 @@ export class AppTheoryMcpServer extends Construct {
       contract_id: MCP_TRANSPORT_POSTURE_CONTRACT_ID,
       route_count: this.routeInventory.routes.length,
       runtime_posture_declared: props.runtimePosture !== undefined,
+      // Only a FRONTED decision extends the marker, so DISABLED and LOCKED
+      // templates stay byte-identical. The literal secret is consumed here for
+      // its digest and never emitted.
+      ...(originReachability === AppTheoryMcpOriginReachability.FRONTED
+        ? frontDoorPostureMetadata(props.frontDoorVerification)
+        : {}),
     });
 
     const sessionState = normalizeSessionState(props);
@@ -1512,9 +1623,10 @@ function validateDefenseInDepth(
   if (
     props.originReachability !== AppTheoryMcpOriginReachability.DISABLED
     && props.originReachability !== AppTheoryMcpOriginReachability.LOCKED
+    && props.originReachability !== AppTheoryMcpOriginReachability.FRONTED
   ) {
     throw new Error(
-      `AppTheoryMcpServer: transportPosture ${label} requires originReachability to be AppTheoryMcpOriginReachability.DISABLED or .LOCKED`,
+      `AppTheoryMcpServer: transportPosture ${label} requires originReachability to be AppTheoryMcpOriginReachability.DISABLED, .LOCKED, or .FRONTED`,
     );
   }
   if (props.api !== undefined) {
@@ -1539,12 +1651,15 @@ function validateDefenseInDepth(
 /**
  * Resolve the declared direct-origin decision to a proven posture.
  *
- * Every supplied value is checked, not only the two postures that require the
- * decision. Neither value is ever accepted as an assertion: DISABLED needs the
- * owned ordinary domain that replaces the disabled execute-api authority (or a
- * provable concrete attach), and LOCKED additionally needs mutual TLS on every
- * domain mapped to the owned API. Attach-mode LOCKED is unsupported because an
- * external API carries no in-stack truststore or mapping evidence.
+ * Every supplied value is checked, not only the postures that require the
+ * decision. DISABLED needs the owned ordinary domain that replaces the disabled
+ * execute-api authority (or a provable concrete attach), and LOCKED
+ * additionally needs mutual TLS on every domain mapped to the owned API.
+ * Attach-mode LOCKED is unsupported because an external API carries no in-stack
+ * truststore or mapping evidence. FRONTED is the attach-mode counterpart for an
+ * application-owned front door: it produces no in-stack evidence, so it is
+ * accepted only with an explicit, validated `frontDoorVerification` declaration
+ * and only in attach mode.
  */
 function resolveOriginReachability(
   scope: Construct,
@@ -1559,20 +1674,43 @@ function resolveOriginReachability(
         "AppTheoryMcpServer: ownedApi.domain.mutualTlsAuthentication is only valid with originReachability LOCKED",
       );
     }
+    if (props.frontDoorVerification !== undefined) {
+      throw new Error(
+        "AppTheoryMcpServer: frontDoorVerification is only valid with originReachability FRONTED",
+      );
+    }
     return undefined;
   }
   if (
     decision !== AppTheoryMcpOriginReachability.DISABLED
     && decision !== AppTheoryMcpOriginReachability.LOCKED
+    && decision !== AppTheoryMcpOriginReachability.FRONTED
   ) {
     throw new Error(
-      "AppTheoryMcpServer: originReachability must be AppTheoryMcpOriginReachability.DISABLED or .LOCKED",
+      "AppTheoryMcpServer: originReachability must be AppTheoryMcpOriginReachability.DISABLED, .LOCKED, or .FRONTED",
     );
   }
   if (mutualTls !== undefined && decision !== AppTheoryMcpOriginReachability.LOCKED) {
     throw new Error(
       "AppTheoryMcpServer: ownedApi.domain.mutualTlsAuthentication is only valid with originReachability LOCKED",
     );
+  }
+  if (
+    decision !== AppTheoryMcpOriginReachability.FRONTED
+    && props.frontDoorVerification !== undefined
+  ) {
+    throw new Error(
+      "AppTheoryMcpServer: frontDoorVerification is only valid with originReachability FRONTED",
+    );
+  }
+  if (decision === AppTheoryMcpOriginReachability.FRONTED) {
+    if (props.api === undefined) {
+      throw new Error(
+        "AppTheoryMcpServer: originReachability FRONTED is unsupported in owned mode; an owned front door is wired by the DISABLED or LOCKED posture",
+      );
+    }
+    validateFrontDoorVerification(props.frontDoorVerification);
+    return decision;
   }
   if (decision === AppTheoryMcpOriginReachability.LOCKED) {
     if (props.api !== undefined) {
@@ -1607,6 +1745,76 @@ function resolveOriginReachability(
     );
   }
   return decision;
+}
+
+/**
+ * Validate the `frontDoorVerification` declaration for `originReachability:
+ * FRONTED`.
+ *
+ * The declaration is mandatory and every field is checked: an absent
+ * declaration, a missing or reserved header name, a secret outside the
+ * header-value-safe alphabet, and a missing `asserted: true` all fail synthesis
+ * rather than producing a declaration the runtime could not honor.
+ */
+function validateFrontDoorVerification(
+  verification: AppTheoryMcpFrontDoorVerificationOptions | undefined,
+): void {
+  if (verification === undefined) {
+    throw new Error(
+      "AppTheoryMcpServer: originReachability FRONTED requires frontDoorVerification; the runtime cannot enforce an undeclared front door",
+    );
+  }
+  const headerName = verification.headerName;
+  if (typeof headerName !== "string" || !FRONT_DOOR_HEADER_NAME_PATTERN.test(headerName)) {
+    throw new Error(
+      "AppTheoryMcpServer: frontDoorVerification.headerName must be 1 to 64 characters of [A-Za-z0-9-]",
+    );
+  }
+  const normalizedHeader = headerName.toLowerCase();
+  if (
+    RESERVED_FRONT_DOOR_HEADERS.has(normalizedHeader)
+    || normalizedHeader.startsWith("x-amz-")
+    || normalizedHeader.startsWith("x-amzn-")
+    || normalizedHeader.startsWith("cloudfront-")
+  ) {
+    throw new Error(
+      `AppTheoryMcpServer: frontDoorVerification.headerName ${headerName} is a reserved or platform-managed request header and cannot carry the front-door verification`,
+    );
+  }
+  const secretValue = verification.secretValue;
+  if (typeof secretValue !== "string" || !FRONT_DOOR_SECRET_PATTERN.test(secretValue)) {
+    throw new Error(
+      "AppTheoryMcpServer: frontDoorVerification.secretValue must be 32 to 128 characters of [A-Za-z0-9._~-]",
+    );
+  }
+  if (verification.asserted !== true) {
+    throw new Error(
+      "AppTheoryMcpServer: frontDoorVerification requires asserted: true — the caller must record that the runtime verifies the front-door header on every derived route",
+    );
+  }
+}
+
+/**
+ * The FRONTED fields of the `apptheory:mcp-transport-posture` marker.
+ *
+ * The marker records the posture and the header name and a SHA-256 digest of the
+ * declared secret. The literal secret is consumed here for validation (already
+ * performed) and its digest only: it never lands in the synthesized template or
+ * in CloudFormation, so it cannot be read back out of a stack.
+ */
+function frontDoorPostureMetadata(
+  verification: AppTheoryMcpFrontDoorVerificationOptions | undefined,
+): Record<string, string> {
+  if (verification === undefined) {
+    throw new Error(
+      "AppTheoryMcpServer: originReachability FRONTED requires frontDoorVerification; the runtime cannot enforce an undeclared front door",
+    );
+  }
+  return {
+    origin_reachability: AppTheoryMcpOriginReachability.FRONTED,
+    front_door_header_name: verification.headerName,
+    front_door_secret_sha256: createHash("sha256").update(verification.secretValue, "utf8").digest("hex"),
+  };
 }
 
 /**
