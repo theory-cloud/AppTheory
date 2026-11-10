@@ -5842,6 +5842,16 @@ function registerFixtureMCPFacade(runtime, app, setup) {
     transportPosture: "iam",
   };
 
+  if (setup?.origin_reachability) {
+    config.originReachability = String(setup.origin_reachability);
+  }
+  if (setup?.front_door_verification) {
+    config.frontDoorVerification = {
+      headerName: String(setup.front_door_verification.header_name ?? ""),
+      secretValue: String(setup.front_door_verification.secret_value ?? ""),
+    };
+  }
+
   if (setup?.bearer) {
     const requiredScopes = (setup.bearer.required_scopes ?? []).map(String);
     const records = (setup.bearer.accepted_tokens ?? []).map((entry) => {

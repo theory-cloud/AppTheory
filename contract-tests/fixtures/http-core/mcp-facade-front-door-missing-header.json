@@ -1,0 +1,49 @@
+{
+  "id": "p0.mcp_facade.front_door_missing_header",
+  "tier": "p0",
+  "name": "MCP facade under FRONTED: a direct-origin transport request without the front-door header is refused 403",
+  "setup": {
+    "mcp_facade": {
+      "issuer": "https://issuer.example.com/",
+      "jwks_uri": "https://issuer.example.com/jwks.json?set=active",
+      "public_base_url": "https://front.example.com/",
+      "resource_metadata_url": "https://front.example.com/.well-known/oauth-protected-resource/acme/mcp",
+      "scopes": ["namespace:use"],
+      "bearer": {
+        "accepted_tokens": [
+          { "token": "valid-token", "subject": "acme", "scopes": ["namespace:use"] }
+        ],
+        "required_scopes": ["namespace:use"]
+      },
+      "origin_reachability": "fronted",
+      "front_door_verification": {
+        "header_name": "x-front-door",
+        "secret_value": "front-door-secret-0123456789-abcdefghi"
+      }
+    }
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/acme/mcp",
+      "query": {},
+      "headers": { "authorization": ["Bearer valid-token"] },
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 403,
+      "headers": {
+        "content-type": ["application/json; charset=utf-8"]
+      },
+      "cookies": [],
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"error\":{\"code\":\"app.forbidden\",\"message\":\"forbidden\",\"status_code\":403}}"
+      },
+      "is_base64": false
+    }
+  }
+}

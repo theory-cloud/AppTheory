@@ -1,0 +1,46 @@
+{
+  "id": "p0.mcp_facade.front_door_admitted",
+  "tier": "p0",
+  "name": "MCP facade under FRONTED: a request carrying the declared front-door header is admitted",
+  "setup": {
+    "mcp_facade": {
+      "issuer": "https://issuer.example.com/",
+      "jwks_uri": "https://issuer.example.com/jwks.json?set=active",
+      "public_base_url": "https://front.example.com/",
+      "resource_metadata_url": "https://front.example.com/.well-known/oauth-protected-resource/acme/mcp",
+      "scopes": ["namespace:use"],
+      "bearer": {
+        "accepted_tokens": [
+          { "token": "valid-token", "subject": "acme", "scopes": ["namespace:use"] }
+        ],
+        "required_scopes": ["namespace:use"]
+      },
+      "origin_reachability": "fronted",
+      "front_door_verification": {
+        "header_name": "x-front-door",
+        "secret_value": "front-door-secret-0123456789-abcdefghi"
+      }
+    }
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/acme/mcp",
+      "query": {},
+      "headers": {
+        "authorization": ["Bearer valid-token"],
+        "x-front-door": ["front-door-secret-0123456789-abcdefghi"]
+      },
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 204,
+      "headers": {},
+      "cookies": [],
+      "is_base64": false
+    }
+  }
+}

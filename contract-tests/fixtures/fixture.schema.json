@@ -523,7 +523,30 @@
         "public_base_url": { "type": "string", "minLength": 1 },
         "resource_metadata_url": { "type": "string", "minLength": 1 },
         "scopes": { "$ref": "#/$defs/stringArray" },
-        "bearer": { "$ref": "#/$defs/mcpFacadeBearer" }
+        "bearer": { "$ref": "#/$defs/mcpFacadeBearer" },
+        "origin_reachability": {
+          "type": "string",
+          "enum": ["disabled", "locked", "fronted"]
+        },
+        "front_door_verification": { "$ref": "#/$defs/mcpFacadeFrontDoorVerification" }
+      }
+    },
+    "mcpFacadeFrontDoorVerification": {
+      "type": "object",
+      "description": "The app-owned front-door header the runtime verifies on every derived route under origin_reachability fronted. Required with fronted; refused under every other posture, because an undeclared front door enforces nothing.",
+      "additionalProperties": false,
+      "required": ["header_name", "secret_value"],
+      "properties": {
+        "header_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "1 to 64 characters of [A-Za-z0-9-], never a reserved request header. The same name the construct declared and the distribution injects."
+        },
+        "secret_value": {
+          "type": "string",
+          "minLength": 1,
+          "description": "32 to 128 characters of [A-Za-z0-9._~-]. The literal the distribution injects and the runtime compares in constant time."
+        }
       }
     },
     "mcpFacadeBearer": {
