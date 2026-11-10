@@ -166,6 +166,21 @@ type FacadeConfig struct {
 	// every other posture.
 	RequireBearerToken *oauth.RequireBearerTokenOptions
 
+	// OriginReachability records the direct-origin posture the CDK construct
+	// declared, so one application-owned constant can feed both surfaces. An
+	// empty value leaves the posture unrecorded; disabled and locked are
+	// edge-enforced and add no runtime check. Fronted requires
+	// FrontDoorVerification and refuses every derived route whose front-door
+	// header is absent or wrong.
+	OriginReachability OriginReachability
+
+	// FrontDoorVerification is the app-owned front-door header this runtime
+	// verifies on every derived route (transport and OAuth facade paths) under
+	// OriginReachability fronted. Registration fails closed when fronted is
+	// declared without it, and it is rejected under every other posture: an
+	// undeclared or unenforced front door would be a silent no-op.
+	FrontDoorVerification *FrontDoorVerification
+
 	// Provider anchors the framework-owned front channel (DESIGN §8). When it is
 	// set, AppTheory owns /authorize, the stage-global upstream callback, and the
 	// /token authorization_code grant, and the rest of the front-channel field
@@ -302,6 +317,8 @@ type normalizedConfig struct {
 	rootDiscoveryPath       string
 	transportPosture        TransportPosture
 	requireBearerToken      *oauth.RequireBearerTokenOptions
+	originReachability      OriginReachability
+	frontDoorGuard          apptheory.RouteGuard
 	frontChannel            *frontChannelConfig
 	refusalHook             refusal.Hook
 }
@@ -419,6 +436,16 @@ func normalizeConfig(config FacadeConfig) (normalizedConfig, error) {
 	normalized.requireBearerToken = config.RequireBearerToken
 	normalized.mcpHandler = config.MCPHandler
 	normalized.callbackHandler = config.CallbackHandler
+
+	originReachability, frontDoorGuard, err := normalizeOriginReachability(
+		config.OriginReachability,
+		config.FrontDoorVerification,
+	)
+	if err != nil {
+		return normalizedConfig{}, err
+	}
+	normalized.originReachability = originReachability
+	normalized.frontDoorGuard = frontDoorGuard
 
 	frontChannel, err := normalizeFrontChannel(config)
 	if err != nil {
@@ -722,6 +749,21 @@ func buildRegistrations(config normalizedConfig, inventory *RouteInventory) ([]r
 			handler: config.callbackHandlerFor(),
 			posture: surfacePosture,
 		})
+	}
+	if config.frontDoorGuard != nil {
+		// The front-door check covers every derived route in the construct's
+		// inventory (transport and OAuth facade), and it runs before the
+		// transport credential guard: a request that did not arrive through the
+		// declared front door is refused before any other admission work.
+		guarded := make([]routeRegistration, len(registrations))
+		for index, registration := range registrations {
+			registration.options = append(
+				append([]apptheory.RouteOption(nil), registration.options...),
+				apptheory.WithRouteGuard(config.frontDoorGuard),
+			)
+			guarded[index] = registration
+		}
+		registrations = guarded
 	}
 	if err := validateRouteRegistrations(registrations); err != nil {
 		return nil, err

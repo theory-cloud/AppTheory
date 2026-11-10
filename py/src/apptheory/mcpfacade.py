@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import hmac
 import ipaddress
 import json as jsonlib
 import re
@@ -29,6 +30,7 @@ from urllib.parse import quote_plus
 from apptheory.app import App, Handler, RouteGuard, SecureApp, _resolve, create_app
 from apptheory.cloudfront import origin_url
 from apptheory.context import Context
+from apptheory.errors import AppTheoryError
 from apptheory.mcproutes import (
     CONTRACT_VERSION,
     ISSUER_MODE_FAMILY,
@@ -111,6 +113,37 @@ URL_MODE_REQUEST_HOST = "request_host"
 
 # TRANSPORT_POSTURES is the closed transport-posture vocabulary.
 TRANSPORT_POSTURES: tuple[str, ...] = ("iam", "jwt", "runtime-bearer", "none-public")
+
+# ORIGIN_REACHABILITIES is the closed direct-origin posture vocabulary. It
+# mirrors the CDK construct's AppTheoryMcpOriginReachability decision, so one
+# application-owned constant can feed both the construct prop and this config.
+# Only "fronted" changes runtime behavior: "disabled" and "locked" are enforced
+# at the edge, where the construct proves them, and are recorded here so the
+# runtime can refuse a contradictory front-door declaration.
+ORIGIN_REACHABILITIES: tuple[str, ...] = ("disabled", "locked", "fronted")
+
+
+@dataclass(slots=True)
+class FrontDoorVerification:
+    """The app-owned front-door header verified under ``origin_reachability="fronted"``.
+
+    The front door (for example an application-owned CloudFront distribution
+    whose origin is the execute-api hostname) injects ``header_name``:
+    ``secret_value`` on every origin request. Three copies of that value must
+    come from one application-owned constant — the CDK construct prop (digest
+    only), the distribution's origin custom-header configuration, and this
+    config — because the runtime shares routes with the construct, never
+    configuration environment variables.
+    """
+
+    # ``header_name`` is the origin request header the front door injects. 1 to
+    # 64 characters of ``[A-Za-z0-9-]``, and never a request header that rewrites
+    # the origin contract.
+    header_name: str
+    # ``secret_value`` is the literal header value. 32 to 128 characters of
+    # ``[A-Za-z0-9._~-]``. It is compared in constant time on every request and
+    # never appears in a response.
+    secret_value: str
 
 # METADATA_VARY_HEADER is the exact Vary header advertised by every facade
 # metadata response, matching the Go and TypeScript runtimes.
@@ -569,6 +602,19 @@ class FacadeConfig:
     root_authorization_server: RootDiscoveryConfig | None = None
     transport_posture: str = "iam"
     require_bearer_token: RequireBearerTokenOptions | None = None
+    # ``origin_reachability`` records the direct-origin posture the CDK construct
+    # declared, so one application-owned constant can feed both surfaces. An
+    # empty value leaves the posture unrecorded; ``disabled`` and ``locked`` are
+    # edge-enforced and add no runtime check. ``fronted`` requires
+    # ``front_door_verification`` and refuses every derived route whose
+    # front-door header is absent or wrong.
+    origin_reachability: str = ""
+    # ``front_door_verification`` is the app-owned front-door header this runtime
+    # verifies on every derived route (transport and OAuth facade paths) under
+    # ``origin_reachability="fronted"``. Registration fails closed when fronted
+    # is declared without it, and it is rejected under every other posture: an
+    # undeclared or unenforced front door would be a silent no-op.
+    front_door_verification: FrontDoorVerification | None = None
     # ``provider`` anchors the framework-owned front channel (DESIGN section 8).
     # When it is set, AppTheory owns ``/authorize``, the stage-global upstream
     # callback, and the ``/token`` authorization_code grant, and the rest of the
@@ -716,6 +762,8 @@ class _NormalizedConfig:
     root_discovery_path: str
     transport_posture: str
     require_bearer_token: RequireBearerTokenOptions | None
+    origin_reachability: str = ""
+    front_door_guard: RouteGuard | None = None
     front_channel: _FrontChannelConfig | None = None
     refusal_hook: Callable[[RefusalEvent], None] | None = None
 
@@ -803,9 +851,14 @@ def _normalize_config(config: FacadeConfig | None) -> _NormalizedConfig:
     if mcp_handler is None:
         raise ValueError(f"{_ERROR_PREFIX} MCP handler is required")
     transport_posture = _normalize_transport_posture(config.transport_posture, config.require_bearer_token)
+    origin_reachability, front_door_guard = _normalize_origin_reachability(
+        config.origin_reachability, config.front_door_verification
+    )
     normalized = _normalize_derived_config(config, mcp_handler)
     normalized.transport_posture = transport_posture
     normalized.require_bearer_token = config.require_bearer_token
+    normalized.origin_reachability = origin_reachability
+    normalized.front_door_guard = front_door_guard
     normalized.callback_handler = config.callback_handler
     normalized.front_channel = _normalize_front_channel(config)
     _validate_posture_surface_config(
@@ -1174,6 +1227,104 @@ def _normalize_transport_posture(posture: str | None, require_bearer_token: Requ
     return resolved
 
 
+def _normalize_origin_reachability(
+    posture: str | None, verification: FrontDoorVerification | None
+) -> tuple[str, RouteGuard | None]:
+    """Resolves the declared origin posture and front-door verification into a guard.
+
+    An empty posture stays valid (an application that does not share the
+    construct's posture record keeps its current behavior), but ``fronted``
+    without the verification config fails registration: a declared front door
+    the runtime does not enforce would be a silent no-op.
+    """
+    resolved = posture or ""
+    if resolved != "":
+        if resolved not in ORIGIN_REACHABILITIES:
+            raise ValueError(f"{_ERROR_PREFIX} OriginReachability must be disabled, locked, or fronted")
+        if resolved != "fronted":
+            if verification is not None:
+                raise ValueError(
+                    f"{_ERROR_PREFIX} FrontDoorVerification is only valid with OriginReachability fronted"
+                )
+            return resolved, None
+        if verification is None:
+            raise ValueError(f"{_ERROR_PREFIX} OriginReachability fronted requires FrontDoorVerification")
+        return resolved, _front_door_guard(verification)
+    if verification is not None:
+        raise ValueError(f"{_ERROR_PREFIX} FrontDoorVerification is only valid with OriginReachability fronted")
+    return "", None
+
+
+_FRONT_DOOR_HEADER_NAME = re.compile(r"^[A-Za-z0-9-]{1,64}$")
+_FRONT_DOOR_SECRET = re.compile(r"^[A-Za-z0-9._~-]{32,128}$")
+
+_RESERVED_FRONT_DOOR_HEADERS = frozenset(
+    {
+        "authorization",
+        "connection",
+        "content-length",
+        "cookie",
+        "host",
+        "transfer-encoding",
+        "www-authenticate",
+        "x-forwarded-for",
+    }
+)
+
+
+def _front_door_guard(verification: FrontDoorVerification) -> RouteGuard:
+    """Validates the front-door declaration and returns its fail-closed guard."""
+    header_name = str(verification.header_name or "").strip().lower()
+    if not _FRONT_DOOR_HEADER_NAME.match(header_name):
+        raise ValueError(f"{_ERROR_PREFIX} FrontDoorVerification header name must be 1 to 64 characters of [A-Za-z0-9-]")
+    if header_name in _RESERVED_FRONT_DOOR_HEADERS or header_name.startswith(
+        ("x-amz-", "x-amzn-", "cloudfront-")
+    ):
+        raise ValueError(
+            f"{_ERROR_PREFIX} FrontDoorVerification header name must be a request header the front door can set"
+        )
+    secret_value = str(verification.secret_value or "")
+    if not _FRONT_DOOR_SECRET.match(secret_value):
+        raise ValueError(
+            f"{_ERROR_PREFIX} FrontDoorVerification secret value must be 32 to 128 characters of [A-Za-z0-9._~-]"
+        )
+
+    def guard(ctx: Context) -> Response | None:
+        presented = _first_header_value(ctx.request.headers, header_name)
+        if not hmac.compare_digest(presented.encode("utf-8"), secret_value.encode("utf-8")):
+            raise AppTheoryError("app.forbidden", "forbidden", status_code=403)
+        return None
+
+    return guard
+
+
+def _first_header_value(headers: Any, name: str) -> str:
+    if not headers:
+        return ""
+    key = name.strip().lower()
+    for raw_key, values in headers.items():
+        if str(raw_key).strip().lower() != key:
+            continue
+        return str((values or [""])[0])
+    return ""
+
+
+def _compose_route_guards(first: RouteGuard | None, second: RouteGuard | None) -> RouteGuard | None:
+    """Composes two pre-middleware guards: the first refusal wins."""
+    if first is None:
+        return second
+    if second is None:
+        return first
+
+    def guard(ctx: Context) -> Response | None:
+        denied = _resolve(first(ctx))
+        if denied is not None:
+            return denied
+        return _resolve(second(ctx))
+
+    return guard
+
+
 def _build_inventory(config: _NormalizedConfig) -> RouteInventory:
     authorization_routes_attached = config.transport_posture != "none-public"
     endpoints = supported_endpoint_templates()
@@ -1422,6 +1573,13 @@ def _build_registrations(config: _NormalizedConfig, inventory: RouteInventory) -
         )
 
     _validate_route_registrations(registrations)
+    if config.front_door_guard is not None:
+        # The front-door check covers every derived route in the construct's
+        # inventory (transport and OAuth facade), and it runs before the
+        # transport credential guard: a request that did not arrive through the
+        # declared front door is refused before any other admission work.
+        for registration in registrations:
+            registration.guard = _compose_route_guards(config.front_door_guard, registration.guard)
     return registrations
 
 

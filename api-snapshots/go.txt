@@ -3841,6 +3841,12 @@ const MinRefreshReuseRateCeiling = 9
 
 const MinRouteRefreshHandleTTL = time.Minute
 
+const OriginReachabilityDisabled OriginReachability = "disabled"
+
+const OriginReachabilityFronted OriginReachability = "fronted"
+
+const OriginReachabilityLocked OriginReachability = "locked"
+
 const RouteRefreshEventGraceServed RouteRefreshEventClass = "grace_served"
 
 const RouteRefreshEventIssued RouteRefreshEventClass = "issued"
@@ -3973,6 +3979,10 @@ type FacadeConfig struct {
 
 	RequireBearerToken *oauth.RequireBearerTokenOptions
 
+	OriginReachability OriginReachability
+
+	FrontDoorVerification *FrontDoorVerification
+
 	Provider oauth.Provider
 
 	Stores oauthstore.Stores
@@ -3992,7 +4002,15 @@ type FacadeConfig struct {
 	RefusalHook refusal.Hook
 }
 
+type FrontDoorVerification struct {
+	HeaderName string
+
+	SecretValue string
+}
+
 type HandlerFactory func(mcproutes.EndpointKind) apptheory.Handler
+
+type OriginReachability string
 
 type RootDiscoveryConfig struct {
 	IssuerURL                string
