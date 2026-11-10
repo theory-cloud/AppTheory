@@ -145,6 +145,7 @@ class FrontDoorVerification:
     # never appears in a response.
     secret_value: str
 
+
 # METADATA_VARY_HEADER is the exact Vary header advertised by every facade
 # metadata response, matching the Go and TypeScript runtimes.
 METADATA_VARY_HEADER = (
@@ -1243,9 +1244,7 @@ def _normalize_origin_reachability(
             raise ValueError(f"{_ERROR_PREFIX} OriginReachability must be disabled, locked, or fronted")
         if resolved != "fronted":
             if verification is not None:
-                raise ValueError(
-                    f"{_ERROR_PREFIX} FrontDoorVerification is only valid with OriginReachability fronted"
-                )
+                raise ValueError(f"{_ERROR_PREFIX} FrontDoorVerification is only valid with OriginReachability fronted")
             return resolved, None
         if verification is None:
             raise ValueError(f"{_ERROR_PREFIX} OriginReachability fronted requires FrontDoorVerification")
@@ -1276,10 +1275,10 @@ def _front_door_guard(verification: FrontDoorVerification) -> RouteGuard:
     """Validates the front-door declaration and returns its fail-closed guard."""
     header_name = str(verification.header_name or "").strip().lower()
     if not _FRONT_DOOR_HEADER_NAME.match(header_name):
-        raise ValueError(f"{_ERROR_PREFIX} FrontDoorVerification header name must be 1 to 64 characters of [A-Za-z0-9-]")
-    if header_name in _RESERVED_FRONT_DOOR_HEADERS or header_name.startswith(
-        ("x-amz-", "x-amzn-", "cloudfront-")
-    ):
+        raise ValueError(
+            f"{_ERROR_PREFIX} FrontDoorVerification header name must be 1 to 64 characters of [A-Za-z0-9-]"
+        )
+    if header_name in _RESERVED_FRONT_DOOR_HEADERS or header_name.startswith(("x-amz-", "x-amzn-", "cloudfront-")):
         raise ValueError(
             f"{_ERROR_PREFIX} FrontDoorVerification header name must be a request header the front door can set"
         )
