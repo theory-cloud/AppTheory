@@ -171,3 +171,23 @@ func frontDoorRefusal() error {
 		StatusCode: 403,
 	}
 }
+
+// applyFrontDoorGuard attaches the front-door check to every derived route in
+// the construct's inventory (transport and OAuth facade). The guard is appended
+// to each route's options ahead of the transport credential guard, so a request
+// that did not arrive through the declared front door is refused before any
+// other admission work.
+func applyFrontDoorGuard(
+	registrations []routeRegistration,
+	guard apptheory.RouteGuard,
+) []routeRegistration {
+	guarded := make([]routeRegistration, len(registrations))
+	for index, registration := range registrations {
+		registration.options = append(
+			append([]apptheory.RouteOption(nil), registration.options...),
+			apptheory.WithRouteGuard(guard),
+		)
+		guarded[index] = registration
+	}
+	return guarded
+}

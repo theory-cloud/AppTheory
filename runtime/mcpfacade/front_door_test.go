@@ -11,7 +11,7 @@ import (
 	"github.com/theory-cloud/apptheory/v7/runtime/oauth"
 )
 
-const frontDoorTestSecret = "front-door-secret-0123456789-abcdefghi"
+const frontDoorTestSecret = "front-door-secret-0123456789-abcdefghi" // #nosec G101 -- a test fixture header value, not a credential.
 
 func frontedConfig() FacadeConfig {
 	config := validConfig(URLModePublicBaseURL)

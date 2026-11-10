@@ -734,41 +734,45 @@ func buildRegistrations(config normalizedConfig, inventory *RouteInventory) ([]r
 			posture: surfacePosture,
 		})
 	}
-	if inventory.CallbackPattern != "" && config.callbackHandler != nil {
-		registrations = append(registrations, routeRegistration{
-			method:  "GET",
-			pattern: inventory.CallbackPattern,
-			handler: config.callbackHandler,
-			posture: surfacePosture,
-		})
-	}
-	if inventory.CallbackPattern != "" && config.frontChannel != nil {
-		registrations = append(registrations, routeRegistration{
-			method:  "GET",
-			pattern: inventory.CallbackPattern,
-			handler: config.callbackHandlerFor(),
-			posture: surfacePosture,
-		})
-	}
+	registrations = appendCallbackRegistrations(registrations, config, inventory, surfacePosture)
 	if config.frontDoorGuard != nil {
-		// The front-door check covers every derived route in the construct's
-		// inventory (transport and OAuth facade), and it runs before the
-		// transport credential guard: a request that did not arrive through the
-		// declared front door is refused before any other admission work.
-		guarded := make([]routeRegistration, len(registrations))
-		for index, registration := range registrations {
-			registration.options = append(
-				append([]apptheory.RouteOption(nil), registration.options...),
-				apptheory.WithRouteGuard(config.frontDoorGuard),
-			)
-			guarded[index] = registration
-		}
-		registrations = guarded
+		registrations = applyFrontDoorGuard(registrations, config.frontDoorGuard)
 	}
 	if err := validateRouteRegistrations(registrations); err != nil {
 		return nil, err
 	}
 	return registrations, nil
+}
+
+// appendCallbackRegistrations adds the stage-global upstream callback route the
+// inventory declares. The explicit callback handler and the framework-owned
+// front channel are mutually exclusive, so at most one registration is added.
+func appendCallbackRegistrations(
+	registrations []routeRegistration,
+	config normalizedConfig,
+	inventory *RouteInventory,
+	posture apptheory.AuthPosture,
+) []routeRegistration {
+	if inventory.CallbackPattern == "" {
+		return registrations
+	}
+	if config.callbackHandler != nil {
+		return append(registrations, routeRegistration{
+			method:  "GET",
+			pattern: inventory.CallbackPattern,
+			handler: config.callbackHandler,
+			posture: posture,
+		})
+	}
+	if config.frontChannel != nil {
+		return append(registrations, routeRegistration{
+			method:  "GET",
+			pattern: inventory.CallbackPattern,
+			handler: config.callbackHandlerFor(),
+			posture: posture,
+		})
+	}
+	return registrations
 }
 
 func validateRouteRegistrations(registrations []routeRegistration) error {
