@@ -543,7 +543,13 @@ here for operators who need implementation-level details:
   each origin from the incoming request. `DefaultCapabilities` supplies the fixed defaults, while `Capabilities`,
   per-kind scope sets, and paired application-owned `HandlerFactory` authorize/token plug points remain explicit
   config. Optional `RootDiscoveryConfig` installs the static upstream authorization-server root document. Each
-  installed `Route` records its methods and derived paths.
+  installed `Route` records its methods and derived paths. The direct-origin posture is app-owned too:
+  `FacadeConfig.OriginReachability` (`disabled`, `locked`, or `fronted`) mirrors the CDK construct's declared
+  `AppTheoryMcpOriginReachability`, and `FrontDoorVerification` (required with `fronted`, refused otherwise) makes the
+  runtime verify the declared front-door header on every derived route — transport and OAuth facade — refusing a
+  request whose header is absent or wrong with `403 app.forbidden` before any credential work. Registering `fronted`
+  without the verification fails closed. TypeScript `originReachability`/`frontDoorVerification` and Python
+  `origin_reachability`/`front_door_verification` are the same contract.
 - `testkit/oauth`: Claude-like end-to-end OAuth flow helpers for remote MCP tests (`NewClaudePublicClient`,
   `AuthorizeOptions`, `Authorize`)
 - TypeScript and Python expose matching MCP registries, server/test harnesses, in-memory/Dynamo stores, bearer-token
