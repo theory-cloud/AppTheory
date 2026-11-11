@@ -3546,22 +3546,30 @@ async function terminalRefreshEvidence(front, presented) {
  * answers transiently without calling the upstream.
  */
 async function takeRotationIntent(front, ctx, presented, locked) {
-    if (locked.rotationUnconfirmedAt === undefined) {
-        const updated = {
-            ...locked,
-            rotationUnconfirmedAt: ctx.now(),
-        };
-        try {
-            const stored = await front.stores.routeRefreshBroker.compareAndSwap(updated, locked.version);
-            return { record: stored, response: null };
-        }
-        catch {
-            await releaseRefreshLock(front, presented, locked);
-            emitStateFailure(front, ctx, presented, ROUTE_REFRESH_REASON_REWRITE_FAILURE);
-            return { record: null, response: facadeTemporarilyUnavailablePage() };
-        }
+    const attempt = await takeRotationIntentAt(front, locked, ctx.now());
+    if (attempt.error === null) {
+        return { record: attempt.record, response: null };
     }
-    return { record: locked, response: null };
+    await releaseRefreshLock(front, presented, locked);
+    emitStateFailure(front, ctx, presented, ROUTE_REFRESH_REASON_REWRITE_FAILURE);
+    return { record: null, response: facadeTemporarilyUnavailablePage() };
+}
+/**
+ * takeRotationIntent for a caller without a request context (the sweeper). An
+ * already-set marker is preserved, so the ambiguity horizon stays anchored to the
+ * first lost attempt and retries cannot extend it.
+ */
+async function takeRotationIntentAt(front, locked, now) {
+    if (locked.rotationUnconfirmedAt !== undefined) {
+        return { record: locked, error: null };
+    }
+    try {
+        const stored = await front.stores.routeRefreshBroker.compareAndSwap({ ...locked, rotationUnconfirmedAt: now }, locked.version);
+        return { record: stored, error: null };
+    }
+    catch (err) {
+        return { record: locked, error: err };
+    }
 }
 /**
  * Makes the ONE upstream refresh call of a rotation under the encoded budget. The
@@ -4980,8 +4988,9 @@ export class RefreshSweeper {
         const lockEvent = routeRefreshEventFor(ROUTE_REFRESH_EVENT_LOCK_ACQUIRED, now, head);
         lockEvent.statusTo = "refreshing";
         emitRouteRefresh(front, lockEvent);
-        const attempted = await takeRotationIntent(front, { now: () => now }, head, locked);
-        if (attempted.response !== null || attempted.record === null) {
+        const attempted = await takeRotationIntentAt(front, locked, now);
+        if (attempted.error !== null) {
+            await releaseRefreshLock(front, head, locked);
             result.deferredReason = ROUTE_REFRESH_REASON_REWRITE_FAILURE;
             return result;
         }
@@ -4996,7 +5005,10 @@ export class RefreshSweeper {
                 : "temporarily_unavailable";
             await releaseRefreshLock(front, head, locked);
             result.upstreamClass = errorClass;
-            emitStateFailure(front, { now: () => now }, head, ROUTE_REFRESH_REASON_UPSTREAM_REJECTED, errorClass);
+            const failure = routeRefreshEventFor(ROUTE_REFRESH_EVENT_STATE_FAILURE, now, head);
+            failure.reason = ROUTE_REFRESH_REASON_UPSTREAM_REJECTED;
+            failure.upstreamClass = errorClass;
+            emitRouteRefresh(front, failure);
             if (errorClass === "invalid_grant") {
                 // Contract-terminal verdict: reported, never acted on here.
                 result.outcome = "terminal_verdict";
