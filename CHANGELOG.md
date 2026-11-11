@@ -1,5 +1,25 @@
 # Changelog
 
+## [7.2.0-rc](https://github.com/theory-cloud/AppTheory/compare/v7.1.0...v7.2.0-rc) (2026-11-11)
+
+
+### Features
+
+* **cdk:** add the FRONTED origin posture for attach-mode MCP servers ([8ce8344](https://github.com/theory-cloud/AppTheory/commit/8ce8344ef906a85321f143c15063203d512840e4))
+* **mcp:** add the FRONTED origin posture for externally fronted attach-mode servers ([5fd8128](https://github.com/theory-cloud/AppTheory/commit/5fd8128f29ada4c5b69c1ab012285c1722f950b7))
+* **mcp:** add validation-first opt-in for declined stream-less GETs ([9494eee](https://github.com/theory-cloud/AppTheory/commit/9494eeeae634ebc82338ac866939f10e0865bebf))
+* **mcpfacade:** enforce the declared front-door header under FRONTED ([654d061](https://github.com/theory-cloud/AppTheory/commit/654d06177e3c3cbb1ba07e67ee9b2cb5ff45fe7b))
+* **mcp:** opt-in validation-first ordering for declined stream-less GETs ([c519c58](https://github.com/theory-cloud/AppTheory/commit/c519c5852bfcf407700de203a8f9947cb17b377f))
+* **ts,py:** accept the declined-GET validation-first option as parity ([19223fc](https://github.com/theory-cloud/AppTheory/commit/19223fcf62d47e6e42918420b52f0f740cd39f68))
+
+
+### Bug Fixes
+
+* **contract-tests:** correct the fixture corpus count to 335 ([c210da6](https://github.com/theory-cloud/AppTheory/commit/c210da61f8786ecae56e93cfcd9d7c5cb847547d))
+* **mcpfacade:** keep the front-door guard within the lint budget ([f3c8a04](https://github.com/theory-cloud/AppTheory/commit/f3c8a044692bdc5d6345b30630b82125fb7546e7))
+* **py:** anchor the front-door secret at end of string ([21f18ca](https://github.com/theory-cloud/AppTheory/commit/21f18ca88aa085210c5f1ea6d758b2c571102812))
+* **py:** sort the new facade exports and stay within the format width ([0630fb1](https://github.com/theory-cloud/AppTheory/commit/0630fb17c36bedf1248984129fcd45b6d7e07f43))
+
 ## [7.1.0](https://github.com/theory-cloud/AppTheory/compare/v7.0.0...v7.1.0) (2026-11-10)
 
 
