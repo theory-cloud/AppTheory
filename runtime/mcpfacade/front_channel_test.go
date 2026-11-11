@@ -96,6 +96,10 @@ type frontChannelHarness struct {
 	broker *recordingBrokerStore
 	kind   mcproutes.EndpointKind
 
+	// provider is the swappable provider the facade captured at registration, so a
+	// row can script an upstream sequence the local fake cannot produce.
+	provider *swappableProvider
+
 	// bearerValidator is the transport claims validator the harness installed,
 	// when it installed one. The journey loader reuses it to prove an exchanged
 	// access token is a genuine upstream-minted token.
@@ -166,6 +170,16 @@ type frontChannelHarnessOptions struct {
 	// principal resolution and policy evaluation on a non-facade route.
 	securePrincipalResolver apptheory.SecurePrincipalResolver
 	policyHook              apptheory.PolicyHook
+
+	// providerWrapper, when set, wraps the adapter the facade is registered with,
+	// so a test can script an upstream sequence the local fake cannot produce (a
+	// rotation whose response is lost after the material was consumed).
+	providerWrapper func(oauth.Provider) oauth.Provider
+
+	// routeRefreshPolicy, when set, mutates the registered route refresh policy,
+	// so a test can pin an encoded knob (a short upstream budget, a short grace
+	// window) without changing the defaults every other row uses.
+	routeRefreshPolicy func(*RouteRefreshPolicy)
 }
 
 // manualClockAdapter implements apptheory.Clock over the harness's ManualClock,
@@ -196,6 +210,10 @@ type recordingBrokerStore struct {
 	// It is read through the store pointer the facade itself holds, so a test may
 	// set it after the harness is built and the facade still observes it.
 	acquireLockFn func(context.Context, string, string, int) (*oauthstore.RouteRefreshBrokerRecord, error)
+
+	// rotateFamilyErr, when set, makes the rotation transaction fail, so a test can
+	// prove nothing is minted when the every-write-landed write cannot land.
+	rotateFamilyErr error
 }
 
 func (s *recordingBrokerStore) Put(ctx context.Context, record *oauthstore.RouteRefreshBrokerRecord) error {
@@ -255,6 +273,9 @@ func (s *recordingBrokerStore) RotateFamily(
 	ctx context.Context,
 	rotation oauthstore.RouteRefreshFamilyRotation,
 ) (*oauthstore.RouteRefreshBrokerRecord, error) {
+	if s.rotateFamilyErr != nil {
+		return nil, s.rotateFamilyErr
+	}
 	return s.family.RotateFamily(ctx, rotation)
 }
 
@@ -343,6 +364,29 @@ func newFrontChannelHarnessWith(t *testing.T, options frontChannelHarnessOptions
 		}
 	}
 	kind := mcproutes.EndpointKindNamespace
+	policy := RouteRefreshPolicy{
+		HandleTTL:        oauthstore.DefaultRouteRefreshBrokerTTL,
+		ReuseRateCeiling: MinRefreshReuseRateCeiling,
+	}
+	if options.routeRefreshPolicy != nil {
+		options.routeRefreshPolicy(&policy)
+	}
+	var registeredProvider oauth.Provider = newSwappableProvider(&mintingProvider{
+		Provider: adapter,
+		server:   fake,
+		claims: oauthprovider.Claims{
+			Issuer:          frontTestUpstreamIss,
+			Audience:        frontTestBaseURL + "/acme/mcp",
+			AuthorizedParty: frontTestClientID,
+			Subject:         "user-1",
+			Scope:           "mcp:tools",
+			ExpiresIn:       900,
+		},
+		failAuthorizationURL: options.failAuthorizationURL,
+	})
+	if options.providerWrapper != nil {
+		registeredProvider = options.providerWrapper(registeredProvider)
+	}
 	config := FacadeConfig{
 		IssuerURL:               frontTestBaseURL + "/acme/mcp",
 		JWKSURI:                 frontTestUpstreamIss + "/.well-known/jwks.json",
@@ -358,28 +402,13 @@ func newFrontChannelHarnessWith(t *testing.T, options frontChannelHarnessOptions
 			mcproutes.EndpointKindAgent:            {"mcp:tools"},
 			mcproutes.EndpointKindPartnerAgent:     {"mcp:tools"},
 		},
-		MCPHandler: mcpHandler,
-		Provider: &mintingProvider{
-			Provider: adapter,
-			server:   fake,
-			claims: oauthprovider.Claims{
-				Issuer:          frontTestUpstreamIss,
-				Audience:        frontTestBaseURL + "/acme/mcp",
-				AuthorizedParty: frontTestClientID,
-				Subject:         "user-1",
-				Scope:           "mcp:tools",
-				ExpiresIn:       900,
-			},
-			failAuthorizationURL: options.failAuthorizationURL,
-		},
-		Stores:           stores,
-		UpstreamClientID: frontTestClientID,
-		UpstreamIssuer:   frontTestUpstreamIss,
-		ProviderHints:    options.providerHints,
-		RouteRefreshPolicy: RouteRefreshPolicy{
-			HandleTTL:        oauthstore.DefaultRouteRefreshBrokerTTL,
-			ReuseRateCeiling: MinRefreshReuseRateCeiling,
-		},
+		MCPHandler:         mcpHandler,
+		Provider:           registeredProvider,
+		Stores:             stores,
+		UpstreamClientID:   frontTestClientID,
+		UpstreamIssuer:     frontTestUpstreamIss,
+		ProviderHints:      options.providerHints,
+		RouteRefreshPolicy: policy,
 		RouteRefreshEvents: options.routeRefreshEvents,
 		RefusalHook:        options.refusalHook,
 
@@ -393,6 +422,9 @@ func newFrontChannelHarnessWith(t *testing.T, options frontChannelHarnessOptions
 	}))
 
 	harness := &frontChannelHarness{t: t, fake: fake, clock: clock, stores: stores, broker: broker, kind: kind}
+	if swappable, ok := registeredProvider.(*swappableProvider); ok {
+		harness.provider = swappable
+	}
 	if options.secureTopology {
 		harness.secure = apptheory.NewSecure(apptheory.SecureOptions{
 			Clock:             manualClockAdapter{clock: clock},

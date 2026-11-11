@@ -39,10 +39,17 @@ import (
 //     served by rotating the head and the re-armed grace window bounds retries.
 //     The field and its validation stay so an existing configuration keeps
 //     registering unchanged, and the F20 limiter semantics are untouched.
+//   - RefreshBudget is the encoded time budget of one upstream refresh call.
+//     Zero selects DefaultRefreshBudget. The facade applies it as the deadline
+//     of the provider call, so an adapter that ignores the deadline still cannot
+//     outlive it, and it is bounded above by the broker lock TTL it has to stay
+//     inside (MaxRefreshBudget). It is a configuration field, never an
+//     environment variable.
 type RouteRefreshPolicy struct {
 	HandleTTL        time.Duration
 	GraceWindow      time.Duration
 	ReuseRateCeiling int
+	RefreshBudget    time.Duration
 }
 
 const (
@@ -81,6 +88,29 @@ const (
 	// as the root of a new refresh family. Every successor records the presented
 	// generation plus one, so depth relative to the head is arithmetic.
 	refreshChainRootGeneration = 1
+
+	// DefaultRefreshBudget is the upstream refresh-call budget a policy that does
+	// not state one selects. It is the M2.1 hardened upstream HTTP deadline
+	// (oauth's default fetch bound, shared by the discovery, token, and JWKS
+	// fetches), so an unchanged configuration keeps exactly the deadline the
+	// adapter already used.
+	DefaultRefreshBudget = 10 * time.Second
+
+	// MinRefreshBudget is the shortest accepted upstream refresh budget. Below it
+	// a healthy upstream could not answer, so the facade would report transient
+	// failures it caused itself.
+	MinRefreshBudget = time.Second
+
+	// refreshBudgetLockMargin is the headroom the budget must leave inside the
+	// broker lock TTL so the winner can still commit its rotation before the lock
+	// it holds expires and a second caller may take it.
+	refreshBudgetLockMargin = 3 * time.Second
+
+	// MaxRefreshBudget is the longest accepted upstream refresh budget: the
+	// reference broker lock TTL (oauthstore.DefaultRouteRefreshLockTTL, 15 s) less
+	// the commit margin. A store with a shorter lock TTL fails closed instead of
+	// admitting a second concurrent upstream refresh.
+	MaxRefreshBudget = oauthstore.DefaultRouteRefreshLockTTL - refreshBudgetLockMargin
 )
 
 // normalized validates the policy and resolves its optional fields. Every
@@ -119,6 +149,15 @@ func (policy RouteRefreshPolicy) normalized() (RouteRefreshPolicy, error) {
 			MinRefreshReuseRateCeiling, MaxRefreshReuseRateCeiling,
 		)
 	}
+	if policy.RefreshBudget == 0 {
+		policy.RefreshBudget = DefaultRefreshBudget
+	}
+	if policy.RefreshBudget < MinRefreshBudget || policy.RefreshBudget > MaxRefreshBudget {
+		return RouteRefreshPolicy{}, fmt.Errorf(
+			"mcpfacade: route refresh policy refresh budget must be within [%s, %s]",
+			MinRefreshBudget, MaxRefreshBudget,
+		)
+	}
 	return policy, nil
 }
 
@@ -145,5 +184,6 @@ func validateRouteRefreshPolicyStore(policy RouteRefreshPolicy, stores oauthstor
 // policy supplied without Provider fails as part of the anchored field set
 // instead of being ignored.
 func routeRefreshPolicyDeclared(policy RouteRefreshPolicy) bool {
-	return policy.HandleTTL != 0 || policy.GraceWindow != 0 || policy.ReuseRateCeiling != 0
+	return policy.HandleTTL != 0 || policy.GraceWindow != 0 ||
+		policy.ReuseRateCeiling != 0 || policy.RefreshBudget != 0
 }

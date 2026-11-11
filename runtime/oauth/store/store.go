@@ -318,6 +318,18 @@ type ClientRecord struct {
 //
 // DepthOneServedAt is retained for stored-record compatibility. It marked the
 // removed beyond-grace access-token-only serve and is no longer written.
+//
+// RotationUnconfirmedAt is the durable rotation-intent marker. The facade writes
+// it, in the store, before it presents the record's upstream material, so a
+// process that loses the rotation response to a timeout or a crash leaves
+// evidence behind. A later attempt that reads a set marker knows the material may
+// already be consumed upstream; it verifies lineage through the recovery contract
+// and keeps an invalid_grant transient for the facade's own ambiguity horizon
+// instead of treating it as family-terminal evidence. It is additive: a store
+// that does not persist it leaves the zero value, which is exactly the pre-marker
+// behavior. RotateFamily clears it on the presented record as part of the
+// rotation transaction, and the earliest unconfirmed instant is never moved
+// forward, so repeated retries cannot extend the horizon.
 type RouteRefreshBrokerRecord struct {
 	HandleHash                    string
 	Issuer                        string
@@ -350,7 +362,12 @@ type RouteRefreshBrokerRecord struct {
 	ChainGeneration           int
 	FamilyHash                string
 	DepthOneServedAt          time.Time
-	Version                   int
+	// RotationUnconfirmedAt is when a rotation attempt of this record's upstream
+	// material became unconfirmed (a timeout, a lost response, or a process
+	// failure after the material was presented). Zero means no attempt is in
+	// flight or the last one was confirmed. See the type documentation.
+	RotationUnconfirmedAt time.Time
+	Version               int
 }
 
 // Route refresh broker status values of the facade-store-spi.v1.json status

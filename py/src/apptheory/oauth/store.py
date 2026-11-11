@@ -215,6 +215,17 @@ class RouteRefreshBrokerRecord:
     chain_generation: int = 0
     family_hash: str = ""
     depth_one_served_at: datetime | None = None
+    # The durable rotation-intent marker. The facade writes it, in the store,
+    # before it presents the record's upstream material, so a process that loses
+    # the rotation response to a timeout or a crash leaves evidence behind. A
+    # later attempt that reads a set marker knows the material may already be
+    # consumed upstream; it verifies lineage through the recovery contract and
+    # keeps an invalid_grant transient for the facade's own ambiguity horizon
+    # instead of treating it as family-terminal evidence. ``None`` means no
+    # attempt is in flight or the last one was confirmed. ``rotate_family`` clears
+    # it on the presented record as part of the rotation transaction, and the
+    # earliest unconfirmed instant is never moved forward.
+    rotation_unconfirmed_at: datetime | None = None
     version: int = 0
 
 
@@ -757,6 +768,9 @@ class MemoryRouteRefreshBrokerStore:
                 raise BrokerFamilyMismatchError("route refresh successor status mismatch")
             stored_successor.refresh_lock_owner = ""
             stored_successor.refresh_lock_expires_at = None
+            # The rotation is confirmed: the presented material was consumed and its
+            # successor is stored, so the unconfirmed-attempt marker is cleared in the
+            # same transaction that resolves it.
             completed = _copy_record(
                 stored,
                 encrypted_grace_refresh_response=rotation.grace_refresh_response,
@@ -765,6 +779,7 @@ class MemoryRouteRefreshBrokerStore:
                 status=STATUS_ACTIVE,
                 refresh_lock_owner="",
                 refresh_lock_expires_at=None,
+                rotation_unconfirmed_at=None,
                 version=stored.version + 1,
             )
             stored_at = self._records[stored.handle_hash][1]
@@ -1840,6 +1855,28 @@ def _run_family_scenario(  # noqa: C901 - one branch per shared-table scenario
                 presented is not None and not presented.refresh_lock_owner and presented.refresh_lock_expires_at is None
             ),
         }
+    elif scenario == "family_rotation_intent":
+        # The durable rotation-intent marker: written under the held lock, read back,
+        # then cleared by the rotation transaction that resolves the attempt.
+        locked = _family_create_and_lock(store, family_hash)
+        intent = _copy_record(locked, rotation_unconfirmed_at=clock.now())
+        intent_cas = _family_outcome(lambda: store.compare_and_swap(intent, locked.version))
+        reread = _family_read(store, locked.handle_hash)
+        stored = store.get(locked.handle_hash)
+        rotate = _family_outcome(lambda: _family_rotate(store, stored, "successor", family_hash))
+        presented = _family_read(store, locked.handle_hash)
+        actual = {
+            "intent_cas": intent_cas,
+            "intent_get": "ok" if reread is not None else "not_found",
+            "intent_persisted": bool(
+                stored is not None
+                and stored.rotation_unconfirmed_at is not None
+                and reread is not None
+                and reread.rotation_unconfirmed_at is not None
+            ),
+            "rotate": rotate,
+            "presented_unconfirmed_cleared": bool(presented is not None and presented.rotation_unconfirmed_at is None),
+        }
     elif scenario == "family_rotate_wrong_owner":
         locked = _family_create_and_lock(store, family_hash)
         rotate = _family_outcome(
@@ -2171,6 +2208,7 @@ for _family_scenario in (
     "family_create",
     "family_create_binding",
     "family_rotate",
+    "family_rotation_intent",
     "family_rotate_wrong_owner",
     "family_rotate_stale_version",
     "family_rotate_existing_successor",
