@@ -82,19 +82,34 @@ Typed errors map to a closed client-facing vocabulary, so a caller never has to 
 | `temporarily_unavailable` | 503 (retryable; `Retry-After`) |
 | `invalid_grant` | 400 (terminal) |
 | `invalid_request` | 400 (adapter-side; never reaches the upstream) |
-| `reauth_required` | 400 (terminal; only an explicit upstream stale/replaced signal) |
+| `reauth_required` | 503 (recovery-available; retryable) |
+
+**Only `invalid_grant` is a contract-terminal verdict.** The token-endpoint error codes are enumerated per code
+under the refresh-rotation-recovery contract (`theorycloud_refresh_rotation_recovery.v0.1` R6/R7): `invalid_grant`
+is the one code that may carry a family-terminal authority verdict, and every per-request client code —
+`invalid_scope`, `invalid_request`, `access_denied`, `expired_token`, `invalid_token`, `invalid_client`,
+`unauthorized_client` — is a request-level refusal that is transient to the family. The adapters report a
+per-request code, and any unrecognized code, as an `upstream_error`; none of them can revoke a family. The
+classification is exported for consumers as `IsTerminalTokenVerdict` / `TerminalTokenVerdictCodes` /
+`IsPerRequestTokenVerdict` in Go, `isTerminalTokenVerdict` / `terminalTokenVerdictCodes` /
+`isPerRequestTokenVerdict` in TypeScript, and `is_terminal_token_verdict` / `terminal_token_verdict_codes` /
+`is_per_request_token_verdict` in Python, and it is pinned in both directions by the shared provider conformance
+table and by the vendored contract corpus.
 
 The `reauth_required` class is a **defensive** mapping, carried identically by all three runtimes (Go
 `ProviderReauthRequired`, TypeScript the `reauth_required` member of the `ProviderErrorClass` union, Python
-`ERROR_REAUTH_REQUIRED`). The Autheory adapter's upstream never emits that code — Autheory reports every terminal
-refresh failure as `invalid_grant`, which the broker already handles — so no row can produce it from a real upstream
-response; the class, its 400 status and its terminal treatment are pinned so that a future provider which does emit
-it cannot be silently misclassified. A refresh that receives it is treated as terminal and revokes the broker
-record, exactly like `invalid_grant`.
+`ERROR_REAUTH_REQUIRED`). It means "the recorded material is stale or replaced", which the rotation-recovery
+contract classifies as **recovery-available**: the replaced material is walked to its successor inside the serve
+window, so the class is retryable (503 + `Retry-After`) and never family-terminal. The Autheory adapter reports a
+`reauth_required` upstream answer as `temporarily_unavailable` for the same reason.
 
-An upstream OAuth `invalid_request` maps onto the terminal `invalid_grant` (a client-facing 400, not a 502): a
-facade request bug that reaches the upstream surfaces as a request-class error, and every other non-2xx —
-including an unrecognized upstream error code — is an `upstream_error`.
+**A terminal verdict is revocable only on corroborated evidence.** A facade that receives an `invalid_grant` for a
+refresh release-releases the lock and answers transiently unless the verdict is about the family's current live head
+and no rotation attempt of that record is unconfirmed inside the facade's ambiguity horizon (its configured grace
+window). An unconfirmed attempt is a timeout, a lost response, or a process failure after the upstream material was
+presented — the 2026-11-11 16:00Z class — and its verdict stays transient. A verdict about superseded material is
+also transient. Only the head's own material being rejected revokes the family, and the revocation is attributed as
+`upstream_reauth_required`, never as client theft.
 
 **At the callback the class table above collapses to one outcome.** When the framework-owned front channel's
 callback calls the provider, **any** failure — the server-side `ExchangeCode`, and the `ValidateAccessToken` that
@@ -164,7 +179,7 @@ covered by the encryption obligation (the successor handle and an access token t
 
 ## Route refresh policy, family, and telemetry
 
-The brokered refresh handle has three encoded policy values (see `FacadeConfig.RouteRefreshPolicy`):
+The brokered refresh handle has four encoded policy values (see `FacadeConfig.RouteRefreshPolicy`):
 
 - **`HandleTTL`** — the local lifetime of a route refresh handle, required and bounded to `[60 s, 30 d]`. It is the
   store's lifetime policy; a broker store that reports its own lifetime through the optional
@@ -178,6 +193,33 @@ The brokered refresh handle has three encoded policy values (see `FacadeConfig.R
   response states. The boundary is exclusive: a presentation at exactly the deadline is a stale predecessor.
 - **`ReuseRateCeiling`** — retained for configuration compatibility, required and bounded to `[9, 120]`. It
   previously budgeted the removed beyond-grace access-token-only serve; no refresh path uses it now.
+- **`RefreshBudget`** (`refreshBudgetSeconds` / `refresh_budget_seconds` in TypeScript and Python) — the encoded
+  time budget of one upstream refresh call, absent or zero selecting 10 s and bounded to `[1 s, 12 s]`. The facade
+  applies it as the deadline of the call (a context deadline in Go, a bounded race in TypeScript) so an adapter that
+  ignores its own transport default still cannot outlive the budget the deployment chose; Python's synchronous
+  provider SPI cannot be interrupted, so its facade refuses to act on an answer that outlived the budget and treats
+  that answer as unconfirmed, exactly like a timeout. The 12 s ceiling is the reference 15 s broker lock TTL less a
+  3 s commit margin: a budget above it could let the lock expire mid-rotation and admit a second concurrent upstream
+  refresh. It is a configuration field, never an environment variable.
+
+### Rotation intent, post-timeout lineage verify, and the ambiguity horizon
+
+Before it presents a record's upstream material, the facade writes a durable **rotation-intent marker**
+(`RotationUnconfirmedAt` on the broker record) under the held lock. It is the read-side twin of persist-before-ack:
+the facade never presents material it has not recorded an attempt for, so a process that loses the answer leaves
+evidence behind. `RotateFamily` clears the marker in the same transaction that resolves the attempt, and the earliest
+unconfirmed instant is never moved forward, so retries cannot extend the horizon.
+
+On the next presentation of a marked record, the facade **verifies lineage** before presenting anything: if the
+family's live head has already moved on, the successor exists and the stale material is never presented again — the
+head is rotated for the client and the event carries the additive `lineage_verified` reason. If the head has not
+moved, the attempt is presented through the recovery path, and an upstream `invalid_grant` remains transient
+(`temporarily_unavailable` with `Retry-After`, `recovery_pending` reason) until the marker is older than the
+configured grace window. Inside that **ambiguity horizon** a verdict cannot be told apart from a lost response, a
+timeout, or the contract's informed serve-off state (with artifact writes on but walk serve off, an in-window
+rescue-marked presenter receives `invalid_grant` while the family survives), so it is never treated as
+family-terminal evidence. Outside it, with the verdict about the live head and no unconfirmed attempt, the family is
+revoked with the `upstream_reauth_required` attribution — the one genuinely terminal shape.
 
 ### Reuse is served, never punished
 
@@ -192,8 +234,8 @@ upstream call rather than one per attempt. Every member of the family stays live
 
 A reuse telemetry event fires with the additive `rotated_from_head` outcome and the `stale_predecessor` reason; no
 family is revoked by reuse. The family is revoked only when the upstream terminally rejects the grant
-(`invalid_grant` or reauthorization required), when an operator revokes it through the incident surface, or when the
-authorization code that minted it is replayed. Each of those answers the uniform non-oracle `invalid_grant` an
+(`invalid_grant` on the live head, with no unconfirmed rotation attempt inside the ambiguity horizon), when an
+operator revokes it through the incident surface, or when the authorization code that minted it is replayed. Each of those answers the uniform non-oracle `invalid_grant` an
 unknown handle gets, which is the token endpoint's re-authorize signal.
 
 Citations: [RFC 9700](https://www.rfc-editor.org/rfc/rfc9700) (OAuth 2.0 Security Best Current Practice) on
@@ -259,9 +301,37 @@ every binding check, rotation, refusal and telemetry event remains the facade's.
 `mcp_invalid_result` and calls no tool. The authoritative Autheory-path proof still runs in TMS; the
 example's own rows (`examples/cdk/local-mcp-auth-facade`) replay the same sequences over real HTTP in CI.
 
+### Exported refresh sweep entrypoint
+
+A scheduled trigger keeps credentials fresh through the exported sweep entrypoint: `mcpfacade.RefreshSweeper`
+(`NewRefreshSweeper` + `SweepFamily`) in Go, the `RefreshSweeper` class with `sweepFamily` in TypeScript,
+`RefreshSweeper` with `sweep_family` in Python. It takes the same five stores, the same provider, and the same
+encoded `RouteRefreshPolicy` the facade was registered with, and it rotates one family's live head through the same
+lock and the same `RotateFamily` transaction. The caller decides which families are due; the sweeper does not guess,
+because the scheduler that owns the access-token expiry knows it better than the broker record.
+
+Its concurrency contract is part of the SPI:
+
+1. **Exclusive lock.** A held lock, an unavailable lock, or a version that moved since the head was read resolves to
+   the `deferred` outcome: no upstream call, no state change, no family effect. The caller retries on its next tick.
+2. **Exactly one winner.** A loser of the commit race (the request path rotated first, the lock expired, the family
+   was revoked) gets a typed transient result and never mints a successor.
+3. **The loser keeps working.** A request-path presentation racing a committed sweep rotation is served from the
+   stored successor body, or has the new live head rotated for it; a sweep racing a committed request-path rotation
+   defers and reads the new head. Neither order is family-affecting.
+4. **The sweep never revokes.** Continuity maintenance is not a revocation trigger. A contract-terminal upstream
+   verdict observed by the sweep releases the lock and returns `terminal_verdict`, leaving the family intact:
+   revocation and its receipt stay on the request path, where the client-facing verdict is rendered and lineage is
+   verified.
+5. **It is bounded.** The upstream call carries the same encoded refresh budget, which stays below the broker lock
+   TTL, so a sweep can never outlive the lock it holds.
+
 ### Family identity, tombstone, and migration
 
-Every record carries a chain-root/family hash and a chain-generation counter. A handle the facade mints is the root
+Every record carries a chain-root/family hash and a chain-generation counter, and a `RotationUnconfirmedAt`
+(`rotationUnconfirmedAt` / `rotation_unconfirmed_at`) durable rotation-intent marker that a store must round-trip;
+`RotateFamily` clears it as part of the rotation transaction. The shared store conformance table pins both
+directions (`family_rotation_intent`), so a durable store that drops the marker fails its own conformance run. A handle the facade mints is the root
 of its own family (generation 1, family hash = hash of its own handle); every successor records the presented
 generation plus one and inherits the family hash.
 
@@ -317,7 +387,7 @@ front-channel field may be set (the `/register` and callback routes then mount o
 | `UpstreamIssuer` / `upstreamIssuer` / `upstream_issuer` | The expected upstream issuer: the RFC 9207 `iss` the callback pins before consuming the transaction or exchanging the code, and the issuer `Discovery` must verify before any published endpoint is trusted | empty | absolute HTTPS URL, no query, no fragment, normalized like `IssuerURL` | Registration error (`… upstream issuer must be an absolute HTTPS URL without query or fragment`) | DESIGN §8.2; DESIGN §5.2, §6 |
 | `LifecycleScopes` / `lifecycleScopes` / `lifecycle_scopes` | Scope values added to every upstream authorize request but never required from the MCP client (for example `offline_access`) | absent — adds none | each value trimmed, non-empty, and well-formed Unicode; duplicates collapse | Registration error (`lifecycle scope values cannot be empty` / `… must be well-formed Unicode`) | FRAMEWORK_VS_POLICY row 7 |
 | `ProviderHints` / `providerHints` / `provider_hints` | The opaque per-request hint seam for one authorize request (for example `account_id`); a hint carries **no authority** | absent — contributes no hints | none at registration (the function is opaque); a hint whose trimmed, lower-cased name collides with a required or reserved authorize parameter (`response_type`, `client_id`, `redirect_uri`, `code_challenge`, `code_challenge_method`, `state`, `resource`, `scope`) is refused by the adapter as `invalid_request` before the upstream is contacted, and a hint whose name carries leading or trailing whitespace is refused the same way rather than forwarded under its untrimmed or trimmed spelling, so a returned error is a provider-call failure in the gateway class (502 `upstream_error`), never a redirect | Registration error when set without `Provider` | DESIGN §6 |
-| `RouteRefreshPolicy` / `routeRefreshPolicy` / `route_refresh_policy` | The static policy of the brokered route refresh handle: `HandleTTL` (required), `GraceWindow` (optional, default 120 s), and `ReuseRateCeiling` (required) | none | **required whenever `Provider` is set.** `HandleTTL` ∈ [60 s, 30 d]; `GraceWindow` ∈ (0, 120 s]; `ReuseRateCeiling` ∈ [9, 120] per family per hour. A broker store that reports its own lifetime through the optional reporter must equal `HandleTTL` | Registration error on absent/zero/invalid values (`… route refresh policy handle TTL is required and must be positive`, `… must be within [1m0s, 720h0m0s]`); registration error when set without `Provider` | DESIGN §7 TTL min-of; docs/115 |
+| `RouteRefreshPolicy` / `routeRefreshPolicy` / `route_refresh_policy` | The static policy of the brokered route refresh handle: `HandleTTL` (required), `GraceWindow` (optional, default 120 s), `ReuseRateCeiling` (required), and `RefreshBudget` / `refreshBudgetSeconds` / `refresh_budget_seconds` (optional, default 10 s) — the encoded upstream refresh-call budget | none | **required whenever `Provider` is set.** `HandleTTL` ∈ [60 s, 30 d]; `GraceWindow` ∈ (0, 120 s]; `ReuseRateCeiling` ∈ [9, 120] per family per hour; `RefreshBudget` ∈ [1 s, 12 s], the ceiling being the reference 15 s broker lock TTL less a 3 s commit margin. A broker store that reports its own lifetime through the optional reporter must equal `HandleTTL` | Registration error on absent/zero/invalid values (`… route refresh policy handle TTL is required and must be positive`, `… must be within [1m0s, 720h0m0s]`, `… refresh budget must be within [1s, 12s]`); registration error when set without `Provider` | DESIGN §7 TTL min-of; docs/115; refresh-rotation-recovery R7 |
 | `RouteRefreshEvents` / `routeRefreshEvents` / `route_refresh_events` | Optional schema-redacted route refresh broker telemetry hook | absent — emits nothing | hook is opaque; called synchronously and its panic/exception is contained | Registration error when set without `Provider` | SPEC.md:346-352 |
 
 Every rejection uses the runtime's existing configuration-error prefix and the same message body (`mcpfacade: …`
