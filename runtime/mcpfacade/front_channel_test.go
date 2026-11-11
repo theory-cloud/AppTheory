@@ -214,6 +214,13 @@ type recordingBrokerStore struct {
 	// rotateFamilyErr, when set, makes the rotation transaction fail, so a test can
 	// prove nothing is minted when the every-write-landed write cannot land.
 	rotateFamilyErr error
+
+	// listFamilyErr, compareAndSwapErr, and revokeFamilyErr stage the remaining
+	// family-capability failures, so a test can prove the facade and the sweeper
+	// fail transiently (never terminally) when the store cannot answer.
+	listFamilyErr     error
+	compareAndSwapErr error
+	revokeFamilyErr   error
 }
 
 func (s *recordingBrokerStore) Put(ctx context.Context, record *oauthstore.RouteRefreshBrokerRecord) error {
@@ -246,6 +253,9 @@ func (s *recordingBrokerStore) ListFamily(
 	ctx context.Context,
 	familyHash string,
 ) ([]*oauthstore.RouteRefreshBrokerRecord, error) {
+	if s.listFamilyErr != nil {
+		return nil, s.listFamilyErr
+	}
 	return s.family.ListFamily(ctx, familyHash)
 }
 
@@ -254,7 +264,23 @@ func (s *recordingBrokerStore) RevokeFamily(
 	ctx context.Context,
 	familyHash string,
 ) ([]*oauthstore.RouteRefreshBrokerRecord, error) {
+	if s.revokeFamilyErr != nil {
+		return nil, s.revokeFamilyErr
+	}
 	return s.family.RevokeFamily(ctx, familyHash)
+}
+
+// CompareAndSwap delegates to the reference store after honoring the staged
+// failure, so a row can prove a failed rotation-intent write fails transiently.
+func (s *recordingBrokerStore) CompareAndSwap(
+	ctx context.Context,
+	record *oauthstore.RouteRefreshBrokerRecord,
+	expectedVersion int,
+) (*oauthstore.RouteRefreshBrokerRecord, error) {
+	if s.compareAndSwapErr != nil {
+		return nil, s.compareAndSwapErr
+	}
+	return s.RouteRefreshBrokerStore.CompareAndSwap(ctx, record, expectedVersion)
 }
 
 // CreateFamily delegates the atomic root creation to the reference store.
