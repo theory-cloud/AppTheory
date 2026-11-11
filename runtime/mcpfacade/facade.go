@@ -166,6 +166,21 @@ type FacadeConfig struct {
 	// every other posture.
 	RequireBearerToken *oauth.RequireBearerTokenOptions
 
+	// OriginReachability records the direct-origin posture the CDK construct
+	// declared, so one application-owned constant can feed both surfaces. An
+	// empty value leaves the posture unrecorded; disabled and locked are
+	// edge-enforced and add no runtime check. Fronted requires
+	// FrontDoorVerification and refuses every derived route whose front-door
+	// header is absent or wrong.
+	OriginReachability OriginReachability
+
+	// FrontDoorVerification is the app-owned front-door header this runtime
+	// verifies on every derived route (transport and OAuth facade paths) under
+	// OriginReachability fronted. Registration fails closed when fronted is
+	// declared without it, and it is rejected under every other posture: an
+	// undeclared or unenforced front door would be a silent no-op.
+	FrontDoorVerification *FrontDoorVerification
+
 	// Provider anchors the framework-owned front channel (DESIGN §8). When it is
 	// set, AppTheory owns /authorize, the stage-global upstream callback, and the
 	// /token authorization_code grant, and the rest of the front-channel field
@@ -302,6 +317,8 @@ type normalizedConfig struct {
 	rootDiscoveryPath       string
 	transportPosture        TransportPosture
 	requireBearerToken      *oauth.RequireBearerTokenOptions
+	originReachability      OriginReachability
+	frontDoorGuard          apptheory.RouteGuard
 	frontChannel            *frontChannelConfig
 	refusalHook             refusal.Hook
 }
@@ -419,6 +436,16 @@ func normalizeConfig(config FacadeConfig) (normalizedConfig, error) {
 	normalized.requireBearerToken = config.RequireBearerToken
 	normalized.mcpHandler = config.MCPHandler
 	normalized.callbackHandler = config.CallbackHandler
+
+	originReachability, frontDoorGuard, err := normalizeOriginReachability(
+		config.OriginReachability,
+		config.FrontDoorVerification,
+	)
+	if err != nil {
+		return normalizedConfig{}, err
+	}
+	normalized.originReachability = originReachability
+	normalized.frontDoorGuard = frontDoorGuard
 
 	frontChannel, err := normalizeFrontChannel(config)
 	if err != nil {
@@ -707,26 +734,45 @@ func buildRegistrations(config normalizedConfig, inventory *RouteInventory) ([]r
 			posture: surfacePosture,
 		})
 	}
-	if inventory.CallbackPattern != "" && config.callbackHandler != nil {
-		registrations = append(registrations, routeRegistration{
-			method:  "GET",
-			pattern: inventory.CallbackPattern,
-			handler: config.callbackHandler,
-			posture: surfacePosture,
-		})
-	}
-	if inventory.CallbackPattern != "" && config.frontChannel != nil {
-		registrations = append(registrations, routeRegistration{
-			method:  "GET",
-			pattern: inventory.CallbackPattern,
-			handler: config.callbackHandlerFor(),
-			posture: surfacePosture,
-		})
+	registrations = appendCallbackRegistrations(registrations, config, inventory, surfacePosture)
+	if config.frontDoorGuard != nil {
+		registrations = applyFrontDoorGuard(registrations, config.frontDoorGuard)
 	}
 	if err := validateRouteRegistrations(registrations); err != nil {
 		return nil, err
 	}
 	return registrations, nil
+}
+
+// appendCallbackRegistrations adds the stage-global upstream callback route the
+// inventory declares. The explicit callback handler and the framework-owned
+// front channel are mutually exclusive, so at most one registration is added.
+func appendCallbackRegistrations(
+	registrations []routeRegistration,
+	config normalizedConfig,
+	inventory *RouteInventory,
+	posture apptheory.AuthPosture,
+) []routeRegistration {
+	if inventory.CallbackPattern == "" {
+		return registrations
+	}
+	if config.callbackHandler != nil {
+		return append(registrations, routeRegistration{
+			method:  "GET",
+			pattern: inventory.CallbackPattern,
+			handler: config.callbackHandler,
+			posture: posture,
+		})
+	}
+	if config.frontChannel != nil {
+		return append(registrations, routeRegistration{
+			method:  "GET",
+			pattern: inventory.CallbackPattern,
+			handler: config.callbackHandlerFor(),
+			posture: posture,
+		})
+	}
+	return registrations
 }
 
 func validateRouteRegistrations(registrations []routeRegistration) error {

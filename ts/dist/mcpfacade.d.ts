@@ -24,6 +24,43 @@ export declare const URL_MODE_REQUEST_HOST: UrlMode;
 export type McpTransportPosture = "iam" | "jwt" | "runtime-bearer" | "none-public";
 export declare const TRANSPORT_POSTURES: readonly McpTransportPosture[];
 /**
+ * The declared direct-origin posture of the front door that fronts this facade.
+ *
+ * The value mirrors the CDK construct's `AppTheoryMcpOriginReachability`
+ * decision, so one application-owned constant can feed both the construct prop
+ * and this config. Only `fronted` changes runtime behavior: `disabled` and
+ * `locked` are enforced at the edge, where the construct proves them, and are
+ * recorded here so the runtime can refuse a contradictory front-door
+ * declaration instead of silently ignoring it.
+ */
+export type McpOriginReachability = "disabled" | "locked" | "fronted";
+export declare const ORIGIN_REACHABILITIES: readonly McpOriginReachability[];
+/**
+ * Declares the app-owned front-door header this runtime verifies on every
+ * derived route under `originReachability: "fronted"`.
+ *
+ * The front door (for example an application-owned CloudFront distribution
+ * whose origin is the execute-api hostname) injects `headerName: secretValue`
+ * on every origin request. Three copies of that value must come from one
+ * application-owned constant — the CDK construct prop (digest only), the
+ * distribution's origin custom-header configuration, and this config — because
+ * the runtime shares routes with the construct, never configuration environment
+ * variables.
+ */
+export interface FrontDoorVerification {
+    /**
+     * The origin request header the front door injects. 1 to 64 characters of
+     * `[A-Za-z0-9-]`, and never a request header that rewrites the origin
+     * contract.
+     */
+    headerName: string;
+    /**
+     * The literal header value. 32 to 128 characters of `[A-Za-z0-9._~-]`. It is
+     * compared in constant time on every request and never appears in a response.
+     */
+    secretValue: string;
+}
+/**
  * Returns an application-owned handler for one endpoint kind. Factories run
  * during facade registration, never during request handling.
  */
@@ -115,6 +152,22 @@ export interface FacadeConfig {
     transportPosture?: McpTransportPosture;
     /** Valid only with runtime-bearer; refused under every other posture. */
     requireBearerToken?: RequireBearerTokenOptions;
+    /**
+     * Records the direct-origin posture the CDK construct declared, so one
+     * application-owned constant can feed both surfaces. Omitted leaves the
+     * posture unrecorded; `disabled` and `locked` are edge-enforced and add no
+     * runtime check. `fronted` requires {@link FacadeConfig.frontDoorVerification}
+     * and refuses every derived route whose front-door header is absent or wrong.
+     */
+    originReachability?: McpOriginReachability;
+    /**
+     * The app-owned front-door header this runtime verifies on every derived
+     * route (transport and OAuth facade paths) under `originReachability:
+     * "fronted"`. Registration fails closed when `fronted` is declared without
+     * it, and it is rejected under every other posture: an undeclared or
+     * unenforced front door would be a silent no-op.
+     */
+    frontDoorVerification?: FrontDoorVerification;
     /**
      * Anchors the framework-owned front channel (DESIGN §8). When it is set,
      * AppTheory owns `/authorize`, the stage-global upstream callback, and the

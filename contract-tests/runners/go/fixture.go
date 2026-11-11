@@ -11,12 +11,13 @@ import (
 )
 
 type Fixture struct {
-	ID     string        `json:"id"`
-	Tier   string        `json:"tier"`
-	Name   string        `json:"name"`
-	Setup  FixtureSetup  `json:"setup"`
-	Input  FixtureInput  `json:"input"`
-	Expect FixtureExpect `json:"expect"`
+	ID              string                   `json:"id"`
+	Tier            string                   `json:"tier"`
+	Name            string                   `json:"name"`
+	Setup           FixtureSetup             `json:"setup"`
+	Input           FixtureInput             `json:"input"`
+	Expect          FixtureExpect            `json:"expect"`
+	ExpectByRuntime map[string]FixtureExpect `json:"expect_by_runtime,omitempty"`
 }
 
 type FixtureSetup struct {
@@ -260,6 +261,18 @@ type FixtureMCPFacadeSetup struct {
 	ResourceMetadataURL string                  `json:"resource_metadata_url,omitempty"`
 	Scopes              []string                `json:"scopes,omitempty"`
 	Bearer              *FixtureMCPFacadeBearer `json:"bearer,omitempty"`
+	// OriginReachability records the direct-origin posture the construct
+	// declared. Empty leaves it unrecorded; fronted requires
+	// FrontDoorVerification and registers the fail-closed header check.
+	OriginReachability    string                        `json:"origin_reachability,omitempty"`
+	FrontDoorVerification *FixtureFrontDoorVerification `json:"front_door_verification,omitempty"`
+}
+
+// FixtureFrontDoorVerification declares the app-owned front-door header the
+// runtime verifies under origin_reachability fronted.
+type FixtureFrontDoorVerification struct {
+	HeaderName  string `json:"header_name"`
+	SecretValue string `json:"secret_value"`
 }
 
 // FixtureMCPFacadeBearer selects the runtime-bearer transport posture and the
@@ -334,6 +347,7 @@ type FixtureMCPServer struct {
 	Version                       string                      `json:"version,omitempty"`
 	IncludeServerInfoMetadata     *bool                       `json:"include_server_info_metadata,omitempty"`
 	InitialSessionListenerEnabled *bool                       `json:"initial_session_listener_enabled,omitempty"`
+	DeclinedGETValidationFirst    *bool                       `json:"declined_get_validation_first,omitempty"`
 	ExtensionCapabilities         map[string]map[string]any   `json:"extension_capabilities,omitempty"`
 	CacheableResults              *FixtureMCPCacheableResults `json:"cacheable_results,omitempty"`
 }

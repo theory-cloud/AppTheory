@@ -543,7 +543,17 @@ here for operators who need implementation-level details:
   each origin from the incoming request. `DefaultCapabilities` supplies the fixed defaults, while `Capabilities`,
   per-kind scope sets, and paired application-owned `HandlerFactory` authorize/token plug points remain explicit
   config. Optional `RootDiscoveryConfig` installs the static upstream authorization-server root document. Each
-  installed `Route` records its methods and derived paths.
+  installed `Route` records its methods and derived paths. The direct-origin posture is app-owned too:
+  `FacadeConfig.OriginReachability` (`OriginReachabilityDisabled`, `OriginReachabilityLocked`, or
+  `OriginReachabilityFronted`) mirrors the CDK construct's declared `AppTheoryMcpOriginReachability`, and
+  `FrontDoorVerification` (required with `fronted`, refused otherwise) makes the runtime verify the declared
+  front-door header on every derived route — transport and OAuth facade — refusing a request whose header is absent
+  or wrong with `403 app.forbidden` before any credential work. Registering `fronted` without the verification fails
+  closed. `fronted` is a defense-in-depth declaration with runtime enforcement, not mutual-TLS assurance and not
+  origin unreachability; an unwired runtime enforces nothing, and the construct prop, the distribution's origin
+  header, and this config must come from one application-owned constant. TypeScript
+  `originReachability`/`frontDoorVerification` and Python `origin_reachability`/`front_door_verification` are the
+  same contract.
 - `testkit/oauth`: Claude-like end-to-end OAuth flow helpers for remote MCP tests (`NewClaudePublicClient`,
   `AuthorizeOptions`, `Authorize`)
 - TypeScript and Python expose matching MCP registries, server/test harnesses, in-memory/Dynamo stores, bearer-token
@@ -624,7 +634,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>1283 exported top-level symbols</summary>
+<summary>1289 exported top-level symbols</summary>
 
 ```text
 AccountAssertion, AccountAssertionAssumeFailed, AccountAssertionMismatch, AccountAssertionNotConfigured, AccountAssertionState, AccountAssertionUnavailable,
@@ -691,7 +701,8 @@ ErrStreamAggregateBackfillRequired, ErrStreamAggregateCapacityExceeded, ErrStrea
 ErrStreamTransactionRequired, ErrTaskNotFound, ErrTaskTerminal, ErrTransactionExpired, ErrTransactionNotFound, ErrUnsupportedOperation, EscapeHatches, ETag,
 Event, EventBridgeEvent, EventBridgeEventOptions, EventBridgeHandler, EventBridgePattern, EventBridgeRule, EventBridgeScheduledWorkloadResultSummary,
 EventBridgeScheduledWorkloadSummary, EventBridgeSelector, EventBridgeWorkloadEnvelope, EventBus, EventBusConfig, EventContext, EventHandler, EventMiddleware,
-EventQuery, FacadeConfig, Factory, FakeClient, FakeEmbedder, FakeProvider, FakeSNSClient, FakeStore, FakeStreamerClient, FixedWindowStrategy, FullyRedact,
+EventQuery, FacadeConfig, Factory, FakeClient, FakeEmbedder, FakeProvider, FakeSNSClient, FakeStore, FakeStreamerClient, FixedWindowStrategy,
+FrontDoorVerification, FullyRedact,
 GenerateOpenAPI, GenerateOpenAPIJSON, GetDayWindow, GetFixedWindow, GetHourWindow, GetInput, GetMinuteWindow, GetOutput, GetPromptRequest, Handler,
 HandlerFactory, HashKey, Hook, HookFailure, HookPrepareImage, HookReadiness, HookReady, HookResume, HookRun, HooksFromEMFMetricSink, HooksFromLogger,
 HooksFromLoggerAndEMFMetricSink, HooksFromProfileLogger, HookStart, HookStop, HookSuspend, HookTeardown, HookTerminate, HookValidate, HTML, HTMLStream,
@@ -733,7 +744,8 @@ NormalizeStage, NormalizeTopK, OAuthAuthorizationServerMCPPath, OAuthDiscoveryTe
 OAuthProtectedResourcePath, ObjectRef, ObservabilityHooks, OpenAPIAuthSchemes, OpenAPIFieldSpec, OpenAPIRequestSpec, OpenAPIResponseSpec, OpenAPIRouteSpec,
 OpenAPISpec, OpenAPIValidationRule, Operation, OperationAuthToken, OperationContract, OperationDelete, OperationGet, OperationHTTPRouteContract,
 OperationInvoke, OperationLegacyShellToken, OperationList, OperationPresignPut, OperationPut, OperationResume, OperationRun, OperationShellAuthToken,
-OperationShellToken, OperationSuspend, OperationTerminate, Option, Optional, OptionalAuth, Options, OriginalHost, OriginalURI, OriginURL, OriginValidator,
+OperationShellToken, OperationSuspend, OperationTerminate, Option, Optional, OptionalAuth, Options, OriginalHost, OriginalURI,
+OriginReachability, OriginReachabilityDisabled, OriginReachabilityFronted, OriginReachabilityLocked, OriginURL, OriginValidator,
 ParamAgentID, ParamClientNamespace, ParamPartnerID, ParseBatchRequest, ParseMCPPath, ParseObjectRef, ParseRequest, ParseResponse, PartialMask,
 PartnerAgentMCPPattern, PartnerNamespaceMCPPattern, PaymentXMLPatterns, PKCEChallengeS256, PKCEVerifyS256, Policy, PolicyAction, PolicyAllow, PolicyDecision,
 PolicyFromEnv, PolicyFromText, PolicyFullyRedact, PolicyHook, PolicyPartialMask, PolicyRule, PresignPutInput, PresignPutOutput, PrincipalAuthHook,
@@ -804,7 +816,7 @@ ValidationRuleRequired, Vary, VectorRecord, VerifyVersionedArtifact, VersionedAr
 WebSocketEvent, WebSocketEventOptions, WebSocketHandler, WindowConfig, WindowLimit, WithAPI, WithAuthHook, WithAuthPrincipalHook, WithAWSConfig,
 WithAWSLambdaMicroVMClock, WithAWSLambdaMicroVMRegion, WithCacheableResultConfig, WithCapabilityConfig, WithClock, WithCompletionHooks, WithControllerClock,
 WithControllerDeploymentDefaults, WithControllerExecutionRoleArn, WithControllerID, WithControllerIDGenerator, WithControllerLogging,
-WithControllerProviderID, WithControllerSessionTTL, WithCORS, WithDeviceAuthorizationEndpoint, WithDynamoStreamSpillEncryption, WithEMFClock,
+WithControllerProviderID, WithControllerSessionTTL, WithCORS, WithDeclinedGETValidationFirst, WithDeviceAuthorizationEndpoint, WithDynamoStreamSpillEncryption, WithEMFClock,
 WithEMFNamespace, WithEMFService, WithEMFWriter, WithEnvironmentErrorNotifications, WithErrorNotifier, WithExtensionCapabilities, WithHTTPErrorFormat,
 WithIdentifier, WithIDGenerator, WithInitialSessionListenerBudget, WithInitialSessionListenerEnabled, WithLegacyHTTPErrorShape, WithLifecycleContract,
 WithLifecycleHandler, WithLimits, WithLogger, WithLoggingLevelHook, WithObservability, WithOriginValidator, WithPolicyHook, WithProfileClock,

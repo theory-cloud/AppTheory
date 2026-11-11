@@ -84,7 +84,17 @@ new AppTheoryHttpApi(stack, "Api", { handler: fn, apiName: "my-api" });
 - `AppTheoryMcpServer` attaches an ordered route-algebra family to a supplied `IHttpApi` or creates the standalone
   specialization. The complete OAuth facade and DynamoDB session state default on; owned APIs also default access
   logging and throttling on. Go `mcpfacade.RegisterMCPFacade` owns explicit issuer/JWKS/scope/handler configuration.
-  The v3.1.x singleton, auth-env, and flat owned-resource props carry jsii deprecation notices and migration pointers.
+  Under `runtime-bearer` and `none-public` the direct-origin decision is mandatory: `originReachability` must be
+  `disabled`, `locked`, or (attach mode only) `fronted`. `fronted` is for an application-owned front door whose origin
+  is the attached API's execute-api hostname: it requires
+  `frontDoorVerification: { headerName, secretValue, asserted: true }`, records the posture, the header name, and a
+  SHA-256 digest of the secret in the `apptheory:mcp-transport-posture` marker (never the literal), and is enforced by
+  the runtime, which refuses every derived route — transport and OAuth facade — when the header is absent or wrong and
+  fails registration when the posture is declared without the verification config. It is a defense-in-depth
+  declaration with runtime enforcement, not mTLS assurance and not origin unreachability; an unwired runtime enforces
+  nothing, and the prop, the distribution's origin header, and the runtime config must come from one app-owned
+  constant. The v3.1.x singleton, auth-env, and flat owned-resource props carry jsii deprecation notices and migration
+  pointers.
 - `AppTheoryInstallParameters` is the required, account-agnostic namespace installation surface. It emits the ten
   governed `String` parameters and the `TargetAccountMatchesCaller` CloudFormation Rule; consuming constructs use its
   typed string-token accessors rather than accepting a second identity-injection path.

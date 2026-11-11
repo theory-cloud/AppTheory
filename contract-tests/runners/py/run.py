@@ -108,6 +108,30 @@ def filter_fixtures_by_id(
     return matches
 
 
+FIXTURE_RUNTIME_NAME = "py"
+
+
+def resolve_fixture_expectation(fixture: dict[str, Any], file: Path) -> dict[str, Any]:
+    """Select this runtime's entry from a per-runtime expectation block.
+
+    A fixture that carries ``expect_by_runtime`` must name every runtime; a
+    missing entry fails closed instead of falling back to a shared expectation.
+    """
+
+    by_runtime = fixture.get("expect_by_runtime")
+    if by_runtime is None:
+        return fixture
+    if not isinstance(by_runtime, dict):
+        raise RuntimeError(f"fixture {file} expect_by_runtime must be an object")
+    expect = by_runtime.get(FIXTURE_RUNTIME_NAME)
+    if expect is None:
+        raise RuntimeError(
+            f"fixture {file} expect_by_runtime has no {FIXTURE_RUNTIME_NAME!r} entry"
+        )
+    fixture["expect"] = expect
+    return fixture
+
+
 def load_fixtures(fixtures_root: Path) -> list[dict[str, Any]]:
     files = list_fixture_files(fixtures_root)
     if not files:
@@ -118,7 +142,7 @@ def load_fixtures(fixtures_root: Path) -> list[dict[str, Any]]:
         fixture = json.loads(raw)
         if not fixture.get("id"):
             raise RuntimeError(f"fixture {file} missing id")
-        fixtures.append(fixture)
+        fixtures.append(resolve_fixture_expectation(fixture, file))
     return fixtures
 
 
@@ -2618,6 +2642,10 @@ def _new_fixture_mcp_server(runtime: Any, setup: dict[str, Any]) -> Any:
     if "initial_session_listener_enabled" in server_config:
         options["initial_session_listener_enabled"] = bool(
             server_config["initial_session_listener_enabled"]
+        )
+    if "declined_get_validation_first" in server_config:
+        options["declined_get_validation_first"] = bool(
+            server_config["declined_get_validation_first"]
         )
     if server_config.get("cacheable_results"):
         options["cacheable_results"] = server_config["cacheable_results"]
@@ -6590,7 +6618,15 @@ def register_fixture_mcp_facade(runtime: Any, app: Any, setup: dict[str, Any]) -
             status=204, headers={}, cookies=[], body=b"", is_base64=False
         ),
         transport_posture="iam",
+        origin_reachability=str(setup.get("origin_reachability") or ""),
     )
+
+    verification = setup.get("front_door_verification") or None
+    if verification:
+        config.front_door_verification = runtime.FrontDoorVerification(
+            header_name=str(verification.get("header_name") or ""),
+            secret_value=str(verification.get("secret_value") or ""),
+        )
 
     bearer = setup.get("bearer") or None
     if bearer:

@@ -191,6 +191,7 @@ test("AppTheoryMcpServer input surfaces exclude undeclared origin and URL author
       "domain",
       "enableSessionTable",
       "facade",
+      "frontDoorVerification",
       "handler",
       "jwksUri",
       "mcpPath",
@@ -217,6 +218,7 @@ test("AppTheoryMcpServer input surfaces exclude undeclared origin and URL author
       "issuer",
     ],
     AppTheoryMcpFacadeAttachment: ["providerId"],
+    AppTheoryMcpFrontDoorVerificationOptions: ["asserted", "headerName", "secretValue"],
     AppTheoryMcpRuntimePostureOptions: ["requireBearerToken"],
     AppTheoryMcpDenialSignalOptions: ["dimensions", "metricName"],
     AppTheoryMcpOwningApiDefenseOptions: ["accessLogging", "throttling"],
@@ -275,7 +277,7 @@ test("AppTheoryMcpServer input surfaces exclude undeclared origin and URL author
   ];
   assert.deepEqual(
     originReachability.members.map((member) => member.name).sort(),
-    ["DISABLED", "LOCKED"],
+    ["DISABLED", "FRONTED", "LOCKED"],
     "the origin reachability decision must stay a bounded enum",
   );
 });

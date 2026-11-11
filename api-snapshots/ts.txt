@@ -159,6 +159,7 @@ FakeTokenRequest	interface
 FakeVectorStore	class
 FakeWebSocketManagementClient	class
 FixedWindowStrategy	class
+FrontDoorVerification	interface
 GetVectorsInput	interface
 HTTPErrorFormat	type
 HTTP_ERROR_FORMAT_FLAT_LEGACY	const
@@ -305,6 +306,7 @@ McpInputRequest	interface
 McpInputRequiredResult	interface
 McpJSONRecord	type
 McpJSONValue	type
+McpOriginReachability	type
 McpPromptArgument	interface
 McpPromptDef	interface
 McpPromptHandler	type
@@ -475,6 +477,7 @@ OBJECTSTORE_ERROR_INVALID_STORE_CONFIG	const
 OBJECTSTORE_ERROR_NOT_FOUND	const
 OBJECTSTORE_ERROR_OBJECT_TOO_LARGE	const
 OBJECTSTORE_ERROR_UNSUPPORTED_OPERATION	const
+ORIGIN_REACHABILITIES	const
 ObjectRef	interface
 ObjectStore	interface
 ObjectStoreCall	interface

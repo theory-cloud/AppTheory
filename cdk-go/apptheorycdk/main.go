@@ -635,6 +635,10 @@ func init() {
 		reflect.TypeOf((*AppTheoryMcpFacadeAttachment)(nil)).Elem(),
 	)
 	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpFrontDoorVerificationOptions",
+		reflect.TypeOf((*AppTheoryMcpFrontDoorVerificationOptions)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryMcpOAuthDiscoveryTemplate",
 		reflect.TypeOf((*AppTheoryMcpOAuthDiscoveryTemplate)(nil)).Elem(),
 	)
@@ -648,6 +652,7 @@ func init() {
 		map[string]interface{}{
 			"DISABLED": AppTheoryMcpOriginReachability_DISABLED,
 			"LOCKED":   AppTheoryMcpOriginReachability_LOCKED,
+			"FRONTED":  AppTheoryMcpOriginReachability_FRONTED,
 		},
 	)
 	_jsii_.RegisterStruct(
