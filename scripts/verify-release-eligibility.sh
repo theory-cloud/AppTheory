@@ -1,7 +1,17 @@
 #!/usr/bin/env bash
-# Purpose: verify that a promotion range contains at least one release-eligible
-# Conventional Commit (feat:/fix:/perf:), because release-please ships nothing
-# else.
+# Purpose: verify that a promotion range contains at least one user-facing,
+# release-driving Conventional Commit (feat:/fix:/perf:), because release-please
+# ships nothing else.
+#
+# Release Please's own generated commits are release-driving fix(...) messages by
+# design: both lane configs set `pull-request-title-pattern`, and release-please
+# uses the rendered release PR title as the release-branch commit subject, while
+# the artifact sync subject is declared in scripts/sync-release-pr-generated.sh.
+# Those commits are already-released automation, not fresh user-facing work, so
+# the shared classifier in scripts/lib/release-automation-commits.py excludes
+# exactly the generated subjects. A range that holds only generated release
+# automation still fails: the train never promotes an already-published no-op.
+# A `Release-As:` footer on a prohibited subject is not an eligibility bypass.
 #
 # This single predicate is shared by the two CI surfaces that must agree:
 #   - "Prerelease readiness (staging → premain)" on the staging -> premain PR,
@@ -21,10 +31,11 @@
 #
 # Post-release main back-merge exemption (opt-in via --allow-main-backmerge):
 # after a stable release the release train brings the released main branch back
-# into staging. That range carries only `chore(main): release X.Y.Z` and
-# `chore(release): sync generated release artifacts`, so it holds no
-# release-driving commit -- correctly, because the release already shipped.
-# TableTheory's staging-release-driver exempts exactly this shape
+# into staging. That range carries only the released stable content and the
+# release train's own generated automation commits (now fix-typed, and excluded
+# by the shared classifier), so it holds no new release-driving commit --
+# correctly, because the release already shipped. TableTheory's
+# staging-release-driver exempts exactly this shape
 # (`if HEAD_REF == main -> PASS (post-release main back-merge)`); without the
 # same exemption here every stable release leaves the merged staging SHA red.
 #
@@ -48,6 +59,8 @@
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+repo_root="$(pwd)"
+release_automation_classifier="${repo_root}/scripts/lib/release-automation-commits.py"
 
 range=""
 context=""
@@ -121,6 +134,11 @@ done
 
 if ! command -v git >/dev/null 2>&1; then
   echo "release-eligibility: BLOCKED (git not found)" >&2
+  exit 2
+fi
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "release-eligibility: BLOCKED (python3 not found; generated release-automation commits cannot be classified)" >&2
   exit 2
 fi
 
@@ -206,13 +224,24 @@ eligibility_verdict() {
   # Do not pipe directly into grep -q under pipefail: grep exits as soon as it
   # finds a match, which can SIGPIPE git log and make a matching commit look like
   # a failed eligibility check.
-  if grep -Eq '^(feat|fix|perf)(\([^)]+\))?(!)?: ' <<<"${commit_subjects}"; then
+  local user_facing_subjects=""
+  if ! user_facing_subjects="$(
+    printf '%s\n' "${commit_subjects}" |
+      python3 "${release_automation_classifier}" filter-user-facing 2>&1
+  )"; then
+    echo "release-eligibility: BLOCKED (could not classify generated release-automation commits)" >&2
+    printf '%s\n' "${user_facing_subjects}" >&2
+    return 2
+  fi
+
+  if grep -Eq '^(feat|fix|perf)(\([^)]+\))?(!)?: ' <<<"${user_facing_subjects}"; then
     echo "release-eligibility: PASS (${context})"
     return 0
   fi
 
   echo "release-eligibility: FAIL (${context})"
   echo "No user-facing conventional commits (feat:/fix:/perf:) found in ${range}."
+  echo "Generated Release Please release/sync commits are excluded: they are already-released automation."
   echo "release-please will skip, so no new release will be cut."
   echo
   echo "Commit subjects:"
@@ -223,7 +252,10 @@ eligibility_verdict() {
 # run_self_test builds a throwaway release-train repository (released main, a
 # premain RC line, staging after the back-merge) and proves the exemption stays
 # narrow in both directions: every exempting shape passes, and chore-only,
-# lookalike, forked, non-main-merge, and non-opted-in shapes still fail.
+# lookalike, forked, non-main-merge, and non-opted-in shapes still fail. It also
+# replays the reset-only promotion (prohibited subject plus a Release-As footer)
+# and proves only the real recovery fix, not generated fix-typed automation,
+# makes both existing range expressions release-eligible.
 run_self_test() {
   self_test_tmp="$(mktemp -d)"
   trap 'rm -rf "${self_test_tmp}"' EXIT
@@ -246,6 +278,12 @@ run_self_test() {
     blob="$(printf '%s\n' "${2}" | git hash-object -w --stdin)"
     tree="$(printf '100644 blob %s\tmarker.txt\n' "${blob}" | git mktree)"
     git commit-tree "${tree}" -p "${1}" -m "${3}"
+  }
+  commit_with_body_on() { # <parent> <marker> <subject> <body>
+    local blob tree
+    blob="$(printf '%s\n' "${2}" | git hash-object -w --stdin)"
+    tree="$(printf '100644 blob %s\tmarker.txt\n' "${blob}" | git mktree)"
+    git commit-tree "${tree}" -p "${1}" -m "${3}" -m "${4}"
   }
   merge_of() { # <mainline-parent> <merged-parent> <marker> <subject>
     local blob tree
@@ -349,6 +387,53 @@ run_self_test() {
   git switch -q --detach "${backmerge_sha}"
   allow_main_backmerge="false"
   check_case "the back-merge range without the opt-in stays subject to the predicate" 1
+
+  # R1: the exact reset-only promotion shape. staging carries only the #1271
+  # merge plus the reset commit whose body has a Release-As footer. A footer is
+  # not an eligibility bypass: the prohibited chore subject still fails. The
+  # real signed recovery fix then has to pass both existing range expressions.
+  local reset_commit reset_merge generated_release_commit generated_sync_commit
+  local recovery_fix recovery_bundle
+  reset_commit="$(commit_with_body_on "${backmerge_sha}" "reset" \
+    "chore(release): reset the prerelease track to the stable baseline" \
+    "Release-As: 7.3.0-rc")"
+  reset_merge="$(merge_of "${backmerge_sha}" "${reset_commit}" "reset-merge" \
+    "Merge pull request #1271 from theory-cloud/apptheory/release-train-v7.3.0-reset")"
+  generated_release_commit="$(commit_on "${reset_merge}" "generated-release" "fix(premain): release 7.3.0-rc")"
+  generated_sync_commit="$(commit_on "${reset_merge}" "generated-sync" "fix(release): sync generated release artifacts")"
+  recovery_fix="$(commit_on "${reset_merge}" "recovery-fix" "fix(ci): repair the release train eligibility path")"
+  recovery_bundle="$(commit_on "${generated_sync_commit}" "recovery-bundle" "fix(ci): repair the release train eligibility path")"
+
+  git update-ref refs/remotes/origin/premain "${backmerge_sha}"
+  git update-ref refs/remotes/origin/staging "${reset_merge}"
+  allow_main_backmerge="false"
+  head_ref=""
+  head_repo=""
+  repository="theory-cloud/AppTheory"
+
+  git switch -q --detach "${reset_merge}"
+  range="origin/premain..origin/staging"
+  check_case "the reset-only promotion is rejected by the promotion-range predicate" 1 "" "release-eligibility: PASS"
+  range="origin/premain..HEAD"
+  check_case "the reset-only promotion is rejected by the staging-push predicate" 1 "" "release-eligibility: PASS"
+
+  git switch -q --detach "${generated_release_commit}"
+  range="origin/premain..HEAD"
+  check_case "a generated Release Please release commit is not fresh release eligibility" 1
+  git switch -q --detach "${generated_sync_commit}"
+  check_case "the generated artifact sync commit is not fresh release eligibility" 1
+
+  git update-ref refs/remotes/origin/staging "${recovery_fix}"
+  git switch -q --detach "${recovery_fix}"
+  range="origin/premain..origin/staging"
+  check_case "the real recovery fix is accepted by the promotion-range predicate" 0 "release-eligibility: PASS"
+  range="origin/premain..HEAD"
+  check_case "the real recovery fix is accepted by the staging-push predicate" 0 "release-eligibility: PASS"
+
+  git update-ref refs/remotes/origin/staging "${recovery_bundle}"
+  git switch -q --detach "${recovery_bundle}"
+  range="origin/premain..origin/staging"
+  check_case "the real recovery fix is still accepted next to generated fix-typed automation" 0 "release-eligibility: PASS"
 
   if (( failures > 0 )); then
     echo "release-eligibility self-test: FAIL (${failures} of ${cases} cases failed)" >&2

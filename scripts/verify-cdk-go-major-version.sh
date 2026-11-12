@@ -129,7 +129,7 @@ summary_file="${tmp_dir}/summary.json"
     --branch release-please--branches--premain \
     --expected-head 0000000000000000000000000000000000000000 \
     --repository theory-cloud/AppTheory \
-    --message "chore(release): sync generated release artifacts" \
+    --message "fix(release): sync generated release artifacts" \
     --body "[skip ci]" \
     --mode fixture \
     --payload-file "${payload_file}" \

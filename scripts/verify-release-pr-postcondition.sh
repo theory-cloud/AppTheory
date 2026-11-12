@@ -3,6 +3,8 @@
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+repo_root="$(pwd)"
+release_automation_classifier="${repo_root}/scripts/lib/release-automation-commits.py"
 
 version_line_re='^[[:space:]]*([0-9]+\.[0-9]+\.[0-9]+(-rc(\.[0-9]+)?)?)[[:space:]]*(#.*)?$'
 rc_version_re='^[0-9]+\.[0-9]+\.[0-9]+-rc(\.[0-9]+)?$'
@@ -82,6 +84,7 @@ has_releasable_commits_since() {
   local baseline="$1"
   local base_ref="$2"
   local commit_subjects
+  local user_facing_subjects
 
   # Same user-facing predicate as the prerelease readiness gate:
   # git log --no-merges --format=%s <baseline>..<base_branch> |
@@ -90,7 +93,20 @@ has_releasable_commits_since() {
   # Keep the subjects in memory instead of piping directly into grep -q so
   # pipefail cannot turn a matching early grep exit into a false negative.
   commit_subjects="$(git log --no-merges --format=%s "${baseline}..${base_ref}")"
-  grep -Eq "${releasable_subject_re}" <<<"${commit_subjects}"
+
+  # Release Please's generated release and artifact-sync commits are fix-typed,
+  # but they are already-released automation, not a user-facing change. Exclude
+  # exactly those generated subjects so a legitimate no-op stays a no-op.
+  if ! user_facing_subjects="$(
+    printf '%s\n' "${commit_subjects}" |
+      python3 "${release_automation_classifier}" filter-user-facing 2>&1
+  )"; then
+    echo "release-pr-postcondition: FAIL (could not classify generated release-automation commits; treating the range as releasable)" >&2
+    printf '%s\n' "${user_facing_subjects}" >&2
+    return 0
+  fi
+
+  grep -Eq "${releasable_subject_re}" <<<"${user_facing_subjects}"
 }
 
 verify_no_open_release_pr_is_legitimate_noop() {
@@ -238,6 +254,48 @@ PY
     }
     echo "release-pr-postcondition: PASS (self-test ${channel} empty release-please PR with zero user-facing commits passed)"
 
+    # Generated fix-typed automation is already-released content: it must not
+    # turn a legitimate no-op into a red lane, and it must not hide a real miss.
+    commit_self_test_change "fix(release): sync generated release artifacts" "self-test.txt" "generated-sync"
+    if ! output="$(
+      verify_no_open_release_pr_is_legitimate_noop \
+        "${base_branch}" \
+        "${release_branch}" \
+        "${expected_shape}" \
+        "${noop_message}" \
+        "${manifest_path}" 2>&1
+    )"; then
+      printf '%s\n' "${output}" >&2
+      echo "release-pr-postcondition: FAIL (self-test ${channel} generated artifact sync commit broke the no-op path)" >&2
+      return 1
+    fi
+    grep -Fq "legitimate no-op" <<<"${output}" || {
+      printf '%s\n' "${output}" >&2
+      echo "release-pr-postcondition: FAIL (self-test ${channel} generated artifact sync commit was not treated as already-released automation)" >&2
+      return 1
+    }
+    echo "release-pr-postcondition: PASS (self-test ${channel} generated artifact sync commit stayed a legitimate no-op)"
+
+    commit_self_test_change "fix(premain): release 1.0.1-rc" "self-test.txt" "generated-release"
+    if ! output="$(
+      verify_no_open_release_pr_is_legitimate_noop \
+        "${base_branch}" \
+        "${release_branch}" \
+        "${expected_shape}" \
+        "${noop_message}" \
+        "${manifest_path}" 2>&1
+    )"; then
+      printf '%s\n' "${output}" >&2
+      echo "release-pr-postcondition: FAIL (self-test ${channel} generated release PR commit broke the no-op path)" >&2
+      return 1
+    fi
+    grep -Fq "legitimate no-op" <<<"${output}" || {
+      printf '%s\n' "${output}" >&2
+      echo "release-pr-postcondition: FAIL (self-test ${channel} generated release PR commit was not treated as already-released automation)" >&2
+      return 1
+    }
+    echo "release-pr-postcondition: PASS (self-test ${channel} generated release PR commit stayed a legitimate no-op)"
+
     commit_self_test_change "fix: self-test releasable change" "self-test.txt" "fix"
     if output="$(
       verify_no_open_release_pr_is_legitimate_noop \
@@ -292,6 +350,7 @@ case "${channel}" in
     expected_shape="RC"
     noop_message="release-please no-op is a failed RC gate"
     manifest_path=".release-please-manifest.premain.json"
+    config_path="release-please-config.premain.json"
     ;;
   stable)
     base_branch="main"
@@ -299,6 +358,7 @@ case "${channel}" in
     expected_shape="stable"
     noop_message="release-please no-op is a failed stable gate"
     manifest_path=".release-please-manifest.json"
+    config_path="release-please-config.json"
     ;;
   *)
     echo "release-pr-postcondition: FAIL (usage: $0 prerelease|stable)" >&2
@@ -380,5 +440,51 @@ case "${channel}" in
     fi
     ;;
 esac
+
+# The generated release PR title is also the release-branch commit subject
+# (pinned release-please 17.11.2 uses releasePullRequest.title.toString() as the
+# commit message). Bind both to the lane's configured pull-request-title-pattern
+# so a non-release-driving generated message cannot pass as a release gate.
+if ! expected_title="$(
+  python3 "${release_automation_classifier}" render-title \
+    --config "${config_path}" \
+    --branch "${base_branch}" \
+    --version "${version}" 2>&1
+)"; then
+  echo "release-pr-postcondition: FAIL (could not render the configured release PR title for ${base_branch}: ${expected_title})" >&2
+  exit 1
+fi
+
+if ! [[ "${expected_title}" =~ ${releasable_subject_re} ]]; then
+  echo "release-pr-postcondition: FAIL (configured release PR title for ${base_branch} is not release-driving: ${expected_title})" >&2
+  exit 1
+fi
+
+if [[ "${title}" != "${expected_title}" ]]; then
+  echo "release-pr-postcondition: FAIL (generated ${base_branch} release PR #${pr_number} title ${title} != configured release-driving title ${expected_title})" >&2
+  exit 1
+fi
+
+if ! sync_message="$(python3 "${release_automation_classifier}" sync-message 2>&1)"; then
+  echo "release-pr-postcondition: FAIL (could not read the generated artifact sync commit subject: ${sync_message})" >&2
+  exit 1
+fi
+
+pr_commit_headlines="$(
+  gh pr view --repo "${repository}" "${pr_number}" --json commits --jq '.commits[].messageHeadline'
+)"
+if ! grep -Fxq -- "${title}" <<<"${pr_commit_headlines}"; then
+  echo "release-pr-postcondition: FAIL (generated ${base_branch} release PR #${pr_number} has no release-branch commit subject equal to the generated title ${title})" >&2
+  exit 1
+fi
+
+while IFS= read -r headline; do
+  [[ -z "${headline}" ]] && continue
+  if [[ "${headline}" == "${title}" || "${headline}" == "${sync_message}" ]]; then
+    continue
+  fi
+  echo "release-pr-postcondition: FAIL (generated ${base_branch} release PR #${pr_number} contains an unexpected release-branch commit subject: ${headline})" >&2
+  exit 1
+done <<<"${pr_commit_headlines}"
 
 echo "release-pr-postcondition: PASS (${expected_shape} PR #${pr_number}, VERSION=${version})"

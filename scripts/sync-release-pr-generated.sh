@@ -4,7 +4,7 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-artifact_sync_commit_message="chore(release): sync generated release artifacts"
+artifact_sync_commit_message="fix(release): sync generated release artifacts"
 artifact_sync_commit_body="[skip ci]"
 
 default_required_checks() {

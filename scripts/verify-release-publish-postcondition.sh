@@ -3,6 +3,8 @@
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+repo_root="$(pwd)"
+release_automation_classifier="${repo_root}/scripts/lib/release-automation-commits.py"
 
 releasable_subject_re='^(feat|fix|perf)(\([^)]+\))?(!)?: '
 
@@ -42,6 +44,7 @@ has_releasable_commits_since() {
   local baseline="$1"
   local base_ref="$2"
   local commit_subjects
+  local user_facing_subjects
 
   # Same user-facing predicate as the prerelease readiness gate:
   # git log --no-merges --format=%s <baseline>..<base_branch> |
@@ -50,7 +53,21 @@ has_releasable_commits_since() {
   # Keep the subjects in memory instead of piping directly into grep -q so
   # pipefail cannot turn a matching early grep exit into a false negative.
   commit_subjects="$(git log --no-merges --format=%s "${baseline}..${base_ref}")"
-  grep -Eq "${releasable_subject_re}" <<<"${commit_subjects}"
+
+  # Generated release-please release/artifact-sync commits are fix-typed but are
+  # already-released automation. Exclude exactly those generated subjects so an
+  # already-published release stays a legitimate no-op while a real user-facing
+  # change after the tag still fails closed.
+  if ! user_facing_subjects="$(
+    printf '%s\n' "${commit_subjects}" |
+      python3 "${release_automation_classifier}" filter-user-facing 2>&1
+  )"; then
+    echo "release-publish-postcondition: FAIL (could not classify generated release-automation commits; treating the range as releasable)" >&2
+    printf '%s\n' "${user_facing_subjects}" >&2
+    return 0
+  fi
+
+  grep -Eq "${releasable_subject_re}" <<<"${user_facing_subjects}"
 }
 
 is_published_release() {
@@ -363,6 +380,10 @@ self_test_stable_already_published_noop() {
     git init -q
     git checkout -q -b main
     commit_self_test_change "chore: seed stable baseline" "self-test.txt" "baseline"
+    # Release automation commits belong to the tagged release, not to changes
+    # after it, even though they are fix-typed.
+    commit_self_test_change "fix(release): sync generated release artifacts" "self-test.txt" "generated-sync-in-tag"
+    commit_self_test_change "fix(main): release 1.0.0" "self-test.txt" "generated-release-in-tag"
     git update-ref refs/tags/v1.0.0 HEAD
 
     expected_tag="v1.0.0"
@@ -385,6 +406,32 @@ self_test_stable_already_published_noop() {
       return 1
     }
     echo "release-publish-postcondition: PASS (self-test stable already-published tag with zero user-facing commits passed)"
+
+    commit_self_test_change "fix(release): sync generated release artifacts" "self-test.txt" "generated-sync-after"
+    if ! output="$(require_created_tag "stable" 2>&1)"; then
+      printf '%s\n' "${output}" >&2
+      echo "release-publish-postcondition: FAIL (self-test stable generated artifact sync broke the already-published no-op path)" >&2
+      return 1
+    fi
+    grep -Fq "already published v1.0.0; legitimate no-op" <<<"${output}" || {
+      printf '%s\n' "${output}" >&2
+      echo "release-publish-postcondition: FAIL (self-test stable generated artifact sync was not treated as already-released automation)" >&2
+      return 1
+    }
+    echo "release-publish-postcondition: PASS (self-test stable generated artifact sync after the tag stayed a legitimate no-op)"
+
+    commit_self_test_change "fix(main): release 1.0.1" "self-test.txt" "generated-release-after"
+    if ! output="$(require_created_tag "stable" 2>&1)"; then
+      printf '%s\n' "${output}" >&2
+      echo "release-publish-postcondition: FAIL (self-test stable generated release PR commit broke the already-published no-op path)" >&2
+      return 1
+    fi
+    grep -Fq "already published v1.0.0; legitimate no-op" <<<"${output}" || {
+      printf '%s\n' "${output}" >&2
+      echo "release-publish-postcondition: FAIL (self-test stable generated release PR commit was not treated as already-released automation)" >&2
+      return 1
+    }
+    echo "release-publish-postcondition: PASS (self-test stable generated release PR commit after the tag stayed a legitimate no-op)"
 
     commit_self_test_change "perf: self-test releasable change" "self-test.txt" "perf"
     if output="$(require_created_tag "stable" 2>&1)"; then
@@ -434,6 +481,19 @@ self_test_prerelease_already_published_noop() {
       return 1
     }
     echo "release-publish-postcondition: PASS (self-test prerelease already-published tag with zero user-facing commits passed)"
+
+    commit_self_test_change "fix(release): sync generated release artifacts" "self-test.txt" "generated-sync-after"
+    if ! output="$(require_created_tag "RC" 2>&1)"; then
+      printf '%s\n' "${output}" >&2
+      echo "release-publish-postcondition: FAIL (self-test prerelease generated artifact sync broke the already-published no-op path)" >&2
+      return 1
+    fi
+    grep -Fq "already published v1.0.0-rc; legitimate no-op" <<<"${output}" || {
+      printf '%s\n' "${output}" >&2
+      echo "release-publish-postcondition: FAIL (self-test prerelease generated artifact sync was not treated as already-released automation)" >&2
+      return 1
+    }
+    echo "release-publish-postcondition: PASS (self-test prerelease generated artifact sync after the tag stayed a legitimate no-op)"
 
     commit_self_test_change "fix: self-test releasable change" "self-test.txt" "fix"
     if output="$(require_created_tag "RC" 2>&1)"; then
