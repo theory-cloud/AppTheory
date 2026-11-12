@@ -12,8 +12,13 @@ import (
 	"strings"
 )
 
-// evidenceInvocation matches the stable CI entry point and captures the gate id.
-var evidenceInvocation = regexp.MustCompile(`scripts/evidence/verify-or-execute\.sh[ \t]+--gate[ \t]+([a-z0-9-]+)`)
+// evidenceInvocation matches the stable CI entry point, the gate id, and the
+// optional tracked proof profile. The profile may be a literal or a matrix
+// reference; both are resolved against the tracked registry and the job's
+// explicit matrix cells.
+var evidenceInvocation = regexp.MustCompile(`scripts/evidence/verify-or-execute\.sh[ \t]+--gate[ \t]+([a-z0-9-]+)(?:[ \t]+--profile[ \t]+("[^"]*"|'[^']*'|[^ \t"']+))?`)
+
+var matrixProfileReference = regexp.MustCompile(`^\$\{\{\s*matrix\.([A-Za-z0-9_-]+)\s*\}\}$`)
 
 // evidenceWiringRequirement names the jobs whose evidence wiring is part of the
 // operator-authorized execution policy. A job that loses its evidence entry
@@ -24,10 +29,10 @@ type evidenceWiringRequirement struct {
 	workflow string
 	job      string
 	gates    []string
-	// forced means every invocation of a listed gate in this job must set
-	// EVIDENCE_FORCE_EXECUTE: "true": the job's environment is itself under test
-	// (a runtime floor) or it is the generated-delta smoke, so it must never
-	// reuse another environment's proof.
+	// forced means the job is an artifact-production smoke that always executes
+	// on the current event and must set EVIDENCE_FORCE_EXECUTE: "true". Every
+	// other job must name a tracked proof profile instead, so a given tested
+	// environment is proven once rather than forced again on every leg.
 	forced bool
 }
 
@@ -41,8 +46,8 @@ var evidenceWiring = []evidenceWiringRequirement{
 	{workflow: ciWorkflowPath, job: "cdk-go-drift", gates: []string{"cdk-go-drift"}},
 	{workflow: ciWorkflowPath, job: "security-refresh", gates: []string{"security-refresh"}},
 	{workflow: ciWorkflowPath, job: "release-delta", gates: []string{"release-delta"}, forced: true},
-	{workflow: ciWorkflowPath, job: "runtime-floor-matrix", gates: []string{"ts", "py", "contract-tests"}, forced: true},
-	{workflow: ciWorkflowPath, job: "cdk-floor-matrix", gates: []string{"cdk-go-drift"}, forced: true},
+	{workflow: ciWorkflowPath, job: "runtime-floor-matrix", gates: []string{"ts", "py", "contract-tests"}},
+	{workflow: ciWorkflowPath, job: "cdk-floor-matrix", gates: []string{"cdk-go-drift"}},
 	{workflow: ".github/workflows/examples-local.yml", job: "examples-local", gates: []string{"examples-local"}},
 }
 
@@ -51,20 +56,54 @@ var evidenceWiring = []evidenceWiringRequirement{
 // commit, independent of any reusable proof.
 var alwaysExecutingJobs = []string{"release-security-gates"}
 
+type evidenceProfile struct {
+	Environment struct {
+		Go       string `json:"go"`
+		Node     string `json:"node"`
+		Python   string `json:"python"`
+		Platform struct {
+			OS   string `json:"os"`
+			Arch string `json:"arch"`
+		} `json:"platform"`
+	} `json:"environment"`
+}
+
+type evidenceGate struct {
+	Kind     string   `json:"kind"`
+	Profiles []string `json:"profiles"`
+	Commands []struct {
+		ID   string   `json:"id"`
+		Argv []string `json:"argv"`
+	} `json:"commands"`
+}
+
 type evidenceRegistry struct {
 	SchemaVersion     int    `json:"schemaVersion"`
 	EvidenceDirectory string `json:"evidenceDirectory"`
 	LocalLogDirectory string `json:"localLogDirectory"`
-	Gates             map[string]struct {
-		Kind     string `json:"kind"`
-		Commands []struct {
-			ID   string   `json:"id"`
-			Argv []string `json:"argv"`
-		} `json:"commands"`
-	} `json:"gates"`
+	// ProofProfiles is deliberately strict: every gate profile must resolve to a
+	// tracked declaration whose environment the collector probes.
+	ProofProfiles   map[string]evidenceProfile `json:"proofProfiles"`
+	Gates           map[string]evidenceGate    `json:"gates"`
 	ExecutionMatrix []struct {
 		ID string `json:"id"`
 	} `json:"executionMatrix"`
+}
+
+func (g evidenceGate) supportedProfiles() []string {
+	if len(g.Profiles) == 0 {
+		return []string{"default"}
+	}
+	return g.Profiles
+}
+
+func (g evidenceGate) supportsProfile(profile string) bool {
+	for _, item := range g.supportedProfiles() {
+		if item == profile {
+			return true
+		}
+	}
+	return false
 }
 
 func runEvidenceWiring(args []string, stdout, stderr io.Writer) int {
@@ -93,7 +132,7 @@ func checkEvidenceWiring(root string) []string {
 		return []string{err.Error()}
 	}
 	failures := checkEvidenceRegistry(registry)
-	failures = append(failures, checkEvidenceWorkflowWiring(root)...)
+	failures = append(failures, checkEvidenceWorkflowWiring(root, registry)...)
 	failures = append(failures, checkAlwaysExecutingWiring(root)...)
 	return failures
 }
@@ -109,6 +148,23 @@ func checkEvidenceRegistry(registry *evidenceRegistry) []string {
 	for _, gate := range []string{"rubric", "deterministic-builds", "go", "ts", "py", "contract-tests", "cdk-go-drift", "examples-local", "security-refresh", "release-delta"} {
 		if _, ok := registry.Gates[gate]; !ok {
 			failures = append(failures, fmt.Sprintf("tracked gate registry is missing %q", gate))
+		}
+	}
+	if len(registry.ProofProfiles) == 0 {
+		failures = append(failures, "tracked gate registry must declare proof profiles")
+	}
+	for profile, declaration := range registry.ProofProfiles {
+		environment := declaration.Environment
+		if environment.Go == "" || environment.Node == "" || environment.Python == "" ||
+			environment.Platform.OS == "" || environment.Platform.Arch == "" {
+			failures = append(failures, fmt.Sprintf("proof profile %q must declare go, node, python and platform", profile))
+		}
+	}
+	for gateID, gate := range registry.Gates {
+		for _, profile := range gate.supportedProfiles() {
+			if _, ok := registry.ProofProfiles[profile]; !ok {
+				failures = append(failures, fmt.Sprintf("gate %q supports undeclared proof profile %q", gateID, profile))
+			}
 		}
 	}
 	if commands := registry.Gates["rubric"].Commands; len(commands) != 1 || strings.Join(commands[0].Argv, " ") != "make rubric" {
@@ -128,7 +184,7 @@ func checkEvidenceRegistry(registry *evidenceRegistry) []string {
 	return failures
 }
 
-func checkEvidenceWorkflowWiring(root string) []string {
+func checkEvidenceWorkflowWiring(root string, registry *evidenceRegistry) []string {
 	var failures []string
 	workflows := map[string]*workflowFile{}
 	for _, requirement := range evidenceWiring {
@@ -146,7 +202,7 @@ func checkEvidenceWorkflowWiring(root string) []string {
 			failures = append(failures, fmt.Sprintf("%s must define job %q", requirement.workflow, requirement.job))
 			continue
 		}
-		failures = append(failures, checkJobEvidenceWiring(requirement, job)...)
+		failures = append(failures, checkJobEvidenceWiring(requirement, job, registry)...)
 	}
 	return failures
 }
@@ -172,18 +228,43 @@ func checkAlwaysExecutingWiring(root string) []string {
 	return failures
 }
 
-func checkJobEvidenceWiring(requirement evidenceWiringRequirement, job workflowJob) []string {
+func checkJobEvidenceWiring(requirement evidenceWiringRequirement, job workflowJob, registry *evidenceRegistry) []string {
 	var failures []string
 	found := map[string]bool{}
 	for _, step := range job.steps {
 		for _, match := range evidenceInvocation.FindAllStringSubmatch(step.run, -1) {
 			gate := match[1]
 			found[gate] = true
-			if requirement.forced && step.env["EVIDENCE_FORCE_EXECUTE"] != literalTrue {
+			gateDefinition, ok := registry.Gates[gate]
+			if !ok {
 				failures = append(failures, fmt.Sprintf(
-					"job %q step %q must set EVIDENCE_FORCE_EXECUTE: \"true\" for gate %q; this environment is itself under test",
+					"job %q invokes unknown gate %q", requirement.job, gate))
+				continue
+			}
+			if requirement.forced {
+				if step.env["EVIDENCE_FORCE_EXECUTE"] != literalTrue {
+					failures = append(failures, fmt.Sprintf(
+						"job %q step %q must set EVIDENCE_FORCE_EXECUTE: \"true\" for gate %q; this is an artifact-production smoke, not reusable evidence",
+						requirement.job, step.name, gate))
+				}
+				continue
+			}
+			if step.env["EVIDENCE_FORCE_EXECUTE"] == literalTrue {
+				failures = append(failures, fmt.Sprintf(
+					"job %q step %q forces execution of gate %q instead of naming a tracked proof profile",
 					requirement.job, step.name, gate))
 			}
+			profile := ""
+			if len(match) > 2 {
+				profile = match[2]
+			}
+			if profile == "" {
+				failures = append(failures, fmt.Sprintf(
+					"job %q step %q must name a tracked proof profile for gate %q (--profile)",
+					requirement.job, step.name, gate))
+				continue
+			}
+			failures = append(failures, checkProfileReference(requirement, job, gate, gateDefinition, profile, registry)...)
 		}
 	}
 	for _, gate := range requirement.gates {
@@ -192,6 +273,61 @@ func checkJobEvidenceWiring(requirement evidenceWiringRequirement, job workflowJ
 				"%s job %q must invoke scripts/evidence/verify-or-execute.sh --gate %s",
 				requirement.workflow, requirement.job, gate))
 		}
+	}
+	return failures
+}
+
+// checkProfileReference resolves a literal or matrix-driven profile against the
+// tracked registry and the job's explicit matrix cells. A profile that is not
+// declared, not supported by the gate, or not covered by every matrix cell
+// fails closed, so a required context cannot silently degrade into a wildcard.
+func checkProfileReference(
+	requirement evidenceWiringRequirement,
+	job workflowJob,
+	gate string,
+	gateDefinition evidenceGate,
+	raw string,
+	registry *evidenceRegistry,
+) []string {
+	var failures []string
+	value := strings.Trim(raw, `"'`)
+	if match := matrixProfileReference.FindStringSubmatch(value); match != nil {
+		key := match[1]
+		if len(job.matrixInclude) == 0 {
+			failures = append(failures, fmt.Sprintf(
+				"job %q references matrix.%s for gate %q but declares no explicit matrix.include cells",
+				requirement.job, key, gate))
+			return failures
+		}
+		for _, cell := range job.matrixInclude {
+			profile, ok := cell[key]
+			if !ok || profile == "" {
+				failures = append(failures, fmt.Sprintf(
+					"job %q matrix cell %v does not bind %q for gate %q", requirement.job, cell, key, gate))
+				continue
+			}
+			failures = append(failures, checkLiteralProfile(requirement, gate, gateDefinition, profile, registry)...)
+		}
+		return failures
+	}
+	return append(failures, checkLiteralProfile(requirement, gate, gateDefinition, value, registry)...)
+}
+
+func checkLiteralProfile(
+	requirement evidenceWiringRequirement,
+	gate string,
+	gateDefinition evidenceGate,
+	profile string,
+	registry *evidenceRegistry,
+) []string {
+	var failures []string
+	if _, ok := registry.ProofProfiles[profile]; !ok {
+		failures = append(failures, fmt.Sprintf(
+			"job %q gate %q names undeclared proof profile %q", requirement.job, gate, profile))
+	}
+	if !gateDefinition.supportsProfile(profile) {
+		failures = append(failures, fmt.Sprintf(
+			"job %q gate %q names proof profile %q it does not support", requirement.job, gate, profile))
 	}
 	return failures
 }

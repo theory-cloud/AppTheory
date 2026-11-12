@@ -132,6 +132,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           bash scripts/verify-branch-release-supply-chain.sh
@@ -187,7 +188,7 @@ jobs:
       # (tracked in scripts/evidence/validation-gates.json). A stale scan, a
       # changed dependency input or untrusted PR origin executes the scan.
       - name: Verify dependency freshness or scan
-        run: bash scripts/evidence/verify-or-execute.sh --gate security-refresh
+        run: bash scripts/evidence/verify-or-execute.sh --gate security-refresh --profile default
 
   release-delta:
     name: Release delta validation
@@ -251,14 +252,27 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: ["22", "24"]
-        python-version: ["3.12", "3.14"]
-        # The latest/latest leg is the dedicated Go/TypeScript/Python/contract
-        # job set on the same toolchains; the floor cross-product below keeps
-        # every distinct lower-floor environment covered.
-        exclude:
-          - node-version: "24"
+        # Each cell is a distinct tested environment with its own tracked proof
+        # profile. The latest/latest leg is the dedicated Go/TypeScript/Python/
+        # contract job set on the same toolchains. A profile's proof is reused
+        # on every later release event for the same inputs; a changed floor or
+        # input invalidates only that profile, never the whole matrix.
+        include:
+          - node-version: "22"
+            python-version: "3.12"
+            ts-profile: floor-node22
+            py-profile: floor-py3.12
+            contract-profile: floor-node22-py3.12
+          - node-version: "22"
             python-version: "3.14"
+            ts-profile: floor-node22
+            py-profile: default
+            contract-profile: floor-node22-py3.14
+          - node-version: "24"
+            python-version: "3.12"
+            ts-profile: default
+            py-profile: floor-py3.12
+            contract-profile: floor-node24-py3.12
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -278,15 +292,24 @@ jobs:
           cache-dependency-path: |
             py/pyproject.toml
             py/requirements-build.txt
-      # The floor environment is itself under test, so these never reuse
-      # another environment's evidence.
+      # The floor environment is a tracked proof profile, not a forced rerun on
+      # every event. A committed record for this profile and these exact inputs
+      # verifies; otherwise the real command executes once and the produced
+      # sanitized record is preserved so a single commit makes every later leg
+      # reuse it.
       - name: Verify lower-floor package and fixture proof
-        env:
-          EVIDENCE_FORCE_EXECUTE: "true"
         run: |
-          bash scripts/evidence/verify-or-execute.sh --gate ts
-          bash scripts/evidence/verify-or-execute.sh --gate py
-          bash scripts/evidence/verify-or-execute.sh --gate contract-tests
+          bash scripts/evidence/verify-or-execute.sh --gate ts --profile "${{ matrix.ts-profile }}"
+          bash scripts/evidence/verify-or-execute.sh --gate py --profile "${{ matrix.py-profile }}"
+          bash scripts/evidence/verify-or-execute.sh --gate contract-tests --profile "${{ matrix.contract-profile }}"
+      - name: Preserve produced floor records
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: floor-records-node${{ matrix.node-version }}-py${{ matrix.python-version }}
+          path: gov-infra/evidence/proportionate/*/*.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   cdk-floor-matrix:
     name: CDK floor matrix (Node ${{ matrix.node-version }})
@@ -295,10 +318,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: ["22", "24"]
-        # Node 24 is covered by the dedicated CDK Go binding drift job.
-        exclude:
-          - node-version: "24"
+        # Node 24 is covered by the dedicated CDK Go binding drift job, which
+        # uses the default profile.
+        include:
+          - node-version: "22"
+            drift-profile: floor-node22
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -314,12 +338,20 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: "npm"
           cache-dependency-path: cdk/package-lock.json
+      # Same profile mechanism as the runtime floor: the Node 22 binding proof
+      # is produced once and reused by every later leg for these inputs.
       - name: Verify CDK lower-floor generated binding proof
-        env:
-          EVIDENCE_FORCE_EXECUTE: "true"
-        run: bash scripts/evidence/verify-or-execute.sh --gate cdk-go-drift
+        run: bash scripts/evidence/verify-or-execute.sh --gate cdk-go-drift --profile "${{ matrix.drift-profile }}"
       - name: Verify CDK dependency engines admit the Node floor
         run: bash scripts/verify-cdk-engines-floor.sh
+      - name: Preserve produced floor records
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cdk-floor-records-node${{ matrix.node-version }}
+          path: gov-infra/evidence/proportionate/*/*.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   prerelease-readiness:
     name: Prerelease readiness (staging → premain)
@@ -403,7 +435,7 @@ jobs:
         with:
           node-version: "24"
       - name: Verify Go tests and vet
-        run: bash scripts/evidence/verify-or-execute.sh --gate go
+        run: bash scripts/evidence/verify-or-execute.sh --gate go --profile default
 
   ts:
     name: TypeScript (npm pack)
@@ -417,7 +449,7 @@ jobs:
           cache: "npm"
           cache-dependency-path: ts/package-lock.json
       - name: Verify checked-in dist drift and pack the tarball
-        run: bash scripts/evidence/verify-or-execute.sh --gate ts
+        run: bash scripts/evidence/verify-or-execute.sh --gate ts --profile default
 
   py:
     name: Python (build wheel + sdist)
@@ -433,7 +465,7 @@ jobs:
             py/pyproject.toml
             py/requirements-build.txt
       - name: Build wheel + sdist
-        run: bash scripts/evidence/verify-or-execute.sh --gate py
+        run: bash scripts/evidence/verify-or-execute.sh --gate py --profile default
 
   builds:
     name: Verify deterministic builds
@@ -466,7 +498,7 @@ jobs:
             py/requirements-lint.txt
             cdk/requirements-build.txt
       - name: Build twice and compare checksums
-        run: bash scripts/evidence/verify-or-execute.sh --gate deterministic-builds
+        run: bash scripts/evidence/verify-or-execute.sh --gate deterministic-builds --profile default
 
   cdk-go-drift:
     name: CDK Go binding drift
@@ -488,7 +520,7 @@ jobs:
           cache: "npm"
           cache-dependency-path: cdk/package-lock.json
       - name: Verify cdk-go generated binding drift
-        run: bash scripts/evidence/verify-or-execute.sh --gate cdk-go-drift
+        run: bash scripts/evidence/verify-or-execute.sh --gate cdk-go-drift --profile default
 
   contract-tests:
     name: Contract tests (fixtures)
@@ -512,7 +544,7 @@ jobs:
           cache: "pip"
           cache-dependency-path: py/pyproject.toml
       - name: Verify API snapshots and contract fixtures
-        run: bash scripts/evidence/verify-or-execute.sh --gate contract-tests
+        run: bash scripts/evidence/verify-or-execute.sh --gate contract-tests --profile default
 
   rubric:
     name: Rubric (full gate set)
@@ -548,7 +580,7 @@ jobs:
       # proof was verified for these exact inputs, or the rubric executed when
       # no applicable proof existed; the step prints which.
       - name: Verify reusable evidence or run full rubric
-        run: bash scripts/evidence/verify-or-execute.sh --gate rubric
+        run: bash scripts/evidence/verify-or-execute.sh --gate rubric --profile default
       - name: Upload GovTheory rubric evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

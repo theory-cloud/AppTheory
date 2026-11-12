@@ -303,7 +303,7 @@ require_job_contains(
 require_job_contains(
     ".github/workflows/examples-local.yml",
     "examples-local",
-    "scripts/evidence/verify-or-execute.sh --gate examples-local --verify-only",
+    "scripts/evidence/verify-or-execute.sh --gate examples-local --profile default --verify-only",
     "the examples harness must reuse verified evidence or execute the real harness",
 )
 require_not_contains(

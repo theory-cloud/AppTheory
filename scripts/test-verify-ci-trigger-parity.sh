@@ -173,10 +173,10 @@ elif mode == "eligibility_backmerge_head_ref_widened":
     text = text.replace(binding, step + "          PR_HEAD_REF: ${{ github.ref_name }}\n", 1)
 elif mode == "rubric_step_event_gate":
     target = ("      - name: Verify reusable evidence or run full rubric\n"
-              "        run: bash scripts/evidence/verify-or-execute.sh --gate rubric\n")
+              "        run: bash scripts/evidence/verify-or-execute.sh --gate rubric --profile default\n")
     replacement = ("      - name: Verify reusable evidence or run full rubric\n"
                    "        if: github.event_name == 'workflow_dispatch'\n"
-                   "        run: bash scripts/evidence/verify-or-execute.sh --gate rubric\n")
+                   "        run: bash scripts/evidence/verify-or-execute.sh --gate rubric --profile default\n")
     if target not in text:
         raise SystemExit("rubric step fixture not found")
     text = text.replace(target, replacement, 1)

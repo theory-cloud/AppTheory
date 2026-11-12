@@ -36,13 +36,31 @@ jobs:
         with:
           persist-credentials: false
 
+      # The examples gate is the most expensive local proof. A reviewed record
+      # for these exact inputs and the tracked `default` producing-host profile
+      # lets the PR and every later lane reuse it; a fork PR, a changed input or
+      # a missing/stale record executes the real harness. The summary states
+      # which happened, and this check runs before any setup so a reused proof
+      # costs no toolchain install.
+      - name: Check reusable examples evidence
+        id: evidence
+        run: |
+          set -euo pipefail
+          if bash scripts/evidence/verify-or-execute.sh --gate examples-local --profile default --verify-only; then
+            echo "reuse=true" >>"${GITHUB_OUTPUT}"
+          else
+            echo "reuse=false" >>"${GITHUB_OUTPUT}"
+          fi
+
       - name: Set up Go
+        if: steps.evidence.outputs.reuse != 'true'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Set up Node
+        if: steps.evidence.outputs.reuse != 'true'
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
@@ -53,6 +71,7 @@ jobs:
             examples/cdk/*/package-lock.json
 
       - name: Set up Python
+        if: steps.evidence.outputs.reuse != 'true'
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
@@ -60,6 +79,7 @@ jobs:
       # The field-level encryption row decrypts with the official AWS
       # Encryption SDK, so the harness interpreter needs it.
       - name: Install the harness Python dependencies
+        if: steps.evidence.outputs.reuse != 'true'
         run: python -m pip install -r scripts/local/requirements-examples.txt
 
       # The local-TLS browser row loads the CloudFront page in headless
@@ -67,21 +87,8 @@ jobs:
       # authenticator. --with-deps installs the shared libraries Chromium needs
       # on this runner image.
       - name: Install the browser row's Chromium
+        if: steps.evidence.outputs.reuse != 'true'
         run: python -m playwright install --with-deps chromium
-
-      # The examples gate is the most expensive local proof. A reviewed record
-      # for these exact inputs lets the PR, merge and promotion lanes reuse it;
-      # a fork PR, a changed input or a missing/stale record executes the real
-      # harness. The summary states which happened.
-      - name: Check reusable examples evidence
-        id: evidence
-        run: |
-          set -euo pipefail
-          if bash scripts/evidence/verify-or-execute.sh --gate examples-local --verify-only; then
-            echo "reuse=true" >>"${GITHUB_OUTPUT}"
-          else
-            echo "reuse=false" >>"${GITHUB_OUTPUT}"
-          fi
 
       # The service container publishes the profile port; --external tells the
       # harness to wait for it instead of starting a compose container on the

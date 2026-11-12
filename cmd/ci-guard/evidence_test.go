@@ -11,16 +11,24 @@ const evidenceRegistryFixture = `{
   "schemaVersion": 1,
   "evidenceDirectory": "gov-infra/evidence/proportionate",
   "localLogDirectory": "gov-infra/evidence/proportionate/local",
+  "proofProfiles": {
+    "default": {"environment": {"go": "go1.27.4", "node": "24", "python": "3.14", "platform": {"os": "darwin", "arch": "arm64"}}},
+    "floor-node22": {"environment": {"go": "go1.27.4", "node": "22", "python": "3.12", "platform": {"os": "linux", "arch": "x64"}}},
+    "floor-py3.12": {"environment": {"go": "go1.27.4", "node": "24", "python": "3.12", "platform": {"os": "linux", "arch": "x64"}}},
+    "floor-node22-py3.12": {"environment": {"go": "go1.27.4", "node": "22", "python": "3.12", "platform": {"os": "linux", "arch": "x64"}}},
+    "floor-node22-py3.14": {"environment": {"go": "go1.27.4", "node": "22", "python": "3.14", "platform": {"os": "linux", "arch": "x64"}}},
+    "floor-node24-py3.12": {"environment": {"go": "go1.27.4", "node": "24", "python": "3.12", "platform": {"os": "linux", "arch": "x64"}}}
+  },
   "gates": {
-    "rubric": {"kind": "source", "commands": [{"id": "rubric", "argv": ["make", "rubric"]}]},
-    "deterministic-builds": {"kind": "source", "commands": [{"id": "builds", "argv": ["bash", "scripts/verify-builds.sh"]}]},
-    "go": {"kind": "source", "commands": [{"id": "go", "argv": ["bash", "scripts/verify-go.sh"]}]},
-    "ts": {"kind": "source", "commands": [{"id": "ts", "argv": ["bash", "scripts/verify-ts-pack.sh"]}]},
-    "py": {"kind": "source", "commands": [{"id": "py", "argv": ["bash", "scripts/verify-python-build.sh"]}]},
-    "contract-tests": {"kind": "source", "commands": [{"id": "contract", "argv": ["bash", "scripts/verify-contract-tests.sh"]}]},
-    "cdk-go-drift": {"kind": "source", "commands": [{"id": "drift", "argv": ["bash", "scripts/verify-cdk-go-drift.sh"]}]},
-    "examples-local": {"kind": "source", "commands": [{"id": "examples", "argv": ["make", "examples-local"]}]},
-    "security-refresh": {"kind": "dependency-scan", "commands": [{"id": "scan", "argv": ["bash", "scripts/verify-security-refresh.sh"]}]},
+    "rubric": {"kind": "source", "profiles": ["default"], "commands": [{"id": "rubric", "argv": ["make", "rubric"]}]},
+    "deterministic-builds": {"kind": "source", "profiles": ["default"], "commands": [{"id": "builds", "argv": ["bash", "scripts/verify-builds.sh"]}]},
+    "go": {"kind": "source", "profiles": ["default"], "commands": [{"id": "go", "argv": ["bash", "scripts/verify-go.sh"]}]},
+    "ts": {"kind": "source", "profiles": ["default", "floor-node22"], "commands": [{"id": "ts", "argv": ["bash", "scripts/verify-ts-pack.sh"]}]},
+    "py": {"kind": "source", "profiles": ["default", "floor-py3.12"], "commands": [{"id": "py", "argv": ["bash", "scripts/verify-python-build.sh"]}]},
+    "contract-tests": {"kind": "source", "profiles": ["default", "floor-node22-py3.12", "floor-node22-py3.14", "floor-node24-py3.12"], "commands": [{"id": "contract", "argv": ["bash", "scripts/verify-contract-tests.sh"]}]},
+    "cdk-go-drift": {"kind": "source", "profiles": ["default", "floor-node22"], "commands": [{"id": "drift", "argv": ["bash", "scripts/verify-cdk-go-drift.sh"]}]},
+    "examples-local": {"kind": "source", "profiles": ["default"], "commands": [{"id": "examples", "argv": ["make", "examples-local"]}]},
+    "security-refresh": {"kind": "dependency-scan", "profiles": ["default"], "commands": [{"id": "scan", "argv": ["bash", "scripts/verify-security-refresh.sh"]}]},
     "release-delta": {"kind": "generated-delta", "commands": [{"id": "delta", "argv": ["bash", "scripts/verify-version-alignment.sh"]}]}
   },
   "executionMatrix": [
@@ -52,35 +60,35 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Run rubric
-        run: bash scripts/evidence/verify-or-execute.sh --gate rubric
+        run: bash scripts/evidence/verify-or-execute.sh --gate rubric --profile default
   builds:
     runs-on: ubuntu-latest
     steps:
-      - run: bash scripts/evidence/verify-or-execute.sh --gate deterministic-builds
+      - run: bash scripts/evidence/verify-or-execute.sh --gate deterministic-builds --profile default
   go:
     runs-on: ubuntu-latest
     steps:
-      - run: bash scripts/evidence/verify-or-execute.sh --gate go
+      - run: bash scripts/evidence/verify-or-execute.sh --gate go --profile default
   ts:
     runs-on: ubuntu-latest
     steps:
-      - run: bash scripts/evidence/verify-or-execute.sh --gate ts
+      - run: bash scripts/evidence/verify-or-execute.sh --gate ts --profile default
   py:
     runs-on: ubuntu-latest
     steps:
-      - run: bash scripts/evidence/verify-or-execute.sh --gate py
+      - run: bash scripts/evidence/verify-or-execute.sh --gate py --profile default
   contract-tests:
     runs-on: ubuntu-latest
     steps:
-      - run: bash scripts/evidence/verify-or-execute.sh --gate contract-tests
+      - run: bash scripts/evidence/verify-or-execute.sh --gate contract-tests --profile default
   cdk-go-drift:
     runs-on: ubuntu-latest
     steps:
-      - run: bash scripts/evidence/verify-or-execute.sh --gate cdk-go-drift
+      - run: bash scripts/evidence/verify-or-execute.sh --gate cdk-go-drift --profile default
   security-refresh:
     runs-on: ubuntu-latest
     steps:
-      - run: bash scripts/evidence/verify-or-execute.sh --gate security-refresh
+      - run: bash scripts/evidence/verify-or-execute.sh --gate security-refresh --profile default
   release-delta:
     runs-on: ubuntu-latest
     steps:
@@ -90,21 +98,40 @@ jobs:
         run: bash scripts/evidence/verify-or-execute.sh --gate release-delta
   runtime-floor-matrix:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - node-version: "22"
+            python-version: "3.12"
+            ts-profile: floor-node22
+            py-profile: floor-py3.12
+            contract-profile: floor-node22-py3.12
+          - node-version: "22"
+            python-version: "3.14"
+            ts-profile: floor-node22
+            py-profile: default
+            contract-profile: floor-node22-py3.14
+          - node-version: "24"
+            python-version: "3.12"
+            ts-profile: default
+            py-profile: floor-py3.12
+            contract-profile: floor-node24-py3.12
     steps:
       - name: Floor proof
-        env:
-          EVIDENCE_FORCE_EXECUTE: "true"
         run: |
-          bash scripts/evidence/verify-or-execute.sh --gate ts
-          bash scripts/evidence/verify-or-execute.sh --gate py
-          bash scripts/evidence/verify-or-execute.sh --gate contract-tests
+          bash scripts/evidence/verify-or-execute.sh --gate ts --profile "${{ matrix.ts-profile }}"
+          bash scripts/evidence/verify-or-execute.sh --gate py --profile "${{ matrix.py-profile }}"
+          bash scripts/evidence/verify-or-execute.sh --gate contract-tests --profile "${{ matrix.contract-profile }}"
   cdk-floor-matrix:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - node-version: "22"
+            drift-profile: floor-node22
     steps:
       - name: CDK floor proof
-        env:
-          EVIDENCE_FORCE_EXECUTE: "true"
-        run: bash scripts/evidence/verify-or-execute.sh --gate cdk-go-drift
+        run: bash scripts/evidence/verify-or-execute.sh --gate cdk-go-drift --profile "${{ matrix.drift-profile }}"
 `
 
 const evidenceExamplesWorkflowFixture = `name: Examples
@@ -115,7 +142,7 @@ jobs:
   examples-local:
     runs-on: ubuntu-latest
     steps:
-      - run: bash scripts/evidence/verify-or-execute.sh --gate examples-local
+      - run: bash scripts/evidence/verify-or-execute.sh --gate examples-local --profile default
 `
 
 func writeEvidenceRoot(t *testing.T, ciWorkflow string) string {
@@ -154,21 +181,49 @@ func TestEvidenceWiringFailsClosed(t *testing.T) {
 		{
 			name: "missing gate entry point",
 			mutate: func(text string) string {
-				return strings.Replace(text, "bash scripts/evidence/verify-or-execute.sh --gate go", "bash scripts/verify-go.sh", 1)
+				return strings.Replace(text, "bash scripts/evidence/verify-or-execute.sh --gate go --profile default", "bash scripts/verify-go.sh", 1)
 			},
 			want: "--gate go",
 		},
 		{
-			name: "floor job stops forcing execution",
+			name: "floor job loses its profile",
 			mutate: func(text string) string {
-				return strings.Replace(text, "          EVIDENCE_FORCE_EXECUTE: \"true\"\n        run: |\n          bash scripts/evidence/verify-or-execute.sh --gate ts", "        run: |\n          bash scripts/evidence/verify-or-execute.sh --gate ts", 1)
+				return strings.Replace(text, `bash scripts/evidence/verify-or-execute.sh --gate ts --profile "${{ matrix.ts-profile }}"`, "bash scripts/evidence/verify-or-execute.sh --gate ts", 1)
 			},
-			want: "EVIDENCE_FORCE_EXECUTE",
+			want: "must name a tracked proof profile",
+		},
+		{
+			name: "floor job forces execution again",
+			mutate: func(text string) string {
+				return strings.Replace(text, "      - name: Floor proof\n        run: |", "      - name: Floor proof\n        env:\n          EVIDENCE_FORCE_EXECUTE: \"true\"\n        run: |", 1)
+			},
+			want: "instead of naming a tracked proof profile",
+		},
+		{
+			name: "matrix cell names an undeclared profile",
+			mutate: func(text string) string {
+				return strings.Replace(text, "            py-profile: floor-py3.12\n            contract-profile: floor-node22-py3.12", "            py-profile: floor-py9.9\n            contract-profile: floor-node22-py3.12", 1)
+			},
+			want: "undeclared proof profile",
+		},
+		{
+			name: "matrix cell names a profile the gate does not support",
+			mutate: func(text string) string {
+				return strings.Replace(text, "            ts-profile: floor-node22\n            py-profile: floor-py3.12\n            contract-profile: floor-node22-py3.12\n          - node-version: \"22\"\n            python-version: \"3.14\"", "            ts-profile: floor-py3.12\n            py-profile: floor-py3.12\n            contract-profile: floor-node22-py3.12\n          - node-version: \"22\"\n            python-version: \"3.14\"", 1)
+			},
+			want: "it does not support",
+		},
+		{
+			name: "matrix reference without explicit cells",
+			mutate: func(text string) string {
+				return strings.Replace(text, "    strategy:\n      matrix:\n        include:\n          - node-version: \"22\"\n            drift-profile: floor-node22\n", "", 1)
+			},
+			want: "declares no explicit matrix.include cells",
 		},
 		{
 			name: "always-executing job reuses evidence",
 			mutate: func(text string) string {
-				return strings.Replace(text, "run: bash scripts/verify-release-branch-signatures.sh", "run: bash scripts/evidence/verify-or-execute.sh --gate rubric", 1)
+				return strings.Replace(text, "run: bash scripts/verify-release-branch-signatures.sh", "run: bash scripts/evidence/verify-or-execute.sh --gate rubric --profile default", 1)
 			},
 			want: "must always execute",
 		},
@@ -179,6 +234,14 @@ func TestEvidenceWiringFailsClosed(t *testing.T) {
 				return strings.Replace(text, `"release-delta": {"kind": "generated-delta", "commands": [{"id": "delta", "argv": ["bash", "scripts/verify-version-alignment.sh"]}]}`, `"unused": {"kind": "source", "commands": [{"id": "unused", "argv": ["true"]}]}`, 1)
 			},
 			want: "missing \"release-delta\"",
+		},
+		{
+			name:   "gate supports an undeclared profile",
+			mutate: func(text string) string { return text },
+			registry: func(text string) string {
+				return strings.Replace(text, `"profiles": ["default", "floor-node22"], "commands": [{"id": "drift"`, `"profiles": ["default", "floor-node22", "floor-node99"], "commands": [{"id": "drift"`, 1)
+			},
+			want: "supports undeclared proof profile",
 		},
 		{
 			name:   "release delta repeats the source suite",

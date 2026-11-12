@@ -151,13 +151,14 @@ type workflowStep struct {
 }
 
 type workflowJob struct {
-	id     string
-	name   string
-	ifText string
-	hasIf  bool
-	needs  []string
-	uses   string
-	steps  []workflowStep
+	id            string
+	name          string
+	ifText        string
+	hasIf         bool
+	needs         []string
+	uses          string
+	steps         []workflowStep
+	matrixInclude []map[string]string
 }
 
 type jobClass struct {
@@ -624,8 +625,58 @@ func applyJobField(job *workflowJob, key string, value *yaml.Node) error {
 			return fmt.Errorf("job %q: %w", job.id, err)
 		}
 		job.steps = steps
+	case "strategy":
+		include, err := parseMatrixInclude(value)
+		if err != nil {
+			return fmt.Errorf("job %q strategy: %w", job.id, err)
+		}
+		job.matrixInclude = include
 	}
 	return nil
+}
+
+// parseMatrixInclude reads the explicit matrix.include cells a job declares.
+// The evidence-wiring guard resolves a matrix-driven proof profile against these
+// cells, so a profile can never be chosen dynamically at run time outside the
+// tracked declaration.
+func parseMatrixInclude(node *yaml.Node) ([]map[string]string, error) {
+	if isNullNode(node) {
+		return nil, nil
+	}
+	if node.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("strategy must be a mapping")
+	}
+	matrix, ok := mapLookup(node, "matrix")
+	if !ok || isNullNode(matrix) {
+		return nil, nil
+	}
+	if matrix.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("matrix must be a mapping")
+	}
+	include, ok := mapLookup(matrix, "include")
+	if !ok || isNullNode(include) {
+		return nil, nil
+	}
+	if include.Kind != yaml.SequenceNode {
+		return nil, fmt.Errorf("matrix.include must be a sequence")
+	}
+	var entries []map[string]string
+	for _, item := range include.Content {
+		if item.Kind != yaml.MappingNode {
+			return nil, fmt.Errorf("matrix.include entries must be mappings")
+		}
+		entry := map[string]string{}
+		for i := 0; i+1 < len(item.Content); i += 2 {
+			key := item.Content[i]
+			scalar := item.Content[i+1]
+			if key.Kind != yaml.ScalarNode || scalar.Kind != yaml.ScalarNode {
+				continue
+			}
+			entry[key.Value] = scalar.Value
+		}
+		entries = append(entries, entry)
+	}
+	return entries, nil
 }
 
 // parseJobCondition reads a job-level if:. A literal or folded block scalar is
