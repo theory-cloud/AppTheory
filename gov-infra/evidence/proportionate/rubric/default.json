@@ -5,16 +5,16 @@
         "make",
         "rubric"
       ],
-      "durationSeconds": 271.741,
+      "durationSeconds": 556.166,
       "executed": true,
       "exitCode": 2,
-      "finishedAt": "2026-11-12T20:31:00Z",
+      "finishedAt": "2026-11-12T21:10:46Z",
       "id": "rubric",
       "inputsDigest": "sha256:98d57e1b1679890c17010b3228ff91416281069d9738fd92cd6ae9b3c9881102",
-      "logDigest": "sha256:cb45523cca82575b2bf14ee64b6a469ea1e23a86199655c2194958256622c4a3",
-      "logRef": "gov-infra/evidence/proportionate/local/rubric-rubric-20261112T202629Z-82956.log",
+      "logDigest": "sha256:d5116ef3e3f7b16067b2e933baf6a524d8e4dd17dd3d218226cd5d8cdadadd21",
+      "logRef": "gov-infra/evidence/proportionate/local/rubric-rubric-20261112T210129Z-49350.log",
       "reused": false,
-      "startedAt": "2026-11-12T20:26:29Z"
+      "startedAt": "2026-11-12T21:01:29Z"
     }
   ],
   "consumed": [
@@ -22,6 +22,26 @@
       "digest": "sha256:efa00c884f49580c33962d4d7585719c86ebb79de63d7c3cacc4d025ca6d01a2",
       "gate": "cdk-go-drift",
       "recordedAt": "2026-11-12T19:59:37Z"
+    },
+    {
+      "digest": "sha256:dc4faa8ce72d15fe76e8bf043b66264600c1340f6c06428ecf5ea4e4d6c0434c",
+      "gate": "contract-tests",
+      "recordedAt": "2026-11-12T20:00:09Z"
+    },
+    {
+      "digest": "sha256:82aa5d2e108f6247b9a2b8468c3f466e74306d9a2cd3fa05fc9807705e06159b",
+      "gate": "deterministic-builds",
+      "recordedAt": "2026-11-12T20:01:15Z"
+    },
+    {
+      "digest": "sha256:498cbe5e090cd36c62a2a490a8771740ae57a757119248427facaa0372eea45c",
+      "gate": "go",
+      "recordedAt": "2026-11-12T20:00:21Z"
+    },
+    {
+      "digest": "sha256:578c84b6821c04bf90c328648c4bc139a1d9cd251f08591c37e46f2c0581d3c4",
+      "gate": "unit",
+      "recordedAt": "2026-11-12T20:26:29Z"
     }
   ],
   "description": "Full local rubric gate used by the staging required context; composes independently produced product records and executes only rubric-unique checks",
@@ -42,7 +62,7 @@
   },
   "profile": "default",
   "reason": "command failed: rubric exit=2",
-  "recordedAt": "2026-11-12T20:31:00Z",
+  "recordedAt": "2026-11-12T21:10:46Z",
   "releaseOnly": {
     "digest": "sha256:dea47f7c318e6703d405d14f61f76d6c1a8d2b38f1b682fdc96b6781c222b699",
     "fileCount": 476,
