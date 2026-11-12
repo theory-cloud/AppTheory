@@ -21,7 +21,7 @@ No branch may skip a leg of that cycle. `premain` only receives `staging`, `main
 | `premain` | Prerelease branch. | Human `staging` promotion PRs and generated `release-please--branches--premain` RC PRs only. |
 | `main` | Stable release branch. | Human `premain` promotion PRs and generated `release-please--branches--main` stable PRs only. |
 
-Release automation is driven by Conventional Commits. `feat:` and `fix:` entries ship; `docs:`, `test:`, `chore:`, and `refactor:` do not trigger a release by themselves. Generated release automation is never `chore:`-typed: both lane configs set `pull-request-title-pattern` to `fix${scope}: release${component} ${version}`, release-please uses that rendered title as the release-branch commit subject, and the artifact sync commit is `fix(release): sync generated release artifacts`. The release predicates do not classify generated commit subjects. Promotion eligibility compares commit subjects with release-please's own conventional-commit rule and excludes only commits reachable from an existing `v<semver>` tag (already-published history); the release-PR and publish no-op predicates measure from the recorded manifest tag or the immutable published tag. A generated fix that lands after a tag is a new change in every predicate and fails closed if it was not released; a human fix whose subject resembles a generated one is never exempted. A `Release-As:` footer on a prohibited subject is not an eligibility bypass. Version state must remain aligned across `VERSION`, TypeScript and CDK package manifests and lockfiles, Python metadata, and the active Release Please manifest for the release lane. Stable releases align both Release Please manifests to the stable version; prerelease branches keep `.release-please-manifest.json` on the last stable version while `.release-please-manifest.premain.json` tracks the RC version.
+Release automation is driven by Conventional Commits. `feat:` and `fix:` entries ship; `docs:`, `test:`, `chore:`, and `refactor:` do not trigger a release by themselves. Generated release automation is never `chore:`-typed: both lane configs set `pull-request-title-pattern` to `fix${scope}: release${component} ${version}`, release-please uses that rendered title as the release-branch commit subject, and the artifact sync commit is `fix(release): sync generated release artifacts`. The release predicates do not classify generated commit subjects. Promotion eligibility compares commit subjects with release-please's own conventional-commit rule over exactly the range the caller supplies: it does not consult local tag names, so a tagged commit inside an explicitly supplied promotion range is not silently removed by that verifier. The release-PR and publish no-op predicates measure from the recorded manifest tag or the immutable published tag. A human fix whose subject resembles a generated one is never exempted. A `Release-As:` footer on a prohibited subject is not an eligibility bypass. Version state must remain aligned across `VERSION`, TypeScript and CDK package manifests and lockfiles, Python metadata, and the active Release Please manifest for the release lane. Stable releases align both Release Please manifests to the stable version; prerelease branches keep `.release-please-manifest.json` on the last stable version while `.release-please-manifest.premain.json` tracks the RC version.
 
 Upgrade policy is maintained separately from the generated changelog. When a minor line changes runtime behavior, deployment defaults, dependency floors, generated-artifact expectations, or deprecation posture, update `UPGRADING.md` in the same change or release-prep PR. The changelog lists commits; `UPGRADING.md` lists consumer action and per-line compatibility notes.
 
@@ -59,12 +59,12 @@ publication or provenance from a subject's shape. A stale open release PR genera
 that postcondition and must be refreshed or closed instead of merged.
 
 `scripts/verify-release-eligibility.sh` and the no-op paths in the release-PR and publish postconditions do not
-classify generated commit subjects. They compare commits and tags directly: eligibility excludes commits
-reachable from an existing immutable release tag, the release-PR no-op starts from the recorded manifest tag, and
-the publish no-op starts from the immutable published tag. Generated release and sync commits therefore count only
-when they are genuinely outside that tag. `scripts/verify-release-generated-messages.sh` re-checks the config
-binding, exact rendering and strict semver, the stable release-as selection, the workflow `paths-ignore` trigger,
-and the Release Please tag baseline.
+classify generated commit subjects. Eligibility evaluates exactly the range it is given and does not consult
+local tag names, so a tagged commit inside an explicitly supplied promotion range is not silently removed by
+that verifier. The release-PR no-op starts from the recorded manifest tag, and the publish no-op starts from the
+immutable published tag; generated release and sync commits inside those baselines are already published.
+`scripts/verify-release-generated-messages.sh` re-checks the config binding, exact rendering and strict semver,
+the stable release-as selection, the workflow `paths-ignore` trigger, and the Release Please tag baseline.
 
 A gate is not part of Release Please's commit parser: these predicates run after generation. A merged release PR
 does not re-trigger generation because the push that merges it changes files listed in the generation workflow's

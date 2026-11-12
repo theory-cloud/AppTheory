@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
-# Purpose: verify that a promotion range contains at least one user-facing,
-# release-driving Conventional Commit (feat:/fix:/perf:), because release-please
-# ships nothing else.
+# Purpose: verify that a promotion range contains at least one release-eligible
+# Conventional Commit (feat:/fix:/perf:), because release-please ships nothing
+# else.
 #
 # The predicate classifies commit subjects exactly as release-please does; it
-# does not special-case generated release messages. A generated fix(...) commit
-# outside an immutable release tag is a new release-driving change, and a human
-# fix whose subject happens to resemble a generated one still counts, so no
-# genuine fix can disappear. Already-published history is excluded by ancestry:
-# commits reachable from an existing v<semver> tag are part of that immutable
-# release and cannot count as fresh readiness. A `Release-As:` footer on a
-# prohibited subject is not an eligibility bypass.
+# does not special-case generated release messages. A human fix whose subject
+# happens to resemble a generated one still counts, so no genuine fix can
+# disappear. Eligibility evaluates exactly the range the caller supplies and
+# does not consult local tag names, so a tagged commit inside an explicitly
+# supplied promotion range is not silently removed by this verifier. A
+# `Release-As:` footer on a prohibited subject is not an eligibility bypass.
 #
 # This single predicate is shared by the two CI surfaces that must agree:
 #   - "Prerelease readiness (staging → premain)" on the staging -> premain PR,
@@ -26,15 +25,14 @@
 # requests into staging. The job's pull_request leg is guarded on
 # base.ref == premain && head.ref == staging, so an ordinary PR into staging no
 # longer evaluates origin/premain..HEAD -- a range that, after a stable release
-# plus the main back-merge, holds only that already-published history.
+# plus the main back-merge, holds only released history and release-train
+# automation commits.
 #
 # Post-release main back-merge exemption (opt-in via --allow-main-backmerge):
 # after a stable release the release train brings the released main branch back
-# into staging. That range carries only the released stable content and the
-# release train's own generated automation commits, all reachable from the
-# existing immutable release tags, so it holds no new release-driving commit --
-# correctly, because the release already shipped. TableTheory's
-# staging-release-driver exempts exactly this shape
+# into staging. That range is already-released content returning to staging, so
+# it carries no new promotion intent -- correctly, because the release already
+# shipped. TableTheory's staging-release-driver exempts exactly this shape
 # (`if HEAD_REF == main -> PASS (post-release main back-merge)`); without the
 # same exemption here every stable release leaves the merged staging SHA red.
 #
@@ -193,25 +191,8 @@ eligibility_verdict() {
 
   # A range that git cannot resolve is a broken invocation or missing history,
   # not a release-eligibility verdict: block rather than pass.
-  #
-  # Already-published history does not count as fresh readiness. Commits reachable
-  # from an existing immutable release tag are part of that release; everything
-  # else in the range is new, whether generated or human-authored. This is a tag
-  # ancestry test, not subject matching, so no commit subject can be exempted.
-  local release_tags=()
-  local release_tag=""
-  while IFS= read -r release_tag; do
-    if [[ -n "${release_tag}" ]]; then
-      release_tags+=("${release_tag}")
-    fi
-  done < <(git tag --list 'v[0-9]*')
-
   local commit_subjects=""
-  local log_args=("--format=%s" "${range}")
-  if (( ${#release_tags[@]} > 0 )); then
-    log_args+=(--not "${release_tags[@]}")
-  fi
-  if ! commit_subjects="$(git log "${log_args[@]}" 2>&1)"; then
+  if ! commit_subjects="$(git log --format=%s "${range}" 2>&1)"; then
     echo "release-eligibility: BLOCKED (cannot resolve ${range})" >&2
     printf '%s\n' "${commit_subjects}" >&2
     return 2
@@ -239,8 +220,7 @@ eligibility_verdict() {
   fi
 
   echo "release-eligibility: FAIL (${context})"
-  echo "No new release-driving conventional commits (feat:/fix:/perf:) found in ${range}."
-  echo "Commits reachable from an existing immutable release tag are already published and are excluded."
+  echo "No user-facing conventional commits (feat:/fix:/perf:) found in ${range}."
   echo "release-please will skip, so no new release will be cut."
   echo
   echo "Commit subjects:"
@@ -254,8 +234,9 @@ eligibility_verdict() {
 # lookalike, forked, non-main-merge, and non-opted-in shapes still fail. It also
 # replays the reset-only promotion (prohibited subject plus a Release-As footer)
 # and proves the real recovery fix passes both existing range expressions, that a
-# fix reachable from an immutable release tag is not fresh readiness, and that a
-# human fix whose subject resembles a generated one is never exempted.
+# tagged commit inside an explicitly supplied promotion range is not removed by
+# this verifier, and that a human fix whose subject resembles a generated one is
+# never exempted.
 run_self_test() {
   self_test_tmp="$(mktemp -d)"
   trap 'rm -rf "${self_test_tmp}"' EXIT
@@ -302,11 +283,9 @@ run_self_test() {
 
   premain_sha="$(commit_on "${base_sha}" "premain-rc" "chore(premain): release 5.0.0-rc")"
   git update-ref refs/remotes/origin/premain "${premain_sha}"
-  git update-ref refs/tags/v5.0.0-rc "${premain_sha}"
 
   main_sha="$(commit_on "${premain_sha}" "main-release" "chore(main): release 5.0.0")"
   git update-ref refs/remotes/origin/main "${main_sha}"
-  git update-ref refs/tags/v5.0.0 "${main_sha}"
 
   backmerge_sha="$(merge_of "${premain_sha}" "${main_sha}" "staging-backmerge" "Merge pull request #9999 from theory-cloud/main")"
   git update-ref refs/remotes/origin/staging "${backmerge_sha}"
@@ -406,7 +385,7 @@ run_self_test() {
   generated_sync_commit="$(commit_on "${reset_merge}" "generated-sync" "fix(release): sync generated release artifacts")"
   recovery_fix="$(commit_on "${reset_merge}" "recovery-fix" "fix(ci): repair the release train eligibility path")"
   recovery_bundle="$(commit_on "${generated_sync_commit}" "recovery-bundle" "fix(ci): repair the release train eligibility path")"
-  tagged_fix="$(commit_on "${backmerge_sha}" "tagged-fix" "fix(runtime): already released in the tagged baseline")"
+  tagged_fix="$(commit_on "${backmerge_sha}" "tagged-fix" "fix(runtime): tagged but still inside the supplied range")"
   git update-ref refs/tags/v5.0.1 "${tagged_fix}"
   lookalike_parser="$(commit_on "${reset_merge}" "lookalike-parser" "fix(parser): release v2 of caching")"
   lookalike_2fa="$(commit_on "${reset_merge}" "lookalike-2fa" "fix(premain): release 2FA hardening")"
@@ -427,13 +406,15 @@ run_self_test() {
 
   git switch -q --detach "${generated_release_commit}"
   range="origin/premain..HEAD"
-  check_case "a generated release commit outside the tag is release-intended" 0 "release-eligibility: PASS"
+  check_case "a generated release commit in the supplied range is release-intended" 0 "release-eligibility: PASS"
   git switch -q --detach "${generated_sync_commit}"
-  check_case "a generated artifact sync commit outside the tag is release-intended" 0 "release-eligibility: PASS"
+  check_case "a generated artifact sync commit in the supplied range is release-intended" 0 "release-eligibility: PASS"
 
+  # The tag does not change the verdict: the verifier evaluates the range the
+  # caller supplies, so a tagged commit inside that range is not removed.
   git switch -q --detach "${tagged_fix}"
   range="origin/premain..HEAD"
-  check_case "a release-driving commit reachable from an immutable tag is not fresh readiness" 1 "" "release-eligibility: PASS"
+  check_case "a tagged commit inside the explicitly supplied range still counts" 0 "release-eligibility: PASS"
 
   git switch -q --detach "${lookalike_parser}"
   check_case "a human fix whose subject resembles a generated release message still counts" 0 "release-eligibility: PASS"

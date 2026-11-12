@@ -15,9 +15,10 @@
 #
 # The release predicates do not classify generated commit subjects. Release
 # Please makes its own decision from conventional commits and the tag baseline;
-# the gates run after generation and compare commits and immutable tags
-# directly. A generated commit after a tag therefore remains a new,
-# release-intended change in every predicate.
+# the gates run after generation. The release-PR and publish no-op predicates
+# measure from their immutable tags, while promotion eligibility evaluates only
+# the range it is supplied. A generated commit remains a release-intended change
+# wherever a predicate's own baseline does not already cover it.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -115,8 +116,9 @@ grep -Fq 'baseline_tag_from_manifest' scripts/verify-release-pr-postcondition.sh
   fail "the release PR no-op must be measured from the recorded manifest tag"
 grep -Fq 'has_releasable_commits_since "${expected_tag}"' scripts/verify-release-publish-postcondition.sh ||
   fail "the publish no-op must be measured from the immutable published tag"
-grep -Fq 'git tag --list' scripts/verify-release-eligibility.sh ||
-  fail "promotion eligibility must tie its published-history exclusion to tags"
+if grep -Fq 'git tag --list' scripts/verify-release-eligibility.sh; then
+  fail "promotion eligibility must evaluate only its supplied range, not local tag names"
+fi
 
 # 4. The wrappers keep the explicit stable release-as override and the premain
 #    lane keeps deriving its RC from the historical footer instead.

@@ -1432,8 +1432,9 @@ subprocess.run(["bash", "scripts/verify-release-eligibility.sh", "--self-test"],
 # Release-driven generated messages: both lanes must render a fix-type release PR
 # title (which pinned release-please also uses as the release-branch commit
 # message), the artifact sync commit must stay release-driving, and the release
-# PR postcondition must bind those exact messages. The other predicates compare
-# commits and immutable tags directly, so they must not classify subjects.
+# PR postcondition must bind those exact messages. The predicates must not
+# classify subjects, and promotion eligibility must evaluate only its supplied
+# range rather than local tag names.
 for lane_config in ("release-please-config.premain.json", "release-please-config.json"):
     require_contains(
         lane_config,
@@ -1480,10 +1481,10 @@ require_contains(
     '"fix(${base_branch}): "',
     "release PR postcondition must require the exact main/premain scope",
 )
-require_contains(
+require_not_contains(
     "scripts/verify-release-eligibility.sh",
     "git tag --list",
-    "promotion eligibility must tie published-history exclusion to immutable tags",
+    "promotion eligibility must evaluate only its supplied range, not local tag names",
 )
 subprocess.run(["bash", "scripts/verify-release-generated-messages.sh"], check=True)
 
