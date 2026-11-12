@@ -524,7 +524,7 @@
         "runtime/",
         "testkit/",
         "pkg/",
-        "cmd/",
+        "cmd/apptheory-local/",
         "ts/",
         "contract-tests/",
         "scripts/lib/"

@@ -158,9 +158,12 @@ jobs:
     name: Security refresh (dependency scan)
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      APPTHEORY_EVIDENCE_PRODUCED_MANIFEST: ${{ runner.temp }}/produced-records.txt
     steps:
+      # The produced-record manifest path needs the runner context, which
+      # GitHub does not expose to jobs.<job_id>.env. Export it from a step so
+      # the gate, resolve and upload steps all see the same path.
+      - name: Expose produced evidence manifest path
+        run: printf 'APPTHEORY_EVIDENCE_PRODUCED_MANIFEST=%s\n' "${RUNNER_TEMP}/produced-records.txt" >> "${GITHUB_ENV}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -263,8 +266,6 @@ jobs:
     name: Runtime floor matrix (Node ${{ matrix.node-version }}, Python ${{ matrix.python-version }})
     if: (github.event_name != 'push' || !contains(github.event.head_commit.message, 'release-please--branches--')) && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')) && !(github.event_name == 'workflow_dispatch' && inputs.release_pr_number != '')
     runs-on: ubuntu-latest
-    env:
-      APPTHEORY_EVIDENCE_PRODUCED_MANIFEST: ${{ runner.temp }}/produced-records.txt
     strategy:
       fail-fast: false
       matrix:
@@ -290,6 +291,11 @@ jobs:
             py-profile: floor-py3.12
             contract-profile: floor-node24-py3.12
     steps:
+      # The produced-record manifest path needs the runner context, which
+      # GitHub does not expose to jobs.<job_id>.env. Export it from a step so
+      # the gate, resolve and upload steps all see the same path.
+      - name: Expose produced evidence manifest path
+        run: printf 'APPTHEORY_EVIDENCE_PRODUCED_MANIFEST=%s\n' "${RUNNER_TEMP}/produced-records.txt" >> "${GITHUB_ENV}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -336,8 +342,6 @@ jobs:
     name: CDK floor matrix (Node ${{ matrix.node-version }})
     if: (github.event_name != 'push' || !contains(github.event.head_commit.message, 'release-please--branches--')) && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')) && !(github.event_name == 'workflow_dispatch' && inputs.release_pr_number != '')
     runs-on: ubuntu-latest
-    env:
-      APPTHEORY_EVIDENCE_PRODUCED_MANIFEST: ${{ runner.temp }}/produced-records.txt
     strategy:
       fail-fast: false
       matrix:
@@ -347,6 +351,11 @@ jobs:
           - node-version: "22"
             drift-profile: floor-node22
     steps:
+      # The produced-record manifest path needs the runner context, which
+      # GitHub does not expose to jobs.<job_id>.env. Export it from a step so
+      # the gate, resolve and upload steps all see the same path.
+      - name: Expose produced evidence manifest path
+        run: printf 'APPTHEORY_EVIDENCE_PRODUCED_MANIFEST=%s\n' "${RUNNER_TEMP}/produced-records.txt" >> "${GITHUB_ENV}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
@@ -449,9 +458,12 @@ jobs:
     name: Go (test + vet)
     if: (github.event_name != 'push' || !contains(github.event.head_commit.message, 'release-please--branches--')) && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')) && !(github.event_name == 'workflow_dispatch' && inputs.release_pr_number != '')
     runs-on: ubuntu-latest
-    env:
-      APPTHEORY_EVIDENCE_PRODUCED_MANIFEST: ${{ runner.temp }}/produced-records.txt
     steps:
+      # The produced-record manifest path needs the runner context, which
+      # GitHub does not expose to jobs.<job_id>.env. Export it from a step so
+      # the gate, resolve and upload steps all see the same path.
+      - name: Expose produced evidence manifest path
+        run: printf 'APPTHEORY_EVIDENCE_PRODUCED_MANIFEST=%s\n' "${RUNNER_TEMP}/produced-records.txt" >> "${GITHUB_ENV}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -482,9 +494,12 @@ jobs:
     name: TypeScript (npm pack)
     if: (github.event_name != 'push' || !contains(github.event.head_commit.message, 'release-please--branches--')) && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')) && !(github.event_name == 'workflow_dispatch' && inputs.release_pr_number != '')
     runs-on: ubuntu-latest
-    env:
-      APPTHEORY_EVIDENCE_PRODUCED_MANIFEST: ${{ runner.temp }}/produced-records.txt
     steps:
+      # The produced-record manifest path needs the runner context, which
+      # GitHub does not expose to jobs.<job_id>.env. Export it from a step so
+      # the gate, resolve and upload steps all see the same path.
+      - name: Expose produced evidence manifest path
+        run: printf 'APPTHEORY_EVIDENCE_PRODUCED_MANIFEST=%s\n' "${RUNNER_TEMP}/produced-records.txt" >> "${GITHUB_ENV}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -510,9 +525,12 @@ jobs:
     name: Python (build wheel + sdist)
     if: (github.event_name != 'push' || !contains(github.event.head_commit.message, 'release-please--branches--')) && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')) && !(github.event_name == 'workflow_dispatch' && inputs.release_pr_number != '')
     runs-on: ubuntu-latest
-    env:
-      APPTHEORY_EVIDENCE_PRODUCED_MANIFEST: ${{ runner.temp }}/produced-records.txt
     steps:
+      # The produced-record manifest path needs the runner context, which
+      # GitHub does not expose to jobs.<job_id>.env. Export it from a step so
+      # the gate, resolve and upload steps all see the same path.
+      - name: Expose produced evidence manifest path
+        run: printf 'APPTHEORY_EVIDENCE_PRODUCED_MANIFEST=%s\n' "${RUNNER_TEMP}/produced-records.txt" >> "${GITHUB_ENV}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -540,9 +558,12 @@ jobs:
     name: Verify deterministic builds
     if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'
     runs-on: ubuntu-latest
-    env:
-      APPTHEORY_EVIDENCE_PRODUCED_MANIFEST: ${{ runner.temp }}/produced-records.txt
     steps:
+      # The produced-record manifest path needs the runner context, which
+      # GitHub does not expose to jobs.<job_id>.env. Export it from a step so
+      # the gate, resolve and upload steps all see the same path.
+      - name: Expose produced evidence manifest path
+        run: printf 'APPTHEORY_EVIDENCE_PRODUCED_MANIFEST=%s\n' "${RUNNER_TEMP}/produced-records.txt" >> "${GITHUB_ENV}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -587,9 +608,12 @@ jobs:
     name: CDK Go binding drift
     if: (github.event_name != 'push' || !contains(github.event.head_commit.message, 'release-please--branches--')) && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')) && !(github.event_name == 'workflow_dispatch' && inputs.release_pr_number != '')
     runs-on: ubuntu-latest
-    env:
-      APPTHEORY_EVIDENCE_PRODUCED_MANIFEST: ${{ runner.temp }}/produced-records.txt
     steps:
+      # The produced-record manifest path needs the runner context, which
+      # GitHub does not expose to jobs.<job_id>.env. Export it from a step so
+      # the gate, resolve and upload steps all see the same path.
+      - name: Expose produced evidence manifest path
+        run: printf 'APPTHEORY_EVIDENCE_PRODUCED_MANIFEST=%s\n' "${RUNNER_TEMP}/produced-records.txt" >> "${GITHUB_ENV}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
@@ -623,9 +647,12 @@ jobs:
     name: Contract tests (fixtures)
     if: (github.event_name != 'push' || !contains(github.event.head_commit.message, 'release-please--branches--')) && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')) && !(github.event_name == 'workflow_dispatch' && inputs.release_pr_number != '')
     runs-on: ubuntu-latest
-    env:
-      APPTHEORY_EVIDENCE_PRODUCED_MANIFEST: ${{ runner.temp }}/produced-records.txt
     steps:
+      # The produced-record manifest path needs the runner context, which
+      # GitHub does not expose to jobs.<job_id>.env. Export it from a step so
+      # the gate, resolve and upload steps all see the same path.
+      - name: Expose produced evidence manifest path
+        run: printf 'APPTHEORY_EVIDENCE_PRODUCED_MANIFEST=%s\n' "${RUNNER_TEMP}/produced-records.txt" >> "${GITHUB_ENV}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -661,9 +688,12 @@ jobs:
     name: Rubric (full gate set)
     if: (github.event_name == 'workflow_dispatch' && (inputs.run_full_rubric == true || inputs.run_full_rubric == 'true')) || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging')
     runs-on: ubuntu-latest
-    env:
-      APPTHEORY_EVIDENCE_PRODUCED_MANIFEST: ${{ runner.temp }}/produced-records.txt
     steps:
+      # The produced-record manifest path needs the runner context, which
+      # GitHub does not expose to jobs.<job_id>.env. Export it from a step so
+      # the gate, resolve and upload steps all see the same path.
+      - name: Expose produced evidence manifest path
+        run: printf 'APPTHEORY_EVIDENCE_PRODUCED_MANIFEST=%s\n' "${RUNNER_TEMP}/produced-records.txt" >> "${GITHUB_ENV}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
