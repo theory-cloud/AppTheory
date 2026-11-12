@@ -1082,8 +1082,8 @@ require_contains(
 )
 require_contains(
     "scripts/sync-release-pr-generated.sh",
-    'artifact_sync_commit_message="chore(release): sync generated release artifacts"',
-    "release PR sync must use one stable generated artifact sync commit message",
+    'artifact_sync_commit_message="fix(release): sync generated release artifacts"',
+    "release PR sync must use one release-driving generated artifact sync commit message",
 )
 require_contains(
     "scripts/sync-release-pr-generated.sh",
@@ -1181,7 +1181,7 @@ require_contains(
 )
 require_not_contains(
     "scripts/sync-release-pr-generated.sh",
-    'git commit -S -m "chore(release): sync generated release artifacts"',
+    'git commit -S -m "fix(release): sync generated release artifacts"',
     "release PR sync must not force a bespoke CI signing path",
 )
 require_not_contains(
@@ -1428,6 +1428,65 @@ subprocess.run(["bash", "scripts/verify-release-please-token-safety.sh"], check=
 # chore-only feature PR, a lookalike or forked head ref, and a non-main push
 # merge all still fail).
 subprocess.run(["bash", "scripts/verify-release-eligibility.sh", "--self-test"], check=True)
+
+# Release-driven generated messages: both lanes must render a fix-type release PR
+# title (which pinned release-please also uses as the release-branch commit
+# message), the artifact sync commit must stay release-driving, and the release
+# PR postcondition must bind those exact messages. The predicates must not
+# classify subjects, and promotion eligibility must evaluate only its supplied
+# range rather than local tag names.
+for lane_config in ("release-please-config.premain.json", "release-please-config.json"):
+    require_contains(
+        lane_config,
+        '"pull-request-title-pattern": "fix${scope}: release${component} ${version}"',
+        "release lane config must generate a release-driving fix-type release PR title and commit subject",
+    )
+    require_contains(
+        lane_config,
+        '"draft": true',
+        "release lane config must keep the generated GitHub release draft until publish",
+    )
+for release_predicate in (
+    "scripts/verify-release-eligibility.sh",
+    "scripts/verify-release-pr-postcondition.sh",
+    "scripts/verify-release-publish-postcondition.sh",
+):
+    require_not_contains(
+        release_predicate,
+        "filter-user-facing",
+        "release predicates must not exempt commit subjects from release readiness",
+    )
+    require_not_contains(
+        release_predicate,
+        "release-automation-commits.py",
+        "release predicates must not classify generated commit subjects",
+    )
+require_contains(
+    "scripts/verify-release-pr-postcondition.sh",
+    "release-generated-messages.py",
+    "release PR postcondition must bind the generated title to the lane config",
+)
+require_contains(
+    "scripts/verify-release-pr-postcondition.sh",
+    "render-title",
+    "release PR postcondition must render the generated title from the lane config",
+)
+require_contains(
+    "scripts/verify-release-pr-postcondition.sh",
+    "messageHeadline",
+    "release PR postcondition must prove the release-branch commit subject",
+)
+require_contains(
+    "scripts/verify-release-pr-postcondition.sh",
+    '"fix(${base_branch}): "',
+    "release PR postcondition must require the exact main/premain scope",
+)
+require_not_contains(
+    "scripts/verify-release-eligibility.sh",
+    "git tag --list",
+    "promotion eligibility must evaluate only its supplied range, not local tag names",
+)
+subprocess.run(["bash", "scripts/verify-release-generated-messages.sh"], check=True)
 
 print("release-workflows: PASS")
 PY

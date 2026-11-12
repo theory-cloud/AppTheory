@@ -3,6 +3,14 @@
 # Conventional Commit (feat:/fix:/perf:), because release-please ships nothing
 # else.
 #
+# The predicate classifies commit subjects exactly as release-please does; it
+# does not special-case generated release messages. A human fix whose subject
+# happens to resemble a generated one still counts, so no genuine fix can
+# disappear. Eligibility evaluates exactly the range the caller supplies and
+# does not consult local tag names, so a tagged commit inside an explicitly
+# supplied promotion range is not silently removed by this verifier. A
+# `Release-As:` footer on a prohibited subject is not an eligibility bypass.
+#
 # This single predicate is shared by the two CI surfaces that must agree:
 #   - "Prerelease readiness (staging → premain)" on the staging -> premain PR,
 #     over origin/premain..origin/staging (the promotion range itself).
@@ -17,14 +25,14 @@
 # requests into staging. The job's pull_request leg is guarded on
 # base.ref == premain && head.ref == staging, so an ordinary PR into staging no
 # longer evaluates origin/premain..HEAD -- a range that, after a stable release
-# plus the main back-merge, holds only chore(release)/chore(main) commits.
+# plus the main back-merge, holds only released history and release-train
+# automation commits.
 #
 # Post-release main back-merge exemption (opt-in via --allow-main-backmerge):
 # after a stable release the release train brings the released main branch back
-# into staging. That range carries only `chore(main): release X.Y.Z` and
-# `chore(release): sync generated release artifacts`, so it holds no
-# release-driving commit -- correctly, because the release already shipped.
-# TableTheory's staging-release-driver exempts exactly this shape
+# into staging. That range is already-released content returning to staging, so
+# it carries no new promotion intent -- correctly, because the release already
+# shipped. TableTheory's staging-release-driver exempts exactly this shape
 # (`if HEAD_REF == main -> PASS (post-release main back-merge)`); without the
 # same exemption here every stable release leaves the merged staging SHA red.
 #
@@ -223,7 +231,12 @@ eligibility_verdict() {
 # run_self_test builds a throwaway release-train repository (released main, a
 # premain RC line, staging after the back-merge) and proves the exemption stays
 # narrow in both directions: every exempting shape passes, and chore-only,
-# lookalike, forked, non-main-merge, and non-opted-in shapes still fail.
+# lookalike, forked, non-main-merge, and non-opted-in shapes still fail. It also
+# replays the reset-only promotion (prohibited subject plus a Release-As footer)
+# and proves the real recovery fix passes both existing range expressions, that a
+# tagged commit inside an explicitly supplied promotion range is not removed by
+# this verifier, and that a human fix whose subject resembles a generated one is
+# never exempted.
 run_self_test() {
   self_test_tmp="$(mktemp -d)"
   trap 'rm -rf "${self_test_tmp}"' EXIT
@@ -246,6 +259,12 @@ run_self_test() {
     blob="$(printf '%s\n' "${2}" | git hash-object -w --stdin)"
     tree="$(printf '100644 blob %s\tmarker.txt\n' "${blob}" | git mktree)"
     git commit-tree "${tree}" -p "${1}" -m "${3}"
+  }
+  commit_with_body_on() { # <parent> <marker> <subject> <body>
+    local blob tree
+    blob="$(printf '%s\n' "${2}" | git hash-object -w --stdin)"
+    tree="$(printf '100644 blob %s\tmarker.txt\n' "${blob}" | git mktree)"
+    git commit-tree "${tree}" -p "${1}" -m "${3}" -m "${4}"
   }
   merge_of() { # <mainline-parent> <merged-parent> <marker> <subject>
     local blob tree
@@ -349,6 +368,72 @@ run_self_test() {
   git switch -q --detach "${backmerge_sha}"
   allow_main_backmerge="false"
   check_case "the back-merge range without the opt-in stays subject to the predicate" 1
+
+  # R1: the exact reset-only promotion shape. staging carries only the #1271
+  # merge plus the reset commit whose body has a Release-As footer. A footer is
+  # not an eligibility bypass: the prohibited chore subject still fails. The
+  # real signed recovery fix then has to pass both existing range expressions.
+  local reset_commit reset_merge generated_release_commit generated_sync_commit
+  local recovery_fix recovery_bundle tagged_fix
+  local lookalike_parser lookalike_2fa lookalike_flags
+  reset_commit="$(commit_with_body_on "${backmerge_sha}" "reset" \
+    "chore(release): reset the prerelease track to the stable baseline" \
+    "Release-As: 7.3.0-rc")"
+  reset_merge="$(merge_of "${backmerge_sha}" "${reset_commit}" "reset-merge" \
+    "Merge pull request #1271 from theory-cloud/apptheory/release-train-v7.3.0-reset")"
+  generated_release_commit="$(commit_on "${reset_merge}" "generated-release" "fix(premain): release 7.3.0-rc")"
+  generated_sync_commit="$(commit_on "${reset_merge}" "generated-sync" "fix(release): sync generated release artifacts")"
+  recovery_fix="$(commit_on "${reset_merge}" "recovery-fix" "fix(ci): repair the release train eligibility path")"
+  recovery_bundle="$(commit_on "${generated_sync_commit}" "recovery-bundle" "fix(ci): repair the release train eligibility path")"
+  tagged_fix="$(commit_on "${backmerge_sha}" "tagged-fix" "fix(runtime): tagged but still inside the supplied range")"
+  git update-ref refs/tags/v5.0.1 "${tagged_fix}"
+  lookalike_parser="$(commit_on "${reset_merge}" "lookalike-parser" "fix(parser): release v2 of caching")"
+  lookalike_2fa="$(commit_on "${reset_merge}" "lookalike-2fa" "fix(premain): release 2FA hardening")"
+  lookalike_flags="$(commit_on "${reset_merge}" "lookalike-flags" "fix(cli): release 2 new flags")"
+
+  git update-ref refs/remotes/origin/premain "${backmerge_sha}"
+  git update-ref refs/remotes/origin/staging "${reset_merge}"
+  allow_main_backmerge="false"
+  head_ref=""
+  head_repo=""
+  repository="theory-cloud/AppTheory"
+
+  git switch -q --detach "${reset_merge}"
+  range="origin/premain..origin/staging"
+  check_case "the reset-only promotion is rejected by the promotion-range predicate" 1 "" "release-eligibility: PASS"
+  range="origin/premain..HEAD"
+  check_case "the reset-only promotion is rejected by the staging-push predicate" 1 "" "release-eligibility: PASS"
+
+  git switch -q --detach "${generated_release_commit}"
+  range="origin/premain..HEAD"
+  check_case "a generated release commit in the supplied range is release-intended" 0 "release-eligibility: PASS"
+  git switch -q --detach "${generated_sync_commit}"
+  check_case "a generated artifact sync commit in the supplied range is release-intended" 0 "release-eligibility: PASS"
+
+  # The tag does not change the verdict: the verifier evaluates the range the
+  # caller supplies, so a tagged commit inside that range is not removed.
+  git switch -q --detach "${tagged_fix}"
+  range="origin/premain..HEAD"
+  check_case "a tagged commit inside the explicitly supplied range still counts" 0 "release-eligibility: PASS"
+
+  git switch -q --detach "${lookalike_parser}"
+  check_case "a human fix whose subject resembles a generated release message still counts" 0 "release-eligibility: PASS"
+  git switch -q --detach "${lookalike_2fa}"
+  check_case "a human fix in the exact lane scope shape still counts" 0 "release-eligibility: PASS"
+  git switch -q --detach "${lookalike_flags}"
+  check_case "a human fix with release-like prose still counts" 0 "release-eligibility: PASS"
+
+  git update-ref refs/remotes/origin/staging "${recovery_fix}"
+  git switch -q --detach "${recovery_fix}"
+  range="origin/premain..origin/staging"
+  check_case "the real recovery fix is accepted by the promotion-range predicate" 0 "release-eligibility: PASS"
+  range="origin/premain..HEAD"
+  check_case "the real recovery fix is accepted by the staging-push predicate" 0 "release-eligibility: PASS"
+
+  git update-ref refs/remotes/origin/staging "${recovery_bundle}"
+  git switch -q --detach "${recovery_bundle}"
+  range="origin/premain..origin/staging"
+  check_case "the real recovery fix is still accepted next to generated fix-typed automation" 0 "release-eligibility: PASS"
 
   if (( failures > 0 )); then
     echo "release-eligibility self-test: FAIL (${failures} of ${cases} cases failed)" >&2

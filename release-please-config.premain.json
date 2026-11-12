@@ -2,6 +2,7 @@
   "release-type": "go",
   "include-v-in-tag": true,
   "draft": true,
+  "pull-request-title-pattern": "fix${scope}: release${component} ${version}",
   "bootstrap-sha": "aa8ae4ec7190bd30dcd4368d64def0cd9346f08c",
   "versioning": "prerelease",
   "prerelease-type": "rc",

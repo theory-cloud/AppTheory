@@ -2,6 +2,7 @@
   "release-type": "go",
   "include-v-in-tag": true,
   "draft": true,
+  "pull-request-title-pattern": "fix${scope}: release${component} ${version}",
   "bootstrap-sha": "2d2912adad21d2ab493ffface5459728836a4546",
   "packages": {
     ".": {
