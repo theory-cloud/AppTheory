@@ -18,18 +18,27 @@ from apptheory import (
     REFRESH_SWEEP_DEFERRED,
     REFRESH_SWEEP_ROTATED,
     REFRESH_SWEEP_TERMINAL_VERDICT,
+    ROUTE_REFRESH_EVENT_STATE_FAILURE,
+    ROUTE_REFRESH_EVENT_UPSTREAM_REAUTH_REQUIRED,
     RefreshSweepConfig,
     RefreshSweeper,
     RouteRefreshPolicy,
 )
 from apptheory.mcpfacade import MAX_REFRESH_BUDGET_SECONDS as FACADE_MAX_BUDGET
-from apptheory.oauth.provider import ERROR_INVALID_GRANT, ERROR_TEMPORARILY_UNAVAILABLE, ERROR_UPSTREAM, ProviderError
+from apptheory.oauth.provider import (
+    ERROR_INVALID_GRANT,
+    ERROR_REAUTH_REQUIRED,
+    ERROR_TEMPORARILY_UNAVAILABLE,
+    ERROR_UPSTREAM,
+    ProviderError,
+)
 from apptheory.oauth.store import BrokerRevokedError, hash_key
 
 from py.tests.test_mcpfacade_front_channel import (
     FRONT_TEST_REFRESH_ACCESS_TOKEN,
     FRONT_TEST_ROTATED_UPSTREAM_REFRESH_TOKEN,
     FRONT_TEST_ROTATED_UPSTREAM_SCOPE,
+    _EventRecorder,
     _FrontChannelHarness,
     _broker_record,
     _minted_refresh_handle,
@@ -115,6 +124,48 @@ class RefreshVerdictTests(unittest.TestCase):
 
         recovered = harness.token(_refresh_form(handle))
         self.assertEqual(200, recovered.status)
+
+    def test_reauth_required_keeps_the_family(self) -> None:
+        # Mirror of Go's TestRefreshGrantReauthRequiredKeepsTheFamily: the
+        # defensive `reauth_required` class means the recorded material is stale
+        # or replaced, which the rotation-recovery contract classifies as
+        # recovery-available. It is never a family verdict, so the facade releases
+        # the lock, leaves the family untombstoned, answers 503 + Retry-After, and
+        # the very next attempt reaches the upstream and rotates.
+        recorder = _EventRecorder()
+        harness = _FrontChannelHarness(self, route_refresh_events=recorder)
+        handle = _minted_refresh_handle(harness)
+        calls = _script_refresh(
+            harness,
+            [
+                lambda: (_ for _ in ()).throw(ProviderError(ERROR_REAUTH_REQUIRED, "refresh")),
+                _successor_token_set,
+            ],
+        )
+
+        deferred = harness.token(_refresh_form(handle))
+        self.assertEqual(503, deferred.status)
+        self.assertIn(b'"error":"temporarily_unavailable"', deferred.body)
+        self.assertEqual(["1"], deferred.headers.get("retry-after"))
+        self.assertEqual(1, calls[0])
+        self.assertIsNone(recorder.find(ROUTE_REFRESH_EVENT_UPSTREAM_REAUTH_REQUIRED))
+        failure = recorder.require(ROUTE_REFRESH_EVENT_STATE_FAILURE)
+        self.assertEqual(ERROR_REAUTH_REQUIRED, failure.upstream_class)
+        self.assertEqual("temporarily_unavailable", failure.error_code)
+
+        kept = _broker_record(harness, handle)
+        self.assertEqual("issued", kept.status)
+        self.assertEqual("", kept.refresh_lock_owner)
+        self.assertIsNone(kept.refresh_lock_expires_at)
+        family = harness.stores.route_refresh_broker.list_family(hash_key(handle))
+        self.assertTrue(family)
+        self.assertTrue(all(member.status != "revoked" for member in family))
+
+        recovered = harness.token(_refresh_form(handle))
+        self.assertEqual(200, recovered.status)
+        self.assertNotEqual(handle, _token_response_handle(recovered))
+        self.assertEqual(2, calls[0])
+        self.assertEqual("active", _broker_record(harness, handle).status)
 
     def test_lost_rotation_recovers_through_the_persisted_intent(self) -> None:
         harness = _FrontChannelHarness(self)

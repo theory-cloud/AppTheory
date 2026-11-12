@@ -50,7 +50,6 @@ from apptheory.mcproutes import (
 )
 from apptheory.oauth import (
     ERROR_INVALID_GRANT,
-    ERROR_REAUTH_REQUIRED,
     ERROR_TEMPORARILY_UNAVAILABLE,
     ERROR_UPSTREAM,
     AuthorizationRequest,
@@ -3392,6 +3391,12 @@ def _failed_terminal_refresh_grant(
     front = config.front_channel
     if front is None:
         raise ValueError(f"{_ERROR_PREFIX} front channel is not configured")
+    # The ambiguity check reads the marker from ``presented``, the copy read before
+    # the lock and before this attempt's intent was written, so the marker just
+    # persisted for this attempt is deliberately invisible here. That is correct
+    # only because the attempt in hand carries the upstream's own definitive
+    # answer; the marker exists to make later attempts, which read it back from the
+    # store, cautious.
     if _refresh_verdict_ambiguous(front, presented, ctx.now()):
         _release_refresh_lock(front, presented, locked)
         event = _event_from_record(presented)
@@ -3576,21 +3581,6 @@ def _failed_refresh_grant(
         error_class = upstream_error.error_class
     if error_class == ERROR_INVALID_GRANT:
         return _failed_terminal_refresh_grant(config, ctx, presented, locked, error_class)
-    if error_class in (ERROR_INVALID_GRANT, ERROR_REAUTH_REQUIRED):  # pragma: no cover - unreachable
-        if not _revoke_family_for_record(front, presented):
-            # The grant is dead upstream but could not be revoked here, so the
-            # client is not told the handle is invalid while it is still live.
-            _emit_state_failure(front, ctx, presented, ROUTE_REFRESH_REASON_STORE_FAILURE, error_class)
-            return _facade_temporarily_unavailable_page()
-        event = _event_from_record(presented)
-        event.event_class = ROUTE_REFRESH_EVENT_UPSTREAM_REAUTH_REQUIRED
-        event.reason = ROUTE_REFRESH_REASON_UPSTREAM_REJECTED
-        event.upstream_class = error_class
-        event.error_code = "invalid_grant"
-        event.status_to = STATUS_REVOKED
-        event.at = ctx.now()
-        _emit_route_refresh(front, event)
-        return _facade_error_page(400, "invalid_grant")
     if error_class == ERROR_UPSTREAM:
         _release_refresh_lock(front, presented, locked)
         _emit_state_failure(
@@ -3602,9 +3592,11 @@ def _failed_refresh_grant(
             error_code="upstream_error",
         )
         return _facade_upstream_error_page()
-    # ERROR_TEMPORARILY_UNAVAILABLE, and any provider failure the adapter did not
-    # classify: transient by default, so the lock is released and the caller is
-    # told to retry.
+    # ERROR_TEMPORARILY_UNAVAILABLE, ERROR_REAUTH_REQUIRED (a stale-or-replaced
+    # signal is recovery-available under the rotation-recovery contract), and any
+    # provider failure the adapter did not classify: transient by default, so the
+    # lock is released, the unconfirmed-attempt marker is left in place, and the
+    # caller is told to retry.
     _release_refresh_lock(front, presented, locked)
     _emit_state_failure(
         front,
