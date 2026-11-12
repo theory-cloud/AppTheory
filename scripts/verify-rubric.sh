@@ -29,11 +29,16 @@ bash ./scripts/test-check-visible-findings.sh
 # The proportionate-validation policy binds the evidence schema to the release
 # automation, and the evidence self-test exercises the fail-closed controls.
 bash ./scripts/test-validation-evidence.sh
+# The composed CDK packaging step must build each package exactly once per
+# rubric invocation; its nested-call and force-mode controls run here.
+bash ./scripts/test-verify-cdk-packaging.sh
 python3 ./scripts/evidence/check-policy.py
 bash ./scripts/verify-ci-evidence-wiring.sh
 # Release artifact completeness (CDK constructs/synth/packs, runtime floors,
 # template pairing) runs once here, not inside both deterministic build passes.
-bash ./scripts/verify-release-gates.sh
+# The GovTheory verifier's deterministic-build passes own the two CDK package
+# builds, so declare that coverage instead of packaging a third time.
+APPTHEORY_RUBRIC_CDK_PACKAGING_COVERED=true bash ./scripts/verify-release-gates.sh
 bash ./scripts/verify-release-train-promotion.sh --self-test
 bash ./scripts/verify-release-cycle.sh
 # The lab candidate builder is the fail-closed entry point for "build AppTheory at a

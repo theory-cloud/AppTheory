@@ -5,7 +5,9 @@
 # This runs once in the full rubric. It is not part of the deterministic-build
 # loop: a build pass proves artifact reproducibility, not CDK synthesis or
 # runtime-floor claims, and repeating those inside both build passes duplicated
-# the suite without strengthening that claim.
+# the suite without strengthening that claim. The CDK packs are composed from
+# the deterministic-build passes through verify-cdk-packaging.sh rather than
+# built a third time.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -15,8 +17,7 @@ bash ./scripts/verify-runtime-floor-claims.sh
 ./scripts/verify-cdk-engines-floor.sh
 ./scripts/verify-cdk-constructs.sh
 ./scripts/verify-cdk-deprecation-warnings.sh
-./scripts/verify-cdk-ts-pack.sh
-./scripts/verify-cdk-python-build.sh
+./scripts/verify-cdk-packaging.sh
 ./scripts/verify-cdk-go.sh
 ./scripts/verify-cdk-synth.sh
 ./scripts/verify-microvm-conformance-harness.sh
