@@ -1,5 +1,24 @@
 # Changelog
 
+## [7.2.0-rc.1](https://github.com/theory-cloud/AppTheory/compare/v7.2.0-rc...v7.2.0-rc.1) (2026-11-12)
+
+
+### Features
+
+* **mcpfacade:** contract-terminal refresh verdicts, lost-rotation recovery, and the exported sweep entrypoint (D3) ([3c3b5e8](https://github.com/theory-cloud/AppTheory/commit/3c3b5e89fd4a62ad4990ef24f7478084868625b3))
+* **mcpfacade:** export the refresh sweep entrypoint ([8437f02](https://github.com/theory-cloud/AppTheory/commit/8437f02725ba302d579e3b56aeaec20819f447e8))
+* **mcpfacade:** recover a lost rotation instead of killing the family ([a2c1f10](https://github.com/theory-cloud/AppTheory/commit/a2c1f10871f208f1cf98bd00eecb5f43e3ecb84e))
+* **oauth:** make invalid_grant the only contract-terminal token verdict ([44f8028](https://github.com/theory-cloud/AppTheory/commit/44f80280a5666bb1f4f6f5318847fee755df6343))
+
+
+### Bug Fixes
+
+* **build:** bump Go toolchain pin to 1.27.4 and tabletheory to v6.4.1 ([7fe0111](https://github.com/theory-cloud/AppTheory/commit/7fe01118787f045b3ffce13ad72cf171a6761de5))
+* **build:** bump Go toolchain pin to 1.27.4 and tabletheory to v6.4.1 ([f3cdade](https://github.com/theory-cloud/AppTheory/commit/f3cdade362fe02cd988e4f9e7755b05584980552))
+* **deps:** bump the ts-runtime group to [@aws-sdk](https://github.com/aws-sdk) 3.1164.0 ([a2f45ab](https://github.com/theory-cloud/AppTheory/commit/a2f45ab832962acd3dbe8d69ba9ace345e4616c2))
+* **mcpfacade:** describe the refresh budget's real short-lock-TTL outcome ([35be029](https://github.com/theory-cloud/AppTheory/commit/35be029df4bc4362c7e9844b2519aa4a7d2211a6))
+* **mcpfacade:** keep the family on a reauth_required refresh signal ([2625928](https://github.com/theory-cloud/AppTheory/commit/262592819b378181c851a6cb61e8ba3c52a51967))
+
 ## [7.2.0-rc](https://github.com/theory-cloud/AppTheory/compare/v7.1.0...v7.2.0-rc) (2026-11-11)
 
 
