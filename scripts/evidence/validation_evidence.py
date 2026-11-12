@@ -2448,18 +2448,19 @@ def produced_records(args: argparse.Namespace) -> int:
                 entries.append(entry)
 
     verified: list[str] = []
+    evidence_directory = registry.evidence_directory
     for relative, expected_digest in entries:
-        parts = Path(relative).parts
-        if (
-            len(parts) != 3
-            or parts[0] != registry.evidence_directory
-            or not parts[2].endswith(".json")
-        ):
+        # The evidence directory is itself a path, so a record sits at
+        # <directory>/<gate>/<profile>.json at whatever depth the registry names.
+        record_parts: tuple[str, ...] = ()
+        if is_evidence_path(relative, evidence_directory):
+            record_parts = Path(relative[len(evidence_directory) :].lstrip("/")).parts
+        if len(record_parts) != 2 or not record_parts[1].endswith(".json"):
             raise EvidenceError(
                 f"produced evidence path {relative!r} is not "
-                f"{registry.evidence_directory}/<gate>/<profile>.json"
+                f"{evidence_directory}/<gate>/<profile>.json"
             )
-        gate_id, profile_id = parts[1], parts[2][: -len(".json")]
+        gate_id, profile_id = record_parts[0], record_parts[1][: -len(".json")]
         if not GATE_ID_RE.fullmatch(gate_id) or not PROFILE_ID_RE.fullmatch(profile_id):
             raise EvidenceError(f"produced evidence path {relative!r} names an invalid gate or profile")
         if gate_id not in registry.gates:
@@ -2469,7 +2470,7 @@ def produced_records(args: argparse.Namespace) -> int:
             raise EvidenceError(
                 f"produced evidence path {relative!r} names a profile the gate does not support"
             )
-        target = root / relative
+        target = record_path_for(root, registry, gate_id, profile_id)
         if not target.is_file():
             raise EvidenceError(f"produced record is missing: {relative}")
         try:

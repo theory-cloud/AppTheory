@@ -418,6 +418,112 @@ grep -Fxq "evidence/capture/default.json" <(grep -v '^any=' "${gh_output}") || f
 )
 pass_test "a stale committed record replaced by this run is a produced record"
 
+# ---------------------------------------------------------------------------
+# 6. The tracked registry keeps records in a nested evidence directory. The
+#    fixture reads that directory from the real registry, so capture ->
+#    produced-records exercises the real path shape instead of a one-segment
+#    fixture that cannot see a path-shape mismatch.
+# ---------------------------------------------------------------------------
+real_registry="${repo_root}/scripts/evidence/validation-gates.json"
+real_evidence_dir="$("${python_bin}" - "${real_registry}" <<'PY'
+import json
+import sys
+
+print(json.load(open(sys.argv[1], encoding="utf-8"))["evidenceDirectory"].strip("/"))
+PY
+)"
+[[ -n "${real_evidence_dir}" ]] || fail_test "the tracked registry declares no evidence directory"
+
+nested_scratch="${tmp}/nested-repo"
+nested_registry="${tmp}/nested-registry.json"
+mkdir -p "${nested_scratch}/${real_evidence_dir}" "${nested_scratch}/src" \
+  "${nested_scratch}/scripts/evidence"
+"${python_bin}" - "${real_registry}" "${nested_registry}" "${live_environment_json}" "${real_evidence_dir}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+registry_path, nested_path, live_raw, evidence_dir = sys.argv[1:5]
+probe = json.loads(live_raw)
+live = {
+    "go": probe["go"],
+    "node": str(probe["node"]).lstrip("v").split(".")[0],
+    "python": ".".join(str(probe["python"]).split(".")[:2]),
+    "platform": probe["platform"],
+}
+data = json.loads(Path(registry_path).read_text(encoding="utf-8"))
+data["evidenceDirectory"] = evidence_dir
+data["localLogDirectory"] = f"{evidence_dir}/local"
+data["proofProfiles"] = {"default": {"environment": live}}
+data["gates"] = {
+    "capture-nested": {
+        "kind": "source",
+        "environment": "toolchain",
+        "profiles": ["default"],
+        "resource": "cpu",
+        "paths": ["src/"],
+        "commands": [
+            {
+                "id": "capture-nested",
+                "argv": ["python3", "scripts/job.py", "mark", f"{evidence_dir}/state/capture.log"],
+            }
+        ],
+    }
+}
+Path(nested_path).write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+PY
+
+cp "${evidence_py}" "${nested_scratch}/scripts/evidence/validation_evidence.py"
+cp "${nested_registry}" "${nested_scratch}/scripts/evidence/validation-gates.json"
+cp "${repo_root}/scripts/evidence/verify-or-execute.sh" "${nested_scratch}/scripts/evidence/verify-or-execute.sh"
+cp "${repo_root}/scripts/evidence/reuse-if-recorded.sh" "${nested_scratch}/scripts/evidence/reuse-if-recorded.sh"
+cp "${repo_root}/scripts/evidence/collect.sh" "${nested_scratch}/scripts/evidence/collect.sh"
+cp "${scratch}/bin/job.py" "${nested_scratch}/scripts/job.py"
+printf 'one\n' >"${nested_scratch}/src/x.txt"
+printf '1.0.0\n' >"${nested_scratch}/VERSION"
+(
+  cd "${nested_scratch}"
+  git init -q -b main
+  git config user.name "evidence-capture nested self-test"
+  git config user.email "evidence-capture-nested@example.invalid"
+  git config commit.gpgsign false
+  git add -A
+  git commit -q -m "fix: seed nested evidence fixture"
+)
+
+nested_manifest="${tmp}/nested-produced.txt"
+: >"${nested_manifest}"
+nested_record="${real_evidence_dir}/capture-nested/default.json"
+if ! (cd "${nested_scratch}" && APPTHEORY_EVIDENCE_PRODUCED_MANIFEST="${nested_manifest}" bash scripts/evidence/verify-or-execute.sh --gate capture-nested) >"${tmp}/out.log" 2>&1; then
+  fail_test "capture under the tracked nested evidence directory failed"
+fi
+[[ -f "${nested_scratch}/${nested_record}" ]] || fail_test "capture did not write the nested record path"
+grep -Fxq "${nested_record}" <(cut -f1 "${nested_manifest}") || fail_test "the producer manifest does not name the nested record"
+
+nested_gh_output="${tmp}/nested-github-output.txt"
+: >"${nested_gh_output}"
+if ! (cd "${nested_scratch}" && GITHUB_OUTPUT="${nested_gh_output}" "${python_bin}" scripts/evidence/validation_evidence.py produced-records --manifest "${nested_manifest}") >"${tmp}/out.log" 2>&1; then
+  fail_test "the produced-record contract rejected the tracked nested evidence directory"
+fi
+nested_paths="$(grep -F ".json" "${nested_gh_output}" || true)"
+[[ "${nested_paths}" == "${nested_record}" ]] || fail_test "the upload contract did not report exactly the newly produced nested record"
+grep -Fxq "any=true" "${nested_gh_output}" || fail_test "the nested upload contract did not report produced records"
+
+if ! (cd "${nested_scratch}" && bash scripts/evidence/verify-or-execute.sh --gate capture-nested) >"${tmp}/out.log" 2>&1; then
+  fail_test "second nested wrapper run failed"
+fi
+grep -Fq "evidence-verified" "${tmp}/out.log" || fail_test "second nested wrapper run did not reuse the record"
+grep -Fq "executing" "${tmp}/out.log" && fail_test "second nested wrapper run executed again"
+[[ "$(count_lines "${nested_scratch}/${real_evidence_dir}/state/capture.log")" == "1" ]] || fail_test "the nested record was not produced exactly once"
+
+printf 'evidence/capture-nested/default.json\n' >"${tmp}/nested-outside.txt"
+(cd "${nested_scratch}" && "${python_bin}" scripts/evidence/validation_evidence.py produced-records --manifest "${tmp}/nested-outside.txt") >"${tmp}/out.log" 2>&1 && fail_test "a path outside the tracked nested evidence directory was uploaded"
+printf '%s/../capture-nested/default.json\n' "${real_evidence_dir}" >"${tmp}/nested-traversal.txt"
+(cd "${nested_scratch}" && "${python_bin}" scripts/evidence/validation_evidence.py produced-records --manifest "${tmp}/nested-traversal.txt") >"${tmp}/out.log" 2>&1 && fail_test "a traversal path under the nested evidence directory was uploaded"
+printf '%s\tsha256:0000000000000000000000000000000000000000000000000000000000000000\n' "${nested_record}" >"${tmp}/nested-digest.txt"
+(cd "${nested_scratch}" && "${python_bin}" scripts/evidence/validation_evidence.py produced-records --manifest "${tmp}/nested-digest.txt") >"${tmp}/out.log" 2>&1 && fail_test "a nested record with the wrong digest was uploaded"
+pass_test "the tracked nested evidence path round-trips through capture and the upload contract"
+
 # The workflow must use the produced-record contract, not the old glob.
 ci_workflow="${repo_root}/.github/workflows/ci.yml"
 grep -Fq "validation_evidence.py produced-records --require-manifest" "${ci_workflow}" || fail_test "ci.yml lost the produced-record contract"
