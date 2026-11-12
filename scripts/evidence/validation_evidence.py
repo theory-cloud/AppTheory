@@ -28,6 +28,14 @@ filesystem/build/Docker work serializes. Completed records are written atomicall
 as each gate finishes, so an interrupted run keeps its completed results and a
 restart executes only the incomplete or changed work.
 
+The CI fallback (``run``, behind ``verify-or-execute.sh``) uses the same record
+builder: it validates that the live host can truthfully produce the requested
+tracked profile, executes the approved commands, and writes the record the
+verifier accepts for those inputs. Failed, cancelled or tainted work is never
+published as a PASS. A produced record is appended to the producer manifest
+named by ``APPTHEORY_EVIDENCE_PRODUCED_MANIFEST`` so the upload step can require
+the exact file this job wrote instead of a glob over the checkout.
+
 Identity is content-addressed, so it is independent of commit SHAs, branch names,
 and evidence-only commits. Inputs are partitioned into disjoint sets:
 
@@ -79,6 +87,7 @@ EXIT_TERMINATED = 143
 DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 GATE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 PROFILE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9.-]*$")
+PRODUCED_MANIFEST_ENV = "APPTHEORY_EVIDENCE_PRODUCED_MANIFEST"
 ENVIRONMENT_DIMENSIONS = ("go", "node", "python", "platform")
 ENVIRONMENT_ALIASES = {
     "none": [],
@@ -308,6 +317,14 @@ def load_registry(path: Path) -> Registry:
             if profile_id not in profiles:
                 raise EvidenceError(
                     f"gate {gate_id!r} supports undeclared proof profile {profile_id!r}"
+                )
+        fallbacks = gate.get("fallbackProfiles", [])
+        if not isinstance(fallbacks, list):
+            raise EvidenceError(f"gate {gate_id!r} fallbackProfiles must be a list")
+        for fallback in fallbacks:
+            if not isinstance(fallback, str) or fallback not in gate_profile_ids(gate, gate_id):
+                raise EvidenceError(
+                    f"gate {gate_id!r} declares fallback profile {fallback!r} it does not support"
                 )
     runner = data.get("runner") or {}
     if int(runner.get("maxWorkers", DEFAULT_RUNNER["maxWorkers"])) < 1:
@@ -659,6 +676,44 @@ def resolve_profile(registry: Registry, gate_id: str, requested: str | None) -> 
     return profile_id
 
 
+def select_producing_profile(
+    registry: Registry,
+    gate_id: str,
+    requested: str,
+    environment: dict[str, Any],
+) -> str:
+    """Choose the tracked profile this host can truthfully produce for the gate.
+
+    The requested profile wins whenever the live host satisfies it. Otherwise
+    the gate's tracked ``fallbackProfiles`` are tried in declaration order, so a
+    platform-bound claim can be produced on its explicitly supported Linux
+    producer instead of being mislabeled with the macOS default. Every candidate
+    is a tracked profile the gate declares; a caller can never assert an
+    arbitrary environment, and the recorded environment is always the real
+    probe. When nothing matches, execution is refused instead of producing
+    false provenance.
+    """
+    gate = registry.gates[gate_id]
+    candidates = [requested]
+    for fallback in gate.get("fallbackProfiles", []):
+        fallback_id = str(fallback)
+        if fallback_id not in candidates:
+            candidates.append(fallback_id)
+    dimensions = environment_dimensions(gate, gate_id)
+    mismatches: list[str] = []
+    for profile_id in candidates:
+        declared = profile_environment(registry, profile_id)
+        mismatch = environment_mismatch(environment, declared, dimensions)
+        if not mismatch:
+            return profile_id
+        mismatches.append(f"{profile_id}: {mismatch}")
+    raise EvidenceError(
+        f"gate {gate_id!r} cannot be produced on this host for proof profile {requested!r} "
+        f"({'; '.join(mismatches)}); run it under the governed toolchain for that profile "
+        "or on a host the profile declares"
+    )
+
+
 def working_tree_dirt(root: Path, registry: Registry) -> list[str]:
     completed = subprocess.run(
         ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
@@ -790,6 +845,7 @@ class GateRunResult:
     commands_reused: int
     verdict: str
     reason: str = ""
+    profile_id: str = ""
 
 
 @dataclass
@@ -1318,18 +1374,44 @@ def write_record(root: Path, registry: Registry, record: dict[str, Any]) -> Path
     return target
 
 
-def run_gate_plan(
+def record_produced_path(root: Path, target: Path) -> None:
+    """Append a record this process actually wrote to the producer manifest.
+
+    CI cannot upload a record it never wrote, and it must not upload a record
+    bundled with the checkout as if this run produced it. The manifest names the
+    exact files this process wrote, so the upload contract has real evidence to
+    check instead of a glob over whatever the checkout happened to contain.
+    """
+    manifest = os.environ.get(PRODUCED_MANIFEST_ENV, "")
+    if not manifest:
+        return
+    try:
+        relative = target.resolve().relative_to(root.resolve())
+    except ValueError as exc:
+        raise EvidenceError(f"produced record {target} is outside the repository root") from exc
+    try:
+        digest = sha256_bytes(target.read_bytes())
+    except OSError as exc:
+        raise EvidenceError(f"cannot read the produced record {target}: {exc}") from exc
+    try:
+        descriptor = os.open(manifest, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    except OSError as exc:
+        raise EvidenceError(f"cannot append to the produced-record manifest {manifest}: {exc}") from exc
+    try:
+        os.write(descriptor, f"{relative}\t{digest}\n".encode("utf-8"))
+    finally:
+        os.close(descriptor)
+
+
+def execute_gate_commands(
     root: Path,
     registry: Registry,
     plan: GatePlan,
-    snapshot: Snapshot,
     environment: dict[str, Any],
     processes: ProcessRegistry,
     cancel: threading.Event,
-    reviews: list[dict[str, str]],
-) -> GateRunResult:
-    gate_id = plan.gate_id
-    gate = plan.gate
+) -> tuple[list[dict[str, Any]], list[dict[str, str]], int, int, list[str]]:
+    """Execute (or reuse) a plan's commands and return the honest command entries."""
     command_entries: list[dict[str, Any]] = []
     consumed: list[dict[str, str]] = []
     executed = 0
@@ -1349,14 +1431,14 @@ def run_gate_plan(
         # Composition, not a shared command cache, is the one dedup mechanism:
         # a leaf consumes a verified record through APPTHEORY_EVIDENCE_REUSE and
         # executes its real command whenever that record is not applicable.
-        extra_env = command_environment(gate, command)
+        extra_env = command_environment(plan.gate, command)
         extra_env["APPTHEORY_EVIDENCE_PROFILE"] = plan.profile_id
         if plan.force:
             extra_env["EVIDENCE_FORCE_EXECUTE"] = "true"
         entry = execute_command(
             root=root,
             registry=registry,
-            gate_id=gate_id,
+            gate_id=plan.gate_id,
             command=command,
             environment=environment,
             processes=processes,
@@ -1369,38 +1451,128 @@ def run_gate_plan(
             failures.append(f"{command['id']} exit={entry.get('exitCode')}")
         command_entries.append(entry)
         executed += 1
+    return command_entries, consumed, executed, reused, failures
 
-    verdict = "FAIL" if failures else "PASS"
-    reason = ("command failed: " + ", ".join(failures)) if failures else ""
+
+def produced_record_problem(
+    registry: Registry,
+    plan: GatePlan,
+    record: dict[str, Any],
+    snapshot: Snapshot,
+    consumed: list[dict[str, str]],
+) -> str:
+    """Return why a just-executed PASS record would not verify, or an empty string.
+
+    A successful execution may only claim a record that the verifier accepts on
+    this same input set and profile. Anything else is retained as a FAIL record
+    instead of a green claim.
+    """
+    if consumed:
+        return "the executed run consumed nested evidence and cannot claim a reusable PASS"
+    if plan.gate.get("kind") == "source":
+        unknown = unmatched_inputs(snapshot, registry)
+        if unknown:
+            return "unknown inputs require broad validation: " + ", ".join(unknown[:5])
+    digests = {command.definition["id"]: command.inputs_digest for command in plan.commands}
+    applicable, reason = record_applicable(
+        record,
+        plan.gate_id,
+        plan.gate,
+        plan.profile_id,
+        plan.scope_digest,
+        digests,
+        profile_environment(registry, plan.profile_id),
+        snapshot,
+    )
+    return "" if applicable else reason
+
+
+def finalize_gate_record(
+    root: Path,
+    registry: Registry,
+    plan: GatePlan,
+    snapshot: Snapshot,
+    environment: dict[str, Any],
+    commands: list[dict[str, Any]],
+    consumed: list[dict[str, str]],
+    verdict: str,
+    reason: str,
+    reviews: list[dict[str, str]],
+    verify_when_pass: bool = False,
+) -> GateRunResult:
     record = build_record(
         registry,
-        gate_id,
-        gate,
+        plan.gate_id,
+        plan.gate,
         plan,
         snapshot,
         environment,
-        command_entries,
+        commands,
         verdict,
         reason,
         reviews,
         consumed,
     )
+    if verdict == "PASS" and verify_when_pass:
+        problem = produced_record_problem(registry, plan, record, snapshot, consumed)
+        if problem:
+            record["verdict"] = "FAIL"
+            record["reason"] = f"produced record does not verify: {problem}"
+    verdict = str(record["verdict"])
+    reason = str(record.get("reason") or "")
     target = write_record(root, registry, record)
+    record_produced_path(root, target)
     print(
-        f"validation-evidence: gate={gate_id} profile={plan.profile_id} action=executed verdict={verdict} "
-        f"commands={len(command_entries)} executed={executed} reused={reused} "
-        f"consumed={len(consumed)} scope={plan.scope_digest}"
+        f"validation-evidence: gate={plan.gate_id} profile={plan.profile_id} action=executed verdict={verdict} "
+        f"commands={len(commands)} executed={sum(1 for item in commands if item.get('executed'))} "
+        f"reused={sum(1 for item in commands if item.get('reused'))} "
+        f"consumed={len(consumed)} scope={plan.scope_digest} record={target.relative_to(root)}"
         + (f" reason={reason}" if reason else ""),
         file=sys.stderr,
     )
     return GateRunResult(
-        gate_id=gate_id,
+        gate_id=plan.gate_id,
         status=verdict.lower(),
         record_path=target,
-        commands_executed=executed,
-        commands_reused=reused,
+        commands_executed=sum(1 for item in commands if item.get("executed")),
+        commands_reused=sum(1 for item in commands if item.get("reused")),
         verdict=verdict,
         reason=reason,
+        profile_id=plan.profile_id,
+    )
+
+
+def run_gate_plan(
+    root: Path,
+    registry: Registry,
+    plan: GatePlan,
+    snapshot: Snapshot,
+    environment: dict[str, Any],
+    processes: ProcessRegistry,
+    cancel: threading.Event,
+    reviews: list[dict[str, str]],
+) -> GateRunResult:
+    commands, consumed, _executed, _reused, failures = execute_gate_commands(
+        root=root,
+        registry=registry,
+        plan=plan,
+        environment=environment,
+        processes=processes,
+        cancel=cancel,
+    )
+    verdict = "FAIL" if failures else "PASS"
+    reason = ("command failed: " + ", ".join(failures)) if failures else ""
+    return finalize_gate_record(
+        root=root,
+        registry=registry,
+        plan=plan,
+        snapshot=snapshot,
+        environment=environment,
+        commands=commands,
+        consumed=consumed,
+        verdict=verdict,
+        reason=reason,
+        reviews=reviews,
     )
 
 
@@ -1691,7 +1863,8 @@ def collect(args: argparse.Namespace) -> int:
                     continue
                 record["verdict"] = "FAIL"
                 record["reason"] = "relevant inputs changed during the run; the record is not reusable"
-                write_record(root, registry, record)
+                rewritten = write_record(root, registry, record)
+                record_produced_path(root, rewritten)
             print(
                 "validation-evidence: FAIL (relevant inputs changed during the run; "
                 "completed records were marked FAIL and retained)",
@@ -2044,64 +2217,131 @@ def verify(args: argparse.Namespace) -> int:
 
 
 def run_gate(args: argparse.Namespace) -> int:
+    """Execute one gate as the CI fallback and persist what actually ran.
+
+    This is the entry point behind ``verify-or-execute.sh`` when no applicable
+    record exists. It must not merely print PASS: the whole reuse policy depends
+    on the execution writing a record the verifier accepts later. It therefore
+    validates that the live host can truthfully produce the requested profile
+    (or a tracked fallback), snapshots the inputs before and after, retains a
+    FAIL record for failed or tainted work, and writes the completed record
+    atomically with the same schema and builder the collector uses.
+    """
     registry = load_registry(args.registry)
     root = repo_root(args.root)
     gate_id = args.gate
     if not gate_id or gate_id not in registry.gates:
         raise EvidenceError(f"gate {gate_id!r} is not approved in the tracked registry")
     gate = registry.gates[gate_id]
-    profile_id = resolve_profile(registry, gate_id, args.profile)
+    requested_profile = resolve_profile(registry, gate_id, args.profile)
     forced = bool(getattr(args, "forced", False))
+    if not forced:
+        raise EvidenceError(
+            "run executes the approved commands and records the result; pass --forced "
+            "(the CI fallback path always does)"
+        )
+    generated_delta = gate.get("kind") == "generated-delta"
+    environment = probe_environment()
+
+    if generated_delta:
+        # A generated-delta smoke is deliberately never reusable evidence: it
+        # runs on the event that changed the generated artifact set and writes
+        # no record, so it cannot be mistaken for proof of a later input set.
+        profile_id = requested_profile
+    else:
+        dirty = working_tree_dirt(root, registry)
+        if dirty:
+            preview = ", ".join(dirty[:10])
+            raise EvidenceError(
+                f"working tree must be clean before executing gate evidence (dirty: {preview})"
+            )
+        profile_id = select_producing_profile(registry, gate_id, requested_profile, environment)
+        if profile_id != requested_profile:
+            print(
+                f"validation-evidence: requested profile {requested_profile!r} cannot be produced on this host; "
+                f"producing tracked fallback profile {profile_id!r} with its real environment",
+                file=sys.stderr,
+            )
+
+    before = load_snapshot(root, registry)
+    plan = build_plans(root, registry, [gate_id], before, {gate_id: profile_id}, force=True)[0]
     processes = ProcessRegistry()
     cancel = threading.Event()
+    received_signal: list[int] = []
 
     def handle_signal(signum: int, _frame: Any) -> None:
+        received_signal.append(signum)
         cancel.set()
         processes.terminate_all()
 
     previous_int = signal.signal(signal.SIGINT, handle_signal)
     previous_term = signal.signal(signal.SIGTERM, handle_signal)
-    failures: list[str] = []
-    executed = 0
     try:
-        for command in gate_commands(gate):
-            extra_env = command_environment(gate, command)
-            extra_env["APPTHEORY_EVIDENCE_PROFILE"] = profile_id
-            if forced:
-                # A forced run must not consume another record through a nested
-                # leaf: the whole point is that this environment executes.
-                extra_env["EVIDENCE_FORCE_EXECUTE"] = "true"
-            result = execute_command(
-                root=root,
-                registry=registry,
-                gate_id=gate_id,
-                command=command,
-                environment=probe_environment(),
-                processes=processes,
-                cancel=cancel,
-                extra_env=extra_env,
-            )
-            executed += 1
-            if result["exitCode"] != 0:
-                failures.append(f"{command['id']} exit={result['exitCode']}")
-            if cancel.is_set():
-                break
+        commands, consumed, executed, reused, failures = execute_gate_commands(
+            root=root,
+            registry=registry,
+            plan=plan,
+            environment=environment,
+            processes=processes,
+            cancel=cancel,
+        )
+    except RunCancelled:
+        processes.terminate_all()
+        print("validation-evidence: interrupted (no record written)", file=sys.stderr)
+        return EXIT_TERMINATED if signal.SIGTERM in received_signal else EXIT_INTERRUPTED
     finally:
         signal.signal(signal.SIGINT, previous_int)
         signal.signal(signal.SIGTERM, previous_term)
-    if cancel.is_set():
-        processes.terminate_all()
-        print("validation-evidence: interrupted", file=sys.stderr)
-        return EXIT_INTERRUPTED
-    if failures:
+
+    if generated_delta:
+        if failures:
+            print(
+                "validation-evidence: FAIL (executed " + ", ".join(failures) + ")",
+                file=sys.stderr,
+            )
+            return EXIT_FAIL
         print(
-            "validation-evidence: FAIL (executed "
-            + ", ".join(failures)
-            + ")",
+            f"validation-evidence: PASS (executed {executed} approved command(s) for gate={gate_id} "
+            f"profile={profile_id}; generated-delta smoke is never reusable evidence)"
+        )
+        return EXIT_PASS
+
+    after = load_snapshot(root, registry)
+    tainted = after.global_identity() != before.global_identity()
+    if tainted:
+        verdict = "FAIL"
+        reason = "relevant inputs changed during the run; the record is not reusable"
+    elif failures:
+        verdict = "FAIL"
+        reason = "command failed: " + ", ".join(failures)
+    else:
+        verdict = "PASS"
+        reason = ""
+    result = finalize_gate_record(
+        root=root,
+        registry=registry,
+        plan=plan,
+        snapshot=after,
+        environment=environment,
+        commands=commands,
+        consumed=consumed,
+        verdict=verdict,
+        reason=reason,
+        reviews=[],
+        verify_when_pass=True,
+    )
+    record_ref = str(result.record_path.relative_to(root)) if result.record_path else "?"
+    if result.verdict != "PASS":
+        print(
+            f"validation-evidence: FAIL (gate={gate_id} profile={profile_id} record={record_ref} "
+            f"{result.reason})",
             file=sys.stderr,
         )
         return EXIT_FAIL
-    print(f"validation-evidence: PASS (executed {executed} approved command(s) for gate={gate_id} profile={profile_id})")
+    print(
+        f"validation-evidence: PASS (executed {executed} approved command(s) for gate={gate_id} "
+        f"profile={profile_id} reused={reused}; wrote {record_ref})"
+    )
     return EXIT_PASS
 
 
@@ -2164,6 +2404,155 @@ def finalize(args: argparse.Namespace) -> int:
     return EXIT_PASS
 
 
+def produced_records(args: argparse.Namespace) -> int:
+    """Resolve the records this job actually wrote into uploadable paths.
+
+    A workflow must upload the record its execution produced, not whatever
+    ``*.json`` the checkout happened to contain. This reads the producer
+    manifest written by real record writes, checks each named path is the exact
+    gate/profile record for the tracked registry, is present, is not bundled
+    with the checkout, and (for a PASS record) still verifies on the current
+    inputs. When nothing was produced it reports ``any=false`` so the upload
+    step is skipped instead of publishing stale receipts as new proof.
+    """
+    registry = load_registry(args.registry)
+    root = repo_root(args.root)
+    manifest_value = args.manifest or os.environ.get(PRODUCED_MANIFEST_ENV, "")
+    if args.require_manifest and not manifest_value:
+        raise EvidenceError(
+            f"no producer manifest is configured; set {PRODUCED_MANIFEST_ENV} "
+            "so a CI job can require the records it actually wrote"
+        )
+    entries: list[tuple[str, str]] = []
+    if manifest_value:
+        manifest_path = Path(manifest_value)
+        if not manifest_path.is_absolute():
+            manifest_path = root / manifest_path
+        if manifest_path.is_file():
+            for line in manifest_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                relative_text, _, digest_text = line.strip().partition("\t")
+                candidate = Path(relative_text.strip())
+                if candidate.is_absolute():
+                    try:
+                        candidate = candidate.resolve().relative_to(root.resolve())
+                    except ValueError as exc:
+                        raise EvidenceError(
+                            f"produced record {relative_text!r} is outside the repository"
+                        ) from exc
+                entry = (str(candidate).strip("/"), digest_text.strip())
+                # A later write of the same record supersedes an earlier one (a
+                # taint rewrite keeps the retained FAIL result authoritative).
+                entries = [item for item in entries if item[0] != entry[0]]
+                entries.append(entry)
+
+    verified: list[str] = []
+    for relative, expected_digest in entries:
+        parts = Path(relative).parts
+        if (
+            len(parts) != 3
+            or parts[0] != registry.evidence_directory
+            or not parts[2].endswith(".json")
+        ):
+            raise EvidenceError(
+                f"produced evidence path {relative!r} is not "
+                f"{registry.evidence_directory}/<gate>/<profile>.json"
+            )
+        gate_id, profile_id = parts[1], parts[2][: -len(".json")]
+        if not GATE_ID_RE.fullmatch(gate_id) or not PROFILE_ID_RE.fullmatch(profile_id):
+            raise EvidenceError(f"produced evidence path {relative!r} names an invalid gate or profile")
+        if gate_id not in registry.gates:
+            raise EvidenceError(f"produced evidence path {relative!r} names an unapproved gate")
+        gate = registry.gates[gate_id]
+        if profile_id not in gate_profile_ids(gate, gate_id) or profile_id not in registry.profiles:
+            raise EvidenceError(
+                f"produced evidence path {relative!r} names a profile the gate does not support"
+            )
+        target = root / relative
+        if not target.is_file():
+            raise EvidenceError(f"produced record is missing: {relative}")
+        try:
+            payload = target.read_bytes()
+        except OSError as exc:
+            raise EvidenceError(f"produced record {relative} is unreadable: {exc}") from exc
+        if expected_digest and not DIGEST_RE.fullmatch(expected_digest):
+            raise EvidenceError(f"produced manifest digest for {relative} is malformed")
+        if expected_digest and sha256_bytes(payload) != expected_digest:
+            raise EvidenceError(f"produced record {relative} changed after it was written")
+        tracked = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "--", relative],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if tracked.returncode == 0:
+            unchanged = subprocess.run(
+                ["git", "diff", "--quiet", "--", relative],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if unchanged.returncode == 0:
+                raise EvidenceError(
+                    f"{relative} is bundled with the checkout, not produced by this run"
+                )
+            if unchanged.returncode != 1:
+                raise EvidenceError(f"cannot compare {relative} with the checkout: {unchanged.stderr.strip()}")
+        try:
+            record = json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise EvidenceError(f"produced record {relative} is unreadable: {exc}") from exc
+        if not isinstance(record, dict) or record.get("gate") != gate_id or record.get("profile") != profile_id:
+            raise EvidenceError(f"produced record {relative} does not describe {gate_id}/{profile_id}")
+        verdict = record.get("verdict")
+        if verdict not in {"PASS", "FAIL"}:
+            raise EvidenceError(f"produced record {relative} has an invalid verdict {verdict!r}")
+        if verdict == "PASS":
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).resolve()),
+                    "--registry",
+                    str(registry.path),
+                    "verify",
+                    "--root",
+                    str(root),
+                    "--gate",
+                    gate_id,
+                    "--profile",
+                    profile_id,
+                ],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if completed.returncode != 0:
+                detail = (completed.stderr.strip().splitlines() or ["verification failed"])[-1]
+                raise EvidenceError(f"produced record {relative} does not verify: {detail}")
+        verified.append(relative)
+
+    any_value = "true" if verified else "false"
+    output_path = os.environ.get("GITHUB_OUTPUT", "")
+    if output_path:
+        with open(output_path, "a", encoding="utf-8") as handle:
+            handle.write(f"any={any_value}\n")
+        if verified:
+            with open(output_path, "a", encoding="utf-8") as handle:
+                handle.write("paths<<APPTHEORY_PRODUCED_RECORDS\n")
+                for relative in verified:
+                    handle.write(f"{relative}\n")
+                handle.write("APPTHEORY_PRODUCED_RECORDS\n")
+    else:
+        for relative in verified:
+            print(relative)
+    print(f"produced-records: any={any_value} records={len(verified)}")
+    return EXIT_PASS
+
+
 def build_parser() -> argparse.ArgumentParser:
     default_registry = Path(__file__).resolve().with_name("validation-gates.json")
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -2198,12 +2587,31 @@ def build_parser() -> argparse.ArgumentParser:
     probe_parser = subparsers.add_parser("probe", help="print the probed live environment")
     probe_parser.set_defaults(handler=probe)
 
-    run_parser = subparsers.add_parser("run", help="execute the approved commands for one gate without recording")
+    run_parser = subparsers.add_parser(
+        "run",
+        help="execute the approved commands for one gate and record the producing environment",
+    )
     run_parser.add_argument("--root", type=Path)
     run_parser.add_argument("--gate", required=True)
-    run_parser.add_argument("--profile", help="tracked proof profile whose environment the run assumes")
-    run_parser.add_argument("--forced", action="store_true", help="refuse nested composition; execute every command")
+    run_parser.add_argument("--profile", help="tracked proof profile to record (requests a fallback when the host cannot produce it)")
+    run_parser.add_argument("--forced", action="store_true", help="required: execute every command and refuse nested composition")
     run_parser.set_defaults(handler=run_gate)
+
+    produced_parser = subparsers.add_parser(
+        "produced-records",
+        help="resolve the records this job wrote into strict upload paths",
+    )
+    produced_parser.add_argument("--root", type=Path)
+    produced_parser.add_argument(
+        "--manifest",
+        help=f"producer manifest (default: ${PRODUCED_MANIFEST_ENV})",
+    )
+    produced_parser.add_argument(
+        "--require-manifest",
+        action="store_true",
+        help="fail when no producer manifest is configured (CI upload contract)",
+    )
+    produced_parser.set_defaults(handler=produced_records)
 
     finalize_parser = subparsers.add_parser("finalize", help="add review references to an existing record")
     finalize_parser.add_argument("--root", type=Path)

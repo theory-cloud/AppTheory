@@ -85,6 +85,18 @@
           "arch": "x64"
         }
       }
+    },
+    "linux-x64": {
+      "description": "Linux x64 CI producer for platform-bound build proof; a record under this profile is labeled Linux and never substitutes for the macOS default",
+      "environment": {
+        "go": "go1.27.4",
+        "node": "24",
+        "python": "3.14",
+        "platform": {
+          "os": "linux",
+          "arch": "x64"
+        }
+      }
     }
   },
   "nonProductPaths": [
@@ -254,7 +266,8 @@
     "deterministic-builds": {
       "kind": "source",
       "environment": ["go", "node", "python", "platform"],
-      "profiles": ["default"],
+      "profiles": ["default", "linux-x64"],
+      "fallbackProfiles": ["linux-x64"],
       "description": "Deterministic release artifact builds (built twice and compared) on the approved producing host",
       "resources": ["cpu", "repo-write"],
       "paths": [

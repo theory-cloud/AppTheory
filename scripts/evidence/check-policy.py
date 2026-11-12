@@ -130,6 +130,15 @@ def main() -> int:
         for profile_id in gate_profiles:
             if profile_id not in profiles:
                 fail(f"gate {gate_id} supports undeclared proof profile {profile_id!r}")
+        fallbacks = gate.get("fallbackProfiles", [])
+        if not isinstance(fallbacks, list):
+            fail(f"gate {gate_id} fallbackProfiles must be a list")
+        for fallback_profile in fallbacks:
+            if fallback_profile not in gate_profiles:
+                fail(
+                    f"gate {gate_id} declares fallback profile {fallback_profile!r} "
+                    "it does not support"
+                )
         declared_resources = gate.get("resources", [gate.get("resource")])
         if isinstance(declared_resources, str):
             declared_resources = [declared_resources]
@@ -273,8 +282,11 @@ def main() -> int:
         "declared input scope",
         "--profile",
         "proof profile",
+        "fallback profile",
         "executed once per profile",
         "Linux release artifact construction",
+        "produced record",
+        "tc-toolchain",
     ):
         if token not in docs:
             fail(f"docs must document the corrected collector default: missing {token!r}")

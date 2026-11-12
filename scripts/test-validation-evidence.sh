@@ -11,6 +11,11 @@ evidence_py="${repo_root}/scripts/evidence/validation_evidence.py"
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/apptheory-validation-evidence.XXXXXX")"
 trap 'rm -rf "${tmp}"' EXIT
 
+# The rubric collector runs this self-test with its own evidence environment
+# exported (force/reuse/profile). The fixture controls those itself.
+unset EVIDENCE_FORCE_EXECUTE APPTHEORY_EVIDENCE_REUSE APPTHEORY_EVIDENCE_PROFILE \
+  APPTHEORY_EVIDENCE_CONSUME_LOG APPTHEORY_EVIDENCE_PRODUCED_MANIFEST
+
 scratch="${tmp}/repo"
 registry="${tmp}/registry.json"
 mkdir -p "${scratch}/evidence" "${scratch}/gen"
@@ -222,14 +227,14 @@ expect_output "verify identical inputs" "mode=evidence-verified" verify --gate u
 # 0. The real wrapper reuses verified proof, executes when none applies, and
 #    forces execution for an untrusted pull-request origin.
 expect_output "wrapper reuses applicable evidence" "evidence-verified" \
-  env GOTOOLCHAIN=go1.27.4 bash -c 'cd "$1" && bash scripts/evidence/verify-or-execute.sh --gate unit' _ "${scratch}"
+  bash -c 'cd "$1" && bash scripts/evidence/verify-or-execute.sh --gate unit' _ "${scratch}"
 expect_output "wrapper executes when no evidence applies" "executing" \
-  env GOTOOLCHAIN=go1.27.4 bash -c 'cd "$1" && bash scripts/evidence/verify-or-execute.sh --gate noop' _ "${scratch}"
+  bash -c 'cd "$1" && bash scripts/evidence/verify-or-execute.sh --gate noop' _ "${scratch}"
 printf '{"pull_request":{"head":{"repo":{"full_name":"someone-else/AppTheory"}}}}\n' >"${tmp}/fork-event.json"
 fork_status=0
 fork_output="$(
   cd "${scratch}" &&
-    GOTOOLCHAIN=go1.27.4 GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH="${tmp}/fork-event.json" GITHUB_REPOSITORY=theory-cloud/AppTheory \
+    GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH="${tmp}/fork-event.json" GITHUB_REPOSITORY=theory-cloud/AppTheory \
       bash scripts/evidence/verify-or-execute.sh --gate unit --verify-only 2>&1
 )" || fork_status=$?
 if [[ "${fork_status:-0}" -eq 0 || "${fork_output}" != *"would-execute"* ]]; then

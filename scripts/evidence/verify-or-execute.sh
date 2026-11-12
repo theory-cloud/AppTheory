@@ -13,6 +13,19 @@
 # same tested environment is reused on every later release event instead of
 # being forced to execute again.
 #
+# When the requested profile has no applicable record, the gate's tracked
+# fallback profiles (for example its Linux producer for a platform-bound claim)
+# are verified before executing. A record is always labeled with the profile
+# that really produced it, and the printed line names both the verified profile
+# and the requested one.
+#
+# Execution goes through the collector's own record builder: it writes the
+# completed record atomically for the real producing environment, keeps FAIL and
+# tainted results honest, and refuses a profile the live host cannot truthfully
+# produce. When APPTHEORY_EVIDENCE_PRODUCED_MANIFEST is set, each record the run
+# wrote is listed there so the workflow can upload the produced files instead of
+# a glob over the checkout.
+#
 # The printed line and the job summary state unambiguously which profile was
 # verified or executed.
 #
@@ -44,9 +57,9 @@ while [[ $# -gt 0 ]]; do
 usage: scripts/evidence/verify-or-execute.sh --gate <gate-id> [--profile <id>] [--verify-only]
 
 Reuses a verified evidence record for the gate and tracked proof profile, or
-executes its approved commands. --verify-only reports the decision and exits 0
-only when evidence is reusable; it never executes. Set EVIDENCE_FORCE_EXECUTE=true
-to force execution.
+executes its approved commands and records the real producing environment.
+--verify-only reports the decision and exits 0 only when evidence is reusable;
+it never executes. Set EVIDENCE_FORCE_EXECUTE=true to force execution.
 USAGE
       exit 0
       ;;
@@ -120,6 +133,45 @@ if [[ "${force_execute}" != "true" ]]; then
   fi
   reason="$(tail -n 1 "${verify_stderr}" | sed -e 's/^validation-evidence: FAIL (//' -e 's/)$//')"
   cat "${verify_stderr}" >&2 || true
+
+  # A gate may declare tracked producing fallbacks (for example the Linux CI
+  # producer of a platform-bound build claim). Verify those records too: the
+  # verifier compares the record with its tracked profile and never with its
+  # own runner, so a macOS-produced record still verifies on a Linux verifier,
+  # and a Linux-produced fallback record verifies under its own profile name.
+  profile_plan="$(
+    python3 - "${gate}" "${profile}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+gate, profile = sys.argv[1], sys.argv[2]
+registry = json.loads(Path("scripts/evidence/validation-gates.json").read_text(encoding="utf-8"))
+entry = registry.get("gates", {}).get(gate, {})
+allowed = [str(item) for item in entry.get("profiles") or ["default"]]
+requested = profile or allowed[0]
+print(requested)
+for item in entry.get("fallbackProfiles", []):
+    if str(item) != requested:
+        print(str(item))
+PY
+  )" || profile_plan=""
+  requested_profile_id="$(printf '%s\n' "${profile_plan}" | sed -n '1p')"
+  while IFS= read -r candidate; do
+    if [[ -z "${candidate}" ]]; then
+      continue
+    fi
+    fallback_stderr="$(mktemp)"
+    if python3 scripts/evidence/validation_evidence.py verify --gate "${gate}" --profile "${candidate}" 2>"${fallback_stderr}"; then
+      cat "${fallback_stderr}" >&2 || true
+      rm -f "${fallback_stderr}"
+      echo "gate ${gate} (profile ${candidate}; requested ${requested_profile_id}): evidence-verified (tracked fallback profile; no command executed in this run)"
+      summary_line "- \`${gate}\`: evidence-verified via tracked fallback profile \`${candidate}\` for requested \`${requested_profile_id}\` (no command executed in this run)"
+      exit 0
+    fi
+    cat "${fallback_stderr}" >&2 || true
+    rm -f "${fallback_stderr}"
+  done < <(printf '%s\n' "${profile_plan}" | sed -n '2,$p')
 
   # A gate may declare that another gate's record fully covers its command set
   # (for example the deterministic-build record covers the standalone ts/py

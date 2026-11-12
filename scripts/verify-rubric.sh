@@ -29,6 +29,10 @@ bash ./scripts/test-check-visible-findings.sh
 # The proportionate-validation policy binds the evidence schema to the release
 # automation, and the evidence self-test exercises the fail-closed controls.
 bash ./scripts/test-validation-evidence.sh
+# The CI fallback must persist what it actually executed: the wrapper execution
+# tests cover record capture, taint/failure retention, truthful fallback
+# profiles and the produced-record upload contract.
+bash ./scripts/test-evidence-execution-capture.sh
 # The composed CDK packaging step must build each package exactly once per
 # rubric invocation; its nested-call and force-mode controls run here.
 bash ./scripts/test-verify-cdk-packaging.sh
