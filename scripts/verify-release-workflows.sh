@@ -1431,8 +1431,9 @@ subprocess.run(["bash", "scripts/verify-release-eligibility.sh", "--self-test"],
 
 # Release-driven generated messages: both lanes must render a fix-type release PR
 # title (which pinned release-please also uses as the release-branch commit
-# message), the artifact sync commit must stay release-driving, and every release
-# predicate must exclude those generated subjects from fresh-user-facing checks.
+# message), the artifact sync commit must stay release-driving, and the release
+# PR postcondition must bind those exact messages. The other predicates compare
+# commits and immutable tags directly, so they must not classify subjects.
 for lane_config in ("release-please-config.premain.json", "release-please-config.json"):
     require_contains(
         lane_config,
@@ -1442,27 +1443,47 @@ for lane_config in ("release-please-config.premain.json", "release-please-config
     require_contains(
         lane_config,
         '"draft": true',
-        "release lane config must keep generated release PRs draft until the sync marks them ready",
+        "release lane config must keep the generated GitHub release draft until publish",
     )
 for release_predicate in (
     "scripts/verify-release-eligibility.sh",
     "scripts/verify-release-pr-postcondition.sh",
     "scripts/verify-release-publish-postcondition.sh",
 ):
-    require_contains(
+    require_not_contains(
+        release_predicate,
+        "filter-user-facing",
+        "release predicates must not exempt commit subjects from release readiness",
+    )
+    require_not_contains(
         release_predicate,
         "release-automation-commits.py",
-        "release predicate must exclude already-released generated automation",
+        "release predicates must not classify generated commit subjects",
     )
 require_contains(
     "scripts/verify-release-pr-postcondition.sh",
-    "render-title",
+    "release-generated-messages.py",
     "release PR postcondition must bind the generated title to the lane config",
+)
+require_contains(
+    "scripts/verify-release-pr-postcondition.sh",
+    "render-title",
+    "release PR postcondition must render the generated title from the lane config",
 )
 require_contains(
     "scripts/verify-release-pr-postcondition.sh",
     "messageHeadline",
     "release PR postcondition must prove the release-branch commit subject",
+)
+require_contains(
+    "scripts/verify-release-pr-postcondition.sh",
+    '"fix(${base_branch}): "',
+    "release PR postcondition must require the exact main/premain scope",
+)
+require_contains(
+    "scripts/verify-release-eligibility.sh",
+    "git tag --list",
+    "promotion eligibility must tie published-history exclusion to immutable tags",
 )
 subprocess.run(["bash", "scripts/verify-release-generated-messages.sh"], check=True)
 
