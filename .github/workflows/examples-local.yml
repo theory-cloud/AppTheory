@@ -69,10 +69,25 @@ jobs:
       - name: Install the browser row's Chromium
         run: python -m playwright install --with-deps chromium
 
+      # The examples gate is the most expensive local proof. A reviewed record
+      # for these exact inputs lets the PR, merge and promotion lanes reuse it;
+      # a fork PR, a changed input or a missing/stale record executes the real
+      # harness. The summary states which happened.
+      - name: Check reusable examples evidence
+        id: evidence
+        run: |
+          set -euo pipefail
+          if bash scripts/evidence/verify-or-execute.sh --gate examples-local --verify-only; then
+            echo "reuse=true" >>"${GITHUB_OUTPUT}"
+          else
+            echo "reuse=false" >>"${GITHUB_OUTPUT}"
+          fi
+
       # The service container publishes the profile port; --external tells the
       # harness to wait for it instead of starting a compose container on the
       # same host port. --slot 0 pins the compose slot to that port.
       - name: Run the local examples harness
+        if: steps.evidence.outputs.reuse != 'true'
         run: make examples-local EXAMPLES_LOCAL_ARGS="--slot 0 --external"
 
       # A pinned synth hash only proves location independence when synthesis
@@ -81,4 +96,5 @@ jobs:
       # same bytes. It is a second synth run, so it lives here rather than in
       # the 60-minute harness step.
       - name: Verify CDK synth from a relocated copy
+        if: steps.evidence.outputs.reuse != 'true'
         run: make verify-cdk-synth-location-independent

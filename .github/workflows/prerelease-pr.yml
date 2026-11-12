@@ -16,7 +16,13 @@ on:
       - "examples/cdk/multilang/package-lock.json"
       - "examples/cdk/ssr-site/package-lock.json"
       - "examples/cdk/lesser-parity/package-lock.json"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      finalize_only:
+        description: "Verify the exact generated PR head, postcondition and current checks, then mark ready only"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   actions: write
@@ -30,7 +36,7 @@ concurrency:
 
 jobs:
   release-please:
-    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, 'release-please--branches--premain')
+    if: (github.event_name == 'workflow_dispatch' && inputs.finalize_only != true) || (github.event_name != 'workflow_dispatch' && !contains(github.event.head_commit.message, 'release-please--branches--premain'))
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -125,3 +131,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
         run: scripts/sync-release-pr-generated.sh release-please--branches--premain
+
+  finalize-release-pr:
+    name: Finalize generated release PR
+    if: github.event_name == 'workflow_dispatch' && inputs.finalize_only == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      # Recovery path only: verify the exact current head, the release
+      # postcondition and the current required checks, then mark the PR ready.
+      # It never dispatches, commits, rewrites or merges.
+      - name: Finalize generated release PR
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: scripts/sync-release-pr-generated.sh --finalize-only release-please--branches--premain

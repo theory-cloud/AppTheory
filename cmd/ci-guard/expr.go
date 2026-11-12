@@ -5,18 +5,23 @@ import (
 	"strings"
 )
 
+// literalTrue is the canonical GitHub Actions boolean spelling compared as a
+// string by the classifier and the evidence-wiring guard.
+const literalTrue = "true"
+
 // state is one concrete assignment of the GitHub Actions contexts a job-level
 // `if:` expression may reference. A job's effective triggers are derived by
 // evaluating its expression over a finite set of states rather than by matching
 // the expression's text, so negations, `!=`, folded scalars and reordered
 // clauses cannot hide coverage.
 type state struct {
-	event  string            // push | pull_request | workflow_dispatch
-	ref    string            // github.ref; "" models a null context
-	base   string            // github.event.pull_request.base.ref
-	head   string            // github.event.pull_request.head.ref
-	draft  string            // github.event.pull_request.draft ("true"/"false")
-	inputs map[string]string // workflow_dispatch inputs; nil for other events
+	event       string            // push | pull_request | workflow_dispatch
+	ref         string            // github.ref; "" models a null context
+	base        string            // github.event.pull_request.base.ref
+	head        string            // github.event.pull_request.head.ref
+	draft       string            // github.event.pull_request.draft ("true"/"false")
+	headMessage string            // github.event.head_commit.message on push
+	inputs      map[string]string // workflow_dispatch inputs; nil for other events
 }
 
 // expr is a parsed boolean GitHub Actions expression.
@@ -101,6 +106,39 @@ func containsAlways(e expr) bool {
 	return false
 }
 
+// stringPredicateExpr models the string predicates the release-generated
+// guards use over modeled contexts: contains(), startsWith() and endsWith().
+// An unset context evaluates the predicate false, matching GitHub's null
+// comparison semantics, so a push-only context never selects a pull request.
+type stringPredicateExpr struct {
+	kind  string
+	left  operand
+	right operand
+}
+
+func (e stringPredicateExpr) eval(s state) (bool, error) {
+	left, leftSet, err := e.left.resolve(s)
+	if err != nil {
+		return false, err
+	}
+	right, rightSet, err := e.right.resolve(s)
+	if err != nil {
+		return false, err
+	}
+	if !leftSet || !rightSet {
+		return false, nil
+	}
+	switch e.kind {
+	case "contains":
+		return strings.Contains(left, right), nil
+	case "startsWith":
+		return strings.HasPrefix(left, right), nil
+	case "endsWith":
+		return strings.HasSuffix(left, right), nil
+	}
+	return false, fmt.Errorf("string predicate %q is not modeled", e.kind)
+}
+
 type compareExpr struct {
 	op    string
 	left  operand
@@ -159,6 +197,7 @@ var modeledContexts = map[string]bool{
 	"github.event.pull_request.base.ref": true,
 	"github.event.pull_request.head.ref": true,
 	"github.event.pull_request.draft":    true,
+	"github.event.head_commit.message":   true,
 }
 
 func (o operand) resolve(s state) (string, bool, error) {
@@ -176,6 +215,8 @@ func (o operand) resolve(s state) (string, bool, error) {
 		return s.head, s.head != "", nil
 	case "github.event.pull_request.draft":
 		return s.draft, s.draft != "", nil
+	case "github.event.head_commit.message":
+		return s.headMessage, s.event == "push", nil
 	}
 	if name, ok := strings.CutPrefix(o.text, "inputs."); ok && name != "" {
 		if s.inputs == nil {
@@ -417,6 +458,29 @@ func (p *expressionParser) isFunctionCall() bool {
 func (p *expressionParser) parseFunctionCall() (expr, error) {
 	name := p.tokens[p.pos].text
 	p.pos += 2
+	switch name {
+	case "contains", "startsWith", "endsWith":
+		if p.peekPunct(")") {
+			return nil, fmt.Errorf("function %q in if: expression requires two string arguments", name)
+		}
+		left, err := p.parseOperand()
+		if err != nil {
+			return nil, err
+		}
+		if !p.peekPunct(",") {
+			return nil, fmt.Errorf("function %q in if: expression requires a comma between arguments", name)
+		}
+		p.pos++
+		right, err := p.parseOperand()
+		if err != nil {
+			return nil, err
+		}
+		if !p.peekPunct(")") {
+			return nil, fmt.Errorf("function %q in if: expression must close with a single ')'", name)
+		}
+		p.pos++
+		return stringPredicateExpr{kind: name, left: left, right: right}, nil
+	}
 	if !p.peekPunct(")") {
 		return nil, fmt.Errorf("function %q with arguments in if: expression is not modeled", name)
 	}
@@ -453,7 +517,7 @@ func (p *expressionParser) parseOperand() (operand, error) {
 
 func classifyIdentOperand(text string) (operand, error) {
 	switch {
-	case text == "true" || text == "false":
+	case text == literalTrue || text == "false":
 		return operand{kind: operandLiteral, text: text}, nil
 	case isNumberLiteral(text):
 		return operand{kind: operandLiteral, text: text}, nil

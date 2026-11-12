@@ -4,7 +4,6 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-SIGNED_HISTORY_BASE="${SIGNED_HISTORY_BASE:-c723c42c71d9220f49702db965d4deffff6183f1}"
 HISTORICAL_UNSIGNED_FIXTURE="${HISTORICAL_UNSIGNED_FIXTURE:-ae2468e0c27b02138ad25f3035afff17e253b8a1}"
 RELEASE_SIGNATURE_VERBOSE="${RELEASE_SIGNATURE_VERBOSE:-false}"
 RELEASE_SIGNATURE_RETRY_SLEEP_BUDGET_SECONDS="${RELEASE_SIGNATURE_RETRY_SLEEP_BUDGET_SECONDS:-300}"
@@ -213,6 +212,25 @@ fetch_release_refs_if_possible() {
   git fetch --no-tags origin "${refspecs[@]}" >/dev/null 2>&1 || true
 }
 
+# The trusted accepted base for a protected ref is the newest release tag that
+# is an ancestor of that ref. Release tags are created by the release automation
+# from reviewed release PRs and are never derived from pull-request evidence, so
+# the scan covers only commits produced since the last accepted release. Old
+# history was already proven when it was released; it stays a baseline, not new
+# work.
+proven_base_for_ref() {
+  local ref="$1"
+  local base
+  base="$(git describe --tags --match 'v[0-9]*' --abbrev=0 "${ref}" 2>/dev/null || true)"
+  if [[ -z "${base}" ]]; then
+    return 1
+  fi
+  if ! git merge-base --is-ancestor "${base}" "${ref}"; then
+    return 1
+  fi
+  printf '%s\n' "${base}"
+}
+
 scan_default_release_refs() {
   local failures=0
   local refs=(
@@ -228,12 +246,13 @@ scan_default_release_refs() {
       echo "release-signatures: SKIP ${ref} (ref unavailable)"
       continue
     fi
-    if ! git merge-base --is-ancestor "${SIGNED_HISTORY_BASE}" "${ref}"; then
-      echo "release-signatures: FAIL ${ref} is not descended from signed-history base ${SIGNED_HISTORY_BASE}" >&2
+    local base
+    if ! base="$(proven_base_for_ref "${ref}")"; then
+      echo "release-signatures: FAIL ${ref} has no ancestor release tag to bound the new-commit range" >&2
       failures=$((failures + 1))
       continue
     fi
-    if ! scan_range "${ref}" "${SIGNED_HISTORY_BASE}..${ref}"; then
+    if ! scan_range "${ref}" "${base}..${ref}"; then
       failures=$((failures + 1))
     fi
   done
@@ -278,9 +297,18 @@ PY
     local before="${GITHUB_EVENT_BEFORE:-${GITHUB_BEFORE:-}}"
     local head="${GITHUB_SHA:-}"
     if [[ -n "${head}" ]]; then
-      local base="${SIGNED_HISTORY_BASE}"
+      local base=""
       if [[ -n "${before}" && ! "${before}" =~ ^0+$ ]]; then
         base="${before}"
+      elif base="$(proven_base_for_ref "${head}")"; then
+        :
+      else
+        base=""
+      fi
+      if [[ -z "${base}" ]]; then
+        echo "release-signatures: FAIL push has no trusted base (no event before and no ancestor release tag)" >&2
+        failures=$((failures + 1))
+        return "${failures}"
       fi
       if git rev-parse --verify --quiet "${base}^{commit}" >/dev/null && git rev-parse --verify --quiet "${head}^{commit}" >/dev/null; then
         if ! scan_range "push:${base}..${head}" "${base}..${head}"; then
@@ -307,7 +335,13 @@ run_self_test() {
       failures=$((failures + 1))
       continue
     fi
-    if ! scan_range "self-test:${ref}" "${SIGNED_HISTORY_BASE}..${ref}"; then
+    local base
+    if ! base="$(proven_base_for_ref "${ref}")"; then
+      echo "release-signatures self-test: FAIL (${ref} has no ancestor release tag)" >&2
+      failures=$((failures + 1))
+      continue
+    fi
+    if ! scan_range "self-test:${ref}" "${base}..${ref}"; then
       failures=$((failures + 1))
     fi
   done
@@ -711,8 +745,9 @@ while [[ $# -gt 0 ]]; do
       cat <<'USAGE'
 usage: scripts/verify-release-branch-signatures.sh [--self-test] [--range <base..head> [--label <label>]]...
 
-Without explicit ranges, scans repaired protected/release-please branch history from the
-signed-history repair base and any GitHub Actions pull_request or push range in the environment.
+Without explicit ranges, scans each protected/release-please ref from its newest ancestor
+release tag (a trusted accepted base) plus any GitHub Actions pull_request or push range in
+the environment. A ref without an ancestor release tag fails closed.
 USAGE
       exit 0
       ;;

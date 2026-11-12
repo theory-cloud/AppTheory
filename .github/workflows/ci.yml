@@ -124,6 +124,9 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.27.4"
+      # These invariants always execute on the new commit. They are deliberately
+      # not evidence-aware: their whole value is re-reading the current merge,
+      # signature and workflow wiring.
       - name: Verify release/security invariants
         env:
           GH_TOKEN: ${{ github.token }}
@@ -152,7 +155,6 @@ jobs:
 
   security-refresh:
     name: Security refresh (dependency scan)
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -181,18 +183,82 @@ jobs:
             py/requirements-build.txt
             py/requirements-lint.txt
             cdk/requirements-build.txt
-      - name: Scan dependencies at the pull-request revision
-        run: bash scripts/verify-security-refresh.sh
+      # A fresh dependency-scoped scan is reusable across train legs for 24h
+      # (tracked in scripts/evidence/validation-gates.json). A stale scan, a
+      # changed dependency input or untrusted PR origin executes the scan.
+      - name: Verify dependency freshness or scan
+        run: bash scripts/evidence/verify-or-execute.sh --gate security-refresh
+
+  release-delta:
+    name: Release delta validation
+    if: (github.event_name == 'pull_request' && (github.event.pull_request.base.ref == 'premain' || github.event.pull_request.base.ref == 'main') && (github.event.pull_request.head.ref == 'release-please--branches--premain' || github.event.pull_request.head.ref == 'release-please--branches--main')) || (github.event_name == 'workflow_dispatch' && inputs.release_pr_number != '')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify dispatched release branch identity
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          DISPATCH_REF_NAME: ${{ github.ref_name }}
+          DISPATCH_PR_NUMBER: ${{ inputs.release_pr_number }}
+        run: |
+          set -euo pipefail
+          case "${DISPATCH_REF_NAME}" in
+            release-please--branches--premain|release-please--branches--main) ;;
+            *)
+              echo "release-delta: FAIL (dispatch ref ${DISPATCH_REF_NAME} is not a generated release branch)" >&2
+              exit 1
+              ;;
+          esac
+          if [[ ! "${DISPATCH_PR_NUMBER}" =~ ^[0-9]+$ ]]; then
+            echo "release-delta: FAIL (release_pr_number must be numeric)" >&2
+            exit 1
+          fi
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.4"
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            cdk-go/apptheorycdk/go.sum
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: |
+            ts/package-lock.json
+            cdk/package-lock.json
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: |
+            py/pyproject.toml
+            py/requirements-build.txt
+      # Generated release PRs never repeat the source rubric, contract corpus,
+      # examples harness or language test suites. Version coupling, regeneration
+      # equality and package smoke run once for the changed artifact set.
+      - name: Verify generated release delta
+        env:
+          EVIDENCE_FORCE_EXECUTE: "true"
+        run: bash scripts/evidence/verify-or-execute.sh --gate release-delta
 
   runtime-floor-matrix:
     name: Runtime floor matrix (Node ${{ matrix.node-version }}, Python ${{ matrix.python-version }})
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false || (github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')
+    if: (github.event_name != 'push' || !contains(github.event.head_commit.message, 'release-please--branches--')) && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')) && !(github.event_name == 'workflow_dispatch' && inputs.release_pr_number != '')
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         node-version: ["22", "24"]
         python-version: ["3.12", "3.14"]
+        # The latest/latest leg is the dedicated Go/TypeScript/Python/contract
+        # job set on the same toolchains; the floor cross-product below keeps
+        # every distinct lower-floor environment covered.
+        exclude:
+          - node-version: "24"
+            python-version: "3.14"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -212,21 +278,27 @@ jobs:
           cache-dependency-path: |
             py/pyproject.toml
             py/requirements-build.txt
-      - name: Verify lower-floor runtime, package, and fixture proof
+      # The floor environment is itself under test, so these never reuse
+      # another environment's evidence.
+      - name: Verify lower-floor package and fixture proof
+        env:
+          EVIDENCE_FORCE_EXECUTE: "true"
         run: |
-          bash scripts/verify-runtime-floor-claims.sh
-          bash scripts/verify-ts-pack.sh
-          bash scripts/verify-python-build.sh
-          bash scripts/verify-contract-tests.sh
+          bash scripts/evidence/verify-or-execute.sh --gate ts
+          bash scripts/evidence/verify-or-execute.sh --gate py
+          bash scripts/evidence/verify-or-execute.sh --gate contract-tests
 
   cdk-floor-matrix:
     name: CDK floor matrix (Node ${{ matrix.node-version }})
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false || (github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')
+    if: (github.event_name != 'push' || !contains(github.event.head_commit.message, 'release-please--branches--')) && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')) && !(github.event_name == 'workflow_dispatch' && inputs.release_pr_number != '')
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         node-version: ["22", "24"]
+        # Node 24 is covered by the dedicated CDK Go binding drift job.
+        exclude:
+          - node-version: "24"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -243,7 +315,9 @@ jobs:
           cache: "npm"
           cache-dependency-path: cdk/package-lock.json
       - name: Verify CDK lower-floor generated binding proof
-        run: bash scripts/verify-cdk-go-drift.sh
+        env:
+          EVIDENCE_FORCE_EXECUTE: "true"
+        run: bash scripts/evidence/verify-or-execute.sh --gate cdk-go-drift
       - name: Verify CDK dependency engines admit the Node floor
         run: bash scripts/verify-cdk-engines-floor.sh
 
@@ -314,7 +388,7 @@ jobs:
 
   go:
     name: Go (test + vet)
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false || (github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')
+    if: (github.event_name != 'push' || !contains(github.event.head_commit.message, 'release-please--branches--')) && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')) && !(github.event_name == 'workflow_dispatch' && inputs.release_pr_number != '')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -328,12 +402,12 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
-      - name: Test and vet
-        run: scripts/verify-go.sh
+      - name: Verify Go tests and vet
+        run: bash scripts/evidence/verify-or-execute.sh --gate go
 
   ts:
     name: TypeScript (npm pack)
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false || (github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')
+    if: (github.event_name != 'push' || !contains(github.event.head_commit.message, 'release-please--branches--')) && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')) && !(github.event_name == 'workflow_dispatch' && inputs.release_pr_number != '')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -342,14 +416,12 @@ jobs:
           node-version: "24"
           cache: "npm"
           cache-dependency-path: ts/package-lock.json
-      - name: Verify checked-in dist drift
-        run: scripts/verify-ts-dist-drift.sh
-      - name: Build tarball
-        run: scripts/verify-ts-pack.sh
+      - name: Verify checked-in dist drift and pack the tarball
+        run: bash scripts/evidence/verify-or-execute.sh --gate ts
 
   py:
     name: Python (build wheel + sdist)
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false || (github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')
+    if: (github.event_name != 'push' || !contains(github.event.head_commit.message, 'release-please--branches--')) && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')) && !(github.event_name == 'workflow_dispatch' && inputs.release_pr_number != '')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -361,7 +433,7 @@ jobs:
             py/pyproject.toml
             py/requirements-build.txt
       - name: Build wheel + sdist
-        run: scripts/verify-python-build.sh
+        run: bash scripts/evidence/verify-or-execute.sh --gate py
 
   builds:
     name: Verify deterministic builds
@@ -394,11 +466,11 @@ jobs:
             py/requirements-lint.txt
             cdk/requirements-build.txt
       - name: Build twice and compare checksums
-        run: scripts/verify-builds.sh
+        run: bash scripts/evidence/verify-or-execute.sh --gate deterministic-builds
 
   cdk-go-drift:
     name: CDK Go binding drift
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false || (github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')
+    if: (github.event_name != 'push' || !contains(github.event.head_commit.message, 'release-please--branches--')) && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')) && !(github.event_name == 'workflow_dispatch' && inputs.release_pr_number != '')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -416,11 +488,11 @@ jobs:
           cache: "npm"
           cache-dependency-path: cdk/package-lock.json
       - name: Verify cdk-go generated binding drift
-        run: scripts/verify-cdk-go-drift.sh
+        run: bash scripts/evidence/verify-or-execute.sh --gate cdk-go-drift
 
   contract-tests:
     name: Contract tests (fixtures)
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false || (github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')
+    if: (github.event_name != 'push' || !contains(github.event.head_commit.message, 'release-please--branches--')) && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')) && !(github.event_name == 'workflow_dispatch' && inputs.release_pr_number != '')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -439,10 +511,8 @@ jobs:
           python-version: "3.14"
           cache: "pip"
           cache-dependency-path: py/pyproject.toml
-      - name: Verify API snapshots
-        run: scripts/verify-api-snapshots.sh
-      - name: Run contract tests
-        run: scripts/verify-contract-tests.sh
+      - name: Verify API snapshots and contract fixtures
+        run: bash scripts/evidence/verify-or-execute.sh --gate contract-tests
 
   rubric:
     name: Rubric (full gate set)
@@ -474,8 +544,11 @@ jobs:
             py/requirements-build.txt
             py/requirements-lint.txt
             cdk/requirements-build.txt
-      - name: Run full rubric
-        run: make rubric
+      # The required context keeps its name. A green run means the recorded
+      # proof was verified for these exact inputs, or the rubric executed when
+      # no applicable proof existed; the step prints which.
+      - name: Verify reusable evidence or run full rubric
+        run: bash scripts/evidence/verify-or-execute.sh --gate rubric
       - name: Upload GovTheory rubric evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

@@ -58,3 +58,4 @@ AGENTS.md
 # nodejs/node_modules content: the Lambda packaging page puts it there.
 !examples/cdk/lambda-packaging/layers/node/nodejs/node_modules/
 !examples/cdk/lambda-packaging/layers/node/nodejs/node_modules/**
+gov-infra/evidence/proportionate/local/

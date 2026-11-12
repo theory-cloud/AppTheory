@@ -327,17 +327,23 @@ def main() -> None:
     require_ci_node_major(ts_floor, runtime_floor_node_versions)
     if ts_floor < LATEST_PROVEN_NODE_MAJOR:
         require_ci_node_major(LATEST_PROVEN_NODE_MAJOR, runtime_floor_node_versions)
-    require_job_contains("runtime-floor-matrix", runtime_floor_job, "bash scripts/verify-runtime-floor-claims.sh")
-    require_job_contains("runtime-floor-matrix", runtime_floor_job, "bash scripts/verify-ts-pack.sh")
-    require_job_contains("runtime-floor-matrix", runtime_floor_job, "bash scripts/verify-python-build.sh")
-    require_job_contains("runtime-floor-matrix", runtime_floor_job, "bash scripts/verify-contract-tests.sh")
+    require_job_contains("runtime-floor-matrix", runtime_floor_job, 'EVIDENCE_FORCE_EXECUTE: "true"')
+    require_job_contains("runtime-floor-matrix", runtime_floor_job, "verify-or-execute.sh --gate ts")
+    require_job_contains("runtime-floor-matrix", runtime_floor_job, "verify-or-execute.sh --gate py")
+    require_job_contains("runtime-floor-matrix", runtime_floor_job, "verify-or-execute.sh --gate contract-tests")
+    require_job_contains(
+        "release-security-gates",
+        workflow_job_body("release-security-gates"),
+        "bash scripts/verify-runtime-floor-claims.sh",
+    )
 
     cdk_floor_job = workflow_job_body("cdk-floor-matrix")
     cdk_floor_node_versions = collect_versions_from_text(cdk_floor_job, "node")
     require_ci_node_major(cdk_floor, cdk_floor_node_versions)
     if cdk_floor < LATEST_PROVEN_NODE_MAJOR:
         require_ci_node_major(LATEST_PROVEN_NODE_MAJOR, cdk_floor_node_versions)
-    require_job_contains("cdk-floor-matrix", cdk_floor_job, "bash scripts/verify-cdk-go-drift.sh")
+    require_job_contains("cdk-floor-matrix", cdk_floor_job, 'EVIDENCE_FORCE_EXECUTE: "true"')
+    require_job_contains("cdk-floor-matrix", cdk_floor_job, "verify-or-execute.sh --gate cdk-go-drift")
 
     print(
         "runtime-floor-claims: PASS "

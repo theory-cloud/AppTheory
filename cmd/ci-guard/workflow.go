@@ -971,13 +971,24 @@ func classifyJob(ctx triggerContext, job workflowJob) (*jobClass, bool, error) {
 
 func classifyPush(condition expr, pushBranches []string, jobID string) ([]string, error) {
 	refs := map[string]bool{}
-	for _, branch := range uniqueStrings(pushBranches) {
-		ok, err := condition.eval(state{event: "push", ref: pushRefPrefix + branch})
-		if err != nil {
-			return nil, fmt.Errorf("job %q: %w", jobID, err)
-		}
-		if ok {
-			refs[branch] = true
+	// A push trigger carries one commit message that a job condition may read.
+	// Evaluate both shapes the release train produces: an ordinary merge message
+	// and a generated release-please merge message. A job runs on a push branch
+	// if either shape selects it, so a guard that skips generated release merges
+	// cannot be mistaken for a guard that vacates the whole push lane.
+	messages := []string{
+		"Merge pull request #1 from theory-cloud/apptheory/ordinary-change",
+		"Merge pull request #1 from theory-cloud/release-please--branches--premain",
+	}
+	for _, message := range messages {
+		for _, branch := range uniqueStrings(pushBranches) {
+			ok, err := condition.eval(state{event: "push", ref: pushRefPrefix + branch, headMessage: message})
+			if err != nil {
+				return nil, fmt.Errorf("job %q: %w", jobID, err)
+			}
+			if ok {
+				refs[branch] = true
+			}
 		}
 	}
 	return sortedKeys(refs), nil
@@ -1133,6 +1144,11 @@ var promotionParityExemptions = []parityExemption{
 		job:         prereleaseID,
 		counterpart: eligibilityID,
 		reason:      "promotion-edge release-eligibility gate; the staging lane runs the same predicate through " + eligibilityID + ", which covers the staging lane on the pushed staging SHA",
+	},
+	{
+		job:         "release-delta",
+		counterpart: "rubric",
+		reason:      "generated release-PR delta smoke; generated release PRs only target premain/main, and the reviewed full rubric covers the staging lane whose tree the release transformation derives from",
 	},
 }
 

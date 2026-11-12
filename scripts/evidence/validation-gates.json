@@ -1,0 +1,263 @@
+{
+  "schemaVersion": 1,
+  "evidenceDirectory": "gov-infra/evidence/proportionate",
+  "localLogDirectory": "gov-infra/evidence/proportionate/local",
+  "clockSkewSeconds": 300,
+  "securityMaxAgeSeconds": 86400,
+  "releaseOnly": {
+    "exact": [
+      ".release-please-manifest.json",
+      ".release-please-manifest.premain.json",
+      "CHANGELOG.md",
+      "VERSION",
+      "ts/package.json",
+      "ts/package-lock.json",
+      "cdk/package.json",
+      "cdk/package-lock.json",
+      "cdk/.jsii",
+      "py/pyproject.toml",
+      "cdk-go/go.mod",
+      "cdk-go/go.sum"
+    ],
+    "prefixes": [
+      "cdk/lib/",
+      "cdk-go/apptheorycdk/"
+    ],
+    "patterns": [
+      "examples/cdk/*/package-lock.json"
+    ]
+  },
+  "securityInputs": {
+    "exact": [
+      "go.mod",
+      "go.sum",
+      "cdk-go/apptheorycdk/go.mod",
+      "cdk-go/apptheorycdk/go.sum",
+      "ts/package.json",
+      "ts/package-lock.json",
+      "cdk/package.json",
+      "cdk/package-lock.json",
+      "py/pyproject.toml",
+      "py/requirements-build.txt",
+      "py/requirements-lint.txt",
+      "cdk/requirements-build.txt",
+      "scripts/local/requirements-examples.txt"
+    ],
+    "patterns": [
+      "examples/cdk/*/package-lock.json"
+    ]
+  },
+  "executionMatrix": [
+    {
+      "id": "pr-staging",
+      "leg": "pull request -> staging",
+      "old": "every job executes on the pull-request merge ref",
+      "new": "required product jobs reuse applicable evidence; untrusted or unmatched inputs execute"
+    },
+    {
+      "id": "push-staging",
+      "leg": "merge push -> staging",
+      "old": "every job re-executes on the merged tree",
+      "new": "product jobs reuse the merged tree's evidence; release/security gates execute cheaply"
+    },
+    {
+      "id": "pr-staging-premain",
+      "leg": "staging -> premain promotion pull request",
+      "old": "CI product set plus promotion readiness and eligibility",
+      "new": "promotion readiness/eligibility plus evidenced product checks; no source rerun"
+    },
+    {
+      "id": "push-premain",
+      "leg": "promotion merge push -> premain",
+      "old": "CI product set re-executes, then release-please generates the RC PR",
+      "new": "CI reuses evidence; release-please generation and artifact sync run"
+    },
+    {
+      "id": "release-pr-premain",
+      "leg": "generated RC release PR",
+      "old": "dispatched CI re-executes the product suite on generated artifacts",
+      "new": "release-delta packaging/drift smoke once; product jobs skip the release-only transformation"
+    },
+    {
+      "id": "release-merge-premain",
+      "leg": "RC merge/publish on premain",
+      "old": "CI product set re-executes, then the publisher builds assets again",
+      "new": "product checks skip the generated merge commit; signatures and version state run; publisher builds real assets once"
+    },
+    {
+      "id": "pr-premain-main",
+      "leg": "premain -> main promotion pull request",
+      "old": "CI product set plus promotion readiness and eligibility",
+      "new": "promotion readiness/eligibility plus evidenced product checks; no source rerun"
+    },
+    {
+      "id": "push-main",
+      "leg": "promotion merge push -> main",
+      "old": "CI product set re-executes, then release-please generates the stable PR",
+      "new": "CI reuses evidence; release-please generation and artifact sync run"
+    },
+    {
+      "id": "release-pr-main",
+      "leg": "generated stable release PR",
+      "old": "dispatched CI re-executes the product suite on generated artifacts",
+      "new": "release-delta packaging/drift smoke once; product jobs skip the release-only transformation"
+    },
+    {
+      "id": "release-merge-main",
+      "leg": "stable merge/publish on main",
+      "old": "CI product set re-executes, then the publisher builds assets again",
+      "new": "product checks skip the generated merge commit; signatures and version state run; publisher builds real assets once"
+    },
+    {
+      "id": "backmerge-main-staging",
+      "leg": "main -> staging back-merge pull request",
+      "old": "full rubric, builds, examples and matrix re-execute",
+      "new": "evidenced pure version-transformation reuse; a real source delta executes the affected gates"
+    }
+  ],
+  "gates": {
+    "rubric": {
+      "kind": "source",
+      "environment": "toolchain",
+      "description": "Full local rubric gate used by the staging required context",
+      "commands": [
+        {
+          "id": "rubric",
+          "argv": ["make", "rubric"]
+        }
+      ]
+    },
+    "deterministic-builds": {
+      "kind": "source",
+      "environment": "toolchain",
+      "description": "Deterministic release artifact builds (built twice and compared)",
+      "commands": [
+        {
+          "id": "deterministic-builds",
+          "argv": ["bash", "scripts/verify-builds.sh"]
+        }
+      ]
+    },
+    "go": {
+      "kind": "source",
+      "environment": "toolchain",
+      "description": "Go test and vet",
+      "commands": [
+        {
+          "id": "go-test-vet",
+          "argv": ["bash", "scripts/verify-go.sh"]
+        }
+      ]
+    },
+    "ts": {
+      "kind": "source",
+      "environment": "toolchain",
+      "description": "TypeScript checked-in dist drift and npm pack",
+      "commands": [
+        {
+          "id": "ts-dist-drift",
+          "argv": ["bash", "scripts/verify-ts-dist-drift.sh"]
+        },
+        {
+          "id": "ts-pack",
+          "argv": ["bash", "scripts/verify-ts-pack.sh"]
+        }
+      ]
+    },
+    "py": {
+      "kind": "source",
+      "environment": "toolchain",
+      "description": "Python wheel and sdist build",
+      "commands": [
+        {
+          "id": "py-build",
+          "argv": ["bash", "scripts/verify-python-build.sh"]
+        }
+      ]
+    },
+    "contract-tests": {
+      "kind": "source",
+      "environment": "toolchain",
+      "description": "API snapshots and the cross-language contract fixture corpus",
+      "commands": [
+        {
+          "id": "api-snapshots",
+          "argv": ["bash", "scripts/verify-api-snapshots.sh"]
+        },
+        {
+          "id": "contract-fixtures",
+          "argv": ["bash", "scripts/verify-contract-tests.sh"]
+        }
+      ]
+    },
+    "cdk-go-drift": {
+      "kind": "source",
+      "environment": "toolchain",
+      "description": "CDK Go bindings regeneration equality",
+      "commands": [
+        {
+          "id": "cdk-go-drift",
+          "argv": ["bash", "scripts/verify-cdk-go-drift.sh"]
+        }
+      ]
+    },
+    "examples-local": {
+      "kind": "source",
+      "environment": "toolchain",
+      "description": "Local examples harness plus relocated-copy synth proof",
+      "commands": [
+        {
+          "id": "examples-harness",
+          "argv": ["make", "examples-local"]
+        },
+        {
+          "id": "examples-relocated-synth",
+          "argv": ["make", "verify-cdk-synth-location-independent"]
+        }
+      ]
+    },
+    "security-refresh": {
+      "kind": "dependency-scan",
+      "environment": "toolchain",
+      "description": "Dependency vulnerability refresh bounded by the tracked max age",
+      "maxAgeSeconds": 86400,
+      "commands": [
+        {
+          "id": "security-refresh",
+          "argv": ["bash", "scripts/verify-security-refresh.sh"]
+        }
+      ]
+    },
+    "release-delta": {
+      "kind": "generated-delta",
+      "environment": "none",
+      "description": "Narrow packaging and regeneration smoke once per changed generated artifact set",
+      "commands": [
+        {
+          "id": "version-alignment",
+          "argv": ["bash", "scripts/verify-version-alignment.sh"]
+        },
+        {
+          "id": "generated-messages",
+          "argv": ["bash", "scripts/verify-release-generated-messages.sh"]
+        },
+        {
+          "id": "cdk-go-regeneration-equality",
+          "argv": ["bash", "scripts/verify-cdk-go-drift.sh"]
+        },
+        {
+          "id": "ts-pack-smoke",
+          "argv": ["bash", "scripts/verify-ts-pack.sh"]
+        },
+        {
+          "id": "py-build-smoke",
+          "argv": ["bash", "scripts/verify-python-build.sh"]
+        },
+        {
+          "id": "cdk-ts-pack-smoke",
+          "argv": ["bash", "scripts/verify-cdk-ts-pack.sh"]
+        }
+      ]
+    }
+  }
+}

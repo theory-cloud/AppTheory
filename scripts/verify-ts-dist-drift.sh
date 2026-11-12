@@ -122,6 +122,13 @@ fi
 
 ensure_ts_runtime_deps_installed
 
+# The deterministic-build gate runs this verifier inside a source-only snapshot
+# that has no .git. Keep the exact checked-in comparison by snapshotting ts/dist
+# before the build and diffing against it; a real work tree additionally uses
+# git status, which also catches untracked outputs.
+pristine_dist="$(mktemp -d)"
+cp -a ts/dist "${pristine_dist}/dist"
+
 (cd ts && npm run build >/dev/null)
 
 if ! find ts/dist -name '*.js.map' -print -quit | grep -q .; then
@@ -135,11 +142,20 @@ fi
 
 verify_dist_file_inventory "ts/src" "ts/dist"
 
-status_output="$(git status --porcelain=v1 --untracked-files=all -- ts/dist)"
-if [[ -n "${status_output}" ]]; then
-  echo "ts-dist-drift: FAIL (ts/dist has uncommitted generated drift after npm run build)" >&2
-  echo "${status_output}" >&2
-  exit 1
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  status_output="$(git status --porcelain=v1 --untracked-files=all -- ts/dist)"
+  if [[ -n "${status_output}" ]]; then
+    echo "ts-dist-drift: FAIL (ts/dist has uncommitted generated drift after npm run build)" >&2
+    echo "${status_output}" >&2
+    exit 1
+  fi
+else
+  if ! diff_output="$(diff -ru "${pristine_dist}/dist" ts/dist)"; then
+    echo "ts-dist-drift: FAIL (ts/dist differs from the checked-in generated files)" >&2
+    echo "${diff_output}" >&2
+    exit 1
+  fi
 fi
+rm -rf "${pristine_dist}"
 
 echo "ts-dist-drift: PASS"

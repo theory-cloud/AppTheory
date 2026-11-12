@@ -188,7 +188,7 @@ func parseNPMConfigLine(line string) (string, string, bool) {
 	}
 	if !hasValue {
 		// A bare key is npm's "true" spelling.
-		return key, "true", true
+		return key, literalTrue, true
 	}
 	return key, trimConfigValue(value), true
 }
