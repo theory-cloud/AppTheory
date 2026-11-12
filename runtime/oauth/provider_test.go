@@ -21,7 +21,7 @@ import (
 const providerConformanceFixture = "../../contract-tests/fixtures/routing/mcp-auth-facade/facade-provider-conformance.v1.json"
 
 // providerFixtureCaseCount is the case count the shared fixture must carry.
-const providerFixtureCaseCount = 29
+const providerFixtureCaseCount = 36
 
 // defaultFetchTimeout bounds one upstream call in the conformance harness,
 // unless the case states its own fetch_timeout_seconds.
@@ -558,21 +558,36 @@ func TestAutheoryProviderDiscoveryRejectsDocumentWithoutIssuer(t *testing.T) {
 }
 
 // TestAutheoryProviderTokenErrorClasses covers the classes the shared table does
-// not reach: reauth_required needs an explicit upstream signal, and an
-// unrecognized 4xx must stay an upstream_error rather than become a terminal
-// client-facing decision.
+// not reach, and pins the contract's per-code verdict enumeration in both
+// directions: only invalid_grant is the contract-terminal class; a
+// stale-or-replaced signal is recovery-available; and every per-request client
+// code (and an unrecognized 4xx) stays an upstream_error rather than becoming a
+// terminal client-facing decision.
 func TestAutheoryProviderTokenErrorClasses(t *testing.T) {
-	cases := []struct {
+	type tokenErrorCase struct {
 		name   string
 		status int
 		body   map[string]any
 		want   oauthruntime.ProviderErrorClass
-	}{
+	}
+	cases := make([]tokenErrorCase, 0, 12)
+	cases = append(cases, []tokenErrorCase{
 		{"invalid_grant", 400, map[string]any{"error": "invalid_grant"}, oauthruntime.ProviderInvalidGrant},
-		{"reauth_required", 400, map[string]any{"error": "reauth_required"}, oauthruntime.ProviderReauthRequired},
+		{"reauth_required", 400, map[string]any{"error": "reauth_required"}, oauthruntime.ProviderTemporarilyUnavailable},
 		{"temporarily_unavailable", 503, map[string]any{"error": "temporarily_unavailable"}, oauthruntime.ProviderTemporarilyUnavailable},
 		{"server_error", 500, map[string]any{"error": "server_error"}, oauthruntime.ProviderUpstreamError},
 		{"unknown_4xx", 400, map[string]any{"error": "something_new"}, oauthruntime.ProviderUpstreamError},
+	}...)
+	for _, code := range []string{
+		"invalid_scope",
+		"invalid_request",
+		"access_denied",
+		"expired_token",
+		"invalid_token",
+		"invalid_client",
+		"unauthorized_client",
+	} {
+		cases = append(cases, tokenErrorCase{code, 400, map[string]any{"error": code}, oauthruntime.ProviderUpstreamError})
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -832,7 +847,7 @@ func TestProviderErrorHTTPStatusAndUnwrap(t *testing.T) {
 		oauthruntime.ProviderTemporarilyUnavailable: 503,
 		oauthruntime.ProviderInvalidGrant:           400,
 		oauthruntime.ProviderInvalidRequest:         400,
-		oauthruntime.ProviderReauthRequired:         400,
+		oauthruntime.ProviderReauthRequired:         503,
 	}
 	for class, expected := range statuses {
 		providerErr := oauthruntime.NewProviderError(class, "test", "fixed message")

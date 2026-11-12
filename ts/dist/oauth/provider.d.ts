@@ -5,6 +5,39 @@
  */
 export type ProviderErrorClass = "upstream_error" | "temporarily_unavailable" | "invalid_grant" | "invalid_request" | "reauth_required";
 /**
+ * The upstream OAuth error codes that are a definitive, contract-terminal grant
+ * rejection. Exactly one code is terminal: `invalid_grant`, which the identity
+ * plane emits only for genuinely terminal cases (out-of-window replay,
+ * logout/revoke-all containment, explicit revocation). Any other non-2xx stays
+ * an upstream_error, so an unknown signal is never upgraded into a client-facing
+ * decision. The set is identical in the Go and Python adapters
+ * (theorycloud_refresh_rotation_recovery.v0.1 R6).
+ */
+export declare const TERMINAL_TOKEN_ERROR_CODES: ReadonlySet<string>;
+/**
+ * The contract's per-request client-error set: the codes a token endpoint
+ * answers when this one request cannot be honored. They are transient to the
+ * family, so no family, session, or tombstone may be killed for one of them. The
+ * set is identical in the Go and Python adapters, and it is enumerated in both
+ * directions by the shared provider conformance table.
+ */
+export declare const PER_REQUEST_TOKEN_ERROR_CODES: ReadonlySet<string>;
+/**
+ * Reports whether an upstream token-endpoint error code may carry a
+ * contract-terminal family verdict. It is the exported seam the facade's
+ * terminal classifier and the vendored refresh-rotation-recovery corpus are
+ * pinned against, so a consumer classifies an upstream answer exactly as the
+ * facade does.
+ */
+export declare function isTerminalTokenVerdict(code: string): boolean;
+/** The contract's terminal token-verdict codes. */
+export declare function terminalTokenVerdictCodes(): string[];
+/**
+ * Reports whether an upstream token-endpoint error code is one of the contract's
+ * per-request client errors. The two sets are disjoint by construction.
+ */
+export declare function isPerRequestTokenVerdict(code: string): boolean;
+/**
  * A provider-call failure in the facade's closed vocabulary. `httpStatus` is
  * the facade status the class maps to, and `op` names the SPI operation that
  * failed; both are safe to surface.

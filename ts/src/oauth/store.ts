@@ -147,6 +147,19 @@ export interface RouteRefreshBrokerRecord {
    * theft class, so the marker is written before the serve.
    */
   depthOneServedAt?: Date;
+  /**
+   * The durable rotation-intent marker. The facade writes it, in the store,
+   * before it presents the record's upstream material, so a process that loses
+   * the rotation response to a timeout or a crash leaves evidence behind. A
+   * later attempt that reads a set marker knows the material may already be
+   * consumed upstream; it verifies lineage through the recovery contract and
+   * keeps an invalid_grant transient for the facade's own ambiguity horizon
+   * instead of treating it as family-terminal evidence. Absent means no attempt
+   * is in flight or the last one was confirmed. `rotateFamily` clears it on the
+   * presented record as part of the rotation transaction, and the earliest
+   * unconfirmed instant is never moved forward.
+   */
+  rotationUnconfirmedAt?: Date;
 }
 
 export type RouteRefreshBrokerStatus =
@@ -908,6 +921,10 @@ export class MemoryRouteRefreshBrokerStore
       status: "active",
       version: presented.version + 1,
     };
+    // The rotation is confirmed: the presented material was consumed and its
+    // successor is stored, so the unconfirmed-attempt marker is cleared in the
+    // same transaction that resolves it.
+    delete completed.rotationUnconfirmedAt;
     delete completed.refreshLockOwner;
     delete completed.refreshLockExpiresAt;
     const presentedStoredAt = this.storedAt.get(presented.handleHash);

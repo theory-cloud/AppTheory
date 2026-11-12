@@ -1,0 +1,48 @@
+{
+  "contract": "theorycloud_refresh_rotation_recovery.v0.1",
+  "case_id": "family-revoked-on-upstream-timeout",
+  "description": "Banned: the shipped 16:00Z behavior — an upstream timeout lost the rotation response, the retry presented the consumed token, and the family was revoked as invalid_grant. Latency and timeouts are never revocation triggers; recovery-available staleness is 503 or a walk-serve.",
+  "expected_outcome": "nonconformant",
+  "expected_violation": "R5",
+  "stage_config": {
+    "serve_window_seconds": 600,
+    "access_token_ttl_seconds": 900,
+    "refresh_due_fraction": 0.5,
+    "sweep_interval_seconds": 60,
+    "generation_bound": 4,
+    "margin": 2.0
+  },
+  "scenario": [
+    {
+      "t_offset_seconds": 0,
+      "actor": "steward-a",
+      "action": "rotate",
+      "generation": "g5",
+      "successor": "g6",
+      "minted": true,
+      "artifact_atomic": true,
+      "wire": "lost"
+    },
+    {
+      "t_offset_seconds": 20,
+      "actor": "steward-a",
+      "action": "present",
+      "generation": "g5",
+      "in_window": true,
+      "wire": "invalid_grant"
+    },
+    {
+      "t_offset_seconds": 20,
+      "actor": "autheory",
+      "action": "revoke",
+      "reason": "upstream_timeout"
+    }
+  ],
+  "expect": {
+    "family_revoked": true,
+    "recovery": "none",
+    "terminal_wire_error": "invalid_grant",
+    "transient_wire": "none",
+    "receipt_emitted": true
+  }
+}

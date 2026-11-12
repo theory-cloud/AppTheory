@@ -51,7 +51,7 @@ const PROVIDER_ERROR_HTTP_STATUS: Record<ProviderErrorClass, number> = {
   temporarily_unavailable: 503,
   invalid_grant: 400,
   invalid_request: 400,
-  reauth_required: 400,
+  reauth_required: 503,
 };
 
 /**
@@ -68,21 +68,58 @@ const PROVIDER_ERROR_MESSAGE: Record<ProviderErrorClass, string> = {
 };
 
 /**
- * The upstream OAuth error codes that are a definitive grant rejection. Any
- * other 4xx code stays an upstream_error, so an unknown signal is never
- * upgraded into a client-facing decision. The set is identical in the Go and
- * Python adapters.
+ * The upstream OAuth error codes that are a definitive, contract-terminal grant
+ * rejection. Exactly one code is terminal: `invalid_grant`, which the identity
+ * plane emits only for genuinely terminal cases (out-of-window replay,
+ * logout/revoke-all containment, explicit revocation). Any other non-2xx stays
+ * an upstream_error, so an unknown signal is never upgraded into a client-facing
+ * decision. The set is identical in the Go and Python adapters
+ * (theorycloud_refresh_rotation_recovery.v0.1 R6).
  */
-const TERMINAL_TOKEN_ERROR_CODES: ReadonlySet<string> = new Set([
+export const TERMINAL_TOKEN_ERROR_CODES: ReadonlySet<string> = new Set([
   "invalid_grant",
-  "invalid_client",
-  "unauthorized_client",
+]);
+
+/**
+ * The contract's per-request client-error set: the codes a token endpoint
+ * answers when this one request cannot be honored. They are transient to the
+ * family, so no family, session, or tombstone may be killed for one of them. The
+ * set is identical in the Go and Python adapters, and it is enumerated in both
+ * directions by the shared provider conformance table.
+ */
+export const PER_REQUEST_TOKEN_ERROR_CODES: ReadonlySet<string> = new Set([
   "invalid_scope",
   "invalid_request",
   "access_denied",
   "expired_token",
   "invalid_token",
+  "invalid_client",
+  "unauthorized_client",
 ]);
+
+/**
+ * Reports whether an upstream token-endpoint error code may carry a
+ * contract-terminal family verdict. It is the exported seam the facade's
+ * terminal classifier and the vendored refresh-rotation-recovery corpus are
+ * pinned against, so a consumer classifies an upstream answer exactly as the
+ * facade does.
+ */
+export function isTerminalTokenVerdict(code: string): boolean {
+  return TERMINAL_TOKEN_ERROR_CODES.has((code ?? "").trim());
+}
+
+/** The contract's terminal token-verdict codes. */
+export function terminalTokenVerdictCodes(): string[] {
+  return [...TERMINAL_TOKEN_ERROR_CODES];
+}
+
+/**
+ * Reports whether an upstream token-endpoint error code is one of the contract's
+ * per-request client errors. The two sets are disjoint by construction.
+ */
+export function isPerRequestTokenVerdict(code: string): boolean {
+  return PER_REQUEST_TOKEN_ERROR_CODES.has((code ?? "").trim());
+}
 
 /**
  * The authorize parameters the adapter itself owns. A hint whose name collides
@@ -561,15 +598,19 @@ export class AutheoryProvider implements Provider {
     }
     if (response.status < 200 || response.status >= 300) {
       // Only an explicit upstream signal changes the class: `reauth_required`
-      // and `temporarily_unavailable` are read directly, a 4xx carrying one of
-      // the terminal OAuth codes is a definitive grant rejection, and every
-      // other non-2xx (including an unrecognized 4xx code, and a 3xx the
-      // transport already refuses) is an upstream failure. Only the error code
-      // is read, so nothing else in the body can reach the client.
+      // (recovery-available, so retryable) and `temporarily_unavailable` are read
+      // directly, a 4xx carrying the one contract-terminal OAuth code is a
+      // definitive grant rejection, and every other non-2xx (including a
+      // per-request client code, an unrecognized 4xx, and a 3xx the transport
+      // already refuses) is an upstream failure. Only the error code is read, so
+      // nothing else in the body can reach the client.
       const errorBody = parseJSONObject(response.body);
       const code = errorBody ? stringField(errorBody, "error").trim() : "";
       if (code === "reauth_required") {
-        throw new ProviderError("reauth_required", op);
+        // A stale-or-replaced signal is recovery-available under the
+        // rotation-recovery contract: the replaced material is walked to its
+        // successor inside the serve window. It is retryable, never terminal.
+        throw new ProviderError("temporarily_unavailable", op);
       }
       if (code === "temporarily_unavailable") {
         throw new ProviderError("temporarily_unavailable", op);

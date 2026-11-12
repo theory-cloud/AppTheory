@@ -29,7 +29,7 @@ _ERROR_HTTP_STATUS: dict[str, int] = {
     ERROR_TEMPORARILY_UNAVAILABLE: 503,
     ERROR_INVALID_GRANT: 400,
     ERROR_INVALID_REQUEST: 400,
-    ERROR_REAUTH_REQUIRED: 400,
+    ERROR_REAUTH_REQUIRED: 503,
 }
 
 # Fixed messages, by class: they never carry an upstream response body, which

@@ -1,0 +1,170 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://factory.theorycloud.ai/contracts/refresh-rotation-recovery/v0.1/schema.json",
+  "title": "theorycloud_refresh_rotation_recovery.v0.1 conformance fixture",
+  "description": "Scenario trace asserting conformant or banned behavior under the refresh rotation/recovery contract. Rules are evaluated in order (R1..R8); the first violation is the case's verdict.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "case_id",
+    "description",
+    "expected_outcome",
+    "stage_config",
+    "scenario",
+    "expect"
+  ],
+  "properties": {
+    "contract": { "const": "theorycloud_refresh_rotation_recovery.v0.1" },
+    "case_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "description": "Must equal the fixture filename without .json."
+    },
+    "description": { "type": "string", "minLength": 1 },
+    "expected_outcome": { "enum": ["conformant", "nonconformant"] },
+    "expected_violation": {
+      "enum": ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10"],
+      "description": "Required on nonconformant fixtures: the rule the scenario violates. Forbidden on conformant fixtures."
+    },
+    "stage_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "serve_window_seconds",
+        "access_token_ttl_seconds",
+        "refresh_due_fraction",
+        "sweep_interval_seconds",
+        "generation_bound",
+        "margin"
+      ],
+      "properties": {
+        "serve_window_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "W: min(replay retention, refresh concurrency grace); both knobs move together (R3)."
+        },
+        "access_token_ttl_seconds": { "type": "integer", "minimum": 1 },
+        "refresh_due_fraction": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "description": "Fraction of TTL at which a token is due for refresh; g_min = fraction x TTL."
+        },
+        "sweep_interval_seconds": { "type": "integer", "minimum": 1 },
+        "generation_bound": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "N: walk hop budget and retention cap only, never a revocation predicate (R4)."
+        },
+        "margin": { "type": "number", "minimum": 1 },
+        "window_source": {
+          "enum": ["measured_recovery_latency", "steward_sleep"],
+          "description": "Provenance marker for the window derivation. steward_sleep is banned (R3); absent means measured_recovery_latency."
+        }
+      }
+    },
+    "scenario": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["t_offset_seconds", "actor", "action"],
+        "properties": {
+          "t_offset_seconds": { "type": "integer", "minimum": 0 },
+          "actor": { "type": "string", "minLength": 1 },
+          "action": {
+            "enum": ["rotate", "rescue_mint", "present", "revoke", "family_kill", "advance"]
+          },
+          "generation": {
+            "type": "string",
+            "description": "Token generation presented or consumed, e.g. g5."
+          },
+          "successor": {
+            "type": "string",
+            "description": "Generation minted by a rotate/rescue_mint, or chain head reached by an advance."
+          },
+          "minted": {
+            "type": "boolean",
+            "description": "Whether a successor was actually minted. false means fail-closed before minting (R1)."
+          },
+          "artifact_atomic": {
+            "type": "boolean",
+            "description": "Whether the consumed->successor replay artifact was written in the same atomic transaction (R1)."
+          },
+          "wire": {
+            "enum": [
+              "success",
+              "lost",
+              "temporarily_unavailable_503",
+              "replay_budget_exhausted_503",
+              "invalid_grant",
+              "invalid_scope",
+              "none"
+            ],
+            "description": "What the actor observed on the wire. lost = response never arrived."
+          },
+          "in_window": {
+            "type": "boolean",
+            "description": "Whether a presentation falls inside the serve window W."
+          },
+          "recovery": {
+            "enum": ["walk_serve", "none"],
+            "description": "How a present was recovered; walk_serve = served the current successor via the artifact chain."
+          },
+          "reason": {
+            "enum": [
+              "out_of_window_replay",
+              "containment",
+              "explicit",
+              "upstream_timeout",
+              "chain_anomaly",
+              "count_exceeded"
+            ],
+            "description": "Revocation trigger. R5 permits only out_of_window_replay, containment, explicit; count_exceeded is R4's banned predicate."
+          },
+          "trigger_error": {
+            "enum": [
+              "invalid_grant",
+              "invalid_scope",
+              "invalid_request",
+              "access_denied",
+              "expired_token",
+              "invalid_token"
+            ],
+            "description": "Wire error the facade classified before a family_kill (R7: only invalid_grant is contract-terminal)."
+          },
+          "hops": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Generation distance covered by an advance event."
+          }
+        }
+      }
+    },
+    "expect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "family_revoked",
+        "recovery",
+        "terminal_wire_error",
+        "transient_wire",
+        "receipt_emitted"
+      ],
+      "properties": {
+        "family_revoked": { "type": "boolean" },
+        "recovery": { "enum": ["walk_serve", "rescue_mint", "none"] },
+        "terminal_wire_error": { "enum": ["invalid_grant", "none"] },
+        "transient_wire": {
+          "enum": ["temporarily_unavailable_503", "replay_budget_exhausted_503", "none"]
+        },
+        "receipt_emitted": {
+          "type": "boolean",
+          "description": "R8: every revocation emits a receipt; no silent revocations."
+        }
+      }
+    }
+  }
+}

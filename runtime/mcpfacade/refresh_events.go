@@ -124,6 +124,17 @@ const (
 	// migrated in code onto a fresh generation-1 family. It is additive: the
 	// client keeps its session and no manual data operation is needed.
 	RouteRefreshReasonLegacyLineageAdopted = "legacy_lineage_adopted"
+	// RouteRefreshReasonLineageVerified is a presentation resolved by the
+	// post-timeout lineage check: the family's live head had already moved on past
+	// the presented record, so the head was rotated for the client and the stale
+	// material was never presented again. It is ordinary recovery, never theft.
+	RouteRefreshReasonLineageVerified = "lineage_verified"
+	// RouteRefreshReasonRecoveryPending is an upstream contract-terminal verdict
+	// that is still ambiguous because a rotation attempt of the same record is
+	// unconfirmed inside the ambiguity horizon: a lost response, a timeout, or an
+	// informed serve-off state can all produce that verdict. The family is kept and
+	// the client is told to retry.
+	RouteRefreshReasonRecoveryPending = "recovery_pending"
 )
 
 // Expiry signals. The store distinguishes an aged-out handle from one that

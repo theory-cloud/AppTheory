@@ -1,0 +1,42 @@
+{
+  "contract": "theorycloud_refresh_rotation_recovery.v0.1",
+  "case_id": "rotation-loss-rescue-walk-serve",
+  "description": "The 2026-11-11 16:00Z incident sequence under the contract: the rescue mints the successor with the consumed->successor replay artifact in the same atomic transaction, the response is lost, and the retry presenting the consumed token is walk-served the current successor. No revocation, no invalid_grant.",
+  "expected_outcome": "conformant",
+  "stage_config": {
+    "serve_window_seconds": 600,
+    "access_token_ttl_seconds": 900,
+    "refresh_due_fraction": 0.5,
+    "sweep_interval_seconds": 60,
+    "generation_bound": 4,
+    "margin": 2.0
+  },
+  "scenario": [
+    {
+      "t_offset_seconds": 0,
+      "actor": "steward-a",
+      "action": "rescue_mint",
+      "generation": "g5",
+      "successor": "g6",
+      "minted": true,
+      "artifact_atomic": true,
+      "wire": "lost"
+    },
+    {
+      "t_offset_seconds": 20,
+      "actor": "steward-a",
+      "action": "present",
+      "generation": "g5",
+      "in_window": true,
+      "wire": "success",
+      "recovery": "walk_serve"
+    }
+  ],
+  "expect": {
+    "family_revoked": false,
+    "recovery": "walk_serve",
+    "terminal_wire_error": "none",
+    "transient_wire": "none",
+    "receipt_emitted": false
+  }
+}

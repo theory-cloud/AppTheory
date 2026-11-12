@@ -32,7 +32,6 @@ from apptheory.oauth import OAuthBearerError, canonicalize_issuer_url, jwks
 from apptheory.oauth.provider import (
     ERROR_INVALID_GRANT,
     ERROR_INVALID_REQUEST,
-    ERROR_REAUTH_REQUIRED,
     ERROR_TEMPORARILY_UNAVAILABLE,
     ERROR_UPSTREAM,
     AuthorizationRequest,
@@ -58,25 +57,55 @@ MAX_HTTP_RESPONSE_BYTES = jwks.MAX_HTTP_RESPONSE_BYTES
 MAX_VALIDATOR_CACHE_ENTRIES = 32
 S256 = "S256"
 
-# Upstream token-endpoint error codes that carry an adapter-level meaning. The
-# remaining terminal codes all map to invalid_grant, and an unrecognized code
-# stays an upstream_error so an unknown signal is never upgraded into a
-# client-facing decision. The mapping is identical in the Go and TypeScript
-# adapters.
+# Upstream token-endpoint error codes that carry an adapter-level meaning. Only
+# invalid_grant is a contract-terminal verdict; the per-request client codes are
+# enumerated as such, and an unrecognized code stays an upstream_error so an
+# unknown signal is never upgraded into a client-facing decision. The mapping is
+# identical in the Go and TypeScript adapters
+# (theorycloud_refresh_rotation_recovery.v0.1 R6).
 TOKEN_ERROR_REAUTH_REQUIRED = "reauth_required"  # noqa: S105 - an OAuth error code
 TOKEN_ERROR_TEMPORARILY_UNAVAILABLE = "temporarily_unavailable"  # noqa: S105 - an OAuth error code
-TERMINAL_TOKEN_ERROR_CODES = frozenset(
+TERMINAL_TOKEN_ERROR_CODES = frozenset({"invalid_grant"})
+# The contract's per-request client-error set: codes a token endpoint answers
+# when this one request cannot be honored. They are transient to the family, so
+# no family, session, or tombstone may be killed for one of them. The set is
+# identical in the Go and TypeScript adapters and is pinned by the shared
+# provider conformance table in both directions.
+PER_REQUEST_TOKEN_ERROR_CODES = frozenset(
     {
-        "invalid_grant",
-        "invalid_client",
-        "unauthorized_client",
         "invalid_scope",
         "invalid_request",
         "access_denied",
         "expired_token",
         "invalid_token",
+        "invalid_client",
+        "unauthorized_client",
     }
 )
+
+
+def is_terminal_token_verdict(code: str) -> bool:
+    """Reports whether an upstream token-endpoint error code may carry a
+    contract-terminal family verdict. It is the exported seam the facade's
+    terminal classifier and the vendored refresh-rotation-recovery corpus are
+    pinned against, so a consumer classifies an upstream answer exactly as the
+    facade does.
+    """
+    return str(code or "").strip() in TERMINAL_TOKEN_ERROR_CODES
+
+
+def terminal_token_verdict_codes() -> tuple[str, ...]:
+    """The contract's terminal token-verdict codes."""
+    return tuple(sorted(TERMINAL_TOKEN_ERROR_CODES))
+
+
+def is_per_request_token_verdict(code: str) -> bool:
+    """Reports whether an upstream token-endpoint error code is one of the
+    contract's per-request client errors. The two sets are disjoint by
+    construction.
+    """
+    return str(code or "").strip() in PER_REQUEST_TOKEN_ERROR_CODES
+
 
 # The authorize parameters the adapter itself owns. A hint whose name collides
 # with one of these — compared case-insensitively after trimming — is refused
@@ -387,7 +416,10 @@ class AutheoryProvider:
         # unknown signal is never upgraded into a client-facing decision.
         error_code = _json_error(body)
         if error_code == TOKEN_ERROR_REAUTH_REQUIRED:
-            raise ProviderError(ERROR_REAUTH_REQUIRED, op)
+            # A stale-or-replaced signal is recovery-available under the
+            # rotation-recovery contract: the replaced material is walked to its
+            # successor inside the serve window. It is retryable, never terminal.
+            raise ProviderError(ERROR_TEMPORARILY_UNAVAILABLE, op)
         if error_code == TOKEN_ERROR_TEMPORARILY_UNAVAILABLE:
             raise ProviderError(ERROR_TEMPORARILY_UNAVAILABLE, op)
         if 400 <= status < 500 and error_code in TERMINAL_TOKEN_ERROR_CODES:

@@ -510,6 +510,10 @@ export class MemoryRouteRefreshBrokerStore {
             status: "active",
             version: presented.version + 1,
         };
+        // The rotation is confirmed: the presented material was consumed and its
+        // successor is stored, so the unconfirmed-attempt marker is cleared in the
+        // same transaction that resolves it.
+        delete completed.rotationUnconfirmedAt;
         delete completed.refreshLockOwner;
         delete completed.refreshLockExpiresAt;
         const presentedStoredAt = this.storedAt.get(presented.handleHash);
