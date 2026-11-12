@@ -108,8 +108,12 @@ const (
 
 	// MaxRefreshBudget is the longest accepted upstream refresh budget: the
 	// reference broker lock TTL (oauthstore.DefaultRouteRefreshLockTTL, 15 s) less
-	// the commit margin. A store with a shorter lock TTL fails closed instead of
-	// admitting a second concurrent upstream refresh.
+	// the commit margin. The ceiling is calibrated to that reference TTL; a store
+	// with a shorter one is not rejected at registration. If such a store's lock
+	// expires mid-rotation, the second caller runs another upstream refresh and
+	// RotateFamily's owner/expiry/version re-check defers its rotation to the
+	// winner, so the outcome is an extra upstream call and a deferred loser, never
+	// a second mint.
 	MaxRefreshBudget = oauthstore.DefaultRouteRefreshLockTTL - refreshBudgetLockMargin
 )
 
