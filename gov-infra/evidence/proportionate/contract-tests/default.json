@@ -1,0 +1,98 @@
+{
+  "commands": [
+    {
+      "argv": [
+        "bash",
+        "scripts/verify-api-snapshots.sh"
+      ],
+      "durationSeconds": 0.476,
+      "executed": true,
+      "exitCode": 0,
+      "finishedAt": "2026-11-12T19:59:37Z",
+      "id": "api-snapshots",
+      "inputsDigest": "sha256:4aa10156a0cc0f404277f70bb529b019ec6e50942fc7896532a503c566585069",
+      "logDigest": "sha256:b17e1296373b7df42af02ec9c5b739b85a211832a965a53883d2195a43e69d35",
+      "logRef": "gov-infra/evidence/proportionate/local/contract-tests-api-snapshots-20261112T195937Z-82956.log",
+      "reused": false,
+      "startedAt": "2026-11-12T19:59:37Z"
+    },
+    {
+      "argv": [
+        "bash",
+        "scripts/verify-contract-tests.sh"
+      ],
+      "durationSeconds": 31.801,
+      "executed": true,
+      "exitCode": 0,
+      "finishedAt": "2026-11-12T20:00:09Z",
+      "id": "contract-fixtures",
+      "inputsDigest": "sha256:3746ce36b4eea3c25250cc360f745d5fd97d290d0dfe81d32ef4c199bcac4dcd",
+      "logDigest": "sha256:2166c2f4514344a50a52af99268a15524136ed1daecfc76d232f62ee12498dde",
+      "logRef": "gov-infra/evidence/proportionate/local/contract-tests-contract-fixtures-20261112T195937Z-82956.log",
+      "reused": false,
+      "startedAt": "2026-11-12T19:59:37Z"
+    }
+  ],
+  "consumed": [],
+  "description": "API snapshots and the cross-language contract fixture corpus",
+  "environment": {
+    "go": "go1.27.4",
+    "node": "v24.21.0",
+    "platform": {
+      "arch": "arm64",
+      "os": "darwin"
+    },
+    "python": "3.14.7"
+  },
+  "gate": "contract-tests",
+  "kind": "source",
+  "producer": {
+    "registry": "validation-gates.json",
+    "tool": "scripts/evidence/validation_evidence.py"
+  },
+  "profile": "default",
+  "reason": "",
+  "recordedAt": "2026-11-12T20:00:09Z",
+  "releaseOnly": {
+    "digest": "sha256:dea47f7c318e6703d405d14f61f76d6c1a8d2b38f1b682fdc96b6781c222b699",
+    "fileCount": 476,
+    "normalizedDigest": "sha256:c5ecbf183fa35bbf12642d3d5103e5af06b5b0d169ec8b29c253d8712187ac69",
+    "version": "7.1.0"
+  },
+  "reviews": [
+    {
+      "kind": "review-reference",
+      "ref": "factory:20261112T194701Z-adversary-81745"
+    },
+    {
+      "kind": "review-reference",
+      "ref": "factory:20261112T194701Z-sanity-81746"
+    }
+  ],
+  "schemaVersion": 1,
+  "scope": {
+    "digest": "sha256:dc4faa8ce72d15fe76e8bf043b66264600c1340f6c06428ecf5ea4e4d6c0434c",
+    "fileCount": 1282,
+    "paths": [
+      "api-snapshots/",
+      "contract-tests/",
+      "runtime/",
+      "testkit/",
+      "pkg/",
+      "ts/src/",
+      "ts/dist/",
+      "py/src/",
+      "scripts/verify-api-snapshots.sh",
+      "scripts/verify-contract-tests.sh",
+      "scripts/verify-fixture-schema.sh",
+      "scripts/generate-api-snapshots.sh",
+      "scripts/lib/"
+    ],
+    "version": 1
+  },
+  "source": {
+    "digest": "sha256:ca76497f13c6e3d8ded84c7468f4f56ef263a9f68bffac56f091e4ac55df2f2e",
+    "fileCount": 2658
+  },
+  "verdict": "PASS"
+}

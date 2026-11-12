@@ -1,0 +1,76 @@
+{
+  "commands": [
+    {
+      "argv": [
+        "make",
+        "rubric"
+      ],
+      "durationSeconds": 271.741,
+      "executed": true,
+      "exitCode": 2,
+      "finishedAt": "2026-11-12T20:31:00Z",
+      "id": "rubric",
+      "inputsDigest": "sha256:98d57e1b1679890c17010b3228ff91416281069d9738fd92cd6ae9b3c9881102",
+      "logDigest": "sha256:cb45523cca82575b2bf14ee64b6a469ea1e23a86199655c2194958256622c4a3",
+      "logRef": "gov-infra/evidence/proportionate/local/rubric-rubric-20261112T202629Z-82956.log",
+      "reused": false,
+      "startedAt": "2026-11-12T20:26:29Z"
+    }
+  ],
+  "consumed": [
+    {
+      "digest": "sha256:efa00c884f49580c33962d4d7585719c86ebb79de63d7c3cacc4d025ca6d01a2",
+      "gate": "cdk-go-drift",
+      "recordedAt": "2026-11-12T19:59:37Z"
+    }
+  ],
+  "description": "Full local rubric gate used by the staging required context; composes independently produced product records and executes only rubric-unique checks",
+  "environment": {
+    "go": "go1.27.4",
+    "node": "v24.21.0",
+    "platform": {
+      "arch": "arm64",
+      "os": "darwin"
+    },
+    "python": "3.14.7"
+  },
+  "gate": "rubric",
+  "kind": "source",
+  "producer": {
+    "registry": "validation-gates.json",
+    "tool": "scripts/evidence/validation_evidence.py"
+  },
+  "profile": "default",
+  "reason": "command failed: rubric exit=2",
+  "recordedAt": "2026-11-12T20:31:00Z",
+  "releaseOnly": {
+    "digest": "sha256:dea47f7c318e6703d405d14f61f76d6c1a8d2b38f1b682fdc96b6781c222b699",
+    "fileCount": 476,
+    "normalizedDigest": "sha256:c5ecbf183fa35bbf12642d3d5103e5af06b5b0d169ec8b29c253d8712187ac69",
+    "version": "7.1.0"
+  },
+  "reviews": [
+    {
+      "kind": "review-reference",
+      "ref": "factory:20261112T194701Z-adversary-81745"
+    },
+    {
+      "kind": "review-reference",
+      "ref": "factory:20261112T194701Z-sanity-81746"
+    }
+  ],
+  "schemaVersion": 1,
+  "scope": {
+    "digest": "sha256:92f9852a2fbfa0b385cd8cf90c015f54aa02ac0cec651eb352b860ef2212e5e6",
+    "fileCount": 3134,
+    "paths": [
+      "**"
+    ],
+    "version": 1
+  },
+  "source": {
+    "digest": "sha256:ca76497f13c6e3d8ded84c7468f4f56ef263a9f68bffac56f091e4ac55df2f2e",
+    "fileCount": 2658
+  },
+  "verdict": "FAIL"
+}

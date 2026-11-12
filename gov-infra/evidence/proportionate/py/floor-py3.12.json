@@ -1,0 +1,72 @@
+{
+  "commands": [
+    {
+      "argv": [
+        "bash",
+        "scripts/verify-python-build.sh"
+      ],
+      "durationSeconds": 4.403,
+      "executed": true,
+      "exitCode": 0,
+      "finishedAt": "2026-11-12T20:57:37Z",
+      "id": "py-build",
+      "inputsDigest": "sha256:8a5f909cfa4d7088b88258bc7cd02f5d4d01bb774201a976d54c90113a58b01c",
+      "logDigest": "sha256:b74a4c0a1cc8c10bb130f1eed794d9404bb0cc15f7be2c6bb8d287b86b8ad834",
+      "logRef": "gov-infra/evidence/proportionate/local/py-py-build-20261112T205733Z-48962.log",
+      "reused": false,
+      "startedAt": "2026-11-12T20:57:33Z"
+    }
+  ],
+  "consumed": [],
+  "description": "Python wheel and sdist build",
+  "environment": {
+    "go": "go1.27.4",
+    "node": "v24.21.0",
+    "platform": {
+      "arch": "arm64",
+      "os": "darwin"
+    },
+    "python": "3.12.14"
+  },
+  "gate": "py",
+  "kind": "source",
+  "producer": {
+    "registry": "validation-gates.json",
+    "tool": "scripts/evidence/validation_evidence.py"
+  },
+  "profile": "floor-py3.12",
+  "reason": "",
+  "recordedAt": "2026-11-12T20:57:37Z",
+  "releaseOnly": {
+    "digest": "sha256:dea47f7c318e6703d405d14f61f76d6c1a8d2b38f1b682fdc96b6781c222b699",
+    "fileCount": 476,
+    "normalizedDigest": "sha256:c5ecbf183fa35bbf12642d3d5103e5af06b5b0d169ec8b29c253d8712187ac69",
+    "version": "7.1.0"
+  },
+  "reviews": [
+    {
+      "kind": "review-reference",
+      "ref": "factory:20261112T194701Z-adversary-81745"
+    },
+    {
+      "kind": "review-reference",
+      "ref": "factory:20261112T194701Z-sanity-81746"
+    }
+  ],
+  "schemaVersion": 1,
+  "scope": {
+    "digest": "sha256:34d849e386aa800a5fe56b5f1e0af6869b8d4066c3fa7f97907761ce1623c11d",
+    "fileCount": 132,
+    "paths": [
+      "py/",
+      "scripts/verify-python-build.sh",
+      "scripts/read-version.sh"
+    ],
+    "version": 1
+  },
+  "source": {
+    "digest": "sha256:ca76497f13c6e3d8ded84c7468f4f56ef263a9f68bffac56f091e4ac55df2f2e",
+    "fileCount": 2658
+  },
+  "verdict": "PASS"
+}
