@@ -13,6 +13,80 @@
       "network": 1
     }
   },
+  "proofProfiles": {
+    "default": {
+      "description": "Operator-approved producing host for portable source, packaging and local-journey proofs; Go pin, Node 24, Python 3.14 on macOS arm64",
+      "environment": {
+        "go": "go1.27.4",
+        "node": "24",
+        "python": "3.14",
+        "platform": {
+          "os": "darwin",
+          "arch": "arm64"
+        }
+      }
+    },
+    "floor-node22": {
+      "description": "Node 22 runtime-floor compatibility for node-bound portable claims (ts pack, CDK Go bindings)",
+      "environment": {
+        "go": "go1.27.4",
+        "node": "22",
+        "python": "3.12",
+        "platform": {
+          "os": "linux",
+          "arch": "x64"
+        }
+      }
+    },
+    "floor-py3.12": {
+      "description": "Python 3.12 runtime-floor compatibility for the Python package build",
+      "environment": {
+        "go": "go1.27.4",
+        "node": "24",
+        "python": "3.12",
+        "platform": {
+          "os": "linux",
+          "arch": "x64"
+        }
+      }
+    },
+    "floor-node22-py3.12": {
+      "description": "Combined Node 22 / Python 3.12 runtime-floor compatibility for the Go/TS/Python contract corpus",
+      "environment": {
+        "go": "go1.27.4",
+        "node": "22",
+        "python": "3.12",
+        "platform": {
+          "os": "linux",
+          "arch": "x64"
+        }
+      }
+    },
+    "floor-node22-py3.14": {
+      "description": "Combined Node 22 / Python 3.14 runtime-floor compatibility for the Go/TS/Python contract corpus",
+      "environment": {
+        "go": "go1.27.4",
+        "node": "22",
+        "python": "3.14",
+        "platform": {
+          "os": "linux",
+          "arch": "x64"
+        }
+      }
+    },
+    "floor-node24-py3.12": {
+      "description": "Combined Node 24 / Python 3.12 runtime-floor compatibility for the Go/TS/Python contract corpus",
+      "environment": {
+        "go": "go1.27.4",
+        "node": "24",
+        "python": "3.12",
+        "platform": {
+          "os": "linux",
+          "arch": "x64"
+        }
+      }
+    }
+  },
   "nonProductPaths": [
     "docs/",
     "gov-infra/",
@@ -86,73 +160,74 @@
       "id": "pr-staging",
       "leg": "pull request -> staging",
       "old": "every job executes on the pull-request merge ref",
-      "new": "required product jobs reuse applicable evidence; untrusted or unmatched inputs execute"
+      "new": "required product jobs reuse applicable evidence for their tracked profile; untrusted or unmatched inputs execute"
     },
     {
       "id": "push-staging",
       "leg": "merge push -> staging",
       "old": "every job re-executes on the merged tree",
-      "new": "product jobs reuse the merged tree's evidence; release/security gates execute cheaply"
+      "new": "product and floor jobs reuse each profile's proof for the same inputs; release/security gates execute cheaply"
     },
     {
       "id": "pr-staging-premain",
       "leg": "staging -> premain promotion pull request",
       "old": "CI product set plus promotion readiness and eligibility",
-      "new": "promotion readiness/eligibility plus evidenced product checks; no source rerun"
+      "new": "promotion readiness/eligibility plus evidenced product checks per profile; no source rerun"
     },
     {
       "id": "push-premain",
       "leg": "promotion merge push -> premain",
       "old": "CI product set re-executes, then release-please generates the RC PR",
-      "new": "CI reuses evidence; release-please generation and artifact sync run"
+      "new": "CI reuses each profile's evidence; release-please generation and artifact sync run"
     },
     {
       "id": "release-pr-premain",
       "leg": "generated RC release PR",
       "old": "dispatched CI re-executes the product suite on generated artifacts",
-      "new": "release-delta packaging/drift smoke once; product jobs skip the release-only transformation"
+      "new": "release-delta packaging/drift smoke once; product and floor jobs verify their profile records"
     },
     {
       "id": "release-merge-premain",
       "leg": "RC merge/publish on premain",
       "old": "CI product set re-executes, then the publisher builds assets again",
-      "new": "product checks skip the generated merge commit; signatures and version state run; publisher builds real assets once"
+      "new": "product checks verify profile evidence; signatures and version state run; publisher builds real Linux assets once"
     },
     {
       "id": "pr-premain-main",
       "leg": "premain -> main promotion pull request",
       "old": "CI product set plus promotion readiness and eligibility",
-      "new": "promotion readiness/eligibility plus evidenced product checks; no source rerun"
+      "new": "promotion readiness/eligibility plus evidenced product checks per profile; no source rerun"
     },
     {
       "id": "push-main",
       "leg": "promotion merge push -> main",
       "old": "CI product set re-executes, then release-please generates the stable PR",
-      "new": "CI reuses evidence; release-please generation and artifact sync run"
+      "new": "CI reuses each profile's evidence; release-please generation and artifact sync run"
     },
     {
       "id": "release-pr-main",
       "leg": "generated stable release PR",
       "old": "dispatched CI re-executes the product suite on generated artifacts",
-      "new": "release-delta packaging/drift smoke once; product jobs skip the release-only transformation"
+      "new": "release-delta packaging/drift smoke once; product and floor jobs verify their profile records"
     },
     {
       "id": "release-merge-main",
       "leg": "stable merge/publish on main",
       "old": "CI product set re-executes, then the publisher builds assets again",
-      "new": "product checks skip the generated merge commit; signatures and version state run; publisher builds real assets once"
+      "new": "product checks verify profile evidence; signatures and version state run; publisher builds real Linux assets once"
     },
     {
       "id": "backmerge-main-staging",
       "leg": "main -> staging back-merge pull request",
       "old": "full rubric, builds, examples and matrix re-execute",
-      "new": "evidenced pure version-transformation reuse; a real source delta executes the affected gates"
+      "new": "evidenced pure version-transformation reuse per profile; a real source delta executes the affected gates"
     }
   ],
   "gates": {
     "rubric": {
       "kind": "source",
-      "environment": "toolchain",
+      "environment": ["go", "node", "python"],
+      "profiles": ["default"],
       "description": "Full local rubric gate used by the staging required context; composes independently produced product records and executes only rubric-unique checks",
       "resource": "repo-write",
       "paths": [
@@ -178,9 +253,10 @@
     },
     "deterministic-builds": {
       "kind": "source",
-      "environment": "toolchain+platform",
-      "description": "Deterministic release artifact builds (built twice and compared)",
-      "resource": "repo-write",
+      "environment": ["go", "node", "python", "platform"],
+      "profiles": ["default"],
+      "description": "Deterministic release artifact builds (built twice and compared) on the approved producing host",
+      "resources": ["cpu", "repo-write"],
       "paths": [
         "VERSION",
         "ts/",
@@ -208,7 +284,8 @@
     },
     "go": {
       "kind": "source",
-      "environment": "toolchain",
+      "environment": ["go", "node"],
+      "profiles": ["default"],
       "description": "Go test and vet",
       "resource": "cpu",
       "paths": [
@@ -236,9 +313,10 @@
     },
     "unit": {
       "kind": "source",
-      "environment": "toolchain",
+      "environment": ["go", "node", "python"],
+      "profiles": ["default"],
       "description": "Cross-language unit tests (Go unit selection, TypeScript tests, Python tests) composed with the Go gate",
-      "resource": "repo-write",
+      "resources": ["cpu", "repo-write"],
       "dependsOn": [
         "go"
       ],
@@ -276,7 +354,8 @@
     },
     "ts": {
       "kind": "source",
-      "environment": "toolchain",
+      "environment": ["node"],
+      "profiles": ["default", "floor-node22"],
       "description": "TypeScript checked-in dist drift and npm pack",
       "resource": "repo-write",
       "paths": [
@@ -322,7 +401,8 @@
     },
     "py": {
       "kind": "source",
-      "environment": "toolchain",
+      "environment": ["python"],
+      "profiles": ["default", "floor-py3.12"],
       "description": "Python wheel and sdist build",
       "resource": "repo-write",
       "paths": [
@@ -352,9 +432,15 @@
     },
     "contract-tests": {
       "kind": "source",
-      "environment": "toolchain",
+      "environment": ["go", "node", "python"],
+      "profiles": [
+        "default",
+        "floor-node22-py3.12",
+        "floor-node22-py3.14",
+        "floor-node24-py3.12"
+      ],
       "description": "API snapshots and the cross-language contract fixture corpus",
-      "resource": "cpu",
+      "resources": ["cpu", "repo-write"],
       "paths": [
         "api-snapshots/",
         "contract-tests/",
@@ -389,7 +475,8 @@
     },
     "cdk-go-drift": {
       "kind": "source",
-      "environment": "toolchain",
+      "environment": ["go", "node"],
+      "profiles": ["default", "floor-node22"],
       "description": "CDK Go bindings regeneration equality",
       "resource": "repo-write",
       "paths": [
@@ -412,9 +499,10 @@
     },
     "examples-local": {
       "kind": "source",
-      "environment": "toolchain+platform",
-      "description": "Local examples harness plus relocated-copy synth proof",
-      "resource": "docker",
+      "environment": ["go", "node", "python", "platform"],
+      "profiles": ["default"],
+      "description": "Local examples harness plus relocated-copy synth proof (local journey, produced on the approved host)",
+      "resources": ["docker", "repo-write"],
       "paths": [
         "Makefile",
         "examples/",
@@ -447,7 +535,8 @@
     },
     "security-refresh": {
       "kind": "dependency-scan",
-      "environment": "toolchain",
+      "environment": ["go", "node", "python"],
+      "profiles": ["default"],
       "description": "Dependency vulnerability refresh bounded by the tracked max age",
       "maxAgeSeconds": 86400,
       "resource": "network",
@@ -482,7 +571,7 @@
     "release-delta": {
       "kind": "generated-delta",
       "environment": "none",
-      "description": "Narrow packaging and regeneration smoke once per changed generated artifact set",
+      "description": "Narrow packaging and regeneration smoke once per changed generated artifact set; it executes in CI and is never reusable evidence",
       "resource": "repo-write",
       "paths": [
         "**"

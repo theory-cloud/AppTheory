@@ -7,21 +7,32 @@
 # whose head repository is not this repository always executes, so untrusted
 # content gains nothing from carrying evidence records.
 #
-# The printed line and the job summary state unambiguously whether this run
-# reused evidence or executed the commands.
+# A gate is verified against a tracked proof profile, not against the runner's
+# own environment. CI is an evidence verifier; the record names the real
+# environment its commands ran in. A runtime-floor leg passes its profile so the
+# same tested environment is reused on every later release event instead of
+# being forced to execute again.
 #
-# Usage: scripts/evidence/verify-or-execute.sh --gate <gate-id>
+# The printed line and the job summary state unambiguously which profile was
+# verified or executed.
+#
+# Usage: scripts/evidence/verify-or-execute.sh --gate <gate-id> [--profile <id>] [--verify-only]
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${repo_root}"
 
 gate=""
+profile=""
 verify_only=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --gate)
       gate="${2:-}"
+      shift 2
+      ;;
+    --profile)
+      profile="${2:-}"
       shift 2
       ;;
     --verify-only)
@@ -30,11 +41,12 @@ while [[ $# -gt 0 ]]; do
       ;;
     --help|-h)
       cat <<'USAGE'
-usage: scripts/evidence/verify-or-execute.sh --gate <gate-id> [--verify-only]
+usage: scripts/evidence/verify-or-execute.sh --gate <gate-id> [--profile <id>] [--verify-only]
 
-Reuses a verified evidence record for the gate or executes its approved commands.
---verify-only reports the decision and exits 0 only when evidence is reusable;
-it never executes. Set EVIDENCE_FORCE_EXECUTE=true to force execution.
+Reuses a verified evidence record for the gate and tracked proof profile, or
+executes its approved commands. --verify-only reports the decision and exits 0
+only when evidence is reusable; it never executes. Set EVIDENCE_FORCE_EXECUTE=true
+to force execution.
 USAGE
       exit 0
       ;;
@@ -49,6 +61,19 @@ if [[ -z "${gate}" ]]; then
   echo "validation-evidence: FAIL (--gate is required)" >&2
   exit 1
 fi
+
+profile_args=()
+if [[ -n "${profile}" ]]; then
+  profile_args=(--profile "${profile}")
+fi
+
+describe_target() {
+  if [[ -n "${profile}" ]]; then
+    printf '%s (profile %s)' "${gate}" "${profile}"
+  else
+    printf '%s (default profile)' "${gate}"
+  fi
+}
 
 force_execute=false
 if [[ "${EVIDENCE_FORCE_EXECUTE:-}" == "true" ]]; then
@@ -87,10 +112,10 @@ verify_stderr="$(mktemp)"
 trap 'rm -f "${verify_stderr}"' EXIT
 
 if [[ "${force_execute}" != "true" ]]; then
-  if python3 scripts/evidence/validation_evidence.py verify --gate "${gate}" 2>"${verify_stderr}"; then
+  if python3 scripts/evidence/validation_evidence.py verify --gate "${gate}" "${profile_args[@]}" 2>"${verify_stderr}"; then
     cat "${verify_stderr}" >&2 || true
-    echo "gate ${gate}: evidence-verified (no command executed in this run)"
-    summary_line "- \`${gate}\`: evidence-verified (reused reviewed local proof; not executed in this run)"
+    echo "gate $(describe_target): evidence-verified (no command executed in this run)"
+    summary_line "- \`${gate}\`: evidence-verified for its tracked proof profile (reused reviewed local proof; not executed in this run)"
     exit 0
   fi
   reason="$(tail -n 1 "${verify_stderr}" | sed -e 's/^validation-evidence: FAIL (//' -e 's/)$//')"
@@ -116,10 +141,10 @@ PY
       continue
     fi
     dependency_stderr="$(mktemp)"
-    if python3 scripts/evidence/validation_evidence.py verify --gate "${dependency}" 2>"${dependency_stderr}"; then
+    if python3 scripts/evidence/validation_evidence.py verify --gate "${dependency}" "${profile_args[@]}" 2>"${dependency_stderr}"; then
       cat "${dependency_stderr}" >&2 || true
       rm -f "${dependency_stderr}"
-      echo "gate ${gate}: evidence-verified (composed from ${dependency}; no command executed in this run)"
+      echo "gate $(describe_target): evidence-verified (composed from ${dependency}; no command executed in this run)"
       summary_line "- \`${gate}\`: evidence-verified via \`${dependency}\` (no command executed in this run)"
       exit 0
     fi
@@ -131,11 +156,11 @@ else
 fi
 
 if [[ "${verify_only}" == "true" ]]; then
-  echo "gate ${gate}: would-execute (${reason:-no applicable evidence})"
+  echo "gate $(describe_target): would-execute (${reason:-no applicable evidence})"
   summary_line "- \`${gate}\`: would execute (${reason:-no applicable evidence})"
   exit 1
 fi
 
-echo "gate ${gate}: executing (${reason:-no applicable evidence})"
+echo "gate $(describe_target): executing (${reason:-no applicable evidence})"
 summary_line "- \`${gate}\`: executed in this run (${reason:-no applicable evidence})"
-exec python3 scripts/evidence/validation_evidence.py run --gate "${gate}"
+exec python3 scripts/evidence/validation_evidence.py run --gate "${gate}" "${profile_args[@]}" --forced

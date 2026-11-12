@@ -104,13 +104,40 @@ def main() -> int:
     if not registry.get("nonProductPaths"):
         fail("nonProductPaths must declare the paths whose change cannot affect product proof")
 
+    profiles = registry.get("proofProfiles")
+    if not isinstance(profiles, dict) or not profiles:
+        fail("registry must declare proofProfiles")
+    for profile_id, profile in profiles.items():
+        if not isinstance(profile, dict):
+            fail(f"proof profile {profile_id} must be an object")
+        environment = profile.get("environment")
+        if not isinstance(environment, dict):
+            fail(f"proof profile {profile_id} must declare an environment")
+        for dimension in ("go", "node", "python"):
+            if not isinstance(environment.get(dimension), str) or not environment[dimension]:
+                fail(f"proof profile {profile_id} must declare {dimension}")
+        platform_value = environment.get("platform")
+        if not isinstance(platform_value, dict) or not platform_value.get("os") or not platform_value.get("arch"):
+            fail(f"proof profile {profile_id} must declare platform os/arch")
+
     for gate_id, gate in gates.items():
         paths = gate.get("paths")
         if not isinstance(paths, list) or not paths:
             fail(f"gate {gate_id} must declare its input scope")
-        gate_resource = gate.get("resource")
-        if gate_resource not in resources:
-            fail(f"gate {gate_id} declares unknown resource {gate_resource!r}")
+        gate_profiles = gate.get("profiles") or ["default"]
+        if not isinstance(gate_profiles, list) or not gate_profiles:
+            fail(f"gate {gate_id} must declare at least one supported proof profile")
+        for profile_id in gate_profiles:
+            if profile_id not in profiles:
+                fail(f"gate {gate_id} supports undeclared proof profile {profile_id!r}")
+        declared_resources = gate.get("resources", [gate.get("resource")])
+        if isinstance(declared_resources, str):
+            declared_resources = [declared_resources]
+        if not declared_resources:
+            fail(f"gate {gate_id} must declare its resource groups")
+        for declared_resource in declared_resources:
+            if declared_resource not in resources:
+                fail(f"gate {gate_id} declares unknown resource {declared_resource!r}")
         for dependency in gate.get("dependsOn", []):
             if dependency not in gates:
                 fail(f"gate {gate_id} depends on unknown gate {dependency!r}")
@@ -130,9 +157,12 @@ def main() -> int:
                         f"its composed gate {dependency!r}"
                     )
         for command in gate.get("commands", []):
-            command_resource = command.get("resource", gate_resource)
-            if command_resource not in resources:
-                fail(f"gate {gate_id} command {command.get('id')} declares unknown resource {command_resource!r}")
+            command_resources = command.get("resources", command.get("resource", declared_resources))
+            if isinstance(command_resources, str):
+                command_resources = [command_resources]
+            for command_resource in command_resources:
+                if command_resource not in resources:
+                    fail(f"gate {gate_id} command {command.get('id')} declares unknown resource {command_resource!r}")
             reuse = (command.get("env") or {}).get("APPTHEORY_EVIDENCE_REUSE", "")
             for reused in [item for item in reuse.split(",") if item]:
                 if reused not in gates:
@@ -159,17 +189,6 @@ def main() -> int:
 
     for gate_id in gates:
         visit(gate_id)
-
-    shared: dict[str, tuple[str, str]] = {}
-    for gate_id, gate in gates.items():
-        for command in gate.get("commands", []):
-            key = command.get("sharedKey")
-            if not key:
-                continue
-            signature = (str(command.get("id")), json.dumps(command.get("argv")))
-            if key in shared and shared[key] != signature:
-                fail(f"shared command {key!r} is declared with different definitions")
-            shared[key] = signature
 
     rubric_commands = gates["rubric"].get("commands", [])
     rubric_reuse = ",".join(
@@ -223,16 +242,45 @@ def main() -> int:
         if not entry.get("old") or not entry.get("new"):
             fail(f"execution matrix leg {leg_id} must record both old and new execution")
 
+    for gate_id, gate in gates.items():
+        composed_from = gate.get("composedFrom") or []
+        if not composed_from:
+            continue
+        for command in gate.get("commands", []):
+            argv = command.get("argv") or []
+            if len(argv) < 2 or argv[0] != "bash":
+                fail(f"gate {gate_id} composed command {command.get('id')} must run a tracked shell script")
+            script_path = ROOT / argv[1]
+            if not script_path.is_file():
+                fail(f"gate {gate_id} composed command {command.get('id')} script {argv[1]} is missing")
+            script = script_path.read_text(encoding="utf-8")
+            for dependency in composed_from:
+                if f"reuse-if-recorded.sh {dependency}" not in script:
+                    fail(
+                        f"gate {gate_id} command {command.get('id')} composes {dependency!r} "
+                        f"but {argv[1]} never consumes it"
+                    )
+
     docs = DOCS.read_text(encoding="utf-8")
     for leg_id in sorted(REQUIRED_LEGS):
         if f"| `{leg_id}` |" not in docs:
             fail(f"docs table is missing execution leg {leg_id}")
-    for token in ("--force", "--dry-run", "zero commands", "resource group", "declared input scope"):
+    for token in (
+        "--force",
+        "--dry-run",
+        "zero commands",
+        "resource group",
+        "declared input scope",
+        "--profile",
+        "proof profile",
+        "executed once per profile",
+        "Linux release artifact construction",
+    ):
         if token not in docs:
             fail(f"docs must document the corrected collector default: missing {token!r}")
 
     result = subprocess.run(
-        ["git", "check-ignore", "-q", "gov-infra/evidence/proportionate/rubric.json"],
+        ["git", "check-ignore", "-q", "gov-infra/evidence/proportionate/rubric/default.json"],
         cwd=ROOT,
         check=False,
     )

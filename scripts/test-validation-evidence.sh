@@ -37,9 +37,18 @@ cat >"${registry}" <<'JSON'
     "unit": {
       "kind": "source",
       "environment": "toolchain",
+      "profiles": ["default", "portable", "wrong-floor"],
       "resource": "cpu",
       "paths": ["src.txt", "VERSION", "artifact.txt", "gen/*"],
       "commands": [{"id": "unit", "argv": ["true"]}]
+    },
+    "platform-unit": {
+      "kind": "source",
+      "environment": "toolchain+platform",
+      "profiles": ["default", "portable"],
+      "resource": "cpu",
+      "paths": ["src.txt"],
+      "commands": [{"id": "platform-unit", "argv": ["true"]}]
     },
     "broken": {
       "kind": "source",
@@ -73,6 +82,51 @@ cat >"${registry}" <<'JSON'
   }
 }
 JSON
+
+# The tracked proof profiles are declared from this host's real probe, so the
+# fixture can collect the default profile anywhere. Extra profiles exercise the
+# fail-closed controls: a portable claim produced on another platform, and a
+# floor the live host cannot satisfy.
+live_environment_json="$("${python_bin}" "${evidence_py}" probe)"
+
+inject_profiles() {
+  local path="$1"
+  local extra="${2:-false}"
+  local live_json="${3:-${live_environment_json}}"
+  "${python_bin}" - "${path}" "${live_json}" "${extra}" <<'PY'
+import json
+import sys
+
+path, live_raw, extra = sys.argv[1], sys.argv[2], sys.argv[3] == "true"
+probe = json.loads(live_raw)
+live = {
+    "go": probe["go"],
+    "node": str(probe["node"]).lstrip("v").split(".")[0],
+    "python": ".".join(str(probe["python"]).split(".")[:2]),
+    "platform": probe["platform"],
+}
+node_major = int(live["node"])
+profiles = {"default": {"environment": live}}
+if extra:
+    other_os = "darwin" if live["platform"]["os"] != "darwin" else "linux"
+    other_arch = "arm64" if other_os == "darwin" else "x64"
+    profiles["portable"] = {
+        "environment": {**live, "platform": {"os": other_os, "arch": other_arch}}
+    }
+    profiles["wrong-floor"] = {
+        "environment": {**live, "node": str(node_major + 1), "python": "9.9"}
+    }
+    profiles["floor-sim"] = {"environment": live}
+    profiles["wrong-node"] = {"environment": {**live, "node": str(node_major - 1)}}
+data = json.loads(open(path, encoding="utf-8").read())
+data["proofProfiles"] = profiles
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(data, handle, indent=2)
+    handle.write("\n")
+PY
+}
+
+inject_profiles "${registry}" true
 
 init_repo() {
   (
@@ -208,13 +262,13 @@ expect_fail "verify rejects a final edit" verify --gate unit
 expect_ok "verify recovers when the source returns" verify --gate unit
 
 # 5. Missing evidence record.
-mv "${scratch}/evidence/unit.json" "${tmp}/unit.json.bak"
+mv "${scratch}/evidence/unit/default.json" "${tmp}/unit.json.bak"
 expect_fail "verify rejects missing evidence" verify --gate unit
-mv "${tmp}/unit.json.bak" "${scratch}/evidence/unit.json"
+mv "${tmp}/unit.json.bak" "${scratch}/evidence/unit/default.json"
 
 # 6. Failed verdicts are retained honestly and never read as success.
 expect_fail "collect retains a failing command" collect --gate broken
-grep -Fq '"verdict": "FAIL"' "${scratch}/evidence/broken.json" ||
+grep -Fq '"verdict": "FAIL"' "${scratch}/evidence/broken/default.json" ||
   {
     echo "test-validation-evidence: FAIL (failed record was not retained)" >&2
     exit 1
@@ -223,7 +277,7 @@ expect_fail "verify rejects a recorded failure" verify --gate broken
 
 # 7. Inputs changed during the run.
 expect_fail "collect detects a during-run edit" collect --gate mutator
-grep -Fq "changed during the run" "${scratch}/evidence/mutator.json" ||
+grep -Fq "changed during the run" "${scratch}/evidence/mutator/default.json" ||
   {
     echo "test-validation-evidence: FAIL (during-run edit was not recorded)" >&2
     exit 1
@@ -232,14 +286,14 @@ grep -Fq "changed during the run" "${scratch}/evidence/mutator.json" ||
   cd "${scratch}"
   git checkout -q -- src.txt
 )
-rm -f "${scratch}/evidence/mutator.json"
+rm -f "${scratch}/evidence/mutator/default.json"
 
 # 8. Malformed record, future timestamp, unapproved command, environment drift.
-cp "${scratch}/evidence/unit.json" "${tmp}/unit.json.good"
-printf '{not json\n' >"${scratch}/evidence/unit.json"
+cp "${scratch}/evidence/unit/default.json" "${tmp}/unit.json.good"
+printf '{not json\n' >"${scratch}/evidence/unit/default.json"
 expect_fail "verify rejects malformed JSON" verify --gate unit
 
-"${python_bin}" - "${scratch}/evidence/unit.json" "${tmp}/unit.json.good" <<'PY'
+"${python_bin}" - "${scratch}/evidence/unit/default.json" "${tmp}/unit.json.good" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -250,7 +304,7 @@ Path(sys.argv[1]).write_text(json.dumps(source), encoding="utf-8")
 PY
 expect_fail "verify rejects a future record timestamp" verify --gate unit
 
-"${python_bin}" - "${scratch}/evidence/unit.json" "${tmp}/unit.json.good" <<'PY'
+"${python_bin}" - "${scratch}/evidence/unit/default.json" "${tmp}/unit.json.good" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -267,7 +321,7 @@ fi
 pass_count=$((pass_count + 1))
 echo "test-validation-evidence: PASS verifier never executes recorded commands"
 
-"${python_bin}" - "${scratch}/evidence/unit.json" "${tmp}/unit.json.good" <<'PY'
+"${python_bin}" - "${scratch}/evidence/unit/default.json" "${tmp}/unit.json.good" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -278,7 +332,7 @@ Path(sys.argv[1]).write_text(json.dumps(source), encoding="utf-8")
 PY
 expect_fail "verify rejects an environment mismatch" verify --gate unit
 
-cp "${tmp}/unit.json.good" "${scratch}/evidence/unit.json"
+cp "${tmp}/unit.json.good" "${scratch}/evidence/unit/default.json"
 expect_ok "verify recovers the good record" verify --gate unit
 
 # 9. Release-only version substitution is applicable; any other generated edit is not.
@@ -315,8 +369,8 @@ mv "${tmp}/src.txt.bak" "${scratch}/src.txt"
 # 12. Dependency freshness: fresh passes, stale and future fail.
 expect_ok "collect dependency scan" collect --gate scan
 expect_ok "verify fresh dependency scan" verify --gate scan
-cp "${scratch}/evidence/scan.json" "${tmp}/scan.json.good"
-"${python_bin}" - "${scratch}/evidence/scan.json" "${tmp}/scan.json.good" <<'PY'
+cp "${scratch}/evidence/scan/default.json" "${tmp}/scan.json.good"
+"${python_bin}" - "${scratch}/evidence/scan/default.json" "${tmp}/scan.json.good" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -326,7 +380,7 @@ source["scan"]["scannedAt"] = "2020-01-01T00:00:00Z"
 Path(sys.argv[1]).write_text(json.dumps(source), encoding="utf-8")
 PY
 expect_fail "verify rejects a stale dependency scan" verify --gate scan
-"${python_bin}" - "${scratch}/evidence/scan.json" "${tmp}/scan.json.good" <<'PY'
+"${python_bin}" - "${scratch}/evidence/scan/default.json" "${tmp}/scan.json.good" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -336,7 +390,7 @@ source["scan"]["scannedAt"] = "2999-01-01T00:00:00Z"
 Path(sys.argv[1]).write_text(json.dumps(source), encoding="utf-8")
 PY
 expect_fail "verify rejects a future dependency scan" verify --gate scan
-"${python_bin}" - "${scratch}/evidence/scan.json" "${tmp}/scan.json.good" <<'PYMAXAGE'
+"${python_bin}" - "${scratch}/evidence/scan/default.json" "${tmp}/scan.json.good" <<'PYMAXAGE'
 import json
 import sys
 from pathlib import Path
@@ -346,13 +400,31 @@ source["scan"]["maxAgeSeconds"] = 31536000
 Path(sys.argv[1]).write_text(json.dumps(source), encoding="utf-8")
 PYMAXAGE
 expect_fail "verify rejects a widened scan max age" verify --gate scan
-cp "${tmp}/scan.json.good" "${scratch}/evidence/scan.json"
+cp "${tmp}/scan.json.good" "${scratch}/evidence/scan/default.json"
 expect_ok "verify recovers the fresh dependency scan" verify --gate scan
 
 # 13. Review finalization adds references without invalidating identity.
 expect_ok "finalize adds review references" \
   "${python_bin}" "${evidence_py}" --registry "${registry}" finalize --root "${scratch}" --gate unit --review-ref factory-review-1
 expect_output "finalized record still verifies" "reviews=factory-review-1" verify --gate unit
+
+# 14. Proof profiles: a portable claim keeps the platform disclosure but is not
+# bound to it, while a platform-bound claim refuses a profile produced on a
+# different host.
+expect_ok "collect a portable profile for a toolchain claim" collect --gate unit --profile portable
+expect_output "portable profile verifies on a different host" "profile=portable mode=evidence-verified" \
+  verify --gate unit --profile portable
+expect_fail "platform-bound claim refuses a differently produced profile" \
+  collect --gate platform-unit --profile portable
+expect_fail "collect refuses a profile the live host does not satisfy" \
+  collect --gate unit --profile wrong-floor
+expect_fail "verify refuses a profile the gate does not support" verify --gate noop --profile portable
+if [[ -e "${scratch}/evidence/platform-unit/portable.json" ]]; then
+  echo "test-validation-evidence: FAIL (platform-bound claim published a cross-host record)" >&2
+  exit 1
+fi
+pass_count=$((pass_count + 1))
+echo "test-validation-evidence: PASS proof profiles fail closed"
 
 echo "test-validation-evidence: PASS (${pass_count} checks)"
 
@@ -364,7 +436,7 @@ echo "test-validation-evidence: PASS (${pass_count} checks)"
 
 sched="${tmp}/sched"
 mkdir -p "${sched}/bin" "${sched}/scripts/evidence" "${sched}/evidence/state" "${sched}/docs"
-for dir in alpha beta m x dep-parent dep-child shared fail fast slow prod-a prod-b pack inc-a inc-b; do
+for dir in alpha beta m x dep-parent dep-child shared fail fast slow prod-a prod-b pack inc-a inc-b pkg block block-child block-ind ev ev-floor ev-wrong; do
   mkdir -p "${sched}/src/${dir}"
   printf 'keep\n' >"${sched}/src/${dir}/keep.txt"
 done
@@ -460,6 +532,10 @@ elif MODE == "consume":
             print(f"compose failed for {gate}", file=sys.stderr)
             sys.exit(8)
     append(STATE / "consumed.log", "composed")
+elif MODE == "compose-mark":
+    gate, marker = sys.argv[2], sys.argv[3]
+    completed = subprocess.run(["bash", "scripts/evidence/reuse-if-recorded.sh", gate], check=False)
+    append(marker, "composed" if completed.returncode == 0 else "ran")
 elif MODE == "fail":
     sys.exit(1)
 else:
@@ -501,9 +577,32 @@ cat >"${sched}/scripts/evidence/validation-gates.json" <<'JSON'
       "dependsOn": ["dep-parent"],
       "commands": [{"id": "dep-child", "argv": ["python3", "bin/job.py", "dep", "evidence/state/parent.done"]}]},
     "s1": {"kind": "source", "environment": "toolchain", "resource": "cpu", "paths": ["src/shared/"],
-      "commands": [{"id": "shared-node", "sharedKey": "shared-node", "argv": ["python3", "bin/job.py", "shared", "evidence/state/shared.log"]}]},
+      "commands": [{"id": "s1", "argv": ["python3", "bin/job.py", "mark", "evidence/state/s1.log"]}]},
     "s2": {"kind": "source", "environment": "toolchain", "resource": "cpu", "paths": ["src/shared/"],
-      "commands": [{"id": "shared-node", "sharedKey": "shared-node", "argv": ["python3", "bin/job.py", "shared", "evidence/state/shared.log"]}]},
+      "commands": [{"id": "s2", "argv": ["python3", "bin/job.py", "mark", "evidence/state/s2.log"]}]},
+    "pkg": {"kind": "source", "environment": "toolchain", "resource": "cpu", "paths": ["src/pkg/"],
+      "commands": [{"id": "pkg", "argv": ["python3", "bin/job.py", "mark", "evidence/state/pkg.log"]}]},
+    "uses-a": {"kind": "source", "environment": "toolchain", "resource": "cpu", "paths": ["src/pkg/"],
+      "dependsOn": ["pkg"], "composedFrom": ["pkg"],
+      "commands": [{"id": "uses-a", "argv": ["python3", "bin/job.py", "compose-mark", "pkg", "evidence/state/uses-a.log"],
+        "consumeLog": true, "env": {"APPTHEORY_EVIDENCE_REUSE": "pkg"}}]},
+    "uses-b": {"kind": "source", "environment": "toolchain", "resource": "cpu", "paths": ["src/pkg/"],
+      "dependsOn": ["pkg"], "composedFrom": ["pkg"],
+      "commands": [{"id": "uses-b", "argv": ["python3", "bin/job.py", "compose-mark", "pkg", "evidence/state/uses-b.log"],
+        "consumeLog": true, "env": {"APPTHEORY_EVIDENCE_REUSE": "pkg"}}]},
+    "block-parent": {"kind": "source", "environment": "toolchain", "resource": "cpu", "paths": ["src/block/"],
+      "commands": [{"id": "block-parent", "argv": ["python3", "bin/job.py", "fail"]}]},
+    "block-child": {"kind": "source", "environment": "toolchain", "resource": "cpu", "paths": ["src/block-child/"],
+      "dependsOn": ["block-parent"],
+      "commands": [{"id": "block-child", "argv": ["python3", "bin/job.py", "mark", "evidence/state/block-child.log"]}]},
+    "block-independent": {"kind": "source", "environment": "toolchain", "resource": "cpu", "paths": ["src/block-ind/"],
+      "commands": [{"id": "block-independent", "argv": ["python3", "bin/job.py", "mark", "evidence/state/block-independent.log"]}]},
+    "ev-default": {"kind": "source", "environment": "toolchain", "profiles": ["default", "floor-sim"], "resource": "cpu", "paths": ["src/ev/"],
+      "commands": [{"id": "ev-default", "argv": ["python3", "bin/job.py", "mark", "evidence/state/ev-default.log"]}]},
+    "ev-floor": {"kind": "source", "environment": "toolchain", "profiles": ["floor-sim"], "resource": "cpu", "paths": ["src/ev-floor/"],
+      "commands": [{"id": "ev-floor", "argv": ["python3", "bin/job.py", "mark", "evidence/state/ev-floor.log"]}]},
+    "ev-wrong": {"kind": "source", "environment": "toolchain", "profiles": ["wrong-node"], "resource": "cpu", "paths": ["src/ev-wrong/"],
+      "commands": [{"id": "ev-wrong", "argv": ["python3", "bin/job.py", "mark", "evidence/state/ev-wrong.log"]}]},
     "fail": {"kind": "source", "environment": "toolchain", "resource": "cpu", "paths": ["src/fail/"],
       "commands": [{"id": "fail", "argv": ["python3", "bin/job.py", "fail"]}]},
     "a-fast": {"kind": "source", "environment": "toolchain", "resource": "cpu", "paths": ["src/fast/"],
@@ -530,6 +629,12 @@ cat >"${sched}/scripts/evidence/validation-gates.json" <<'JSON'
   }
 }
 JSON
+
+# Probe the fixture repository itself: the Go toolchain is selected by the
+# enclosing module, so the fixture's own directory is the live environment the
+# collector will see.
+sched_live_environment_json="$(cd "${sched}" && "${python_bin}" "${evidence_py}" probe)"
+inject_profiles "${sched}/scripts/evidence/validation-gates.json" true "${sched_live_environment_json}"
 
 cp "${evidence_py}" "${sched}/scripts/evidence/validation_evidence.py"
 cp "${repo_root}/scripts/evidence/verify-or-execute.sh" "${sched}/scripts/evidence/verify-or-execute.sh"
@@ -646,15 +751,112 @@ grep -q "run" "${sched}/evidence/state/dep-child.log" || { echo "test-validation
 pass_count=$((pass_count + 1))
 echo "test-validation-evidence: PASS dependency ordering"
 
-# A shared command node executes once even when two gates declare it.
-expect_ok "shared command executes once" sched_collect --gate s1 --gate s2
-shared_lines="$(wc -l <"${sched}/evidence/state/shared.log" | tr -d ' ')"
-if [[ "${shared_lines}" != "1" ]]; then
-  echo "test-validation-evidence: FAIL (shared command ran ${shared_lines} times)" >&2
+# Composition, not a shared command cache, is the one dedup mechanism. Two gates
+# that declare the production shape (composedFrom + a leaf that consumes the
+# verified record) execute the shared work once and record their attribution.
+rm -f "${sched}/evidence/pkg/default.json" "${sched}/evidence/uses-a/default.json" "${sched}/evidence/uses-b/default.json"
+: >"${sched}/evidence/state/pkg.log"
+: >"${sched}/evidence/state/uses-a.log"
+: >"${sched}/evidence/state/uses-b.log"
+expect_ok "declared composition executes shared work once" sched_collect --gate pkg --gate uses-a --gate uses-b
+pkg_lines="$(wc -l <"${sched}/evidence/state/pkg.log" | tr -d ' ')"
+if [[ "${pkg_lines}" != "1" ]]; then
+  echo "test-validation-evidence: FAIL (shared work ran ${pkg_lines} times)" >&2
+  exit 1
+fi
+for leaf in uses-a uses-b; do
+  if ! grep -Fxq "composed" "${sched}/evidence/state/${leaf}.log"; then
+    echo "test-validation-evidence: FAIL (${leaf} did not compose the shared record)" >&2
+    exit 1
+  fi
+done
+python3 - "${sched}/evidence/uses-a/default.json" <<'PYCOMPOSED'
+import json
+import sys
+
+record = json.load(open(sys.argv[1], encoding="utf-8"))
+consumed = {item["gate"] for item in record.get("consumed", [])}
+if consumed != {"pkg"}:
+    raise SystemExit(f"coverage attribution is wrong: {sorted(consumed)}")
+PYCOMPOSED
+pass_count=$((pass_count + 1))
+echo "test-validation-evidence: PASS composition deduplicates shared work"
+
+# Forced execution refuses composition: a forced run really performs the shared
+# work instead of inheriting the record.
+: >"${sched}/evidence/state/uses-a.log"
+(
+  cd "${sched}"
+  EVIDENCE_FORCE_EXECUTE=true bash scripts/evidence/verify-or-execute.sh --gate uses-a
+) >"${tmp}/forced-exec.log" 2>&1 || {
+  echo "test-validation-evidence: FAIL (forced execution failed)" >&2
+  cat "${tmp}/forced-exec.log" >&2
+  exit 1
+}
+if ! grep -Fxq "ran" "${sched}/evidence/state/uses-a.log"; then
+  echo "test-validation-evidence: FAIL (forced execution composed a record)" >&2
+  cat "${tmp}/forced-exec.log" >&2
   exit 1
 fi
 pass_count=$((pass_count + 1))
-echo "test-validation-evidence: PASS shared command deduplicated"
+echo "test-validation-evidence: PASS forced execution refuses composition"
+
+# A prerequisite failure blocks its dependent instead of executing it through a
+# fallback, keeps the independent completed record, and returns a truthful
+# non-zero aggregate. A later explicit run retries only the failed work.
+rm -f "${sched}/evidence/block-parent/default.json" "${sched}/evidence/block-child/default.json" "${sched}/evidence/block-independent/default.json"
+rm -f "${sched}/evidence/state/block-child.log" "${sched}/evidence/state/block-independent.log"
+block_status=0
+sched_collect --gate block-parent --gate block-child --gate block-independent >"${tmp}/block.log" 2>&1 || block_status=$?
+if [[ "${block_status}" -eq 0 ]]; then
+  echo "test-validation-evidence: FAIL (a blocked collection returned success)" >&2
+  cat "${tmp}/block.log" >&2
+  exit 1
+fi
+grep -Fq "gate=block-child action=blocked" "${tmp}/block.log" || {
+  echo "test-validation-evidence: FAIL (dependent was not reported blocked)" >&2
+  cat "${tmp}/block.log" >&2
+  exit 1
+}
+if [[ -e "${sched}/evidence/state/block-child.log" ]]; then
+  echo "test-validation-evidence: FAIL (blocked dependent executed its command)" >&2
+  exit 1
+fi
+if [[ ! -f "${sched}/evidence/block-independent/default.json" ]]; then
+  echo "test-validation-evidence: FAIL (independent completed record was not preserved)" >&2
+  exit 1
+fi
+grep -Fq '"verdict": "FAIL"' "${sched}/evidence/block-parent/default.json" || {
+  echo "test-validation-evidence: FAIL (failed prerequisite record was not retained)" >&2
+  exit 1
+}
+pass_count=$((pass_count + 1))
+echo "test-validation-evidence: PASS dependent blocked after prerequisite failure"
+
+# Retry: replacing the failing prerequisite command and running again executes
+# the retried prerequisite and the previously-blocked dependent exactly once.
+python3 - "${sched}/scripts/evidence/validation-gates.json" <<'PYRETRY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+registry = json.loads(path.read_text(encoding="utf-8"))
+registry["gates"]["block-parent"]["commands"] = [
+    {"id": "block-parent", "argv": ["python3", "bin/job.py", "mark", "evidence/state/block-parent.log"]}
+]
+path.write_text(json.dumps(registry, indent=2), encoding="utf-8")
+PYRETRY
+sched_commit "fix: make the blocked prerequisite pass"
+: >"${sched}/evidence/state/block-child.log"
+expect_ok "retry executes only failed and blocked work" sched_collect --gate block-parent --gate block-child
+block_child_lines="$(wc -l <"${sched}/evidence/state/block-child.log" | tr -d ' ')"
+if [[ "${block_child_lines}" != "1" ]]; then
+  echo "test-validation-evidence: FAIL (retried dependent ran ${block_child_lines} times)" >&2
+  exit 1
+fi
+pass_count=$((pass_count + 1))
+echo "test-validation-evidence: PASS retry runs only failed work"
 
 # Failure propagates non-zero and is retained honestly.
 fail_status=0
@@ -664,7 +866,7 @@ if [[ "${fail_status}" -eq 0 ]]; then
   cat "${tmp}/fail.log" >&2
   exit 1
 fi
-grep -Fq '"verdict": "FAIL"' "${sched}/evidence/fail.json" || { echo "test-validation-evidence: FAIL (failed record not retained)" >&2; exit 1; }
+grep -Fq '"verdict": "FAIL"' "${sched}/evidence/fail/default.json" || { echo "test-validation-evidence: FAIL (failed record not retained)" >&2; exit 1; }
 fail_verify_status=0
 sched_verify fail >"${tmp}/fail-verify.log" 2>&1 || fail_verify_status=$?
 if [[ "${fail_verify_status}" -eq 0 ]]; then
@@ -676,14 +878,14 @@ echo "test-validation-evidence: PASS failure propagation"
 
 # Interruption: the completed record survives, the incomplete gate has no
 # record, the owned child is gone, and restart runs only the incomplete gate.
-rm -f "${sched}/evidence/a-fast.json" "${sched}/evidence/b-slow.json" "${sched}/evidence/state/slow.pid"
+rm -f "${sched}/evidence/a-fast/default.json" "${sched}/evidence/b-slow/default.json" "${sched}/evidence/state/slow.pid"
 (
   cd "${sched}"
   exec bash scripts/evidence/collect.sh --gate a-fast --gate b-slow --jobs 1
 ) >"${tmp}/interrupt.log" 2>&1 &
 collector_pid=$!
 for _ in $(seq 1 100); do
-  if [[ -f "${sched}/evidence/a-fast.json" && -f "${sched}/evidence/state/slow.pid" ]]; then
+  if [[ -f "${sched}/evidence/a-fast/default.json" && -f "${sched}/evidence/state/slow.pid" ]]; then
     break
   fi
   sleep 0.1
@@ -696,8 +898,8 @@ if [[ "${interrupt_status}" -eq 0 ]]; then
   cat "${tmp}/interrupt.log" >&2
   exit 1
 fi
-[[ -f "${sched}/evidence/a-fast.json" ]] || { echo "test-validation-evidence: FAIL (completed record lost on interrupt)" >&2; exit 1; }
-[[ ! -f "${sched}/evidence/b-slow.json" ]] || { echo "test-validation-evidence: FAIL (incomplete gate published a record)" >&2; exit 1; }
+[[ -f "${sched}/evidence/a-fast/default.json" ]] || { echo "test-validation-evidence: FAIL (completed record lost on interrupt)" >&2; exit 1; }
+[[ ! -f "${sched}/evidence/b-slow/default.json" ]] || { echo "test-validation-evidence: FAIL (incomplete gate published a record)" >&2; exit 1; }
 slow_pid="$(cat "${sched}/evidence/state/slow.pid" 2>/dev/null || true)"
 if [[ -n "${slow_pid}" ]] && kill -0 "${slow_pid}" 2>/dev/null; then
   echo "test-validation-evidence: FAIL (owned child survived cancellation)" >&2
@@ -705,13 +907,13 @@ if [[ -n "${slow_pid}" ]] && kill -0 "${slow_pid}" 2>/dev/null; then
   exit 1
 fi
 expect_ok "restart resumes only incomplete work" sched_collect --gate a-fast --gate b-slow
-[[ -f "${sched}/evidence/b-slow.json" ]] || { echo "test-validation-evidence: FAIL (restart did not complete the gate)" >&2; exit 1; }
+[[ -f "${sched}/evidence/b-slow/default.json" ]] || { echo "test-validation-evidence: FAIL (restart did not complete the gate)" >&2; exit 1; }
 pass_count=$((pass_count + 1))
 echo "test-validation-evidence: PASS interruption resume and child cleanup"
 
 # Rubric composition: product gates run once, the rubric consumes their
 # verified records, and the record carries explicit coverage attribution.
-rm -f "${sched}/evidence/prod-a.json" "${sched}/evidence/prod-b.json" "${sched}/evidence/rubric.json"
+rm -f "${sched}/evidence/prod-a/default.json" "${sched}/evidence/prod-b/default.json" "${sched}/evidence/rubric/default.json"
 : >"${sched}/evidence/state/prod-a.log"
 : >"${sched}/evidence/state/prod-b.log"
 expect_ok "rubric composes product records" sched_collect --gate prod-a --gate prod-b --gate rubric
@@ -721,7 +923,7 @@ if [[ "${a_lines}" != "1" || "${b_lines}" != "1" ]]; then
   echo "test-validation-evidence: FAIL (product commands were repeated: a=${a_lines} b=${b_lines})" >&2
   exit 1
 fi
-python3 - "${sched}/evidence/rubric.json" <<'PYCOVER'
+python3 - "${sched}/evidence/rubric/default.json" <<'PYCOVER'
 import json
 import sys
 
@@ -731,17 +933,17 @@ if consumed != {"prod-a", "prod-b"}:
     raise SystemExit(f"coverage attribution is wrong: {sorted(consumed)}")
 PYCOVER
 expect_ok "rubric record verifies with its consumed records" sched_verify rubric
-cp "${sched}/evidence/prod-b.json" "${tmp}/prod-b.good"
-rm -f "${sched}/evidence/prod-b.json"
+cp "${sched}/evidence/prod-b/default.json" "${tmp}/prod-b.good"
+rm -f "${sched}/evidence/prod-b/default.json"
 expect_fail "rubric verification rejects a deleted consumed record" sched_verify rubric
-cp "${tmp}/prod-b.good" "${sched}/evidence/prod-b.json"
+cp "${tmp}/prod-b.good" "${sched}/evidence/prod-b/default.json"
 expect_ok "rubric verification recovers the consumed record" sched_verify rubric
 pass_count=$((pass_count + 1))
 echo "test-validation-evidence: PASS rubric coverage composition"
 
 # Composition cannot fabricate a pass: a missing product record makes the
 # composed rubric command fail.
-rm -f "${sched}/evidence/prod-a.json" "${sched}/evidence/rubric.json"
+rm -f "${sched}/evidence/prod-a/default.json" "${sched}/evidence/rubric/default.json"
 rubric_status=0
 sched_collect --gate rubric --force >"${tmp}/rubric-fail.log" 2>&1 || rubric_status=$?
 if [[ "${rubric_status}" -eq 0 ]]; then
@@ -760,7 +962,7 @@ import sys
 from pathlib import Path
 
 root = Path(sys.argv[1])
-records = sorted(root.glob("*.json"))
+records = sorted(root.glob("*/*.json"))
 if not records:
     raise SystemExit("no records written")
 for path in records:
@@ -795,8 +997,8 @@ pass_count=$((pass_count + 1))
 echo "test-validation-evidence: PASS wrapper composition and force boundary"
 
 # Legacy records without a scope binding are historical, not reusable.
-cp "${sched}/evidence/inc-a.json" "${tmp}/inc-a.good"
-python3 - "${sched}/evidence/inc-a.json" <<'PYLEGACY'
+cp "${sched}/evidence/inc-a/default.json" "${tmp}/inc-a.good"
+python3 - "${sched}/evidence/inc-a/default.json" <<'PYLEGACY'
 import json
 import sys
 from pathlib import Path
@@ -807,12 +1009,162 @@ record.pop("scope", None)
 path.write_text(json.dumps(record), encoding="utf-8")
 PYLEGACY
 expect_fail "legacy record without scope is not reusable" sched_verify inc-a
-cp "${tmp}/inc-a.good" "${sched}/evidence/inc-a.json"
+cp "${tmp}/inc-a.good" "${sched}/evidence/inc-a/default.json"
 expect_ok "rescoped record verifies again" sched_verify inc-a
 
 # The actual CLI wrapper uses the scheduler/reuse default and can show the
 # schedule without executing.
 expect_output "collect wrapper exposes the incremental dry-run" "dry-run" \
-  bash -c 'cd "$1" && bash scripts/evidence/collect.sh --all --dry-run' _ "${sched}"
+  bash -c 'cd "$1" && bash scripts/evidence/collect.sh --all --profile default --dry-run' _ "${sched}"
+
+# ---------------------------------------------------------------------------
+# Proof profiles. A record is bound to one tracked profile; the collector probes
+# the live versions and refuses a profile the host does not satisfy; the
+# verifier compares the record with the tracked profile, never with its own
+# runner.
+# ---------------------------------------------------------------------------
+
+# A portable claim is disclosed with its producing platform, and verification on
+# a different host still applies it: the record names the real environment.
+expect_ok "collect a portable profile" sched_collect --gate ev-floor --profile floor-sim
+portable_record="${sched}/evidence/ev-floor/floor-sim.json"
+python3 - "${portable_record}" <<'PYPORTABLE'
+import json
+import sys
+
+record = json.load(open(sys.argv[1], encoding="utf-8"))
+if record["profile"] != "floor-sim":
+    raise SystemExit(f"record profile is {record['profile']!r}")
+environment = record["environment"]
+if not environment.get("go") or not environment.get("node") or not environment.get("platform"):
+    raise SystemExit(f"record does not disclose the real environment: {environment}")
+PYPORTABLE
+expect_output "verification is not the runner's own environment" "profile=floor-sim mode=evidence-verified" \
+  bash -c 'cd "$1" && python3 scripts/evidence/validation_evidence.py verify --gate ev-floor --profile floor-sim' _ "${sched}"
+pass_count=$((pass_count + 1))
+echo "test-validation-evidence: PASS profile record binds the real environment"
+
+# A profile that is not declared fails closed, and a declared profile a gate does
+# not support fails closed. Neither can be used as a wildcard.
+expect_fail "verify rejects an undeclared profile" \
+  bash -c 'cd "$1" && python3 scripts/evidence/validation_evidence.py verify --gate ev-floor --profile wildcard' _ "${sched}"
+expect_fail "verify rejects a profile the gate does not support" \
+  bash -c 'cd "$1" && python3 scripts/evidence/validation_evidence.py verify --gate ev-default --profile wrong-node' _ "${sched}"
+# A floor the live host cannot satisfy cannot be collected: no Node 24 host may
+# mint a lower-floor receipt.
+expect_fail "collect refuses a floor the live host does not satisfy" sched_collect --gate ev-wrong --profile wrong-node
+if [[ -e "${sched}/evidence/ev-wrong/wrong-node.json" ]]; then
+  echo "test-validation-evidence: FAIL (unsatisfiable profile published a record)" >&2
+  exit 1
+fi
+pass_count=$((pass_count + 1))
+echo "test-validation-evidence: PASS unsupported profiles fail closed"
+
+# A forged environment field never verifies against the trackless profile: the
+# record must still match the tracked declaration.
+cp "${portable_record}" "${tmp}/portable.good"
+python3 - "${portable_record}" <<'PYFORGE'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+record = json.loads(path.read_text(encoding="utf-8"))
+record["environment"]["node"] = "v19.0.0"
+path.write_text(json.dumps(record), encoding="utf-8")
+PYFORGE
+expect_fail "verify rejects a forged environment field" \
+  bash -c 'cd "$1" && python3 scripts/evidence/validation_evidence.py verify --gate ev-floor --profile floor-sim' _ "${sched}"
+cp "${tmp}/portable.good" "${portable_record}"
+expect_ok "verify recovers the honest record" \
+  bash -c 'cd "$1" && python3 scripts/evidence/validation_evidence.py verify --gate ev-floor --profile floor-sim' _ "${sched}"
+
+# ---------------------------------------------------------------------------
+# Event cycle. Every release-train leg verifies the same per-profile record for
+# unchanged inputs; no leg re-executes an already-proven profile. The counters
+# are the concrete expensive-invocation counts.
+# ---------------------------------------------------------------------------
+
+rm -f "${sched}/evidence/ev-default/default.json" "${sched}/evidence/ev-floor/floor-sim.json"
+: >"${sched}/evidence/state/ev-default.log"
+: >"${sched}/evidence/state/ev-floor.log"
+expect_ok "cycle baseline collects each profile once" \
+  sched_collect --gate ev-default --profile default
+expect_ok "cycle baseline collects the floor profile once" \
+  sched_collect --gate ev-floor --profile floor-sim
+default_baseline="$(wc -l <"${sched}/evidence/state/ev-default.log" | tr -d ' ')"
+floor_baseline="$(wc -l <"${sched}/evidence/state/ev-floor.log" | tr -d ' ')"
+if [[ "${default_baseline}" != "1" || "${floor_baseline}" != "1" ]]; then
+  echo "test-validation-evidence: FAIL (baseline executions default=${default_baseline} floor=${floor_baseline})" >&2
+  exit 1
+fi
+
+cat >"${tmp}/own-pr-event.json" <<'JSON'
+{"pull_request": {"base": {"ref": "staging"}, "head": {"ref": "feature", "repo": {"full_name": "theory-cloud/AppTheory"}}}}
+JSON
+cycle_rows=""
+cycle_failures=0
+for leg in pr-staging push-staging pr-staging-premain push-premain release-pr-premain release-merge-premain pr-premain-main push-main release-pr-main release-merge-main backmerge-main-staging; do
+  case "${leg}" in
+    push-*|release-merge-*) leg_event="push" ;;
+    *) leg_event="pull_request" ;;
+  esac
+  for pair in "ev-default:default" "ev-floor:floor-sim"; do
+    gate="${pair%%:*}"
+    profile="${pair##*:}"
+    leg_output="$(
+      cd "${sched}" &&
+        GITHUB_REPOSITORY=theory-cloud/AppTheory \
+          GITHUB_EVENT_NAME="${leg_event}" \
+          GITHUB_EVENT_PATH="${tmp}/own-pr-event.json" \
+          bash scripts/evidence/verify-or-execute.sh --gate "${gate}" --profile "${profile}" 2>&1
+    )" || {
+      echo "test-validation-evidence: FAIL (leg ${leg} ${gate}/${profile} did not verify)" >&2
+      echo "${leg_output}" >&2
+      cycle_failures=$((cycle_failures + 1))
+      continue
+    }
+    if [[ "${leg_output}" != *"evidence-verified"* ]]; then
+      echo "test-validation-evidence: FAIL (leg ${leg} ${gate}/${profile} did not report evidence-verified)" >&2
+      echo "${leg_output}" >&2
+      cycle_failures=$((cycle_failures + 1))
+    fi
+    cycle_rows+="${leg} ${gate}/${profile} 0"$'\n'
+  done
+done
+default_total="$(wc -l <"${sched}/evidence/state/ev-default.log" | tr -d ' ')"
+floor_total="$(wc -l <"${sched}/evidence/state/ev-floor.log" | tr -d ' ')"
+if [[ "${cycle_failures}" -ne 0 || "${default_total}" != "1" || "${floor_total}" != "1" ]]; then
+  echo "test-validation-evidence: FAIL (cycle repeated executions default=${default_total} floor=${floor_total} for 22 verified leg/profile pairs)" >&2
+  exit 1
+fi
+printf '%s' "${cycle_rows}" >"${tmp}/cycle-table.txt"
+{
+  echo "test-validation-evidence: cycle table (leg, profile, repeated expensive invocations)"
+  while IFS= read -r row; do
+    [[ -n "${row}" ]] || continue
+    printf '  %s\n' "${row}"
+  done <"${tmp}/cycle-table.txt"
+  printf '  TOTAL ev-default/default 0 repeats (%s baseline execution)\n' "${default_total}"
+  printf '  TOTAL ev-floor/floor-sim 0 repeats (%s baseline execution)\n' "${floor_total}"
+} >&2
+pass_count=$((pass_count + 1))
+echo "test-validation-evidence: PASS whole event cycle reuses each proven profile (executions default=${default_total} floor=${floor_total})"
+
+# A real source change invalidates only the profile it affects; a different
+# profile's proof stays reusable.
+printf 'runtime change\n' >>"${sched}/src/ev/keep.txt"
+sched_commit "fix: change the ev-default input"
+: >"${sched}/evidence/state/ev-default.log"
+expect_ok "changed input executes only the affected profile" sched_collect --gate ev-default --profile default
+affected="$(wc -l <"${sched}/evidence/state/ev-default.log" | tr -d ' ')"
+if [[ "${affected}" != "1" ]]; then
+  echo "test-validation-evidence: FAIL (affected profile ran ${affected} times)" >&2
+  exit 1
+fi
+expect_ok "the other profile's proof is unaffected" \
+  bash -c 'cd "$1" && python3 scripts/evidence/validation_evidence.py verify --gate ev-floor --profile floor-sim' _ "${sched}"
+pass_count=$((pass_count + 1))
+echo "test-validation-evidence: PASS input change invalidates only its profile"
 
 echo "test-validation-evidence: PASS (${pass_count} checks)"

@@ -2,11 +2,22 @@
 """Produce, verify, and schedule AppTheory validation evidence.
 
 The evidence record binds the exact checked-in inputs a governed command set was
-executed against. Verification recomputes the inputs digest from the candidate
-working tree and compares it with the record; it never executes anything the
-record names. Commands come only from the tracked gate registry
+executed against, plus the supported proof profile that claim belongs to.
+Verification recomputes the inputs digest from the candidate working tree and
+compares it with the record; it never executes anything the record names.
+Commands come only from the tracked gate registry
 (``scripts/evidence/validation-gates.json``) and are executed as argv arrays,
 never through a shell or ``eval``.
+
+A proof profile is a tracked declaration of a supported environment (Go pin,
+Node major, Python major.minor, and the producing OS/arch). The collector probes
+the real versions it runs under and refuses to record a profile the live host
+does not satisfy. Verification compares the recorded environment with the
+tracked profile, never with the verifier runner: CI is an evidence verifier, not
+the environment under test for portable source, packaging and journey claims. A
+record also names the profile it was produced for, so a floor proof is reused
+across every later release event for the same inputs and never doubles as a
+different floor's proof.
 
 Collection is incremental. ``collect --all`` enumerates the required coverage,
 then schedules only missing, failed, stale or affected gates. A second run over
@@ -55,11 +66,11 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 SCHEMA_VERSION = 1
 SCOPE_DIGEST_VERSION = 1
-COMMAND_DIGEST_VERSION = 1
+COMMAND_DIGEST_VERSION = 2
 EXIT_PASS = 0
 EXIT_FAIL = 1
 EXIT_BLOCKED = 2
@@ -67,6 +78,13 @@ EXIT_INTERRUPTED = 130
 EXIT_TERMINATED = 143
 DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 GATE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+PROFILE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9.-]*$")
+ENVIRONMENT_DIMENSIONS = ("go", "node", "python", "platform")
+ENVIRONMENT_ALIASES = {
+    "none": [],
+    "toolchain": ["go", "node", "python"],
+    "toolchain+platform": ["go", "node", "python", "platform"],
+}
 VERSION_TOKEN = b"@@APPTHEORY_VERSION@@"
 SOURCE_HEADER = b"apptheory-validation-source-v1\n"
 RELEASE_HEADER = b"apptheory-validation-release-v1\n"
@@ -94,6 +112,7 @@ RECORD_KEYS = {
     "schemaVersion",
     "gate",
     "kind",
+    "profile",
     "description",
     "verdict",
     "reason",
@@ -122,7 +141,6 @@ COMMAND_KEYS = {
     "inputsDigest",
     "executed",
     "reused",
-    "sharedFrom",
 }
 
 
@@ -154,6 +172,10 @@ class Registry:
     @property
     def gates(self) -> dict[str, dict[str, Any]]:
         return self.data["gates"]
+
+    @property
+    def profiles(self) -> dict[str, dict[str, Any]]:
+        return self.data.get("proofProfiles") or {}
 
     @property
     def runner(self) -> dict[str, Any]:
@@ -198,6 +220,65 @@ def canonical_json(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
+def environment_dimensions(gate: dict[str, Any], gate_id: str) -> list[str]:
+    """Return the environment dimensions a gate's claim depends on."""
+    declared = gate.get("environment", "toolchain")
+    if isinstance(declared, str):
+        if declared not in ENVIRONMENT_ALIASES:
+            raise EvidenceError(f"gate {gate_id!r} declares unknown environment binding {declared!r}")
+        return list(ENVIRONMENT_ALIASES[declared])
+    if not isinstance(declared, list) or not all(isinstance(item, str) for item in declared):
+        raise EvidenceError(f"gate {gate_id!r} environment must be a binding name or dimension list")
+    dimensions: list[str] = []
+    for item in declared:
+        if item not in ENVIRONMENT_DIMENSIONS:
+            raise EvidenceError(f"gate {gate_id!r} declares unknown environment dimension {item!r}")
+        if item not in dimensions:
+            dimensions.append(item)
+    return dimensions
+
+
+def gate_profile_ids(gate: dict[str, Any], gate_id: str) -> list[str]:
+    """Return the supported proof profiles for a gate, validated and non-empty."""
+    declared = gate.get("profiles")
+    if declared is None:
+        declared = ["default"]
+    if not isinstance(declared, list) or not declared:
+        raise EvidenceError(f"gate {gate_id!r} must declare at least one supported proof profile")
+    profiles: list[str] = []
+    for item in declared:
+        if not isinstance(item, str) or not PROFILE_ID_RE.fullmatch(item):
+            raise EvidenceError(f"gate {gate_id!r} declares invalid proof profile {item!r}")
+        if item not in profiles:
+            profiles.append(item)
+    return profiles
+
+
+def validate_profile_declaration(profile_id: str, profile: Any) -> None:
+    if not isinstance(profile, dict):
+        raise EvidenceError(f"proof profile {profile_id!r} must be an object")
+    environment = profile.get("environment")
+    if not isinstance(environment, dict):
+        raise EvidenceError(f"proof profile {profile_id!r} must declare an environment")
+    for dimension in ("go", "node", "python"):
+        value = environment.get(dimension)
+        if not isinstance(value, str) or not value:
+            raise EvidenceError(f"proof profile {profile_id!r} must declare {dimension}")
+    if not re.fullmatch(r"go[0-9]+\.[0-9]+(\.[0-9]+)?", environment["go"]):
+        raise EvidenceError(f"proof profile {profile_id!r} go pin must be a canonical goX.Y[.Z] version")
+    if not re.fullmatch(r"[0-9]+", environment["node"]):
+        raise EvidenceError(f"proof profile {profile_id!r} node must be the supported major")
+    if not re.fullmatch(r"[0-9]+\.[0-9]+", environment["python"]):
+        raise EvidenceError(f"proof profile {profile_id!r} python must be major.minor")
+    platform_value = environment.get("platform")
+    if not isinstance(platform_value, dict):
+        raise EvidenceError(f"proof profile {profile_id!r} must declare platform os/arch")
+    for key in ("os", "arch"):
+        value = platform_value.get(key)
+        if not isinstance(value, str) or not value:
+            raise EvidenceError(f"proof profile {profile_id!r} must declare platform.{key}")
+
+
 def load_registry(path: Path) -> Registry:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -212,6 +293,22 @@ def load_registry(path: Path) -> Registry:
     evidence_directory = data.get("evidenceDirectory")
     if not isinstance(evidence_directory, str) or not evidence_directory.strip("/"):
         raise EvidenceError("gate registry evidenceDirectory must be a non-empty path")
+    profiles = data.get("proofProfiles")
+    if not isinstance(profiles, dict) or not profiles:
+        raise EvidenceError("gate registry must declare proofProfiles")
+    for profile_id, profile in profiles.items():
+        if not isinstance(profile_id, str) or not PROFILE_ID_RE.fullmatch(profile_id):
+            raise EvidenceError(f"gate registry declares invalid proof profile id {profile_id!r}")
+        validate_profile_declaration(profile_id, profile)
+    for gate_id, gate in data["gates"].items():
+        if not isinstance(gate, dict):
+            raise EvidenceError(f"gate {gate_id!r} must be an object")
+        environment_dimensions(gate, gate_id)
+        for profile_id in gate_profile_ids(gate, gate_id):
+            if profile_id not in profiles:
+                raise EvidenceError(
+                    f"gate {gate_id!r} supports undeclared proof profile {profile_id!r}"
+                )
     runner = data.get("runner") or {}
     if int(runner.get("maxWorkers", DEFAULT_RUNNER["maxWorkers"])) < 1:
         raise EvidenceError("gate registry runner.maxWorkers must be positive")
@@ -470,50 +567,96 @@ def probe_environment() -> dict[str, Any]:
         return _ENVIRONMENT_CACHE
 
 
-def environment_subset(environment: dict[str, Any], binding: str) -> dict[str, Any]:
-    if binding == "none":
-        return {}
-    if binding == "toolchain+platform":
-        return {
-            "go": environment.get("go", ""),
-            "node": environment.get("node", ""),
-            "python": environment.get("python", ""),
-            "platform": environment.get("platform", {}),
-        }
-    return {
-        "go": environment.get("go", ""),
-        "node": environment.get("node", ""),
-        "python": environment.get("python", ""),
-    }
+def environment_subset(environment: dict[str, Any], dimensions: list[str]) -> dict[str, Any]:
+    subset: dict[str, Any] = {}
+    for dimension in dimensions:
+        if dimension == "platform":
+            subset["platform"] = dict(environment.get("platform") or {})
+        else:
+            subset[dimension] = environment.get(dimension, "")
+    return subset
 
 
-def environment_mismatch(recorded: Any, current: dict[str, Any], binding: str) -> str:
-    if binding == "none":
+def _major(value: Any) -> str:
+    text = str(value or "").strip().lstrip("v")
+    return text.split(".", 1)[0]
+
+
+def _major_minor(value: Any) -> str:
+    parts = str(value or "").strip().split(".")
+    return ".".join(parts[:2]) if len(parts) >= 2 else ""
+
+
+def environment_mismatch(recorded: Any, declared: Any, dimensions: list[str]) -> str:
+    """Compare a probed environment with the tracked profile's declaration.
+
+    Go is matched at the repository pin, Node at its supported major, Python at
+    its supported major.minor, and the OS/arch only when the gate's claim is
+    platform-bound. Patch levels and the runner that performs verification are
+    deliberately not part of the comparison.
+    """
+    if not dimensions:
         return ""
     if not isinstance(recorded, dict):
         return "recorded environment is missing"
-    for key in ("go", "node", "python"):
-        value = recorded.get(key)
+    if not isinstance(declared, dict):
+        return "tracked profile environment is missing"
+    for dimension in ("go", "node", "python"):
+        if dimension not in dimensions:
+            continue
+        value = recorded.get(dimension)
         if not isinstance(value, str) or not value:
-            return f"recorded {key} version is missing"
-    if recorded["go"] != current["go"]:
-        return f"go {recorded['go']} != {current['go']}"
-    recorded_node_major = recorded["node"].lstrip("v").split(".", 1)[0]
-    current_node_major = current["node"].lstrip("v").split(".", 1)[0]
-    if not current_node_major or recorded_node_major != current_node_major:
-        return f"node {recorded['node']} != {current['node']}"
-    recorded_python = ".".join(recorded["python"].split(".")[:2])
-    current_python = ".".join(current["python"].split(".")[:2])
-    if recorded_python != current_python:
-        return f"python {recorded['python']} != {current['python']}"
-    if binding == "toolchain+platform":
-        recorded_platform = recorded.get("platform") or {}
-        if recorded_platform.get("os") != current["platform"]["os"] or recorded_platform.get("arch") != current["platform"]["arch"]:
+            return f"recorded {dimension} version is missing"
+    if "go" in dimensions and recorded["go"] != declared.get("go"):
+        return f"go {recorded['go']} != profile {declared.get('go')}"
+    if "node" in dimensions:
+        recorded_major = _major(recorded["node"])
+        if not recorded_major or recorded_major != str(declared.get("node")):
+            return f"node {recorded['node']} != profile major {declared.get('node')}"
+    if "python" in dimensions:
+        recorded_minor = _major_minor(recorded["python"])
+        if not recorded_minor or recorded_minor != str(declared.get("python")):
+            return f"python {recorded['python']} != profile {declared.get('python')}"
+    if "platform" in dimensions:
+        recorded_platform = recorded.get("platform")
+        declared_platform = declared.get("platform")
+        if not isinstance(recorded_platform, dict) or not isinstance(declared_platform, dict):
+            return "platform binding requires recorded and declared os/arch"
+        if (
+            recorded_platform.get("os") != declared_platform.get("os")
+            or recorded_platform.get("arch") != declared_platform.get("arch")
+        ):
             return (
                 f"platform {recorded_platform.get('os')}/{recorded_platform.get('arch')} "
-                f"!= {current['platform']['os']}/{current['platform']['arch']}"
+                f"!= profile {declared_platform.get('os')}/{declared_platform.get('arch')}"
             )
     return ""
+
+
+def profile_environment(registry: Registry, profile_id: str) -> dict[str, Any]:
+    profile = registry.profiles.get(profile_id)
+    if not isinstance(profile, dict):
+        raise EvidenceError(f"proof profile {profile_id!r} is not declared in the tracked registry")
+    environment = profile.get("environment")
+    if not isinstance(environment, dict):
+        raise EvidenceError(f"proof profile {profile_id!r} has no declared environment")
+    return dict(environment)
+
+
+def resolve_profile(registry: Registry, gate_id: str, requested: str | None) -> str:
+    gate = registry.gates.get(gate_id)
+    if not isinstance(gate, dict):
+        raise EvidenceError(f"gate {gate_id!r} is not approved in the tracked registry")
+    allowed = gate_profile_ids(gate, gate_id)
+    profile_id = requested or allowed[0]
+    if profile_id not in registry.profiles:
+        raise EvidenceError(f"proof profile {profile_id!r} is not declared in the tracked registry")
+    if profile_id not in allowed:
+        raise EvidenceError(
+            f"gate {gate_id!r} does not support proof profile {profile_id!r} "
+            f"(supported: {', '.join(allowed)})"
+        )
+    return profile_id
 
 
 def working_tree_dirt(root: Path, registry: Registry) -> list[str]:
@@ -572,7 +715,7 @@ def command_inputs_digest(
     gate: dict[str, Any],
     scope: str,
     environment: dict[str, Any],
-    binding: str,
+    dimensions: list[str],
 ) -> str:
     payload = {
         "version": COMMAND_DIGEST_VERSION,
@@ -580,18 +723,38 @@ def command_inputs_digest(
         "argv": command["argv"],
         "env": sorted(command_environment(gate, command).items()),
         "scope": scope,
-        "environment": environment_subset(environment, binding),
-        "resource": command.get("resource", gate.get("resource", "cpu")),
-        "sharedKey": command.get("sharedKey", ""),
+        "environment": environment_subset(environment, dimensions),
+        "resources": sorted(declared_resources(command, gate)),
     }
     return sha256_bytes(canonical_json(payload))
 
 
+def declared_resources(command: dict[str, Any], gate: dict[str, Any]) -> set[str]:
+    """Return the resource groups a command declares (its own, else the gate's)."""
+    declared = command.get("resources")
+    if declared is None:
+        declared = gate.get("resources")
+    if declared is None:
+        single = command.get("resource", gate.get("resource", "cpu"))
+        declared = [single]
+    if isinstance(declared, str):
+        declared = [declared]
+    if not isinstance(declared, list) or not declared:
+        raise EvidenceError(f"gate command {command.get('id')!r} must declare at least one resource")
+    resources: set[str] = set()
+    for item in declared:
+        if not isinstance(item, str) or not item:
+            raise EvidenceError(f"gate command {command.get('id')!r} declares an invalid resource")
+        resources.add(item)
+    return resources
+
+
 def command_resources(command: dict[str, Any], gate: dict[str, Any], runner: dict[str, Any]) -> set[str]:
-    resource = command.get("resource", gate.get("resource", "cpu"))
-    if resource not in runner["resources"]:
-        raise EvidenceError(f"gate command {command.get('id')!r} declares unknown resource {resource!r}")
-    return {resource}
+    resources = declared_resources(command, gate)
+    for resource in resources:
+        if resource not in runner["resources"]:
+            raise EvidenceError(f"gate command {command.get('id')!r} declares unknown resource {resource!r}")
+    return resources
 
 
 @dataclass
@@ -605,6 +768,7 @@ class CommandPlan:
 @dataclass
 class GatePlan:
     gate_id: str
+    profile_id: str
     gate: dict[str, Any]
     scope_digest: str
     scope_count: int
@@ -633,23 +797,24 @@ class RunSummary:
     verified: list[str] = field(default_factory=list)
     executed: list[GateRunResult] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
+    blocked: list[str] = field(default_factory=list)
     cancelled: bool = False
     input_changed: bool = False
 
     def exit_code(self) -> int:
         if self.cancelled:
             return EXIT_INTERRUPTED
-        if self.input_changed or self.failed or any(result.verdict != "PASS" for result in self.executed):
+        if self.input_changed or self.failed or self.blocked or any(result.verdict != "PASS" for result in self.executed):
             return EXIT_FAIL
         return EXIT_PASS
 
 
-def record_path_for(root: Path, registry: Registry, gate_id: str) -> Path:
-    return root / registry.evidence_directory / f"{gate_id}.json"
+def record_path_for(root: Path, registry: Registry, gate_id: str, profile_id: str) -> Path:
+    return root / registry.evidence_directory / gate_id / f"{profile_id}.json"
 
 
-def load_prior_record(root: Path, registry: Registry, gate_id: str) -> dict[str, Any] | None:
-    path = record_path_for(root, registry, gate_id)
+def load_prior_record(root: Path, registry: Registry, gate_id: str, profile_id: str) -> dict[str, Any] | None:
+    path = record_path_for(root, registry, gate_id, profile_id)
     if not path.is_file():
         return None
     try:
@@ -701,15 +866,18 @@ def record_applicable(
     record: dict[str, Any] | None,
     gate_id: str,
     gate: dict[str, Any],
+    profile_id: str,
     scope: str,
     command_digests: dict[str, str],
-    environment: dict[str, Any],
+    declared_environment: dict[str, Any],
     snapshot: Snapshot,
 ) -> tuple[bool, str]:
     if record is None:
         return False, "no record"
     if record.get("gate") != gate_id or record.get("kind") != gate["kind"]:
         return False, "record does not match the tracked gate"
+    if record.get("profile") != profile_id:
+        return False, f"record is for proof profile {record.get('profile')!r}, not {profile_id!r}"
     if record.get("verdict") != "PASS":
         return False, f"recorded verdict is {record.get('verdict')}"
     if record_tainted(record):
@@ -721,7 +889,8 @@ def record_applicable(
         return False, f"record scope digest version {recorded_scope.get('version')} is not supported"
     if recorded_scope.get("digest") != scope:
         return False, "gate scope inputs changed"
-    mismatch = environment_mismatch(record.get("environment"), environment, gate.get("environment", "toolchain"))
+    dimensions = environment_dimensions(gate, gate_id)
+    mismatch = environment_mismatch(record.get("environment"), declared_environment, dimensions)
     if mismatch:
         return False, f"environment-mismatch: {mismatch}"
     if gate["kind"] == "dependency-scan":
@@ -744,16 +913,22 @@ def record_applicable(
 
 def reusable_command_results(
     record: dict[str, Any] | None,
+    gate_id: str,
     gate: dict[str, Any],
+    profile_id: str,
     command_digests: dict[str, str],
-    environment: dict[str, Any],
+    declared_environment: dict[str, Any],
     snapshot: Snapshot,
 ) -> dict[str, dict[str, Any]]:
     if record is None or record.get("kind") != gate["kind"]:
         return {}
+    if record.get("profile") != profile_id:
+        return {}
     if record_tainted(record):
         return {}
-    mismatch = environment_mismatch(record.get("environment"), environment, gate.get("environment", "toolchain"))
+    mismatch = environment_mismatch(
+        record.get("environment"), declared_environment, environment_dimensions(gate, gate_id)
+    )
     if mismatch:
         return {}
     if gate["kind"] == "dependency-scan":
@@ -780,7 +955,7 @@ def build_plans(
     registry: Registry,
     gate_ids: list[str],
     snapshot: Snapshot,
-    environment: dict[str, Any],
+    profile_ids: dict[str, str],
     force: bool,
 ) -> list[GatePlan]:
     unknown = unmatched_inputs(snapshot, registry)
@@ -790,13 +965,15 @@ def build_plans(
         if gate_id in scope_cache:
             return scope_cache[gate_id]
         gate = registry.gates[gate_id]
+        profile_id = profile_ids[gate_id]
         paths = gate.get("paths")
         if not isinstance(paths, list) or not paths:
             raise EvidenceError(f"gate {gate_id!r} must declare a non-empty input scope")
         scope, scope_count = scope_digest(snapshot, [str(item) for item in paths])
-        binding = gate.get("environment", "toolchain")
+        dimensions = environment_dimensions(gate, gate_id)
+        declared_environment = profile_environment(registry, profile_id)
         command_digests = {
-            command["id"]: command_inputs_digest(command, gate, scope, environment, binding)
+            command["id"]: command_inputs_digest(command, gate, scope, declared_environment, dimensions)
             for command in gate_commands(gate)
         }
         scope_cache[gate_id] = (scope, scope_count, command_digests)
@@ -805,9 +982,20 @@ def build_plans(
     plans: list[GatePlan] = []
     for gate_id in gate_ids:
         gate = registry.gates[gate_id]
+        profile_id = profile_ids[gate_id]
         scope, scope_count, command_digests = gate_scope(gate_id)
-        prior = None if force else load_prior_record(root, registry, gate_id)
-        applicable, reason = record_applicable(prior, gate_id, gate, scope, command_digests, environment, snapshot)
+        declared_environment = profile_environment(registry, profile_id)
+        prior = None if force else load_prior_record(root, registry, gate_id, profile_id)
+        applicable, reason = record_applicable(
+            prior,
+            gate_id,
+            gate,
+            profile_id,
+            scope,
+            command_digests,
+            declared_environment,
+            snapshot,
+        )
         if unknown and gate.get("kind") == "source":
             applicable = False
             reason = f"unknown inputs require broad validation: {', '.join(unknown[:5])}"
@@ -815,24 +1003,6 @@ def build_plans(
         for dependency in depends_on:
             if dependency not in registry.gates:
                 raise EvidenceError(f"gate {gate_id!r} depends on unknown gate {dependency!r}")
-        if applicable and depends_on:
-            for dependency in depends_on:
-                dependency_gate = registry.gates[dependency]
-                dependency_scope, _, dependency_digests = gate_scope(dependency)
-                dependency_record = load_prior_record(root, registry, dependency)
-                dependency_ok, dependency_reason = record_applicable(
-                    dependency_record,
-                    dependency,
-                    dependency_gate,
-                    dependency_scope,
-                    dependency_digests,
-                    environment,
-                    snapshot,
-                )
-                if not dependency_ok:
-                    applicable = False
-                    reason = f"dependency {dependency} is not reusable: {dependency_reason}"
-                    break
         if applicable and prior is not None:
             for item in prior.get("consumed", []) or []:
                 if not isinstance(item, dict):
@@ -852,7 +1022,15 @@ def build_plans(
         reusable = (
             {}
             if force or (unknown and gate.get("kind") == "source")
-            else reusable_command_results(prior, gate, command_digests, environment, snapshot)
+            else reusable_command_results(
+                prior,
+                gate_id,
+                gate,
+                profile_id,
+                command_digests,
+                declared_environment,
+                snapshot,
+            )
         )
         resources: set[str] = set()
         command_plans: list[CommandPlan] = []
@@ -872,6 +1050,7 @@ def build_plans(
         plans.append(
             GatePlan(
                 gate_id=gate_id,
+                profile_id=profile_id,
                 gate=gate,
                 scope_digest=scope,
                 scope_count=scope_count,
@@ -932,40 +1111,6 @@ class ProcessRegistry:
                 os.killpg(os.getpgid(process.pid), signal.SIGKILL)
             except (ProcessLookupError, PermissionError):
                 continue
-
-
-class CommandCache:
-    """Runs a shared command node exactly once across gates in one collection."""
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._entries: dict[tuple[Any, ...], dict[str, Any]] = {}
-
-    def run(
-        self,
-        key: tuple[Any, ...],
-        origin_gate: str,
-        run: Callable[[], dict[str, Any]],
-    ) -> tuple[dict[str, Any], str]:
-        with self._lock:
-            entry = self._entries.get(key)
-            owner = entry is None
-            if entry is None:
-                entry = {"event": threading.Event(), "result": None, "error": None, "origin": origin_gate}
-                self._entries[key] = entry
-        if owner:
-            try:
-                entry["result"] = run()
-            except BaseException as exc:  # noqa: BLE001 - propagated to every waiter
-                entry["error"] = exc
-                raise
-            finally:
-                entry["event"].set()
-            return dict(entry["result"]), origin_gate
-        entry["event"].wait()
-        if entry["error"] is not None:
-            raise entry["error"]
-        return dict(entry["result"]), str(entry["origin"])
 
 
 class ResourcePool:
@@ -1113,6 +1258,7 @@ def build_record(
         "schemaVersion": SCHEMA_VERSION,
         "gate": gate_id,
         "kind": gate["kind"],
+        "profile": plan.profile_id,
         "description": gate.get("description", ""),
         "verdict": verdict,
         "reason": reason,
@@ -1155,10 +1301,11 @@ def build_record(
 
 
 def write_record(root: Path, registry: Registry, record: dict[str, Any]) -> Path:
-    directory = root / registry.evidence_directory
-    if not directory.is_dir():
+    directory = root / registry.evidence_directory / str(record["gate"])
+    if not (root / registry.evidence_directory).is_dir():
         raise EvidenceError(f"evidence directory does not exist: {registry.evidence_directory}")
-    target = directory / f"{record['gate']}.json"
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / f"{record['profile']}.json"
     payload = json.dumps(record, indent=2, sort_keys=True) + "\n"
     handle = tempfile.NamedTemporaryFile("w", dir=directory, prefix=".evidence.", suffix=".tmp", delete=False)
     try:
@@ -1179,7 +1326,6 @@ def run_gate_plan(
     environment: dict[str, Any],
     processes: ProcessRegistry,
     cancel: threading.Event,
-    cache: CommandCache,
     reviews: list[dict[str, str]],
 ) -> GateRunResult:
     gate_id = plan.gate_id
@@ -1200,39 +1346,25 @@ def run_gate_plan(
             continue
         if cancel.is_set():
             raise RunCancelled()
-        key: tuple[Any, ...]
-        if command.get("sharedKey"):
-            key = ("shared", command["sharedKey"])
-        else:
-            key = (
-                "command",
-                command["id"],
-                tuple(command["argv"]),
-                command_plan.inputs_digest,
-                tuple(sorted(command_environment(gate, command).items())),
-                plan.force,
-            )
-
-        def execute() -> dict[str, Any]:
-            extra_env = command_environment(gate, command)
-            if plan.force:
-                extra_env["EVIDENCE_FORCE_EXECUTE"] = "true"
-            return execute_command(
-                root=root,
-                registry=registry,
-                gate_id=gate_id,
-                command=command,
-                environment=environment,
-                processes=processes,
-                cancel=cancel,
-                extra_env=extra_env,
-            )
-
-        entry, origin = cache.run(key, gate_id, execute)
+        # Composition, not a shared command cache, is the one dedup mechanism:
+        # a leaf consumes a verified record through APPTHEORY_EVIDENCE_REUSE and
+        # executes its real command whenever that record is not applicable.
+        extra_env = command_environment(gate, command)
+        extra_env["APPTHEORY_EVIDENCE_PROFILE"] = plan.profile_id
+        if plan.force:
+            extra_env["EVIDENCE_FORCE_EXECUTE"] = "true"
+        entry = execute_command(
+            root=root,
+            registry=registry,
+            gate_id=gate_id,
+            command=command,
+            environment=environment,
+            processes=processes,
+            cancel=cancel,
+            extra_env=extra_env,
+        )
         consumed.extend(entry.pop("_consumed", []))
         entry["inputsDigest"] = command_plan.inputs_digest
-        if origin != gate_id:
-            entry["sharedFrom"] = origin
         if entry.get("exitCode") != 0:
             failures.append(f"{command['id']} exit={entry.get('exitCode')}")
         command_entries.append(entry)
@@ -1255,7 +1387,7 @@ def run_gate_plan(
     )
     target = write_record(root, registry, record)
     print(
-        f"validation-evidence: gate={gate_id} action=executed verdict={verdict} "
+        f"validation-evidence: gate={gate_id} profile={plan.profile_id} action=executed verdict={verdict} "
         f"commands={len(command_entries)} executed={executed} reused={reused} "
         f"consumed={len(consumed)} scope={plan.scope_digest}"
         + (f" reason={reason}" if reason else ""),
@@ -1293,7 +1425,6 @@ class Scheduler:
         self.cancel = cancel
         self.processes = processes
         self.pool = ResourcePool(registry.runner["resources"])
-        self.cache = CommandCache()
 
     def run(self, plans: list[GatePlan]) -> list[GateRunResult]:
         pending = {plan.gate_id: plan for plan in plans}
@@ -1305,6 +1436,38 @@ class Scheduler:
             while pending or futures:
                 if self.cancel.is_set():
                     break
+                # A gate whose prerequisite did not pass is blocked, never
+                # executed through a fallback in the same failed collection. Its
+                # dependents are blocked in turn; a later explicit run retries
+                # only the failed or missing work.
+                for gate_id in sorted(pending):
+                    failed = [
+                        dependency
+                        for dependency in pending[gate_id].depends_on
+                        if dependency in selected
+                        and dependency in completed
+                        and completed[dependency] != "pass"
+                    ]
+                    if not failed:
+                        continue
+                    reason = f"prerequisite {failed[0]} did not pass"
+                    results.append(
+                        GateRunResult(
+                            gate_id=gate_id,
+                            status="blocked",
+                            record_path=None,
+                            commands_executed=0,
+                            commands_reused=0,
+                            verdict="BLOCKED",
+                            reason=reason,
+                        )
+                    )
+                    completed[gate_id] = "blocked"
+                    del pending[gate_id]
+                    print(
+                        f"validation-evidence: gate={gate_id} action=blocked reason={reason}",
+                        file=sys.stderr,
+                    )
                 submitted = False
                 for gate_id in sorted(pending):
                     if self.cancel.is_set():
@@ -1324,7 +1487,6 @@ class Scheduler:
                         self.environment,
                         self.processes,
                         self.cancel,
-                        self.cache,
                         self.reviews,
                     )
                     futures[future] = (gate_id, acquired)
@@ -1334,6 +1496,8 @@ class Scheduler:
                         break
                 if not futures:
                     if not submitted:
+                        if not pending:
+                            continue
                         raise EvidenceError(
                             "scheduler made no progress; check gate dependencies and resource capacities"
                         )
@@ -1394,7 +1558,7 @@ def print_plan(plans: list[GatePlan], registry: Registry) -> None:
     for plan in sorted(plans, key=lambda item: item.gate_id):
         action = "verified" if plan.applicable else "would-run"
         print(
-            f"validation-evidence: gate={plan.gate_id} action={action} "
+            f"validation-evidence: gate={plan.gate_id} profile={plan.profile_id} action={action} "
             f"scope={plan.scope_digest} files={plan.scope_count} "
             f"depends={','.join(plan.depends_on) or '-'} resources={','.join(sorted(plan.resources))}"
             + (f" reason={plan.reason}" if not plan.applicable else ""),
@@ -1402,10 +1566,58 @@ def print_plan(plans: list[GatePlan], registry: Registry) -> None:
         )
 
 
+def resolve_collect_profiles(
+    registry: Registry,
+    gate_ids: list[str],
+    requested: str | None,
+) -> dict[str, str]:
+    """Resolve the proof profile for each gate and fail closed on unsupported ones."""
+    profile_ids: dict[str, str] = {}
+    for gate_id in gate_ids:
+        profile_ids[gate_id] = resolve_profile(registry, gate_id, requested)
+    return profile_ids
+
+
+def require_live_environment(
+    registry: Registry,
+    gate_ids: list[str],
+    profile_ids: dict[str, str],
+    environment: dict[str, Any],
+) -> None:
+    """Refuse to collect a profile the live host does not actually satisfy.
+
+    This is what makes a receipt's environment truthful: a Node 24 host cannot
+    record the Node 22 floor, and ambient Python 3.15 cannot record the tracked
+    Python 3.14 profile.
+    """
+    mismatches: list[str] = []
+    for gate_id in gate_ids:
+        dimensions = environment_dimensions(registry.gates[gate_id], gate_id)
+        declared = profile_environment(registry, profile_ids[gate_id])
+        mismatch = environment_mismatch(environment, declared, dimensions)
+        if mismatch:
+            mismatches.append(f"{gate_id} (profile {profile_ids[gate_id]}): {mismatch}")
+    if mismatches:
+        raise EvidenceError(
+            "live environment does not satisfy the requested proof profile: "
+            + "; ".join(mismatches[:5])
+            + " (select the governed toolchain for that profile before collecting)"
+        )
+
+
 def collect(args: argparse.Namespace) -> int:
     registry = load_registry(args.registry)
     root = repo_root(args.root)
     gate_ids = select_gate_ids(registry, args)
+    if args.all and args.profile:
+        gate_ids = [
+            gate_id
+            for gate_id in gate_ids
+            if args.profile in gate_profile_ids(registry.gates[gate_id], gate_id)
+        ]
+        if not gate_ids:
+            raise EvidenceError(f"proof profile {args.profile!r} is not supported by any collectable gate")
+    profile_ids = resolve_collect_profiles(registry, gate_ids, args.profile)
 
     dirty = working_tree_dirt(root, registry)
     if dirty:
@@ -1414,8 +1626,9 @@ def collect(args: argparse.Namespace) -> int:
 
     reviews = [{"ref": ref, "kind": "review-reference"} for ref in args.review_ref]
     environment = probe_environment()
+    require_live_environment(registry, gate_ids, profile_ids, environment)
     before = load_snapshot(root, registry)
-    plans = build_plans(root, registry, gate_ids, before, environment, force=args.force)
+    plans = build_plans(root, registry, gate_ids, before, profile_ids, force=args.force)
 
     if args.dry_run:
         print_plan(plans, registry)
@@ -1442,10 +1655,10 @@ def collect(args: argparse.Namespace) -> int:
     to_run = [plan for plan in plans if not plan.applicable]
     try:
         for gate_id in summary.verified:
-            record = load_prior_record(root, registry, gate_id)
+            record = load_prior_record(root, registry, gate_id, profile_ids[gate_id])
             scope = record.get("scope", {}).get("digest", "?") if record else "?"
             print(
-                f"validation-evidence: gate={gate_id} action=verified scope={scope} "
+                f"validation-evidence: gate={gate_id} profile={profile_ids[gate_id]} action=verified scope={scope} "
                 "(no command executed in this run)"
             )
         if to_run:
@@ -1488,14 +1701,18 @@ def collect(args: argparse.Namespace) -> int:
         signal.signal(signal.SIGINT, previous_int)
         signal.signal(signal.SIGTERM, previous_term)
 
-    summary.failed = sorted(result.gate_id for result in summary.executed if result.verdict != "PASS")
+    summary.failed = sorted(
+        result.gate_id for result in summary.executed if result.status not in ("pass", "blocked")
+    )
+    summary.blocked = sorted(result.gate_id for result in summary.executed if result.status == "blocked")
     commands_executed = sum(result.commands_executed for result in summary.executed)
     commands_reused = sum(result.commands_reused for result in summary.executed)
-    executed = len(summary.executed)
+    executed = len(summary.executed) - len(summary.blocked)
     print(
         "validation-evidence: summary "
         f"gates={len(plans)} verified={len(summary.verified)} executed={executed} "
         f"commands={commands_executed} reused={commands_reused} failed={len(summary.failed)} "
+        f"blocked={len(summary.blocked)} "
         f"cancelled={'true' if summary.cancelled else 'false'} "
         f"inputChanged={'true' if summary.input_changed else 'false'}"
     )
@@ -1511,16 +1728,23 @@ def collect(args: argparse.Namespace) -> int:
             f"executed={executed} verified={len(summary.verified)})"
         )
     else:
+        detail = ", ".join(summary.failed + summary.blocked) or "input change"
         print(
-            "validation-evidence: FAIL (failed: "
-            + (", ".join(summary.failed) or "input change")
+            "validation-evidence: FAIL (failed or blocked: "
+            + detail
             + "; evidence records retained honestly)",
             file=sys.stderr,
         )
     return code
 
 
-def validate_record_shape(gate_id: str, gate: dict[str, Any], record: Any) -> dict[str, Any]:
+def validate_record_shape(
+    registry: Registry,
+    gate_id: str,
+    gate: dict[str, Any],
+    record: Any,
+    profile_id: str,
+) -> dict[str, Any]:
     if not isinstance(record, dict):
         raise EvidenceError("record must be a JSON object")
     extra = set(record) - RECORD_KEYS
@@ -1528,6 +1752,7 @@ def validate_record_shape(gate_id: str, gate: dict[str, Any], record: Any) -> di
         "schemaVersion",
         "gate",
         "kind",
+        "profile",
         "verdict",
         "recordedAt",
         "scope",
@@ -1545,6 +1770,14 @@ def validate_record_shape(gate_id: str, gate: dict[str, Any], record: Any) -> di
         raise EvidenceError(f"record gate {record['gate']!r} does not match {gate_id!r}")
     if record["kind"] != gate["kind"]:
         raise EvidenceError("record kind does not match the tracked gate definition")
+    if record["profile"] != profile_id:
+        raise EvidenceError(
+            f"record profile {record['profile']!r} does not match proof profile {profile_id!r}"
+        )
+    if record["profile"] not in gate_profile_ids(gate, gate_id):
+        raise EvidenceError(f"record profile {record['profile']!r} is not supported by gate {gate_id!r}")
+    if record["profile"] not in registry.profiles:
+        raise EvidenceError(f"record profile {record['profile']!r} is not declared in the tracked registry")
     if record["verdict"] not in {"PASS", "FAIL"}:
         raise EvidenceError("record verdict must be PASS or FAIL")
     if record["verdict"] != "PASS":
@@ -1647,18 +1880,26 @@ def verify(args: argparse.Namespace) -> int:
     if not gate_id or gate_id not in registry.gates:
         raise EvidenceError(f"gate {gate_id!r} is not approved in the tracked registry")
     gate = registry.gates[gate_id]
-    record_path = record_path_for(root, registry, gate_id)
+    if gate.get("kind") == "generated-delta":
+        raise EvidenceError(
+            f"gate {gate_id!r} is a generated-delta smoke; it executes in CI and is not verified as reusable evidence"
+        )
+    profile_id = resolve_profile(registry, gate_id, args.profile)
+    declared_environment = profile_environment(registry, profile_id)
+    record_path = record_path_for(root, registry, gate_id, profile_id)
     if not record_path.is_file():
-        raise EvidenceError(f"no evidence record at {record_path.relative_to(root)}")
+        raise EvidenceError(
+            f"no evidence record at {record_path.relative_to(root)} for proof profile {profile_id!r}"
+        )
     try:
         record = json.loads(record_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise EvidenceError(f"malformed evidence record: {exc}") from exc
-    record = validate_record_shape(gate_id, gate, record)
+    record = validate_record_shape(registry, gate_id, gate, record, profile_id)
 
     snapshot = load_snapshot(root, registry)
-    environment = probe_environment()
-    mismatch = environment_mismatch(record.get("environment"), environment, gate.get("environment", "toolchain"))
+    dimensions = environment_dimensions(gate, gate_id)
+    mismatch = environment_mismatch(record.get("environment"), declared_environment, dimensions)
     if mismatch:
         raise EvidenceError(f"environment-mismatch: {mismatch}")
 
@@ -1677,9 +1918,8 @@ def verify(args: argparse.Namespace) -> int:
             "gate-scope-inputs-changed: recorded "
             f"{recorded_scope['digest']} candidate {scope} (the affected validation must run again)"
         )
-    binding = gate.get("environment", "toolchain")
     command_digests = {
-        command["id"]: command_inputs_digest(command, gate, scope, environment, binding)
+        command["id"]: command_inputs_digest(command, gate, scope, declared_environment, dimensions)
         for command in gate_commands(gate)
     }
     for command in record["commands"]:
@@ -1697,15 +1937,23 @@ def verify(args: argparse.Namespace) -> int:
         dependency_gate = registry.gates.get(consumed_gate)
         if dependency_gate is None:
             raise EvidenceError(f"consumed dependency {consumed_gate!r} is not an approved gate")
-        dependency_record_path = record_path_for(root, registry, consumed_gate)
+        dependency_profile = resolve_profile(registry, consumed_gate, profile_id)
+        if dependency_profile != profile_id:
+            raise EvidenceError(
+                f"consumed dependency {consumed_gate!r} is not proven for profile {profile_id!r}"
+            )
+        dependency_record_path = record_path_for(root, registry, consumed_gate, profile_id)
         if not dependency_record_path.is_file():
             raise EvidenceError(
-                f"consumed dependency {consumed_gate!r} has no record; the composed proof is not applicable"
+                f"consumed dependency {consumed_gate!r} has no record for profile {profile_id!r}; "
+                "the composed proof is not applicable"
             )
         dependency_record = validate_record_shape(
+            registry,
             consumed_gate,
             dependency_gate,
             json.loads(dependency_record_path.read_text(encoding="utf-8")),
+            profile_id,
         )
         dependency_scope, _ = scope_digest(
             snapshot, [str(item) for item in dependency_gate.get("paths", [])]
@@ -1714,10 +1962,13 @@ def verify(args: argparse.Namespace) -> int:
             raise EvidenceError(
                 f"consumed dependency {consumed_gate!r} inputs changed; the composed proof is not applicable"
             )
-        dependency_binding = dependency_gate.get("environment", "toolchain")
         dependency_digests = {
             command["id"]: command_inputs_digest(
-                command, dependency_gate, dependency_scope, environment, dependency_binding
+                command,
+                dependency_gate,
+                dependency_scope,
+                profile_environment(registry, profile_id),
+                environment_dimensions(dependency_gate, consumed_gate),
             )
             for command in gate_commands(dependency_gate)
         }
@@ -1725,9 +1976,10 @@ def verify(args: argparse.Namespace) -> int:
             dependency_record,
             consumed_gate,
             dependency_gate,
+            profile_id,
             dependency_scope,
             dependency_digests,
-            environment,
+            declared_environment,
             snapshot,
         )
         if not dependency_ok:
@@ -1765,7 +2017,7 @@ def verify(args: argparse.Namespace) -> int:
     recorded_at = record["recordedAt"]
     print(
         "validation-evidence: "
-        f"gate={gate_id} mode={mode} scope={scope} source={record['source']['digest']} "
+        f"gate={gate_id} profile={profile_id} mode={mode} scope={scope} source={record['source']['digest']} "
         f"recorded={recorded_at} "
         f"environment=go{record['environment'].get('go', '?')}/node{record['environment'].get('node', '?')}/"
         f"python{record['environment'].get('python', '?')} "
@@ -1778,6 +2030,7 @@ def verify(args: argparse.Namespace) -> int:
             json.dumps(
                 {
                     "gate": gate_id,
+                    "profile": profile_id,
                     "mode": mode,
                     "scopeDigest": scope,
                     "sourceDigest": record["source"]["digest"],
@@ -1797,6 +2050,8 @@ def run_gate(args: argparse.Namespace) -> int:
     if not gate_id or gate_id not in registry.gates:
         raise EvidenceError(f"gate {gate_id!r} is not approved in the tracked registry")
     gate = registry.gates[gate_id]
+    profile_id = resolve_profile(registry, gate_id, args.profile)
+    forced = bool(getattr(args, "forced", False))
     processes = ProcessRegistry()
     cancel = threading.Event()
 
@@ -1810,6 +2065,12 @@ def run_gate(args: argparse.Namespace) -> int:
     executed = 0
     try:
         for command in gate_commands(gate):
+            extra_env = command_environment(gate, command)
+            extra_env["APPTHEORY_EVIDENCE_PROFILE"] = profile_id
+            if forced:
+                # A forced run must not consume another record through a nested
+                # leaf: the whole point is that this environment executes.
+                extra_env["EVIDENCE_FORCE_EXECUTE"] = "true"
             result = execute_command(
                 root=root,
                 registry=registry,
@@ -1818,7 +2079,7 @@ def run_gate(args: argparse.Namespace) -> int:
                 environment=probe_environment(),
                 processes=processes,
                 cancel=cancel,
-                extra_env=command_environment(gate, command),
+                extra_env=extra_env,
             )
             executed += 1
             if result["exitCode"] != 0:
@@ -1840,7 +2101,12 @@ def run_gate(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return EXIT_FAIL
-    print(f"validation-evidence: PASS (executed {executed} approved command(s) for gate={gate_id})")
+    print(f"validation-evidence: PASS (executed {executed} approved command(s) for gate={gate_id} profile={profile_id})")
+    return EXIT_PASS
+
+
+def probe(args: argparse.Namespace) -> int:
+    print(json.dumps(probe_environment(), indent=2, sort_keys=True))
     return EXIT_PASS
 
 
@@ -1873,18 +2139,28 @@ def finalize(args: argparse.Namespace) -> int:
     gate_ids = sorted(registry.gates) if args.all else [args.gate]
     if not gate_ids or any(gate_id not in registry.gates for gate_id in gate_ids):
         raise EvidenceError("finalize requires approved gate ids")
+    finalized = 0
     for gate_id in gate_ids:
         gate = registry.gates[gate_id]
-        record_path = record_path_for(root, registry, gate_id)
+        profile_id = resolve_profile(registry, gate_id, args.profile)
+        record_path = record_path_for(root, registry, gate_id, profile_id)
         if not record_path.is_file():
-            raise EvidenceError(f"no evidence record at {record_path.relative_to(root)}")
-        record = validate_record_shape(gate_id, gate, json.loads(record_path.read_text(encoding="utf-8")))
+            continue
+        record = validate_record_shape(
+            registry, gate_id, gate, json.loads(record_path.read_text(encoding="utf-8")), profile_id
+        )
         existing = {(item.get("ref"), item.get("kind")) for item in record.get("reviews", []) if isinstance(item, dict)}
         for ref in args.review_ref:
             if (ref, "review-reference") not in existing:
                 record.setdefault("reviews", []).append({"ref": ref, "kind": "review-reference"})
         write_record(root, registry, record)
-        print(f"validation-evidence: finalized {record_path.relative_to(root)} reviews={len(record.get('reviews', []))}")
+        finalized += 1
+        print(
+            f"validation-evidence: finalized {record_path.relative_to(root)} "
+            f"profile={profile_id} reviews={len(record.get('reviews', []))}"
+        )
+    if finalized == 0:
+        raise EvidenceError("finalize found no record for the requested gate and proof profile")
     return EXIT_PASS
 
 
@@ -1901,6 +2177,7 @@ def build_parser() -> argparse.ArgumentParser:
     collect_parser.add_argument("--root", type=Path)
     collect_parser.add_argument("--gate", action="append", default=[])
     collect_parser.add_argument("--all", action="store_true", help="enumerate required coverage; only affected work runs")
+    collect_parser.add_argument("--profile", help="tracked proof profile to collect (default: the gate's first)")
     collect_parser.add_argument("--force", action="store_true", help="ignore applicable records and execute")
     collect_parser.add_argument("--dry-run", action="store_true", help="print the schedule without executing")
     collect_parser.add_argument("--jobs", type=int, help="bounded worker count (1-8)")
@@ -1910,6 +2187,7 @@ def build_parser() -> argparse.ArgumentParser:
     verify_parser = subparsers.add_parser("verify", help="verify evidence without executing the recorded commands")
     verify_parser.add_argument("--root", type=Path)
     verify_parser.add_argument("--gate", required=True)
+    verify_parser.add_argument("--profile", help="tracked proof profile to verify (default: the gate's first)")
     verify_parser.add_argument("--json", action="store_true")
     verify_parser.set_defaults(handler=verify)
 
@@ -1917,14 +2195,20 @@ def build_parser() -> argparse.ArgumentParser:
     project_parser.add_argument("--root", type=Path)
     project_parser.set_defaults(handler=project)
 
+    probe_parser = subparsers.add_parser("probe", help="print the probed live environment")
+    probe_parser.set_defaults(handler=probe)
+
     run_parser = subparsers.add_parser("run", help="execute the approved commands for one gate without recording")
     run_parser.add_argument("--root", type=Path)
     run_parser.add_argument("--gate", required=True)
+    run_parser.add_argument("--profile", help="tracked proof profile whose environment the run assumes")
+    run_parser.add_argument("--forced", action="store_true", help="refuse nested composition; execute every command")
     run_parser.set_defaults(handler=run_gate)
 
     finalize_parser = subparsers.add_parser("finalize", help="add review references to an existing record")
     finalize_parser.add_argument("--root", type=Path)
     finalize_parser.add_argument("--gate")
+    finalize_parser.add_argument("--profile", help="tracked proof profile whose record is finalized")
     finalize_parser.add_argument("--all", action="store_true")
     finalize_parser.add_argument("--review-ref", action="append", default=[])
     finalize_parser.set_defaults(handler=finalize)

@@ -34,28 +34,40 @@ case ",${reuse}," in
   *) exit 1 ;;
 esac
 
+profile_args=()
+if [[ -n "${APPTHEORY_EVIDENCE_PROFILE:-}" ]]; then
+  profile_args=(--profile "${APPTHEORY_EVIDENCE_PROFILE}")
+fi
+
 stderr_file="$(mktemp)"
 trap 'rm -f "${stderr_file}"' EXIT
 
-if ! python3 scripts/evidence/validation_evidence.py verify --gate "${gate}" >/dev/null 2>"${stderr_file}"; then
+if ! python3 scripts/evidence/validation_evidence.py verify --gate "${gate}" "${profile_args[@]}" >/dev/null 2>"${stderr_file}"; then
   reason="$(tail -n 1 "${stderr_file}" | sed -e 's/^validation-evidence: FAIL (//' -e 's/)$//')"
   echo "evidence-consume: gate=${gate} not-applicable (${reason:-no applicable record})" >&2
   exit 1
 fi
 
 line="$(
-  python3 - "${gate}" <<'PY'
+  python3 - "${gate}" "${APPTHEORY_EVIDENCE_PROFILE:-}" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 gate = sys.argv[1]
+profile = sys.argv[2]
 root = Path.cwd()
 registry = json.loads((root / "scripts/evidence/validation-gates.json").read_text(encoding="utf-8"))
-record_path = root / registry["evidenceDirectory"] / f"{gate}.json"
+entry = registry.get("gates", {}).get(gate, {})
+if not profile:
+    profile = (entry.get("profiles") or ["default"])[0]
+record_path = root / registry["evidenceDirectory"] / gate / f"{profile}.json"
 record = json.loads(record_path.read_text(encoding="utf-8"))
 scope = record.get("scope") or {}
-print(f"gate={gate}\tdigest={scope.get('digest', '')}\trecordedAt={record.get('recordedAt', '')}")
+print(
+    f"gate={gate}\tprofile={profile}\tdigest={scope.get('digest', '')}\t"
+    f"recordedAt={record.get('recordedAt', '')}"
+)
 PY
 )"
 
