@@ -614,6 +614,7 @@ class GatePlan:
     depends_on: list[str]
     resources: set[str]
     prior_record: dict[str, Any] | None = None
+    force: bool = False
 
 
 @dataclass
@@ -880,6 +881,7 @@ def build_plans(
                 depends_on=depends_on,
                 resources=resources,
                 prior_record=prior,
+                force=force,
             )
         )
     return plans
@@ -1208,9 +1210,13 @@ def run_gate_plan(
                 tuple(command["argv"]),
                 command_plan.inputs_digest,
                 tuple(sorted(command_environment(gate, command).items())),
+                plan.force,
             )
 
         def execute() -> dict[str, Any]:
+            extra_env = command_environment(gate, command)
+            if plan.force:
+                extra_env["EVIDENCE_FORCE_EXECUTE"] = "true"
             return execute_command(
                 root=root,
                 registry=registry,
@@ -1219,7 +1225,7 @@ def run_gate_plan(
                 environment=environment,
                 processes=processes,
                 cancel=cancel,
-                extra_env=command_environment(gate, command),
+                extra_env=extra_env,
             )
 
         entry, origin = cache.run(key, gate_id, execute)
