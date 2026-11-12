@@ -138,6 +138,14 @@ func checkEvidenceWiring(root string) []string {
 }
 
 func checkEvidenceRegistry(registry *evidenceRegistry) []string {
+	failures := checkRegistryDirectories(registry)
+	failures = append(failures, checkRegistryGates(registry)...)
+	failures = append(failures, checkRegistryProfiles(registry)...)
+	failures = append(failures, checkRegistryCommands(registry)...)
+	return failures
+}
+
+func checkRegistryDirectories(registry *evidenceRegistry) []string {
 	var failures []string
 	if got, want := registry.EvidenceDirectory, "gov-infra/evidence/proportionate"; got != want {
 		failures = append(failures, fmt.Sprintf("evidence directory must stay %q, got %q", want, got))
@@ -145,6 +153,11 @@ func checkEvidenceRegistry(registry *evidenceRegistry) []string {
 	if !strings.HasPrefix(registry.LocalLogDirectory+"/", registry.EvidenceDirectory+"/") {
 		failures = append(failures, "local evidence logs must live under the dedicated evidence directory")
 	}
+	return failures
+}
+
+func checkRegistryGates(registry *evidenceRegistry) []string {
+	var failures []string
 	for _, gate := range []string{"rubric", "deterministic-builds", "go", "ts", "py", "contract-tests", "cdk-go-drift", "examples-local", "security-refresh", "release-delta"} {
 		if _, ok := registry.Gates[gate]; !ok {
 			failures = append(failures, fmt.Sprintf("tracked gate registry is missing %q", gate))
@@ -153,6 +166,11 @@ func checkEvidenceRegistry(registry *evidenceRegistry) []string {
 	if len(registry.ProofProfiles) == 0 {
 		failures = append(failures, "tracked gate registry must declare proof profiles")
 	}
+	return failures
+}
+
+func checkRegistryProfiles(registry *evidenceRegistry) []string {
+	var failures []string
 	for profile, declaration := range registry.ProofProfiles {
 		environment := declaration.Environment
 		if environment.Go == "" || environment.Node == "" || environment.Python == "" ||
@@ -167,6 +185,11 @@ func checkEvidenceRegistry(registry *evidenceRegistry) []string {
 			}
 		}
 	}
+	return failures
+}
+
+func checkRegistryCommands(registry *evidenceRegistry) []string {
+	var failures []string
 	if commands := registry.Gates["rubric"].Commands; len(commands) != 1 || strings.Join(commands[0].Argv, " ") != "make rubric" {
 		failures = append(failures, "rubric gate must keep the approved `make rubric` command")
 	}
