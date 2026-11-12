@@ -4,6 +4,40 @@
   "localLogDirectory": "gov-infra/evidence/proportionate/local",
   "clockSkewSeconds": 300,
   "securityMaxAgeSeconds": 86400,
+  "runner": {
+    "maxWorkers": 2,
+    "resources": {
+      "cpu": 2,
+      "repo-write": 1,
+      "docker": 1,
+      "network": 1
+    }
+  },
+  "nonProductPaths": [
+    "docs/",
+    "gov-infra/",
+    ".github/",
+    "scripts/",
+    "reference/",
+    "README.md",
+    "LICENSE",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "CODE_OF_CONDUCT.md",
+    ".gitignore",
+    ".golangci-v2.yml",
+    "ENUMERATED-CHANGES-improvement-program.md",
+    "IMPROVEMENTS.md",
+    "LINEAR-PROJECT-improvement-program.md",
+    "ROADMAP-improvement-program.md",
+    "SCOPED-NEED-improvement-program.md",
+    "THEORY_CLOUD.md",
+    "UPGRADING.md",
+    "llms.txt",
+    "release-please-config.json",
+    "release-please-config.premain.json",
+    "templates/"
+  ],
   "releaseOnly": {
     "exact": [
       ".release-please-manifest.json",
@@ -119,18 +153,52 @@
     "rubric": {
       "kind": "source",
       "environment": "toolchain",
-      "description": "Full local rubric gate used by the staging required context",
+      "description": "Full local rubric gate used by the staging required context; composes independently produced product records and executes only rubric-unique checks",
+      "resource": "repo-write",
+      "paths": [
+        "**"
+      ],
+      "dependsOn": [
+        "go",
+        "unit",
+        "contract-tests",
+        "cdk-go-drift",
+        "deterministic-builds"
+      ],
       "commands": [
         {
           "id": "rubric",
-          "argv": ["make", "rubric"]
+          "argv": ["make", "rubric"],
+          "consumeLog": true,
+          "env": {
+            "APPTHEORY_EVIDENCE_REUSE": "go,unit,contract-tests,cdk-go-drift,deterministic-builds"
+          }
         }
       ]
     },
     "deterministic-builds": {
       "kind": "source",
-      "environment": "toolchain",
+      "environment": "toolchain+platform",
       "description": "Deterministic release artifact builds (built twice and compared)",
+      "resource": "repo-write",
+      "paths": [
+        "VERSION",
+        "ts/",
+        "py/",
+        "cdk/",
+        "third_party/",
+        "py/requirements-build.txt",
+        "cdk/requirements-build.txt",
+        "scripts/verify-builds.sh",
+        "scripts/verify-ts-dist-drift.sh",
+        "scripts/verify-ts-pack.sh",
+        "scripts/verify-python-build.sh",
+        "scripts/verify-cdk-ts-pack.sh",
+        "scripts/verify-cdk-python-build.sh",
+        "scripts/generate-checksums.sh",
+        "scripts/read-version.sh",
+        "scripts/lib/"
+      ],
       "commands": [
         {
           "id": "deterministic-builds",
@@ -142,10 +210,67 @@
       "kind": "source",
       "environment": "toolchain",
       "description": "Go test and vet",
+      "resource": "cpu",
+      "paths": [
+        "go.mod",
+        "go.sum",
+        "runtime/",
+        "testkit/",
+        "pkg/",
+        "cmd/",
+        "internal/",
+        "contract-tests/",
+        "examples/",
+        "scripts/list-go-packages.sh",
+        "scripts/verify-go.sh"
+      ],
       "commands": [
         {
           "id": "go-test-vet",
-          "argv": ["bash", "scripts/verify-go.sh"]
+          "argv": [
+            "bash",
+            "scripts/verify-go.sh"
+          ]
+        }
+      ]
+    },
+    "unit": {
+      "kind": "source",
+      "environment": "toolchain",
+      "description": "Cross-language unit tests (Go unit selection, TypeScript tests, Python tests) composed with the Go gate",
+      "resource": "repo-write",
+      "dependsOn": [
+        "go"
+      ],
+      "paths": [
+        "go.mod",
+        "go.sum",
+        "runtime/",
+        "testkit/",
+        "pkg/",
+        "cmd/",
+        "internal/",
+        "contract-tests/",
+        "ts/",
+        "py/",
+        "scripts/list-go-packages.sh",
+        "scripts/verify-go.sh",
+        "scripts/verify-unit.sh",
+        "scripts/verify-ts-tests.sh",
+        "scripts/verify-python-tests.sh",
+        "scripts/lib/"
+      ],
+      "commands": [
+        {
+          "id": "unit",
+          "argv": [
+            "bash",
+            "scripts/verify-unit.sh"
+          ],
+          "consumeLog": true,
+          "env": {
+            "APPTHEORY_EVIDENCE_REUSE": "go"
+          }
         }
       ]
     },
@@ -153,14 +278,31 @@
       "kind": "source",
       "environment": "toolchain",
       "description": "TypeScript checked-in dist drift and npm pack",
+      "resource": "repo-write",
+      "paths": [
+        "ts/",
+        "scripts/verify-ts-dist-drift.sh",
+        "scripts/verify-ts-pack.sh",
+        "scripts/read-version.sh",
+        "scripts/lib/ts-runtime-deps.sh",
+        "scripts/lib/runtime-deps.sh",
+        "scripts/lib/retry.sh",
+        "scripts/lib/blocked.sh"
+      ],
       "commands": [
         {
           "id": "ts-dist-drift",
-          "argv": ["bash", "scripts/verify-ts-dist-drift.sh"]
+          "argv": [
+            "bash",
+            "scripts/verify-ts-dist-drift.sh"
+          ]
         },
         {
           "id": "ts-pack",
-          "argv": ["bash", "scripts/verify-ts-pack.sh"]
+          "argv": [
+            "bash",
+            "scripts/verify-ts-pack.sh"
+          ]
         }
       ]
     },
@@ -168,10 +310,19 @@
       "kind": "source",
       "environment": "toolchain",
       "description": "Python wheel and sdist build",
+      "resource": "repo-write",
+      "paths": [
+        "py/",
+        "scripts/verify-python-build.sh",
+        "scripts/read-version.sh"
+      ],
       "commands": [
         {
           "id": "py-build",
-          "argv": ["bash", "scripts/verify-python-build.sh"]
+          "argv": [
+            "bash",
+            "scripts/verify-python-build.sh"
+          ]
         }
       ]
     },
@@ -179,14 +330,36 @@
       "kind": "source",
       "environment": "toolchain",
       "description": "API snapshots and the cross-language contract fixture corpus",
+      "resource": "cpu",
+      "paths": [
+        "api-snapshots/",
+        "contract-tests/",
+        "runtime/",
+        "testkit/",
+        "pkg/",
+        "ts/src/",
+        "ts/dist/",
+        "py/src/",
+        "scripts/verify-api-snapshots.sh",
+        "scripts/verify-contract-tests.sh",
+        "scripts/verify-fixture-schema.sh",
+        "scripts/generate-api-snapshots.sh",
+        "scripts/lib/"
+      ],
       "commands": [
         {
           "id": "api-snapshots",
-          "argv": ["bash", "scripts/verify-api-snapshots.sh"]
+          "argv": [
+            "bash",
+            "scripts/verify-api-snapshots.sh"
+          ]
         },
         {
           "id": "contract-fixtures",
-          "argv": ["bash", "scripts/verify-contract-tests.sh"]
+          "argv": [
+            "bash",
+            "scripts/verify-contract-tests.sh"
+          ]
         }
       ]
     },
@@ -194,25 +367,57 @@
       "kind": "source",
       "environment": "toolchain",
       "description": "CDK Go bindings regeneration equality",
+      "resource": "repo-write",
+      "paths": [
+        "cdk/",
+        "cdk-go/",
+        "scripts/update-cdk-generated.sh",
+        "scripts/verify-cdk-go-drift.sh",
+        "scripts/verify-cdk-go-major-version.sh",
+        "scripts/lib/canonicalize-jsii-tarballs.py"
+      ],
       "commands": [
         {
           "id": "cdk-go-drift",
-          "argv": ["bash", "scripts/verify-cdk-go-drift.sh"]
+          "argv": [
+            "bash",
+            "scripts/verify-cdk-go-drift.sh"
+          ]
         }
       ]
     },
     "examples-local": {
       "kind": "source",
-      "environment": "toolchain",
+      "environment": "toolchain+platform",
       "description": "Local examples harness plus relocated-copy synth proof",
+      "resource": "docker",
+      "paths": [
+        "Makefile",
+        "examples/",
+        "scripts/local/",
+        "scripts/verify-cdk-synth-location-independent.sh",
+        "runtime/",
+        "testkit/",
+        "pkg/",
+        "cmd/",
+        "ts/",
+        "contract-tests/",
+        "scripts/lib/"
+      ],
       "commands": [
         {
           "id": "examples-harness",
-          "argv": ["make", "examples-local"]
+          "argv": [
+            "make",
+            "examples-local"
+          ]
         },
         {
           "id": "examples-relocated-synth",
-          "argv": ["make", "verify-cdk-synth-location-independent"]
+          "argv": [
+            "make",
+            "verify-cdk-synth-location-independent"
+          ]
         }
       ]
     },
@@ -221,10 +426,32 @@
       "environment": "toolchain",
       "description": "Dependency vulnerability refresh bounded by the tracked max age",
       "maxAgeSeconds": 86400,
+      "resource": "network",
+      "paths": [
+        "go.mod",
+        "go.sum",
+        "cdk-go/apptheorycdk/go.mod",
+        "cdk-go/apptheorycdk/go.sum",
+        "ts/package.json",
+        "ts/package-lock.json",
+        "cdk/package.json",
+        "cdk/package-lock.json",
+        "py/pyproject.toml",
+        "py/requirements-build.txt",
+        "py/requirements-lint.txt",
+        "cdk/requirements-build.txt",
+        "scripts/local/requirements-examples.txt",
+        "examples/cdk/*/package-lock.json",
+        "scripts/verify-security-refresh.sh",
+        "gov-infra/verifiers/gov-verify-rubric.sh"
+      ],
       "commands": [
         {
           "id": "security-refresh",
-          "argv": ["bash", "scripts/verify-security-refresh.sh"]
+          "argv": [
+            "bash",
+            "scripts/verify-security-refresh.sh"
+          ]
         }
       ]
     },
@@ -232,30 +459,52 @@
       "kind": "generated-delta",
       "environment": "none",
       "description": "Narrow packaging and regeneration smoke once per changed generated artifact set",
+      "resource": "repo-write",
+      "paths": [
+        "**"
+      ],
       "commands": [
         {
           "id": "version-alignment",
-          "argv": ["bash", "scripts/verify-version-alignment.sh"]
+          "argv": [
+            "bash",
+            "scripts/verify-version-alignment.sh"
+          ]
         },
         {
           "id": "generated-messages",
-          "argv": ["bash", "scripts/verify-release-generated-messages.sh"]
+          "argv": [
+            "bash",
+            "scripts/verify-release-generated-messages.sh"
+          ]
         },
         {
           "id": "cdk-go-regeneration-equality",
-          "argv": ["bash", "scripts/verify-cdk-go-drift.sh"]
+          "argv": [
+            "bash",
+            "scripts/verify-cdk-go-drift.sh"
+          ]
         },
         {
           "id": "ts-pack-smoke",
-          "argv": ["bash", "scripts/verify-ts-pack.sh"]
+          "argv": [
+            "bash",
+            "scripts/verify-ts-pack.sh"
+          ]
         },
         {
           "id": "py-build-smoke",
-          "argv": ["bash", "scripts/verify-python-build.sh"]
+          "argv": [
+            "bash",
+            "scripts/verify-python-build.sh"
+          ]
         },
         {
           "id": "cdk-ts-pack-smoke",
-          "argv": ["bash", "scripts/verify-cdk-ts-pack.sh"]
+          "argv": [
+            "bash",
+            "scripts/verify-cdk-ts-pack.sh"
+          ]
         }
       ]
     }

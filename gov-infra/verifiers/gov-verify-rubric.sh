@@ -621,6 +621,12 @@ gov_cmd_unit() {
   require_cmd_or_blocked npm || return $?
   require_cmd_or_blocked python3 || return $?
 
+  # The collector may have produced the cross-language unit gate independently.
+  # Reuse only a verified record; any failure falls through to the real suite.
+  if [[ -n "${APPTHEORY_EVIDENCE_REUSE:-}" ]] && scripts/evidence/reuse-if-recorded.sh unit; then
+    return 0
+  fi
+
   # QUA-1 is the unit-test gate. The direct, uninstrumented contract suite runs
   # once in CON-3; TS/Python coverage may rerun fixtures under instrumentation
   # for coverage evidence. Keep Go runner meta-tests in QUA-1 without rerunning

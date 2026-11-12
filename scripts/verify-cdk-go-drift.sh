@@ -6,6 +6,12 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+# Compose an independently produced drift result when the collector asks for it.
+# A non-applicable record falls through to the real regeneration below.
+if [[ -n "${APPTHEORY_EVIDENCE_REUSE:-}" ]] && bash scripts/evidence/reuse-if-recorded.sh cdk-go-drift; then
+  exit 0
+fi
+
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   echo "cdk-go-drift: FAIL (must run inside a git work tree)" >&2
   exit 1

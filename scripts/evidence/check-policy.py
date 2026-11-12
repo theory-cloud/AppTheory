@@ -24,6 +24,7 @@ APPROVED_GATES = {
     "rubric",
     "deterministic-builds",
     "go",
+    "unit",
     "ts",
     "py",
     "contract-tests",
@@ -91,6 +92,80 @@ def main() -> int:
     if set(gates) != APPROVED_GATES:
         fail(f"approved gate set drifted: {sorted(set(gates) ^ APPROVED_GATES)}")
 
+    runner = registry.get("runner") or {}
+    if int(runner.get("maxWorkers", 0)) < 1:
+        fail("runner.maxWorkers must be a positive conservative bound")
+    resources = runner.get("resources") or {}
+    if not resources:
+        fail("runner.resources must declare the tracked resource groups")
+    for name, capacity in resources.items():
+        if int(capacity) < 1:
+            fail(f"resource {name!r} must have a positive capacity")
+    if not registry.get("nonProductPaths"):
+        fail("nonProductPaths must declare the paths whose change cannot affect product proof")
+
+    for gate_id, gate in gates.items():
+        paths = gate.get("paths")
+        if not isinstance(paths, list) or not paths:
+            fail(f"gate {gate_id} must declare its input scope")
+        gate_resource = gate.get("resource")
+        if gate_resource not in resources:
+            fail(f"gate {gate_id} declares unknown resource {gate_resource!r}")
+        for dependency in gate.get("dependsOn", []):
+            if dependency not in gates:
+                fail(f"gate {gate_id} depends on unknown gate {dependency!r}")
+        for command in gate.get("commands", []):
+            command_resource = command.get("resource", gate_resource)
+            if command_resource not in resources:
+                fail(f"gate {gate_id} command {command.get('id')} declares unknown resource {command_resource!r}")
+            reuse = (command.get("env") or {}).get("APPTHEORY_EVIDENCE_REUSE", "")
+            for reused in [item for item in reuse.split(",") if item]:
+                if reused not in gates:
+                    fail(f"gate {gate_id} command {command.get('id')} reuses unknown gate {reused!r}")
+                if reused not in gate.get("dependsOn", []):
+                    fail(
+                        f"gate {gate_id} command {command.get('id')} reuses {reused!r} "
+                        "without a declared dependency"
+                    )
+
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(gate_id: str) -> None:
+        if gate_id in visited:
+            return
+        if gate_id in visiting:
+            fail(f"gate dependency cycle at {gate_id!r}")
+        visiting.add(gate_id)
+        for dependency in gates[gate_id].get("dependsOn", []):
+            visit(dependency)
+        visiting.remove(gate_id)
+        visited.add(gate_id)
+
+    for gate_id in gates:
+        visit(gate_id)
+
+    shared: dict[str, tuple[str, str]] = {}
+    for gate_id, gate in gates.items():
+        for command in gate.get("commands", []):
+            key = command.get("sharedKey")
+            if not key:
+                continue
+            signature = (str(command.get("id")), json.dumps(command.get("argv")))
+            if key in shared and shared[key] != signature:
+                fail(f"shared command {key!r} is declared with different definitions")
+            shared[key] = signature
+
+    rubric_commands = gates["rubric"].get("commands", [])
+    rubric_reuse = ",".join(
+        (command.get("env") or {}).get("APPTHEORY_EVIDENCE_REUSE", "") for command in rubric_commands
+    )
+    if not rubric_reuse.strip(","):
+        fail("the rubric gate must compose verified product records instead of re-running them")
+    for required in ("go", "unit", "contract-tests", "cdk-go-drift", "deterministic-builds"):
+        if required not in rubric_reuse.split(","):
+            fail(f"the rubric gate must compose the {required!r} record")
+
     policy = registry["releaseOnly"]
     for prefix in policy.get("prefixes", []):
         if not prefix.endswith("/") or len(prefix.strip("/")) < 3:
@@ -137,6 +212,9 @@ def main() -> int:
     for leg_id in sorted(REQUIRED_LEGS):
         if f"| `{leg_id}` |" not in docs:
             fail(f"docs table is missing execution leg {leg_id}")
+    for token in ("--force", "--dry-run", "zero commands", "resource group", "declared input scope"):
+        if token not in docs:
+            fail(f"docs must document the corrected collector default: missing {token!r}")
 
     result = subprocess.run(
         ["git", "check-ignore", "-q", "gov-infra/evidence/proportionate/rubric.json"],

@@ -9,6 +9,13 @@
 # Usage:
 #   scripts/evidence/collect.sh --gate <gate-id> [--review-ref <ref>]...
 #   scripts/evidence/collect.sh --all [--review-ref <ref>]...
+#   scripts/evidence/collect.sh --all --dry-run
+#   scripts/evidence/collect.sh --all --force   # explicit re-execution override
+#
+# Collection is incremental: --all enumerates the required coverage and runs
+# only missing/failed/stale/affected gates. A second unchanged run executes zero
+# commands. Completed records are written atomically per gate, so an interrupted
+# run keeps its completed proof and a restart resumes only the unfinished work.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."

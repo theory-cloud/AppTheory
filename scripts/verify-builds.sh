@@ -9,6 +9,13 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+# Compose an independently produced deterministic-build result when the
+# collector asks for it. A non-applicable record falls through to the real
+# two-pass build below.
+if [[ -n "${APPTHEORY_EVIDENCE_REUSE:-}" ]] && bash scripts/evidence/reuse-if-recorded.sh deterministic-builds; then
+  exit 0
+fi
+
 epoch="${SOURCE_DATE_EPOCH:-}"
 if [[ -z "${epoch}" ]]; then
   epoch="$(git show -s --format=%ct HEAD)"
@@ -56,6 +63,9 @@ sys.stdout.buffer.write(b"\0".join(p for p in data if p and p != b"gov-infra/evi
   (
     cd "${tmp_dir}"
     export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}"
+    # The two build passes are the determinism proof: never let a nested leaf
+    # consume outer evidence and turn the passes into no-ops.
+    unset APPTHEORY_EVIDENCE_REUSE APPTHEORY_EVIDENCE_CONSUME_LOG EVIDENCE_FORCE_EXECUTE
     # Guard each inner command individually: a subshell on the left of `||` disables
     # errexit for everything inside it, so a single `( ... ) || fail` wrapper would
     # let a post-build gate failure slide through as a silent PASS.

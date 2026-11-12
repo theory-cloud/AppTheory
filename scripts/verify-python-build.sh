@@ -4,6 +4,10 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+if [[ -n "${APPTHEORY_EVIDENCE_REUSE:-}" ]] && bash scripts/evidence/reuse-if-recorded.sh py; then
+  exit 0
+fi
+
 expected_version="$(./scripts/read-version.sh)"
 expected_py_version="${expected_version}"
 if [[ "${expected_py_version}" == *"-rc."* ]]; then

@@ -5,6 +5,10 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 source "scripts/lib/ts-runtime-deps.sh"
 
+if [[ -n "${APPTHEORY_EVIDENCE_REUSE:-}" ]] && bash scripts/evidence/reuse-if-recorded.sh ts; then
+  exit 0
+fi
+
 if ! command -v node >/dev/null 2>&1; then
   echo "ts-dist-drift: BLOCKED (node not found)" >&2
   exit 2
