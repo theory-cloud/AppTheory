@@ -30,6 +30,8 @@ const legacyLineageWalkLimit = 64
 // the head's lock, or a concurrent migration won the family-create race. A
 // non-nil response ends the request, and a nil record with a non-nil response is
 // the terminal class.
+//
+//nolint:gocyclo // the migration order is the security contract.
 func (config normalizedConfig) adoptLegacyLineage(
 	ctx *apptheory.Context,
 	presented *oauthstore.RouteRefreshBrokerRecord,
@@ -79,10 +81,12 @@ func (config normalizedConfig) adoptLegacyLineage(
 		}
 	}
 	front.emitLockAcquired(ctx, locked)
-	upstream, refreshErr := front.provider.Refresh(ctx.Context(), oauth.RefreshRequest{
-		RefreshMaterial:  locked.EncryptedUpstreamRefreshToken,
-		UpstreamClientID: locked.UpstreamClientID,
-	})
+	attempted, intentResponse, intentErr := config.takeRotationIntent(ctx, head, locked)
+	if intentErr != nil || intentResponse != nil {
+		return nil, intentResponse, intentErr
+	}
+	locked = attempted
+	upstream, refreshErr := front.refreshUpstream(ctx.Context(), locked)
 	if refreshErr != nil {
 		return config.failedLegacyAdoption(ctx, head, locked, refreshErr)
 	}
@@ -164,10 +168,11 @@ func (config normalizedConfig) adoptLegacyLineage(
 	return nil, refreshTokenPage(body), nil
 }
 
-// failedLegacyAdoption maps a failed upstream refresh during migration. A
-// terminal rejection means the recorded grant is dead, so the legacy head is
-// revoked — it can never be migrated — and the client is told invalid_grant to
-// re-authorize. Every other class releases the lock: transient and upstream
+// failedLegacyAdoption maps a failed upstream refresh during migration. Only an
+// upstream invalid_grant may revoke the legacy head — it can never be migrated —
+// and only on corroborated evidence: an unconfirmed rotation attempt inside the
+// ambiguity horizon keeps the head and answers transiently, exactly like the
+// family path. Every other class releases the lock: transient and upstream
 // failures are retryable and must not cost the client its lineage.
 func (config normalizedConfig) failedLegacyAdoption(
 	ctx *apptheory.Context,
@@ -181,7 +186,18 @@ func (config normalizedConfig) failedLegacyAdoption(
 		class = providerErr.Class
 	}
 	switch class {
-	case oauth.ProviderInvalidGrant, oauth.ProviderReauthRequired:
+	case oauth.ProviderInvalidGrant:
+		if front.refreshVerdictAmbiguous(head, ctx.Now()) {
+			front.releaseRefreshLock(ctx, head, locked)
+			event := eventFromRecord(head)
+			event.Class = RouteRefreshEventStateFailure
+			event.Reason = RouteRefreshReasonRecoveryPending
+			event.UpstreamClass = string(class)
+			event.ErrorCode = facadeErrorTemporarilyUnavailable
+			event.At = ctx.Now()
+			front.emitRouteRefresh(ctx.Context(), event)
+			return nil, facadeTemporarilyUnavailablePage(), nil
+		}
 		front.releaseRefreshLock(ctx, head, locked)
 		if _, err := front.stores.RouteRefreshBroker.Revoke(ctx.Context(), head.HandleHash); err != nil {
 			front.emitStateFailure(ctx, head, RouteRefreshReasonStoreFailure, string(class))
@@ -296,6 +312,9 @@ func (front *frontChannelConfig) markLegacyHeadAdopted(
 	updated.EncryptedGraceRefreshResponse = string(body)
 	updated.GraceExpiresAt = graceExpiresAt
 	updated.GraceAccessTokenExpiresAt = accessExpiresAt
+	// The adoption consumed the material and stored the family root, so the
+	// rotation intent is resolved here too.
+	updated.RotationUnconfirmedAt = time.Time{}
 	updated.Status = oauthstore.BrokerStatusActive
 	updated.RefreshLockOwner = ""
 	updated.RefreshLockExpiresAt = time.Time{}

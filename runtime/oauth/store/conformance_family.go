@@ -229,6 +229,55 @@ func (h *conformanceHarness) brokerFamilyRotate(testCase ConformanceCase) (map[s
 	}, nil
 }
 
+// brokerFamilyRotationIntent pins the durable rotation-intent marker: the
+// compare-and-swap that records an unconfirmed rotation attempt persists on the
+// record, and the rotation transaction clears it when it resolves the attempt.
+// The marker is what lets a later attempt know the upstream material may already
+// have been consumed, so a store that drops it silently re-arms the family-kill
+// class this contract exists to remove.
+func (h *conformanceHarness) brokerFamilyRotationIntent(testCase ConformanceCase) (map[string]any, error) {
+	family, err := h.familyStore()
+	if err != nil {
+		return nil, err
+	}
+	familyHash := h.key(testCase, "family")
+	if _, createErr := family.CreateFamily(h.ctx(), h.familyRoot(familyHash)); createErr != nil {
+		return nil, createErr
+	}
+	root, err := h.stores.RouteRefreshBroker.Get(h.ctx(), familyHash)
+	if err != nil {
+		return nil, err
+	}
+	locked, err := h.stores.RouteRefreshBroker.AcquireLock(h.ctx(), root.HandleHash, "conformance-owner", root.Version)
+	if err != nil {
+		return nil, err
+	}
+	intent := *locked
+	intent.RotationUnconfirmedAt = h.now()
+	stored, casErr := h.stores.RouteRefreshBroker.CompareAndSwap(h.ctx(), &intent, locked.Version)
+	reread, rereadErr := h.stores.RouteRefreshBroker.Get(h.ctx(), root.HandleHash)
+	if casErr != nil {
+		return map[string]any{
+			"intent_cas": outcomeFor(casErr),
+			"intent_get": outcomeFor(rereadErr),
+		}, nil
+	}
+	successorKey := h.key(testCase, "successor")
+	_, rotateErr := h.rotateFamily(family, RouteRefreshFamilyRotation{
+		PresentedHandleHash: stored.HandleHash,
+		LockOwner:           locked.RefreshLockOwner,
+		ExpectedVersion:     stored.Version,
+	}, stored, successorKey, stored.ChainGeneration+1, familyHash)
+	presented, presentedErr := h.stores.RouteRefreshBroker.Get(h.ctx(), root.HandleHash)
+	return map[string]any{
+		"intent_cas":                    outcomeFor(casErr),
+		"intent_get":                    outcomeFor(rereadErr),
+		"intent_persisted":              !stored.RotationUnconfirmedAt.IsZero() && reread != nil && !reread.RotationUnconfirmedAt.IsZero(),
+		"rotate":                        outcomeFor(rotateErr),
+		"presented_unconfirmed_cleared": presentedErr == nil && presented != nil && presented.RotationUnconfirmedAt.IsZero(),
+	}, nil
+}
+
 // brokerFamilyRotateWrongOwner proves the rotation transaction checks the lock
 // owner before minting anything.
 func (h *conformanceHarness) brokerFamilyRotateWrongOwner(testCase ConformanceCase) (map[string]any, error) {

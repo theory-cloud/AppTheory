@@ -666,6 +666,10 @@ func (s *MemoryRouteRefreshBrokerStore) RotateFamily(
 	completed.Status = BrokerStatusActive
 	completed.RefreshLockOwner = ""
 	completed.RefreshLockExpiresAt = time.Time{}
+	// The rotation is confirmed: the presented material was consumed and its
+	// successor is stored, so the unconfirmed-attempt marker is cleared in the
+	// same transaction that resolves it.
+	completed.RotationUnconfirmedAt = time.Time{}
 	completed.Version = presented.Version + 1
 	s.records[storedSuccessor.HandleHash] = &brokerEntry{record: storedSuccessor, storedAt: now}
 	s.records[presented.HandleHash] = &brokerEntry{record: completed, storedAt: entry.storedAt}

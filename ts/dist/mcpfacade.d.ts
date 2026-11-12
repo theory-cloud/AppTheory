@@ -111,11 +111,17 @@ export interface RootDiscoveryConfig {
  * - `reuseRateCeiling` is retained for configuration compatibility and must lie
  *   in `[9, 120]`; no refresh path uses it now that the beyond-grace serve was
  *   removed.
+ * - `refreshBudgetSeconds` is the encoded time budget of one upstream refresh
+ *   call. Absent selects `DEFAULT_REFRESH_BUDGET_SECONDS`; it must lie in
+ *   `[MIN_REFRESH_BUDGET_SECONDS, MAX_REFRESH_BUDGET_SECONDS]`, where the
+ *   ceiling keeps the budget inside the broker lock TTL it has to outlive. It is
+ *   a configuration field, never an environment variable.
  */
 export interface RouteRefreshPolicy {
     handleTTLSeconds: number;
     graceWindowSeconds?: number;
     reuseRateCeiling: number;
+    refreshBudgetSeconds?: number;
 }
 /** Configures the complete route-algebra MCP OAuth facade. */
 export interface FacadeConfig {
@@ -344,6 +350,20 @@ export declare const MIN_REFRESH_REUSE_RATE_CEILING = 9;
 /** The retained reuse-rate ceiling's upper bound. */
 export declare const MAX_REFRESH_REUSE_RATE_CEILING = 120;
 /**
+ * The upstream refresh-call budget a policy that does not state one selects. It
+ * is the hardened upstream HTTP deadline the adapter already used, so an
+ * unchanged configuration keeps exactly the bound it had.
+ */
+export declare const DEFAULT_REFRESH_BUDGET_SECONDS = 10;
+/** The shortest accepted upstream refresh budget. */
+export declare const MIN_REFRESH_BUDGET_SECONDS = 1;
+/**
+ * The longest accepted upstream refresh budget: the reference broker lock TTL
+ * (15 s) less the commit margin, so the winner can still commit its rotation
+ * before the lock it holds expires.
+ */
+export declare const MAX_REFRESH_BUDGET_SECONDS: number;
+/**
  * The generation of a handle the facade mints as the root of a new refresh
  * family. Every successor records the presented generation plus one, so depth
  * relative to the head is arithmetic.
@@ -410,6 +430,18 @@ export declare const ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE: "family_stat
 export declare const ROUTE_REFRESH_REASON_STALE_PREDECESSOR: "stale_predecessor";
 /** A family whose live head aged out, leaving no member that can rotate. */
 export declare const ROUTE_REFRESH_REASON_FAMILY_HEAD_ABSENT: "family_head_absent";
+/**
+ * A presentation resolved by the post-timeout lineage check: the family's live
+ * head had already moved past the presented record, so the head was rotated for
+ * the client and the stale material was never presented again.
+ */
+export declare const ROUTE_REFRESH_REASON_LINEAGE_VERIFIED: "lineage_verified";
+/**
+ * An upstream contract-terminal verdict that is still ambiguous because a
+ * rotation attempt of the same record is unconfirmed inside the ambiguity
+ * horizon. The family is kept and the client is told to retry.
+ */
+export declare const ROUTE_REFRESH_REASON_RECOVERY_PENDING: "recovery_pending";
 /** A family-less pre-policy record migrated in code onto a fresh family. */
 export declare const ROUTE_REFRESH_REASON_LEGACY_LINEAGE_ADOPTED: "legacy_lineage_adopted";
 /** The store's absent-versus-expired signal; the client body stays uniform. */
@@ -462,4 +494,80 @@ export interface RouteRefreshEvent {
  * hook is contained so telemetry can never fail a refresh.
  */
 export type RouteRefreshEventHook = (event: RouteRefreshEvent) => void;
+/**
+ * Rotates the live head of one refresh family out of band, so a scheduled
+ * trigger (a worker function, a cron entry, a batch invocation) keeps
+ * credentials fresh without reimplementing the facade's rotation. It is the
+ * exported sweep entrypoint of the rotation-recovery contract's facade rule
+ * (theorycloud_refresh_rotation_recovery.v0.1 R7): the same store SPI, the same
+ * lock, the same rotation transaction, and the same encoded policy the request
+ * path uses.
+ *
+ * The caller decides which families are due: a scheduler that owns the
+ * access-token expiry knows it better than the broker record.
+ *
+ * # Concurrency contract
+ *
+ * A sweep-driven rotation is an ordinary rotation competitor, never a second
+ * authority over the family:
+ *
+ * 1. Exclusive lock. The sweep takes the same per-record lock the request path
+ *    takes (acquireLock with the version it read) before any upstream call. A
+ *    held lock, a lock the sweep cannot take, or a version that moved since the
+ *    head was read resolves to `deferred`: no upstream call, no state change, no
+ *    family effect. The caller retries on its next tick.
+ * 2. Exactly one winner. The rotation commits through the same rotateFamily
+ *    transaction, which re-checks the lock owner, the expected version, the
+ *    family and generation bindings, and successor uniqueness. A loser (the
+ *    request path rotated first, the lock expired, the family was revoked) gets a
+ *    typed transient result and never mints a successor: nothing is minted unless
+ *    every write landed.
+ * 3. The loser keeps working. A request-path presentation racing a committed
+ *    sweep rotation finds its handle grace-marked and is served the stored
+ *    successor body, or — past the grace window — has the family's new live head
+ *    rotated for it. A sweep racing a committed request-path rotation defers and
+ *    reads the new head on its next tick. Neither order is family-affecting.
+ * 4. The sweep never revokes. Continuity maintenance is not a revocation trigger
+ *    (contract R5). A contract-terminal upstream verdict observed by the sweep
+ *    releases the lock and returns `terminal_verdict`, leaving the family intact:
+ *    revocation and its receipt stay on the request path, where the client-facing
+ *    verdict is rendered and lineage is verified.
+ * 5. It is bounded. The upstream call carries the same encoded
+ *    `refreshBudgetSeconds` as the request path, which stays below the broker lock
+ *    TTL, so a sweep can never outlive the lock it holds.
+ */
+export declare class RefreshSweeper {
+    private readonly front;
+    private readonly now;
+    constructor(config: RefreshSweepConfig);
+    /** Rotates the live head of one family. Never revokes; see the class docs. */
+    sweepFamily(familyHash: string): Promise<RefreshSweepResult>;
+    private deferredLock;
+    private deferredRotation;
+}
+/** Configures a {@link RefreshSweeper}. */
+export interface RefreshSweepConfig {
+    /** Makes the upstream refresh call. */
+    provider: Provider;
+    /** The broker store the rotation transacts through; needs the family capability. */
+    stores: Stores;
+    /** The encoded route refresh policy: grace window, upstream budget, handle TTL. */
+    policy: RouteRefreshPolicy;
+    /** Optionally receives the same schema-redacted route refresh telemetry. */
+    events?: RouteRefreshEventHook;
+    /** The sweeper's clock for the stored deadlines and event instants. */
+    now?: () => Date;
+}
+/** The closed result vocabulary of one `sweepFamily` call. */
+export type RefreshSweepOutcome = "rotated" | "deferred" | "terminal_verdict" | "revoked_family" | "no_live_head";
+/** One sweep result. It carries hashes and a generation only. */
+export interface RefreshSweepResult {
+    outcome: RefreshSweepOutcome;
+    familyHash: string;
+    presentedHandleHash?: string;
+    successorHandleHash?: string;
+    chainGeneration?: number;
+    deferredReason?: string;
+    upstreamClass?: string;
+}
 //# sourceMappingURL=mcpfacade.d.ts.map

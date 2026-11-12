@@ -1,0 +1,40 @@
+{
+  "contract": "theorycloud_refresh_rotation_recovery.v0.1",
+  "case_id": "multi-generation-gap-resume",
+  "description": "A steward resumes holding g0 while the family advanced to g12 inside the serve window (lab pins: 120 s TTL, g_min 60 s, N 20, so 12 hops fit the walk budget). The steward is walked to the head: recovery, not revocation.",
+  "expected_outcome": "conformant",
+  "stage_config": {
+    "serve_window_seconds": 600,
+    "access_token_ttl_seconds": 120,
+    "refresh_due_fraction": 0.5,
+    "sweep_interval_seconds": 60,
+    "generation_bound": 20,
+    "margin": 2.0
+  },
+  "scenario": [
+    {
+      "t_offset_seconds": 0,
+      "actor": "family",
+      "action": "advance",
+      "generation": "g0",
+      "successor": "g12",
+      "hops": 12
+    },
+    {
+      "t_offset_seconds": 540,
+      "actor": "steward-a",
+      "action": "present",
+      "generation": "g0",
+      "in_window": true,
+      "wire": "success",
+      "recovery": "walk_serve"
+    }
+  ],
+  "expect": {
+    "family_revoked": false,
+    "recovery": "walk_serve",
+    "terminal_wire_error": "none",
+    "transient_wire": "none",
+    "receipt_emitted": false
+  }
+}

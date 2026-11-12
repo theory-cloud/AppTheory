@@ -1,0 +1,38 @@
+{
+  "contract": "theorycloud_refresh_rotation_recovery.v0.1",
+  "case_id": "per-request-error-family-kill",
+  "description": "Banned: the facade terminal classifier family-kills on a per-request client error (invalid_scope). Per-request errors (invalid_scope, invalid_request, access_denied, expired_token, invalid_token) are transient to the family; failedRefreshGrant/revokeFamilyForRecord may fire only on contract-terminal verdicts (R6/R7).",
+  "expected_outcome": "nonconformant",
+  "expected_violation": "R7",
+  "stage_config": {
+    "serve_window_seconds": 600,
+    "access_token_ttl_seconds": 900,
+    "refresh_due_fraction": 0.5,
+    "sweep_interval_seconds": 60,
+    "generation_bound": 4,
+    "margin": 2.0
+  },
+  "scenario": [
+    {
+      "t_offset_seconds": 0,
+      "actor": "steward-a",
+      "action": "present",
+      "generation": "g5",
+      "in_window": true,
+      "wire": "invalid_scope"
+    },
+    {
+      "t_offset_seconds": 1,
+      "actor": "mcpfacade",
+      "action": "family_kill",
+      "trigger_error": "invalid_scope"
+    }
+  ],
+  "expect": {
+    "family_revoked": true,
+    "recovery": "none",
+    "terminal_wire_error": "none",
+    "transient_wire": "none",
+    "receipt_emitted": true
+  }
+}
