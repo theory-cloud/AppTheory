@@ -580,4 +580,21 @@ record_py verify --gate capture >"${tmp}/out.log" 2>&1 && fail_test "a record wi
 )
 pass_test "an unclassified input is refused instead of recorded as a reusable PASS"
 
+# The producer manifest lists the records this run wrote and their digests.
+# A fresh manifest is created by this process, so it must be owner-only:
+# another local account must not be able to read or rewrite the upload list.
+mode_manifest="${tmp}/mode-manifest.txt"
+rm -f "${mode_manifest}"
+if ! (cd "${scratch}" && APPTHEORY_EVIDENCE_PRODUCED_MANIFEST="${mode_manifest}" EVIDENCE_FORCE_EXECUTE=true bash scripts/evidence/verify-or-execute.sh --gate capture) >"${tmp}/out.log" 2>&1; then
+  fail_test "creating a fresh producer manifest failed"
+fi
+"${python_bin}" - "${mode_manifest}" <<'PY' || fail_test "a fresh producer manifest is not owner-only"
+import os
+import sys
+
+mode = os.stat(sys.argv[1]).st_mode & 0o777
+assert mode == 0o600, oct(mode)
+PY
+pass_test "a fresh producer manifest is created owner-only"
+
 echo "test-evidence-execution-capture: PASS (${pass_count} checks)"

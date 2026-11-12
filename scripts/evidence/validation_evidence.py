@@ -1394,7 +1394,7 @@ def record_produced_path(root: Path, target: Path) -> None:
     except OSError as exc:
         raise EvidenceError(f"cannot read the produced record {target}: {exc}") from exc
     try:
-        descriptor = os.open(manifest, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+        descriptor = os.open(manifest, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     except OSError as exc:
         raise EvidenceError(f"cannot append to the produced-record manifest {manifest}: {exc}") from exc
     try:
