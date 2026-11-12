@@ -275,7 +275,10 @@ When the release lane is blocked, recover by preserving evidence and re-entering
    bash scripts/verify-go-module-tags.sh --self-test
    bash scripts/verify-release-workflows.sh
    bash scripts/verify-ci-rubric-enforced.sh
-   bash scripts/verify-release-branch-signatures.sh
+   # Manual audits pass the exact new-commit range. Without --range the gate
+   # bounds the scan by the current GitHub event's own base; with no event it
+   # fails closed rather than sweeping whole ref histories.
+   bash scripts/verify-release-branch-signatures.sh --range "<accepted-base>..<candidate-head>"
    make test
    ```
 
