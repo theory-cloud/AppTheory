@@ -295,15 +295,29 @@
           "argv": [
             "bash",
             "scripts/verify-ts-dist-drift.sh"
-          ]
+          ],
+          "consumeLog": true,
+          "env": {
+            "APPTHEORY_EVIDENCE_REUSE": "deterministic-builds"
+          }
         },
         {
           "id": "ts-pack",
           "argv": [
             "bash",
             "scripts/verify-ts-pack.sh"
-          ]
+          ],
+          "consumeLog": true,
+          "env": {
+            "APPTHEORY_EVIDENCE_REUSE": "deterministic-builds"
+          }
         }
+      ],
+      "dependsOn": [
+        "deterministic-builds"
+      ],
+      "composedFrom": [
+        "deterministic-builds"
       ]
     },
     "py": {
@@ -322,8 +336,18 @@
           "argv": [
             "bash",
             "scripts/verify-python-build.sh"
-          ]
+          ],
+          "consumeLog": true,
+          "env": {
+            "APPTHEORY_EVIDENCE_REUSE": "deterministic-builds"
+          }
         }
+      ],
+      "dependsOn": [
+        "deterministic-builds"
+      ],
+      "composedFrom": [
+        "deterministic-builds"
       ]
     },
     "contract-tests": {

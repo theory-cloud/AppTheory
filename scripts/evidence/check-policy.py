@@ -114,6 +114,21 @@ def main() -> int:
         for dependency in gate.get("dependsOn", []):
             if dependency not in gates:
                 fail(f"gate {gate_id} depends on unknown gate {dependency!r}")
+        composed_from = gate.get("composedFrom", [])
+        if not isinstance(composed_from, list):
+            fail(f"gate {gate_id} composedFrom must be a list")
+        for dependency in composed_from:
+            if dependency not in gates:
+                fail(f"gate {gate_id} composes unknown gate {dependency!r}")
+            if dependency not in gate.get("dependsOn", []):
+                fail(f"gate {gate_id} composes {dependency!r} without a declared dependency")
+            for command in gate.get("commands", []):
+                reuse = (command.get("env") or {}).get("APPTHEORY_EVIDENCE_REUSE", "")
+                if dependency not in reuse.split(","):
+                    fail(
+                        f"gate {gate_id} command {command.get('id')} does not reuse "
+                        f"its composed gate {dependency!r}"
+                    )
         for command in gate.get("commands", []):
             command_resource = command.get("resource", gate_resource)
             if command_resource not in resources:

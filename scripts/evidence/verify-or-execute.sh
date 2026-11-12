@@ -95,6 +95,34 @@ if [[ "${force_execute}" != "true" ]]; then
   fi
   reason="$(tail -n 1 "${verify_stderr}" | sed -e 's/^validation-evidence: FAIL (//' -e 's/)$//')"
   cat "${verify_stderr}" >&2 || true
+
+  # A gate may declare that another gate's record fully covers its command set
+  # (for example the deterministic-build record covers the standalone ts/py
+  # packaging smoke). Verify that record too; anything else still executes.
+  composed_from="$(
+    python3 - "${gate}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+gate = sys.argv[1]
+registry = json.loads(Path("scripts/evidence/validation-gates.json").read_text(encoding="utf-8"))
+entry = registry.get("gates", {}).get(gate, {})
+print("\n".join(str(item) for item in entry.get("composedFrom", [])))
+PY
+  )" || composed_from=""
+  for dependency in ${composed_from}; do
+    dependency_stderr="$(mktemp)"
+    if python3 scripts/evidence/validation_evidence.py verify --gate "${dependency}" 2>"${dependency_stderr}"; then
+      cat "${dependency_stderr}" >&2 || true
+      rm -f "${dependency_stderr}"
+      echo "gate ${gate}: evidence-verified (composed from ${dependency}; no command executed in this run)"
+      summary_line "- \`${gate}\`: evidence-verified via \`${dependency}\` (no command executed in this run)"
+      exit 0
+    fi
+    cat "${dependency_stderr}" >&2 || true
+    rm -f "${dependency_stderr}"
+  done
 else
   reason="untrusted pull-request origin or forced execution"
 fi

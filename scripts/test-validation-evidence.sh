@@ -364,7 +364,7 @@ echo "test-validation-evidence: PASS (${pass_count} checks)"
 
 sched="${tmp}/sched"
 mkdir -p "${sched}/bin" "${sched}/scripts/evidence" "${sched}/evidence/state" "${sched}/docs"
-for dir in alpha beta m x dep-parent dep-child shared fail fast slow prod-a prod-b inc-a inc-b; do
+for dir in alpha beta m x dep-parent dep-child shared fail fast slow prod-a prod-b pack inc-a inc-b; do
   mkdir -p "${sched}/src/${dir}"
   printf 'keep\n' >"${sched}/src/${dir}/keep.txt"
 done
@@ -518,6 +518,11 @@ cat >"${sched}/scripts/evidence/validation-gates.json" <<'JSON'
       "dependsOn": ["prod-a", "prod-b"],
       "commands": [{"id": "rubric", "argv": ["python3", "bin/job.py", "consume", "prod-a", "prod-b"],
         "consumeLog": true, "env": {"APPTHEORY_EVIDENCE_REUSE": "prod-a,prod-b"}}]},
+    "pack": {"kind": "source", "environment": "toolchain", "resource": "cpu", "paths": ["src/pack/"],
+      "commands": [{"id": "pack", "argv": ["python3", "bin/job.py", "mark", "evidence/state/pack.log"]}]},
+    "compose": {"kind": "source", "environment": "toolchain", "resource": "cpu", "paths": ["src/pack/"],
+      "dependsOn": ["pack"], "composedFrom": ["pack"],
+      "commands": [{"id": "compose", "argv": ["python3", "bin/job.py", "fail"]}]},
     "inc-a": {"kind": "source", "environment": "toolchain", "resource": "cpu", "paths": ["src/inc-a/"],
       "commands": [{"id": "inc-a", "argv": ["python3", "bin/job.py", "mark", "evidence/state/inc-a.log"]}]},
     "inc-b": {"kind": "source", "environment": "toolchain", "resource": "cpu", "paths": ["src/inc-b/"],
@@ -773,6 +778,21 @@ if [[ "${first_summary}" != "${second_summary}" ]]; then
 fi
 pass_count=$((pass_count + 1))
 echo "test-validation-evidence: PASS atomic records and deterministic summary"
+
+# The actual CI wrapper composes a declared packaging record and still refuses
+# composition under a forced environment.
+expect_ok "packaging baseline" sched_collect --gate pack
+expect_output "wrapper composes a declared packaging record" "composed from pack" \
+  bash -c 'cd "$1" && bash scripts/evidence/verify-or-execute.sh --gate compose --verify-only' _ "${sched}"
+forced_status=0
+(cd "${sched}" && EVIDENCE_FORCE_EXECUTE=true bash scripts/evidence/verify-or-execute.sh --gate compose --verify-only) >"${tmp}/forced.log" 2>&1 || forced_status=$?
+if [[ "${forced_status}" -eq 0 ]]; then
+  echo "test-validation-evidence: FAIL (forced execution composed a record)" >&2
+  cat "${tmp}/forced.log" >&2
+  exit 1
+fi
+pass_count=$((pass_count + 1))
+echo "test-validation-evidence: PASS wrapper composition and force boundary"
 
 # Legacy records without a scope binding are historical, not reusable.
 cp "${sched}/evidence/inc-a.json" "${tmp}/inc-a.good"

@@ -4,8 +4,13 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-if [[ -n "${APPTHEORY_EVIDENCE_REUSE:-}" ]] && bash scripts/evidence/reuse-if-recorded.sh py; then
-  exit 0
+if [[ -n "${APPTHEORY_EVIDENCE_REUSE:-}" ]]; then
+  if bash scripts/evidence/reuse-if-recorded.sh py; then
+    exit 0
+  fi
+  if bash scripts/evidence/reuse-if-recorded.sh deterministic-builds; then
+    exit 0
+  fi
 fi
 
 expected_version="$(./scripts/read-version.sh)"

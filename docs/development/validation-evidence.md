@@ -75,8 +75,8 @@ serializes through explicit tracked resource groups:
 | --- | --- | --- | --- |
 | `go` | `cpu` | — | Go modules, contract runners, examples |
 | `unit` | `repo-write` | `go` | Go unit selection, TypeScript tests, Python tests |
-| `ts` | `repo-write` | — | `ts/`, dist drift and pack scripts |
-| `py` | `repo-write` | — | `py/`, Python build script |
+| `ts` | `repo-write` | `deterministic-builds` | `ts/`, dist drift and pack scripts |
+| `py` | `repo-write` | `deterministic-builds` | `py/`, Python build script |
 | `contract-tests` | `cpu` | — | fixtures, API snapshots, runtime surfaces |
 | `cdk-go-drift` | `repo-write` | — | `cdk/`, `cdk-go/`, generation scripts |
 | `deterministic-builds` | `repo-write` | — | packaging inputs and scripts |
@@ -106,6 +106,12 @@ verifies the named record against the exact candidate inputs and never executes
 a recorded command. A missing, stale, mismatched or failed record falls through
 to the real command, so composition can reduce repeated work but can never
 fabricate a pass.
+
+The standalone `ts` and `py` packaging gates also declare
+`composedFrom: deterministic-builds`: those scripts run inside both determinism
+passes, so when that record applies the standalone gate verifies it instead of
+packing a third and fourth time. A platform or toolchain mismatch falls through
+to the real packaging command.
 
 The consumed records are written into the rubric record's `consumed` list with
 their scope digests and timestamps. That is the coverage attribution: a green
