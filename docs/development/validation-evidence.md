@@ -105,7 +105,9 @@ substitute, because the probe records what actually ran:
 tc-toolchain exec frameworks/AppTheory -- \
   python3 scripts/evidence/validation_evidence.py probe
 
-# Default producing-host profile (Go comes from the go.mod pin).
+# Default producing-host profile (Go comes from the go.mod pin). This enumerates
+# coverage; a first collection must use the prerequisite and ordering sequence
+# below, not treat this single command as a guaranteed clean bootstrap.
 tc-toolchain exec frameworks/AppTheory --node 24.21.0 --python 3.14.7 -- \
   scripts/evidence/collect.sh --all --profile default
 
@@ -122,6 +124,35 @@ tc-toolchain exec frameworks/AppTheory --node 22.23.3 --python 3.12.14 -- \
 The manager must also supply the repository Go pin from `go.mod`; if its Go
 selection is stale, that is a blocker to report, not a reason to collect under
 an ambient Go. The same manager entry point is used for every local test run.
+
+### First-collection prerequisites
+
+`examples-local` runs its Python harness directly, so the pinned harness
+dependencies must be installed in the interpreter that runs it:
+`scripts/local/requirements-examples.txt` plus the Chromium build fetched by
+`python -m playwright install chromium`. Build an isolated virtual environment
+from the governed Python and put its `bin` first on `PATH` for the collection.
+Do not install into the sealed toolchain store: that runtime tree is read-only
+and is not a dependency target.
+
+```bash
+tc-toolchain exec frameworks/AppTheory --node 24.21.0 --python 3.14.7 -- \
+  python3 -m venv /path/to/apptheory-examples-venv
+/path/to/apptheory-examples-venv/bin/pip install -r scripts/local/requirements-examples.txt
+/path/to/apptheory-examples-venv/bin/python -m playwright install chromium
+```
+
+Then run the collector with that environment first on `PATH`, for example:
+
+```bash
+tc-toolchain exec frameworks/AppTheory --node 24.21.0 --python 3.14.7 -- \
+  bash -c 'export PATH=/path/to/apptheory-examples-venv/bin:"$PATH"; scripts/evidence/collect.sh --all --profile default'
+```
+
+Without these prerequisites the harness rows fail as named requirement errors
+(for example the edge-gateway encryption row, the shared-plane botocore row and
+the local-TLS Playwright rows). That is an environment failure to fix, not a
+product failure to record as the product's verdict.
 
 If a profile cannot be produced on the current host (for example the requested
 Node major is not selected), collection fails closed with the exact mismatch.
@@ -144,7 +175,8 @@ existing gate records for the requested profile first, then schedules only
 missing, failed, stale or affected work:
 
 ```bash
-# Enumerate the required coverage; execute only what is missing or affected.
+# Enumerate the required coverage on a committed tree; execute only what is
+# missing or affected (see the first-run sequence below).
 scripts/evidence/collect.sh --all --profile default
 
 # Re-run one gate only when its declared input scope changed.
@@ -349,7 +381,8 @@ affected gate. It does not edit an old record into a new pass.
 ## Workflow
 
 ```bash
-# Enumerate every approved gate for the default profile.
+# Enumerate every approved gate on a committed, clean tree (later incremental
+# runs; the first-run sequence is above).
 scripts/evidence/collect.sh --all --profile default
 
 # Or only the gates affected by a follow-up source fix.
@@ -370,10 +403,27 @@ finalization never demands future review IDs. Adding references or any other
 evidence-only file does not change the scope digest. Signing applies to the
 evidence-only commit like any other commit.
 
-Collection requires a clean worktree outside the evidence directory. Commit the
-source first, collect, then commit the records (signed). A source fix after
-review invalidates only the affected gates and profiles; recollect those, or run
-`--all --profile <id>` and let the scheduler decide.
+Collection requires the source to be committed first and a clean worktree
+outside the dedicated evidence directory. The first collection writes
+machine-produced records as uncommitted files, and the rubric's
+`candidate-build` self-test requires an empty `git status`. A single `--all` run
+that includes `rubric` is therefore not a guaranteed clean bootstrap. Use the
+practical first-run sequence:
+
+1. Collect the non-rubric gates for the profile by repeating `--gate` for
+   `go`, `unit`, `ts`, `py`, `contract-tests`, `cdk-go-drift`,
+   `deterministic-builds`, `examples-local` and `security-refresh`.
+2. Make the normal signed evidence commit with those records.
+3. Collect only `rubric` on the now-clean tree:
+   `scripts/evidence/collect.sh --gate rubric --profile default`.
+4. Commit the rubric record the same way.
+
+Later incremental runs reuse every committed record and execute zero commands
+when the inputs are unchanged; `--all --profile <id>` then enumerates the
+coverage and reports only genuinely missing, failed, stale or affected work. A
+source fix after review invalidates only the affected gates and profiles;
+recollect those, or run `--all --profile <id>` on the committed tree and let the
+scheduler decide.
 
 ## The CI execution fallback writes the record
 
