@@ -111,7 +111,10 @@ entry = registry.get("gates", {}).get(gate, {})
 print("\n".join(str(item) for item in entry.get("composedFrom", [])))
 PY
   )" || composed_from=""
-  for dependency in ${composed_from}; do
+  while IFS= read -r dependency; do
+    if [[ -z "${dependency}" ]]; then
+      continue
+    fi
     dependency_stderr="$(mktemp)"
     if python3 scripts/evidence/validation_evidence.py verify --gate "${dependency}" 2>"${dependency_stderr}"; then
       cat "${dependency_stderr}" >&2 || true
@@ -122,7 +125,7 @@ PY
     fi
     cat "${dependency_stderr}" >&2 || true
     rm -f "${dependency_stderr}"
-  done
+  done <<<"${composed_from}"
 else
   reason="untrusted pull-request origin or forced execution"
 fi
