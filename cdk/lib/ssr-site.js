@@ -298,7 +298,7 @@ function generateSsrViewerResponseFunctionCode() {
 	`.trim();
 }
 class AppTheorySsrSite extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheorySsrSite", version: "7.1.0" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheorySsrSite", version: "7.3.0" };
     assetsBucket;
     assetsKeyPrefix;
     assetsManifestKey;
