@@ -7,11 +7,11 @@
     "notes": "One conformance table for the provider SPI of DESIGN §6. Every provider adapter (the Autheory adapter and the tiny second test adapter that proves provider-neutrality) must pass every row. Each runtime's loader spins up a real local HTTP fake upstream with real RSA keys and runs the rows against the adapter; the same rows and outcomes must hold in Go, TypeScript and Python. The adapter never forwards an upstream error body to the client and never relaxes a fail-closed check. A hint whose name collides, case-insensitively, with a required or reserved authorize parameter (response_type, client_id, redirect_uri, code_challenge, code_challenge_method, state, resource, scope) is refused as invalid_request rather than being allowed to override or duplicate that parameter; a hint whose name carries leading or trailing whitespace is refused the same way rather than forwarded under its untrimmed spelling (which would add a second parameter) or silently trimmed onto a colliding one; a non-colliding, already-trimmed hint is still forwarded."
   },
   "error_classes": {
-    "upstream_error": "an upstream provider failure (HTTP 502 in the facade vocabulary); includes a replayed/invalid upstream response, a signature or issuer mismatch, an expired token, an oversized document, and a non-2xx non-terminal call",
+    "upstream_error": "an upstream provider failure (HTTP 502 in the facade vocabulary); includes a replayed/invalid upstream response, a signature or issuer mismatch, an expired token, an oversized document, a per-request client error code (invalid_scope, invalid_request, access_denied, expired_token, invalid_token, invalid_client, unauthorized_client), and a non-2xx non-terminal call",
     "temporarily_unavailable": "a transient provider failure, retryable (HTTP 503 + Retry-After); includes a fetch timeout and a connect failure",
-    "invalid_grant": "the provider definitively rejected the grant (terminal; HTTP 400)",
+    "invalid_grant": "the provider definitively rejected the grant (the one contract-terminal verdict; HTTP 400)",
     "invalid_request": "the adapter was called with a request it cannot send (HTTP 400); never reaches the upstream",
-    "reauth_required": "the provider reported the recorded material stale/replaced (terminal; HTTP 400); only an explicit upstream signal produces it"
+    "reauth_required": "the provider reported the recorded material stale/replaced (recovery-available; HTTP 503 + Retry-After); the replaced material is walked to its successor under the refresh-rotation-recovery contract, so the class is retryable, never terminal"
   },
   "autheory": {
     "issuer_by_stage": {
@@ -395,7 +395,7 @@
       "expect": { "outcome": "error", "error_class": "invalid_grant" }
     },
     {
-      "id": "provider.refresh.reauth_required_is_terminal",
+      "id": "provider.refresh.reauth_required_is_recoverable",
       "operation": "refresh",
       "upstream": {
         "issuer": "https://auth.example.test",
@@ -404,7 +404,91 @@
         "token_body": { "error": "reauth_required" }
       },
       "request": { "refresh_material": "upstream-refresh-token", "upstream_client_id": "facade-client" },
-      "expect": { "outcome": "error", "error_class": "reauth_required" }
+      "expect": { "outcome": "error", "error_class": "temporarily_unavailable" }
+    },
+    {
+      "id": "provider.refresh.invalid_scope_is_per_request",
+      "operation": "refresh",
+      "upstream": {
+        "issuer": "https://auth.example.test",
+        "discovery_issuer": "https://auth.example.test",
+        "token_status": 400,
+        "token_body": { "error": "invalid_scope" }
+      },
+      "request": { "refresh_material": "upstream-refresh-token", "upstream_client_id": "facade-client" },
+      "expect": { "outcome": "error", "error_class": "upstream_error" }
+    },
+    {
+      "id": "provider.refresh.invalid_request_is_per_request",
+      "operation": "refresh",
+      "upstream": {
+        "issuer": "https://auth.example.test",
+        "discovery_issuer": "https://auth.example.test",
+        "token_status": 400,
+        "token_body": { "error": "invalid_request" }
+      },
+      "request": { "refresh_material": "upstream-refresh-token", "upstream_client_id": "facade-client" },
+      "expect": { "outcome": "error", "error_class": "upstream_error" }
+    },
+    {
+      "id": "provider.refresh.access_denied_is_per_request",
+      "operation": "refresh",
+      "upstream": {
+        "issuer": "https://auth.example.test",
+        "discovery_issuer": "https://auth.example.test",
+        "token_status": 400,
+        "token_body": { "error": "access_denied" }
+      },
+      "request": { "refresh_material": "upstream-refresh-token", "upstream_client_id": "facade-client" },
+      "expect": { "outcome": "error", "error_class": "upstream_error" }
+    },
+    {
+      "id": "provider.refresh.expired_token_is_per_request",
+      "operation": "refresh",
+      "upstream": {
+        "issuer": "https://auth.example.test",
+        "discovery_issuer": "https://auth.example.test",
+        "token_status": 400,
+        "token_body": { "error": "expired_token" }
+      },
+      "request": { "refresh_material": "upstream-refresh-token", "upstream_client_id": "facade-client" },
+      "expect": { "outcome": "error", "error_class": "upstream_error" }
+    },
+    {
+      "id": "provider.refresh.invalid_token_is_per_request",
+      "operation": "refresh",
+      "upstream": {
+        "issuer": "https://auth.example.test",
+        "discovery_issuer": "https://auth.example.test",
+        "token_status": 400,
+        "token_body": { "error": "invalid_token" }
+      },
+      "request": { "refresh_material": "upstream-refresh-token", "upstream_client_id": "facade-client" },
+      "expect": { "outcome": "error", "error_class": "upstream_error" }
+    },
+    {
+      "id": "provider.refresh.invalid_client_is_per_request",
+      "operation": "refresh",
+      "upstream": {
+        "issuer": "https://auth.example.test",
+        "discovery_issuer": "https://auth.example.test",
+        "token_status": 400,
+        "token_body": { "error": "invalid_client" }
+      },
+      "request": { "refresh_material": "upstream-refresh-token", "upstream_client_id": "facade-client" },
+      "expect": { "outcome": "error", "error_class": "upstream_error" }
+    },
+    {
+      "id": "provider.refresh.unauthorized_client_is_per_request",
+      "operation": "refresh",
+      "upstream": {
+        "issuer": "https://auth.example.test",
+        "discovery_issuer": "https://auth.example.test",
+        "token_status": 400,
+        "token_body": { "error": "unauthorized_client" }
+      },
+      "request": { "refresh_material": "upstream-refresh-token", "upstream_client_id": "facade-client" },
+      "expect": { "outcome": "error", "error_class": "upstream_error" }
     },
     {
       "id": "provider.refresh.missing_material_fails_closed",

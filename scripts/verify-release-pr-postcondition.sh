@@ -3,6 +3,8 @@
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+repo_root="$(pwd)"
+release_generated_messages="${repo_root}/scripts/lib/release-generated-messages.py"
 
 version_line_re='^[[:space:]]*([0-9]+\.[0-9]+\.[0-9]+(-rc(\.[0-9]+)?)?)[[:space:]]*(#.*)?$'
 rc_version_re='^[0-9]+\.[0-9]+\.[0-9]+-rc(\.[0-9]+)?$'
@@ -86,6 +88,11 @@ has_releasable_commits_since() {
   # Same user-facing predicate as the prerelease readiness gate:
   # git log --no-merges --format=%s <baseline>..<base_branch> |
   #   grep -Eq '^(feat|fix|perf)(\([^)]+\))?(!)?: '
+  #
+  # The baseline is the recorded manifest tag, so tagged release history cannot
+  # count. Any commit after that immutable tag is a new change and keeps the
+  # range releasable, including a generated fix-typed release or sync commit:
+  # a generated subject is never excused from publication by its shape.
   #
   # Keep the subjects in memory instead of piping directly into grep -q so
   # pipefail cannot turn a matching early grep exit into a false negative.
@@ -208,6 +215,10 @@ self_test_no_open_release_pr_channel() {
     git init -q
     git checkout -q -b "${base_branch}"
     commit_self_test_change "chore: seed release baseline" "self-test.txt" "baseline"
+    # The generated release and artifact-sync commits that produced the baseline
+    # are inside the immutable tag, so they are published history.
+    commit_self_test_change "fix(release): sync generated release artifacts" "self-test.txt" "generated-sync-in-tag"
+    commit_self_test_change "fix(${base_branch}): release 1.0.0" "self-test.txt" "generated-release-in-tag"
     git update-ref refs/tags/v1.0.0 HEAD
 
     python3 - "${manifest_path}" <<'PY'
@@ -236,7 +247,70 @@ PY
       echo "release-pr-postcondition: FAIL (self-test ${channel} no-op did not report legitimate no-op)" >&2
       return 1
     }
-    echo "release-pr-postcondition: PASS (self-test ${channel} empty release-please PR with zero user-facing commits passed)"
+    echo "release-pr-postcondition: PASS (self-test ${channel} empty release-please PR with only published history passed)"
+
+    # A generated fix-typed commit created after the immutable tag is a new
+    # post-tag change: its subject must never excuse it from publication.
+    commit_self_test_change "fix(release): sync generated release artifacts" "self-test.txt" "generated-sync-after"
+    if output="$(
+      verify_no_open_release_pr_is_legitimate_noop \
+        "${base_branch}" \
+        "${release_branch}" \
+        "${expected_shape}" \
+        "${noop_message}" \
+        "${manifest_path}" 2>&1
+    )"; then
+      printf '%s\n' "${output}" >&2
+      echo "release-pr-postcondition: FAIL (self-test ${channel} generated artifact sync after the tag was accepted as a no-op)" >&2
+      return 1
+    fi
+    grep -Fq "release-pr-postcondition: FAIL (${noop_message}; expected an open generated ${expected_shape} release-please PR ${release_branch} -> ${base_branch})" <<<"${output}" || {
+      printf '%s\n' "${output}" >&2
+      echo "release-pr-postcondition: FAIL (self-test ${channel} generated artifact sync after the tag did not preserve the fail-closed message)" >&2
+      return 1
+    }
+    echo "release-pr-postcondition: PASS (self-test ${channel} generated artifact sync after the tag failed closed)"
+
+    commit_self_test_change "fix(${base_branch}): release 1.0.1" "self-test.txt" "generated-release-after"
+    if output="$(
+      verify_no_open_release_pr_is_legitimate_noop \
+        "${base_branch}" \
+        "${release_branch}" \
+        "${expected_shape}" \
+        "${noop_message}" \
+        "${manifest_path}" 2>&1
+    )"; then
+      printf '%s\n' "${output}" >&2
+      echo "release-pr-postcondition: FAIL (self-test ${channel} generated release commit after the tag was accepted as a no-op)" >&2
+      return 1
+    fi
+    grep -Fq "release-pr-postcondition: FAIL (${noop_message}; expected an open generated ${expected_shape} release-please PR ${release_branch} -> ${base_branch})" <<<"${output}" || {
+      printf '%s\n' "${output}" >&2
+      echo "release-pr-postcondition: FAIL (self-test ${channel} generated release commit after the tag did not preserve the fail-closed message)" >&2
+      return 1
+    }
+    echo "release-pr-postcondition: PASS (self-test ${channel} generated release commit after the tag failed closed)"
+
+    # A human fix whose subject resembles a generated one must still count.
+    commit_self_test_change "fix(parser): release v2 of caching" "self-test.txt" "lookalike"
+    if output="$(
+      verify_no_open_release_pr_is_legitimate_noop \
+        "${base_branch}" \
+        "${release_branch}" \
+        "${expected_shape}" \
+        "${noop_message}" \
+        "${manifest_path}" 2>&1
+    )"; then
+      printf '%s\n' "${output}" >&2
+      echo "release-pr-postcondition: FAIL (self-test ${channel} lookalike fix was accepted as a no-op)" >&2
+      return 1
+    fi
+    grep -Fq "release-pr-postcondition: FAIL (${noop_message}; expected an open generated ${expected_shape} release-please PR ${release_branch} -> ${base_branch})" <<<"${output}" || {
+      printf '%s\n' "${output}" >&2
+      echo "release-pr-postcondition: FAIL (self-test ${channel} lookalike fix did not preserve the fail-closed message)" >&2
+      return 1
+    }
+    echo "release-pr-postcondition: PASS (self-test ${channel} lookalike fix failed closed)"
 
     commit_self_test_change "fix: self-test releasable change" "self-test.txt" "fix"
     if output="$(
@@ -292,6 +366,7 @@ case "${channel}" in
     expected_shape="RC"
     noop_message="release-please no-op is a failed RC gate"
     manifest_path=".release-please-manifest.premain.json"
+    config_path="release-please-config.premain.json"
     ;;
   stable)
     base_branch="main"
@@ -299,6 +374,7 @@ case "${channel}" in
     expected_shape="stable"
     noop_message="release-please no-op is a failed stable gate"
     manifest_path=".release-please-manifest.json"
+    config_path="release-please-config.json"
     ;;
   *)
     echo "release-pr-postcondition: FAIL (usage: $0 prerelease|stable)" >&2
@@ -380,5 +456,58 @@ case "${channel}" in
     fi
     ;;
 esac
+
+# The generated release PR title is also the release-branch commit subject
+# (pinned release-please 17.11.2 uses releasePullRequest.title.toString() as the
+# commit message). Bind both to the lane's configured pull-request-title-pattern
+# so a non-release-driving generated message cannot pass as a release gate. The
+# comparison is exact: the scope is the lane's own main/premain branch and the
+# version is the strict semver parsed from the release branch VERSION file.
+if ! expected_title="$(
+  python3 "${release_generated_messages}" render-title \
+    --config "${config_path}" \
+    --branch "${base_branch}" \
+    --version "${version}" 2>&1
+)"; then
+  echo "release-pr-postcondition: FAIL (could not render the configured release PR title for ${base_branch}: ${expected_title})" >&2
+  exit 1
+fi
+
+if ! [[ "${expected_title}" =~ ${releasable_subject_re} ]]; then
+  echo "release-pr-postcondition: FAIL (configured release PR title for ${base_branch} is not release-driving: ${expected_title})" >&2
+  exit 1
+fi
+
+if [[ "${expected_title}" != "fix(${base_branch}): "* ]]; then
+  echo "release-pr-postcondition: FAIL (configured release PR title for ${base_branch} does not carry the exact lane scope: ${expected_title})" >&2
+  exit 1
+fi
+
+if [[ "${title}" != "${expected_title}" ]]; then
+  echo "release-pr-postcondition: FAIL (generated ${base_branch} release PR #${pr_number} title ${title} != configured release-driving title ${expected_title})" >&2
+  exit 1
+fi
+
+if ! sync_message="$(python3 "${release_generated_messages}" sync-message 2>&1)"; then
+  echo "release-pr-postcondition: FAIL (could not read the generated artifact sync commit subject: ${sync_message})" >&2
+  exit 1
+fi
+
+pr_commit_headlines="$(
+  gh pr view --repo "${repository}" "${pr_number}" --json commits --jq '.commits[].messageHeadline'
+)"
+if ! grep -Fxq -- "${title}" <<<"${pr_commit_headlines}"; then
+  echo "release-pr-postcondition: FAIL (generated ${base_branch} release PR #${pr_number} has no release-branch commit subject equal to the generated title ${title})" >&2
+  exit 1
+fi
+
+while IFS= read -r headline; do
+  [[ -z "${headline}" ]] && continue
+  if [[ "${headline}" == "${title}" || "${headline}" == "${sync_message}" ]]; then
+    continue
+  fi
+  echo "release-pr-postcondition: FAIL (generated ${base_branch} release PR #${pr_number} contains an unexpected release-branch commit subject: ${headline})" >&2
+  exit 1
+done <<<"${pr_commit_headlines}"
 
 echo "release-pr-postcondition: PASS (${expected_shape} PR #${pr_number}, VERSION=${version})"

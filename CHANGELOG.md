@@ -1,5 +1,86 @@
 # Changelog
 
+## [7.3.0-rc](https://github.com/theory-cloud/AppTheory/compare/v7.1.0...v7.3.0-rc) (2026-11-13)
+
+
+### Features
+
+* **cdk:** add the FRONTED origin posture for attach-mode MCP servers ([8ce8344](https://github.com/theory-cloud/AppTheory/commit/8ce8344ef906a85321f143c15063203d512840e4))
+* **mcp:** add the FRONTED origin posture for externally fronted attach-mode servers ([5fd8128](https://github.com/theory-cloud/AppTheory/commit/5fd8128f29ada4c5b69c1ab012285c1722f950b7))
+* **mcp:** add validation-first opt-in for declined stream-less GETs ([9494eee](https://github.com/theory-cloud/AppTheory/commit/9494eeeae634ebc82338ac866939f10e0865bebf))
+* **mcpfacade:** contract-terminal refresh verdicts, lost-rotation recovery, and the exported sweep entrypoint (D3) ([3c3b5e8](https://github.com/theory-cloud/AppTheory/commit/3c3b5e89fd4a62ad4990ef24f7478084868625b3))
+* **mcpfacade:** enforce the declared front-door header under FRONTED ([654d061](https://github.com/theory-cloud/AppTheory/commit/654d06177e3c3cbb1ba07e67ee9b2cb5ff45fe7b))
+* **mcpfacade:** export the refresh sweep entrypoint ([8437f02](https://github.com/theory-cloud/AppTheory/commit/8437f02725ba302d579e3b56aeaec20819f447e8))
+* **mcpfacade:** recover a lost rotation instead of killing the family ([a2c1f10](https://github.com/theory-cloud/AppTheory/commit/a2c1f10871f208f1cf98bd00eecb5f43e3ecb84e))
+* **mcp:** opt-in validation-first ordering for declined stream-less GETs ([c519c58](https://github.com/theory-cloud/AppTheory/commit/c519c5852bfcf407700de203a8f9947cb17b377f))
+* **oauth:** make invalid_grant the only contract-terminal token verdict ([44f8028](https://github.com/theory-cloud/AppTheory/commit/44f80280a5666bb1f4f6f5318847fee755df6343))
+* **ts,py:** accept the declined-GET validation-first option as parity ([19223fc](https://github.com/theory-cloud/AppTheory/commit/19223fcf62d47e6e42918420b52f0f740cd39f68))
+
+
+### Bug Fixes
+
+* **build:** bump Go toolchain pin to 1.27.4 and tabletheory to v6.4.1 ([7fe0111](https://github.com/theory-cloud/AppTheory/commit/7fe01118787f045b3ffce13ad72cf171a6761de5))
+* **build:** bump Go toolchain pin to 1.27.4 and tabletheory to v6.4.1 ([f3cdade](https://github.com/theory-cloud/AppTheory/commit/f3cdade362fe02cd988e4f9e7755b05584980552))
+* **ci:** avoid word splitting when verifying composed gates ([94922c6](https://github.com/theory-cloud/AppTheory/commit/94922c64450c1301a90e621eb1fcd7f0ef4e71a7))
+* **ci:** bound signature proof to the event's accepted base ([b5a0a6e](https://github.com/theory-cloud/AppTheory/commit/b5a0a6ea3e290ee58a411426f2892a17d1e6c31a))
+* **ci:** compose packaging gates from deterministic builds ([5a7ee6b](https://github.com/theory-cloud/AppTheory/commit/5a7ee6b45efe2a66bcd72ec0fae017011b028e45))
+* **ci:** compose the CDK packages from the determinism passes ([b9c9945](https://github.com/theory-cloud/AppTheory/commit/b9c99451839caddca037a69212007657fc5840ef))
+* **ci:** create evidence manifests owner-only ([ed95934](https://github.com/theory-cloud/AppTheory/commit/ed9593470a481f059e71fe9e466960cafb5c8446))
+* **ci:** extract evidence registry checks below the lint threshold ([8692293](https://github.com/theory-cloud/AppTheory/commit/86922935e8be6d5d52ba9154b52cf13519505e54))
+* **ci:** include the local runner sources in the examples-local scope ([7d23f6a](https://github.com/theory-cloud/AppTheory/commit/7d23f6a877dd39f5e40dffffd30050f543f52b0d))
+* **ci:** keep forced collection free of composed evidence ([9491065](https://github.com/theory-cloud/AppTheory/commit/949106583e1229f630487f6a5efac7537abe036b))
+* **ci:** key reusable validation proof to tracked proof profiles ([b9bc674](https://github.com/theory-cloud/AppTheory/commit/b9bc6744500ddc217a8c5247bd625245b24079fb))
+* **ci:** make the CI workflow valid and narrow the examples-local scope ([95bb27b](https://github.com/theory-cloud/AppTheory/commit/95bb27bbcbe2ed30f68c37fccd1dcd2410d950bc))
+* **ci:** name a proof profile on every evidence-aware job ([74f4fa3](https://github.com/theory-cloud/AppTheory/commit/74f4fa3225be6dc7a3787c1c0387ac1d7f627fec))
+* **ci:** persist records from the actual evidence fallback ([2ef16a5](https://github.com/theory-cloud/AppTheory/commit/2ef16a5e8418ca49c1ba9f00a19ef1a737a3717e))
+* **ci:** record evidence at the final validated head ([d0a694f](https://github.com/theory-cloud/AppTheory/commit/d0a694fa5452dd425e488644d53983ddd3d1e1cd))
+* **ci:** record evidence at the final validated head ([644212d](https://github.com/theory-cloud/AppTheory/commit/644212d91e9e65b216d1be85b1cd00d9f2de9e7c))
+* **ci:** record the real default and runtime-floor validation evidence ([19c36fd](https://github.com/theory-cloud/AppTheory/commit/19c36fd3cc6267ccf479462f1e93f2723014c788))
+* **ci:** record the real rubric result and its lint blocker ([1d12c63](https://github.com/theory-cloud/AppTheory/commit/1d12c63bf8652b1e6a9c92dcedca0cd478478945))
+* **ci:** resolve produced records below the tracked evidence directory ([8191829](https://github.com/theory-cloud/AppTheory/commit/8191829af14bc860e49ed41af4fe3410be7baef1))
+* **ci:** reuse validated evidence across the release cycle ([41e5cf6](https://github.com/theory-cloud/AppTheory/commit/41e5cf6c7effc3fb34205f0f9a9f914a6713b49a))
+* **ci:** schedule validation incrementally and compose the rubric ([cc37d66](https://github.com/theory-cloud/AppTheory/commit/cc37d6652c40b41e9b00472f19e260e5a41571ba))
+* **ci:** validate releases once per input set and reuse reviewed proof ([9a0bd88](https://github.com/theory-cloud/AppTheory/commit/9a0bd88813a843a8525690584164f3ed61dc6f34))
+* **contract-tests:** correct the fixture corpus count to 335 ([c210da6](https://github.com/theory-cloud/AppTheory/commit/c210da61f8786ecae56e93cfcd9d7c5cb847547d))
+* **deps:** bump the ts-runtime group to [@aws-sdk](https://github.com/aws-sdk) 3.1164.0 ([a2f45ab](https://github.com/theory-cloud/AppTheory/commit/a2f45ab832962acd3dbe8d69ba9ace345e4616c2))
+* **mcpfacade:** describe the refresh budget's real short-lock-TTL outcome ([35be029](https://github.com/theory-cloud/AppTheory/commit/35be029df4bc4362c7e9844b2519aa4a7d2211a6))
+* **mcpfacade:** keep the family on a reauth_required refresh signal ([2625928](https://github.com/theory-cloud/AppTheory/commit/262592819b378181c851a6cb61e8ba3c52a51967))
+* **mcpfacade:** keep the front-door guard within the lint budget ([f3c8a04](https://github.com/theory-cloud/AppTheory/commit/f3c8a044692bdc5d6345b30630b82125fb7546e7))
+* **py:** anchor the front-door secret at end of string ([21f18ca](https://github.com/theory-cloud/AppTheory/commit/21f18ca88aa085210c5f1ea6d758b2c571102812))
+* **py:** sort the new facade exports and stay within the format width ([0630fb1](https://github.com/theory-cloud/AppTheory/commit/0630fb17c36bedf1248984129fcd45b6d7e07f43))
+* **release:** keep generated release automation release-driving without bypassing readiness ([d15fa0e](https://github.com/theory-cloud/AppTheory/commit/d15fa0ee9f38fba0112254e7a12f8bbe4841bf7d))
+* **release:** make generated releases release-driving and preserve promotion gates ([65620dc](https://github.com/theory-cloud/AppTheory/commit/65620dc1e02505facdd90f135a79a3476bdef00a))
+* **release:** merge premain promotion history into staging ([196fa6d](https://github.com/theory-cloud/AppTheory/commit/196fa6d50d4e7eed988931fa34e5ecd804d9ef7d))
+* **release:** merge premain promotion history into staging ([47f86c2](https://github.com/theory-cloud/AppTheory/commit/47f86c2f5359992317279473fc49ca8af11a20fa))
+* **release:** promote staging to premain (v7.3.0-rc track) ([305c9f5](https://github.com/theory-cloud/AppTheory/commit/305c9f547a748618accac7f597e88aec0df6b70b))
+* **release:** remove local tag exclusion from promotion eligibility ([5f12872](https://github.com/theory-cloud/AppTheory/commit/5f12872d27271dad1fe48f4c0dbfa211a70b1ed9))
+* **release:** restore tag-based release gate semantics without subject exemptions ([f2dda4c](https://github.com/theory-cloud/AppTheory/commit/f2dda4cd5157773b3ef6f3fef5b459386a770724))
+
+
+### Miscellaneous Chores
+
+* **release:** reset the prerelease track to the stable baseline ([2f93d53](https://github.com/theory-cloud/AppTheory/commit/2f93d53093cd7e3033fc4047ace9fbe2f610a1c6))
+
+## [7.2.0-rc](https://github.com/theory-cloud/AppTheory/compare/v7.1.0...v7.2.0-rc) (2026-11-11)
+
+
+### Features
+
+* **cdk:** add the FRONTED origin posture for attach-mode MCP servers ([8ce8344](https://github.com/theory-cloud/AppTheory/commit/8ce8344ef906a85321f143c15063203d512840e4))
+* **mcp:** add the FRONTED origin posture for externally fronted attach-mode servers ([5fd8128](https://github.com/theory-cloud/AppTheory/commit/5fd8128f29ada4c5b69c1ab012285c1722f950b7))
+* **mcp:** add validation-first opt-in for declined stream-less GETs ([9494eee](https://github.com/theory-cloud/AppTheory/commit/9494eeeae634ebc82338ac866939f10e0865bebf))
+* **mcpfacade:** enforce the declared front-door header under FRONTED ([654d061](https://github.com/theory-cloud/AppTheory/commit/654d06177e3c3cbb1ba07e67ee9b2cb5ff45fe7b))
+* **mcp:** opt-in validation-first ordering for declined stream-less GETs ([c519c58](https://github.com/theory-cloud/AppTheory/commit/c519c5852bfcf407700de203a8f9947cb17b377f))
+* **ts,py:** accept the declined-GET validation-first option as parity ([19223fc](https://github.com/theory-cloud/AppTheory/commit/19223fcf62d47e6e42918420b52f0f740cd39f68))
+
+
+### Bug Fixes
+
+* **contract-tests:** correct the fixture corpus count to 335 ([c210da6](https://github.com/theory-cloud/AppTheory/commit/c210da61f8786ecae56e93cfcd9d7c5cb847547d))
+* **mcpfacade:** keep the front-door guard within the lint budget ([f3c8a04](https://github.com/theory-cloud/AppTheory/commit/f3c8a044692bdc5d6345b30630b82125fb7546e7))
+* **py:** anchor the front-door secret at end of string ([21f18ca](https://github.com/theory-cloud/AppTheory/commit/21f18ca88aa085210c5f1ea6d758b2c571102812))
+* **py:** sort the new facade exports and stay within the format width ([0630fb1](https://github.com/theory-cloud/AppTheory/commit/0630fb17c36bedf1248984129fcd45b6d7e07f43))
+
 ## [7.1.0](https://github.com/theory-cloud/AppTheory/compare/v7.0.0...v7.1.0) (2026-11-10)
 
 

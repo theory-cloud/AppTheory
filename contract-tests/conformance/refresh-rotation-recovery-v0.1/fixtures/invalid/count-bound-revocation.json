@@ -1,0 +1,58 @@
+{
+  "contract": "theorycloud_refresh_rotation_recovery.v0.1",
+  "case_id": "count-bound-revocation",
+  "description": "Banned: the family is revoked because in-window presentations of a replaced generation exceeded the generation bound N. N is a walk hop budget and retention cap only, never a revocation predicate; count excess degrades to transient replay_budget_exhausted 503s (ADV-133-R2-1).",
+  "expected_outcome": "nonconformant",
+  "expected_violation": "R4",
+  "stage_config": {
+    "serve_window_seconds": 600,
+    "access_token_ttl_seconds": 900,
+    "refresh_due_fraction": 0.5,
+    "sweep_interval_seconds": 60,
+    "generation_bound": 4,
+    "margin": 2.0
+  },
+  "scenario": [
+    {
+      "t_offset_seconds": 0,
+      "actor": "steward-a",
+      "action": "rotate",
+      "generation": "g5",
+      "successor": "g6",
+      "minted": true,
+      "artifact_atomic": true,
+      "wire": "success"
+    },
+    {
+      "t_offset_seconds": 10,
+      "actor": "steward-b",
+      "action": "present",
+      "generation": "g5",
+      "in_window": true,
+      "wire": "success",
+      "recovery": "walk_serve"
+    },
+    {
+      "t_offset_seconds": 20,
+      "actor": "steward-c",
+      "action": "present",
+      "generation": "g5",
+      "in_window": true,
+      "wire": "success",
+      "recovery": "walk_serve"
+    },
+    {
+      "t_offset_seconds": 30,
+      "actor": "autheory",
+      "action": "revoke",
+      "reason": "count_exceeded"
+    }
+  ],
+  "expect": {
+    "family_revoked": true,
+    "recovery": "walk_serve",
+    "terminal_wire_error": "none",
+    "transient_wire": "none",
+    "receipt_emitted": true
+  }
+}

@@ -21,7 +21,7 @@ No branch may skip a leg of that cycle. `premain` only receives `staging`, `main
 | `premain` | Prerelease branch. | Human `staging` promotion PRs and generated `release-please--branches--premain` RC PRs only. |
 | `main` | Stable release branch. | Human `premain` promotion PRs and generated `release-please--branches--main` stable PRs only. |
 
-Release automation is driven by Conventional Commits. `feat:` and `fix:` entries ship; `docs:`, `test:`, `chore:`, and `refactor:` do not trigger a release by themselves. Version state must remain aligned across `VERSION`, TypeScript and CDK package manifests and lockfiles, Python metadata, and the active Release Please manifest for the release lane. Stable releases align both Release Please manifests to the stable version; prerelease branches keep `.release-please-manifest.json` on the last stable version while `.release-please-manifest.premain.json` tracks the RC version.
+Release automation is driven by Conventional Commits. `feat:` and `fix:` entries ship; `docs:`, `test:`, `chore:`, and `refactor:` do not trigger a release by themselves. Generated release automation is never `chore:`-typed: both lane configs set `pull-request-title-pattern` to `fix${scope}: release${component} ${version}`, release-please uses that rendered title as the release-branch commit subject, and the artifact sync commit is `fix(release): sync generated release artifacts`. The release predicates do not classify generated commit subjects. Promotion eligibility compares commit subjects with release-please's own conventional-commit rule over exactly the range the caller supplies: it does not consult local tag names, so a tagged commit inside an explicitly supplied promotion range is not silently removed by that verifier. The release-PR and publish no-op predicates measure from the recorded manifest tag or the immutable published tag. A human fix whose subject resembles a generated one is never exempted. A `Release-As:` footer on a prohibited subject is not an eligibility bypass. Version state must remain aligned across `VERSION`, TypeScript and CDK package manifests and lockfiles, Python metadata, and the active Release Please manifest for the release lane. Stable releases align both Release Please manifests to the stable version; prerelease branches keep `.release-please-manifest.json` on the last stable version while `.release-please-manifest.premain.json` tracks the RC version.
 
 Upgrade policy is maintained separately from the generated changelog. When a minor line changes runtime behavior, deployment defaults, dependency floors, generated-artifact expectations, or deprecation posture, update `UPGRADING.md` in the same change or release-prep PR. The changelog lists commits; `UPGRADING.md` lists consumer action and per-line compatibility notes.
 
@@ -43,6 +43,34 @@ remains required and fails closed.
 
 Skipped full-rubric and deterministic-build contexts are not release/security proof. The `Release/security gates` CI job is unconditional and branch-protection-compatible; it verifies release supply-chain wiring, release branch signature history, Release Please provenance self-tests, CI rubric enforcement, workflow invariants, and deterministic release-cycle fixtures even when the full rubric is intentionally skipped.
 
+### Generated release messages
+
+Both lane configs set `pull-request-title-pattern` to `fix${scope}: release${component} ${version}`. Pinned
+`release-please@17.11.2` uses that rendered title as the release PR title and as the release-branch commit
+message: `build/src/manifest.js` `createOrUpdatePullRequest` and `build/src/github.js` `updatePullRequest` both
+set `message = releasePullRequest.title.toString()`. The generated premain title/commit is therefore
+`fix(premain): release X.Y.Z-rc` and the generated main title/commit is `fix(main): release X.Y.Z`.
+
+`scripts/verify-release-pr-postcondition.sh` re-renders the configured title from the lane config using the
+strict semver read from the release branch `VERSION`, requires the rendered title to be release-driving with the
+exact `premain`/`main` lane scope, requires the open PR title to match it exactly, and requires every
+release-branch commit headline to be that title or the generated artifact sync subject. It does not infer
+publication or provenance from a subject's shape. A stale open release PR generated under an older policy fails
+that postcondition and must be refreshed or closed instead of merged.
+
+`scripts/verify-release-eligibility.sh` and the no-op paths in the release-PR and publish postconditions do not
+classify generated commit subjects. Eligibility evaluates exactly the range it is given and does not consult
+local tag names, so a tagged commit inside an explicitly supplied promotion range is not silently removed by
+that verifier. The release-PR no-op starts from the recorded manifest tag, and the publish no-op starts from the
+immutable published tag; generated release and sync commits inside those baselines are already published.
+`scripts/verify-release-generated-messages.sh` re-checks the config binding, exact rendering and strict semver,
+the stable release-as selection, the workflow `paths-ignore` trigger, and the Release Please tag baseline.
+
+A gate is not part of Release Please's commit parser: these predicates run after generation. A merged release PR
+does not re-trigger generation because the push that merges it changes files listed in the generation workflow's
+`paths-ignore`, and Release Please's next run uses the tag created at that merged release PR head as its baseline.
+The generated release and sync commits are ancestors of that tag.
+
 ### Release credential boundary
 
 Release Please credentials are environment-only secrets. They must never be placed in shell, npm, Node, or
@@ -63,7 +91,7 @@ Generated release PR artifact sync commits on both `release-please--branches--pr
 and no workflow-held private signing key exists. The sync workflow draft-locks the release PR, regenerates
 artifacts, proves the diff is limited to the generated release-artifact allowlist, and, when a commit is
 needed, creates exactly one GitHub GraphQL `createCommitOnBranch` commit with
-`chore(release): sync generated release artifacts` and `expectedHeadOid` set to the fetched release-branch
+`fix(release): sync generated release artifacts` and `expectedHeadOid` set to the fetched release-branch
 head. GitHub signs that commit server-side, the workflow fetches the resulting head, and the release branch
 signature gate must accept it as GitHub verified-valid before required CI is dispatched or the release PR is
 marked ready. The workflow does not `git push` a CI-created artifact commit, import signing material, set git
@@ -105,6 +133,7 @@ evidence, and do not claim CI can sign generated sync commits by holding private
 - Do not retarget the PR from another branch.
 - CI must run the release train promotion gate and branch version sync checks.
 - The prerelease Release Please workflow must create or update the release-candidate PR. A Release Please no-op is a failed RC gate; annotated `VERSION` markers such as `# x-release-please-version` are ignored only after the leading RC semver is validated.
+- The generated RC PR title and release-branch commit subject must be `fix(premain): release X.Y.Z-rc`; the postcondition requires the exact lane scope and a release-driving generated message, and rejects a stale `chore`-titled PR.
 - The release-candidate PR remains draft-locked while generated CDK artifacts are synchronized and required checks run.
 - When the release includes a change to `release-please-config*.json` `extra-files` entries, watch the first generated
   `release-please--branches--premain` RC PR deliberately. Do not claim proof from static config alone: verify the
@@ -122,10 +151,11 @@ evidence, and do not claim CI can sign generated sync commits by holding private
 - Open a PR from `premain` into `main`.
 - CI must verify the promotion is `premain` → `main` and that release manifests are synchronized.
 - The stable Release Please workflow must create or update the stable release PR. A Release Please no-op is a failed stable gate.
+- The generated stable PR title and release-branch commit subject must be `fix(main): release X.Y.Z`; the postcondition requires the exact lane scope and a release-driving generated message.
 - The stable release PR must reset `.release-please-manifest.premain.json` to the stable version and include generated CDK artifact sync before it becomes ready.
 - Generated release-artifact sync commits are created automatically by the shared sync script as GitHub-verified
   product-automation commits. Do not add CI-held signing secrets; the workflow token creates the server-side signed
-  `chore(release): sync generated release artifacts` commit through `createCommitOnBranch`, then verifies the new
+  `fix(release): sync generated release artifacts` commit through `createCommitOnBranch`, then verifies the new
   range before the PR can become ready.
 - Merge the stable release PR only after required checks pass.
 - The stable publisher creates immutable assets for the `vX.Y.Z` GitHub Release.
@@ -245,7 +275,10 @@ When the release lane is blocked, recover by preserving evidence and re-entering
    bash scripts/verify-go-module-tags.sh --self-test
    bash scripts/verify-release-workflows.sh
    bash scripts/verify-ci-rubric-enforced.sh
-   bash scripts/verify-release-branch-signatures.sh
+   # Manual audits pass the exact new-commit range. Without --range the gate
+   # bounds the scan by the current GitHub event's own base; with no event it
+   # fails closed rather than sweeping whole ref histories.
+   bash scripts/verify-release-branch-signatures.sh --range "<accepted-base>..<candidate-head>"
    make test
    ```
 
@@ -270,7 +303,7 @@ git verify-commit HEAD
 
 The script starts from a clean checkout, fetches the release PR branch, regenerates only release artifact files,
 stages only `.release-please-manifest.premain.json`, `cdk/.jsii`, `cdk/lib`, `cdk-go/go.mod`, `cdk-go/go.sum`, and
-`cdk-go/apptheorycdk`, then runs plain `git commit -m "chore(release): sync generated release artifacts"`. It does not set
+`cdk-go/apptheorycdk`, then runs plain `git commit -m "fix(release): sync generated release artifacts"`. It does not set
 `user.signingkey`, replace the signing program, import keys, or add passphrases. If the normal local signing
 configuration does not produce a locally trusted-good signature, the script fails before pushing and reports the
 signature status.

@@ -419,6 +419,12 @@
       "expect": { "rotate": "ok", "successor_get": "ok", "successor_version": 1, "successor_generation": 2, "successor_family_matches": true, "presented_get": "ok", "presented_version": 3, "presented_status": "active", "presented_grace_set": true, "presented_lock_cleared": true }
     },
     {
+      "id": "store.route_refresh_broker.family_rotation_intent_round_trips",
+      "store": "route_refresh_broker",
+      "scenario": "family_rotation_intent",
+      "expect": { "intent_cas": "ok", "intent_persisted": true, "intent_get": "ok", "rotate": "ok", "presented_unconfirmed_cleared": true }
+    },
+    {
       "id": "store.route_refresh_broker.family_rotate_requires_the_lock_owner",
       "store": "route_refresh_broker",
       "scenario": "family_rotate_wrong_owner",

@@ -100,7 +100,7 @@ require_job_without_if() {
 }
 
 ci=".github/workflows/ci.yml"
-release_please_draft_guard="if: github.event_name != 'pull_request' || github.event.pull_request.draft == false || (github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')"
+product_guard="if: (github.event_name != 'push' || !contains(github.event.head_commit.message, 'release-please--branches--')) && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')) && !(github.event_name == 'workflow_dispatch' && inputs.release_pr_number != '')"
 
 require_contains "${ci}" "  release-security-gates:" \
   "CI must define non-skipped release/security gates independent of the full rubric"
@@ -124,12 +124,15 @@ require_line "${ci}" "  cdk-go-drift:" \
   "CI must define the dedicated cdk-go generated binding drift job"
 require_contains "${ci}" "name: CDK Go binding drift" \
   "CI must keep the cdk-go drift check name stable for branch protection visibility"
-require_job_contains "${ci}" "cdk-go-drift" "${release_please_draft_guard}" \
-  "cdk-go drift must use the standard draft release-please guard and otherwise run"
-require_job_contains "${ci}" "cdk-go-drift" "run: scripts/verify-cdk-go-drift.sh" \
-  "cdk-go drift job must execute the generated binding drift verifier"
+require_job_contains "${ci}" "cdk-go-drift" "${product_guard}" \
+  "cdk-go drift must skip only generated release work and otherwise run the evidenced gate"
+require_job_contains "${ci}" "cdk-go-drift" "run: bash scripts/evidence/verify-or-execute.sh --gate cdk-go-drift" \
+  "cdk-go drift job must verify the gate or execute its approved command"
 require_contains "${ci}" "  rubric:" "CI must define the full rubric job"
-require_contains "${ci}" "run: make rubric" "CI rubric job must run make rubric"
+require_job_contains "${ci}" "rubric" "run: bash scripts/evidence/verify-or-execute.sh --gate rubric" \
+  "full rubric job must reuse verified evidence or execute the approved rubric command"
+require_contains "scripts/evidence/validation-gates.json" '"argv": ["make", "rubric"]' \
+  "the tracked rubric gate must keep the approved make rubric command"
 require_contains "${ci}" "run_full_rubric:" \
   "manual CI dispatch must expose an explicit full-rubric toggle"
 require_contains "${ci}" "default: true" \
@@ -137,6 +140,10 @@ require_contains "${ci}" "default: true" \
 require_contains "${ci}" "  builds:" "CI must define the standalone deterministic-build job"
 require_contains "${ci}" "name: Verify deterministic builds" \
   "CI must keep the deterministic-build job name stable for branch protection visibility"
+require_job_contains "${ci}" "builds" "run: bash scripts/evidence/verify-or-execute.sh --gate deterministic-builds" \
+  "deterministic-build job must reuse verified evidence or execute the approved build command"
+require_contains "scripts/evidence/validation-gates.json" '"argv": ["bash", "scripts/verify-builds.sh"]' \
+  "the tracked deterministic-build gate must keep the approved verify-builds command"
 
 # Operator ruling (2026-09-28): the rubric is staging-only — the staging ruleset
 # requires it with strict_required_status_checks_policy: true, so the merged
@@ -157,6 +164,7 @@ require_contains "${ci}" "name: Verify deterministic builds" \
 # continuation-line clause broadened the rubric while a grep still passed), so
 # no line-level condition matching is done here.
 bash scripts/verify-ci-trigger-parity.sh
+bash scripts/verify-ci-evidence-wiring.sh
 
 require_job_contains "${ci}" "rubric" "uses: actions/upload-artifact@" \
   "full rubric must publish the GovTheory evidence report as a retrievable artifact"
@@ -166,6 +174,18 @@ require_job_contains "${ci}" "rubric" "if: always()" \
   "GovTheory evidence artifact must upload even when the rubric fails"
 require_contains "scripts/sync-release-pr-generated.sh" "--raw-field run_full_rubric=false" \
   "automated generated release PR CI dispatch must opt out of the full rubric"
+require_contains "scripts/sync-release-pr-generated.sh" "Release delta validation" \
+  "generated release PR required checks must include the release delta smoke"
+require_contains "scripts/sync-release-pr-generated.sh" "--finalize-only" \
+  "generated release PR recovery must expose a finalize-only path"
+for retired_check in \
+  "Go (test + vet)" \
+  "TypeScript (npm pack)" \
+  "Python (build wheel + sdist)" \
+  "Contract tests (fixtures)"; do
+  require_not_contains "scripts/sync-release-pr-generated.sh" "${retired_check}" \
+    "generated release PR required checks must not wait on product jobs that skip the release-only transformation"
+done
 require_not_contains "scripts/sync-release-pr-generated.sh" "Rubric (full gate set)" \
   "generated release PR required checks must exclude the full rubric"
 require_not_contains "scripts/sync-release-pr-generated.sh" "Verify deterministic builds" \

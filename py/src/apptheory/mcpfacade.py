@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import hmac
 import ipaddress
 import json as jsonlib
 import re
@@ -29,6 +30,7 @@ from urllib.parse import quote_plus
 from apptheory.app import App, Handler, RouteGuard, SecureApp, _resolve, create_app
 from apptheory.cloudfront import origin_url
 from apptheory.context import Context
+from apptheory.errors import AppTheoryError
 from apptheory.mcproutes import (
     CONTRACT_VERSION,
     ISSUER_MODE_FAMILY,
@@ -48,7 +50,6 @@ from apptheory.mcproutes import (
 )
 from apptheory.oauth import (
     ERROR_INVALID_GRANT,
-    ERROR_REAUTH_REQUIRED,
     ERROR_TEMPORARILY_UNAVAILABLE,
     ERROR_UPSTREAM,
     AuthorizationRequest,
@@ -111,6 +112,38 @@ URL_MODE_REQUEST_HOST = "request_host"
 
 # TRANSPORT_POSTURES is the closed transport-posture vocabulary.
 TRANSPORT_POSTURES: tuple[str, ...] = ("iam", "jwt", "runtime-bearer", "none-public")
+
+# ORIGIN_REACHABILITIES is the closed direct-origin posture vocabulary. It
+# mirrors the CDK construct's AppTheoryMcpOriginReachability decision, so one
+# application-owned constant can feed both the construct prop and this config.
+# Only "fronted" changes runtime behavior: "disabled" and "locked" are enforced
+# at the edge, where the construct proves them, and are recorded here so the
+# runtime can refuse a contradictory front-door declaration.
+ORIGIN_REACHABILITIES: tuple[str, ...] = ("disabled", "locked", "fronted")
+
+
+@dataclass(slots=True)
+class FrontDoorVerification:
+    """The app-owned front-door header verified under ``origin_reachability="fronted"``.
+
+    The front door (for example an application-owned CloudFront distribution
+    whose origin is the execute-api hostname) injects ``header_name``:
+    ``secret_value`` on every origin request. Three copies of that value must
+    come from one application-owned constant — the CDK construct prop (digest
+    only), the distribution's origin custom-header configuration, and this
+    config — because the runtime shares routes with the construct, never
+    configuration environment variables.
+    """
+
+    # ``header_name`` is the origin request header the front door injects. 1 to
+    # 64 characters of ``[A-Za-z0-9-]``, and never a request header that rewrites
+    # the origin contract.
+    header_name: str
+    # ``secret_value`` is the literal header value. 32 to 128 characters of
+    # ``[A-Za-z0-9._~-]``. It is compared in constant time on every request and
+    # never appears in a response.
+    secret_value: str
+
 
 # METADATA_VARY_HEADER is the exact Vary header advertised by every facade
 # metadata response, matching the Go and TypeScript runtimes.
@@ -203,6 +236,23 @@ MIN_REFRESH_REUSE_RATE_CEILING = 9
 # MAX_REFRESH_REUSE_RATE_CEILING caps the configured budget so no deployment can
 # turn the throttle into an unbounded access-token harvest path.
 MAX_REFRESH_REUSE_RATE_CEILING = 120
+
+# DEFAULT_REFRESH_BUDGET_SECONDS is the upstream refresh-call budget a policy
+# that does not state one selects. It is the hardened upstream HTTP deadline the
+# adapter already used, so an unchanged configuration keeps exactly that bound.
+DEFAULT_REFRESH_BUDGET_SECONDS = 10
+
+# MIN_REFRESH_BUDGET_SECONDS is the shortest accepted upstream refresh budget.
+MIN_REFRESH_BUDGET_SECONDS = 1
+
+# REFRESH_BUDGET_LOCK_MARGIN_SECONDS is the headroom the budget must leave inside
+# the broker lock TTL so the winner can still commit its rotation before the lock
+# it holds expires.
+REFRESH_BUDGET_LOCK_MARGIN_SECONDS = 3
+
+# MAX_REFRESH_BUDGET_SECONDS is the longest accepted upstream refresh budget: the
+# reference broker lock TTL (15 s) less the commit margin.
+MAX_REFRESH_BUDGET_SECONDS = 15 - REFRESH_BUDGET_LOCK_MARGIN_SECONDS
 
 # REFRESH_REUSE_RATE_WINDOW_SECONDS is the fixed window of the per-family reuse
 # budget.
@@ -390,11 +440,18 @@ class RouteRefreshPolicy:
     lie in ``[MIN_REFRESH_REUSE_RATE_CEILING,
     MAX_REFRESH_REUSE_RATE_CEILING]``; no refresh path uses it now that the
     beyond-grace serve was removed.
+
+    ``refresh_budget_seconds`` is the encoded time budget of one upstream
+    refresh call. ``None`` or 0 selects ``DEFAULT_REFRESH_BUDGET_SECONDS``; it
+    must lie in ``[MIN_REFRESH_BUDGET_SECONDS, MAX_REFRESH_BUDGET_SECONDS]``,
+    where the ceiling keeps the budget inside the broker lock TTL it has to
+    outlive. It is a configuration field, never an environment variable.
     """
 
     handle_ttl_seconds: int
     reuse_rate_ceiling: int
     grace_window_seconds: int | None = None
+    refresh_budget_seconds: int | None = None
 
 
 # RouteRefreshEventClass is the closed class vocabulary of the route refresh
@@ -446,6 +503,14 @@ ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE = "family_state_unavailable"
 # never treated as theft.
 ROUTE_REFRESH_REASON_STALE_PREDECESSOR = "stale_predecessor"
 # A family whose live head aged out, leaving no member that can rotate.
+# A presentation resolved by the post-timeout lineage check: the family's live head
+# had already moved past the presented record, so the head was rotated for the
+# client and the stale material was never presented again.
+ROUTE_REFRESH_REASON_LINEAGE_VERIFIED = "lineage_verified"
+# An upstream contract-terminal verdict that is still ambiguous because a rotation
+# attempt of the same record is unconfirmed inside the ambiguity horizon. The
+# family is kept and the client is told to retry.
+ROUTE_REFRESH_REASON_RECOVERY_PENDING = "recovery_pending"
 ROUTE_REFRESH_REASON_FAMILY_HEAD_ABSENT = "family_head_absent"
 # A family-less pre-policy record migrated in code onto a fresh family.
 ROUTE_REFRESH_REASON_LEGACY_LINEAGE_ADOPTED = "legacy_lineage_adopted"
@@ -569,6 +634,19 @@ class FacadeConfig:
     root_authorization_server: RootDiscoveryConfig | None = None
     transport_posture: str = "iam"
     require_bearer_token: RequireBearerTokenOptions | None = None
+    # ``origin_reachability`` records the direct-origin posture the CDK construct
+    # declared, so one application-owned constant can feed both surfaces. An
+    # empty value leaves the posture unrecorded; ``disabled`` and ``locked`` are
+    # edge-enforced and add no runtime check. ``fronted`` requires
+    # ``front_door_verification`` and refuses every derived route whose
+    # front-door header is absent or wrong.
+    origin_reachability: str = ""
+    # ``front_door_verification`` is the app-owned front-door header this runtime
+    # verifies on every derived route (transport and OAuth facade paths) under
+    # ``origin_reachability="fronted"``. Registration fails closed when fronted
+    # is declared without it, and it is rejected under every other posture: an
+    # undeclared or unenforced front door would be a silent no-op.
+    front_door_verification: FrontDoorVerification | None = None
     # ``provider`` anchors the framework-owned front channel (DESIGN section 8).
     # When it is set, AppTheory owns ``/authorize``, the stage-global upstream
     # callback, and the ``/token`` authorization_code grant, and the rest of the
@@ -716,6 +794,8 @@ class _NormalizedConfig:
     root_discovery_path: str
     transport_posture: str
     require_bearer_token: RequireBearerTokenOptions | None
+    origin_reachability: str = ""
+    front_door_guard: RouteGuard | None = None
     front_channel: _FrontChannelConfig | None = None
     refusal_hook: Callable[[RefusalEvent], None] | None = None
 
@@ -803,9 +883,14 @@ def _normalize_config(config: FacadeConfig | None) -> _NormalizedConfig:
     if mcp_handler is None:
         raise ValueError(f"{_ERROR_PREFIX} MCP handler is required")
     transport_posture = _normalize_transport_posture(config.transport_posture, config.require_bearer_token)
+    origin_reachability, front_door_guard = _normalize_origin_reachability(
+        config.origin_reachability, config.front_door_verification
+    )
     normalized = _normalize_derived_config(config, mcp_handler)
     normalized.transport_posture = transport_posture
     normalized.require_bearer_token = config.require_bearer_token
+    normalized.origin_reachability = origin_reachability
+    normalized.front_door_guard = front_door_guard
     normalized.callback_handler = config.callback_handler
     normalized.front_channel = _normalize_front_channel(config)
     _validate_posture_surface_config(
@@ -944,7 +1029,12 @@ def _route_refresh_policy_declared(policy: RouteRefreshPolicy | None) -> bool:
     exactly as Go's zero-value struct is."""
     if policy is None:
         return False
-    return bool(policy.handle_ttl_seconds or policy.grace_window_seconds or policy.reuse_rate_ceiling)
+    return bool(
+        policy.handle_ttl_seconds
+        or policy.grace_window_seconds
+        or policy.reuse_rate_ceiling
+        or policy.refresh_budget_seconds
+    )
 
 
 def _policy_setting_is_int(value: Any) -> bool:
@@ -983,10 +1073,21 @@ def _normalize_route_refresh_policy(policy: RouteRefreshPolicy | None) -> RouteR
             f"{_POLICY_ERROR_PREFIX} route refresh policy reuse rate ceiling must be within "
             f"[{MIN_REFRESH_REUSE_RATE_CEILING}, {MAX_REFRESH_REUSE_RATE_CEILING}] per family per hour"
         )
+    budget = policy.refresh_budget_seconds
+    if budget is None or budget == 0:
+        budget = DEFAULT_REFRESH_BUDGET_SECONDS
+    elif (
+        not _policy_setting_is_int(budget) or budget < MIN_REFRESH_BUDGET_SECONDS or budget > MAX_REFRESH_BUDGET_SECONDS
+    ):
+        raise ValueError(
+            f"{_POLICY_ERROR_PREFIX} route refresh policy refresh budget must be within "
+            f"[{MIN_REFRESH_BUDGET_SECONDS}s, {MAX_REFRESH_BUDGET_SECONDS}s]"
+        )
     return RouteRefreshPolicy(
         handle_ttl_seconds=ttl,
         reuse_rate_ceiling=ceiling,
         grace_window_seconds=grace,
+        refresh_budget_seconds=budget,
     )
 
 
@@ -1172,6 +1273,102 @@ def _normalize_transport_posture(posture: str | None, require_bearer_token: Requ
             raise ValueError(f"{_ERROR_PREFIX} TransportPosture none-public cannot be combined with RequireBearerToken")
         raise ValueError(f"{_ERROR_PREFIX} RequireBearerToken is only valid with TransportPosture runtime-bearer")
     return resolved
+
+
+def _normalize_origin_reachability(
+    posture: str | None, verification: FrontDoorVerification | None
+) -> tuple[str, RouteGuard | None]:
+    """Resolves the declared origin posture and front-door verification into a guard.
+
+    An empty posture stays valid (an application that does not share the
+    construct's posture record keeps its current behavior), but ``fronted``
+    without the verification config fails registration: a declared front door
+    the runtime does not enforce would be a silent no-op.
+    """
+    resolved = posture or ""
+    if resolved != "":
+        if resolved not in ORIGIN_REACHABILITIES:
+            raise ValueError(f"{_ERROR_PREFIX} OriginReachability must be disabled, locked, or fronted")
+        if resolved != "fronted":
+            if verification is not None:
+                raise ValueError(f"{_ERROR_PREFIX} FrontDoorVerification is only valid with OriginReachability fronted")
+            return resolved, None
+        if verification is None:
+            raise ValueError(f"{_ERROR_PREFIX} OriginReachability fronted requires FrontDoorVerification")
+        return resolved, _front_door_guard(verification)
+    if verification is not None:
+        raise ValueError(f"{_ERROR_PREFIX} FrontDoorVerification is only valid with OriginReachability fronted")
+    return "", None
+
+
+_FRONT_DOOR_HEADER_NAME = re.compile(r"^[A-Za-z0-9-]{1,64}$")
+_FRONT_DOOR_SECRET = re.compile(r"^[A-Za-z0-9._~-]{32,128}\Z")
+
+_RESERVED_FRONT_DOOR_HEADERS = frozenset(
+    {
+        "authorization",
+        "connection",
+        "content-length",
+        "cookie",
+        "host",
+        "transfer-encoding",
+        "www-authenticate",
+        "x-forwarded-for",
+    }
+)
+
+
+def _front_door_guard(verification: FrontDoorVerification) -> RouteGuard:
+    """Validates the front-door declaration and returns its fail-closed guard."""
+    header_name = str(verification.header_name or "").strip().lower()
+    if not _FRONT_DOOR_HEADER_NAME.match(header_name):
+        raise ValueError(
+            f"{_ERROR_PREFIX} FrontDoorVerification header name must be 1 to 64 characters of [A-Za-z0-9-]"
+        )
+    if header_name in _RESERVED_FRONT_DOOR_HEADERS or header_name.startswith(("x-amz-", "x-amzn-", "cloudfront-")):
+        raise ValueError(
+            f"{_ERROR_PREFIX} FrontDoorVerification header name must be a request header the front door can set"
+        )
+    secret_value = str(verification.secret_value or "")
+    if not _FRONT_DOOR_SECRET.match(secret_value):
+        raise ValueError(
+            f"{_ERROR_PREFIX} FrontDoorVerification secret value must be 32 to 128 characters of [A-Za-z0-9._~-]"
+        )
+
+    def guard(ctx: Context) -> Response | None:
+        presented = _first_header_value(ctx.request.headers, header_name)
+        if not hmac.compare_digest(presented.encode("utf-8"), secret_value.encode("utf-8")):
+            raise AppTheoryError("app.forbidden", "forbidden", status_code=403)
+        return None
+
+    return guard
+
+
+def _first_header_value(headers: Any, name: str) -> str:
+    if not headers:
+        return ""
+    key = name.strip().lower()
+    for raw_key, values in headers.items():
+        if str(raw_key).strip().lower() != key:
+            continue
+        return str((values or [""])[0])
+    return ""
+
+
+def _compose_route_guards(first: RouteGuard | None, second: RouteGuard | None) -> RouteGuard | None:
+    """Composes two pre-middleware guards: the first refusal wins."""
+    if first is None:
+        return second
+    if second is None:
+        return first
+
+    def guard(ctx: Context) -> Response | None:
+        denied = _resolve(first(ctx))
+        if denied is not None:
+            return denied
+        return _resolve(second(ctx))
+
+    return guard
 
 
 def _build_inventory(config: _NormalizedConfig) -> RouteInventory:
@@ -1422,6 +1619,13 @@ def _build_registrations(config: _NormalizedConfig, inventory: RouteInventory) -
         )
 
     _validate_route_registrations(registrations)
+    if config.front_door_guard is not None:
+        # The front-door check covers every derived route in the construct's
+        # inventory (transport and OAuth facade), and it runs before the
+        # transport credential guard: a request that did not arrive through the
+        # declared front door is refused before any other admission work.
+        for registration in registrations:
+            registration.guard = _compose_route_guards(config.front_door_guard, registration.guard)
     return registrations
 
 
@@ -2675,8 +2879,25 @@ def _handle_refresh_token_grant(  # noqa: C901 - the validation order is the sec
         # already been rotated (an upstream that detects reuse would otherwise
         # revoke the grant on ordinary client behaviour).
         stale = record.grace_expires_at is not None
+        lineage_verified = False
         target = record
-        if stale:
+        # R2 post-timeout lineage-verify. A record that carries an unconfirmed
+        # rotation attempt may already have had its upstream material consumed by
+        # the attempt whose response never arrived. Before presenting anything,
+        # verify the family's lineage: if the live head has moved on, the successor
+        # already exists and the stale material is never presented again — the head
+        # is rotated for the client instead.
+        if not stale and record.rotation_unconfirmed_at is not None:
+            head, failure = _refresh_family_head(config, ctx, record)
+            if failure is not None:
+                return failure
+            if head is None:  # pragma: no cover - _refresh_family_head pairs one with the other
+                return _facade_temporarily_unavailable_page()
+            if head.handle_hash != record.handle_hash:
+                target = head
+                stale = True
+                lineage_verified = True
+        if stale and not lineage_verified:
             head, failure = _refresh_family_head(config, ctx, record)
             if failure is not None:
                 return failure
@@ -2699,7 +2920,7 @@ def _handle_refresh_token_grant(  # noqa: C901 - the validation order is the sec
         event.at = ctx.now()
         _emit_route_refresh(front, event)
         if stale:
-            return _rotate_stale_predecessor(config, ctx, record, locked)
+            return _rotate_stale_predecessor(config, ctx, record, locked, lineage_verified)
         return _rotate_refresh_grant(config, ctx, target, locked)
 
 
@@ -2938,15 +3159,19 @@ def _perform_refresh_rotation(
     front = config.front_channel
     if front is None:
         raise ValueError(f"{_ERROR_PREFIX} front channel is not configured")
+    # The rotation intent is persisted before any upstream material is presented,
+    # so a process that loses the answer leaves evidence a later attempt can verify
+    # lineage against. A failed write releases the lock and answers transiently
+    # without calling the upstream.
+    attempted, intent_failure = _take_rotation_intent(front, ctx, presented, locked)
+    if intent_failure is not None:
+        return None, intent_failure
+    if attempted is not None:
+        locked = attempted
     # The ONE upstream refresh call of this rotation is made under the lock, with
-    # the client that owns the recorded material.
+    # the client that owns the recorded material, bounded by the encoded budget.
     try:
-        upstream = front.provider.refresh(
-            RefreshRequest(
-                refresh_material=locked.encrypted_upstream_refresh_token,
-                upstream_client_id=locked.upstream_client_id,
-            )
-        )
+        upstream = _refresh_upstream(front, locked)
     except Exception as err:  # noqa: BLE001 - mapped and unwound by _failed_refresh_grant
         return None, _failed_refresh_grant(config, ctx, presented, locked, err)
     handle = _new_opaque_token()
@@ -2994,9 +3219,11 @@ def _perform_refresh_rotation(
         _emit_state_failure(front, ctx, presented, ROUTE_REFRESH_REASON_LEGACY_LINEAGE)
         return None, _facade_error_page(400, "invalid_grant")
     except (BrokerFamilyStateUnavailableError, BrokerFamilyMismatchError):
+        _release_refresh_lock(front, presented, locked)
         _emit_state_failure(front, ctx, presented, ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE)
         return None, _facade_temporarily_unavailable_page()
     except Exception:  # noqa: BLE001 - a rotation that did not land is the retryable class
+        _release_refresh_lock(front, presented, locked)
         _emit_state_failure(front, ctx, presented, ROUTE_REFRESH_REASON_REWRITE_FAILURE)
         return None, _facade_temporarily_unavailable_page()
     event = _event_from_record(presented)
@@ -3051,6 +3278,7 @@ def _rotate_stale_predecessor(
     ctx: Context,
     presented: RouteRefreshBrokerRecord,
     locked: RouteRefreshBrokerRecord,
+    lineage_verified: bool = False,
 ) -> Response:
     """Serves a rotated-away handle whose grace window has closed. It rotates the
     family's live head -- never the predecessor, whose recorded material the
@@ -3070,7 +3298,7 @@ def _rotate_stale_predecessor(
     _rearm_stale_predecessor(front, presented, rotation)
     event = _event_from_record(presented)
     event.event_class = ROUTE_REFRESH_EVENT_REUSE
-    event.reason = ROUTE_REFRESH_REASON_STALE_PREDECESSOR
+    event.reason = ROUTE_REFRESH_REASON_LINEAGE_VERIFIED if lineage_verified else ROUTE_REFRESH_REASON_STALE_PREDECESSOR
     event.outcome = ROUTE_REFRESH_OUTCOME_ROTATED_FROM_HEAD
     event.successor_handle_hash = rotation.successor.handle_hash
     event.family_hash = rotation.successor.family_hash
@@ -3126,6 +3354,147 @@ def _refresh_family_head(
     except Exception:  # noqa: BLE001 - a store that cannot answer is the retryable class
         _emit_state_failure(front, ctx, presented, ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE)
         return None, _facade_temporarily_unavailable_page()
+    head = _live_family_head(members)
+    if head is None:
+        event = _event_from_record(presented)
+        event.event_class = ROUTE_REFRESH_EVENT_REUSE
+        event.reason = ROUTE_REFRESH_REASON_FAMILY_HEAD_ABSENT
+        event.error_code = "invalid_grant"
+        event.at = ctx.now()
+        _emit_route_refresh(front, event)
+        return None, _facade_error_page(400, "invalid_grant")
+    return head, None
+
+
+# What one upstream invalid_grant is evidence about, from the family's live head.
+_TERMINAL_REFRESH_UNVERIFIED = "unverified"
+_TERMINAL_REFRESH_SUPERSEDED = "superseded"
+_TERMINAL_REFRESH_LIVE_HEAD = "live_head"
+
+
+def _failed_terminal_refresh_grant(
+    config: _NormalizedConfig,
+    ctx: Context,
+    presented: RouteRefreshBrokerRecord,
+    locked: RouteRefreshBrokerRecord,
+    error_class: str,
+) -> Response:
+    """Renders the one upstream verdict class that may be family-terminal, and
+    only on corroborated evidence: the verdict is about the family's current live
+    head and no rotation attempt of that record is unconfirmed inside the facade's
+    ambiguity horizon. Every other shape stays transient — an unconfirmed attempt
+    (a timeout, a lost response, the 16:00Z class), a verdict about superseded
+    material, or a family the facade cannot read. Latency, a lost response, an
+    informed serve-off state, and client naivety must never kill a family
+    (contract R1/R5/R7).
+    """
+    front = config.front_channel
+    if front is None:
+        raise ValueError(f"{_ERROR_PREFIX} front channel is not configured")
+    # The ambiguity check reads the marker from ``presented``, the copy read before
+    # the lock and before this attempt's intent was written, so the marker just
+    # persisted for this attempt is deliberately invisible here. That is correct
+    # only because the attempt in hand carries the upstream's own definitive
+    # answer; the marker exists to make later attempts, which read it back from the
+    # store, cautious.
+    if _refresh_verdict_ambiguous(front, presented, ctx.now()):
+        _release_refresh_lock(front, presented, locked)
+        event = _event_from_record(presented)
+        event.event_class = ROUTE_REFRESH_EVENT_STATE_FAILURE
+        event.reason = ROUTE_REFRESH_REASON_RECOVERY_PENDING
+        event.upstream_class = error_class
+        event.error_code = "temporarily_unavailable"
+        event.at = ctx.now()
+        _emit_route_refresh(front, event)
+        return _facade_temporarily_unavailable_page()
+    evidence = _terminal_refresh_evidence(front, presented)
+    if evidence == _TERMINAL_REFRESH_SUPERSEDED:
+        if presented.status == STATUS_REVOKED:
+            # Already tombstoned: every presentation is the same terminal answer and
+            # no second revocation is emitted.
+            return _facade_error_page(400, "invalid_grant")
+        _release_refresh_lock(front, presented, locked)
+        event = _event_from_record(presented)
+        event.event_class = ROUTE_REFRESH_EVENT_STATE_FAILURE
+        event.reason = ROUTE_REFRESH_REASON_LINEAGE_VERIFIED
+        event.upstream_class = error_class
+        event.error_code = "temporarily_unavailable"
+        event.at = ctx.now()
+        _emit_route_refresh(front, event)
+        return _facade_temporarily_unavailable_page()
+    if evidence != _TERMINAL_REFRESH_LIVE_HEAD:
+        _release_refresh_lock(front, presented, locked)
+        _emit_state_failure(front, ctx, presented, ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE, error_class)
+        return _facade_temporarily_unavailable_page()
+    if not _revoke_family_for_record(front, presented):
+        # The grant is dead upstream but could not be revoked here, so the client is
+        # not told the handle is invalid while it is still live.
+        _emit_state_failure(front, ctx, presented, ROUTE_REFRESH_REASON_STORE_FAILURE, error_class)
+        return _facade_temporarily_unavailable_page()
+    event = _event_from_record(presented)
+    event.event_class = ROUTE_REFRESH_EVENT_UPSTREAM_REAUTH_REQUIRED
+    event.reason = ROUTE_REFRESH_REASON_UPSTREAM_REJECTED
+    event.upstream_class = error_class
+    event.error_code = "invalid_grant"
+    event.status_to = STATUS_REVOKED
+    event.at = ctx.now()
+    _emit_route_refresh(front, event)
+    return _facade_error_page(400, "invalid_grant")
+
+
+def _refresh_verdict_ambiguous(
+    front: _FrontChannelConfig,
+    record: RouteRefreshBrokerRecord,
+    now: datetime,
+) -> bool:
+    """Reports whether the record carries an unconfirmed rotation attempt still
+    inside the facade's ambiguity horizon. The horizon is the configured grace
+    window: the facade's own recovery-attempt window, in which the upstream's walk
+    can still serve replaced material and an invalid_grant cannot be told apart
+    from a lost response. The marker's earliest instant is never moved forward, so
+    retries cannot extend the horizon.
+    """
+    marker = record.rotation_unconfirmed_at
+    if marker is None:
+        return False
+    horizon = timedelta(seconds=front.policy.grace_window_seconds or 0)
+    return now <= marker + horizon
+
+
+def _terminal_refresh_evidence(
+    front: _FrontChannelConfig,
+    presented: RouteRefreshBrokerRecord,
+) -> str:
+    """Classifies what an upstream verdict about the presented material is
+    evidence of, from the family's live head. A family-less record cannot be
+    family-revoked; it is treated as its own live head so the caller's revocation
+    fails closed on the legacy path instead of revoking something.
+    """
+    if presented.family_hash == "":
+        return _TERMINAL_REFRESH_LIVE_HEAD
+    list_family = getattr(front.stores.route_refresh_broker, "list_family", None)
+    if not callable(list_family):
+        return _TERMINAL_REFRESH_UNVERIFIED
+    try:
+        members = list(cast("Any", list_family)(presented.family_hash))
+    except Exception:  # noqa: BLE001 - an unreadable family draws no terminal conclusion
+        return _TERMINAL_REFRESH_UNVERIFIED
+    head = _live_family_head(members)
+    if head is None:
+        return _TERMINAL_REFRESH_SUPERSEDED
+    if (
+        head.handle_hash == presented.handle_hash
+        and head.upstream_refresh_token_hash == presented.upstream_refresh_token_hash
+    ):
+        return _TERMINAL_REFRESH_LIVE_HEAD
+    return _TERMINAL_REFRESH_SUPERSEDED
+
+
+def _live_family_head(members: Any) -> RouteRefreshBrokerRecord | None:
+    """Selects the record whose upstream material is current: the
+    highest-generation member that is neither revoked nor rotated away. Ties are
+    broken by handle hash so every caller resolves the same head.
+    """
     head: RouteRefreshBrokerRecord | None = None
     for candidate in members:
         if candidate is None or candidate.status == STATUS_REVOKED:
@@ -3140,15 +3509,54 @@ def _refresh_family_head(
             or (candidate.chain_generation == head.chain_generation and candidate.handle_hash > head.handle_hash)
         ):
             head = candidate
-    if head is None:
-        event = _event_from_record(presented)
-        event.event_class = ROUTE_REFRESH_EVENT_REUSE
-        event.reason = ROUTE_REFRESH_REASON_FAMILY_HEAD_ABSENT
-        event.error_code = "invalid_grant"
-        event.at = ctx.now()
-        _emit_route_refresh(front, event)
-        return None, _facade_error_page(400, "invalid_grant")
-    return head, None
+    return head
+
+
+def _take_rotation_intent(
+    front: _FrontChannelConfig,
+    ctx: Context,
+    presented: RouteRefreshBrokerRecord,
+    locked: RouteRefreshBrokerRecord,
+) -> tuple[RouteRefreshBrokerRecord | None, Response | None]:
+    """Persists, in the store, that this record's upstream material is about to be
+    presented, and returns the locked record at its new version. It is the
+    read-side twin of persist-before-ack: the facade never presents material it
+    has not recorded an attempt for, so a process that loses the answer leaves
+    evidence a later attempt can verify lineage against. A failed write releases
+    the lock and answers transiently without calling the upstream.
+    """
+    if locked.rotation_unconfirmed_at is not None:
+        return locked, None
+    updated = replace(locked, rotation_unconfirmed_at=ctx.now())
+    try:
+        stored = front.stores.route_refresh_broker.compare_and_swap(updated, locked.version)
+    except Exception:  # noqa: BLE001 - a failed intent write is the retryable class
+        _release_refresh_lock(front, presented, locked)
+        _emit_state_failure(front, ctx, presented, ROUTE_REFRESH_REASON_REWRITE_FAILURE)
+        return None, _facade_temporarily_unavailable_page()
+    return stored, None
+
+
+def _refresh_upstream(front: _FrontChannelConfig, record: RouteRefreshBrokerRecord) -> Any:
+    """Makes the ONE upstream refresh call of a rotation under the encoded budget.
+
+    Python's provider SPI is synchronous, so the facade cannot interrupt a call in
+    flight; it refuses to act on an answer that outlived the budget instead. A late
+    answer is therefore unconfirmed exactly like a timeout: the marker stays, the
+    client is told to retry, and the next attempt verifies lineage. The adapter's
+    own transport timeout remains the mechanism that bounds the wait itself.
+    """
+    budget = front.policy.refresh_budget_seconds or DEFAULT_REFRESH_BUDGET_SECONDS
+    started = time.monotonic()
+    upstream = front.provider.refresh(
+        RefreshRequest(
+            refresh_material=record.encrypted_upstream_refresh_token,
+            upstream_client_id=record.upstream_client_id,
+        )
+    )
+    if time.monotonic() - started > budget:
+        raise ProviderError(ERROR_TEMPORARILY_UNAVAILABLE, "refresh")
+    return upstream
 
 
 def _failed_refresh_grant(
@@ -3159,11 +3567,11 @@ def _failed_refresh_grant(
     upstream_error: Exception,
 ) -> Response:
     """Maps a failed upstream refresh call and unwinds the lock (ruling R1 step
-    7's failure section). A terminal provider failure means the recorded upstream
-    material is dead, so the presented record is revoked and the client is told
-    ``invalid_grant``. Every other failure releases the lock and reports its
-    typed response; a failure to release leaves the lock to expire and never
-    becomes a success.
+    7's failure section). Only one class may be family-terminal — an upstream
+    ``invalid_grant`` — and even that one is revocable only after lineage
+    verification (see ``_failed_terminal_refresh_grant``). Every other failure
+    releases the lock and reports its typed response; a failure to release leaves
+    the lock to expire and never becomes a success.
     """
     front = config.front_channel
     if front is None:
@@ -3171,21 +3579,8 @@ def _failed_refresh_grant(
     error_class = ERROR_TEMPORARILY_UNAVAILABLE
     if isinstance(upstream_error, ProviderError):
         error_class = upstream_error.error_class
-    if error_class in (ERROR_INVALID_GRANT, ERROR_REAUTH_REQUIRED):
-        if not _revoke_family_for_record(front, presented):
-            # The grant is dead upstream but could not be revoked here, so the
-            # client is not told the handle is invalid while it is still live.
-            _emit_state_failure(front, ctx, presented, ROUTE_REFRESH_REASON_STORE_FAILURE, error_class)
-            return _facade_temporarily_unavailable_page()
-        event = _event_from_record(presented)
-        event.event_class = ROUTE_REFRESH_EVENT_UPSTREAM_REAUTH_REQUIRED
-        event.reason = ROUTE_REFRESH_REASON_UPSTREAM_REJECTED
-        event.upstream_class = error_class
-        event.error_code = "invalid_grant"
-        event.status_to = STATUS_REVOKED
-        event.at = ctx.now()
-        _emit_route_refresh(front, event)
-        return _facade_error_page(400, "invalid_grant")
+    if error_class == ERROR_INVALID_GRANT:
+        return _failed_terminal_refresh_grant(config, ctx, presented, locked, error_class)
     if error_class == ERROR_UPSTREAM:
         _release_refresh_lock(front, presented, locked)
         _emit_state_failure(
@@ -3197,9 +3592,11 @@ def _failed_refresh_grant(
             error_code="upstream_error",
         )
         return _facade_upstream_error_page()
-    # ERROR_TEMPORARILY_UNAVAILABLE, and any provider failure the adapter did not
-    # classify: transient by default, so the lock is released and the caller is
-    # told to retry.
+    # ERROR_TEMPORARILY_UNAVAILABLE, ERROR_REAUTH_REQUIRED (a stale-or-replaced
+    # signal is recovery-available under the rotation-recovery contract), and any
+    # provider failure the adapter did not classify: transient by default, so the
+    # lock is released, the unconfirmed-attempt marker is left in place, and the
+    # caller is told to retry.
     _release_refresh_lock(front, presented, locked)
     _emit_state_failure(
         front,
@@ -3261,13 +3658,13 @@ def _adopt_legacy_lineage(
     event.status_to = STATUS_REFRESHING
     event.at = ctx.now()
     _emit_route_refresh(front, event)
+    attempted, intent_failure = _take_rotation_intent(front, ctx, head, locked)
+    if intent_failure is not None:
+        return None, intent_failure
+    if attempted is not None:
+        locked = attempted
     try:
-        upstream = front.provider.refresh(
-            RefreshRequest(
-                refresh_material=locked.encrypted_upstream_refresh_token,
-                upstream_client_id=locked.upstream_client_id,
-            )
-        )
+        upstream = _refresh_upstream(front, locked)
     except Exception as err:  # noqa: BLE001 - classified by _failed_legacy_adoption
         return _failed_legacy_adoption(config, ctx, head, locked, err)
     handle = _new_opaque_token()
@@ -3335,9 +3732,10 @@ def _failed_legacy_adoption(
     upstream_error: Exception,
 ) -> tuple[None, Response]:
     """Maps a failed upstream refresh during migration onto the retryable classes.
-    A terminal rejection means the recorded grant is dead, so the legacy head is
-    revoked -- it can never be migrated -- and the client is told
-    ``invalid_grant`` to re-authorize.
+    Only an upstream ``invalid_grant`` may revoke the legacy head — it can never be
+    migrated — and only on corroborated evidence: an unconfirmed rotation attempt
+    inside the ambiguity horizon keeps the head and answers transiently, exactly
+    like the family path.
     """
     front = config.front_channel
     if front is None:
@@ -3345,7 +3743,17 @@ def _failed_legacy_adoption(
     error_class = ERROR_TEMPORARILY_UNAVAILABLE
     if isinstance(upstream_error, ProviderError):
         error_class = upstream_error.error_class
-    if error_class in (ERROR_INVALID_GRANT, ERROR_REAUTH_REQUIRED):
+    if error_class == ERROR_INVALID_GRANT:
+        if _refresh_verdict_ambiguous(front, head, ctx.now()):
+            _release_refresh_lock(front, head, locked)
+            event = _event_from_record(head)
+            event.event_class = ROUTE_REFRESH_EVENT_STATE_FAILURE
+            event.reason = ROUTE_REFRESH_REASON_RECOVERY_PENDING
+            event.upstream_class = error_class
+            event.error_code = "temporarily_unavailable"
+            event.at = ctx.now()
+            _emit_route_refresh(front, event)
+            return None, _facade_temporarily_unavailable_page()
         _release_refresh_lock(front, head, locked)
         try:
             front.stores.route_refresh_broker.revoke(head.handle_hash)
@@ -3448,6 +3856,9 @@ def _mark_legacy_head_adopted(
         current.status = STATUS_ACTIVE
         current.refresh_lock_owner = ""
         current.refresh_lock_expires_at = None
+        # The adoption consumed the material and stored the family root, so the
+        # rotation intent is resolved here too.
+        current.rotation_unconfirmed_at = None
         front.stores.route_refresh_broker.compare_and_swap(current, current.version)
     except Exception:  # noqa: BLE001 - best effort
         return
@@ -4917,3 +5328,264 @@ def _clone_inventory(inventory: RouteInventory) -> RouteInventory:
 
 def _quote(value: Any) -> str:
     return jsonlib.dumps(str(value))
+
+
+@dataclass(frozen=True, slots=True)
+class RefreshSweepConfig:
+    """Configures a :class:`RefreshSweeper`.
+
+    The provider, the broker store, and the route refresh policy are exactly the
+    ones the facade was registered with; the sweeper refuses an incomplete set
+    rather than degrading.
+    """
+
+    provider: Provider
+    stores: Stores | None
+    policy: RouteRefreshPolicy
+    # Optionally receives the same schema-redacted route refresh telemetry.
+    events: Callable[[RouteRefreshEvent], None] | None = None
+    # The sweeper's clock for the stored deadlines and event instants.
+    now: Callable[[], datetime] | None = None
+
+
+# The closed result vocabulary of one ``RefreshSweeper.sweep_family`` call.
+REFRESH_SWEEP_ROTATED = "rotated"
+REFRESH_SWEEP_DEFERRED = "deferred"
+REFRESH_SWEEP_TERMINAL_VERDICT = "terminal_verdict"
+REFRESH_SWEEP_REVOKED_FAMILY = "revoked_family"
+REFRESH_SWEEP_NO_LIVE_HEAD = "no_live_head"
+
+
+@dataclass(slots=True)
+class RefreshSweepResult:
+    """One sweep result. It carries hashes and a generation only: never a handle,
+    an access token, or upstream material."""
+
+    outcome: str
+    family_hash: str
+    presented_handle_hash: str = ""
+    successor_handle_hash: str = ""
+    chain_generation: int = 0
+    deferred_reason: str = ""
+    upstream_class: str = ""
+
+
+class RefreshSweeper:
+    """Rotates the live head of one refresh family out of band, so a scheduled
+    trigger (a worker function, a cron entry, a batch invocation) keeps
+    credentials fresh without reimplementing the facade's rotation. It is the
+    exported sweep entrypoint of the rotation-recovery contract's facade rule
+    (theorycloud_refresh_rotation_recovery.v0.1 R7): the same store SPI, the same
+    lock, the same rotation transaction, and the same encoded policy the request
+    path uses.
+
+    The caller decides which families are due: a scheduler that owns the
+    access-token expiry knows it better than the broker record.
+
+    Concurrency contract
+    --------------------
+    A sweep-driven rotation is an ordinary rotation competitor, never a second
+    authority over the family:
+
+    1. Exclusive lock. The sweep takes the same per-record lock the request path
+       takes (``acquire_lock`` with the version it read) before any upstream call.
+       A held lock, a lock the sweep cannot take, or a version that moved since
+       the head was read resolves to ``deferred``: no upstream call, no state
+       change, no family effect. The caller retries on its next tick.
+    2. Exactly one winner. The rotation commits through the same
+       ``rotate_family`` transaction, which re-checks the lock owner, the expected
+       version, the family and generation bindings, and successor uniqueness. A
+       loser (the request path rotated first, the lock expired, the family was
+       revoked) gets a typed transient result and never mints a successor: nothing
+       is minted unless every write landed.
+    3. The loser keeps working. A request-path presentation racing a committed
+       sweep rotation finds its handle grace-marked and is served the stored
+       successor body, or — past the grace window — has the family's new live head
+       rotated for it. A sweep racing a committed request-path rotation defers and
+       reads the new head on its next tick. Neither order is family-affecting.
+    4. The sweep never revokes. Continuity maintenance is not a revocation trigger
+       (contract R5). A contract-terminal upstream verdict observed by the sweep
+       releases the lock and returns ``terminal_verdict``, leaving the family
+       intact: revocation and its receipt stay on the request path, where the
+       client-facing verdict is rendered and lineage is verified.
+    5. It is bounded. The upstream call carries the same encoded
+       ``refresh_budget_seconds`` as the request path, which stays below the
+       broker lock TTL, so a sweep can never outlive the lock it holds.
+    """
+
+    def __init__(self, config: RefreshSweepConfig) -> None:
+        if config.provider is None:
+            raise ValueError(f"{_ERROR_PREFIX} refresh sweeper requires a provider")
+        stores = _require_front_channel_stores(config.stores)
+        policy = _normalize_route_refresh_policy(config.policy)
+        self._front = _FrontChannelConfig(
+            provider=config.provider,
+            stores=stores,
+            upstream_client_id="",
+            upstream_issuer="",
+            lifecycle_scopes=[],
+            provider_hints=None,
+            policy=policy,
+            events=config.events,
+        )
+        self._now = config.now or (lambda: datetime.now().astimezone())
+
+    def sweep_family(self, family_hash: str) -> RefreshSweepResult:
+        """Rotates the live head of one family. Never revokes; see the class
+        documentation."""
+        trimmed = (family_hash or "").strip()
+        if trimmed == "":
+            raise ValueError(f"{_ERROR_PREFIX} refresh sweep requires a family hash")
+        front = self._front
+        now = self._now()
+        result = RefreshSweepResult(outcome=REFRESH_SWEEP_DEFERRED, family_hash=trimmed)
+        list_family = getattr(front.stores.route_refresh_broker, "list_family", None)
+        if not callable(list_family):
+            result.deferred_reason = ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE
+            return result
+        try:
+            members = list(cast("Any", list_family)(trimmed))
+        except Exception:  # noqa: BLE001 - an unreadable family is a deferred tick
+            result.deferred_reason = ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE
+            return result
+        head = _live_family_head(members)
+        if head is None:
+            result.outcome = (
+                REFRESH_SWEEP_NO_LIVE_HEAD
+                if any(member is not None and member.status != STATUS_REVOKED for member in members)
+                else REFRESH_SWEEP_REVOKED_FAMILY
+            )
+            return result
+        result.presented_handle_hash = head.handle_hash
+        result.chain_generation = head.chain_generation
+        try:
+            locked = front.stores.route_refresh_broker.acquire_lock(head.handle_hash, _new_opaque_token(), head.version)
+        except Exception as err:  # noqa: BLE001 - classified below
+            return self._deferred_lock(result, err)
+        event = _event_from_record(head)
+        event.event_class = ROUTE_REFRESH_EVENT_LOCK_ACQUIRED
+        event.status_to = STATUS_REFRESHING
+        event.at = now
+        _emit_route_refresh(front, event)
+
+        intent, intent_failure = _take_rotation_intent_at(front, head, locked, now)
+        if intent_failure is not None:
+            result.deferred_reason = ROUTE_REFRESH_REASON_REWRITE_FAILURE
+            return result
+        if intent is not None:
+            locked = intent
+        try:
+            upstream = _refresh_upstream(front, locked)
+        except Exception as err:  # noqa: BLE001 - classified below
+            error_class = err.error_class if isinstance(err, ProviderError) else ERROR_TEMPORARILY_UNAVAILABLE
+            _release_refresh_lock(front, head, locked)
+            result.upstream_class = error_class
+            failure = _event_from_record(head)
+            failure.event_class = ROUTE_REFRESH_EVENT_STATE_FAILURE
+            failure.reason = ROUTE_REFRESH_REASON_UPSTREAM_REJECTED
+            failure.upstream_class = error_class
+            failure.at = now
+            _emit_route_refresh(front, failure)
+            if error_class == ERROR_INVALID_GRANT:
+                # Contract-terminal verdict: reported, never acted on here.
+                result.outcome = REFRESH_SWEEP_TERMINAL_VERDICT
+                return result
+            result.deferred_reason = ROUTE_REFRESH_REASON_UPSTREAM_REJECTED
+            return result
+        handle = _new_opaque_token()
+        successor = _successor_broker_record(head, handle, upstream)
+        body = _successor_token_body(upstream, handle)
+        rotate_family = getattr(front.stores.route_refresh_broker, "rotate_family", None)
+        if not callable(rotate_family):
+            _release_refresh_lock(front, head, locked)
+            result.deferred_reason = ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE
+            return result
+        try:
+            cast("Any", rotate_family)(
+                RouteRefreshFamilyRotation(
+                    presented_handle_hash=locked.handle_hash,
+                    lock_owner=locked.refresh_lock_owner,
+                    expected_version=locked.version,
+                    successor=successor,
+                    grace_refresh_response=body.decode("utf-8"),
+                    grace_expires_at=now + timedelta(seconds=front.policy.grace_window_seconds or 0),
+                    grace_access_token_expires_at=now + timedelta(seconds=_access_token_lifetime_seconds(upstream)),
+                )
+            )
+        except Exception as err:  # noqa: BLE001 - classified below
+            return self._deferred_rotation(result, head, locked, err)
+        result.outcome = REFRESH_SWEEP_ROTATED
+        result.successor_handle_hash = successor.handle_hash
+        result.chain_generation = successor.chain_generation
+        refreshed = _event_from_record(head)
+        refreshed.event_class = ROUTE_REFRESH_EVENT_REFRESHED
+        refreshed.status_from = STATUS_REFRESHING
+        refreshed.status_to = STATUS_ACTIVE
+        refreshed.successor_handle_hash = successor.handle_hash
+        refreshed.family_hash = successor.family_hash
+        refreshed.chain_generation = successor.chain_generation
+        refreshed.previous_upstream_refresh_token_hash = head.upstream_refresh_token_hash
+        refreshed.upstream_refresh_token_hash = successor.upstream_refresh_token_hash
+        refreshed.at = now
+        _emit_route_refresh(front, refreshed)
+        return result
+
+    def _deferred_lock(self, result: RefreshSweepResult, err: Exception) -> RefreshSweepResult:
+        if isinstance(err, BrokerRevokedError):
+            result.outcome = REFRESH_SWEEP_REVOKED_FAMILY
+            return result
+        if isinstance(err, (KeyError, BrokerExpiredError)):
+            result.outcome = REFRESH_SWEEP_NO_LIVE_HEAD
+            return result
+        result.outcome = REFRESH_SWEEP_DEFERRED
+        if isinstance(err, (BrokerLockedError, BrokerVersionConflictError)):
+            result.deferred_reason = ROUTE_REFRESH_REASON_LOCK_CONTENTION
+        elif isinstance(
+            err,
+            (BrokerFamilyStateUnavailableError, BrokerFamilyMismatchError, BrokerLegacyLineageUnsupportedError),
+        ):
+            result.deferred_reason = ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE
+        else:
+            result.deferred_reason = ROUTE_REFRESH_REASON_STORE_FAILURE
+        return result
+
+    def _deferred_rotation(
+        self,
+        result: RefreshSweepResult,
+        head: RouteRefreshBrokerRecord,
+        locked: RouteRefreshBrokerRecord,
+        err: Exception,
+    ) -> RefreshSweepResult:
+        _release_refresh_lock(self._front, head, locked)
+        if isinstance(err, BrokerRevokedError):
+            result.outcome = REFRESH_SWEEP_REVOKED_FAMILY
+            return result
+        result.outcome = REFRESH_SWEEP_DEFERRED
+        if isinstance(err, (BrokerLockedError, BrokerVersionConflictError, BrokerSuccessorExistsError)):
+            result.deferred_reason = ROUTE_REFRESH_REASON_LOCK_CONTENTION
+        elif isinstance(
+            err,
+            (BrokerFamilyStateUnavailableError, BrokerFamilyMismatchError, BrokerLegacyLineageUnsupportedError),
+        ):
+            result.deferred_reason = ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE
+        else:
+            result.deferred_reason = ROUTE_REFRESH_REASON_REWRITE_FAILURE
+        return result
+
+
+def _take_rotation_intent_at(
+    front: _FrontChannelConfig,
+    presented: RouteRefreshBrokerRecord,
+    locked: RouteRefreshBrokerRecord,
+    now: datetime,
+) -> tuple[RouteRefreshBrokerRecord | None, Response | None]:
+    """takeRotationIntent for a caller without a request context (the sweeper)."""
+    if locked.rotation_unconfirmed_at is not None:
+        return locked, None
+    updated = replace(locked, rotation_unconfirmed_at=now)
+    try:
+        stored = front.stores.route_refresh_broker.compare_and_swap(updated, locked.version)
+    except Exception:  # noqa: BLE001 - a failed intent write is the retryable class
+        _release_refresh_lock(front, presented, locked)
+        return None, _facade_temporarily_unavailable_page()
+    return stored, None

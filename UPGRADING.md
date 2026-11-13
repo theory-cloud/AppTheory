@@ -15,6 +15,82 @@ or deprecation posture must add or update a section here before the release is p
 
 ## v7.x line
 
+### Unreleased
+
+- **MCP auth facade: a refresh family dies only from a contract-terminal verdict.** The facade's terminal token-error
+  classification is now the refresh-rotation-recovery contract's per-code enumeration
+  (`theorycloud_refresh_rotation_recovery.v0.1` R6/R7). Only an upstream `invalid_grant` may carry a family-terminal
+  verdict; the per-request client codes (`invalid_scope`, `invalid_request`, `access_denied`, `expired_token`,
+  `invalid_token`, `invalid_client`, `unauthorized_client`) and every unrecognized code are reported as
+  `upstream_error` (502) and never reach `revokeFamilyForRecord`. A `reauth_required` answer is now
+  `temporarily_unavailable` (503 + `Retry-After`) instead of a terminal 400, because a stale-or-replaced signal is
+  recovery-available under the contract.
+
+  Even a terminal `invalid_grant` revokes only on corroborated evidence: the verdict must be about the family's live
+  head and no rotation attempt of that record may be unconfirmed inside the facade's ambiguity horizon (the
+  configured `RouteRefreshPolicy.GraceWindow`). A timeout, a lost rotation response (the 2026-11-11 16:00Z class), an
+  informed serve-off state, or a verdict about superseded material now answers 503 and keeps the family. The rotation
+  intent is persisted before upstream material is presented, the next attempt verifies lineage instead of
+  re-presenting stale material as current, and a successful rotation clears the marker.
+
+  Consumer action: **none required** for an unchanged deployment. Two optional additions:
+
+  - `RouteRefreshPolicy` gains `RefreshBudget` (Go) / `refreshBudgetSeconds` (TypeScript) / `refresh_budget_seconds`
+    (Python), the encoded upstream refresh-call budget, default 10 s and bounded to `[1 s, 12 s]` (the reference 15 s
+    broker lock TTL less a 3 s commit margin). It is configuration, never an environment variable.
+  - The exported sweep entrypoint (`mcpfacade.RefreshSweeper` / `RefreshSweeper`) lets a scheduled trigger rotate a
+    family's live head through the same store SPI, lock, and transaction as the request path, under the documented
+    concurrency contract in [MCP auth facade SPI, "Exported refresh sweep entrypoint"]
+    (./docs/features/mcp-auth-facade-spi.md#exported-refresh-sweep-entrypoint). A sweep never revokes.
+
+  A durable broker store must round-trip the new `RotationUnconfirmedAt` record field
+  (`rotationUnconfirmedAt` / `rotation_unconfirmed_at`) and clear it in `RotateFamily`; the shared store conformance
+  table pins both directions, so a store that drops it fails its own conformance run rather than silently re-arming
+  the family-kill class. A store that does not persist it degrades to the pre-marker behavior (an unconfirmed
+  rotation is not distinguishable from a confirmed one) — the wire behavior is still non-terminal for every
+  per-request code.
+
+- **CDK MCP fronted origins: `FRONTED` restores a synthesis-passing posture for an externally fronted attach-mode API.**
+  v7 removed the declaration-only attach `LOCKED` escape, so a topology with an app-owned HTTP API v2 whose
+  `execute-api` hostname is the origin of a public front door (for example CloudFront) had no expressible origin
+  posture: attach `LOCKED` throws, owned `LOCKED` needs mTLS on a custom domain, and attach `DISABLED` needs a custom
+  domain plus `DisableExecuteApiEndpoint`. `AppTheoryMcpOriginReachability.FRONTED` is that posture, and it synthesizes
+  with **no CloudFront or API change**.
+
+  What it requires and does:
+
+  - Attach mode only, accepted with `runtime-bearer` and `none-public` like `DISABLED`/`LOCKED`, and mandatory
+    `frontDoorVerification: { headerName, secretValue, asserted: true }`. `headerName` is 1–64 characters of
+    `[A-Za-z0-9-]` and must be a header a front door can set; `secretValue` is a literal 32–128 characters of
+    `[A-Za-z0-9._~-]`; `asserted` must be `true`. Synthesis refuses `FRONTED` without the prop, refuses `FRONTED` in
+    owned mode, and refuses the prop under every other decision. Owned front doors keep `DISABLED` or `LOCKED`.
+  - The `apptheory:mcp-transport-posture` marker gains `origin_reachability: "fronted"`, `front_door_header_name`, and
+    `front_door_secret_sha256` (SHA-256 of the declared secret). The literal secret never lands in the template or in
+    CloudFormation. `DISABLED` and `LOCKED` markers are byte-identical to before.
+  - Enforcement is the runtime's: registration fails closed when `FRONTED` is declared without
+    `FacadeConfig.FrontDoorVerification` (Go), `frontDoorVerification` (TypeScript), or `front_door_verification`
+    (Python), and every derived route then refuses a request whose declared header is absent or wrong with
+    `403 app.forbidden` before any credential work. That covers the MCP transport routes **and** the OAuth facade paths
+    (protected-resource metadata, both discovery documents, authorize, token, register, and the upstream callback), so
+    a direct-origin request that bypasses the front door is refused on every route — including the OAuth ones.
+
+  Migrate an existing v6 declaration-only attach `LOCKED` to `FRONTED`:
+
+  1. Replace `originReachability: LOCKED` with `FRONTED` and add `frontDoorVerification`, all from one
+     application-owned constant.
+  2. Wire that same header name and value into the distribution's origin custom-header configuration (this copy is
+     application-owned and necessarily carries the literal, since CloudFront origin custom headers are plain strings —
+     keep it out of committed source and inject it from your normal configuration source).
+  3. Wire the same constant into the runtime: `FacadeConfig.OriginReachability = mcpfacade.OriginReachabilityFronted`
+     with `FrontDoorVerification{HeaderName, SecretValue}` (or the TypeScript/Python equivalents) before
+     `RegisterMCPFacade` / `register_mcp_facade`.
+  4. Deploy, then confirm the direct-origin negative case: a request to the execute-api hostname **without** the header
+     is refused `403 app.forbidden` on a transport route and on an OAuth facade route.
+
+  `FRONTED` is a defense-in-depth declaration with runtime enforcement, not mutual-TLS assurance (that is `LOCKED`) and
+  not origin unreachability (that is `DISABLED`). An unwired `FRONTED` enforces nothing, and synthesis alone never
+  proves enforcement.
+
 ### 7.1.0
 
 - **MCP auth facade: a reused refresh route handle is served, not treated as theft.** A handle that was rotated

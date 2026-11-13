@@ -30,15 +30,16 @@ File layout is organized by behavior domain. The historical tier/milestone label
 - `contract-tests/fixtures/objectstore/` — SP13 bounded object-store Put, capped Get, Delete, deterministic fake behavior, and forbidden operation errors
 - `contract-tests/fixtures/vectorstore/` — SP14 semantic vector-store, Bedrock Titan embedding, metadata filter, and deterministic fake behavior
 
-The current corpus contains 320 machine-readable contract vectors plus the internal schema file. <!-- apptheory-fixture-count: 320 -->
-Of those, 306 are single-envelope behavior fixtures executed by the Go, TypeScript, and Python runners. The fourteen
+The current corpus contains 335 machine-readable contract vectors plus the internal schema file. <!-- apptheory-fixture-count: 335 -->
+Of those, 319 are single-envelope behavior fixtures executed by the Go, TypeScript, and Python runners. The sixteen
 nested tables under `routing/` — `limiter/multi-window-cancellation.v1.json`, `mcp-route-algebra/expectations.json`, `mcp-route-algebra/facade-route-inventory.json`,
 `mcp-auth-facade/facade-transport-posture.v1.json`, `mcp-auth-facade/facade-route-model.v1.json`,
 `mcp-auth-facade/jwks-validator.v1.json`, `mcp-auth-facade/discovery-bootstrap.v1.json`,
 `mcp-auth-facade/route-challenge.v1.json`, `mcp-auth-facade/facade-provider-conformance.v1.json`,
 `mcp-auth-facade/facade-store-conformance.v1.json`, `mcp-auth-facade/facade-conformance.v1.json`,
-`mcp-auth-facade/facade-middleware-order.v1.json`, `mcp-auth-facade/facade-journey.v1.json`, and
-`mcp-auth-facade/facade-threat-controls.v1.json` — are deliberate
+`mcp-auth-facade/facade-middleware-order.v1.json`, `mcp-auth-facade/facade-journey.v1.json`,
+`mcp-auth-facade/facade-threat-controls.v1.json`, `mcp-auth-facade/facade-family-capability.v1.json`, and
+`mcp-auth-facade/facade-origin-validation.v1.json` — are deliberate
 exceptions: the generic harness assumes all three runtime legs participate and only discovers one directory level,
 while these versioned contracts ship as loader tests. Go and CDK tests load the four route/facade tables directly, and
 the Go, TypeScript, and Python suites each load the three M2 acceptance tables, the two M3a provider/store
@@ -52,6 +53,17 @@ The generic schema gate validates one level deep, so the nested tables are valid
 with `./scripts/verify-fixture-schema.sh`, then runs an in-memory negative self-test to prove a malformed fixture
 (missing required envelope fields) is rejected. The schema is strict for the shared fixture envelope and section keys,
 while provider/runtime payload objects remain open so behavior-specific contracts can stay in their fixtures.
+
+## Per-runtime expectations
+
+A fixture whose correct response differs by runtime declares `expect_by_runtime` instead of `expect`. The block must
+name all three runtimes — `go`, `ts`, and `py` — and each entry has the same shape as `expect`. Every runner selects
+its own entry and fails closed when its runtime is missing; there is no fallback to a shared `expect`, because a
+shared expectation would misstate at least one runtime.
+
+The declined stream-less `GET /mcp` ordering uses this mechanism: Go answers 405 before session validation by default
+while TypeScript and Python validate first, and the Go validation-first opt-in selects the second order. The fixtures
+name each runtime's expected sequence explicitly rather than pretending the runtimes agree.
 
 
 ## Common shape
@@ -201,6 +213,11 @@ error envelopes — rather than a runner-owned stand-in. Every field is optional
   - `required_scopes`: the route scope set a token must carry. A credential-free or unknown token is the `401` case
     (RFC 9728 `resource_metadata` challenge); a known token missing a required scope is the `403
     insufficient_scope` case (RFC 6750 `error`/`scope`/`resource_metadata` challenge).
+- `origin_reachability`: the declared direct-origin posture (`disabled`, `locked`, or `fronted`). `fronted` requires
+  `front_door_verification` (`header_name`, `secret_value`): the runtime then refuses every derived route — transport
+  and OAuth facade — with `403 app.forbidden` when the declared header is absent or wrong, and registration fails
+  closed when `fronted` is declared without it. The `mcp-facade-front-door-*` fixtures pin that fail-closed behavior,
+  including an OAuth facade document path and the unconfigured registration error.
 
 The mounted facade serves the client-facing route algebra, so a fixture asserts its real responses through
 `input.aws_event` with a greedy `ANY /{proxy+}` (or `ANY /`) route key. The `http-core` `mcp-facade-greedy-*`

@@ -1,0 +1,93 @@
+{
+  "commands": [
+    {
+      "argv": [
+        "bash",
+        "scripts/verify-security-refresh.sh"
+      ],
+      "durationSeconds": 34.625,
+      "executed": true,
+      "exitCode": 0,
+      "finishedAt": "2026-11-12T20:00:55Z",
+      "id": "security-refresh",
+      "inputsDigest": "sha256:1b0f27ddf22dde1bf7bbbeb5f52d7a14b5132982432d10bde8268aa27f5a1e8b",
+      "logDigest": "sha256:615d28b9880f0ece125a3d4cb7ef411b81dd99a9f43495a18387aa90b261cab5",
+      "logRef": "gov-infra/evidence/proportionate/local/security-refresh-security-refresh-20261112T200021Z-82956.log",
+      "reused": false,
+      "startedAt": "2026-11-12T20:00:21Z"
+    }
+  ],
+  "consumed": [],
+  "dependency": {
+    "digest": "sha256:cad30787fc04c2328564c879568779e54188b088c9f858dbf62eb53980b41c88",
+    "fileCount": 35
+  },
+  "description": "Dependency vulnerability refresh bounded by the tracked max age",
+  "environment": {
+    "go": "go1.27.4",
+    "node": "v24.21.0",
+    "platform": {
+      "arch": "arm64",
+      "os": "darwin"
+    },
+    "python": "3.14.7"
+  },
+  "gate": "security-refresh",
+  "kind": "dependency-scan",
+  "producer": {
+    "registry": "validation-gates.json",
+    "tool": "scripts/evidence/validation_evidence.py"
+  },
+  "profile": "default",
+  "reason": "",
+  "recordedAt": "2026-11-12T20:00:55Z",
+  "releaseOnly": {
+    "digest": "sha256:dea47f7c318e6703d405d14f61f76d6c1a8d2b38f1b682fdc96b6781c222b699",
+    "fileCount": 476,
+    "normalizedDigest": "sha256:c5ecbf183fa35bbf12642d3d5103e5af06b5b0d169ec8b29c253d8712187ac69",
+    "version": "7.1.0"
+  },
+  "reviews": [
+    {
+      "kind": "review-reference",
+      "ref": "factory:20261112T194701Z-adversary-81745"
+    },
+    {
+      "kind": "review-reference",
+      "ref": "factory:20261112T194701Z-sanity-81746"
+    }
+  ],
+  "scan": {
+    "maxAgeSeconds": 86400,
+    "scannedAt": "2026-11-12T20:00:55Z"
+  },
+  "schemaVersion": 1,
+  "scope": {
+    "digest": "sha256:8cf2afbecce6842d671493908ee51b42b0c9bc804fa91f74c1856d92270b609e",
+    "fileCount": 37,
+    "paths": [
+      "go.mod",
+      "go.sum",
+      "cdk-go/apptheorycdk/go.mod",
+      "cdk-go/apptheorycdk/go.sum",
+      "ts/package.json",
+      "ts/package-lock.json",
+      "cdk/package.json",
+      "cdk/package-lock.json",
+      "py/pyproject.toml",
+      "py/requirements-build.txt",
+      "py/requirements-lint.txt",
+      "cdk/requirements-build.txt",
+      "scripts/local/requirements-examples.txt",
+      "examples/cdk/*/package-lock.json",
+      "scripts/verify-security-refresh.sh",
+      "gov-infra/verifiers/gov-verify-rubric.sh"
+    ],
+    "version": 1
+  },
+  "source": {
+    "digest": "sha256:ca76497f13c6e3d8ded84c7468f4f56ef263a9f68bffac56f091e4ac55df2f2e",
+    "fileCount": 2658
+  },
+  "verdict": "PASS"
+}

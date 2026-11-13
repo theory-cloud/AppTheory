@@ -61,7 +61,9 @@ class TTLIgnoringBrokerStore(MemoryRouteRefreshBrokerStore):
 
     TTL_SECONDS = 360000
 
-    def __init__(self, now: Any = None, ttl: int | None = None, lock_ttl_seconds: int = UTC_NOW_LOCK_TTL_SECONDS) -> None:
+    def __init__(
+        self, now: Any = None, ttl: int | None = None, lock_ttl_seconds: int = UTC_NOW_LOCK_TTL_SECONDS
+    ) -> None:
         super().__init__(now=now, ttl=self.TTL_SECONDS, lock_ttl_seconds=lock_ttl_seconds)
 
 
@@ -135,7 +137,7 @@ class StoreConformanceTests(unittest.TestCase):
 
     def test_fixture_table_is_complete(self) -> None:
         cases = self.fixture["cases"]
-        self.assertEqual(len(cases), 65)
+        self.assertEqual(len(cases), 66)
         self.assertEqual(
             {case["store"] for case in cases},
             {"transaction", "authorization_code", "client", "route_refresh_broker", "rate_limit"},
@@ -146,8 +148,8 @@ class StoreConformanceTests(unittest.TestCase):
         cases = self.fixture["cases"]
         ran = run_store_conformance(STORE_CLASSES, cases, self.clock)
         print(f"store conformance: {ran} cases run")
-        self.assertEqual(ran, 65)
-        self.assertEqual(len(cases), 65)
+        self.assertEqual(ran, 66)
+        self.assertEqual(len(cases), 66)
 
     def test_fixture_lock_ttl_is_the_mandated_default(self) -> None:
         # A conforming durable store is judged against the table's
@@ -172,7 +174,7 @@ class StoreConformanceTests(unittest.TestCase):
         # rows (one with a put_version, one without) share one scenario, and the
         # two revoke_family rows share one scenario.
         pairs = {(case["store"], case["scenario"]) for case in self.fixture["cases"]}
-        self.assertEqual(len(pairs), 59)
+        self.assertEqual(len(pairs), 60)
 
 
 class TransactionStoreTests(unittest.TestCase):
@@ -414,9 +416,7 @@ class RateLimitStoreTests(unittest.TestCase):
     def setUp(self) -> None:
         self.clock = ManualClock(_epoch("2026-01-01T00:00:00Z"))
         self.store = MemoryRateLimitStore(now=self.clock.now, ttl=60)
-        self.key = RateLimitBucketKey(
-            identifier="c", resource="r", operation="register", limit=2, window_seconds=60
-        )
+        self.key = RateLimitBucketKey(identifier="c", resource="r", operation="register", limit=2, window_seconds=60)
 
     def test_window_budget_and_reset(self) -> None:
         self.assertTrue(self.store.check_and_increment(self.key).allowed)
@@ -482,9 +482,7 @@ class SliceIsolationTests(unittest.TestCase):
         self.assertEqual(again.response_types, ["code"])
 
     def test_broker_store_copies_returned_scopes(self) -> None:
-        store = MemoryRouteRefreshBrokerStore(
-            now=self.clock.now, ttl=900, lock_ttl_seconds=UTC_NOW_LOCK_TTL_SECONDS
-        )
+        store = MemoryRouteRefreshBrokerStore(now=self.clock.now, ttl=900, lock_ttl_seconds=UTC_NOW_LOCK_TTL_SECONDS)
         record = RouteRefreshBrokerRecord(handle_hash="handle", status="active", scopes=["scope-a"])
         store.put(record)
         record.scopes[0] = "mutated-caller"

@@ -18,6 +18,12 @@
 //	    closed when a lockfile directory is missing the package-manager config
 //	    that disables lifecycle scripts, or sets scripts back on.
 //
+//	evidence-wiring --root <dir>
+//	    Read the tracked validation gate registry and fail closed when a job
+//	    whose proof may be reused loses its evidence entry point, when a job
+//	    whose environment is itself under test stops forcing execution, or when
+//	    an always-executing release/security job starts reusing evidence.
+//
 // Exit codes: 0 PASS, 1 FAIL, 2 BLOCKED.
 package main
 
@@ -49,6 +55,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runInstallHygiene(args[1:], stdin, stdout, stderr)
 	case "lockfile-config":
 		return runLockfileConfig(args[1:], stdin, stdout, stderr)
+	case "evidence-wiring":
+		return runEvidenceWiring(args[1:], stdout, stderr)
 	default:
 		writeString(stderr, fmt.Sprintf("ci-guard: unknown subcommand %q\n", args[0]))
 		return exitBlocked

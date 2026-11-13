@@ -4,7 +4,6 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-SIGNED_HISTORY_BASE="${SIGNED_HISTORY_BASE:-c723c42c71d9220f49702db965d4deffff6183f1}"
 HISTORICAL_UNSIGNED_FIXTURE="${HISTORICAL_UNSIGNED_FIXTURE:-ae2468e0c27b02138ad25f3035afff17e253b8a1}"
 RELEASE_SIGNATURE_VERBOSE="${RELEASE_SIGNATURE_VERBOSE:-false}"
 RELEASE_SIGNATURE_RETRY_SLEEP_BUDGET_SECONDS="${RELEASE_SIGNATURE_RETRY_SLEEP_BUDGET_SECONDS:-300}"
@@ -23,6 +22,7 @@ declare -A GITHUB_VERIFICATION_CACHE_SIGNER=()
 declare -A GITHUB_VERIFICATION_CACHE_KEY=()
 declare -A GITHUB_VERIFICATION_CACHE_STDERR=()
 declare -A GITHUB_VERIFICATION_CACHE_STDERR_REPORTED=()
+declare -A SCANNED_COMMIT_SHAS=()
 
 github_repo_name() {
   if [[ -n "${GITHUB_REPOSITORY:-}" ]]; then
@@ -179,6 +179,12 @@ scan_range() {
   local scanned=0
   while IFS=$'\x1f' read -r sha status signer key subject; do
     [[ -n "${sha}" ]] || continue
+    # Bound the work to the unique new commits the current event introduces:
+    # overlapping ranges and already-proven duplicates are not re-verified.
+    if [[ -n "${SCANNED_COMMIT_SHAS[${sha}]-}" ]]; then
+      continue
+    fi
+    SCANNED_COMMIT_SHAS["${sha}"]=1
     scanned=$((scanned + 1))
     if ! verify_commit_signature_status "${sha}" "${status}" "${signer}" "${key}" "${subject}" "${label}"; then
       failures=$((failures + 1))
@@ -198,119 +204,271 @@ fetch_release_refs_if_possible() {
     return 0
   fi
 
+  # Only the accepted protected branches are needed: a pull_request or push
+  # event carries its own before/base SHA, and a dispatch on a generated release
+  # branch needs the accepted branch it will merge into. Scanning unrelated ref
+  # histories is exactly what this gate stopped doing.
   local refspecs=(
     "+refs/heads/main:refs/remotes/origin/main"
     "+refs/heads/premain:refs/remotes/origin/premain"
     "+refs/heads/staging:refs/remotes/origin/staging"
-    "+refs/heads/release-please--branches--main:refs/remotes/origin/release-please--branches--main"
-    "+refs/heads/release-please--branches--premain:refs/remotes/origin/release-please--branches--premain"
   )
-
-  if [[ -n "${GITHUB_HEAD_REF:-}" && "${GITHUB_HEAD_REF}" != refs/* ]]; then
-    refspecs+=("+refs/heads/${GITHUB_HEAD_REF}:refs/remotes/origin/${GITHUB_HEAD_REF}")
-  fi
 
   git fetch --no-tags origin "${refspecs[@]}" >/dev/null 2>&1 || true
 }
 
-scan_default_release_refs() {
-  local failures=0
-  local refs=(
-    origin/main
-    origin/premain
-    origin/staging
-    origin/release-please--branches--main
-    origin/release-please--branches--premain
-  )
+event_payload_field() {
+  local path="$1"
+  if [[ -z "${GITHUB_EVENT_PATH:-}" || ! -f "${GITHUB_EVENT_PATH}" ]]; then
+    return 1
+  fi
+  python3 - "${GITHUB_EVENT_PATH}" "${path}" <<'PY'
+import json
+import sys
+from pathlib import Path
 
-  for ref in "${refs[@]}"; do
-    if ! git rev-parse --verify --quiet "${ref}^{commit}" >/dev/null; then
-      echo "release-signatures: SKIP ${ref} (ref unavailable)"
-      continue
-    fi
-    if ! git merge-base --is-ancestor "${SIGNED_HISTORY_BASE}" "${ref}"; then
-      echo "release-signatures: FAIL ${ref} is not descended from signed-history base ${SIGNED_HISTORY_BASE}" >&2
-      failures=$((failures + 1))
-      continue
-    fi
-    if ! scan_range "${ref}" "${SIGNED_HISTORY_BASE}..${ref}"; then
-      failures=$((failures + 1))
-    fi
-  done
-
-  return "${failures}"
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+value = data
+for part in sys.argv[2].split("."):
+    if not isinstance(value, dict):
+        value = None
+        break
+    value = value.get(part)
+print(value if isinstance(value, str) else "")
+PY
 }
 
-scan_pr_or_push_range_if_present() {
-  local failures=0
+# Emit one trusted base..head range for the current event, or fail closed.
+#
+# The base is the event's own accepted base: the pull request's base commit, the
+# push's before commit, or the accepted protected branch a dispatched release PR
+# merges into. An arbitrary ancestor tag is never treated as proof of published
+# history. Both endpoints must resolve, the base must be an ancestor of the head
+# (a rewritten base fails closed), and a missing base is an error, not a reason
+# to widen the scan.
+event_signed_range() {
   local event_name="${GITHUB_EVENT_NAME:-}"
 
   if [[ "${event_name}" == "pull_request" ]]; then
-    local base_ref="${PR_BASE_REF:-${GITHUB_BASE_REF:-}}"
-    local head_sha="${PR_HEAD_SHA:-}"
-    if [[ -z "${head_sha}" && -n "${GITHUB_EVENT_PATH:-}" && -f "${GITHUB_EVENT_PATH}" ]]; then
-      head_sha="$(python3 - <<'PY'
-import json
-import os
-from pathlib import Path
-path = Path(os.environ["GITHUB_EVENT_PATH"])
-data = json.loads(path.read_text(encoding="utf-8"))
-print(data.get("pull_request", {}).get("head", {}).get("sha", ""))
-PY
-)"
+    local base="${PR_BASE_SHA:-}"
+    local head="${PR_HEAD_SHA:-${GITHUB_SHA:-}}"
+    if [[ -z "${base}" ]]; then
+      base="$(event_payload_field "pull_request.base.sha" 2>/dev/null || true)"
     fi
-
-    if [[ -n "${base_ref}" && -n "${head_sha}" ]]; then
-      local base="origin/${base_ref}"
-      if ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null; then
-        git fetch --no-tags origin "+refs/heads/${base_ref}:refs/remotes/origin/${base_ref}" >/dev/null 2>&1 || true
-      fi
-      if git rev-parse --verify --quiet "${base}^{commit}" >/dev/null && git rev-parse --verify --quiet "${head_sha}^{commit}" >/dev/null; then
-        if ! scan_range "pull_request:${base_ref}..${head_sha}" "${base}..${head_sha}"; then
-          failures=$((failures + 1))
-        fi
-      else
-        echo "release-signatures: FAIL pull_request range unavailable base=${base_ref} head=${head_sha}" >&2
-        failures=$((failures + 1))
-      fi
+    if [[ -z "${head}" ]]; then
+      head="$(event_payload_field "pull_request.head.sha" 2>/dev/null || true)"
     fi
-  elif [[ "${event_name}" == "push" ]]; then
-    local before="${GITHUB_EVENT_BEFORE:-${GITHUB_BEFORE:-}}"
-    local head="${GITHUB_SHA:-}"
-    if [[ -n "${head}" ]]; then
-      local base="${SIGNED_HISTORY_BASE}"
-      if [[ -n "${before}" && ! "${before}" =~ ^0+$ ]]; then
-        base="${before}"
-      fi
-      if git rev-parse --verify --quiet "${base}^{commit}" >/dev/null && git rev-parse --verify --quiet "${head}^{commit}" >/dev/null; then
-        if ! scan_range "push:${base}..${head}" "${base}..${head}"; then
-          failures=$((failures + 1))
-        fi
-      else
-        echo "release-signatures: FAIL push range unavailable base=${base} head=${head}" >&2
-        failures=$((failures + 1))
-      fi
+    if [[ -z "${base}" || -z "${head}" ]]; then
+      echo "release-signatures: FAIL pull_request event has no base/head commit to bound the new range" >&2
+      return 1
     fi
+    signed_range_from "pull_request:${event_name}" "${base}" "${head}"
+    return $?
   fi
 
-  return "${failures}"
+  if [[ "${event_name}" == "push" ]]; then
+    local base="${GITHUB_EVENT_BEFORE:-${GITHUB_BEFORE:-}}"
+    local head="${GITHUB_SHA:-}"
+    if [[ -z "${base}" ]]; then
+      base="$(event_payload_field "before" 2>/dev/null || true)"
+    fi
+    if [[ -z "${head}" ]]; then
+      head="$(event_payload_field "after" 2>/dev/null || true)"
+    fi
+    if [[ -z "${base}" || "${base}" =~ ^0+$ ]]; then
+      echo "release-signatures: FAIL push event has no before commit to bound the new range" >&2
+      return 1
+    fi
+    if [[ -z "${head}" ]]; then
+      echo "release-signatures: FAIL push event has no head commit" >&2
+      return 1
+    fi
+    signed_range_from "push:${event_name}" "${base}" "${head}"
+    return $?
+  fi
+
+  if [[ "${event_name}" == "workflow_dispatch" ]]; then
+    local ref_name="${GITHUB_REF_NAME:-${GITHUB_REF#refs/heads/}}"
+    local head="${GITHUB_SHA:-}"
+    local base_ref=""
+    case "${ref_name}" in
+      release-please--branches--premain) base_ref="origin/premain" ;;
+      release-please--branches--main) base_ref="origin/main" ;;
+      premain | staging | main) base_ref="origin/${ref_name}" ;;
+      *)
+        echo "release-signatures: FAIL workflow_dispatch ref ${ref_name:-unknown} has no accepted base branch" >&2
+        return 1
+        ;;
+    esac
+    if [[ -z "${head}" ]]; then
+      echo "release-signatures: FAIL workflow_dispatch event has no head commit" >&2
+      return 1
+    fi
+    if ! git rev-parse --verify --quiet "${base_ref}^{commit}" >/dev/null; then
+      echo "release-signatures: FAIL workflow_dispatch base ${base_ref} is unavailable" >&2
+      return 1
+    fi
+    signed_range_from "workflow_dispatch:${ref_name}" "${base_ref}" "${head}"
+    return $?
+  fi
+
+  echo "release-signatures: FAIL no release event and no explicit --range; pass --range <base..head> for a manual audit" >&2
+  return 1
+}
+
+signed_range_from() {
+  local label="$1"
+  local base="$2"
+  local head="$3"
+  if ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null; then
+    echo "release-signatures: FAIL ${label} base ${base} is unavailable locally" >&2
+    return 1
+  fi
+  if ! git rev-parse --verify --quiet "${head}^{commit}" >/dev/null; then
+    echo "release-signatures: FAIL ${label} head ${head} is unavailable locally" >&2
+    return 1
+  fi
+  if ! git merge-base --is-ancestor "${base}" "${head}"; then
+    echo "release-signatures: FAIL ${label} base ${base} is not an ancestor of ${head}" >&2
+    return 1
+  fi
+  scan_range "${label}" "${base}..${head}"
 }
 
 run_self_test() {
   local failures=0
 
-  fetch_release_refs_if_possible
+  # Event base selection is exercised with a stubbed scan_range: only the
+  # event's own range may be scanned, never the five-ref historical sweep.
+  local scanned_ranges_file
+  scanned_ranges_file="$(mktemp)"
+  local event_output
+  local event_status
+  event_output="$(
+    scan_range() {
+      printf '%s %s\n' "$1" "$2" >>"${scanned_ranges_file}"
+      return 0
+    }
+    git() {
+      case "$1" in
+        rev-parse) return 0 ;;
+        merge-base) return 0 ;;
+      esac
+      command git "$@"
+    }
+    GITHUB_EVENT_NAME=pull_request \
+      PR_BASE_SHA=1111111111111111111111111111111111111111 \
+      PR_HEAD_SHA=2222222222222222222222222222222222222222 \
+      event_signed_range
+  )" || event_status=$?
+  if [[ "${event_status:-0}" -ne 0 ]]; then
+    echo "release-signatures self-test: FAIL (pull_request event range was rejected)" >&2
+    echo "${event_output}" >&2
+    failures=$((failures + 1))
+  elif [[ "$(wc -l <"${scanned_ranges_file}" | tr -d ' ')" != "1" ]] ||
+    ! grep -Fq "1111111111111111111111111111111111111111..2222222222222222222222222222222222222222" "${scanned_ranges_file}"; then
+    echo "release-signatures self-test: FAIL (pull_request event scanned more than its own range)" >&2
+    cat "${scanned_ranges_file}" >&2
+    failures=$((failures + 1))
+  else
+    echo "release-signatures self-test: PASS pull_request scans exactly its base..head range"
+  fi
+  : >"${scanned_ranges_file}"
 
-  for ref in origin/main origin/premain origin/staging origin/release-please--branches--main origin/release-please--branches--premain; do
-    if ! git rev-parse --verify --quiet "${ref}^{commit}" >/dev/null; then
-      echo "release-signatures self-test: FAIL (${ref} unavailable)" >&2
-      failures=$((failures + 1))
-      continue
-    fi
-    if ! scan_range "self-test:${ref}" "${SIGNED_HISTORY_BASE}..${ref}"; then
-      failures=$((failures + 1))
-    fi
-  done
+  event_status=0
+  event_output="$(
+    scan_range() { printf '%s %s\n' "$1" "$2" >>"${scanned_ranges_file}"; return 0; }
+    git() {
+      case "$1" in
+        rev-parse) return 0 ;;
+        merge-base) return 0 ;;
+      esac
+      command git "$@"
+    }
+    GITHUB_EVENT_NAME=push \
+      GITHUB_EVENT_BEFORE=3333333333333333333333333333333333333333 \
+      GITHUB_SHA=4444444444444444444444444444444444444444 \
+      event_signed_range
+  )" || event_status=$?
+  if [[ "${event_status:-0}" -ne 0 ]] || ! grep -Fq "3333333333333333333333333333333333333333..4444444444444444444444444444444444444444" "${scanned_ranges_file}"; then
+    echo "release-signatures self-test: FAIL (push event range was not bounded by before..head)" >&2
+    echo "${event_output}" >&2
+    cat "${scanned_ranges_file}" >&2
+    failures=$((failures + 1))
+  else
+    echo "release-signatures self-test: PASS push scans exactly its before..head range"
+  fi
+  : >"${scanned_ranges_file}"
+
+  # Missing base fails closed: a zero before SHA and an absent base are not
+  # reasons to fall back to a tag or to the whole history.
+  event_status=0
+  event_output="$(
+    scan_range() { printf 'unexpected\n' >>"${scanned_ranges_file}"; return 0; }
+    GITHUB_EVENT_NAME=push GITHUB_EVENT_BEFORE=0000000000000000000000000000000000000000 GITHUB_SHA=4444444444444444444444444444444444444444 event_signed_range
+  )" || event_status=$?
+  if [[ "${event_status}" -eq 0 || -s "${scanned_ranges_file}" ]]; then
+    echo "release-signatures self-test: FAIL (zero push base did not fail closed)" >&2
+    echo "${event_output}" >&2
+    failures=$((failures + 1))
+  else
+    echo "release-signatures self-test: PASS missing push base fails closed"
+  fi
+
+  event_status=0
+  event_output="$(
+    scan_range() { printf 'unexpected\n' >>"${scanned_ranges_file}"; return 0; }
+    GITHUB_EVENT_NAME=pull_request PR_BASE_SHA= PR_HEAD_SHA= event_signed_range
+  )" || event_status=$?
+  if [[ "${event_status}" -eq 0 || -s "${scanned_ranges_file}" ]]; then
+    echo "release-signatures self-test: FAIL (absent pull_request base did not fail closed)" >&2
+    echo "${event_output}" >&2
+    failures=$((failures + 1))
+  else
+    echo "release-signatures self-test: PASS missing pull_request base fails closed"
+  fi
+  : >"${scanned_ranges_file}"
+
+  # A base that is not an ancestor of the head fails closed instead of being
+  # scanned blindly.
+  event_status=0
+  event_output="$(
+    scan_range() { printf 'unexpected\n' >>"${scanned_ranges_file}"; return 0; }
+    git() {
+      case "$1" in
+        rev-parse) return 0 ;;
+        merge-base) return 1 ;;
+      esac
+      command git "$@"
+    }
+    GITHUB_EVENT_NAME=pull_request \
+      PR_BASE_SHA=1111111111111111111111111111111111111111 \
+      PR_HEAD_SHA=2222222222222222222222222222222222222222 \
+      event_signed_range
+  )" || event_status=$?
+  if [[ "${event_status}" -eq 0 || -s "${scanned_ranges_file}" ]]; then
+    echo "release-signatures self-test: FAIL (non-ancestor base did not fail closed)" >&2
+    echo "${event_output}" >&2
+    failures=$((failures + 1))
+  else
+    echo "release-signatures self-test: PASS non-ancestor base fails closed"
+  fi
+  : >"${scanned_ranges_file}"
+
+  # No event and no explicit range fails closed rather than sweeping history.
+  event_status=0
+  event_output="$(
+    scan_range() { printf 'unexpected\n' >>"${scanned_ranges_file}"; return 0; }
+    event_signed_range
+  )" || event_status=$?
+  if [[ "${event_status}" -eq 0 || -s "${scanned_ranges_file}" ]]; then
+    echo "release-signatures self-test: FAIL (missing event did not fail closed)" >&2
+    echo "${event_output}" >&2
+    failures=$((failures + 1))
+  else
+    echo "release-signatures self-test: PASS missing event fails closed"
+  fi
+  rm -f "${scanned_ranges_file}"
 
   if ! git rev-parse --verify --quiet "${HISTORICAL_UNSIGNED_FIXTURE}^{commit}" >/dev/null; then
     echo "release-signatures self-test: FAIL (historical unsigned fixture ${HISTORICAL_UNSIGNED_FIXTURE} unavailable)" >&2
@@ -711,8 +869,13 @@ while [[ $# -gt 0 ]]; do
       cat <<'USAGE'
 usage: scripts/verify-release-branch-signatures.sh [--self-test] [--range <base..head> [--label <label>]]...
 
-Without explicit ranges, scans repaired protected/release-please branch history from the
-signed-history repair base and any GitHub Actions pull_request or push range in the environment.
+Without explicit ranges, scans exactly the new commits the current release event
+introduces, bounded by that event's own accepted base: a pull request's base
+commit (base.sha), a push's before commit, or the accepted protected branch a
+dispatched generated release PR merges into. A missing base, a base that is not
+an ancestor of the head, or no event at all fails closed. No ancestor tag is
+treated as proof of published history, and unrelated ref histories are never
+scanned.
 USAGE
       exit 0
       ;;
@@ -734,10 +897,7 @@ if (( ${#ranges[@]} > 0 )); then
   done
 else
   fetch_release_refs_if_possible
-  if ! scan_default_release_refs; then
-    failures=$((failures + 1))
-  fi
-  if ! scan_pr_or_push_range_if_present; then
+  if ! event_signed_range; then
     failures=$((failures + 1))
   fi
 fi

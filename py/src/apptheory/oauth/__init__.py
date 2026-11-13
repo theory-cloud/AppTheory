@@ -1281,7 +1281,10 @@ def _normalize_dcr_request(
 from apptheory.oauth.autheory import (  # noqa: E402
     AutheoryProvider,
     AutheoryProviderOptions,
+    is_per_request_token_verdict,
+    is_terminal_token_verdict,
     new_autheory_provider,
+    terminal_token_verdict_codes,
 )
 from apptheory.oauth.jwks import (  # noqa: E402
     JWKSValidatorOptions,
@@ -1411,6 +1414,8 @@ __all__ = [
     "claude_dynamic_client_registration_policy",
     "hash_key",
     "insufficient_scope_www_authenticate",
+    "is_per_request_token_verdict",
+    "is_terminal_token_verdict",
     "new_autheory_provider",
     "new_authorization_server_metadata",
     "new_jwks_validator",
@@ -1426,6 +1431,7 @@ __all__ = [
     "resource_metadata_url_from_mcp_endpoint",
     "rfc9728_resource_metadata_url",
     "run_store_conformance",
+    "terminal_token_verdict_codes",
     "validate_dynamic_client_registration_request",
     "validate_pkce_code_verifier",
 ]

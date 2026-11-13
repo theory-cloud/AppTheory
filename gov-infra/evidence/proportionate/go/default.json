@@ -1,0 +1,71 @@
+{
+  "commands": [
+    {
+      "argv": [
+        "bash",
+        "scripts/verify-go.sh"
+      ],
+      "durationSeconds": 69.298,
+      "executed": true,
+      "exitCode": 0,
+      "finishedAt": "2026-11-12T23:21:12Z",
+      "id": "go-test-vet",
+      "inputsDigest": "sha256:76dc56f02f4bf3f3eabdff18859d1420bf5a30c8a4f734c65ee59483c2be49d1",
+      "logDigest": "sha256:b9a86bcbe5b6f10c2c816408046a5b68b7cd5102f9e4cb27c852afffeecdcd67",
+      "logRef": "gov-infra/evidence/proportionate/local/go-go-test-vet-20261112T232003Z-68712.log",
+      "reused": false,
+      "startedAt": "2026-11-12T23:20:03Z"
+    }
+  ],
+  "consumed": [],
+  "description": "Go test and vet",
+  "environment": {
+    "go": "go1.27.4",
+    "node": "v24.13.1",
+    "platform": {
+      "arch": "arm64",
+      "os": "darwin"
+    },
+    "python": "3.14.7"
+  },
+  "gate": "go",
+  "kind": "source",
+  "producer": {
+    "registry": "validation-gates.json",
+    "tool": "scripts/evidence/validation_evidence.py"
+  },
+  "profile": "default",
+  "reason": "",
+  "recordedAt": "2026-11-12T23:21:12Z",
+  "releaseOnly": {
+    "digest": "sha256:dea47f7c318e6703d405d14f61f76d6c1a8d2b38f1b682fdc96b6781c222b699",
+    "fileCount": 476,
+    "normalizedDigest": "sha256:c5ecbf183fa35bbf12642d3d5103e5af06b5b0d169ec8b29c253d8712187ac69",
+    "version": "7.1.0"
+  },
+  "reviews": [],
+  "schemaVersion": 1,
+  "scope": {
+    "digest": "sha256:dd9b2839af2222c4ac864f0de595b0f301cda5bffa3c9136eff32531001a3fce",
+    "fileCount": 1527,
+    "paths": [
+      "go.mod",
+      "go.sum",
+      "runtime/",
+      "testkit/",
+      "pkg/",
+      "cmd/",
+      "internal/",
+      "contract-tests/",
+      "examples/",
+      "scripts/list-go-packages.sh",
+      "scripts/verify-go.sh"
+    ],
+    "version": 1
+  },
+  "source": {
+    "digest": "sha256:f126e887ac3038d3b92d1195cfb81dc02854eae09d9844e74265a1c0ec0484ff",
+    "fileCount": 2658
+  },
+  "verdict": "PASS"
+}

@@ -1,0 +1,35 @@
+{
+  "contract": "theorycloud_refresh_rotation_recovery.v0.1",
+  "case_id": "sleep-derived-window",
+  "description": "Banned: the serve window W (and through it the generation bound N) derived from steward sleep duration instead of measured recovery-attempt latency. Multi-hour-sleep stewards are recovered at the facade plane; sleep never enters W or N (ADV-133-R2-1).",
+  "expected_outcome": "nonconformant",
+  "expected_violation": "R3",
+  "stage_config": {
+    "serve_window_seconds": 600,
+    "access_token_ttl_seconds": 900,
+    "refresh_due_fraction": 0.5,
+    "sweep_interval_seconds": 60,
+    "generation_bound": 4,
+    "margin": 2.0,
+    "window_source": "steward_sleep"
+  },
+  "scenario": [
+    {
+      "t_offset_seconds": 0,
+      "actor": "steward-a",
+      "action": "rotate",
+      "generation": "g5",
+      "successor": "g6",
+      "minted": true,
+      "artifact_atomic": true,
+      "wire": "success"
+    }
+  ],
+  "expect": {
+    "family_revoked": false,
+    "recovery": "none",
+    "terminal_wire_error": "none",
+    "transient_wire": "none",
+    "receipt_emitted": false
+  }
+}

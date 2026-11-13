@@ -146,6 +146,7 @@ var conformanceScenarios = map[string]func(*conformanceHarness, ConformanceCase)
 	"family_create":                      (*conformanceHarness).brokerFamilyCreate,
 	"family_create_binding":              (*conformanceHarness).brokerFamilyCreateBinding,
 	"family_rotate":                      (*conformanceHarness).brokerFamilyRotate,
+	"family_rotation_intent":             (*conformanceHarness).brokerFamilyRotationIntent,
 	"family_rotate_wrong_owner":          (*conformanceHarness).brokerFamilyRotateWrongOwner,
 	"family_rotate_stale_version":        (*conformanceHarness).brokerFamilyRotateStaleVersion,
 	"family_rotate_existing_successor":   (*conformanceHarness).brokerFamilyRotateExistingSuccessor,

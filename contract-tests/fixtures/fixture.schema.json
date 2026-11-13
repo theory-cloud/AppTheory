@@ -4,7 +4,8 @@
   "title": "AppTheory contract fixture",
   "description": "Internal meta-contract for AppTheory cross-language contract test fixtures.",
   "type": "object",
-  "required": ["id", "tier", "name", "expect"],
+  "required": ["id", "tier", "name"],
+  "anyOf": [{ "required": ["expect"] }, { "required": ["expect_by_runtime"] }],
   "additionalProperties": false,
   "properties": {
     "id": {
@@ -15,7 +16,18 @@
     "name": { "type": "string", "minLength": 1 },
     "setup": { "$ref": "#/$defs/setup" },
     "input": { "$ref": "#/$defs/input" },
-    "expect": { "$ref": "#/$defs/expect" }
+    "expect": { "$ref": "#/$defs/expect" },
+    "expect_by_runtime": {
+      "description": "Per-runtime expectations for a behavior whose correct response differs by runtime. Each runner selects its own entry instead of a shared expect; a fixture that carries this must name every runtime.",
+      "type": "object",
+      "required": ["go", "ts", "py"],
+      "additionalProperties": false,
+      "properties": {
+        "go": { "$ref": "#/$defs/expect" },
+        "ts": { "$ref": "#/$defs/expect" },
+        "py": { "$ref": "#/$defs/expect" }
+      }
+    }
   },
   "$defs": {
     "tier": {
@@ -370,6 +382,7 @@
             "version": { "type": "string", "minLength": 1 },
             "include_server_info_metadata": { "type": "boolean" },
             "initial_session_listener_enabled": { "type": "boolean" },
+            "declined_get_validation_first": { "type": "boolean" },
             "extension_capabilities": {
               "type": "object",
               "additionalProperties": {
@@ -523,7 +536,30 @@
         "public_base_url": { "type": "string", "minLength": 1 },
         "resource_metadata_url": { "type": "string", "minLength": 1 },
         "scopes": { "$ref": "#/$defs/stringArray" },
-        "bearer": { "$ref": "#/$defs/mcpFacadeBearer" }
+        "bearer": { "$ref": "#/$defs/mcpFacadeBearer" },
+        "origin_reachability": {
+          "type": "string",
+          "enum": ["disabled", "locked", "fronted"]
+        },
+        "front_door_verification": { "$ref": "#/$defs/mcpFacadeFrontDoorVerification" }
+      }
+    },
+    "mcpFacadeFrontDoorVerification": {
+      "type": "object",
+      "description": "The app-owned front-door header the runtime verifies on every derived route under origin_reachability fronted. Required with fronted; refused under every other posture, because an undeclared front door enforces nothing.",
+      "additionalProperties": false,
+      "required": ["header_name", "secret_value"],
+      "properties": {
+        "header_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "1 to 64 characters of [A-Za-z0-9-], never a reserved request header. The same name the construct declared and the distribution injects."
+        },
+        "secret_value": {
+          "type": "string",
+          "minLength": 1,
+          "description": "32 to 128 characters of [A-Za-z0-9._~-]. The literal the distribution injects and the runtime compares in constant time."
+        }
       }
     },
     "mcpFacadeBearer": {

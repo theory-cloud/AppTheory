@@ -90,6 +90,7 @@ CountingTransportHandler	interface
 CreateIdempotencyRecordInput	type
 CreateJobInput	type
 DEFAULT_CALLBACK_PATH	const
+DEFAULT_REFRESH_BUDGET_SECONDS	const
 DEFAULT_REFRESH_GRACE_WINDOW_SECONDS	const
 DefaultEmbeddingDimensions	const
 DefaultQueryTopK	const
@@ -159,6 +160,7 @@ FakeTokenRequest	interface
 FakeVectorStore	class
 FakeWebSocketManagementClient	class
 FixedWindowStrategy	class
+FrontDoorVerification	interface
 GetVectorsInput	interface
 HTTPErrorFormat	type
 HTTP_ERROR_FORMAT_FLAT_LEGACY	const
@@ -225,6 +227,7 @@ LoggingProfileSanitizer	type
 LoggingProfileValidationError	class
 MAX_CLIENT_REQUEST_ID_LENGTH	const
 MAX_PRESIGN_PUT_EXPIRES_IN	const
+MAX_REFRESH_BUDGET_SECONDS	const
 MAX_REFRESH_GRACE_WINDOW_SECONDS	const
 MAX_REFRESH_REUSE_RATE_CEILING	const
 MAX_ROUTE_REFRESH_HANDLE_TTL_SECONDS	const
@@ -288,6 +291,7 @@ MICROVM_ERROR_UNAUTHENTICATED_CONTROLLER	const
 MICROVM_SESSION_REGISTRY_MODEL_NAME	const
 MICROVM_SESSION_REGISTRY_TABLE_ENV	const
 MICROVM_SESSION_REGISTRY_TABLE_NAME	const
+MIN_REFRESH_BUDGET_SECONDS	const
 MIN_REFRESH_REUSE_RATE_CEILING	const
 MIN_ROUTE_REFRESH_HANDLE_TTL_SECONDS	const
 ManualClock	class
@@ -305,6 +309,7 @@ McpInputRequest	interface
 McpInputRequiredResult	interface
 McpJSONRecord	type
 McpJSONValue	type
+McpOriginReachability	type
 McpPromptArgument	interface
 McpPromptDef	interface
 McpPromptHandler	type
@@ -475,6 +480,7 @@ OBJECTSTORE_ERROR_INVALID_STORE_CONFIG	const
 OBJECTSTORE_ERROR_NOT_FOUND	const
 OBJECTSTORE_ERROR_OBJECT_TOO_LARGE	const
 OBJECTSTORE_ERROR_UNSUPPORTED_OPERATION	const
+ORIGIN_REACHABILITIES	const
 ObjectRef	interface
 ObjectStore	interface
 ObjectStoreCall	interface
@@ -504,6 +510,7 @@ PARAM_CLIENT_NAMESPACE	const
 PARAM_PARTNER_ID	const
 PARTNER_AGENT_MCP_PATTERN	const
 PARTNER_NAMESPACE_MCP_PATTERN	const
+PER_REQUEST_TOKEN_ERROR_CODES	const
 PROTECTED_RESOURCE_PREFIX	const
 PolicyDecision	interface
 PolicyHook	type
@@ -558,10 +565,12 @@ ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE	const
 ROUTE_REFRESH_REASON_HANDLE_MALFORMED	const
 ROUTE_REFRESH_REASON_LEGACY_LINEAGE	const
 ROUTE_REFRESH_REASON_LEGACY_LINEAGE_ADOPTED	const
+ROUTE_REFRESH_REASON_LINEAGE_VERIFIED	const
 ROUTE_REFRESH_REASON_LOCK_CONTENTION	const
 ROUTE_REFRESH_REASON_RECORD_ABSENT	const
 ROUTE_REFRESH_REASON_RECORD_EXPIRED	const
 ROUTE_REFRESH_REASON_RECORD_REVOKED	const
+ROUTE_REFRESH_REASON_RECOVERY_PENDING	const
 ROUTE_REFRESH_REASON_RESOURCE_MISMATCH	const
 ROUTE_REFRESH_REASON_REWRITE_FAILURE	const
 ROUTE_REFRESH_REASON_ROTATED_REUSE	const
@@ -586,6 +595,10 @@ RecordStatus	type
 RefreshLeaseInput	type
 RefreshRequest	interface
 RefreshSemaphoreSlotInput	type
+RefreshSweepConfig	interface
+RefreshSweepOutcome	type
+RefreshSweepResult	interface
+RefreshSweeper	class
 RefusalClass	type
 RefusalEvent	interface
 RefusalHook	type
@@ -648,6 +661,7 @@ StageGlobalRoute	interface
 StoreConformanceCase	interface
 Stores	interface
 StructuredLogger	interface
+TERMINAL_TOKEN_ERROR_CODES	const
 TRANSPORT_POSTURES	const
 TableTheoryMicroVMSessionRegistry	class
 TableTheoryMicroVMSessionRegistryOptions	interface
@@ -805,7 +819,9 @@ htmlStream	function
 insufficientScopeWWWAuthenticate	function
 isAppTheoryError	const
 isMicroVMTerminalState	function
+isPerRequestTokenVerdict	function
 isSupportedProfileOutputField	function
+isTerminalTokenVerdict	function
 isWellFormedClientRequestId	function
 jobLockSortKey	function
 jobMetaSortKey	function
@@ -921,6 +937,7 @@ supportedIssuerModes	function
 supportedOAuthDiscoveryTemplates	function
 supportedOAuthFacadeTemplates	function
 supportedStageGlobalRoutes	function
+terminalTokenVerdictCodes	function
 text	function
 timeoutMiddleware	function
 unixSeconds	function

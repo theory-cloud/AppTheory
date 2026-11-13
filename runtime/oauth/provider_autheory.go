@@ -65,10 +65,11 @@ const (
 	providerMsgTokenValidationFailed = "upstream access token validation failed"
 )
 
-// Upstream token-endpoint error codes that carry an adapter-level meaning. The
-// remaining terminal codes all map to the invalid_grant class, and an
-// unrecognized code stays an upstream_error so an unknown signal is never
-// upgraded into a client-facing decision.
+// Upstream token-endpoint error codes that carry an adapter-level meaning. Only
+// invalid_grant is a contract-terminal verdict; the per-request client codes are
+// enumerated as such rather than collapsed into it, and an unrecognized code
+// stays an upstream_error so an unknown signal is never upgraded into a
+// client-facing decision.
 const (
 	tokenErrorReauthRequired      = "reauth_required" // #nosec G101 -- an OAuth error-code literal, not a credential.
 	tokenErrorTemporarilyUnavail  = "temporarily_unavailable"
@@ -654,32 +655,82 @@ func tokenErrorCode(body []byte) string {
 	return strings.TrimSpace(document.Error)
 }
 
-// isTerminalTokenErrorCode reports whether the upstream named a terminal OAuth
-// error, which the facade maps onto the invalid_grant class.
+// isTerminalTokenErrorCode reports whether the upstream named a
+// contract-terminal OAuth error: the only token-endpoint code that may carry a
+// family-terminal authority verdict, which the facade maps onto the invalid_grant
+// class.
+//
+// The enumeration is the refresh-rotation-recovery contract's R6 per-code set
+// (theorycloud_refresh_rotation_recovery.v0.1). Exactly one code is terminal:
+// invalid_grant, which the identity plane emits only for genuinely terminal
+// cases (out-of-window replay, logout/revoke-all containment, explicit
+// revocation). Every per-request client code is listed in
+// isPerRequestTokenErrorCode and is never a family-killer: the family is alive,
+// the individual request was refused. A stale-or-replaced signal
+// (reauth_required) is recovery-available under the contract, so it is not
+// terminal either. An unrecognized code is not terminal.
 func isTerminalTokenErrorCode(code string) bool {
-	switch code {
-	case tokenErrorInvalidGrant,
-		tokenErrorInvalidClient,
-		tokenErrorUnauthorizedClient,
-		tokenErrorInvalidScope,
-		tokenErrorInvalidRequest,
-		tokenErrorAccessDenied,
-		tokenErrorExpiredToken,
-		tokenErrorInvalidToken:
-		return true
-	default:
-		return false
-	}
+	return code == tokenErrorInvalidGrant
+}
+
+// perRequestTokenErrorCodes is the contract's per-request client-error set: the
+// codes a token endpoint answers when this one request cannot be honored. They
+// are transient to the family, so no family, session, or tombstone may be
+// killed for one of them.
+var perRequestTokenErrorCodes = map[string]struct{}{
+	tokenErrorInvalidClient:      {},
+	tokenErrorUnauthorizedClient: {},
+	tokenErrorInvalidScope:       {},
+	tokenErrorInvalidRequest:     {},
+	tokenErrorAccessDenied:       {},
+	tokenErrorExpiredToken:       {},
+	tokenErrorInvalidToken:       {},
+}
+
+// isPerRequestTokenErrorCode reports whether the code belongs to the contract's
+// per-request client-error set. It is the complement the facade and the
+// conformance tables enumerate in both directions, so a future code added to
+// the terminal classifier cannot silently become a family verdict.
+func isPerRequestTokenErrorCode(code string) bool {
+	_, ok := perRequestTokenErrorCodes[code]
+	return ok
+}
+
+// IsTerminalTokenVerdict reports whether an upstream token-endpoint error code
+// may carry a contract-terminal family verdict. It is the exported seam the
+// facade's terminal classifier, the store/sweep conformance tables, and the
+// vendored refresh-rotation-recovery corpus are all pinned against, so a
+// consumer can classify an upstream answer exactly as the facade does.
+func IsTerminalTokenVerdict(code string) bool {
+	return isTerminalTokenErrorCode(strings.TrimSpace(code))
+}
+
+// TerminalTokenVerdictCodes returns the contract's terminal token-verdict codes.
+// Exactly one code is terminal today; the slice is returned so a conformance
+// check can enumerate it in both directions.
+func TerminalTokenVerdictCodes() []string {
+	return []string{tokenErrorInvalidGrant}
+}
+
+// IsPerRequestTokenVerdict reports whether an upstream token-endpoint error code
+// is one of the contract's per-request client errors. It is exported for the
+// same reason as IsTerminalTokenVerdict, and the two are disjoint by
+// construction.
+func IsPerRequestTokenVerdict(code string) bool {
+	return isPerRequestTokenErrorCode(strings.TrimSpace(code))
 }
 
 // tokenResponseError maps a non-2xx token response onto the closed provider
-// vocabulary. Only an explicit upstream signal produces reauth_required or
-// temporarily_unavailable; a 4xx with a terminal OAuth code is a definitive
-// grant rejection, and everything else is an upstream_error.
+// vocabulary. Only invalid_grant is a contract-terminal grant rejection. A
+// stale-or-replaced signal (reauth_required) is recovery-available under the
+// rotation-recovery contract — the replaced material is walked to its successor
+// within the serve window — so it is reported as the retryable class, and every
+// per-request client code (and every unrecognized code) stays an upstream_error
+// so a request-level refusal never becomes a family verdict.
 func tokenResponseError(op string, status int, code string) *ProviderError {
 	switch code {
 	case tokenErrorReauthRequired:
-		return NewProviderError(ProviderReauthRequired, op, providerMsgReauthRequired)
+		return NewProviderError(ProviderTemporarilyUnavailable, op, providerMsgReauthRequired)
 	case tokenErrorTemporarilyUnavail:
 		return NewProviderError(ProviderTemporarilyUnavailable, op, providerMsgTokenEndpointFailed)
 	}

@@ -1045,3 +1045,79 @@ func TestFetchKeysSkipsOversizedKid(t *testing.T) {
 		t.Fatalf("an oversized document kid entered the cache: %v", validator.keys)
 	}
 }
+
+// TestTerminalTokenErrorCodeEnumeration pins the refresh-rotation-recovery
+// contract's R6 per-code set in both directions: exactly one code is
+// contract-terminal, every per-request client code is enumerated as such, and
+// the adapter's class mapping follows from the enumeration rather than from a
+// status check alone. A code that is neither terminal nor per-request (an
+// unknown 4xx, a 5xx, an empty body) can never become a family verdict.
+func TestTerminalTokenErrorCodeEnumeration(t *testing.T) {
+	perRequest := []string{
+		"invalid_scope",
+		"invalid_request",
+		"access_denied",
+		"expired_token",
+		"invalid_token",
+		"invalid_client",
+		"unauthorized_client",
+	}
+	perRequestSet := map[string]bool{}
+	for _, code := range perRequest {
+		perRequestSet[code] = true
+	}
+	codes := append([]string{tokenErrorInvalidGrant, tokenErrorReauthRequired}, perRequest...)
+	codes = append(codes, tokenErrorTemporarilyUnavail, "server_error", "something_new", "")
+
+	terminalSeen := 0
+	perRequestSeen := 0
+	for _, code := range codes {
+		wantTerminal := code == tokenErrorInvalidGrant
+		if got := isTerminalTokenErrorCode(code); got != wantTerminal {
+			t.Errorf("isTerminalTokenErrorCode(%q) = %t, want %t", code, got, wantTerminal)
+		}
+		if wantTerminal {
+			terminalSeen++
+		}
+		wantPerRequest := perRequestSet[code]
+		if got := isPerRequestTokenErrorCode(code); got != wantPerRequest {
+			t.Errorf("isPerRequestTokenErrorCode(%q) = %t, want %t", code, got, wantPerRequest)
+		}
+		if wantPerRequest {
+			perRequestSeen++
+		}
+		if wantTerminal && wantPerRequest {
+			t.Errorf("code %q is both terminal and per-request", code)
+		}
+
+		// The class mapping is derived from the enumeration: only the terminal code
+		// reaches invalid_grant, and a per-request code never does even on a 4xx.
+		class := tokenResponseError(providerOpRefresh, http.StatusBadRequest, code).Class
+		switch {
+		case wantTerminal:
+			if class != ProviderInvalidGrant {
+				t.Errorf("tokenResponseError(%q) class = %q, want %q", code, class, ProviderInvalidGrant)
+			}
+		case wantPerRequest:
+			if class != ProviderUpstreamError {
+				t.Errorf("tokenResponseError(%q) class = %q, want %q", code, class, ProviderUpstreamError)
+			}
+		}
+	}
+	if terminalSeen != 1 {
+		t.Fatalf("terminal codes enumerated = %d, want exactly 1", terminalSeen)
+	}
+	if perRequestSeen != len(perRequest) {
+		t.Fatalf("per-request codes enumerated = %d, want %d", perRequestSeen, len(perRequest))
+	}
+
+	// Direction two: the terminal code is terminal only on a 4xx. A 5xx carrying
+	// the same code is an upstream failure, not a grant verdict.
+	if class := tokenResponseError(providerOpRefresh, http.StatusServiceUnavailable, tokenErrorInvalidGrant).Class; class != ProviderUpstreamError {
+		t.Errorf("5xx invalid_grant class = %q, want %q", class, ProviderUpstreamError)
+	}
+	// A stale-or-replaced signal is recovery-available, so it is retryable.
+	if class := tokenResponseError(providerOpRefresh, http.StatusBadRequest, tokenErrorReauthRequired).Class; class != ProviderTemporarilyUnavailable {
+		t.Errorf("reauth_required class = %q, want %q", class, ProviderTemporarilyUnavailable)
+	}
+}

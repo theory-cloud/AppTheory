@@ -311,6 +311,15 @@ export interface McpServerOptions {
      * replay requests are unaffected.
      */
     initialSessionListenerEnabled?: boolean;
+    /**
+     * Accepted for cross-language interface parity with the Go
+     * `mcp.WithDeclinedGETValidationFirst` option. TypeScript already validates
+     * origin, GET headers, session, and protocol version before the stream-less
+     * 405 in both modes, so this option changes no response here; it exists so a
+     * transport configuration can be shared across runtimes without a runtime
+     * column. Go defaults to 405-first and opts into validation-first with it.
+     */
+    declinedGetValidationFirst?: boolean;
 }
 export declare class McpSessionNotFoundError extends Error {
     constructor(message?: string);

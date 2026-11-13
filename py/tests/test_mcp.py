@@ -808,6 +808,33 @@ class McpRuntimeTests(unittest.TestCase):
 
         self.assertEqual(harness.invoke(method="DELETE", session_id=session_id).response.status, 202)
 
+    def test_declined_get_validation_first_option_is_accepted_parity(self) -> None:
+        for enabled in (False, True):
+            server = create_mcp_server(
+                "PyMCP",
+                "test",
+                {
+                    "id_generator": sequence_mcp_id_generator(
+                        [f"sess-validation-first-{enabled}"]
+                    ),
+                    "initial_session_listener_enabled": False,
+                    "declined_get_validation_first": enabled,
+                },
+            )
+            harness = create_mcp_test_harness(server)
+            session_id = harness.initialize(id="init").response.headers["mcp-session-id"][0]
+
+            # Python always validates before the stream-less 405, so both modes
+            # report the session failure and only a valid session reaches 405.
+            self.assertEqual(harness.invoke(method="GET").response.status, 400)
+            self.assertEqual(
+                harness.invoke(method="GET", session_id="missing").response.status, 404
+            )
+            declined = harness.invoke(method="GET", session_id=session_id)
+            self.assertEqual(declined.response.status, 405)
+            self.assertEqual(declined.response.headers["allow"], ["DELETE, GET, POST"])
+            self.assertEqual(declined.body_json, {"error": "method not allowed"})
+
     def test_resource_context_type_is_public(self) -> None:
         self.assertEqual(McpResourceContext(uri="theory://x").uri, "theory://x")
 

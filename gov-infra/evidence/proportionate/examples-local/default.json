@@ -1,0 +1,95 @@
+{
+  "commands": [
+    {
+      "argv": [
+        "make",
+        "examples-local"
+      ],
+      "durationSeconds": 1177.44,
+      "executed": true,
+      "exitCode": 0,
+      "finishedAt": "2026-11-13T01:06:39Z",
+      "id": "examples-harness",
+      "inputsDigest": "sha256:e950414a966fde7f66563105e90327fb07c0c5c974464f70fb13d82164591a09",
+      "logDigest": "sha256:50e8e35b94cebb5db57716df4d67d0650530154649c364846e1e76bb67174f25",
+      "logRef": "gov-infra/evidence/proportionate/local/examples-local-examples-harness-20261113T004702Z-28647.log",
+      "reused": false,
+      "startedAt": "2026-11-13T00:47:02Z"
+    },
+    {
+      "argv": [
+        "make",
+        "verify-cdk-synth-location-independent"
+      ],
+      "durationSeconds": 129.201,
+      "executed": true,
+      "exitCode": 0,
+      "finishedAt": "2026-11-13T01:08:49Z",
+      "id": "examples-relocated-synth",
+      "inputsDigest": "sha256:772cbcd7519fd75588c12b1851979813f604f28fcfdacd25680345e231202ec4",
+      "logDigest": "sha256:cbb2e16dc5b988ba6f81b76f2e3e02ab97448622b0453e23e38aef955d4be0a4",
+      "logRef": "gov-infra/evidence/proportionate/local/examples-local-examples-relocated-synth-20261113T010639Z-28647.log",
+      "reused": false,
+      "startedAt": "2026-11-13T01:06:39Z"
+    }
+  ],
+  "consumed": [],
+  "description": "Local examples harness plus relocated-copy synth proof (local journey, produced on the approved host)",
+  "environment": {
+    "go": "go1.27.4",
+    "node": "v24.21.0",
+    "platform": {
+      "arch": "arm64",
+      "os": "darwin"
+    },
+    "python": "3.14.7"
+  },
+  "gate": "examples-local",
+  "kind": "source",
+  "producer": {
+    "registry": "validation-gates.json",
+    "tool": "scripts/evidence/validation_evidence.py"
+  },
+  "profile": "default",
+  "reason": "",
+  "recordedAt": "2026-11-13T01:08:49Z",
+  "releaseOnly": {
+    "digest": "sha256:dea47f7c318e6703d405d14f61f76d6c1a8d2b38f1b682fdc96b6781c222b699",
+    "fileCount": 476,
+    "normalizedDigest": "sha256:c5ecbf183fa35bbf12642d3d5103e5af06b5b0d169ec8b29c253d8712187ac69",
+    "version": "7.1.0"
+  },
+  "reviews": [],
+  "schemaVersion": 1,
+  "scope": {
+    "digest": "sha256:f75d4064dcd419e0d24fae874c53a37e776647295e2e12956e27a73356954dd4",
+    "fileCount": 2437,
+    "paths": [
+      "Makefile",
+      "examples/",
+      "scripts/local/",
+      "scripts/verify-cdk-synth.sh",
+      "scripts/verify-cdk-example-assertions.mjs",
+      "scripts/verify-cdk-synth-location-independent.sh",
+      "runtime/",
+      "testkit/",
+      "pkg/",
+      "internal/",
+      "go.mod",
+      "go.sum",
+      "cmd/apptheory-local/",
+      "ts/",
+      "py/",
+      "cdk/",
+      "contract-tests/",
+      "scripts/lib/",
+      "docs/examples/local-harness.md"
+    ],
+    "version": 1
+  },
+  "source": {
+    "digest": "sha256:09629b1d99eaf66c3ee324abde622a7b4c40a45893e68da60bef35505cc50539",
+    "fileCount": 2658
+  },
+  "verdict": "PASS"
+}

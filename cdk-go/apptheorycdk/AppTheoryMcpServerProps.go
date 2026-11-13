@@ -53,6 +53,15 @@ type AppTheoryMcpServerProps struct {
 	// Default: undefined.
 	//
 	Facade *AppTheoryMcpFacadeAttachment `field:"optional" json:"facade" yaml:"facade"`
+	// Front-door verification declaration, required with `originReachability: FRONTED` and refused under every other decision.
+	//
+	// The construct records the posture, the header name, and a SHA-256 digest of
+	// the declared secret in the `apptheory:mcp-transport-posture` metadata; it
+	// never emits the literal secret. Enforcement is the runtime's front-door
+	// header check, so an unwired runtime enforces nothing.
+	// Default: undefined.
+	//
+	FrontDoorVerification *AppTheoryMcpFrontDoorVerificationOptions `field:"optional" json:"frontDoorVerification" yaml:"frontDoorVerification"`
 	// JWKS URI from the v3.1.x A6 environment contract.
 	// Deprecated: Configure `runtime/mcpfacade.FacadeConfig.JWKSURI` in the
 	// application. The construct no longer injects JWKS environment values.
@@ -63,7 +72,8 @@ type AppTheoryMcpServerProps struct {
 	McpPath *string `field:"optional" json:"mcpPath" yaml:"mcpPath"`
 	// Direct-origin reachability decision required under RUNTIME_BEARER and NONE_PUBLIC.
 	//
-	// A directly reachable origin is refused.
+	// A directly reachable origin is refused unless it is declared
+	// `FRONTED`, which requires `frontDoorVerification`.
 	// Default: undefined.
 	//
 	OriginReachability AppTheoryMcpOriginReachability `field:"optional" json:"originReachability" yaml:"originReachability"`

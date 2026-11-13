@@ -1,0 +1,104 @@
+{
+  "commands": [
+    {
+      "argv": [
+        "bash",
+        "scripts/verify-ts-dist-drift.sh"
+      ],
+      "durationSeconds": 0.435,
+      "executed": true,
+      "exitCode": 0,
+      "finishedAt": "2026-11-12T20:25:39Z",
+      "id": "ts-dist-drift",
+      "inputsDigest": "sha256:233414d9726c4e6ab73d78bc20b849951a9b93856e93ae97d785f67bd5afe8df",
+      "logDigest": "sha256:7de8f522337a8d8723df5594462e6f5af204da3e79f574503577a006e66a6086",
+      "logRef": "gov-infra/evidence/proportionate/local/ts-ts-dist-drift-20261112T202538Z-82956.log",
+      "reused": false,
+      "startedAt": "2026-11-12T20:25:38Z"
+    },
+    {
+      "argv": [
+        "bash",
+        "scripts/verify-ts-pack.sh"
+      ],
+      "durationSeconds": 0.44,
+      "executed": true,
+      "exitCode": 0,
+      "finishedAt": "2026-11-12T20:25:39Z",
+      "id": "ts-pack",
+      "inputsDigest": "sha256:402f105328f65e71614d077981ec68bfa5f104a6305d76df9dd892340c082437",
+      "logDigest": "sha256:7de8f522337a8d8723df5594462e6f5af204da3e79f574503577a006e66a6086",
+      "logRef": "gov-infra/evidence/proportionate/local/ts-ts-pack-20261112T202539Z-82956.log",
+      "reused": false,
+      "startedAt": "2026-11-12T20:25:39Z"
+    }
+  ],
+  "consumed": [
+    {
+      "digest": "sha256:82aa5d2e108f6247b9a2b8468c3f466e74306d9a2cd3fa05fc9807705e06159b",
+      "gate": "deterministic-builds",
+      "recordedAt": "2026-11-12T20:01:15Z"
+    },
+    {
+      "digest": "sha256:82aa5d2e108f6247b9a2b8468c3f466e74306d9a2cd3fa05fc9807705e06159b",
+      "gate": "deterministic-builds",
+      "recordedAt": "2026-11-12T20:01:15Z"
+    }
+  ],
+  "description": "TypeScript checked-in dist drift and npm pack",
+  "environment": {
+    "go": "go1.27.4",
+    "node": "v24.21.0",
+    "platform": {
+      "arch": "arm64",
+      "os": "darwin"
+    },
+    "python": "3.14.7"
+  },
+  "gate": "ts",
+  "kind": "source",
+  "producer": {
+    "registry": "validation-gates.json",
+    "tool": "scripts/evidence/validation_evidence.py"
+  },
+  "profile": "default",
+  "reason": "",
+  "recordedAt": "2026-11-12T20:25:39Z",
+  "releaseOnly": {
+    "digest": "sha256:dea47f7c318e6703d405d14f61f76d6c1a8d2b38f1b682fdc96b6781c222b699",
+    "fileCount": 476,
+    "normalizedDigest": "sha256:c5ecbf183fa35bbf12642d3d5103e5af06b5b0d169ec8b29c253d8712187ac69",
+    "version": "7.1.0"
+  },
+  "reviews": [
+    {
+      "kind": "review-reference",
+      "ref": "factory:20261112T194701Z-adversary-81745"
+    },
+    {
+      "kind": "review-reference",
+      "ref": "factory:20261112T194701Z-sanity-81746"
+    }
+  ],
+  "schemaVersion": 1,
+  "scope": {
+    "digest": "sha256:4d7dd2e9fad5f15d8ef0d5ccf5bba593dc5006c15e683e94e2dcae5d8647b24a",
+    "fileCount": 463,
+    "paths": [
+      "ts/",
+      "scripts/verify-ts-dist-drift.sh",
+      "scripts/verify-ts-pack.sh",
+      "scripts/read-version.sh",
+      "scripts/lib/ts-runtime-deps.sh",
+      "scripts/lib/runtime-deps.sh",
+      "scripts/lib/retry.sh",
+      "scripts/lib/blocked.sh"
+    ],
+    "version": 1
+  },
+  "source": {
+    "digest": "sha256:ca76497f13c6e3d8ded84c7468f4f56ef263a9f68bffac56f091e4ac55df2f2e",
+    "fileCount": 2658
+  },
+  "verdict": "PASS"
+}

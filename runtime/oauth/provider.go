@@ -135,7 +135,11 @@ const (
 	// cannot send; it never reaches the upstream (facade HTTP 400).
 	ProviderInvalidRequest ProviderErrorClass = "invalid_request"
 	// ProviderReauthRequired means the provider reported the recorded material
-	// stale or replaced (terminal; facade HTTP 400).
+	// stale or replaced. Under the refresh-rotation-recovery contract that is a
+	// recovery-available signal — the replaced material is walked to its
+	// successor — so the class is retryable, not terminal (facade HTTP 503 +
+	// Retry-After). The Autheory adapter does not produce it: a stale-or-replaced
+	// upstream answer is reported as temporarily_unavailable.
 	ProviderReauthRequired ProviderErrorClass = "reauth_required"
 )
 
@@ -192,9 +196,9 @@ func (e *ProviderError) HTTPStatus() int {
 	switch e.Class {
 	case ProviderUpstreamError:
 		return 502
-	case ProviderTemporarilyUnavailable:
+	case ProviderTemporarilyUnavailable, ProviderReauthRequired:
 		return 503
-	case ProviderInvalidGrant, ProviderInvalidRequest, ProviderReauthRequired:
+	case ProviderInvalidGrant, ProviderInvalidRequest:
 		return 400
 	default:
 		return 500

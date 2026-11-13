@@ -61,6 +61,39 @@ export async function runFamilyConformanceCase(stores, testCase, clock) {
                     presented?.refreshLockExpiresAt === undefined,
             };
         }
+        case "family_rotation_intent": {
+            const familyHash = `${key}-family`;
+            const locked = await createAndLock(stores, family, familyHash);
+            // The durable rotation-intent marker: written under the held lock, read back,
+            // then cleared by the rotation transaction that resolves the attempt.
+            const intent = {
+                ...locked,
+                rotationUnconfirmedAt: new Date(Date.now()),
+            };
+            let intentOutcome = "ok";
+            let stored = locked;
+            try {
+                stored = await stores.routeRefreshBroker.compareAndSwap(intent, locked.version);
+            }
+            catch (err) {
+                intentOutcome = await familyOutcome(() => {
+                    throw err;
+                });
+            }
+            const reread = await readRecord(stores, locked.handleHash);
+            const successorKey = `${key}-successor`;
+            const rotate = await familyOutcome(() => rotateFamily(family, stored, successorKey, familyHash));
+            const presented = await readRecord(stores, locked.handleHash);
+            return {
+                intent_cas: intentOutcome,
+                intent_get: reread === null ? "not_found" : "ok",
+                intent_persisted: stored.rotationUnconfirmedAt !== undefined &&
+                    reread !== null &&
+                    reread.rotationUnconfirmedAt !== undefined,
+                rotate,
+                presented_unconfirmed_cleared: presented !== null && presented.rotationUnconfirmedAt === undefined,
+            };
+        }
         case "family_rotate_wrong_owner": {
             const familyHash = `${key}-family`;
             const locked = await createAndLock(stores, family, familyHash);

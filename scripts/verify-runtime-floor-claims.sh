@@ -212,6 +212,11 @@ def require_job_contains(job: str, body: str, needle: str) -> None:
         fail(f".github/workflows/ci.yml {job} job must include {needle}")
 
 
+def require_job_not_contains(job: str, body: str, needle: str) -> None:
+    if needle in body:
+        fail(f".github/workflows/ci.yml {job} job must not include {needle}")
+
+
 def main() -> None:
     pyproject = read_pyproject()
     py_floor = parse_python_floor(pyproject["project"]["requires-python"], "py/pyproject.toml project.requires-python")
@@ -327,17 +332,60 @@ def main() -> None:
     require_ci_node_major(ts_floor, runtime_floor_node_versions)
     if ts_floor < LATEST_PROVEN_NODE_MAJOR:
         require_ci_node_major(LATEST_PROVEN_NODE_MAJOR, runtime_floor_node_versions)
-    require_job_contains("runtime-floor-matrix", runtime_floor_job, "bash scripts/verify-runtime-floor-claims.sh")
-    require_job_contains("runtime-floor-matrix", runtime_floor_job, "bash scripts/verify-ts-pack.sh")
-    require_job_contains("runtime-floor-matrix", runtime_floor_job, "bash scripts/verify-python-build.sh")
-    require_job_contains("runtime-floor-matrix", runtime_floor_job, "bash scripts/verify-contract-tests.sh")
+    # Each floor cell names its own tracked proof profile. A profile is proven
+    # once for its environment and inputs and reused on every later release
+    # event; forcing execution here would re-prove the same floor forever.
+    require_job_contains("runtime-floor-matrix", runtime_floor_job, f"ts-profile: floor-node{ts_floor}")
+    require_job_contains(
+        "runtime-floor-matrix",
+        runtime_floor_job,
+        'bash scripts/evidence/verify-or-execute.sh --gate ts --profile "${{ matrix.ts-profile }}"',
+    )
+    require_job_contains(
+        "runtime-floor-matrix",
+        runtime_floor_job,
+        'bash scripts/evidence/verify-or-execute.sh --gate py --profile "${{ matrix.py-profile }}"',
+    )
+    require_job_contains(
+        "runtime-floor-matrix",
+        runtime_floor_job,
+        'bash scripts/evidence/verify-or-execute.sh --gate contract-tests --profile "${{ matrix.contract-profile }}"',
+    )
+    require_job_contains(
+        "runtime-floor-matrix",
+        runtime_floor_job,
+        f"py-profile: floor-py{version_text(py_floor)}",
+    )
+    require_job_contains(
+        "runtime-floor-matrix",
+        runtime_floor_job,
+        f"contract-profile: floor-node{ts_floor}-py{version_text(py_floor)}",
+    )
+    require_job_not_contains("runtime-floor-matrix", runtime_floor_job, "EVIDENCE_FORCE_EXECUTE: \"true\"")
+    require_job_contains(
+        "release-security-gates",
+        workflow_job_body("release-security-gates"),
+        "bash scripts/verify-runtime-floor-claims.sh",
+    )
 
     cdk_floor_job = workflow_job_body("cdk-floor-matrix")
     cdk_floor_node_versions = collect_versions_from_text(cdk_floor_job, "node")
     require_ci_node_major(cdk_floor, cdk_floor_node_versions)
     if cdk_floor < LATEST_PROVEN_NODE_MAJOR:
-        require_ci_node_major(LATEST_PROVEN_NODE_MAJOR, cdk_floor_node_versions)
-    require_job_contains("cdk-floor-matrix", cdk_floor_job, "bash scripts/verify-cdk-go-drift.sh")
+        # Node 24 CDK coverage lives in the dedicated binding-drift job, which
+        # uses the default profile; requiring it again in the floor job would
+        # only re-prove an already-covered environment.
+        require_ci_node_major(
+            LATEST_PROVEN_NODE_MAJOR,
+            collect_versions_from_text(workflow_job_body("cdk-go-drift"), "node"),
+        )
+    require_job_contains("cdk-floor-matrix", cdk_floor_job, f"drift-profile: floor-node{cdk_floor}")
+    require_job_contains(
+        "cdk-floor-matrix",
+        cdk_floor_job,
+        'bash scripts/evidence/verify-or-execute.sh --gate cdk-go-drift --profile "${{ matrix.drift-profile }}"',
+    )
+    require_job_not_contains("cdk-floor-matrix", cdk_floor_job, "EVIDENCE_FORCE_EXECUTE: \"true\"")
 
     print(
         "runtime-floor-claims: PASS "

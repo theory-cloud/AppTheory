@@ -1,7 +1,8 @@
 import { Buffer } from "node:buffer";
-import { randomBytes } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { isIP } from "node:net";
 import { Authenticated, createApp, Public, SecureApp } from "./app.js";
+import { AppTheoryError } from "./errors.js";
 import { CONTRACT_VERSION, ISSUER_MODE_FAMILY, ISSUER_MODE_ROUTE, PARAM_AGENT_ID, PARAM_CLIENT_NAMESPACE, PARAM_PARTNER_ID, authorizationServerPathForResourcePath, callbackPathForConfiguredPath, mcpPath, oauthAuthorizationServerPath, oauthAuthorizationServerSuffixPath, oauthAuthorizePath, oauthRegisterPath, oauthTokenPath, parseMcpPath, resourcePathFromProtectedResourcePath, supportedEndpointTemplates, supportedIssuerModes, supportedOAuthDiscoveryTemplates, supportedOAuthFacadeTemplates, } from "./mcproutes.js";
 import { authorizationServerMetadataHandler, BrokerExpiredError, BrokerFamilyMismatchError, BrokerFamilyStateUnavailableError, BrokerLegacyLineageUnsupportedError, BrokerLockedError, BrokerNotFoundError, BrokerFamilyExistsError, BrokerRevokedError, BrokerSuccessorExistsError, BrokerVersionConflictError, canonicalizeIssuerURL, canonicalResourceURL, hashKey, newPKCECodeVerifier, pkceChallengeS256, pkceVerifyS256, protectedResourceMetadataHandler, ProviderError, requireBearerTokenGuard, REFUSAL_REASON_UNCLASSIFIED, } from "./oauth/index.js";
 import { originURL } from "./response.js";
@@ -12,6 +13,11 @@ export const TRANSPORT_POSTURES = [
     "jwt",
     "runtime-bearer",
     "none-public",
+];
+export const ORIGIN_REACHABILITIES = [
+    "disabled",
+    "locked",
+    "fronted",
 ];
 /** The golden-path OAuth capabilities. */
 export function defaultCapabilities() {
@@ -98,9 +104,12 @@ function normalizeConfig(config) {
         throw new Error(`${ERROR_PREFIX} MCP handler is required`);
     }
     const transportPosture = normalizeTransportPosture(config.transportPosture, config.requireBearerToken);
+    const { originReachability, frontDoorGuard } = normalizeFrontDoorVerification(config.originReachability, config.frontDoorVerification);
     const normalized = normalizeDerivedConfig(config);
     normalized.transportPosture = transportPosture;
     normalized.requireBearerToken = config.requireBearerToken;
+    normalized.originReachability = originReachability;
+    normalized.frontDoorGuard = frontDoorGuard;
     normalized.refusalHook = config.refusalHook;
     normalized.mcpHandler = config.mcpHandler;
     normalized.callbackHandler = config.callbackHandler ?? null;
@@ -162,6 +171,8 @@ function normalizeDerivedConfig(config) {
         rootDiscoveryPath,
         transportPosture: "iam",
         requireBearerToken: undefined,
+        originReachability: "",
+        frontDoorGuard: null,
         frontChannel: null,
     };
 }
@@ -306,7 +317,22 @@ function normalizeRouteRefreshPolicy(policy) {
         reuseRateCeiling > MAX_REFRESH_REUSE_RATE_CEILING) {
         throw new Error(`${ERROR_PREFIX} route refresh policy reuse rate ceiling must be within [${MIN_REFRESH_REUSE_RATE_CEILING}, ${MAX_REFRESH_REUSE_RATE_CEILING}] per family per hour`);
     }
-    return { handleTTLSeconds, graceWindowSeconds, reuseRateCeiling };
+    let refreshBudgetSeconds = policy?.refreshBudgetSeconds ?? 0;
+    if (refreshBudgetSeconds === 0) {
+        refreshBudgetSeconds = DEFAULT_REFRESH_BUDGET_SECONDS;
+    }
+    if (typeof refreshBudgetSeconds !== "number" ||
+        !Number.isFinite(refreshBudgetSeconds) ||
+        refreshBudgetSeconds < MIN_REFRESH_BUDGET_SECONDS ||
+        refreshBudgetSeconds > MAX_REFRESH_BUDGET_SECONDS) {
+        throw new Error(`${ERROR_PREFIX} route refresh policy refresh budget must be within [${MIN_REFRESH_BUDGET_SECONDS}s, ${MAX_REFRESH_BUDGET_SECONDS}s]`);
+    }
+    return {
+        handleTTLSeconds,
+        graceWindowSeconds,
+        reuseRateCeiling,
+        refreshBudgetSeconds,
+    };
 }
 /**
  * Refuses a broker store that reports a local handle lifetime different from
@@ -446,6 +472,108 @@ function normalizeTransportPosture(posture, requireBearerToken) {
         throw new Error(`${ERROR_PREFIX} RequireBearerToken is only valid with TransportPosture runtime-bearer`);
     }
     return resolved;
+}
+/**
+ * Resolves the declared origin posture and the front-door verification into the
+ * request-time guard.
+ *
+ * An empty posture stays valid (an application that does not share the
+ * construct's posture record keeps its current behavior), but `fronted` without
+ * the verification config fails registration: a declared front door the runtime
+ * does not enforce would be a silent no-op.
+ */
+function normalizeFrontDoorVerification(posture, verification) {
+    const resolved = posture ?? "";
+    if (resolved !== "") {
+        if (!ORIGIN_REACHABILITIES.includes(resolved)) {
+            throw new Error(`${ERROR_PREFIX} OriginReachability must be disabled, locked, or fronted`);
+        }
+        if (resolved !== "fronted") {
+            if (isPresent(verification)) {
+                throw new Error(`${ERROR_PREFIX} FrontDoorVerification is only valid with OriginReachability fronted`);
+            }
+            return { originReachability: resolved, frontDoorGuard: null };
+        }
+        if (!isPresent(verification)) {
+            throw new Error(`${ERROR_PREFIX} OriginReachability fronted requires FrontDoorVerification`);
+        }
+        return {
+            originReachability: resolved,
+            frontDoorGuard: frontDoorGuard(verification),
+        };
+    }
+    if (isPresent(verification)) {
+        throw new Error(`${ERROR_PREFIX} FrontDoorVerification is only valid with OriginReachability fronted`);
+    }
+    return { originReachability: "", frontDoorGuard: null };
+}
+const FRONT_DOOR_HEADER_NAME = /^[A-Za-z0-9-]{1,64}$/;
+const FRONT_DOOR_SECRET = /^[A-Za-z0-9._~-]{32,128}$/;
+const RESERVED_FRONT_DOOR_HEADERS = new Set([
+    "authorization",
+    "connection",
+    "content-length",
+    "cookie",
+    "host",
+    "transfer-encoding",
+    "www-authenticate",
+    "x-forwarded-for",
+]);
+/**
+ * Validates the front-door declaration and returns the guard that refuses every
+ * request whose front-door header is absent or wrong.
+ */
+function frontDoorGuard(verification) {
+    const headerName = String(verification.headerName ?? "")
+        .trim()
+        .toLowerCase();
+    if (!FRONT_DOOR_HEADER_NAME.test(headerName)) {
+        throw new Error(`${ERROR_PREFIX} FrontDoorVerification header name must be 1 to 64 characters of [A-Za-z0-9-]`);
+    }
+    if (RESERVED_FRONT_DOOR_HEADERS.has(headerName) ||
+        headerName.startsWith("x-amz-") ||
+        headerName.startsWith("x-amzn-") ||
+        headerName.startsWith("cloudfront-")) {
+        throw new Error(`${ERROR_PREFIX} FrontDoorVerification header name must be a request header the front door can set`);
+    }
+    const secretValue = String(verification.secretValue ?? "");
+    if (!FRONT_DOOR_SECRET.test(secretValue)) {
+        throw new Error(`${ERROR_PREFIX} FrontDoorVerification secret value must be 32 to 128 characters of [A-Za-z0-9._~-]`);
+    }
+    const expected = Buffer.from(secretValue, "utf8");
+    return (ctx) => {
+        const presented = Buffer.from(firstHeaderValue(ctx.request?.headers, headerName), "utf8");
+        if (presented.length !== expected.length ||
+            !timingSafeEqual(presented, expected)) {
+            throw new AppTheoryError("app.forbidden", "forbidden", {
+                statusCode: 403,
+            });
+        }
+        return null;
+    };
+}
+/** The first value of a case-insensitively matched request header. */
+function firstHeaderValue(headers, name) {
+    if (!headers)
+        return "";
+    const key = name.trim().toLowerCase();
+    for (const [rawKey, values] of Object.entries(headers)) {
+        if (String(rawKey).trim().toLowerCase() !== key)
+            continue;
+        return String((values ?? [])[0] ?? "");
+    }
+    return "";
+}
+/**
+ * Composes two pre-middleware guards: the first refusal wins, and a request
+ * both guards admit continues to the handler.
+ */
+function composeRouteGuards(first, second) {
+    if (!first)
+        return second;
+    if (!second)
+        return first;
+    return async (ctx) => (await first(ctx)) ?? (await second(ctx));
 }
 function buildInventory(config) {
     const authorizationRoutesAttached = config.transportPosture !== "none-public";
@@ -650,6 +778,15 @@ function buildRegistrations(config, inventory) {
             authRequired: false,
             posture: surfacePosture,
         });
+    }
+    if (config.frontDoorGuard) {
+        // The front-door check covers every derived route in the construct's
+        // inventory (transport and OAuth facade), and it runs before the transport
+        // credential guard: a request that did not arrive through the declared front
+        // door is refused before any other admission work.
+        for (const registration of registrations) {
+            registration.guard = composeRouteGuards(config.frontDoorGuard, registration.guard ?? null);
+        }
     }
     validateRouteRegistrations(registrations);
     return registrations;
@@ -2470,6 +2607,22 @@ export const MIN_REFRESH_REUSE_RATE_CEILING = 9;
 /** The retained reuse-rate ceiling's upper bound. */
 export const MAX_REFRESH_REUSE_RATE_CEILING = 120;
 /**
+ * The upstream refresh-call budget a policy that does not state one selects. It
+ * is the hardened upstream HTTP deadline the adapter already used, so an
+ * unchanged configuration keeps exactly the bound it had.
+ */
+export const DEFAULT_REFRESH_BUDGET_SECONDS = 10;
+/** The shortest accepted upstream refresh budget. */
+export const MIN_REFRESH_BUDGET_SECONDS = 1;
+/** The headroom the budget must leave inside the broker lock TTL. */
+const REFRESH_BUDGET_LOCK_MARGIN_SECONDS = 3;
+/**
+ * The longest accepted upstream refresh budget: the reference broker lock TTL
+ * (15 s) less the commit margin, so the winner can still commit its rotation
+ * before the lock it holds expires.
+ */
+export const MAX_REFRESH_BUDGET_SECONDS = 15 - REFRESH_BUDGET_LOCK_MARGIN_SECONDS;
+/**
  * The generation of a handle the facade mints as the root of a new refresh
  * family. Every successor records the presented generation plus one, so depth
  * relative to the head is arithmetic.
@@ -2577,6 +2730,18 @@ export const ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE = "family_state_unava
 export const ROUTE_REFRESH_REASON_STALE_PREDECESSOR = "stale_predecessor";
 /** A family whose live head aged out, leaving no member that can rotate. */
 export const ROUTE_REFRESH_REASON_FAMILY_HEAD_ABSENT = "family_head_absent";
+/**
+ * A presentation resolved by the post-timeout lineage check: the family's live
+ * head had already moved past the presented record, so the head was rotated for
+ * the client and the stale material was never presented again.
+ */
+export const ROUTE_REFRESH_REASON_LINEAGE_VERIFIED = "lineage_verified";
+/**
+ * An upstream contract-terminal verdict that is still ambiguous because a
+ * rotation attempt of the same record is unconfirmed inside the ambiguity
+ * horizon. The family is kept and the client is told to retry.
+ */
+export const ROUTE_REFRESH_REASON_RECOVERY_PENDING = "recovery_pending";
 /** A family-less pre-policy record migrated in code onto a fresh family. */
 export const ROUTE_REFRESH_REASON_LEGACY_LINEAGE_ADOPTED = "legacy_lineage_adopted";
 /** The store's absent-versus-expired signal; the client body stays uniform. */
@@ -2736,9 +2901,30 @@ async function handleRefreshTokenGrant(config, kind, ctx, form) {
         // live grace replay was already served inside resolveRefreshRecord, so this
         // is a stale predecessor: rotate the family's head, not the predecessor, so
         // the upstream is never presented material that has already been rotated.
-        const stale = presented.graceExpiresAt !== undefined;
+        let stale = presented.graceExpiresAt !== undefined;
+        let lineageVerified = false;
         let target = presented;
-        if (stale) {
+        // R2 post-timeout lineage-verify. A record that carries an unconfirmed
+        // rotation attempt may already have had its upstream material consumed by the
+        // attempt whose response never arrived. Before presenting anything, verify the
+        // family's lineage: if the live head has moved on, the successor already
+        // exists and the stale material is never presented again — the head is rotated
+        // for the client instead.
+        if (!stale && presented.rotationUnconfirmedAt !== undefined) {
+            const head = await refreshFamilyHead(config, ctx, presented);
+            if (head.response !== null) {
+                return head.response;
+            }
+            if (head.record === null) {
+                throw new Error(`${ERROR_PREFIX} refresh family head resolution is empty`);
+            }
+            if (head.record.handleHash !== presented.handleHash) {
+                target = head.record;
+                stale = true;
+                lineageVerified = true;
+            }
+        }
+        if (stale && !lineageVerified) {
             const head = await refreshFamilyHead(config, ctx, presented);
             if (head.response !== null) {
                 return head.response;
@@ -2766,7 +2952,7 @@ async function handleRefreshTokenGrant(config, kind, ctx, form) {
         lockEvent.statusTo = "refreshing";
         emitRouteRefresh(front, lockEvent);
         if (stale) {
-            return await rotateStalePredecessor(config, ctx, presented, locked);
+            return await rotateStalePredecessor(config, ctx, presented, locked, lineageVerified);
         }
         return await rotateRefreshGrant(config, ctx, target, locked);
     }
@@ -3020,14 +3206,20 @@ async function performRefreshRotation(config, ctx, presented, locked) {
     if (front === null) {
         throw new Error(`${ERROR_PREFIX} front channel is not configured`);
     }
+    // The rotation intent is persisted before any upstream material is presented,
+    // so a process that loses the answer leaves evidence a later attempt can verify
+    // lineage against. A failed write releases the lock and answers transiently
+    // without calling the upstream.
+    const attempted = await takeRotationIntent(front, ctx, presented, locked);
+    if (attempted.response !== null) {
+        return { rotation: null, response: attempted.response };
+    }
+    locked = attempted.record ?? locked;
     // The ONE upstream refresh call of this rotation is made under the lock, with
-    // the client that owns the recorded material.
+    // the client that owns the recorded material, bounded by the encoded budget.
     let upstream;
     try {
-        upstream = await front.provider.refresh({
-            refreshMaterial: locked.encryptedUpstreamRefreshToken,
-            upstreamClientId: locked.upstreamClientId,
-        });
+        upstream = await refreshUpstream(front, locked);
     }
     catch (err) {
         return {
@@ -3089,9 +3281,11 @@ async function performRefreshRotation(config, ctx, presented, locked) {
         }
         if (err instanceof BrokerFamilyStateUnavailableError ||
             err instanceof BrokerFamilyMismatchError) {
+            await releaseRefreshLock(front, presented, locked);
             emitStateFailure(front, ctx, presented, ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE);
             return { rotation: null, response: facadeTemporarilyUnavailablePage() };
         }
+        await releaseRefreshLock(front, presented, locked);
         emitStateFailure(front, ctx, presented, ROUTE_REFRESH_REASON_REWRITE_FAILURE);
         return { rotation: null, response: facadeTemporarilyUnavailablePage() };
     }
@@ -3133,7 +3327,7 @@ async function rotateRefreshGrant(config, ctx, presented, locked) {
  * effort), so a retry storm inside one window is served from the stored body
  * instead of buying another upstream rotation; the family is never revoked.
  */
-async function rotateStalePredecessor(config, ctx, presented, locked) {
+async function rotateStalePredecessor(config, ctx, presented, locked, lineageVerified = false) {
     const front = config.frontChannel;
     if (front === null) {
         throw new Error(`${ERROR_PREFIX} front channel is not configured`);
@@ -3147,7 +3341,9 @@ async function rotateStalePredecessor(config, ctx, presented, locked) {
     }
     await rearmStalePredecessor(front, presented, result.rotation);
     const event = routeRefreshEventFor(ROUTE_REFRESH_EVENT_REUSE, ctx.now(), presented);
-    event.reason = ROUTE_REFRESH_REASON_STALE_PREDECESSOR;
+    event.reason = lineageVerified
+        ? ROUTE_REFRESH_REASON_LINEAGE_VERIFIED
+        : ROUTE_REFRESH_REASON_STALE_PREDECESSOR;
     event.outcome = ROUTE_REFRESH_OUTCOME_ROTATED_FROM_HEAD;
     event.successorHandleHash = result.rotation.successor.handleHash;
     event.familyHash = result.rotation.successor.familyHash ?? "";
@@ -3203,8 +3399,24 @@ async function refreshFamilyHead(config, ctx, presented) {
         emitStateFailure(front, ctx, presented, ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE);
         return { record: null, response: facadeTemporarilyUnavailablePage() };
     }
+    const head = liveFamilyHead(members);
+    if (head === null) {
+        const event = routeRefreshEventFor(ROUTE_REFRESH_EVENT_REUSE, ctx.now(), presented);
+        event.reason = ROUTE_REFRESH_REASON_FAMILY_HEAD_ABSENT;
+        event.errorCode = "invalid_grant";
+        emitRouteRefresh(front, event);
+        return { record: null, response: facadeErrorPage(400, "invalid_grant") };
+    }
+    return { record: head, response: null };
+}
+/**
+ * Selects the record whose upstream material is current: the highest-generation
+ * member that is neither revoked nor rotated away. Ties are broken by handle hash
+ * so every caller resolves the same head.
+ */
+function liveFamilyHead(records) {
     let head = null;
-    for (const candidate of members) {
+    for (const candidate of records) {
         if (candidate.status === "revoked")
             continue;
         if (candidate.graceExpiresAt !== undefined)
@@ -3218,14 +3430,175 @@ async function refreshFamilyHead(config, ctx, presented) {
             head = candidate;
         }
     }
-    if (head === null) {
-        const event = routeRefreshEventFor(ROUTE_REFRESH_EVENT_REUSE, ctx.now(), presented);
-        event.reason = ROUTE_REFRESH_REASON_FAMILY_HEAD_ABSENT;
-        event.errorCode = "invalid_grant";
-        emitRouteRefresh(front, event);
-        return { record: null, response: facadeErrorPage(400, "invalid_grant") };
+    return head;
+}
+/**
+ * Renders the one upstream verdict class that may be family-terminal, and only on
+ * corroborated evidence: the verdict is about the family's current live head and
+ * no rotation attempt of that record is unconfirmed inside the facade's ambiguity
+ * horizon. Every other shape stays transient — an unconfirmed attempt (a timeout,
+ * a lost response, the 16:00Z class), a verdict about superseded material, or a
+ * family the facade cannot read. Latency, a lost response, an informed serve-off
+ * state, and client naivety must never kill a family (contract R1/R5/R7).
+ */
+async function failedTerminalRefreshGrant(config, ctx, presented, locked) {
+    const front = config.frontChannel;
+    if (front === null) {
+        throw new Error(`${ERROR_PREFIX} front channel is not configured`);
     }
-    return { record: head, response: null };
+    const errorClass = "invalid_grant";
+    if (refreshVerdictAmbiguous(front, presented, ctx.now())) {
+        await releaseRefreshLock(front, presented, locked);
+        const event = routeRefreshEventFor(ROUTE_REFRESH_EVENT_STATE_FAILURE, ctx.now(), presented);
+        event.reason = ROUTE_REFRESH_REASON_RECOVERY_PENDING;
+        event.upstreamClass = errorClass;
+        event.errorCode = "temporarily_unavailable";
+        emitRouteRefresh(front, event);
+        return facadeTemporarilyUnavailablePage();
+    }
+    const evidence = await terminalRefreshEvidence(front, presented);
+    if (evidence === "superseded") {
+        if (presented.status === "revoked") {
+            // Already tombstoned: every presentation is the same terminal answer and no
+            // second revocation is emitted.
+            return facadeErrorPage(400, "invalid_grant");
+        }
+        await releaseRefreshLock(front, presented, locked);
+        const event = routeRefreshEventFor(ROUTE_REFRESH_EVENT_STATE_FAILURE, ctx.now(), presented);
+        event.reason = ROUTE_REFRESH_REASON_LINEAGE_VERIFIED;
+        event.upstreamClass = errorClass;
+        event.errorCode = "temporarily_unavailable";
+        emitRouteRefresh(front, event);
+        return facadeTemporarilyUnavailablePage();
+    }
+    if (evidence === "unverified") {
+        await releaseRefreshLock(front, presented, locked);
+        emitStateFailure(front, ctx, presented, ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE, errorClass);
+        return facadeTemporarilyUnavailablePage();
+    }
+    if (!(await revokeFamilyForRecord(front, presented))) {
+        // The grant is dead upstream but could not be revoked here, so the client is
+        // not told the handle is invalid while it is still live.
+        emitStateFailure(front, ctx, presented, ROUTE_REFRESH_REASON_STORE_FAILURE, errorClass);
+        return facadeTemporarilyUnavailablePage();
+    }
+    const event = routeRefreshEventFor(ROUTE_REFRESH_EVENT_UPSTREAM_REAUTH_REQUIRED, ctx.now(), presented);
+    event.reason = ROUTE_REFRESH_REASON_UPSTREAM_REJECTED;
+    event.upstreamClass = errorClass;
+    event.errorCode = "invalid_grant";
+    event.statusTo = "revoked";
+    emitRouteRefresh(front, event);
+    return facadeErrorPage(400, "invalid_grant");
+}
+/**
+ * Reports whether the record carries an unconfirmed rotation attempt still inside
+ * the facade's ambiguity horizon. The horizon is the configured grace window: the
+ * facade's own recovery-attempt window, in which the upstream's walk can still
+ * serve replaced material and an invalid_grant cannot be told apart from a lost
+ * response. The marker's earliest instant is never moved forward, so retries
+ * cannot extend the horizon.
+ */
+function refreshVerdictAmbiguous(front, record, now) {
+    const marker = record.rotationUnconfirmedAt;
+    if (marker === undefined) {
+        return false;
+    }
+    return (now.getTime() <= marker.getTime() + front.policy.graceWindowSeconds * 1000);
+}
+/**
+ * Classifies what an upstream verdict about the presented material is evidence
+ * of, from the family's live head. A family-less record cannot be family-revoked;
+ * it is treated as its own live head so the caller's revocation fails closed on
+ * the legacy path instead of revoking something.
+ */
+async function terminalRefreshEvidence(front, presented) {
+    if ((presented.familyHash ?? "") === "") {
+        return "live_head";
+    }
+    const familyStore = front.stores
+        .routeRefreshBroker;
+    if (typeof familyStore.listFamily !== "function") {
+        return "unverified";
+    }
+    let family;
+    try {
+        family = await familyStore.listFamily(presented.familyHash ?? "");
+    }
+    catch {
+        return "unverified";
+    }
+    const head = liveFamilyHead(family);
+    if (head === null) {
+        return "superseded";
+    }
+    if (head.handleHash === presented.handleHash &&
+        head.upstreamRefreshTokenHash === presented.upstreamRefreshTokenHash) {
+        return "live_head";
+    }
+    return "superseded";
+}
+/**
+ * Persists, in the store, that this record's upstream material is about to be
+ * presented, and returns the locked record at its new version. It is the
+ * read-side twin of persist-before-ack: the facade never presents material it has
+ * not recorded an attempt for, so a process that loses the answer leaves evidence
+ * a later attempt can verify lineage against. A failed write releases the lock and
+ * answers transiently without calling the upstream.
+ */
+async function takeRotationIntent(front, ctx, presented, locked) {
+    const attempt = await takeRotationIntentAt(front, locked, ctx.now());
+    if (attempt.error === null) {
+        return { record: attempt.record, response: null };
+    }
+    await releaseRefreshLock(front, presented, locked);
+    emitStateFailure(front, ctx, presented, ROUTE_REFRESH_REASON_REWRITE_FAILURE);
+    return { record: null, response: facadeTemporarilyUnavailablePage() };
+}
+/**
+ * takeRotationIntent for a caller without a request context (the sweeper). An
+ * already-set marker is preserved, so the ambiguity horizon stays anchored to the
+ * first lost attempt and retries cannot extend it.
+ */
+async function takeRotationIntentAt(front, locked, now) {
+    if (locked.rotationUnconfirmedAt !== undefined) {
+        return { record: locked, error: null };
+    }
+    try {
+        const stored = await front.stores.routeRefreshBroker.compareAndSwap({ ...locked, rotationUnconfirmedAt: now }, locked.version);
+        return { record: stored, error: null };
+    }
+    catch (err) {
+        return { record: locked, error: err };
+    }
+}
+/**
+ * Makes the ONE upstream refresh call of a rotation under the encoded budget. The
+ * facade stops waiting at the budget and reports the retryable class, so an
+ * adapter that ignores its own default still cannot make the request path outlive
+ * the policy the deployment chose.
+ */
+async function refreshUpstream(front, record) {
+    const budgetMs = front.policy.refreshBudgetSeconds * 1000;
+    let expire = () => { };
+    const expired = new Promise((_resolve, reject) => {
+        expire = reject;
+    });
+    const timer = setTimeout(() => {
+        expire(new ProviderError("temporarily_unavailable", "refresh"));
+    }, budgetMs);
+    timer.unref?.();
+    try {
+        return await Promise.race([
+            front.provider.refresh({
+                refreshMaterial: record.encryptedUpstreamRefreshToken,
+                upstreamClientId: record.upstreamClientId,
+            }),
+            expired,
+        ]);
+    }
+    finally {
+        clearTimeout(timer);
+    }
 }
 /**
  * Maps a failed upstream refresh call and unwinds the lock (ruling R1 step 7's
@@ -3243,20 +3616,8 @@ async function failedRefreshGrant(config, ctx, presented, locked, upstreamErr) {
     const errorClass = upstreamErr instanceof ProviderError
         ? upstreamErr.errorClass
         : "temporarily_unavailable";
-    if (errorClass === "invalid_grant" || errorClass === "reauth_required") {
-        if (!(await revokeFamilyForRecord(front, presented))) {
-            // The grant is dead upstream but could not be revoked here, so the
-            // client is not told the handle is invalid while it is still live.
-            emitStateFailure(front, ctx, presented, ROUTE_REFRESH_REASON_STORE_FAILURE, errorClass);
-            return facadeTemporarilyUnavailablePage();
-        }
-        const event = routeRefreshEventFor(ROUTE_REFRESH_EVENT_UPSTREAM_REAUTH_REQUIRED, ctx.now(), presented);
-        event.reason = ROUTE_REFRESH_REASON_UPSTREAM_REJECTED;
-        event.upstreamClass = errorClass;
-        event.errorCode = "invalid_grant";
-        event.statusTo = "revoked";
-        emitRouteRefresh(front, event);
-        return facadeErrorPage(400, "invalid_grant");
+    if (errorClass === "invalid_grant") {
+        return await failedTerminalRefreshGrant(config, ctx, presented, locked);
     }
     if (errorClass === "upstream_error") {
         await releaseRefreshLock(front, presented, locked);
@@ -3267,8 +3628,10 @@ async function failedRefreshGrant(config, ctx, presented, locked, upstreamErr) {
         emitRouteRefresh(front, event);
         return facadeUpstreamErrorPage();
     }
-    // temporarily_unavailable, and any provider failure the adapter did not
-    // classify: transient by default, so the lock is released and the caller is
+    // temporarily_unavailable, reauth_required (a stale-or-replaced signal is
+    // recovery-available under the rotation-recovery contract), and any provider
+    // failure the adapter did not classify: transient by default, so the lock is
+    // released, the unconfirmed-attempt marker is left in place, and the caller is
     // told to retry.
     await releaseRefreshLock(front, presented, locked);
     const event = routeRefreshEventFor(ROUTE_REFRESH_EVENT_STATE_FAILURE, ctx.now(), presented);
@@ -3332,12 +3695,14 @@ async function adoptLegacyLineage(config, ctx, presented) {
     const lockEvent = routeRefreshEventFor(ROUTE_REFRESH_EVENT_LOCK_ACQUIRED, ctx.now(), locked);
     lockEvent.statusTo = "refreshing";
     emitRouteRefresh(front, lockEvent);
+    const attempted = await takeRotationIntent(front, ctx, head, locked);
+    if (attempted.response !== null) {
+        return { record: null, response: attempted.response };
+    }
+    locked = attempted.record ?? locked;
     let upstream;
     try {
-        upstream = await front.provider.refresh({
-            refreshMaterial: locked.encryptedUpstreamRefreshToken,
-            upstreamClientId: locked.upstreamClientId,
-        });
+        upstream = await refreshUpstream(front, locked);
     }
     catch (err) {
         return failedLegacyAdoption(config, ctx, head, locked, err);
@@ -3411,7 +3776,16 @@ async function failedLegacyAdoption(config, ctx, head, locked, upstreamErr) {
     const errorClass = upstreamErr instanceof ProviderError
         ? upstreamErr.errorClass
         : "temporarily_unavailable";
-    if (errorClass === "invalid_grant" || errorClass === "reauth_required") {
+    if (errorClass === "invalid_grant") {
+        if (refreshVerdictAmbiguous(front, head, ctx.now())) {
+            await releaseRefreshLock(front, head, locked);
+            const ambiguous = routeRefreshEventFor(ROUTE_REFRESH_EVENT_STATE_FAILURE, ctx.now(), head);
+            ambiguous.reason = ROUTE_REFRESH_REASON_RECOVERY_PENDING;
+            ambiguous.upstreamClass = errorClass;
+            ambiguous.errorCode = "temporarily_unavailable";
+            emitRouteRefresh(front, ambiguous);
+            return { record: null, response: facadeTemporarilyUnavailablePage() };
+        }
         await releaseRefreshLock(front, head, locked);
         try {
             await front.stores.routeRefreshBroker.revoke(head.handleHash);
@@ -3513,6 +3887,9 @@ async function markLegacyHeadAdopted(front, ctx, head, body, upstream) {
     };
     delete updated.refreshLockOwner;
     delete updated.refreshLockExpiresAt;
+    // The adoption consumed the material and stored the family root, so the
+    // rotation intent is resolved here too.
+    delete updated.rotationUnconfirmedAt;
     try {
         await front.stores.routeRefreshBroker.compareAndSwap(updated, current.version);
     }
@@ -4505,5 +4882,224 @@ function queryUnescapeGo(value) {
         index += 1;
     }
     return out;
+}
+/**
+ * Rotates the live head of one refresh family out of band, so a scheduled
+ * trigger (a worker function, a cron entry, a batch invocation) keeps
+ * credentials fresh without reimplementing the facade's rotation. It is the
+ * exported sweep entrypoint of the rotation-recovery contract's facade rule
+ * (theorycloud_refresh_rotation_recovery.v0.1 R7): the same store SPI, the same
+ * lock, the same rotation transaction, and the same encoded policy the request
+ * path uses.
+ *
+ * The caller decides which families are due: a scheduler that owns the
+ * access-token expiry knows it better than the broker record.
+ *
+ * # Concurrency contract
+ *
+ * A sweep-driven rotation is an ordinary rotation competitor, never a second
+ * authority over the family:
+ *
+ * 1. Exclusive lock. The sweep takes the same per-record lock the request path
+ *    takes (acquireLock with the version it read) before any upstream call. A
+ *    held lock, a lock the sweep cannot take, or a version that moved since the
+ *    head was read resolves to `deferred`: no upstream call, no state change, no
+ *    family effect. The caller retries on its next tick.
+ * 2. Exactly one winner. The rotation commits through the same rotateFamily
+ *    transaction, which re-checks the lock owner, the expected version, the
+ *    family and generation bindings, and successor uniqueness. A loser (the
+ *    request path rotated first, the lock expired, the family was revoked) gets a
+ *    typed transient result and never mints a successor: nothing is minted unless
+ *    every write landed.
+ * 3. The loser keeps working. A request-path presentation racing a committed
+ *    sweep rotation finds its handle grace-marked and is served the stored
+ *    successor body, or — past the grace window — has the family's new live head
+ *    rotated for it. A sweep racing a committed request-path rotation defers and
+ *    reads the new head on its next tick. Neither order is family-affecting.
+ * 4. The sweep never revokes. Continuity maintenance is not a revocation trigger
+ *    (contract R5). A contract-terminal upstream verdict observed by the sweep
+ *    releases the lock and returns `terminal_verdict`, leaving the family intact:
+ *    revocation and its receipt stay on the request path, where the client-facing
+ *    verdict is rendered and lineage is verified.
+ * 5. It is bounded. The upstream call carries the same encoded
+ *    `refreshBudgetSeconds` as the request path, which stays below the broker lock
+ *    TTL, so a sweep can never outlive the lock it holds.
+ */
+export class RefreshSweeper {
+    front;
+    now;
+    constructor(config) {
+        const policy = normalizeRouteRefreshPolicy(config.policy);
+        validateFrontChannelStores(config.stores);
+        this.front = {
+            provider: config.provider,
+            stores: config.stores,
+            upstreamClientID: "",
+            upstreamIssuer: "",
+            lifecycleScopes: [],
+            providerHints: null,
+            policy,
+            events: config.events ?? null,
+        };
+        this.now = config.now ?? (() => new Date());
+    }
+    /** Rotates the live head of one family. Never revokes; see the class docs. */
+    async sweepFamily(familyHash) {
+        const trimmed = (familyHash ?? "").trim();
+        if (trimmed === "") {
+            throw new Error(`${ERROR_PREFIX} refresh sweep requires a family hash`);
+        }
+        const front = this.front;
+        const now = this.now();
+        const result = {
+            outcome: "deferred",
+            familyHash: trimmed,
+        };
+        const familyStore = front.stores
+            .routeRefreshBroker;
+        if (typeof familyStore.listFamily !== "function") {
+            result.deferredReason = ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE;
+            return result;
+        }
+        let members;
+        try {
+            members = await familyStore.listFamily(trimmed);
+        }
+        catch {
+            result.deferredReason = ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE;
+            return result;
+        }
+        const head = liveFamilyHead(members);
+        if (head === null) {
+            result.outcome = members.some((member) => member.status !== "revoked")
+                ? "no_live_head"
+                : "revoked_family";
+            return result;
+        }
+        result.presentedHandleHash = head.handleHash;
+        result.chainGeneration = head.chainGeneration ?? 0;
+        let locked;
+        try {
+            locked = await front.stores.routeRefreshBroker.acquireLock(head.handleHash, newOpaqueToken(), head.version);
+        }
+        catch (err) {
+            return this.deferredLock(result, err);
+        }
+        const lockEvent = routeRefreshEventFor(ROUTE_REFRESH_EVENT_LOCK_ACQUIRED, now, head);
+        lockEvent.statusTo = "refreshing";
+        emitRouteRefresh(front, lockEvent);
+        const attempted = await takeRotationIntentAt(front, locked, now);
+        if (attempted.error !== null) {
+            await releaseRefreshLock(front, head, locked);
+            result.deferredReason = ROUTE_REFRESH_REASON_REWRITE_FAILURE;
+            return result;
+        }
+        const intent = attempted.record;
+        let upstream;
+        try {
+            upstream = await refreshUpstream(front, intent);
+        }
+        catch (err) {
+            const errorClass = err instanceof ProviderError
+                ? err.errorClass
+                : "temporarily_unavailable";
+            await releaseRefreshLock(front, head, locked);
+            result.upstreamClass = errorClass;
+            const failure = routeRefreshEventFor(ROUTE_REFRESH_EVENT_STATE_FAILURE, now, head);
+            failure.reason = ROUTE_REFRESH_REASON_UPSTREAM_REJECTED;
+            failure.upstreamClass = errorClass;
+            emitRouteRefresh(front, failure);
+            if (errorClass === "invalid_grant") {
+                // Contract-terminal verdict: reported, never acted on here.
+                result.outcome = "terminal_verdict";
+                return result;
+            }
+            result.deferredReason = ROUTE_REFRESH_REASON_UPSTREAM_REJECTED;
+            return result;
+        }
+        const handle = newOpaqueToken();
+        const successor = successorBrokerRecord(head, handle, upstream);
+        const body = Buffer.from(JSON.stringify(successorTokenPayload(upstream, handle)), "utf8");
+        const rotateFamily = familyStore.rotateFamily;
+        if (typeof rotateFamily !== "function") {
+            await releaseRefreshLock(front, head, locked);
+            result.deferredReason = ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE;
+            return result;
+        }
+        try {
+            await rotateFamily.call(familyStore, {
+                presentedHandleHash: intent.handleHash,
+                lockOwner: intent.refreshLockOwner ?? "",
+                expectedVersion: intent.version,
+                successor,
+                graceRefreshResponse: body.toString("utf8"),
+                graceExpiresAt: new Date(now.getTime() + front.policy.graceWindowSeconds * 1000),
+                graceAccessTokenExpiresAt: new Date(now.getTime() + accessTokenLifetimeMilliseconds(upstream)),
+            });
+        }
+        catch (err) {
+            return this.deferredRotation(result, head, locked, err);
+        }
+        result.outcome = "rotated";
+        result.successorHandleHash = successor.handleHash;
+        result.chainGeneration = successor.chainGeneration ?? 0;
+        const event = routeRefreshEventFor(ROUTE_REFRESH_EVENT_REFRESHED, now, head);
+        event.statusFrom = "refreshing";
+        event.statusTo = "active";
+        event.successorHandleHash = successor.handleHash;
+        event.familyHash = successor.familyHash ?? "";
+        event.chainGeneration = successor.chainGeneration ?? 0;
+        event.previousUpstreamRefreshTokenHash = head.upstreamRefreshTokenHash;
+        event.upstreamRefreshTokenHash = successor.upstreamRefreshTokenHash;
+        emitRouteRefresh(front, event);
+        return result;
+    }
+    deferredLock(result, err) {
+        if (err instanceof BrokerRevokedError) {
+            result.outcome = "revoked_family";
+            return result;
+        }
+        if (err instanceof BrokerNotFoundError ||
+            err instanceof BrokerExpiredError) {
+            result.outcome = "no_live_head";
+            return result;
+        }
+        result.outcome = "deferred";
+        if (err instanceof BrokerLockedError ||
+            err instanceof BrokerVersionConflictError) {
+            result.deferredReason = ROUTE_REFRESH_REASON_LOCK_CONTENTION;
+            return result;
+        }
+        if (err instanceof BrokerFamilyStateUnavailableError ||
+            err instanceof BrokerFamilyMismatchError ||
+            err instanceof BrokerLegacyLineageUnsupportedError) {
+            result.deferredReason = ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE;
+            return result;
+        }
+        result.deferredReason = ROUTE_REFRESH_REASON_STORE_FAILURE;
+        return result;
+    }
+    async deferredRotation(result, head, locked, err) {
+        await releaseRefreshLock(this.front, head, locked);
+        if (err instanceof BrokerRevokedError) {
+            result.outcome = "revoked_family";
+            return result;
+        }
+        result.outcome = "deferred";
+        if (err instanceof BrokerLockedError ||
+            err instanceof BrokerVersionConflictError ||
+            err instanceof BrokerSuccessorExistsError) {
+            result.deferredReason = ROUTE_REFRESH_REASON_LOCK_CONTENTION;
+            return result;
+        }
+        if (err instanceof BrokerFamilyStateUnavailableError ||
+            err instanceof BrokerFamilyMismatchError ||
+            err instanceof BrokerLegacyLineageUnsupportedError) {
+            result.deferredReason = ROUTE_REFRESH_REASON_FAMILY_STATE_UNAVAILABLE;
+            return result;
+        }
+        result.deferredReason = ROUTE_REFRESH_REASON_REWRITE_FAILURE;
+        return result;
+    }
 }
 //# sourceMappingURL=mcpfacade.js.map

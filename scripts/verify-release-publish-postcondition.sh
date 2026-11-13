@@ -47,6 +47,11 @@ has_releasable_commits_since() {
   # git log --no-merges --format=%s <baseline>..<base_branch> |
   #   grep -Eq '^(feat|fix|perf)(\([^)]+\))?(!)?: '
   #
+  # The baseline is the immutable published tag. Commits that landed before it
+  # are published history and cannot make a no-op illegitimate. Any commit after
+  # it, generated or human-authored, is a new change: its subject shape never
+  # excuses it from publication, so a generated fix after the tag fails closed.
+  #
   # Keep the subjects in memory instead of piping directly into grep -q so
   # pipefail cannot turn a matching early grep exit into a false negative.
   commit_subjects="$(git log --no-merges --format=%s "${baseline}..${base_ref}")"
@@ -363,6 +368,10 @@ self_test_stable_already_published_noop() {
     git init -q
     git checkout -q -b main
     commit_self_test_change "chore: seed stable baseline" "self-test.txt" "baseline"
+    # The generated stable release and artifact-sync commits are inside the
+    # published tag: they are already-published history.
+    commit_self_test_change "fix(release): sync generated release artifacts" "self-test.txt" "generated-sync-in-tag"
+    commit_self_test_change "fix(main): release 1.0.0" "self-test.txt" "generated-release-in-tag"
     git update-ref refs/tags/v1.0.0 HEAD
 
     expected_tag="v1.0.0"
@@ -384,7 +393,43 @@ self_test_stable_already_published_noop() {
       echo "release-publish-postcondition: FAIL (self-test stable no-op did not report already-published tolerance)" >&2
       return 1
     }
-    echo "release-publish-postcondition: PASS (self-test stable already-published tag with zero user-facing commits passed)"
+    echo "release-publish-postcondition: PASS (self-test stable already-published tag with only published history passed)"
+
+    # A generated fix-typed commit created after the immutable tag is a new
+    # post-tag change: it must fail closed, not pass as an already-published no-op.
+    commit_self_test_change "fix(release): sync generated release artifacts" "self-test.txt" "generated-sync-after"
+    if output="$(require_created_tag "stable" 2>&1)"; then
+      printf '%s\n' "${output}" >&2
+      echo "release-publish-postcondition: FAIL (self-test stable generated artifact sync after the tag was accepted as an already-published no-op)" >&2
+      return 1
+    fi
+    grep -Fq "release-publish-postcondition: FAIL (release-please no-op is a failed stable publish gate; release_created=false)" <<<"${output}" || {
+      printf '%s\n' "${output}" >&2
+      echo "release-publish-postcondition: FAIL (self-test stable generated artifact sync after the tag did not fail closed)" >&2
+      return 1
+    }
+    echo "release-publish-postcondition: PASS (self-test stable generated artifact sync after the tag failed closed)"
+
+    commit_self_test_change "fix(main): release 1.0.1" "self-test.txt" "generated-release-after"
+    if output="$(require_created_tag "stable" 2>&1)"; then
+      printf '%s\n' "${output}" >&2
+      echo "release-publish-postcondition: FAIL (self-test stable generated release commit after the tag was accepted as an already-published no-op)" >&2
+      return 1
+    fi
+    grep -Fq "release-publish-postcondition: FAIL (release-please no-op is a failed stable publish gate; release_created=false)" <<<"${output}" || {
+      printf '%s\n' "${output}" >&2
+      echo "release-publish-postcondition: FAIL (self-test stable generated release commit after the tag did not fail closed)" >&2
+      return 1
+    }
+    echo "release-publish-postcondition: PASS (self-test stable generated release commit after the tag failed closed)"
+
+    commit_self_test_change "fix(parser): release v2 of caching" "self-test.txt" "lookalike"
+    if output="$(require_created_tag "stable" 2>&1)"; then
+      printf '%s\n' "${output}" >&2
+      echo "release-publish-postcondition: FAIL (self-test stable lookalike fix was accepted as an already-published no-op)" >&2
+      return 1
+    fi
+    echo "release-publish-postcondition: PASS (self-test stable lookalike fix after the tag failed closed)"
 
     commit_self_test_change "perf: self-test releasable change" "self-test.txt" "perf"
     if output="$(require_created_tag "stable" 2>&1)"; then
@@ -412,6 +457,10 @@ self_test_prerelease_already_published_noop() {
     git init -q
     git checkout -q -b premain
     commit_self_test_change "chore: seed RC baseline" "self-test.txt" "baseline"
+    # The generated RC release and artifact-sync commits are inside the published
+    # prerelease tag.
+    commit_self_test_change "fix(release): sync generated release artifacts" "self-test.txt" "generated-sync-in-tag"
+    commit_self_test_change "fix(premain): release 1.0.0-rc" "self-test.txt" "generated-release-in-tag"
     git update-ref refs/tags/v1.0.0-rc HEAD
 
     expected_tag="v1.0.0-rc"
@@ -433,7 +482,43 @@ self_test_prerelease_already_published_noop() {
       echo "release-publish-postcondition: FAIL (self-test prerelease no-op did not report already-published tolerance)" >&2
       return 1
     }
-    echo "release-publish-postcondition: PASS (self-test prerelease already-published tag with zero user-facing commits passed)"
+    echo "release-publish-postcondition: PASS (self-test prerelease already-published tag with only published history passed)"
+
+    # Any post-tag commit, generated or human-authored, is a new change: it must
+    # fail closed rather than pass as an already-published no-op.
+    commit_self_test_change "fix(release): sync generated release artifacts" "self-test.txt" "generated-sync-after"
+    if output="$(require_created_tag "RC" 2>&1)"; then
+      printf '%s\n' "${output}" >&2
+      echo "release-publish-postcondition: FAIL (self-test prerelease generated artifact sync after the tag was accepted as an already-published no-op)" >&2
+      return 1
+    fi
+    grep -Fq "release-publish-postcondition: FAIL (release-please no-op is a failed RC publish gate; release_created=false)" <<<"${output}" || {
+      printf '%s\n' "${output}" >&2
+      echo "release-publish-postcondition: FAIL (self-test prerelease generated artifact sync after the tag did not fail closed)" >&2
+      return 1
+    }
+    echo "release-publish-postcondition: PASS (self-test prerelease generated artifact sync after the tag failed closed)"
+
+    commit_self_test_change "fix(premain): release 1.0.1-rc" "self-test.txt" "generated-release-after"
+    if output="$(require_created_tag "RC" 2>&1)"; then
+      printf '%s\n' "${output}" >&2
+      echo "release-publish-postcondition: FAIL (self-test prerelease generated release commit after the tag was accepted as an already-published no-op)" >&2
+      return 1
+    fi
+    grep -Fq "release-publish-postcondition: FAIL (release-please no-op is a failed RC publish gate; release_created=false)" <<<"${output}" || {
+      printf '%s\n' "${output}" >&2
+      echo "release-publish-postcondition: FAIL (self-test prerelease generated release commit after the tag did not fail closed)" >&2
+      return 1
+    }
+    echo "release-publish-postcondition: PASS (self-test prerelease generated release commit after the tag failed closed)"
+
+    commit_self_test_change "fix(premain): release 2FA hardening" "self-test.txt" "lookalike"
+    if output="$(require_created_tag "RC" 2>&1)"; then
+      printf '%s\n' "${output}" >&2
+      echo "release-publish-postcondition: FAIL (self-test prerelease lookalike fix was accepted as an already-published no-op)" >&2
+      return 1
+    fi
+    echo "release-publish-postcondition: PASS (self-test prerelease lookalike fix after the tag failed closed)"
 
     commit_self_test_change "fix: self-test releasable change" "self-test.txt" "fix"
     if output="$(require_created_tag "RC" 2>&1)"; then

@@ -365,6 +365,28 @@ function filterFixturesByID(fixtures, fixtureID) {
   return matches;
 }
 
+// fixtureRuntimeName selects this runner's entry in a fixture's
+// expect_by_runtime block. A fixture that carries per-runtime expectations must
+// name every runtime; a missing entry fails closed instead of falling back to a
+// shared expect.
+const FIXTURE_RUNTIME_NAME = "ts";
+
+function resolveFixtureExpectation(fixture, file) {
+  const byRuntime = fixture.expect_by_runtime;
+  if (!byRuntime) return fixture;
+  if (typeof byRuntime !== "object" || Array.isArray(byRuntime)) {
+    throw new Error(`fixture ${file} expect_by_runtime must be an object`);
+  }
+  const expect = byRuntime[FIXTURE_RUNTIME_NAME];
+  if (!expect) {
+    throw new Error(
+      `fixture ${file} expect_by_runtime has no ${FIXTURE_RUNTIME_NAME} entry`,
+    );
+  }
+  fixture.expect = expect;
+  return fixture;
+}
+
 function loadFixtures(fixturesRoot) {
   const files = listFixtureFiles(fixturesRoot);
   if (files.length === 0) {
@@ -376,7 +398,7 @@ function loadFixtures(fixturesRoot) {
     if (!fixture.id) {
       throw new Error(`fixture ${file} missing id`);
     }
-    return fixture;
+    return resolveFixtureExpectation(fixture, file);
   });
 }
 
@@ -2541,6 +2563,9 @@ async function newFixtureMCPServer(runtime, setup) {
   }
   if (serverConfig.initial_session_listener_enabled !== undefined) {
     options.initialSessionListenerEnabled = Boolean(serverConfig.initial_session_listener_enabled);
+  }
+  if (serverConfig.declined_get_validation_first !== undefined) {
+    options.declinedGetValidationFirst = Boolean(serverConfig.declined_get_validation_first);
   }
   if (serverConfig.cacheable_results) {
     const config = serverConfig.cacheable_results;
@@ -5841,6 +5866,16 @@ function registerFixtureMCPFacade(runtime, app, setup) {
     }),
     transportPosture: "iam",
   };
+
+  if (setup?.origin_reachability) {
+    config.originReachability = String(setup.origin_reachability);
+  }
+  if (setup?.front_door_verification) {
+    config.frontDoorVerification = {
+      headerName: String(setup.front_door_verification.header_name ?? ""),
+      secretValue: String(setup.front_door_verification.secret_value ?? ""),
+    };
+  }
 
   if (setup?.bearer) {
     const requiredScopes = (setup.bearer.required_scopes ?? []).map(String);

@@ -1,0 +1,82 @@
+{
+  "commands": [
+    {
+      "argv": [
+        "bash",
+        "scripts/verify-unit.sh"
+      ],
+      "durationSeconds": 50.015,
+      "executed": true,
+      "exitCode": 0,
+      "finishedAt": "2026-11-12T23:23:32Z",
+      "id": "unit",
+      "inputsDigest": "sha256:668c9b0ca53308dc59691f9b9bd2b0c310d8106be40ea3d0f4bfeb67539cc1a1",
+      "logDigest": "sha256:f25329c8eb250ef90edca82ecbaa778c0f8c1c29658830f110a31fffad1b299c",
+      "logRef": "gov-infra/evidence/proportionate/local/unit-unit-20261112T232242Z-70271.log",
+      "reused": false,
+      "startedAt": "2026-11-12T23:22:42Z"
+    }
+  ],
+  "consumed": [
+    {
+      "digest": "sha256:dd9b2839af2222c4ac864f0de595b0f301cda5bffa3c9136eff32531001a3fce",
+      "gate": "go",
+      "recordedAt": "2026-11-12T23:21:12Z"
+    }
+  ],
+  "description": "Cross-language unit tests (Go unit selection, TypeScript tests, Python tests) composed with the Go gate",
+  "environment": {
+    "go": "go1.27.4",
+    "node": "v24.13.1",
+    "platform": {
+      "arch": "arm64",
+      "os": "darwin"
+    },
+    "python": "3.14.7"
+  },
+  "gate": "unit",
+  "kind": "source",
+  "producer": {
+    "registry": "validation-gates.json",
+    "tool": "scripts/evidence/validation_evidence.py"
+  },
+  "profile": "default",
+  "reason": "",
+  "recordedAt": "2026-11-12T23:23:32Z",
+  "releaseOnly": {
+    "digest": "sha256:dea47f7c318e6703d405d14f61f76d6c1a8d2b38f1b682fdc96b6781c222b699",
+    "fileCount": 476,
+    "normalizedDigest": "sha256:c5ecbf183fa35bbf12642d3d5103e5af06b5b0d169ec8b29c253d8712187ac69",
+    "version": "7.1.0"
+  },
+  "reviews": [],
+  "schemaVersion": 1,
+  "scope": {
+    "digest": "sha256:1dbba2e7530b9944036cb08337e08c3132763386482adee5a8d9d1304b0d02cb",
+    "fileCount": 1729,
+    "paths": [
+      "go.mod",
+      "go.sum",
+      "runtime/",
+      "testkit/",
+      "pkg/",
+      "cmd/",
+      "internal/",
+      "contract-tests/",
+      "ts/",
+      "py/",
+      "scripts/list-go-packages.sh",
+      "scripts/verify-go.sh",
+      "scripts/verify-unit.sh",
+      "scripts/verify-ts-tests.sh",
+      "scripts/verify-python-tests.sh",
+      "scripts/lib/"
+    ],
+    "version": 1
+  },
+  "source": {
+    "digest": "sha256:f126e887ac3038d3b92d1195cfb81dc02854eae09d9844e74265a1c0ec0484ff",
+    "fileCount": 2658
+  },
+  "verdict": "PASS"
+}

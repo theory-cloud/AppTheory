@@ -1,0 +1,93 @@
+{
+  "commands": [
+    {
+      "argv": [
+        "bash",
+        "scripts/verify-ts-dist-drift.sh"
+      ],
+      "durationSeconds": 2.212,
+      "executed": true,
+      "exitCode": 0,
+      "finishedAt": "2026-11-12T20:56:42Z",
+      "id": "ts-dist-drift",
+      "inputsDigest": "sha256:dc9919772ddb1bdc5e47144e46dc09f3f4cb034c834186a5c1dd01a3afee888e",
+      "logDigest": "sha256:30073aa0c5546268ad8b8d1c10c69bb84fe6d4cb52b1faf8af05154ebe78451d",
+      "logRef": "gov-infra/evidence/proportionate/local/ts-ts-dist-drift-20261112T205640Z-48369.log",
+      "reused": false,
+      "startedAt": "2026-11-12T20:56:40Z"
+    },
+    {
+      "argv": [
+        "bash",
+        "scripts/verify-ts-pack.sh"
+      ],
+      "durationSeconds": 5.864,
+      "executed": true,
+      "exitCode": 0,
+      "finishedAt": "2026-11-12T20:56:48Z",
+      "id": "ts-pack",
+      "inputsDigest": "sha256:8742f1fe3525716423cee8ba7b620ac677f7338d0f71f176c2375258ed1a5702",
+      "logDigest": "sha256:d5a7010a0609736f7cd2b7f17584ae7452b79be929651a40fce9e539aa543a30",
+      "logRef": "gov-infra/evidence/proportionate/local/ts-ts-pack-20261112T205642Z-48369.log",
+      "reused": false,
+      "startedAt": "2026-11-12T20:56:42Z"
+    }
+  ],
+  "consumed": [],
+  "description": "TypeScript checked-in dist drift and npm pack",
+  "environment": {
+    "go": "go1.27.4",
+    "node": "v22.23.3",
+    "platform": {
+      "arch": "arm64",
+      "os": "darwin"
+    },
+    "python": "3.12.14"
+  },
+  "gate": "ts",
+  "kind": "source",
+  "producer": {
+    "registry": "validation-gates.json",
+    "tool": "scripts/evidence/validation_evidence.py"
+  },
+  "profile": "floor-node22",
+  "reason": "",
+  "recordedAt": "2026-11-12T20:56:48Z",
+  "releaseOnly": {
+    "digest": "sha256:dea47f7c318e6703d405d14f61f76d6c1a8d2b38f1b682fdc96b6781c222b699",
+    "fileCount": 476,
+    "normalizedDigest": "sha256:c5ecbf183fa35bbf12642d3d5103e5af06b5b0d169ec8b29c253d8712187ac69",
+    "version": "7.1.0"
+  },
+  "reviews": [
+    {
+      "kind": "review-reference",
+      "ref": "factory:20261112T194701Z-adversary-81745"
+    },
+    {
+      "kind": "review-reference",
+      "ref": "factory:20261112T194701Z-sanity-81746"
+    }
+  ],
+  "schemaVersion": 1,
+  "scope": {
+    "digest": "sha256:4d7dd2e9fad5f15d8ef0d5ccf5bba593dc5006c15e683e94e2dcae5d8647b24a",
+    "fileCount": 463,
+    "paths": [
+      "ts/",
+      "scripts/verify-ts-dist-drift.sh",
+      "scripts/verify-ts-pack.sh",
+      "scripts/read-version.sh",
+      "scripts/lib/ts-runtime-deps.sh",
+      "scripts/lib/runtime-deps.sh",
+      "scripts/lib/retry.sh",
+      "scripts/lib/blocked.sh"
+    ],
+    "version": 1
+  },
+  "source": {
+    "digest": "sha256:ca76497f13c6e3d8ded84c7468f4f56ef263a9f68bffac56f091e4ac55df2f2e",
+    "fileCount": 2658
+  },
+  "verdict": "PASS"
+}

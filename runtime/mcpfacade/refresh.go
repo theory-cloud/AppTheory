@@ -1,6 +1,7 @@
 package mcpfacade
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/url"
@@ -140,7 +141,26 @@ func (config normalizedConfig) handleRefreshTokenGrant(
 		// revoke the grant on ordinary client behavior).
 		target := presented
 		stale := !presented.GraceExpiresAt.IsZero()
-		if stale {
+		lineageVerified := false
+		// R2 post-timeout lineage-verify. A record that carries an unconfirmed
+		// rotation attempt may already have had its upstream material consumed by
+		// the attempt whose response never arrived. Before presenting anything,
+		// verify the family's lineage: if the live head has moved on, the successor
+		// already exists and the stale material is never presented again — the head
+		// is rotated for the client instead. The presentation is not treated as
+		// current state, and the family is never affected.
+		if !stale && !presented.RotationUnconfirmedAt.IsZero() {
+			head, headResponse := config.refreshFamilyHead(ctx, presented)
+			if headResponse != nil {
+				return headResponse, nil
+			}
+			if head.HandleHash != presented.HandleHash {
+				target = head
+				stale = true
+				lineageVerified = true
+			}
+		}
+		if stale && !lineageVerified {
 			target, response = config.refreshFamilyHead(ctx, presented)
 			if response != nil {
 				return response, nil
@@ -155,7 +175,7 @@ func (config normalizedConfig) handleRefreshTokenGrant(
 		if lockErr == nil {
 			front.emitLockAcquired(ctx, target)
 			if stale {
-				return config.rotateStalePredecessor(ctx, presented, target, locked)
+				return config.rotateStalePredecessor(ctx, presented, target, locked, lineageVerified)
 			}
 			return config.rotateRefreshGrant(ctx, target, locked)
 		}
@@ -472,6 +492,37 @@ func (config normalizedConfig) refreshFamilyHead(
 		front.emitStateFailure(ctx, presented, RouteRefreshReasonFamilyStateUnavailable, "")
 		return nil, facadeTemporarilyUnavailablePage()
 	}
+	head := liveFamilyHead(records)
+	if head == nil {
+		event := eventFromRecord(presented)
+		event.Class = RouteRefreshEventReuse
+		event.Reason = RouteRefreshReasonFamilyHeadAbsent
+		event.ErrorCode = facadeErrorInvalidGrant
+		event.At = ctx.Now()
+		front.emitRouteRefresh(ctx.Context(), event)
+		return nil, facadeErrorPage(400, facadeErrorInvalidGrant)
+	}
+	return head, nil
+}
+
+// listFamily enumerates a family through the broker store's family capability.
+// A store without the capability, and a store that cannot answer, are both
+// unreadable family state: the caller must not draw a terminal conclusion.
+func (front *frontChannelConfig) listFamily(
+	ctx context.Context,
+	familyHash string,
+) ([]*oauthstore.RouteRefreshBrokerRecord, error) {
+	familyStore, ok := front.stores.RouteRefreshBroker.(oauthstore.RouteRefreshBrokerTransactionalFamilyStore)
+	if !ok {
+		return nil, oauthstore.ErrBrokerFamilyStateUnavailable
+	}
+	return familyStore.ListFamily(ctx, familyHash)
+}
+
+// liveFamilyHead selects the record whose upstream material is current: the
+// highest-generation member that is neither revoked nor rotated away. Ties are
+// broken by handle hash so every caller resolves the same head.
+func liveFamilyHead(records []*oauthstore.RouteRefreshBrokerRecord) *oauthstore.RouteRefreshBrokerRecord {
 	var head *oauthstore.RouteRefreshBrokerRecord
 	for _, candidate := range records {
 		if candidate == nil || candidate.Status == oauthstore.BrokerStatusRevoked {
@@ -485,16 +536,26 @@ func (config normalizedConfig) refreshFamilyHead(
 			head = candidate
 		}
 	}
-	if head == nil {
-		event := eventFromRecord(presented)
-		event.Class = RouteRefreshEventReuse
-		event.Reason = RouteRefreshReasonFamilyHeadAbsent
-		event.ErrorCode = facadeErrorInvalidGrant
-		event.At = ctx.Now()
-		front.emitRouteRefresh(ctx.Context(), event)
-		return nil, facadeErrorPage(400, facadeErrorInvalidGrant)
+	return head
+}
+
+// refreshUpstream makes the ONE upstream refresh call of a rotation under the
+// configured encoded budget. The deadline is enforced here, not only inside the
+// adapter, so an implementation that ignores it still cannot outlive the budget
+// the deployment chose.
+func (front *frontChannelConfig) refreshUpstream(
+	ctx context.Context,
+	record *oauthstore.RouteRefreshBrokerRecord,
+) (*oauth.TokenSet, error) {
+	if record == nil {
+		return nil, oauth.NewProviderError(oauth.ProviderInvalidRequest, "refresh", "refresh record is required")
 	}
-	return head, nil
+	budgeted, cancel := context.WithTimeout(ctx, front.policy.RefreshBudget)
+	defer cancel()
+	return front.provider.Refresh(budgeted, oauth.RefreshRequest{
+		RefreshMaterial:  record.EncryptedUpstreamRefreshToken,
+		UpstreamClientID: record.UpstreamClientID,
+	})
 }
 
 // refreshRotation is one persisted rotation: the body the client receives, the
@@ -528,11 +589,15 @@ func (config normalizedConfig) rotateRefreshGrant(
 // from the stored body instead of buying another upstream rotation; the family
 // is never revoked. The presentation is reported as reuse with the additive
 // rotated_from_head outcome: it is ordinary client behavior, not theft.
+// lineageVerified reports that the presentation was resolved by the
+// post-timeout lineage check rather than by an elapsed grace window; it changes
+// the telemetry reason only.
 func (config normalizedConfig) rotateStalePredecessor(
 	ctx *apptheory.Context,
 	presented *oauthstore.RouteRefreshBrokerRecord,
 	head *oauthstore.RouteRefreshBrokerRecord,
 	locked *oauthstore.RouteRefreshBrokerRecord,
+	lineageVerified bool,
 ) (*apptheory.Response, error) {
 	front := config.frontChannel
 	rotation, response, err := config.performRefreshRotation(ctx, head, locked)
@@ -543,6 +608,9 @@ func (config normalizedConfig) rotateStalePredecessor(
 	event := eventFromRecord(presented)
 	event.Class = RouteRefreshEventReuse
 	event.Reason = RouteRefreshReasonStalePredecessor
+	if lineageVerified {
+		event.Reason = RouteRefreshReasonLineageVerified
+	}
 	event.Outcome = RouteRefreshOutcomeRotatedFromHead
 	event.SuccessorHandleHash = rotation.successor.HandleHash
 	event.FamilyHash = rotation.successor.FamilyHash
@@ -577,18 +645,21 @@ func (front *frontChannelConfig) rearmStalePredecessor(
 }
 
 // performRefreshRotation makes the ONE upstream refresh call of a rotation under
-// the held lock, persists the successor transactionally, and reports it. Nothing
-// is minted unless every write landed.
+// the held lock, persists the successor transactionally, and reports it. The
+// rotation intent is written to the store before any upstream material is
+// presented, and nothing is minted unless every write landed.
 func (config normalizedConfig) performRefreshRotation(
 	ctx *apptheory.Context,
 	presented *oauthstore.RouteRefreshBrokerRecord,
 	locked *oauthstore.RouteRefreshBrokerRecord,
 ) (*refreshRotation, *apptheory.Response, error) {
 	front := config.frontChannel
-	upstream, err := front.provider.Refresh(ctx.Context(), oauth.RefreshRequest{
-		RefreshMaterial:  locked.EncryptedUpstreamRefreshToken,
-		UpstreamClientID: locked.UpstreamClientID,
-	})
+	attempted, response, err := config.takeRotationIntent(ctx, presented, locked)
+	if err != nil || response != nil {
+		return nil, response, err
+	}
+	locked = attempted
+	upstream, err := front.refreshUpstream(ctx.Context(), locked)
 	if err != nil {
 		response, failure := config.failedRefreshGrant(ctx, presented, locked, err)
 		return nil, response, failure
@@ -633,8 +704,10 @@ func (config normalizedConfig) performRefreshRotation(
 		GraceAccessTokenExpiresAt: rotation.accessExpiresAt,
 	}); err != nil {
 		// Nothing was minted. A family revoked between the lock and the rotation is
-		// the uniform invalid_grant; every other failure is retryable, because a
-		// success response may never be returned for state that was not persisted.
+		// the uniform invalid_grant; every other failure releases the lock and is
+		// retryable, because a success response may never be returned for state that
+		// was not persisted. The unconfirmed-rotation marker stays behind, so the next
+		// attempt knows the upstream material may already have been consumed.
 		switch {
 		case errors.Is(err, oauthstore.ErrBrokerRevoked):
 			event := eventFromRecord(presented)
@@ -650,9 +723,11 @@ func (config normalizedConfig) performRefreshRotation(
 			return nil, facadeErrorPage(400, facadeErrorInvalidGrant), nil
 		case errors.Is(err, oauthstore.ErrBrokerFamilyStateUnavailable),
 			errors.Is(err, oauthstore.ErrBrokerFamilyMismatch):
+			front.releaseRefreshLock(ctx, presented, locked)
 			front.emitStateFailure(ctx, presented, RouteRefreshReasonFamilyStateUnavailable, "")
 			return nil, facadeTemporarilyUnavailablePage(), nil
 		default:
+			front.releaseRefreshLock(ctx, presented, locked)
 			front.emitStateFailure(ctx, presented, RouteRefreshReasonRewriteFailure, "")
 			return nil, facadeTemporarilyUnavailablePage(), nil
 		}
@@ -682,12 +757,11 @@ func accessTokenLifetime(tokenSet *oauth.TokenSet) time.Duration {
 }
 
 // failedRefreshGrant maps a failed upstream refresh call and unwinds the lock
-// (ruling R1 step 7's failure section). A terminal provider failure means the
-// recorded grant is dead upstream, so the family is revoked and the client is
-// told invalid_grant: that is the one re-authorize signal the token endpoint
-// sends, and it is a fact from the upstream, not a guess about the client. Every
-// other failure releases the lock and reports its typed response; a failure to
-// release leaves the lock to expire and never becomes a success.
+// (ruling R1 step 7's failure section). Only one class may be family-terminal —
+// an upstream invalid_grant — and even that one is revocable only after lineage
+// verification (see failedTerminalRefreshGrant). Every other failure releases the
+// lock and reports its typed response; a failure to release leaves the lock to
+// expire and never becomes a success.
 func (config normalizedConfig) failedRefreshGrant(
 	ctx *apptheory.Context,
 	presented *oauthstore.RouteRefreshBrokerRecord,
@@ -700,22 +774,8 @@ func (config normalizedConfig) failedRefreshGrant(
 		class = providerErr.Class
 	}
 	switch class {
-	case oauth.ProviderInvalidGrant, oauth.ProviderReauthRequired:
-		if err := front.revokeFamilyForRecord(ctx, presented); err != nil {
-			// The grant is dead upstream but could not be revoked here, so the
-			// client is not told the handle is invalid while it is still live.
-			front.emitStateFailure(ctx, presented, RouteRefreshReasonStoreFailure, string(class))
-			return facadeTemporarilyUnavailablePage(), nil
-		}
-		event := eventFromRecord(presented)
-		event.Class = RouteRefreshEventUpstreamReauthRequired
-		event.Reason = RouteRefreshReasonUpstreamRejected
-		event.UpstreamClass = string(class)
-		event.ErrorCode = facadeErrorInvalidGrant
-		event.StatusTo = oauthstore.BrokerStatusRevoked
-		event.At = ctx.Now()
-		front.emitRouteRefresh(ctx.Context(), event)
-		return facadeErrorPage(400, facadeErrorInvalidGrant), nil
+	case oauth.ProviderInvalidGrant:
+		return config.failedTerminalRefreshGrant(ctx, presented, locked, class)
 	case oauth.ProviderUpstreamError:
 		front.releaseRefreshLock(ctx, presented, locked)
 		event := eventFromRecord(presented)
@@ -727,8 +787,10 @@ func (config normalizedConfig) failedRefreshGrant(
 		front.emitRouteRefresh(ctx.Context(), event)
 		return facadeUpstreamErrorPage(), nil
 	default:
-		// ProviderTemporarilyUnavailable, and any provider failure the adapter did
-		// not classify: transient by default, so the lock is released and the
+		// ProviderTemporarilyUnavailable, ProviderReauthRequired (a stale-or-replaced
+		// signal is recovery-available under the rotation-recovery contract), and any
+		// provider failure the adapter did not classify: transient by default, so the
+		// lock is released, the unconfirmed-attempt marker is left in place, and the
 		// caller is told to retry.
 		front.releaseRefreshLock(ctx, presented, locked)
 		event := eventFromRecord(presented)
@@ -740,6 +802,176 @@ func (config normalizedConfig) failedRefreshGrant(
 		front.emitRouteRefresh(ctx.Context(), event)
 		return facadeTemporarilyUnavailablePage(), nil
 	}
+}
+
+// terminalRefreshEvidence classifies what one upstream invalid_grant is evidence
+// about, from the store's own view of the family.
+type terminalRefreshEvidence int
+
+const (
+	// terminalRefreshUnverified means the family could not be read, so no terminal
+	// conclusion may be drawn from the verdict.
+	terminalRefreshUnverified terminalRefreshEvidence = iota
+	// terminalRefreshSuperseded means the verdict is about material the family's
+	// live head has already replaced: it is not evidence about the family.
+	terminalRefreshSuperseded
+	// terminalRefreshLiveHead means the verdict is about the family's current live
+	// head, which is the only record whose material speaks for the family.
+	terminalRefreshLiveHead
+)
+
+// failedTerminalRefreshGrant renders the one upstream verdict class that may be
+// family-terminal, and only on corroborated evidence. It is terminal when the
+// verdict is about the family's current live head and no rotation attempt of that
+// record is unconfirmed inside the facade's ambiguity horizon. Every other shape
+// stays transient: an unconfirmed attempt (a timeout, a lost response, the
+// 16:00Z class), a verdict about superseded material, or a family the facade
+// cannot read. Latency, a lost response, an informed serve-off state, and client
+// naivety must never kill a family (contract R1/R5/R7).
+func (config normalizedConfig) failedTerminalRefreshGrant(
+	ctx *apptheory.Context,
+	presented *oauthstore.RouteRefreshBrokerRecord,
+	locked *oauthstore.RouteRefreshBrokerRecord,
+	class oauth.ProviderErrorClass,
+) (*apptheory.Response, error) {
+	front := config.frontChannel
+	if front.refreshVerdictAmbiguous(presented, ctx.Now()) {
+		front.releaseRefreshLock(ctx, presented, locked)
+		event := eventFromRecord(presented)
+		event.Class = RouteRefreshEventStateFailure
+		event.Reason = RouteRefreshReasonRecoveryPending
+		event.UpstreamClass = string(class)
+		event.ErrorCode = facadeErrorTemporarilyUnavailable
+		event.At = ctx.Now()
+		front.emitRouteRefresh(ctx.Context(), event)
+		return facadeTemporarilyUnavailablePage(), nil
+	}
+	switch front.terminalRefreshEvidence(ctx, presented) {
+	case terminalRefreshLiveHead:
+		// The family's current material was rejected: the one genuinely terminal
+		// shape. The family tombstone is written before the client is told.
+	case terminalRefreshSuperseded:
+		if presented.Status == oauthstore.BrokerStatusRevoked {
+			// The family is already tombstoned; every presentation is the same
+			// terminal answer and no second revocation is emitted.
+			return facadeErrorPage(400, facadeErrorInvalidGrant), nil
+		}
+		front.releaseRefreshLock(ctx, presented, locked)
+		event := eventFromRecord(presented)
+		event.Class = RouteRefreshEventStateFailure
+		event.Reason = RouteRefreshReasonLineageVerified
+		event.UpstreamClass = string(class)
+		event.ErrorCode = facadeErrorTemporarilyUnavailable
+		event.At = ctx.Now()
+		front.emitRouteRefresh(ctx.Context(), event)
+		return facadeTemporarilyUnavailablePage(), nil
+	default:
+		front.releaseRefreshLock(ctx, presented, locked)
+		front.emitStateFailure(ctx, presented, RouteRefreshReasonFamilyStateUnavailable, string(class))
+		return facadeTemporarilyUnavailablePage(), nil
+	}
+	if err := front.revokeFamilyForRecord(ctx, presented); err != nil {
+		// The grant is dead upstream but could not be revoked here, so the
+		// client is not told the handle is invalid while it is still live.
+		front.emitStateFailure(ctx, presented, RouteRefreshReasonStoreFailure, string(class))
+		return facadeTemporarilyUnavailablePage(), nil
+	}
+	event := eventFromRecord(presented)
+	event.Class = RouteRefreshEventUpstreamReauthRequired
+	event.Reason = RouteRefreshReasonUpstreamRejected
+	event.UpstreamClass = string(class)
+	event.ErrorCode = facadeErrorInvalidGrant
+	event.StatusTo = oauthstore.BrokerStatusRevoked
+	event.At = ctx.Now()
+	front.emitRouteRefresh(ctx.Context(), event)
+	return facadeErrorPage(400, facadeErrorInvalidGrant), nil
+}
+
+// refreshVerdictAmbiguous reports whether the record carries an unconfirmed
+// rotation attempt that is still inside the facade's ambiguity horizon. The
+// horizon is the configured grace window: it is the facade's own measured
+// recovery-attempt window, it is the interval in which the upstream's walk can
+// still serve the replaced material, and inside it an upstream invalid_grant
+// cannot be told apart from a lost response. The marker's earliest instant is
+// never moved forward, so retries cannot extend the horizon.
+func (front *frontChannelConfig) refreshVerdictAmbiguous(
+	record *oauthstore.RouteRefreshBrokerRecord,
+	now time.Time,
+) bool {
+	if front == nil || record == nil || record.RotationUnconfirmedAt.IsZero() {
+		return false
+	}
+	return !now.After(record.RotationUnconfirmedAt.Add(front.policy.GraceWindow))
+}
+
+// terminalRefreshEvidence reads the family the presented record belongs to and
+// classifies what an upstream verdict about the presented material is evidence
+// of. A family-less record cannot be family-revoked; it is treated as its own
+// live head so the caller's revocation fails closed on the legacy path instead
+// of revoking something.
+func (front *frontChannelConfig) terminalRefreshEvidence(
+	ctx *apptheory.Context,
+	presented *oauthstore.RouteRefreshBrokerRecord,
+) terminalRefreshEvidence {
+	if front == nil || presented == nil {
+		return terminalRefreshUnverified
+	}
+	if presented.FamilyHash == "" {
+		return terminalRefreshLiveHead
+	}
+	records, err := front.listFamily(ctx.Context(), presented.FamilyHash)
+	if err != nil {
+		return terminalRefreshUnverified
+	}
+	head := liveFamilyHead(records)
+	if head == nil {
+		return terminalRefreshSuperseded
+	}
+	if head.HandleHash == presented.HandleHash &&
+		head.UpstreamRefreshTokenHash == presented.UpstreamRefreshTokenHash {
+		return terminalRefreshLiveHead
+	}
+	return terminalRefreshSuperseded
+}
+
+// takeRotationIntent persists, in the store, that this record's upstream material
+// is about to be presented, and returns the locked record at its new version. It
+// is the read-side twin of persist-before-ack: the facade never presents material
+// it has not recorded an attempt for, so a process that loses the answer leaves
+// evidence a later attempt can verify lineage against. A failed write releases the
+// lock and answers transiently without calling the upstream.
+func (config normalizedConfig) takeRotationIntent(
+	ctx *apptheory.Context,
+	presented *oauthstore.RouteRefreshBrokerRecord,
+	locked *oauthstore.RouteRefreshBrokerRecord,
+) (*oauthstore.RouteRefreshBrokerRecord, *apptheory.Response, error) {
+	front := config.frontChannel
+	attempted, err := front.takeRotationIntentAt(ctx.Context(), locked, ctx.Now())
+	if err != nil {
+		front.releaseRefreshLock(ctx, presented, locked)
+		front.emitStateFailure(ctx, presented, RouteRefreshReasonRewriteFailure, "")
+		return nil, facadeTemporarilyUnavailablePage(), nil
+	}
+	return attempted, nil, nil
+}
+
+// takeRotationIntentAt writes the unconfirmed-rotation marker under the held
+// lock. An already-set marker is preserved, so the ambiguity horizon stays
+// anchored to the first lost attempt and retries cannot extend it.
+func (front *frontChannelConfig) takeRotationIntentAt(
+	ctx context.Context,
+	locked *oauthstore.RouteRefreshBrokerRecord,
+	now time.Time,
+) (*oauthstore.RouteRefreshBrokerRecord, error) {
+	if locked == nil {
+		return nil, oauthstore.ErrRecordKeyRequired
+	}
+	if !locked.RotationUnconfirmedAt.IsZero() {
+		return locked, nil
+	}
+	updated := *locked
+	updated.RotationUnconfirmedAt = now
+	return front.stores.RouteRefreshBroker.CompareAndSwap(ctx, &updated, locked.Version)
 }
 
 // revokeFamilyForRecord revokes the family of a record whose upstream material
@@ -765,17 +997,33 @@ func (front *frontChannelConfig) revokeFamilyForRecord(
 // lock was taken, with the lock cleared, so a caller that failed for a transient
 // reason can try again instead of waiting out the lock TTL. It is best effort: a
 // failed release leaves the lock to expire, which delays the next attempt but
-// never reports a success.
+// never reports a success. The unconfirmed-rotation marker is deliberately
+// preserved: the attempt that failed may still have landed upstream.
 func (front *frontChannelConfig) releaseRefreshLock(
 	ctx *apptheory.Context,
 	presented *oauthstore.RouteRefreshBrokerRecord,
 	locked *oauthstore.RouteRefreshBrokerRecord,
 ) {
+	front.releaseRefreshLockAt(ctx.Context(), presented, locked)
+}
+
+// releaseRefreshLockAt is releaseRefreshLock for a caller that has no request
+// context, such as the out-of-band refresh sweeper.
+func (front *frontChannelConfig) releaseRefreshLockAt(
+	ctx context.Context,
+	presented *oauthstore.RouteRefreshBrokerRecord,
+	locked *oauthstore.RouteRefreshBrokerRecord,
+) {
+	if locked == nil {
+		return
+	}
 	released := *locked
 	released.RefreshLockOwner = ""
 	released.RefreshLockExpiresAt = time.Time{}
-	released.Status = presented.Status
-	if _, err := front.stores.RouteRefreshBroker.CompareAndSwap(ctx.Context(), &released, locked.Version); err != nil {
+	if presented != nil {
+		released.Status = presented.Status
+	}
+	if _, err := front.stores.RouteRefreshBroker.CompareAndSwap(ctx, &released, locked.Version); err != nil {
 		return
 	}
 }
