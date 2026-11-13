@@ -431,6 +431,55 @@ fi
 pass_count=$((pass_count + 1))
 echo "test-validation-evidence: PASS proof profiles fail closed"
 
+# 15. Platform binding folds the kernel arch names the live probe reports onto
+# the tracked profile spelling. The Linux CI producer profile must therefore be
+# producible on the x86_64 runner that declares it, while a genuinely different
+# host is still refused with the tracked fail-closed error.
+cat >"${tmp}/arch-check.py" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+registry_path = Path(sys.argv[1]).resolve()
+sys.path.insert(0, str(registry_path.parent))
+import validation_evidence as ve
+
+registry = ve.load_registry(registry_path)
+gate = "deterministic-builds"
+dimensions = ve.environment_dimensions(registry.gates[gate], gate)
+declared = registry.profiles["linux-x64"]["environment"]
+assert "linux-x64" in registry.gates[gate].get("fallbackProfiles", []), registry.gates[gate]
+
+
+def recorded(os_name, arch):
+    return {"go": declared["go"], "node": "v24.11.0", "python": "3.14.0", "platform": {"os": os_name, "arch": arch}}
+
+
+# The ubuntu runner probes `platform.machine()` as x86_64.
+runner = recorded("linux", "x86_64")
+assert not ve.environment_mismatch(runner, declared, dimensions), ve.environment_mismatch(runner, declared, dimensions)
+assert ve.select_producing_profile(registry, gate, "linux-x64", runner) == "linux-x64"
+assert ve.select_producing_profile(registry, gate, "default", runner) == "linux-x64", "the CI fallback did not select the Linux producer"
+
+# Other spellings of the same architecture fold too.
+for alias in ("amd64", "x64", "X86_64"):
+    assert not ve.environment_mismatch(recorded("linux", alias), declared, dimensions), alias
+assert not ve.environment_mismatch(recorded("linux", "aarch64"), {"platform": {"os": "linux", "arch": "arm64"}}, ["platform"])
+
+# A genuinely different architecture still fails closed.
+linux_arm = recorded("linux", "arm64")
+mismatch = ve.environment_mismatch(linux_arm, declared, dimensions)
+assert "linux/arm64" in mismatch and "linux/x64" in mismatch, mismatch
+try:
+    ve.select_producing_profile(registry, gate, "linux-x64", linux_arm)
+except ve.EvidenceError as exc:
+    assert "cannot be produced on this host" in str(exc), exc
+else:
+    raise AssertionError("a Linux arm host was accepted for the linux-x64 profile")
+PY
+expect_ok "linux-x64 profile is producible on the linux/x86_64 CI runner" \
+  "${python_bin}" "${tmp}/arch-check.py" "${repo_root}/scripts/evidence/validation-gates.json"
+
 echo "test-validation-evidence: PASS (${pass_count} checks)"
 
 # ---------------------------------------------------------------------------
