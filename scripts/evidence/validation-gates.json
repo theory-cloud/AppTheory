@@ -520,14 +520,22 @@
         "Makefile",
         "examples/",
         "scripts/local/",
+        "scripts/verify-cdk-synth.sh",
+        "scripts/verify-cdk-example-assertions.mjs",
         "scripts/verify-cdk-synth-location-independent.sh",
         "runtime/",
         "testkit/",
         "pkg/",
+        "internal/",
+        "go.mod",
+        "go.sum",
         "cmd/apptheory-local/",
         "ts/",
+        "py/",
+        "cdk/",
         "contract-tests/",
-        "scripts/lib/"
+        "scripts/lib/",
+        "docs/examples/local-harness.md"
       ],
       "commands": [
         {
