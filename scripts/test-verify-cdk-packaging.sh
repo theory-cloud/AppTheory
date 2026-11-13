@@ -6,6 +6,14 @@
 # block checks the production wiring: one composed call from the release-gates
 # step, and two real calls per packaging script inside the deterministic-build
 # passes.
+#
+# Each case declares the packaging environment it exercises instead of
+# inheriting the caller's. The rubric also runs from the CI evidence fallback,
+# which exports EVIDENCE_FORCE_EXECUTE=true for the gate command, and a forced
+# execution deliberately never inherits a composed coverage claim
+# (scripts/verify-cdk-packaging.sh). A composed case therefore clears that flag
+# explicitly; otherwise an inherited flag would silently turn it into the
+# direct-packaging case and fail.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -83,7 +91,7 @@ expect_failure() {
 # deterministic-build passes already built both packages.
 reset_calls
 expect_success "composed rubric packaging builds nothing" \
-  env APPTHEORY_RUBRIC_CDK_PACKAGING_COVERED=true bash -c 'cd "$1" && bash scripts/verify-cdk-packaging.sh' _ "${fixture}"
+  env -u EVIDENCE_FORCE_EXECUTE APPTHEORY_RUBRIC_CDK_PACKAGING_COVERED=true bash -c 'cd "$1" && bash scripts/verify-cdk-packaging.sh' _ "${fixture}"
 composed_calls="$(call_count)"
 if [[ "${composed_calls}" != "0" ]]; then
   echo "test-verify-cdk-packaging: FAIL (composed packaging executed ${composed_calls} scripts)" >&2
@@ -118,12 +126,12 @@ cp "${fixture}/scripts/verify-builds.sh" "${tmp}/verify-builds.good"
 cp "${fixture}/gov-infra/verifiers/gov-verify-rubric.sh" "${tmp}/verifier.good"
 printf '#!/usr/bin/env bash\nset -euo pipefail\nscripts/verify-cdk-python-build.sh\n' >"${fixture}/scripts/verify-builds.sh"
 expect_failure "composed claim fails when a package leaves the determinism passes" "coverage would be lost" \
-  env APPTHEORY_RUBRIC_CDK_PACKAGING_COVERED=true bash -c 'cd "$1" && bash scripts/verify-cdk-packaging.sh' _ "${fixture}"
+  env -u EVIDENCE_FORCE_EXECUTE APPTHEORY_RUBRIC_CDK_PACKAGING_COVERED=true bash -c 'cd "$1" && bash scripts/verify-cdk-packaging.sh' _ "${fixture}"
 cp "${tmp}/verify-builds.good" "${fixture}/scripts/verify-builds.sh"
 
 printf '#!/usr/bin/env bash\nset -euo pipefail\ntrue\n' >"${fixture}/gov-infra/verifiers/gov-verify-rubric.sh"
 expect_failure "composed claim fails when the rubric stops running the builds" "no longer runs verify-builds.sh" \
-  env APPTHEORY_RUBRIC_CDK_PACKAGING_COVERED=true bash -c 'cd "$1" && bash scripts/verify-cdk-packaging.sh' _ "${fixture}"
+  env -u EVIDENCE_FORCE_EXECUTE APPTHEORY_RUBRIC_CDK_PACKAGING_COVERED=true bash -c 'cd "$1" && bash scripts/verify-cdk-packaging.sh' _ "${fixture}"
 cp "${tmp}/verifier.good" "${fixture}/gov-infra/verifiers/gov-verify-rubric.sh"
 
 # Production wiring: exactly one composed call, with the two real builds retained

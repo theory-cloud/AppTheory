@@ -5,21 +5,21 @@
         "bash",
         "scripts/verify-security-refresh.sh"
       ],
-      "durationSeconds": 34.625,
+      "durationSeconds": 41.609,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-12T20:00:55Z",
+      "finishedAt": "2026-11-13T02:47:02Z",
       "id": "security-refresh",
-      "inputsDigest": "sha256:1b0f27ddf22dde1bf7bbbeb5f52d7a14b5132982432d10bde8268aa27f5a1e8b",
-      "logDigest": "sha256:615d28b9880f0ece125a3d4cb7ef411b81dd99a9f43495a18387aa90b261cab5",
-      "logRef": "gov-infra/evidence/proportionate/local/security-refresh-security-refresh-20261112T200021Z-82956.log",
+      "inputsDigest": "sha256:8249334046e66f3686d5dc6b914e663620e416f064d028fbde4fe354ce5fe454",
+      "logDigest": "sha256:2c1d731c7e56e8ffe95df82d1b0ed6d193e2d14b8ae6bebead5677679500dd60",
+      "logRef": "gov-infra/evidence/proportionate/local/security-refresh-security-refresh-20261113T024620Z-69804.log",
       "reused": false,
-      "startedAt": "2026-11-12T20:00:21Z"
+      "startedAt": "2026-11-13T02:46:20Z"
     }
   ],
   "consumed": [],
   "dependency": {
-    "digest": "sha256:cad30787fc04c2328564c879568779e54188b088c9f858dbf62eb53980b41c88",
+    "digest": "sha256:17ec847bc2954e0dfbda12d777d111085c128935f13eca78c5228202cd83eaf8",
     "fileCount": 35
   },
   "description": "Dependency vulnerability refresh bounded by the tracked max age",
@@ -40,30 +40,21 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-12T20:00:55Z",
+  "recordedAt": "2026-11-13T02:47:02Z",
   "releaseOnly": {
-    "digest": "sha256:dea47f7c318e6703d405d14f61f76d6c1a8d2b38f1b682fdc96b6781c222b699",
+    "digest": "sha256:1dc919d2a5e8962c22283972db036b1366abe5d3308ab8840906a1e273711b64",
     "fileCount": 476,
-    "normalizedDigest": "sha256:c5ecbf183fa35bbf12642d3d5103e5af06b5b0d169ec8b29c253d8712187ac69",
-    "version": "7.1.0"
+    "normalizedDigest": "sha256:a1a1d61689822e006d9c7c4c60a860d063ede848af626f804ba22ce0f0bf2df8",
+    "version": "7.3.0"
   },
-  "reviews": [
-    {
-      "kind": "review-reference",
-      "ref": "factory:20261112T194701Z-adversary-81745"
-    },
-    {
-      "kind": "review-reference",
-      "ref": "factory:20261112T194701Z-sanity-81746"
-    }
-  ],
+  "reviews": [],
   "scan": {
     "maxAgeSeconds": 86400,
-    "scannedAt": "2026-11-12T20:00:55Z"
+    "scannedAt": "2026-11-13T02:47:02Z"
   },
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:8cf2afbecce6842d671493908ee51b42b0c9bc804fa91f74c1856d92270b609e",
+    "digest": "sha256:4a203796cfb600445aa8e764d1ddd6ff6c316fb300c96762ed94b4a96818cdb7",
     "fileCount": 37,
     "paths": [
       "go.mod",
@@ -86,7 +77,7 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:ca76497f13c6e3d8ded84c7468f4f56ef263a9f68bffac56f091e4ac55df2f2e",
+    "digest": "sha256:bfb556022f91a4ce4f50e3da1cbdd3d0231789b65ec39a6b1ca9a9b9bba6d1b9",
     "fileCount": 2658
   },
   "verdict": "PASS"
