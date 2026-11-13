@@ -14,7 +14,9 @@
 #     fallback, never mislabeled;
 #   * the upload contract names the exact produced path and refuses a record
 #     bundled with the checkout;
-#   * forced execution never consumes nested proof.
+#   * forced execution never consumes nested proof;
+#   * the rubric's own composed controls hold under the forced environment the
+#     fallback exports.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -596,5 +598,20 @@ mode = os.stat(sys.argv[1]).st_mode & 0o777
 assert mode == 0o600, oct(mode)
 PY
 pass_test "a fresh producer manifest is created owner-only"
+
+# ---------------------------------------------------------------------------
+# 6. The rubric's composed controls hold under the CI fallback environment.
+# ---------------------------------------------------------------------------
+# The execute path of verify-or-execute.sh exports EVIDENCE_FORCE_EXECUTE=true
+# for the gate command, and a forced run deliberately refuses nested
+# composition. The rubric's own composed CDK-packaging controls therefore run
+# under that flag on every CI fallback, so they must pass with it exported: a
+# control that inherited the flag instead of declaring the environment it
+# exercises failed every real rubric fallback.
+if ! (cd "${repo_root}" && EVIDENCE_FORCE_EXECUTE=true bash scripts/test-verify-cdk-packaging.sh) >"${tmp}/out.log" 2>&1; then
+  cat "${tmp}/out.log" >&2
+  fail_test "the composed packaging controls fail under the CI fallback environment"
+fi
+pass_test "the composed packaging controls hold under the CI fallback environment"
 
 echo "test-evidence-execution-capture: PASS (${pass_count} checks)"
