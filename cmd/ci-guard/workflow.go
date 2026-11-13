@@ -151,13 +151,14 @@ type workflowStep struct {
 }
 
 type workflowJob struct {
-	id     string
-	name   string
-	ifText string
-	hasIf  bool
-	needs  []string
-	uses   string
-	steps  []workflowStep
+	id            string
+	name          string
+	ifText        string
+	hasIf         bool
+	needs         []string
+	uses          string
+	steps         []workflowStep
+	matrixInclude []map[string]string
 }
 
 type jobClass struct {
@@ -624,8 +625,58 @@ func applyJobField(job *workflowJob, key string, value *yaml.Node) error {
 			return fmt.Errorf("job %q: %w", job.id, err)
 		}
 		job.steps = steps
+	case "strategy":
+		include, err := parseMatrixInclude(value)
+		if err != nil {
+			return fmt.Errorf("job %q strategy: %w", job.id, err)
+		}
+		job.matrixInclude = include
 	}
 	return nil
+}
+
+// parseMatrixInclude reads the explicit matrix.include cells a job declares.
+// The evidence-wiring guard resolves a matrix-driven proof profile against these
+// cells, so a profile can never be chosen dynamically at run time outside the
+// tracked declaration.
+func parseMatrixInclude(node *yaml.Node) ([]map[string]string, error) {
+	if isNullNode(node) {
+		return nil, nil
+	}
+	if node.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("strategy must be a mapping")
+	}
+	matrix, ok := mapLookup(node, "matrix")
+	if !ok || isNullNode(matrix) {
+		return nil, nil
+	}
+	if matrix.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("matrix must be a mapping")
+	}
+	include, ok := mapLookup(matrix, "include")
+	if !ok || isNullNode(include) {
+		return nil, nil
+	}
+	if include.Kind != yaml.SequenceNode {
+		return nil, fmt.Errorf("matrix.include must be a sequence")
+	}
+	var entries []map[string]string
+	for _, item := range include.Content {
+		if item.Kind != yaml.MappingNode {
+			return nil, fmt.Errorf("matrix.include entries must be mappings")
+		}
+		entry := map[string]string{}
+		for i := 0; i+1 < len(item.Content); i += 2 {
+			key := item.Content[i]
+			scalar := item.Content[i+1]
+			if key.Kind != yaml.ScalarNode || scalar.Kind != yaml.ScalarNode {
+				continue
+			}
+			entry[key.Value] = scalar.Value
+		}
+		entries = append(entries, entry)
+	}
+	return entries, nil
 }
 
 // parseJobCondition reads a job-level if:. A literal or folded block scalar is
@@ -971,13 +1022,24 @@ func classifyJob(ctx triggerContext, job workflowJob) (*jobClass, bool, error) {
 
 func classifyPush(condition expr, pushBranches []string, jobID string) ([]string, error) {
 	refs := map[string]bool{}
-	for _, branch := range uniqueStrings(pushBranches) {
-		ok, err := condition.eval(state{event: "push", ref: pushRefPrefix + branch})
-		if err != nil {
-			return nil, fmt.Errorf("job %q: %w", jobID, err)
-		}
-		if ok {
-			refs[branch] = true
+	// A push trigger carries one commit message that a job condition may read.
+	// Evaluate both shapes the release train produces: an ordinary merge message
+	// and a generated release-please merge message. A job runs on a push branch
+	// if either shape selects it, so a guard that skips generated release merges
+	// cannot be mistaken for a guard that vacates the whole push lane.
+	messages := []string{
+		"Merge pull request #1 from theory-cloud/apptheory/ordinary-change",
+		"Merge pull request #1 from theory-cloud/release-please--branches--premain",
+	}
+	for _, message := range messages {
+		for _, branch := range uniqueStrings(pushBranches) {
+			ok, err := condition.eval(state{event: "push", ref: pushRefPrefix + branch, headMessage: message})
+			if err != nil {
+				return nil, fmt.Errorf("job %q: %w", jobID, err)
+			}
+			if ok {
+				refs[branch] = true
+			}
 		}
 	}
 	return sortedKeys(refs), nil
@@ -1133,6 +1195,11 @@ var promotionParityExemptions = []parityExemption{
 		job:         prereleaseID,
 		counterpart: eligibilityID,
 		reason:      "promotion-edge release-eligibility gate; the staging lane runs the same predicate through " + eligibilityID + ", which covers the staging lane on the pushed staging SHA",
+	},
+	{
+		job:         "release-delta",
+		counterpart: "rubric",
+		reason:      "generated release-PR delta smoke; generated release PRs only target premain/main, and the reviewed full rubric covers the staging lane whose tree the release transformation derives from",
 	},
 }
 

@@ -4,6 +4,15 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+if [[ -n "${APPTHEORY_EVIDENCE_REUSE:-}" ]]; then
+  if bash scripts/evidence/reuse-if-recorded.sh ts; then
+    exit 0
+  fi
+  if bash scripts/evidence/reuse-if-recorded.sh deterministic-builds; then
+    exit 0
+  fi
+fi
+
 if ! command -v node >/dev/null 2>&1; then
   echo "ts-pack: BLOCKED (node not found)" >&2
   exit 2

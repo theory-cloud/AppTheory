@@ -274,13 +274,38 @@ release_please_draft_guard = (
     "(github.event.pull_request.head.ref != 'release-please--branches--premain' && "
     "github.event.pull_request.head.ref != 'release-please--branches--main')"
 )
-for job in ("version-alignment", "go", "ts", "py", "contract-tests"):
+product_guard = (
+    "if: (github.event_name != 'push' || !contains(github.event.head_commit.message, 'release-please--branches--')) && "
+    "(github.event_name != 'pull_request' || (github.event.pull_request.draft == false && "
+    "github.event.pull_request.head.ref != 'release-please--branches--premain' && "
+    "github.event.pull_request.head.ref != 'release-please--branches--main')) && "
+    "!(github.event_name == 'workflow_dispatch' && inputs.release_pr_number != '')"
+)
+require_job_contains(
+    ".github/workflows/ci.yml",
+    "version-alignment",
+    release_please_draft_guard,
+    "required version checks must not evaluate draft release-please heads before generated artifacts are synced",
+)
+for job in ("go", "ts", "py", "contract-tests", "cdk-go-drift", "runtime-floor-matrix", "cdk-floor-matrix"):
     require_job_contains(
         ".github/workflows/ci.yml",
         job,
-        release_please_draft_guard,
-        "required CI checks must not evaluate draft release-please heads before generated artifacts are synced",
+        product_guard,
+        "product jobs must skip only the generated release-only transformation, never an ordinary source change",
     )
+require_job_contains(
+    ".github/workflows/ci.yml",
+    "release-delta",
+    "run: bash scripts/evidence/verify-or-execute.sh --gate release-delta",
+    "generated release PRs must run the narrow release delta gate",
+)
+require_job_contains(
+    ".github/workflows/examples-local.yml",
+    "examples-local",
+    "scripts/evidence/verify-or-execute.sh --gate examples-local --profile default --verify-only",
+    "the examples harness must reuse verified evidence or execute the real harness",
+)
 require_not_contains(
     ".github/workflows/release.yml",
     "if: github.ref == 'refs/heads/main'\n",
@@ -887,14 +912,14 @@ require_contains(
     "CI release/security gates must fail closed on unsupported Python/Node floor claims",
 )
 require_contains(
-    "scripts/verify-release-gates.sh",
+    "scripts/verify-rubric.sh",
     "bash ./scripts/verify-release-train-promotion.sh --self-test",
-    "full release gates must include release train provenance self-tests",
+    "the full rubric must include release train provenance self-tests",
 )
 require_contains(
-    "scripts/verify-release-gates.sh",
+    "scripts/verify-rubric.sh",
     "bash ./scripts/verify-release-cycle.sh",
-    "full release gates must include deterministic full-cycle release regression",
+    "the full rubric must include the deterministic full-cycle release regression",
 )
 require_contains(
     "scripts/verify-release-gates.sh",
@@ -1355,9 +1380,34 @@ require_order(
 )
 require_order(
     "scripts/sync-release-pr-generated.sh",
-    "After the generated-artifact head is visible",
-    "dispatch_required_checks\nwait_for_required_checks_to_start\nwait_for_required_checks",
-    "release PR sync must dispatch and wait for independent CI after the generated-artifact head is visible",
+    'wait_for_pr_head "${synced_head}"',
+    'case "$(classify_existing_required_checks)"',
+    "release PR sync must classify the required checks at the exact head before deciding to dispatch",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "dispatch_required_checks\n    wait_for_required_checks_to_start\n    wait_for_required_checks",
+    "release PR sync must still dispatch and wait when no required check exists at the head",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "reusing green required checks",
+    "release PR sync must reuse green required checks instead of re-dispatching an unchanged head",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "waiting without re-dispatch",
+    "release PR sync must await already-queued required checks instead of dispatching a duplicate run",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "classify_gh_failure",
+    "release PR sync must classify auth, not-found and transient gh failures distinctly",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "--finalize-only",
+    "release PR sync must expose the finalize-only recovery path",
 )
 require_contains(
     "scripts/sync-release-pr-generated.sh",
@@ -1376,7 +1426,7 @@ require_contains(
 )
 require_order_after(
     "scripts/sync-release-pr-generated.sh",
-    "dispatch_required_checks\nwait_for_required_checks_to_start\nwait_for_required_checks",
+    'case "$(classify_existing_required_checks)"',
     "wait_for_required_checks",
     'require_pr_head "${synced_head}" "after required checks passed"',
     "release PR must re-check the generated-artifact head after required checks pass",
@@ -1384,7 +1434,7 @@ require_order_after(
 require_order(
     "scripts/sync-release-pr-generated.sh",
     'require_pr_head "${synced_head}" "after required checks passed"',
-    'if ! gh pr ready "${pr_number}"; then',
+    'ensure_release_pr_is_draft "before marking generated-artifact-synced PR ready"',
     "release PR must wait for required checks before becoming ready",
 )
 require_contains(
