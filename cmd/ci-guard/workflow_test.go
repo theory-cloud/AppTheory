@@ -62,6 +62,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: echo ok
+  release-delta:
+    name: Release delta validation
+    if: (github.event_name == 'pull_request' && (github.event.pull_request.base.ref == 'premain' || github.event.pull_request.base.ref == 'main') && (github.event.pull_request.head.ref == 'release-please--branches--premain' || github.event.pull_request.head.ref == 'release-please--branches--main')) || (github.event_name == 'workflow_dispatch' && inputs.release_pr_number != '')
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo ok
   rubric:
     name: Rubric (full gate set)
     if: (github.event_name == 'workflow_dispatch' && (inputs.run_full_rubric == true || inputs.run_full_rubric == 'true')) || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging')

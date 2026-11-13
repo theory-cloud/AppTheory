@@ -12,10 +12,7 @@ default_required_checks() {
 Version alignment
 Release train promotion gate
 Release/security gates
-Go (test + vet)
-TypeScript (npm pack)
-Python (build wheel + sdist)
-Contract tests (fixtures)
+Release delta validation
 EOF
 }
 
@@ -397,73 +394,129 @@ PY
   echo "sync-release-pr-generated self-test: PASS major-version-artifact-plan"
 }
 
-if [[ "${1:-}" == "--self-test" ]]; then
-  run_required_check_classifier_self_test
-  run_signed_sync_mode_self_test
-  run_sync_secret_material_self_test
-  run_artifact_plan_self_test
-  exit 0
-fi
+# Classify a failed gh read instead of collapsing every failure into "the PR
+# disappeared". Authentication failures, genuine not-found responses and
+# transient transport failures are distinct states; only notfound may ever be
+# reported as absent, and even then it never authorizes readiness.
+classify_gh_failure() {
+  local status="$1"
+  local text="$2"
+  if [[ "${status}" == "4" ]] || grep -Eqi 'authentication|not logged|bad credentials|HTTP 40[13]|GH_TOKEN|gh auth login' <<<"${text}"; then
+    echo auth
+    return 0
+  fi
+  if grep -Eqi 'Could not resolve to a (PullRequest|Repository)|not found|HTTP 404|No pull requests found' <<<"${text}"; then
+    echo notfound
+    return 0
+  fi
+  if grep -Eqi 'HTTP 5[0-9][0-9]|timeout|timed out|connection reset|connection refused|temporary failure|rate limit|secondary rate|TLS' <<<"${text}"; then
+    echo transient
+    return 0
+  fi
+  echo error
+}
 
-local_signed_sync_requested=false
-print_plan_requested=false
-while [[ "${1:-}" == --* ]]; do
-  case "${1:-}" in
-    --local-signed-sync)
-      local_signed_sync_requested=true
-      shift
-      ;;
-    --print-plan)
-      print_plan_requested=true
-      shift
-      ;;
-    --help|-h)
-      cat <<'USAGE'
-usage: scripts/sync-release-pr-generated.sh [--print-plan] [--local-signed-sync] <release-branch>|--self-test
+read_pr_state() {
+  local attempt=1
+  while true; do
+    local stderr_file
+    local out
+    local status=0
+    stderr_file="$(mktemp)"
+    out="$(gh pr view "${pr_number}" --json state,isDraft,headRefOid --jq '"\(.state)\t\(.isDraft)\t\(.headRefOid)"' 2>"${stderr_file}")" || status=$?
+    local stderr_text
+    stderr_text="$(cat "${stderr_file}")"
+    rm -f "${stderr_file}"
+    if (( status == 0 )) && [[ -n "${out}" ]]; then
+      PR_STATE_KIND=ok
+      PR_STATE_LINE="${out}"
+      PR_FAILURE_DETAIL=""
+      return 0
+    fi
 
---print-plan prints the non-mutating GitHub API commit plan after regenerating
-release artifacts. It does not send createCommitOnBranch or push.
-USAGE
-      exit 0
+    local kind
+    kind="$(classify_gh_failure "${status}" "${stderr_text}")"
+    if [[ "${kind}" == "transient" ]] && (( attempt < PR_READ_ATTEMPTS )); then
+      sleep "$(( attempt * PR_READ_BACKOFF_SECONDS ))"
+      attempt=$((attempt + 1))
+      continue
+    fi
+    PR_STATE_KIND="${kind}"
+    PR_STATE_LINE=""
+    PR_FAILURE_DETAIL="gh pr view #${pr_number} exited ${status}: ${stderr_text:-empty output}"
+    return 1
+  done
+}
+
+fail_pr_read() {
+  local context="$1"
+  case "${PR_STATE_KIND}" in
+    notfound)
+      echo "sync-release-pr-generated: FAIL (PR #${pr_number} not found ${context}; a failed lookup is never read as disappeared or merged)" >&2
+      ;;
+    auth)
+      echo "sync-release-pr-generated: FAIL (PR #${pr_number} read denied by credentials ${context}; ${PR_FAILURE_DETAIL})" >&2
+      ;;
+    transient)
+      echo "sync-release-pr-generated: FAIL (PR #${pr_number} read unavailable after ${PR_READ_ATTEMPTS} attempts ${context}; ${PR_FAILURE_DETAIL})" >&2
       ;;
     *)
-      break
+      echo "sync-release-pr-generated: FAIL (PR #${pr_number} read failed ${context}; ${PR_FAILURE_DETAIL})" >&2
       ;;
   esac
-done
-
-release_branch="${1:-}"
-if [[ -z "${release_branch}" ]]; then
-  echo "sync-release-pr-generated: FAIL (usage: $0 [--print-plan] [--local-signed-sync] <release-branch>|--self-test)" >&2
   exit 1
-fi
+}
 
-if ! command -v gh >/dev/null 2>&1; then
-  echo "sync-release-pr-generated: FAIL (gh not found)" >&2
-  exit 1
-fi
+require_pr_state_line() {
+  local context="$1"
+  if ! read_pr_state; then
+    fail_pr_read "${context}"
+  fi
+  printf '%s\n' "${PR_STATE_LINE}"
+}
 
-pr_line="$(
-  gh pr list \
-    --state open \
-    --head "${release_branch}" \
-    --json number,isDraft \
-    --jq '.[] | "\(.number)	\(.isDraft)"' \
-    | head -n 1
-)"
+read_check_runs() {
+  local head="$1"
+  local repo="$2"
+  local attempt=1
+  while true; do
+    local stderr_file
+    local out
+    local status=0
+    stderr_file="$(mktemp)"
+    out="$(gh api "repos/${repo}/commits/${head}/check-runs?per_page=100" \
+      --jq '[.check_runs[] | {
+        name: .name,
+        bucket: (
+          if .status != "completed" then "pending"
+          elif (.conclusion == "success" or .conclusion == "neutral") then "pass"
+          elif .conclusion == "skipped" then "skipping"
+          else .conclusion
+          end
+        ),
+        startedAt: (.started_at // ""),
+        completedAt: (.completed_at // ""),
+        workflow: (.app.slug // "github-actions"),
+        headSha: (.head_sha // "")
+      }]' 2>"${stderr_file}")" || status=$?
+    local stderr_text
+    stderr_text="$(cat "${stderr_file}")"
+    rm -f "${stderr_file}"
+    if (( status == 0 )); then
+      printf '%s' "${out}"
+      return 0
+    fi
 
-if [[ -z "${pr_line}" ]]; then
-  echo "sync-release-pr-generated: SKIP (no open PR for ${release_branch})"
-  exit 0
-fi
-
-pr_number="${pr_line%%$'\t'*}"
-
-pr_state_line() {
-  gh pr view "${pr_number}" \
-    --json state,isDraft,headRefOid \
-    --jq '"\(.state)	\(.isDraft)	\(.headRefOid)"' \
-    2>/dev/null || true
+    local kind
+    kind="$(classify_gh_failure "${status}" "${stderr_text}")"
+    if [[ "${kind}" == "transient" ]] && (( attempt < PR_READ_ATTEMPTS )); then
+      sleep "$(( attempt * PR_READ_BACKOFF_SECONDS ))"
+      attempt=$((attempt + 1))
+      continue
+    fi
+    echo "sync-release-pr-generated: FAIL (check-run read failed (${kind}) for ${head}; ${stderr_text:-empty output})" >&2
+    return 1
+  done
 }
 
 required_checks_passed=false
@@ -473,7 +526,8 @@ exit_if_benign_merged_release_pr() {
   local context="$1"
   local current_pr_line="${2:-}"
   if [[ -z "${current_pr_line}" ]]; then
-    current_pr_line="$(pr_state_line)"
+    read_pr_state || return 1
+    current_pr_line="${PR_STATE_LINE}"
   fi
   if [[ -z "${current_pr_line}" ]]; then
     return 1
@@ -504,11 +558,7 @@ exit_if_benign_merged_release_pr() {
 ensure_release_pr_is_draft() {
   local context="$1"
   local current_pr_line
-  current_pr_line="$(pr_state_line)"
-  if [[ -z "${current_pr_line}" ]]; then
-    echo "sync-release-pr-generated: FAIL (PR #${pr_number} disappeared ${context})"
-    exit 1
-  fi
+  current_pr_line="$(require_pr_state_line "${context}")"
 
   local current_pr_state
   local current_pr_is_draft
@@ -526,7 +576,7 @@ ensure_release_pr_is_draft() {
     echo "sync-release-pr-generated: drafting PR #${pr_number} ${context}"
     gh pr ready "${pr_number}" --undo
 
-    current_pr_line="$(pr_state_line)"
+    current_pr_line="$(require_pr_state_line "${context} after drafting")"
     current_pr_is_draft="${current_pr_line#*$'\t'}"
     current_pr_is_draft="${current_pr_is_draft%%$'\t'*}"
     if [[ "${current_pr_is_draft}" != "true" ]]; then
@@ -546,12 +596,9 @@ repo_full_name() {
 }
 
 collect_check_records() {
+  local context="${1:-while reading checks}"
   local current_pr_line
-  current_pr_line="$(pr_state_line)"
-  if [[ -z "${current_pr_line}" ]]; then
-    echo "sync-release-pr-generated: FAIL (PR #${pr_number} disappeared while reading checks)" >&2
-    return 1
-  fi
+  current_pr_line="$(require_pr_state_line "${context}")"
 
   local current_pr_state
   local current_pr_head
@@ -559,37 +606,20 @@ collect_check_records() {
   current_pr_head="${current_pr_line##*$'\t'}"
 
   if [[ "${current_pr_state}" != "OPEN" && "${current_pr_state}" != "MERGED" ]]; then
-    echo "sync-release-pr-generated: FAIL (PR #${pr_number} is ${current_pr_state} while reading checks)" >&2
+    echo "sync-release-pr-generated: FAIL (PR #${pr_number} is ${current_pr_state} ${context})" >&2
     return 1
   fi
   if [[ "${current_pr_state}" == "MERGED" ]]; then
-    echo "sync-release-pr-generated: PR #${pr_number} merged while reading checks; verifying required checks on ${current_pr_head}" >&2
+    echo "sync-release-pr-generated: PR #${pr_number} merged ${context}; verifying required checks on ${current_pr_head}" >&2
   fi
 
   local repo
   repo="$(repo_full_name)"
 
-  local commit_checks_file
-  commit_checks_file="$(mktemp)"
-  if ! gh api "repos/${repo}/commits/${current_pr_head}/check-runs?per_page=100" \
-    --jq '[.check_runs[] | {
-      name: .name,
-      bucket: (
-        if .status != "completed" then "pending"
-        elif (.conclusion == "success" or .conclusion == "neutral") then "pass"
-        elif .conclusion == "skipped" then "skipping"
-        else .conclusion
-        end
-      ),
-      startedAt: (.started_at // ""),
-      completedAt: (.completed_at // ""),
-      workflow: (.app.slug // "github-actions"),
-      headSha: "'${current_pr_head}'"
-    }]' >"${commit_checks_file}" 2>/dev/null; then
-    printf '[]' >"${commit_checks_file}"
-  fi
+  local checks_json
+  checks_json="$(read_check_runs "${current_pr_head}" "${repo}")" || return 1
 
-  CURRENT_PR_HEAD="${current_pr_head}" COMMIT_CHECKS_JSON="$(cat "${commit_checks_file}")" \
+  CURRENT_PR_HEAD="${current_pr_head}" COMMIT_CHECKS_JSON="${checks_json}" \
     python3 - <<'PY'
 import json
 import os
@@ -613,8 +643,6 @@ for item in load("COMMIT_CHECKS_JSON"):
 
 print(json.dumps(records, separators=(",", ":")))
 PY
-
-  rm -f "${commit_checks_file}"
 }
 
 wait_for_required_checks() {
@@ -627,7 +655,7 @@ wait_for_required_checks() {
 
   while true; do
     local checks_json
-    checks_json="$(collect_check_records)"
+    checks_json="$(collect_check_records "while waiting for required checks")"
 
     local status_file
     status_file="$(mktemp)"
@@ -683,7 +711,7 @@ wait_for_required_checks_to_start() {
 
   while true; do
     local checks_json
-    checks_json="$(collect_check_records)"
+    checks_json="$(collect_check_records "while waiting for required checks to start")"
 
     local status_file
     status_file="$(mktemp)"
@@ -736,6 +764,40 @@ PY
   done
 }
 
+# Report pass|pending|fail|none for the required checks at the current PR head.
+# "none" means no required check exists at this head yet, so a dispatch is
+# genuinely needed; "pending" means a run is already in flight and must be
+# awaited instead of dispatched again.
+classify_existing_required_checks() {
+  local required_checks checks_json status_file status
+  required_checks="$(release_pr_required_checks)"
+  checks_json="$(collect_check_records "before deciding whether to dispatch")"
+  status_file="$(mktemp)"
+  CHECKS_JSON="${checks_json}" REQUIRED_CHECKS="${required_checks}" classify_required_checks >"${status_file}"
+  status="$(head -n 1 "${status_file}")"
+  rm -f "${status_file}"
+  case "${status}" in
+    pass|fail)
+      printf '%s\n' "${status}"
+      ;;
+    pending)
+      CHECKS_JSON="${checks_json}" REQUIRED_CHECKS="${required_checks}" python3 - <<'PYCHECK'
+import json
+import os
+
+checks = json.loads(os.environ.get("CHECKS_JSON") or "[]")
+required = [line for line in os.environ["REQUIRED_CHECKS"].splitlines() if line]
+seen = {check.get("name", "") for check in checks}
+print("pending" if any(name in seen for name in required) else "none")
+PYCHECK
+      ;;
+    *)
+      echo "unknown"
+      return 1
+      ;;
+  esac
+}
+
 dispatch_required_checks() {
   local required_check_workflow="${RELEASE_PR_CHECK_WORKFLOW:-ci.yml}"
   local dispatch_args=(workflow run "${required_check_workflow}" --ref "${release_branch}")
@@ -762,11 +824,7 @@ wait_for_pr_head() {
 
   while true; do
     local current_pr_line
-    current_pr_line="$(pr_state_line)"
-    if [[ -z "${current_pr_line}" ]]; then
-      echo "sync-release-pr-generated: FAIL (PR #${pr_number} disappeared before head ${expected_head} was visible)"
-      exit 1
-    fi
+    current_pr_line="$(require_pr_state_line "before head ${expected_head} was visible")"
 
     local current_pr_state
     local current_pr_head
@@ -798,11 +856,7 @@ require_pr_head() {
   local expected_head="$1"
   local context="$2"
   local current_pr_line
-  current_pr_line="$(pr_state_line)"
-  if [[ -z "${current_pr_line}" ]]; then
-    echo "sync-release-pr-generated: FAIL (PR #${pr_number} disappeared ${context})"
-    exit 1
-  fi
+  current_pr_line="$(require_pr_state_line "${context}")"
 
   local current_pr_state
   local current_pr_head
@@ -819,6 +873,81 @@ require_pr_head() {
     echo "sync-release-pr-generated: FAIL (PR #${pr_number} head changed ${context}; expected ${expected_head}, found ${current_pr_head})"
     exit 1
   fi
+}
+
+finalize_release_pr() {
+  local lane
+  case "${release_branch}" in
+    release-please--branches--premain) lane="prerelease" ;;
+    release-please--branches--main) lane="stable" ;;
+    *)
+      echo "sync-release-pr-generated: FAIL (finalize-only requires a generated release branch)" >&2
+      exit 1
+      ;;
+  esac
+
+  git fetch origin "${release_branch}"
+  local expected_head
+  local local_head
+  expected_head="$(git rev-parse FETCH_HEAD)"
+  local_head="$(git rev-parse HEAD)"
+  if [[ "${local_head}" != "${expected_head}" ]]; then
+    echo "sync-release-pr-generated: FAIL (finalize-only must run from ${release_branch} head ${expected_head}; checkout is ${local_head})" >&2
+    exit 1
+  fi
+
+  require_pr_head "${expected_head}" "before finalizing the generated release PR"
+  bash scripts/verify-version-alignment.sh
+  bash scripts/verify-release-pr-postcondition.sh "${lane}"
+
+  local status
+  status="$(classify_existing_required_checks)"
+  if [[ "${status}" != "pass" ]]; then
+    echo "sync-release-pr-generated: FAIL (required checks at ${expected_head} are ${status}; finalize-only never dispatches, reruns, merges or rewrites a commit)" >&2
+    exit 1
+  fi
+  required_checks_passed=true
+  synced_head="${expected_head}"
+
+  local current_pr_line current_pr_state current_pr_is_draft current_pr_head
+  current_pr_line="$(require_pr_state_line "before marking the generated-artifact-synced PR ready")"
+  current_pr_state="${current_pr_line%%$'\t'*}"
+  current_pr_is_draft="${current_pr_line#*$'\t'}"
+  current_pr_is_draft="${current_pr_is_draft%%$'\t'*}"
+  current_pr_head="${current_pr_line##*$'\t'}"
+
+  if [[ "${current_pr_state}" != "OPEN" ]]; then
+    echo "sync-release-pr-generated: FAIL (PR #${pr_number} is ${current_pr_state} before finalizing)" >&2
+    exit 1
+  fi
+  if [[ "${current_pr_head}" != "${expected_head}" ]]; then
+    echo "sync-release-pr-generated: FAIL (PR #${pr_number} head changed before finalizing; expected ${expected_head}, found ${current_pr_head})" >&2
+    exit 1
+  fi
+  if [[ "${current_pr_is_draft}" == "false" ]]; then
+    echo "sync-release-pr-generated: PASS (${release_branch} already ready at ${expected_head})"
+    exit 0
+  fi
+
+  require_pr_head "${expected_head}" "at the marking-ready boundary"
+  if ! gh pr ready "${pr_number}"; then
+    exit_if_benign_merged_release_pr "while finalizing the generated release PR" || true
+    echo "sync-release-pr-generated: FAIL (PR #${pr_number} could not be marked ready at ${expected_head})" >&2
+    exit 1
+  fi
+
+  current_pr_line="$(require_pr_state_line "after finalizing the generated release PR")"
+  current_pr_state="${current_pr_line%%$'\t'*}"
+  current_pr_is_draft="${current_pr_line#*$'\t'}"
+  current_pr_is_draft="${current_pr_is_draft%%$'\t'*}"
+  current_pr_head="${current_pr_line##*$'\t'}"
+  if [[ "${current_pr_state}" != "OPEN" || "${current_pr_head}" != "${expected_head}" || "${current_pr_is_draft}" != "false" ]]; then
+    gh pr ready "${pr_number}" --undo || true
+    echo "sync-release-pr-generated: FAIL (PR #${pr_number} did not finalize cleanly; expected OPEN, draft=false at ${expected_head}, found ${current_pr_state}/${current_pr_is_draft} at ${current_pr_head})" >&2
+    exit 1
+  fi
+
+  echo "sync-release-pr-generated: PASS (${release_branch} finalized at ${expected_head})"
 }
 
 sync_stable_release_premain_manifest() {
@@ -1090,6 +1219,313 @@ push_local_signed_release_artifact_sync() {
   git push origin HEAD:"${release_branch}"
 }
 
+
+run_read_classifier_self_test() {
+  local failures=0
+
+  check_kind() {
+    local label="$1"
+    local status="$2"
+    local text="$3"
+    local want="$4"
+    local got
+    got="$(classify_gh_failure "${status}" "${text}")"
+    if [[ "${got}" != "${want}" ]]; then
+      echo "sync-release-pr-generated self-test: FAIL ${label} (expected ${want}, got ${got})" >&2
+      failures=$((failures + 1))
+    else
+      echo "sync-release-pr-generated self-test: PASS ${label}"
+    fi
+  }
+
+  check_kind "auth exit 4" "4" "gh auth not configured" "auth"
+  check_kind "auth HTTP 401" "1" "gh: Bad credentials (HTTP 401)" "auth"
+  check_kind "genuine 404" "1" "Could not resolve to a PullRequest with the number of 1275." "notfound"
+  check_kind "transient 503" "1" "gh: Service Unavailable (HTTP 503)" "transient"
+  check_kind "unclassified" "1" "something unexpected" "error"
+
+  local transient_calls_file transient_sleeps_file
+  transient_calls_file="$(mktemp)"
+  transient_sleeps_file="$(mktemp)"
+  (
+    PR_READ_ATTEMPTS=4
+    PR_READ_BACKOFF_SECONDS=2
+    pr_number=1275
+    gh() {
+      local calls
+      calls="$(wc -l <"${transient_calls_file}")"
+      printf '%s\n' "$*" >>"${transient_calls_file}"
+      if (( calls < 2 )); then
+        echo "gh: Service Unavailable (HTTP 503)" >&2
+        return 1
+      fi
+      printf 'OPEN\ttrue\tabc123\n'
+    }
+    sleep() {
+      printf '%s\n' "$1" >>"${transient_sleeps_file}"
+    }
+    read_pr_state || exit 1
+    [[ "${PR_STATE_KIND}" == "ok" && "${PR_STATE_LINE}" == $'OPEN\ttrue\tabc123' ]]
+  ) || {
+    echo "sync-release-pr-generated self-test: FAIL transient read did not recover" >&2
+    failures=$((failures + 1))
+  }
+  if [[ "$(wc -l <"${transient_calls_file}")" -ne 3 || "$(tr '\n' ' ' <"${transient_sleeps_file}")" != "2 4 " ]]; then
+    echo "sync-release-pr-generated self-test: FAIL transient read attempts/sleeps were not bounded as expected" >&2
+    failures=$((failures + 1))
+  else
+    echo "sync-release-pr-generated self-test: PASS transient read is retried with bounded backoff"
+  fi
+  rm -f "${transient_calls_file}" "${transient_sleeps_file}"
+
+  local auth_calls_file
+  auth_calls_file="$(mktemp)"
+  (
+    PR_READ_ATTEMPTS=4
+    pr_number=1275
+    gh() {
+      printf '%s\n' "$*" >>"${auth_calls_file}"
+      echo "gh: authentication failed (HTTP 401)" >&2
+      return 1
+    }
+    sleep() {
+      echo "unexpected sleep" >&2
+      exit 9
+    }
+    read_pr_state && exit 1
+    [[ "${PR_STATE_KIND}" == "auth" ]]
+  ) || {
+    echo "sync-release-pr-generated self-test: FAIL auth failure was retried or misclassified" >&2
+    failures=$((failures + 1))
+  }
+  if [[ "$(wc -l <"${auth_calls_file}")" -ne 1 ]]; then
+    echo "sync-release-pr-generated self-test: FAIL auth failure was retried" >&2
+    failures=$((failures + 1))
+  else
+    echo "sync-release-pr-generated self-test: PASS auth failure is permanent and classified"
+  fi
+  rm -f "${auth_calls_file}"
+
+  local classify_cases
+  classify_cases="$(cat <<'CASES'
+pass|[{"name":"Required Check","bucket":"pass"}]|pass
+fail|[{"name":"Required Check","bucket":"failure"}]|fail
+none|[]|none
+pending|[{"name":"Required Check","bucket":"pending"}]|pending
+CASES
+)"
+  while IFS='|' read -r label checks_json want; do
+    local got
+    got="$(
+      STUB_CHECKS_JSON="${checks_json}"
+      collect_check_records() { printf '%s' "${STUB_CHECKS_JSON}"; }
+      release_pr_required_checks() { printf 'Required Check\n'; }
+      classify_existing_required_checks
+    )"
+    if [[ "${got}" != "${want}" ]]; then
+      echo "sync-release-pr-generated self-test: FAIL required-check classification ${label} (expected ${want}, got ${got})" >&2
+      failures=$((failures + 1))
+    else
+      echo "sync-release-pr-generated self-test: PASS required-check classification ${label}"
+    fi
+  done <<<"${classify_cases}"
+
+  if (( failures > 0 )); then
+    echo "sync-release-pr-generated self-test: FAIL (${failures} read-classifier issue(s))" >&2
+    exit 1
+  fi
+  echo "sync-release-pr-generated self-test: PASS read-classification"
+}
+
+
+run_finalize_self_test() {
+  local failures=0
+
+  run_finalize_case() {
+    local label="$1"
+    local expect_success="$2"
+    local checks="$3"
+    local initial_state="$4"
+    local state_file
+    state_file="$(mktemp)"
+    printf '%s\n' "${initial_state}" >"${state_file}"
+    local ready_file
+    ready_file="$(mktemp)"
+
+    local status=0
+    (
+      release_branch=release-please--branches--premain
+      pr_number=1275
+      git() {
+        case "$1" in
+          fetch) return 0 ;;
+          rev-parse)
+            if [[ "${2:-}" == "FETCH_HEAD" || "${2:-}" == "HEAD" ]]; then
+              echo "abc123"
+              return 0
+            fi
+            command git "$@"
+            ;;
+          *) command git "$@" ;;
+        esac
+      }
+      bash() { return 0; }
+      require_pr_head() { return 0; }
+      classify_existing_required_checks() { printf '%s\n' "${checks}"; }
+      require_pr_state_line() { cat "${state_file}"; }
+      gh() {
+        printf '%s\n' "$*" >>"${ready_file}"
+        if [[ "${1:-} ${2:-}" == "pr ready" ]]; then
+          printf 'OPEN\tfalse\tabc123\n' >"${state_file}"
+        fi
+        return 0
+      }
+      finalize_release_pr
+    ) >/dev/null 2>&1 || status=$?
+
+    local ready_calls
+    ready_calls="$(grep -c '^pr ready' "${ready_file}" 2>/dev/null || true)"
+    local final_state
+    final_state="$(tr '\n' ' ' <"${state_file}")"
+    rm -f "${state_file}" "${ready_file}"
+
+    local ok=true
+    if [[ "${expect_success}" == "true" ]]; then
+      (( status == 0 )) || ok=false
+    else
+      (( status != 0 )) || ok=false
+    fi
+    if [[ "${expect_success}" == "true" && "${final_state}" != *$'false\tabc123'* ]]; then
+      ok=false
+    fi
+    if [[ "${expect_success}" != "true" && "${final_state}" != *$'true\tabc123'* && "${checks}" != "pass" ]]; then
+      ok=false
+    fi
+
+    if [[ "${ok}" != "true" ]]; then
+      echo "sync-release-pr-generated self-test: FAIL finalize ${label} (status=${status} ready_calls=${ready_calls} state=${final_state})" >&2
+      failures=$((failures + 1))
+    else
+      echo "sync-release-pr-generated self-test: PASS finalize ${label}"
+    fi
+  }
+
+  run_finalize_case "green draft head is marked ready" true "pass" $'OPEN\ttrue\tabc123'
+  run_finalize_case "already-ready head is idempotent" true "pass" $'OPEN\tfalse\tabc123'
+  run_finalize_case "pending checks refuse readiness" false "pending" $'OPEN\ttrue\tabc123'
+  run_finalize_case "failed checks refuse readiness" false "fail" $'OPEN\ttrue\tabc123'
+  run_finalize_case "moved head refuses readiness" false "pass" $'OPEN\ttrue\tdef456'
+
+  if (( failures > 0 )); then
+    echo "sync-release-pr-generated self-test: FAIL (${failures} finalize issue(s))" >&2
+    exit 1
+  fi
+  echo "sync-release-pr-generated self-test: PASS finalize-only"
+}
+
+if [[ "${1:-}" == "--self-test" ]]; then
+  run_required_check_classifier_self_test
+  run_signed_sync_mode_self_test
+  run_sync_secret_material_self_test
+  run_artifact_plan_self_test
+  run_read_classifier_self_test
+  run_finalize_self_test
+  exit 0
+fi
+
+local_signed_sync_requested=false
+print_plan_requested=false
+finalize_only=false
+while [[ "${1:-}" == --* ]]; do
+  case "${1:-}" in
+    --local-signed-sync)
+      local_signed_sync_requested=true
+      shift
+      ;;
+    --print-plan)
+      print_plan_requested=true
+      shift
+      ;;
+    --finalize-only)
+      finalize_only=true
+      shift
+      ;;
+    --help|-h)
+      cat <<'USAGE'
+usage: scripts/sync-release-pr-generated.sh [--print-plan] [--local-signed-sync] [--finalize-only] <release-branch>|--self-test
+
+--print-plan prints the non-mutating GitHub API commit plan after regenerating
+release artifacts. It does not send createCommitOnBranch or push.
+--finalize-only verifies the exact PR head, release postcondition and current
+required checks, then marks the PR ready. It never dispatches, commits or merges.
+USAGE
+      exit 0
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+PR_READ_ATTEMPTS="${RELEASE_PR_READ_ATTEMPTS:-4}"
+PR_READ_BACKOFF_SECONDS="${RELEASE_PR_READ_BACKOFF_SECONDS:-2}"
+PR_STATE_KIND=""
+PR_STATE_LINE=""
+PR_FAILURE_DETAIL=""
+
+release_branch="${1:-}"
+if [[ -z "${release_branch}" ]]; then
+  echo "sync-release-pr-generated: FAIL (usage: $0 [--print-plan] [--local-signed-sync] <release-branch>|--self-test)" >&2
+  exit 1
+fi
+
+if ! command -v gh >/dev/null 2>&1; then
+  echo "sync-release-pr-generated: FAIL (gh not found)" >&2
+  exit 1
+fi
+
+# Resolve the open release PR with the same bounded-retry classification used
+# for every later read. An empty result is only a skip after a successful read;
+# a failed read is reported as the failure it is.
+read_open_release_pr() {
+  local attempt=1
+  while true; do
+    local stderr_file
+    local out
+    local status=0
+    stderr_file="$(mktemp)"
+    out="$(gh pr list --state open --head "${release_branch}" --json number,isDraft --jq '.[] | "\(.number)\t\(.isDraft)"' 2>"${stderr_file}")" || status=$?
+    local stderr_text
+    stderr_text="$(cat "${stderr_file}")"
+    rm -f "${stderr_file}"
+    if (( status == 0 )); then
+      printf '%s\n' "${out}" | head -n 1
+      return 0
+    fi
+    local kind
+    kind="$(classify_gh_failure "${status}" "${stderr_text}")"
+    if [[ "${kind}" == "transient" ]] && (( attempt < PR_READ_ATTEMPTS )); then
+      sleep "$(( attempt * PR_READ_BACKOFF_SECONDS ))"
+      attempt=$((attempt + 1))
+      continue
+    fi
+    echo "sync-release-pr-generated: FAIL (could not list the open PR for ${release_branch} (${kind}); ${stderr_text:-empty output})" >&2
+    return 1
+  done
+}
+
+pr_line="$(read_open_release_pr)"
+if [[ -z "${pr_line}" ]]; then
+  echo "sync-release-pr-generated: SKIP (no open PR for ${release_branch})"
+  exit 0
+fi
+
+pr_number="${pr_line%%$'\t'*}"
+if [[ "${finalize_only}" == "true" ]]; then
+  finalize_release_pr
+  exit 0
+fi
+
 # The release PR must not be mergeable while generated artifacts are still being
 # rewritten. This is the release-lane invariant: release-please version files and
 # generated CDK/jsii artifacts land in the same release PR before it becomes
@@ -1161,10 +1597,31 @@ wait_for_pr_head "${synced_head}"
 # release-branch code.
 ensure_release_pr_is_draft "before waiting for independent required checks"
 require_pr_head "${synced_head}" "before dispatching independent required checks"
-dispatch_required_checks
-wait_for_required_checks_to_start
-wait_for_required_checks
-required_checks_passed=true
+case "$(classify_existing_required_checks)" in
+  pass)
+    echo "sync-release-pr-generated: reusing green required checks at ${synced_head}; no re-dispatch"
+    required_checks_passed=true
+    ;;
+  fail)
+    echo "sync-release-pr-generated: FAIL (required checks already failed at ${synced_head}; refusing to re-dispatch around a red check)" >&2
+    exit 1
+    ;;
+  pending)
+    echo "sync-release-pr-generated: required checks already queued at ${synced_head}; waiting without re-dispatch"
+    wait_for_required_checks
+    required_checks_passed=true
+    ;;
+  none)
+    dispatch_required_checks
+    wait_for_required_checks_to_start
+    wait_for_required_checks
+    required_checks_passed=true
+    ;;
+  *)
+    echo "sync-release-pr-generated: FAIL (could not classify required checks at ${synced_head})" >&2
+    exit 1
+    ;;
+esac
 
 require_pr_head "${synced_head}" "after required checks passed"
 ensure_release_pr_is_draft "before marking generated-artifact-synced PR ready"
@@ -1175,11 +1632,7 @@ if ! gh pr ready "${pr_number}"; then
   exit 1
 fi
 
-current_pr_line="$(pr_state_line)"
-if [[ -z "${current_pr_line}" ]]; then
-  echo "sync-release-pr-generated: FAIL (PR #${pr_number} disappeared after marking ready)"
-  exit 1
-fi
+current_pr_line="$(require_pr_state_line "after marking ready")"
 current_pr_state="${current_pr_line%%$'\t'*}"
 current_pr_is_draft="${current_pr_line#*$'\t'}"
 current_pr_is_draft="${current_pr_is_draft%%$'\t'*}"
