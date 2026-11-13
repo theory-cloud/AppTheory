@@ -5,43 +5,28 @@
         "make",
         "rubric"
       ],
-      "durationSeconds": 498.073,
+      "durationSeconds": 721.855,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-13T00:44:32Z",
+      "finishedAt": "2026-11-13T02:46:19Z",
       "id": "rubric",
-      "inputsDigest": "sha256:7bcfad83e3cfc167df4a3577b9032b56e9b6b97611ab72b11dcf2b709cdcf1b8",
-      "logDigest": "sha256:d5c47c809c25b026813c7fd5fa3b4b7ae6280091c246cdba801629d0b59d4114",
-      "logRef": "gov-infra/evidence/proportionate/local/rubric-rubric-20261113T003614Z-5438.log",
+      "inputsDigest": "sha256:ffb95b80b344be65f9fa14dea28abc6f9b1b746b421a2eb1873a1b9d56386f60",
+      "logDigest": "sha256:66f3f66130c6caa58ddc6cc2e8e90158ced167c150bb40d021077d67429c222c",
+      "logRef": "gov-infra/evidence/proportionate/local/rubric-rubric-20261113T023417Z-94706.log",
       "reused": false,
-      "startedAt": "2026-11-13T00:36:14Z"
+      "startedAt": "2026-11-13T02:34:17Z"
     }
   ],
   "consumed": [
-    {
-      "digest": "sha256:efa00c884f49580c33962d4d7585719c86ebb79de63d7c3cacc4d025ca6d01a2",
-      "gate": "cdk-go-drift",
-      "recordedAt": "2026-11-12T19:59:37Z"
-    },
     {
       "digest": "sha256:dc4faa8ce72d15fe76e8bf043b66264600c1340f6c06428ecf5ea4e4d6c0434c",
       "gate": "contract-tests",
       "recordedAt": "2026-11-12T20:00:09Z"
     },
     {
-      "digest": "sha256:82aa5d2e108f6247b9a2b8468c3f466e74306d9a2cd3fa05fc9807705e06159b",
-      "gate": "deterministic-builds",
-      "recordedAt": "2026-11-12T20:01:15Z"
-    },
-    {
       "digest": "sha256:dd9b2839af2222c4ac864f0de595b0f301cda5bffa3c9136eff32531001a3fce",
       "gate": "go",
       "recordedAt": "2026-11-12T23:21:12Z"
-    },
-    {
-      "digest": "sha256:1dbba2e7530b9944036cb08337e08c3132763386482adee5a8d9d1304b0d02cb",
-      "gate": "unit",
-      "recordedAt": "2026-11-12T23:23:32Z"
     }
   ],
   "description": "Full local rubric gate used by the staging required context; composes independently produced product records and executes only rubric-unique checks",
@@ -62,17 +47,17 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-13T00:44:32Z",
+  "recordedAt": "2026-11-13T02:46:19Z",
   "releaseOnly": {
-    "digest": "sha256:dea47f7c318e6703d405d14f61f76d6c1a8d2b38f1b682fdc96b6781c222b699",
+    "digest": "sha256:1dc919d2a5e8962c22283972db036b1366abe5d3308ab8840906a1e273711b64",
     "fileCount": 476,
-    "normalizedDigest": "sha256:c5ecbf183fa35bbf12642d3d5103e5af06b5b0d169ec8b29c253d8712187ac69",
-    "version": "7.1.0"
+    "normalizedDigest": "sha256:a1a1d61689822e006d9c7c4c60a860d063ede848af626f804ba22ce0f0bf2df8",
+    "version": "7.3.0"
   },
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:3f544444316b61ae8e6daa7d03ca00cf7226598c7c4cd1e9715cefb74efc7fa8",
+    "digest": "sha256:fe66c31bcbc8d6e754f8457e9eaff931f09bb6d4839bec9c68c0898babf90c52",
     "fileCount": 3134,
     "paths": [
       "**"
@@ -80,7 +65,7 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:09629b1d99eaf66c3ee324abde622a7b4c40a45893e68da60bef35505cc50539",
+    "digest": "sha256:bfb556022f91a4ce4f50e3da1cbdd3d0231789b65ec39a6b1ca9a9b9bba6d1b9",
     "fileCount": 2658
   },
   "verdict": "PASS"
