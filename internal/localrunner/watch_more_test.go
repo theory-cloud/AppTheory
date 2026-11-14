@@ -601,7 +601,7 @@ func TestDataDirRefusals(t *testing.T) {
 		}
 	}
 	runner = &Runner{options: Options{Stdout: io.Discard}, scratch: blocker, profile: &Profile{}}
-	if _, err := runner.elasticMQDataConfig(); err == nil {
+	if _, err := runner.elasticMQDataConfig(nil); err == nil {
 		t.Fatal("an ElasticMQ config under a file was written")
 	}
 	sqs := &Runner{dataDir: root, options: Options{Stdout: io.Discard}, scratch: blocker, profile: &Profile{}}
@@ -713,7 +713,7 @@ func TestDataDirModesAllowTheContainerUsers(t *testing.T) {
 	if info, statErr := os.Stat(dir); statErr != nil || info.Mode().Perm() != 0o777 {
 		t.Fatalf("an existing backend dir was not widened: %v, %v", info, statErr)
 	}
-	config, err := runner.elasticMQDataConfig()
+	config, err := runner.elasticMQDataConfig(nil)
 	if err != nil {
 		t.Fatal(err)
 	}

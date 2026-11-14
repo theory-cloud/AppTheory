@@ -121,7 +121,7 @@ func (r *Runner) configureBackendDataDir(_ string, container string, pin Contain
 		// in-file database and restores them on startup. The pinned 1.7.1 image
 		// was verified to persist a message across a restart.
 		// https://github.com/softwaremill/elasticmq
-		config, err := r.elasticMQDataConfig()
+		config, err := r.elasticMQDataConfig(r.sqsStartupPlans)
 		if err != nil {
 			return pin, nil, err
 		}
@@ -161,11 +161,26 @@ func dynamoDBPersistentCommand(command []string) []string {
 }
 
 // elasticMQDataConfig writes the ElasticMQ configuration that enables message
-// storage under the bind-mounted data directory. The image entrypoint reads
-// /opt/elasticmq.conf. The file is world-readable because the container runs as
-// its own non-root user and a Linux bind mount keeps the host UID; it contains
-// no secret (only the H2 path).
-func (r *Runner) elasticMQDataConfig() (string, error) {
+// storage under the bind-mounted data directory and declares the app's queues
+// as startup queues. The image entrypoint reads /opt/elasticmq.conf. The file is
+// world-readable because the container runs as its own non-root user and a
+// Linux bind mount keeps the host UID; it contains no secret (the H2 path and
+// queue definitions).
+//
+// The queues belong in this file, not only in the runner's API provisioning.
+// With messages-storage enabled, ElasticMQ binds its REST listener first and
+// then runs one asynchronous restore that merges the persisted queues with the
+// startup configuration (SqlQueuePersistenceActor.createQueues). An API
+// CreateQueue that lands inside that window creates the queue with the request's
+// own definition; when the restore then replays the persisted definition, which
+// carries the redrive policy the runner sets after creation, the queue manager
+// sees two different definitions for one name and returns QueueAlreadyExists.
+// ElasticMQServer treats that as fatal and stops the container, so the next run
+// never reaches ready. Declaring the queues here makes the restore the only
+// creator, and the runner waits for each queue instead of racing it.
+// https://github.com/softwaremill/elasticmq/blob/v1.7.1/rest/rest-sqs/src/main/scala/org/elasticmq/server/ElasticMQServer.scala
+// https://github.com/softwaremill/elasticmq/blob/v1.7.1/persistence/persistence-sql/src/main/scala/org/elasticmq/persistence/sql/SqlQueuePersistenceActor.scala
+func (r *Runner) elasticMQDataConfig(queues []localQueuePlan) (string, error) {
 	dir := filepath.Join(r.scratch, "elasticmq")
 	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // the config directory only holds a world-readable path
 		return "", fmt.Errorf("create the ElasticMQ config directory: %w", err)
@@ -173,13 +188,73 @@ func (r *Runner) elasticMQDataConfig() (string, error) {
 	path := filepath.Join(dir, "elasticmq.conf")
 	// The H2 URI is fixed to the bind mount so a data directory moved between
 	// runs keeps the same database.
-	config := "include classpath(\"application.conf\")\n" +
+	var config strings.Builder
+	config.WriteString("include classpath(\"application.conf\")\n" +
 		"messages-storage {\n" +
 		"  enabled = true\n" +
 		"  uri = \"jdbc:h2:/data/elasticmq\"\n" +
-		"}\n"
-	if err := os.WriteFile(path, []byte(config), 0o644); err != nil { //nolint:gosec // the ElasticMQ container user must read the H2 path; no secret
+		"}\n")
+	if err := writeElasticMQQueueConfig(&config, queues); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, []byte(config.String()), 0o644); err != nil { //nolint:gosec // the ElasticMQ container user must read the H2 path; no secret
 		return "", fmt.Errorf("write the ElasticMQ config %s: %w", path, err)
 	}
 	return path, nil
+}
+
+// writeElasticMQQueueConfig renders the startup `queues` block. Only the
+// template's explicit attributes are written, so an absent attribute keeps the
+// pinned image's documented default (visibility 30s, delay 0, wait 0):
+// https://github.com/softwaremill/elasticmq/blob/v1.7.1/core/src/main/scala/org/elasticmq/CreateQueueDefaults.scala
+//
+// A FIFO queue's name must end in .fifo: QueueConfigUtil appends the suffix to a
+// FIFO entry whose name lacks it, which would create a queue the template never
+// named. CloudFormation and AWS SQS require the suffix too.
+func writeElasticMQQueueConfig(config *strings.Builder, queues []localQueuePlan) error {
+	if len(queues) == 0 {
+		return nil
+	}
+	config.WriteString("queues {\n")
+	for _, queue := range queues {
+		if queue.props.FifoQueue && !strings.HasSuffix(queue.name, ".fifo") {
+			return fmt.Errorf(
+				"SQS queue %s is FIFO but its name does not end in .fifo; ElasticMQ appends the suffix to a startup queue, so --data-dir cannot preserve the declared name",
+				queue.name,
+			)
+		}
+		fmt.Fprintf(config, "  %s {\n", hoconString(queue.name))
+		if queue.props.VisibilityTimeout > 0 {
+			fmt.Fprintf(config, "    defaultVisibilityTimeout = %d seconds\n", queue.props.VisibilityTimeout)
+		}
+		if queue.props.DelaySeconds > 0 {
+			fmt.Fprintf(config, "    delay = %d seconds\n", queue.props.DelaySeconds)
+		}
+		if queue.props.ReceiveMessageWaitTimeSeconds > 0 {
+			fmt.Fprintf(config, "    receiveMessageWait = %d seconds\n", queue.props.ReceiveMessageWaitTimeSeconds)
+		}
+		if queue.props.FifoQueue {
+			config.WriteString("    fifo = true\n")
+		}
+		if queue.props.ContentBasedDeduplication {
+			config.WriteString("    contentBasedDeduplication = true\n")
+		}
+		if queue.deadLetterName != "" {
+			config.WriteString("    deadLettersQueue {\n")
+			fmt.Fprintf(config, "      name = %s\n", hoconString(queue.deadLetterName))
+			fmt.Fprintf(config, "      maxReceiveCount = %d\n", queue.maxReceiveCount)
+			config.WriteString("    }\n")
+		}
+		config.WriteString("  }\n")
+	}
+	config.WriteString("}\n")
+	return nil
+}
+
+// hoconString quotes a value for HOCON. Queue names contain only characters
+// SQS accepts, but quoting keeps a hand-authored name from changing the file's
+// structure.
+func hoconString(value string) string {
+	replacer := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\r", `\r`, "\t", `\t`)
+	return `"` + replacer.Replace(value) + `"`
 }

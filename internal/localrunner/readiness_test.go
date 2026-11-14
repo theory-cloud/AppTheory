@@ -157,7 +157,7 @@ func TestStartBackendsWaitsForReadinessBeforeProvisioning(t *testing.T) {
 	output := &syncBuffer{}
 	runner := newBackendRunner(t, base, "s3proxy", "s3proxy", "s3", serverPort(t, server.URL), output)
 
-	if err := runner.startBackends(context.Background()); err != nil {
+	if err := runner.startBackends(context.Background(), &Spec{}); err != nil {
 		t.Fatalf("start backends: %v", err)
 	}
 	requests := log.snapshot()
@@ -209,7 +209,7 @@ func TestStartBackendsFailsClosedWhenBackendNeverAnswers(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	start := time.Now()
-	err := runner.startBackends(ctx)
+	err := runner.startBackends(ctx, &Spec{})
 	if err == nil {
 		t.Fatal("a backend that never answers must fail the run")
 	}
@@ -252,7 +252,7 @@ func TestStartBackendsStopsWaitingWhenCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- runner.startBackends(ctx) }()
+	go func() { done <- runner.startBackends(ctx, &Spec{}) }()
 	select {
 	case <-started:
 	case err := <-done:
@@ -316,7 +316,7 @@ func TestStartBackendsProbesEachServiceNatively(t *testing.T) {
 				backend = "dynamodb-local"
 			}
 			runner := newBackendRunner(t, testBase(t), backend, backend, testCase.service, serverPort(t, server.URL), &syncBuffer{})
-			if err := runner.startBackends(context.Background()); err != nil {
+			if err := runner.startBackends(context.Background(), &Spec{}); err != nil {
 				t.Fatalf("start %s backend: %v", testCase.service, err)
 			}
 			if len(log.snapshot()) == 0 {

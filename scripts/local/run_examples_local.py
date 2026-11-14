@@ -1760,34 +1760,49 @@ def run_data_dir_s3(harness: Harness) -> str:
         _remove_data_dir(data_dir)
 
 
-def _unconsumed_queue(session: LocalSession) -> str:
-    consumed = {str(source.get("source")) for source in session.info.get("eventSources") or []}
-    candidates = sorted(
-        str(resource.get("logicalId"))
-        for resource in session.info.get("resources") or []
-        if resource.get("type") == "AWS::SQS::Queue"
-        and str(resource.get("logicalId")) not in consumed
-        and "DeadLetter" not in str(resource.get("logicalId"))
-    )
-    if not candidates:
-        raise HarnessFailure("the sqs-queue session has no unconsumed queue")
-    return candidates[0]
+def _queue_by_name(session: LocalSession, name: str) -> str:
+    for resource in session.info.get("resources") or []:
+        if resource.get("type") == "AWS::SQS::Queue" and resource.get("name") == name:
+            return str(resource.get("logicalId"))
+    raise HarnessFailure(f"the sqs-queue session has no queue named {name}")
+
+
+def _redrive_policy(attributes: dict) -> dict:
+    raw = (attributes.get("attributes") or {}).get("RedrivePolicy")
+    if not raw:
+        raise HarnessFailure(f"queue has no RedrivePolicy: {attributes.get('attributes')}")
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HarnessFailure(f"queue RedrivePolicy is not JSON: {raw}") from exc
 
 
 def run_data_dir_sqs(harness: Harness) -> str:
     app = "examples/cdk/sqs-queue"
     data_dir = _data_dir(harness, "sqs")
     backends = ("sqs", "dynamodb", "moto")
+    queue_name = "persistence-events"
     first = start_local_session(harness, app, name="data-dir-sqs-write", backends=backends, data_dir=data_dir)
     try:
-        queue = _unconsumed_queue(first)
+        queue = _queue_by_name(first, queue_name)
         first.request("sqs.send", queue=queue, body="persisted-message")
+        attributes = first.request("sqs.attributes", queue=queue)
+        policy = _redrive_policy(attributes)
+        if int(attributes.get("visible", 0)) < 1:
+            raise HarnessFailure(f"run 1 did not observe the sent message: {attributes}")
+        if (attributes.get("attributes") or {}).get("VisibilityTimeout") != "90":
+            raise HarnessFailure(f"run 1 queue visibility = {attributes.get('attributes')}")
+        if policy.get("maxReceiveCount") != 4 or not str(policy.get("deadLetterTargetArn", "")).endswith(
+            ":persistence-events-dlq"
+        ):
+            raise HarnessFailure(f"run 1 queue redrive = {policy}")
     finally:
         stop_local_session(harness, first)
     if not (Path(data_dir) / "sqs" / "elasticmq.mv.db").is_file():
         raise HarnessFailure("data-dir ElasticMQ run left no message database")
     second = start_local_session(harness, app, name="data-dir-sqs-read", backends=backends, data_dir=data_dir)
     try:
+        queue = _queue_by_name(second, queue_name)
         attributes = second.request("sqs.attributes", queue=queue)
         if int(attributes.get("visible", 0)) < 1:
             raise HarnessFailure(f"data-dir ElasticMQ queue {queue} lost the persisted message: {attributes}")
@@ -1795,12 +1810,51 @@ def run_data_dir_sqs(harness: Harness) -> str:
         messages = received.get("messages") or []
         if not messages or messages[0].get("body") != "persisted-message":
             raise HarnessFailure(f"data-dir ElasticMQ receive returned {received}")
-        return (
-            "a real ElasticMQ message survived a second session with the same --data-dir; the pinned "
-            "1.7.1 image's messages-storage H2 database held it"
-        )
+        policy = _redrive_policy(attributes)
+        if (attributes.get("attributes") or {}).get("VisibilityTimeout") != "90":
+            raise HarnessFailure(f"the restart changed the queue visibility: {attributes.get('attributes')}")
+        if policy.get("maxReceiveCount") != 4 or not str(policy.get("deadLetterTargetArn", "")).endswith(
+            ":persistence-events-dlq"
+        ):
+            raise HarnessFailure(f"the restart changed the queue redrive: {policy}")
+        if any(
+            resource.get("type") == "AWS::SQS::Queue"
+            and resource.get("name") == "persistence-events-extra"
+            for resource in second.info.get("resources") or []
+        ):
+            raise HarnessFailure("a queue declared only in the third run appeared before it")
     finally:
         stop_local_session(harness, second)
+    # The third session re-declares the same queue with a different visibility and
+    # adds a queue. The restored definition must not win silently: the runner
+    # applies the template and creates the newly declared queue, and the message
+    # the first session sent is still there.
+    third = start_local_session(
+        harness,
+        app,
+        name="data-dir-sqs-reconcile",
+        backends=backends,
+        data_dir=data_dir,
+        context={"persistenceVisibility": "120", "persistenceExtraQueue": "true"},
+    )
+    try:
+        queue = _queue_by_name(third, queue_name)
+        attributes = third.request("sqs.attributes", queue=queue)
+        if (attributes.get("attributes") or {}).get("VisibilityTimeout") != "120":
+            raise HarnessFailure(f"the changed visibility was not applied: {attributes.get('attributes')}")
+        # The second session's receive leaves the message in flight on the
+        # pinned image (a zero VisibilityTimeout does not clear it), so the third
+        # session proves it is still held rather than visible again.
+        if int(attributes.get("visible", 0)) + int(attributes.get("notVisible", 0)) < 1:
+            raise HarnessFailure(f"the transition session lost the persisted message: {attributes}")
+        _queue_by_name(third, "persistence-events-extra")
+        return (
+            "two sessions on one --data-dir kept a real ElasticMQ message, the queue's visibility, DLQ and "
+            "redrive policy; a third session declared the queue with a different visibility and added a queue, "
+            "and it observed the applied attribute, the new queue and the retained message"
+        )
+    finally:
+        stop_local_session(harness, third)
         _remove_data_dir(data_dir)
 
 

@@ -58,7 +58,7 @@ function the CDK definition targets and reads one JSON command per line.
 | `--memory MB` | 128 | `invoke --handler-dir`: function memory. |
 | `--timeout SECONDS` | 3 | `invoke --handler-dir`: function timeout. |
 | `--watch` | off | `run`/`session`: follow `cdk.json`'s `watch` include/exclude (or the app directory), re-synthesize on a change and apply the new surface without restarting the listeners. See [Dev loop](#dev-loop). |
-| `--data-dir DIR` | none (ephemeral) | `run`/`session`/`invoke`: keep DynamoDB Local, s3proxy and ElasticMQ state under `DIR`, plus the runner's KMS key material, S3 SSE-S3 records and the versioned buckets' version log; moto stays in memory. See [Dev loop](#dev-loop). |
+| `--data-dir DIR` | none (ephemeral) | `run`/`session`/`invoke`: keep DynamoDB Local, s3proxy and ElasticMQ state under `DIR`, plus the runner's KMS key material, S3 SSE-S3 records and the versioned buckets' version log; the declared SQS queues are created by ElasticMQ's restore and their attributes and redrive policy are reconciled on the next start; moto stays in memory. See [Dev loop](#dev-loop). |
 | `--seed COMMAND` | none | `run`/`session`: run `sh -c COMMAND` after provisioning and before `local-run: ready`. See [Dev loop](#dev-loop). |
 | `--port LOGICALID=PORT` | none | `run`/`session`/`plan`: pin a served public surface (API, Function URL, WebSocket API or CloudFront distribution) to a declared port. Repeatable; needs `--port-base`. Pinned ports are reserved first and the counter skips them; a collision, an out-of-range port, a repeated surface or an unknown id fails closed. |
 | `--tls` | off | `run`/`session`: serve every public listener over HTTPS from a certificate the run's local CA signs. |
@@ -248,7 +248,7 @@ label=apptheory.local.run`).
 <data-dir>/s3sse/index.json                    the objects written with SSE-S3 (0600)
 <data-dir>/s3versions/index.json               the version log of every version-enabled bucket (0600)
 <data-dir>/s3versions/blobs/<bucket>/<id>      the archived bytes of one version
-<data-dir>/sqs/elasticmq.mv.db                 ElasticMQ messages-storage (H2), verified on the pinned 1.7.1 image
+<data-dir>/sqs/elasticmq.mv.db                 ElasticMQ messages-storage (H2): queues, attributes and messages, verified on the pinned 1.7.1 image
 <data-dir>/kms/keys.json                       the runner's KMS key material (0600)
 ```
 
@@ -276,7 +276,30 @@ so another user of the same host could write to or delete the emulator store.
 Definitions are re-provisioned
 from the assembly on every start;
 existing tables, buckets, queues, topics, streams, parameters, secrets, pools
-and keys are reconciled, never dropped. A KMS key is the one shape whose moto
+and keys are reconciled, never dropped.
+
+SQS queues are reconciled through ElasticMQ's own restore rather than a
+provisioning race. The runner writes every declared queue, with its visibility,
+delay, receive-wait, FIFO/deduplication flags and redrive policy, into the
+ElasticMQ configuration it mounts at `/opt/elasticmq.conf`. The pinned image
+binds its SQS listener before it runs the messages-storage restore; declaring
+the queues there makes the restore their only creator, and provisioning waits
+for each queue instead of calling `CreateQueue` while the restore is in flight.
+On a restart the persisted definition wins ElasticMQ's merge, so the runner then
+applies the template's `VisibilityTimeout`, `DelaySeconds`,
+`ReceiveMessageWaitTimeSeconds` and `RedrivePolicy` (an undeclared value goes
+back to the image's default: 30 s visibility, 0 s delay and wait) and logs each
+changed attribute. A changed `FifoQueue` or `ContentBasedDeduplication`, or a
+redrive policy the template no longer declares, fails closed with the queue and
+the attribute named, because ElasticMQ cannot change a creation-time attribute
+or clear a redrive policy on an existing queue; remove `<data-dir>/sqs` to start
+those queues fresh. A queue declared after the run started is created through
+the API after the startup queues are present, and a restored queue the template no
+longer declares is kept. A FIFO queue's name must already end in `.fifo`
+(CloudFormation and SQS require it); a `--data-dir` run refuses one that does
+not, because ElasticMQ appends the suffix to a startup queue.
+
+A KMS key is the one shape whose moto
 metadata is re-created: the runner's KMS front reuses the material persisted
 for the same `stack/logicalId` and reports the persisted `KeyId`/`Arn`, so
 ciphertext, `GetPublicKey` and a caller's pinned key id remain valid; the rest

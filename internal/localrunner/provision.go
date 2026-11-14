@@ -1032,20 +1032,319 @@ type sqsQueueProperties struct {
 	RedrivePolicy                 json.RawMessage `json:"RedrivePolicy"`
 }
 
+// localQueuePlan is one declared SQS queue resolved to the identity both the
+// ElasticMQ startup configuration and the provisioning pass use. deadLetterName
+// and maxReceiveCount carry the template's redrive policy when it declares one.
+type localQueuePlan struct {
+	resource        ResourceSpec
+	name            string
+	props           sqsQueueProperties
+	deadLetterName  string
+	maxReceiveCount int
+}
+
+// localQueuePlans resolves every AWS::SQS::Queue in the assembly. The startup
+// configuration and the API path both render from these plans, so they cannot
+// disagree about a queue's name or its redrive target.
+func localQueuePlans(spec *Spec) ([]localQueuePlan, error) {
+	byLogicalID := make(map[string]ResourceSpec, len(spec.Resources))
+	for _, resource := range spec.Resources {
+		byLogicalID[resource.LogicalID] = resource
+	}
+	plans := make([]localQueuePlan, 0, len(spec.Resources))
+	for _, resource := range spec.Resources {
+		if resource.Type != typeSQSQueue {
+			continue
+		}
+		var props sqsQueueProperties
+		if len(resource.Properties) > 0 {
+			if err := json.Unmarshal(resource.Properties, &props); err != nil {
+				return nil, fmt.Errorf("parse SQS queue %s properties: %w", resource.LogicalID, err)
+			}
+		}
+		name, err := resourceName(resource)
+		if err != nil {
+			return nil, err
+		}
+		plan := localQueuePlan{resource: resource, name: name, props: props}
+		if len(props.RedrivePolicy) > 0 {
+			targetID, count, err := parseRedrivePolicy(resource, props.RedrivePolicy)
+			if err != nil {
+				return nil, err
+			}
+			target, ok := byLogicalID[targetID]
+			if !ok {
+				return nil, fmt.Errorf("SQS queue %s redrive target %s was not provisioned", resource.LogicalID, targetID)
+			}
+			targetName, err := resourceName(target)
+			if err != nil {
+				return nil, err
+			}
+			plan.deadLetterName = targetName
+			plan.maxReceiveCount = count
+		}
+		plans = append(plans, plan)
+	}
+	return plans, nil
+}
+
 func (r *Runner) provisionQueues(ctx context.Context, spec *Spec) error {
 	backend, networkEndpoint, client, err := r.sqsProvisioner()
 	if err != nil || client == nil {
 		return err
 	}
-	for _, resource := range spec.Resources {
-		if resource.Type != typeSQSQueue {
-			continue
-		}
-		if err := r.provisionQueue(ctx, client, networkEndpoint, resource); err != nil {
+	plans, err := localQueuePlans(spec)
+	if err != nil {
+		return err
+	}
+	for _, plan := range plans {
+		if err := r.ensureLocalQueue(ctx, client, networkEndpoint, plan); err != nil {
 			return err
 		}
 	}
-	return r.applyRedrivePolicies(ctx, client, backend, spec)
+	if r.dataDir == "" {
+		return r.applyRedrivePolicies(ctx, client, backend, spec)
+	}
+	// A --data-dir run reconciles every queue against the template: the restored
+	// definition may predate a change. The queue must exist first, so this pass
+	// runs after every queue in the plan is present.
+	for _, plan := range plans {
+		value, ok := r.resourceValues[plan.resource.Stack+"/"+plan.resource.LogicalID]
+		if !ok {
+			return fmt.Errorf("SQS queue %s was not provisioned", plan.resource.LogicalID)
+		}
+		hostURL, err := hostQueueURL(value.URL, backend.HostURL)
+		if err != nil {
+			return fmt.Errorf("rewrite local SQS queue %s URL for the runner: %w", plan.name, err)
+		}
+		if err := r.reconcileLocalQueue(ctx, client, plan, hostURL); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ensureLocalQueue makes one declared queue exist and records its local URL and
+// ARN. A queue the SQS backend's startup configuration declared is waited for,
+// never created through the API: ElasticMQ's messages-storage restore creates it
+// while its REST listener is already answering, and a concurrent CreateQueue
+// with a different definition (the runner's lacks the redrive policy the restore
+// carries) makes the restore return QueueAlreadyExists, which the server treats
+// as fatal. A queue added later (a watch reload) or an ephemeral run keeps the
+// API path.
+func (r *Runner) ensureLocalQueue(ctx context.Context, client *sqs.Client, networkEndpoint Endpoint, plan localQueuePlan) error {
+	queueURL := ""
+	if r.dataDir != "" && r.sqsStartupQueues[plan.name] {
+		var err error
+		queueURL, err = r.waitForStartupQueue(ctx, client, plan.name)
+		if err != nil {
+			return err
+		}
+	} else {
+		created, err := client.CreateQueue(ctx, &sqs.CreateQueueInput{
+			QueueName:  aws.String(plan.name),
+			Attributes: queueAttributes(plan.props),
+		})
+		if err != nil && !queueAlreadyExists(err) {
+			return fmt.Errorf("create local SQS queue %s for %s: %w", plan.name, plan.resource.LogicalID, err)
+		}
+		if created != nil {
+			queueURL = aws.ToString(created.QueueUrl)
+		}
+		if queueURL == "" {
+			found, findErr := client.GetQueueUrl(ctx, &sqs.GetQueueUrlInput{QueueName: aws.String(plan.name)})
+			if findErr != nil {
+				return fmt.Errorf("find local SQS queue %s for %s: %w", plan.name, plan.resource.LogicalID, findErr)
+			}
+			queueURL = aws.ToString(found.QueueUrl)
+		}
+	}
+	networkURL, err := rewriteQueueURL(queueURL, networkEndpoint.URL)
+	if err != nil {
+		return fmt.Errorf("rewrite local SQS queue %s URL: %w", plan.name, err)
+	}
+	r.resourceValues[plan.resource.Stack+"/"+plan.resource.LogicalID] = resourceValue{
+		Type: typeSQSQueue,
+		Name: plan.name,
+		URL:  networkURL,
+		ARN:  localSourceARN(backendSQS, plan.name),
+	}
+	r.logf("provisioned SQS queue %s for %s", plan.name, plan.resource.LogicalID)
+	return nil
+}
+
+// sqsStartupQueueTimeout bounds how long provisioning waits for a queue the
+// startup configuration declared. The restore creates queues before it restores
+// their messages, so a queue that never appears means the backend failed to
+// start; the error names that and points at the backend log.
+var (
+	sqsStartupQueueTimeout      = backendReadyTimeout
+	sqsStartupQueuePollInterval = 100 * time.Millisecond
+)
+
+func (r *Runner) waitForStartupQueue(ctx context.Context, client *sqs.Client, name string) (string, error) {
+	deadline := time.Now().Add(sqsStartupQueueTimeout)
+	var lastErr error
+	for {
+		found, err := client.GetQueueUrl(ctx, &sqs.GetQueueUrlInput{QueueName: aws.String(name)})
+		if err == nil {
+			if queueURL := aws.ToString(found.QueueUrl); queueURL != "" {
+				return queueURL, nil
+			}
+			lastErr = fmt.Errorf("the backend answered without a queue URL")
+		} else {
+			lastErr = err
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", fmt.Errorf("wait for ElasticMQ queue %s from the startup configuration: %w", name, ctxErr)
+		}
+		if !time.Now().Before(deadline) {
+			if lastErr == nil {
+				lastErr = fmt.Errorf("the queue was not found")
+			}
+			return "", fmt.Errorf(
+				"ElasticMQ did not create queue %s from its startup configuration within %s: %w (the backend log names the startup failure)",
+				name, sqsStartupQueueTimeout, lastErr,
+			)
+		}
+		select {
+		case <-ctx.Done():
+			return "", fmt.Errorf("wait for ElasticMQ queue %s from the startup configuration: %w", name, ctx.Err())
+		case <-time.After(sqsStartupQueuePollInterval):
+		}
+	}
+}
+
+// The pinned image's defaults for a queue created without the attribute:
+// https://github.com/softwaremill/elasticmq/blob/v1.7.1/core/src/main/scala/org/elasticmq/CreateQueueDefaults.scala
+const (
+	localSQSDefaultVisibilityTimeout  = 30
+	localSQSDefaultDelaySeconds       = 0
+	localSQSDefaultReceiveWaitSeconds = 0
+)
+
+// reconcileLocalQueue makes an existing queue match the template. ElasticMQ's
+// messages-storage restore prefers the persisted definition over the startup
+// configuration, so a queue's attributes can lag a template change; this pass
+// applies the writable attributes (visibility, delay, receive wait, redrive) and
+// refuses, naming the queue and the attribute, when the difference is one the
+// pinned image cannot apply to an existing queue: FifoQueue and
+// ContentBasedDeduplication are creation-time attributes, and SetQueueAttributes
+// cannot clear a redrive policy (an empty RedrivePolicy fails to parse).
+func (r *Runner) reconcileLocalQueue(ctx context.Context, client *sqs.Client, plan localQueuePlan, hostURL string) error {
+	current, err := client.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
+		QueueUrl:       aws.String(hostURL),
+		AttributeNames: []sqstypes.QueueAttributeName{sqstypes.QueueAttributeNameAll},
+	})
+	if err != nil {
+		return fmt.Errorf("read local SQS queue %s attributes: %w", plan.name, err)
+	}
+	attributes := current.Attributes
+	restoredFifo := attributes[string(sqstypes.QueueAttributeNameFifoQueue)] == boolTrue
+	if restoredFifo != plan.props.FifoQueue {
+		return fmt.Errorf(
+			"local SQS queue %s: FifoQueue is %t on the restored queue but the template declares %t; ElasticMQ cannot change a creation-time attribute on an existing queue, so --data-dir refuses instead of starting with the stale value (remove the data directory's sqs state or restore the declared value)",
+			plan.name, restoredFifo, plan.props.FifoQueue,
+		)
+	}
+	if plan.props.FifoQueue {
+		restoredDedup := attributes[string(sqstypes.QueueAttributeNameContentBasedDeduplication)] == boolTrue
+		if restoredDedup != plan.props.ContentBasedDeduplication {
+			return fmt.Errorf(
+				"local SQS queue %s: ContentBasedDeduplication is %t on the restored queue but the template declares %t; ElasticMQ cannot change a creation-time attribute on an existing queue, so --data-dir refuses instead of starting with the stale value (remove the data directory's sqs state or restore the declared value)",
+				plan.name, restoredDedup, plan.props.ContentBasedDeduplication,
+			)
+		}
+	}
+	changes := map[string]string{}
+	desired := map[sqstypes.QueueAttributeName]string{
+		sqstypes.QueueAttributeNameVisibilityTimeout:             strconv.Itoa(queueSecondsOr(plan.props.VisibilityTimeout, localSQSDefaultVisibilityTimeout)),
+		sqstypes.QueueAttributeNameDelaySeconds:                  strconv.Itoa(queueSecondsOr(plan.props.DelaySeconds, localSQSDefaultDelaySeconds)),
+		sqstypes.QueueAttributeNameReceiveMessageWaitTimeSeconds: strconv.Itoa(queueSecondsOr(plan.props.ReceiveMessageWaitTimeSeconds, localSQSDefaultReceiveWaitSeconds)),
+	}
+	for name, value := range desired {
+		if attributes[string(name)] != value {
+			changes[string(name)] = value
+		}
+	}
+	currentRedrive, hasRedrive := parseRedrivePolicyValue(attributes[string(sqstypes.QueueAttributeNameRedrivePolicy)])
+	if plan.deadLetterName != "" {
+		if !hasRedrive || currentRedrive.name != plan.deadLetterName || currentRedrive.maxReceiveCount != plan.maxReceiveCount {
+			encoded, encodeErr := json.Marshal(map[string]any{
+				"deadLetterTargetArn": localSourceARN(backendSQS, plan.deadLetterName),
+				"maxReceiveCount":     plan.maxReceiveCount,
+			})
+			if encodeErr != nil {
+				return encodeErr
+			}
+			changes[string(sqstypes.QueueAttributeNameRedrivePolicy)] = string(encoded)
+		}
+	} else if hasRedrive {
+		return fmt.Errorf(
+			"local SQS queue %s: the restored queue has a RedrivePolicy to %s, but the template declares none; ElasticMQ 1.7.1 cannot clear a RedrivePolicy on an existing queue, so --data-dir refuses instead of starting with the stale policy (remove the data directory's sqs state or declare the redrive again)",
+			plan.name, currentRedrive.name,
+		)
+	}
+	if len(changes) == 0 {
+		return nil
+	}
+	if _, err := client.SetQueueAttributes(ctx, &sqs.SetQueueAttributesInput{
+		QueueUrl:   aws.String(hostURL),
+		Attributes: changes,
+	}); err != nil {
+		return fmt.Errorf("reconcile local SQS queue %s for %s: %w", plan.name, plan.resource.LogicalID, err)
+	}
+	r.logf("reconciled local SQS queue %s: %s", plan.name, describeQueueChanges(changes))
+	return nil
+}
+
+// localRedrivePolicy is the part of a queue's RedrivePolicy the runner compares.
+// ElasticMQ rewrites the ARN to its own region and account, so only the target
+// queue name and the receive count are stable across a restore.
+type localRedrivePolicy struct {
+	name            string
+	maxReceiveCount int
+}
+
+func parseRedrivePolicyValue(value string) (localRedrivePolicy, bool) {
+	if strings.TrimSpace(value) == "" {
+		return localRedrivePolicy{}, false
+	}
+	var policy struct {
+		DeadLetterTargetARN string `json:"deadLetterTargetArn"`
+		MaxReceiveCount     int    `json:"maxReceiveCount"`
+	}
+	if err := json.Unmarshal([]byte(value), &policy); err != nil {
+		return localRedrivePolicy{}, false
+	}
+	name := policy.DeadLetterTargetARN
+	if index := strings.LastIndex(name, ":"); index >= 0 {
+		name = name[index+1:]
+	}
+	if name == "" {
+		return localRedrivePolicy{}, false
+	}
+	return localRedrivePolicy{name: name, maxReceiveCount: policy.MaxReceiveCount}, true
+}
+
+func queueSecondsOr(value, fallback int) int {
+	if value > 0 {
+		return value
+	}
+	return fallback
+}
+
+func describeQueueChanges(changes map[string]string) string {
+	names := make([]string, 0, len(changes))
+	for name := range changes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	parts := make([]string, 0, len(names))
+	for _, name := range names {
+		parts = append(parts, name+"="+changes[name])
+	}
+	return strings.Join(parts, ", ")
 }
 
 func (r *Runner) sqsProvisioner() (backendProcess, Endpoint, *sqs.Client, error) {
@@ -1061,68 +1360,6 @@ func (r *Runner) sqsProvisioner() (backendProcess, Endpoint, *sqs.Client, error)
 		return backendProcess{}, Endpoint{}, nil, fmt.Errorf("the sqs backend has no network endpoint for function containers")
 	}
 	return backend, networkEndpoint, newSQSClient(backend.HostURL), nil
-}
-
-func (r *Runner) provisionQueue(ctx context.Context, client *sqs.Client, networkEndpoint Endpoint, resource ResourceSpec) error {
-	var props sqsQueueProperties
-	if len(resource.Properties) > 0 {
-		if err := json.Unmarshal(resource.Properties, &props); err != nil {
-			return fmt.Errorf("parse SQS queue %s properties: %w", resource.LogicalID, err)
-		}
-	}
-	name, err := resourceName(resource)
-	if err != nil {
-		return err
-	}
-	created, err := client.CreateQueue(ctx, &sqs.CreateQueueInput{
-		QueueName:  aws.String(name),
-		Attributes: queueAttributes(props),
-	})
-	existed := err != nil && queueAlreadyExists(err)
-	if err != nil && !existed {
-		return fmt.Errorf("create local SQS queue %s for %s: %w", name, resource.LogicalID, err)
-	}
-	queueURL := ""
-	if created != nil {
-		queueURL = aws.ToString(created.QueueUrl)
-	}
-	if queueURL == "" {
-		found, findErr := client.GetQueueUrl(ctx, &sqs.GetQueueUrlInput{QueueName: aws.String(name)})
-		if findErr != nil {
-			return fmt.Errorf("find local SQS queue %s for %s: %w", name, resource.LogicalID, findErr)
-		}
-		queueURL = aws.ToString(found.QueueUrl)
-	}
-	if existed && r.dataDir != "" {
-		// Reconcile the re-runnable attributes on a queue that already holds
-		// messages. CreateQueue is idempotent only when the attribute list
-		// matches, so an explicit SetQueueAttributes applies a definition change
-		// without deleting the queue. FifoQueue and ContentBasedDeduplication
-		// are creation-time attributes and are not changed here.
-		attributes := queueAttributes(props)
-		delete(attributes, string(sqstypes.QueueAttributeNameFifoQueue))
-		delete(attributes, string(sqstypes.QueueAttributeNameContentBasedDeduplication))
-		if len(attributes) > 0 {
-			if _, setErr := client.SetQueueAttributes(ctx, &sqs.SetQueueAttributesInput{
-				QueueUrl:   aws.String(queueURL),
-				Attributes: attributes,
-			}); setErr != nil {
-				return fmt.Errorf("reconcile local SQS queue %s for %s: %w", name, resource.LogicalID, setErr)
-			}
-		}
-	}
-	networkURL, err := rewriteQueueURL(queueURL, networkEndpoint.URL)
-	if err != nil {
-		return fmt.Errorf("rewrite local SQS queue %s URL: %w", name, err)
-	}
-	r.resourceValues[resource.Stack+"/"+resource.LogicalID] = resourceValue{
-		Type: typeSQSQueue,
-		Name: name,
-		URL:  networkURL,
-		ARN:  localSourceARN(backendSQS, name),
-	}
-	r.logf("provisioned SQS queue %s for %s", name, resource.LogicalID)
-	return nil
 }
 
 // applyRedrivePolicies sets redrive after every queue exists. ElasticMQ
@@ -1162,25 +1399,35 @@ func (r *Runner) applyRedrivePolicies(ctx context.Context, client *sqs.Client, b
 	return nil
 }
 
-func (r *Runner) redrivePolicy(resource ResourceSpec, raw json.RawMessage) (map[string]string, error) {
+// parseRedrivePolicy reads the template's redrive reference and receive count.
+// The reference names a logical id; the caller resolves the target it can see.
+func parseRedrivePolicy(resource ResourceSpec, raw json.RawMessage) (string, int, error) {
 	var policy struct {
 		DeadLetterTargetARN json.RawMessage `json:"deadLetterTargetArn"`
 		MaxReceiveCount     json.RawMessage `json:"maxReceiveCount"`
 	}
 	if err := json.Unmarshal(raw, &policy); err != nil {
-		return nil, fmt.Errorf("parse SQS queue %s redrive policy: %w", resource.LogicalID, err)
+		return "", 0, fmt.Errorf("parse SQS queue %s redrive policy: %w", resource.LogicalID, err)
 	}
 	refs := refsIn(policy.DeadLetterTargetARN)
 	if len(refs) == 0 {
-		return nil, fmt.Errorf("SQS queue %s redrive policy has no dead-letter queue reference", resource.LogicalID)
-	}
-	target, ok := r.resourceValues[resource.Stack+"/"+refs[0].ID]
-	if !ok {
-		return nil, fmt.Errorf("SQS queue %s redrive target %s was not provisioned", resource.LogicalID, refs[0].ID)
+		return "", 0, fmt.Errorf("SQS queue %s redrive policy has no dead-letter queue reference", resource.LogicalID)
 	}
 	count, err := parseIntJSON(policy.MaxReceiveCount)
 	if err != nil || count <= 0 {
-		return nil, fmt.Errorf("SQS queue %s redrive maxReceiveCount is invalid", resource.LogicalID)
+		return "", 0, fmt.Errorf("SQS queue %s redrive maxReceiveCount is invalid", resource.LogicalID)
+	}
+	return refs[0].ID, count, nil
+}
+
+func (r *Runner) redrivePolicy(resource ResourceSpec, raw json.RawMessage) (map[string]string, error) {
+	targetID, count, err := parseRedrivePolicy(resource, raw)
+	if err != nil {
+		return nil, err
+	}
+	target, ok := r.resourceValues[resource.Stack+"/"+targetID]
+	if !ok {
+		return nil, fmt.Errorf("SQS queue %s redrive target %s was not provisioned", resource.LogicalID, targetID)
 	}
 	encoded, err := json.Marshal(map[string]any{
 		"deadLetterTargetArn": target.ARN,
