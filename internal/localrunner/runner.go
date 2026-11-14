@@ -192,8 +192,14 @@ type Runner struct {
 	invokers                map[string]*FunctionProcess
 	backends                map[string]backendProcess
 	resourceValues          resourceValues
-	tables                  map[string]tableInfo
-	localSecrets            map[string]string
+	// sqsStartupPlans are the queues a --data-dir run wrote into ElasticMQ's
+	// startup configuration, and sqsStartupQueues is the same set by name.
+	// Provisioning waits for each member instead of creating it through the API
+	// while ElasticMQ restores its messages-storage.
+	sqsStartupPlans  []localQueuePlan
+	sqsStartupQueues map[string]bool
+	tables           map[string]tableInfo
+	localSecrets     map[string]string
 	// secretValues holds the provisioned secret strings, keyed by ARN and
 	// friendly name. A deploy-time dynamic reference to the same secret resolves
 	// to this value instead of the wave-1 deterministic placeholder.
@@ -840,7 +846,7 @@ func (r *Runner) prepareRun(ctx context.Context) (*Spec, error) {
 	if err = r.initTLS(spec); err != nil {
 		return nil, err
 	}
-	if err = r.startBackends(ctx); err != nil {
+	if err = r.startBackends(ctx, spec); err != nil {
 		return nil, err
 	}
 	if err = r.startMailSurface(ctx, spec); err != nil {

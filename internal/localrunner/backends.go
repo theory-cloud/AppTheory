@@ -25,13 +25,49 @@ type backendProcess struct {
 }
 
 // startBackends starts every local emulator configured from the profile.
-func (r *Runner) startBackends(ctx context.Context) error {
+func (r *Runner) startBackends(ctx context.Context, spec *Spec) error {
+	if err := r.prepareElasticMQStartupQueues(spec); err != nil {
+		return err
+	}
 	for _, backend := range r.options.Backends {
 		if err := r.startBackend(ctx, backend); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// prepareElasticMQStartupQueues records the queues a --data-dir run declares in
+// ElasticMQ's startup configuration. Only then is the SQS container's restore
+// the sole creator of those queues; provisioning waits for each one instead of
+// calling CreateQueue while the restore is in flight. An ephemeral run keeps the
+// API provisioning path untouched.
+func (r *Runner) prepareElasticMQStartupQueues(spec *Spec) error {
+	r.sqsStartupQueues = nil
+	r.sqsStartupPlans = nil
+	if r.dataDir == "" || !r.backendRequested(backendSQS) {
+		return nil
+	}
+	plans, err := localQueuePlans(spec)
+	if err != nil {
+		return err
+	}
+	r.sqsStartupPlans = plans
+	r.sqsStartupQueues = make(map[string]bool, len(plans))
+	for _, plan := range plans {
+		r.sqsStartupQueues[plan.name] = true
+	}
+	return nil
+}
+
+// backendRequested reports whether a --backend flag named the backend.
+func (r *Runner) backendRequested(name string) bool {
+	for _, backend := range r.options.Backends {
+		if backend == name {
+			return true
+		}
+	}
+	return false
 }
 
 // startBackend starts one emulator, resolves its network address for the
