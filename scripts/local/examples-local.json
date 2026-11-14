@@ -883,8 +883,8 @@
   "examples/cdk/sqs-queue/scripts/data-dir-sqs.sh": {
    "run": "data-dir-sqs",
    "class": "L2",
-   "gap": "ElasticMQ 1.7.1 persists queues and messages through messages-storage (verified on the pinned image); IAM, KMS encryption and AWS-managed scaling are not emulated.",
-   "description": "SQS --data-dir: a real ElasticMQ message was sent to an unconsumed queue in one session; a second session with the same --data-dir found it visible and received its body; the messages-storage H2 database held it."
+   "gap": "ElasticMQ 1.7.1 persists queues and messages through messages-storage (verified on the pinned image); a FIFO/deduplication change and a removed redrive policy fail closed on an existing queue, because ElasticMQ cannot apply either; IAM, KMS encryption and AWS-managed scaling are not emulated.",
+   "description": "SQS --data-dir: run 1 sent a real message to the unconsumed persistence-events queue (DLQ, redrive maxReceiveCount 4, visibility 90 s) and stopped; run 2 on the same --data-dir reached ready, found the message visible, received its body, and read the same visibility and redrive policy; run 3 declared the queue with visibility 120 s and added persistence-events-extra, reached ready, observed the applied visibility and the new queue, and the queue still held the run-1 message. The messages-storage H2 database held the queues, attributes and message."
   },
   "examples/cdk/ssr-only-provided-assets-site/bin/app.ts": {
    "run": "ssr-only-gateway",

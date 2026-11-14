@@ -577,6 +577,33 @@ export class SqsQueueStack extends cdk.Stack {
         });
 
         // ========================================================================
+        // --data-dir persistence pair
+        // A queue no consumer drains, with a DLQ, a redrive policy and a
+        // visibility timeout: the harness sends a message in one session, stops
+        // the run, and receives it in the next session on the same --data-dir.
+        // The context knobs let the same row change the declared attributes and
+        // add a queue between sessions, which is the deterministic reconciliation
+        // path. They default to the committed shape, so the synthesized template
+        // and every other row stay unchanged.
+        // ========================================================================
+
+        const persistenceVisibility = Number(
+            this.node.tryGetContext("persistenceVisibility") ?? 90,
+        );
+        new AppTheoryQueue(this, "PersistenceQueue", {
+            queueName: "persistence-events",
+            enableDlq: true,
+            maxReceiveCount: 4,
+            visibilityTimeout: cdk.Duration.seconds(persistenceVisibility),
+        });
+        if (String(this.node.tryGetContext("persistenceExtraQueue") ?? "false") === "true") {
+            new AppTheoryQueue(this, "PersistenceExtraQueue", {
+                queueName: "persistence-events-extra",
+                enableDlq: false,
+            });
+        }
+
+        // ========================================================================
         // Outputs
         // ========================================================================
 

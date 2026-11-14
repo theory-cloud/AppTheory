@@ -133,7 +133,7 @@ func (r *Runner) prepareInvoke(ctx context.Context, spec *Spec, functionID strin
 	}
 	r.logf("network %s", r.network)
 	r.chooseRuntimeAPIAddress(ctx)
-	if err = r.startBackends(ctx); err != nil {
+	if err = r.startBackends(ctx, spec); err != nil {
 		return err
 	}
 	if err = r.startKMSFront(ctx); err != nil {

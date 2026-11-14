@@ -5,39 +5,39 @@
         "make",
         "examples-local"
       ],
-      "durationSeconds": 1177.44,
+      "durationSeconds": 1291.831,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-13T01:06:39Z",
+      "finishedAt": "2026-11-14T02:18:42Z",
       "id": "examples-harness",
-      "inputsDigest": "sha256:e950414a966fde7f66563105e90327fb07c0c5c974464f70fb13d82164591a09",
-      "logDigest": "sha256:50e8e35b94cebb5db57716df4d67d0650530154649c364846e1e76bb67174f25",
-      "logRef": "gov-infra/evidence/proportionate/local/examples-local-examples-harness-20261113T004702Z-28647.log",
+      "inputsDigest": "sha256:e2d9fe8d172fbf329967a59f345a135048c4ef42304fafd58e96119c2ee31659",
+      "logDigest": "sha256:f6c2aac4d0c6377e5de7d096b8a6b198277d52d07fb7e611cf08751eff169408",
+      "logRef": "gov-infra/evidence/proportionate/local/examples-local-examples-harness-20261114T015710Z-23353.log",
       "reused": false,
-      "startedAt": "2026-11-13T00:47:02Z"
+      "startedAt": "2026-11-14T01:57:10Z"
     },
     {
       "argv": [
         "make",
         "verify-cdk-synth-location-independent"
       ],
-      "durationSeconds": 129.201,
-      "executed": true,
+      "durationSeconds": 158.587,
+      "executed": false,
       "exitCode": 0,
-      "finishedAt": "2026-11-13T01:08:49Z",
+      "finishedAt": "2026-11-14T01:50:11Z",
       "id": "examples-relocated-synth",
-      "inputsDigest": "sha256:772cbcd7519fd75588c12b1851979813f604f28fcfdacd25680345e231202ec4",
-      "logDigest": "sha256:cbb2e16dc5b988ba6f81b76f2e3e02ab97448622b0453e23e38aef955d4be0a4",
-      "logRef": "gov-infra/evidence/proportionate/local/examples-local-examples-relocated-synth-20261113T010639Z-28647.log",
-      "reused": false,
-      "startedAt": "2026-11-13T01:06:39Z"
+      "inputsDigest": "sha256:7f5981e699392743d6d08d37e45b05d6defe36aaf3ea2f6c0fcbbf0a844a09ab",
+      "logDigest": "sha256:2d855678838e5611e23b7036ff8e1124b0c0dd9f91864d3b842c8502af44c6db",
+      "logRef": "gov-infra/evidence/proportionate/local/examples-local-examples-relocated-synth-20261114T014732Z-89004.log",
+      "reused": true,
+      "startedAt": "2026-11-14T01:47:32Z"
     }
   ],
   "consumed": [],
   "description": "Local examples harness plus relocated-copy synth proof (local journey, produced on the approved host)",
   "environment": {
     "go": "go1.27.4",
-    "node": "v24.21.0",
+    "node": "v24.13.1",
     "platform": {
       "arch": "arm64",
       "os": "darwin"
@@ -52,18 +52,18 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-13T01:08:49Z",
+  "recordedAt": "2026-11-14T02:18:42Z",
   "releaseOnly": {
-    "digest": "sha256:dea47f7c318e6703d405d14f61f76d6c1a8d2b38f1b682fdc96b6781c222b699",
+    "digest": "sha256:1dc919d2a5e8962c22283972db036b1366abe5d3308ab8840906a1e273711b64",
     "fileCount": 476,
-    "normalizedDigest": "sha256:c5ecbf183fa35bbf12642d3d5103e5af06b5b0d169ec8b29c253d8712187ac69",
-    "version": "7.1.0"
+    "normalizedDigest": "sha256:a1a1d61689822e006d9c7c4c60a860d063ede848af626f804ba22ce0f0bf2df8",
+    "version": "7.3.0"
   },
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:f75d4064dcd419e0d24fae874c53a37e776647295e2e12956e27a73356954dd4",
-    "fileCount": 2437,
+    "digest": "sha256:5be9db9ee146fa55f0c2cb74cfe50b335e9a419d5eebe1ccff3c69ed02319fee",
+    "fileCount": 2438,
     "paths": [
       "Makefile",
       "examples/",
@@ -88,8 +88,8 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:09629b1d99eaf66c3ee324abde622a7b4c40a45893e68da60bef35505cc50539",
-    "fileCount": 2658
+    "digest": "sha256:0bcdbdb0cb6f296ecee0586e6f8eb25103af6319f8c0caa7f2a67c815e104b93",
+    "fileCount": 2659
   },
   "verdict": "PASS"
 }

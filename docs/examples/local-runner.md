@@ -2413,7 +2413,7 @@ one directory per backend:
 | --- | --- | --- |
 | DynamoDB Local | Tables and items | `-dbPath /data` on `<dir>/dynamodb`; the pinned command's `-sharedDb` is kept, so the single database file is `shared-local-instance.db`. |
 | s3proxy | Buckets and objects, plus each object's SSE-S3 record | The filesystem jclouds provider with `JCLOUDS_FILESYSTEM_BASEDIR=/data` on `<dir>/s3proxy`; the runner records the objects written with SSE-S3 in `<dir>/s3sse/index.json`. |
-| ElasticMQ | Queues and messages | `messages-storage` with the H2 file `/data/elasticmq` on `<dir>/sqs`. Verified on the pinned 1.7.1 image: a message survived a restart. |
+| ElasticMQ | Queues, their declared attributes and redrive policy, and messages | `messages-storage` with the H2 file `/data/elasticmq` on `<dir>/sqs`, plus the template's queues in the startup configuration so the restore creates them instead of racing the runner's provisioning. Verified on the pinned 1.7.1 image: a message, the queue's visibility and its redrive policy survived a restart. |
 | moto | Nothing, except the runner's KMS key material | Server-mode state lives in the process; there is no persistence option ([moto server mode](https://docs.getmoto.org/en/latest/docs/server_mode.html)). This is the docs/125 memory-only limit, named rather than hidden. The runner's KMS front keeps the material of the key families it owns in `<dir>/kms/keys.json`, so ciphertext written in one run decrypts in the next; see [KMS signing and key material](#kms-signing-and-key-material). |
 
 The runner widens the data root to `0755` and each backend directory to `0777`
@@ -2435,6 +2435,42 @@ persistent store ([s3proxy](https://github.com/gaul/s3proxy)). ElasticMQ's
 `messages-storage` keeps queues and messages in an H2 in-file database and
 restores them on startup ([Persisting queues and messages](https://github.com/softwaremill/elasticmq)).
 
+**Declared queues and the restored state.** With `--data-dir`, the runner writes
+every `AWS::SQS::Queue` into the ElasticMQ configuration it mounts at
+`/opt/elasticmq.conf`: the declared `VisibilityTimeout`, `DelaySeconds`,
+`ReceiveMessageWaitTimeSeconds`, FIFO and content-based-deduplication flags, and
+the redrive policy. The pinned image binds its SQS listener before it runs the
+messages-storage restore, and the restore merges the persisted queues with that
+configuration
+([ElasticMQServer](https://github.com/softwaremill/elasticmq/blob/v1.7.1/rest/rest-sqs/src/main/scala/org/elasticmq/server/ElasticMQServer.scala),
+[SqlQueuePersistenceActor](https://github.com/softwaremill/elasticmq/blob/v1.7.1/persistence/persistence-sql/src/main/scala/org/elasticmq/persistence/sql/SqlQueuePersistenceActor.scala)).
+Declaring the queues makes the restore their only creator; provisioning waits
+for each declared queue (up to the backend readiness budget) instead of calling
+`CreateQueue` for it. Without that ordering, a `CreateQueue` that lands inside
+the restore window makes the restore's own `CreateQueue` for the persisted
+definition — which carries the redrive policy the runner sets after creation —
+return `QueueAlreadyExists`; the image treats that as fatal, stops the
+container, and the run never reaches ready.
+
+On a restart the persisted definition wins that merge, so the runner reconciles
+each queue once it appears. `VisibilityTimeout`, `DelaySeconds`,
+`ReceiveMessageWaitTimeSeconds` and `RedrivePolicy` are applied from the
+template, and an attribute the template no longer declares goes back to the
+pinned image's default (30 s visibility, 0 s delay, 0 s receive wait); the run
+logs one line naming each changed attribute. Two differences fail closed instead
+of starting with a stale queue, and the error names the queue and the attribute:
+a changed `FifoQueue` or `ContentBasedDeduplication` (creation-time attributes),
+and a redrive policy the template no longer declares (`SetQueueAttributes`
+cannot clear one on the pinned image). Remove `<data-dir>/sqs` to start those
+queues fresh, accepting the loss of their messages, or restore the declaration.
+A queue declared after the run started (a watch reload) is created through the
+API after the startup queues are present, and a restored queue the template no longer
+declares is kept. A FIFO queue's name must already end in `.fifo` (CloudFormation
+and SQS require it); a `--data-dir` run refuses one that does not, because
+ElasticMQ appends the suffix to a startup queue and the declared name would not
+survive. `MessageRetentionPeriod` is not emulated by ElasticMQ, so it is not
+reconciled.
+
 Definitions are re-provisioned from the CDK definition on every start. A table,
 bucket, queue, topic, stream, parameter, secret, pool or key that already
 exists in the data directory is reconciled, never dropped or recreated. A KMS
@@ -2451,8 +2487,9 @@ fails at start with the table named and the UpdateTable page's rule,
 DynamoDB Streams settings, or global table replica settings for a given table"
 ([UpdateTable](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html)).
 Missing or changed global secondary indexes are created or deleted, and an
-existing queue's visibility, retention, wait and delay attributes are updated
-without deleting its messages. A newly added global secondary index carries its
+existing queue's visibility, receive-wait and delay attributes and its redrive
+policy are updated without deleting its messages (retention is not emulated).
+A newly added global secondary index carries its
 key attributes in the update's `AttributeDefinitions`
 ([UpdateTable](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html)),
 and one keyed on an existing attribute whose declared type differs from the
@@ -2468,7 +2505,9 @@ cannot change one
 An existing global secondary index whose key attribute type drifted is reported
 and kept the same way, instead of being treated as unchanged.
 The examples' `data-dir.sh`,
-`data-dir-s3.sh` and `data-dir-sqs.sh` scripts show the two-run pattern.
+`data-dir-s3.sh` and `data-dir-sqs.sh` scripts show the two-run pattern; the
+`data-dir-sqs.sh` harness row adds a third session that changes the queue's
+visibility and adds a queue, to prove the reconciliation above.
 
 ### Seed hooks (`--seed`)
 

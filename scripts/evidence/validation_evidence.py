@@ -604,13 +604,38 @@ def _major_minor(value: Any) -> str:
     return ".".join(parts[:2]) if len(parts) >= 2 else ""
 
 
+# The live probe reports the machine name (`platform.machine()`), while the
+# tracked profiles use the Node/GitHub runner spelling. Both name the same
+# architecture, so the comparison folds the kernel aliases onto one spelling;
+# a value this table does not know is compared as written and fails closed.
+_ARCH_ALIASES = {
+    "x86_64": "x64",
+    "x86-64": "x64",
+    "amd64": "x64",
+    "x64": "x64",
+    "aarch64": "arm64",
+    "arm64": "arm64",
+}
+
+
+def canonical_arch(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    return _ARCH_ALIASES.get(text, text)
+
+
+def canonical_os(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
 def environment_mismatch(recorded: Any, declared: Any, dimensions: list[str]) -> str:
     """Compare a probed environment with the tracked profile's declaration.
 
     Go is matched at the repository pin, Node at its supported major, Python at
     its supported major.minor, and the OS/arch only when the gate's claim is
-    platform-bound. Patch levels and the runner that performs verification are
-    deliberately not part of the comparison.
+    platform-bound. The OS/arch comparison folds kernel arch aliases onto the
+    profile spelling, so a Linux x86_64 runner satisfies the ``linux-x64``
+    profile it declares. Patch levels and the runner that performs verification
+    are deliberately not part of the comparison.
     """
     if not dimensions:
         return ""
@@ -640,8 +665,8 @@ def environment_mismatch(recorded: Any, declared: Any, dimensions: list[str]) ->
         if not isinstance(recorded_platform, dict) or not isinstance(declared_platform, dict):
             return "platform binding requires recorded and declared os/arch"
         if (
-            recorded_platform.get("os") != declared_platform.get("os")
-            or recorded_platform.get("arch") != declared_platform.get("arch")
+            canonical_os(recorded_platform.get("os")) != canonical_os(declared_platform.get("os"))
+            or canonical_arch(recorded_platform.get("arch")) != canonical_arch(declared_platform.get("arch"))
         ):
             return (
                 f"platform {recorded_platform.get('os')}/{recorded_platform.get('arch')} "
