@@ -794,6 +794,10 @@ func TestProvisionQueueReconcilesExistingQueueInDataDir(t *testing.T) {
 			writeTestResponse(t, writer, `{"__type":"com.amazonaws.sqs#QueueAlreadyExists","message":"queue exists"}`)
 		case strings.HasSuffix(target, "GetQueueUrl"):
 			writeTestResponse(t, writer, `{"QueueUrl":"http://localhost:9324/000000000000/events"}`)
+		case strings.HasSuffix(target, "GetQueueAttributes"):
+			writeTestResponse(t, writer, `{"Attributes":{`+
+				`"VisibilityTimeout":"30","DelaySeconds":"0","ReceiveMessageWaitTimeSeconds":"0",`+
+				`"FifoQueue":"true","ContentBasedDeduplication":"true"}}`)
 		case strings.HasSuffix(target, "SetQueueAttributes"):
 			var payload struct {
 				Attributes map[string]string `json:"Attributes"`
