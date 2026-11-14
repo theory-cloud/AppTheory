@@ -394,6 +394,8 @@ const assertions = {
       "events-queue-dlq",
       "simple-queue",
       "simple-queue-dlq",
+      "persistence-events",
+      "persistence-events-dlq",
     ]) {
       assert.ok(queues.has(name), `missing queue ${name}`);
     }
@@ -402,6 +404,14 @@ const assertions = {
     assert.equal(queues.get("simple-queue").RedrivePolicy.maxReceiveCount, 3);
     assert.equal(queues.get("contract-events").VisibilityTimeout, 60);
     assert.equal(queues.get("events-queue").VisibilityTimeout, 300);
+    // The --data-dir restart row: a queue no consumer drains, with a redrive
+    // policy and a visibility timeout the third session changes through context.
+    assert.equal(queues.get("persistence-events").RedrivePolicy.maxReceiveCount, 4);
+    assert.equal(queues.get("persistence-events").VisibilityTimeout, 90);
+    assert.ok(
+      !queues.has("persistence-events-extra"),
+      "the context-gated queue must not exist in the committed template",
+    );
 
     const mappings = byType("AWS::Lambda::EventSourceMapping").map(
       ([, mapping]) => mapping.Properties,
