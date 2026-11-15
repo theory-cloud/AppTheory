@@ -900,16 +900,26 @@ require_contains(
     "bash scripts/verify-runtime-floor-claims.sh",
     "CI release/security gates must fail closed on unsupported Python/Node floor claims",
 )
-require_contains(
+require_not_contains(
     "scripts/verify-rubric.sh",
     "bash ./scripts/verify-release-train-promotion.sh --self-test",
-    "the full rubric must include release train provenance self-tests",
+    "the full rubric must not repeat the release train self-test the required Release/security gates job already runs",
 )
-require_contains(
+require_not_contains(
     "scripts/verify-rubric.sh",
     "bash ./scripts/verify-release-cycle.sh",
-    "the full rubric must include the deterministic full-cycle release regression",
+    "the full rubric must not repeat the release-cycle regression the required Release/security gates job already runs",
 )
+for release_security_step in (
+    "bash scripts/verify-release-train-promotion.sh --self-test",
+    "bash scripts/verify-release-cycle.sh",
+):
+    require_job_contains(
+        ".github/workflows/ci.yml",
+        "release-security-gates",
+        release_security_step,
+        "the required Release/security gates job must own the release-train and release-cycle invariants once",
+    )
 require_contains(
     "scripts/verify-release-gates.sh",
     "bash ./scripts/verify-runtime-floor-claims.sh",

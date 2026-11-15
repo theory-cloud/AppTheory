@@ -266,6 +266,12 @@ passes, so when that record applies the standalone gate verifies it instead of
 packing a third and fourth time. A profile or toolchain mismatch falls through to
 the real packaging command.
 
+The release-train provenance self-test and the deterministic release-cycle
+regression are owned by the required `Release/security gates` job, which runs
+both on every staging pull request. `make rubric` no longer repeats them: the
+merge already requires that context, so a second run would duplicate a check the
+branch cannot merge without.
+
 The CDK TypeScript pack and Python build appear in the release-gates step as
 `scripts/verify-cdk-packaging.sh`. At rubric nesting the wrapper declares that
 the two deterministic-build passes own those two package builds; the composed
