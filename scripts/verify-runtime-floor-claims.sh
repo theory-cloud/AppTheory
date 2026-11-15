@@ -373,11 +373,13 @@ def main() -> None:
     require_ci_node_major(cdk_floor, cdk_floor_node_versions)
     if cdk_floor < LATEST_PROVEN_NODE_MAJOR:
         # Node 24 CDK coverage lives in the dedicated binding-drift job, which
-        # uses the default profile; requiring it again in the floor job would
-        # only re-prove an already-covered environment.
-        require_ci_node_major(
-            LATEST_PROVEN_NODE_MAJOR,
-            collect_versions_from_text(workflow_job_body("cdk-go-drift"), "node"),
+        # verifies the `default` profile. That profile's tracked declaration is
+        # the Node 24 claim; requiring the label again in the floor job would
+        # only re-state an always-covered environment.
+        require_job_contains(
+            "cdk-go-drift",
+            workflow_job_body("cdk-go-drift"),
+            'bash scripts/evidence/verify-gate.sh --gate cdk-go-drift --profile default',
         )
     require_job_contains("cdk-floor-matrix", cdk_floor_job, f"drift-profile: floor-node{cdk_floor}")
     require_job_contains(

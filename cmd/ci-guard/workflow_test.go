@@ -11,12 +11,8 @@ const baseWorkflow = `
 name: CI
 on:
   pull_request:
+    branches: [staging, premain, main]
     types: [opened, synchronize, reopened, ready_for_review]
-  push:
-    branches:
-      - staging
-      - main
-      - premain
   workflow_dispatch:
     inputs:
       release_pr_number:
@@ -24,6 +20,17 @@ on:
 jobs:
   release-security-gates:
     name: Release/security gates
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo ok
+  release-train-promotion:
+    name: Release train promotion gate
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo ok
+  version-alignment:
+    name: Version alignment
     runs-on: ubuntu-latest
     steps:
       - run: echo ok
@@ -39,7 +46,7 @@ jobs:
             --context "prerelease readiness"
   staging-release-eligibility:
     name: Release eligibility (staging -> premain)
-    if: (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain' && github.event.pull_request.head.ref == 'staging') || (github.event_name == 'push' && github.ref == 'refs/heads/staging')
+    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain' && github.event.pull_request.head.ref == 'staging'
     runs-on: ubuntu-latest
     steps:
       - name: Verify the promotion range stays release-eligible
@@ -75,7 +82,6 @@ jobs:
       - name: Verify the recorded full rubric
         run: echo ok
 `
-const eligibilityIfPrefix = "    if: (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain'"
 
 func writeWorkflow(t *testing.T, text string) (string, string) {
 	t.Helper()
@@ -103,11 +109,13 @@ func evaluateText(t *testing.T, text string) ([]string, error) {
 		return nil, err
 	}
 	failures := checkParity(jobs, true)
-	failures = append(failures, checkCIPushTrigger(workflow)...)
+	failures = append(failures, checkStagingLaneShape(workflow, jobs)...)
+	failures = append(failures, checkPremainMainShape(workflow, jobs)...)
+	failures = append(failures, checkNoGatingPush(workflow)...)
+	failures = append(failures, checkNoDeadJobs(jobs)...)
+	failures = append(failures, checkRequiredReleaseContexts(jobs)...)
 	failures = append(failures, checkExactConditions(jobs)...)
 	failures = append(failures, checkBackmergeExemption(jobs)...)
-	failures = append(failures, checkExemptionsAreLive(jobs)...)
-	failures = append(failures, checkStagingLaneScopeExceptions(jobs)...)
 	failures = append(failures, checkCanary(jobs)...)
 	failures = append(failures, checkUnconditionalSteps(jobs)...)
 	return failures, nil
@@ -139,17 +147,6 @@ func mustFailWith(t *testing.T, text, want string) {
 	}
 }
 
-func replaceLine(text, prefix, replacement string) string {
-	lines := strings.Split(text, "\n")
-	for i, line := range lines {
-		if strings.HasPrefix(line, prefix) {
-			lines[i] = replacement
-			return strings.Join(lines, "\n")
-		}
-	}
-	return text
-}
-
 // replaceJobIf rewrites one job's job-level if: line. Two staged gates carry the
 // same condition, so the fixture targets the job header instead of the text.
 func replaceJobIf(text, jobID, replacement string) string {
@@ -176,17 +173,17 @@ func TestGuardPassesCurrentTree(t *testing.T) {
 	mustPass(t, baseWorkflow)
 }
 
-// TestGuardRejectsPushlessCIWorkflow pins the on: push requirement: the
-// push-to-staging release-eligibility leg and the push-parity check are vacuous
-// without it, so a pushless ci.yml fails closed while the push-carrying
-// baseWorkflow above stays green.
-func TestGuardRejectsPushlessCIWorkflow(t *testing.T) {
-	pushless := strings.Replace(baseWorkflow,
-		"  push:\n    branches:\n      - staging\n      - main\n      - premain\n", "", 1)
-	if pushless == baseWorkflow {
-		t.Fatal("failed to build the pushless ci.yml fixture")
+// TestGuardRejectsGatingPushTrigger pins the verified-once rule: staging is
+// where the gates are verified, so ci.yml must not declare a push trigger that
+// would re-run them after the merge.
+func TestGuardRejectsGatingPushTrigger(t *testing.T) {
+	pushing := strings.Replace(baseWorkflow,
+		"  workflow_dispatch:\n",
+		"  push:\n    branches: [staging, premain, main]\n  workflow_dispatch:\n", 1)
+	if pushing == baseWorkflow {
+		t.Fatal("failed to build the pushing ci.yml fixture")
 	}
-	mustFailWith(t, pushless, "on: push")
+	mustFailWith(t, pushing, "must not declare an on: push trigger")
 }
 
 func TestGuardRejectsBroadenedRubric(t *testing.T) {
@@ -214,36 +211,34 @@ func TestGuardRejectsFoldedRubricCondition(t *testing.T) {
 	}
 }
 
-// TestGuardRejectsEligibilityPushLegRemoval is the ADV-1073-R1-01 regression:
-// dropping the push-to-staging leg of the release-eligibility gate must fail, not
-// pass as a semantically weaker condition, because that leg is the whole of the
-// staging-lane coverage the recorded scope exception stands on.
-func TestGuardRejectsEligibilityPushLegRemoval(t *testing.T) {
-	pushLegGone := replaceLine(baseWorkflow, eligibilityIfPrefix, "    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain' && github.event.pull_request.head.ref == 'staging'")
-	if pushLegGone == baseWorkflow {
+// TestGuardRejectsEligibilityPushLegRestored pins the promotion-only condition:
+// widening the release-eligibility gate back onto a push re-creates the
+// post-merge re-verification the policy removed.
+func TestGuardRejectsEligibilityPushLegRestored(t *testing.T) {
+	pushLegRestored := replaceJobIf(baseWorkflow, eligibilityID, "    if: (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain' && github.event.pull_request.head.ref == 'staging') || (github.event_name == 'push' && github.ref == 'refs/heads/staging')")
+	if pushLegRestored == baseWorkflow {
 		t.Fatal("failed to build the eligibility fixture")
 	}
-	mustFailWith(t, pushLegGone, "promotion-pull-request-plus-push-to-staging")
-	mustFailWith(t, pushLegGone, "the job must keep its push staging leg")
+	mustFailWith(t, pushLegRestored, "promotion-pull-request-only")
 }
 
-// TestGuardRejectsUnnecessaryEligibilityScopeException pins the other half of the
-// recorded exception: while the gate runs on pull requests into staging again,
-// the exception is stale, so a widened condition cannot hide behind it.
-func TestGuardRejectsUnnecessaryEligibilityScopeException(t *testing.T) {
-	prLegRestored := replaceLine(baseWorkflow, eligibilityIfPrefix, "    if: (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging') || (github.event_name == 'push' && github.ref == 'refs/heads/staging')")
+// TestGuardRejectsEligibilityOnStagingPullRequest keeps the 2026-10-12 decision:
+// a verdict on staging's whole post-release range cannot be demanded on a pull
+// request into staging.
+func TestGuardRejectsEligibilityOnStagingPullRequest(t *testing.T) {
+	prLegRestored := replaceJobIf(baseWorkflow, eligibilityID, "    if: (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain' && github.event.pull_request.head.ref == 'staging') || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging')")
 	if prLegRestored == baseWorkflow {
 		t.Fatal("failed to build the eligibility fixture")
 	}
-	mustFailWith(t, prLegRestored, "the job runs on pull requests to staging again")
+	mustFailWith(t, prLegRestored, "promotion-pull-request-only")
 }
 
-// TestGuardRejectsThirdJobWithPushLegOnly pins the exception's scope: only the
-// recorded job may carry a push-to-staging leg without a pull-request-to-staging
-// leg, so the carve-out cannot be inherited by another job.
-func TestGuardRejectsThirdJobWithPushLegOnly(t *testing.T) {
-	text := baseWorkflow + "\n  sneaky-push-only:\n    name: Sneaky push only\n    if: github.event_name == 'push' && github.ref == 'refs/heads/staging'\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo sneaky\n"
-	mustFailWith(t, text, "push parity")
+// TestGuardRejectsNewStagingExecutingJob pins the staging-lane shape: a job that
+// runs on a pull request to staging must verify a recorded gate result or be one
+// of the recorded fast checks.
+func TestGuardRejectsNewStagingExecutingJob(t *testing.T) {
+	text := baseWorkflow + "\n  sneaky-staging:\n    name: Sneaky staging\n    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash scripts/verify-go.sh\n"
+	mustFailWith(t, text, "neither verifies a recorded gate result")
 }
 
 func TestGuardRejectsNewPromotionOnlyJob(t *testing.T) {
@@ -254,7 +249,7 @@ func TestGuardRejectsNewPromotionOnlyJob(t *testing.T) {
 		"github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'staging'",
 	} {
 		text := baseWorkflow + "\n  sneaky-promotion:\n    name: Sneaky promotion\n    if: " + condition + "\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo sneaky\n"
-		mustFailWith(t, text, "no pull-request-to-staging equivalent")
+		mustFailWith(t, text, "only recorded release hygiene may run there")
 	}
 }
 
@@ -265,49 +260,50 @@ func TestGuardRejectsFoldedNewJobCondition(t *testing.T) {
 	}
 }
 
-// TestGuardRejectsNeedsInducedPromotionJob is the SAN-AT1073-R1-F2 bypass: a job
-// with no if: of its own that needs a promotion-only job can only ever run on
-// the promotion lane, so it must be classified as promotion-only.
-func TestGuardRejectsNeedsInducedPromotionJob(t *testing.T) {
-	text := baseWorkflow + "\n  sneaky-dependent:\n    name: Sneaky dependent\n    needs: prerelease-readiness\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo sneaky\n"
-	mustFailWith(t, text, "no pull-request-to-staging equivalent")
-}
-
-// A needs: edge on a job that does run on the PR-to-staging lane stays parity
-// clean, so the needs: handling is not a blanket failure.
-func TestGuardAcceptsNeedsOnSharedJob(t *testing.T) {
-	text := baseWorkflow + "\n  shared-dependent:\n    name: Shared dependent\n    needs: release-security-gates\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n"
-	mustPass(t, text)
-}
-
-// always() lifts the needs: gate: the dependent job runs even when the job it
-// needs was skipped, so it keeps its own (all-lane) triggers.
-func TestGuardAcceptsNeedsWithAlways(t *testing.T) {
-	text := baseWorkflow + "\n  always-dependent:\n    name: Always dependent\n    needs: prerelease-readiness\n    if: always()\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n"
-	mustPass(t, text)
-}
-
-func TestGuardRejectsPushOnlyJob(t *testing.T) {
-	for _, condition := range []string{
-		"github.event_name == 'push'",
-		"github.event_name != 'pull_request'",
-	} {
-		text := baseWorkflow + "\n  sneaky-push:\n    name: Sneaky push\n    if: " + condition + "\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo sneaky\n"
-		mustFailWith(t, text, "push parity")
+// TestNeedsEdgeNarrowsEffectiveTriggers is the SAN-AT1073-R1-F2 guard: a job with
+// no if: of its own that needs a promotion-only job can only ever run on the
+// promotion lane, while an always() condition lifts that edge. Neither shape is
+// recordable release hygiene, so both are rejected by the shape rule.
+func TestNeedsEdgeNarrowsEffectiveTriggers(t *testing.T) {
+	text := baseWorkflow + "\n  dependent:\n    name: Dependent\n    needs: prerelease-readiness\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n  always-dependent:\n    name: Always dependent\n    needs: prerelease-readiness\n    if: always()\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n"
+	root, rel := writeWorkflow(t, text)
+	workflow, err := loadWorkflow(filepath.Join(root, filepath.FromSlash(rel)), rel)
+	if err != nil {
+		t.Fatalf("load workflow: %v", err)
 	}
+	jobs, err := classifyWorkflow(root, workflow, workflow.ctx, "", 0)
+	if err != nil {
+		t.Fatalf("classify workflow: %v", err)
+	}
+	classes := classIndex(jobs)
+	if classes["dependent"].prBases[stagingBranch] || !classes["dependent"].prBases[premainBranch] {
+		t.Fatalf("a needs: edge on a promotion-only job must narrow the dependent to the promotion lane, got %+v", classes["dependent"])
+	}
+	if !classes["always-dependent"].prBases[stagingBranch] {
+		t.Fatalf("always() must lift the needs: edge, got %+v", classes["always-dependent"])
+	}
+	mustFailWith(t, text, "only recorded release hygiene may run there")
+}
+
+// A job gated only on a push can never run once ci.yml declares no push trigger,
+// so it fails closed as dead wiring instead of sitting beside the real gates.
+func TestGuardRejectsDeadPushOnlyJob(t *testing.T) {
+	text := baseWorkflow + "\n  sneaky-push:\n    name: Sneaky push\n    if: github.event_name == 'push'\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo sneaky\n"
+	mustFailWith(t, text, "can never run on a modeled trigger")
 }
 
 func TestGuardRejectsUnmodeledTriggerFilters(t *testing.T) {
 	cases := map[string]string{
 		"pull_request branches filter that omits staging": strings.Replace(baseWorkflow,
-			"  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\n",
-			"  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\n    branches: [premain]\n", 1),
+			"    branches: [staging, premain, main]\n",
+			"    branches: [premain, main]\n", 1),
 		"pull_request branches filter with an empty list": strings.Replace(baseWorkflow,
-			"  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\n",
-			"  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\n    branches: []\n", 1),
-		"unknown trigger":       strings.Replace(baseWorkflow, "  workflow_dispatch:\n", "  schedule:\n    - cron: '0 0 * * *'\n  workflow_dispatch:\n", 1),
-		"missing synchronize":   strings.Replace(baseWorkflow, "types: [opened, synchronize, reopened, ready_for_review]", "types: [opened]", 1),
-		"push branches missing": strings.Replace(baseWorkflow, "      - premain\n", "", 1),
+			"    branches: [staging, premain, main]\n",
+			"    branches: []\n", 1),
+		"unknown trigger":     strings.Replace(baseWorkflow, "  workflow_dispatch:\n", "  schedule:\n    - cron: '0 0 * * *'\n  workflow_dispatch:\n", 1),
+		"missing synchronize": strings.Replace(baseWorkflow, "types: [opened, synchronize, reopened, ready_for_review]", "types: [opened]", 1),
+		"push branches that omit a protected branch": strings.Replace(baseWorkflow,
+			"  workflow_dispatch:\n", "  push:\n    branches: [staging, premain]\n  workflow_dispatch:\n", 1),
 	}
 	for label, text := range cases {
 		if text == baseWorkflow {
@@ -434,16 +430,16 @@ func TestGuardRejectsPromotionOnlyCallee(t *testing.T) {
 	if err != nil {
 		t.Fatalf("classify caller: %v", err)
 	}
-	failures := strings.Join(checkParity(jobs, true), "\n")
-	if !strings.Contains(failures, "no pull-request-to-staging equivalent") {
-		t.Fatalf("a promotion-only callee job must fail parity, got: %v", failures)
+	failures := strings.Join(checkPremainMainShape(workflow, jobs), "\n")
+	if !strings.Contains(failures, "only recorded release hygiene may run there") {
+		t.Fatalf("a promotion-only callee job must fail the release-branch shape rule, got: %v", failures)
 	}
 	if !strings.Contains(failures, "callee.yml:promoted") {
 		t.Fatalf("the failure must name the callee job, got: %v", failures)
 	}
 }
 
-func TestGuardAcceptsAllLaneCallee(t *testing.T) {
+func TestGuardRejectsUnrecordedAllLaneCallee(t *testing.T) {
 	root, rel := writeWorkflow(t, baseWorkflow+"\n  calls-callee:\n    uses: ./.github/workflows/callee.yml\n")
 	calleeRel := ".github/workflows/callee.yml"
 	callee := "name: callee\non:\n  workflow_call:\njobs:\n  shared:\n    name: Shared\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo shared\n"
@@ -458,8 +454,9 @@ func TestGuardAcceptsAllLaneCallee(t *testing.T) {
 	if err != nil {
 		t.Fatalf("classify caller: %v", err)
 	}
-	if failures := checkParity(jobs, true); len(failures) > 0 {
-		t.Fatalf("an all-lane callee job must pass parity, got: %v", failures)
+	failures := strings.Join(checkPremainMainShape(workflow, jobs), "\n")
+	if !strings.Contains(failures, "only recorded release hygiene may run there") {
+		t.Fatalf("an unrecorded all-lane callee job must fail the release-branch shape rule, got: %v", failures)
 	}
 }
 

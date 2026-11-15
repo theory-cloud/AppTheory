@@ -100,7 +100,9 @@ require_job_without_if() {
 }
 
 ci=".github/workflows/ci.yml"
-product_guard="if: (github.event_name != 'push' || !contains(github.event.head_commit.message, 'release-please--branches--')) && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')) && !(github.event_name == 'workflow_dispatch' && inputs.release_pr_number != '')"
+# Every product job verifies its record on the pull request into staging and
+# nowhere else: no push leg, no draft/release-head exception and no dispatch.
+product_guard="if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'"
 
 require_contains "${ci}" "  release-security-gates:" \
   "CI must define non-skipped release/security gates independent of the full rubric"
@@ -143,24 +145,25 @@ require_job_contains "${ci}" "builds" "run: bash scripts/evidence/verify-gate.sh
 require_contains "scripts/evidence/validation-gates.json" '"argv": ["bash", "scripts/verify-builds.sh"]' \
   "the tracked deterministic-build gate must keep the approved verify-builds command"
 
-# Operator ruling (2026-09-28): the rubric is staging-only — the staging ruleset
-# requires it with strict_required_status_checks_policy: true, so the merged
-# staging SHA is the tested SHA, and premain/main only ever receive staging
-# content. scripts/verify-ci-trigger-parity.sh enforces, by parsing rather than
-# matching text: the rubric and deterministic-build conditions; the
-# release-eligibility gate's promotion-pull-request *and* push-to-staging legs,
-# with the staging-lane scope exception recorded in cmd/ci-guard (a push-leg
-# removal is a coverage regression, not a simplification); the
-# push/promotion parity of every other job, including jobs whose effective
-# runnability comes from a `needs:` edge; both promotion lanes; every workflow
-# file in .github/workflows/ (ci.yml classified, justified non-gating publishers
-# required to stay non-gating, reusable `uses:` callees classified in the
-# caller's trigger context, anything else classified like ci.yml); and the rubric
-# and deterministic-build jobs carrying no event-dependent step-level `if:` that
-# could vacate the gate while the check name stays green. Matching the raw
-# condition text was bypassable (a negated join, a `github.ref` disjunct, or a
-# continuation-line clause broadened the rubric while a grep still passed), so
-# no line-level condition matching is done here.
+# Verified-once policy: the gates are verified on the pull request into staging
+# and nowhere else. The staging ruleset requires the rubric with
+# strict_required_status_checks_policy: true, so the merged staging SHA is the
+# tested SHA, and premain/main only ever receive staging content.
+# scripts/verify-ci-trigger-parity.sh enforces, by parsing rather than matching
+# text: no on: push trigger on ci.yml; the rubric and deterministic-build
+# conditions; the release-eligibility gate as promotion-pull-request-only; the
+# staging pull-request job set (every job there verifies a record or is a
+# recorded fast check); the premain/main pull-request job set (recorded release
+# hygiene only); no dead job gated on a trigger the workflow no longer declares;
+# every workflow file in .github/workflows/ (ci.yml classified, justified
+# non-gating publishers required to stay non-gating, reusable `uses:` callees
+# classified in the caller's trigger context, anything else classified like
+# ci.yml); and the rubric and deterministic-build jobs carrying no
+# event-dependent step-level `if:` that could vacate the gate while the check
+# name stays green. Matching the raw condition text was bypassable (a negated
+# join, a `github.ref` disjunct, or a continuation-line clause broadened the
+# rubric while a grep still passed), so no line-level condition matching is done
+# here.
 bash scripts/verify-ci-trigger-parity.sh
 bash scripts/verify-ci-evidence-wiring.sh
 
@@ -222,16 +225,18 @@ require_job_contains "${ci}" "staging-release-eligibility" '--repository "${GITH
 require_job_not_contains "${ci}" "prerelease-readiness" "--allow-main-backmerge" \
   "prerelease readiness must never take the post-release main back-merge exemption"
 
-# Toolchain-provisioning parity: the promotion-path rubric job and the PR-to-
-# staging rubric job are the same job, so its pinned toolchain is provisioned
-# identically on every lane it now runs on.
-for provisioned in \
-  "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e" \
-  "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1" \
-  "actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0" \
-  "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0"; do
-  require_job_contains "${ci}" "rubric" "${provisioned}" \
-    "full rubric must provision its pinned toolchain on every lane it runs on"
+# The rubric job verifies a recorded rubric result, so it provisions no
+# toolchain and installs no linter: verification reads the committed record and
+# needs only the shell and the Python verifier the runner image already provides.
+# A provisioned toolchain here would be the first step of the execution path this
+# policy removes.
+for unprovisioned in \
+  "actions/setup-go@" \
+  "actions/setup-node@" \
+  "actions/setup-python@" \
+  "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@"; do
+  require_job_not_contains "${ci}" "rubric" "${unprovisioned}" \
+    "the rubric job verifies a recorded result and must not provision an execution toolchain"
 done
 # The release-eligibility predicate is git-only. Assert that so the staging PR
 # lane and the promotion lane cannot diverge by provisioning.

@@ -496,17 +496,36 @@ release operations run only from protected branches.
 
 | Leg | Event | Old behavior | New behavior |
 | --- | --- | --- | --- |
-| `pr-staging` | pull request → staging | every job executes on the merge ref | required product jobs reuse applicable evidence for their tracked profile; untrusted or unmatched inputs execute |
-| `push-staging` | merge push → staging | every job re-executes on the merged tree | product and floor jobs reuse each profile's proof; release/security gates execute cheaply |
-| `pr-staging-premain` | staging → premain promotion PR | CI product set plus promotion readiness/eligibility | promotion readiness/eligibility plus evidenced product checks per profile; no source rerun |
-| `push-premain` | promotion merge push → premain | CI product set re-executes, then release-please generates the RC PR | CI reuses each profile's evidence; release-please generation and artifact sync run |
-| `release-pr-premain` | generated RC release PR | dispatched CI re-executes the product suite on generated artifacts | release-delta packaging/drift smoke once; product and floor jobs verify their profile records |
-| `release-merge-premain` | RC merge/publish on premain | CI product set re-executes, then the publisher builds assets again | product checks verify profile evidence; signatures and version state run; publisher builds real Linux assets once |
-| `pr-premain-main` | premain → main promotion PR | CI product set plus promotion readiness/eligibility | promotion readiness/eligibility plus evidenced product checks per profile; no source rerun |
-| `push-main` | promotion merge push → main | CI product set re-executes, then release-please generates the stable PR | CI reuses each profile's evidence; release-please generation and artifact sync run |
-| `release-pr-main` | generated stable release PR | dispatched CI re-executes the product suite on generated artifacts | release-delta packaging/drift smoke once; product and floor jobs verify their profile records |
-| `release-merge-main` | stable merge/publish on main | CI product set re-executes, then the publisher builds assets again | product checks verify profile evidence; signatures and version state run; publisher builds real Linux assets once |
-| `backmerge-main-staging` | main → staging back-merge PR | full rubric, builds, examples and matrix re-execute | evidenced pure version-transformation reuse per profile; a real source delta executes the affected gates |
+| `pr-staging` | pull request → staging | every job executes on the merge ref | every product job verifies the committed record for its tracked profile; nothing executes, and a missing or stale record fails with the local collection command |
+| `push-staging` | merge push → staging | every job re-executes on the merged tree | publish side effects only (pages); no gate-class job runs on the merge |
+| `pr-staging-premain` | staging → premain promotion PR | CI product set plus promotion readiness/eligibility | release hygiene only: promotion gate, version alignment, release/security gates and dependency-scan freshness; no product job runs |
+| `push-premain` | promotion merge push → premain | CI product set re-executes, then release-please generates the RC PR | release-please generation and publish only; no gate re-verification |
+| `release-pr-premain` | generated RC release PR | dispatched CI re-executes the product suite on generated artifacts | generated release PR: release-delta smoke once over generated artifacts, plus release/security gates and version alignment; no product job runs |
+| `release-merge-premain` | RC merge/publish on premain | CI product set re-executes, then the publisher builds assets again | publish only; the publisher builds real Linux assets once and no gate re-verifies |
+| `pr-premain-main` | premain → main promotion PR | CI product set plus promotion readiness/eligibility | release hygiene only: promotion gate, version alignment and release/security gates; no product job runs |
+| `push-main` | promotion merge push → main | CI product set re-executes, then release-please generates the stable PR | release-please generation and publish only; no gate re-verification |
+| `release-pr-main` | generated stable release PR | dispatched CI re-executes the product suite on generated artifacts | generated release PR: release-delta smoke once over generated artifacts, plus release/security gates and version alignment; no product job runs |
+| `release-merge-main` | stable merge/publish on main | CI product set re-executes, then the publisher builds assets again | publish only; no gate re-verifies |
+| `backmerge-main-staging` | main → staging back-merge PR | full rubric, builds, examples and matrix re-execute | records-only evidence refresh on the back-merge branch, then the staging pull-request verification set; a real source delta needs the affected gates recollected |
+
+No gate runs on a push, on a release branch, or at deploy. `ci.yml` declares a
+pull-request trigger scoped to `staging`, `premain` and `main`, plus the release
+dispatch; every job in it is either a staging-pull-request evidence verify, one
+of the recorded fast checks (`release-train-promotion`,
+`release-security-gates`, `version-alignment`), or recorded release hygiene
+(`release-delta`, `security-refresh`, `prerelease-readiness`,
+`staging-release-eligibility`). `cmd/ci-guard` fails closed on anything else,
+including a push trigger, a job no modeled trigger can reach, or a job that
+starts executing a gate command.
+
+The staging required contexts are exactly the checks that report on every
+staging pull request: `Rubric (full gate set)`, `Examples (local harness)`,
+`Version alignment` and `Release/security gates`. On `premain` and `main` the
+required context is the head-branch check `Release train promotion gate`, which
+keeps its accepted heads (`staging`, and the generated
+`release-please--branches--premain` / `--main` heads); `Version alignment` and
+`Release/security gates` also report there, and `security-refresh` fails a
+promotion whose scan record is older than 24 hours.
 
 The lower-floor matrix maps each cell to explicit profiles:
 

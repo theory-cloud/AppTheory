@@ -274,13 +274,7 @@ release_please_draft_guard = (
     "(github.event.pull_request.head.ref != 'release-please--branches--premain' && "
     "github.event.pull_request.head.ref != 'release-please--branches--main')"
 )
-product_guard = (
-    "if: (github.event_name != 'push' || !contains(github.event.head_commit.message, 'release-please--branches--')) && "
-    "(github.event_name != 'pull_request' || (github.event.pull_request.draft == false && "
-    "github.event.pull_request.head.ref != 'release-please--branches--premain' && "
-    "github.event.pull_request.head.ref != 'release-please--branches--main')) && "
-    "!(github.event_name == 'workflow_dispatch' && inputs.release_pr_number != '')"
-)
+product_guard = "if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'"
 require_job_contains(
     ".github/workflows/ci.yml",
     "version-alignment",
@@ -292,7 +286,7 @@ for job in ("go", "ts", "py", "contract-tests", "cdk-go-drift", "runtime-floor-m
         ".github/workflows/ci.yml",
         job,
         product_guard,
-        "product jobs must skip only the generated release-only transformation, never an ordinary source change",
+        "product jobs must verify their record on the staging pull request and nowhere else",
     )
 require_job_contains(
     ".github/workflows/ci.yml",
