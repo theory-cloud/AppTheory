@@ -10,11 +10,6 @@ on:
       - premain
   workflow_dispatch:
     inputs:
-      run_full_rubric:
-        description: "Run Rubric (full gate set)"
-        required: false
-        type: boolean
-        default: true
       release_pr_number:
         description: "Generated release PR number for head-bound release checks"
         required: false
@@ -159,11 +154,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      # The produced-record manifest path needs the runner context, which
-      # GitHub does not expose to jobs.<job_id>.env. Export it from a step so
-      # the gate, resolve and upload steps all see the same path.
-      - name: Expose produced evidence manifest path
-        run: printf 'APPTHEORY_EVIDENCE_PRODUCED_MANIFEST=%s\n' "${RUNNER_TEMP}/produced-records.txt" >> "${GITHUB_ENV}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -189,23 +179,12 @@ jobs:
             py/requirements-build.txt
             py/requirements-lint.txt
             cdk/requirements-build.txt
-      # A fresh dependency-scoped scan is reusable across train legs for 24h
-      # (tracked in scripts/evidence/validation-gates.json). A stale scan, a
-      # changed dependency input or untrusted PR origin executes the scan.
-      - name: Verify dependency freshness or scan
-        run: bash scripts/evidence/verify-or-execute.sh --gate security-refresh --profile default
-      - name: Resolve produced evidence records
-        id: produced
-        if: always()
-        run: python3 scripts/evidence/validation_evidence.py produced-records --require-manifest
-      - name: Preserve produced evidence records
-        if: always() && steps.produced.outputs.any == 'true'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: produced-records-security-refresh
-          path: ${{ steps.produced.outputs.paths }}
-          if-no-files-found: error
-          retention-days: 14
+      # The dependency scan is a local, network-bound proof. This job verifies
+      # its record and its freshness bound: the tracked maxAgeSeconds is 24h, so
+      # a scan older than that fails here instead of shipping. Nothing is
+      # scanned in CI.
+      - name: Verify the recorded dependency scan and its freshness
+        run: bash scripts/evidence/verify-gate.sh --gate security-refresh --profile default
 
   release-delta:
     name: Release delta validation
@@ -256,11 +235,12 @@ jobs:
             py/requirements-build.txt
       # Generated release PRs never repeat the source rubric, contract corpus,
       # examples harness or language test suites. Version coupling, regeneration
-      # equality and package smoke run once for the changed artifact set.
+      # equality and package smoke run once for the changed artifact set. This is
+      # an artifact-production smoke over generated content that does not exist
+      # locally before release-please generates it, so it is the one job that
+      # executes; it is never reusable evidence and never verifies a record.
       - name: Verify generated release delta
-        env:
-          EVIDENCE_FORCE_EXECUTE: "true"
-        run: bash scripts/evidence/verify-or-execute.sh --gate release-delta
+        run: python3 scripts/evidence/validation_evidence.py run --gate release-delta --forced
 
   runtime-floor-matrix:
     name: Runtime floor matrix (Node ${{ matrix.node-version }}, Python ${{ matrix.python-version }})
@@ -291,11 +271,6 @@ jobs:
             py-profile: floor-py3.12
             contract-profile: floor-node24-py3.12
     steps:
-      # The produced-record manifest path needs the runner context, which
-      # GitHub does not expose to jobs.<job_id>.env. Export it from a step so
-      # the gate, resolve and upload steps all see the same path.
-      - name: Expose produced evidence manifest path
-        run: printf 'APPTHEORY_EVIDENCE_PRODUCED_MANIFEST=%s\n' "${RUNNER_TEMP}/produced-records.txt" >> "${GITHUB_ENV}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -314,29 +289,15 @@ jobs:
           cache-dependency-path: |
             py/pyproject.toml
             py/requirements-build.txt
-      # The floor environment is a tracked proof profile, not a forced rerun on
-      # every event. A committed record for this profile and these exact inputs
-      # verifies; otherwise the real command executes once and the record it
-      # actually wrote is preserved so a single commit makes every later leg
-      # reuse it. The upload requires those exact produced paths, so a stale
-      # checkout record is never published as if this run produced it.
+      # The floor environment is a tracked proof profile. This job verifies the
+      # committed record for this profile and these exact inputs; a missing or
+      # stale record fails here and names the local collection command. Nothing
+      # executes on this runner.
       - name: Verify lower-floor package and fixture proof
         run: |
-          bash scripts/evidence/verify-or-execute.sh --gate ts --profile "${{ matrix.ts-profile }}"
-          bash scripts/evidence/verify-or-execute.sh --gate py --profile "${{ matrix.py-profile }}"
-          bash scripts/evidence/verify-or-execute.sh --gate contract-tests --profile "${{ matrix.contract-profile }}"
-      - name: Resolve produced floor records
-        id: produced
-        if: always()
-        run: python3 scripts/evidence/validation_evidence.py produced-records --require-manifest
-      - name: Preserve produced floor records
-        if: always() && steps.produced.outputs.any == 'true'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: floor-records-node${{ matrix.node-version }}-py${{ matrix.python-version }}
-          path: ${{ steps.produced.outputs.paths }}
-          if-no-files-found: error
-          retention-days: 14
+          bash scripts/evidence/verify-gate.sh --gate ts --profile "${{ matrix.ts-profile }}"
+          bash scripts/evidence/verify-gate.sh --gate py --profile "${{ matrix.py-profile }}"
+          bash scripts/evidence/verify-gate.sh --gate contract-tests --profile "${{ matrix.contract-profile }}"
 
   cdk-floor-matrix:
     name: CDK floor matrix (Node ${{ matrix.node-version }})
@@ -351,11 +312,6 @@ jobs:
           - node-version: "22"
             drift-profile: floor-node22
     steps:
-      # The produced-record manifest path needs the runner context, which
-      # GitHub does not expose to jobs.<job_id>.env. Export it from a step so
-      # the gate, resolve and upload steps all see the same path.
-      - name: Expose produced evidence manifest path
-        run: printf 'APPTHEORY_EVIDENCE_PRODUCED_MANIFEST=%s\n' "${RUNNER_TEMP}/produced-records.txt" >> "${GITHUB_ENV}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
@@ -370,24 +326,12 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: "npm"
           cache-dependency-path: cdk/package-lock.json
-      # Same profile mechanism as the runtime floor: the Node 22 binding proof
-      # is produced once and reused by every later leg for these inputs.
+      # Same profile mechanism as the runtime floor: this job verifies the
+      # committed Node 22 binding record instead of regenerating it.
       - name: Verify CDK lower-floor generated binding proof
-        run: bash scripts/evidence/verify-or-execute.sh --gate cdk-go-drift --profile "${{ matrix.drift-profile }}"
+        run: bash scripts/evidence/verify-gate.sh --gate cdk-go-drift --profile "${{ matrix.drift-profile }}"
       - name: Verify CDK dependency engines admit the Node floor
         run: bash scripts/verify-cdk-engines-floor.sh
-      - name: Resolve produced floor records
-        id: produced
-        if: always()
-        run: python3 scripts/evidence/validation_evidence.py produced-records --require-manifest
-      - name: Preserve produced floor records
-        if: always() && steps.produced.outputs.any == 'true'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: cdk-floor-records-node${{ matrix.node-version }}
-          path: ${{ steps.produced.outputs.paths }}
-          if-no-files-found: error
-          retention-days: 14
 
   prerelease-readiness:
     name: Prerelease readiness (staging → premain)
@@ -459,11 +403,6 @@ jobs:
     if: (github.event_name != 'push' || !contains(github.event.head_commit.message, 'release-please--branches--')) && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')) && !(github.event_name == 'workflow_dispatch' && inputs.release_pr_number != '')
     runs-on: ubuntu-latest
     steps:
-      # The produced-record manifest path needs the runner context, which
-      # GitHub does not expose to jobs.<job_id>.env. Export it from a step so
-      # the gate, resolve and upload steps all see the same path.
-      - name: Expose produced evidence manifest path
-        run: printf 'APPTHEORY_EVIDENCE_PRODUCED_MANIFEST=%s\n' "${RUNNER_TEMP}/produced-records.txt" >> "${GITHUB_ENV}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -476,30 +415,13 @@ jobs:
         with:
           node-version: "24"
       - name: Verify Go tests and vet
-        run: bash scripts/evidence/verify-or-execute.sh --gate go --profile default
-      - name: Resolve produced evidence records
-        id: produced
-        if: always()
-        run: python3 scripts/evidence/validation_evidence.py produced-records --require-manifest
-      - name: Preserve produced evidence records
-        if: always() && steps.produced.outputs.any == 'true'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: produced-records-go
-          path: ${{ steps.produced.outputs.paths }}
-          if-no-files-found: error
-          retention-days: 14
+        run: bash scripts/evidence/verify-gate.sh --gate go --profile default
 
   ts:
     name: TypeScript (npm pack)
     if: (github.event_name != 'push' || !contains(github.event.head_commit.message, 'release-please--branches--')) && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')) && !(github.event_name == 'workflow_dispatch' && inputs.release_pr_number != '')
     runs-on: ubuntu-latest
     steps:
-      # The produced-record manifest path needs the runner context, which
-      # GitHub does not expose to jobs.<job_id>.env. Export it from a step so
-      # the gate, resolve and upload steps all see the same path.
-      - name: Expose produced evidence manifest path
-        run: printf 'APPTHEORY_EVIDENCE_PRODUCED_MANIFEST=%s\n' "${RUNNER_TEMP}/produced-records.txt" >> "${GITHUB_ENV}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -507,30 +429,13 @@ jobs:
           cache: "npm"
           cache-dependency-path: ts/package-lock.json
       - name: Verify checked-in dist drift and pack the tarball
-        run: bash scripts/evidence/verify-or-execute.sh --gate ts --profile default
-      - name: Resolve produced evidence records
-        id: produced
-        if: always()
-        run: python3 scripts/evidence/validation_evidence.py produced-records --require-manifest
-      - name: Preserve produced evidence records
-        if: always() && steps.produced.outputs.any == 'true'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: produced-records-ts
-          path: ${{ steps.produced.outputs.paths }}
-          if-no-files-found: error
-          retention-days: 14
+        run: bash scripts/evidence/verify-gate.sh --gate ts --profile default
 
   py:
     name: Python (build wheel + sdist)
     if: (github.event_name != 'push' || !contains(github.event.head_commit.message, 'release-please--branches--')) && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')) && !(github.event_name == 'workflow_dispatch' && inputs.release_pr_number != '')
     runs-on: ubuntu-latest
     steps:
-      # The produced-record manifest path needs the runner context, which
-      # GitHub does not expose to jobs.<job_id>.env. Export it from a step so
-      # the gate, resolve and upload steps all see the same path.
-      - name: Expose produced evidence manifest path
-        run: printf 'APPTHEORY_EVIDENCE_PRODUCED_MANIFEST=%s\n' "${RUNNER_TEMP}/produced-records.txt" >> "${GITHUB_ENV}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -540,30 +445,13 @@ jobs:
             py/pyproject.toml
             py/requirements-build.txt
       - name: Build wheel + sdist
-        run: bash scripts/evidence/verify-or-execute.sh --gate py --profile default
-      - name: Resolve produced evidence records
-        id: produced
-        if: always()
-        run: python3 scripts/evidence/validation_evidence.py produced-records --require-manifest
-      - name: Preserve produced evidence records
-        if: always() && steps.produced.outputs.any == 'true'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: produced-records-py
-          path: ${{ steps.produced.outputs.paths }}
-          if-no-files-found: error
-          retention-days: 14
+        run: bash scripts/evidence/verify-gate.sh --gate py --profile default
 
   builds:
     name: Verify deterministic builds
     if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'
     runs-on: ubuntu-latest
     steps:
-      # The produced-record manifest path needs the runner context, which
-      # GitHub does not expose to jobs.<job_id>.env. Export it from a step so
-      # the gate, resolve and upload steps all see the same path.
-      - name: Expose produced evidence manifest path
-        run: printf 'APPTHEORY_EVIDENCE_PRODUCED_MANIFEST=%s\n' "${RUNNER_TEMP}/produced-records.txt" >> "${GITHUB_ENV}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -590,30 +478,13 @@ jobs:
             py/requirements-lint.txt
             cdk/requirements-build.txt
       - name: Build twice and compare checksums
-        run: bash scripts/evidence/verify-or-execute.sh --gate deterministic-builds --profile default
-      - name: Resolve produced evidence records
-        id: produced
-        if: always()
-        run: python3 scripts/evidence/validation_evidence.py produced-records --require-manifest
-      - name: Preserve produced evidence records
-        if: always() && steps.produced.outputs.any == 'true'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: produced-records-deterministic-builds
-          path: ${{ steps.produced.outputs.paths }}
-          if-no-files-found: error
-          retention-days: 14
+        run: bash scripts/evidence/verify-gate.sh --gate deterministic-builds --profile default
 
   cdk-go-drift:
     name: CDK Go binding drift
     if: (github.event_name != 'push' || !contains(github.event.head_commit.message, 'release-please--branches--')) && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')) && !(github.event_name == 'workflow_dispatch' && inputs.release_pr_number != '')
     runs-on: ubuntu-latest
     steps:
-      # The produced-record manifest path needs the runner context, which
-      # GitHub does not expose to jobs.<job_id>.env. Export it from a step so
-      # the gate, resolve and upload steps all see the same path.
-      - name: Expose produced evidence manifest path
-        run: printf 'APPTHEORY_EVIDENCE_PRODUCED_MANIFEST=%s\n' "${RUNNER_TEMP}/produced-records.txt" >> "${GITHUB_ENV}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
@@ -629,30 +500,13 @@ jobs:
           cache: "npm"
           cache-dependency-path: cdk/package-lock.json
       - name: Verify cdk-go generated binding drift
-        run: bash scripts/evidence/verify-or-execute.sh --gate cdk-go-drift --profile default
-      - name: Resolve produced evidence records
-        id: produced
-        if: always()
-        run: python3 scripts/evidence/validation_evidence.py produced-records --require-manifest
-      - name: Preserve produced evidence records
-        if: always() && steps.produced.outputs.any == 'true'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: produced-records-cdk-go-drift
-          path: ${{ steps.produced.outputs.paths }}
-          if-no-files-found: error
-          retention-days: 14
+        run: bash scripts/evidence/verify-gate.sh --gate cdk-go-drift --profile default
 
   contract-tests:
     name: Contract tests (fixtures)
     if: (github.event_name != 'push' || !contains(github.event.head_commit.message, 'release-please--branches--')) && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')) && !(github.event_name == 'workflow_dispatch' && inputs.release_pr_number != '')
     runs-on: ubuntu-latest
     steps:
-      # The produced-record manifest path needs the runner context, which
-      # GitHub does not expose to jobs.<job_id>.env. Export it from a step so
-      # the gate, resolve and upload steps all see the same path.
-      - name: Expose produced evidence manifest path
-        run: printf 'APPTHEORY_EVIDENCE_PRODUCED_MANIFEST=%s\n' "${RUNNER_TEMP}/produced-records.txt" >> "${GITHUB_ENV}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -670,30 +524,13 @@ jobs:
           cache: "pip"
           cache-dependency-path: py/pyproject.toml
       - name: Verify API snapshots and contract fixtures
-        run: bash scripts/evidence/verify-or-execute.sh --gate contract-tests --profile default
-      - name: Resolve produced evidence records
-        id: produced
-        if: always()
-        run: python3 scripts/evidence/validation_evidence.py produced-records --require-manifest
-      - name: Preserve produced evidence records
-        if: always() && steps.produced.outputs.any == 'true'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: produced-records-contract-tests
-          path: ${{ steps.produced.outputs.paths }}
-          if-no-files-found: error
-          retention-days: 14
+        run: bash scripts/evidence/verify-gate.sh --gate contract-tests --profile default
 
   rubric:
     name: Rubric (full gate set)
-    if: (github.event_name == 'workflow_dispatch' && (inputs.run_full_rubric == true || inputs.run_full_rubric == 'true')) || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging')
+    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'
     runs-on: ubuntu-latest
     steps:
-      # The produced-record manifest path needs the runner context, which
-      # GitHub does not expose to jobs.<job_id>.env. Export it from a step so
-      # the gate, resolve and upload steps all see the same path.
-      - name: Expose produced evidence manifest path
-        run: printf 'APPTHEORY_EVIDENCE_PRODUCED_MANIFEST=%s\n' "${RUNNER_TEMP}/produced-records.txt" >> "${GITHUB_ENV}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -720,32 +557,8 @@ jobs:
             py/requirements-lint.txt
             cdk/requirements-build.txt
       # The required context keeps its name. A green run means the recorded
-      # proof was verified for these exact inputs, or the rubric executed when
-      # no applicable proof existed; the step prints which. An executed rubric
-      # writes the record for the environment that really ran it, and the
-      # produced-record contract below uploads that exact file.
-      - name: Verify reusable evidence or run full rubric
-        run: bash scripts/evidence/verify-or-execute.sh --gate rubric --profile default
-      - name: Resolve produced rubric records
-        id: produced
-        if: always()
-        run: python3 scripts/evidence/validation_evidence.py produced-records --require-manifest
-      - name: Preserve produced rubric records
-        if: always() && steps.produced.outputs.any == 'true'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: produced-records-rubric
-          path: ${{ steps.produced.outputs.paths }}
-          if-no-files-found: error
-          retention-days: 14
-      # Diagnostic bundle for reviewers (coverage, per-gate logs, the GovTheory
-      # report). It is not the record-preservation contract above: a record is
-      # only claimed as new proof through the produced-record paths.
-      - name: Upload GovTheory rubric evidence
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: gov-rubric-evidence
-          path: gov-infra/evidence/
-          if-no-files-found: error
-          retention-days: 14
+      # proof was verified for these exact inputs, and the step prints which
+      # profile satisfied it. No rubric command runs on this runner: a missing
+      # or stale record fails here and names the local collection command.
+      - name: Verify the recorded full rubric
+        run: bash scripts/evidence/verify-gate.sh --gate rubric --profile default

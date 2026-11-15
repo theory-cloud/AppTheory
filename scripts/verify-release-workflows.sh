@@ -297,14 +297,14 @@ for job in ("go", "ts", "py", "contract-tests", "cdk-go-drift", "runtime-floor-m
 require_job_contains(
     ".github/workflows/ci.yml",
     "release-delta",
-    "run: bash scripts/evidence/verify-or-execute.sh --gate release-delta",
-    "generated release PRs must run the narrow release delta gate",
+    "run: python3 scripts/evidence/validation_evidence.py run --gate release-delta --forced",
+    "generated release PRs must run the narrow release delta smoke, the one recorded execution path",
 )
 require_job_contains(
     ".github/workflows/examples-local.yml",
     "examples-local",
-    "scripts/evidence/verify-or-execute.sh --gate examples-local --profile default --verify-only",
-    "the examples harness must reuse verified evidence or execute the real harness",
+    "scripts/evidence/verify-gate.sh --gate examples-local --profile default",
+    "the examples harness job must verify the recorded local-harness evidence",
 )
 require_not_contains(
     ".github/workflows/release.yml",
@@ -715,15 +715,10 @@ require_contains(
     "ready_for_review",
     "CI must run when humans mark draft release PRs ready",
 )
-require_contains(
+require_not_contains(
     ".github/workflows/ci.yml",
-    "workflow_dispatch:\n    inputs:\n      run_full_rubric:",
-    "CI must be dispatchable for bot-authored release PR branch updates with explicit rubric control",
-)
-require_contains(
-    ".github/workflows/ci.yml",
-    "default: true",
-    "manual CI workflow_dispatch must continue to run the full rubric by default",
+    "run_full_rubric",
+    "CI dispatch must not carry a rubric execution toggle; CI verifies a recorded result",
 )
 require_contains(
     ".github/workflows/ci.yml",
@@ -747,8 +742,8 @@ require_contains(
 )
 require_contains(
     ".github/workflows/ci.yml",
-    "if: (github.event_name == 'workflow_dispatch' && (inputs.run_full_rubric == true || inputs.run_full_rubric == 'true')) || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging')",
-    "full rubric must run only on staging PRs and opted-in manual dispatch",
+    "if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'",
+    "the full rubric context must verify the recorded rubric on staging PRs only",
 )
 require_contains(
     ".github/workflows/ci.yml",
@@ -1070,10 +1065,10 @@ for forbidden in (
             forbidden,
             "release artifact sync must not depend on CI-held signing secrets",
         )
-require_contains(
+require_not_contains(
     "scripts/sync-release-pr-generated.sh",
-    "--raw-field run_full_rubric=false",
-    "automated release PR CI dispatch must disable the full rubric",
+    "run_full_rubric",
+    "automated release PR CI dispatch must not request a rubric execution",
 )
 require_contains(
     "scripts/sync-release-pr-generated.sh",

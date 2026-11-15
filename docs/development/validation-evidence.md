@@ -26,28 +26,35 @@ the release-please configuration.
   applies to the exact candidate inputs and to the tracked profile. It never
   treats a record as an authenticated verdict and never executes a command named
   by a record.
+- Gates are verified once, on the pull request into `staging`, because `staging`
+  is what gets released and deployed. No gate-class job runs on a push to
+  `staging`, `premain` or `main`, and none runs at deploy. `premain` and `main`
+  only ever receive PRs from `staging` (or a generated release-please branch),
+  so the tree merged there is the tree that was verified.
 - The accepted provenance is ordinary cooperating implementer and reviewer
   provenance. There is no signing of test execution, no remote attestation and
   no persistent proof service.
-- A pull request whose head repository is not this repository always executes
-  the real command set. Evidence records carried by untrusted content gain
-  nothing, and the pull-request lane keeps read-only credentials.
+- A fork pull request never executes a gate. It cannot carry a record produced
+  here, so it fails closed with "produce evidence locally", and the pull-request
+  lane keeps read-only credentials. External contributions arrive through a
+  pre-arranged branch negotiated with CODEOWNERS; a codeowner carries the change
+  into `staging` with locally produced evidence.
 - Paired approval of the candidate remains the Factory review gate.
 
 ## Proof profiles: one claim, one environment, one proof
 
 A **proof profile** is a tracked declaration of a supported environment: the Go
 repository pin, the Node major, the Python major.minor, and the producing
-OS/arch. The collector and the CI execution fallback probe the real versions
-they run under and refuse to record a profile the live host does not satisfy.
+OS/arch. The collector probes the real versions it runs under and refuses to
+record a profile the live host does not satisfy.
 Verification compares the recorded environment with the tracked profile
 declaration, never with the verifier runner.
 
 A platform-bound gate may also declare tracked `fallbackProfiles`: explicit
 alternate producers of the same claim. `default` (darwin/arm64) is the approved
 producing host for the local journey and build proofs; `deterministic-builds`
-additionally supports `linux-x64` so a Linux CI runner can produce and reuse its
-own truthfully labeled record. A fallback is never a caller wildcard: it is a
+additionally supports `linux-x64` so a Linux producer records its own truthfully
+labeled proof. A fallback is never a caller wildcard: it is a
 declared profile of that gate, the record names the environment that really ran,
 and a host that satisfies neither profile refuses to execute.
 
@@ -391,8 +398,9 @@ scripts/evidence/collect.sh --gate go --gate ts --profile default
 # Verify without executing anything named by the record.
 scripts/evidence/verify.sh --gate rubric --profile default
 
-# Reuse applicable proof, otherwise execute the approved commands (CI entry point).
-scripts/evidence/verify-or-execute.sh --gate rubric --profile default
+# The CI entry point: verify the record or fail with the local collection
+# command. It has no execution path.
+scripts/evidence/verify-gate.sh --gate rubric --profile default
 
 # Add reviewer references after review without invalidating input identity.
 python3 scripts/evidence/validation_evidence.py finalize --gate rubric --profile default --review-ref factory-review-1234
@@ -425,12 +433,19 @@ source fix after review invalidates only the affected gates and profiles;
 recollect those, or run `--all --profile <id>` on the committed tree and let the
 scheduler decide.
 
-## The CI execution fallback writes the record
+## The CI verifies the record and never executes a gate
 
-`scripts/evidence/verify-or-execute.sh` is the CI entry point. When no
-applicable record verifies, it executes the approved commands through
-`validation_evidence.py run --forced`, which uses the same record builder,
-schema, atomic write and verifier as collection:
+`scripts/evidence/verify-gate.sh` is the CI entry point, and verification is the
+only thing it does. It verifies the requested tracked profile, then the gate's
+declared `fallbackProfiles`, then a `composedFrom` record whose scope covers the
+same command set. When nothing applies it prints the exact
+`scripts/evidence/collect.sh --gate <gate> --profile <profile>` command and exits
+non-zero with "produce evidence locally". There is no execute fallback, no
+force switch and no fork exception.
+
+The local record builder behind that command (`validation_evidence.py run`, and
+`collect.sh` above it) uses the same record builder, schema, atomic write and
+verifier as collection:
 
 - it validates the live probe against the requested tracked profile before
   running anything, and refuses with the exact mismatch when the host cannot
@@ -443,31 +458,18 @@ schema, atomic write and verifier as collection:
   cancelled run writes no record and returns a signal exit; a successful run
   re-checks that its own record verifies on those exact inputs and profile
   before claiming PASS;
-- forced execution sets `EVIDENCE_FORCE_EXECUTE=true` for the leaf commands, so
-  it cannot consume another gate's nested proof and then claim composition;
+- a forced run (`run --forced`) sets `EVIDENCE_FORCE_EXECUTE=true` for the leaf
+  commands, so it cannot consume another gate's nested proof and then claim
+  composition; the generated release delta smoke is the one CI step that runs
+  this way;
 - an unclassified input (neither release-only, nor in any gate scope, nor a
   declared non-product path) is refused instead of being recorded as a reusable
   PASS.
 
 A second identical run therefore verifies the record and executes zero
 commands. Records are never written by the verifier and never edited into a new
-result.
-
-### Producing and uploading records
-
-A record the run wrote is appended to the producer manifest named by
-`APPTHEORY_EVIDENCE_PRODUCED_MANIFEST`, with the digest written. Workflow jobs
-point that manifest at a per-job runner-temp file, then resolve it with
-`python3 scripts/evidence/validation_evidence.py produced-records`, which
-requires each named path to be the exact
-`<evidence>/<gate>/<profile>.json` record, to exist, to match the digest written
-by this run, not to be an untouched checkout record, and — for a PASS record —
-to verify on the current inputs. The upload step consumes those resolved paths with
-`if-no-files-found: error`, and is skipped when nothing was produced. A missing
-record, a foreign path, or a stale committed receipt fails closed instead of
-being uploaded as if this run had produced it. A verified-only run produces
-nothing to upload; a run that replaces a stale committed record does produce an
-uploadable path.
+result, and CI never produces a record to upload: the record is committed by the
+steward in a records-only commit, and CI only reads it.
 
 ## Applicability summary in CI
 
@@ -475,14 +477,15 @@ Every evidence-aware job prints one unambiguous line and a job-summary entry:
 
 - `gate <id> (profile <id>): evidence-verified (no command executed in this run)`; or
 - `gate <id> (profile <id>; requested <id>): evidence-verified (tracked fallback profile; no command executed in this run)`; or
-- `gate <id> (profile <id>): executing (<reason>)` followed by the real approved command.
+- `gate <id> (profile <id>): evidence-verified (composed from <gate>; no command executed in this run)`; or
+- `gate <id> (profile <id>): no applicable evidence record (<reason>)` followed by
+  `produce evidence locally: run 'scripts/evidence/collect.sh --gate <gate> --profile <profile>' ...`.
 
 The staging required context keeps its name, `Rubric (full gate set)`. A green
 state means the recorded proof was verified for the candidate inputs and the
-tracked profile, not that the command was executed in that run. When a committed
-record does not apply, the gate executes its real command; that is the
-missing-proof fallback, not a silent pass, and the record it actually wrote is
-uploaded so one commit can make later legs reuse it.
+tracked profile, not that the command was executed in that run. When no committed
+record applies, the job is red and names the local collection command; a red job
+is the missing-proof signal, never a silent pass.
 
 The PR lane runs workflow code from the candidate. That is acceptable because
 all PR-lane permissions are read-only, the verifier never executes record
@@ -541,18 +544,16 @@ write, tag mutation or branch-protection change in this gate.
 - Evidence proves the inputs, the tracked profile and the cooperating
   implementation, not a cryptographic attestation of execution.
 - A floor profile that cannot be produced on the implementer's host stays
-  unproven until its one real execution is captured; until then that CI job
-  executes and fails closed on errors. It is not silently substituted with a
-  different floor's proof.
-- The intended provenance is a locally produced, reviewed, signed record. A
-  CI-produced record is preserved as an artifact so the same inputs are not
-  re-executed; because there is no unattended auto-commit path, it becomes
-  reusable only after an operator commits it. The governed local toolchain is
-  the primary way to produce the default and floor records.
-- `examples-local` runs its harness directly in the CI job and has no supported
-  Linux profile, so a CI execution does not produce a record. Reuse on later
-  events requires a committed macOS-arm64 record produced on the approved host;
-  the gap is a rerun, never a false PASS.
+  unproven until its one real execution is captured under that floor; until then
+  that CI job is red and names the collection command. It is not silently
+  substituted with a different floor's proof.
+- The provenance is a locally produced, reviewed, signed record, committed in a
+  records-only commit. CI never produces a record, so there is no unattended
+  auto-commit path and no CI artifact that could be mistaken for one. The
+  governed local toolchain produces the default and floor records.
+- `examples-local` has no supported Linux profile. Its record is produced on the
+  approved macOS-arm64 producing host, and the CI job only verifies it; a
+  missing or stale record is a red rerun for the steward, never a false PASS.
 - The Go pin and the governed toolchain selection must agree. A manager whose Go
   selection is behind the repository pin blocks collection; it does not justify
   ambient fallback.

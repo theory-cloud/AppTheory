@@ -118,8 +118,6 @@ import sys
 path = pathlib.Path(sys.argv[1])
 mode = sys.argv[2]
 text = path.read_text(encoding="utf-8")
-RUBRIC_PREFIX = "    if: (github.event_name == 'workflow_dispatch'"
-BUILDS_PREFIX = "    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'"
 ELIGIBILITY_PREFIX = "    if: (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain'"
 
 
@@ -128,6 +126,33 @@ def find_line(prefix):
         if line.startswith(prefix):
             return line
     raise SystemExit(f"line with prefix {prefix!r} not found")
+
+
+def job_if_index(job_id):
+    """Index of the `if:` line inside one job, so two identical guards stay distinct."""
+    lines = text.splitlines(keepends=True)
+    header = f"  {job_id}:\n"
+    for index, line in enumerate(lines):
+        if line == header:
+            for probe in range(index + 1, len(lines)):
+                if lines[probe].startswith("    if:"):
+                    return probe
+                if lines[probe].startswith("  ") and not lines[probe].startswith("    "):
+                    break
+            raise SystemExit(f"job {job_id!r} has no job-level if: line")
+    raise SystemExit(f"job {job_id!r} not found")
+
+
+def replace_job_if(job_id, replacement):
+    global text
+    lines = text.splitlines(keepends=True)
+    index = job_if_index(job_id)
+    lines[index] = replacement if replacement.endswith("\n") else replacement + "\n"
+    text = "".join(lines)
+
+
+def job_if_line(job_id):
+    return text.splitlines()[job_if_index(job_id)]
 
 
 def replace_line(prefix, replacement):
@@ -142,18 +167,18 @@ def replace_line(prefix, replacement):
 
 
 if mode == "rubric_append":
-    replace_line(RUBRIC_PREFIX, find_line(RUBRIC_PREFIX) + " " + sys.argv[3])
+    replace_job_if("rubric", job_if_line("rubric") + " " + sys.argv[3])
 elif mode == "rubric_continuation":
-    replace_line(RUBRIC_PREFIX, find_line(RUBRIC_PREFIX) + "\n      " + sys.argv[3])
+    replace_job_if("rubric", job_if_line("rubric") + "\n      " + sys.argv[3])
 elif mode == "rubric_replace":
-    replace_line(RUBRIC_PREFIX, "    if: " + sys.argv[3])
+    replace_job_if("rubric", "    if: " + sys.argv[3])
 elif mode == "rubric_fold":
-    replace_line(RUBRIC_PREFIX, (
+    replace_job_if("rubric", (
         "    if: >-\n"
-        "      (github.event_name == 'workflow_dispatch' && (inputs.run_full_rubric == true || inputs.run_full_rubric == 'true'))\n"
-        "      || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging')"))
+        "      github.event_name == 'pull_request'\n"
+        "      && github.event.pull_request.base.ref == 'staging'"))
 elif mode == "builds_replace":
-    replace_line(BUILDS_PREFIX, "    if: " + sys.argv[3])
+    replace_job_if("builds", "    if: " + sys.argv[3])
 elif mode == "eligibility_push_leg_removed":
     replace_line(ELIGIBILITY_PREFIX,
                  "    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain' && github.event.pull_request.head.ref == 'staging'")
@@ -172,11 +197,11 @@ elif mode == "eligibility_backmerge_head_ref_widened":
         raise SystemExit("eligibility head ref binding fixture not found")
     text = text.replace(binding, step + "          PR_HEAD_REF: ${{ github.ref_name }}\n", 1)
 elif mode == "rubric_step_event_gate":
-    target = ("      - name: Verify reusable evidence or run full rubric\n"
-              "        run: bash scripts/evidence/verify-or-execute.sh --gate rubric --profile default\n")
-    replacement = ("      - name: Verify reusable evidence or run full rubric\n"
+    target = ("      - name: Verify the recorded full rubric\n"
+              "        run: bash scripts/evidence/verify-gate.sh --gate rubric --profile default\n")
+    replacement = ("      - name: Verify the recorded full rubric\n"
                    "        if: github.event_name == 'workflow_dispatch'\n"
-                   "        run: bash scripts/evidence/verify-or-execute.sh --gate rubric --profile default\n")
+                   "        run: bash scripts/evidence/verify-gate.sh --gate rubric --profile default\n")
     if target not in text:
         raise SystemExit("rubric step fixture not found")
     text = text.replace(target, replacement, 1)

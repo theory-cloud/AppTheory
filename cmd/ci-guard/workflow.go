@@ -15,10 +15,11 @@ import (
 
 const (
 	// rubricCondition and buildsCondition are the only job conditions the
-	// operator ruling of 2026-09-28 allows: the full rubric and the
-	// deterministic-build job run for pull requests targeting staging plus the
-	// opt-in manual dispatch, and nowhere else.
-	rubricCondition = "(github.event_name == 'workflow_dispatch' && (inputs.run_full_rubric == true || inputs.run_full_rubric == 'true')) || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging')"
+	// verified-once policy allows: the full rubric and the deterministic-build
+	// job verify a recorded result for pull requests targeting staging, and
+	// nowhere else. No dispatch path runs them, because CI never executes a
+	// gate.
+	rubricCondition = "github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'"
 	buildsCondition = "github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'"
 
 	// eligibilityCondition is the release-eligibility gate: the staging -> premain

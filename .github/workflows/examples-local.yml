@@ -1,12 +1,14 @@
 name: Examples (Local)
 
-# Runs `make examples-local`: the real examples against a DynamoDB Local
-# service container. The job carries no AWS secrets. The harness supplies its
-# own endpoint overrides and static dummy credentials, and its preflight fails
-# when a DynamoDB client would resolve anywhere else.
+# Verifies the committed local-harness evidence record on pull requests that
+# target `staging`. The harness itself never runs here: a steward runs
+# `make examples-local` locally, where the runner supplies its own DynamoDB Local
+# endpoint and static dummy credentials, and commits the record it writes. The
+# job carries no AWS secrets and needs no service container, because nothing
+# executes.
 # It runs only for PRs targeting `staging`: `premain` and `main` derive from
-# `staging`, so the harness has already run on the same tree before promotion
-# and a second run there only repeats it.
+# `staging`, so the verified tree is the reviewed tree and a second harness run
+# there would only repeat it.
 on:
   pull_request:
     branches: ["staging"]
@@ -18,90 +20,16 @@ permissions:
 jobs:
   examples-local:
     name: Examples (local harness)
-    # The hello-world Go function deploys an arm64 provided.al2023 bootstrap
-    # (the examples' CDK stacks build it that way). The local runner runs the
-    # official image for the function's architecture and refuses to guess at
-    # cross-architecture emulation, so the job uses an arm64 runner where the
-    # bootstrap executes natively.
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 60
-    services:
-      dynamodb-local:
-        image: amazon/dynamodb-local@sha256:7ef4a2c45b58c2901e70a4f28e0953a422c2c631baaaf5e2c15e0805740c7752
-        ports:
-          - 8130:8000
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
-      # The examples gate is the most expensive local proof. A reviewed record
-      # for these exact inputs and the tracked `default` producing-host profile
-      # lets the PR and every later lane reuse it; a fork PR, a changed input or
-      # a missing/stale record executes the real harness. The summary states
-      # which happened, and this check runs before any setup so a reused proof
-      # costs no toolchain install.
-      - name: Check reusable examples evidence
-        id: evidence
-        run: |
-          set -euo pipefail
-          if bash scripts/evidence/verify-or-execute.sh --gate examples-local --profile default --verify-only; then
-            echo "reuse=true" >>"${GITHUB_OUTPUT}"
-          else
-            echo "reuse=false" >>"${GITHUB_OUTPUT}"
-          fi
-
-      - name: Set up Go
-        if: steps.evidence.outputs.reuse != 'true'
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Set up Node
-        if: steps.evidence.outputs.reuse != 'true'
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: |
-            ts/package-lock.json
-            cdk/package-lock.json
-            examples/cdk/*/package-lock.json
-
-      - name: Set up Python
-        if: steps.evidence.outputs.reuse != 'true'
-        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version: "3.14"
-
-      # The field-level encryption row decrypts with the official AWS
-      # Encryption SDK, so the harness interpreter needs it.
-      - name: Install the harness Python dependencies
-        if: steps.evidence.outputs.reuse != 'true'
-        run: python -m pip install -r scripts/local/requirements-examples.txt
-
-      # The local-TLS browser row loads the CloudFront page in headless
-      # Chromium and registers a WebAuthn credential through the CDP virtual
-      # authenticator. --with-deps installs the shared libraries Chromium needs
-      # on this runner image.
-      - name: Install the browser row's Chromium
-        if: steps.evidence.outputs.reuse != 'true'
-        run: python -m playwright install --with-deps chromium
-
-      # The service container publishes the profile port; --external tells the
-      # harness to wait for it instead of starting a compose container on the
-      # same host port. --slot 0 pins the compose slot to that port.
-      - name: Run the local examples harness
-        if: steps.evidence.outputs.reuse != 'true'
-        run: make examples-local EXAMPLES_LOCAL_ARGS="--slot 0 --external"
-
-      # A pinned synth hash only proves location independence when synthesis
-      # from another absolute path reproduces it. This copies the source tree
-      # under $HOME, re-synthesizes every pinned example there, and requires the
-      # same bytes. It is a second synth run, so it lives here rather than in
-      # the 60-minute harness step.
-      - name: Verify CDK synth from a relocated copy
-        if: steps.evidence.outputs.reuse != 'true'
-        run: make verify-cdk-synth-location-independent
+      # The local journey is the most expensive proof this repository records,
+      # so it is produced once by the steward and verified here for the exact
+      # inputs of this pull request. A missing or stale record fails the job and
+      # names the collection command; no fallback executes the harness.
+      - name: Verify the local harness evidence record
+        run: bash scripts/evidence/verify-gate.sh --gate examples-local --profile default

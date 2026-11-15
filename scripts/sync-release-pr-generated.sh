@@ -803,13 +803,10 @@ dispatch_required_checks() {
   local dispatch_args=(workflow run "${required_check_workflow}" --ref "${release_branch}")
 
   if [[ "${required_check_workflow}" == "ci.yml" ]]; then
-    dispatch_args+=(
-      --raw-field run_full_rubric=false
-      --raw-field release_pr_number="${pr_number}"
-    )
+    dispatch_args+=(--raw-field release_pr_number="${pr_number}")
   fi
 
-  echo "sync-release-pr-generated: dispatching ${required_check_workflow} for ${release_branch} with full rubric disabled"
+  echo "sync-release-pr-generated: dispatching ${required_check_workflow} for ${release_branch} to verify its evidence records"
   if ! gh "${dispatch_args[@]}"; then
     echo "sync-release-pr-generated: FAIL (could not dispatch ${required_check_workflow} for ${release_branch})"
     exit 1

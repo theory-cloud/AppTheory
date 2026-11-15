@@ -339,17 +339,17 @@ def main() -> None:
     require_job_contains(
         "runtime-floor-matrix",
         runtime_floor_job,
-        'bash scripts/evidence/verify-or-execute.sh --gate ts --profile "${{ matrix.ts-profile }}"',
+        'bash scripts/evidence/verify-gate.sh --gate ts --profile "${{ matrix.ts-profile }}"',
     )
     require_job_contains(
         "runtime-floor-matrix",
         runtime_floor_job,
-        'bash scripts/evidence/verify-or-execute.sh --gate py --profile "${{ matrix.py-profile }}"',
+        'bash scripts/evidence/verify-gate.sh --gate py --profile "${{ matrix.py-profile }}"',
     )
     require_job_contains(
         "runtime-floor-matrix",
         runtime_floor_job,
-        'bash scripts/evidence/verify-or-execute.sh --gate contract-tests --profile "${{ matrix.contract-profile }}"',
+        'bash scripts/evidence/verify-gate.sh --gate contract-tests --profile "${{ matrix.contract-profile }}"',
     )
     require_job_contains(
         "runtime-floor-matrix",
@@ -383,7 +383,7 @@ def main() -> None:
     require_job_contains(
         "cdk-floor-matrix",
         cdk_floor_job,
-        'bash scripts/evidence/verify-or-execute.sh --gate cdk-go-drift --profile "${{ matrix.drift-profile }}"',
+        'bash scripts/evidence/verify-gate.sh --gate cdk-go-drift --profile "${{ matrix.drift-profile }}"',
     )
     require_job_not_contains("cdk-floor-matrix", cdk_floor_job, "EVIDENCE_FORCE_EXECUTE: \"true\"")
 

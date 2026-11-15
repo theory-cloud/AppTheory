@@ -14,7 +14,7 @@ trap 'rm -rf "${tmp}"' EXIT
 # The rubric collector runs this self-test with its own evidence environment
 # exported (force/reuse/profile). The fixture controls those itself.
 unset EVIDENCE_FORCE_EXECUTE APPTHEORY_EVIDENCE_REUSE APPTHEORY_EVIDENCE_PROFILE \
-  APPTHEORY_EVIDENCE_CONSUME_LOG APPTHEORY_EVIDENCE_PRODUCED_MANIFEST
+  APPTHEORY_EVIDENCE_CONSUME_LOG
 
 scratch="${tmp}/repo"
 registry="${tmp}/registry.json"
@@ -214,7 +214,7 @@ init_repo
 mkdir -p "${scratch}/scripts/evidence"
 cp "${evidence_py}" "${scratch}/scripts/evidence/validation_evidence.py"
 cp "${registry}" "${scratch}/scripts/evidence/validation-gates.json"
-cp "${repo_root}/scripts/evidence/verify-or-execute.sh" "${scratch}/scripts/evidence/verify-or-execute.sh"
+cp "${repo_root}/scripts/evidence/verify-gate.sh" "${scratch}/scripts/evidence/verify-gate.sh"
 cp "${repo_root}/scripts/evidence/reuse-if-recorded.sh" "${scratch}/scripts/evidence/reuse-if-recorded.sh"
 cp "${repo_root}/scripts/evidence/collect.sh" "${scratch}/scripts/evidence/collect.sh"
 commit_all "fix: install the evidence entry point for wrapper tests"
@@ -224,26 +224,46 @@ commit_all "fix: install the evidence entry point for wrapper tests"
 expect_ok "collect source gate" collect --gate unit
 expect_output "verify identical inputs" "mode=evidence-verified" verify --gate unit
 
-# 0. The real wrapper reuses verified proof, executes when none applies, and
-#    forces execution for an untrusted pull-request origin.
-expect_output "wrapper reuses applicable evidence" "evidence-verified" \
-  bash -c 'cd "$1" && bash scripts/evidence/verify-or-execute.sh --gate unit' _ "${scratch}"
-expect_output "wrapper executes when no evidence applies" "executing" \
-  bash -c 'cd "$1" && bash scripts/evidence/verify-or-execute.sh --gate noop' _ "${scratch}"
+# 0. The real CI entry point verifies an applicable record and fails closed,
+#    naming the local collection command, when no record applies. A fork PR is
+#    not special-cased: it cannot carry a record produced here, so it fails
+#    closed exactly like any other tree with no applicable record, and nothing
+#    executes.
+expect_output "CI entry point verifies applicable evidence" "evidence-verified" \
+  bash -c 'cd "$1" && bash scripts/evidence/verify-gate.sh --gate unit --profile default' _ "${scratch}"
+expect_fail "CI entry point refuses a gate with no record" \
+  bash -c 'cd "$1" && bash scripts/evidence/verify-gate.sh --gate noop --profile default' _ "${scratch}"
+missing_status=0
+missing_output="$(bash -c 'cd "$1" && bash scripts/evidence/verify-gate.sh --gate noop --profile default' _ "${scratch}" 2>&1)" || missing_status=$?
+if [[ "${missing_status}" -eq 0 || "${missing_output}" != *"produce evidence locally"* ]]; then
+  echo "test-validation-evidence: FAIL (a missing record did not name the local collection command)" >&2
+  echo "${missing_output}" >&2
+  exit 1
+fi
+pass_count=$((pass_count + 1))
+echo "test-validation-evidence: PASS CI entry point names the local collection command"
+if [[ -f "${scratch}/evidence/state/noop.log" ]]; then
+  echo "test-validation-evidence: FAIL (the CI entry point executed a gate)" >&2
+  exit 1
+fi
 printf '{"pull_request":{"head":{"repo":{"full_name":"someone-else/AppTheory"}}}}\n' >"${tmp}/fork-event.json"
 fork_status=0
 fork_output="$(
   cd "${scratch}" &&
     GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH="${tmp}/fork-event.json" GITHUB_REPOSITORY=theory-cloud/AppTheory \
-      bash scripts/evidence/verify-or-execute.sh --gate unit --verify-only 2>&1
+      bash scripts/evidence/verify-gate.sh --gate noop --profile default 2>&1
 )" || fork_status=$?
-if [[ "${fork_status:-0}" -eq 0 || "${fork_output}" != *"would-execute"* ]]; then
-  echo "test-validation-evidence: FAIL (a fork PR must never reuse evidence)" >&2
+if [[ "${fork_status:-0}" -eq 0 || "${fork_output}" != *"produce evidence locally"* ]]; then
+  echo "test-validation-evidence: FAIL (a fork PR must never pass or execute a gate)" >&2
   echo "${fork_output}" >&2
   exit 1
 fi
+if [[ -f "${scratch}/evidence/state/noop.log" ]]; then
+  echo "test-validation-evidence: FAIL (a fork PR executed a gate)" >&2
+  exit 1
+fi
 pass_count=$((pass_count + 1))
-echo "test-validation-evidence: PASS fork PR forces execution"
+echo "test-validation-evidence: PASS fork PR fails closed without executing"
 
 # 2. Same tree, different commit SHA.
 (
@@ -691,7 +711,7 @@ sched_live_environment_json="$(cd "${sched}" && "${python_bin}" "${evidence_py}"
 inject_profiles "${sched}/scripts/evidence/validation-gates.json" true "${sched_live_environment_json}"
 
 cp "${evidence_py}" "${sched}/scripts/evidence/validation_evidence.py"
-cp "${repo_root}/scripts/evidence/verify-or-execute.sh" "${sched}/scripts/evidence/verify-or-execute.sh"
+cp "${repo_root}/scripts/evidence/verify-gate.sh" "${sched}/scripts/evidence/verify-gate.sh"
 cp "${repo_root}/scripts/evidence/reuse-if-recorded.sh" "${sched}/scripts/evidence/reuse-if-recorded.sh"
 cp "${repo_root}/scripts/evidence/collect.sh" "${sched}/scripts/evidence/collect.sh"
 
@@ -841,7 +861,7 @@ echo "test-validation-evidence: PASS composition deduplicates shared work"
 : >"${sched}/evidence/state/uses-a.log"
 (
   cd "${sched}"
-  EVIDENCE_FORCE_EXECUTE=true bash scripts/evidence/verify-or-execute.sh --gate uses-a
+  "${python_bin}" scripts/evidence/validation_evidence.py run --gate uses-a --forced
 ) >"${tmp}/forced-exec.log" 2>&1 || {
   echo "test-validation-evidence: FAIL (forced execution failed)" >&2
   cat "${tmp}/forced-exec.log" >&2
@@ -1035,20 +1055,32 @@ fi
 pass_count=$((pass_count + 1))
 echo "test-validation-evidence: PASS atomic records and deterministic summary"
 
-# The actual CI wrapper composes a declared packaging record and still refuses
-# composition under a forced environment.
+# The CI entry point composes a declared packaging record, and a forced local
+# run still refuses composition.
 expect_ok "packaging baseline" sched_collect --gate pack
-expect_output "wrapper composes a declared packaging record" "composed from pack" \
-  bash -c 'cd "$1" && bash scripts/evidence/verify-or-execute.sh --gate compose --verify-only' _ "${sched}"
+expect_output "CI entry point composes a declared packaging record" "composed from pack" \
+  bash -c 'cd "$1" && bash scripts/evidence/verify-gate.sh --gate compose --profile default' _ "${sched}"
 forced_status=0
-(cd "${sched}" && EVIDENCE_FORCE_EXECUTE=true bash scripts/evidence/verify-or-execute.sh --gate compose --verify-only) >"${tmp}/forced.log" 2>&1 || forced_status=$?
+(cd "${sched}" && "${python_bin}" scripts/evidence/validation_evidence.py run --gate compose --forced) >"${tmp}/forced.log" 2>&1 || forced_status=$?
 if [[ "${forced_status}" -eq 0 ]]; then
-  echo "test-validation-evidence: FAIL (forced execution composed a record)" >&2
+  echo "test-validation-evidence: FAIL (a forced run of a failing gate returned success)" >&2
   cat "${tmp}/forced.log" >&2
   exit 1
 fi
+if ! "${python_bin}" - "${sched}/evidence/compose/default.json" <<'PYFORCED'
+import json
+import sys
+
+record = json.load(open(sys.argv[1], encoding="utf-8"))
+assert record["verdict"] == "FAIL", record["verdict"]
+assert record["consumed"] == [], record["consumed"]
+PYFORCED
+then
+  echo "test-validation-evidence: FAIL (a forced run claimed composed proof)" >&2
+  exit 1
+fi
 pass_count=$((pass_count + 1))
-echo "test-validation-evidence: PASS wrapper composition and force boundary"
+echo "test-validation-evidence: PASS CI composition and force boundary"
 
 # Legacy records without a scope binding are historical, not reusable.
 cp "${sched}/evidence/inc-a/default.json" "${tmp}/inc-a.good"
@@ -1171,7 +1203,7 @@ for leg in pr-staging push-staging pr-staging-premain push-premain release-pr-pr
         GITHUB_REPOSITORY=theory-cloud/AppTheory \
           GITHUB_EVENT_NAME="${leg_event}" \
           GITHUB_EVENT_PATH="${tmp}/own-pr-event.json" \
-          bash scripts/evidence/verify-or-execute.sh --gate "${gate}" --profile "${profile}" 2>&1
+          bash scripts/evidence/verify-gate.sh --gate "${gate}" --profile "${profile}" 2>&1
     )" || {
       echo "test-validation-evidence: FAIL (leg ${leg} ${gate}/${profile} did not verify)" >&2
       echo "${leg_output}" >&2

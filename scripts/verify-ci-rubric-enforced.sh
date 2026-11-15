@@ -126,21 +126,19 @@ require_contains "${ci}" "name: CDK Go binding drift" \
   "CI must keep the cdk-go drift check name stable for branch protection visibility"
 require_job_contains "${ci}" "cdk-go-drift" "${product_guard}" \
   "cdk-go drift must skip only generated release work and otherwise run the evidenced gate"
-require_job_contains "${ci}" "cdk-go-drift" "run: bash scripts/evidence/verify-or-execute.sh --gate cdk-go-drift" \
+require_job_contains "${ci}" "cdk-go-drift" "run: bash scripts/evidence/verify-gate.sh --gate cdk-go-drift" \
   "cdk-go drift job must verify the gate or execute its approved command"
 require_contains "${ci}" "  rubric:" "CI must define the full rubric job"
-require_job_contains "${ci}" "rubric" "run: bash scripts/evidence/verify-or-execute.sh --gate rubric" \
+require_job_contains "${ci}" "rubric" "run: bash scripts/evidence/verify-gate.sh --gate rubric" \
   "full rubric job must reuse verified evidence or execute the approved rubric command"
 require_contains "scripts/evidence/validation-gates.json" '"argv": ["make", "rubric"]' \
   "the tracked rubric gate must keep the approved make rubric command"
-require_contains "${ci}" "run_full_rubric:" \
-  "manual CI dispatch must expose an explicit full-rubric toggle"
-require_contains "${ci}" "default: true" \
-  "manual CI dispatch must continue to run the full rubric by default"
+require_not_contains "${ci}" "run_full_rubric" \
+  "CI must not offer a dispatch toggle that executes the rubric; CI verifies a recorded result"
 require_contains "${ci}" "  builds:" "CI must define the standalone deterministic-build job"
 require_contains "${ci}" "name: Verify deterministic builds" \
   "CI must keep the deterministic-build job name stable for branch protection visibility"
-require_job_contains "${ci}" "builds" "run: bash scripts/evidence/verify-or-execute.sh --gate deterministic-builds" \
+require_job_contains "${ci}" "builds" "run: bash scripts/evidence/verify-gate.sh --gate deterministic-builds" \
   "deterministic-build job must reuse verified evidence or execute the approved build command"
 require_contains "scripts/evidence/validation-gates.json" '"argv": ["bash", "scripts/verify-builds.sh"]' \
   "the tracked deterministic-build gate must keep the approved verify-builds command"
@@ -166,14 +164,10 @@ require_contains "scripts/evidence/validation-gates.json" '"argv": ["bash", "scr
 bash scripts/verify-ci-trigger-parity.sh
 bash scripts/verify-ci-evidence-wiring.sh
 
-require_job_contains "${ci}" "rubric" "uses: actions/upload-artifact@" \
-  "full rubric must publish the GovTheory evidence report as a retrievable artifact"
-require_job_contains "${ci}" "rubric" "path: gov-infra/evidence/" \
-  "published GovTheory evidence artifact must cover the verifier evidence directory"
-require_job_contains "${ci}" "rubric" "if: always()" \
-  "GovTheory evidence artifact must upload even when the rubric fails"
-require_contains "scripts/sync-release-pr-generated.sh" "--raw-field run_full_rubric=false" \
-  "automated generated release PR CI dispatch must opt out of the full rubric"
+require_job_not_contains "${ci}" "rubric" "produced-records" \
+  "the rubric job must verify records, not upload ones it executed"
+require_job_not_contains "${ci}" "rubric" "uses: actions/upload-artifact@" \
+  "the rubric job must not publish a bundle of committed records as if this run produced them"
 require_contains "scripts/sync-release-pr-generated.sh" "Release delta validation" \
   "generated release PR required checks must include the release delta smoke"
 require_contains "scripts/sync-release-pr-generated.sh" "--finalize-only" \

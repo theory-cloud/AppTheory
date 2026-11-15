@@ -19,9 +19,8 @@ on:
       - premain
   workflow_dispatch:
     inputs:
-      run_full_rubric:
-        type: boolean
-        default: true
+      release_pr_number:
+        type: string
 jobs:
   release-security-gates:
     name: Release/security gates
@@ -70,15 +69,12 @@ jobs:
       - run: echo ok
   rubric:
     name: Rubric (full gate set)
-    if: (github.event_name == 'workflow_dispatch' && (inputs.run_full_rubric == true || inputs.run_full_rubric == 'true')) || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging')
+    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'
     runs-on: ubuntu-latest
     steps:
-      - run: echo ok
-      - if: always()
-        uses: actions/upload-artifact@1111111111111111111111111111111111111111
+      - name: Verify the recorded full rubric
+        run: echo ok
 `
-
-const rubricIfPrefix = "    if: (github.event_name == 'workflow_dispatch'"
 const eligibilityIfPrefix = "    if: (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain'"
 
 func writeWorkflow(t *testing.T, text string) (string, string) {
@@ -154,6 +150,28 @@ func replaceLine(text, prefix, replacement string) string {
 	return text
 }
 
+// replaceJobIf rewrites one job's job-level if: line. Two staged gates carry the
+// same condition, so the fixture targets the job header instead of the text.
+func replaceJobIf(text, jobID, replacement string) string {
+	lines := strings.Split(text, "\n")
+	header := "  " + jobID + ":"
+	for i, line := range lines {
+		if line != header {
+			continue
+		}
+		for j := i + 1; j < len(lines); j++ {
+			if strings.HasPrefix(lines[j], "    if:") {
+				lines[j] = replacement
+				return strings.Join(lines, "\n")
+			}
+			if strings.HasPrefix(lines[j], "  ") && !strings.HasPrefix(lines[j], "    ") {
+				break
+			}
+		}
+	}
+	return text
+}
+
 func TestGuardPassesCurrentTree(t *testing.T) {
 	mustPass(t, baseWorkflow)
 }
@@ -181,13 +199,13 @@ func TestGuardRejectsBroadenedRubric(t *testing.T) {
 		"all-base pull request":                  "github.event_name == 'pull_request'",
 	}
 	for _, replacement := range broadenings {
-		mustFailWith(t, replaceLine(baseWorkflow, rubricIfPrefix, "    if: "+replacement), "staging-pull-request-only")
+		mustFailWith(t, replaceJobIf(baseWorkflow, "rubric", "    if: "+replacement), "staging-pull-request-only")
 	}
 }
 
 func TestGuardRejectsFoldedRubricCondition(t *testing.T) {
-	folded := strings.Replace(baseWorkflow, rubricIfPrefix,
-		"    if: >-\n      (github.event_name == 'workflow_dispatch' && (inputs.run_full_rubric == true || inputs.run_full_rubric == 'true'))\n      || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging')", 1)
+	folded := replaceJobIf(baseWorkflow, "rubric",
+		"    if: >-\n      github.event_name == 'pull_request'\n      && github.event.pull_request.base.ref == 'staging'")
 	if folded == baseWorkflow {
 		t.Fatal("failed to build the folded fixture")
 	}
@@ -371,8 +389,8 @@ func TestGuardRejectsYAMLSmuggling(t *testing.T) {
 // gate while the rubric check name still reports green on a staging PR.
 func TestGuardRejectsEventDependentRubricStep(t *testing.T) {
 	text := strings.Replace(baseWorkflow,
-		"      - run: echo ok\n      - if: always()\n",
-		"      - if: github.event_name == 'workflow_dispatch'\n        run: echo ok\n", 1)
+		"      - name: Verify the recorded full rubric\n        run: echo ok\n",
+		"      - name: Verify the recorded full rubric\n        if: github.event_name == 'workflow_dispatch'\n        run: echo ok\n", 1)
 	if text == baseWorkflow {
 		t.Fatal("failed to build the step-level fixture")
 	}
@@ -382,10 +400,13 @@ func TestGuardRejectsEventDependentRubricStep(t *testing.T) {
 // A status-only step condition such as if: always() does not depend on the
 // event, so it stays allowed.
 func TestGuardAcceptsStatusOnlyRubricStep(t *testing.T) {
-	if !strings.Contains(baseWorkflow, "if: always()") {
-		t.Fatal("fixture must carry the evidence upload's if: always()")
+	text := strings.Replace(baseWorkflow,
+		"      - name: Verify the recorded full rubric\n",
+		"      - name: Verify the recorded full rubric\n        if: always()\n", 1)
+	if text == baseWorkflow {
+		t.Fatal("failed to build the status-only fixture")
 	}
-	mustPass(t, baseWorkflow)
+	mustPass(t, text)
 }
 
 func TestGuardRejectsRemoteReusableWorkflowJob(t *testing.T) {
