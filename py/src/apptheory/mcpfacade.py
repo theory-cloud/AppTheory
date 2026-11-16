@@ -20,6 +20,7 @@ import ipaddress
 import json as jsonlib
 import re
 import secrets
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -141,8 +142,40 @@ class FrontDoorVerification:
     header_name: str
     # ``secret_value`` is the literal header value. 32 to 128 characters of
     # ``[A-Za-z0-9._~-]``. It is compared in constant time on every request and
-    # never appears in a response.
-    secret_value: str
+    # never appears in a response. Mutually exclusive with
+    # ``secret_parameter_name``.
+    secret_value: str | None = None
+    # ``secret_parameter_name`` is the well-known, stage-qualified SSM parameter
+    # that holds the header value, mutually exclusive with ``secret_value``. A
+    # fully qualified name from ``/``, at most 1011 characters and fifteen
+    # levels, in the ``[A-Za-z0-9_.-/]`` alphabet a CloudFormation ``ssm``
+    # dynamic reference accepts, and never in the reserved ``aws``/``ssm``
+    # hierarchy. The value is read lazily in the request path -- never by a
+    # background timer -- cached for ``front_door_secret_ttl_seconds``, and
+    # re-read on a verification mismatch, so a rotation takes effect without a
+    # redeploy. An unreadable parameter refuses every derived route with
+    # ``403 app.forbidden``.
+    secret_parameter_name: str | None = None
+
+
+# DEFAULT_FRONT_DOOR_SECRET_TTL_SECONDS is how long a front-door secret read
+# from Parameter Store is reused in one execution environment when
+# ``FacadeConfig.front_door_secret_ttl_seconds`` is unset.
+DEFAULT_FRONT_DOOR_SECRET_TTL_SECONDS = 300.0
+
+# MAX_FRONT_DOOR_SECRET_TTL_SECONDS is the largest accepted cache lifetime. A
+# longer cache would let a rotated-out value stay accepted for longer than the
+# documented rotation window.
+MAX_FRONT_DOOR_SECRET_TTL_SECONDS = 3600.0
+
+# _FRONT_DOOR_SECRET_REFRESH_FLOOR_SECONDS bounds how often a mismatching request
+# may force a Parameter Store read: a rotated value is picked up within this
+# window, and a caller sending bogus headers cannot drive one read per request.
+_FRONT_DOOR_SECRET_REFRESH_FLOOR_SECONDS = 1.0
+
+
+class _FrontDoorSecretUnavailable(Exception):
+    """A front-door parameter that cannot be read, or carries an unusable value."""
 
 
 # METADATA_VARY_HEADER is the exact Vary header advertised by every facade
@@ -647,6 +680,19 @@ class FacadeConfig:
     # is declared without it, and it is rejected under every other posture: an
     # undeclared or unenforced front door would be a silent no-op.
     front_door_verification: FrontDoorVerification | None = None
+    # ``front_door_secret_reader`` reads
+    # ``front_door_verification.secret_parameter_name``. ``None`` selects AWS
+    # Systems Manager Parameter Store through boto3, created on the first
+    # request in the execution environment. It is consulted by the parameter
+    # form only; supply one to serve the same well-known name from another
+    # source (the local runner, for example) or to keep unit tests offline.
+    front_door_secret_reader: Callable[[str], str] | None = None
+    # ``front_door_secret_ttl_seconds`` bounds how long a parameter value is
+    # reused before it is read again, in ``(0, 3600]`` seconds. Defaults to
+    # ``DEFAULT_FRONT_DOOR_SECRET_TTL_SECONDS``. A verification mismatch also
+    # refreshes the value, so the first request carrying a rotated value is
+    # admitted. Parameter form only.
+    front_door_secret_ttl_seconds: float | None = None
     # ``provider`` anchors the framework-owned front channel (DESIGN section 8).
     # When it is set, AppTheory owns ``/authorize``, the stage-global upstream
     # callback, and the ``/token`` authorization_code grant, and the rest of the
@@ -884,7 +930,10 @@ def _normalize_config(config: FacadeConfig | None) -> _NormalizedConfig:
         raise ValueError(f"{_ERROR_PREFIX} MCP handler is required")
     transport_posture = _normalize_transport_posture(config.transport_posture, config.require_bearer_token)
     origin_reachability, front_door_guard = _normalize_origin_reachability(
-        config.origin_reachability, config.front_door_verification
+        config.origin_reachability,
+        config.front_door_verification,
+        config.front_door_secret_reader,
+        config.front_door_secret_ttl_seconds,
     )
     normalized = _normalize_derived_config(config, mcp_handler)
     normalized.transport_posture = transport_posture
@@ -1276,7 +1325,10 @@ def _normalize_transport_posture(posture: str | None, require_bearer_token: Requ
 
 
 def _normalize_origin_reachability(
-    posture: str | None, verification: FrontDoorVerification | None
+    posture: str | None,
+    verification: FrontDoorVerification | None,
+    reader: Callable[[str], str] | None = None,
+    ttl_seconds: float | None = None,
 ) -> tuple[str, RouteGuard | None]:
     """Resolves the declared origin posture and front-door verification into a guard.
 
@@ -1295,7 +1347,7 @@ def _normalize_origin_reachability(
             return resolved, None
         if verification is None:
             raise ValueError(f"{_ERROR_PREFIX} OriginReachability fronted requires FrontDoorVerification")
-        return resolved, _front_door_guard(verification)
+        return resolved, _front_door_guard(verification, reader, ttl_seconds)
     if verification is not None:
         raise ValueError(f"{_ERROR_PREFIX} FrontDoorVerification is only valid with OriginReachability fronted")
     return "", None
@@ -1303,6 +1355,10 @@ def _normalize_origin_reachability(
 
 _FRONT_DOOR_HEADER_NAME = re.compile(r"^[A-Za-z0-9-]{1,64}$")
 _FRONT_DOOR_SECRET = re.compile(r"^[A-Za-z0-9._~-]{32,128}\Z")
+
+_FRONT_DOOR_PARAMETER_NAME = re.compile(r"^/[A-Za-z0-9_.\-/]+$")
+_FRONT_DOOR_PARAMETER_MAX_LENGTH = 1011
+_FRONT_DOOR_PARAMETER_MAX_LEVELS = 15
 
 _RESERVED_FRONT_DOOR_HEADERS = frozenset(
     {
@@ -1318,8 +1374,18 @@ _RESERVED_FRONT_DOOR_HEADERS = frozenset(
 )
 
 
-def _front_door_guard(verification: FrontDoorVerification) -> RouteGuard:
-    """Validates the front-door declaration and returns its fail-closed guard."""
+def _front_door_guard(
+    verification: FrontDoorVerification,
+    reader: Callable[[str], str] | None = None,
+    ttl_seconds: float | None = None,
+) -> RouteGuard:
+    """Validates the front-door declaration and returns its fail-closed guard.
+
+    The literal form compares the configured value. The parameter form reads the
+    well-known parameter lazily in the request path, so no thread and no timer
+    outlives an invocation, and fails closed: an unreadable, empty, or malformed
+    parameter refuses the request with the same 403 a direct-origin request gets.
+    """
     header_name = str(verification.header_name or "").strip().lower()
     if not _FRONT_DOOR_HEADER_NAME.match(header_name):
         raise ValueError(
@@ -1329,19 +1395,165 @@ def _front_door_guard(verification: FrontDoorVerification) -> RouteGuard:
         raise ValueError(
             f"{_ERROR_PREFIX} FrontDoorVerification header name must be a request header the front door can set"
         )
-    secret_value = str(verification.secret_value or "")
-    if not _FRONT_DOOR_SECRET.match(secret_value):
+    has_literal = verification.secret_value is not None
+    has_parameter = verification.secret_parameter_name is not None
+    if has_literal == has_parameter:
         raise ValueError(
-            f"{_ERROR_PREFIX} FrontDoorVerification secret value must be 32 to 128 characters of [A-Za-z0-9._~-]"
+            f"{_ERROR_PREFIX} FrontDoorVerification requires exactly one of secret_value and secret_parameter_name"
+        )
+    if has_literal:
+        secret_value = str(verification.secret_value or "")
+        if not _FRONT_DOOR_SECRET.match(secret_value):
+            raise ValueError(
+                f"{_ERROR_PREFIX} FrontDoorVerification secret value must be 32 to 128 characters of [A-Za-z0-9._~-]"
+            )
+        expected = secret_value.encode("utf-8")
+
+        def literal_guard(ctx: Context) -> Response | None:
+            presented = _first_header_value(ctx.request.headers, header_name)
+            if not hmac.compare_digest(presented.encode("utf-8"), expected):
+                raise _front_door_refusal()
+            return None
+
+        return literal_guard
+
+    parameter_name = str(verification.secret_parameter_name or "")
+    _validate_front_door_parameter_name(parameter_name)
+    cache = _FrontDoorSecretCache(
+        reader or _default_front_door_secret_reader,
+        parameter_name,
+        _normalize_front_door_secret_ttl_seconds(ttl_seconds),
+    )
+
+    def parameter_guard(ctx: Context) -> Response | None:
+        presented = _first_header_value(ctx.request.headers, header_name).encode("utf-8")
+        try:
+            expected = cache.secret(force=False)
+        except _FrontDoorSecretUnavailable:
+            raise _front_door_refusal() from None
+        if hmac.compare_digest(presented, expected.encode("utf-8")):
+            return None
+        try:
+            expected = cache.secret(force=True)
+        except _FrontDoorSecretUnavailable:
+            raise _front_door_refusal() from None
+        if hmac.compare_digest(presented, expected.encode("utf-8")):
+            return None
+        raise _front_door_refusal()
+
+    return parameter_guard
+
+
+def _front_door_refusal() -> AppTheoryError:
+    """The fail-closed answer to a request that did not arrive through the front door."""
+    return AppTheoryError("app.forbidden", "forbidden", status_code=403)
+
+
+def _validate_front_door_parameter_name(name: str) -> None:
+    """Validate a well-known front-door parameter name.
+
+    The name must satisfy both contracts: Parameter Store's naming limits and the
+    CloudFormation dynamic reference alphabet the distribution header renders.
+
+    https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references-ssm.html
+    https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_PutParameter.html
+    """
+    if (
+        not name
+        or len(name) > _FRONT_DOOR_PARAMETER_MAX_LENGTH
+        or not _FRONT_DOOR_PARAMETER_NAME.match(name)
+        or name.endswith("/")
+        or "//" in name
+    ):
+        raise ValueError(
+            f"{_ERROR_PREFIX} FrontDoorVerification secret_parameter_name must be a fully qualified SSM "
+            "parameter name from '/', at most 1011 characters, of [A-Za-z0-9_.-/] with no empty segment"
+        )
+    levels = [segment for segment in name.split("/") if segment]
+    if not levels or len(levels) > _FRONT_DOOR_PARAMETER_MAX_LEVELS:
+        raise ValueError(
+            f"{_ERROR_PREFIX} FrontDoorVerification secret_parameter_name must have between one and fifteen "
+            "hierarchy levels"
+        )
+    if levels[0].lower() in ("aws", "ssm"):
+        raise ValueError(
+            f"{_ERROR_PREFIX} FrontDoorVerification secret_parameter_name must not use the reserved aws or ssm "
+            "hierarchy"
         )
 
-    def guard(ctx: Context) -> Response | None:
-        presented = _first_header_value(ctx.request.headers, header_name)
-        if not hmac.compare_digest(presented.encode("utf-8"), secret_value.encode("utf-8")):
-            raise AppTheoryError("app.forbidden", "forbidden", status_code=403)
-        return None
 
-    return guard
+def _normalize_front_door_secret_ttl_seconds(ttl_seconds: float | None) -> float:
+    """Resolve and bound the parameter cache lifetime."""
+    if ttl_seconds is None:
+        return DEFAULT_FRONT_DOOR_SECRET_TTL_SECONDS
+    if not (0 < ttl_seconds <= MAX_FRONT_DOOR_SECRET_TTL_SECONDS):
+        raise ValueError(
+            f"{_ERROR_PREFIX} FrontDoorVerification front_door_secret_ttl_seconds must be greater than zero "
+            f"and at most {MAX_FRONT_DOOR_SECRET_TTL_SECONDS:g}"
+        )
+    return float(ttl_seconds)
+
+
+class _FrontDoorSecretCache:
+    """One execution environment's view of a front-door parameter.
+
+    Reads happen in the request path under a lock, so concurrent requests
+    coalesce onto one call and no timer or background thread outlives the
+    invocation.
+    """
+
+    def __init__(self, read: Callable[[str], str], name: str, ttl_seconds: float) -> None:
+        self._read = read
+        self._name = name
+        self._ttl_seconds = ttl_seconds
+        self._lock = threading.Lock()
+        self._value = ""
+        self._fetched_at = 0.0
+        self._last_read_at = 0.0
+
+    def secret(self, *, force: bool) -> str:
+        """The cached value while fresh, otherwise a read; ``force`` is floored."""
+        with self._lock:
+            now = time.monotonic()
+            if not force and self._value and now - self._fetched_at < self._ttl_seconds:
+                return self._value
+            if force and self._value and now - self._last_read_at < _FRONT_DOOR_SECRET_REFRESH_FLOOR_SECONDS:
+                return self._value
+            self._last_read_at = now
+            try:
+                value = self._read(self._name)
+            except Exception as exc:
+                raise _FrontDoorSecretUnavailable() from exc
+            if not isinstance(value, str) or not _FRONT_DOOR_SECRET.match(value):
+                raise _FrontDoorSecretUnavailable()
+            self._value = value
+            self._fetched_at = now
+            return value
+
+
+# _front_door_ssm_client_instance is the boto3 SSM client for this execution
+# environment, created on the first parameter read.
+_front_door_ssm_client_instance: Any = None
+
+
+def _front_door_ssm_client() -> Any:
+    global _front_door_ssm_client_instance
+    if _front_door_ssm_client_instance is None:
+        try:
+            import boto3  # type: ignore[import-not-found]
+        except ImportError as exc:
+            raise RuntimeError("apptheory: boto3 is required to read a front-door secret parameter") from exc
+        _front_door_ssm_client_instance = boto3.client("ssm")
+    return _front_door_ssm_client_instance
+
+
+def _default_front_door_secret_reader(parameter_name: str) -> str:
+    """Read the parameter from Parameter Store with decryption enabled."""
+    output = _front_door_ssm_client().get_parameter(Name=parameter_name, WithDecryption=True)
+    value = (output or {}).get("Parameter", {}).get("Value")
+    if not isinstance(value, str) or value == "":
+        raise RuntimeError("apptheory: the front-door secret parameter returned an empty value")
+    return value
 
 
 def _first_header_value(headers: Any, name: str) -> str:
