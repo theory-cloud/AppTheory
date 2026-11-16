@@ -274,13 +274,7 @@ release_please_draft_guard = (
     "(github.event.pull_request.head.ref != 'release-please--branches--premain' && "
     "github.event.pull_request.head.ref != 'release-please--branches--main')"
 )
-product_guard = (
-    "if: (github.event_name != 'push' || !contains(github.event.head_commit.message, 'release-please--branches--')) && "
-    "(github.event_name != 'pull_request' || (github.event.pull_request.draft == false && "
-    "github.event.pull_request.head.ref != 'release-please--branches--premain' && "
-    "github.event.pull_request.head.ref != 'release-please--branches--main')) && "
-    "!(github.event_name == 'workflow_dispatch' && inputs.release_pr_number != '')"
-)
+product_guard = "if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'"
 require_job_contains(
     ".github/workflows/ci.yml",
     "version-alignment",
@@ -292,19 +286,19 @@ for job in ("go", "ts", "py", "contract-tests", "cdk-go-drift", "runtime-floor-m
         ".github/workflows/ci.yml",
         job,
         product_guard,
-        "product jobs must skip only the generated release-only transformation, never an ordinary source change",
+        "product jobs must verify their record on the staging pull request and nowhere else",
     )
 require_job_contains(
     ".github/workflows/ci.yml",
     "release-delta",
-    "run: bash scripts/evidence/verify-or-execute.sh --gate release-delta",
-    "generated release PRs must run the narrow release delta gate",
+    "run: python3 scripts/evidence/validation_evidence.py run --gate release-delta --forced",
+    "generated release PRs must run the narrow release delta smoke, the one recorded execution path",
 )
 require_job_contains(
     ".github/workflows/examples-local.yml",
     "examples-local",
-    "scripts/evidence/verify-or-execute.sh --gate examples-local --profile default --verify-only",
-    "the examples harness must reuse verified evidence or execute the real harness",
+    "scripts/evidence/verify-gate.sh --gate examples-local --profile default",
+    "the examples harness job must verify the recorded local-harness evidence",
 )
 require_not_contains(
     ".github/workflows/release.yml",
@@ -715,15 +709,10 @@ require_contains(
     "ready_for_review",
     "CI must run when humans mark draft release PRs ready",
 )
-require_contains(
+require_not_contains(
     ".github/workflows/ci.yml",
-    "workflow_dispatch:\n    inputs:\n      run_full_rubric:",
-    "CI must be dispatchable for bot-authored release PR branch updates with explicit rubric control",
-)
-require_contains(
-    ".github/workflows/ci.yml",
-    "default: true",
-    "manual CI workflow_dispatch must continue to run the full rubric by default",
+    "run_full_rubric",
+    "CI dispatch must not carry a rubric execution toggle; CI verifies a recorded result",
 )
 require_contains(
     ".github/workflows/ci.yml",
@@ -747,8 +736,8 @@ require_contains(
 )
 require_contains(
     ".github/workflows/ci.yml",
-    "if: (github.event_name == 'workflow_dispatch' && (inputs.run_full_rubric == true || inputs.run_full_rubric == 'true')) || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging')",
-    "full rubric must run only on staging PRs and opted-in manual dispatch",
+    "if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'",
+    "the full rubric context must verify the recorded rubric on staging PRs only",
 )
 require_contains(
     ".github/workflows/ci.yml",
@@ -911,16 +900,26 @@ require_contains(
     "bash scripts/verify-runtime-floor-claims.sh",
     "CI release/security gates must fail closed on unsupported Python/Node floor claims",
 )
-require_contains(
+require_not_contains(
     "scripts/verify-rubric.sh",
     "bash ./scripts/verify-release-train-promotion.sh --self-test",
-    "the full rubric must include release train provenance self-tests",
+    "the full rubric must not repeat the release train self-test the required Release/security gates job already runs",
 )
-require_contains(
+require_not_contains(
     "scripts/verify-rubric.sh",
     "bash ./scripts/verify-release-cycle.sh",
-    "the full rubric must include the deterministic full-cycle release regression",
+    "the full rubric must not repeat the release-cycle regression the required Release/security gates job already runs",
 )
+for release_security_step in (
+    "bash scripts/verify-release-train-promotion.sh --self-test",
+    "bash scripts/verify-release-cycle.sh",
+):
+    require_job_contains(
+        ".github/workflows/ci.yml",
+        "release-security-gates",
+        release_security_step,
+        "the required Release/security gates job must own the release-train and release-cycle invariants once",
+    )
 require_contains(
     "scripts/verify-release-gates.sh",
     "bash ./scripts/verify-runtime-floor-claims.sh",
@@ -1070,10 +1069,10 @@ for forbidden in (
             forbidden,
             "release artifact sync must not depend on CI-held signing secrets",
         )
-require_contains(
+require_not_contains(
     "scripts/sync-release-pr-generated.sh",
-    "--raw-field run_full_rubric=false",
-    "automated release PR CI dispatch must disable the full rubric",
+    "run_full_rubric",
+    "automated release PR CI dispatch must not request a rubric execution",
 )
 require_contains(
     "scripts/sync-release-pr-generated.sh",

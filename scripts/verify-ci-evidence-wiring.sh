@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Purpose: fail closed when the evidence-aware CI wiring drifts from the tracked
-# gate registry: a job that may reuse proof must keep its verify-or-execute entry
-# point and name a tracked proof profile, a generated-delta smoke must keep
-# forcing execution, and the always-executing release/security job must never
-# gain an evidence entry point.
+# gate registry: a job that verifies proof must keep its verify-only entry point
+# and name a tracked proof profile, a generated-delta smoke must keep executing
+# through the one recorded run path, no workflow may execute a gate command
+# directly, and the always-executing release/security job must never gain an
+# evidence entry point.
 #
 # The classification is delegated to cmd/ci-guard, which parses the workflows as
 # YAML, reads the tracked registry, and resolves matrix-driven profile

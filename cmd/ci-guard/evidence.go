@@ -10,13 +10,20 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
-// evidenceInvocation matches the stable CI entry point, the gate id, and the
-// optional tracked proof profile. The profile may be a literal or a matrix
+// evidenceInvocation matches the verify-only CI entry point, the gate id, and
+// the tracked proof profile. The profile may be a literal or a matrix
 // reference; both are resolved against the tracked registry and the job's
 // explicit matrix cells.
-var evidenceInvocation = regexp.MustCompile(`scripts/evidence/verify-or-execute\.sh[ \t]+--gate[ \t]+([a-z0-9-]+)(?:[ \t]+--profile[ \t]+("[^"]*"|'[^']*'|[^ \t"']+))?`)
+var evidenceInvocation = regexp.MustCompile(`scripts/evidence/verify-gate\.sh[ \t]+--gate[ \t]+([a-z0-9-]+)(?:[ \t]+--profile[ \t]+("[^"]*"|'[^']*'|[^ \t"']+))?`)
+
+// forcedRunInvocation matches the one recorded execution path: the generated
+// release delta smoke runs the registered commands for generated content that
+// does not exist before release-please produces it.
+var forcedRunInvocation = regexp.MustCompile(`validation_evidence\.py[ \t]+run[ \t]+--gate[ \t]+([a-z0-9-]+)[^\n]*--forced`)
 
 var matrixProfileReference = regexp.MustCompile(`^\$\{\{\s*matrix\.([A-Za-z0-9_-]+)\s*\}\}$`)
 
@@ -30,9 +37,9 @@ type evidenceWiringRequirement struct {
 	job      string
 	gates    []string
 	// forced means the job is an artifact-production smoke that always executes
-	// on the current event and must set EVIDENCE_FORCE_EXECUTE: "true". Every
-	// other job must name a tracked proof profile instead, so a given tested
-	// environment is proven once rather than forced again on every leg.
+	// on generated content and must therefore name the registered gate through
+	// `run --forced`. Every other job must verify a tracked record instead, so a
+	// given tested environment is proven once locally rather than executed in CI.
 	forced bool
 }
 
@@ -55,6 +62,10 @@ var evidenceWiring = []evidenceWiringRequirement{
 // cheap release/security invariants whose whole value is running on the new
 // commit, independent of any reusable proof.
 var alwaysExecutingJobs = []string{"release-security-gates"}
+
+// evidenceEntryPoint is the single verify-only entry point every evidence-aware
+// CI job must use.
+const evidenceEntryPoint = "scripts/evidence/verify-gate.sh"
 
 type evidenceProfile struct {
 	Environment struct {
@@ -134,6 +145,7 @@ func checkEvidenceWiring(root string) []string {
 	failures := checkEvidenceRegistry(registry)
 	failures = append(failures, checkEvidenceWorkflowWiring(root, registry)...)
 	failures = append(failures, checkAlwaysExecutingWiring(root)...)
+	failures = append(failures, checkNoWorkflowGateExecution(root, registry)...)
 	return failures
 }
 
@@ -255,6 +267,15 @@ func checkJobEvidenceWiring(requirement evidenceWiringRequirement, job workflowJ
 	var failures []string
 	found := map[string]bool{}
 	for _, step := range job.steps {
+		if requirement.forced {
+			failures = append(failures, checkForcedRunStep(requirement, step, registry, found)...)
+			continue
+		}
+		if forcedRunInvocation.MatchString(step.run) {
+			failures = append(failures, fmt.Sprintf(
+				"job %q step %q executes a gate instead of verifying its record; only the generated release delta smoke may execute",
+				requirement.job, step.name))
+		}
 		for _, match := range evidenceInvocation.FindAllStringSubmatch(step.run, -1) {
 			gate := match[1]
 			found[gate] = true
@@ -263,19 +284,6 @@ func checkJobEvidenceWiring(requirement evidenceWiringRequirement, job workflowJ
 				failures = append(failures, fmt.Sprintf(
 					"job %q invokes unknown gate %q", requirement.job, gate))
 				continue
-			}
-			if requirement.forced {
-				if step.env["EVIDENCE_FORCE_EXECUTE"] != literalTrue {
-					failures = append(failures, fmt.Sprintf(
-						"job %q step %q must set EVIDENCE_FORCE_EXECUTE: \"true\" for gate %q; this is an artifact-production smoke, not reusable evidence",
-						requirement.job, step.name, gate))
-				}
-				continue
-			}
-			if step.env["EVIDENCE_FORCE_EXECUTE"] == literalTrue {
-				failures = append(failures, fmt.Sprintf(
-					"job %q step %q forces execution of gate %q instead of naming a tracked proof profile",
-					requirement.job, step.name, gate))
 			}
 			profile := ""
 			if len(match) > 2 {
@@ -293,8 +301,40 @@ func checkJobEvidenceWiring(requirement evidenceWiringRequirement, job workflowJ
 	for _, gate := range requirement.gates {
 		if !found[gate] {
 			failures = append(failures, fmt.Sprintf(
-				"%s job %q must invoke scripts/evidence/verify-or-execute.sh --gate %s",
-				requirement.workflow, requirement.job, gate))
+				"%s job %q must invoke %s for gate %s",
+				requirement.workflow, requirement.job, evidenceEntryPoint, gate))
+		}
+	}
+	return failures
+}
+
+// checkForcedRunStep pins the single execution path: a generated-delta smoke
+// must run the registered gate through `validation_evidence.py run --forced`,
+// which executes the approved command set and refuses nested proof. It must not
+// route through the verification entry point, and it must not name a proof
+// profile, because a generated-delta claim is never reusable evidence.
+func checkForcedRunStep(
+	requirement evidenceWiringRequirement,
+	step workflowStep,
+	registry *evidenceRegistry,
+	found map[string]bool,
+) []string {
+	var failures []string
+	if evidenceInvocation.MatchString(step.run) {
+		failures = append(failures, fmt.Sprintf(
+			"job %q step %q verifies evidence for gate %q; this is an artifact-production smoke that must execute",
+			requirement.job, step.name, requirement.gates[0]))
+	}
+	for _, match := range forcedRunInvocation.FindAllStringSubmatch(step.run, -1) {
+		gate := match[1]
+		if _, ok := registry.Gates[gate]; !ok {
+			failures = append(failures, fmt.Sprintf("job %q invokes unknown gate %q", requirement.job, gate))
+			continue
+		}
+		for _, want := range requirement.gates {
+			if gate == want {
+				found[gate] = true
+			}
 		}
 	}
 	return failures
@@ -362,6 +402,94 @@ func findJob(workflow *workflowFile, id string) (workflowJob, bool) {
 		}
 	}
 	return workflowJob{}, false
+}
+
+// registeredCommand is one approved command a tracked gate executes locally.
+type registeredCommand struct {
+	gate string
+	text string
+}
+
+// checkNoWorkflowGateExecution fails closed when a workflow executes a
+// registered gate command directly. A gate is verified once from a locally
+// produced record; the only execution path in CI is the generated release delta
+// smoke, which runs generated content that does not exist locally. A workflow
+// that starts executing a gate again would restore the cost and the
+// post-merge re-execution this policy removes, and the recorded force switch
+// would turn verification back into an escape hatch.
+func checkNoWorkflowGateExecution(root string, registry *evidenceRegistry) []string {
+	files, err := listWorkflowFiles(root, defaultWorkflowsDir)
+	if err != nil {
+		return []string{err.Error()}
+	}
+	commands := registeredCommandTexts(registry)
+	var failures []string
+	for _, rel := range files {
+		failures = append(failures,
+			checkWorkflowTextForExecution(filepath.Join(root, filepath.FromSlash(rel)), rel, commands)...)
+	}
+	return failures
+}
+
+func registeredCommandTexts(registry *evidenceRegistry) []registeredCommand {
+	var commands []registeredCommand
+	for gateID, gate := range registry.Gates {
+		for _, command := range gate.Commands {
+			text := strings.Join(command.Argv, " ")
+			if text == "" {
+				continue
+			}
+			commands = append(commands, registeredCommand{gate: gateID, text: text})
+		}
+	}
+	sort.Slice(commands, func(i, j int) bool { return commands[i].text < commands[j].text })
+	return commands
+}
+
+func checkWorkflowTextForExecution(fullPath, rel string, commands []registeredCommand) []string {
+	//nolint:gosec // the path is a repository workflow enumerated from the workflow directory.
+	data, err := os.ReadFile(fullPath)
+	if err != nil {
+		return []string{fmt.Sprintf("%s: %v", rel, err)}
+	}
+	var document yaml.Node
+	if err := yaml.Unmarshal(data, &document); err != nil {
+		return []string{fmt.Sprintf("%s: %v", rel, err)}
+	}
+	var failures []string
+	for _, text := range scalarTexts(&document) {
+		if strings.Contains(text, "EVIDENCE_FORCE_EXECUTE") {
+			failures = append(failures, fmt.Sprintf(
+				"%s must not force gate execution through EVIDENCE_FORCE_EXECUTE; CI verifies a recorded result", rel))
+		}
+		if forcedRunInvocation.MatchString(text) {
+			continue
+		}
+		for _, command := range commands {
+			if strings.Contains(text, command.text) {
+				failures = append(failures, fmt.Sprintf(
+					"%s executes the %q gate command directly (%q); CI must verify the gate's record through %s instead",
+					rel, command.gate, command.text, evidenceEntryPoint))
+			}
+		}
+	}
+	return failures
+}
+
+// scalarTexts collects every scalar string in a workflow document. Comments are
+// not part of the node tree, so a documented example can never trip the check.
+func scalarTexts(node *yaml.Node) []string {
+	if node == nil {
+		return nil
+	}
+	if node.Kind == yaml.ScalarNode {
+		return []string{node.Value}
+	}
+	var texts []string
+	for _, child := range node.Content {
+		texts = append(texts, scalarTexts(child)...)
+	}
+	return texts
 }
 
 func loadEvidenceRegistry(root string) (*evidenceRegistry, error) {

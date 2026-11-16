@@ -172,67 +172,67 @@
       "id": "pr-staging",
       "leg": "pull request -> staging",
       "old": "every job executes on the pull-request merge ref",
-      "new": "required product jobs reuse applicable evidence for their tracked profile; untrusted or unmatched inputs execute"
+      "new": "every product job verifies the committed record for its tracked proof profile; nothing executes, and a missing or stale record fails with the local collection command"
     },
     {
       "id": "push-staging",
       "leg": "merge push -> staging",
       "old": "every job re-executes on the merged tree",
-      "new": "product and floor jobs reuse each profile's proof for the same inputs; release/security gates execute cheaply"
+      "new": "publish side effects only (pages); no gate-class job runs on the merge"
     },
     {
       "id": "pr-staging-premain",
       "leg": "staging -> premain promotion pull request",
       "old": "CI product set plus promotion readiness and eligibility",
-      "new": "promotion readiness/eligibility plus evidenced product checks per profile; no source rerun"
+      "new": "release hygiene only: promotion gate, version alignment, release/security gates and dependency-scan freshness; no product job runs"
     },
     {
       "id": "push-premain",
       "leg": "promotion merge push -> premain",
       "old": "CI product set re-executes, then release-please generates the RC PR",
-      "new": "CI reuses each profile's evidence; release-please generation and artifact sync run"
+      "new": "release-please generation and publish only; no gate re-verification"
     },
     {
       "id": "release-pr-premain",
       "leg": "generated RC release PR",
       "old": "dispatched CI re-executes the product suite on generated artifacts",
-      "new": "release-delta packaging/drift smoke once; product and floor jobs verify their profile records"
+      "new": "generated release PR: release-delta smoke once over generated artifacts, plus release/security gates and version alignment; no product job runs"
     },
     {
       "id": "release-merge-premain",
       "leg": "RC merge/publish on premain",
       "old": "CI product set re-executes, then the publisher builds assets again",
-      "new": "product checks verify profile evidence; signatures and version state run; publisher builds real Linux assets once"
+      "new": "publish only; the publisher builds real Linux assets once and no gate re-verifies"
     },
     {
       "id": "pr-premain-main",
       "leg": "premain -> main promotion pull request",
       "old": "CI product set plus promotion readiness and eligibility",
-      "new": "promotion readiness/eligibility plus evidenced product checks per profile; no source rerun"
+      "new": "release hygiene only: promotion gate, version alignment, release/security gates and dependency-scan freshness; no product job runs"
     },
     {
       "id": "push-main",
       "leg": "promotion merge push -> main",
       "old": "CI product set re-executes, then release-please generates the stable PR",
-      "new": "CI reuses each profile's evidence; release-please generation and artifact sync run"
+      "new": "release-please generation and publish only; no gate re-verification"
     },
     {
       "id": "release-pr-main",
       "leg": "generated stable release PR",
       "old": "dispatched CI re-executes the product suite on generated artifacts",
-      "new": "release-delta packaging/drift smoke once; product and floor jobs verify their profile records"
+      "new": "generated release PR: release-delta smoke once over generated artifacts, plus release/security gates and version alignment; no product job runs"
     },
     {
       "id": "release-merge-main",
       "leg": "stable merge/publish on main",
       "old": "CI product set re-executes, then the publisher builds assets again",
-      "new": "product checks verify profile evidence; signatures and version state run; publisher builds real Linux assets once"
+      "new": "publish only; the publisher builds real Linux assets once and no gate re-verifies"
     },
     {
       "id": "backmerge-main-staging",
       "leg": "main -> staging back-merge pull request",
       "old": "full rubric, builds, examples and matrix re-execute",
-      "new": "evidenced pure version-transformation reuse per profile; a real source delta executes the affected gates"
+      "new": "records-only evidence refresh on the back-merge branch, then the staging pull-request verification set; a real source delta needs the affected gates recollected"
     }
   ],
   "gates": {
@@ -558,7 +558,7 @@
       "kind": "dependency-scan",
       "environment": ["go", "node", "python"],
       "profiles": ["default"],
-      "description": "Dependency vulnerability refresh bounded by the tracked max age",
+      "description": "Dependency vulnerability refresh bounded by the tracked max age, verified on the promotion pull request so a stale scan record fails there",
       "maxAgeSeconds": 86400,
       "resource": "network",
       "paths": [

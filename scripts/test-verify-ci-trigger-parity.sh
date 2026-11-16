@@ -1,7 +1,10 @@
-#!/usr/bin/env bash
 # Purpose: prove scripts/verify-ci-trigger-parity.sh (cmd/ci-guard) fails closed
-# on every R-F1 bypass reproduced in review rounds 0 and 1, and still passes on
-# the shipped wiring.
+# on every bypass reproduced in review rounds 0, 1 and 2, and still passes on the
+# shipped wiring.
+#
+# The shipped shape is verified-once: gates run on the pull request into staging
+# and nowhere else, a merge publishes instead of re-verifying, and premain/main
+# pull requests run recorded release hygiene only.
 #
 # Round 0 reproduced bypasses that used to pass the line-matching guard:
 #   - appending `|| (github.event_name != 'pull_request')`
@@ -16,9 +19,6 @@
 #
 # Round 1 reproduced bypasses (SAN/ADV-1073-R1-*), each returning exit 0 while
 # the gate was vacated or a promotion-only gate hid outside ci.yml:
-#   - dropping the eligibility gate's push-to-staging leg (ADV-1073-R1-01)
-#   - `needs: prerelease-readiness` with no `if:` of its own, which makes the
-#     job promotion-only in practice (SAN-AT1073-R1-F2)
 #   - a new workflow file with a push-only gating job (F3)
 #   - a new workflow file with a promotion-only pull request trigger (F3)
 #   - a promotion-only job hidden inside a `uses:` reusable-workflow callee
@@ -33,13 +33,11 @@
 #   - widening the exemption's head ref binding (to `github.ref_name`), which
 #     would exempt pull requests whose content has not been released
 #
-# Round 3 records the operator decision of 2026-10-12: the release-eligibility
-# gate is scoped to the staging -> premain promotion pull request plus the push to
-# staging, and is skipped for pull requests into staging, where the post-release
-# range legitimately carries no release-driving commit. Its staging-lane coverage
-# is recorded in the guard's stagingLaneScopeExceptions, and the probes below keep
-# that exception honest: the push leg cannot go, the pull-request-to-staging leg
-# cannot come back behind it, and no other job inherits the carve-out.
+# The verified-once probes below keep that policy honest: ci.yml cannot regain a
+# push trigger, the promotion-lane jobs cannot regain a push leg, premain/main
+# pull requests cannot gain an unrecorded job, the staging pull request cannot
+# gain an executing job, and no job may sit gated on a trigger the workflow no
+# longer declares.
 #
 # plus the canonical regressions (a promotion-scoped rubric, a push-broadened
 # deterministic-build job, a `pull_request` branch filter that omits staging, and
@@ -118,9 +116,7 @@ import sys
 path = pathlib.Path(sys.argv[1])
 mode = sys.argv[2]
 text = path.read_text(encoding="utf-8")
-RUBRIC_PREFIX = "    if: (github.event_name == 'workflow_dispatch'"
-BUILDS_PREFIX = "    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'"
-ELIGIBILITY_PREFIX = "    if: (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain'"
+ELIGIBILITY_JOB = "staging-release-eligibility"
 
 
 def find_line(prefix):
@@ -128,6 +124,33 @@ def find_line(prefix):
         if line.startswith(prefix):
             return line
     raise SystemExit(f"line with prefix {prefix!r} not found")
+
+
+def job_if_index(job_id):
+    """Index of the `if:` line inside one job, so two identical guards stay distinct."""
+    lines = text.splitlines(keepends=True)
+    header = f"  {job_id}:\n"
+    for index, line in enumerate(lines):
+        if line == header:
+            for probe in range(index + 1, len(lines)):
+                if lines[probe].startswith("    if:"):
+                    return probe
+                if lines[probe].startswith("  ") and not lines[probe].startswith("    "):
+                    break
+            raise SystemExit(f"job {job_id!r} has no job-level if: line")
+    raise SystemExit(f"job {job_id!r} not found")
+
+
+def replace_job_if(job_id, replacement):
+    global text
+    lines = text.splitlines(keepends=True)
+    index = job_if_index(job_id)
+    lines[index] = replacement if replacement.endswith("\n") else replacement + "\n"
+    text = "".join(lines)
+
+
+def job_if_line(job_id):
+    return text.splitlines()[job_if_index(job_id)]
 
 
 def replace_line(prefix, replacement):
@@ -142,24 +165,24 @@ def replace_line(prefix, replacement):
 
 
 if mode == "rubric_append":
-    replace_line(RUBRIC_PREFIX, find_line(RUBRIC_PREFIX) + " " + sys.argv[3])
+    replace_job_if("rubric", job_if_line("rubric") + " " + sys.argv[3])
 elif mode == "rubric_continuation":
-    replace_line(RUBRIC_PREFIX, find_line(RUBRIC_PREFIX) + "\n      " + sys.argv[3])
+    replace_job_if("rubric", job_if_line("rubric") + "\n      " + sys.argv[3])
 elif mode == "rubric_replace":
-    replace_line(RUBRIC_PREFIX, "    if: " + sys.argv[3])
+    replace_job_if("rubric", "    if: " + sys.argv[3])
 elif mode == "rubric_fold":
-    replace_line(RUBRIC_PREFIX, (
+    replace_job_if("rubric", (
         "    if: >-\n"
-        "      (github.event_name == 'workflow_dispatch' && (inputs.run_full_rubric == true || inputs.run_full_rubric == 'true'))\n"
-        "      || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging')"))
+        "      github.event_name == 'pull_request'\n"
+        "      && github.event.pull_request.base.ref == 'staging'"))
 elif mode == "builds_replace":
-    replace_line(BUILDS_PREFIX, "    if: " + sys.argv[3])
-elif mode == "eligibility_push_leg_removed":
-    replace_line(ELIGIBILITY_PREFIX,
-                 "    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain' && github.event.pull_request.head.ref == 'staging'")
+    replace_job_if("builds", "    if: " + sys.argv[3])
+elif mode == "eligibility_push_leg_restored":
+    replace_job_if(ELIGIBILITY_JOB,
+                   "    if: (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain' && github.event.pull_request.head.ref == 'staging') || (github.event_name == 'push' && github.ref == 'refs/heads/staging')")
 elif mode == "eligibility_pr_leg_restored":
-    replace_line(ELIGIBILITY_PREFIX,
-                 "    if: (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging') || (github.event_name == 'push' && github.ref == 'refs/heads/staging')")
+    replace_job_if(ELIGIBILITY_JOB,
+                   "    if: (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain' && github.event.pull_request.head.ref == 'staging') || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging')")
 elif mode == "eligibility_backmerge_removed":
     if "--allow-main-backmerge" not in text:
         raise SystemExit("eligibility back-merge opt-in fixture not found")
@@ -172,19 +195,23 @@ elif mode == "eligibility_backmerge_head_ref_widened":
         raise SystemExit("eligibility head ref binding fixture not found")
     text = text.replace(binding, step + "          PR_HEAD_REF: ${{ github.ref_name }}\n", 1)
 elif mode == "rubric_step_event_gate":
-    target = ("      - name: Verify reusable evidence or run full rubric\n"
-              "        run: bash scripts/evidence/verify-or-execute.sh --gate rubric --profile default\n")
-    replacement = ("      - name: Verify reusable evidence or run full rubric\n"
+    target = ("      - name: Verify the recorded full rubric\n"
+              "        run: bash scripts/evidence/verify-gate.sh --gate rubric --profile default\n")
+    replacement = ("      - name: Verify the recorded full rubric\n"
                    "        if: github.event_name == 'workflow_dispatch'\n"
-                   "        run: bash scripts/evidence/verify-or-execute.sh --gate rubric --profile default\n")
+                   "        run: bash scripts/evidence/verify-gate.sh --gate rubric --profile default\n")
     if target not in text:
         raise SystemExit("rubric step fixture not found")
     text = text.replace(target, replacement, 1)
 elif mode == "append":
     text = text.rstrip("\n") + "\n" + sys.argv[3] + "\n"
 elif mode == "add_pull_request_branch_filter":
-    text = text.replace("  pull_request:\n    types:",
-                        f"  pull_request:\n    branches: [{sys.argv[3]}]\n    types:", 1)
+    replacement = f"    branches: [{sys.argv[3]}]\n"
+    if "    branches: [staging, premain, main]\n" in text:
+        text = text.replace("    branches: [staging, premain, main]\n", replacement, 1)
+    else:
+        text = text.replace("  pull_request:\n    types:",
+                            f"  pull_request:\n{replacement}    types:", 1)
 elif mode == "examples_local_filter":
     if '    branches: ["staging"]\n' not in text:
         raise SystemExit("examples-local staging filter fixture not found")
@@ -193,6 +220,9 @@ elif mode == "examples_local_filter":
 elif mode == "add_yaml_smuggling":
     text = text.replace("  release-security-gates:\n", "  release-security-gates: &base\n", 1)
     text = text.rstrip("\n") + "\n  clone:\n    <<: *base\n    runs-on: ubuntu-latest\n"
+elif mode == "add_push_trigger":
+    text = text.replace("  workflow_dispatch:\n",
+                        "  push:\n    branches: [staging, premain, main]\n  workflow_dispatch:\n", 1)
 elif mode == "add_pull_request_trigger":
     text = text.replace("  push:\n    branches: [staging]\n",
                         "  push:\n    branches: [staging]\n  pull_request:\n    types: [opened, synchronize]\n", 1)
@@ -252,25 +282,24 @@ reset_fixture
 mutate ci.yml builds_replace "github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging' || github.event_name == 'push'"
 expect_fail "deterministic builds broadened to a push" "staging-pull-request-only"
 
-# C. The release-eligibility gate is scoped to the promotion lane (the
-# staging -> premain pull request) and to the push to staging. Dropping the push
-# leg leaves the staging lane uncovered and must fail (ADV-1073-R1-01); restoring
-# the pull-request-to-staging leg makes the recorded scope exception stale and
-# must fail too, so a widened condition cannot hide behind it.
+# C. The release-eligibility gate is scoped to the promotion pull request and
+# nowhere else. Restoring the push-to-staging leg re-creates the post-merge
+# re-verification the policy removed, and restoring the
+# pull-request-to-staging leg demands a verdict on a range that carries no
+# release-driving commit; both widen a pinned condition and must fail.
 reset_fixture
-mutate ci.yml eligibility_push_leg_removed
-expect_fail "eligibility gate stripped of its push-to-staging leg" "promotion-pull-request-plus-push-to-staging"
-expect_fail "eligibility gate stripped of its push-to-staging leg" "the job must keep its push staging leg"
+mutate ci.yml eligibility_push_leg_restored
+expect_fail "eligibility gate given back its push-to-staging leg" "promotion-pull-request-only"
 
 reset_fixture
 mutate ci.yml eligibility_pr_leg_restored
-expect_fail "eligibility gate run on pull requests to staging again" "the job runs on pull requests to staging again"
+expect_fail "eligibility gate run on pull requests to staging again" "promotion-pull-request-only"
 
-# C1. The exception is scoped to the recorded job: another job with only a
-# push-to-staging leg still violates push parity.
+# C1. A job gated only on a push can never run once ci.yml declares no push
+# trigger, so it fails closed as dead wiring.
 reset_fixture
 mutate ci.yml append "$(new_job sneaky-push-only 'Sneaky push only' "github.event_name == 'push' && github.ref == 'refs/heads/staging'")"
-expect_fail "a third job carrying only the push-to-staging leg" "push parity"
+expect_fail "a job gated only on the push-to-staging leg" "can never run on a modeled trigger"
 
 # C2. The post-release main back-merge exemption stays wired and narrow: losing
 # the opt-in hands the gate back to the plain predicate (the released staging SHA
@@ -292,24 +321,24 @@ mutate ci.yml append "  needs-promotion-only:
     runs-on: ubuntu-latest
     steps:
       - run: echo probe"
-expect_fail "needs: on a promotion-only job makes the dependent promotion-only" "no pull-request-to-staging equivalent"
+expect_fail "needs: on a promotion-only job makes the dependent promotion-only" "only recorded release hygiene may run there"
 
 # E. New promotion-only jobs in either lane, and push-only jobs.
 reset_fixture
 mutate ci.yml append "$(new_job sneaky-premain-to-main 'Sneaky premain to main' "github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.ref == 'premain'")"
-expect_fail "new premain-to-main promotion-only job" "no pull-request-to-staging equivalent"
+expect_fail "new premain-to-main promotion-only job" "only recorded release hygiene may run there"
 
 reset_fixture
 mutate ci.yml append "$(new_job sneaky-staging-to-premain 'Sneaky staging to premain' "github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain' && github.event.pull_request.head.ref == 'staging'")"
-expect_fail "new staging-to-premain promotion-only job" "no pull-request-to-staging equivalent"
+expect_fail "new staging-to-premain promotion-only job" "only recorded release hygiene may run there"
 
 reset_fixture
 mutate ci.yml append "$(new_job sneaky-negated-base 'Sneaky negated base' "github.event_name == 'pull_request' && github.event.pull_request.base.ref != 'staging'")"
-expect_fail "new promotion-only job with a negated base ref" "no pull-request-to-staging equivalent"
+expect_fail "new promotion-only job with a negated base ref" "only recorded release hygiene may run there"
 
 reset_fixture
 mutate ci.yml append "$(new_job sneaky-head-only 'Sneaky head-only gate' "github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'staging'")"
-expect_fail "new head-only gate on the staging promotion lane" "no pull-request-to-staging equivalent"
+expect_fail "new head-only gate on the staging promotion lane" "only recorded release hygiene may run there"
 
 folded_job="$(cat <<'YAML'
   sneaky-folded:
@@ -327,11 +356,12 @@ expect_fail "new job with a folded if: block" "not modeled"
 
 reset_fixture
 mutate ci.yml append "$(new_job sneaky-push 'Sneaky push' "github.event_name == 'push'")"
-expect_fail "new generic push-only job" "push parity"
+expect_fail "new generic push-only job" "can never run on a modeled trigger"
 
+# The workflow-level regression: ci.yml cannot regain a push trigger.
 reset_fixture
-mutate ci.yml append "$(new_job sneaky-not-pr 'Sneaky not pull request' "github.event_name != 'pull_request'")"
-expect_fail "new negated-event push-only job" "push parity"
+mutate ci.yml add_push_trigger
+expect_fail "ci.yml regains a push trigger" "must not declare an on: push trigger"
 
 # F. Unmodeled trigger and YAML shapes fail closed. A pull_request branch filter
 # is modeled only when it keeps pull requests to staging: a filter that omits
@@ -377,7 +407,7 @@ jobs:
     steps:
       - run: echo evil
 YAML
-expect_fail "new workflow whose push-only job has no PR-to-staging counterpart" "push parity"
+expect_fail "new workflow whose push-only job would re-run a gate after the merge" "never on a merge"
 
 reset_fixture
 cat >"${root}/.github/workflows/evil-promo.yml" <<'YAML'
@@ -411,7 +441,7 @@ jobs:
     steps:
       - run: echo evil
 YAML
-expect_fail "a same-named job outside ci.yml does not inherit the scope exception" "push parity"
+expect_fail "a same-named job outside ci.yml cannot ride the ci.yml shape" "never on a merge"
 
 # H. A reusable workflow's jobs are classified in the caller's context.
 reset_fixture
@@ -432,6 +462,9 @@ jobs:
 YAML
 expect_fail "promotion-only job hidden in a reusable-workflow callee" "callee.yml:promoted"
 
+# A callee job that runs on every lane is classified as such, so it fails both
+# lane-shape rules: an unrecorded job cannot ride into the staging or release
+# lanes just because it lives in another file.
 reset_fixture
 mutate ci.yml append "  calls-callee:
     name: Calls callee
@@ -447,7 +480,7 @@ jobs:
     steps:
       - run: echo shared
 YAML
-expect_pass "all-lane job in a reusable-workflow callee"
+expect_fail "all-lane job in a reusable-workflow callee" "neither verifies a recorded gate result"
 
 reset_fixture
 mutate ci.yml append "  calls-remote:

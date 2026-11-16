@@ -45,23 +45,18 @@ for f in "${required_files[@]}"; do
 done
 
 if [[ -f ".github/workflows/ci.yml" ]]; then
-  # Staging is the integration branch in the documented TableTheory-style flow; it must run CI on merge.
-  grep -Eq 'branches:' ".github/workflows/ci.yml" || {
-    echo "branch-release: ci workflow must define push branches"
+  # Verified once, on the pull request into staging. Premain and main only ever
+  # receive pull requests from staging or a generated release-please branch, so
+  # the release branches must be pull-request bases, never push targets: a push
+  # would re-run the gate on content the staging pull request already verified.
+  grep -Fq "branches: [staging, premain, main]" ".github/workflows/ci.yml" || {
+    echo "branch-release: ci workflow must run on pull requests into staging, premain and main"
     failures=$((failures + 1))
   }
-  grep -Eq '^\s*-\s*staging\s*$' ".github/workflows/ci.yml" || {
-    echo "branch-release: ci workflow must run on staging pushes"
+  if grep -Eq '^  push:' ".github/workflows/ci.yml"; then
+    echo "branch-release: ci workflow must not declare a gate-class push trigger"
     failures=$((failures + 1))
-  }
-  grep -Eq '^\s*-\s*premain\s*$' ".github/workflows/ci.yml" || {
-    echo "branch-release: ci workflow must run on premain pushes"
-    failures=$((failures + 1))
-  }
-  grep -Eq '^\s*-\s*main\s*$' ".github/workflows/ci.yml" || {
-    echo "branch-release: ci workflow must run on main pushes"
-    failures=$((failures + 1))
-  }
+  fi
   grep -Fq "github.event.pull_request.base.ref == 'staging'" ".github/workflows/ci.yml" || {
     echo "branch-release: full rubric must be scoped to PRs targeting staging"
     failures=$((failures + 1))

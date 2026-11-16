@@ -43,8 +43,11 @@ bash ./scripts/verify-ci-evidence-wiring.sh
 # The GovTheory verifier's deterministic-build passes own the two CDK package
 # builds, so declare that coverage instead of packaging a third time.
 APPTHEORY_RUBRIC_CDK_PACKAGING_COVERED=true bash ./scripts/verify-release-gates.sh
-bash ./scripts/verify-release-train-promotion.sh --self-test
-bash ./scripts/verify-release-cycle.sh
+# The release-train provenance self-test and the deterministic release-cycle
+# regression are not repeated here: the required "Release/security gates" job
+# runs both on every staging pull request (scripts/verify-ci-rubric-enforced.sh
+# pins that wiring), so a second run would only re-execute a check the merge
+# already requires.
 # The lab candidate builder is the fail-closed entry point for "build AppTheory at a
 # pinned commit" (docs/development/planning/apptheory/mcp-auth-facade/CANDIDATE_BUILD_INTERFACE.md).
 # Run its offline self-test so a builder that stops refusing live, environment input, a dirty
