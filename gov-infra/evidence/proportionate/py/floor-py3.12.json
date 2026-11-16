@@ -5,23 +5,23 @@
         "bash",
         "scripts/verify-python-build.sh"
       ],
-      "durationSeconds": 3.756,
+      "durationSeconds": 4.207,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-16T16:58:36Z",
+      "finishedAt": "2026-11-16T18:44:54Z",
       "id": "py-build",
-      "inputsDigest": "sha256:7d7f6db7131a6b88b13a544d972f1982b388cf080e849c17d07d2d5159946e17",
+      "inputsDigest": "sha256:806b5ebeeb10cc74c36ec8faff7d37655dde7ce90b8a3dbd005262c651c0cc20",
       "logDigest": "sha256:63705aeb908af528f0f1a27fb0282737d17d33b9be7007c57593ed157958896b",
-      "logRef": "gov-infra/evidence/proportionate/local/py-py-build-20261116T165832Z-56498.log",
+      "logRef": "gov-infra/evidence/proportionate/local/py-py-build-20261116T184450Z-41982.log",
       "reused": false,
-      "startedAt": "2026-11-16T16:58:32Z"
+      "startedAt": "2026-11-16T18:44:50Z"
     }
   ],
   "consumed": [],
   "description": "Python wheel and sdist build",
   "environment": {
     "go": "go1.27.4",
-    "node": "v24.13.1",
+    "node": "v24.21.0",
     "platform": {
       "arch": "arm64",
       "os": "darwin"
@@ -36,7 +36,7 @@
   },
   "profile": "floor-py3.12",
   "reason": "",
-  "recordedAt": "2026-11-16T16:58:36Z",
+  "recordedAt": "2026-11-16T18:44:54Z",
   "releaseOnly": {
     "digest": "sha256:e1f3a46f884d3eeacab9887004847f6a100f9d1ad2fc125634b50c3077babc8c",
     "fileCount": 477,
@@ -46,7 +46,7 @@
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:9544f9f0f47cba072d1a56e638314d90703c92b7b6823136e0792886d0abeaf4",
+    "digest": "sha256:a18b44e434ad9364460083591e2a4d45fe1253bcd55dc031a893b70a4fbc8d1f",
     "fileCount": 132,
     "paths": [
       "py/",
@@ -56,8 +56,8 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:aa51abb5ec14221e4fe3be6eb030c9a41163d01ce2de7ff37fbe6f77f50b349f",
-    "fileCount": 2663
+    "digest": "sha256:07c974df36d2cecd3c0d9074861aab03f13beefd26e626357c770d2d3df4c72e",
+    "fileCount": 2672
   },
   "verdict": "PASS"
 }
