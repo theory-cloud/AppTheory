@@ -57,9 +57,37 @@ export interface FrontDoorVerification {
     /**
      * The literal header value. 32 to 128 characters of `[A-Za-z0-9._~-]`. It is
      * compared in constant time on every request and never appears in a response.
+     * Mutually exclusive with {@link FrontDoorVerification.secretParameterName}.
      */
-    secretValue: string;
+    secretValue?: string;
+    /**
+     * The well-known, stage-qualified SSM parameter that holds the header value,
+     * mutually exclusive with {@link FrontDoorVerification.secretValue}.
+     *
+     * A fully qualified name from `/`, at most 1011 characters and fifteen levels,
+     * in the `[A-Za-z0-9_.-/]` alphabet a CloudFormation `ssm` dynamic reference
+     * accepts, and never in the reserved `aws`/`ssm` hierarchy. The value is read
+     * lazily in the request path — never by a background timer — cached for
+     * {@link FacadeConfig.frontDoorSecretTTLSeconds}, and re-read on a
+     * verification mismatch, so a rotation takes effect without a redeploy. An
+     * unreadable parameter refuses every derived route with `403 app.forbidden`.
+     */
+    secretParameterName?: string;
 }
+/**
+ * Reads a front-door secret parameter by name.
+ *
+ * The default reads AWS Systems Manager Parameter Store with decryption enabled,
+ * created lazily on the first request in the execution environment. Supply one
+ * to serve the same well-known name from another source — the local runner's
+ * credential-free parameter store, for example — and to keep unit tests free of
+ * AWS calls.
+ */
+export type FrontDoorSecretReader = (parameterName: string) => Promise<string>;
+/** Default parameter cache lifetime in one execution environment. */
+export declare const DEFAULT_FRONT_DOOR_SECRET_TTL_SECONDS = 300;
+/** Largest accepted parameter cache lifetime. */
+export declare const MAX_FRONT_DOOR_SECRET_TTL_SECONDS = 3600;
 /**
  * Returns an application-owned handler for one endpoint kind. Factories run
  * during facade registration, never during request handling.
@@ -174,6 +202,20 @@ export interface FacadeConfig {
      * unenforced front door would be a silent no-op.
      */
     frontDoorVerification?: FrontDoorVerification;
+    /**
+     * Reads {@link FrontDoorVerification.secretParameterName}. Omitted selects AWS
+     * Systems Manager Parameter Store, created lazily on the first request in the
+     * execution environment. Consulted by the parameter form only.
+     */
+    frontDoorSecretReader?: FrontDoorSecretReader;
+    /**
+     * How long a parameter value is reused before it is read again, bounded to
+     * `(0, 3600]` seconds. Defaults to
+     * {@link DEFAULT_FRONT_DOOR_SECRET_TTL_SECONDS}. A verification mismatch also
+     * refreshes the value, so the first request carrying a rotated value is
+     * admitted. Parameter form only.
+     */
+    frontDoorSecretTTLSeconds?: number;
     /**
      * Anchors the framework-owned front channel (DESIGN §8). When it is set,
      * AppTheory owns `/authorize`, the stage-global upstream callback, and the

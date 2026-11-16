@@ -93,7 +93,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/ts.txt`.
 
 <details>
-<summary>963 exported top-level symbols</summary>
+<summary>966 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, AGENT_MCP_PATTERN, ALBTargetGroupRequest, ALBTargetGroupResponse, APIGatewayProxyRequest,
@@ -122,7 +122,7 @@ createEMFMetricSink, createFakeMicroVMClient, createFakeMicroVMProvider, createF
 CreateJobInput, createKinesisJsonRecord, createLambdaFunctionURLStreamingHandler, createMcpServer, createMcpTestHarness, createMemoryMicroVMSessionRegistry,
 createMicroVMController, createMicroVMLifecycleAdapter, createMicroVMRegistryClient, createRealMicroVMController, createReconstructingMicroVMSessionRegistry,
 createS3ObjectStore, createS3VectorStore, createTableTheoryMicroVMSessionRegistry, createTestEnv, decodeCloudWatchLogsSubscription, decodeLoggingProfileJSON,
-DEFAULT_CALLBACK_PATH, DEFAULT_REFRESH_BUDGET_SECONDS, DEFAULT_REFRESH_GRACE_WINDOW_SECONDS, defaultCapabilities, defaultConfig, DefaultEmbeddingDimensions,
+DEFAULT_CALLBACK_PATH, DEFAULT_FRONT_DOOR_SECRET_TTL_SECONDS, DEFAULT_REFRESH_BUDGET_SECONDS, DEFAULT_REFRESH_GRACE_WINDOW_SECONDS, defaultCapabilities, defaultConfig, DefaultEmbeddingDimensions,
 defaultJobsConfig, defaultJobsTableName, defaultLoggingProfile, defaultMcpStreamModel, defaultMcpTaskModel, defaultMicroVMControllerContract,
 defaultMicroVMLifecycleContract, defaultMicroVMOperationContract, defaultMicroVMProviderStateMappings, defaultMicroVMRealLifecycleContract,
 defaultMicroVMSessionRegistryContract, DefaultQueryTopK, DefaultTitanEmbedTextModelId, DeleteVectorsInput, detectMcpProtocolVersion,
@@ -136,7 +136,7 @@ ERR_BEARER_TOKEN_INVALID_AUDIENCE, ERR_INVALID_AUTHORIZATION_HEADER, ERR_INVALID
 ErrorType, etag, EventBridgeEvent, EventBridgeHandler, EventBridgeScheduledWorkloadResultSummary, EventBridgeScheduledWorkloadSummary, EventBridgeSelector,
 EventBridgeWorkloadEnvelope, EventContext, EventHandler, EventMiddleware, FacadeCapabilities, FacadeConfig, FacadeRoute, FakeAccessTokenClaims, FakeEmbedder,
 FakeMicroVMClient, FakeMicroVMProvider, FakeOAuthProvider, FakeOAuthProviderOptions, FakeObjectStore, FakeRefreshStage, FakeTokenRequest, FakeVectorStore,
-FakeWebSocketManagementClient, fixedIdGenerator, FixedWindowStrategy, formatRfc3339Nano, formatWindowId, FrontDoorVerification, generateOpenAPI,
+FakeWebSocketManagementClient, fixedIdGenerator, FixedWindowStrategy, formatRfc3339Nano, formatWindowId, FrontDoorSecretReader, FrontDoorVerification, generateOpenAPI,
 generateOpenAPIJSON, getDayWindow, getFixedWindow, getHourWindow, getLogger, getMinuteWindow, GetVectorsInput, Handler, HandlerFactory, hashKey, Headers,
 hooksFromEMFMetricSink, hooksFromLogger, hooksFromProfileLogger, html, htmlStream, HTTP_ERROR_FORMAT_FLAT_LEGACY, HTTP_ERROR_FORMAT_NESTED, HTTPErrorFormat,
 IdempotencyCreateOutcome, IdempotencyStatus, IdGenerator, IDGenerator, InspectSemaphoreInput, insufficientScopeWWWAuthenticate, InternalOnly,
@@ -151,7 +151,7 @@ LOGGING_PROFILE_LEGACY, LOGGING_PROFILE_LOCAL_DEV, LOGGING_PROFILE_PAYTHEORY_ALE
 loggingProfileCatalog, LoggingProfileConfig, LoggingProfileEncoding, LoggingProfileEnrichment, LoggingProfileError, LoggingProfileErrorCapture,
 LoggingProfileEvent, LoggingProfileJobContext, LoggingProfileRequestContext, LoggingProfileSanitization, LoggingProfileSanitizer,
 LoggingProfileValidationError, loggingProfileValidationErrors, LogRecord, ManualClock, ManualIdGenerator, mapMicroVMProviderState, maskFirstLast,
-maskFirstLast4, matchesIfNoneMatch, max, MAX_CLIENT_REQUEST_ID_LENGTH, MAX_PRESIGN_PUT_EXPIRES_IN, MAX_REFRESH_BUDGET_SECONDS,
+maskFirstLast4, matchesIfNoneMatch, max, MAX_CLIENT_REQUEST_ID_LENGTH, MAX_FRONT_DOOR_SECRET_TTL_SECONDS, MAX_PRESIGN_PUT_EXPIRES_IN, MAX_REFRESH_BUDGET_SECONDS,
 MAX_REFRESH_GRACE_WINDOW_SECONDS, MAX_REFRESH_REUSE_RATE_CEILING, MAX_ROUTE_REFRESH_HANDLE_TTL_SECONDS, maxLength, MaxPutDeleteBatchSize, MaxQueryTopK,
 MCP_CODE_HEADER_MISMATCH, MCP_CODE_INTERNAL_ERROR, MCP_CODE_INVALID_PARAMS, MCP_CODE_INVALID_REQUEST, MCP_CODE_METHOD_NOT_FOUND,
 MCP_CODE_MISSING_REQUIRED_CLIENT_CAPABILITY, MCP_CODE_PARSE_ERROR, MCP_CODE_SERVER_ERROR, MCP_CODE_UNSUPPORTED_PROTOCOL_VERSION, MCP_HEADER_LAST_EVENT_ID,
