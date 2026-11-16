@@ -635,6 +635,10 @@ func init() {
 		reflect.TypeOf((*AppTheoryMcpFacadeAttachment)(nil)).Elem(),
 	)
 	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpFrontDoorHeader",
+		reflect.TypeOf((*AppTheoryMcpFrontDoorHeader)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryMcpFrontDoorVerificationOptions",
 		reflect.TypeOf((*AppTheoryMcpFrontDoorVerificationOptions)(nil)).Elem(),
 	)
@@ -732,6 +736,7 @@ func init() {
 			_jsii_.MemberProperty{JsiiProperty: "domainName", GoGetter: "DomainName"},
 			_jsii_.MemberProperty{JsiiProperty: "endpoint", GoGetter: "Endpoint"},
 			_jsii_.MemberProperty{JsiiProperty: "endpoints", GoGetter: "Endpoints"},
+			_jsii_.MemberProperty{JsiiProperty: "frontDoorOriginHeader", GoGetter: "FrontDoorOriginHeader"},
 			_jsii_.MemberProperty{JsiiProperty: "mcpPath", GoGetter: "McpPath"},
 			_jsii_.MemberProperty{JsiiProperty: "mcpPaths", GoGetter: "McpPaths"},
 			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},

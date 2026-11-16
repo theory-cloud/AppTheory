@@ -42,6 +42,14 @@ type AppTheoryMcpServer interface {
 	// from `apiId`, the stack region and URL suffix, plus
 	// `attachedApiStageName` when supplied.
 	Endpoints() *[]*string
+	// The origin custom header the app-owned front door must send on every origin request, present only under `originReachability: FRONTED`.
+	//
+	// Wire it into the distribution origin:
+	// `origins.HttpOrigin(host, { customHeaders: { [h.headerName]: h.headerValue } })`.
+	// Under the parameter form `headerValue` is a `{{resolve:ssm:...}}`
+	// CloudFormation dynamic reference, so the value never enters the
+	// application source or the construct's template.
+	FrontDoorOriginHeader() *AppTheoryMcpFrontDoorHeader
 	// Deprecated: Use `mcpPaths`.
 	McpPath() *string
 	McpPaths() *[]*string
@@ -142,6 +150,16 @@ func (j *jsiiProxy_AppTheoryMcpServer) Endpoints() *[]*string {
 	_jsii_.Get(
 		j,
 		"endpoints",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheoryMcpServer) FrontDoorOriginHeader() *AppTheoryMcpFrontDoorHeader {
+	var returns *AppTheoryMcpFrontDoorHeader
+	_jsii_.Get(
+		j,
+		"frontDoorOriginHeader",
 		&returns,
 	)
 	return returns

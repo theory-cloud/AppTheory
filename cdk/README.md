@@ -86,14 +86,14 @@ new AppTheoryHttpApi(stack, "Api", { handler: fn, apiName: "my-api" });
   logging and throttling on. Go `mcpfacade.RegisterMCPFacade` owns explicit issuer/JWKS/scope/handler configuration.
   Under `runtime-bearer` and `none-public` the direct-origin decision is mandatory: `originReachability` must be
   `disabled`, `locked`, or (attach mode only) `fronted`. `fronted` is for an application-owned front door whose origin
-  is the attached API's execute-api hostname: it requires
-  `frontDoorVerification: { headerName, secretValue, asserted: true }`, records the posture, the header name, and a
-  SHA-256 digest of the secret in the `apptheory:mcp-transport-posture` marker (never the literal), and is enforced by
-  the runtime, which refuses every derived route — transport and OAuth facade — when the header is absent or wrong and
-  fails registration when the posture is declared without the verification config. It is a defense-in-depth
-  declaration with runtime enforcement, not mTLS assurance and not origin unreachability; an unwired runtime enforces
-  nothing, and the prop, the distribution's origin header, and the runtime config must come from one app-owned
-  constant. The v3.1.x singleton, auth-env, and flat owned-resource props carry jsii deprecation notices and migration
+  is the attached API's execute-api hostname: it requires `frontDoorVerification` with `headerName`, `asserted: true`,
+  and exactly one of `secretValue` (a literal, recorded as a SHA-256 digest in the
+  `apptheory:mcp-transport-posture` marker and never emitted) or `secretParameterName` (a well-known String parameter,
+  recorded by name and rendered by `frontDoorOriginHeader` as a `{{resolve:ssm:...}}` CloudFormation dynamic
+  reference). It is enforced by the runtime, which refuses every derived route — transport and OAuth facade — when the
+  header is absent or wrong and fails registration when the posture is declared without the verification config. It is
+  a defense-in-depth declaration with runtime enforcement, not mTLS assurance and not origin unreachability; an unwired
+  runtime enforces nothing, and the prop, the distribution's origin header, and the runtime config must agree. The v3.1.x singleton, auth-env, and flat owned-resource props carry jsii deprecation notices and migration
   pointers.
 - `AppTheoryInstallParameters` is the required, account-agnostic namespace installation surface. It emits the ten
   governed `String` parameters and the `TargetAccountMatchesCaller` CloudFormation Rule; consuming constructs use its
