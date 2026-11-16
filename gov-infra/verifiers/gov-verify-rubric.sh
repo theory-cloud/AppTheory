@@ -991,11 +991,27 @@ check_toolchain_pins() {
     return 1
   fi
 
-  # golangci-lint pin (string check; the repo installs via `go install ...@v2.9.0`)
-  if ! grep -Eq "golangci-lint.*/v2/cmd/golangci-lint@${PIN_GOLANGCI_LINT_VERSION}" "${wf}"; then
-    echo "FAIL: ci.yml does not pin golangci-lint to ${PIN_GOLANGCI_LINT_VERSION}" >&2
-    grep -n "golangci-lint" "${wf}" || true
+  # golangci-lint pin. CI verifies a recorded rubric and provisions no linter,
+  # so the authoritative pin is the repo-local lint entry point that installs and
+  # runs it. A workflow that installs golangci-lint must still agree with that
+  # pin, so a stale CI install cannot drift back in unnoticed.
+  local lint_script="${REPO_ROOT}/scripts/verify-go-lint.sh"
+  if [[ ! -f "${lint_script}" ]]; then
+    echo "FAIL: missing local lint entry point: ${lint_script}" >&2
     return 1
+  fi
+  local lint_pin
+  lint_pin="$(awk -F'"' '/^PIN_GOLANGCI_LINT_VERSION=/{print $2; exit}' "${lint_script}")"
+  if [[ "${lint_pin}" != "${PIN_GOLANGCI_LINT_VERSION}" ]]; then
+    echo "FAIL: scripts/verify-go-lint.sh pins golangci-lint ${lint_pin:-<none>}, expected ${PIN_GOLANGCI_LINT_VERSION}" >&2
+    return 1
+  fi
+  if grep -Eq "golangci-lint" "${wf}"; then
+    if ! grep -Eq "golangci-lint.*/v2/cmd/golangci-lint@${PIN_GOLANGCI_LINT_VERSION}" "${wf}"; then
+      echo "FAIL: ci.yml installs golangci-lint at a version other than ${PIN_GOLANGCI_LINT_VERSION}" >&2
+      grep -n "golangci-lint" "${wf}" || true
+      return 1
+    fi
   fi
 
   echo "toolchain-pins: PASS"
