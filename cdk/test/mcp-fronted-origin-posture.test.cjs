@@ -64,6 +64,23 @@ function postureMetadata(template) {
   return marked[0];
 }
 
+// Every IAM statement the stack synthesizes: role-inline policies and the
+// standalone AWS::IAM::Policy resources addToRolePolicy creates.
+function policyStatements(template) {
+  const statements = [];
+  for (const resource of Object.values(template.Resources ?? {})) {
+    if (resource.Type === "AWS::IAM::Role") {
+      for (const policy of resource.Properties?.Policies ?? []) {
+        statements.push(...(policy.PolicyDocument?.Statement ?? []));
+      }
+    }
+    if (resource.Type === "AWS::IAM::Policy") {
+      statements.push(...(resource.Properties?.PolicyDocument?.Statement ?? []));
+    }
+  }
+  return statements;
+}
+
 function sha256Hex(value) {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
@@ -360,4 +377,254 @@ test("owned LOCKED keeps its posture marker byte-stable", () => {
     route_count: 4,
     runtime_posture_declared: true,
   });
+});
+
+// Parameter form (docs/058 FRONTED-SSM): the value lives in a well-known,
+// stage-qualified Parameter Store parameter, the distribution header is a
+// CloudFormation dynamic reference, and the marker records the parameter name
+// instead of a digest of a literal the application no longer holds.
+
+const FRONT_DOOR_PARAMETER = "/theorycloud/tms/lab/fronted/origin-token";
+
+function parameterFrontDoorVerification(extra = {}) {
+  return {
+    headerName: FRONT_DOOR_HEADER,
+    secretParameterName: FRONT_DOOR_PARAMETER,
+    asserted: true,
+    ...extra,
+  };
+}
+
+function frontedStackWith(verification, extra = {}) {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, extra.stackId ?? "FrontedParameterStack", {
+    env: { region: "us-east-1", account: "123456789012" },
+  });
+  const api = new apigwv2.HttpApi(stack, "Api");
+  const server = new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: handler(stack),
+    api,
+    routeModel: apptheory.AppTheoryMcpRouteModel.CONSOLIDATED,
+    originReachability: apptheory.AppTheoryMcpOriginReachability.FRONTED,
+    frontDoorVerification: verification,
+    ...runtimeBearerFloor(),
+    ...extra.props,
+  });
+  return { stack, server };
+}
+
+test("parameter form records the parameter name and that the value is parameter-sourced", () => {
+  const { stack } = frontedStackWith(parameterFrontDoorVerification());
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  assert.deepEqual(postureMetadata(template), {
+    posture: "runtime-bearer",
+    contract_id: "m17.mcp-transport-posture/v1",
+    route_count: 4,
+    runtime_posture_declared: true,
+    origin_reachability: "fronted",
+    front_door_header_name: FRONT_DOOR_HEADER,
+    front_door_secret_source: "ssm-parameter",
+    front_door_secret_parameter_name: FRONT_DOOR_PARAMETER,
+  });
+  assert.equal(
+    Object.hasOwn(postureMetadata(template), "front_door_secret_sha256"),
+    false,
+    "the parameter form records no digest of a value the application never holds",
+  );
+});
+
+test("parameter form renders the origin header as an ssm dynamic reference", () => {
+  const { stack, server } = frontedStackWith(parameterFrontDoorVerification());
+  assert.deepEqual(server.frontDoorOriginHeader, {
+    headerName: FRONT_DOOR_HEADER,
+    headerValue: `{{resolve:ssm:${FRONT_DOOR_PARAMETER}}}`,
+  });
+
+  const distribution = new cloudfront.Distribution(stack, "FrontDoor", {
+    defaultBehavior: {
+      origin: new origins.HttpOrigin("origin.example.com", {
+        customHeaders: {
+          [server.frontDoorOriginHeader.headerName]: server.frontDoorOriginHeader.headerValue,
+        },
+      }),
+      viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+    },
+  });
+  assert.ok(distribution);
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const [emitted] = resourcesOfType(template, "AWS::CloudFront::Distribution");
+  assert.deepEqual(
+    emitted.Properties.DistributionConfig.Origins[0].OriginCustomHeaders,
+    [{ HeaderName: FRONT_DOOR_HEADER, HeaderValue: `{{resolve:ssm:${FRONT_DOOR_PARAMETER}}}` }],
+    "the app-owned distribution carries the reference, not a value",
+  );
+});
+
+test("literal form still renders the literal and keeps its marker byte-identical", () => {
+  const { server } = frontedStackWith(frontDoorVerification(), { stackId: "FrontedLiteralStack" });
+  assert.deepEqual(server.frontDoorOriginHeader, {
+    headerName: FRONT_DOOR_HEADER,
+    headerValue: FRONT_DOOR_SECRET,
+  });
+});
+
+test("parameter form grants ssm:GetParameter on exactly that parameter", () => {
+  const { stack } = frontedStackWith(parameterFrontDoorVerification(), {
+    stackId: "FrontedParameterGrantStack",
+  });
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const statements = policyStatements(template);
+  const grant = statements.find((statement) => [].concat(statement.Action).includes("ssm:GetParameter"));
+  assert.ok(grant, "the construct grants the runtime read access to the parameter");
+  assert.equal(
+    JSON.stringify(grant.Resource),
+    JSON.stringify({
+      "Fn::Join": ["", [
+        "arn:",
+        { Ref: "AWS::Partition" },
+        `:ssm:us-east-1:123456789012:parameter${FRONT_DOOR_PARAMETER}`,
+      ]],
+    }),
+    "the grant names exactly the well-known parameter ARN",
+  );
+  assert.equal(
+    JSON.stringify(statements).includes("parameter/*"),
+    false,
+    "the grant names the parameter, never a wildcard",
+  );
+});
+
+test("parameter form grants kms:Decrypt only when a key is declared", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "FrontedParameterKmsStack", {
+    env: { region: "us-east-1", account: "123456789012" },
+  });
+  const key = new (require("aws-cdk-lib/aws-kms").Key)(stack, "ParameterKey", {});
+  const api = new apigwv2.HttpApi(stack, "Api");
+  new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: handler(stack),
+    api,
+    routeModel: apptheory.AppTheoryMcpRouteModel.CONSOLIDATED,
+    originReachability: apptheory.AppTheoryMcpOriginReachability.FRONTED,
+    frontDoorVerification: parameterFrontDoorVerification({ secretParameterKmsKey: key }),
+    ...runtimeBearerFloor(),
+  });
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.ok(
+    policyStatements(template).some((statement) => [].concat(statement.Action).includes("kms:Decrypt")),
+    "a declared customer managed key adds kms:Decrypt",
+  );
+});
+
+test("secretValue and secretParameterName are mutually exclusive", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "FrontedBothFormsStack");
+  const api = new apigwv2.HttpApi(stack, "Api");
+  assert.throws(
+    () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+      handler: handler(stack),
+      api,
+      originReachability: apptheory.AppTheoryMcpOriginReachability.FRONTED,
+      frontDoorVerification: frontDoorVerification({ secretParameterName: FRONT_DOOR_PARAMETER }),
+      ...runtimeBearerFloor(),
+    }),
+    /requires exactly one of secretValue and secretParameterName/,
+  );
+});
+
+test("FRONTED requires one of the two secret forms", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "FrontedNeitherFormStack");
+  const api = new apigwv2.HttpApi(stack, "Api");
+  assert.throws(
+    () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+      handler: handler(stack),
+      api,
+      originReachability: apptheory.AppTheoryMcpOriginReachability.FRONTED,
+      frontDoorVerification: { headerName: FRONT_DOOR_HEADER, asserted: true },
+      ...runtimeBearerFloor(),
+    }),
+    /requires exactly one of secretValue and secretParameterName/,
+  );
+});
+
+test("the parameter name must be a dynamic-reference-safe, well-known name", () => {
+  const cases = [
+    {
+      name: "no leading slash",
+      secretParameterName: "theorycloud/tms/lab/fronted-token",
+      error: /secretParameterName must be a fully qualified SSM parameter name/,
+    },
+    {
+      name: "colon cannot appear in a dynamic reference",
+      secretParameterName: "/theorycloud/tms/lab/fronted:token",
+      error: /secretParameterName must be a fully qualified SSM parameter name/,
+    },
+    {
+      name: "empty segment",
+      secretParameterName: "/theorycloud//fronted-token",
+      error: /secretParameterName must be a fully qualified SSM parameter name/,
+    },
+    {
+      name: "trailing slash",
+      secretParameterName: "/theorycloud/tms/",
+      error: /secretParameterName must be a fully qualified SSM parameter name/,
+    },
+    {
+      name: "reserved aws hierarchy",
+      secretParameterName: "/aws/fronted-token",
+      error: /must not use the reserved aws or ssm hierarchy/,
+    },
+    {
+      name: "reserved ssm hierarchy",
+      secretParameterName: "/SSM/fronted-token",
+      error: /must not use the reserved aws or ssm hierarchy/,
+    },
+    {
+      name: "too many levels",
+      secretParameterName: `/${Array.from({ length: 16 }, (_, index) => `l${index}`).join("/")}`,
+      error: /must have between one and fifteen hierarchy levels/,
+    },
+    {
+      name: "longer than 1011 characters",
+      secretParameterName: `/${"a".repeat(1011)}`,
+      error: /secretParameterName must be a fully qualified SSM parameter name/,
+    },
+  ];
+  for (const item of cases) {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, `FrontedBadParameter${item.name.replace(/[^A-Za-z0-9]/g, "")}`);
+    const api = new apigwv2.HttpApi(stack, "Api");
+    assert.throws(
+      () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+        handler: handler(stack),
+        api,
+        originReachability: apptheory.AppTheoryMcpOriginReachability.FRONTED,
+        frontDoorVerification: parameterFrontDoorVerification(
+          { secretParameterName: item.secretParameterName },
+        ),
+        ...runtimeBearerFloor(),
+      }),
+      item.error,
+      item.name,
+    );
+  }
+});
+
+test("secretParameterKmsKey is refused with the literal form", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "FrontedLiteralKmsStack");
+  const key = new (require("aws-cdk-lib/aws-kms").Key)(stack, "ParameterKey", {});
+  const api = new apigwv2.HttpApi(stack, "Api");
+  assert.throws(
+    () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+      handler: handler(stack),
+      api,
+      originReachability: apptheory.AppTheoryMcpOriginReachability.FRONTED,
+      frontDoorVerification: frontDoorVerification({ secretParameterKmsKey: key }),
+      ...runtimeBearerFloor(),
+    }),
+    /secretParameterKmsKey is only valid with secretParameterName/,
+  );
 });

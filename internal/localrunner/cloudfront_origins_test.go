@@ -64,7 +64,7 @@ func TestCloudFrontOriginsWiresS3FunctionURLAndGroups(t *testing.T) {
 			ID: "Group", Members: []string{"Html", "Ssr"}, FailoverStatusCodes: []int{403, 404},
 		}},
 	}
-	origins, err := runner.cloudFrontOrigins(spec, distribution)
+	origins, err := runner.cloudFrontOrigins(context.Background(), spec, distribution)
 	if err != nil {
 		t.Fatalf("cloudfront origins: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestCloudFrontOriginWiringRefusesUnavailableOriginsInsteadOfFailingTheRun(t
 		}},
 	}
 	runner := &Runner{options: Options{Stdout: io.Discard}, resourceValues: resourceValues{}}
-	origins, err := runner.cloudFrontOrigins(&Spec{}, distribution)
+	origins, err := runner.cloudFrontOrigins(context.Background(), &Spec{}, distribution)
 	if err != nil {
 		t.Fatalf("missing backend must be a refused origin, not a run failure: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestCloudFrontOriginWiringRefusesUnavailableOriginsInsteadOfFailingTheRun(t
 		t.Fatalf("missing backend fetch err = %v", fetchErr)
 	}
 	runner.backends = map[string]backendProcess{"s3proxy": {HostURL: "http://127.0.0.1:1", Endpoints: []Endpoint{{Service: "s3"}}}}
-	origins, err = runner.cloudFrontOrigins(&Spec{}, distribution)
+	origins, err = runner.cloudFrontOrigins(context.Background(), &Spec{}, distribution)
 	if err != nil {
 		t.Fatalf("missing bucket must be a refused origin, not a run failure: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestCloudFrontOriginWiringReportsEachMissingPiece(t *testing.T) {
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			origins, err := base.cloudFrontOrigins(testCase.spec, testCase.distribution)
+			origins, err := base.cloudFrontOrigins(context.Background(), testCase.spec, testCase.distribution)
 			if testCase.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), testCase.wantErr) {
 					t.Fatalf("err = %v, want %q", err, testCase.wantErr)

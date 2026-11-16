@@ -55,10 +55,13 @@ type AppTheoryMcpServerProps struct {
 	Facade *AppTheoryMcpFacadeAttachment `field:"optional" json:"facade" yaml:"facade"`
 	// Front-door verification declaration, required with `originReachability: FRONTED` and refused under every other decision.
 	//
-	// The construct records the posture, the header name, and a SHA-256 digest of
-	// the declared secret in the `apptheory:mcp-transport-posture` metadata; it
-	// never emits the literal secret. Enforcement is the runtime's front-door
-	// header check, so an unwired runtime enforces nothing.
+	// The construct records the posture, the header name, and either a SHA-256
+	// digest of the declared literal or the well-known parameter name in the
+	// `apptheory:mcp-transport-posture` metadata; it never emits the secret
+	// value. `frontDoorOriginHeader` is the origin custom header the application
+	// wires, and for the parameter form its value is a CloudFormation dynamic
+	// reference. Enforcement is the runtime's front-door header check, so an
+	// unwired runtime enforces nothing.
 	// Default: undefined.
 	//
 	FrontDoorVerification *AppTheoryMcpFrontDoorVerificationOptions `field:"optional" json:"frontDoorVerification" yaml:"frontDoorVerification"`

@@ -5726,6 +5726,19 @@ async function runFixtureM14(fixture) {
   return { actual };
 }
 
+// fixtureHttpRequest builds the runtime request for one fixture request
+// envelope. A p0 fixture may serve a warmup_request before the measured request.
+function fixtureHttpRequest(input) {
+  return {
+    method: input.method,
+    path: input.path,
+    query: input.query ?? {},
+    headers: input.headers ?? {},
+    body: decodeFixtureBody(input.body),
+    isBase64: input.is_base64 ?? false,
+  };
+}
+
 async function runFixtureP0(fixture) {
   const runtime = await loadAppTheoryRuntime();
   const app = runtime.createApp({
@@ -5788,18 +5801,15 @@ async function runFixtureP0(fixture) {
     );
   }
 
-  const input = fixture.input?.request ?? {};
-  const body = decodeFixtureBody(input.body);
-  const req = {
-    method: input.method,
-    path: input.path,
-    query: input.query ?? {},
-    headers: input.headers ?? {},
-    body,
-    isBase64: input.is_base64 ?? false,
-  };
+  const warmup = fixture.input?.warmup_request ?? null;
+  if (warmup) {
+    await app.serve(fixtureHttpRequest(warmup));
+    await new Promise((resolve) => {
+      setTimeout(resolve, FIXTURE_FRONT_DOOR_ROTATION_PAUSE_MS);
+    });
+  }
 
-  const resp = await app.serve(req);
+  const resp = await app.serve(fixtureHttpRequest(fixture.input?.request ?? {}));
   const actual = {
     status: resp.status,
     headers: resp.headers ?? {},
@@ -5827,6 +5837,33 @@ const FIXTURE_MCP_FACADE_DEFAULTS = Object.freeze({
 function fixtureMCPFacadeValue(value, fallback) {
   const text = String(value ?? "").trim();
   return text === "" ? fallback : text;
+}
+
+// The runtimes document a one-second front-door secret refresh floor: a
+// mismatch-triggered re-read is floored so a wrong header cannot thrash
+// Parameter Store. A rotation fixture serves a warmup request, waits past the
+// floor, then serves the request that carries the rotated value.
+const FIXTURE_FRONT_DOOR_ROTATION_PAUSE_MS = 1100;
+
+// fixtureFrontDoorParameterSource serves the ordered read results a fixture
+// declares for the front-door parameter, so the corpus pins the parameter form
+// without an AWS call. A null entry is a read failure and the last entry repeats.
+function fixtureFrontDoorParameterSource(reads) {
+  const values = Array.isArray(reads)
+    ? reads.map((value) => (value === null ? null : String(value)))
+    : [];
+  let read = 0;
+  return async (parameterName) => {
+    if (values.length === 0) {
+      throw new Error(`front-door parameter ${parameterName} is unreadable`);
+    }
+    const value = values[read];
+    if (read < values.length - 1) read += 1;
+    if (value === null) {
+      throw new Error(`front-door parameter ${parameterName} is unreadable`);
+    }
+    return value;
+  };
 }
 
 // registerFixtureMCPFacade mounts the real MCP OAuth facade on a p0 fixture
@@ -5871,10 +5908,22 @@ function registerFixtureMCPFacade(runtime, app, setup) {
     config.originReachability = String(setup.origin_reachability);
   }
   if (setup?.front_door_verification) {
-    config.frontDoorVerification = {
-      headerName: String(setup.front_door_verification.header_name ?? ""),
-      secretValue: String(setup.front_door_verification.secret_value ?? ""),
-    };
+    const verification = setup.front_door_verification;
+    const declared = { headerName: String(verification.header_name ?? "") };
+    // Presence, not truthiness: an omitted form must reach the runtime as
+    // absent so the exactly-one-of check fires, as it does in every runtime.
+    if (Object.hasOwn(verification, "secret_value")) {
+      declared.secretValue = String(verification.secret_value ?? "");
+    }
+    if (Object.hasOwn(verification, "secret_parameter_name")) {
+      declared.secretParameterName = String(verification.secret_parameter_name ?? "");
+    }
+    config.frontDoorVerification = declared;
+  }
+  if (setup?.front_door_parameter_reads !== undefined) {
+    config.frontDoorSecretReader = fixtureFrontDoorParameterSource(
+      setup.front_door_parameter_reads,
+    );
   }
 
   if (setup?.bearer) {

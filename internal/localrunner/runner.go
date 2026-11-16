@@ -99,6 +99,12 @@ type Options struct {
 	// local gateway may reach. An unmapped external origin is refused at plan
 	// time.
 	Origins map[string]string
+	// FrontDoorParameters names well-known Parameter Store parameters a FRONTED
+	// application reads by name. The run creates each one in its local SSM
+	// store when it does not exist, never overwrites one that does, and resolves
+	// a CloudFront origin custom header that references it through an
+	// {{resolve:ssm:...}} dynamic reference. No AWS call is made.
+	FrontDoorParameters []string
 	// ViewerCountry is the run's resolved ISO 3166-1 alpha-2 viewer country for
 	// CloudFront geo restriction. An empty value is an undetermined location,
 	// which CloudFront serves.
@@ -204,11 +210,16 @@ type Runner struct {
 	// friendly name. A deploy-time dynamic reference to the same secret resolves
 	// to this value instead of the wave-1 deterministic placeholder.
 	secretValues map[string]string
-	apiURLs      map[string]string
-	servers      []*http.Server
-	listeners    []net.Listener
-	semaphore    chan struct{}
-	network      string
+	// frontDoorSecrets holds the well-known front-door parameters this run
+	// created or read, so a CloudFront origin custom header's
+	// {{resolve:ssm:...}} reference resolves without a second store call.
+	frontDoorMu      sync.Mutex
+	frontDoorSecrets map[string]string
+	apiURLs          map[string]string
+	servers          []*http.Server
+	listeners        []net.Listener
+	semaphore        chan struct{}
+	network          string
 	// sharedNetwork is true when this run joined a --shared-network, so cleanup
 	// leaves the network for the other co-resident runs.
 	sharedNetwork bool
@@ -1650,7 +1661,7 @@ func (r *Runner) startServers(ctx context.Context, spec *Spec) error {
 				return fmt.Errorf("distribution %s uses CloudFront Functions: %w", distribution.LogicalID, err)
 			}
 		}
-		origins, err := r.cloudFrontOrigins(spec, distribution)
+		origins, err := r.cloudFrontOrigins(ctx, spec, distribution)
 		if err != nil {
 			return err
 		}

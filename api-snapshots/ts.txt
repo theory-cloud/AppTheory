@@ -90,6 +90,7 @@ CountingTransportHandler	interface
 CreateIdempotencyRecordInput	type
 CreateJobInput	type
 DEFAULT_CALLBACK_PATH	const
+DEFAULT_FRONT_DOOR_SECRET_TTL_SECONDS	const
 DEFAULT_REFRESH_BUDGET_SECONDS	const
 DEFAULT_REFRESH_GRACE_WINDOW_SECONDS	const
 DefaultEmbeddingDimensions	const
@@ -160,6 +161,7 @@ FakeTokenRequest	interface
 FakeVectorStore	class
 FakeWebSocketManagementClient	class
 FixedWindowStrategy	class
+FrontDoorSecretReader	type
 FrontDoorVerification	interface
 GetVectorsInput	interface
 HTTPErrorFormat	type
@@ -226,6 +228,7 @@ LoggingProfileSanitization	interface
 LoggingProfileSanitizer	type
 LoggingProfileValidationError	class
 MAX_CLIENT_REQUEST_ID_LENGTH	const
+MAX_FRONT_DOOR_SECRET_TTL_SECONDS	const
 MAX_PRESIGN_PUT_EXPIRES_IN	const
 MAX_REFRESH_BUDGET_SECONDS	const
 MAX_REFRESH_GRACE_WINDOW_SECONDS	const

@@ -3832,9 +3832,13 @@ func (sessionRecord) TableName() string
 
 ## github.com/theory-cloud/apptheory/v7/runtime/mcpfacade
 
+const DefaultFrontDoorSecretTTL = 5 * time.Minute
+
 const DefaultRefreshBudget = 10 * time.Second
 
 const DefaultRefreshGraceWindow = 120 * time.Second
+
+const MaxFrontDoorSecretTTL = time.Hour
 
 const MaxRefreshBudget = oauthstore.DefaultRouteRefreshLockTTL - refreshBudgetLockMargin
 
@@ -4006,6 +4010,10 @@ type FacadeConfig struct {
 
 	FrontDoorVerification *FrontDoorVerification
 
+	FrontDoorSecretReader FrontDoorSecretReader
+
+	FrontDoorSecretTTL time.Duration
+
 	Provider oauth.Provider
 
 	Stores oauthstore.Stores
@@ -4025,10 +4033,14 @@ type FacadeConfig struct {
 	RefusalHook refusal.Hook
 }
 
+type FrontDoorSecretReader func(context.Context, string) (string, error)
+
 type FrontDoorVerification struct {
 	HeaderName string
 
 	SecretValue string
+
+	SecretParameterName string
 }
 
 type HandlerFactory func(mcproutes.EndpointKind) apptheory.Handler

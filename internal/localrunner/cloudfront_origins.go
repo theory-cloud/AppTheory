@@ -28,9 +28,16 @@ func (o *refusedOrigin) Fetch(context.Context, localcloudfront.OriginRequest) (l
 // distribution. S3 origins reach the runner's s3proxy backend, Function URL
 // origins invoke the runner's function container, and origin groups wrap their
 // members with CloudFront's failover rules.
-func (r *Runner) cloudFrontOrigins(spec *Spec, distribution *localcloudfront.Distribution) (map[string]localcloudfront.Origin, error) {
+func (r *Runner) cloudFrontOrigins(
+	ctx context.Context,
+	spec *Spec,
+	distribution *localcloudfront.Distribution,
+) (map[string]localcloudfront.Origin, error) {
 	origins := map[string]localcloudfront.Origin{}
 	for _, origin := range distribution.Origins {
+		if err := r.resolveOriginCustomHeaders(ctx, distribution.LogicalID, origin); err != nil {
+			return nil, err
+		}
 		implementation, err := r.cloudFrontOrigin(spec, origin)
 		if err != nil {
 			return nil, fmt.Errorf("distribution %s origin %s: %w", distribution.LogicalID, origin.ID, err)

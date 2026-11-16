@@ -19,6 +19,16 @@ export const ORIGIN_REACHABILITIES = [
     "locked",
     "fronted",
 ];
+/** Default parameter cache lifetime in one execution environment. */
+export const DEFAULT_FRONT_DOOR_SECRET_TTL_SECONDS = 300;
+/** Largest accepted parameter cache lifetime. */
+export const MAX_FRONT_DOOR_SECRET_TTL_SECONDS = 3600;
+/**
+ * Lower bound between mismatch-triggered parameter reads. A rotated value is
+ * picked up within this window, and a caller that sends bogus headers cannot
+ * drive one Parameter Store read per request.
+ */
+const FRONT_DOOR_SECRET_REFRESH_FLOOR_MS = 1000;
 /** The golden-path OAuth capabilities. */
 export function defaultCapabilities() {
     return {
@@ -104,7 +114,7 @@ function normalizeConfig(config) {
         throw new Error(`${ERROR_PREFIX} MCP handler is required`);
     }
     const transportPosture = normalizeTransportPosture(config.transportPosture, config.requireBearerToken);
-    const { originReachability, frontDoorGuard } = normalizeFrontDoorVerification(config.originReachability, config.frontDoorVerification);
+    const { originReachability, frontDoorGuard } = normalizeFrontDoorVerification(config.originReachability, config.frontDoorVerification, config.frontDoorSecretReader, config.frontDoorSecretTTLSeconds);
     const normalized = normalizeDerivedConfig(config);
     normalized.transportPosture = transportPosture;
     normalized.requireBearerToken = config.requireBearerToken;
@@ -482,7 +492,7 @@ function normalizeTransportPosture(posture, requireBearerToken) {
  * the verification config fails registration: a declared front door the runtime
  * does not enforce would be a silent no-op.
  */
-function normalizeFrontDoorVerification(posture, verification) {
+function normalizeFrontDoorVerification(posture, verification, reader, ttlSeconds) {
     const resolved = posture ?? "";
     if (resolved !== "") {
         if (!ORIGIN_REACHABILITIES.includes(resolved)) {
@@ -499,7 +509,7 @@ function normalizeFrontDoorVerification(posture, verification) {
         }
         return {
             originReachability: resolved,
-            frontDoorGuard: frontDoorGuard(verification),
+            frontDoorGuard: frontDoorGuard(verification, reader, ttlSeconds),
         };
     }
     if (isPresent(verification)) {
@@ -509,6 +519,9 @@ function normalizeFrontDoorVerification(posture, verification) {
 }
 const FRONT_DOOR_HEADER_NAME = /^[A-Za-z0-9-]{1,64}$/;
 const FRONT_DOOR_SECRET = /^[A-Za-z0-9._~-]{32,128}$/;
+const FRONT_DOOR_PARAMETER_NAME = /^\/[A-Za-z0-9_.\-/]+$/;
+const FRONT_DOOR_PARAMETER_MAX_LENGTH = 1011;
+const FRONT_DOOR_PARAMETER_MAX_LEVELS = 15;
 const RESERVED_FRONT_DOOR_HEADERS = new Set([
     "authorization",
     "connection",
@@ -523,7 +536,7 @@ const RESERVED_FRONT_DOOR_HEADERS = new Set([
  * Validates the front-door declaration and returns the guard that refuses every
  * request whose front-door header is absent or wrong.
  */
-function frontDoorGuard(verification) {
+function frontDoorGuard(verification, reader, ttlSeconds) {
     const headerName = String(verification.headerName ?? "")
         .trim()
         .toLowerCase();
@@ -536,21 +549,171 @@ function frontDoorGuard(verification) {
         headerName.startsWith("cloudfront-")) {
         throw new Error(`${ERROR_PREFIX} FrontDoorVerification header name must be a request header the front door can set`);
     }
-    const secretValue = String(verification.secretValue ?? "");
-    if (!FRONT_DOOR_SECRET.test(secretValue)) {
-        throw new Error(`${ERROR_PREFIX} FrontDoorVerification secret value must be 32 to 128 characters of [A-Za-z0-9._~-]`);
+    const hasLiteral = verification.secretValue !== undefined;
+    const hasParameter = verification.secretParameterName !== undefined;
+    if (hasLiteral === hasParameter) {
+        throw new Error(`${ERROR_PREFIX} FrontDoorVerification requires exactly one of secretValue and secretParameterName`);
     }
-    const expected = Buffer.from(secretValue, "utf8");
-    return (ctx) => {
-        const presented = Buffer.from(firstHeaderValue(ctx.request?.headers, headerName), "utf8");
-        if (presented.length !== expected.length ||
-            !timingSafeEqual(presented, expected)) {
-            throw new AppTheoryError("app.forbidden", "forbidden", {
-                statusCode: 403,
-            });
+    if (hasLiteral) {
+        const secretValue = String(verification.secretValue ?? "");
+        if (!FRONT_DOOR_SECRET.test(secretValue)) {
+            throw new Error(`${ERROR_PREFIX} FrontDoorVerification secret value must be 32 to 128 characters of [A-Za-z0-9._~-]`);
         }
-        return null;
+        const expected = Buffer.from(secretValue, "utf8");
+        return (ctx) => {
+            const presented = Buffer.from(firstHeaderValue(ctx.request?.headers, headerName), "utf8");
+            if (!frontDoorSecretMatches(presented, expected)) {
+                throw new AppTheoryError("app.forbidden", "forbidden", {
+                    statusCode: 403,
+                });
+            }
+            return null;
+        };
+    }
+    const parameterName = String(verification.secretParameterName ?? "");
+    validateFrontDoorParameterName(parameterName);
+    const cache = new FrontDoorSecretCache(reader ?? defaultFrontDoorSecretReader, parameterName, normalizeFrontDoorSecretTTLSeconds(ttlSeconds) * 1000);
+    return async (ctx) => {
+        const presented = Buffer.from(firstHeaderValue(ctx.request?.headers, headerName), "utf8");
+        // Fail closed: an unreadable, empty, or malformed parameter refuses the
+        // request with the same 403 a direct-origin request gets.
+        let expected;
+        try {
+            expected = await cache.secret(false);
+        }
+        catch {
+            throw frontDoorRefusal();
+        }
+        if (frontDoorSecretMatches(presented, Buffer.from(expected, "utf8"))) {
+            return null;
+        }
+        try {
+            expected = await cache.secret(true);
+        }
+        catch {
+            throw frontDoorRefusal();
+        }
+        if (frontDoorSecretMatches(presented, Buffer.from(expected, "utf8"))) {
+            return null;
+        }
+        throw frontDoorRefusal();
     };
+}
+/** The fail-closed answer to a request that did not arrive through the front door. */
+function frontDoorRefusal() {
+    return new AppTheoryError("app.forbidden", "forbidden", { statusCode: 403 });
+}
+/** Constant-time comparison of a presented header value and the expected value. */
+function frontDoorSecretMatches(presented, expected) {
+    return (presented.length === expected.length && timingSafeEqual(presented, expected));
+}
+/**
+ * Validate a well-known front-door parameter name against both contracts it
+ * must satisfy: Parameter Store's naming limits and the CloudFormation dynamic
+ * reference alphabet the distribution header renders.
+ *
+ * https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references-ssm.html
+ * https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_PutParameter.html
+ */
+function validateFrontDoorParameterName(name) {
+    if (name.length === 0 ||
+        name.length > FRONT_DOOR_PARAMETER_MAX_LENGTH ||
+        !FRONT_DOOR_PARAMETER_NAME.test(name) ||
+        name.endsWith("/") ||
+        name.includes("//")) {
+        throw new Error(`${ERROR_PREFIX} FrontDoorVerification secretParameterName must be a fully qualified SSM parameter name from '/', at most 1011 characters, of [A-Za-z0-9_.-/] with no empty segment`);
+    }
+    const levels = name.split("/").filter((segment) => segment.length > 0);
+    const first = levels[0]?.toLowerCase();
+    if (levels.length === 0 || levels.length > FRONT_DOOR_PARAMETER_MAX_LEVELS) {
+        throw new Error(`${ERROR_PREFIX} FrontDoorVerification secretParameterName must have between one and fifteen hierarchy levels`);
+    }
+    if (first === "aws" || first === "ssm") {
+        throw new Error(`${ERROR_PREFIX} FrontDoorVerification secretParameterName must not use the reserved aws or ssm hierarchy`);
+    }
+}
+/** Resolve and bound the parameter cache lifetime. */
+function normalizeFrontDoorSecretTTLSeconds(ttlSeconds) {
+    if (ttlSeconds === undefined) {
+        return DEFAULT_FRONT_DOOR_SECRET_TTL_SECONDS;
+    }
+    if (!Number.isFinite(ttlSeconds) ||
+        ttlSeconds <= 0 ||
+        ttlSeconds > MAX_FRONT_DOOR_SECRET_TTL_SECONDS) {
+        throw new Error(`${ERROR_PREFIX} FrontDoorVerification frontDoorSecretTTLSeconds must be greater than zero and at most ${MAX_FRONT_DOOR_SECRET_TTL_SECONDS}`);
+    }
+    return ttlSeconds;
+}
+/**
+ * One execution environment's view of a front-door parameter.
+ *
+ * Reads happen in the request path and are single-flighted, so concurrent
+ * requests coalesce onto one call and no timer or background task outlives the
+ * invocation.
+ */
+class FrontDoorSecretCache {
+    read;
+    name;
+    ttlMs;
+    value = null;
+    fetchedAt = 0;
+    lastReadAt = 0;
+    inflight = null;
+    constructor(read, name, ttlMs) {
+        this.read = read;
+        this.name = name;
+        this.ttlMs = ttlMs;
+    }
+    /** The cached value while fresh, otherwise a read; `force` is floored. */
+    async secret(force) {
+        const now = Date.now();
+        if (!force && this.value !== null && now - this.fetchedAt < this.ttlMs) {
+            return this.value;
+        }
+        if (force &&
+            this.value !== null &&
+            now - this.lastReadAt < FRONT_DOOR_SECRET_REFRESH_FLOOR_MS) {
+            return this.value;
+        }
+        if (this.inflight !== null) {
+            return this.inflight;
+        }
+        this.lastReadAt = now;
+        this.inflight = this.load();
+        try {
+            return await this.inflight;
+        }
+        finally {
+            this.inflight = null;
+        }
+    }
+    async load() {
+        const value = await this.read(this.name);
+        if (typeof value !== "string" || !FRONT_DOOR_SECRET.test(value)) {
+            throw new Error(`${ERROR_PREFIX} FrontDoorVerification secret parameter value must be 32 to 128 characters of [A-Za-z0-9._~-]`);
+        }
+        this.value = value;
+        this.fetchedAt = Date.now();
+        return value;
+    }
+}
+/**
+ * Read the parameter from Systems Manager Parameter Store with decryption
+ * enabled, so the same runtime serves a String or SecureString parameter. The
+ * client is created on the first request inside the execution environment and
+ * the SDK is loaded lazily, so an application that uses the literal form never
+ * pays for it.
+ */
+let frontDoorSsmClient;
+async function defaultFrontDoorSecretReader(parameterName) {
+    const { GetParameterCommand, SSMClient } = await import("@aws-sdk/client-ssm");
+    frontDoorSsmClient ??= new SSMClient({});
+    const output = await frontDoorSsmClient.send(new GetParameterCommand({ Name: parameterName, WithDecryption: true }));
+    const value = output.Parameter?.Value;
+    if (typeof value !== "string" || value === "") {
+        throw new Error(`${ERROR_PREFIX} FrontDoorVerification secret parameter returned an empty value`);
+    }
+    return value;
 }
 /** The first value of a case-insensitively matched request header. */
 function firstHeaderValue(headers, name) {

@@ -230,3 +230,249 @@ test("the front-door guard runs before the bearer guard", async () => {
     "a front-door request still faces the runtime-bearer challenge",
   );
 });
+
+// Parameter form: the value lives in a well-known, stage-qualified parameter,
+// is read lazily in the request path, cached, and refreshed on a mismatch or
+// after the TTL, so a rotation takes effect without a redeploy. An unreadable
+// parameter fails closed.
+
+const FRONT_DOOR_PARAMETER = "/theorycloud/apptheory/test/fronted/origin-token";
+
+function stubReader(initial, error = undefined) {
+  const state = { value: initial, error, calls: 0, params: [] };
+  state.read = async (parameterName) => {
+    state.calls += 1;
+    state.params.push(parameterName);
+    if (state.error) throw state.error;
+    return state.value;
+  };
+  return state;
+}
+
+function parameterConfig(reader, overrides = {}) {
+  const config = baseConfig();
+  config.originReachability = "fronted";
+  config.frontDoorVerification = {
+    headerName: "x-front-door",
+    secretParameterName: FRONT_DOOR_PARAMETER,
+  };
+  config.frontDoorSecretReader = reader.read;
+  Object.assign(config, overrides);
+  return config;
+}
+
+function frontDoorHeadersFor(secret) {
+  return { "x-front-door": [secret], authorization: ["Bearer admitted-token"] };
+}
+
+test("parameter form fails registration closed", () => {
+  const cases = [
+    {
+      name: "both secret forms",
+      mutate: (config) => {
+        config.frontDoorVerification.secretValue = FRONT_DOOR_SECRET;
+      },
+      error: /requires exactly one of secretValue and secretParameterName/,
+    },
+    {
+      name: "neither secret form",
+      mutate: (config) => {
+        config.frontDoorVerification.secretParameterName = undefined;
+      },
+      error: /requires exactly one of secretValue and secretParameterName/,
+    },
+    {
+      name: "name without a leading slash",
+      mutate: (config) => {
+        config.frontDoorVerification.secretParameterName = "theorycloud/apptheory/fronted";
+      },
+      error: /secretParameterName must be a fully qualified SSM parameter name/,
+    },
+    {
+      name: "name with a colon",
+      mutate: (config) => {
+        config.frontDoorVerification.secretParameterName = "/theorycloud/apptheory:fronted";
+      },
+      error: /secretParameterName must be a fully qualified SSM parameter name/,
+    },
+    {
+      name: "reserved aws hierarchy",
+      mutate: (config) => {
+        config.frontDoorVerification.secretParameterName = "/aws/apptheory/fronted";
+      },
+      error: /must not use the reserved aws or ssm hierarchy/,
+    },
+    {
+      name: "too many levels",
+      mutate: (config) => {
+        config.frontDoorVerification.secretParameterName = `/${Array.from({ length: 16 }, (_, i) => `l${i}`).join("/")}`;
+      },
+      error: /must have between one and fifteen hierarchy levels/,
+    },
+    {
+      name: "ttl above the bound",
+      mutate: (config) => {
+        config.frontDoorSecretTTLSeconds = 3601;
+      },
+      error: /frontDoorSecretTTLSeconds must be greater than zero and at most 3600/,
+    },
+    {
+      name: "ttl not positive",
+      mutate: (config) => {
+        config.frontDoorSecretTTLSeconds = 0;
+      },
+      error: /frontDoorSecretTTLSeconds must be greater than zero and at most 3600/,
+    },
+  ];
+  for (const testCase of cases) {
+    const reader = stubReader(FRONT_DOOR_SECRET);
+    const config = parameterConfig(reader);
+    testCase.mutate(config);
+    assert.throws(
+      () => registerMcpFacade(createApp({ tier: "p0" }), config),
+      testCase.error,
+      testCase.name,
+    );
+    assert.equal(reader.calls, 0, `${testCase.name}: registration never reads the parameter`);
+  }
+});
+
+test("parameter form reads lazily and refuses a direct-origin request", async () => {
+  const reader = stubReader(FRONT_DOOR_SECRET);
+  const app = createApp({ tier: "p0" });
+  const inventory = registerMcpFacade(app, parameterConfig(reader));
+  const route = inventory.routes[0];
+  assert.equal(reader.calls, 0, "registration performs no read");
+
+  assert.equal(
+    (await serve(app, "POST", route.mcpPattern, frontDoorHeadersFor(FRONT_DOOR_SECRET))).status,
+    204,
+  );
+  assert.equal(reader.calls, 1);
+  assert.deepEqual(reader.params, [FRONT_DOOR_PARAMETER]);
+
+  assert.equal((await serve(app, "POST", route.mcpPattern)).status, 403);
+  assert.equal(
+    (
+      await serve(app, "POST", route.mcpPattern, {
+        "x-front-door": ["b".repeat(FRONT_DOOR_SECRET.length)],
+      })
+    ).status,
+    403,
+  );
+  assert.equal((await serve(app, "GET", route.protectedResourcePattern)).status, 403);
+});
+
+test("parameter form fails closed when the parameter is unreadable", async () => {
+  const cases = [
+    { name: "read error", value: "", error: new Error("AccessDeniedException") },
+    { name: "empty value", value: "" },
+    { name: "value outside the alphabet", value: "contains a space and is long enough" },
+    { name: "value too short", value: "short" },
+  ];
+  for (const testCase of cases) {
+    const reader = stubReader(testCase.value, testCase.error);
+    const app = createApp({ tier: "p0" });
+    const inventory = registerMcpFacade(app, parameterConfig(reader));
+    const route = inventory.routes[0];
+    assert.equal(
+      (await serve(app, "POST", route.mcpPattern, frontDoorHeadersFor(FRONT_DOOR_SECRET))).status,
+      403,
+      testCase.name,
+    );
+    assert.equal((await serve(app, "GET", route.protectedResourcePattern)).status, 403);
+  }
+});
+
+test("parameter form refreshes on a mismatch, bounded by the refresh floor", async () => {
+  const reader = stubReader(FRONT_DOOR_SECRET);
+  const app = createApp({ tier: "p0" });
+  const inventory = registerMcpFacade(
+    app,
+    parameterConfig(reader, { frontDoorSecretTTLSeconds: 3600 }),
+  );
+  const route = inventory.routes[0];
+  const rotated = "rotated-front-door-secret-0123456789-abcdef";
+
+  assert.equal(
+    (await serve(app, "POST", route.mcpPattern, frontDoorHeadersFor(FRONT_DOOR_SECRET))).status,
+    204,
+  );
+  assert.equal(reader.calls, 1);
+
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  reader.value = rotated;
+  assert.equal(
+    (await serve(app, "POST", route.mcpPattern, frontDoorHeadersFor(rotated))).status,
+    204,
+    "the first request after the floor carrying the rotated value is admitted",
+  );
+  assert.equal(reader.calls, 2, "a mismatch forces exactly one refresh");
+
+  assert.equal(
+    (
+      await serve(app, "POST", route.mcpPattern, {
+        "x-front-door": ["c".repeat(rotated.length)],
+      })
+    ).status,
+    403,
+  );
+  assert.equal(reader.calls, 2, "the refresh floor bounds forced reads");
+  assert.equal(
+    (await serve(app, "POST", route.mcpPattern, frontDoorHeadersFor(rotated))).status,
+    204,
+  );
+});
+
+test("parameter form refreshes after the TTL without a mismatching request", async () => {
+  const reader = stubReader(FRONT_DOOR_SECRET);
+  const app = createApp({ tier: "p0" });
+  const inventory = registerMcpFacade(
+    app,
+    parameterConfig(reader, { frontDoorSecretTTLSeconds: 0.05 }),
+  );
+  const route = inventory.routes[0];
+  const rotated = "rotated-front-door-secret-0123456789-abcdef";
+
+  assert.equal(
+    (await serve(app, "POST", route.mcpPattern, frontDoorHeadersFor(FRONT_DOOR_SECRET))).status,
+    204,
+  );
+  reader.value = rotated;
+  await new Promise((resolve) => setTimeout(resolve, 80));
+
+  assert.equal(
+    (await serve(app, "POST", route.mcpPattern, frontDoorHeadersFor(rotated))).status,
+    204,
+  );
+  assert.equal(reader.calls, 2, "the TTL re-reads the parameter");
+  assert.equal(
+    (await serve(app, "POST", route.mcpPattern, frontDoorHeadersFor(FRONT_DOOR_SECRET))).status,
+    403,
+    "the rotated-out value is no longer accepted",
+  );
+});
+
+test("parameter form coalesces concurrent reads onto one call", async () => {
+  let resolveRead;
+  const state = { calls: 0 };
+  const read = (parameterName) => {
+    state.calls += 1;
+    assert.equal(parameterName, FRONT_DOOR_PARAMETER);
+    return new Promise((resolve) => {
+      resolveRead = resolve;
+    });
+  };
+  const config = parameterConfig({ read });
+  const app = createApp({ tier: "p0" });
+  const inventory = registerMcpFacade(app, config);
+  const route = inventory.routes[0];
+
+  const first = serve(app, "POST", route.mcpPattern, frontDoorHeadersFor(FRONT_DOOR_SECRET));
+  const second = serve(app, "POST", route.mcpPattern, frontDoorHeadersFor(FRONT_DOOR_SECRET));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  resolveRead(FRONT_DOOR_SECRET);
+  assert.equal((await first).status, 204);
+  assert.equal((await second).status, 204);
+  assert.equal(state.calls, 1, "concurrent requests share one in-flight read");
+});

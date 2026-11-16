@@ -6575,6 +6575,37 @@ def _fixture_mcp_facade_value(value: Any, fallback: str) -> str:
     return fallback if not text else text
 
 
+# The runtimes document a one-second front-door secret refresh floor: a
+# mismatch-triggered re-read is floored so a wrong header cannot thrash
+# Parameter Store. A rotation fixture serves a warmup request, waits past the
+# floor, then serves the request that carries the rotated value.
+_FIXTURE_FRONT_DOOR_ROTATION_PAUSE_SECONDS = 1.1
+
+
+def _fixture_front_door_parameter_source(reads: Any) -> Any:
+    """Serves the ordered read results a fixture declares for the parameter.
+
+    A null entry is a read failure and the last entry repeats, so the corpus
+    pins the parameter form -- including an unreadable parameter and a rotation
+    -- without an AWS call.
+    """
+    values = [None if value is None else str(value) for value in (reads or [])]
+    state = {"read": 0}
+
+    def read(parameter_name: str) -> str:
+        if not values:
+            raise RuntimeError(f"front-door parameter {parameter_name} is unreadable")
+        index = state["read"]
+        value = values[min(index, len(values) - 1)]
+        if index < len(values) - 1:
+            state["read"] = index + 1
+        if value is None:
+            raise RuntimeError(f"front-door parameter {parameter_name} is unreadable")
+        return value
+
+    return read
+
+
 def _fixture_mcp_facade_token(runtime: Any, entry: Any) -> Any:
     if isinstance(entry, str):
         return runtime.BearerTokenRecord(token=entry)
@@ -6623,9 +6654,19 @@ def register_fixture_mcp_facade(runtime: Any, app: Any, setup: dict[str, Any]) -
 
     verification = setup.get("front_door_verification") or None
     if verification:
-        config.front_door_verification = runtime.FrontDoorVerification(
-            header_name=str(verification.get("header_name") or ""),
-            secret_value=str(verification.get("secret_value") or ""),
+        declared = {"header_name": str(verification.get("header_name") or "")}
+        # Presence, not truthiness: an omitted form must reach the runtime as
+        # absent so the exactly-one-of check fires, as it does in every runtime.
+        if "secret_value" in verification:
+            declared["secret_value"] = str(verification.get("secret_value") or "")
+        if "secret_parameter_name" in verification:
+            declared["secret_parameter_name"] = str(
+                verification.get("secret_parameter_name") or ""
+            )
+        config.front_door_verification = runtime.FrontDoorVerification(**declared)
+    if "front_door_parameter_reads" in setup:
+        config.front_door_secret_reader = _fixture_front_door_parameter_source(
+            setup.get("front_door_parameter_reads")
         )
 
     bearer = setup.get("bearer") or None
@@ -6652,6 +6693,21 @@ def register_fixture_mcp_facade(runtime: Any, app: Any, setup: dict[str, Any]) -
         )
 
     runtime.register_mcp_facade(app, config)
+
+
+def _fixture_p0_request(runtime: Any, input_: dict[str, Any]) -> Any:
+    """Builds the runtime request for one fixture request envelope.
+
+    A p0 fixture may serve a warmup_request before the measured request.
+    """
+    return runtime.Request(
+        method=input_.get("method", ""),
+        path=input_.get("path", ""),
+        query=input_.get("query") or {},
+        headers=input_.get("headers") or {},
+        body=decode_fixture_body(input_.get("body")),
+        is_base64=bool(input_.get("is_base64")),
+    )
 
 
 def run_fixture_p0(
@@ -6701,16 +6757,13 @@ def run_fixture_p0(
         expected = fixture.get("expect", {}).get("response", {})
         return run_fixture_compare(fixture, actual, expected, _DummyEffectsApp())
 
+    warmup = (fixture.get("input", {}) or {}).get("warmup_request")
+    if warmup:
+        app.serve(_fixture_p0_request(runtime, warmup))
+        time.sleep(_FIXTURE_FRONT_DOOR_ROTATION_PAUSE_SECONDS)
+
     input_ = fixture.get("input", {}).get("request", {})
-    req_body = decode_fixture_body(input_.get("body"))
-    req = runtime.Request(
-        method=input_.get("method", ""),
-        path=input_.get("path", ""),
-        query=input_.get("query") or {},
-        headers=input_.get("headers") or {},
-        body=req_body,
-        is_base64=bool(input_.get("is_base64")),
-    )
+    req = _fixture_p0_request(runtime, input_)
 
     resp = app.serve(req)
     actual = CanonicalResponse(

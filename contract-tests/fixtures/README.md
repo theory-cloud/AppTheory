@@ -30,8 +30,8 @@ File layout is organized by behavior domain. The historical tier/milestone label
 - `contract-tests/fixtures/objectstore/` — SP13 bounded object-store Put, capped Get, Delete, deterministic fake behavior, and forbidden operation errors
 - `contract-tests/fixtures/vectorstore/` — SP14 semantic vector-store, Bedrock Titan embedding, metadata filter, and deterministic fake behavior
 
-The current corpus contains 335 machine-readable contract vectors plus the internal schema file. <!-- apptheory-fixture-count: 335 -->
-Of those, 319 are single-envelope behavior fixtures executed by the Go, TypeScript, and Python runners. The sixteen
+The current corpus contains 344 machine-readable contract vectors plus the internal schema file. <!-- apptheory-fixture-count: 344 -->
+Of those, 328 are single-envelope behavior fixtures executed by the Go, TypeScript, and Python runners. The sixteen
 nested tables under `routing/` — `limiter/multi-window-cancellation.v1.json`, `mcp-route-algebra/expectations.json`, `mcp-route-algebra/facade-route-inventory.json`,
 `mcp-auth-facade/facade-transport-posture.v1.json`, `mcp-auth-facade/facade-route-model.v1.json`,
 `mcp-auth-facade/jwks-validator.v1.json`, `mcp-auth-facade/discovery-bootstrap.v1.json`,
@@ -214,10 +214,20 @@ error envelopes — rather than a runner-owned stand-in. Every field is optional
     (RFC 9728 `resource_metadata` challenge); a known token missing a required scope is the `403
     insufficient_scope` case (RFC 6750 `error`/`scope`/`resource_metadata` challenge).
 - `origin_reachability`: the declared direct-origin posture (`disabled`, `locked`, or `fronted`). `fronted` requires
-  `front_door_verification` (`header_name`, `secret_value`): the runtime then refuses every derived route — transport
-  and OAuth facade — with `403 app.forbidden` when the declared header is absent or wrong, and registration fails
-  closed when `fronted` is declared without it. The `mcp-facade-front-door-*` fixtures pin that fail-closed behavior,
-  including an OAuth facade document path and the unconfigured registration error.
+  `front_door_verification` with exactly one of two mutually exclusive forms: `secret_value` (`header_name`,
+  `secret_value`), or the parameter form (`header_name`, `secret_parameter_name`) naming the well-known SSM parameter
+  that holds the value. Either way the runtime refuses every derived route — transport and OAuth facade — with `403
+  app.forbidden` when the declared header is absent or wrong, registration fails closed when `fronted` is declared
+  without a form, and a malformed parameter name fails registration. The `mcp-facade-front-door-*` fixtures pin that
+  fail-closed behavior, including an OAuth facade document path and the unconfigured registration error.
+  - The parameter form reads the value once per execution environment through `front_door_parameter_reads`: one entry
+    per read, in order, with the last entry repeating, and `null` for an unreadable parameter. That is the injected
+    parameter source, so the corpus covers a correct value, a wrong value, an unreadable parameter and a rotation
+    without an AWS call. The `front-door-parameter-*` fixtures pin those cases plus the invalid-name, both-forms and
+    neither-form registration errors.
+- `input.warmup_request`: an optional request served first on the same application instance and not compared. The
+  runner then waits past the runtimes' documented one-second front-door secret refresh floor before serving
+  `input.request`, so the rotation fixture models a value that rotated between two invocations.
 
 The mounted facade serves the client-facing route algebra, so a fixture asserts its real responses through
 `input.aws_event` with a greedy `ANY /{proxy+}` (or `ANY /`) route key. The `http-core` `mcp-facade-greedy-*`
