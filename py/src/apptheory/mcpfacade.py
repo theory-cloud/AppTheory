@@ -1356,7 +1356,9 @@ def _normalize_origin_reachability(
 _FRONT_DOOR_HEADER_NAME = re.compile(r"^[A-Za-z0-9-]{1,64}$")
 _FRONT_DOOR_SECRET = re.compile(r"^[A-Za-z0-9._~-]{32,128}\Z")
 
-_FRONT_DOOR_PARAMETER_NAME = re.compile(r"^/[A-Za-z0-9_.\-/]+$")
+# ``\Z`` rather than ``$``: Python's ``$`` also matches before a trailing
+# newline, which accepts a name the CDK, Go and TypeScript surfaces reject.
+_FRONT_DOOR_PARAMETER_NAME = re.compile(r"^/[A-Za-z0-9_.\-/]+\Z")
 _FRONT_DOOR_PARAMETER_MAX_LENGTH = 1011
 _FRONT_DOOR_PARAMETER_MAX_LEVELS = 15
 

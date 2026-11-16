@@ -297,6 +297,16 @@ class FrontDoorParameterRegistrationTests(unittest.TestCase):
                 "must be a fully qualified SSM parameter name",
             ),
             (
+                "name with a trailing newline",
+                {"secret_parameter_name": FRONT_DOOR_PARAMETER + "\n"},
+                "must be a fully qualified SSM parameter name",
+            ),
+            (
+                "empty name",
+                {"secret_parameter_name": ""},
+                "must be a fully qualified SSM parameter name",
+            ),
+            (
                 "reserved aws hierarchy",
                 {"secret_parameter_name": "/aws/apptheory/fronted"},
                 "must not use the reserved aws or ssm hierarchy",
