@@ -5,23 +5,23 @@
         "bash",
         "scripts/verify-python-build.sh"
       ],
-      "durationSeconds": 4.403,
+      "durationSeconds": 3.756,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-12T20:57:37Z",
+      "finishedAt": "2026-11-16T16:58:36Z",
       "id": "py-build",
-      "inputsDigest": "sha256:8a5f909cfa4d7088b88258bc7cd02f5d4d01bb774201a976d54c90113a58b01c",
-      "logDigest": "sha256:b74a4c0a1cc8c10bb130f1eed794d9404bb0cc15f7be2c6bb8d287b86b8ad834",
-      "logRef": "gov-infra/evidence/proportionate/local/py-py-build-20261112T205733Z-48962.log",
+      "inputsDigest": "sha256:7d7f6db7131a6b88b13a544d972f1982b388cf080e849c17d07d2d5159946e17",
+      "logDigest": "sha256:63705aeb908af528f0f1a27fb0282737d17d33b9be7007c57593ed157958896b",
+      "logRef": "gov-infra/evidence/proportionate/local/py-py-build-20261116T165832Z-56498.log",
       "reused": false,
-      "startedAt": "2026-11-12T20:57:33Z"
+      "startedAt": "2026-11-16T16:58:32Z"
     }
   ],
   "consumed": [],
   "description": "Python wheel and sdist build",
   "environment": {
     "go": "go1.27.4",
-    "node": "v24.21.0",
+    "node": "v24.13.1",
     "platform": {
       "arch": "arm64",
       "os": "darwin"
@@ -36,26 +36,17 @@
   },
   "profile": "floor-py3.12",
   "reason": "",
-  "recordedAt": "2026-11-12T20:57:37Z",
+  "recordedAt": "2026-11-16T16:58:36Z",
   "releaseOnly": {
-    "digest": "sha256:dea47f7c318e6703d405d14f61f76d6c1a8d2b38f1b682fdc96b6781c222b699",
-    "fileCount": 476,
-    "normalizedDigest": "sha256:c5ecbf183fa35bbf12642d3d5103e5af06b5b0d169ec8b29c253d8712187ac69",
-    "version": "7.1.0"
+    "digest": "sha256:e1f3a46f884d3eeacab9887004847f6a100f9d1ad2fc125634b50c3077babc8c",
+    "fileCount": 477,
+    "normalizedDigest": "sha256:b6497cf22c491838d27ec9d7609ac732bfa1471704b9a443f8e0b650afac781f",
+    "version": "7.3.1"
   },
-  "reviews": [
-    {
-      "kind": "review-reference",
-      "ref": "factory:20261112T194701Z-adversary-81745"
-    },
-    {
-      "kind": "review-reference",
-      "ref": "factory:20261112T194701Z-sanity-81746"
-    }
-  ],
+  "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:34d849e386aa800a5fe56b5f1e0af6869b8d4066c3fa7f97907761ce1623c11d",
+    "digest": "sha256:9544f9f0f47cba072d1a56e638314d90703c92b7b6823136e0792886d0abeaf4",
     "fileCount": 132,
     "paths": [
       "py/",
@@ -65,8 +56,8 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:ca76497f13c6e3d8ded84c7468f4f56ef263a9f68bffac56f091e4ac55df2f2e",
-    "fileCount": 2658
+    "digest": "sha256:aa51abb5ec14221e4fe3be6eb030c9a41163d01ce2de7ff37fbe6f77f50b349f",
+    "fileCount": 2663
   },
   "verdict": "PASS"
 }
