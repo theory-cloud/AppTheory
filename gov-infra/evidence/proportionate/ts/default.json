@@ -6,14 +6,14 @@
         "scripts/verify-ts-dist-drift.sh"
       ],
       "durationSeconds": 0.395,
-      "executed": true,
+      "executed": false,
       "exitCode": 0,
       "finishedAt": "2026-11-16T16:15:39Z",
       "id": "ts-dist-drift",
       "inputsDigest": "sha256:272d257d03eb305518590c2ddb58408f1b64e88d31333fafb6383ec60aac0b88",
       "logDigest": "sha256:17e2400ed40fc4f9bbbf11be026c0d878a4d5df1f37b94bca756868686f58f17",
       "logRef": "gov-infra/evidence/proportionate/local/ts-ts-dist-drift-20261116T161539Z-60885.log",
-      "reused": false,
+      "reused": true,
       "startedAt": "2026-11-16T16:15:39Z"
     },
     {
@@ -22,33 +22,22 @@
         "scripts/verify-ts-pack.sh"
       ],
       "durationSeconds": 0.386,
-      "executed": true,
+      "executed": false,
       "exitCode": 0,
       "finishedAt": "2026-11-16T16:15:40Z",
       "id": "ts-pack",
       "inputsDigest": "sha256:5eef35dab77437f14671d9bfb19223906b1c95fa9f4cc95bdc7b0c86d7725efe",
       "logDigest": "sha256:17e2400ed40fc4f9bbbf11be026c0d878a4d5df1f37b94bca756868686f58f17",
       "logRef": "gov-infra/evidence/proportionate/local/ts-ts-pack-20261116T161539Z-60885.log",
-      "reused": false,
+      "reused": true,
       "startedAt": "2026-11-16T16:15:39Z"
     }
   ],
-  "consumed": [
-    {
-      "digest": "sha256:d1b7a5def8dd86a9ca13198a575655c1c4a93dc7c5bb958573ce95e4345aa571",
-      "gate": "deterministic-builds",
-      "recordedAt": "2026-11-16T15:53:45Z"
-    },
-    {
-      "digest": "sha256:d1b7a5def8dd86a9ca13198a575655c1c4a93dc7c5bb958573ce95e4345aa571",
-      "gate": "deterministic-builds",
-      "recordedAt": "2026-11-16T15:53:45Z"
-    }
-  ],
+  "consumed": [],
   "description": "TypeScript checked-in dist drift and npm pack",
   "environment": {
     "go": "go1.27.4",
-    "node": "v24.13.1",
+    "node": "v24.21.0",
     "platform": {
       "arch": "arm64",
       "os": "darwin"
@@ -63,7 +52,7 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-16T16:15:40Z",
+  "recordedAt": "2026-11-16T17:58:33Z",
   "releaseOnly": {
     "digest": "sha256:e1f3a46f884d3eeacab9887004847f6a100f9d1ad2fc125634b50c3077babc8c",
     "fileCount": 477,
@@ -88,8 +77,8 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:20c40ed402d71725e1474bc7d7dcdc7e6b9ba24275d8f60a29004bcb4f20ef8f",
-    "fileCount": 2663
+    "digest": "sha256:1732f56f11c0dd944b258d616e0ef15fa9d2b7013c7d602043690a34f8f3c1c9",
+    "fileCount": 2672
   },
   "verdict": "PASS"
 }
