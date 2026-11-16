@@ -95,8 +95,14 @@ print("requested\t" + requested)
 for fallback in entry.get("fallbackProfiles", []):
     if str(fallback) != requested:
         print("fallback\t" + str(fallback))
+gates = registry.get("gates", {})
 for composed in entry.get("composedFrom", []):
-    print("composed\t" + str(composed))
+    # A composed gate is only a candidate when it declares the requested
+    # profile. Asking a default-only producer to verify a floor profile would
+    # replace the real reason (no record for this tree) with a profile error.
+    supported = [str(item) for item in (gates.get(str(composed)) or {}).get("profiles") or ["default"]]
+    if requested in supported:
+        print("composed\t" + str(composed))
 PY
 }
 
