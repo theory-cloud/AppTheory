@@ -28,7 +28,15 @@ set -euo pipefail
 #   3. the scheduled recovery sweep exists, is wired to the same lane, and cannot
 #      be turned into a silent no-op;
 #   4. no workflow reintroduces a release-please token or a secret-to-token
-#      fallback: the lane runs on the built-in token only.
+#      fallback: the lane runs on the built-in token only;
+#   5. a script that a ruleset-required job runs models the review event for
+#      every event-dependent input it reads: a script that branches on the event
+#      name has a `pull_request_review` branch, a script that reads
+#      GITHUB_BASE_REF/GITHUB_HEAD_REF (which GitHub sets only for
+#      `pull_request`/`pull_request_target`) also reads them from the review
+#      event, and a script that skips when it cannot derive its branch does not
+#      let a review event reach that skip. Otherwise the code-owner review would
+#      fail closed after the approval, or pass without validating.
 #
 # The self-test proves the guard is not vacuous: it mutates copies of the real
 # workflows and declaration and requires each mutation to fail, and it drives the
@@ -79,6 +87,7 @@ root = Path(sys.argv[1])
 config_path = root / ".github" / "release-lane.json"
 workflows = root / ".github" / "workflows"
 failures: list[str] = []
+reported_review_scripts: set[tuple[str, str, str]] = set()
 
 
 def report(message: str) -> None:
@@ -114,11 +123,33 @@ if not sweep:
     raise SystemExit(1)
 
 JOB_BLOCK = r"(?ms)^  {job}:\n(?P<block>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)"
+# Scripts a job invokes, and the runtime event-name read a script must map onto
+# the code-owner review. A workflow expression (`github.event_name`) is expanded
+# before a script runs, so the runtime signal for a script is the
+# GITHUB_EVENT_NAME environment variable. Both checks are grep-level by design:
+# the guard proves the review branch is present, not that every path inside the
+# script reaches it.
+SCRIPT_REF = re.compile(r"scripts/[A-Za-z0-9_./-]+\.(?:sh|py|mjs)")
+EVENT_NAME_BRANCH = re.compile(r"GITHUB_EVENT_NAME")
+# GITHUB_BASE_REF and GITHUB_HEAD_REF are set only for pull_request and
+# pull_request_target runs, so a script that reads them must also read the same
+# refs from a review event: the step's PR_BASE_REF/PR_HEAD_REF or the payload.
+PULL_REQUEST_ONLY_REF = re.compile(r"\$\{?(?:GITHUB_BASE_REF|GITHUB_HEAD_REF)\b")
+REVIEW_REF_SOURCE = re.compile(r"\bPR_BASE_REF\b|\bPR_HEAD_REF\b|\bGITHUB_EVENT_PATH\b")
+# A skip-and-exit-0 path is a state where the required context reports success
+# without checking anything. A review event starts the job on
+# `refs/pull/<n>/merge`, whose ref name is `<n>/merge`, so a script that skips an
+# unmodelled branch must first be sure it is not a review.
+SKIP_EXIT = re.compile(r"(?m)^[^\n]*\bSKIP\b[^\n]*\n(?:[ \t][^\n]*\n){0,3}?[ \t]*exit 0\b")
 
 
 def job_block(text: str, job: str) -> str | None:
     match = re.search(JOB_BLOCK.format(job=re.escape(job)), text)
     return match.group("block") if match else None
+
+
+def script_refs(block: str) -> set[str]:
+    return {match.group(0) for match in SCRIPT_REF.finditer(block)}
 
 
 def producer_checks(head: str, base: str, workflow: str) -> None:
@@ -181,6 +212,44 @@ def context_checks(base: str, item: dict) -> None:
         report(f"{workflow} job {job} does not prove the checkout is the resolved pull request head")
     if not item_checkout_proof and not str(entry_note).strip():
         report(f"{workflow} job {job} skips the checkout proof without stating why")
+    # A ruleset-required context is evaluated from the code-owner review of the
+    # pull request, so every script this job runs also runs on that event. A
+    # script that branches on the event name must therefore map
+    # pull_request_review the way it maps pull_request; otherwise the review run
+    # fails closed after the approval and the ruleset keeps the pull request
+    # blocked with no way to clear it. Scope: the script files the job block
+    # names, matched by grep — inline workflow shell is covered by the trigger
+    # and job checks above, not here.
+    if item.get("rulesetRequired"):
+        for script in sorted(script_refs(block)):
+            script_path = root / script
+            if not script_path.is_file():
+                continue
+            script_text = read(script_path)
+            if EVENT_NAME_BRANCH.search(script_text):
+                if "pull_request_review" not in script_text and (job, script, "event") not in reported_review_scripts:
+                    reported_review_scripts.add((job, script, "event"))
+                    report(
+                        f"{workflow} job {job} runs {script}, which branches on the event name "
+                        f"without a pull_request_review branch; the code-owner review would fail closed"
+                    )
+            if PULL_REQUEST_ONLY_REF.search(script_text) and not REVIEW_REF_SOURCE.search(script_text):
+                if (job, script, "refs") not in reported_review_scripts:
+                    reported_review_scripts.add((job, script, "refs"))
+                    report(
+                        f"{workflow} job {job} runs {script}, which reads GITHUB_BASE_REF/GITHUB_HEAD_REF "
+                        f"without a review-event source (PR_BASE_REF/PR_HEAD_REF or GITHUB_EVENT_PATH); "
+                        f"GitHub sets those variables only for pull_request, so the review run cannot derive "
+                        f"the pull request the ruleset requires it to validate"
+                    )
+            if SKIP_EXIT.search(script_text) and "pull_request_review" not in script_text:
+                if (job, script, "skip") not in reported_review_scripts:
+                    reported_review_scripts.add((job, script, "skip"))
+                    report(
+                        f"{workflow} job {job} runs {script}, which skips when it cannot derive its branch; "
+                        f"a pull_request_review run starts on refs/pull/<n>/merge and reaches that skip, "
+                        f"so the required context would report success without validating"
+                    )
 
 
 for entry in producers:
@@ -299,6 +368,25 @@ run_self_test() {
     cp -R "${root}/.github/workflows/." "${dir}/.github/workflows/"
     cp "${root}/.github/release-lane.json" "${dir}/.github/release-lane.json"
     cp "${root}/scripts/sync-release-pr-checks.sh" "${dir}/scripts/sync-release-pr-checks.sh"
+    # The review-event script check reads the script files the jobs name, so the
+    # fixture carries exactly those and nothing else.
+    python3 - "${root}" "${dir}" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+dest = Path(sys.argv[2])
+text = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+refs = {match.group(0) for match in re.finditer(r"scripts/[A-Za-z0-9_./-]+\.(?:sh|py|mjs)", text)}
+for ref in sorted(refs):
+    source = root / ref
+    if not source.is_file():
+        continue
+    target = dest / ref
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+PY
     printf '%s\n' "${dir}"
   }
 
@@ -455,6 +543,55 @@ path.write_text("".join(out), encoding="utf-8")
 PY
   expect_fixture_failure "a verifying workflow without the eligible-event trigger fails" \
     "has no pull_request_review trigger" "${fixture}"
+
+  # 11c. A script a ruleset-required job runs loses its review branch. The
+  #      trigger is still there, so the workflow starts; the script then fails
+  #      closed after the approval and nothing can clear the ruleset.
+  fixture="$(new_fixture script-without-review-branch)"
+  python3 - "${fixture}/scripts/verify-release-branch-signatures.sh" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+path.write_text(text.replace("pull_request_review", "pull_request"), encoding="utf-8")
+PY
+  expect_fixture_failure "a review-run script without a pull_request_review branch fails" \
+    "branches on the event name without a pull_request_review branch" "${fixture}"
+
+  # 11d. A ruleset-required script keeps the pull_request-only refs but loses
+  #      the review-event source. The review run then has no base or head ref:
+  #      GITHUB_BASE_REF/GITHUB_HEAD_REF are unset on that event.
+  fixture="$(new_fixture script-without-review-ref-source)"
+  python3 - "${fixture}/scripts/verify-branch-version-sync.sh" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+for name in ("PR_BASE_REF", "PR_HEAD_REF", "GITHUB_EVENT_PATH"):
+    text = text.replace(name, f"{name}_LEGACY")
+path.write_text(text, encoding="utf-8")
+PY
+  expect_fixture_failure "a review-run script reading only the pull_request refs fails" \
+    "without a review-event source" "${fixture}"
+
+  # 11e. A ruleset-required script that skips on a branch it cannot derive. A
+  #      review run reaches that skip on `refs/pull/<n>/merge`, so the required
+  #      context would report success without checking anything.
+  fixture="$(new_fixture script-that-skips-on-review)"
+  python3 - "${fixture}/scripts/verify-branch-version-sync.sh" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+for name in ("pull_request_review", "PR_BASE_REF", "PR_HEAD_REF", "GITHUB_EVENT_PATH"):
+    text = text.replace(name, "")
+path.write_text(text, encoding="utf-8")
+PY
+  expect_fixture_failure "a review-run script that skips an underivable branch fails" \
+    "skips when it cannot derive its branch" "${fixture}"
 
   # 12. The head-binding resolver itself. A stub `gh` answers the pull request
   #     read, so every hostile answer runs through the real validation.

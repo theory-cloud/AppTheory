@@ -246,12 +246,17 @@ PY
 # history. Both endpoints must resolve, the base must be an ancestor of the head
 # (a rewritten base fails closed), and a missing base is an error, not a reason
 # to widen the scan.
+#
+# A review event carries the reviewed pull request's own base and head commits,
+# so it proves the same range a pull_request run proves; the code-owner review is
+# the event that satisfies the premain/main ruleset for a generated release
+# pull request.
 event_signed_range() {
   local event_name="${GITHUB_EVENT_NAME:-}"
 
-  if [[ "${event_name}" == "pull_request" ]]; then
+  if [[ "${event_name}" == "pull_request" || "${event_name}" == "pull_request_review" ]]; then
     local base="${PR_BASE_SHA:-}"
-    local head="${PR_HEAD_SHA:-${GITHUB_SHA:-}}"
+    local head="${PR_HEAD_SHA:-}"
     if [[ -z "${base}" ]]; then
       base="$(event_payload_field "pull_request.base.sha" 2>/dev/null || true)"
     fi
@@ -259,7 +264,7 @@ event_signed_range() {
       head="$(event_payload_field "pull_request.head.sha" 2>/dev/null || true)"
     fi
     if [[ -z "${base}" || -z "${head}" ]]; then
-      echo "release-signatures: FAIL pull_request event has no base/head commit to bound the new range" >&2
+      echo "release-signatures: FAIL ${event_name} event has no base/head commit to bound the new range" >&2
       return 1
     fi
     signed_range_from "pull_request:${event_name}" "${base}" "${head}"
@@ -375,6 +380,85 @@ run_self_test() {
   fi
   : >"${scanned_ranges_file}"
 
+  # A review event proves the same pull request range as pull_request: the
+  # code-owner review is the eligible run that satisfies the premain/main
+  # ruleset for a generated release pull request.
+  event_status=0
+  event_output="$(
+    scan_range() { printf '%s %s\n' "$1" "$2" >>"${scanned_ranges_file}"; return 0; }
+    git() {
+      case "$1" in
+        rev-parse) return 0 ;;
+        merge-base) return 0 ;;
+      esac
+      command git "$@"
+    }
+    GITHUB_EVENT_NAME=pull_request_review \
+      PR_BASE_SHA=1111111111111111111111111111111111111111 \
+      PR_HEAD_SHA=2222222222222222222222222222222222222222 \
+      event_signed_range
+  )" || event_status=$?
+  if [[ "${event_status:-0}" -ne 0 ]]; then
+    echo "release-signatures self-test: FAIL (pull_request_review event range was rejected)" >&2
+    echo "${event_output}" >&2
+    failures=$((failures + 1))
+  elif [[ "$(wc -l <"${scanned_ranges_file}" | tr -d ' ')" != "1" ]] ||
+    ! grep -Fq "1111111111111111111111111111111111111111..2222222222222222222222222222222222222222" "${scanned_ranges_file}"; then
+    echo "release-signatures self-test: FAIL (pull_request_review event scanned more than its own range)" >&2
+    cat "${scanned_ranges_file}" >&2
+    failures=$((failures + 1))
+  else
+    echo "release-signatures self-test: PASS pull_request_review scans exactly its base..head range"
+  fi
+  : >"${scanned_ranges_file}"
+
+  # A review payload carries the same pull_request object shape, so the range
+  # also has to survive when only GITHUB_EVENT_PATH is available.
+  local review_payload_file
+  review_payload_file="$(mktemp)"
+  cat >"${review_payload_file}" <<'JSON'
+{
+  "action": "submitted",
+  "review": {"state": "approved"},
+  "pull_request": {
+    "number": 1302,
+    "state": "open",
+    "draft": false,
+    "title": "fix(release): promote staging to premain",
+    "base": {"ref": "premain", "sha": "3333333333333333333333333333333333333333"},
+    "head": {"ref": "staging", "sha": "4444444444444444444444444444444444444444"}
+  }
+}
+JSON
+  event_status=0
+  event_output="$(
+    scan_range() { printf '%s %s\n' "$1" "$2" >>"${scanned_ranges_file}"; return 0; }
+    git() {
+      case "$1" in
+        rev-parse) return 0 ;;
+        merge-base) return 0 ;;
+      esac
+      command git "$@"
+    }
+    GITHUB_EVENT_NAME=pull_request_review \
+      GITHUB_EVENT_PATH="${review_payload_file}" \
+      PR_BASE_SHA= PR_HEAD_SHA= GITHUB_SHA= \
+      event_signed_range
+  )" || event_status=$?
+  if [[ "${event_status:-0}" -ne 0 ]]; then
+    echo "release-signatures self-test: FAIL (pull_request_review payload range was rejected)" >&2
+    echo "${event_output}" >&2
+    failures=$((failures + 1))
+  elif [[ "$(wc -l <"${scanned_ranges_file}" | tr -d ' ')" != "1" ]] ||
+    ! grep -Fq "3333333333333333333333333333333333333333..4444444444444444444444444444444444444444" "${scanned_ranges_file}"; then
+    echo "release-signatures self-test: FAIL (pull_request_review payload did not yield its base..head range)" >&2
+    cat "${scanned_ranges_file}" >&2
+    failures=$((failures + 1))
+  else
+    echo "release-signatures self-test: PASS pull_request_review payload scans exactly its base..head range"
+  fi
+  : >"${scanned_ranges_file}"
+
   event_status=0
   event_output="$(
     scan_range() { printf '%s %s\n' "$1" "$2" >>"${scanned_ranges_file}"; return 0; }
@@ -429,6 +513,25 @@ run_self_test() {
   fi
   : >"${scanned_ranges_file}"
 
+  # A review event with no base commit is an error, never a reason to widen the
+  # scan or to fall back to the merge commit GITHUB_SHA names.
+  event_status=0
+  event_output="$(
+    scan_range() { printf 'unexpected\n' >>"${scanned_ranges_file}"; return 0; }
+    GITHUB_EVENT_NAME=pull_request_review \
+      GITHUB_EVENT_PATH= \
+      PR_BASE_SHA= PR_HEAD_SHA=5555555555555555555555555555555555555555 GITHUB_SHA=6666666666666666666666666666666666666666 \
+      event_signed_range
+  )" || event_status=$?
+  if [[ "${event_status}" -eq 0 || -s "${scanned_ranges_file}" ]]; then
+    echo "release-signatures self-test: FAIL (absent pull_request_review base did not fail closed)" >&2
+    echo "${event_output}" >&2
+    failures=$((failures + 1))
+  else
+    echo "release-signatures self-test: PASS missing pull_request_review base fails closed"
+  fi
+  : >"${scanned_ranges_file}"
+
   # A base that is not an ancestor of the head fails closed instead of being
   # scanned blindly.
   event_status=0
@@ -468,7 +571,7 @@ run_self_test() {
   else
     echo "release-signatures self-test: PASS missing event fails closed"
   fi
-  rm -f "${scanned_ranges_file}"
+  rm -f "${scanned_ranges_file}" "${review_payload_file}"
 
   if ! git rev-parse --verify --quiet "${HISTORICAL_UNSIGNED_FIXTURE}^{commit}" >/dev/null; then
     echo "release-signatures self-test: FAIL (historical unsigned fixture ${HISTORICAL_UNSIGNED_FIXTURE} unavailable)" >&2
@@ -870,12 +973,12 @@ while [[ $# -gt 0 ]]; do
 usage: scripts/verify-release-branch-signatures.sh [--self-test] [--range <base..head> [--label <label>]]...
 
 Without explicit ranges, scans exactly the new commits the current release event
-introduces, bounded by that event's own accepted base: a pull request's base
-commit (base.sha), a push's before commit, or the accepted protected branch a
-dispatched generated release PR merges into. A missing base, a base that is not
-an ancestor of the head, or no event at all fails closed. No ancestor tag is
-treated as proof of published history, and unrelated ref histories are never
-scanned.
+introduces, bounded by that event's own accepted base: a pull request's (or the
+code-owner review of a pull request's) base commit (base.sha), a push's before
+commit, or the accepted protected branch a dispatched generated release PR
+merges into. A missing base, a base that is not an ancestor of the head, or no
+event at all fails closed. No ancestor tag is treated as proof of published
+history, and unrelated ref histories are never scanned.
 USAGE
       exit 0
       ;;
