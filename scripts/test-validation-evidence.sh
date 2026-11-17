@@ -30,12 +30,18 @@ cat >"${registry}" <<'JSON'
   "runner": {"maxWorkers": 2, "resources": {"cpu": 2, "repo-write": 1, "docker": 1, "network": 1}},
   "nonProductPaths": ["docs/", "notes/", "scripts/", "bin/"],
   "releaseOnly": {
-    "exact": ["VERSION", "artifact.txt", "CHANGELOG.md", ".release-please-manifest.json"],
+    "exact": ["VERSION", "artifact.txt", "CHANGELOG.md", ".release-please-manifest.json", "assembly.jsii"],
     "prefixes": [],
-    "patterns": ["gen/*"]
+    "patterns": ["gen/*", "packed/*.tgz"]
   },
   "releaseNotes": {
     "exact": ["CHANGELOG.md", ".release-please-manifest.json"]
+  },
+  "releaseDerived": {
+    "projections": {
+      "assembly.jsii": "jsii-assembly",
+      "packed/sample-{{version}}.tgz": "jsii-tarball"
+    }
   },
   "securityInputs": {
     "exact": ["deps.lock"],
@@ -47,7 +53,7 @@ cat >"${registry}" <<'JSON'
       "environment": "toolchain",
       "profiles": ["default", "portable", "wrong-floor"],
       "resource": "cpu",
-      "paths": ["src.txt", "VERSION", "artifact.txt", "gen/*", "CHANGELOG.md", ".release-please-manifest.json"],
+      "paths": ["src.txt", "VERSION", "artifact.txt", "gen/*", "CHANGELOG.md", ".release-please-manifest.json", "assembly.jsii", "packed/*.tgz"],
       "commands": [{"id": "unit", "argv": ["true"]}]
     },
     "platform-unit": {
@@ -136,6 +142,94 @@ PY
 
 inject_profiles "${registry}" true
 
+fingerprint_a="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+fingerprint_b="BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="
+fingerprint_c="CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC="
+
+# A jsii assembly with the anchored top-level fingerprint line the projection
+# recognizes, and a packed tarball of the same shape npm packs. The tarball
+# builder takes the compress level explicitly so a test can repack identical
+# content into different archive bytes, which is what a different host zlib does.
+write_assembly() {
+  local version="$1"
+  local fingerprint="$2"
+  local path="$3"
+  "${python_bin}" - "${version}" "${fingerprint}" "${path}" <<'PY'
+import sys
+
+version, fingerprint, path = sys.argv[1], sys.argv[2], sys.argv[3]
+text = (
+    "{\n"
+    '  "schema": "jsii/0.10.0",\n'
+    '  "name": "sample",\n'
+    '  "types": {"sample.App": {"kind": "class"}},\n'
+    f'  "version": "{version}",\n'
+    f'  "fingerprint": "{fingerprint}"\n'
+    "}"
+)
+open(path, "w", encoding="utf-8").write(text)
+PY
+}
+
+write_tarball() {
+  local version="$1"
+  local fingerprint="$2"
+  local compresslevel="$3"
+  local path="$4"
+  local extra="${5:-}"
+  "${python_bin}" - "${version}" "${fingerprint}" "${compresslevel}" "${path}" "${extra}" <<'PY'
+import gzip
+import io
+import sys
+import tarfile
+
+version, fingerprint, compresslevel, path, extra = (
+    sys.argv[1],
+    sys.argv[2],
+    int(sys.argv[3]),
+    sys.argv[4],
+    sys.argv[5],
+)
+assembly = (
+    "{\n"
+    '  "schema": "jsii/0.10.0",\n'
+    '  "name": "sample",\n'
+    f'  "version": "{version}",\n'
+    f'  "fingerprint": "{fingerprint}"\n'
+    "}"
+).encode()
+members = {
+    "package/.jsii": assembly,
+    "package/package.json": ('{"name":"sample","version":"%s"}\n' % version).encode(),
+    "package/lib/app.js": b"exports.VALUE = 'sample';\n",
+}
+if extra:
+    members["package/extra.txt"] = extra.encode()
+tar = io.BytesIO()
+with tarfile.open(fileobj=tar, mode="w", format=tarfile.GNU_FORMAT) as archive:
+    for name, payload in members.items():
+        info = tarfile.TarInfo(name)
+        info.size = len(payload)
+        info.mtime = 499162500
+        info.mode = 0o644
+        archive.addfile(info, io.BytesIO(payload))
+out = io.BytesIO()
+with gzip.GzipFile(fileobj=out, mode="wb", compresslevel=compresslevel, mtime=0) as stream:
+    stream.write(tar.getvalue())
+with open(path, "wb") as handle:
+    handle.write(out.getvalue())
+PY
+}
+
+release_derived_for() {
+  local version="$1"
+  local fingerprint="$2"
+  local compresslevel="${3:-9}"
+  rm -f "${scratch}/packed/"*.tgz
+  write_assembly "${version}" "${fingerprint}" "${scratch}/assembly.jsii"
+  write_tarball "${version}" "${fingerprint}" "${compresslevel}" "${scratch}/packed/sample-${version}.tgz"
+}
+
 init_repo() {
   (
     cd "${scratch}"
@@ -151,6 +245,9 @@ init_repo() {
     printf '# Changelog\n\n## [1.0.0](https://example.invalid/compare/v0.9.0...v1.0.0) (2026-01-01)\n\n* seed\n' >CHANGELOG.md
     printf '{\n  ".": "1.0.0"\n}\n' >.release-please-manifest.json
     printf 'keep\n' >evidence/.gitkeep
+    mkdir -p packed
+    write_assembly 1.0.0 "${fingerprint_a}" assembly.jsii
+    write_tarball 1.0.0 "${fingerprint_a}" 9 packed/sample-1.0.0.tgz
     git add -A
     git commit -q -m "fix: seed"
   )
@@ -369,6 +466,7 @@ expect_ok "verify recovers the good record" verify --gate unit
 printf '1.1.0\n' >"${scratch}/VERSION"
 printf 'version=1.1.0\n' >"${scratch}/artifact.txt"
 printf 'gen 1.1.0\n' >"${scratch}/gen/a.txt"
+release_derived_for 1.1.0 "${fingerprint_b}"
 commit_all "fix: release 1.1.0"
 expect_output "verify accepts a pure version substitution" "mode=release-transformation-verified" verify --gate unit
 cp "${scratch}/gen/a.txt" "${tmp}/gen-a.txt.bak"
@@ -532,6 +630,7 @@ MD
 cat "${scratch}/CHANGELOG.md.new" "${scratch}/CHANGELOG.md" >"${scratch}/CHANGELOG.md.merged"
 mv "${scratch}/CHANGELOG.md.merged" "${scratch}/CHANGELOG.md"
 rm -f "${scratch}/CHANGELOG.md.new"
+release_derived_for 1.2.0 "${fingerprint_c}"
 commit_all "fix: release 1.2.0 generated by release-please"
 expect_output "verify accepts a release-please back-merge unchanged records" \
   "mode=release-transformation-verified" verify --gate unit
@@ -566,6 +665,113 @@ expect_fail "a product byte still stales the record behind release history" veri
 cp "${tmp}/src.txt.bak3" "${scratch}/src.txt"
 commit_all "fix: restore the product byte"
 expect_output "verify recovers when the product byte returns" \
+  "mode=release-transformation-verified" verify --gate unit
+
+# 17. Release-derived artifacts are bound by content, not by pack bytes. A
+# release renames and repacks the jsii tarball and re-derives the assembly
+# fingerprint; those are the two artifacts the release lane rebuilds rather than
+# edits. The committed record must stay applicable across the rename, a repack
+# with different archive bytes, and a moved fingerprint, while every packed byte,
+# every other assembly byte, a second tarball and a missing tarball fail closed.
+expect_ok "collect the release-derived fixture" collect --gate unit
+expect_ok "verify the release-derived fixture" verify --gate unit
+cp "${scratch}/packed/sample-1.2.0.tgz" "${tmp}/sample-1.2.0.tgz"
+printf '1.3.0\n' >"${scratch}/VERSION"
+printf 'version=1.3.0\n' >"${scratch}/artifact.txt"
+printf 'gen 1.3.0\n' >"${scratch}/gen/a.txt"
+cat >"${scratch}/.release-please-manifest.json" <<'JSON'
+{
+  ".": "1.3.0"
+}
+JSON
+cat >"${scratch}/CHANGELOG.md.new" <<'MD'
+## [1.3.0](https://example.invalid/compare/v1.2.0...v1.3.0) (2026-02-03)
+
+
+### Bug Fixes
+
+* **release:** repack the generated artifacts ([1234567](https://example.invalid/commit/1234567))
+MD
+cat "${scratch}/CHANGELOG.md.new" "${scratch}/CHANGELOG.md" >"${scratch}/CHANGELOG.md.merged"
+mv "${scratch}/CHANGELOG.md.merged" "${scratch}/CHANGELOG.md"
+rm -f "${scratch}/CHANGELOG.md.new"
+release_derived_for 1.3.0 "${fingerprint_b}" 6
+commit_all "fix: release 1.3.0 with a renamed tarball and a new fingerprint"
+
+if [[ "$(shasum -a 256 "${tmp}/sample-1.2.0.tgz" | cut -d' ' -f1)" == \
+  "$(shasum -a 256 "${scratch}/packed/sample-1.3.0.tgz" | cut -d' ' -f1)" ]]; then
+  echo "test-validation-evidence: FAIL (the fixture did not vary the archive bytes)" >&2
+  exit 1
+fi
+pass_count=$((pass_count + 1))
+echo "test-validation-evidence: PASS the fixture repacks to different archive bytes"
+
+expect_output "verify accepts a renamed and repacked release-derived set" \
+  "mode=release-transformation-verified" verify --gate unit
+
+cp "${scratch}/packed/sample-1.3.0.tgz" "${tmp}/sample-1.3.0.tgz"
+write_tarball 1.3.0 "${fingerprint_b}" 6 "${scratch}/packed/sample-1.3.0.tgz" "smuggled"
+commit_all "fix: smuggle a non-version byte into a packed member"
+expect_fail "a non-version byte inside a packed member stales the record" verify --gate unit
+cp "${tmp}/sample-1.3.0.tgz" "${scratch}/packed/sample-1.3.0.tgz"
+commit_all "fix: restore the packed member"
+expect_output "verify recovers the packed tarball" \
+  "mode=release-transformation-verified" verify --gate unit
+
+cp "${scratch}/assembly.jsii" "${tmp}/assembly.jsii.bak"
+"${python_bin}" - "${scratch}/assembly.jsii" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+path.write_text(
+    text.replace('"types": {"sample.App": {"kind": "class"}}', '"types": {"sample.App": {"kind": "interface"}}'),
+    encoding="utf-8",
+)
+PY
+commit_all "fix: change another jsii assembly field"
+expect_fail "a non-fingerprint jsii field stales the record" verify --gate unit
+cp "${tmp}/assembly.jsii.bak" "${scratch}/assembly.jsii"
+commit_all "fix: restore the jsii assembly field"
+expect_output "verify recovers the jsii assembly" \
+  "mode=release-transformation-verified" verify --gate unit
+
+write_assembly 1.3.0 "${fingerprint_c}" "${scratch}/assembly.jsii"
+commit_all "fix: re-derive only the assembly fingerprint"
+expect_output "a fingerprint-only jsii edit stays bound to the rest of the document" \
+  "mode=release-transformation-verified" verify --gate unit
+
+write_tarball 1.3.0 "${fingerprint_c}" 9 "${scratch}/packed/sample-1.2.0.tgz"
+commit_all "fix: leave a second tarball beside the release tarball"
+two_tarballs_status=0
+two_tarballs_output="$(verify --gate unit 2>&1)" || two_tarballs_status=$?
+if [[ "${two_tarballs_status}" -eq 0 || "${two_tarballs_output}" != *"must name exactly one file"* ]]; then
+  echo "test-validation-evidence: FAIL (two tarballs did not fail closed)" >&2
+  echo "${two_tarballs_output}" >&2
+  exit 1
+fi
+pass_count=$((pass_count + 1))
+echo "test-validation-evidence: PASS two tarballs fail closed"
+rm -f "${scratch}/packed/sample-1.2.0.tgz"
+commit_all "fix: remove the leftover tarball"
+expect_output "verify recovers after the leftover tarball is removed" \
+  "mode=release-transformation-verified" verify --gate unit
+
+rm -f "${scratch}/packed/sample-1.3.0.tgz"
+commit_all "fix: remove the release tarball"
+missing_tarball_status=0
+missing_tarball_output="$(verify --gate unit 2>&1)" || missing_tarball_status=$?
+if [[ "${missing_tarball_status}" -eq 0 || "${missing_tarball_output}" != *"must name exactly one file; found 0"* ]]; then
+  echo "test-validation-evidence: FAIL (a missing tarball did not fail closed)" >&2
+  echo "${missing_tarball_output}" >&2
+  exit 1
+fi
+pass_count=$((pass_count + 1))
+echo "test-validation-evidence: PASS a missing tarball fails closed"
+write_tarball 1.3.0 "${fingerprint_c}" 6 "${scratch}/packed/sample-1.3.0.tgz"
+commit_all "fix: restore the release tarball"
+expect_output "verify recovers the restored release tarball" \
   "mode=release-transformation-verified" verify --gate unit
 
 echo "test-validation-evidence: PASS (${pass_count} checks)"

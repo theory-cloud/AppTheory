@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -67,6 +68,20 @@ APPROVED_RELEASE_NOTES = {
     ".release-please-manifest.premain.json",
 }
 
+# The release-derived class is the only other place where a tracked path stops
+# binding its bytes: these two artifacts are *rebuilt* by the release lane, so a
+# release rewrites them in ways version-literal normalization cannot describe.
+# The reviewed map is fixed here, the registry must match it exactly, and each
+# entry names either one exact path or one anchored pattern with a single
+# `{{version}}` placeholder in the file name -- no directories, no other globs.
+APPROVED_RELEASE_DERIVED = {
+    "cdk/.jsii": "jsii-assembly",
+    "cdk-go/apptheorycdk/jsii/theory-cloud-apptheory-cdk-{{version}}.tgz": "jsii-tarball",
+}
+RELEASE_DERIVED_VERSION_TOKEN = "{{version}}"
+RELEASE_DERIVED_VERSION_RE = re.compile(r"^v?[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?$")
+RELEASE_DERIVED_PROJECTIONS = {"jsii-assembly", "jsii-tarball"}
+
 
 def fail(message: str) -> None:
     print(f"validation-policy: FAIL ({message})", file=sys.stderr)
@@ -79,6 +94,18 @@ def is_release_only(relative: str, policy: dict) -> bool:
     if any(relative.startswith(prefix) for prefix in policy.get("prefixes", [])):
         return True
     return any(fnmatch.fnmatchcase(relative, pattern) for pattern in policy.get("patterns", []))
+
+
+def tracked_files() -> list[str]:
+    completed = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=ROOT,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        fail("tracked files cannot be enumerated")
+    return [path for path in completed.stdout.decode("utf-8", "surrogateescape").split("\0") if path]
 
 
 def paths_ignore(workflow: str) -> list[str]:
@@ -257,6 +284,63 @@ def main() -> int:
             if fnmatch.fnmatchcase(path, pattern):
                 fail(f"release-notes path {path!r} matches dependency-scan input {pattern!r}")
 
+    derived = registry.get("releaseDerived")
+    if not isinstance(derived, dict):
+        fail("registry must declare the releaseDerived class")
+    if set(derived) - {"projections"}:
+        fail(f"releaseDerived must declare projections only: unexpected {sorted(set(derived) - {'projections'})}")
+    projections = derived.get("projections")
+    if not isinstance(projections, dict) or not projections:
+        fail("releaseDerived.projections must be a non-empty object")
+    if projections != APPROVED_RELEASE_DERIVED:
+        fail(
+            "releaseDerived.projections must match the reviewed allowlist exactly: "
+            f"missing {sorted(set(APPROVED_RELEASE_DERIVED) - set(projections))}, "
+            f"unreviewed {sorted(set(projections) - set(APPROVED_RELEASE_DERIVED))}, "
+            f"or a changed projection {sorted(k for k in projections if k in APPROVED_RELEASE_DERIVED and projections[k] != APPROVED_RELEASE_DERIVED[k])}"
+        )
+    tracked = tracked_files()
+    for entry, projection in sorted(projections.items()):
+        if projection not in RELEASE_DERIVED_PROJECTIONS:
+            fail(f"release-derived entry {entry!r} declares unknown projection {projection!r}")
+        if entry in APPROVED_RELEASE_NOTES:
+            fail(f"release-derived entry {entry!r} must not also be release-notes history")
+        if not is_release_only(entry, policy):
+            fail(f"release-derived entry {entry!r} must also be release-only")
+        if entry.count(RELEASE_DERIVED_VERSION_TOKEN) > 1:
+            fail(f"release-derived entry {entry!r} may use {RELEASE_DERIVED_VERSION_TOKEN} at most once")
+        if entry.endswith("/"):
+            fail(f"release-derived entry {entry!r} must name a file, never a directory")
+        if entry in set(security_inputs.get("exact", [])) or any(
+            fnmatch.fnmatchcase(entry, pattern) for pattern in security_inputs.get("patterns", [])
+        ):
+            fail(f"release-derived entry {entry!r} must not also be a dependency-scan input")
+        if RELEASE_DERIVED_VERSION_TOKEN in entry:
+            prefix, _, suffix = entry.partition(RELEASE_DERIVED_VERSION_TOKEN)
+            if not prefix or not suffix:
+                fail(f"release-derived entry {entry!r} must anchor both sides of {RELEASE_DERIVED_VERSION_TOKEN}")
+            if "*" in prefix + suffix or "?" in prefix + suffix or "[" in prefix + suffix:
+                fail(f"release-derived entry {entry!r} must not mix {RELEASE_DERIVED_VERSION_TOKEN} with another glob")
+            if "/" in suffix:
+                fail(f"release-derived entry {entry!r} must keep {RELEASE_DERIVED_VERSION_TOKEN} inside the file name")
+            matches = [
+                path
+                for path in tracked
+                if path.startswith(prefix)
+                and path.endswith(suffix)
+                and RELEASE_DERIVED_VERSION_RE.fullmatch(path[len(prefix) : len(path) - len(suffix)])
+            ]
+            if len(matches) != 1:
+                fail(
+                    f"release-derived entry {entry!r} must describe exactly one tracked file; "
+                    f"found {len(matches)}: {sorted(matches)}"
+                )
+            directory = prefix.rsplit("/", 1)[0]
+            if not (ROOT / directory).is_dir():
+                fail(f"release-derived entry {entry!r} names a missing directory {directory!r}")
+        elif entry not in tracked:
+            fail(f"release-derived entry {entry!r} is not a tracked file in this repository")
+
     for config_name in ("release-please-config.json", "release-please-config.premain.json"):
         config = json.loads((ROOT / config_name).read_text(encoding="utf-8"))
         for package in config.get("packages", {}).values():
@@ -331,6 +415,8 @@ def main() -> int:
         "produced record",
         "tc-toolchain",
         "release-notes",
+        "release-derived",
+        "jsii",
     ):
         if token not in docs:
             fail(f"docs must document the corrected collector default: missing {token!r}")
