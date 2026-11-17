@@ -147,6 +147,19 @@
       "examples/cdk/*/package-lock.json"
     ]
   },
+  "releaseNotes": {
+    "exact": [
+      "CHANGELOG.md",
+      ".release-please-manifest.json",
+      ".release-please-manifest.premain.json"
+    ]
+  },
+  "releaseDerived": {
+    "projections": {
+      "cdk/.jsii": "jsii-assembly",
+      "cdk-go/apptheorycdk/jsii/theory-cloud-apptheory-cdk-{{version}}.tgz": "jsii-tarball"
+    }
+  },
   "securityInputs": {
     "exact": [
       "go.mod",
@@ -232,7 +245,7 @@
       "id": "backmerge-main-staging",
       "leg": "main -> staging back-merge pull request",
       "old": "full rubric, builds, examples and matrix re-execute",
-      "new": "records-only evidence refresh on the back-merge branch, then the staging pull-request verification set; a real source delta needs the affected gates recollected"
+      "new": "the committed staging records verify the back-merge pull request: a pure release back-merge changes release-only paths, release history and the two release-derived jsii artifacts only, each projected to what it contributes; a product delta still stales its scope and needs the affected gates recollected"
     }
   ],
   "gates": {

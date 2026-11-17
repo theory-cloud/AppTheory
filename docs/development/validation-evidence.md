@@ -301,6 +301,13 @@ fail closed. The enumerator partitions every file into exactly one projection:
 - **release-only inputs** — the explicit version-coupled and regenerated paths
   in the registry (`VERSION`, both manifests, `CHANGELOG.md`, package manifests
   and lockfiles, `cdk/.jsii`, `cdk/lib/**`, `cdk-go/**`, example CDK lockfiles);
+- **release-notes inputs** — the explicit release-history allowlist inside the
+  release-only set: the changelog and the release-please manifests, which are
+  projected so that release history cannot stale product proof;
+- **release-derived inputs** — the explicit allowlist of artifacts the release
+  lane rebuilds rather than edits: the jsii assembly and its packed npm tarball,
+  projected to content so a release rename, repack or re-derived fingerprint
+  cannot stale product proof while every packed byte stays bound;
 - the dedicated evidence directory itself is the only evidence-content
   exclusion.
 
@@ -308,9 +315,104 @@ The source digest identifies ordinary proof. It is content-addressed, so the
 same tree verifies across commit SHAs, branch names and evidence-only commits.
 Each gate stores a scope digest computed over its declared inputs. Release-only
 files inside that scope are normalized by substituting the recorded `VERSION`
-literal, so a pure version transformation stays applicable while any other edit
-in the same path still invalidates the gate. A source or documentation edit
-outside a product gate's scope does not invalidate that product proof.
+literal, and the two allowlisted classes are projected to what they contribute,
+so a pure version transformation stays applicable while any other edit in the
+same path still invalidates the gate. A source or documentation edit outside a
+product gate's scope does not invalidate that product proof.
+
+### Release notes are history, not input
+
+A release appends to the changelog and moves the release-please manifest values,
+and neither carries product bytes: no gate command reads the changelog, and
+nothing is built, packed or published from a release-please manifest. Binding
+that content is what made every `**`-scoped record go stale on a pure release
+back-merge, because a newly appended section is not a version-literal
+substitution. The `releaseNotes` class fixes that by narrowing those paths'
+projection instead of widening normalization anywhere else:
+
+- a changelog contributes its path and mode, never its bytes — a generated
+  section, a hand edit and a reordering all project to the same line;
+- a release-please manifest projects every version *value* (including a
+  prerelease track or a second package that the tracked `VERSION` literal does
+  not name) and keeps the structure around those values bound, so an unrelated
+  edit to the manifest still fails closed.
+
+Nothing else moved. `cdk/lib/`, `cdk-go/apptheorycdk/`, `cdk/.jsii` and the
+package manifests and lockfiles keep version-literal normalization only: a
+one-byte change in `cdk/lib/app.js` still stales every record whose scope covers
+it, exactly as before. The class is a fixed allowlist in
+`scripts/evidence/check-policy.py` — it has no prefixes and no patterns, the
+registry must match the allowlist exactly, every entry must be a release-only
+path naming one tracked file outside the product prefixes, and an entry that is
+also a dependency-scan input is rejected.
+
+What a hand edit to `CHANGELOG.md` on a staging pull request does now: it no
+longer stales any record. That is deliberate and bounded. Release notes have no
+runtime, packaging or publication effect; the edit is still visible in the diff
+the reviewer approves; `release-delta` re-reads the generated changelog form
+through `verify-release-generated-messages.sh` on every generated release pull
+request; and version alignment keeps reading both manifests, so a manifest
+value that disagrees with `VERSION` still fails the `Version alignment` job.
+The alternative — binding release history to proof — would only add a claim no
+gate makes.
+
+### Release-derived artifacts are bound by content, not by pack bytes
+
+The release lane does not only rewrite version literals: `update-cdk-generated.sh`
+rebuilds the CDK bindings and repacks the jsii npm tarball, so a release
+*renames* `cdk-go/apptheorycdk/jsii/theory-cloud-apptheory-cdk-<version>.tgz`
+and re-derives the jsii assembly `fingerprint` in `cdk/.jsii`. Both are derived
+from bytes that stay bound (the CDK TypeScript sources, `cdk/lib/`, and the Go
+bindings), and neither is a version literal, so version-literal normalization
+alone cannot describe them. The `releaseDerived` class is the narrow fix:
+
+- the tarball is projected to its **content**: member order, path, mode, mtime
+  and content of every packed file, with the version literal normalized and the
+  packed `package/.jsii` fingerprint projected exactly as the standalone one.
+  The gzip framing is excluded because npm compresses with the host zlib, so an
+  identical pack has different archive bytes on Linux and macOS — the same
+  variation `scripts/lib/canonicalize-jsii-tarballs.py` exists to absorb. The
+  file name is normalized with the same version literal, so a rename is a
+  transformation, not a new input;
+- `cdk/.jsii` projects only its top-level `fingerprint` value. jsii derives that
+  value as the base64 SHA-256 of the sorted assembly with the field removed, so
+  it is a hash of exactly the bytes that remain bound; every other byte —
+  including the version, the types, the readme and the key order — stays bound.
+
+Anything a projection does not describe stays raw and therefore fails closed:
+
+- a tarball whose members are not regular files, whose paths are absolute or
+  traversing, that exceeds the read caps, that is not a gzip/tar stream, or that
+  fails to parse is bound by its raw archive bytes;
+- a class that names zero or more than one file (a leftover tarball beside the
+  new one) is refused outright, because a projection that covered zero or
+  several artifacts would hide an input instead of describing one;
+- a name whose variable segment is not a version does not match the class at all
+  and stays an ordinary release-only input.
+
+What a hand edit to either artifact does: it fails closed unless the edit is the
+version literal alone, or — for `cdk/.jsii` — the fingerprint value and nothing
+else. A hand edit to an existing tarball's packed bytes, to its member metadata,
+to its member order, or to any other byte of `cdk/.jsii` changes the digest and
+stales every record whose scope covers it. Binding the fingerprint is deliberate:
+it is not product bytes, `verify-cdk-go-drift.sh` regenerates and compares the
+bindings on every staging pull request, and a stale fingerprint with an unchanged
+assembly cannot change a build, a package or a published artifact.
+
+Nothing else moved: `cdk/lib/`, `cdk-go/apptheorycdk/*.go`,
+`cdk-go/apptheorycdk/version`, the package manifests and the lockfiles still get
+version-literal normalization only, and no path was added to `nonProductPaths`.
+The class is a fixed allowlist in `scripts/evidence/check-policy.py`: the
+registry must match it exactly, each entry is one exact path or one anchored
+pattern whose single `{{version}}` placeholder stays inside the file name, and an
+entry that is not release-only, that is also release history, that is a
+dependency-scan input, or that does not describe exactly one tracked file is
+rejected.
+
+`scripts/test-validation-evidence.sh` proves the class: a renamed and repacked
+tarball with a moved fingerprint verifies with the committed record unchanged,
+while a non-version byte inside a packed member, another `.jsii` field, a second
+tarball and a missing tarball each fail closed.
 
 `release-delta` performs the narrow regeneration and packaging smoke once per
 changed generated artifact set. It deliberately does not run the rubric,
@@ -512,7 +614,7 @@ release operations run only from protected branches.
 | `push-main` | promotion merge push → main | CI product set re-executes, then release-please generates the stable PR | release-please generation and publish only; no gate re-verification |
 | `release-pr-main` | generated stable release PR | dispatched CI re-executes the product suite on generated artifacts | generated release PR: release-delta smoke once over generated artifacts, plus release/security gates and version alignment; no product job runs |
 | `release-merge-main` | stable merge/publish on main | CI product set re-executes, then the publisher builds assets again | publish only; no gate re-verifies |
-| `backmerge-main-staging` | main → staging back-merge PR | full rubric, builds, examples and matrix re-execute | records-only evidence refresh on the back-merge branch, then the staging pull-request verification set; a real source delta needs the affected gates recollected |
+| `backmerge-main-staging` | main → staging back-merge PR | full rubric, builds, examples and matrix re-execute | the committed staging records verify the back-merge pull request: a pure release back-merge changes release-only paths, release history and the two release-derived jsii artifacts only, each projected to what it contributes; a product delta still stales its scope and needs the affected gates recollected |
 
 No gate runs on a push, on a release branch, or at deploy. `ci.yml` declares a
 pull-request trigger scoped to `staging`, `premain` and `main`, plus the release
@@ -583,9 +685,15 @@ write, tag mutation or branch-protection change in this gate.
   selection is behind the repository pin blocks collection; it does not justify
   ambient fallback.
 - The generated release transformation is bounded by the explicit release-only
-  path set, version-normalized equality and `release-delta` regeneration
-  equality. A change outside that set is a source change and requires the
-  affected validation.
+  path set, version-normalized equality, the release-notes projection, the
+  release-derived projections and `release-delta` regeneration equality. A
+  change outside that set is a source change and requires the affected
+  validation. Release-notes content is the one input no record binds, because no
+  gate reads it; the class that says so is allowlisted in the policy checker
+  rather than inferred from a path pattern. The two release-derived artifacts
+  are bound by content: the tarball's packed members (order, path, mode, mtime,
+  bytes) and every byte of the jsii assembly except the `fingerprint` value it
+  derives from the rest of the document.
 - The scheduler's per-gate input scopes are conservative declarations. A new
   file outside every declared product scope is treated as unknown and forces
   broad execution; it is never silently inherited as green.

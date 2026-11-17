@@ -43,13 +43,29 @@ and evidence-only commits. Inputs are partitioned into disjoint sets:
 * release-only inputs -- the explicit version-coupled and regenerated artifact
   paths named in the registry.
 
+A third, explicit class narrows the release-only treatment to the release history
+itself: the registry's ``releaseNotes`` files (the changelog, and the
+release-please manifests' version values) carry no product bytes, so no record
+binds their content. Every other release-only path keeps version-literal
+normalization only, and a path outside the class keeps the treatment it had.
+
+A fourth, equally explicit class covers the release-derived artifacts the release
+lane rebuilds rather than edits: ``releaseDerived`` names one jsii assembly and
+one anchored jsii tarball name, and projects only what a release rewrites (the
+assembly's derived ``fingerprint``, and for the tarball its compressed framing
+plus the same version literal and fingerprint) while every other byte of both --
+including the tar's member order, modes, mtimes and contents -- stays bound. A
+path whose shape the projection does not describe keeps its raw bytes, so it
+fails closed instead of being silently accepted.
+
 Each gate carries its own declared input scope. A gate record stores a scope
 digest computed over exactly that scope, with release-only files normalized by
-substituting the recorded version literal. A documentation or evidence-only
-change therefore does not invalidate product proof, while an edit inside a
-gate's scope does. A file that matches no product scope and no declared
-non-product path is an unknown input: every product gate falls back to broad
-execution instead of silently reusing proof.
+substituting the recorded version literal and release-notes and release-derived
+files projected to what they contribute. A documentation or evidence-only change
+therefore does not invalidate product proof, while an edit inside a gate's scope
+does. A file that matches no product scope and no declared non-product path is an
+unknown input: every product gate falls back to broad execution instead of
+silently reusing proof.
 
 Exit codes: 0 PASS, 1 FAIL, 2 BLOCKED, 130 interrupted, 143 terminated.
 """
@@ -59,6 +75,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import hashlib
+import io
 import json
 import os
 import platform
@@ -66,6 +83,7 @@ import re
 import signal
 import subprocess
 import sys
+import tarfile
 import tempfile
 import threading
 import time
@@ -93,9 +111,22 @@ ENVIRONMENT_ALIASES = {
     "toolchain+platform": ["go", "node", "python", "platform"],
 }
 VERSION_TOKEN = b"@@APPTHEORY_VERSION@@"
+RELEASE_NOTES_TOKEN = b"@@APPTHEORY_RELEASE_NOTES@@\n"
+RELEASE_VERSION_VALUE_RE = re.compile(rb'"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?"')
+RELEASE_DERIVED_VERSION_TOKEN = "{{version}}"
+RELEASE_DERIVED_VERSION_RE = re.compile(r"^v?[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?$")
+RELEASE_DERIVED_PATH_TOKEN = "@@APPTHEORY_RELEASE_DERIVED_PATH@@"
+RELEASE_DERIVED_PROJECTIONS = ("jsii-assembly", "jsii-tarball")
+JSII_ASSEMBLY_FINGERPRINT_RE = re.compile(rb'(?m)^  "fingerprint": "[A-Za-z0-9+/]{43}="')
+JSII_ASSEMBLY_FINGERPRINT_TOKEN = b'"fingerprint": "@@APPTHEORY_JSII_FINGERPRINT@@"'
+JSII_TARBALL_ASSEMBLY_MEMBER = "package/.jsii"
+JSII_TARBALL_MAX_BYTES = 64 * 1024 * 1024
+JSII_TARBALL_MAX_MEMBERS = 4096
+JSII_TARBALL_MAX_UNPACKED_BYTES = 256 * 1024 * 1024
 SOURCE_HEADER = b"apptheory-validation-source-v1\n"
 RELEASE_HEADER = b"apptheory-validation-release-v1\n"
 NORMALIZED_HEADER = b"apptheory-validation-release-normalized-v1\n"
+RELEASE_DERIVED_HEADER = b"apptheory-validation-release-derived-v1\n"
 SCOPE_HEADER = b"apptheory-validation-scope-v1\n"
 
 DEFAULT_RUNNER = {
@@ -330,6 +361,18 @@ def load_registry(path: Path) -> Registry:
     for name, capacity in (runner.get("resources") or {}).items():
         if int(capacity) < 1:
             raise EvidenceError(f"gate registry resource {name!r} capacity must be positive")
+    if "releaseDerived" in data:
+        for entry, projection in release_derived_entries(data).items():
+            if not isinstance(entry, str) or not entry:
+                raise EvidenceError("gate registry releaseDerived.projections must name paths")
+            if projection not in RELEASE_DERIVED_PROJECTIONS:
+                raise EvidenceError(
+                    f"release-derived path {entry!r} declares unknown projection {projection!r}"
+                )
+            if entry.count(RELEASE_DERIVED_VERSION_TOKEN) > 1:
+                raise EvidenceError(
+                    f"release-derived path {entry!r} may use {RELEASE_DERIVED_VERSION_TOKEN} at most once"
+                )
     return Registry(path=path, data=data)
 
 
@@ -403,6 +446,61 @@ def matches_release_only(relative: str, registry: Registry) -> bool:
     return any(fnmatch.fnmatchcase(relative, pattern) for pattern in policy.get("patterns", []))
 
 
+def matches_release_notes(relative: str, registry: Registry) -> bool:
+    """Files that are release history rather than release-coupled product bytes.
+
+    The class is an explicit path list with no prefixes and no patterns, so it
+    can only grow one named file at a time (``scripts/evidence/check-policy.py``
+    holds the reviewed allowlist). A release-notes file must also be release-only:
+    it stays out of the source projection, which is what makes a release
+    back-merge a release-only change.
+    """
+    policy = registry.data.get("releaseNotes") or {}
+    return relative in {str(item) for item in policy.get("exact", [])}
+
+
+def release_derived_entries(data: dict[str, Any]) -> dict[str, str]:
+    """The reviewed release-derived artifact map: path (or anchored pattern) -> projection.
+
+    The class is deliberately tiny and explicit. An entry either names one exact
+    path, or one anchored pattern with a single ``{{version}}`` placeholder in the
+    file name, so the class can only grow one named artifact at a time
+    (``scripts/evidence/check-policy.py`` holds the reviewed allowlist).
+    """
+    policy = data.get("releaseDerived")
+    if policy is None:
+        return {}
+    if not isinstance(policy, dict) or set(policy) - {"projections"}:
+        raise EvidenceError("gate registry releaseDerived must declare projections only")
+    projections = policy.get("projections")
+    if not isinstance(projections, dict) or not projections:
+        raise EvidenceError("gate registry releaseDerived.projections must be a non-empty object")
+    return {str(entry): str(projection) for entry, projection in projections.items()}
+
+
+def matches_release_derived(relative: str, registry: Registry) -> tuple[str, str] | None:
+    """(entry, projection) when the path is a release-derived artifact.
+
+    A path with ``{{version}}`` is matched as one anchored pattern: the literal
+    prefix, one version-shaped segment, the literal suffix. A name whose
+    variable segment is not a version does not match, so it stays an ordinary
+    release-only input and a rename still stales the record.
+    """
+    for entry, projection in release_derived_entries(registry.data).items():
+        if RELEASE_DERIVED_VERSION_TOKEN not in entry:
+            if relative == entry:
+                return entry, projection
+            continue
+        prefix, _, suffix = entry.partition(RELEASE_DERIVED_VERSION_TOKEN)
+        if not prefix or not suffix or not relative.startswith(prefix) or not relative.endswith(suffix):
+            continue
+        segment = relative[len(prefix) : len(relative) - len(suffix)]
+        if len(relative) <= len(prefix) + len(suffix) or not RELEASE_DERIVED_VERSION_RE.fullmatch(segment):
+            continue
+        return entry, projection
+    return None
+
+
 def matches_security_input(relative: str, registry: Registry) -> bool:
     policy = registry.data["securityInputs"]
     if relative in set(policy.get("exact", [])):
@@ -431,11 +529,137 @@ def normalize_release_bytes(data: bytes, version: str) -> bytes:
     return data.replace(literal, VERSION_TOKEN)
 
 
+def normalize_release_notes_bytes(relative: str, data: bytes) -> bytes:
+    """Project a release-notes file to what it contributes to product proof.
+
+    A changelog is release history prose: release-please appends a generated
+    section on every release, and no gate reads it. Its content cannot change a
+    claim, so it contributes its presence and mode only, never its bytes.
+
+    A release-please manifest is release state: every version value moves on a
+    release, including versions the tracked `VERSION` literal does not name (a
+    prerelease track, or a second package). Only those values are projected;
+    the structure around them stays bound, so an unrelated edit to the manifest
+    still fails closed.
+    """
+    if relative.endswith(".json"):
+        return RELEASE_VERSION_VALUE_RE.sub(b'"@@APPTHEORY_RELEASE_NOTES@@"', data)
+    return RELEASE_NOTES_TOKEN
+
+
+def normalize_jsii_assembly_bytes(data: bytes, version: str) -> bytes:
+    """Project the jsii assembly's top-level ``fingerprint`` value.
+
+    jsii computes that value as the base64 SHA-256 of the sorted assembly with
+    the field removed, so it is a hash of exactly the bytes that stay bound: a
+    release re-derives it whenever the version moves, and no other byte of the
+    document is projected. A document with zero or several anchored top-level
+    fingerprint lines is left fully bound, so an unreadable shape fails closed
+    rather than projecting something unexpected.
+    """
+    if len(JSII_ASSEMBLY_FINGERPRINT_RE.findall(data)) == 1:
+        data = JSII_ASSEMBLY_FINGERPRINT_RE.sub(JSII_ASSEMBLY_FINGERPRINT_TOKEN, data, count=1)
+    return normalize_release_bytes(data, version)
+
+
+def tarball_member_path_is_safe(name: str) -> bool:
+    """Reject absolute, traversing, empty and non-file member paths."""
+    if not name or name.startswith("/") or "\\" in name or "\x00" in name:
+        return False
+    return all(part not in ("", ".", "..") for part in name.split("/"))
+
+
+def normalize_jsii_tarball_bytes(data: bytes, version: str) -> bytes | None:
+    """Project a packed jsii tarball to the bytes it actually contributes.
+
+    A release renames and repacks the tarball. npm gzips a reproducible tar with
+    the host zlib, so the compressed bytes of an identical pack vary by host and
+    the checked-in bytes are not a digest input; ``scripts/lib/canonicalize-jsii-
+    tarballs.py`` shows the same variation. Every tar-level fact stays bound:
+    member order, path, mode, mtime, size and content, with the version literal
+    normalized and the packed assembly's ``fingerprint`` projected exactly as the
+    standalone assembly is.
+
+    The read is bounded and never extracts: ``tarfile`` in memory, regular files
+    only, safe relative paths, hard caps. Any other shape returns ``None`` so the
+    caller binds the raw archive bytes instead, which fails closed.
+    """
+    if len(data) > JSII_TARBALL_MAX_BYTES:
+        return None
+    try:
+        archive = tarfile.open(fileobj=io.BytesIO(data), mode="r:gz")
+    except (tarfile.TarError, OSError, EOFError):
+        return None
+    lines: list[bytes] = []
+    unpacked = 0
+    with archive:
+        try:
+            members = archive.getmembers()
+        except (tarfile.TarError, OSError, EOFError):
+            return None
+        if not members or len(members) > JSII_TARBALL_MAX_MEMBERS:
+            return None
+        for index, member in enumerate(members):
+            if not member.isfile() or not tarball_member_path_is_safe(member.name):
+                return None
+            unpacked += max(member.size, 0)
+            if unpacked > JSII_TARBALL_MAX_UNPACKED_BYTES:
+                return None
+            handle = archive.extractfile(member)
+            if handle is None:
+                return None
+            try:
+                payload = handle.read(member.size + 1)
+            except (tarfile.TarError, OSError, EOFError):
+                return None
+            if len(payload) != member.size:
+                return None
+            if member.name == JSII_TARBALL_ASSEMBLY_MEMBER:
+                payload = normalize_jsii_assembly_bytes(payload, version)
+            else:
+                payload = normalize_release_bytes(payload, version)
+            name = normalize_release_bytes(member.name.encode("utf-8"), version)
+            lines.append(
+                b"%06d\t%s\t%o\t%d\t%s\n"
+                % (index, name, member.mode, member.mtime, sha256_bytes(payload).encode("ascii"))
+            )
+    return RELEASE_DERIVED_HEADER + b"".join(lines)
+
+
+def normalize_release_derived_path(relative: str, version: str) -> str:
+    """The release-derived path with its version literal projected."""
+    if not version:
+        return relative
+    literal = version
+    return relative.replace("v" + literal, RELEASE_DERIVED_PATH_TOKEN).replace(
+        literal, RELEASE_DERIVED_PATH_TOKEN
+    )
+
+
+def normalize_release_derived_bytes(
+    relative: str, projection: str, data: bytes, version: str
+) -> bytes | None:
+    """Project one release-derived artifact, or ``None`` when it must stay raw.
+
+    ``None`` means the artifact did not have the declared shape, so the caller
+    binds its raw bytes: that fails closed on the next release instead of
+    silently accepting an artifact the projection does not describe.
+    """
+    if projection == "jsii-assembly":
+        return normalize_jsii_assembly_bytes(data, version)
+    if projection == "jsii-tarball":
+        return normalize_jsii_tarball_bytes(data, version)
+    raise EvidenceError(f"release-derived artifact {relative!r} declares unknown projection {projection!r}")
+
+
 @dataclass(frozen=True)
 class FileEntry:
     mode: int
     data: bytes
     release_only: bool
+    release_notes: bool = False
+    release_derived: str = ""
+    release_derived_entry: str = ""
 
 
 @dataclass(frozen=True)
@@ -469,7 +693,16 @@ def load_snapshot(root: Path, registry: Registry) -> Snapshot:
             continue
         mode, data = read_input_bytes(root, relative)
         release_only = matches_release_only(relative, registry)
-        files[relative] = FileEntry(mode=mode, data=data, release_only=release_only)
+        release_notes = release_only and matches_release_notes(relative, registry)
+        derived = matches_release_derived(relative, registry) if release_only else None
+        files[relative] = FileEntry(
+            mode=mode,
+            data=data,
+            release_only=release_only,
+            release_notes=release_notes,
+            release_derived=derived[1] if derived else "",
+            release_derived_entry=derived[0] if derived else "",
+        )
         content_digest = sha256_bytes(data)
         if matches_security_input(relative, registry):
             dependency_count += 1
@@ -477,13 +710,25 @@ def load_snapshot(root: Path, registry: Registry) -> Snapshot:
         if release_only:
             release_count += 1
             release_lines.append(b"%d\t%s\t%s\n" % (mode, relative.encode("utf-8"), content_digest.encode("ascii")))
-            normalized = normalize_release_bytes(data, version)
+            normalized_path = relative
+            if derived is not None:
+                projection = derived[1]
+                projected = normalize_release_derived_bytes(relative, projection, data, version)
+                normalized = data if projected is None else projected
+                normalized_path = normalize_release_derived_path(relative, version)
+            elif release_notes:
+                normalized = normalize_release_notes_bytes(relative, data)
+            else:
+                normalized = normalize_release_bytes(data, version)
             normalized_lines.append(
-                b"%d\t%s\t%s\n" % (mode, relative.encode("utf-8"), sha256_bytes(normalized).encode("ascii"))
+                b"%d\t%s\t%s\n"
+                % (mode, normalized_path.encode("utf-8"), sha256_bytes(normalized).encode("ascii"))
             )
         else:
             source_count += 1
             source_lines.append(b"%d\t%s\t%s\n" % (mode, relative.encode("utf-8"), content_digest.encode("ascii")))
+
+    require_single_release_derived_artifacts(files, registry)
 
     return Snapshot(
         files=files,
@@ -498,6 +743,28 @@ def load_snapshot(root: Path, registry: Registry) -> Snapshot:
     )
 
 
+def require_single_release_derived_artifacts(files: dict[str, FileEntry], registry: Registry) -> None:
+    """A versioned release-derived artifact class must name exactly one file.
+
+    Two tarballs (a leftover beside the new one), a missing tarball, or a name
+    that stopped matching all fail closed: a projection that silently covered
+    zero or several artifacts would let the class hide an input instead of
+    describe one.
+    """
+    counts: dict[str, int] = {}
+    for entry in files.values():
+        if entry.release_derived_entry:
+            counts[entry.release_derived_entry] = counts.get(entry.release_derived_entry, 0) + 1
+    for declared in release_derived_entries(registry.data):
+        if RELEASE_DERIVED_VERSION_TOKEN not in declared:
+            continue
+        found = counts.get(declared, 0)
+        if found != 1:
+            raise EvidenceError(
+                f"release-derived artifact set {declared!r} must name exactly one file; found {found}"
+            )
+
+
 def scope_digest(snapshot: Snapshot, patterns: list[str]) -> tuple[str, int]:
     lines: list[bytes] = []
     count = 0
@@ -505,10 +772,26 @@ def scope_digest(snapshot: Snapshot, patterns: list[str]) -> tuple[str, int]:
         if not matches_any(relative, patterns):
             continue
         entry = snapshot.files[relative]
-        data = normalize_release_bytes(entry.data, snapshot.release_version) if entry.release_only else entry.data
-        kind = b"release-normalized" if entry.release_only else b"source"
+        line_path = relative
+        if entry.release_derived:
+            projected = normalize_release_derived_bytes(
+                relative, entry.release_derived, entry.data, snapshot.release_version
+            )
+            data = entry.data if projected is None else projected
+            kind = b"release-derived"
+            line_path = normalize_release_derived_path(relative, snapshot.release_version)
+        elif entry.release_notes:
+            data = normalize_release_notes_bytes(relative, entry.data)
+            kind = b"release-notes"
+        elif entry.release_only:
+            data = normalize_release_bytes(entry.data, snapshot.release_version)
+            kind = b"release-normalized"
+        else:
+            data = entry.data
+            kind = b"source"
         lines.append(
-            b"%d\t%s\t%s\t%s\n" % (entry.mode, relative.encode("utf-8"), kind, sha256_bytes(data).encode("ascii"))
+            b"%d\t%s\t%s\t%s\n"
+            % (entry.mode, line_path.encode("utf-8"), kind, sha256_bytes(data).encode("ascii"))
         )
         count += 1
     payload = (
