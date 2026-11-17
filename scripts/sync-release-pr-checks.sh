@@ -488,6 +488,12 @@ done
 projected="$(project_pr "$(read_pr)")"
 ensure_open "${projected}"
 if [[ "$(pr_field "${projected}" draft)" == "false" ]]; then
+  # A ready pull request is still re-read: a dispatched check never satisfies the
+  # ruleset, so an absent rollup entry here is the state a generated release PR
+  # sits in until the code-owner review runs the eligible checks.
+  if [[ "$(rollup_reports_contexts)" != "present" ]]; then
+    echo "sync-release-pr-checks: WARN (PR #${pr_number} is ready at ${head_sha} but its rollup does not list the required contexts; the eligible run that satisfies the ruleset is the code-owner review of the pull request, which ci.yml runs on pull_request_review: [submitted])" >&2
+  fi
   echo "sync-release-pr-checks: PASS (PR #${pr_number} already ready at ${head_sha} with green required checks)"
   exit 0
 fi

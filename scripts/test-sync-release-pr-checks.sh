@@ -34,6 +34,9 @@ case "${args}" in
   "pr list"*)
     printf '%s\n' "${STUB_LIST:-}"
     ;;
+  "pr view"*)
+    printf '{"statusCheckRollup":%s}' "${STUB_ROLLUP:-null}"
+    ;;
   "pr ready"*)
     printf 'ready %s\n' "${args}" >>"${STUB_CALLS}"
     printf '%s' "${STUB_PR}"
@@ -148,6 +151,9 @@ run_case "green draft head is marked ready" pass "$(checks_payload success succe
 expect_call "the ready call marks the pull request" "pr ready 7 --repo o/r" true
 
 run_case "an already-ready green head is left alone" pass "$(checks_payload success success success success)" false false
+expect_call "an already-ready head is not marked ready again" "pr ready 7 --repo o/r" false
+
+run_case "an already-ready head without the rollup contexts warns" warn "$(checks_payload success success success success)" false false
 
 run_case "a red head is refused" fail "$(checks_payload failure success success success)" true false
 expect_call "a red head is never re-dispatched" "workflow run" false
