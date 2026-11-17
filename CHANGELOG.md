@@ -1,5 +1,115 @@
 # Changelog
 
+## [7.4.0](https://github.com/theory-cloud/AppTheory/compare/v7.3.1...v7.4.0) (2026-11-17)
+
+
+### Features
+
+* **ci:** drop the rubric items the required release/security job already runs ([cdce4c5](https://github.com/theory-cloud/AppTheory/commit/cdce4c58b64ab56d32e657952d4a82fcafc08ecf))
+* **ci:** run gates on the staging pull request only ([21003bd](https://github.com/theory-cloud/AppTheory/commit/21003bd32be99884a6f09ed964fb2c6b397d24e7))
+* **ci:** verified once on staging — verify-only CI, staging-only gates, release-PR hygiene ([9ec2e5a](https://github.com/theory-cloud/AppTheory/commit/9ec2e5a7dcad6e8cf5432774fec4323f42acf83c))
+* **ci:** verify evidence records instead of executing gates ([b1359e5](https://github.com/theory-cloud/AppTheory/commit/b1359e5bdc98f38bae3d17976f43e21382de01b2))
+* **contract:** pin the FRONTED parameter form across Go, TypeScript and Python ([af2808b](https://github.com/theory-cloud/AppTheory/commit/af2808b5d9be98184c4ce40d2c66f2d73ce37c49))
+* **fronted:** front-door verification from a well-known SSM parameter (CDK + Go/TS/Py + local runner) ([74cb388](https://github.com/theory-cloud/AppTheory/commit/74cb3883c865b84dab579c9f8e75bcef234d23a7))
+
+
+### Bug Fixes
+
+* **cdk:** regenerate the jsii artifacts for aws-cdk-lib 2.277.0 ([eebb70f](https://github.com/theory-cloud/AppTheory/commit/eebb70f48551055ce8eacce984a94fb3a37709d3))
+* **deps:** bump the root aws-sdk-go-v2 module set ([d399e8d](https://github.com/theory-cloud/AppTheory/commit/d399e8d6e9d5074d77c0bc5d44d63d39e484e459))
+* **deps:** consolidate the 2026-11-17 dependency refresh and except the unfixed picomatch advisory ([a333da5](https://github.com/theory-cloud/AppTheory/commit/a333da5e6089c36d0d3daafc180256689548c4ed))
+* **deps:** consolidated pre-release dependency refresh (supersedes [#1291](https://github.com/theory-cloud/AppTheory/issues/1291), [#1273](https://github.com/theory-cloud/AppTheory/issues/1273)) ([8d552a7](https://github.com/theory-cloud/AppTheory/commit/8d552a76385498e6f025ca5aca466db4ffb9e6a9))
+* **deps:** keep the lint requirements on the same TableTheory wheel ([d6a3efc](https://github.com/theory-cloud/AppTheory/commit/d6a3efc55c6ccf144afdd3ed8485093e471bcd1c))
+* **deps:** move TableTheory to v6.5.0 and make a pure release back-merge verify ([498506d](https://github.com/theory-cloud/AppTheory/commit/498506dacad4a84adfa736efbc93103734ba38c1))
+* **deps:** move the TableTheory pin to v6.5.0 in all three runtimes ([5c0f82f](https://github.com/theory-cloud/AppTheory/commit/5c0f82fcd1218d219bd05186284b1bbfb0081140))
+* **deps:** move the TypeScript runtime AWS SDK clients to 3.1169.0 ([4154433](https://github.com/theory-cloud/AppTheory/commit/41544336b39413888db503cefc6cb012bce375cb))
+* **deps:** raise the published aws-cdk-lib peer constraint to 2.277.0 ([217f304](https://github.com/theory-cloud/AppTheory/commit/217f3049952f741d34537928de57a0cf43211eff))
+* **docs:** remove the remaining theory-cli references from living guidance ([43e08e7](https://github.com/theory-cloud/AppTheory/commit/43e08e746b94bb005e3a626910f1bdf2fef580d6))
+* **evidence:** bind release-derived jsii artifacts by content ([2c71977](https://github.com/theory-cloud/AppTheory/commit/2c7197724b9e4285899191352bff3c845c352654))
+* **evidence:** do not offer a composed record to a profile it cannot prove ([d76ebef](https://github.com/theory-cloud/AppTheory/commit/d76ebef86ec73121791c23d8f178f1e89a39d9a9))
+* **evidence:** keep the nested evidence fixture out of the release-derived class ([b16a0f7](https://github.com/theory-cloud/AppTheory/commit/b16a0f73ba777488ebefb1c5b39a9bfa09249ce5))
+* **evidence:** keep the nested evidence fixture out of the release-derived class ([03fd200](https://github.com/theory-cloud/AppTheory/commit/03fd200a921b11488a7dd8c19b47a784eab4c8ac))
+* **evidence:** redo the nested fixture change as its own commit ([0a20430](https://github.com/theory-cloud/AppTheory/commit/0a20430ef5c6cf04dd2db34479c90bc0a898eaea))
+* **evidence:** stop binding release history as a product input ([6d5c807](https://github.com/theory-cloud/AppTheory/commit/6d5c8070d4414323b30aa2611929c6a286386bcd))
+* **examples:** repin synthesized templates after the Python front-door name fix ([e413956](https://github.com/theory-cloud/AppTheory/commit/e41395661830c7634a6b7d0efeff986d9b09fc54))
+* **premain:** release 7.4.0-rc ([1317d6d](https://github.com/theory-cloud/AppTheory/commit/1317d6d7e0418b703c6e78d8209effb75724011a))
+* **premain:** release 7.4.0-rc ([a787eab](https://github.com/theory-cloud/AppTheory/commit/a787eabd0f565019af64011e9e1c3aeb62783db6))
+* **py:** reject a FRONTED front-door parameter name with a trailing newline ([5faf2fc](https://github.com/theory-cloud/AppTheory/commit/5faf2fcc1b22ca6f73abb59fea2c6582a8f33939))
+* **release:** derive the release lane from the reviewed pull request ([39b24dd](https://github.com/theory-cloud/AppTheory/commit/39b24dd0433a538412fdf4aaeb132b29889b9f5e))
+* **release:** fail the release lane guard on a review event it cannot run ([696a03e](https://github.com/theory-cloud/AppTheory/commit/696a03ef9fd236fd79e8f77649fdf86f25fc9cf0))
+* **release:** fail the release lane guard on an unmodelled review input ([1fd36d7](https://github.com/theory-cloud/AppTheory/commit/1fd36d7bf313184d110370d3fc87fae54f675fbb))
+* **release:** keep one pull-request classifier for reviews ([9c6572e](https://github.com/theory-cloud/AppTheory/commit/9c6572e014f801657b41731a9b331ae455bdeefb))
+* **release:** let the generated release PR lane attach its own checks ([7ff83a1](https://github.com/theory-cloud/AppTheory/commit/7ff83a17623f38f601b6f7e97231b600f8da2ea7))
+* **release:** make the code-owner review validate the release lane, not skip it ([35985b5](https://github.com/theory-cloud/AppTheory/commit/35985b570061523e62c05a3f7d9f94b09eb91f5c))
+* **release:** make the generated release PR lane attach its own checks ([f334133](https://github.com/theory-cloud/AppTheory/commit/f334133a960d76e20e073628ad23981dac9e9341))
+* **release:** merge premain promotion history into staging ([0e4fe66](https://github.com/theory-cloud/AppTheory/commit/0e4fe66c16e3c7de6768816bf6997194a71f94ac))
+* **release:** merge premain promotion history into staging ([69bda99](https://github.com/theory-cloud/AppTheory/commit/69bda9906fd271940259b69285e4e611863777f0))
+* **release:** promote premain to main for the 7.4.0 stable release ([2fef131](https://github.com/theory-cloud/AppTheory/commit/2fef131af97e00b93e04792af26356ea5a8b1b51))
+* **release:** promote staging to premain (FRONTED SSM parameter, TableTheory v6.5.0, evidence CI) ([c0ff0c6](https://github.com/theory-cloud/AppTheory/commit/c0ff0c66248b1f8e51b6962a1b3932c27e24775b))
+* **release:** promote staging to premain (release-lane review trigger, dependency consolidation) ([60d8fb1](https://github.com/theory-cloud/AppTheory/commit/60d8fb18e63762b467ce045f01ffadebac4ec0d0))
+* **release:** prove the review event's pull request range in the signature gate ([1323ec9](https://github.com/theory-cloud/AppTheory/commit/1323ec9fd91de272724f011ee0f59d9a867ecfa1))
+* **release:** report the eligible-event gap on the ready path too ([a5f66f7](https://github.com/theory-cloud/AppTheory/commit/a5f66f7e582b9a16e057efe2a97d74a11c966f26))
+* **release:** report the required release contexts from an eligible event ([8063a21](https://github.com/theory-cloud/AppTheory/commit/8063a212c0388f164734d0d35759ccfc83691f58))
+* **release:** run the code-owner review checks on release PRs only ([d9d7994](https://github.com/theory-cloud/AppTheory/commit/d9d79940050fd647582b69ce18efea7c4d927b69))
+* **release:** run the lane guard once, in the local rubric ([9736273](https://github.com/theory-cloud/AppTheory/commit/9736273f9a721e825bf5034f87161bb44275612d))
+* **release:** sync generated release artifacts ([ff65882](https://github.com/theory-cloud/AppTheory/commit/ff658825d963c00130810c7fd04aa030ee190b6f))
+* **rubric:** except the unfixed picomatch advisory on dev-only chains ([ab9b41c](https://github.com/theory-cloud/AppTheory/commit/ab9b41c2f7b5f404346f830363dc245861503278))
+* **rubric:** follow the aws-cdk-lib 2.277.0 fixed bundle ([3bcddf4](https://github.com/theory-cloud/AppTheory/commit/3bcddf4df9e1269913fa9b841bb9153e8336e295))
+* **rubric:** pin the lint toolchain where lint actually runs ([c30f569](https://github.com/theory-cloud/AppTheory/commit/c30f56990c5584b678e46139bfa8d1797e0d4e81))
+
+## [7.4.0-rc](https://github.com/theory-cloud/AppTheory/compare/v7.3.1...v7.4.0-rc) (2026-11-17)
+
+
+### Features
+
+* **ci:** drop the rubric items the required release/security job already runs ([cdce4c5](https://github.com/theory-cloud/AppTheory/commit/cdce4c58b64ab56d32e657952d4a82fcafc08ecf))
+* **ci:** run gates on the staging pull request only ([21003bd](https://github.com/theory-cloud/AppTheory/commit/21003bd32be99884a6f09ed964fb2c6b397d24e7))
+* **ci:** verified once on staging — verify-only CI, staging-only gates, release-PR hygiene ([9ec2e5a](https://github.com/theory-cloud/AppTheory/commit/9ec2e5a7dcad6e8cf5432774fec4323f42acf83c))
+* **ci:** verify evidence records instead of executing gates ([b1359e5](https://github.com/theory-cloud/AppTheory/commit/b1359e5bdc98f38bae3d17976f43e21382de01b2))
+* **contract:** pin the FRONTED parameter form across Go, TypeScript and Python ([af2808b](https://github.com/theory-cloud/AppTheory/commit/af2808b5d9be98184c4ce40d2c66f2d73ce37c49))
+* **fronted:** front-door verification from a well-known SSM parameter (CDK + Go/TS/Py + local runner) ([74cb388](https://github.com/theory-cloud/AppTheory/commit/74cb3883c865b84dab579c9f8e75bcef234d23a7))
+
+
+### Bug Fixes
+
+* **cdk:** regenerate the jsii artifacts for aws-cdk-lib 2.277.0 ([eebb70f](https://github.com/theory-cloud/AppTheory/commit/eebb70f48551055ce8eacce984a94fb3a37709d3))
+* **deps:** bump the root aws-sdk-go-v2 module set ([d399e8d](https://github.com/theory-cloud/AppTheory/commit/d399e8d6e9d5074d77c0bc5d44d63d39e484e459))
+* **deps:** consolidate the 2026-11-17 dependency refresh and except the unfixed picomatch advisory ([a333da5](https://github.com/theory-cloud/AppTheory/commit/a333da5e6089c36d0d3daafc180256689548c4ed))
+* **deps:** consolidated pre-release dependency refresh (supersedes [#1291](https://github.com/theory-cloud/AppTheory/issues/1291), [#1273](https://github.com/theory-cloud/AppTheory/issues/1273)) ([8d552a7](https://github.com/theory-cloud/AppTheory/commit/8d552a76385498e6f025ca5aca466db4ffb9e6a9))
+* **deps:** keep the lint requirements on the same TableTheory wheel ([d6a3efc](https://github.com/theory-cloud/AppTheory/commit/d6a3efc55c6ccf144afdd3ed8485093e471bcd1c))
+* **deps:** move TableTheory to v6.5.0 and make a pure release back-merge verify ([498506d](https://github.com/theory-cloud/AppTheory/commit/498506dacad4a84adfa736efbc93103734ba38c1))
+* **deps:** move the TableTheory pin to v6.5.0 in all three runtimes ([5c0f82f](https://github.com/theory-cloud/AppTheory/commit/5c0f82fcd1218d219bd05186284b1bbfb0081140))
+* **deps:** move the TypeScript runtime AWS SDK clients to 3.1169.0 ([4154433](https://github.com/theory-cloud/AppTheory/commit/41544336b39413888db503cefc6cb012bce375cb))
+* **deps:** raise the published aws-cdk-lib peer constraint to 2.277.0 ([217f304](https://github.com/theory-cloud/AppTheory/commit/217f3049952f741d34537928de57a0cf43211eff))
+* **docs:** remove the remaining theory-cli references from living guidance ([43e08e7](https://github.com/theory-cloud/AppTheory/commit/43e08e746b94bb005e3a626910f1bdf2fef580d6))
+* **evidence:** bind release-derived jsii artifacts by content ([2c71977](https://github.com/theory-cloud/AppTheory/commit/2c7197724b9e4285899191352bff3c845c352654))
+* **evidence:** do not offer a composed record to a profile it cannot prove ([d76ebef](https://github.com/theory-cloud/AppTheory/commit/d76ebef86ec73121791c23d8f178f1e89a39d9a9))
+* **evidence:** keep the nested evidence fixture out of the release-derived class ([b16a0f7](https://github.com/theory-cloud/AppTheory/commit/b16a0f73ba777488ebefb1c5b39a9bfa09249ce5))
+* **evidence:** keep the nested evidence fixture out of the release-derived class ([03fd200](https://github.com/theory-cloud/AppTheory/commit/03fd200a921b11488a7dd8c19b47a784eab4c8ac))
+* **evidence:** redo the nested fixture change as its own commit ([0a20430](https://github.com/theory-cloud/AppTheory/commit/0a20430ef5c6cf04dd2db34479c90bc0a898eaea))
+* **evidence:** stop binding release history as a product input ([6d5c807](https://github.com/theory-cloud/AppTheory/commit/6d5c8070d4414323b30aa2611929c6a286386bcd))
+* **examples:** repin synthesized templates after the Python front-door name fix ([e413956](https://github.com/theory-cloud/AppTheory/commit/e41395661830c7634a6b7d0efeff986d9b09fc54))
+* **py:** reject a FRONTED front-door parameter name with a trailing newline ([5faf2fc](https://github.com/theory-cloud/AppTheory/commit/5faf2fcc1b22ca6f73abb59fea2c6582a8f33939))
+* **release:** derive the release lane from the reviewed pull request ([39b24dd](https://github.com/theory-cloud/AppTheory/commit/39b24dd0433a538412fdf4aaeb132b29889b9f5e))
+* **release:** fail the release lane guard on a review event it cannot run ([696a03e](https://github.com/theory-cloud/AppTheory/commit/696a03ef9fd236fd79e8f77649fdf86f25fc9cf0))
+* **release:** fail the release lane guard on an unmodelled review input ([1fd36d7](https://github.com/theory-cloud/AppTheory/commit/1fd36d7bf313184d110370d3fc87fae54f675fbb))
+* **release:** keep one pull-request classifier for reviews ([9c6572e](https://github.com/theory-cloud/AppTheory/commit/9c6572e014f801657b41731a9b331ae455bdeefb))
+* **release:** let the generated release PR lane attach its own checks ([7ff83a1](https://github.com/theory-cloud/AppTheory/commit/7ff83a17623f38f601b6f7e97231b600f8da2ea7))
+* **release:** make the code-owner review validate the release lane, not skip it ([35985b5](https://github.com/theory-cloud/AppTheory/commit/35985b570061523e62c05a3f7d9f94b09eb91f5c))
+* **release:** make the generated release PR lane attach its own checks ([f334133](https://github.com/theory-cloud/AppTheory/commit/f334133a960d76e20e073628ad23981dac9e9341))
+* **release:** merge premain promotion history into staging ([0e4fe66](https://github.com/theory-cloud/AppTheory/commit/0e4fe66c16e3c7de6768816bf6997194a71f94ac))
+* **release:** merge premain promotion history into staging ([69bda99](https://github.com/theory-cloud/AppTheory/commit/69bda9906fd271940259b69285e4e611863777f0))
+* **release:** promote staging to premain (FRONTED SSM parameter, TableTheory v6.5.0, evidence CI) ([c0ff0c6](https://github.com/theory-cloud/AppTheory/commit/c0ff0c66248b1f8e51b6962a1b3932c27e24775b))
+* **release:** promote staging to premain (release-lane review trigger, dependency consolidation) ([60d8fb1](https://github.com/theory-cloud/AppTheory/commit/60d8fb18e63762b467ce045f01ffadebac4ec0d0))
+* **release:** prove the review event's pull request range in the signature gate ([1323ec9](https://github.com/theory-cloud/AppTheory/commit/1323ec9fd91de272724f011ee0f59d9a867ecfa1))
+* **release:** report the eligible-event gap on the ready path too ([a5f66f7](https://github.com/theory-cloud/AppTheory/commit/a5f66f7e582b9a16e057efe2a97d74a11c966f26))
+* **release:** report the required release contexts from an eligible event ([8063a21](https://github.com/theory-cloud/AppTheory/commit/8063a212c0388f164734d0d35759ccfc83691f58))
+* **release:** run the code-owner review checks on release PRs only ([d9d7994](https://github.com/theory-cloud/AppTheory/commit/d9d79940050fd647582b69ce18efea7c4d927b69))
+* **release:** run the lane guard once, in the local rubric ([9736273](https://github.com/theory-cloud/AppTheory/commit/9736273f9a721e825bf5034f87161bb44275612d))
+* **rubric:** except the unfixed picomatch advisory on dev-only chains ([ab9b41c](https://github.com/theory-cloud/AppTheory/commit/ab9b41c2f7b5f404346f830363dc245861503278))
+* **rubric:** follow the aws-cdk-lib 2.277.0 fixed bundle ([3bcddf4](https://github.com/theory-cloud/AppTheory/commit/3bcddf4df9e1269913fa9b841bb9153e8336e295))
+* **rubric:** pin the lint toolchain where lint actually runs ([c30f569](https://github.com/theory-cloud/AppTheory/commit/c30f56990c5584b678e46139bfa8d1797e0d4e81))
+
 ## [7.3.1](https://github.com/theory-cloud/AppTheory/compare/v7.3.0...v7.3.1) (2026-11-14)
 
 
