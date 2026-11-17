@@ -5,16 +5,16 @@
         "bash",
         "scripts/verify-security-refresh.sh"
       ],
-      "durationSeconds": 32.482,
+      "durationSeconds": 30.487,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-17T15:25:04Z",
+      "finishedAt": "2026-11-17T17:03:52Z",
       "id": "security-refresh",
-      "inputsDigest": "sha256:43ea22dc3e127cd45c329ae8e9f3e779d56b3d6ca82683dc534f31d932b2363e",
-      "logDigest": "sha256:9eafd6b5c8278e2db96578d6aec713fd19a7c228a6d4a2017b3c506d2ca4997a",
-      "logRef": "gov-infra/evidence/proportionate/local/security-refresh-security-refresh-20261117T152431Z-5646.log",
+      "inputsDigest": "sha256:fbcb0b45e3a5fb28cd76d4ca949e7d292060b71d8c62b7e35f8bacbcee17b147",
+      "logDigest": "sha256:b61eca99b8450500aa97c1552677b9fb70ccbf55ff9a7cffd02b6b1509d49085",
+      "logRef": "gov-infra/evidence/proportionate/local/security-refresh-security-refresh-20261117T170321Z-95230.log",
       "reused": false,
-      "startedAt": "2026-11-17T15:24:31Z"
+      "startedAt": "2026-11-17T17:03:21Z"
     }
   ],
   "consumed": [],
@@ -40,7 +40,7 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-17T15:25:04Z",
+  "recordedAt": "2026-11-17T17:03:52Z",
   "releaseOnly": {
     "digest": "sha256:cdead0d22055eac0580180e62b916bd08b138c61176a51486fb60cf3ce55ec5b",
     "fileCount": 477,
@@ -50,11 +50,11 @@
   "reviews": [],
   "scan": {
     "maxAgeSeconds": 86400,
-    "scannedAt": "2026-11-17T15:25:04Z"
+    "scannedAt": "2026-11-17T17:03:52Z"
   },
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:09980010c788bb99f17e67e4c7482b6a7466c3d97e4b100254449bcaeb234e35",
+    "digest": "sha256:7eb4091c9b0eb44df639a0c5a4521b936fdac2349012e69540979e40d58b2342",
     "fileCount": 37,
     "paths": [
       "go.mod",
@@ -77,7 +77,7 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:ee9e6b6b4f1740c1e7d034d433d0e7ef63056971d941b7db2ad1efe5a5822099",
+    "digest": "sha256:cd23b811f71928befe1004163cbe722bdcee9def0e8bf9c5cc400df8dde69bf3",
     "fileCount": 2678
   },
   "verdict": "PASS"
