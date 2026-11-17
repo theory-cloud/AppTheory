@@ -147,6 +147,13 @@
       "examples/cdk/*/package-lock.json"
     ]
   },
+  "releaseNotes": {
+    "exact": [
+      "CHANGELOG.md",
+      ".release-please-manifest.json",
+      ".release-please-manifest.premain.json"
+    ]
+  },
   "securityInputs": {
     "exact": [
       "go.mod",
@@ -232,7 +239,7 @@
       "id": "backmerge-main-staging",
       "leg": "main -> staging back-merge pull request",
       "old": "full rubric, builds, examples and matrix re-execute",
-      "new": "records-only evidence refresh on the back-merge branch, then the staging pull-request verification set; a real source delta needs the affected gates recollected"
+      "new": "the committed staging records verify the back-merge pull request: a pure release back-merge changes release-only paths and release history only, which no record binds as product input; a product delta still stales its scope and needs the affected gates recollected"
     }
   ],
   "gates": {

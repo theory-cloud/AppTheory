@@ -55,6 +55,18 @@ SOURCE_RERUN_MARKERS = (
     "verify-go.sh",
 )
 
+# The release-notes class is the one place where a tracked path can stop staling
+# evidence: its files carry release history, not product bytes, so no record
+# binds their content. That makes silent growth the risk the class has to
+# survive, so the reviewed set is fixed here and the registry must match it
+# exactly. Adding a path therefore needs both this allowlist and the registry
+# edit in the same reviewed change.
+APPROVED_RELEASE_NOTES = {
+    "CHANGELOG.md",
+    ".release-please-manifest.json",
+    ".release-please-manifest.premain.json",
+}
+
 
 def fail(message: str) -> None:
     print(f"validation-policy: FAIL ({message})", file=sys.stderr)
@@ -214,6 +226,37 @@ def main() -> int:
         if not prefix.endswith("/") or len(prefix.strip("/")) < 3:
             fail(f"release-only prefix {prefix!r} is not a tightly named directory")
 
+    notes = registry.get("releaseNotes")
+    if not isinstance(notes, dict):
+        fail("registry must declare the releaseNotes class")
+    if set(notes) - {"exact"}:
+        fail(f"releaseNotes must declare exact paths only: unexpected {sorted(set(notes) - {'exact'})}")
+    declared_notes = notes.get("exact")
+    if not isinstance(declared_notes, list) or not declared_notes:
+        fail("releaseNotes.exact must be a non-empty list of paths")
+    if set(declared_notes) != APPROVED_RELEASE_NOTES:
+        fail(
+            "releaseNotes must match the reviewed allowlist exactly: "
+            f"missing {sorted(APPROVED_RELEASE_NOTES - set(declared_notes))}, "
+            f"unreviewed {sorted(set(declared_notes) - APPROVED_RELEASE_NOTES)}"
+        )
+    security_inputs = registry.get("securityInputs") or {}
+    for path in sorted(declared_notes):
+        if any(char in path for char in "*?[]") or path.endswith("/"):
+            fail(f"release-notes path {path!r} must name one file, never a glob or a directory")
+        if not (ROOT / path).is_file():
+            fail(f"release-notes path {path!r} is not a tracked file in this repository")
+        if not is_release_only(path, policy):
+            fail(f"release-notes path {path!r} must also be release-only, so it stays out of the source projection")
+        for prefix in policy.get("prefixes", []):
+            if path.startswith(prefix):
+                fail(f"release-notes path {path!r} is inside the product-bytes prefix {prefix!r}")
+        if path in set(security_inputs.get("exact", [])):
+            fail(f"release-notes path {path!r} must not also be a dependency-scan input")
+        for pattern in security_inputs.get("patterns", []):
+            if fnmatch.fnmatchcase(path, pattern):
+                fail(f"release-notes path {path!r} matches dependency-scan input {pattern!r}")
+
     for config_name in ("release-please-config.json", "release-please-config.premain.json"):
         config = json.loads((ROOT / config_name).read_text(encoding="utf-8"))
         for package in config.get("packages", {}).values():
@@ -287,6 +330,7 @@ def main() -> int:
         "Linux release artifact construction",
         "produced record",
         "tc-toolchain",
+        "release-notes",
     ):
         if token not in docs:
             fail(f"docs must document the corrected collector default: missing {token!r}")

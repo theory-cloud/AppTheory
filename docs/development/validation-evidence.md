@@ -301,6 +301,9 @@ fail closed. The enumerator partitions every file into exactly one projection:
 - **release-only inputs** — the explicit version-coupled and regenerated paths
   in the registry (`VERSION`, both manifests, `CHANGELOG.md`, package manifests
   and lockfiles, `cdk/.jsii`, `cdk/lib/**`, `cdk-go/**`, example CDK lockfiles);
+- **release-notes inputs** — the explicit release-history allowlist inside the
+  release-only set: the changelog and the release-please manifests, which are
+  projected so that release history cannot stale product proof;
 - the dedicated evidence directory itself is the only evidence-content
   exclusion.
 
@@ -311,6 +314,42 @@ files inside that scope are normalized by substituting the recorded `VERSION`
 literal, so a pure version transformation stays applicable while any other edit
 in the same path still invalidates the gate. A source or documentation edit
 outside a product gate's scope does not invalidate that product proof.
+
+### Release notes are history, not input
+
+A release appends to the changelog and moves the release-please manifest values,
+and neither carries product bytes: no gate command reads the changelog, and
+nothing is built, packed or published from a release-please manifest. Binding
+that content is what made every `**`-scoped record go stale on a pure release
+back-merge, because a newly appended section is not a version-literal
+substitution. The `releaseNotes` class fixes that by narrowing those paths'
+projection instead of widening normalization anywhere else:
+
+- a changelog contributes its path and mode, never its bytes — a generated
+  section, a hand edit and a reordering all project to the same line;
+- a release-please manifest projects every version *value* (including a
+  prerelease track or a second package that the tracked `VERSION` literal does
+  not name) and keeps the structure around those values bound, so an unrelated
+  edit to the manifest still fails closed.
+
+Nothing else moved. `cdk/lib/`, `cdk-go/apptheorycdk/`, `cdk/.jsii` and the
+package manifests and lockfiles keep version-literal normalization only: a
+one-byte change in `cdk/lib/app.js` still stales every record whose scope covers
+it, exactly as before. The class is a fixed allowlist in
+`scripts/evidence/check-policy.py` — it has no prefixes and no patterns, the
+registry must match the allowlist exactly, every entry must be a release-only
+path naming one tracked file outside the product prefixes, and an entry that is
+also a dependency-scan input is rejected.
+
+What a hand edit to `CHANGELOG.md` on a staging pull request does now: it no
+longer stales any record. That is deliberate and bounded. Release notes have no
+runtime, packaging or publication effect; the edit is still visible in the diff
+the reviewer approves; `release-delta` re-reads the generated changelog form
+through `verify-release-generated-messages.sh` on every generated release pull
+request; and version alignment keeps reading both manifests, so a manifest
+value that disagrees with `VERSION` still fails the `Version alignment` job.
+The alternative — binding release history to proof — would only add a claim no
+gate makes.
 
 `release-delta` performs the narrow regeneration and packaging smoke once per
 changed generated artifact set. It deliberately does not run the rubric,
@@ -512,7 +551,7 @@ release operations run only from protected branches.
 | `push-main` | promotion merge push → main | CI product set re-executes, then release-please generates the stable PR | release-please generation and publish only; no gate re-verification |
 | `release-pr-main` | generated stable release PR | dispatched CI re-executes the product suite on generated artifacts | generated release PR: release-delta smoke once over generated artifacts, plus release/security gates and version alignment; no product job runs |
 | `release-merge-main` | stable merge/publish on main | CI product set re-executes, then the publisher builds assets again | publish only; no gate re-verifies |
-| `backmerge-main-staging` | main → staging back-merge PR | full rubric, builds, examples and matrix re-execute | records-only evidence refresh on the back-merge branch, then the staging pull-request verification set; a real source delta needs the affected gates recollected |
+| `backmerge-main-staging` | main → staging back-merge PR | full rubric, builds, examples and matrix re-execute | the committed staging records verify the back-merge pull request: a pure release back-merge changes release-only paths and release history only, which no record binds as a product input; a product delta still stales its scope and needs the affected gates recollected |
 
 No gate runs on a push, on a release branch, or at deploy. `ci.yml` declares a
 pull-request trigger scoped to `staging`, `premain` and `main`, plus the release
@@ -583,9 +622,11 @@ write, tag mutation or branch-protection change in this gate.
   selection is behind the repository pin blocks collection; it does not justify
   ambient fallback.
 - The generated release transformation is bounded by the explicit release-only
-  path set, version-normalized equality and `release-delta` regeneration
-  equality. A change outside that set is a source change and requires the
-  affected validation.
+  path set, version-normalized equality, the release-notes projection and
+  `release-delta` regeneration equality. A change outside that set is a source
+  change and requires the affected validation. Release-notes content is the one
+  input no record binds, because no gate reads it; the class that says so is
+  allowlisted in the policy checker rather than inferred from a path pattern.
 - The scheduler's per-gate input scopes are conservative declarations. A new
   file outside every declared product scope is treated as unknown and forces
   broad execution; it is never silently inherited as green.

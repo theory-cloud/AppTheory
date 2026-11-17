@@ -43,13 +43,20 @@ and evidence-only commits. Inputs are partitioned into disjoint sets:
 * release-only inputs -- the explicit version-coupled and regenerated artifact
   paths named in the registry.
 
+A third, explicit class narrows the release-only treatment to the release history
+itself: the registry's ``releaseNotes`` files (the changelog, and the
+release-please manifests' version values) carry no product bytes, so no record
+binds their content. Every other release-only path keeps version-literal
+normalization only, and a path outside the class keeps the treatment it had.
+
 Each gate carries its own declared input scope. A gate record stores a scope
 digest computed over exactly that scope, with release-only files normalized by
-substituting the recorded version literal. A documentation or evidence-only
-change therefore does not invalidate product proof, while an edit inside a
-gate's scope does. A file that matches no product scope and no declared
-non-product path is an unknown input: every product gate falls back to broad
-execution instead of silently reusing proof.
+substituting the recorded version literal and release-notes files projected to
+their release-notes identity. A documentation or evidence-only change therefore
+does not invalidate product proof, while an edit inside a gate's scope does. A
+file that matches no product scope and no declared non-product path is an
+unknown input: every product gate falls back to broad execution instead of
+silently reusing proof.
 
 Exit codes: 0 PASS, 1 FAIL, 2 BLOCKED, 130 interrupted, 143 terminated.
 """
@@ -93,6 +100,8 @@ ENVIRONMENT_ALIASES = {
     "toolchain+platform": ["go", "node", "python", "platform"],
 }
 VERSION_TOKEN = b"@@APPTHEORY_VERSION@@"
+RELEASE_NOTES_TOKEN = b"@@APPTHEORY_RELEASE_NOTES@@\n"
+RELEASE_VERSION_VALUE_RE = re.compile(rb'"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?"')
 SOURCE_HEADER = b"apptheory-validation-source-v1\n"
 RELEASE_HEADER = b"apptheory-validation-release-v1\n"
 NORMALIZED_HEADER = b"apptheory-validation-release-normalized-v1\n"
@@ -403,6 +412,19 @@ def matches_release_only(relative: str, registry: Registry) -> bool:
     return any(fnmatch.fnmatchcase(relative, pattern) for pattern in policy.get("patterns", []))
 
 
+def matches_release_notes(relative: str, registry: Registry) -> bool:
+    """Files that are release history rather than release-coupled product bytes.
+
+    The class is an explicit path list with no prefixes and no patterns, so it
+    can only grow one named file at a time (``scripts/evidence/check-policy.py``
+    holds the reviewed allowlist). A release-notes file must also be release-only:
+    it stays out of the source projection, which is what makes a release
+    back-merge a release-only change.
+    """
+    policy = registry.data.get("releaseNotes") or {}
+    return relative in {str(item) for item in policy.get("exact", [])}
+
+
 def matches_security_input(relative: str, registry: Registry) -> bool:
     policy = registry.data["securityInputs"]
     if relative in set(policy.get("exact", [])):
@@ -431,11 +453,30 @@ def normalize_release_bytes(data: bytes, version: str) -> bytes:
     return data.replace(literal, VERSION_TOKEN)
 
 
+def normalize_release_notes_bytes(relative: str, data: bytes) -> bytes:
+    """Project a release-notes file to what it contributes to product proof.
+
+    A changelog is release history prose: release-please appends a generated
+    section on every release, and no gate reads it. Its content cannot change a
+    claim, so it contributes its presence and mode only, never its bytes.
+
+    A release-please manifest is release state: every version value moves on a
+    release, including versions the tracked `VERSION` literal does not name (a
+    prerelease track, or a second package). Only those values are projected;
+    the structure around them stays bound, so an unrelated edit to the manifest
+    still fails closed.
+    """
+    if relative.endswith(".json"):
+        return RELEASE_VERSION_VALUE_RE.sub(b'"@@APPTHEORY_RELEASE_NOTES@@"', data)
+    return RELEASE_NOTES_TOKEN
+
+
 @dataclass(frozen=True)
 class FileEntry:
     mode: int
     data: bytes
     release_only: bool
+    release_notes: bool = False
 
 
 @dataclass(frozen=True)
@@ -469,7 +510,10 @@ def load_snapshot(root: Path, registry: Registry) -> Snapshot:
             continue
         mode, data = read_input_bytes(root, relative)
         release_only = matches_release_only(relative, registry)
-        files[relative] = FileEntry(mode=mode, data=data, release_only=release_only)
+        release_notes = release_only and matches_release_notes(relative, registry)
+        files[relative] = FileEntry(
+            mode=mode, data=data, release_only=release_only, release_notes=release_notes
+        )
         content_digest = sha256_bytes(data)
         if matches_security_input(relative, registry):
             dependency_count += 1
@@ -477,7 +521,10 @@ def load_snapshot(root: Path, registry: Registry) -> Snapshot:
         if release_only:
             release_count += 1
             release_lines.append(b"%d\t%s\t%s\n" % (mode, relative.encode("utf-8"), content_digest.encode("ascii")))
-            normalized = normalize_release_bytes(data, version)
+            if release_notes:
+                normalized = normalize_release_notes_bytes(relative, data)
+            else:
+                normalized = normalize_release_bytes(data, version)
             normalized_lines.append(
                 b"%d\t%s\t%s\n" % (mode, relative.encode("utf-8"), sha256_bytes(normalized).encode("ascii"))
             )
@@ -505,8 +552,15 @@ def scope_digest(snapshot: Snapshot, patterns: list[str]) -> tuple[str, int]:
         if not matches_any(relative, patterns):
             continue
         entry = snapshot.files[relative]
-        data = normalize_release_bytes(entry.data, snapshot.release_version) if entry.release_only else entry.data
-        kind = b"release-normalized" if entry.release_only else b"source"
+        if entry.release_notes:
+            data = normalize_release_notes_bytes(relative, entry.data)
+            kind = b"release-notes"
+        elif entry.release_only:
+            data = normalize_release_bytes(entry.data, snapshot.release_version)
+            kind = b"release-normalized"
+        else:
+            data = entry.data
+            kind = b"source"
         lines.append(
             b"%d\t%s\t%s\t%s\n" % (entry.mode, relative.encode("utf-8"), kind, sha256_bytes(data).encode("ascii"))
         )
