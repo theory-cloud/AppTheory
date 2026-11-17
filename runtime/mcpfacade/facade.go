@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	apptheory "github.com/theory-cloud/apptheory/v7/runtime"
@@ -180,6 +181,21 @@ type FacadeConfig struct {
 	// declared without it, and it is rejected under every other posture: an
 	// undeclared or unenforced front door would be a silent no-op.
 	FrontDoorVerification *FrontDoorVerification
+
+	// FrontDoorSecretReader reads FrontDoorVerification.SecretParameterName. A
+	// nil reader selects AWS Systems Manager Parameter Store and is created
+	// lazily on the first request in the execution environment. It is only
+	// consulted by the parameter form; the literal form never reads a parameter.
+	FrontDoorSecretReader FrontDoorSecretReader
+
+	// FrontDoorSecretTTL bounds how long a parameter value read from
+	// FrontDoorSecretReader is reused before it is read again, so a rotation
+	// takes effect without a redeploy. Zero selects DefaultFrontDoorSecretTTL;
+	// the accepted range is greater than zero and at most MaxFrontDoorSecretTTL.
+	// The cache also refreshes on a verification mismatch, so the first request
+	// carrying a rotated value is admitted. It applies to the parameter form
+	// only.
+	FrontDoorSecretTTL time.Duration
 
 	// Provider anchors the framework-owned front channel (DESIGN §8). When it is
 	// set, AppTheory owns /authorize, the stage-global upstream callback, and the
@@ -440,6 +456,8 @@ func normalizeConfig(config FacadeConfig) (normalizedConfig, error) {
 	originReachability, frontDoorGuard, err := normalizeOriginReachability(
 		config.OriginReachability,
 		config.FrontDoorVerification,
+		config.FrontDoorSecretReader,
+		config.FrontDoorSecretTTL,
 	)
 	if err != nil {
 		return normalizedConfig{}, err

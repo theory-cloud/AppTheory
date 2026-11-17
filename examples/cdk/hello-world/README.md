@@ -102,5 +102,5 @@ The TypeScript and Python synth snapshots intentionally include framework source
 `ts/dist/index.js` for TypeScript and `py/src/apptheory/**` for Python. When a runtime change deliberately changes
 either input, refresh the hello-world synth snapshot in the same change instead of treating the drift as incidental.
 
-The future `theory-cli` on-ramp should wrap this same scaffold/synth/deploy/curl/destroy sequence. This example remains
-repo-local CDK guidance and does not implement cross-repo CLI behavior.
+This example is repo-local CDK guidance for the scaffold/synth/deploy/curl/destroy sequence and does not implement
+cross-repo tooling behavior.

@@ -548,8 +548,11 @@ here for operators who need implementation-level details:
   `OriginReachabilityFronted`) mirrors the CDK construct's declared `AppTheoryMcpOriginReachability`, and
   `FrontDoorVerification` (required with `fronted`, refused otherwise) makes the runtime verify the declared
   front-door header on every derived route — transport and OAuth facade — refusing a request whose header is absent
-  or wrong with `403 app.forbidden` before any credential work. Registering `fronted` without the verification fails
-  closed. `fronted` is a defense-in-depth declaration with runtime enforcement, not mutual-TLS assurance and not
+  or wrong with `403 app.forbidden` before any credential work. It takes exactly one secret form: the literal
+  `SecretValue`, or `SecretParameterName`, a well-known SSM parameter read through `FrontDoorSecretReader` (default:
+  Parameter Store) and cached for `FrontDoorSecretTTL` (`DefaultFrontDoorSecretTTL` to `MaxFrontDoorSecretTTL`), with a
+  mismatch-triggered refresh. A read failure refuses the same way. Registering `fronted` without the verification
+  fails closed. `fronted` is a defense-in-depth declaration with runtime enforcement, not mutual-TLS assurance and not
   origin unreachability; an unwired runtime enforces nothing, and the construct prop, the distribution's origin
   header, and this config must come from one application-owned constant. TypeScript
   `originReachability`/`frontDoorVerification` and Python `origin_reachability`/`front_door_verification` are the
@@ -634,7 +637,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>1307 exported top-level symbols</summary>
+<summary>1310 exported top-level symbols</summary>
 
 ```text
 AccountAssertion, AccountAssertionAssumeFailed, AccountAssertionMismatch, AccountAssertionNotConfigured, AccountAssertionState, AccountAssertionUnavailable,
@@ -669,7 +672,7 @@ ContractVersionM16, ContractVersionV1, Controller, ControllerAuthContract, Contr
 ControllerDeploymentDefaults, ControllerEnvelopeContract, ControllerInvokeRequest, ControllerOption, ControllerRequest, ControllerResponse, CORSConfig,
 CreatedJSON, CreateIdempotencyRecordInput, CreateJobInput, CreateSessionInput, CreateTaskResult, DCRResult, DecodeCloudWatchLogsSubscription,
 DecodeLoggingProfileJSON, DecodeLoggingProfileYAML, DefaultAuthorizationCodeTTL, DefaultCallbackPath, DefaultCapabilities, DefaultCapabilityConfig,
-DefaultConfig, DefaultControllerContract, DefaultEmbeddingDimensions, DefaultEnvironmentErrorNotifications, DefaultEventBusConfig, DefaultLifecycleContract,
+DefaultConfig, DefaultControllerContract, DefaultEmbeddingDimensions, DefaultEnvironmentErrorNotifications, DefaultEventBusConfig, DefaultFrontDoorSecretTTL, DefaultLifecycleContract,
 DefaultLoggingProfile, DefaultOperationContract, DefaultProviderStateMappings, DefaultQueryTopK, DefaultRateLimitWindow, DefaultRealLifecycleContract,
 DefaultRefreshBudget, DefaultRefreshGraceWindow, DefaultRouteRefreshBrokerTTL, DefaultRouteRefreshLockTTL, DefaultSessionProviderID,
 DefaultSessionRegistryContract, DefaultSessionRegistryTableName, DefaultTitanEmbedTextModelID, DefaultTransactionTTL, DeleteInput, DetectProtocolVersion,
@@ -701,7 +704,7 @@ ErrStreamAggregateBackfillRequired, ErrStreamAggregateCapacityExceeded, ErrStrea
 ErrStreamTransactionRequired, ErrTaskNotFound, ErrTaskTerminal, ErrTransactionExpired, ErrTransactionNotFound, ErrUnsupportedOperation, EscapeHatches, ETag,
 Event, EventBridgeEvent, EventBridgeEventOptions, EventBridgeHandler, EventBridgePattern, EventBridgeRule, EventBridgeScheduledWorkloadResultSummary,
 EventBridgeScheduledWorkloadSummary, EventBridgeSelector, EventBridgeWorkloadEnvelope, EventBus, EventBusConfig, EventContext, EventHandler, EventMiddleware,
-EventQuery, FacadeConfig, Factory, FakeClient, FakeEmbedder, FakeProvider, FakeSNSClient, FakeStore, FakeStreamerClient, FixedWindowStrategy,
+EventQuery, FacadeConfig, Factory, FakeClient, FakeEmbedder, FakeProvider, FakeSNSClient, FakeStore, FakeStreamerClient, FixedWindowStrategy, FrontDoorSecretReader,
 FrontDoorVerification, FullyRedact, GenerateOpenAPI, GenerateOpenAPIJSON, GetDayWindow, GetFixedWindow, GetHourWindow, GetInput, GetMinuteWindow, GetOutput,
 GetPromptRequest, Handler, HandlerFactory, HashKey, Hook, HookFailure, HookPrepareImage, HookReadiness, HookReady, HookResume, HookRun,
 HooksFromEMFMetricSink, HooksFromLogger, HooksFromLoggerAndEMFMetricSink, HooksFromProfileLogger, HookStart, HookStop, HookSuspend, HookTeardown,
@@ -723,7 +726,7 @@ LoggingProfileCloudWatchJSON, LoggingProfileConfig, LoggingProfileEncoding, Logg
 LoggingProfileEvent, LoggingProfileJobContext, LoggingProfileLegacy, LoggingProfileLocalDev, LoggingProfilePayTheoryAlertV1, LoggingProfileRequestContext,
 LoggingProfileSanitization, LoggingProfileSchemaVersion, LoggingProfileValidationError, LoggingProfileValidationErrors, LogRecord, ManualClock,
 ManualIDGenerator, MapProviderState, MarshalResponse, MaskCardNumber, MaskCompletelyFunc, MaskFirstLast, MaskFirstLast4, MaskTokenLastFour,
-MatchesIfNoneMatch, MaxClientRequestIDLength, MaxPresignPutExpiresIn, MaxPutDeleteBatchSize, MaxQueryTopK, MaxRefreshBudget, MaxRefreshGraceWindow,
+MatchesIfNoneMatch, MaxClientRequestIDLength, MaxFrontDoorSecretTTL, MaxPresignPutExpiresIn, MaxPutDeleteBatchSize, MaxQueryTopK, MaxRefreshBudget, MaxRefreshGraceWindow,
 MaxRefreshReuseRateCeiling, MaxRouteRefreshHandleTTL, MaxVersionedArtifactBytes, MaxVersionedArtifactEntries, MCPPath, MCPServerConfig,
 MemoryAuthorizationCodeStore, MemoryClientStore, MemoryEventBus, MemoryRateLimitStore, MemoryRefreshTokenStore, MemoryRouteRefreshBrokerStore,
 MemorySessionRegistry, MemorySessionStore, MemorySessionStoreOption, MemoryStreamStore, MemoryStreamStoreOption, MemoryTaskStore, MemoryTransactionStore,

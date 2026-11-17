@@ -28,13 +28,12 @@ filesystem/build/Docker work serializes. Completed records are written atomicall
 as each gate finishes, so an interrupted run keeps its completed results and a
 restart executes only the incomplete or changed work.
 
-The CI fallback (``run``, behind ``verify-or-execute.sh``) uses the same record
-builder: it validates that the live host can truthfully produce the requested
-tracked profile, executes the approved commands, and writes the record the
-verifier accepts for those inputs. Failed, cancelled or tainted work is never
-published as a PASS. A produced record is appended to the producer manifest
-named by ``APPTHEORY_EVIDENCE_PRODUCED_MANIFEST`` so the upload step can require
-the exact file this job wrote instead of a glob over the checkout.
+CI verifies these records with ``verify-gate.sh`` and never executes a gate.
+``run`` remains the local record builder behind ``collect.sh`` (and the
+generated-release delta smoke): it validates that the live host can truthfully
+produce the requested tracked profile, executes the approved commands, and
+writes the record the verifier accepts for those inputs. Failed, cancelled or
+tainted work is never published as a PASS.
 
 Identity is content-addressed, so it is independent of commit SHAs, branch names,
 and evidence-only commits. Inputs are partitioned into disjoint sets:
@@ -44,13 +43,29 @@ and evidence-only commits. Inputs are partitioned into disjoint sets:
 * release-only inputs -- the explicit version-coupled and regenerated artifact
   paths named in the registry.
 
+A third, explicit class narrows the release-only treatment to the release history
+itself: the registry's ``releaseNotes`` files (the changelog, and the
+release-please manifests' version values) carry no product bytes, so no record
+binds their content. Every other release-only path keeps version-literal
+normalization only, and a path outside the class keeps the treatment it had.
+
+A fourth, equally explicit class covers the release-derived artifacts the release
+lane rebuilds rather than edits: ``releaseDerived`` names one jsii assembly and
+one anchored jsii tarball name, and projects only what a release rewrites (the
+assembly's derived ``fingerprint``, and for the tarball its compressed framing
+plus the same version literal and fingerprint) while every other byte of both --
+including the tar's member order, modes, mtimes and contents -- stays bound. A
+path whose shape the projection does not describe keeps its raw bytes, so it
+fails closed instead of being silently accepted.
+
 Each gate carries its own declared input scope. A gate record stores a scope
 digest computed over exactly that scope, with release-only files normalized by
-substituting the recorded version literal. A documentation or evidence-only
-change therefore does not invalidate product proof, while an edit inside a
-gate's scope does. A file that matches no product scope and no declared
-non-product path is an unknown input: every product gate falls back to broad
-execution instead of silently reusing proof.
+substituting the recorded version literal and release-notes and release-derived
+files projected to what they contribute. A documentation or evidence-only change
+therefore does not invalidate product proof, while an edit inside a gate's scope
+does. A file that matches no product scope and no declared non-product path is an
+unknown input: every product gate falls back to broad execution instead of
+silently reusing proof.
 
 Exit codes: 0 PASS, 1 FAIL, 2 BLOCKED, 130 interrupted, 143 terminated.
 """
@@ -60,6 +75,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import hashlib
+import io
 import json
 import os
 import platform
@@ -67,6 +83,7 @@ import re
 import signal
 import subprocess
 import sys
+import tarfile
 import tempfile
 import threading
 import time
@@ -87,7 +104,6 @@ EXIT_TERMINATED = 143
 DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 GATE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 PROFILE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9.-]*$")
-PRODUCED_MANIFEST_ENV = "APPTHEORY_EVIDENCE_PRODUCED_MANIFEST"
 ENVIRONMENT_DIMENSIONS = ("go", "node", "python", "platform")
 ENVIRONMENT_ALIASES = {
     "none": [],
@@ -95,9 +111,22 @@ ENVIRONMENT_ALIASES = {
     "toolchain+platform": ["go", "node", "python", "platform"],
 }
 VERSION_TOKEN = b"@@APPTHEORY_VERSION@@"
+RELEASE_NOTES_TOKEN = b"@@APPTHEORY_RELEASE_NOTES@@\n"
+RELEASE_VERSION_VALUE_RE = re.compile(rb'"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?"')
+RELEASE_DERIVED_VERSION_TOKEN = "{{version}}"
+RELEASE_DERIVED_VERSION_RE = re.compile(r"^v?[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?$")
+RELEASE_DERIVED_PATH_TOKEN = "@@APPTHEORY_RELEASE_DERIVED_PATH@@"
+RELEASE_DERIVED_PROJECTIONS = ("jsii-assembly", "jsii-tarball")
+JSII_ASSEMBLY_FINGERPRINT_RE = re.compile(rb'(?m)^  "fingerprint": "[A-Za-z0-9+/]{43}="')
+JSII_ASSEMBLY_FINGERPRINT_TOKEN = b'"fingerprint": "@@APPTHEORY_JSII_FINGERPRINT@@"'
+JSII_TARBALL_ASSEMBLY_MEMBER = "package/.jsii"
+JSII_TARBALL_MAX_BYTES = 64 * 1024 * 1024
+JSII_TARBALL_MAX_MEMBERS = 4096
+JSII_TARBALL_MAX_UNPACKED_BYTES = 256 * 1024 * 1024
 SOURCE_HEADER = b"apptheory-validation-source-v1\n"
 RELEASE_HEADER = b"apptheory-validation-release-v1\n"
 NORMALIZED_HEADER = b"apptheory-validation-release-normalized-v1\n"
+RELEASE_DERIVED_HEADER = b"apptheory-validation-release-derived-v1\n"
 SCOPE_HEADER = b"apptheory-validation-scope-v1\n"
 
 DEFAULT_RUNNER = {
@@ -332,6 +361,18 @@ def load_registry(path: Path) -> Registry:
     for name, capacity in (runner.get("resources") or {}).items():
         if int(capacity) < 1:
             raise EvidenceError(f"gate registry resource {name!r} capacity must be positive")
+    if "releaseDerived" in data:
+        for entry, projection in release_derived_entries(data).items():
+            if not isinstance(entry, str) or not entry:
+                raise EvidenceError("gate registry releaseDerived.projections must name paths")
+            if projection not in RELEASE_DERIVED_PROJECTIONS:
+                raise EvidenceError(
+                    f"release-derived path {entry!r} declares unknown projection {projection!r}"
+                )
+            if entry.count(RELEASE_DERIVED_VERSION_TOKEN) > 1:
+                raise EvidenceError(
+                    f"release-derived path {entry!r} may use {RELEASE_DERIVED_VERSION_TOKEN} at most once"
+                )
     return Registry(path=path, data=data)
 
 
@@ -405,6 +446,61 @@ def matches_release_only(relative: str, registry: Registry) -> bool:
     return any(fnmatch.fnmatchcase(relative, pattern) for pattern in policy.get("patterns", []))
 
 
+def matches_release_notes(relative: str, registry: Registry) -> bool:
+    """Files that are release history rather than release-coupled product bytes.
+
+    The class is an explicit path list with no prefixes and no patterns, so it
+    can only grow one named file at a time (``scripts/evidence/check-policy.py``
+    holds the reviewed allowlist). A release-notes file must also be release-only:
+    it stays out of the source projection, which is what makes a release
+    back-merge a release-only change.
+    """
+    policy = registry.data.get("releaseNotes") or {}
+    return relative in {str(item) for item in policy.get("exact", [])}
+
+
+def release_derived_entries(data: dict[str, Any]) -> dict[str, str]:
+    """The reviewed release-derived artifact map: path (or anchored pattern) -> projection.
+
+    The class is deliberately tiny and explicit. An entry either names one exact
+    path, or one anchored pattern with a single ``{{version}}`` placeholder in the
+    file name, so the class can only grow one named artifact at a time
+    (``scripts/evidence/check-policy.py`` holds the reviewed allowlist).
+    """
+    policy = data.get("releaseDerived")
+    if policy is None:
+        return {}
+    if not isinstance(policy, dict) or set(policy) - {"projections"}:
+        raise EvidenceError("gate registry releaseDerived must declare projections only")
+    projections = policy.get("projections")
+    if not isinstance(projections, dict) or not projections:
+        raise EvidenceError("gate registry releaseDerived.projections must be a non-empty object")
+    return {str(entry): str(projection) for entry, projection in projections.items()}
+
+
+def matches_release_derived(relative: str, registry: Registry) -> tuple[str, str] | None:
+    """(entry, projection) when the path is a release-derived artifact.
+
+    A path with ``{{version}}`` is matched as one anchored pattern: the literal
+    prefix, one version-shaped segment, the literal suffix. A name whose
+    variable segment is not a version does not match, so it stays an ordinary
+    release-only input and a rename still stales the record.
+    """
+    for entry, projection in release_derived_entries(registry.data).items():
+        if RELEASE_DERIVED_VERSION_TOKEN not in entry:
+            if relative == entry:
+                return entry, projection
+            continue
+        prefix, _, suffix = entry.partition(RELEASE_DERIVED_VERSION_TOKEN)
+        if not prefix or not suffix or not relative.startswith(prefix) or not relative.endswith(suffix):
+            continue
+        segment = relative[len(prefix) : len(relative) - len(suffix)]
+        if len(relative) <= len(prefix) + len(suffix) or not RELEASE_DERIVED_VERSION_RE.fullmatch(segment):
+            continue
+        return entry, projection
+    return None
+
+
 def matches_security_input(relative: str, registry: Registry) -> bool:
     policy = registry.data["securityInputs"]
     if relative in set(policy.get("exact", [])):
@@ -433,11 +529,137 @@ def normalize_release_bytes(data: bytes, version: str) -> bytes:
     return data.replace(literal, VERSION_TOKEN)
 
 
+def normalize_release_notes_bytes(relative: str, data: bytes) -> bytes:
+    """Project a release-notes file to what it contributes to product proof.
+
+    A changelog is release history prose: release-please appends a generated
+    section on every release, and no gate reads it. Its content cannot change a
+    claim, so it contributes its presence and mode only, never its bytes.
+
+    A release-please manifest is release state: every version value moves on a
+    release, including versions the tracked `VERSION` literal does not name (a
+    prerelease track, or a second package). Only those values are projected;
+    the structure around them stays bound, so an unrelated edit to the manifest
+    still fails closed.
+    """
+    if relative.endswith(".json"):
+        return RELEASE_VERSION_VALUE_RE.sub(b'"@@APPTHEORY_RELEASE_NOTES@@"', data)
+    return RELEASE_NOTES_TOKEN
+
+
+def normalize_jsii_assembly_bytes(data: bytes, version: str) -> bytes:
+    """Project the jsii assembly's top-level ``fingerprint`` value.
+
+    jsii computes that value as the base64 SHA-256 of the sorted assembly with
+    the field removed, so it is a hash of exactly the bytes that stay bound: a
+    release re-derives it whenever the version moves, and no other byte of the
+    document is projected. A document with zero or several anchored top-level
+    fingerprint lines is left fully bound, so an unreadable shape fails closed
+    rather than projecting something unexpected.
+    """
+    if len(JSII_ASSEMBLY_FINGERPRINT_RE.findall(data)) == 1:
+        data = JSII_ASSEMBLY_FINGERPRINT_RE.sub(JSII_ASSEMBLY_FINGERPRINT_TOKEN, data, count=1)
+    return normalize_release_bytes(data, version)
+
+
+def tarball_member_path_is_safe(name: str) -> bool:
+    """Reject absolute, traversing, empty and non-file member paths."""
+    if not name or name.startswith("/") or "\\" in name or "\x00" in name:
+        return False
+    return all(part not in ("", ".", "..") for part in name.split("/"))
+
+
+def normalize_jsii_tarball_bytes(data: bytes, version: str) -> bytes | None:
+    """Project a packed jsii tarball to the bytes it actually contributes.
+
+    A release renames and repacks the tarball. npm gzips a reproducible tar with
+    the host zlib, so the compressed bytes of an identical pack vary by host and
+    the checked-in bytes are not a digest input; ``scripts/lib/canonicalize-jsii-
+    tarballs.py`` shows the same variation. Every tar-level fact stays bound:
+    member order, path, mode, mtime, size and content, with the version literal
+    normalized and the packed assembly's ``fingerprint`` projected exactly as the
+    standalone assembly is.
+
+    The read is bounded and never extracts: ``tarfile`` in memory, regular files
+    only, safe relative paths, hard caps. Any other shape returns ``None`` so the
+    caller binds the raw archive bytes instead, which fails closed.
+    """
+    if len(data) > JSII_TARBALL_MAX_BYTES:
+        return None
+    try:
+        archive = tarfile.open(fileobj=io.BytesIO(data), mode="r:gz")
+    except (tarfile.TarError, OSError, EOFError):
+        return None
+    lines: list[bytes] = []
+    unpacked = 0
+    with archive:
+        try:
+            members = archive.getmembers()
+        except (tarfile.TarError, OSError, EOFError):
+            return None
+        if not members or len(members) > JSII_TARBALL_MAX_MEMBERS:
+            return None
+        for index, member in enumerate(members):
+            if not member.isfile() or not tarball_member_path_is_safe(member.name):
+                return None
+            unpacked += max(member.size, 0)
+            if unpacked > JSII_TARBALL_MAX_UNPACKED_BYTES:
+                return None
+            handle = archive.extractfile(member)
+            if handle is None:
+                return None
+            try:
+                payload = handle.read(member.size + 1)
+            except (tarfile.TarError, OSError, EOFError):
+                return None
+            if len(payload) != member.size:
+                return None
+            if member.name == JSII_TARBALL_ASSEMBLY_MEMBER:
+                payload = normalize_jsii_assembly_bytes(payload, version)
+            else:
+                payload = normalize_release_bytes(payload, version)
+            name = normalize_release_bytes(member.name.encode("utf-8"), version)
+            lines.append(
+                b"%06d\t%s\t%o\t%d\t%s\n"
+                % (index, name, member.mode, member.mtime, sha256_bytes(payload).encode("ascii"))
+            )
+    return RELEASE_DERIVED_HEADER + b"".join(lines)
+
+
+def normalize_release_derived_path(relative: str, version: str) -> str:
+    """The release-derived path with its version literal projected."""
+    if not version:
+        return relative
+    literal = version
+    return relative.replace("v" + literal, RELEASE_DERIVED_PATH_TOKEN).replace(
+        literal, RELEASE_DERIVED_PATH_TOKEN
+    )
+
+
+def normalize_release_derived_bytes(
+    relative: str, projection: str, data: bytes, version: str
+) -> bytes | None:
+    """Project one release-derived artifact, or ``None`` when it must stay raw.
+
+    ``None`` means the artifact did not have the declared shape, so the caller
+    binds its raw bytes: that fails closed on the next release instead of
+    silently accepting an artifact the projection does not describe.
+    """
+    if projection == "jsii-assembly":
+        return normalize_jsii_assembly_bytes(data, version)
+    if projection == "jsii-tarball":
+        return normalize_jsii_tarball_bytes(data, version)
+    raise EvidenceError(f"release-derived artifact {relative!r} declares unknown projection {projection!r}")
+
+
 @dataclass(frozen=True)
 class FileEntry:
     mode: int
     data: bytes
     release_only: bool
+    release_notes: bool = False
+    release_derived: str = ""
+    release_derived_entry: str = ""
 
 
 @dataclass(frozen=True)
@@ -471,7 +693,16 @@ def load_snapshot(root: Path, registry: Registry) -> Snapshot:
             continue
         mode, data = read_input_bytes(root, relative)
         release_only = matches_release_only(relative, registry)
-        files[relative] = FileEntry(mode=mode, data=data, release_only=release_only)
+        release_notes = release_only and matches_release_notes(relative, registry)
+        derived = matches_release_derived(relative, registry) if release_only else None
+        files[relative] = FileEntry(
+            mode=mode,
+            data=data,
+            release_only=release_only,
+            release_notes=release_notes,
+            release_derived=derived[1] if derived else "",
+            release_derived_entry=derived[0] if derived else "",
+        )
         content_digest = sha256_bytes(data)
         if matches_security_input(relative, registry):
             dependency_count += 1
@@ -479,13 +710,25 @@ def load_snapshot(root: Path, registry: Registry) -> Snapshot:
         if release_only:
             release_count += 1
             release_lines.append(b"%d\t%s\t%s\n" % (mode, relative.encode("utf-8"), content_digest.encode("ascii")))
-            normalized = normalize_release_bytes(data, version)
+            normalized_path = relative
+            if derived is not None:
+                projection = derived[1]
+                projected = normalize_release_derived_bytes(relative, projection, data, version)
+                normalized = data if projected is None else projected
+                normalized_path = normalize_release_derived_path(relative, version)
+            elif release_notes:
+                normalized = normalize_release_notes_bytes(relative, data)
+            else:
+                normalized = normalize_release_bytes(data, version)
             normalized_lines.append(
-                b"%d\t%s\t%s\n" % (mode, relative.encode("utf-8"), sha256_bytes(normalized).encode("ascii"))
+                b"%d\t%s\t%s\n"
+                % (mode, normalized_path.encode("utf-8"), sha256_bytes(normalized).encode("ascii"))
             )
         else:
             source_count += 1
             source_lines.append(b"%d\t%s\t%s\n" % (mode, relative.encode("utf-8"), content_digest.encode("ascii")))
+
+    require_single_release_derived_artifacts(files, registry)
 
     return Snapshot(
         files=files,
@@ -500,6 +743,28 @@ def load_snapshot(root: Path, registry: Registry) -> Snapshot:
     )
 
 
+def require_single_release_derived_artifacts(files: dict[str, FileEntry], registry: Registry) -> None:
+    """A versioned release-derived artifact class must name exactly one file.
+
+    Two tarballs (a leftover beside the new one), a missing tarball, or a name
+    that stopped matching all fail closed: a projection that silently covered
+    zero or several artifacts would let the class hide an input instead of
+    describe one.
+    """
+    counts: dict[str, int] = {}
+    for entry in files.values():
+        if entry.release_derived_entry:
+            counts[entry.release_derived_entry] = counts.get(entry.release_derived_entry, 0) + 1
+    for declared in release_derived_entries(registry.data):
+        if RELEASE_DERIVED_VERSION_TOKEN not in declared:
+            continue
+        found = counts.get(declared, 0)
+        if found != 1:
+            raise EvidenceError(
+                f"release-derived artifact set {declared!r} must name exactly one file; found {found}"
+            )
+
+
 def scope_digest(snapshot: Snapshot, patterns: list[str]) -> tuple[str, int]:
     lines: list[bytes] = []
     count = 0
@@ -507,10 +772,26 @@ def scope_digest(snapshot: Snapshot, patterns: list[str]) -> tuple[str, int]:
         if not matches_any(relative, patterns):
             continue
         entry = snapshot.files[relative]
-        data = normalize_release_bytes(entry.data, snapshot.release_version) if entry.release_only else entry.data
-        kind = b"release-normalized" if entry.release_only else b"source"
+        line_path = relative
+        if entry.release_derived:
+            projected = normalize_release_derived_bytes(
+                relative, entry.release_derived, entry.data, snapshot.release_version
+            )
+            data = entry.data if projected is None else projected
+            kind = b"release-derived"
+            line_path = normalize_release_derived_path(relative, snapshot.release_version)
+        elif entry.release_notes:
+            data = normalize_release_notes_bytes(relative, entry.data)
+            kind = b"release-notes"
+        elif entry.release_only:
+            data = normalize_release_bytes(entry.data, snapshot.release_version)
+            kind = b"release-normalized"
+        else:
+            data = entry.data
+            kind = b"source"
         lines.append(
-            b"%d\t%s\t%s\t%s\n" % (entry.mode, relative.encode("utf-8"), kind, sha256_bytes(data).encode("ascii"))
+            b"%d\t%s\t%s\t%s\n"
+            % (entry.mode, line_path.encode("utf-8"), kind, sha256_bytes(data).encode("ascii"))
         )
         count += 1
     payload = (
@@ -1399,35 +1680,6 @@ def write_record(root: Path, registry: Registry, record: dict[str, Any]) -> Path
     return target
 
 
-def record_produced_path(root: Path, target: Path) -> None:
-    """Append a record this process actually wrote to the producer manifest.
-
-    CI cannot upload a record it never wrote, and it must not upload a record
-    bundled with the checkout as if this run produced it. The manifest names the
-    exact files this process wrote, so the upload contract has real evidence to
-    check instead of a glob over whatever the checkout happened to contain.
-    """
-    manifest = os.environ.get(PRODUCED_MANIFEST_ENV, "")
-    if not manifest:
-        return
-    try:
-        relative = target.resolve().relative_to(root.resolve())
-    except ValueError as exc:
-        raise EvidenceError(f"produced record {target} is outside the repository root") from exc
-    try:
-        digest = sha256_bytes(target.read_bytes())
-    except OSError as exc:
-        raise EvidenceError(f"cannot read the produced record {target}: {exc}") from exc
-    try:
-        descriptor = os.open(manifest, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-    except OSError as exc:
-        raise EvidenceError(f"cannot append to the produced-record manifest {manifest}: {exc}") from exc
-    try:
-        os.write(descriptor, f"{relative}\t{digest}\n".encode("utf-8"))
-    finally:
-        os.close(descriptor)
-
-
 def execute_gate_commands(
     root: Path,
     registry: Registry,
@@ -1546,7 +1798,6 @@ def finalize_gate_record(
     verdict = str(record["verdict"])
     reason = str(record.get("reason") or "")
     target = write_record(root, registry, record)
-    record_produced_path(root, target)
     print(
         f"validation-evidence: gate={plan.gate_id} profile={plan.profile_id} action=executed verdict={verdict} "
         f"commands={len(commands)} executed={sum(1 for item in commands if item.get('executed'))} "
@@ -1889,7 +2140,6 @@ def collect(args: argparse.Namespace) -> int:
                 record["verdict"] = "FAIL"
                 record["reason"] = "relevant inputs changed during the run; the record is not reusable"
                 rewritten = write_record(root, registry, record)
-                record_produced_path(root, rewritten)
             print(
                 "validation-evidence: FAIL (relevant inputs changed during the run; "
                 "completed records were marked FAIL and retained)",
@@ -2242,11 +2492,12 @@ def verify(args: argparse.Namespace) -> int:
 
 
 def run_gate(args: argparse.Namespace) -> int:
-    """Execute one gate as the CI fallback and persist what actually ran.
+    """Execute one gate locally and persist what actually ran.
 
-    This is the entry point behind ``verify-or-execute.sh`` when no applicable
-    record exists. It must not merely print PASS: the whole reuse policy depends
-    on the execution writing a record the verifier accepts later. It therefore
+    This is the forced-execution entry point behind the generated release delta
+    smoke, and the raw form of the command collection schedules. It must not
+    merely print PASS: the whole policy depends on the execution writing a record
+    the verifier accepts later. It therefore
     validates that the live host can truthfully produce the requested profile
     (or a tracked fallback), snapshots the inputs before and after, retains a
     FAIL record for failed or tainted work, and writes the completed record
@@ -2429,156 +2680,6 @@ def finalize(args: argparse.Namespace) -> int:
     return EXIT_PASS
 
 
-def produced_records(args: argparse.Namespace) -> int:
-    """Resolve the records this job actually wrote into uploadable paths.
-
-    A workflow must upload the record its execution produced, not whatever
-    ``*.json`` the checkout happened to contain. This reads the producer
-    manifest written by real record writes, checks each named path is the exact
-    gate/profile record for the tracked registry, is present, is not bundled
-    with the checkout, and (for a PASS record) still verifies on the current
-    inputs. When nothing was produced it reports ``any=false`` so the upload
-    step is skipped instead of publishing stale receipts as new proof.
-    """
-    registry = load_registry(args.registry)
-    root = repo_root(args.root)
-    manifest_value = args.manifest or os.environ.get(PRODUCED_MANIFEST_ENV, "")
-    if args.require_manifest and not manifest_value:
-        raise EvidenceError(
-            f"no producer manifest is configured; set {PRODUCED_MANIFEST_ENV} "
-            "so a CI job can require the records it actually wrote"
-        )
-    entries: list[tuple[str, str]] = []
-    if manifest_value:
-        manifest_path = Path(manifest_value)
-        if not manifest_path.is_absolute():
-            manifest_path = root / manifest_path
-        if manifest_path.is_file():
-            for line in manifest_path.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                relative_text, _, digest_text = line.strip().partition("\t")
-                candidate = Path(relative_text.strip())
-                if candidate.is_absolute():
-                    try:
-                        candidate = candidate.resolve().relative_to(root.resolve())
-                    except ValueError as exc:
-                        raise EvidenceError(
-                            f"produced record {relative_text!r} is outside the repository"
-                        ) from exc
-                entry = (str(candidate).strip("/"), digest_text.strip())
-                # A later write of the same record supersedes an earlier one (a
-                # taint rewrite keeps the retained FAIL result authoritative).
-                entries = [item for item in entries if item[0] != entry[0]]
-                entries.append(entry)
-
-    verified: list[str] = []
-    evidence_directory = registry.evidence_directory
-    for relative, expected_digest in entries:
-        # The evidence directory is itself a path, so a record sits at
-        # <directory>/<gate>/<profile>.json at whatever depth the registry names.
-        record_parts: tuple[str, ...] = ()
-        if is_evidence_path(relative, evidence_directory):
-            record_parts = Path(relative[len(evidence_directory) :].lstrip("/")).parts
-        if len(record_parts) != 2 or not record_parts[1].endswith(".json"):
-            raise EvidenceError(
-                f"produced evidence path {relative!r} is not "
-                f"{evidence_directory}/<gate>/<profile>.json"
-            )
-        gate_id, profile_id = record_parts[0], record_parts[1][: -len(".json")]
-        if not GATE_ID_RE.fullmatch(gate_id) or not PROFILE_ID_RE.fullmatch(profile_id):
-            raise EvidenceError(f"produced evidence path {relative!r} names an invalid gate or profile")
-        if gate_id not in registry.gates:
-            raise EvidenceError(f"produced evidence path {relative!r} names an unapproved gate")
-        gate = registry.gates[gate_id]
-        if profile_id not in gate_profile_ids(gate, gate_id) or profile_id not in registry.profiles:
-            raise EvidenceError(
-                f"produced evidence path {relative!r} names a profile the gate does not support"
-            )
-        target = record_path_for(root, registry, gate_id, profile_id)
-        if not target.is_file():
-            raise EvidenceError(f"produced record is missing: {relative}")
-        try:
-            payload = target.read_bytes()
-        except OSError as exc:
-            raise EvidenceError(f"produced record {relative} is unreadable: {exc}") from exc
-        if expected_digest and not DIGEST_RE.fullmatch(expected_digest):
-            raise EvidenceError(f"produced manifest digest for {relative} is malformed")
-        if expected_digest and sha256_bytes(payload) != expected_digest:
-            raise EvidenceError(f"produced record {relative} changed after it was written")
-        tracked = subprocess.run(
-            ["git", "ls-files", "--error-unmatch", "--", relative],
-            cwd=root,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if tracked.returncode == 0:
-            unchanged = subprocess.run(
-                ["git", "diff", "--quiet", "--", relative],
-                cwd=root,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if unchanged.returncode == 0:
-                raise EvidenceError(
-                    f"{relative} is bundled with the checkout, not produced by this run"
-                )
-            if unchanged.returncode != 1:
-                raise EvidenceError(f"cannot compare {relative} with the checkout: {unchanged.stderr.strip()}")
-        try:
-            record = json.loads(payload.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise EvidenceError(f"produced record {relative} is unreadable: {exc}") from exc
-        if not isinstance(record, dict) or record.get("gate") != gate_id or record.get("profile") != profile_id:
-            raise EvidenceError(f"produced record {relative} does not describe {gate_id}/{profile_id}")
-        verdict = record.get("verdict")
-        if verdict not in {"PASS", "FAIL"}:
-            raise EvidenceError(f"produced record {relative} has an invalid verdict {verdict!r}")
-        if verdict == "PASS":
-            completed = subprocess.run(
-                [
-                    sys.executable,
-                    str(Path(__file__).resolve()),
-                    "--registry",
-                    str(registry.path),
-                    "verify",
-                    "--root",
-                    str(root),
-                    "--gate",
-                    gate_id,
-                    "--profile",
-                    profile_id,
-                ],
-                cwd=root,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if completed.returncode != 0:
-                detail = (completed.stderr.strip().splitlines() or ["verification failed"])[-1]
-                raise EvidenceError(f"produced record {relative} does not verify: {detail}")
-        verified.append(relative)
-
-    any_value = "true" if verified else "false"
-    output_path = os.environ.get("GITHUB_OUTPUT", "")
-    if output_path:
-        with open(output_path, "a", encoding="utf-8") as handle:
-            handle.write(f"any={any_value}\n")
-        if verified:
-            with open(output_path, "a", encoding="utf-8") as handle:
-                handle.write("paths<<APPTHEORY_PRODUCED_RECORDS\n")
-                for relative in verified:
-                    handle.write(f"{relative}\n")
-                handle.write("APPTHEORY_PRODUCED_RECORDS\n")
-    else:
-        for relative in verified:
-            print(relative)
-    print(f"produced-records: any={any_value} records={len(verified)}")
-    return EXIT_PASS
-
-
 def build_parser() -> argparse.ArgumentParser:
     default_registry = Path(__file__).resolve().with_name("validation-gates.json")
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -2622,22 +2723,6 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--profile", help="tracked proof profile to record (requests a fallback when the host cannot produce it)")
     run_parser.add_argument("--forced", action="store_true", help="required: execute every command and refuse nested composition")
     run_parser.set_defaults(handler=run_gate)
-
-    produced_parser = subparsers.add_parser(
-        "produced-records",
-        help="resolve the records this job wrote into strict upload paths",
-    )
-    produced_parser.add_argument("--root", type=Path)
-    produced_parser.add_argument(
-        "--manifest",
-        help=f"producer manifest (default: ${PRODUCED_MANIFEST_ENV})",
-    )
-    produced_parser.add_argument(
-        "--require-manifest",
-        action="store_true",
-        help="fail when no producer manifest is configured (CI upload contract)",
-    )
-    produced_parser.set_defaults(handler=produced_records)
 
     finalize_parser = subparsers.add_parser("finalize", help="add review references to an existing record")
     finalize_parser.add_argument("--root", type=Path)

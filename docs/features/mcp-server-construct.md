@@ -277,30 +277,54 @@ new AppTheoryMcpServer(this, "TmsMcp", {
 
 - `frontDoorVerification` is mandatory with `fronted` and refused under every other decision. `headerName` must be 1 to
   64 characters of `[A-Za-z0-9-]` and a header the front door can set (reserved request headers, `x-amz-*`,
-  `x-amzn-*`, and `cloudfront-*` names are refused); `secretValue` must be 32 to 128 characters of `[A-Za-z0-9._~-]`;
-  `asserted` must be `true`. `fronted` is refused in owned mode, where `disabled` or `locked` wires the front door.
+  `x-amzn-*`, and `cloudfront-*` names are refused); `asserted` must be `true`. Supply exactly one secret form:
+  `secretValue`, the literal 32 to 128 characters of `[A-Za-z0-9._~-]`, or `secretParameterName`, a well-known SSM
+  parameter. `fronted` is refused in owned mode, where `disabled` or `locked` wires the front door.
 - The synthesized `apptheory:mcp-transport-posture` marker records, in addition to the transport posture,
-  `origin_reachability: "fronted"`, `front_door_header_name`, and `front_door_secret_sha256` — a SHA-256 digest of the
-  declared secret. The literal secret never lands in the template or in CloudFormation: the prop value is consumed at
-  synthesis for validation and the digest only. `disabled` and `locked` markers are unchanged.
-- **Three copies, one constant.** Because the distribution is app-owned, the declaration is only as good as its
+  `origin_reachability: "fronted"` and `front_door_header_name`. The literal form adds
+  `front_door_secret_sha256` — a SHA-256 digest of the declared secret — and never emits the literal. The parameter
+  form adds `front_door_secret_source: "ssm-parameter"` and `front_door_secret_parameter_name` and emits no digest,
+  because the application holds no literal to digest. `disabled` and `locked` markers are unchanged.
+- **Parameter form: no literal in source.** `secretParameterName` names a well-known, stage-qualified Parameter Store
+  parameter that the application's installer creates if absent (see
+  [Namespace Install Parameters](install-parameters.md#well-known-front-door-parameters-for-fronted)). The construct
+  exposes `frontDoorOriginHeader` — `{ headerName, headerValue }` — for the distribution origin the app owns:
+
+  ```ts
+  const origin = new origins.HttpOrigin(`${api.apiId}.execute-api.${stack.region}.${stack.urlSuffix}`, {
+    customHeaders: {
+      [server.frontDoorOriginHeader!.headerName]: server.frontDoorOriginHeader!.headerValue,
+    },
+  });
+  ```
+
+  Under the parameter form `headerValue` is `{{resolve:ssm:/<namespace>/<app>/<stage>/fronted/origin-token}}`, a
+  CloudFormation dynamic reference, so the synthesized distribution carries the parameter name rather than the value.
+  The parameter **must be type `String`**: AWS lists the resource properties that support `ssm-secure` exhaustively and
+  `AWS::CloudFront::Distribution` is not among them, so a `SecureString` cannot feed the origin header. The value is
+  defense-in-depth against direct origin access, not a confidentiality control — anyone who can read the parameter, or
+  `cloudfront:GetDistributionConfig`, can read the header.
+- **Rotation and propagation.** CloudFormation resolves the reference at stack create/update time (latest version
+  unless the reference pins one) and does not re-resolve it on drift detection, so updating the parameter alone does
+  not move the distribution: perform a stack update. The runtime reads the same parameter lazily and refreshes on a
+  verification mismatch or after its TTL, so the first request carrying the new value is admitted. The runtime image
+  needs `ssm:GetParameter` on exactly that parameter ARN; the construct adds that grant to `handler`, plus
+  `kms:Decrypt` when a `secretParameterKmsKey` is declared.
+- **One constant, three copies.** Because the distribution is app-owned, the declaration is only as good as its
   copies: the construct prop, the distribution's origin custom-header configuration, and the runtime's front-door
-  verification config must all come from one application-owned constant. The construct proves its own copy only. An
-  unwired `fronted` **enforces nothing**.
+  verification config must agree. The construct proves its own copy only. An unwired `fronted` **enforces nothing**.
 - Enforcement lives in the runtime. `mcpfacade.FacadeConfig` (Go), `registerMcpFacade` (TypeScript), and
   `register_mcp_facade` (Python) take `OriginReachability` / `originReachability` / `origin_reachability` plus
   `FrontDoorVerification` / `frontDoorVerification` / `front_door_verification`. Registration fails closed when
   `fronted` is declared without the verification. Under it, every derived route — the MCP transport routes **and** the
   OAuth facade paths (protected-resource metadata, both discovery documents, authorize, token, register, and the
   upstream callback) — refuses a request whose declared header is absent or wrong with `403 app.forbidden` before any
-  credential work. A direct-origin request that bypasses the front door is therefore refused on every route.
+  credential work. A direct-origin request that bypasses the front door is therefore refused on every route. Under the
+  parameter form a read failure, an empty value, or a value outside the documented alphabet refuses the same way; the
+  route is never left open.
 - `fronted` is a **defense-in-depth declaration with runtime enforcement**. It is not mutual-TLS assurance (that is
   `locked`), it does not make the origin unreachable (that is `disabled`), and it cannot be proven by synthesis. The
   adoption-time proof is the receipted run: a request without the declared header is refused.
-- The distribution's own origin custom-header configuration necessarily carries the literal value in the application's
-  template, because CloudFront origin custom headers are plain strings. That copy is application-owned; keep the value
-  out of committed source (inject it from your normal configuration source), rotate by changing it and redeploying, and
-  never reuse a secret that protects anything else.
 
 Discovery, protected-resource metadata, authorize, and token routes stay explicitly `NONE` so a supplied API's default
 authorizer cannot intercept OAuth traffic: OAuth clients must fetch those documents before they hold a token. Scope

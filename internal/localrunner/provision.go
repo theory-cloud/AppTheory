@@ -55,6 +55,9 @@ func (r *Runner) provisionResources(ctx context.Context, spec *Spec) error {
 	if err := r.provisionSSMParameters(ctx, spec); err != nil {
 		return err
 	}
+	if err := r.provisionFrontDoorParameters(ctx); err != nil {
+		return err
+	}
 	if err := r.provisionSecrets(ctx, spec); err != nil {
 		return err
 	}

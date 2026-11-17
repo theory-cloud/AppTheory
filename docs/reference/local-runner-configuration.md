@@ -35,6 +35,7 @@ function the CDK definition targets and reads one JSON command per line.
 | `--image class=ref` | profile | Override a runtime image pin (`go`, `node`, `python`). The reference must be `…@sha256:<64 hex>`. |
 | `--endpoint service=url` | none | Inject a local AWS endpoint for `service` (`dynamodb`, `sqs`, `s3`, …). Repeatable. |
 | `--origin domain=url` | none | Map a CloudFront external custom origin's domain to a loopback URL. An unmapped external origin refuses the distribution at plan time; a non-loopback URL is refused. Repeatable. |
+| `--front-door-parameter NAME` | none | A well-known SSM parameter a `FRONTED` app reads by name. The run creates it in its local SSM store when absent, with a generated value of the documented `[A-Za-z0-9._~-]` alphabet and 32-128 length, never overwrites an existing one, and resolves a CloudFront origin custom header that references it through `{{resolve:ssm:…}}`. No AWS call. Repeatable. |
 | `--viewer-country XX` | unset (undetermined) | CloudFront geo restriction's viewer country: an ISO 3166-1 alpha-2 code in upper case. Without it the viewer's location is undetermined and CloudFront serves the content. Also feeds `CloudFront-Viewer-Country` when a policy forwards it. |
 | `--add-host name=address` | none | Extra `/etc/hosts` entry inside function containers. Repeatable. |
 | `--backend NAME` | none | Start a profile emulator on the run network: `dynamodb`, `sqs`, or a profile container such as `moto` (KMS, STS, SSM, Secrets Manager, SNS, Kinesis, Cognito) or `s3proxy` (S3). Repeatable. |

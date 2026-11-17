@@ -9,6 +9,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-lambda-go/events"
@@ -66,21 +67,32 @@ func serveFixtureP0(app *apptheory.App, f Fixture) (apptheory.Response, error) {
 		return serveFixtureP0AWS(app, f.Input.AWSEvent)
 	}
 
+	if f.Input.WarmupRequest != nil {
+		if _, err := serveFixtureP0Request(app, *f.Input.WarmupRequest); err != nil {
+			return apptheory.Response{}, fmt.Errorf("serve warmup request: %w", err)
+		}
+		time.Sleep(fixtureFrontDoorRotationPause)
+	}
+
 	if f.Input.Request == nil {
 		return apptheory.Response{}, fmt.Errorf("fixture missing input.request")
 	}
-	bodyBytes, err := decodeFixtureBody(f.Input.Request.Body)
+	return serveFixtureP0Request(app, *f.Input.Request)
+}
+
+func serveFixtureP0Request(app *apptheory.App, input FixtureRequest) (apptheory.Response, error) {
+	bodyBytes, err := decodeFixtureBody(input.Body)
 	if err != nil {
 		return apptheory.Response{}, fmt.Errorf("decode request body: %w", err)
 	}
 
 	req := apptheory.Request{
-		Method:   f.Input.Request.Method,
-		Path:     f.Input.Request.Path,
-		Query:    f.Input.Request.Query,
-		Headers:  f.Input.Request.Headers,
+		Method:   input.Method,
+		Path:     input.Path,
+		Query:    input.Query,
+		Headers:  input.Headers,
 		Body:     bodyBytes,
-		IsBase64: f.Input.Request.IsBase64,
+		IsBase64: input.IsBase64,
 	}
 
 	return app.Serve(context.Background(), req), nil
@@ -131,9 +143,13 @@ func registerFixtureMCPFacade(app *apptheory.App, setup FixtureMCPFacadeSetup) e
 
 	if setup.FrontDoorVerification != nil {
 		config.FrontDoorVerification = &mcpfacade.FrontDoorVerification{
-			HeaderName:  setup.FrontDoorVerification.HeaderName,
-			SecretValue: setup.FrontDoorVerification.SecretValue,
+			HeaderName:          setup.FrontDoorVerification.HeaderName,
+			SecretValue:         setup.FrontDoorVerification.SecretValue,
+			SecretParameterName: setup.FrontDoorVerification.SecretParameterName,
 		}
+	}
+	if setup.FrontDoorParameterReads != nil {
+		config.FrontDoorSecretReader = fixtureFrontDoorParameterSource(setup.FrontDoorParameterReads)
 	}
 
 	if setup.Bearer != nil {
@@ -168,6 +184,34 @@ func registerFixtureMCPFacade(app *apptheory.App, setup FixtureMCPFacadeSetup) e
 
 func fixtureMCPFacadeHandler(*apptheory.Context) (*apptheory.Response, error) {
 	return apptheory.NoContent(), nil
+}
+
+// fixtureFrontDoorRotationPause waits past the runtime's documented one-second
+// front-door secret refresh floor, so a warmup request followed by a request
+// carrying the rotated value observes the mismatch-triggered re-read.
+const fixtureFrontDoorRotationPause = 1100 * time.Millisecond
+
+// fixtureFrontDoorParameterSource serves the ordered read results a fixture
+// declares for the front-door parameter, so the corpus pins the parameter form
+// without an AWS call. A null entry is a read failure and the last entry repeats.
+func fixtureFrontDoorParameterSource(reads []*string) mcpfacade.FrontDoorSecretReader {
+	var mu sync.Mutex
+	read := 0
+	return func(_ context.Context, parameterName string) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(reads) == 0 {
+			return "", fmt.Errorf("front-door parameter %s is unreadable", parameterName)
+		}
+		value := reads[read]
+		if read < len(reads)-1 {
+			read++
+		}
+		if value == nil {
+			return "", fmt.Errorf("front-door parameter %s is unreadable", parameterName)
+		}
+		return *value, nil
+	}
 }
 
 func fixtureMCPFacadeValue(value, fallback string) string {

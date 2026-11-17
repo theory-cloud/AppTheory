@@ -82,7 +82,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/py.txt`.
 
 <details>
-<summary>836 exported top-level symbols</summary>
+<summary>838 exported top-level symbols</summary>
 
 ```text
 AGENT_MCP_PATTERN, App, AppError, AppSyncContext, AppSyncResolverEvent, AppSyncResolverInfo, AppSyncResolverRequest, AppTheoryError,
@@ -108,7 +108,7 @@ create_fake_vector_store, create_fake_websocket_client_factory, create_kinesis_j
 create_memory_microvm_session_registry, create_microvm_controller, create_microvm_lifecycle_adapter, create_microvm_registry_client,
 create_real_microvm_controller, create_reconstructing_microvm_session_registry, create_s3_object_store, create_s3_vector_store,
 create_tabletheory_microvm_session_registry, create_test_env, decode_cloudwatch_logs_subscription, decode_logging_profile_json, DEFAULT_CALLBACK_PATH,
-default_capabilities, default_config, default_jobs_config, DEFAULT_JOBS_TABLE_NAME, default_logging_profile, default_mcp_stream_model,
+default_capabilities, default_config, DEFAULT_FRONT_DOOR_SECRET_TTL_SECONDS, default_jobs_config, DEFAULT_JOBS_TABLE_NAME, default_logging_profile, default_mcp_stream_model,
 default_mcp_task_model, default_microvm_controller_contract, default_microvm_lifecycle_contract, default_microvm_operation_contract,
 default_microvm_provider_state_mappings, default_microvm_real_lifecycle_contract, default_microvm_session_registry_contract, DEFAULT_REFRESH_BUDGET_SECONDS,
 DEFAULT_REFRESH_GRACE_WINDOW_SECONDS, DEFAULT_STREAM_TABLE_NAME, DEFAULT_TASK_TABLE_NAME, DefaultEmbeddingDimensions, DefaultQueryTopK,
@@ -135,7 +135,7 @@ LOGGING_PROFILE_LOCAL_DEV, LOGGING_PROFILE_PAYTHEORY_ALERT_V1, LOGGING_PROFILE_S
 LoggingProfileAlertingHints, LoggingProfileConfig, LoggingProfileEncoding, LoggingProfileEnrichment, LoggingProfileError, LoggingProfileErrorCapture,
 LoggingProfileEvent, LoggingProfileJobContext, LoggingProfileRequestContext, LoggingProfileSanitization, LoggingProfileSanitizer,
 LoggingProfileValidationError, ManualClock, ManualIdGenerator, map_microvm_provider_state, mask_first_last, mask_first_last4, matches_if_none_match,
-MAX_CLIENT_REQUEST_ID_LENGTH, max_length, MAX_PRESIGN_PUT_EXPIRES_IN, MAX_REFRESH_BUDGET_SECONDS, MAX_REFRESH_GRACE_WINDOW_SECONDS,
+MAX_CLIENT_REQUEST_ID_LENGTH, MAX_FRONT_DOOR_SECRET_TTL_SECONDS, max_length, MAX_PRESIGN_PUT_EXPIRES_IN, MAX_REFRESH_BUDGET_SECONDS, MAX_REFRESH_GRACE_WINDOW_SECONDS,
 MAX_REFRESH_REUSE_RATE_CEILING, max_value, MaxPutDeleteBatchSize, MaxQueryTopK, MCP_CODE_HEADER_MISMATCH, MCP_CODE_INTERNAL_ERROR, MCP_CODE_INVALID_PARAMS,
 MCP_CODE_INVALID_REQUEST, MCP_CODE_METHOD_NOT_FOUND, MCP_CODE_MISSING_REQUIRED_CLIENT_CAPABILITY, MCP_CODE_PARSE_ERROR, MCP_CODE_SERVER_ERROR,
 MCP_CODE_UNSUPPORTED_PROTOCOL_VERSION, MCP_HEADER_LAST_EVENT_ID, MCP_HEADER_METHOD, MCP_HEADER_NAME, MCP_HEADER_PROTOCOL_VERSION, MCP_HEADER_SESSION_ID,

@@ -1,5 +1,22 @@
 # Changelog
 
+## [7.3.1](https://github.com/theory-cloud/AppTheory/compare/v7.3.0...v7.3.1) (2026-11-14)
+
+
+### Bug Fixes
+
+* **ci:** keep the rubric fallback's composed packaging control green ([132e5d1](https://github.com/theory-cloud/AppTheory/commit/132e5d11dcc403b4466b24d6ad74cf7e0f6228a2))
+* **ci:** match the linux-x64 profile on a linux/x86_64 runner ([6edd62d](https://github.com/theory-cloud/AppTheory/commit/6edd62de906ef3ac4594f6584269b71904c01172))
+* **ci:** record evidence at the final validated head ([92a2062](https://github.com/theory-cloud/AppTheory/commit/92a2062b7f581b81e67b39f073370051ce505769))
+* **localrunner:** create --data-dir queues in ElasticMQ's restore ([2d6e0a7](https://github.com/theory-cloud/AppTheory/commit/2d6e0a761c3eaf4924b05aa4d9da3c481357dcd0))
+* **localrunner:** restore --data-dir SQS queues from ElasticMQ's startup configuration ([8ef3c81](https://github.com/theory-cloud/AppTheory/commit/8ef3c81254c2c31875e2ec1aaf73982281807e9d))
+* **premain:** release 7.3.1-rc ([080ad74](https://github.com/theory-cloud/AppTheory/commit/080ad74e7c507ea6f9b043b4e2617266d3511053))
+* **premain:** release 7.3.1-rc ([0a30bc9](https://github.com/theory-cloud/AppTheory/commit/0a30bc91ca51a522b5ff1357643005d74d794843))
+* **release:** merge v7.3.0 back into staging and repair evidence fallbacks ([9f44722](https://github.com/theory-cloud/AppTheory/commit/9f447224e0387fdfa9521d85b2f0b02f271e0474))
+* **release:** merge v7.3.0 release back into staging ([e77e6b1](https://github.com/theory-cloud/AppTheory/commit/e77e6b10db82eb491c83b54832481d3dc4e0d1d3))
+* **release:** promote staging to premain (local runner --data-dir SQS fix) ([d800123](https://github.com/theory-cloud/AppTheory/commit/d8001239c8581e9bd008e59b0af024f6b7a1579b))
+* **release:** sync generated release artifacts ([34743c3](https://github.com/theory-cloud/AppTheory/commit/34743c3f77ffa8d5f40e2249c4de98411a20f0de))
+
 ## [7.3.1-rc](https://github.com/theory-cloud/AppTheory/compare/v7.3.0...v7.3.1-rc) (2026-11-14)
 
 

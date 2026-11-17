@@ -2,6 +2,7 @@ import { RemovalPolicy } from "aws-cdk-lib";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import type * as kms from "aws-cdk-lib/aws-kms";
 import type * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as route53 from "aws-cdk-lib/aws-route53";
@@ -108,8 +109,18 @@ export declare enum AppTheoryMcpOriginReachability {
  * declaration therefore carries three independently wired copies that must come
  * from one application-owned constant: this prop, the distribution's origin
  * custom-header configuration, and the runtime's front-door verification
- * config. The construct proves only its own copy, and the literal secret is
- * consumed at synthesis for validation and the SHA-256 digest only.
+ * config. The construct proves only its own copy.
+ *
+ * Supply exactly one of `secretValue` and `secretParameterName`:
+ *
+ * - `secretValue` is the v7.3 literal form. It is consumed at synthesis for
+ *   validation and the recorded SHA-256 digest only, and it never lands in the
+ *   construct's own synthesized template.
+ * - `secretParameterName` names a well-known, stage-qualified Parameter Store
+ *   parameter that the application's installer creates if absent. The value
+ *   never enters the application source: the construct renders the header value
+ *   as a CloudFormation `ssm` dynamic reference and records the parameter name
+ *   instead of a digest.
  */
 export interface AppTheoryMcpFrontDoorVerificationOptions {
     /**
@@ -129,11 +140,55 @@ export interface AppTheoryMcpFrontDoorVerificationOptions {
      * 32 to 128 characters of `[A-Za-z0-9._~-]`: a header-value-safe alphabet
      * with no whitespace and no control characters. The value is consumed at
      * synthesis for validation and the recorded SHA-256 digest only — the literal
-     * never lands in the synthesized template or in CloudFormation. It is not a
-     * credential store; rotation means changing the value and redeploying, and it
-     * must not be (or contain) a secret that protects anything else.
+     * never lands in the construct's synthesized template or in CloudFormation.
+     * It is not a credential store; rotation means changing the value and
+     * redeploying, and it must not be (or contain) a secret that protects
+     * anything else.
+     *
+     * Mutually exclusive with `secretParameterName`. Prefer the parameter form:
+     * a committed literal is exactly what the parameter form removes.
+     * @default undefined
      */
-    readonly secretValue: string;
+    readonly secretValue?: string;
+    /**
+     * The well-known, stage-qualified Parameter Store parameter that holds the
+     * front-door secret.
+     *
+     * A fully qualified name from `/`, at most 1011 characters and fifteen
+     * levels, in the `[A-Za-z0-9_.\-/]` alphabet a CloudFormation `ssm` dynamic
+     * reference accepts, and never in the reserved `aws`/`ssm` hierarchy.
+     *
+     * The parameter must be type **String**, not SecureString: CloudFront's
+     * `OriginCustomHeaders` supports the plaintext `ssm` reference only, and AWS
+     * lists the properties that support `ssm-secure` exhaustively (CloudFront is
+     * not one of them). The value is therefore defense-in-depth against direct
+     * origin access, not a confidentiality control — the same posture as the
+     * literal form, which CloudFront already exposes through
+     * `GetDistributionConfig`.
+     *
+     * `frontDoorOriginHeader` renders the dynamic reference for the distribution
+     * the app wires, e.g. `{{resolve:ssm:/theorycloud/tms/lab/fronted-token}}`,
+     * and the construct grants `ssm:GetParameter` on exactly this parameter to
+     * `handler`. A stack update re-resolves the latest parameter version; drift
+     * detection does not see dynamic references.
+     *
+     * Mutually exclusive with `secretValue`.
+     * @default undefined
+     */
+    readonly secretParameterName?: string;
+    /**
+     * The customer managed key that encrypts the parameter when it is a
+     * SecureString.
+     *
+     * FRONTED cannot use a SecureString for the distribution header (see
+     * `secretParameterName`), so this is only meaningful when the same well-known
+     * name is also read for a purpose other than the origin header. When it is
+     * set the construct grants `kms:Decrypt` on the key to `handler`. Leave it
+     * unset for a String parameter: Parameter Store needs no KMS permission for
+     * plaintext values.
+     * @default undefined
+     */
+    readonly secretParameterKmsKey?: kms.IKey;
     /**
      * The assertion that the runtime verifies the front-door header on every
      * derived route.
@@ -143,6 +198,19 @@ export interface AppTheoryMcpFrontDoorVerificationOptions {
      * caller records that the verification exists. Must be `true`.
      */
     readonly asserted: boolean;
+}
+/**
+ * The origin custom header the application wires into its front door.
+ *
+ * `headerValue` is the literal for the literal form and a CloudFormation
+ * `ssm` dynamic reference for the parameter form, so the parameter value never
+ * enters the application source.
+ */
+export interface AppTheoryMcpFrontDoorHeader {
+    /** The origin request header name to send to the origin. */
+    readonly headerName: string;
+    /** The header value: a literal, or a `{{resolve:ssm:...}}` dynamic reference. */
+    readonly headerValue: string;
 }
 /** Denial-telemetry declaration required under `runtime-bearer`. */
 export interface AppTheoryMcpDenialSignalOptions {
@@ -426,10 +494,13 @@ export interface AppTheoryMcpServerProps {
      * Front-door verification declaration, required with
      * `originReachability: FRONTED` and refused under every other decision.
      *
-     * The construct records the posture, the header name, and a SHA-256 digest of
-     * the declared secret in the `apptheory:mcp-transport-posture` metadata; it
-     * never emits the literal secret. Enforcement is the runtime's front-door
-     * header check, so an unwired runtime enforces nothing.
+     * The construct records the posture, the header name, and either a SHA-256
+     * digest of the declared literal or the well-known parameter name in the
+     * `apptheory:mcp-transport-posture` metadata; it never emits the secret
+     * value. `frontDoorOriginHeader` is the origin custom header the application
+     * wires, and for the parameter form its value is a CloudFormation dynamic
+     * reference. Enforcement is the runtime's front-door header check, so an
+     * unwired runtime enforces nothing.
      * @default undefined
      */
     readonly frontDoorVerification?: AppTheoryMcpFrontDoorVerificationOptions;
@@ -571,6 +642,17 @@ export declare class AppTheoryMcpServer extends Construct {
     readonly apiMapping?: apigwv2.ApiMapping;
     readonly cnameRecord?: route53.CnameRecord;
     readonly accessLogGroup?: logs.ILogGroup;
+    /**
+     * The origin custom header the app-owned front door must send on every origin
+     * request, present only under `originReachability: FRONTED`.
+     *
+     * Wire it into the distribution origin:
+     * `origins.HttpOrigin(host, { customHeaders: { [h.headerName]: h.headerValue } })`.
+     * Under the parameter form `headerValue` is a `{{resolve:ssm:...}}`
+     * CloudFormation dynamic reference, so the value never enters the
+     * application source or the construct's template.
+     */
+    readonly frontDoorOriginHeader?: AppTheoryMcpFrontDoorHeader;
     constructor(scope: Construct, id: string, props: AppTheoryMcpServerProps);
     private addRuntimeRoute;
     private nextRouteConstructId;

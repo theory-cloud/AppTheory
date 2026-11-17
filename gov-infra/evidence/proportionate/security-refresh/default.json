@@ -5,24 +5,24 @@
         "bash",
         "scripts/verify-security-refresh.sh"
       ],
-      "durationSeconds": 41.609,
+      "durationSeconds": 30.449,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-13T02:47:02Z",
+      "finishedAt": "2026-11-17T00:14:23Z",
       "id": "security-refresh",
-      "inputsDigest": "sha256:8249334046e66f3686d5dc6b914e663620e416f064d028fbde4fe354ce5fe454",
-      "logDigest": "sha256:2c1d731c7e56e8ffe95df82d1b0ed6d193e2d14b8ae6bebead5677679500dd60",
-      "logRef": "gov-infra/evidence/proportionate/local/security-refresh-security-refresh-20261113T024620Z-69804.log",
+      "inputsDigest": "sha256:bc82c69ca753b5ec50fab6d20b73f4a4d994f0c6cdc6ef0da598ec5f048f188e",
+      "logDigest": "sha256:974dceff2e7a7313004b87733e9dffca07fba6c53b7c22c1d70109f23381d20d",
+      "logRef": "gov-infra/evidence/proportionate/local/security-refresh-security-refresh-20261117T001353Z-32622.log",
       "reused": false,
-      "startedAt": "2026-11-13T02:46:20Z"
+      "startedAt": "2026-11-17T00:13:53Z"
     }
   ],
   "consumed": [],
   "dependency": {
-    "digest": "sha256:17ec847bc2954e0dfbda12d777d111085c128935f13eca78c5228202cd83eaf8",
+    "digest": "sha256:657f641ea35463a2e2a7f4265348f69e474a7264c7c16d052f8b8361d1f8b2c1",
     "fileCount": 35
   },
-  "description": "Dependency vulnerability refresh bounded by the tracked max age",
+  "description": "Dependency vulnerability refresh bounded by the tracked max age, verified on the promotion pull request so a stale scan record fails there",
   "environment": {
     "go": "go1.27.4",
     "node": "v24.21.0",
@@ -40,21 +40,21 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-13T02:47:02Z",
+  "recordedAt": "2026-11-17T00:14:23Z",
   "releaseOnly": {
-    "digest": "sha256:1dc919d2a5e8962c22283972db036b1366abe5d3308ab8840906a1e273711b64",
-    "fileCount": 476,
-    "normalizedDigest": "sha256:a1a1d61689822e006d9c7c4c60a860d063ede848af626f804ba22ce0f0bf2df8",
-    "version": "7.3.0"
+    "digest": "sha256:32f9c041eb6755559c7f88de114a0fb57a4a8f981b39ae32e4321c7fad8c3b4a",
+    "fileCount": 477,
+    "normalizedDigest": "sha256:04e7d83a21a6f9f1ee749046e949340496152a2c2d4363d2b5d0edc921d1b8d8",
+    "version": "7.3.1"
   },
   "reviews": [],
   "scan": {
     "maxAgeSeconds": 86400,
-    "scannedAt": "2026-11-13T02:47:02Z"
+    "scannedAt": "2026-11-17T00:14:23Z"
   },
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:4a203796cfb600445aa8e764d1ddd6ff6c316fb300c96762ed94b4a96818cdb7",
+    "digest": "sha256:6453365ef7f7b165d33241ffc4209c19af2a5bd4f70d8e00df9f8d7eb9df3f45",
     "fileCount": 37,
     "paths": [
       "go.mod",
@@ -77,8 +77,8 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:bfb556022f91a4ce4f50e3da1cbdd3d0231789b65ec39a6b1ca9a9b9bba6d1b9",
-    "fileCount": 2658
+    "digest": "sha256:ae42f316c40c8abeabeaa37b332f413af3a0e5131c17b9532bd5334e08b6ce16",
+    "fileCount": 2672
   },
   "verdict": "PASS"
 }

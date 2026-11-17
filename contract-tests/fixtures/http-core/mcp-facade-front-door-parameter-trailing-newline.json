@@ -1,0 +1,19 @@
+{
+  "id": "p0.mcp_facade.front_door_parameter_trailing_newline",
+  "tier": "p0",
+  "name": "MCP facade: a secret parameter name with a trailing newline fails registration closed",
+  "setup": {
+    "mcp_facade": {
+      "origin_reachability": "fronted",
+      "front_door_verification": {
+        "header_name": "x-front-door",
+        "secret_parameter_name": "/theorycloud/apptheory/test/fronted/origin-token\n"
+      }
+    }
+  },
+  "expect": {
+    "error": {
+      "message": "must be a fully qualified SSM parameter name"
+    }
+  }
+}

@@ -5,8 +5,8 @@ title: Operations Guide
 # Operations Guide
 
 This guide is for people operating an already deployed AppTheory application. It assumes the app was deployed through
-the AppTheory CDK constructs or the `theory app up` path, and that the Lambda handler delegates to the single
-AppTheory runtime entrypoint for the trigger type. It is not a contributor debugging checklist and it is not live deploy
+the AppTheory CDK constructs, and that the Lambda handler delegates to the single AppTheory runtime entrypoint for the
+trigger type. It is not a contributor debugging checklist and it is not live deploy
 proof.
 
 ## Operator first triage
