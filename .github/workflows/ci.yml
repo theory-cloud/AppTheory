@@ -200,8 +200,6 @@ jobs:
           bash scripts/verify-release-train-promotion.sh --self-test
           bash scripts/verify-ci-rubric-enforced.sh
           bash scripts/verify-release-workflows.sh
-          bash scripts/verify-release-pr-check-lane.sh --self-test
-          bash scripts/test-sync-release-pr-checks.sh
           bash scripts/verify-release-cycle.sh
       - name: Verify runtime floor claims
         run: bash scripts/verify-runtime-floor-claims.sh

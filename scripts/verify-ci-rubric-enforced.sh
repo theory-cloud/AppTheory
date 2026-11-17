@@ -183,8 +183,12 @@ require_contains ".github/workflows/release-pr-check-sweep.yml" "scripts/sync-re
   "a checkless generated release PR must be re-verified by the recovery sweep"
 require_contains ".github/workflows/release-pr-check-sweep.yml" "--sweep" \
   "the recovery sweep must run the lane in its report-only mode"
-require_contains "${ci}" "bash scripts/verify-release-pr-check-lane.sh --self-test" \
-  "release/security gates must prove the release-lane check wiring and its self-test"
+require_line "scripts/verify-rubric.sh" "bash ./scripts/verify-release-pr-check-lane.sh --self-test" \
+  "the rubric must prove the release-lane check wiring and its self-test"
+require_line "scripts/verify-rubric.sh" "bash ./scripts/test-sync-release-pr-checks.sh" \
+  "the rubric must exercise the release check lane's decisions"
+require_not_contains "${ci}" "verify-release-pr-check-lane.sh" \
+  "the lane guard is locally runnable and must not re-execute inside the required release/security job"
 require_not_contains "scripts/sync-release-pr-generated.sh" "--finalize-only" \
   "generated release PR recovery must not depend on a human-triggered finalize dispatch"
 for producer in ".github/workflows/prerelease-pr.yml" ".github/workflows/release-pr.yml"; do
