@@ -480,6 +480,14 @@ jobs:
       - name: Verify versions match VERSION
         run: scripts/verify-version-alignment.sh
       - name: Verify branch release version state
+        env:
+          # GitHub sets GITHUB_BASE_REF and GITHUB_HEAD_REF only for
+          # pull_request and pull_request_target runs. The code-owner review that
+          # satisfies the premain/main ruleset is a pull_request_review run, and
+          # its GITHUB_REF_NAME is `<pr_number>/merge`; pass the same reviewed
+          # pull request the dispatch and pull_request paths get.
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: scripts/verify-branch-version-sync.sh
 
   go:
