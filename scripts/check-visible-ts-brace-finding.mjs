@@ -20,7 +20,7 @@
 // Enforcement
 // ---------------------------------------------------------------------------
 // The reviewed graph is exact and fail closed:
-//   * the lockfile must carry exactly one minimatch node, the patched 11.0.1
+//   * the lockfile must carry exactly one minimatch node, the patched 11.0.9
 //     at node_modules/minimatch; an additional minimatch node at any path
 //     fails, and every minimatch node is also compared against the patched
 //     floor 11.0.1 explicitly, so a vulnerable copy reintroduced at the old
@@ -118,40 +118,41 @@ const expectation = {
   globMatch: {
     dev: true,
     path: "node_modules/@isaacs/nonrecursive-glob-match",
-    version: "1.0.3",
+    version: "1.1.0",
   },
-  // The single patched minimatch node. eslint-plugin-import-x 4.18.0 accepts
-  // minimatch 11, so every consumer dedupes onto the same hoisted 11.0.1.
+  // The single patched minimatch node. Every consumer's own 11.x range admits
+  // it, so the override dedupes them onto the same hoisted 11.0.9.
   minimatch: {
     braceExpansionRange: "^5.0.12",
     dev: true,
-    globMatchRange: "^1.0.1",
+    globMatchRange: "^1.1.0",
     paths: ["node_modules/minimatch"],
-    version: "11.0.1",
+    version: "11.0.9",
   },
-  // Every package in the lockfile that declares a minimatch dependency. The
-  // consumers keep their original 10.x ranges; the override, not the range,
-  // moves them onto the patched 11.0.1.
+  // Every package in the lockfile that declares a minimatch dependency. eslint,
+  // @eslint/config-array and @typescript-eslint/typescript-estree now declare an
+  // 11.x range themselves; the override still moves every consumer onto the
+  // reviewed patched node.
   minimatchParents: [
     {
-      dependencyRange: "^10.2.4",
+      dependencyRange: "^11.0.5",
       path: "node_modules/@eslint/config-array",
-      version: "0.23.5",
+      version: "0.23.6",
     },
     {
-      dependencyRange: "^10.2.2",
+      dependencyRange: "^11.0.1",
       path: "node_modules/@typescript-eslint/typescript-estree",
-      version: "8.72.1",
+      version: "8.73.0",
     },
     {
-      dependencyRange: "^10.2.6",
+      dependencyRange: "^11.0.5",
       path: "node_modules/eslint",
-      version: "10.14.0",
+      version: "10.15.0",
     },
     {
       dependencyRange: "^9.0.3 || ^10.1.2 || ^11.0.1",
       path: "node_modules/eslint-plugin-import-x",
-      version: "4.18.0",
+      version: "4.18.1",
     },
   ],
   // The npm overrides that produce the reviewed graph. The lockfile does not
@@ -160,10 +161,10 @@ const expectation = {
   // minimatch, and re-adding an import-x exception would recreate the retired
   // exception's shape.
   overrides: {
-    minimatch: "11.0.1",
-    eslint: { minimatch: "11.0.1" },
-    "@eslint/config-array": { minimatch: "11.0.1" },
-    "@typescript-eslint/typescript-estree": { minimatch: "11.0.1" },
+    minimatch: "11.0.9",
+    eslint: { minimatch: "11.0.9" },
+    "@eslint/config-array": { minimatch: "11.0.9" },
+    "@typescript-eslint/typescript-estree": { minimatch: "11.0.9" },
   },
 };
 
@@ -185,7 +186,7 @@ function lockfileGraphProblems(packages) {
 
   if (!sameStringSet(minimatchPaths, expectation.minimatch.paths)) {
     problems.push(
-      "lockfile graph no longer matches the reviewed TypeScript lint-tool minimatch paths (expected exactly one patched 11.0.1 node at node_modules/minimatch)",
+      "lockfile graph no longer matches the reviewed TypeScript lint-tool minimatch paths (expected exactly one patched 11.0.9 node at node_modules/minimatch)",
     );
   }
   for (const minimatchPath of minimatchPaths) {
@@ -262,7 +263,7 @@ function overrideProblems(packageJson) {
   const actual = packageJson?.overrides;
   if (stableJson(actual) !== stableJson(expectation.overrides)) {
     return [
-      "ts/package.json overrides no longer match the reviewed minimatch override map (expected exactly the reviewed 11.0.1 overrides and no import-x exception)",
+      "ts/package.json overrides no longer match the reviewed minimatch override map (expected exactly the reviewed 11.0.9 overrides and no import-x exception)",
     ];
   }
   return [];
@@ -365,10 +366,10 @@ function runSelfTest() {
 
   const validPackages = () => ({
     "node_modules/minimatch": {
-      version: "11.0.1",
+      version: "11.0.9",
       dev: true,
       dependencies: {
-        "@isaacs/nonrecursive-glob-match": "^1.0.1",
+        "@isaacs/nonrecursive-glob-match": "^1.1.0",
         "brace-expansion": "^5.0.12",
       },
     },
@@ -377,15 +378,15 @@ function runSelfTest() {
       dev: true,
       dependencies: { "balanced-match": "^4.0.2" },
     },
-    "node_modules/@isaacs/nonrecursive-glob-match": { version: "1.0.3", dev: true },
-    "node_modules/@eslint/config-array": { version: "0.23.5", dependencies: { minimatch: "^10.2.4" } },
+    "node_modules/@isaacs/nonrecursive-glob-match": { version: "1.1.0", dev: true },
+    "node_modules/@eslint/config-array": { version: "0.23.6", dependencies: { minimatch: "^11.0.5" } },
     "node_modules/@typescript-eslint/typescript-estree": {
-      version: "8.72.1",
-      dependencies: { minimatch: "^10.2.2" },
+      version: "8.73.0",
+      dependencies: { minimatch: "^11.0.1" },
     },
-    "node_modules/eslint": { version: "10.14.0", dependencies: { minimatch: "^10.2.6" } },
+    "node_modules/eslint": { version: "10.15.0", dependencies: { minimatch: "^11.0.5" } },
     "node_modules/eslint-plugin-import-x": {
-      version: "4.18.0",
+      version: "4.18.1",
       dependencies: { minimatch: "^9.0.3 || ^10.1.2 || ^11.0.1" },
     },
   });
@@ -610,7 +611,7 @@ async function main() {
       checkId: expectation.checkId,
       lockfile: canonicalLockfile,
       justification:
-        "The TypeScript lint stack uses the patched minimatch 11.0.1 for every consumer; no dependency-audit exception applies.",
+        "The TypeScript lint stack uses the patched minimatch 11.0.9 for every consumer; no dependency-audit exception applies.",
       provenance: {
         braceExpansion: {
           path: expectation.braceExpansion.path,
