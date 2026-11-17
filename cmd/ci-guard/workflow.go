@@ -52,11 +52,14 @@ const (
 	// staging rubric and deterministic-build jobs whose conditions are pinned.
 	ciWorkflowPath = ".github/workflows/ci.yml"
 
+	// branchesKey is the trigger key that narrows a pull-request-shaped trigger.
+	branchesKey = "branches"
+
 	// sweepWorkflowPath is the only workflow allowed to run on a clock: it
 	// re-dispatches the head-bound verifying workflow for a generated release
 	// pull request, so a pull request left checkless by an earlier event needs no
 	// human action. It never executes a gate itself.
-	sweepWorkflowPath = ".github/workflows/release-pr-check-sweep.yml"
+	sweepWorkflowPath = ".github/workflows/release-pr-check-sweep.yml" //nolint:gosec // a workflow path, not a credential
 
 	// defaultWorkflowsDir is the directory scanned for every workflow file, so a
 	// new workflow with a push/pull_request trigger cannot gate silently: it
@@ -382,15 +385,25 @@ func checkPublisherWorkflow(fullPath, rel string, exemption *publisherExemption)
 		if key.Kind != yaml.ScalarNode {
 			return fmt.Errorf("%s: on: trigger names must be scalars", rel)
 		}
-		if key.Value == "pull_request" || key.Value == "pull_request_target" {
-			return fmt.Errorf("%s is a non-gating publisher exemption (%s) but declares a %s trigger; a workflow that gates pull requests must be classified, not exempted",
-				rel, exemption.reason, key.Value)
-		}
-		if !publisherTriggers[key.Value] && !(exemption.allowSchedule && key.Value == "schedule") {
-			return fmt.Errorf("%s: on: trigger %q is not modeled for a non-gating publisher exemption", rel, key.Value)
+		if err := checkPublisherTrigger(key.Value, exemption, rel); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// checkPublisherTrigger validates one trigger of an exempt non-gating
+// publisher: a pull-request trigger makes it a gate, and an unmodeled trigger
+// could hide one. The recovery sweep is the single exemption allowed a schedule.
+func checkPublisherTrigger(trigger string, exemption *publisherExemption, rel string) error {
+	if trigger == "pull_request" || trigger == "pull_request_target" {
+		return fmt.Errorf("%s is a non-gating publisher exemption (%s) but declares a %s trigger; a workflow that gates pull requests must be classified, not exempted",
+			rel, exemption.reason, trigger)
+	}
+	if publisherTriggers[trigger] || (exemption.allowSchedule && trigger == "schedule") {
+		return nil
+	}
+	return fmt.Errorf("%s: on: trigger %q is not modeled for a non-gating publisher exemption", rel, trigger)
 }
 
 func loadWorkflow(fullPath, rel string) (*workflowFile, error) {
@@ -537,16 +550,12 @@ func parsePullRequestReviewTrigger(node *yaml.Node) ([]string, error) {
 					return nil, fmt.Errorf("pull_request_review: only the submitted activity type is modeled")
 				}
 			}
-		case "branches":
-			if value.Kind != yaml.SequenceNode {
-				return nil, fmt.Errorf("pull_request_review: branches must be a list")
+		case branchesKey:
+			values, err := scalarSequence(value)
+			if err != nil {
+				return nil, fmt.Errorf("pull_request_review: branches %w", err)
 			}
-			for _, entry := range value.Content {
-				if entry.Kind != yaml.ScalarNode || strings.TrimSpace(entry.Value) == "" {
-					return nil, fmt.Errorf("pull_request_review: branch names must be non-empty scalars")
-				}
-				branches = append(branches, entry.Value)
-			}
+			branches = values
 		default:
 			return nil, fmt.Errorf("pull_request_review: key %q is not modeled", key.Value)
 		}
@@ -614,7 +623,7 @@ func parsePullRequestTrigger(node *yaml.Node) ([]string, error) {
 					return nil, fmt.Errorf("pull_request: types must include %q so a staging pull request is re-checked", required)
 				}
 			}
-		case "branches":
+		case branchesKey:
 			values, err := scalarSequence(node.Content[i+1])
 			if err != nil {
 				return nil, fmt.Errorf("pull_request: branches %w", err)
@@ -1113,12 +1122,12 @@ func classifyJob(ctx triggerContext, job workflowJob) (*jobClass, bool, error) {
 		}
 	}
 	if ctx.hasPullRequest {
-		if err := classifyPullRequest(condition, class, ctx.prBranches, job.id); err != nil {
+		if err := classifyPullRequest(condition, class, ctx.prBranches, "pull_request", job.id); err != nil {
 			return nil, false, err
 		}
 	}
 	if ctx.hasPullRequestReview {
-		if err := classifyPullRequestReview(condition, class, ctx.reviewBranches, job.id); err != nil {
+		if err := classifyPullRequest(condition, class, ctx.reviewBranches, "pull_request_review", job.id); err != nil {
 			return nil, false, err
 		}
 	}
@@ -1162,9 +1171,14 @@ func pullRequestTargetsBase(prBranches []string, base string) bool {
 	return len(prBranches) == 0 || containsString(prBranches, base)
 }
 
-func classifyPullRequest(condition expr, class *jobClass, prBranches []string, jobID string) error {
+// classifyPullRequest classifies a job under one pull-request-shaped event.
+// `pull_request` and `pull_request_review` carry the same pull-request state
+// (base, head, draft) and run from the same merge ref, so one evaluator covers
+// both; only the event name differs. A review event is an eligible event for a
+// required status check, which is why the release lane depends on it.
+func classifyPullRequest(condition expr, class *jobClass, branches []string, event, jobID string) error {
 	for _, base := range baseDomain {
-		if !pullRequestTargetsBase(prBranches, base) {
+		if !pullRequestTargetsBase(branches, base) {
 			continue
 		}
 		for _, head := range headDomain {
@@ -1176,35 +1190,7 @@ func classifyPullRequest(condition expr, class *jobClass, prBranches []string, j
 				continue
 			}
 			for _, draft := range []string{"false", "true"} {
-				ok, err := condition.eval(state{event: "pull_request", ref: prMergeRef, base: base, head: head, draft: draft})
-				if err != nil {
-					return fmt.Errorf("job %q: %w", jobID, err)
-				}
-				if ok {
-					class.prBases[base] = true
-					class.prAny = true
-				}
-			}
-		}
-	}
-	return nil
-}
-
-// classifyPullRequestReview classifies a job under `pull_request_review`. The
-// event carries the same pull-request state as `pull_request` (base, head, draft
-// and the merge ref), so the same expression evaluation decides the bases; only
-// the event name differs.
-func classifyPullRequestReview(condition expr, class *jobClass, reviewBranches []string, jobID string) error {
-	for _, base := range baseDomain {
-		if !pullRequestTargetsBase(reviewBranches, base) {
-			continue
-		}
-		for _, head := range headDomain {
-			if head == base {
-				continue
-			}
-			for _, draft := range []string{"false", "true"} {
-				ok, err := condition.eval(state{event: "pull_request_review", ref: prMergeRef, base: base, head: head, draft: draft})
+				ok, err := condition.eval(state{event: event, ref: prMergeRef, base: base, head: head, draft: draft})
 				if err != nil {
 					return fmt.Errorf("job %q: %w", jobID, err)
 				}
