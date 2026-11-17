@@ -5,16 +5,16 @@
         "make",
         "rubric"
       ],
-      "durationSeconds": 458.45,
+      "durationSeconds": 595.215,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-17T21:12:04Z",
+      "finishedAt": "2026-11-17T23:45:10Z",
       "id": "rubric",
-      "inputsDigest": "sha256:99dc2670258f8b645b9db7b4795b9b4c865f8baaac03888789fc4bb41891d18c",
-      "logDigest": "sha256:fa7ab409ea6b58fa60cda3d38dc30db9b440abce6f7a2fc35e586f46360f10e7",
-      "logRef": "gov-infra/evidence/proportionate/local/rubric-rubric-20261117T210425Z-62271.log",
+      "inputsDigest": "sha256:31f22027f9b39408d0513c18d4dd3cd224a6db72056d98cb25446d7439febe47",
+      "logDigest": "sha256:8205fda804ebc45d7fe1b9fd28945b13df7ababb15433e1b1e55f7040d34618b",
+      "logRef": "gov-infra/evidence/proportionate/local/rubric-rubric-20261117T233515Z-40080.log",
       "reused": false,
-      "startedAt": "2026-11-17T21:04:25Z"
+      "startedAt": "2026-11-17T23:35:15Z"
     }
   ],
   "consumed": [
@@ -29,19 +29,9 @@
       "recordedAt": "2026-11-16T17:35:59Z"
     },
     {
-      "digest": "sha256:058823977584c5e41ccced21d7674bdb1730d67be017590c0dccd55bae53513e",
-      "gate": "deterministic-builds",
-      "recordedAt": "2026-11-17T15:25:28Z"
-    },
-    {
       "digest": "sha256:bba50c0a65954891aecad23075150fef9a8dd21b0f741e20d7e079eb97a04269",
       "gate": "go",
       "recordedAt": "2026-11-17T15:30:04Z"
-    },
-    {
-      "digest": "sha256:99158f96e2c469d229eec521cf19943844dad03ae16292d03170a8a48528a329",
-      "gate": "unit",
-      "recordedAt": "2026-11-17T15:51:12Z"
     }
   ],
   "description": "Full local rubric gate used by the staging required context; composes independently produced product records and executes only rubric-unique checks",
@@ -62,17 +52,17 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-17T21:12:04Z",
+  "recordedAt": "2026-11-17T23:45:10Z",
   "releaseOnly": {
-    "digest": "sha256:cdead0d22055eac0580180e62b916bd08b138c61176a51486fb60cf3ce55ec5b",
+    "digest": "sha256:cefc9b4967b27ef8bbf389866944def6d14026980e1c68c3cb448a331b27bf9d",
     "fileCount": 477,
-    "normalizedDigest": "sha256:3ff85b8100daa0871b1b27af15cd61866f2103de6e09ad42a6eb9ce4819ae968",
-    "version": "7.3.1"
+    "normalizedDigest": "sha256:867a3a8b6e3ba1728f357cf0c90ddc2d696bd3706b407f8db68722228e72de09",
+    "version": "7.4.0"
   },
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:ab727d973b68c52cee5f5e4c0030da088b60e246d09e02693edcce4ee36a9617",
+    "digest": "sha256:cf02281f1d7074da295986dba0a7a0332d6da6a11892a703d521e8d19ec61dad",
     "fileCount": 3155,
     "paths": [
       "**"
