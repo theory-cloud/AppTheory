@@ -17,6 +17,53 @@ or deprecation posture must add or update a section here before the release is p
 
 ### Unreleased
 
+- **`FRONTED` front-door verification from a well-known SSM parameter.** The `FRONTED` origin posture no longer
+  requires the front-door secret as a literal in application source. `frontDoorVerification` takes exactly one of
+  `secretValue` (the existing literal form, unchanged) or `secretParameterName`, a well-known, stage-qualified
+  Parameter Store parameter. The change is additive: every existing literal caller synthesizes and runs byte-identically,
+  including its `front_door_secret_sha256` marker.
+
+  What the new form does:
+
+  - `AppTheoryMcpServer` exposes `frontDoorOriginHeader` — `{ headerName, headerValue }` — and under the parameter
+    form `headerValue` is a CloudFormation dynamic reference, `{{resolve:ssm:/<namespace>/<app>/<stage>/fronted/origin-token}}`.
+    Wire it into the app-owned distribution origin: `customHeaders: { [h.headerName]: h.headerValue }`. The document
+    (`origin_reachability`, `front_door_header_name`, `front_door_secret_source: "ssm-parameter"`,
+    `front_door_secret_parameter_name`) records the name and that the value is parameter-sourced; there is no digest
+    because the application holds no literal.
+  - The parameter **must be type `String`**. AWS lists the resource properties that support the `ssm-secure` dynamic
+    reference exhaustively, and `AWS::CloudFront::Distribution` is not one of them, so a `SecureString` cannot feed
+    the origin header. `{{resolve:ssm:...}}` on a String property is supported for `OriginCustomHeaders`
+    ([dynamic references](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references-ssm.html),
+    [ssm-secure support list](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references-ssm-secure-strings.html),
+    [OriginCustomHeader](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-cloudfront-distribution-origincustomheader.html)).
+  - The runtime reads the value lazily in the request path, once per execution environment, caches it for
+    `frontDoorSecretTTL` / `frontDoorSecretTTLSeconds` / `front_door_secret_ttl_seconds` (default 300 s, bounded to
+    `(0, 3600]`), and re-reads it on a verification mismatch (bounded to one read per second) or after the TTL, so a
+    rotation takes effect without a redeploy. No goroutine or timer outlives an invocation. An unreadable, empty, or
+    malformed value refuses every derived route with the same `403 app.forbidden` a direct-origin request gets.
+  - `AppTheoryMcpServer` grants `ssm:GetParameter` on exactly that parameter ARN to `handler`, and `kms:Decrypt` on a
+    declared `secretParameterKmsKey`. The deploying principal still needs `ssm:GetParameters`, because CloudFormation
+    resolves the distribution reference with the caller's permissions.
+  - Rotation: write a new parameter value, then update the stack. CloudFormation resolves the latest version on each
+    create or update and does not re-resolve on drift detection, so the parameter change alone does not move the
+    distribution; the runtime picks the new value up on the first mismatching request or within its TTL.
+  - `apptheory-local run --front-door-parameter <name>` serves the same name credential-free: the run creates it in
+    its local SSM store when absent, never overwrites an existing value, and resolves the distribution header from it.
+
+  Migrate an existing literal declaration:
+
+  1. Have the application's installer ensure the well-known parameter exists, without overwriting one that does
+     (reference snippet in [Namespace Install Parameters](./docs/features/install-parameters.md#well-known-front-door-parameters-for-fronted)).
+  2. Replace `frontDoorVerification: { headerName, secretValue, asserted: true }` with
+     `{ headerName, secretParameterName, asserted: true }` and delete the literal.
+  3. Replace the distribution origin's literal custom header with `server.frontDoorOriginHeader`, or with the same
+     `{{resolve:ssm:...}}` value.
+  4. Replace the runtime's literal with `SecretParameterName` (`FrontDoorSecretReader` stays the default SSM reader) or
+     the TypeScript/Python equivalents. Registration still fails closed when neither form is configured.
+  5. Redeploy and confirm the direct-origin negative case again. The runtime's cached literal from a previous
+     deployment is gone with the old execution environments; no compatibility shim reads both forms.
+
 - **MCP auth facade: a refresh family dies only from a contract-terminal verdict.** The facade's terminal token-error
   classification is now the refresh-rotation-recovery contract's per-code enumeration
   (`theorycloud_refresh_rotation_recovery.v0.1` R6/R7). Only an upstream `invalid_grant` may carry a family-terminal

@@ -60,42 +60,40 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Run rubric
-        run: bash scripts/evidence/verify-or-execute.sh --gate rubric --profile default
+        run: bash scripts/evidence/verify-gate.sh --gate rubric --profile default
   builds:
     runs-on: ubuntu-latest
     steps:
-      - run: bash scripts/evidence/verify-or-execute.sh --gate deterministic-builds --profile default
+      - run: bash scripts/evidence/verify-gate.sh --gate deterministic-builds --profile default
   go:
     runs-on: ubuntu-latest
     steps:
-      - run: bash scripts/evidence/verify-or-execute.sh --gate go --profile default
+      - run: bash scripts/evidence/verify-gate.sh --gate go --profile default
   ts:
     runs-on: ubuntu-latest
     steps:
-      - run: bash scripts/evidence/verify-or-execute.sh --gate ts --profile default
+      - run: bash scripts/evidence/verify-gate.sh --gate ts --profile default
   py:
     runs-on: ubuntu-latest
     steps:
-      - run: bash scripts/evidence/verify-or-execute.sh --gate py --profile default
+      - run: bash scripts/evidence/verify-gate.sh --gate py --profile default
   contract-tests:
     runs-on: ubuntu-latest
     steps:
-      - run: bash scripts/evidence/verify-or-execute.sh --gate contract-tests --profile default
+      - run: bash scripts/evidence/verify-gate.sh --gate contract-tests --profile default
   cdk-go-drift:
     runs-on: ubuntu-latest
     steps:
-      - run: bash scripts/evidence/verify-or-execute.sh --gate cdk-go-drift --profile default
+      - run: bash scripts/evidence/verify-gate.sh --gate cdk-go-drift --profile default
   security-refresh:
     runs-on: ubuntu-latest
     steps:
-      - run: bash scripts/evidence/verify-or-execute.sh --gate security-refresh --profile default
+      - run: bash scripts/evidence/verify-gate.sh --gate security-refresh --profile default
   release-delta:
     runs-on: ubuntu-latest
     steps:
       - name: Release delta
-        env:
-          EVIDENCE_FORCE_EXECUTE: "true"
-        run: bash scripts/evidence/verify-or-execute.sh --gate release-delta
+        run: python3 scripts/evidence/validation_evidence.py run --gate release-delta --forced
   runtime-floor-matrix:
     runs-on: ubuntu-latest
     strategy:
@@ -119,9 +117,9 @@ jobs:
     steps:
       - name: Floor proof
         run: |
-          bash scripts/evidence/verify-or-execute.sh --gate ts --profile "${{ matrix.ts-profile }}"
-          bash scripts/evidence/verify-or-execute.sh --gate py --profile "${{ matrix.py-profile }}"
-          bash scripts/evidence/verify-or-execute.sh --gate contract-tests --profile "${{ matrix.contract-profile }}"
+          bash scripts/evidence/verify-gate.sh --gate ts --profile "${{ matrix.ts-profile }}"
+          bash scripts/evidence/verify-gate.sh --gate py --profile "${{ matrix.py-profile }}"
+          bash scripts/evidence/verify-gate.sh --gate contract-tests --profile "${{ matrix.contract-profile }}"
   cdk-floor-matrix:
     runs-on: ubuntu-latest
     strategy:
@@ -131,7 +129,7 @@ jobs:
             drift-profile: floor-node22
     steps:
       - name: CDK floor proof
-        run: bash scripts/evidence/verify-or-execute.sh --gate cdk-go-drift --profile "${{ matrix.drift-profile }}"
+        run: bash scripts/evidence/verify-gate.sh --gate cdk-go-drift --profile "${{ matrix.drift-profile }}"
 `
 
 const evidenceExamplesWorkflowFixture = `name: Examples
@@ -142,7 +140,7 @@ jobs:
   examples-local:
     runs-on: ubuntu-latest
     steps:
-      - run: bash scripts/evidence/verify-or-execute.sh --gate examples-local --profile default
+      - run: bash scripts/evidence/verify-gate.sh --gate examples-local --profile default
 `
 
 func writeEvidenceRoot(t *testing.T, ciWorkflow string) string {
@@ -181,14 +179,14 @@ func TestEvidenceWiringFailsClosed(t *testing.T) {
 		{
 			name: "missing gate entry point",
 			mutate: func(text string) string {
-				return strings.Replace(text, "bash scripts/evidence/verify-or-execute.sh --gate go --profile default", "bash scripts/verify-go.sh", 1)
+				return strings.Replace(text, "bash scripts/evidence/verify-gate.sh --gate go --profile default", "bash scripts/verify-go.sh", 1)
 			},
-			want: "--gate go",
+			want: "must invoke scripts/evidence/verify-gate.sh for gate go",
 		},
 		{
 			name: "floor job loses its profile",
 			mutate: func(text string) string {
-				return strings.Replace(text, `bash scripts/evidence/verify-or-execute.sh --gate ts --profile "${{ matrix.ts-profile }}"`, "bash scripts/evidence/verify-or-execute.sh --gate ts", 1)
+				return strings.Replace(text, `bash scripts/evidence/verify-gate.sh --gate ts --profile "${{ matrix.ts-profile }}"`, "bash scripts/evidence/verify-gate.sh --gate ts", 1)
 			},
 			want: "must name a tracked proof profile",
 		},
@@ -197,7 +195,21 @@ func TestEvidenceWiringFailsClosed(t *testing.T) {
 			mutate: func(text string) string {
 				return strings.Replace(text, "      - name: Floor proof\n        run: |", "      - name: Floor proof\n        env:\n          EVIDENCE_FORCE_EXECUTE: \"true\"\n        run: |", 1)
 			},
-			want: "instead of naming a tracked proof profile",
+			want: "must not force gate execution",
+		},
+		{
+			name: "generated delta verifies instead of executing",
+			mutate: func(text string) string {
+				return strings.Replace(text, "run: python3 scripts/evidence/validation_evidence.py run --gate release-delta --forced", "run: bash scripts/evidence/verify-gate.sh --gate release-delta", 1)
+			},
+			want: "must execute",
+		},
+		{
+			name: "workflow executes a registered gate directly",
+			mutate: func(text string) string {
+				return strings.Replace(text, "        run: bash scripts/verify-release-branch-signatures.sh\n", "        run: bash scripts/verify-go.sh\n", 1)
+			},
+			want: "executes the \"go\" gate command directly",
 		},
 		{
 			name: "matrix cell names an undeclared profile",
@@ -223,7 +235,7 @@ func TestEvidenceWiringFailsClosed(t *testing.T) {
 		{
 			name: "always-executing job reuses evidence",
 			mutate: func(text string) string {
-				return strings.Replace(text, "run: bash scripts/verify-release-branch-signatures.sh", "run: bash scripts/evidence/verify-or-execute.sh --gate rubric --profile default", 1)
+				return strings.Replace(text, "run: bash scripts/verify-release-branch-signatures.sh", "run: bash scripts/evidence/verify-gate.sh --gate rubric --profile default", 1)
 			},
 			want: "must always execute",
 		},

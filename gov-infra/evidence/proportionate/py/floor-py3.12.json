@@ -5,16 +5,16 @@
         "bash",
         "scripts/verify-python-build.sh"
       ],
-      "durationSeconds": 4.403,
+      "durationSeconds": 4.099,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-12T20:57:37Z",
+      "finishedAt": "2026-11-17T00:37:10Z",
       "id": "py-build",
-      "inputsDigest": "sha256:8a5f909cfa4d7088b88258bc7cd02f5d4d01bb774201a976d54c90113a58b01c",
-      "logDigest": "sha256:b74a4c0a1cc8c10bb130f1eed794d9404bb0cc15f7be2c6bb8d287b86b8ad834",
-      "logRef": "gov-infra/evidence/proportionate/local/py-py-build-20261112T205733Z-48962.log",
+      "inputsDigest": "sha256:a36aafedd2ee515c42f7eb9e5ee7d41d804286e7821f75d9edfd4eff72e19e4f",
+      "logDigest": "sha256:63705aeb908af528f0f1a27fb0282737d17d33b9be7007c57593ed157958896b",
+      "logRef": "gov-infra/evidence/proportionate/local/py-py-build-20261117T003706Z-57660.log",
       "reused": false,
-      "startedAt": "2026-11-12T20:57:33Z"
+      "startedAt": "2026-11-17T00:37:06Z"
     }
   ],
   "consumed": [],
@@ -36,26 +36,17 @@
   },
   "profile": "floor-py3.12",
   "reason": "",
-  "recordedAt": "2026-11-12T20:57:37Z",
+  "recordedAt": "2026-11-17T00:37:10Z",
   "releaseOnly": {
-    "digest": "sha256:dea47f7c318e6703d405d14f61f76d6c1a8d2b38f1b682fdc96b6781c222b699",
-    "fileCount": 476,
-    "normalizedDigest": "sha256:c5ecbf183fa35bbf12642d3d5103e5af06b5b0d169ec8b29c253d8712187ac69",
-    "version": "7.1.0"
+    "digest": "sha256:32f9c041eb6755559c7f88de114a0fb57a4a8f981b39ae32e4321c7fad8c3b4a",
+    "fileCount": 477,
+    "normalizedDigest": "sha256:04e7d83a21a6f9f1ee749046e949340496152a2c2d4363d2b5d0edc921d1b8d8",
+    "version": "7.3.1"
   },
-  "reviews": [
-    {
-      "kind": "review-reference",
-      "ref": "factory:20261112T194701Z-adversary-81745"
-    },
-    {
-      "kind": "review-reference",
-      "ref": "factory:20261112T194701Z-sanity-81746"
-    }
-  ],
+  "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:34d849e386aa800a5fe56b5f1e0af6869b8d4066c3fa7f97907761ce1623c11d",
+    "digest": "sha256:84eb5f8f7e89957d5517d1588b1812cbb700e22479e9094daa8c940d52565512",
     "fileCount": 132,
     "paths": [
       "py/",
@@ -65,8 +56,8 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:ca76497f13c6e3d8ded84c7468f4f56ef263a9f68bffac56f091e4ac55df2f2e",
-    "fileCount": 2658
+    "digest": "sha256:ae42f316c40c8abeabeaa37b332f413af3a0e5131c17b9532bd5334e08b6ce16",
+    "fileCount": 2672
   },
   "verdict": "PASS"
 }

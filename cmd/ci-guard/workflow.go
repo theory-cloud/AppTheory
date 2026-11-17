@@ -15,26 +15,25 @@ import (
 
 const (
 	// rubricCondition and buildsCondition are the only job conditions the
-	// operator ruling of 2026-09-28 allows: the full rubric and the
-	// deterministic-build job run for pull requests targeting staging plus the
-	// opt-in manual dispatch, and nowhere else.
-	rubricCondition = "(github.event_name == 'workflow_dispatch' && (inputs.run_full_rubric == true || inputs.run_full_rubric == 'true')) || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging')"
+	// verified-once policy allows: the full rubric and the deterministic-build
+	// job verify a recorded result for pull requests targeting staging, and
+	// nowhere else. No dispatch path runs them, because CI never executes a
+	// gate.
+	rubricCondition = "github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'"
 	buildsCondition = "github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'"
 
 	// eligibilityCondition is the release-eligibility gate: the staging -> premain
-	// promotion pull request, plus the push to staging whose merged SHA carries the
-	// range the promotion re-checks.
+	// promotion pull request, the pre-merge surface that can actually ship the
+	// range. It runs alongside its prerelease-readiness sibling.
 	//
-	// Operator decision 2026-10-12: enforcement moved off pull requests into
+	// Operator decision 2026-10-12: enforcement stays off pull requests into
 	// staging. Such a pull request asked the gate for a verdict on staging's whole
 	// post-release range, which legitimately holds no release-driving commit until
 	// the next feat:/fix:/perf: lands, so every docs-, chore-, test- and CI-only
-	// pull request failed a gate it could not fix. The pre-merge surface that can
-	// actually ship the range is the promotion pull request, where the gate now
-	// runs alongside its prerelease-readiness sibling; the push keeps the
-	// merged-SHA signal the staging lane always had. The narrowing is recorded in
-	// stagingLaneScopeExceptions, which fails closed if that push leg goes.
-	eligibilityCondition = "(github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain' && github.event.pull_request.head.ref == 'staging') || (github.event_name == 'push' && github.ref == 'refs/heads/staging')"
+	// pull request failed a gate it could not fix. The push-to-staging leg is gone
+	// with every other gate-class push trigger: a merge publishes, it does not
+	// re-verify.
+	eligibilityCondition = "github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain' && github.event.pull_request.head.ref == 'staging'"
 
 	stagingBranch = "staging"
 	premainBranch = "premain"
@@ -52,6 +51,15 @@ const (
 	// ciWorkflowPath is the workflow the repository gates on; it carries the
 	// staging rubric and deterministic-build jobs whose conditions are pinned.
 	ciWorkflowPath = ".github/workflows/ci.yml"
+
+	// branchesKey is the trigger key that narrows a pull-request-shaped trigger.
+	branchesKey = "branches"
+
+	// sweepWorkflowPath is the only workflow allowed to run on a clock: it
+	// re-dispatches the head-bound verifying workflow for a generated release
+	// pull request, so a pull request left checkless by an earlier event needs no
+	// human action. It never executes a gate itself.
+	sweepWorkflowPath = ".github/workflows/release-pr-check-sweep.yml" //nolint:gosec // a workflow path, not a credential
 
 	// defaultWorkflowsDir is the directory scanned for every workflow file, so a
 	// new workflow with a push/pull_request trigger cannot gate silently: it
@@ -87,6 +95,10 @@ var headDomain = []string{
 type publisherExemption struct {
 	path   string
 	reason string
+	// allowSchedule permits the one clock-driven exception: the release-lane
+	// recovery sweep, which dispatches the head-bound verifying workflow so a
+	// generated release pull request left checkless needs no human action.
+	allowSchedule bool
 }
 
 var publisherExemptions = []publisherExemption{
@@ -114,6 +126,11 @@ var publisherExemptions = []publisherExemption{
 		path:   ".github/workflows/release-pr.yml",
 		reason: "generated stable PR producer; cannot gate the hand-authored PR lane it serves",
 	},
+	{
+		path:          ".github/workflows/release-pr-check-sweep.yml",
+		reason:        "release-lane recovery sweep; re-dispatches the head-bound verifying workflow for a generated release PR and never publishes or gates",
+		allowSchedule: true,
+	},
 }
 
 // publisherTriggers are the triggers an exempt non-gating publisher may
@@ -130,7 +147,14 @@ type triggerContext struct {
 	pushBranches   []string
 	hasPullRequest bool
 	prBranches     []string
-	hasDispatch    bool
+	// hasPullRequestReview records the `pull_request_review: [submitted]` trigger.
+	// GitHub evaluates a required status check only for a run triggered by an
+	// eligible event, and a code-owner review is the one eligible event a
+	// generated (built-in-token) release pull request can produce.
+	hasPullRequestReview bool
+	reviewBranches       []string
+	hasDispatch          bool
+	hasSchedule          bool
 }
 
 type workflowFile struct {
@@ -289,12 +313,14 @@ func evaluateWorkflowFile(root, rel string) fileResult {
 	}
 	result := fileResult{classified: 1, jobs: len(jobs), isCI: rel == ciWorkflowPath}
 	result.failures = append(result.failures, checkParity(jobs, result.isCI)...)
+	result.failures = append(result.failures, checkStagingLaneShape(wf, jobs)...)
+	result.failures = append(result.failures, checkPremainMainShape(wf, jobs)...)
 	if result.isCI {
-		result.failures = append(result.failures, checkCIPushTrigger(wf)...)
+		result.failures = append(result.failures, checkNoGatingPush(wf)...)
+		result.failures = append(result.failures, checkNoDeadJobs(jobs)...)
+		result.failures = append(result.failures, checkRequiredReleaseContexts(jobs)...)
 		result.failures = append(result.failures, checkExactConditions(jobs)...)
 		result.failures = append(result.failures, checkBackmergeExemption(jobs)...)
-		result.failures = append(result.failures, checkExemptionsAreLive(jobs)...)
-		result.failures = append(result.failures, checkStagingLaneScopeExceptions(jobs)...)
 		result.failures = append(result.failures, checkCanary(jobs)...)
 		result.failures = append(result.failures, checkUnconditionalSteps(jobs)...)
 	}
@@ -312,7 +338,7 @@ func checkPublisherExemptionsExist(seen map[string]bool) []string {
 }
 
 func isReusableOnly(wf *workflowFile) bool {
-	return wf.hasWorkflowCall && !wf.ctx.hasPush && !wf.ctx.hasPullRequest && !wf.ctx.hasDispatch
+	return wf.hasWorkflowCall && !wf.ctx.hasPush && !wf.ctx.hasPullRequest && !wf.ctx.hasPullRequestReview && !wf.ctx.hasDispatch
 }
 
 func findPublisherExemption(rel string) (*publisherExemption, bool) {
@@ -359,15 +385,25 @@ func checkPublisherWorkflow(fullPath, rel string, exemption *publisherExemption)
 		if key.Kind != yaml.ScalarNode {
 			return fmt.Errorf("%s: on: trigger names must be scalars", rel)
 		}
-		if key.Value == "pull_request" || key.Value == "pull_request_target" {
-			return fmt.Errorf("%s is a non-gating publisher exemption (%s) but declares a %s trigger; a workflow that gates pull requests must be classified, not exempted",
-				rel, exemption.reason, key.Value)
-		}
-		if !publisherTriggers[key.Value] {
-			return fmt.Errorf("%s: on: trigger %q is not modeled for a non-gating publisher exemption", rel, key.Value)
+		if err := checkPublisherTrigger(key.Value, exemption, rel); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// checkPublisherTrigger validates one trigger of an exempt non-gating
+// publisher: a pull-request trigger makes it a gate, and an unmodeled trigger
+// could hide one. The recovery sweep is the single exemption allowed a schedule.
+func checkPublisherTrigger(trigger string, exemption *publisherExemption, rel string) error {
+	if trigger == "pull_request" || trigger == "pull_request_target" {
+		return fmt.Errorf("%s is a non-gating publisher exemption (%s) but declares a %s trigger; a workflow that gates pull requests must be classified, not exempted",
+			rel, exemption.reason, trigger)
+	}
+	if publisherTriggers[trigger] || (exemption.allowSchedule && trigger == "schedule") {
+		return nil
+	}
+	return fmt.Errorf("%s: on: trigger %q is not modeled for a non-gating publisher exemption", rel, trigger)
 }
 
 func loadWorkflow(fullPath, rel string) (*workflowFile, error) {
@@ -398,6 +434,11 @@ func loadWorkflow(fullPath, rel string) (*workflowFile, error) {
 	}
 	if err := workflow.parseTriggers(onNode); err != nil {
 		return nil, fmt.Errorf("%s: %w", rel, err)
+	}
+	if workflow.ctx.hasSchedule {
+		return nil, fmt.Errorf(
+			"%s declares an on: schedule trigger; only the release-lane recovery sweep (%s) may run on a clock",
+			rel, sweepWorkflowPath)
 	}
 	jobsNode, ok := mapLookup(rootNode, "jobs")
 	if !ok {
@@ -433,7 +474,7 @@ func (wf *workflowFile) parseTriggers(node *yaml.Node) error {
 			return err
 		}
 	}
-	if !wf.ctx.hasPush && !wf.ctx.hasPullRequest && !wf.ctx.hasDispatch && !wf.hasWorkflowCall {
+	if !wf.ctx.hasPush && !wf.ctx.hasPullRequest && !wf.ctx.hasPullRequestReview && !wf.ctx.hasDispatch && !wf.hasWorkflowCall && !wf.ctx.hasSchedule {
 		return fmt.Errorf("on: declares no modeled trigger")
 	}
 	return nil
@@ -460,15 +501,69 @@ func (wf *workflowFile) parseTrigger(name string, value *yaml.Node) error {
 		}
 		wf.ctx.prBranches = branches
 		return nil
+	case "pull_request_review":
+		wf.ctx.hasPullRequestReview = true
+		branches, err := parsePullRequestReviewTrigger(value)
+		if err != nil {
+			return err
+		}
+		wf.ctx.reviewBranches = branches
+		return nil
 	case "workflow_dispatch":
 		wf.ctx.hasDispatch = true
 		return parseDispatchTrigger(value)
+	case "schedule":
+		wf.ctx.hasSchedule = true
+		return parseScheduleTrigger(value)
 	case "workflow_call":
 		wf.hasWorkflowCall = true
 		return parseWorkflowCallTrigger(value)
 	default:
 		return fmt.Errorf("on: trigger %q is not modeled by the parity classifier", name)
 	}
+}
+
+// parsePullRequestReviewTrigger models `pull_request_review`. Only the
+// `submitted` activity is modeled: it is the code-owner approval the
+// premain/main ruleset requires, and it is an eligible event for a required
+// status check. The trigger may narrow to branches exactly like pull_request:
+// an unfiltered trigger returns nil and fires for every base.
+func parsePullRequestReviewTrigger(node *yaml.Node) ([]string, error) {
+	if isNullNode(node) {
+		return nil, fmt.Errorf("pull_request_review: trigger must declare the submitted activity type")
+	}
+	if node.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("pull_request_review: trigger must be a mapping")
+	}
+	var branches []string
+	sawTypes := false
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		key, value := node.Content[i], node.Content[i+1]
+		switch key.Value {
+		case "types":
+			if value.Kind != yaml.SequenceNode || len(value.Content) == 0 {
+				return nil, fmt.Errorf("pull_request_review: types must be a non-empty list")
+			}
+			sawTypes = true
+			for _, entry := range value.Content {
+				if entry.Kind != yaml.ScalarNode || entry.Value != "submitted" {
+					return nil, fmt.Errorf("pull_request_review: only the submitted activity type is modeled")
+				}
+			}
+		case branchesKey:
+			values, err := scalarSequence(value)
+			if err != nil {
+				return nil, fmt.Errorf("pull_request_review: branches %w", err)
+			}
+			branches = values
+		default:
+			return nil, fmt.Errorf("pull_request_review: key %q is not modeled", key.Value)
+		}
+	}
+	if !sawTypes {
+		return nil, fmt.Errorf("pull_request_review: trigger must declare the submitted activity type")
+	}
+	return branches, nil
 }
 
 func parsePushTrigger(node *yaml.Node) ([]string, error) {
@@ -528,7 +623,7 @@ func parsePullRequestTrigger(node *yaml.Node) ([]string, error) {
 					return nil, fmt.Errorf("pull_request: types must include %q so a staging pull request is re-checked", required)
 				}
 			}
-		case "branches":
+		case branchesKey:
 			values, err := scalarSequence(node.Content[i+1])
 			if err != nil {
 				return nil, fmt.Errorf("pull_request: branches %w", err)
@@ -574,6 +669,25 @@ func parseWorkflowCallTrigger(node *yaml.Node) error {
 		key := node.Content[i].Value
 		if key != "inputs" && key != "secrets" && key != "outputs" {
 			return fmt.Errorf("workflow_call: key %q is not modeled", key)
+		}
+	}
+	return nil
+}
+
+// parseScheduleTrigger models the one clock-driven trigger the policy allows,
+// and only for the release-lane recovery sweep (see sweepWorkflowPath): it must
+// enumerate cron entries, so a schedule cannot arrive as an unread shape.
+func parseScheduleTrigger(node *yaml.Node) error {
+	if node.Kind != yaml.SequenceNode || len(node.Content) == 0 {
+		return fmt.Errorf("schedule: trigger must be a non-empty list of cron entries")
+	}
+	for _, entry := range node.Content {
+		if entry.Kind != yaml.MappingNode {
+			return fmt.Errorf("schedule: each entry must be a mapping with a cron key")
+		}
+		cron, ok := mapLookup(entry, "cron")
+		if !ok || cron.Kind != yaml.ScalarNode || strings.TrimSpace(cron.Value) == "" {
+			return fmt.Errorf("schedule: each entry must declare a non-empty cron string")
 		}
 	}
 	return nil
@@ -1008,7 +1122,12 @@ func classifyJob(ctx triggerContext, job workflowJob) (*jobClass, bool, error) {
 		}
 	}
 	if ctx.hasPullRequest {
-		if err := classifyPullRequest(condition, class, ctx.prBranches, job.id); err != nil {
+		if err := classifyPullRequest(condition, class, ctx.prBranches, "pull_request", job.id); err != nil {
+			return nil, false, err
+		}
+	}
+	if ctx.hasPullRequestReview {
+		if err := classifyPullRequest(condition, class, ctx.reviewBranches, "pull_request_review", job.id); err != nil {
 			return nil, false, err
 		}
 	}
@@ -1052,9 +1171,14 @@ func pullRequestTargetsBase(prBranches []string, base string) bool {
 	return len(prBranches) == 0 || containsString(prBranches, base)
 }
 
-func classifyPullRequest(condition expr, class *jobClass, prBranches []string, jobID string) error {
+// classifyPullRequest classifies a job under one pull-request-shaped event.
+// `pull_request` and `pull_request_review` carry the same pull-request state
+// (base, head, draft) and run from the same merge ref, so one evaluator covers
+// both; only the event name differs. A review event is an eligible event for a
+// required status check, which is why the release lane depends on it.
+func classifyPullRequest(condition expr, class *jobClass, branches []string, event, jobID string) error {
 	for _, base := range baseDomain {
-		if !pullRequestTargetsBase(prBranches, base) {
+		if !pullRequestTargetsBase(branches, base) {
 			continue
 		}
 		for _, head := range headDomain {
@@ -1066,7 +1190,7 @@ func classifyPullRequest(condition expr, class *jobClass, prBranches []string, j
 				continue
 			}
 			for _, draft := range []string{"false", "true"} {
-				ok, err := condition.eval(state{event: "pull_request", ref: prMergeRef, base: base, head: head, draft: draft})
+				ok, err := condition.eval(state{event: event, ref: prMergeRef, base: base, head: head, draft: draft})
 				if err != nil {
 					return fmt.Errorf("job %q: %w", jobID, err)
 				}
@@ -1130,183 +1254,193 @@ func intersectClasses(class, needed *jobClass) *jobClass {
 }
 
 func checkParity(jobs []classifiedJob, isCI bool) []string {
-	failures := checkPushParity(jobs, isCI)
-	failures = append(failures, checkPromotionParity(jobs, isCI)...)
-	return failures
+	return checkPushParity(jobs, isCI)
 }
 
-func checkPushParity(jobs []classifiedJob, isCI bool) []string {
+func checkPushParity(jobs []classifiedJob, _ bool) []string {
 	var failures []string
 	for _, job := range jobs {
 		class := job.class
 		if len(class.pushRefs) == 0 || class.prBases[stagingBranch] {
 			continue
 		}
-		// A recorded staging-lane scope exception covers the staging lane through
-		// its push leg instead of a pull-request-to-staging leg;
-		// checkStagingLaneScopeExceptions fails closed if that leg goes. It is only
-		// honored in ci.yml, where checkExactConditions pins the job's condition, so
-		// a same-named job in another workflow file cannot inherit the carve-out.
-		if isCI && findStagingLaneScopeException(job.id) != nil {
-			continue
-		}
 		failures = append(failures, fmt.Sprintf(
-			"job %q (%s) can run on a push (%s) but not on a pull request to staging (R-F1 push parity)",
+			"job %q (%s) can run on a push (%s) but not on a pull request to staging; a gate-class job runs on the staging pull request, never on a merge",
 			job.id, class.name, strings.Join(class.pushRefs, ", ")))
 	}
 	return failures
 }
 
-func checkPromotionParity(jobs []classifiedJob, isCI bool) []string {
+// stagingFastCheckJobs are the only jobs allowed to run on a pull request into
+// staging without verifying a recorded gate result. They are cheap invariants
+// whose whole value is reading the current commit, and each one also reports on
+// the same pull request that the ruleset requires.
+var stagingFastCheckJobs = []string{
+	"release-train-promotion",
+	"release-security-gates",
+	"version-alignment",
+}
+
+// checkStagingLaneShape pins the staging pull-request job set: every job that can
+// run there must either verify a tracked evidence record or be one of the
+// recorded fast checks. A job that starts executing a gate on the staging pull
+// request is the regression this policy removes, so it fails closed instead of
+// running unnoticed beside the required contexts.
+func checkStagingLaneShape(wf *workflowFile, jobs []classifiedJob) []string {
+	verified := map[string]bool{}
+	for _, requirement := range evidenceWiring {
+		verified[requirement.workflow+"\x00"+requirement.job] = true
+	}
+	fast := map[string]bool{}
+	for _, job := range stagingFastCheckJobs {
+		fast[job] = true
+	}
 	var failures []string
 	for _, job := range jobs {
-		class := job.class
-		if !isPromotionOnly(class) {
+		if !job.class.prBases[stagingBranch] {
 			continue
 		}
-		if exemption := findPromotionExemption(class.id); exemption != nil {
+		if fast[job.id] {
 			continue
 		}
-		// A recorded staging-lane scope exception is this job's own record: it
-		// names the push leg that keeps the staging lane covered, and
-		// checkStagingLaneScopeExceptions fails closed when that leg goes. As in
-		// checkPushParity it is only honored in ci.yml.
-		if isCI && findStagingLaneScopeException(class.id) != nil {
+		if verified[wf.path+"\x00"+job.id] {
 			continue
 		}
 		failures = append(failures, fmt.Sprintf(
-			"job %q (%s) runs only on promotion pull requests (%s) with no pull-request-to-staging equivalent; add one or record a justified exception",
-			job.id, class.name, strings.Join(promotionBases(class), ", ")))
+			"job %q (%s) runs on a pull request to staging but neither verifies a recorded gate result nor is a recorded fast check",
+			job.id, job.class.name))
 	}
 	return failures
 }
 
-// parityExemption records a promotion-only job whose pull-request-to-staging
-// equivalent is a different job. Every entry must carry a reason and keep a
-// live counterpart; a stale entry fails the guard.
-type parityExemption struct {
-	job         string
-	counterpart string
-	reason      string
+// releaseHygieneJob records a job allowed to run on a pull request into premain or
+// main, with the reason it must run there. Nothing else may gate those branches:
+// they only ever receive staging content, so a gate there would re-verify a tree
+// that staging already proved.
+type releaseHygieneJob struct {
+	job    string
+	reason string
 }
 
-var promotionParityExemptions = []parityExemption{
+var releaseHygieneJobs = []releaseHygieneJob{
 	{
-		job:         prereleaseID,
-		counterpart: eligibilityID,
-		reason:      "promotion-edge release-eligibility gate; the staging lane runs the same predicate through " + eligibilityID + ", which covers the staging lane on the pushed staging SHA",
+		job:    "release-train-promotion",
+		reason: "head-branch hygiene: the required context that pins which branch may enter premain or main",
 	},
 	{
-		job:         "release-delta",
-		counterpart: "rubric",
-		reason:      "generated release-PR delta smoke; generated release PRs only target premain/main, and the reviewed full rubric covers the staging lane whose tree the release transformation derives from",
+		job:    "release-security-gates",
+		reason: "release signatures and supply chain for the commits that land on the release branches",
 	},
-}
-
-// stagingLaneScopeException records a job the operator deliberately moved off
-// the pull-requests-to-staging lane (operator decision 2026-10-12 for the
-// release-eligibility gate) while keeping its push-to-staging leg. Both R-F1
-// parity rules would otherwise flag such a job, so it is recorded once here,
-// together with the pushed branch it must keep: the exception is only valid
-// while the job it names still carries that leg, because that leg is the whole
-// of the job's staging-lane coverage. If the leg goes, or the job starts running
-// on pull requests into staging again, the exception is stale and the guard
-// fails closed rather than leaving a vacated lane behind it.
-type stagingLaneScopeException struct {
-	job        string
-	pushBranch string
-	reason     string
-}
-
-var stagingLaneScopeExceptions = []stagingLaneScopeException{
 	{
-		job:        eligibilityID,
-		pushBranch: stagingBranch,
-		reason:     "operator decision 2026-10-12: the release-eligibility gate runs on the staging -> premain promotion pull request and on the push to staging, and is skipped for pull requests into staging, where the post-release range carries no release-driving commit",
+		job:    "version-alignment",
+		reason: "version, manifest and branch release-state coupling for the content about to ship",
+	},
+	{
+		job:    "release-delta",
+		reason: "packaging and regeneration smoke over generated release-please content that does not exist locally",
+	},
+	{
+		job:    "security-refresh",
+		reason: "dependency-scan freshness bound: a scan record older than 24h fails the promotion",
+	},
+	{
+		job:    prereleaseID,
+		reason: "promotion-edge release-eligibility predicate for the staging content being promoted",
+	},
+	{
+		job:    eligibilityID,
+		reason: "pre-merge release-eligibility verdict for the range the promotion ships",
 	},
 }
 
-func findStagingLaneScopeException(jobID string) *stagingLaneScopeException {
-	for i := range stagingLaneScopeExceptions {
-		if stagingLaneScopeExceptions[i].job == jobID {
-			return &stagingLaneScopeExceptions[i]
+// checkPremainMainShape pins the premain/main pull-request job set to recorded
+// release hygiene. A classifier gap would otherwise let a gate re-execute on the
+// release branches, which is exactly the post-verification re-execution the
+// policy removes. An allowlisted job that exists but stopped reporting there is
+// stale and fails closed, so a narrowed condition cannot silently vacate a
+// required release context.
+func checkPremainMainShape(wf *workflowFile, jobs []classifiedJob) []string {
+	isCI := wf.path == ciWorkflowPath
+	classes := classIndex(jobs)
+	allowed := map[string]bool{}
+	var failures []string
+	for _, hygiene := range releaseHygieneJobs {
+		if !isCI {
+			break
+		}
+		allowed[hygiene.job] = true
+		class, ok := classes[hygiene.job]
+		if !ok {
+			continue
+		}
+		if !class.prBases[premainBranch] && !class.prBases[mainBranch] {
+			failures = append(failures, fmt.Sprintf(
+				"release-hygiene job %q is stale: it no longer reports on a pull request into premain or main, but %s",
+				hygiene.job, hygiene.reason))
 		}
 	}
-	return nil
-}
-
-func hasPushBranch(class *jobClass, branch string) bool {
-	for _, candidate := range class.pushRefs {
-		if candidate == branch {
-			return true
+	for _, job := range jobs {
+		class := job.class
+		runsOnReleaseBranch := class.prBases[premainBranch] || class.prBases[mainBranch]
+		if runsOnReleaseBranch && !allowed[job.id] {
+			failures = append(failures, fmt.Sprintf(
+				"%s job %q (%s) runs on a pull request into premain or main; only recorded release hygiene may run there",
+				wf.path, job.id, class.name))
 		}
 	}
-	return false
+	return failures
 }
 
-// checkStagingLaneScopeExceptions keeps every recorded scope exception live: the
-// job must still exist, must keep the pushed branch that covers the staging lane,
-// and must not run on pull requests into staging again, which would make the
-// exception unnecessary and could hide a widened condition behind it.
-func checkStagingLaneScopeExceptions(jobs []classifiedJob) []string {
+// requiredReleaseContexts are the contexts the premain/main ruleset names. They
+// must exist in ci.yml so a required check can report on every pull request into
+// those branches.
+var requiredReleaseContexts = []string{
+	"release-train-promotion",
+	"release-security-gates",
+	"version-alignment",
+}
+
+// checkRequiredReleaseContexts fails closed when a required premain/main context
+// is missing entirely, so the ruleset never names a check that does not report.
+func checkRequiredReleaseContexts(jobs []classifiedJob) []string {
 	classes := classIndex(jobs)
 	var failures []string
-	for i := range stagingLaneScopeExceptions {
-		exception := &stagingLaneScopeExceptions[i]
-		class, ok := classes[exception.job]
-		if !ok {
-			failures = append(failures, fmt.Sprintf("staging-lane scope exception for %q is stale: the job is gone", exception.job))
-			continue
-		}
-		if !hasPushBranch(class, exception.pushBranch) {
-			failures = append(failures, fmt.Sprintf("staging-lane scope exception for %q is stale: the job must keep its push %s leg, or the staging lane has no release-eligibility coverage", exception.job, exception.pushBranch))
-		}
-		if class.prBases[stagingBranch] {
-			failures = append(failures, fmt.Sprintf("staging-lane scope exception for %q is stale: the job runs on pull requests to staging again, so remove the exception", exception.job))
+	for _, job := range requiredReleaseContexts {
+		if _, ok := classes[job]; !ok {
+			failures = append(failures, fmt.Sprintf(
+				"%s must define job %q; the premain/main ruleset requires its context", ciWorkflowPath, job))
 		}
 	}
 	return failures
 }
 
-func checkExemptionsAreLive(jobs []classifiedJob) []string {
-	classes := classIndex(jobs)
+// checkNoDeadJobs fails closed on a job that no modeled trigger can reach. With
+// the push trigger gone, a job gated only on a push would sit in ci.yml looking
+// like a gate while never running on any pull request.
+func checkNoDeadJobs(jobs []classifiedJob) []string {
 	var failures []string
-	for _, exemption := range promotionParityExemptions {
-		class, ok := classes[exemption.job]
-		if !ok {
-			failures = append(failures, fmt.Sprintf("parity exemption for %q is stale: the job is gone", exemption.job))
+	for _, job := range jobs {
+		class := job.class
+		if len(class.pushRefs) > 0 || class.prAny || len(class.prBases) > 0 || class.dispatch {
 			continue
 		}
-		if !isPromotionOnly(class) {
-			failures = append(failures, fmt.Sprintf("parity exemption for %q is stale: the job no longer runs only on promotion pull requests", exemption.job))
-			continue
-		}
-		counterpart, ok := classes[exemption.counterpart]
-		if !ok {
-			failures = append(failures, fmt.Sprintf("job %q is exempt from R-F1 parity but its counterpart %q is missing", exemption.job, exemption.counterpart))
-			continue
-		}
-		// A counterpart covers the staging lane either through a pull request to
-		// staging or -- for a recorded scope exception -- through the push to
-		// staging whose liveness checkStagingLaneScopeExceptions enforces.
-		if !counterpart.prBases[stagingBranch] && findStagingLaneScopeException(exemption.counterpart) == nil {
-			failures = append(failures, fmt.Sprintf("job %q is exempt from R-F1 parity but its counterpart %q does not run on pull requests to staging", exemption.job, exemption.counterpart))
-		}
+		failures = append(failures, fmt.Sprintf(
+			"%s job %q can never run on a modeled trigger; it is gated on an event this workflow no longer declares",
+			ciWorkflowPath, job.id))
 	}
 	return failures
 }
 
-// checkCIPushTrigger requires ci.yml to declare an on: push trigger. The
-// push-to-staging leg of the release-eligibility gate and the whole push-parity
-// check are vacuous without it: a job can be classified as promotion-only, or a
-// push lane can disappear, while every remaining check still passes, so a
-// pushless ci.yml fails closed instead of leaving gating push paths unmodeled.
-func checkCIPushTrigger(wf *workflowFile) []string {
-	if wf.ctx.hasPush {
+// checkNoGatingPush forbids a push trigger on ci.yml. staging is where the gates
+// are verified; a merge into staging, premain or main publishes, it does not
+// re-verify a gate. Publishing workflows keep their push triggers as recorded
+// non-gating publisher exemptions.
+func checkNoGatingPush(wf *workflowFile) []string {
+	if !wf.ctx.hasPush {
 		return nil
 	}
 	return []string{fmt.Sprintf(
-		"%s must declare an on: push trigger; without it the push-to-staging release-eligibility leg and the push-parity check are vacuous",
+		"%s must not declare an on: push trigger; a merge publishes, it does not re-verify a gate",
 		ciWorkflowPath)}
 }
 
@@ -1324,7 +1458,7 @@ func checkExactConditions(jobs []classifiedJob) []string {
 	}{
 		{"rubric", rubricCondition, "staging-pull-request-only"},
 		{"builds", buildsCondition, "staging-pull-request-only"},
-		{eligibilityID, eligibilityCondition, "promotion-pull-request-plus-push-to-staging"},
+		{eligibilityID, eligibilityCondition, "promotion-pull-request-only"},
 	}
 	var failures []string
 	for _, want := range expected {
@@ -1496,25 +1630,6 @@ func isPromotionOnly(class *jobClass) bool {
 		return false
 	}
 	return class.prBases[premainBranch] || class.prBases[mainBranch]
-}
-
-func promotionBases(class *jobClass) []string {
-	var bases []string
-	for _, branch := range []string{premainBranch, mainBranch} {
-		if class.prBases[branch] {
-			bases = append(bases, branch)
-		}
-	}
-	return bases
-}
-
-func findPromotionExemption(jobID string) *parityExemption {
-	for i := range promotionParityExemptions {
-		if promotionParityExemptions[i].job == jobID {
-			return &promotionParityExemptions[i]
-		}
-	}
-	return nil
 }
 
 func inputCombinations(names []string) ([]map[string]string, error) {

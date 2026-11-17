@@ -7,204 +7,6 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 artifact_sync_commit_message="fix(release): sync generated release artifacts"
 artifact_sync_commit_body="[skip ci]"
 
-default_required_checks() {
-  cat <<'EOF'
-Version alignment
-Release train promotion gate
-Release/security gates
-Release delta validation
-EOF
-}
-
-release_pr_required_checks() {
-  if [[ -n "${RELEASE_PR_READY_CHECKS:-}" ]]; then
-    printf '%s\n' "${RELEASE_PR_READY_CHECKS}"
-    return 0
-  fi
-  default_required_checks
-}
-
-classify_required_checks() {
-  python3 - <<'PY'
-import json
-import os
-
-PASS_BUCKETS = {"pass", "success", "neutral"}
-PENDING_BUCKETS = {"pending", "skipping", ""}
-
-
-def load_checks() -> list[dict]:
-    try:
-        data = json.loads(os.environ.get("CHECKS_JSON") or "[]")
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(data, list):
-        return []
-    return [item for item in data if isinstance(item, dict)]
-
-
-def normalize_bucket(record: dict) -> str:
-    bucket = record.get("bucket", "")
-    if bucket is None:
-        return ""
-    return str(bucket)
-
-
-checks = load_checks()
-required = [line for line in os.environ["REQUIRED_CHECKS"].splitlines() if line]
-records_by_name = {name: [] for name in required}
-
-for check in checks:
-    name = check.get("name", "")
-    if name in records_by_name:
-        records_by_name[name].append(check)
-
-missing = []
-pending = []
-failed = []
-
-for name in required:
-    records = records_by_name[name]
-    if not records:
-        missing.append(name)
-        continue
-
-    buckets = [normalize_bucket(record) for record in records]
-    failing_buckets = sorted({bucket for bucket in buckets if bucket not in PASS_BUCKETS | PENDING_BUCKETS})
-    if failing_buckets:
-        failed.append(f"{name}={'+'.join(failing_buckets)}")
-        continue
-
-    if any(bucket in PASS_BUCKETS for bucket in buckets):
-        continue
-
-    waiting_buckets = sorted({bucket or "pending" for bucket in buckets})
-    pending.append(f"{name}={'+'.join(waiting_buckets) if waiting_buckets else 'pending'}")
-
-if failed:
-    print("fail")
-    print("failed: " + ", ".join(failed))
-elif missing or pending:
-    print("pending")
-    if missing:
-        print("missing: " + ", ".join(missing))
-    if pending:
-        print("pending: " + ", ".join(pending))
-else:
-    print("pass")
-PY
-}
-
-run_required_check_classifier_self_test() {
-  local required_check=$'Required Check'
-
-  run_case() {
-    local label="$1"
-    local description="$2"
-    local expected="$3"
-    local checks_json="$4"
-    local status_file
-    status_file="$(mktemp)"
-
-    CHECKS_JSON="${checks_json}" REQUIRED_CHECKS="${required_check}" classify_required_checks >"${status_file}"
-
-    local status
-    status="$(head -n 1 "${status_file}")"
-    local details
-    details="$(tail -n +2 "${status_file}")"
-    rm -f "${status_file}"
-
-    if [[ "${status}" != "${expected}" ]]; then
-      echo "sync-release-pr-generated self-test: FAIL ${label} (${description}); expected ${expected}, got ${status}" >&2
-      if [[ -n "${details}" ]]; then
-        echo "${details}" >&2
-      fi
-      exit 1
-    fi
-
-    echo "sync-release-pr-generated self-test: PASS ${label} (${description}) -> ${status}"
-    if [[ -n "${details}" ]]; then
-      echo "${details}"
-    fi
-  }
-
-  local skipped_newer_success_older
-  skipped_newer_success_older="$(cat <<'JSON'
-[
-  {
-    "name": "Required Check",
-    "bucket": "pass",
-    "startedAt": "2026-06-19T00:00:00Z",
-    "completedAt": "2026-06-19T00:01:00Z",
-    "headSha": "synthetic"
-  },
-  {
-    "name": "Required Check",
-    "bucket": "skipping",
-    "startedAt": "2026-06-19T00:02:00Z",
-    "completedAt": "2026-06-19T00:02:01Z",
-    "headSha": "synthetic"
-  }
-]
-JSON
-)"
-  run_case "A" "skipped newer + success older is satisfied" "pass" "${skipped_newer_success_older}"
-
-  local skipped_only
-  skipped_only="$(cat <<'JSON'
-[
-  {
-    "name": "Required Check",
-    "bucket": "skipping",
-    "startedAt": "2026-06-19T00:02:00Z",
-    "completedAt": "2026-06-19T00:02:01Z",
-    "headSha": "synthetic"
-  }
-]
-JSON
-)"
-  run_case "B" "skipped only is not satisfied" "pending" "${skipped_only}"
-
-  local failure_instance
-  failure_instance="$(cat <<'JSON'
-[
-  {
-    "name": "Required Check",
-    "bucket": "pass",
-    "startedAt": "2026-06-19T00:00:00Z",
-    "completedAt": "2026-06-19T00:01:00Z",
-    "headSha": "synthetic"
-  },
-  {
-    "name": "Required Check",
-    "bucket": "failure",
-    "startedAt": "2026-06-19T00:03:00Z",
-    "completedAt": "2026-06-19T00:03:01Z",
-    "headSha": "synthetic"
-  }
-]
-JSON
-)"
-  run_case "C" "any failure instance fails" "fail" "${failure_instance}"
-
-  local success_only
-  success_only="$(cat <<'JSON'
-[
-  {
-    "name": "Required Check",
-    "bucket": "pass",
-    "startedAt": "2026-06-19T00:00:00Z",
-    "completedAt": "2026-06-19T00:01:00Z",
-    "headSha": "synthetic"
-  }
-]
-JSON
-)"
-  run_case "D" "success only is satisfied" "pass" "${success_only}"
-
-  echo "sync-release-pr-generated self-test: PASS"
-}
-
 is_ci_environment() {
   [[ "${GITHUB_ACTIONS:-}" == "true" || "${CI:-}" == "true" ]]
 }
@@ -475,51 +277,6 @@ require_pr_state_line() {
   printf '%s\n' "${PR_STATE_LINE}"
 }
 
-read_check_runs() {
-  local head="$1"
-  local repo="$2"
-  local attempt=1
-  while true; do
-    local stderr_file
-    local out
-    local status=0
-    stderr_file="$(mktemp)"
-    out="$(gh api "repos/${repo}/commits/${head}/check-runs?per_page=100" \
-      --jq '[.check_runs[] | {
-        name: .name,
-        bucket: (
-          if .status != "completed" then "pending"
-          elif (.conclusion == "success" or .conclusion == "neutral") then "pass"
-          elif .conclusion == "skipped" then "skipping"
-          else .conclusion
-          end
-        ),
-        startedAt: (.started_at // ""),
-        completedAt: (.completed_at // ""),
-        workflow: (.app.slug // "github-actions"),
-        headSha: (.head_sha // "")
-      }]' 2>"${stderr_file}")" || status=$?
-    local stderr_text
-    stderr_text="$(cat "${stderr_file}")"
-    rm -f "${stderr_file}"
-    if (( status == 0 )); then
-      printf '%s' "${out}"
-      return 0
-    fi
-
-    local kind
-    kind="$(classify_gh_failure "${status}" "${stderr_text}")"
-    if [[ "${kind}" == "transient" ]] && (( attempt < PR_READ_ATTEMPTS )); then
-      sleep "$(( attempt * PR_READ_BACKOFF_SECONDS ))"
-      attempt=$((attempt + 1))
-      continue
-    fi
-    echo "sync-release-pr-generated: FAIL (check-run read failed (${kind}) for ${head}; ${stderr_text:-empty output})" >&2
-    return 1
-  done
-}
-
-required_checks_passed=false
 synced_head=""
 
 exit_if_benign_merged_release_pr() {
@@ -542,7 +299,7 @@ exit_if_benign_merged_release_pr() {
     return 1
   fi
 
-  if [[ "${required_checks_passed}" != "true" || -z "${synced_head}" ]]; then
+  if [[ -z "${synced_head}" ]]; then
     return 1
   fi
 
@@ -551,7 +308,7 @@ exit_if_benign_merged_release_pr() {
     exit 1
   fi
 
-  echo "sync-release-pr-generated: PASS (${release_branch} already merged after generated artifacts and required checks matched ${synced_head})"
+  echo "sync-release-pr-generated: PASS (${release_branch} already merged at the generated-artifact head ${synced_head})"
   exit 0
 }
 
@@ -595,226 +352,6 @@ repo_full_name() {
   gh repo view --json nameWithOwner --jq '.nameWithOwner'
 }
 
-collect_check_records() {
-  local context="${1:-while reading checks}"
-  local current_pr_line
-  current_pr_line="$(require_pr_state_line "${context}")"
-
-  local current_pr_state
-  local current_pr_head
-  current_pr_state="${current_pr_line%%$'\t'*}"
-  current_pr_head="${current_pr_line##*$'\t'}"
-
-  if [[ "${current_pr_state}" != "OPEN" && "${current_pr_state}" != "MERGED" ]]; then
-    echo "sync-release-pr-generated: FAIL (PR #${pr_number} is ${current_pr_state} ${context})" >&2
-    return 1
-  fi
-  if [[ "${current_pr_state}" == "MERGED" ]]; then
-    echo "sync-release-pr-generated: PR #${pr_number} merged ${context}; verifying required checks on ${current_pr_head}" >&2
-  fi
-
-  local repo
-  repo="$(repo_full_name)"
-
-  local checks_json
-  checks_json="$(read_check_runs "${current_pr_head}" "${repo}")" || return 1
-
-  CURRENT_PR_HEAD="${current_pr_head}" COMMIT_CHECKS_JSON="${checks_json}" \
-    python3 - <<'PY'
-import json
-import os
-
-
-def load(name: str) -> list[dict]:
-    try:
-        data = json.loads(os.environ.get(name) or "[]")
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(data, list):
-        return []
-    return [item for item in data if isinstance(item, dict)]
-
-
-current_head = os.environ["CURRENT_PR_HEAD"]
-records = []
-for item in load("COMMIT_CHECKS_JSON"):
-    if item.get("headSha") == current_head:
-        records.append(item)
-
-print(json.dumps(records, separators=(",", ":")))
-PY
-}
-
-wait_for_required_checks() {
-  local timeout_seconds="${RELEASE_PR_CHECK_TIMEOUT_SECONDS:-2400}"
-  local interval_seconds="${RELEASE_PR_CHECK_INTERVAL_SECONDS:-15}"
-  local required_checks
-  required_checks="$(release_pr_required_checks)"
-
-  local deadline=$((SECONDS + timeout_seconds))
-
-  while true; do
-    local checks_json
-    checks_json="$(collect_check_records "while waiting for required checks")"
-
-    local status_file
-    status_file="$(mktemp)"
-    CHECKS_JSON="${checks_json}" REQUIRED_CHECKS="${required_checks}" classify_required_checks >"${status_file}"
-
-    local status
-    status="$(head -n 1 "${status_file}")"
-    local details
-    details="$(tail -n +2 "${status_file}")"
-    rm -f "${status_file}"
-
-    case "${status}" in
-      pass)
-        echo "sync-release-pr-generated: required checks passed for PR #${pr_number}"
-        return 0
-        ;;
-      fail)
-        echo "sync-release-pr-generated: FAIL (required checks failed for PR #${pr_number})"
-        if [[ -n "${details}" ]]; then
-          echo "${details}"
-        fi
-        return 1
-        ;;
-      pending)
-        if (( SECONDS >= deadline )); then
-          echo "sync-release-pr-generated: FAIL (timed out waiting for required checks on PR #${pr_number})"
-          if [[ -n "${details}" ]]; then
-            echo "${details}"
-          fi
-          return 1
-        fi
-        echo "sync-release-pr-generated: waiting for required checks on PR #${pr_number}"
-        if [[ -n "${details}" ]]; then
-          echo "${details}"
-        fi
-        sleep "${interval_seconds}"
-        ;;
-      *)
-        echo "sync-release-pr-generated: FAIL (could not read required check status for PR #${pr_number})"
-        return 1
-        ;;
-    esac
-  done
-}
-
-wait_for_required_checks_to_start() {
-  local timeout_seconds="${RELEASE_PR_CHECK_START_TIMEOUT_SECONDS:-300}"
-  local interval_seconds="${RELEASE_PR_CHECK_INTERVAL_SECONDS:-15}"
-  local required_checks
-  required_checks="$(release_pr_required_checks)"
-
-  local deadline=$((SECONDS + timeout_seconds))
-
-  while true; do
-    local checks_json
-    checks_json="$(collect_check_records "while waiting for required checks to start")"
-
-    local status_file
-    status_file="$(mktemp)"
-    CHECKS_JSON="${checks_json}" REQUIRED_CHECKS="${required_checks}" python3 - >"${status_file}" <<'PY'
-import json
-import os
-
-checks = json.loads(os.environ.get("CHECKS_JSON") or "[]")
-required = [line for line in os.environ["REQUIRED_CHECKS"].splitlines() if line]
-seen = {check.get("name", "") for check in checks}
-missing = [name for name in required if name not in seen]
-
-if missing:
-    print("pending")
-    print("missing: " + ", ".join(missing))
-else:
-    print("pass")
-PY
-
-    local status
-    status="$(head -n 1 "${status_file}")"
-    local details
-    details="$(tail -n +2 "${status_file}")"
-    rm -f "${status_file}"
-
-    case "${status}" in
-      pass)
-        echo "sync-release-pr-generated: required checks queued for PR #${pr_number}"
-        return 0
-        ;;
-      pending)
-        if (( SECONDS >= deadline )); then
-          echo "sync-release-pr-generated: FAIL (timed out waiting for required checks to queue on PR #${pr_number})"
-          if [[ -n "${details}" ]]; then
-            echo "${details}"
-          fi
-          return 1
-        fi
-        echo "sync-release-pr-generated: waiting for required checks to queue on PR #${pr_number}"
-        if [[ -n "${details}" ]]; then
-          echo "${details}"
-        fi
-        sleep "${interval_seconds}"
-        ;;
-      *)
-        echo "sync-release-pr-generated: FAIL (could not read required check queue status for PR #${pr_number})"
-        return 1
-        ;;
-    esac
-  done
-}
-
-# Report pass|pending|fail|none for the required checks at the current PR head.
-# "none" means no required check exists at this head yet, so a dispatch is
-# genuinely needed; "pending" means a run is already in flight and must be
-# awaited instead of dispatched again.
-classify_existing_required_checks() {
-  local required_checks checks_json status_file status
-  required_checks="$(release_pr_required_checks)"
-  checks_json="$(collect_check_records "before deciding whether to dispatch")"
-  status_file="$(mktemp)"
-  CHECKS_JSON="${checks_json}" REQUIRED_CHECKS="${required_checks}" classify_required_checks >"${status_file}"
-  status="$(head -n 1 "${status_file}")"
-  rm -f "${status_file}"
-  case "${status}" in
-    pass|fail)
-      printf '%s\n' "${status}"
-      ;;
-    pending)
-      CHECKS_JSON="${checks_json}" REQUIRED_CHECKS="${required_checks}" python3 - <<'PYCHECK'
-import json
-import os
-
-checks = json.loads(os.environ.get("CHECKS_JSON") or "[]")
-required = [line for line in os.environ["REQUIRED_CHECKS"].splitlines() if line]
-seen = {check.get("name", "") for check in checks}
-print("pending" if any(name in seen for name in required) else "none")
-PYCHECK
-      ;;
-    *)
-      echo "unknown"
-      return 1
-      ;;
-  esac
-}
-
-dispatch_required_checks() {
-  local required_check_workflow="${RELEASE_PR_CHECK_WORKFLOW:-ci.yml}"
-  local dispatch_args=(workflow run "${required_check_workflow}" --ref "${release_branch}")
-
-  if [[ "${required_check_workflow}" == "ci.yml" ]]; then
-    dispatch_args+=(
-      --raw-field run_full_rubric=false
-      --raw-field release_pr_number="${pr_number}"
-    )
-  fi
-
-  echo "sync-release-pr-generated: dispatching ${required_check_workflow} for ${release_branch} with full rubric disabled"
-  if ! gh "${dispatch_args[@]}"; then
-    echo "sync-release-pr-generated: FAIL (could not dispatch ${required_check_workflow} for ${release_branch})"
-    exit 1
-  fi
-}
 
 wait_for_pr_head() {
   local expected_head="$1"
@@ -873,81 +410,6 @@ require_pr_head() {
     echo "sync-release-pr-generated: FAIL (PR #${pr_number} head changed ${context}; expected ${expected_head}, found ${current_pr_head})"
     exit 1
   fi
-}
-
-finalize_release_pr() {
-  local lane
-  case "${release_branch}" in
-    release-please--branches--premain) lane="prerelease" ;;
-    release-please--branches--main) lane="stable" ;;
-    *)
-      echo "sync-release-pr-generated: FAIL (finalize-only requires a generated release branch)" >&2
-      exit 1
-      ;;
-  esac
-
-  git fetch origin "${release_branch}"
-  local expected_head
-  local local_head
-  expected_head="$(git rev-parse FETCH_HEAD)"
-  local_head="$(git rev-parse HEAD)"
-  if [[ "${local_head}" != "${expected_head}" ]]; then
-    echo "sync-release-pr-generated: FAIL (finalize-only must run from ${release_branch} head ${expected_head}; checkout is ${local_head})" >&2
-    exit 1
-  fi
-
-  require_pr_head "${expected_head}" "before finalizing the generated release PR"
-  bash scripts/verify-version-alignment.sh
-  bash scripts/verify-release-pr-postcondition.sh "${lane}"
-
-  local status
-  status="$(classify_existing_required_checks)"
-  if [[ "${status}" != "pass" ]]; then
-    echo "sync-release-pr-generated: FAIL (required checks at ${expected_head} are ${status}; finalize-only never dispatches, reruns, merges or rewrites a commit)" >&2
-    exit 1
-  fi
-  required_checks_passed=true
-  synced_head="${expected_head}"
-
-  local current_pr_line current_pr_state current_pr_is_draft current_pr_head
-  current_pr_line="$(require_pr_state_line "before marking the generated-artifact-synced PR ready")"
-  current_pr_state="${current_pr_line%%$'\t'*}"
-  current_pr_is_draft="${current_pr_line#*$'\t'}"
-  current_pr_is_draft="${current_pr_is_draft%%$'\t'*}"
-  current_pr_head="${current_pr_line##*$'\t'}"
-
-  if [[ "${current_pr_state}" != "OPEN" ]]; then
-    echo "sync-release-pr-generated: FAIL (PR #${pr_number} is ${current_pr_state} before finalizing)" >&2
-    exit 1
-  fi
-  if [[ "${current_pr_head}" != "${expected_head}" ]]; then
-    echo "sync-release-pr-generated: FAIL (PR #${pr_number} head changed before finalizing; expected ${expected_head}, found ${current_pr_head})" >&2
-    exit 1
-  fi
-  if [[ "${current_pr_is_draft}" == "false" ]]; then
-    echo "sync-release-pr-generated: PASS (${release_branch} already ready at ${expected_head})"
-    exit 0
-  fi
-
-  require_pr_head "${expected_head}" "at the marking-ready boundary"
-  if ! gh pr ready "${pr_number}"; then
-    exit_if_benign_merged_release_pr "while finalizing the generated release PR" || true
-    echo "sync-release-pr-generated: FAIL (PR #${pr_number} could not be marked ready at ${expected_head})" >&2
-    exit 1
-  fi
-
-  current_pr_line="$(require_pr_state_line "after finalizing the generated release PR")"
-  current_pr_state="${current_pr_line%%$'\t'*}"
-  current_pr_is_draft="${current_pr_line#*$'\t'}"
-  current_pr_is_draft="${current_pr_is_draft%%$'\t'*}"
-  current_pr_head="${current_pr_line##*$'\t'}"
-  if [[ "${current_pr_state}" != "OPEN" || "${current_pr_head}" != "${expected_head}" || "${current_pr_is_draft}" != "false" ]]; then
-    gh pr ready "${pr_number}" --undo || true
-    echo "sync-release-pr-generated: FAIL (PR #${pr_number} did not finalize cleanly; expected OPEN, draft=false at ${expected_head}, found ${current_pr_state}/${current_pr_is_draft} at ${current_pr_head})" >&2
-    exit 1
-  fi
-
-  echo "sync-release-pr-generated: PASS (${release_branch} finalized at ${expected_head})"
 }
 
 sync_stable_release_premain_manifest() {
@@ -1306,136 +768,21 @@ run_read_classifier_self_test() {
   fi
   rm -f "${auth_calls_file}"
 
-  local classify_cases
-  classify_cases="$(cat <<'CASES'
-pass|[{"name":"Required Check","bucket":"pass"}]|pass
-fail|[{"name":"Required Check","bucket":"failure"}]|fail
-none|[]|none
-pending|[{"name":"Required Check","bucket":"pending"}]|pending
-CASES
-)"
-  while IFS='|' read -r label checks_json want; do
-    local got
-    got="$(
-      STUB_CHECKS_JSON="${checks_json}"
-      collect_check_records() { printf '%s' "${STUB_CHECKS_JSON}"; }
-      release_pr_required_checks() { printf 'Required Check\n'; }
-      classify_existing_required_checks
-    )"
-    if [[ "${got}" != "${want}" ]]; then
-      echo "sync-release-pr-generated self-test: FAIL required-check classification ${label} (expected ${want}, got ${got})" >&2
-      failures=$((failures + 1))
-    else
-      echo "sync-release-pr-generated self-test: PASS required-check classification ${label}"
-    fi
-  done <<<"${classify_cases}"
-
-  if (( failures > 0 )); then
-    echo "sync-release-pr-generated self-test: FAIL (${failures} read-classifier issue(s))" >&2
-    exit 1
-  fi
   echo "sync-release-pr-generated self-test: PASS read-classification"
 }
 
 
-run_finalize_self_test() {
-  local failures=0
-
-  run_finalize_case() {
-    local label="$1"
-    local expect_success="$2"
-    local checks="$3"
-    local initial_state="$4"
-    local state_file
-    state_file="$(mktemp)"
-    printf '%s\n' "${initial_state}" >"${state_file}"
-    local ready_file
-    ready_file="$(mktemp)"
-
-    local status=0
-    (
-      release_branch=release-please--branches--premain
-      pr_number=1275
-      git() {
-        case "$1" in
-          fetch) return 0 ;;
-          rev-parse)
-            if [[ "${2:-}" == "FETCH_HEAD" || "${2:-}" == "HEAD" ]]; then
-              echo "abc123"
-              return 0
-            fi
-            command git "$@"
-            ;;
-          *) command git "$@" ;;
-        esac
-      }
-      bash() { return 0; }
-      require_pr_head() { return 0; }
-      classify_existing_required_checks() { printf '%s\n' "${checks}"; }
-      require_pr_state_line() { cat "${state_file}"; }
-      gh() {
-        printf '%s\n' "$*" >>"${ready_file}"
-        if [[ "${1:-} ${2:-}" == "pr ready" ]]; then
-          printf 'OPEN\tfalse\tabc123\n' >"${state_file}"
-        fi
-        return 0
-      }
-      finalize_release_pr
-    ) >/dev/null 2>&1 || status=$?
-
-    local ready_calls
-    ready_calls="$(grep -c '^pr ready' "${ready_file}" 2>/dev/null || true)"
-    local final_state
-    final_state="$(tr '\n' ' ' <"${state_file}")"
-    rm -f "${state_file}" "${ready_file}"
-
-    local ok=true
-    if [[ "${expect_success}" == "true" ]]; then
-      (( status == 0 )) || ok=false
-    else
-      (( status != 0 )) || ok=false
-    fi
-    if [[ "${expect_success}" == "true" && "${final_state}" != *$'false\tabc123'* ]]; then
-      ok=false
-    fi
-    if [[ "${expect_success}" != "true" && "${final_state}" != *$'true\tabc123'* && "${checks}" != "pass" ]]; then
-      ok=false
-    fi
-
-    if [[ "${ok}" != "true" ]]; then
-      echo "sync-release-pr-generated self-test: FAIL finalize ${label} (status=${status} ready_calls=${ready_calls} state=${final_state})" >&2
-      failures=$((failures + 1))
-    else
-      echo "sync-release-pr-generated self-test: PASS finalize ${label}"
-    fi
-  }
-
-  run_finalize_case "green draft head is marked ready" true "pass" $'OPEN\ttrue\tabc123'
-  run_finalize_case "already-ready head is idempotent" true "pass" $'OPEN\tfalse\tabc123'
-  run_finalize_case "pending checks refuse readiness" false "pending" $'OPEN\ttrue\tabc123'
-  run_finalize_case "failed checks refuse readiness" false "fail" $'OPEN\ttrue\tabc123'
-  run_finalize_case "moved head refuses readiness" false "pass" $'OPEN\ttrue\tdef456'
-
-  if (( failures > 0 )); then
-    echo "sync-release-pr-generated self-test: FAIL (${failures} finalize issue(s))" >&2
-    exit 1
-  fi
-  echo "sync-release-pr-generated self-test: PASS finalize-only"
-}
 
 if [[ "${1:-}" == "--self-test" ]]; then
-  run_required_check_classifier_self_test
   run_signed_sync_mode_self_test
   run_sync_secret_material_self_test
   run_artifact_plan_self_test
   run_read_classifier_self_test
-  run_finalize_self_test
   exit 0
 fi
 
 local_signed_sync_requested=false
 print_plan_requested=false
-finalize_only=false
 while [[ "${1:-}" == --* ]]; do
   case "${1:-}" in
     --local-signed-sync)
@@ -1446,18 +793,12 @@ while [[ "${1:-}" == --* ]]; do
       print_plan_requested=true
       shift
       ;;
-    --finalize-only)
-      finalize_only=true
-      shift
-      ;;
     --help|-h)
       cat <<'USAGE'
-usage: scripts/sync-release-pr-generated.sh [--print-plan] [--local-signed-sync] [--finalize-only] <release-branch>|--self-test
+usage: scripts/sync-release-pr-generated.sh [--print-plan] [--local-signed-sync] <release-branch>|--self-test
 
 --print-plan prints the non-mutating GitHub API commit plan after regenerating
 release artifacts. It does not send createCommitOnBranch or push.
---finalize-only verifies the exact PR head, release postcondition and current
-required checks, then marks the PR ready. It never dispatches, commits or merges.
 USAGE
       exit 0
       ;;
@@ -1521,11 +862,6 @@ if [[ -z "${pr_line}" ]]; then
 fi
 
 pr_number="${pr_line%%$'\t'*}"
-if [[ "${finalize_only}" == "true" ]]; then
-  finalize_release_pr
-  exit 0
-fi
-
 # The release PR must not be mergeable while generated artifacts are still being
 # rewritten. This is the release-lane invariant: release-please version files and
 # generated CDK/jsii artifacts land in the same release PR before it becomes
@@ -1590,66 +926,5 @@ else
 fi
 
 wait_for_pr_head "${synced_head}"
-# After the generated-artifact head is visible, rely only on independently
-# dispatched checks for protected required contexts. Automation commits suppress
-# their pull_request events, so explicitly dispatch CI with the exact PR number
-# and release head instead of self-attesting protected statuses from mutable
-# release-branch code.
-ensure_release_pr_is_draft "before waiting for independent required checks"
-require_pr_head "${synced_head}" "before dispatching independent required checks"
-case "$(classify_existing_required_checks)" in
-  pass)
-    echo "sync-release-pr-generated: reusing green required checks at ${synced_head}; no re-dispatch"
-    required_checks_passed=true
-    ;;
-  fail)
-    echo "sync-release-pr-generated: FAIL (required checks already failed at ${synced_head}; refusing to re-dispatch around a red check)" >&2
-    exit 1
-    ;;
-  pending)
-    echo "sync-release-pr-generated: required checks already queued at ${synced_head}; waiting without re-dispatch"
-    wait_for_required_checks
-    required_checks_passed=true
-    ;;
-  none)
-    dispatch_required_checks
-    wait_for_required_checks_to_start
-    wait_for_required_checks
-    required_checks_passed=true
-    ;;
-  *)
-    echo "sync-release-pr-generated: FAIL (could not classify required checks at ${synced_head})" >&2
-    exit 1
-    ;;
-esac
-
-require_pr_head "${synced_head}" "after required checks passed"
-ensure_release_pr_is_draft "before marking generated-artifact-synced PR ready"
-require_pr_head "${synced_head}" "before marking generated-artifact-synced PR ready"
-if ! gh pr ready "${pr_number}"; then
-  exit_if_benign_merged_release_pr "while marking generated-artifact-synced PR ready" || true
-  echo "sync-release-pr-generated: FAIL (PR #${pr_number} could not be marked ready after generated artifacts and required checks matched ${synced_head})"
-  exit 1
-fi
-
-current_pr_line="$(require_pr_state_line "after marking ready")"
-current_pr_state="${current_pr_line%%$'\t'*}"
-current_pr_is_draft="${current_pr_line#*$'\t'}"
-current_pr_is_draft="${current_pr_is_draft%%$'\t'*}"
-current_pr_head="${current_pr_line##*$'\t'}"
-if [[ "${current_pr_state}" != "OPEN" ]]; then
-  exit_if_benign_merged_release_pr "after marking ready" "${current_pr_line}" || true
-  echo "sync-release-pr-generated: FAIL (PR #${pr_number} is ${current_pr_state} after marking ready)"
-  exit 1
-fi
-if [[ "${current_pr_head}" != "${synced_head}" ]]; then
-  gh pr ready "${pr_number}" --undo || true
-  echo "sync-release-pr-generated: FAIL (PR #${pr_number} head changed while marking ready; expected ${synced_head}, found ${current_pr_head})"
-  exit 1
-fi
-if [[ "${current_pr_is_draft}" != "false" ]]; then
-  echo "sync-release-pr-generated: FAIL (PR #${pr_number} could not be marked ready after generated artifacts and required checks matched ${synced_head})"
-  exit 1
-fi
 
 echo "sync-release-pr-generated: PASS (${release_branch} updated)"

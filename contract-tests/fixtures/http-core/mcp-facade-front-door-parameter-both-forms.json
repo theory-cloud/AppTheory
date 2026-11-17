@@ -1,0 +1,20 @@
+{
+  "id": "p0.mcp_facade.front_door_parameter_both_forms",
+  "tier": "p0",
+  "name": "MCP facade: declaring both a front-door secret value and a secret parameter name fails registration closed",
+  "setup": {
+    "mcp_facade": {
+      "origin_reachability": "fronted",
+      "front_door_verification": {
+        "header_name": "x-front-door",
+        "secret_value": "front-door-secret-0123456789-abcdefghi",
+        "secret_parameter_name": "/theorycloud/apptheory/test/fronted/origin-token"
+      }
+    }
+  },
+  "expect": {
+    "error": {
+      "message": "requires exactly one of"
+    }
+  }
+}

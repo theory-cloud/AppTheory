@@ -26,28 +26,35 @@ the release-please configuration.
   applies to the exact candidate inputs and to the tracked profile. It never
   treats a record as an authenticated verdict and never executes a command named
   by a record.
+- Gates are verified once, on the pull request into `staging`, because `staging`
+  is what gets released and deployed. No gate-class job runs on a push to
+  `staging`, `premain` or `main`, and none runs at deploy. `premain` and `main`
+  only ever receive PRs from `staging` (or a generated release-please branch),
+  so the tree merged there is the tree that was verified.
 - The accepted provenance is ordinary cooperating implementer and reviewer
   provenance. There is no signing of test execution, no remote attestation and
   no persistent proof service.
-- A pull request whose head repository is not this repository always executes
-  the real command set. Evidence records carried by untrusted content gain
-  nothing, and the pull-request lane keeps read-only credentials.
+- A fork pull request never executes a gate. It cannot carry a record produced
+  here, so it fails closed with "produce evidence locally", and the pull-request
+  lane keeps read-only credentials. External contributions arrive through a
+  pre-arranged branch negotiated with CODEOWNERS; a codeowner carries the change
+  into `staging` with locally produced evidence.
 - Paired approval of the candidate remains the Factory review gate.
 
 ## Proof profiles: one claim, one environment, one proof
 
 A **proof profile** is a tracked declaration of a supported environment: the Go
 repository pin, the Node major, the Python major.minor, and the producing
-OS/arch. The collector and the CI execution fallback probe the real versions
-they run under and refuse to record a profile the live host does not satisfy.
+OS/arch. The collector probes the real versions it runs under and refuses to
+record a profile the live host does not satisfy.
 Verification compares the recorded environment with the tracked profile
 declaration, never with the verifier runner.
 
 A platform-bound gate may also declare tracked `fallbackProfiles`: explicit
 alternate producers of the same claim. `default` (darwin/arm64) is the approved
 producing host for the local journey and build proofs; `deterministic-builds`
-additionally supports `linux-x64` so a Linux CI runner can produce and reuse its
-own truthfully labeled record. A fallback is never a caller wildcard: it is a
+additionally supports `linux-x64` so a Linux producer records its own truthfully
+labeled proof. A fallback is never a caller wildcard: it is a
 declared profile of that gate, the record names the environment that really ran,
 and a host that satisfies neither profile refuses to execute.
 
@@ -259,6 +266,12 @@ passes, so when that record applies the standalone gate verifies it instead of
 packing a third and fourth time. A profile or toolchain mismatch falls through to
 the real packaging command.
 
+The release-train provenance self-test and the deterministic release-cycle
+regression are owned by the required `Release/security gates` job, which runs
+both on every staging pull request. `make rubric` no longer repeats them: the
+merge already requires that context, so a second run would duplicate a check the
+branch cannot merge without.
+
 The CDK TypeScript pack and Python build appear in the release-gates step as
 `scripts/verify-cdk-packaging.sh`. At rubric nesting the wrapper declares that
 the two deterministic-build passes own those two package builds; the composed
@@ -288,6 +301,13 @@ fail closed. The enumerator partitions every file into exactly one projection:
 - **release-only inputs** — the explicit version-coupled and regenerated paths
   in the registry (`VERSION`, both manifests, `CHANGELOG.md`, package manifests
   and lockfiles, `cdk/.jsii`, `cdk/lib/**`, `cdk-go/**`, example CDK lockfiles);
+- **release-notes inputs** — the explicit release-history allowlist inside the
+  release-only set: the changelog and the release-please manifests, which are
+  projected so that release history cannot stale product proof;
+- **release-derived inputs** — the explicit allowlist of artifacts the release
+  lane rebuilds rather than edits: the jsii assembly and its packed npm tarball,
+  projected to content so a release rename, repack or re-derived fingerprint
+  cannot stale product proof while every packed byte stays bound;
 - the dedicated evidence directory itself is the only evidence-content
   exclusion.
 
@@ -295,9 +315,104 @@ The source digest identifies ordinary proof. It is content-addressed, so the
 same tree verifies across commit SHAs, branch names and evidence-only commits.
 Each gate stores a scope digest computed over its declared inputs. Release-only
 files inside that scope are normalized by substituting the recorded `VERSION`
-literal, so a pure version transformation stays applicable while any other edit
-in the same path still invalidates the gate. A source or documentation edit
-outside a product gate's scope does not invalidate that product proof.
+literal, and the two allowlisted classes are projected to what they contribute,
+so a pure version transformation stays applicable while any other edit in the
+same path still invalidates the gate. A source or documentation edit outside a
+product gate's scope does not invalidate that product proof.
+
+### Release notes are history, not input
+
+A release appends to the changelog and moves the release-please manifest values,
+and neither carries product bytes: no gate command reads the changelog, and
+nothing is built, packed or published from a release-please manifest. Binding
+that content is what made every `**`-scoped record go stale on a pure release
+back-merge, because a newly appended section is not a version-literal
+substitution. The `releaseNotes` class fixes that by narrowing those paths'
+projection instead of widening normalization anywhere else:
+
+- a changelog contributes its path and mode, never its bytes — a generated
+  section, a hand edit and a reordering all project to the same line;
+- a release-please manifest projects every version *value* (including a
+  prerelease track or a second package that the tracked `VERSION` literal does
+  not name) and keeps the structure around those values bound, so an unrelated
+  edit to the manifest still fails closed.
+
+Nothing else moved. `cdk/lib/`, `cdk-go/apptheorycdk/`, `cdk/.jsii` and the
+package manifests and lockfiles keep version-literal normalization only: a
+one-byte change in `cdk/lib/app.js` still stales every record whose scope covers
+it, exactly as before. The class is a fixed allowlist in
+`scripts/evidence/check-policy.py` — it has no prefixes and no patterns, the
+registry must match the allowlist exactly, every entry must be a release-only
+path naming one tracked file outside the product prefixes, and an entry that is
+also a dependency-scan input is rejected.
+
+What a hand edit to `CHANGELOG.md` on a staging pull request does now: it no
+longer stales any record. That is deliberate and bounded. Release notes have no
+runtime, packaging or publication effect; the edit is still visible in the diff
+the reviewer approves; `release-delta` re-reads the generated changelog form
+through `verify-release-generated-messages.sh` on every generated release pull
+request; and version alignment keeps reading both manifests, so a manifest
+value that disagrees with `VERSION` still fails the `Version alignment` job.
+The alternative — binding release history to proof — would only add a claim no
+gate makes.
+
+### Release-derived artifacts are bound by content, not by pack bytes
+
+The release lane does not only rewrite version literals: `update-cdk-generated.sh`
+rebuilds the CDK bindings and repacks the jsii npm tarball, so a release
+*renames* `cdk-go/apptheorycdk/jsii/theory-cloud-apptheory-cdk-<version>.tgz`
+and re-derives the jsii assembly `fingerprint` in `cdk/.jsii`. Both are derived
+from bytes that stay bound (the CDK TypeScript sources, `cdk/lib/`, and the Go
+bindings), and neither is a version literal, so version-literal normalization
+alone cannot describe them. The `releaseDerived` class is the narrow fix:
+
+- the tarball is projected to its **content**: member order, path, mode, mtime
+  and content of every packed file, with the version literal normalized and the
+  packed `package/.jsii` fingerprint projected exactly as the standalone one.
+  The gzip framing is excluded because npm compresses with the host zlib, so an
+  identical pack has different archive bytes on Linux and macOS — the same
+  variation `scripts/lib/canonicalize-jsii-tarballs.py` exists to absorb. The
+  file name is normalized with the same version literal, so a rename is a
+  transformation, not a new input;
+- `cdk/.jsii` projects only its top-level `fingerprint` value. jsii derives that
+  value as the base64 SHA-256 of the sorted assembly with the field removed, so
+  it is a hash of exactly the bytes that remain bound; every other byte —
+  including the version, the types, the readme and the key order — stays bound.
+
+Anything a projection does not describe stays raw and therefore fails closed:
+
+- a tarball whose members are not regular files, whose paths are absolute or
+  traversing, that exceeds the read caps, that is not a gzip/tar stream, or that
+  fails to parse is bound by its raw archive bytes;
+- a class that names zero or more than one file (a leftover tarball beside the
+  new one) is refused outright, because a projection that covered zero or
+  several artifacts would hide an input instead of describing one;
+- a name whose variable segment is not a version does not match the class at all
+  and stays an ordinary release-only input.
+
+What a hand edit to either artifact does: it fails closed unless the edit is the
+version literal alone, or — for `cdk/.jsii` — the fingerprint value and nothing
+else. A hand edit to an existing tarball's packed bytes, to its member metadata,
+to its member order, or to any other byte of `cdk/.jsii` changes the digest and
+stales every record whose scope covers it. Binding the fingerprint is deliberate:
+it is not product bytes, `verify-cdk-go-drift.sh` regenerates and compares the
+bindings on every staging pull request, and a stale fingerprint with an unchanged
+assembly cannot change a build, a package or a published artifact.
+
+Nothing else moved: `cdk/lib/`, `cdk-go/apptheorycdk/*.go`,
+`cdk-go/apptheorycdk/version`, the package manifests and the lockfiles still get
+version-literal normalization only, and no path was added to `nonProductPaths`.
+The class is a fixed allowlist in `scripts/evidence/check-policy.py`: the
+registry must match it exactly, each entry is one exact path or one anchored
+pattern whose single `{{version}}` placeholder stays inside the file name, and an
+entry that is not release-only, that is also release history, that is a
+dependency-scan input, or that does not describe exactly one tracked file is
+rejected.
+
+`scripts/test-validation-evidence.sh` proves the class: a renamed and repacked
+tarball with a moved fingerprint verifies with the committed record unchanged,
+while a non-version byte inside a packed member, another `.jsii` field, a second
+tarball and a missing tarball each fail closed.
 
 `release-delta` performs the narrow regeneration and packaging smoke once per
 changed generated artifact set. It deliberately does not run the rubric,
@@ -391,8 +506,9 @@ scripts/evidence/collect.sh --gate go --gate ts --profile default
 # Verify without executing anything named by the record.
 scripts/evidence/verify.sh --gate rubric --profile default
 
-# Reuse applicable proof, otherwise execute the approved commands (CI entry point).
-scripts/evidence/verify-or-execute.sh --gate rubric --profile default
+# The CI entry point: verify the record or fail with the local collection
+# command. It has no execution path.
+scripts/evidence/verify-gate.sh --gate rubric --profile default
 
 # Add reviewer references after review without invalidating input identity.
 python3 scripts/evidence/validation_evidence.py finalize --gate rubric --profile default --review-ref factory-review-1234
@@ -425,12 +541,19 @@ source fix after review invalidates only the affected gates and profiles;
 recollect those, or run `--all --profile <id>` on the committed tree and let the
 scheduler decide.
 
-## The CI execution fallback writes the record
+## The CI verifies the record and never executes a gate
 
-`scripts/evidence/verify-or-execute.sh` is the CI entry point. When no
-applicable record verifies, it executes the approved commands through
-`validation_evidence.py run --forced`, which uses the same record builder,
-schema, atomic write and verifier as collection:
+`scripts/evidence/verify-gate.sh` is the CI entry point, and verification is the
+only thing it does. It verifies the requested tracked profile, then the gate's
+declared `fallbackProfiles`, then a `composedFrom` record whose scope covers the
+same command set. When nothing applies it prints the exact
+`scripts/evidence/collect.sh --gate <gate> --profile <profile>` command and exits
+non-zero with "produce evidence locally". There is no execute fallback, no
+force switch and no fork exception.
+
+The local record builder behind that command (`validation_evidence.py run`, and
+`collect.sh` above it) uses the same record builder, schema, atomic write and
+verifier as collection:
 
 - it validates the live probe against the requested tracked profile before
   running anything, and refuses with the exact mismatch when the host cannot
@@ -443,31 +566,18 @@ schema, atomic write and verifier as collection:
   cancelled run writes no record and returns a signal exit; a successful run
   re-checks that its own record verifies on those exact inputs and profile
   before claiming PASS;
-- forced execution sets `EVIDENCE_FORCE_EXECUTE=true` for the leaf commands, so
-  it cannot consume another gate's nested proof and then claim composition;
+- a forced run (`run --forced`) sets `EVIDENCE_FORCE_EXECUTE=true` for the leaf
+  commands, so it cannot consume another gate's nested proof and then claim
+  composition; the generated release delta smoke is the one CI step that runs
+  this way;
 - an unclassified input (neither release-only, nor in any gate scope, nor a
   declared non-product path) is refused instead of being recorded as a reusable
   PASS.
 
 A second identical run therefore verifies the record and executes zero
 commands. Records are never written by the verifier and never edited into a new
-result.
-
-### Producing and uploading records
-
-A record the run wrote is appended to the producer manifest named by
-`APPTHEORY_EVIDENCE_PRODUCED_MANIFEST`, with the digest written. Workflow jobs
-point that manifest at a per-job runner-temp file, then resolve it with
-`python3 scripts/evidence/validation_evidence.py produced-records`, which
-requires each named path to be the exact
-`<evidence>/<gate>/<profile>.json` record, to exist, to match the digest written
-by this run, not to be an untouched checkout record, and — for a PASS record —
-to verify on the current inputs. The upload step consumes those resolved paths with
-`if-no-files-found: error`, and is skipped when nothing was produced. A missing
-record, a foreign path, or a stale committed receipt fails closed instead of
-being uploaded as if this run had produced it. A verified-only run produces
-nothing to upload; a run that replaces a stale committed record does produce an
-uploadable path.
+result, and CI never produces a record to upload: the record is committed by the
+steward in a records-only commit, and CI only reads it.
 
 ## Applicability summary in CI
 
@@ -475,14 +585,15 @@ Every evidence-aware job prints one unambiguous line and a job-summary entry:
 
 - `gate <id> (profile <id>): evidence-verified (no command executed in this run)`; or
 - `gate <id> (profile <id>; requested <id>): evidence-verified (tracked fallback profile; no command executed in this run)`; or
-- `gate <id> (profile <id>): executing (<reason>)` followed by the real approved command.
+- `gate <id> (profile <id>): evidence-verified (composed from <gate>; no command executed in this run)`; or
+- `gate <id> (profile <id>): no applicable evidence record (<reason>)` followed by
+  `produce evidence locally: run 'scripts/evidence/collect.sh --gate <gate> --profile <profile>' ...`.
 
 The staging required context keeps its name, `Rubric (full gate set)`. A green
 state means the recorded proof was verified for the candidate inputs and the
-tracked profile, not that the command was executed in that run. When a committed
-record does not apply, the gate executes its real command; that is the
-missing-proof fallback, not a silent pass, and the record it actually wrote is
-uploaded so one commit can make later legs reuse it.
+tracked profile, not that the command was executed in that run. When no committed
+record applies, the job is red and names the local collection command; a red job
+is the missing-proof signal, never a silent pass.
 
 The PR lane runs workflow code from the candidate. That is acceptable because
 all PR-lane permissions are read-only, the verifier never executes record
@@ -493,17 +604,36 @@ release operations run only from protected branches.
 
 | Leg | Event | Old behavior | New behavior |
 | --- | --- | --- | --- |
-| `pr-staging` | pull request → staging | every job executes on the merge ref | required product jobs reuse applicable evidence for their tracked profile; untrusted or unmatched inputs execute |
-| `push-staging` | merge push → staging | every job re-executes on the merged tree | product and floor jobs reuse each profile's proof; release/security gates execute cheaply |
-| `pr-staging-premain` | staging → premain promotion PR | CI product set plus promotion readiness/eligibility | promotion readiness/eligibility plus evidenced product checks per profile; no source rerun |
-| `push-premain` | promotion merge push → premain | CI product set re-executes, then release-please generates the RC PR | CI reuses each profile's evidence; release-please generation and artifact sync run |
-| `release-pr-premain` | generated RC release PR | dispatched CI re-executes the product suite on generated artifacts | release-delta packaging/drift smoke once; product and floor jobs verify their profile records |
-| `release-merge-premain` | RC merge/publish on premain | CI product set re-executes, then the publisher builds assets again | product checks verify profile evidence; signatures and version state run; publisher builds real Linux assets once |
-| `pr-premain-main` | premain → main promotion PR | CI product set plus promotion readiness/eligibility | promotion readiness/eligibility plus evidenced product checks per profile; no source rerun |
-| `push-main` | promotion merge push → main | CI product set re-executes, then release-please generates the stable PR | CI reuses each profile's evidence; release-please generation and artifact sync run |
-| `release-pr-main` | generated stable release PR | dispatched CI re-executes the product suite on generated artifacts | release-delta packaging/drift smoke once; product and floor jobs verify their profile records |
-| `release-merge-main` | stable merge/publish on main | CI product set re-executes, then the publisher builds assets again | product checks verify profile evidence; signatures and version state run; publisher builds real Linux assets once |
-| `backmerge-main-staging` | main → staging back-merge PR | full rubric, builds, examples and matrix re-execute | evidenced pure version-transformation reuse per profile; a real source delta executes the affected gates |
+| `pr-staging` | pull request → staging | every job executes on the merge ref | every product job verifies the committed record for its tracked profile; nothing executes, and a missing or stale record fails with the local collection command |
+| `push-staging` | merge push → staging | every job re-executes on the merged tree | publish side effects only (pages); no gate-class job runs on the merge |
+| `pr-staging-premain` | staging → premain promotion PR | CI product set plus promotion readiness/eligibility | release hygiene only: promotion gate, version alignment, release/security gates and dependency-scan freshness; no product job runs |
+| `push-premain` | promotion merge push → premain | CI product set re-executes, then release-please generates the RC PR | release-please generation and publish only; no gate re-verification |
+| `release-pr-premain` | generated RC release PR | dispatched CI re-executes the product suite on generated artifacts | generated release PR: release-delta smoke once over generated artifacts, plus release/security gates and version alignment; no product job runs |
+| `release-merge-premain` | RC merge/publish on premain | CI product set re-executes, then the publisher builds assets again | publish only; the publisher builds real Linux assets once and no gate re-verifies |
+| `pr-premain-main` | premain → main promotion PR | CI product set plus promotion readiness/eligibility | release hygiene only: promotion gate, version alignment and release/security gates; no product job runs |
+| `push-main` | promotion merge push → main | CI product set re-executes, then release-please generates the stable PR | release-please generation and publish only; no gate re-verification |
+| `release-pr-main` | generated stable release PR | dispatched CI re-executes the product suite on generated artifacts | generated release PR: release-delta smoke once over generated artifacts, plus release/security gates and version alignment; no product job runs |
+| `release-merge-main` | stable merge/publish on main | CI product set re-executes, then the publisher builds assets again | publish only; no gate re-verifies |
+| `backmerge-main-staging` | main → staging back-merge PR | full rubric, builds, examples and matrix re-execute | the committed staging records verify the back-merge pull request: a pure release back-merge changes release-only paths, release history and the two release-derived jsii artifacts only, each projected to what it contributes; a product delta still stales its scope and needs the affected gates recollected |
+
+No gate runs on a push, on a release branch, or at deploy. `ci.yml` declares a
+pull-request trigger scoped to `staging`, `premain` and `main`, plus the release
+dispatch; every job in it is either a staging-pull-request evidence verify, one
+of the recorded fast checks (`release-train-promotion`,
+`release-security-gates`, `version-alignment`), or recorded release hygiene
+(`release-delta`, `security-refresh`, `prerelease-readiness`,
+`staging-release-eligibility`). `cmd/ci-guard` fails closed on anything else,
+including a push trigger, a job no modeled trigger can reach, or a job that
+starts executing a gate command.
+
+The staging required contexts are exactly the checks that report on every
+staging pull request: `Rubric (full gate set)`, `Examples (local harness)`,
+`Version alignment` and `Release/security gates`. On `premain` and `main` the
+required context is the head-branch check `Release train promotion gate`, which
+keeps its accepted heads (`staging`, and the generated
+`release-please--branches--premain` / `--main` heads); `Version alignment` and
+`Release/security gates` also report there, and `security-refresh` fails a
+promotion whose scan record is older than 24 hours.
 
 The lower-floor matrix maps each cell to explicit profiles:
 
@@ -541,25 +671,29 @@ write, tag mutation or branch-protection change in this gate.
 - Evidence proves the inputs, the tracked profile and the cooperating
   implementation, not a cryptographic attestation of execution.
 - A floor profile that cannot be produced on the implementer's host stays
-  unproven until its one real execution is captured; until then that CI job
-  executes and fails closed on errors. It is not silently substituted with a
-  different floor's proof.
-- The intended provenance is a locally produced, reviewed, signed record. A
-  CI-produced record is preserved as an artifact so the same inputs are not
-  re-executed; because there is no unattended auto-commit path, it becomes
-  reusable only after an operator commits it. The governed local toolchain is
-  the primary way to produce the default and floor records.
-- `examples-local` runs its harness directly in the CI job and has no supported
-  Linux profile, so a CI execution does not produce a record. Reuse on later
-  events requires a committed macOS-arm64 record produced on the approved host;
-  the gap is a rerun, never a false PASS.
+  unproven until its one real execution is captured under that floor; until then
+  that CI job is red and names the collection command. It is not silently
+  substituted with a different floor's proof.
+- The provenance is a locally produced, reviewed, signed record, committed in a
+  records-only commit. CI never produces a record, so there is no unattended
+  auto-commit path and no CI artifact that could be mistaken for one. The
+  governed local toolchain produces the default and floor records.
+- `examples-local` has no supported Linux profile. Its record is produced on the
+  approved macOS-arm64 producing host, and the CI job only verifies it; a
+  missing or stale record is a red rerun for the steward, never a false PASS.
 - The Go pin and the governed toolchain selection must agree. A manager whose Go
   selection is behind the repository pin blocks collection; it does not justify
   ambient fallback.
 - The generated release transformation is bounded by the explicit release-only
-  path set, version-normalized equality and `release-delta` regeneration
-  equality. A change outside that set is a source change and requires the
-  affected validation.
+  path set, version-normalized equality, the release-notes projection, the
+  release-derived projections and `release-delta` regeneration equality. A
+  change outside that set is a source change and requires the affected
+  validation. Release-notes content is the one input no record binds, because no
+  gate reads it; the class that says so is allowlisted in the policy checker
+  rather than inferred from a path pattern. The two release-derived artifacts
+  are bound by content: the tarball's packed members (order, path, mode, mtime,
+  bytes) and every byte of the jsii assembly except the `fingerprint` value it
+  derives from the rest of the document.
 - The scheduler's per-gate input scopes are conservative declarations. A new
   file outside every declared product scope is treated as unknown and forces
   broad execution; it is never silently inherited as green.

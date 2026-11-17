@@ -96,6 +96,7 @@ type FixtureDynamoDBRoute struct {
 type FixtureInput struct {
 	Context               FixtureContext          `json:"context,omitempty"`
 	Request               *FixtureRequest         `json:"request,omitempty"`
+	WarmupRequest         *FixtureRequest         `json:"warmup_request,omitempty"`
 	AWSEvent              *FixtureAWSEvent        `json:"aws_event,omitempty"`
 	LoggingEvent          json.RawMessage         `json:"logging_event,omitempty"`
 	LoggingProfileCatalog bool                    `json:"logging_profile_catalog,omitempty"`
@@ -266,13 +267,18 @@ type FixtureMCPFacadeSetup struct {
 	// FrontDoorVerification and registers the fail-closed header check.
 	OriginReachability    string                        `json:"origin_reachability,omitempty"`
 	FrontDoorVerification *FixtureFrontDoorVerification `json:"front_door_verification,omitempty"`
+	// FrontDoorParameterReads is the ordered result of each read of the
+	// front-door parameter, so the corpus can pin the parameter form without an
+	// AWS call. A null entry is a read failure; the last entry repeats.
+	FrontDoorParameterReads []*string `json:"front_door_parameter_reads,omitempty"`
 }
 
 // FixtureFrontDoorVerification declares the app-owned front-door header the
 // runtime verifies under origin_reachability fronted.
 type FixtureFrontDoorVerification struct {
-	HeaderName  string `json:"header_name"`
-	SecretValue string `json:"secret_value"`
+	HeaderName          string `json:"header_name"`
+	SecretValue         string `json:"secret_value,omitempty"`
+	SecretParameterName string `json:"secret_parameter_name,omitempty"`
 }
 
 // FixtureMCPFacadeBearer selects the runtime-bearer transport posture and the

@@ -38,13 +38,28 @@ bash ./scripts/test-evidence-execution-capture.sh
 bash ./scripts/test-verify-cdk-packaging.sh
 python3 ./scripts/evidence/check-policy.py
 bash ./scripts/verify-ci-evidence-wiring.sh
+# The release-lane guard proves every generated release pull request has a
+# head-bound dispatch path for each required premain/main context, that the
+# producers attach those checks themselves, that the scheduled recovery sweep is
+# wired, and that no workflow reintroduces a release-please token fallback. Its
+# self-test mutates copies of the real workflows and drives the head-binding
+# resolver with hostile answers, so a guard that stops failing closed fails here.
+bash ./scripts/verify-release-pr-check-lane.sh --self-test
+# The release check lane is the only thing that attaches the required premain/main
+# contexts to a generated release pull request, so its decisions (reuse green,
+# refuse red, dispatch with the pull request number and head SHA, never treat a
+# skip as proof) are pinned against a stub gh here.
+bash ./scripts/test-sync-release-pr-checks.sh
 # Release artifact completeness (CDK constructs/synth/packs, runtime floors,
 # template pairing) runs once here, not inside both deterministic build passes.
 # The GovTheory verifier's deterministic-build passes own the two CDK package
 # builds, so declare that coverage instead of packaging a third time.
 APPTHEORY_RUBRIC_CDK_PACKAGING_COVERED=true bash ./scripts/verify-release-gates.sh
-bash ./scripts/verify-release-train-promotion.sh --self-test
-bash ./scripts/verify-release-cycle.sh
+# The release-train provenance self-test and the deterministic release-cycle
+# regression are not repeated here: the required "Release/security gates" job
+# runs both on every staging pull request (scripts/verify-ci-rubric-enforced.sh
+# pins that wiring), so a second run would only re-execute a check the merge
+# already requires.
 # The lab candidate builder is the fail-closed entry point for "build AppTheory at a
 # pinned commit" (docs/development/planning/apptheory/mcp-auth-facade/CANDIDATE_BUILD_INTERFACE.md).
 # Run its offline self-test so a builder that stops refusing live, environment input, a dirty

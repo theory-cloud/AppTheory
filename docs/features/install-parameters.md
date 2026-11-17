@@ -65,3 +65,63 @@ CloudFormation Rules cannot use `Fn::Join`, so the construct cannot express the 
 `DnsHost == cloud-keeper.<NamespaceSlug>.theorycloud.app`. The governed install-profile validator remains responsible
 for that equality. The `DnsHost` parameter pattern independently rejects hosts outside `theorycloud.app` during stack
 evaluation.
+
+## Well-known front-door parameters for `FRONTED`
+
+A `FRONTED` MCP origin declares its front-door secret as `secretParameterName` instead of `secretValue`, so no literal
+lives in the application's source. The parameter is application-owned and stage-qualified; AppTheory never creates it
+and does not ship an installer. The reference name shape is
+
+```text
+/<namespace-slug>/<application>/<stage>/fronted/origin-token
+```
+
+It must be fully qualified from `/`, at most 1011 characters and fifteen levels, use only `[A-Za-z0-9_.-/]` (the
+alphabet a CloudFormation dynamic reference accepts), stay out of the reserved `aws` and `ssm` hierarchies, and have
+type **`String`**. `AWS::CloudFront::Distribution` `OriginCustomHeaders` does not support the `ssm-secure` dynamic
+reference — AWS lists the properties that do, exhaustively, and CloudFront is not one of them — so a `SecureString`
+parameter cannot feed the origin header. Treat the value as defense-in-depth against direct origin access, not as a
+confidentiality control: anyone with `ssm:GetParameter` or `cloudfront:GetDistributionConfig` can read it.
+
+**Create if absent, never overwrite.** The application's installer ensures the parameter exists with a generated value
+of 32 to 128 characters of `[A-Za-z0-9._~-]`. Reference shape for a shell installer:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+parameter_name="/${NAMESPACE_SLUG}/${APPLICATION}/${STAGE}/fronted/origin-token"
+
+# get-parameter fails when the name is absent; put-parameter without --overwrite
+# fails when it exists. The pair therefore never replaces a live value.
+if ! existing="$(aws ssm get-parameter \
+      --name "${parameter_name}" \
+      --with-decryption \
+      --query 'Parameter.Value' \
+      --output text 2>/dev/null)"; then
+  generated="$(openssl rand -base64 48 | tr '+/' '-_' | tr -d '=\n')"
+  aws ssm put-parameter \
+    --name "${parameter_name}" \
+    --type String \
+    --value "${generated}" \
+    --no-overwrite
+fi
+```
+
+An installer written against an AWS SDK follows the same two steps: read the name, and on a not-found error create it
+without an overwrite flag. `openssl rand -base64 48` produces 64 characters; translating `+` to `-` and `/` to `_` and
+dropping the padding stays inside the documented alphabet.
+
+**Grants.** Two different principals read the parameter:
+
+- The deploying principal resolves the distribution header: CloudFormation performs that read with the caller's
+  permissions, so it needs `ssm:GetParameters` for the name.
+- The runtime function reads the value lazily: it needs `ssm:GetParameter` on exactly
+  `arn:aws:ssm:<region>:<account>:parameter/<name-without-leading-slash>`. `AppTheoryMcpServer` adds that statement to
+  `handler` when it declares `secretParameterName`, and adds `kms:Decrypt` on a declared `secretParameterKmsKey`. A
+  `String` parameter needs no KMS permission.
+
+**Rotation.** Write a new value (a new parameter version), then update the stack: CloudFormation resolves the latest
+version on each create or update and does not re-resolve on drift detection, so the parameter change alone does not move
+the distribution. The runtime picks the new value up on the first mismatching request or within its TTL, so requests
+fail closed only for the interval between the two.

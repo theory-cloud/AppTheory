@@ -190,8 +190,8 @@ npx cdk synth
 ```
 
 Supported language values are `go`, `ts`, and `py`. After synth, follow the same `cdk bootstrap`, `cdk deploy`, `curl`,
-and `cdk destroy` sequence shown above. A future theory-cli integration can wrap this command; the generator itself is
-repo-local and intentionally does not mutate cloud resources.
+and `cdk destroy` sequence shown above. The generator is repo-local and intentionally does not mutate cloud resources;
+deployment stays with the CDK commands you run yourself.
 
 ## Verification
 

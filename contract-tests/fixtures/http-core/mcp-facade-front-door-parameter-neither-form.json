@@ -1,0 +1,18 @@
+{
+  "id": "p0.mcp_facade.front_door_parameter_neither_form",
+  "tier": "p0",
+  "name": "MCP facade: declaring neither a front-door secret value nor a secret parameter name fails registration closed",
+  "setup": {
+    "mcp_facade": {
+      "origin_reachability": "fronted",
+      "front_door_verification": {
+        "header_name": "x-front-door"
+      }
+    }
+  },
+  "expect": {
+    "error": {
+      "message": "requires exactly one of"
+    }
+  }
+}

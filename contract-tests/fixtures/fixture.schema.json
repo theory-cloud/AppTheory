@@ -541,14 +541,19 @@
           "type": "string",
           "enum": ["disabled", "locked", "fronted"]
         },
-        "front_door_verification": { "$ref": "#/$defs/mcpFacadeFrontDoorVerification" }
+        "front_door_verification": { "$ref": "#/$defs/mcpFacadeFrontDoorVerification" },
+        "front_door_parameter_reads": {
+          "type": "array",
+          "items": { "type": ["string", "null"] },
+          "description": "The injected read source for front_door_verification.secret_parameter_name: one entry per read, in order, with the last entry repeating. A null entry is an unreadable parameter, so a fixture pins the fail-closed 403 and a rotation without an AWS call. Present-but-empty means every read fails."
+        }
       }
     },
     "mcpFacadeFrontDoorVerification": {
       "type": "object",
-      "description": "The app-owned front-door header the runtime verifies on every derived route under origin_reachability fronted. Required with fronted; refused under every other posture, because an undeclared front door enforces nothing.",
+      "description": "The app-owned front-door header the runtime verifies on every derived route under origin_reachability fronted. Required with fronted; refused under every other posture, because an undeclared front door enforces nothing. Exactly one of secret_value and secret_parameter_name is required; both or neither fail registration closed, and the corpus pins that refusal rather than the schema, so a fixture can express the invalid declaration.",
       "additionalProperties": false,
-      "required": ["header_name", "secret_value"],
+      "required": ["header_name"],
       "properties": {
         "header_name": {
           "type": "string",
@@ -559,6 +564,10 @@
           "type": "string",
           "minLength": 1,
           "description": "32 to 128 characters of [A-Za-z0-9._~-]. The literal the distribution injects and the runtime compares in constant time."
+        },
+        "secret_parameter_name": {
+          "type": "string",
+          "description": "The well-known, stage-qualified SSM parameter that holds the header value: a fully qualified name from '/', at most 1011 characters and fifteen levels, in the [A-Za-z0-9_.-/] alphabet a CloudFormation ssm dynamic reference accepts, outside the reserved aws and ssm hierarchies. The value is read once per execution environment and re-read on a verification mismatch. Malformed names are the registration-error case; the runtime, not this schema, enforces the alphabet."
         }
       }
     },
@@ -705,6 +714,10 @@
       "additionalProperties": false,
       "properties": {
         "request": { "$ref": "#/$defs/request" },
+        "warmup_request": {
+          "$ref": "#/$defs/request",
+          "description": "Served once on the same application instance before request, and not compared. The runner then waits past the runtime's documented one-second front-door secret refresh floor before serving request, so a fixture can model a rotation the live execution environment observes between two requests."
+        },
         "aws_event": { "$ref": "#/$defs/awsEvent" },
         "context": { "$ref": "#/$defs/context" },
         "logging_event": { "type": "object", "additionalProperties": true },
