@@ -21,13 +21,13 @@
     }
   },
   "dependencies": {
-    "@aws-sdk/client-apigatewaymanagementapi": "^3.1164.0",
-    "@aws-sdk/client-bedrock-runtime": "^3.1164.0",
-    "@aws-sdk/client-lambda-microvms": "^3.1164.0",
-    "@aws-sdk/client-s3": "^3.1164.0",
-    "@aws-sdk/client-s3vectors": "^3.1164.0",
+    "@aws-sdk/client-apigatewaymanagementapi": "^3.1169.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.1169.0",
+    "@aws-sdk/client-lambda-microvms": "^3.1169.0",
+    "@aws-sdk/client-s3": "^3.1169.0",
+    "@aws-sdk/client-s3vectors": "^3.1169.0",
     "@aws-sdk/client-ssm": "^3.1164.0",
-    "@aws-sdk/s3-request-presigner": "^3.1164.0",
+    "@aws-sdk/s3-request-presigner": "^3.1169.0",
     "@theory-cloud/tabletheory-ts": "https://github.com/theory-cloud/TableTheory/releases/download/v6.5.0/theory-cloud-tabletheory-ts-6.5.0.tgz#sha512-PJSRT42RXj/woaH6M9Tf3lQj86Q1ky96cBonWaNNRlsuVb7wBYjGePncxbe966LQPVlZSIzc9mCP0lmxsNWMsg=="
   },
   "files": [
