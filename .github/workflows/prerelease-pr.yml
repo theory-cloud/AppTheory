@@ -1,5 +1,18 @@
 name: Prerelease PR (premain)
 
+# Generated release-candidate pull request producer.
+#
+# Every step below runs on the built-in token. There is no release-please
+# credential: release-please opens and updates its pull request with
+# `GITHUB_TOKEN`, and scripts/sync-release-pr-checks.sh attaches the required
+# contexts to that pull request with a head-bound workflow dispatch, because
+# GitHub starts no `pull_request` workflow for events the built-in token causes.
+#
+# `workflow_dispatch` re-runs this idempotent lane on demand. It is not the
+# recovery path: .github/workflows/release-pr-check-sweep.yml re-verifies a
+# generated release pull request at its current head on a schedule, so a pull
+# request left checkless by an earlier event needs no human action.
+
 on:
   push:
     branches: ["premain"]
@@ -17,12 +30,6 @@ on:
       - "examples/cdk/ssr-site/package-lock.json"
       - "examples/cdk/lesser-parity/package-lock.json"
   workflow_dispatch:
-    inputs:
-      finalize_only:
-        description: "Verify the exact generated PR head, postcondition and current checks, then mark ready only"
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   actions: write
@@ -36,7 +43,11 @@ concurrency:
 
 jobs:
   release-please:
-    if: (github.event_name == 'workflow_dispatch' && inputs.finalize_only != true) || (github.event_name != 'workflow_dispatch' && !contains(github.event.head_commit.message, 'release-please--branches--premain'))
+    # A manual dispatch from any other ref would execute that ref's scripts with
+    # this workflow's write permissions. Only the release branch runs. A push
+    # carrying a release-please merge is skipped: its content already came
+    # through this lane.
+    if: github.ref == 'refs/heads/premain' && !contains(github.event.head_commit.message, 'release-please--branches--premain')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -50,8 +61,8 @@ jobs:
       - name: Release Please (PR only)
         id: release
         env:
-          RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
-          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          RELEASE_PLEASE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Wrapper stages release-please@17.11.2 without credentials in npm and
           # invokes its parser in-process with an environment-only token. It
@@ -63,13 +74,13 @@ jobs:
 
       - name: Verify generated RC release PR postcondition
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: scripts/verify-release-pr-postcondition.sh prerelease
 
       - name: Detect open release PR
         id: release_pr
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           pr_number="$(
             gh pr list \
@@ -89,7 +100,7 @@ jobs:
       - name: Draft-lock release PR before artifact setup
         if: steps.release_pr.outputs.exists == 'true'
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_PR_NUMBER: ${{ steps.release_pr.outputs.number }}
         run: |
           set -euo pipefail
@@ -129,22 +140,23 @@ jobs:
       - name: Sync generated CDK artifacts on release PR
         if: steps.release_pr.outputs.exists == 'true'
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: scripts/sync-release-pr-generated.sh release-please--branches--premain
 
-  finalize-release-pr:
-    name: Finalize generated release PR
-    if: github.event_name == 'workflow_dispatch' && inputs.finalize_only == true
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-      # Recovery path only: verify the exact current head, the release
-      # postcondition and the current required checks, then mark the PR ready.
-      # It never dispatches, commits, rewrites or merges.
-      - name: Finalize generated release PR
+      # release-please and the artifact sync above are made with the built-in
+      # token, so GitHub starts no pull_request workflow for them: this lane is
+      # the only thing that can produce the required contexts on the generated
+      # pull request. It dispatches with the pull request number and the exact
+      # head SHA, reuses green contexts, refuses to re-dispatch around a red
+      # one, and marks the pull request ready only at a green head.
+      - name: Verify required checks on the generated release PR
+        if: steps.release_pr.outputs.exists == 'true'
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
-        run: scripts/sync-release-pr-generated.sh --finalize-only release-please--branches--premain
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          bash scripts/sync-release-pr-checks.sh \
+            --repo "${GITHUB_REPOSITORY}" \
+            --head-branch release-please--branches--premain
+

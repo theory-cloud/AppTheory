@@ -57,7 +57,7 @@ jobs:
         id: release
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
-          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           target-branch: premain
           config-file: release-please-config.premain.json
           manifest-file: .release-please-manifest.premain.json
@@ -74,14 +74,14 @@ jobs:
       - name: Build, upload, and publish prerelease assets
         if: steps.release.outputs.release_created == 'true'
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_NAME: ${{ steps.release.outputs.tag_name }}
         run: scripts/publish-release-assets.sh "${TAG_NAME}"
 
       - name: Recover or verify existing prerelease
         if: steps.release.outputs.release_created != 'true'
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG_NAME="v$(./scripts/read-version.sh)"
           if [[ ! "${TAG_NAME}" =~ -rc(\.|$) ]]; then
@@ -105,7 +105,7 @@ jobs:
       - name: Diagnose failed prerelease state (read-only)
         if: failure()
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_NAME: ${{ steps.release.outputs.tag_name }}
         run: |
           if [[ -z "${TAG_NAME}" ]]; then
