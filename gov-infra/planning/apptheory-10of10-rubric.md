@@ -129,8 +129,8 @@ renewal and its evidence in `E2.renewal`.
 (bundled), reached only through aws-cdk-lib's own bundled `minimatch`; npm lists the derived
 `aws-cdk-lib` entry as pure propagation. AWS publishes it and only AWS can publish a tarball that bundles
 the patched release (`minimatch 11.0.1` exists on npm but cannot be installed into the bundled subtree);
-the latest published aws-cdk-lib (2.275.0) still declares a bundled minimatch `^10.2.6`, so no
-aws-cdk-lib release resolves it. It is build/CLI-time only and no AppTheory runtime package or Lambda
+the latest published aws-cdk-lib (2.277.0, the version this repository pins) still declares a bundled
+minimatch `^10.2.6`, so no aws-cdk-lib release resolves it. It is build/CLI-time only and no AppTheory runtime package or Lambda
 ships it. Scope: the same full bundled-path set as E1 - the cdk lockfile plus all fifteen
 `examples/cdk/*/package-lock.json` files, including the three LOCAL-A1 additions. Owner: AppTheory
 steward (Factory dependency sweeps). **Removal condition:** the pinned `aws-cdk-lib` bundles
@@ -160,8 +160,8 @@ reported no minimatch, and the published package ships only `dist`, `LICENSE`, `
 **That condition was met:** on 2026-11-06 the operator adopted `eslint-plugin-import-x` 4.18.0, whose
 published minimatch range is `^9.0.3 || ^10.1.2 || ^11.0.1` and whose `no-internal-modules` rule no longer
 imports `makeRe` (upstream #570). The dev-only override, the exception, its registry-backed removal probe,
-and its recheck deadline were removed; `ts/package-lock.json` now resolves a single `minimatch@11.0.1` for
-every consumer. Operator ruling: 2026-11-01 (the dev-only exception quoted above).
+and its recheck deadline were removed; `ts/package-lock.json` now resolves a single `minimatch@11.0.9` for
+every consumer (moved from `11.0.1` on 2026-11-17 when `eslint` 10.15.0 raised its own range to `^11.0.5`). Operator ruling: 2026-11-01 (the dev-only exception quoted above).
 
 The two AWS exceptions live in the ONE shared list in `scripts/check-visible-aws-cdk-finding.mjs`; the npm
 and OSV scanner paths match findings against that same list, `scripts/verify-cdk-audit.sh` and
@@ -173,7 +173,7 @@ removal condition) still fail closed.
 The former dev-only TypeScript exception was removed with E4 on 2026-11-06.
 `scripts/check-visible-ts-brace-finding.mjs`, which the same `osv_scan_lockfile` routes
 `ts/package-lock.json` to, now enforces the exception-free graph: exactly one minimatch node
-(`11.0.1` at `node_modules/minimatch`), any minimatch below `11.0.1` at any node path failing closed,
+(`11.0.9` at `node_modules/minimatch`), any minimatch below `11.0.1` at any node path failing closed,
 the exact brace-expansion and runner nodes, the exact minimatch parent set, the exact override map, and
 an empty OSV findings set. Its `--self-test` battery proves that a vulnerable copy reintroduced at the
 old `eslint-plugin-import-x` path, any other minimatch path, version, parent, override map, or lockfile,

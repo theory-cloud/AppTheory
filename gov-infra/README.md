@@ -28,7 +28,7 @@ Notes:
   rulings, and their exact scope are recorded in `gov-infra/planning/apptheory-10of10-rubric.md` SEC-2.
 - The former `ts/` brace-expansion and dev-only minimatch exceptions stay retired. The 2026-11-06 adoption of
   `eslint-plugin-import-x` 4.18.0 (whose minimatch range accepts `>= 11.0.1`) removed E4
-  (`ts-dev-import-x-minimatch`): `ts/package.json` now overrides `minimatch` to `11.0.1` for every consumer,
+  (`ts-dev-import-x-minimatch`): `ts/package.json` now overrides `minimatch` to `11.0.9` for every consumer,
   including import-x. The TypeScript checker requires that exact graph, the exact minimatch parent set, and the exact
   override map, and fails on any minimatch below `11.0.1` at any node path or on any OSV finding; there is no
   TypeScript exception.
