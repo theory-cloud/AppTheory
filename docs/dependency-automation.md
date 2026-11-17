@@ -168,6 +168,17 @@ runner (`@isaacs/nonrecursive-glob-match`) graph, the exact minimatch parent set
 minimatch below `11.0.1` at any node path, and any other advisory, version, path, or lockfile, fails closed. The
 `ts/` brace-expansion path is likewise exception-free: the only instance (`5.0.12`) is past every recorded 5.x fix.
 
+The TypeScript lint graph also carries the 2026-11-17 dev-only picomatch exception, E5. `GHSA-fc5q-39xc-vjpf`
+(high, `CVE-2026-112366`) covers every picomatch `<= 4.0.7` with no patched release - npm's latest is `4.0.7` and the
+advisory has no `fixed` event - so the `@typescript-eslint/parser -> @typescript-eslint/typescript-estree ->
+tinyglobby -> picomatch` chain cannot be upgraded out of it. Operator-ruled 2026-11-17 for this exact dev-only
+chain; `ts/package-lock.json` resolves a single `picomatch@4.0.7` at `node_modules/picomatch` with `dev: true`, the
+root package declares no picomatch runtime dependency, and `npm ls --omit=dev --all` inside `ts/` reports none. The
+checker pins the exact node, version, dev flag, chain edges, and advisory id/aliases; a stable picomatch `>= 4.0.8`
+publish (registry-backed probe), a removal-condition match, or the `2026-12-01` `recheck_by` deadline fails the gate
+until the exception is removed or renewed.
+
+
 The 2026-11-06 `eslint` 10.13.0 -> 10.14.0 move (Dependabot #1222) is an in-family devDependency bump. eslint's own
 `minimatch` range moved `^10.2.5` -> `^10.2.6`, which the override resolves onto the hoisted `11.0.1`, so the
 minimatch node set and the brace-expansion node are unchanged, and no exception node remains. Only the anchor's
@@ -185,7 +196,7 @@ held.
 
 | Held item | Kept at | Reason | Re-check condition |
 | --- | --- | --- | --- |
-| `osv-scanner` v2.x | `v1.9.2` | `v2.7.0` cannot replace the gate's scanner yet. On `ts/package-lock.json` (which pins the TableTheory GitHub-release tarball by sha512) it exits `127` with `vulnmatch/osvdev ... 400 Bad Request ... invalid hash` and emits `{"results":[]}`. The rubric accepts only exit `0` (clean) or `1` (findings covered by a reviewed exception marker; `ts/` now carries no exception, so it must exit `0`); `127` is an operational failure. On `cdk/package-lock.json` and example locks it exits `0` but returns zero packages, so it misses the reviewed bundled `minimatch` finding and would pass vacuously instead of proving the exception. | Retry when v2 parses `ts/package-lock.json` without the hash error and reproduces the v1.9.2 findings on `cdk/package-lock.json` and the example locks. |
+| `osv-scanner` v2.x | `v1.9.2` | `v2.7.0` cannot replace the gate's scanner yet. On `ts/package-lock.json` (which pins the TableTheory GitHub-release tarball by sha512) it exits `127` with `vulnmatch/osvdev ... 400 Bad Request ... invalid hash` and emits `{"results":[]}`. The rubric accepts only exit `0` (clean) or `1` (findings covered by a reviewed exception marker - `ts/` now carries the E5 picomatch exception, so a status-1 scan needs its `exception-applied: ts-dev-picomatch` marker); `127` is an operational failure. On `cdk/package-lock.json` and example locks it exits `0` but returns zero packages, so it misses the reviewed bundled `minimatch` finding and would pass vacuously instead of proving the exception. | Retry when v2 parses `ts/package-lock.json` without the hash error and reproduces the v1.9.2 findings on `cdk/package-lock.json` and the example locks. |
 
 ### Applied moves (ranges raised only where alignment required it)
 
