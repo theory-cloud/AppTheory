@@ -171,21 +171,39 @@ require_job_not_contains "${ci}" "rubric" "produced-records" \
   "the rubric job must verify records, not upload ones it executed"
 require_job_not_contains "${ci}" "rubric" "uses: actions/upload-artifact@" \
   "the rubric job must not publish a bundle of committed records as if this run produced them"
-require_contains "scripts/sync-release-pr-generated.sh" "Release delta validation" \
+require_contains ".github/release-lane.json" '"Release delta validation"' \
   "generated release PR required checks must include the release delta smoke"
-require_contains "scripts/sync-release-pr-generated.sh" "--finalize-only" \
-  "generated release PR recovery must expose a finalize-only path"
+require_contains ".github/release-lane.json" '"Release train promotion gate"' \
+  "the release-lane declaration must name the premain/main promotion context"
+require_contains ".github/release-lane.json" '"Release/security gates"' \
+  "the release-lane declaration must name the release/security context"
+require_contains ".github/release-lane.json" '"Version alignment"' \
+  "the release-lane declaration must name the version alignment context"
+require_contains ".github/workflows/release-pr-check-sweep.yml" "scripts/sync-release-pr-checks.sh" \
+  "a checkless generated release PR must be re-verified by the recovery sweep"
+require_contains ".github/workflows/release-pr-check-sweep.yml" "--sweep" \
+  "the recovery sweep must run the lane in its report-only mode"
+require_contains "${ci}" "bash scripts/verify-release-pr-check-lane.sh --self-test" \
+  "release/security gates must prove the release-lane check wiring and its self-test"
+require_not_contains "scripts/sync-release-pr-generated.sh" "--finalize-only" \
+  "generated release PR recovery must not depend on a human-triggered finalize dispatch"
+for producer in ".github/workflows/prerelease-pr.yml" ".github/workflows/release-pr.yml"; do
+  require_not_contains "${producer}" "finalize_only" \
+    "generated release PR recovery must not depend on a human-triggered dispatch input"
+  require_contains "${producer}" "scripts/sync-release-pr-checks.sh" \
+    "the generated release PR producer must attach the required checks itself"
+done
 for retired_check in \
   "Go (test + vet)" \
   "TypeScript (npm pack)" \
   "Python (build wheel + sdist)" \
   "Contract tests (fixtures)"; do
-  require_not_contains "scripts/sync-release-pr-generated.sh" "${retired_check}" \
+  require_not_contains ".github/release-lane.json" "${retired_check}" \
     "generated release PR required checks must not wait on product jobs that skip the release-only transformation"
 done
-require_not_contains "scripts/sync-release-pr-generated.sh" "Rubric (full gate set)" \
+require_not_contains ".github/release-lane.json" "Rubric (full gate set)" \
   "generated release PR required checks must exclude the full rubric"
-require_not_contains "scripts/sync-release-pr-generated.sh" "Verify deterministic builds" \
+require_not_contains ".github/release-lane.json" "Verify deterministic builds" \
   "generated release PR required checks must exclude skipped deterministic builds"
 
 # R-F1 staging-side readiness equivalence: the promotion lane's readiness gate

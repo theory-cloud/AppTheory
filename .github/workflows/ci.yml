@@ -14,6 +14,11 @@ on:
         required: false
         type: string
         default: ""
+      release_head_sha:
+        description: "Generated release PR head SHA the dispatch was made against"
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -35,11 +40,13 @@ jobs:
       - name: Verify release train promotion path
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           DISPATCH_PR_NUMBER: ${{ inputs.release_pr_number }}
-          DISPATCH_HEAD_REF: ${{ github.ref_name }}
-          DISPATCH_HEAD_SHA: ${{ github.sha }}
+          DISPATCH_HEAD_SHA: ${{ inputs.release_head_sha }}
+          DISPATCH_REF_NAME: ${{ github.ref_name }}
+          DISPATCH_REF_SHA: ${{ github.sha }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
           PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
           PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
@@ -53,25 +60,30 @@ jobs:
               echo "release-train-promotion: FAIL (workflow_dispatch requires a numeric release_pr_number)" >&2
               exit 1
             fi
+            if [[ ! "${DISPATCH_HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "release-train-promotion: FAIL (workflow_dispatch requires the release PR head SHA the lane dispatched)" >&2
+              exit 1
+            fi
 
-            pr_line="$(
-              gh api "repos/${GITHUB_REPOSITORY}/pulls/${DISPATCH_PR_NUMBER}" \
-                --jq '[.state, .base.ref, .head.ref, .head.repo.full_name, .head.sha, .title] | @tsv'
-            )"
-            IFS=$'\t' read -r pr_state PR_BASE_REF PR_HEAD_REF PR_HEAD_REPOSITORY PR_HEAD_SHA PR_TITLE <<<"${pr_line}"
+            # One resolver owns the dispatch binding: it refuses a closed pull
+            # request, a foreign head repository, a non-release base and a moved
+            # branch head, so a dispatched run can never certify a tree the pull
+            # request does not contain.
+            resolved="$(bash scripts/resolve-release-pr-head.sh \
+              --repo "${GITHUB_REPOSITORY}" \
+              --pr "${DISPATCH_PR_NUMBER}" \
+              --ref-name "${DISPATCH_REF_NAME}" \
+              --ref-sha "${DISPATCH_REF_SHA}")"
+            resolved_head="$(sed -n 's/^head_sha=//p' <<<"${resolved}")"
+            if [[ "${resolved_head}" != "${DISPATCH_HEAD_SHA}" ]]; then
+              echo "::warning::the generated release PR head moved from ${DISPATCH_HEAD_SHA} to ${resolved_head}; verifying the current head"
+            fi
 
-            if [[ "${pr_state}" != "open" ]]; then
-              echo "release-train-promotion: FAIL (release PR #${DISPATCH_PR_NUMBER} is ${pr_state:-unknown})" >&2
-              exit 1
-            fi
-            if [[ "${PR_HEAD_REPOSITORY}" != "${GITHUB_REPOSITORY}" ]]; then
-              echo "release-train-promotion: FAIL (release PR head repository ${PR_HEAD_REPOSITORY} != ${GITHUB_REPOSITORY})" >&2
-              exit 1
-            fi
-            if [[ "${PR_HEAD_REF}" != "${DISPATCH_HEAD_REF}" || "${PR_HEAD_SHA}" != "${DISPATCH_HEAD_SHA}" ]]; then
-              echo "release-train-promotion: FAIL (dispatched ref ${DISPATCH_HEAD_REF}@${DISPATCH_HEAD_SHA} != PR head ${PR_HEAD_REF}@${PR_HEAD_SHA})" >&2
-              exit 1
-            fi
+            PR_BASE_REF="$(sed -n 's/^base_ref=//p' <<<"${resolved}")"
+            PR_HEAD_REF="$(sed -n 's/^head_ref=//p' <<<"${resolved}")"
+            PR_HEAD_REPOSITORY="$(sed -n 's/^head_repo=//p' <<<"${resolved}")"
+            PR_HEAD_SHA="$(sed -n 's/^head_sha=//p' <<<"${resolved}")"
+            PR_TITLE="$(sed -n 's/^pr_title=//p' <<<"${resolved}")"
           fi
 
           base_ref_args=()
@@ -112,6 +124,50 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      # On a dispatched run the checkout above is the ref the lane dispatched.
+      # The resolver proves that ref really is the generated release pull
+      # request head, so this job can never certify a tree the pull request
+      # does not contain.
+      - name: Bind the dispatched run to the generated release PR head
+        if: github.event_name == 'workflow_dispatch'
+        id: release_pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          DISPATCH_PR_NUMBER: ${{ inputs.release_pr_number }}
+          DISPATCH_HEAD_SHA: ${{ inputs.release_head_sha }}
+          DISPATCH_REF_NAME: ${{ github.ref_name }}
+          DISPATCH_REF_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${DISPATCH_PR_NUMBER}" =~ ^[0-9]+$ || ! "${DISPATCH_HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "release-security-gates: FAIL (a dispatched run requires the release PR number and head SHA it was dispatched for)" >&2
+            exit 1
+          fi
+          resolved="$(bash scripts/resolve-release-pr-head.sh \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pr "${DISPATCH_PR_NUMBER}" \
+            --ref-name "${DISPATCH_REF_NAME}" \
+            --ref-sha "${DISPATCH_REF_SHA}")"
+          printf '%s\n' "${resolved}" >>"${GITHUB_OUTPUT}"
+          # The lane dispatches the head it read. If the branch moved between
+          # that read and this dispatch, the run is at the pull request's new
+          # head: verify it and say so instead of certifying a tree the pull
+          # request no longer contains. The lane re-reads the head after this
+          # wait and keeps it green from here.
+          resolved_head="$(sed -n 's/^head_sha=//p' <<<"${resolved}")"
+          if [[ "${resolved_head}" != "${DISPATCH_HEAD_SHA}" ]]; then
+            echo "::warning::the generated release PR head moved from ${DISPATCH_HEAD_SHA} to ${resolved_head}; verifying the current head"
+          fi
+      - name: Verify the checked-out tree is the resolved release PR head
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          set -euo pipefail
+          checked_out="$(git rev-parse HEAD)"
+          if [[ "${checked_out}" != "${{ steps.release_pr.outputs.head_sha }}" ]]; then
+            echo "release-security-gates: FAIL (checked out ${checked_out}, resolved release PR head ${{ steps.release_pr.outputs.head_sha }})" >&2
+            exit 1
+          fi
       # The release/security gates run scripts/verify-ci-rubric-enforced.sh,
       # which classifies the workflow through cmd/ci-guard, so the pinned Go
       # toolchain is provisioned before them.
@@ -134,6 +190,8 @@ jobs:
           bash scripts/verify-release-train-promotion.sh --self-test
           bash scripts/verify-ci-rubric-enforced.sh
           bash scripts/verify-release-workflows.sh
+          bash scripts/verify-release-pr-check-lane.sh --self-test
+          bash scripts/test-sync-release-pr-checks.sh
           bash scripts/verify-release-cycle.sh
       - name: Verify runtime floor claims
         run: bash scripts/verify-runtime-floor-claims.sh
@@ -168,24 +226,53 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Verify dispatched release branch identity
+      - name: Bind the dispatched run to the generated release PR head
         if: github.event_name == 'workflow_dispatch'
+        id: release_pr
         env:
-          DISPATCH_REF_NAME: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           DISPATCH_PR_NUMBER: ${{ inputs.release_pr_number }}
+          DISPATCH_HEAD_SHA: ${{ inputs.release_head_sha }}
+          DISPATCH_REF_NAME: ${{ github.ref_name }}
+          DISPATCH_REF_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          case "${DISPATCH_REF_NAME}" in
+          if [[ ! "${DISPATCH_PR_NUMBER}" =~ ^[0-9]+$ || ! "${DISPATCH_HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "release-delta: FAIL (a dispatched run requires the release PR number and head SHA it was dispatched for)" >&2
+            exit 1
+          fi
+          resolved="$(bash scripts/resolve-release-pr-head.sh \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pr "${DISPATCH_PR_NUMBER}" \
+            --ref-name "${DISPATCH_REF_NAME}" \
+            --ref-sha "${DISPATCH_REF_SHA}")"
+          printf '%s\n' "${resolved}" >>"${GITHUB_OUTPUT}"
+          # The lane dispatches the head it read. If the branch moved between
+          # that read and this dispatch, the run is at the pull request's new
+          # head: verify it and say so instead of certifying a tree the pull
+          # request no longer contains. The lane re-reads the head after this
+          # wait and keeps it green from here.
+          resolved_head="$(sed -n 's/^head_sha=//p' <<<"${resolved}")"
+          if [[ "${resolved_head}" != "${DISPATCH_HEAD_SHA}" ]]; then
+            echo "::warning::the generated release PR head moved from ${DISPATCH_HEAD_SHA} to ${resolved_head}; verifying the current head"
+          fi
+      - name: Verify the dispatched release branch identity
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          set -euo pipefail
+          checked_out="$(git rev-parse HEAD)"
+          if [[ "${checked_out}" != "${{ steps.release_pr.outputs.head_sha }}" ]]; then
+            echo "release-delta: FAIL (checked out ${checked_out}, resolved release PR head ${{ steps.release_pr.outputs.head_sha }})" >&2
+            exit 1
+          fi
+          case "${{ steps.release_pr.outputs.head_ref }}" in
             release-please--branches--premain|release-please--branches--main) ;;
             *)
-              echo "release-delta: FAIL (dispatch ref ${DISPATCH_REF_NAME} is not a generated release branch)" >&2
+              echo "release-delta: FAIL (release PR head ${{ steps.release_pr.outputs.head_ref }} is not a generated release branch)" >&2
               exit 1
               ;;
           esac
-          if [[ ! "${DISPATCH_PR_NUMBER}" =~ ^[0-9]+$ ]]; then
-            echo "release-delta: FAIL (release_pr_number must be numeric)" >&2
-            exit 1
-          fi
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.27.4"
@@ -341,6 +428,46 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Bind the dispatched run to the generated release PR head
+        if: github.event_name == 'workflow_dispatch'
+        id: release_pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          DISPATCH_PR_NUMBER: ${{ inputs.release_pr_number }}
+          DISPATCH_HEAD_SHA: ${{ inputs.release_head_sha }}
+          DISPATCH_REF_NAME: ${{ github.ref_name }}
+          DISPATCH_REF_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${DISPATCH_PR_NUMBER}" =~ ^[0-9]+$ || ! "${DISPATCH_HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "version-alignment: FAIL (a dispatched run requires the release PR number and head SHA it was dispatched for)" >&2
+            exit 1
+          fi
+          resolved="$(bash scripts/resolve-release-pr-head.sh \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pr "${DISPATCH_PR_NUMBER}" \
+            --ref-name "${DISPATCH_REF_NAME}" \
+            --ref-sha "${DISPATCH_REF_SHA}")"
+          printf '%s\n' "${resolved}" >>"${GITHUB_OUTPUT}"
+          # The lane dispatches the head it read. If the branch moved between
+          # that read and this dispatch, the run is at the pull request's new
+          # head: verify it and say so instead of certifying a tree the pull
+          # request no longer contains. The lane re-reads the head after this
+          # wait and keeps it green from here.
+          resolved_head="$(sed -n 's/^head_sha=//p' <<<"${resolved}")"
+          if [[ "${resolved_head}" != "${DISPATCH_HEAD_SHA}" ]]; then
+            echo "::warning::the generated release PR head moved from ${DISPATCH_HEAD_SHA} to ${resolved_head}; verifying the current head"
+          fi
+      - name: Verify the checked-out tree is the resolved release PR head
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          set -euo pipefail
+          checked_out="$(git rev-parse HEAD)"
+          if [[ "${checked_out}" != "${{ steps.release_pr.outputs.head_sha }}" ]]; then
+            echo "version-alignment: FAIL (checked out ${checked_out}, resolved release PR head ${{ steps.release_pr.outputs.head_sha }})" >&2
+            exit 1
+          fi
       - name: Verify versions match VERSION
         run: scripts/verify-version-alignment.sh
       - name: Verify branch release version state

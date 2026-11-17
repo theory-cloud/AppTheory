@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "requiredContexts": {
+    "premain": [
+      {
+        "context": "Release train promotion gate",
+        "workflow": "ci.yml",
+        "job": "release-train-promotion",
+        "rulesetRequired": true,
+        "checkoutProof": false,
+        "note": "verifier code checks out refs/heads/staging by design; the dispatched run is bound to the pull request head by the resolver, not by the checkout"
+      },
+      {
+        "context": "Release/security gates",
+        "workflow": "ci.yml",
+        "job": "release-security-gates",
+        "rulesetRequired": true
+      },
+      {
+        "context": "Version alignment",
+        "workflow": "ci.yml",
+        "job": "version-alignment",
+        "rulesetRequired": true
+      },
+      {
+        "context": "Release delta validation",
+        "workflow": "ci.yml",
+        "job": "release-delta",
+        "rulesetRequired": false
+      }
+    ],
+    "main": [
+      {
+        "context": "Release train promotion gate",
+        "workflow": "ci.yml",
+        "job": "release-train-promotion",
+        "rulesetRequired": true,
+        "checkoutProof": false,
+        "note": "verifier code checks out refs/heads/staging by design; the dispatched run is bound to the pull request head by the resolver, not by the checkout"
+      },
+      {
+        "context": "Release/security gates",
+        "workflow": "ci.yml",
+        "job": "release-security-gates",
+        "rulesetRequired": true
+      },
+      {
+        "context": "Version alignment",
+        "workflow": "ci.yml",
+        "job": "version-alignment",
+        "rulesetRequired": true
+      },
+      {
+        "context": "Release delta validation",
+        "workflow": "ci.yml",
+        "job": "release-delta",
+        "rulesetRequired": false
+      }
+    ]
+  },
+  "generatedReleasePullRequests": [
+    {
+      "workflow": "prerelease-pr.yml",
+      "base": "premain",
+      "head": "release-please--branches--premain"
+    },
+    {
+      "workflow": "release-pr.yml",
+      "base": "main",
+      "head": "release-please--branches--main"
+    }
+  ],
+  "recoverySweep": {
+    "workflow": "release-pr-check-sweep.yml",
+    "schedule": "*/20 * * * *"
+  }
+}
