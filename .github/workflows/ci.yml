@@ -17,6 +17,7 @@ on:
   # checks against the same head.
   pull_request_review:
     types: [submitted]
+    branches: [premain, main]
   workflow_dispatch:
     inputs:
       release_pr_number:
