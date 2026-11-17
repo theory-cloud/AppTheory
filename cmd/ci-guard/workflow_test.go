@@ -475,6 +475,27 @@ func TestGuardRejectsUnknownNeed(t *testing.T) {
 	}
 }
 
+// TestGuardRejectsUnlistedReleaseJobOnPullRequestReview proves a review-triggered
+// job is classified like a pull-request job: only recorded release hygiene may
+// report on a premain or main review, because the code-owner approval is the one
+// eligible event a generated release pull request can produce.
+func TestGuardRejectsUnlistedReleaseJobOnPullRequestReview(t *testing.T) {
+	text := strings.Replace(baseWorkflow, "  workflow_dispatch:\n",
+		"  pull_request_review:\n    types: [submitted]\n  workflow_dispatch:\n", 1)
+	text += "\n  sneaky-review:\n    name: Sneaky review\n    if: github.event_name == 'pull_request_review' && github.event.pull_request.base.ref == 'premain'\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo sneaky\n"
+	mustFailWith(t, text, "runs on a pull request into premain or main")
+}
+
+// TestGuardRejectsUnmodeledReviewActivity keeps the review trigger narrow: only
+// the submitted activity (the approval) is modeled.
+func TestGuardRejectsUnmodeledReviewActivity(t *testing.T) {
+	text := strings.Replace(baseWorkflow, "  workflow_dispatch:\n",
+		"  pull_request_review:\n    types: [dismissed]\n  workflow_dispatch:\n", 1)
+	if _, err := evaluateText(t, text); err == nil || !strings.Contains(err.Error(), "only the submitted activity type is modeled") {
+		t.Fatalf("an unmodeled review activity must fail closed, got: %v", err)
+	}
+}
+
 // TestGuardRejectsScheduleOutsideTheRecoverySweep pins the one clock-driven
 // exception: a gated workflow that also runs on a cron would execute work on a
 // clock the policy does not model, so only the release-lane recovery sweep may

@@ -7,6 +7,16 @@ on:
   pull_request:
     branches: [staging, premain, main]
     types: [opened, synchronize, reopened, ready_for_review]
+  # A required status check is only evaluated when the run that reported it was
+  # triggered by push, pull_request, pull_request_review, pull_request_target,
+  # deployment or deployment_status. A generated release pull request is created
+  # and updated with the built-in token, so its pull_request events never start a
+  # run; the code-owner approval the premain/main ruleset already requires is the
+  # one eligible event this repository can produce without a credential. The
+  # code-owner review of a promotion pull request therefore runs the same release
+  # checks against the same head.
+  pull_request_review:
+    types: [submitted]
   workflow_dispatch:
     inputs:
       release_pr_number:
@@ -27,7 +37,7 @@ permissions:
 jobs:
   release-train-promotion:
     name: Release train promotion gate
-    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.release_pr_number != '')
+    if: github.event_name == 'pull_request' || github.event_name == 'pull_request_review' || (github.event_name == 'workflow_dispatch' && inputs.release_pr_number != '')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout trusted release gate code

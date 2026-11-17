@@ -144,8 +144,14 @@ type triggerContext struct {
 	pushBranches   []string
 	hasPullRequest bool
 	prBranches     []string
-	hasDispatch    bool
-	hasSchedule    bool
+	// hasPullRequestReview records the `pull_request_review: [submitted]` trigger.
+	// GitHub evaluates a required status check only for a run triggered by an
+	// eligible event, and a code-owner review is the one eligible event a
+	// generated (built-in-token) release pull request can produce.
+	hasPullRequestReview bool
+	reviewBranches       []string
+	hasDispatch          bool
+	hasSchedule          bool
 }
 
 type workflowFile struct {
@@ -329,7 +335,7 @@ func checkPublisherExemptionsExist(seen map[string]bool) []string {
 }
 
 func isReusableOnly(wf *workflowFile) bool {
-	return wf.hasWorkflowCall && !wf.ctx.hasPush && !wf.ctx.hasPullRequest && !wf.ctx.hasDispatch
+	return wf.hasWorkflowCall && !wf.ctx.hasPush && !wf.ctx.hasPullRequest && !wf.ctx.hasPullRequestReview && !wf.ctx.hasDispatch
 }
 
 func findPublisherExemption(rel string) (*publisherExemption, bool) {
@@ -455,7 +461,7 @@ func (wf *workflowFile) parseTriggers(node *yaml.Node) error {
 			return err
 		}
 	}
-	if !wf.ctx.hasPush && !wf.ctx.hasPullRequest && !wf.ctx.hasDispatch && !wf.hasWorkflowCall && !wf.ctx.hasSchedule {
+	if !wf.ctx.hasPush && !wf.ctx.hasPullRequest && !wf.ctx.hasPullRequestReview && !wf.ctx.hasDispatch && !wf.hasWorkflowCall && !wf.ctx.hasSchedule {
 		return fmt.Errorf("on: declares no modeled trigger")
 	}
 	return nil
@@ -482,6 +488,14 @@ func (wf *workflowFile) parseTrigger(name string, value *yaml.Node) error {
 		}
 		wf.ctx.prBranches = branches
 		return nil
+	case "pull_request_review":
+		wf.ctx.hasPullRequestReview = true
+		branches, err := parsePullRequestReviewTrigger(value)
+		if err != nil {
+			return err
+		}
+		wf.ctx.reviewBranches = branches
+		return nil
 	case "workflow_dispatch":
 		wf.ctx.hasDispatch = true
 		return parseDispatchTrigger(value)
@@ -494,6 +508,53 @@ func (wf *workflowFile) parseTrigger(name string, value *yaml.Node) error {
 	default:
 		return fmt.Errorf("on: trigger %q is not modeled by the parity classifier", name)
 	}
+}
+
+// parsePullRequestReviewTrigger models `pull_request_review`. Only the
+// `submitted` activity is modeled: it is the code-owner approval the
+// premain/main ruleset requires, and it is an eligible event for a required
+// status check. The trigger may narrow to branches exactly like pull_request:
+// an unfiltered trigger returns nil and fires for every base.
+func parsePullRequestReviewTrigger(node *yaml.Node) ([]string, error) {
+	if isNullNode(node) {
+		return nil, fmt.Errorf("pull_request_review: trigger must declare the submitted activity type")
+	}
+	if node.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("pull_request_review: trigger must be a mapping")
+	}
+	var branches []string
+	sawTypes := false
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		key, value := node.Content[i], node.Content[i+1]
+		switch key.Value {
+		case "types":
+			if value.Kind != yaml.SequenceNode || len(value.Content) == 0 {
+				return nil, fmt.Errorf("pull_request_review: types must be a non-empty list")
+			}
+			sawTypes = true
+			for _, entry := range value.Content {
+				if entry.Kind != yaml.ScalarNode || entry.Value != "submitted" {
+					return nil, fmt.Errorf("pull_request_review: only the submitted activity type is modeled")
+				}
+			}
+		case "branches":
+			if value.Kind != yaml.SequenceNode {
+				return nil, fmt.Errorf("pull_request_review: branches must be a list")
+			}
+			for _, entry := range value.Content {
+				if entry.Kind != yaml.ScalarNode || strings.TrimSpace(entry.Value) == "" {
+					return nil, fmt.Errorf("pull_request_review: branch names must be non-empty scalars")
+				}
+				branches = append(branches, entry.Value)
+			}
+		default:
+			return nil, fmt.Errorf("pull_request_review: key %q is not modeled", key.Value)
+		}
+	}
+	if !sawTypes {
+		return nil, fmt.Errorf("pull_request_review: trigger must declare the submitted activity type")
+	}
+	return branches, nil
 }
 
 func parsePushTrigger(node *yaml.Node) ([]string, error) {
@@ -1056,6 +1117,11 @@ func classifyJob(ctx triggerContext, job workflowJob) (*jobClass, bool, error) {
 			return nil, false, err
 		}
 	}
+	if ctx.hasPullRequestReview {
+		if err := classifyPullRequestReview(condition, class, ctx.reviewBranches, job.id); err != nil {
+			return nil, false, err
+		}
+	}
 	if ctx.hasDispatch {
 		if err := classifyDispatch(condition, class, job); err != nil {
 			return nil, false, err
@@ -1111,6 +1177,34 @@ func classifyPullRequest(condition expr, class *jobClass, prBranches []string, j
 			}
 			for _, draft := range []string{"false", "true"} {
 				ok, err := condition.eval(state{event: "pull_request", ref: prMergeRef, base: base, head: head, draft: draft})
+				if err != nil {
+					return fmt.Errorf("job %q: %w", jobID, err)
+				}
+				if ok {
+					class.prBases[base] = true
+					class.prAny = true
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// classifyPullRequestReview classifies a job under `pull_request_review`. The
+// event carries the same pull-request state as `pull_request` (base, head, draft
+// and the merge ref), so the same expression evaluation decides the bases; only
+// the event name differs.
+func classifyPullRequestReview(condition expr, class *jobClass, reviewBranches []string, jobID string) error {
+	for _, base := range baseDomain {
+		if !pullRequestTargetsBase(reviewBranches, base) {
+			continue
+		}
+		for _, head := range headDomain {
+			if head == base {
+				continue
+			}
+			for _, draft := range []string{"false", "true"} {
+				ok, err := condition.eval(state{event: "pull_request_review", ref: prMergeRef, base: base, head: head, draft: draft})
 				if err != nil {
 					return fmt.Errorf("job %q: %w", jobID, err)
 				}

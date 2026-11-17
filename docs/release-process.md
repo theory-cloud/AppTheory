@@ -41,6 +41,15 @@ each verifying job loads that PR through GitHub's API and fails unless its repos
 match the dispatched ref and recorded head. The skip marker does not bypass validation: it suppresses only
 automatic `push`/`pull_request` triggers; the explicit CI dispatch remains required and fails closed.
 
+GitHub evaluates a required status check only when the run that reported it was triggered by `push`,
+`pull_request`, `pull_request_review`, `pull_request_target`, `deployment` or `deployment_status`. A
+`workflow_dispatch` run — the lane's own dispatch — reports check runs that do not appear in the pull request's
+checks section and do not satisfy a required status check, which is why a generated release PR can never be made
+mergeable by self-dispatch alone. The lane's dispatch is therefore an early, head-bound verdict, and the eligible
+run comes from the code-owner approval the `premain`/`main` ruleset already requires: `ci.yml` also runs on
+`pull_request_review: [submitted]`, so approving a promotion or generated release PR runs the same release checks
+on the same head. A head that moves dismisses the stale approval, and the next approval runs the checks again.
+
 `.github/release-lane.json` is the declaration the lane and its guard share: per release branch it names the
 required contexts (the same three the ruleset requires, plus the generated-content delta smoke), the workflow that
 reports each one and the job that carries the context name, the generated release branches, and the recovery

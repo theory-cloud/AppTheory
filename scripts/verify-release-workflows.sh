@@ -1116,8 +1116,8 @@ require_contains(
 )
 require_contains(
     "scripts/sync-release-pr-checks.sh",
-    "rollup does not list every required context yet",
-    "the release check lane must report a lagging pull-request rollup without treating it as a missing check",
+    "rollup does not list the required contexts",
+    "the release check lane must report a rollup that does not carry the required contexts without treating it as a missing check",
 )
 require_contains(
     "scripts/sync-release-pr-generated.sh",

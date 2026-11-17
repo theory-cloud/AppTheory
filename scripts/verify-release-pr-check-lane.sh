@@ -152,6 +152,13 @@ def context_checks(base: str, item: dict) -> None:
     text = read(path)
     if not re.search(r"(?m)^  workflow_dispatch:[ \t]*($|#)", text):
         report(f"{workflow} reports {context} but has no workflow_dispatch path")
+    # GitHub evaluates a required status check only when the reporting run was
+    # triggered by an eligible event, and a generated release pull request only
+    # produces one through the code-owner review it already requires.
+    if not re.search(r"(?m)^  pull_request_review:[ \t]*$", text):
+        report(f"{workflow} has no pull_request_review trigger, so the code-owner review can never make {context} count")
+    if "types: [submitted]" not in text:
+        report(f"{workflow} does not subscribe the pull_request_review trigger to the submitted activity")
     if not re.search(r"(?m)^[ \t]+release_pr_number:[ \t]*$", text):
         report(f"{workflow} has no release_pr_number dispatch input to bind the head")
     if not re.search(r"(?m)^[ \t]+release_head_sha:[ \t]*$", text):
@@ -423,6 +430,31 @@ path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 PY
   expect_fixture_failure "a declaration without a producer fails" \
     "declares required contexts but no generated release pull request produces it" "${fixture}"
+
+  # 11b. A verifying workflow that loses the eligible-event trigger: its
+  #      dispatched check runs would exist but never satisfy the ruleset.
+  fixture="$(new_fixture no-review-trigger)"
+  python3 - "${fixture}/.github/workflows/ci.yml" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+out: list[str] = []
+skipping = False
+for line in lines:
+    if line.rstrip("\n") == "  pull_request_review:":
+        skipping = True
+        continue
+    if skipping:
+        if line.startswith("    "):
+            continue
+        skipping = False
+    out.append(line)
+path.write_text("".join(out), encoding="utf-8")
+PY
+  expect_fixture_failure "a verifying workflow without the eligible-event trigger fails" \
+    "has no pull_request_review trigger" "${fixture}"
 
   # 12. The head-binding resolver itself. A stub `gh` answers the pull request
   #     read, so every hostile answer runs through the real validation.

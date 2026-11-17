@@ -501,12 +501,14 @@ if [[ "${ready_head}" != "${head_sha}" ]]; then
   fail "PR #${pr_number} head changed while marking ready; restored the draft lock"
 fi
 
-# The commit-level check runs are what the ruleset evaluates. The pull-request
-# rollup is a GitHub-side projection of them, and it can lag or drop a context
-# after a close and reopen, so a missing rollup entry is reported rather than
-# treated as a missing check.
+# A dispatched run's check runs do not appear in the pull request's checks
+# section and do not satisfy a required status check: GitHub evaluates only runs
+# triggered by push, pull_request, pull_request_review, pull_request_target,
+# deployment or deployment_status. The rollup is also the only place this lane
+# can see that difference, so an absent rollup entry is reported with the remedy
+# instead of being read as a missing check.
 if [[ "$(rollup_reports_contexts)" != "present" ]]; then
-  echo "sync-release-pr-checks: WARN (PR #${pr_number} rollup does not list every required context yet; the check runs exist at ${head_sha}, which is what the ruleset evaluates)" >&2
+  echo "sync-release-pr-checks: WARN (PR #${pr_number} rollup does not list the required contexts at ${head_sha}; this run's dispatch is an early verdict, and the eligible run that satisfies the ruleset is the code-owner review of the pull request, which ci.yml runs on pull_request_review: [submitted])" >&2
 fi
 
 echo "sync-release-pr-checks: PASS (PR #${pr_number} ready at ${head_sha} with green required checks)"
