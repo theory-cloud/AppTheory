@@ -462,10 +462,6 @@ data = json.loads(Path(registry_path).read_text(encoding="utf-8"))
 data["evidenceDirectory"] = evidence_dir
 data["localLogDirectory"] = f"{evidence_dir}/local"
 data["proofProfiles"] = {"default": {"environment": live}}
-# This fixture proves the nested evidence-directory path shape, not the jsii
-# artifacts: the real registry's release-derived class names files this fixture
-# does not carry, and the class refuses a set that names zero of them.
-data.pop("releaseDerived", None)
 data["gates"] = {
     "capture-nested": {
         "kind": "source",

@@ -5,16 +5,16 @@
         "bash",
         "scripts/verify-builds.sh"
       ],
-      "durationSeconds": 53.194,
+      "durationSeconds": 60.679,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-17T01:21:05Z",
+      "finishedAt": "2026-11-17T00:12:30Z",
       "id": "deterministic-builds",
-      "inputsDigest": "sha256:def8bec74f5131946ab63dde83177b4ff7d04589d7a7ede719363e390891e2fc",
-      "logDigest": "sha256:6b21ab1551bf00f5b3407b586477429c041226f3d106401331bb05dc61b7eecc",
-      "logRef": "gov-infra/evidence/proportionate/local/deterministic-builds-deterministic-builds-20261117T012011Z-19226.log",
+      "inputsDigest": "sha256:cdd03e1e757da7c26553ece07fccf8a9c74ef9901b1026e0cc204c49ab809914",
+      "logDigest": "sha256:18a0ef4ed58d6d300d5992899ad620ae5b9cf53e00aff82095efc2957b34c8a3",
+      "logRef": "gov-infra/evidence/proportionate/local/deterministic-builds-deterministic-builds-20261117T001130Z-30041.log",
       "reused": false,
-      "startedAt": "2026-11-17T01:20:11Z"
+      "startedAt": "2026-11-17T00:11:30Z"
     }
   ],
   "consumed": [],
@@ -36,17 +36,17 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-17T01:21:05Z",
+  "recordedAt": "2026-11-17T00:12:30Z",
   "releaseOnly": {
     "digest": "sha256:32f9c041eb6755559c7f88de114a0fb57a4a8f981b39ae32e4321c7fad8c3b4a",
     "fileCount": 477,
-    "normalizedDigest": "sha256:2c3cdf6ea519b20a9e68a3ed2b6afa22f5af49ff327ec1878cc40e3d5d370aec",
+    "normalizedDigest": "sha256:04e7d83a21a6f9f1ee749046e949340496152a2c2d4363d2b5d0edc921d1b8d8",
     "version": "7.3.1"
   },
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:9af4e660b570438c70040bd54eca3312e05865e9d875fea58405768f201e1967",
+    "digest": "sha256:bb8df537cee25fd31d328f989b672e33d80756d6134df99a1e8d386957e2b09b",
     "fileCount": 915,
     "paths": [
       "VERSION",
@@ -69,7 +69,7 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:cac66dd6ea5542cc2c0d41f6ed45f31ced1e3e8e43db6a9076371783f8821baa",
+    "digest": "sha256:ae42f316c40c8abeabeaa37b332f413af3a0e5131c17b9532bd5334e08b6ce16",
     "fileCount": 2672
   },
   "verdict": "PASS"

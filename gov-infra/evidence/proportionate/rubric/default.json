@@ -5,23 +5,43 @@
         "make",
         "rubric"
       ],
-      "durationSeconds": 54.022,
+      "durationSeconds": 497.921,
       "executed": true,
-      "exitCode": 2,
-      "finishedAt": "2026-11-17T02:40:06Z",
+      "exitCode": 0,
+      "finishedAt": "2026-11-17T00:45:44Z",
       "id": "rubric",
-      "inputsDigest": "sha256:1d6a7b95c38e84392729377a8c5eefb72b480011629272d9d6ff42b679debdbf",
-      "logDigest": "sha256:c1f7a9974d74da61141a4208f1e9bed0387175a9793af21257dc436fbf05c177",
-      "logRef": "gov-infra/evidence/proportionate/local/rubric-rubric-20261117T023912Z-79222.log",
+      "inputsDigest": "sha256:1f55645d6398c6b1aa0864310b18502593a754167c362997e0f9356615cc1672",
+      "logDigest": "sha256:5215a571dda1c40a756266958ae3b8a8b842425ece504ac179fd5496685ef2ec",
+      "logRef": "gov-infra/evidence/proportionate/local/rubric-rubric-20261117T003726Z-57810.log",
       "reused": false,
-      "startedAt": "2026-11-17T02:39:12Z"
+      "startedAt": "2026-11-17T00:37:26Z"
     }
   ],
   "consumed": [
     {
-      "digest": "sha256:977ede424d3b4b1fde71c6c1c4761ca177bd7b9e52fd2cdf38370476e7c04fac",
+      "digest": "sha256:784c75a366b07c3c779cfbddf3110021549f366ee825140bdfd709f987cec8dd",
       "gate": "cdk-go-drift",
-      "recordedAt": "2026-11-17T01:19:22Z"
+      "recordedAt": "2026-11-16T15:52:06Z"
+    },
+    {
+      "digest": "sha256:9f6eb9fe24935333c5d006d42ff1c980c43930b37bd420f428f0eeb68aa0e3f0",
+      "gate": "contract-tests",
+      "recordedAt": "2026-11-16T17:35:59Z"
+    },
+    {
+      "digest": "sha256:bb8df537cee25fd31d328f989b672e33d80756d6134df99a1e8d386957e2b09b",
+      "gate": "deterministic-builds",
+      "recordedAt": "2026-11-17T00:12:30Z"
+    },
+    {
+      "digest": "sha256:20d08dee8e6f6d3ec63c6b99e6dc4ae9f5731221fa064e7e3888da97b55969ca",
+      "gate": "go",
+      "recordedAt": "2026-11-17T00:12:56Z"
+    },
+    {
+      "digest": "sha256:2f1427b9780518aac0fb779ba0a55c126ef489a7daf1a848b84e1c94b858929c",
+      "gate": "unit",
+      "recordedAt": "2026-11-17T00:13:50Z"
     }
   ],
   "description": "Full local rubric gate used by the staging required context; composes independently produced product records and executes only rubric-unique checks",
@@ -41,18 +61,18 @@
     "tool": "scripts/evidence/validation_evidence.py"
   },
   "profile": "default",
-  "reason": "command failed: rubric exit=2",
-  "recordedAt": "2026-11-17T02:40:06Z",
+  "reason": "",
+  "recordedAt": "2026-11-17T00:45:44Z",
   "releaseOnly": {
     "digest": "sha256:32f9c041eb6755559c7f88de114a0fb57a4a8f981b39ae32e4321c7fad8c3b4a",
     "fileCount": 477,
-    "normalizedDigest": "sha256:2c3cdf6ea519b20a9e68a3ed2b6afa22f5af49ff327ec1878cc40e3d5d370aec",
+    "normalizedDigest": "sha256:04e7d83a21a6f9f1ee749046e949340496152a2c2d4363d2b5d0edc921d1b8d8",
     "version": "7.3.1"
   },
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:7ba17fac398b3b7aeb51152cfed248c03f8b2cb24ca8c64c9ec069f0013e46b7",
+    "digest": "sha256:ed7f187013767f637ef6057e4dd7198d350e34f2cbb92ddb7e9134dc50e980f6",
     "fileCount": 3149,
     "paths": [
       "**"
@@ -60,8 +80,8 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:cac66dd6ea5542cc2c0d41f6ed45f31ced1e3e8e43db6a9076371783f8821baa",
+    "digest": "sha256:ae42f316c40c8abeabeaa37b332f413af3a0e5131c17b9532bd5334e08b6ce16",
     "fileCount": 2672
   },
-  "verdict": "FAIL"
+  "verdict": "PASS"
 }
