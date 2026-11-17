@@ -6,7 +6,7 @@
     ]
   },
   "dependencies": {
-    "aws-cdk-lib": "2.275.0",
+    "aws-cdk-lib": "2.277.0",
     "constructs": "^10.8.1"
   },
   "dependencyClosure": {
@@ -9834,7 +9834,7 @@
   },
   "description": "AppTheory CDK constructs (TS-first jsii)",
   "homepage": "https://github.com/theory-cloud/AppTheory.git",
-  "jsiiVersion": "6.0.20 (build 338bb97)",
+  "jsiiVersion": "6.0.22 (build 18ee2f1)",
   "license": "Apache-2.0",
   "metadata": {
     "jsii": {
@@ -32038,5 +32038,5 @@
     }
   },
   "version": "7.3.1",
-  "fingerprint": "9eTXygPtsgE4DORT3KKi+9VVIgHOrOijvgI+RYjY+w4="
+  "fingerprint": "QyWdAYYicVzR9carhlvqtvS1jgRyd+VJCtfy1zmOdCI="
 }

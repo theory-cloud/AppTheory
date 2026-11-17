@@ -15,9 +15,10 @@
 //     dependency ("if a vulnerable dependency is bundled in AWS we make an
 //     exception until its updated there", 2026-10-03).
 //
-// Two exceptions remain (EXCEPTIONS below). The npm scanner path and the OSV
-// scanner path match findings against that list and nothing else; no other code
-// path can suppress a finding.
+// Two exceptions remain (EXCEPTIONS below) plus the 2026-11-17 picomatch
+// dev-chain exception. The npm scanner path and the OSV scanner path match
+// findings against that list and nothing else; no other code path can suppress
+// a finding.
 //
 // ---------------------------------------------------------------------------
 // E2 - braces 3.0.3 in the jsii build toolchain
@@ -56,7 +57,7 @@
 //           vulnerable copy.
 // Why an upgrade cannot resolve it (2026-11-01): the advisory's range is
 //           "< 11.0.1" and the patched minimatch 11.0.1 cannot be installed into
-//           the bundled subtree; the latest published aws-cdk-lib (2.275.0)
+//           the bundled subtree; the latest published aws-cdk-lib (2.277.0)
 //           still declares a bundled minimatch ^10.2.6, so no aws-cdk-lib
 //           release fixes it. AWS publishes the tarball and only AWS can rebuild
 //           it with the patched dependency. Build/CLI-time only; no AppTheory
@@ -67,6 +68,29 @@
 // Removal condition: the pinned aws-cdk-lib bundles minimatch >= 11.0.1.
 //
 // ---------------------------------------------------------------------------
+// E5 - picomatch 2.3.2 in the jsii build toolchain (added 2026-11-17)
+// ---------------------------------------------------------------------------
+// Finding   GHSA-fc5q-39xc-vjpf (high, CVE-2026-112366) on picomatch@2.3.2 at
+//           node_modules/picomatch, reached only via jsii-rosetta -> fast-glob
+//           -> micromatch -> picomatch - the dev toolchain of the cdk
+//           devDependency jsii-pacmak. Build-time only; cdk/ declares no
+//           runtime dependencies at all. npm also lists the derived micromatch,
+//           fast-glob, jsii-rosetta, and jsii-pacmak entries, which are pure
+//           propagation of this single picomatch advisory.
+// Why an upgrade cannot resolve it (2026-11-17): the advisory's range is
+//           "affected <= 4.0.7" with NO fixed event, and npm publishes no
+//           picomatch above 4.0.7, so nothing installable clears it. The cdk
+//           override pins picomatch 2.3.2 for micromatch ^2.3.1, and no newer
+//           micromatch / fast-glob / jsii-rosetta release drops that edge.
+// Ruling:   2026-11-17 operator ruling (Factory docs/058 DEPS-20261117): a
+//           scoped, expiring exception for this exact dev-only chain while the
+//           advisory has no patched upstream release.
+// Removal condition: the jsii toolchain resolves picomatch >= 4.0.8 (the first
+//           release above the advisory's last affected 4.0.7). Lockfile-local:
+//           no registry read, because a published 4.0.8 cannot reach the cdk
+//           graph until micromatch changes its picomatch range.
+//
+// ---------------------------------------------------------------------------
 // Retired 2026-10-10 - brace-expansion bundled inside aws-cdk-lib
 // ---------------------------------------------------------------------------
 // The former E1 exception covered GHSA-6j4f-fj2g-mc7p, GHSA-q2hr-2g5m-vwhr, and
@@ -74,8 +98,8 @@
 // node_modules/aws-cdk-lib/node_modules/brace-expansion (inBundle), reached only
 // through aws-cdk-lib's own bundled minimatch. Its documented removal condition -
 // "the aws-cdk-lib version this repository pins bundles brace-expansion >=
-// 5.0.12" - is now met: this repository pins aws-cdk-lib 2.275.0, whose
-// published tarball bundles brace-expansion 5.0.12. Retiring the exception is
+// 5.0.12" - is now met: this repository pins aws-cdk-lib 2.277.0, whose
+// published tarball bundles brace-expansion 5.0.13. Retiring the exception is
 // STANDARD MAINTENANCE, not a new exception grant.
 //
 // Nothing excuses the bundled path any more. Exactly as before, every routed
@@ -90,9 +114,9 @@
 // Each remaining exception is exact: lockfile, package, version, node path /
 // dependency chain, and advisory ids. Each is ALSO self-expiring and fail
 // closed:
-//   * recheck_by - E2 2026-12-01 (renewed 2026-11-01), E3 2026-12-01 - after
-//     that date the exception no longer applies and the checker fails, forcing
-//     a fresh review;
+//   * recheck_by - E2 2026-12-01 (renewed 2026-11-01), E3 2026-12-01, E5
+//     2026-12-01 - after that date the exception no longer applies and the
+//     checker fails, forcing a fresh review;
 //   * a removal probe runs on every invocation (never only when a finding
 //     happens to appear), so a stale exception cannot survive by simply never
 //     matching again; when a removal condition is met the checker fails with a
@@ -101,7 +125,9 @@
 // closed on a vulnerable bundle (any version below the patched floor), a
 // different bundled version, or any node-path drift. The E3 removal probe is
 // also lockfile-local (the bundled minimatch version is recorded in the
-// lockfile); the E2 removal probe reads the npm registry, and an unreachable
+// lockfile); E5's removal probe is lockfile-local too, because a published
+// picomatch >= 4.0.8 cannot reach the cdk graph until micromatch changes its
+// range; the E2 removal probe reads the npm registry, and an unreachable
 // registry is reported as BLOCKED (exit 2), never assumed clean.
 // Machine contract: when an exception is applied the checker prints one line to
 // stdout per exception beginning "exception-applied: " so a calling gate can
@@ -290,8 +316,8 @@ function canonicalLockfilePath(value) {
 // ---------------------------------------------------------------------------
 
 // The reviewed bundled graph anchor: the exact AWS CDK bundled brace-expansion
-// path this repository resolves after the aws-cdk-lib 2.275.0 bump, whose
-// published tarball bundles the patched brace-expansion 5.0.12. It is not an
+// path this repository resolves after the aws-cdk-lib 2.277.0 bump, whose
+// published tarball bundles the patched brace-expansion 5.0.13. It is not an
 // exception; it is the integrity assertion every routed lockfile must satisfy.
 // It fails closed on a vulnerable bundle (any version below the patched floor),
 // on a different bundled version, on any node-path drift, and on any second
@@ -300,8 +326,8 @@ function canonicalLockfilePath(value) {
 const AWS_CDK_BUNDLE = {
   packageName: "brace-expansion",
   packagePath: "node_modules/aws-cdk-lib/node_modules/brace-expansion",
-  packageVersion: "5.0.12",
-  cdkVersion: "2.275.0",
+  packageVersion: "5.0.13",
+  cdkVersion: "2.277.0",
   minimatchPath: "node_modules/aws-cdk-lib/node_modules/minimatch",
   minimatchVersion: "10.2.6",
   patchedFloor: "5.0.12",
@@ -421,7 +447,41 @@ const E3 = {
   removalCondition: "the pinned aws-cdk-lib bundles minimatch >= 11.0.1",
 };
 
-const EXCEPTIONS = [E2, E3];
+const E5 = {
+  exceptionId: "cdk-dev-picomatch",
+  kind: "dev-chain",
+  lockfiles: ["cdk/package-lock.json"],
+  packageName: "picomatch",
+  packagePath: "node_modules/picomatch",
+  packageVersion: "2.3.2",
+  patchedFloor: "4.0.8",
+  effects: ["micromatch"],
+  // npm propagation chain, root first: picomatch <- micromatch <- fast-glob <-
+  // jsii-rosetta <- jsii-pacmak. Each link is a pure propagation of the single
+  // picomatch advisory.
+  chain: [
+    { name: "micromatch", path: "node_modules/micromatch", via: "picomatch", effects: ["fast-glob"] },
+    { name: "fast-glob", path: "node_modules/fast-glob", via: "micromatch", effects: ["jsii-rosetta"] },
+    { name: "jsii-rosetta", path: "node_modules/jsii-rosetta", via: "fast-glob", effects: ["jsii-pacmak"] },
+    { name: "jsii-pacmak", path: "node_modules/jsii-pacmak", via: "jsii-rosetta", effects: [] },
+  ],
+  advisories: [
+    {
+      id: "GHSA-fc5q-39xc-vjpf",
+      alias: "CVE-2026-112366",
+      url: "https://github.com/advisories/GHSA-fc5q-39xc-vjpf",
+    },
+  ],
+  operatorRuling: "2026-11-17",
+  owner: "theory-cloud/AppTheory steward (Factory dependency sweeps)",
+  recheckBy: "2026-12-01",
+  justification:
+    "Operator-ruled 2026-11-17 (Factory docs/058 DEPS-20261117): picomatch <= 4.0.7 is affected by GHSA-fc5q-39xc-vjpf and npm publishes NO patched picomatch (latest 4.0.7, no fixed event), so the jsii dev toolchain cannot be upgraded out of it. Build-time only; cdk/ declares no runtime dependencies and no AppTheory runtime package or Lambda ships it. Self-expiring; see the removal condition.",
+  removalCondition:
+    "a picomatch release patches GHSA-fc5q-39xc-vjpf (a stable picomatch >= 4.0.8 is published) and the jsii toolchain resolves it, or cdk/ no longer resolves picomatch <= 4.0.7",
+};
+
+const EXCEPTIONS = [E2, E3, E5];
 
 function exceptionById(exceptionId) {
   return EXCEPTIONS.find((exception) => exception.exceptionId === exceptionId) ?? null;
@@ -627,6 +687,59 @@ function jsiiBracesChainProblems(packages) {
   return problems;
 }
 
+// Problems with the reviewed jsii picomatch chain. An empty list means the cdk
+// lockfile matches the reviewed chain exactly. Pure so the self-test can drive
+// it.
+function jsiiPicomatchChainProblems(packages) {
+  const problems = [];
+  const picomatchPaths = Object.keys(packages).filter(
+    (key) => key === E5.packagePath || key.endsWith(`/${E5.packagePath}`),
+  );
+  const node = packages[E5.packagePath];
+
+  if (!sameStringSet(picomatchPaths, [E5.packagePath]) || node?.dev !== true) {
+    problems.push(
+      `lockfile graph no longer matches the reviewed ${E5.exceptionId} exception (expected exactly one dev ${E5.packageName} at ${E5.packagePath})`,
+    );
+    return problems;
+  }
+
+  const version = node?.version;
+  if (version && compareVersionStrings(version, E5.patchedFloor) >= 0) {
+    problems.push(
+      `reviewed exception ${E5.exceptionId} removal condition met: the jsii toolchain now resolves ${E5.packageName} ${version} >= ${E5.patchedFloor}; remove the exception`,
+    );
+  } else if (version !== E5.packageVersion) {
+    problems.push(
+      `lockfile graph no longer matches the reviewed ${E5.exceptionId} exception (expected ${E5.packageName} ${E5.packageVersion})`,
+    );
+  }
+
+  // Dev-only proof, structural half: the cdk package must not declare
+  // picomatch as a runtime dependency.
+  if (Object.keys(packages[""]?.dependencies ?? {}).includes(E5.packageName)) {
+    problems.push(
+      `lockfile graph no longer matches the reviewed ${E5.exceptionId} exception (${E5.packageName} is declared as a runtime dependency)`,
+    );
+  }
+
+  for (const link of E5.chain) {
+    const linkPackage = packages[link.path];
+    if (linkPackage?.dev !== true) {
+      problems.push(
+        `lockfile graph no longer matches the reviewed ${E5.exceptionId} exception (expected the dev ${link.name} at ${link.path})`,
+      );
+      continue;
+    }
+    if (!linkPackage.dependencies?.[link.via] && !linkPackage.peerDependencies?.[link.via]) {
+      problems.push(
+        `lockfile graph no longer matches the reviewed ${E5.exceptionId} exception (${link.name} no longer depends on ${link.via})`,
+      );
+    }
+  }
+  return problems;
+}
+
 // ---------------------------------------------------------------------------
 // Removal conditions (pure, so the self-test can drive them without network)
 // ---------------------------------------------------------------------------
@@ -654,6 +767,22 @@ function e3RemovalReasons(packages) {
   if (version && compareVersionStrings(version, E3.patchedFloor) >= 0) {
     reasons.push(
       `the pinned aws-cdk-lib now bundles ${E3.packageName} ${version} >= ${E3.patchedFloor}`,
+    );
+  }
+  return reasons;
+}
+
+// E5's removal condition is lockfile-local: a published picomatch >= 4.0.8
+// cannot reach the cdk graph until micromatch changes its `^2.3.1` range, so a
+// registry read would trigger the removal message while no installable fix
+// exists. The graph anchor and this probe both fail when the toolchain actually
+// resolves a patched picomatch. Pure so the self-test can drive it.
+function e5RemovalReasons(packages) {
+  const reasons = [];
+  const version = packages[E5.packagePath]?.version;
+  if (version && compareVersionStrings(version, E5.patchedFloor) >= 0) {
+    reasons.push(
+      `the jsii toolchain now resolves ${E5.packageName} ${version} >= ${E5.patchedFloor}`,
     );
   }
   return reasons;
@@ -810,7 +939,7 @@ function runSelfTest() {
       dependencies: { "brace-expansion": "^5.0.8" },
     },
     "node_modules/aws-cdk-lib/node_modules/brace-expansion": {
-      version: "5.0.12",
+      version: "5.0.13",
       inBundle: true,
       dependencies: { "balanced-match": "^4.0.2" },
     },
@@ -909,6 +1038,169 @@ function runSelfTest() {
     otherLockfile,
     true,
   );
+
+  // E5 (picomatch dev chain): the exact root and chain shapes match on the cdk
+  // lockfile, and the graph anchor fails closed on every deviation.
+  const e5RootVuln = {
+    name: E5.packageName,
+    nodes: [E5.packagePath],
+    effects: E5.effects,
+    via: [{ url: E5.advisories[0].url }],
+  };
+  expectNpm("npm E5 root real shape matches", E5.packageName, e5RootVuln, canonical, true);
+  for (const link of E5.chain) {
+    expectNpm(
+      `npm E5 chain link ${link.name} matches`,
+      link.name,
+      { name: link.name, nodes: [link.path], effects: link.effects, via: [link.via] },
+      canonical,
+      true,
+    );
+  }
+  expectOsv(
+    "osv E5 real shape matches",
+    osvResult(canonical),
+    osvPkg(E5.packageName, E5.packageVersion),
+    { id: E5.advisories[0].id, aliases: [E5.advisories[0].alias] },
+    canonical,
+    true,
+  );
+  // (a) another advisory on picomatch still fails.
+  expectNpm(
+    "(a5) npm E5 a different advisory url fails",
+    E5.packageName,
+    { ...e5RootVuln, via: [{ url: "https://github.com/advisories/GHSA-0000-0000-0000" }] },
+    canonical,
+    false,
+  );
+  expectOsv(
+    "(a5) osv E5 a different advisory id fails",
+    osvResult(canonical),
+    osvPkg(E5.packageName, E5.packageVersion),
+    { id: "GHSA-0000-0000-0000", aliases: [E5.advisories[0].alias] },
+    canonical,
+    false,
+  );
+  // The same GHSA on another package still fails.
+  expectOsv(
+    "osv E5 the same GHSA on another package fails",
+    osvResult(canonical),
+    osvPkg("fast-glob", "3.3.3"),
+    { id: E5.advisories[0].id, aliases: [E5.advisories[0].alias] },
+    canonical,
+    false,
+  );
+  // (b) a different version still fails.
+  expectOsv(
+    "(b5) osv E5 a different version fails",
+    osvResult(canonical),
+    osvPkg(E5.packageName, "2.3.1"),
+    { id: E5.advisories[0].id, aliases: [E5.advisories[0].alias] },
+    canonical,
+    false,
+  );
+  // (d) E5 is scoped to the cdk lockfile only.
+  expectNpm("(d5) npm E5 the root shape on a routed example lockfile fails", E5.packageName, e5RootVuln, otherLockfile, false);
+  expectOsv(
+    "(d5) osv E5 on a routed example lockfile fails",
+    osvResult(otherLockfile),
+    osvPkg(E5.packageName, E5.packageVersion),
+    { id: E5.advisories[0].id, aliases: [E5.advisories[0].alias] },
+    otherLockfile,
+    false,
+  );
+
+  // (c5) the E5 graph anchor: dev-only, single path, exact version and chain.
+  const validPicomatchPackages = () => {
+    const packages = validPackages();
+    packages[""] = { devDependencies: { "jsii-pacmak": "^1.140.0" } };
+    packages["node_modules/picomatch"] = { version: E5.packageVersion, dev: true };
+    packages["node_modules/micromatch"] = {
+      version: "4.0.8",
+      dev: true,
+      dependencies: { braces: "^3.0.3", picomatch: "^2.3.1" },
+    };
+    return packages;
+  };
+  cases.push({
+    label: "(c5) the reviewed E5 picomatch graph itself must be clean",
+    actual: jsiiPicomatchChainProblems(validPicomatchPackages()).length,
+    expected: 0,
+  });
+  const nonDevPicomatch = validPicomatchPackages();
+  nonDevPicomatch["node_modules/picomatch"].dev = false;
+  cases.push({
+    label: "(c5) a non-dev picomatch fails the E5 graph",
+    actual: jsiiPicomatchChainProblems(nonDevPicomatch).length > 0,
+    expected: true,
+  });
+  const nestedPicomatch = validPicomatchPackages();
+  delete nestedPicomatch["node_modules/picomatch"];
+  nestedPicomatch["node_modules/fast-glob/node_modules/picomatch"] = { version: E5.packageVersion, dev: true };
+  cases.push({
+    label: "(c5) a picomatch at a nested path fails the E5 graph",
+    actual: jsiiPicomatchChainProblems(nestedPicomatch).length > 0,
+    expected: true,
+  });
+  const runtimePicomatch = validPicomatchPackages();
+  runtimePicomatch[""].dependencies = { picomatch: "^2.3.1" };
+  cases.push({
+    label: "(c5) a runtime picomatch dependency fails the E5 graph",
+    actual: jsiiPicomatchChainProblems(runtimePicomatch).length > 0,
+    expected: true,
+  });
+  const driftedPicomatch = validPicomatchPackages();
+  driftedPicomatch["node_modules/picomatch"].version = "2.3.1";
+  cases.push({
+    label: "(c5) a drifted picomatch version fails the E5 graph",
+    actual: jsiiPicomatchChainProblems(driftedPicomatch).length > 0,
+    expected: true,
+  });
+  const nonDevChainLink = validPicomatchPackages();
+  nonDevChainLink["node_modules/micromatch"].dev = false;
+  cases.push({
+    label: "(c5) a non-dev E5 chain link fails the graph",
+    actual: jsiiPicomatchChainProblems(nonDevChainLink).length > 0,
+    expected: true,
+  });
+  const severedChain = validPicomatchPackages();
+  delete severedChain["node_modules/fast-glob"].dependencies.micromatch;
+  cases.push({
+    label: "(c5) a severed E5 chain edge fails the graph",
+    actual: jsiiPicomatchChainProblems(severedChain).length > 0,
+    expected: true,
+  });
+
+  // (e) after recheck_by E5 stops applying.
+  cases.push({
+    label: "(e) E5 recheck_by boundary: the day before is live",
+    actual: recheckExpired("2026-11-30T23:59:59Z", E5.recheckBy),
+    expected: false,
+  });
+  cases.push({
+    label: "(e) E5 recheck_by boundary: the deadline itself expires",
+    actual: recheckExpired("2026-12-01T00:00:00Z", E5.recheckBy),
+    expected: true,
+  });
+  cases.push({
+    label: "(e) E5 recheck_by boundary: a past deadline is expired",
+    actual: recheckExpired("2026-12-05T00:00:00Z", E5.recheckBy),
+    expected: true,
+  });
+
+  // (f) the E5 removal condition is detected.
+  const patchedPicomatch = validPicomatchPackages();
+  patchedPicomatch[E5.packagePath].version = "4.0.8";
+  cases.push({
+    label: "(f) E5 removal: the jsii toolchain resolves picomatch 4.0.8",
+    actual: e5RemovalReasons(patchedPicomatch).length > 0,
+    expected: true,
+  });
+  cases.push({
+    label: "(f) E5 stays live: the jsii toolchain resolves picomatch 2.3.2",
+    actual: e5RemovalReasons(validPicomatchPackages()).length === 0,
+    expected: true,
+  });
 
   // The retired E1 exception must excuse nothing: the exact bundled
   // brace-expansion shapes it used to cover now fail on every routed lockfile.
@@ -1141,7 +1433,7 @@ function runSelfTest() {
     expected: true,
   });
   const driftedBundleVersion = { ...validPackages() };
-  driftedBundleVersion["node_modules/aws-cdk-lib/node_modules/brace-expansion"].version = "5.0.13";
+  driftedBundleVersion["node_modules/aws-cdk-lib/node_modules/brace-expansion"].version = "5.0.14";
   cases.push({
     label: "(d2) a drifted bundled brace-expansion version fails the fixed-graph anchor",
     actual: awsCdkBundleGraphProblems(driftedBundleVersion).length > 0,
@@ -1325,12 +1617,15 @@ async function main() {
     }
   }
 
-  // Lockfile-local removal probe for E3. It runs before the graph anchors so
-  // that a patched bundled minimatch yields the actionable "remove the
+  // Lockfile-local removal probe for E3 and E5. It runs before the graph
+  // anchors so that a patched dependency yields the actionable "remove the
   // exception" message instead of a generic graph-drift failure.
   const localRemovalReasons = [];
   if (inScopeExceptions.includes(E3)) {
     localRemovalReasons.push(...e3RemovalReasons(packages));
+  }
+  if (inScopeExceptions.includes(E5)) {
+    localRemovalReasons.push(...e5RemovalReasons(packages));
   }
   if (localRemovalReasons.length > 0) {
     for (const reason of localRemovalReasons) {
@@ -1346,6 +1641,9 @@ async function main() {
   const graphProblems = awsCdkBundleGraphProblems(packages);
   if (inScopeExceptions.includes(E2)) {
     graphProblems.push(...jsiiBracesChainProblems(packages));
+  }
+  if (inScopeExceptions.includes(E5)) {
+    graphProblems.push(...jsiiPicomatchChainProblems(packages));
   }
   if (graphProblems.length > 0) {
     for (const problem of graphProblems) {
