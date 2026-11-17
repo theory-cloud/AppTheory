@@ -56,7 +56,7 @@
 //           vulnerable copy.
 // Why an upgrade cannot resolve it (2026-11-01): the advisory's range is
 //           "< 11.0.1" and the patched minimatch 11.0.1 cannot be installed into
-//           the bundled subtree; the latest published aws-cdk-lib (2.275.0)
+//           the bundled subtree; the latest published aws-cdk-lib (2.277.0)
 //           still declares a bundled minimatch ^10.2.6, so no aws-cdk-lib
 //           release fixes it. AWS publishes the tarball and only AWS can rebuild
 //           it with the patched dependency. Build/CLI-time only; no AppTheory
@@ -74,8 +74,8 @@
 // node_modules/aws-cdk-lib/node_modules/brace-expansion (inBundle), reached only
 // through aws-cdk-lib's own bundled minimatch. Its documented removal condition -
 // "the aws-cdk-lib version this repository pins bundles brace-expansion >=
-// 5.0.12" - is now met: this repository pins aws-cdk-lib 2.275.0, whose
-// published tarball bundles brace-expansion 5.0.12. Retiring the exception is
+// 5.0.12" - is now met: this repository pins aws-cdk-lib 2.277.0, whose
+// published tarball bundles brace-expansion 5.0.13. Retiring the exception is
 // STANDARD MAINTENANCE, not a new exception grant.
 //
 // Nothing excuses the bundled path any more. Exactly as before, every routed
@@ -290,8 +290,8 @@ function canonicalLockfilePath(value) {
 // ---------------------------------------------------------------------------
 
 // The reviewed bundled graph anchor: the exact AWS CDK bundled brace-expansion
-// path this repository resolves after the aws-cdk-lib 2.275.0 bump, whose
-// published tarball bundles the patched brace-expansion 5.0.12. It is not an
+// path this repository resolves after the aws-cdk-lib 2.277.0 bump, whose
+// published tarball bundles the patched brace-expansion 5.0.13. It is not an
 // exception; it is the integrity assertion every routed lockfile must satisfy.
 // It fails closed on a vulnerable bundle (any version below the patched floor),
 // on a different bundled version, on any node-path drift, and on any second
@@ -300,8 +300,8 @@ function canonicalLockfilePath(value) {
 const AWS_CDK_BUNDLE = {
   packageName: "brace-expansion",
   packagePath: "node_modules/aws-cdk-lib/node_modules/brace-expansion",
-  packageVersion: "5.0.12",
-  cdkVersion: "2.275.0",
+  packageVersion: "5.0.13",
+  cdkVersion: "2.277.0",
   minimatchPath: "node_modules/aws-cdk-lib/node_modules/minimatch",
   minimatchVersion: "10.2.6",
   patchedFloor: "5.0.12",
@@ -810,7 +810,7 @@ function runSelfTest() {
       dependencies: { "brace-expansion": "^5.0.8" },
     },
     "node_modules/aws-cdk-lib/node_modules/brace-expansion": {
-      version: "5.0.12",
+      version: "5.0.13",
       inBundle: true,
       dependencies: { "balanced-match": "^4.0.2" },
     },
@@ -1141,7 +1141,7 @@ function runSelfTest() {
     expected: true,
   });
   const driftedBundleVersion = { ...validPackages() };
-  driftedBundleVersion["node_modules/aws-cdk-lib/node_modules/brace-expansion"].version = "5.0.13";
+  driftedBundleVersion["node_modules/aws-cdk-lib/node_modules/brace-expansion"].version = "5.0.14";
   cases.push({
     label: "(d2) a drifted bundled brace-expansion version fails the fixed-graph anchor",
     actual: awsCdkBundleGraphProblems(driftedBundleVersion).length > 0,
