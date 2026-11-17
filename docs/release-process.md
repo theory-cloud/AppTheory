@@ -29,17 +29,43 @@ Upgrade policy is maintained separately from the generated changelog. When a min
 
 Release Please never regenerates a past release section, so a published release note is frozen at the shape it had when its tag was cut and a hand edit to it would be dropped or duplicated on the next generated release. Corrections to already-published release notes are therefore recorded in [`release-notes-corrections.md`](./release-notes-corrections.md), which names the incomplete note, the omitted or wrong entry with its commit and pull request, and the consumer action. The correcting change lands as a release-visible `fix:` or `feat:` commit so the next generated release section carries the correction; a `docs:`-typed commit alone is not rendered. Published tags and release assets are immutable, so an edit to a published GitHub Release body is an operator action, recorded as such on that page.
 
-The full rubric runs only for PRs targeting `staging` and optional manual `workflow_dispatch` CI runs. Manual CI dispatch defaults to running the rubric; generated release-PR artifact sync dispatches CI with the full rubric disabled and waits only for release hygiene/build checks. The standalone `Verify deterministic builds` CI job also runs only for PRs targeting `staging`; generated release PR sync must not require or wait for that skipped context. The `Examples (local harness)` workflow also runs only for PRs targeting `staging`: `premain` and `main` derive from `staging`, so the harness has already run on the same tree before promotion and a second run there only repeats it. `premain` and `main` run release hygiene, branch version sync, release-branch provenance, package build, and publish postcondition checks; they must not run the full rubric or deterministic-build job on release publish paths.
+The full rubric runs only for PRs targeting `staging`. Generated release-PR artifact sync dispatches CI with only the release contexts enabled and waits for the release hygiene/build checks. The standalone `Verify deterministic builds` CI job also runs only for PRs targeting `staging`; generated release PR sync must not require or wait for that skipped context. The `Examples (local harness)` workflow also runs only for PRs targeting `staging`: `premain` and `main` derive from `staging`, so the harness has already run on the same tree before promotion and a second run there only repeats it. `premain` and `main` run release hygiene, branch version sync, release-branch provenance, package build, and publish postcondition checks; they must not run the full rubric or deterministic-build job on release publish paths.
 
 Generated release PRs have one CI trigger. Release Please version commits and generated-artifact sync commits carry
 `[skip ci]` in the commit body so their automation-originated `pull_request` `opened` and `synchronize` events do
 not create stale or duplicate CI runs. After the final generated-artifact head is visible and signature-verified,
 the sync workflow starts one explicit `workflow_dispatch` CI run for that exact head, waits for every required
 context (including the release-train promotion and release/security gates), rechecks that the head is unchanged,
-and only then marks the PR ready. The dispatch carries the exact release PR number; the promotion gate loads that
-PR through GitHub's API and fails unless its repository, branch, and SHA match the dispatched ref. The skip marker
-does not bypass validation: it suppresses only automatic `push`/`pull_request` triggers; the explicit CI dispatch
-remains required and fails closed.
+and only then marks the PR ready. The dispatch carries the exact release PR number and the head SHA the lane read;
+each verifying job loads that PR through GitHub's API and fails unless its repository, base, head branch and SHA
+match the dispatched ref and recorded head. The skip marker does not bypass validation: it suppresses only
+automatic `push`/`pull_request` triggers; the explicit CI dispatch remains required and fails closed.
+
+GitHub evaluates a required status check only when the run that reported it was triggered by `push`,
+`pull_request`, `pull_request_review`, `pull_request_target`, `deployment` or `deployment_status`. A
+`workflow_dispatch` run — the lane's own dispatch — reports check runs that do not appear in the pull request's
+checks section and do not satisfy a required status check, which is why a generated release PR can never be made
+mergeable by self-dispatch alone. The lane's dispatch is therefore an early, head-bound verdict, and the eligible
+run comes from the code-owner approval the `premain`/`main` ruleset already requires: `ci.yml` also runs on
+`pull_request_review: [submitted]`, so approving a promotion or generated release PR runs the same release checks
+on the same head. A head that moves dismisses the stale approval, and the next approval runs the checks again.
+
+`.github/release-lane.json` is the declaration the lane and its guard share: per release branch it names the
+required contexts (the same three the ruleset requires, plus the generated-content delta smoke), the workflow that
+reports each one and the job that carries the context name, the generated release branches, and the recovery
+sweep. `scripts/sync-release-pr-checks.sh` drives the lane: it reuses green contexts at the head, refuses to
+re-dispatch around a red one, dispatches one run per verifying workflow with the pull request number and head SHA,
+waits under a bounded budget while re-reading the head, and marks the PR ready only after a final head read. The
+commit-level check runs are what the ruleset evaluates; a pull-request rollup that lags or drops a context is
+reported as a warning rather than treated as a missing check. `scripts/verify-release-pr-check-lane.sh --self-test`
+proves that wiring and fails closed when a generated release PR loses its head-bound dispatch path.
+
+A generated release PR left checkless needs no human action. `.github/workflows/release-pr-check-sweep.yml` runs the
+same lane for both generated release branches every 20 minutes (and on demand): it re-verifies the current head,
+dispatches when the required contexts are missing, and marks the PR ready once the head is green. In sweep mode a
+red or stuck head is reported as a warning, because the pull request already shows that state and a scheduled run
+must never re-dispatch around a red check. The producers carry `workflow_dispatch` only to re-run the idempotent
+lane by hand; no recovery path depends on a human dispatch.
 
 Skipped full-rubric and deterministic-build contexts are not release/security proof. The `Release/security gates` CI job is unconditional and branch-protection-compatible; it verifies release supply-chain wiring, release branch signature history, Release Please provenance self-tests, CI rubric enforcement, workflow invariants, and deterministic release-cycle fixtures even when the full rubric is intentionally skipped.
 

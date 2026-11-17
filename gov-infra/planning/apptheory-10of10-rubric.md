@@ -73,14 +73,15 @@ Enforcement rule (anti-drift):
 
 **10/10 definition:** SEC-1 through SEC-4 pass.
 
-### SEC-2 dependency-audit exceptions: two live operator-ruled exceptions
+### SEC-2 dependency-audit exceptions: three live operator-ruled exceptions
 
-SEC-2 grants **no dependency-audit exceptions** beyond the two live ones below (both AWS-published chains in the
-CDK lockfile class). Each is an exact match (lockfile, package, version, node path / dependency chain, and advisory
-ids) and is **self-expiring and fail-closed**: it carries a hard `recheck_by` deadline, a removal probe runs on every
-invocation so a stale exception cannot survive by never matching again (registry-backed for the jsii chain,
-lockfile-local for the bundled path), and when a removal condition is met the checker fails with a clear message. Any
-*other* finding, in any lockfile, still fails the gate. Nothing beyond these two may be added without a new operator
+SEC-2 grants **no dependency-audit exceptions** beyond the three live ones below (E2 and E3 are AWS-published chains
+in the CDK lockfile class; E5 is the 2026-11-17 dev-only picomatch chain). Each is an exact match (lockfile, package,
+version, node path / dependency chain, and advisory ids) and is **self-expiring and fail-closed**: it carries a hard
+`recheck_by` deadline, a removal probe runs on every invocation so a stale exception cannot survive by never matching
+again (registry-backed for the jsii chain and for E5's `ts/` shape, lockfile-local for the bundled path and E5's
+`cdk/` shape), and when a removal condition is met the checker fails with a clear message. Any
+*other* finding, in any lockfile, still fails the gate. Nothing beyond these three may be added without a new operator
 ruling.
 
 Operator rulings, quoted verbatim:
@@ -93,6 +94,11 @@ Operator rulings, quoted verbatim:
 > 2026-11-01: "Dev-only exception" - override minimatch to 11.0.1 everywhere except eslint-plugin-import-x,
 > keep import-x on 10.2.6, and record the single remaining 10.2.6 node path as a reviewed exception.
 > (Retired with E4 on 2026-11-06; kept here as the ruling that created it.)
+
+> 2026-11-17: a scoped, expiring exception for `picomatch` while `GHSA-fc5q-39xc-vjpf` has no patched upstream
+> release: only that advisory, only `picomatch`, and only on lockfile paths that are proven dev-only, with
+> `recheck_by: 2026-12-01`, the removal condition "a picomatch release patches GHSA-fc5q-39xc-vjpf", and a
+> justification recorded in the checker. (E5, below. The ruling is quoted in Factory docs/058 DEPS-20261117.)
 
 **E1 (retired 2026-10-10) - brace-expansion 5.0.9 bundled inside aws-cdk-lib.** Findings
 `GHSA-q2hr-2g5m-vwhr`, `GHSA-qhr7-859c-m2p7`, and `GHSA-6j4f-fj2g-mc7p` on
@@ -129,13 +135,37 @@ renewal and its evidence in `E2.renewal`.
 (bundled), reached only through aws-cdk-lib's own bundled `minimatch`; npm lists the derived
 `aws-cdk-lib` entry as pure propagation. AWS publishes it and only AWS can publish a tarball that bundles
 the patched release (`minimatch 11.0.1` exists on npm but cannot be installed into the bundled subtree);
-the latest published aws-cdk-lib (2.275.0) still declares a bundled minimatch `^10.2.6`, so no
-aws-cdk-lib release resolves it. It is build/CLI-time only and no AppTheory runtime package or Lambda
+the latest published aws-cdk-lib (2.277.0, the version this repository pins) still declares a bundled
+minimatch `^10.2.6`, so no aws-cdk-lib release resolves it. It is build/CLI-time only and no AppTheory runtime package or Lambda
 ships it. Scope: the same full bundled-path set as E1 - the cdk lockfile plus all fifteen
 `examples/cdk/*/package-lock.json` files, including the three LOCAL-A1 additions. Owner: AppTheory
 steward (Factory dependency sweeps). **Removal condition:** the pinned `aws-cdk-lib` bundles
 `minimatch >= 11.0.1`. **Hard recheck by 2026-12-01.** Operator ruling: 2026-10-03 (the
 bundled-dependency ruling quoted above), extended 2026-10-04.
+
+**E5 - picomatch <= 4.0.7 in the dev-only lint and build toolchains (added 2026-11-17).** Finding
+`GHSA-fc5q-39xc-vjpf` (high, `CVE-2026-112366`) on `picomatch`, whose advisory range is `<= 4.0.7` with **no
+`fixed` event**: `npm view picomatch version` is `4.0.7` (checked 2026-11-17), so no installable release clears it.
+OSV flags exactly two copies across the whole SEC-2 scan set, and both are `dev: true`:
+
+- `ts/package-lock.json`: `picomatch@4.0.7` at `node_modules/picomatch`, reached only through
+  `@typescript-eslint/parser` (a ts `devDependency`) -> `@typescript-eslint/typescript-estree` -> `tinyglobby`
+  (`picomatch ^4.0.4`) and `tinyglobby`'s `fdir` peer edge (`picomatch ^3 || ^4`). Every chain node is `dev: true`,
+  the root package declares no picomatch runtime dependency, and `npm ls --omit=dev --all` inside `ts/` reports none.
+- `cdk/package-lock.json`: `picomatch@2.3.2` at `node_modules/picomatch`, reached only through `jsii-rosetta` (a cdk
+  `devDependency`) -> `fast-glob` -> `micromatch` (`picomatch ^2.3.1`); the cdk override pins `2.3.2`. Every chain
+  node is `dev: true`, and `cdk/package.json` declares **no** runtime `dependencies` at all.
+- Every `examples/cdk/*/package-lock.json` carries **no** picomatch copy, so the exception has no example scope.
+
+**Removal condition:** a picomatch release patches `GHSA-fc5q-39xc-vjpf` (a stable `picomatch >= 4.0.8`, the first
+release above the advisory's last affected `4.0.7`, is published) and the affected toolchain resolves it, or the
+lockfile no longer resolves picomatch `<= 4.0.7`. **Hard recheck by 2026-12-01.** For the `ts/` shape the removal
+probe reads the npm registry on every invocation; for the `cdk/` shape it is lockfile-local, because a published
+`4.0.8` cannot reach the cdk graph until `micromatch` changes its `^2.3.1` range, so a registry read there would fire
+the removal message while no installable fix exists. The checkers fail closed on the same advisory on a non-dev or
+additional node path, another advisory on picomatch, another package carrying this GHSA, a drifted chain, or a passed
+`recheck_by`. Operator ruling: 2026-11-17 (quoted above; Factory docs/058 DEPS-20261117). Owner: AppTheory steward
+(Factory dependency sweeps).
 
 The scan-set completeness is itself gated: `gov-verify-rubric.sh` compares `node_lockfiles` with
 `git ls-files '*package-lock.json' '*npm-shrinkwrap.json'` before scanning and fails when a tracked
@@ -160,25 +190,26 @@ reported no minimatch, and the published package ships only `dist`, `LICENSE`, `
 **That condition was met:** on 2026-11-06 the operator adopted `eslint-plugin-import-x` 4.18.0, whose
 published minimatch range is `^9.0.3 || ^10.1.2 || ^11.0.1` and whose `no-internal-modules` rule no longer
 imports `makeRe` (upstream #570). The dev-only override, the exception, its registry-backed removal probe,
-and its recheck deadline were removed; `ts/package-lock.json` now resolves a single `minimatch@11.0.1` for
-every consumer. Operator ruling: 2026-11-01 (the dev-only exception quoted above).
+and its recheck deadline were removed; `ts/package-lock.json` now resolves a single `minimatch@11.0.9` for
+every consumer (moved from `11.0.1` on 2026-11-17 when `eslint` 10.15.0 raised its own range to `^11.0.5`). Operator ruling: 2026-11-01 (the dev-only exception quoted above).
 
-The two AWS exceptions live in the ONE shared list in `scripts/check-visible-aws-cdk-finding.mjs`; the npm
-and OSV scanner paths match findings against that same list, `scripts/verify-cdk-audit.sh` and
-`gov-verify-rubric.sh`'s `osv_scan_lockfile` accept a non-zero scanner exit only when the checker emits
-the `exception-applied:` machine marker, and the checker's `--self-test` battery proves the negative
-cases (a different advisory id, version, node path, or lockfile, an expired `recheck_by`, or a met
-removal condition) still fail closed.
+The AWS-published exceptions (E2, E3) live in the ONE shared list in `scripts/check-visible-aws-cdk-finding.mjs`,
+together with E5's `cdk/` shape; the npm and OSV scanner paths match findings against that same list,
+`scripts/verify-cdk-audit.sh` and `gov-verify-rubric.sh`'s `osv_scan_lockfile` accept a non-zero scanner exit only
+when the checker emits the `exception-applied:` machine marker, and the checker's `--self-test` battery proves the
+negative cases (a different advisory id, version, node path, or lockfile, a non-dev copy, an expired `recheck_by`, or
+a met removal condition) still fail closed.
 
-The former dev-only TypeScript exception was removed with E4 on 2026-11-06.
-`scripts/check-visible-ts-brace-finding.mjs`, which the same `osv_scan_lockfile` routes
-`ts/package-lock.json` to, now enforces the exception-free graph: exactly one minimatch node
-(`11.0.1` at `node_modules/minimatch`), any minimatch below `11.0.1` at any node path failing closed,
-the exact brace-expansion and runner nodes, the exact minimatch parent set, the exact override map, and
-an empty OSV findings set. Its `--self-test` battery proves that a vulnerable copy reintroduced at the
-old `eslint-plugin-import-x` path, any other minimatch path, version, parent, override map, or lockfile,
-and any finding still fail (26 offline cases). The gate requires the shared AWS marker for the CDK
-lockfiles and no marker for the TypeScript lockfile, so a status-1 TypeScript scan fails closed.
+The TypeScript lockfile keeps the patched minimatch graph and adds E5's `ts/` shape.
+`scripts/check-visible-ts-brace-finding.mjs`, which the same `osv_scan_lockfile` routes `ts/package-lock.json` to,
+enforces exactly one minimatch node (`11.0.9` at `node_modules/minimatch`), any minimatch below `11.0.1` at any node
+path failing closed, the exact brace-expansion and runner nodes, the exact minimatch parent set, the exact override
+map, and E5's single dev `picomatch@4.0.7` with its exact chain. Its `--self-test` battery proves that a vulnerable
+copy reintroduced at the old `eslint-plugin-import-x` path, any other minimatch path, version, parent, override map,
+or lockfile, any finding outside E5, the same GHSA on another package, another advisory on picomatch, a non-dev or
+additional picomatch path, a drifted chain, an expired `recheck_by`, and a met removal condition all fail (48 offline
+cases). The gate now requires the `exception-applied:` marker for the TypeScript lockfile too, so a status-1 scan
+without E5's marker fails closed.
 
 This section previously recorded that SEC-2 carried **no** exception. The pattern reused here is the one
 SEC-2's earlier exception established: advisory `GHSA-528h-pc64-c93x` / `CVE-2026-71429` for

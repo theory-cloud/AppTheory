@@ -300,8 +300,9 @@ func TestGuardRejectsUnmodeledTriggerFilters(t *testing.T) {
 		"pull_request branches filter with an empty list": strings.Replace(baseWorkflow,
 			"    branches: [staging, premain, main]\n",
 			"    branches: []\n", 1),
-		"unknown trigger":     strings.Replace(baseWorkflow, "  workflow_dispatch:\n", "  schedule:\n    - cron: '0 0 * * *'\n  workflow_dispatch:\n", 1),
-		"missing synchronize": strings.Replace(baseWorkflow, "types: [opened, synchronize, reopened, ready_for_review]", "types: [opened]", 1),
+		"unknown trigger":                     strings.Replace(baseWorkflow, "  workflow_dispatch:\n", "  repository_dispatch:\n  workflow_dispatch:\n", 1),
+		"schedule outside the recovery sweep": strings.Replace(baseWorkflow, "  workflow_dispatch:\n", "  schedule:\n    - cron: '0 0 * * *'\n  workflow_dispatch:\n", 1),
+		"missing synchronize":                 strings.Replace(baseWorkflow, "types: [opened, synchronize, reopened, ready_for_review]", "types: [opened]", 1),
 		"push branches that omit a protected branch": strings.Replace(baseWorkflow,
 			"  workflow_dispatch:\n", "  push:\n    branches: [staging, premain]\n  workflow_dispatch:\n", 1),
 	}
@@ -471,6 +472,54 @@ func TestGuardRejectsUnknownNeed(t *testing.T) {
 	text := baseWorkflow + "\n  dangling:\n    needs: does-not-exist\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n"
 	if _, err := evaluateText(t, text); err == nil {
 		t.Fatal("an unknown needs: target must fail closed")
+	}
+}
+
+// TestGuardRejectsUnlistedReleaseJobOnPullRequestReview proves a review-triggered
+// job is classified like a pull-request job: only recorded release hygiene may
+// report on a premain or main review, because the code-owner approval is the one
+// eligible event a generated release pull request can produce.
+func TestGuardRejectsUnlistedReleaseJobOnPullRequestReview(t *testing.T) {
+	text := strings.Replace(baseWorkflow, "  workflow_dispatch:\n",
+		"  pull_request_review:\n    types: [submitted]\n  workflow_dispatch:\n", 1)
+	text += "\n  sneaky-review:\n    name: Sneaky review\n    if: github.event_name == 'pull_request_review' && github.event.pull_request.base.ref == 'premain'\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo sneaky\n"
+	mustFailWith(t, text, "runs on a pull request into premain or main")
+}
+
+// TestGuardRejectsUnmodeledReviewActivity keeps the review trigger narrow: only
+// the submitted activity (the approval) is modeled.
+func TestGuardRejectsUnmodeledReviewActivity(t *testing.T) {
+	text := strings.Replace(baseWorkflow, "  workflow_dispatch:\n",
+		"  pull_request_review:\n    types: [dismissed]\n  workflow_dispatch:\n", 1)
+	if _, err := evaluateText(t, text); err == nil || !strings.Contains(err.Error(), "only the submitted activity type is modeled") {
+		t.Fatalf("an unmodeled review activity must fail closed, got: %v", err)
+	}
+}
+
+// TestGuardRejectsScheduleOutsideTheRecoverySweep pins the one clock-driven
+// exception: a gated workflow that also runs on a cron would execute work on a
+// clock the policy does not model, so only the release-lane recovery sweep may
+// declare a schedule.
+func TestGuardRejectsScheduleOutsideTheRecoverySweep(t *testing.T) {
+	text := strings.Replace(baseWorkflow, "  workflow_dispatch:\n",
+		"  schedule:\n    - cron: '*/20 * * * *'\n  workflow_dispatch:\n", 1)
+	mustFailWith(t, text, "only the release-lane recovery sweep")
+}
+
+// TestGuardAcceptsRecoverySweepSchedule proves the sweep exemption is what the
+// real tree relies on: the recorded exemption accepts its own schedule trigger.
+func TestGuardAcceptsRecoverySweepSchedule(t *testing.T) {
+	exemption, ok := findPublisherExemption(sweepWorkflowPath)
+	if !ok {
+		t.Fatalf("%s must be a recorded publisher exemption", sweepWorkflowPath)
+	}
+	if !exemption.allowSchedule {
+		t.Fatal("the recovery sweep exemption must permit a schedule trigger")
+	}
+	root := filepath.Join("..", "..")
+	full := filepath.Join(root, filepath.FromSlash(sweepWorkflowPath))
+	if err := checkPublisherWorkflow(full, sweepWorkflowPath, exemption); err != nil {
+		t.Fatalf("the recovery sweep must pass its own exemption: %v", err)
 	}
 }
 

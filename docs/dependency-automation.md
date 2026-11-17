@@ -136,7 +136,7 @@ passed `npm audit` with zero vulnerabilities. The removal rationale was:
 - `yaml`: the TableTheory release asset now resolves `yaml@2.9.1`; AppTheory should not override TableTheory's
   transitive dependency unless a current advisory or contract gate requires it.
 
-The repository pins AWS CDK `2.275.0`, whose published tarball bundles the patched `brace-expansion@5.0.12`. That meets
+The repository pins AWS CDK `2.277.0`, whose published tarball bundles the patched `brace-expansion@5.0.13`. That meets
 the documented removal condition of the former `brace-expansion 5.0.9` bundled-dependency exception (operator-ruled
 2026-10-03), so that exception is retired - standard maintenance, not a new exception grant. The CDK npm-audit and
 GovTheory OSV gates still verify the exact bundled graph, now as a positive assertion (`brace-expansion >= 5.0.12`),
@@ -146,14 +146,18 @@ and accept exactly two reviewed, self-expiring exceptions - `braces 3.0.3` reach
 bundled-dependency ruling) - carrying hard `recheck_by` deadlines (2026-12-01 for both; the `braces` deadline was
 renewed 2026-11-01 from 2026-11-02 because the registry still published no patched `braces`, latest `3.0.3`) and
 removal conditions (see `gov-infra/planning/apptheory-10of10-rubric.md` SEC-2). The 2026-11-01 refresh moved the pin
-from `2.273.0` to `2.275.0`; the newer tarball still bundles `minimatch 10.2.6` (below the advisory's `11.0.1`
-fix), so the bundled-minimatch exception is unchanged in scope and its anchor now records `2.275.0` / `10.2.6`.
+from `2.273.0` to `2.275.0`; the 2026-11-17 refresh moved it to `2.277.0`, the latest published release. Both
+tarballs still bundle `minimatch 10.2.6` (below the advisory's `11.0.1` fix), so the bundled-minimatch exception is
+unchanged in scope and its anchor now records `2.277.0` / `10.2.6` with the bundled `brace-expansion 5.0.13`.
 Any vulnerable bundle, AWS CDK, minimatch, brace-expansion, package-path, or finding drift fails closed.
 
 The TypeScript lint graph carries one active `overrides` block and no dependency-audit exception. `ts/package.json`
-overrides `minimatch` to the patched `11.0.1` for `eslint`, `@eslint/config-array`, and
-`@typescript-eslint/typescript-estree`, and `eslint-plugin-import-x` 4.18.0 declares
+overrides `minimatch` to the patched `11.0.9` for `eslint`, `@eslint/config-array`, and
+`@typescript-eslint/typescript-estree`, and `eslint-plugin-import-x` declares
 `^9.0.3 || ^10.1.2 || ^11.0.1`, so every consumer dedupes onto the single hoisted `node_modules/minimatch` node.
+The 2026-11-17 refresh moved the override from `11.0.1` to `11.0.9` because `eslint` 10.15.0 raised its own
+minimatch range to `^11.0.5`; `11.0.9` is the newest `11.x`, satisfies every consumer's range, and still clears the
+advisory's `11.0.1` floor.
 The 2026-11-06 adoption of 4.18.0 retired the dev-only exception E4: upstream #570 replaced the
 `no-internal-modules` rule's `makeRe` import with `Minimatch#match`, which is what had blocked minimatch 11 under
 4.17.1. The 10.2.6 override, the exception, its registry-backed removal probe, and its `recheck_by` deadline were
@@ -163,6 +167,17 @@ runtime dependency, `npm ls --omit=dev --all` inside `ts/` reports none, and the
 runner (`@isaacs/nonrecursive-glob-match`) graph, the exact minimatch parent set, and the exact override map; any
 minimatch below `11.0.1` at any node path, and any other advisory, version, path, or lockfile, fails closed. The
 `ts/` brace-expansion path is likewise exception-free: the only instance (`5.0.12`) is past every recorded 5.x fix.
+
+The TypeScript lint graph also carries the 2026-11-17 dev-only picomatch exception, E5. `GHSA-fc5q-39xc-vjpf`
+(high, `CVE-2026-112366`) covers every picomatch `<= 4.0.7` with no patched release - npm's latest is `4.0.7` and the
+advisory has no `fixed` event - so the `@typescript-eslint/parser -> @typescript-eslint/typescript-estree ->
+tinyglobby -> picomatch` chain cannot be upgraded out of it. Operator-ruled 2026-11-17 for this exact dev-only
+chain; `ts/package-lock.json` resolves a single `picomatch@4.0.7` at `node_modules/picomatch` with `dev: true`, the
+root package declares no picomatch runtime dependency, and `npm ls --omit=dev --all` inside `ts/` reports none. The
+checker pins the exact node, version, dev flag, chain edges, and advisory id/aliases; a stable picomatch `>= 4.0.8`
+publish (registry-backed probe), a removal-condition match, or the `2026-12-01` `recheck_by` deadline fails the gate
+until the exception is removed or renewed.
+
 
 The 2026-11-06 `eslint` 10.13.0 -> 10.14.0 move (Dependabot #1222) is an in-family devDependency bump. eslint's own
 `minimatch` range moved `^10.2.5` -> `^10.2.6`, which the override resolves onto the hoisted `11.0.1`, so the
@@ -181,7 +196,7 @@ held.
 
 | Held item | Kept at | Reason | Re-check condition |
 | --- | --- | --- | --- |
-| `osv-scanner` v2.x | `v1.9.2` | `v2.7.0` cannot replace the gate's scanner yet. On `ts/package-lock.json` (which pins the TableTheory GitHub-release tarball by sha512) it exits `127` with `vulnmatch/osvdev ... 400 Bad Request ... invalid hash` and emits `{"results":[]}`. The rubric accepts only exit `0` (clean) or `1` (findings covered by a reviewed exception marker; `ts/` now carries no exception, so it must exit `0`); `127` is an operational failure. On `cdk/package-lock.json` and example locks it exits `0` but returns zero packages, so it misses the reviewed bundled `minimatch` finding and would pass vacuously instead of proving the exception. | Retry when v2 parses `ts/package-lock.json` without the hash error and reproduces the v1.9.2 findings on `cdk/package-lock.json` and the example locks. |
+| `osv-scanner` v2.x | `v1.9.2` | `v2.7.0` cannot replace the gate's scanner yet. On `ts/package-lock.json` (which pins the TableTheory GitHub-release tarball by sha512) it exits `127` with `vulnmatch/osvdev ... 400 Bad Request ... invalid hash` and emits `{"results":[]}`. The rubric accepts only exit `0` (clean) or `1` (findings covered by a reviewed exception marker - `ts/` now carries the E5 picomatch exception, so a status-1 scan needs its `exception-applied: ts-dev-picomatch` marker); `127` is an operational failure. On `cdk/package-lock.json` and example locks it exits `0` but returns zero packages, so it misses the reviewed bundled `minimatch` finding and would pass vacuously instead of proving the exception. | Retry when v2 parses `ts/package-lock.json` without the hash error and reproduces the v1.9.2 findings on `cdk/package-lock.json` and the example locks. |
 
 ### Applied moves (ranges raised only where alignment required it)
 

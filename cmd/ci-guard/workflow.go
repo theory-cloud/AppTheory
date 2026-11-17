@@ -52,6 +52,15 @@ const (
 	// staging rubric and deterministic-build jobs whose conditions are pinned.
 	ciWorkflowPath = ".github/workflows/ci.yml"
 
+	// branchesKey is the trigger key that narrows a pull-request-shaped trigger.
+	branchesKey = "branches"
+
+	// sweepWorkflowPath is the only workflow allowed to run on a clock: it
+	// re-dispatches the head-bound verifying workflow for a generated release
+	// pull request, so a pull request left checkless by an earlier event needs no
+	// human action. It never executes a gate itself.
+	sweepWorkflowPath = ".github/workflows/release-pr-check-sweep.yml" //nolint:gosec // a workflow path, not a credential
+
 	// defaultWorkflowsDir is the directory scanned for every workflow file, so a
 	// new workflow with a push/pull_request trigger cannot gate silently: it
 	// must be classified, or be one of the justified non-gating publishers.
@@ -86,6 +95,10 @@ var headDomain = []string{
 type publisherExemption struct {
 	path   string
 	reason string
+	// allowSchedule permits the one clock-driven exception: the release-lane
+	// recovery sweep, which dispatches the head-bound verifying workflow so a
+	// generated release pull request left checkless needs no human action.
+	allowSchedule bool
 }
 
 var publisherExemptions = []publisherExemption{
@@ -113,6 +126,11 @@ var publisherExemptions = []publisherExemption{
 		path:   ".github/workflows/release-pr.yml",
 		reason: "generated stable PR producer; cannot gate the hand-authored PR lane it serves",
 	},
+	{
+		path:          ".github/workflows/release-pr-check-sweep.yml",
+		reason:        "release-lane recovery sweep; re-dispatches the head-bound verifying workflow for a generated release PR and never publishes or gates",
+		allowSchedule: true,
+	},
 }
 
 // publisherTriggers are the triggers an exempt non-gating publisher may
@@ -129,7 +147,14 @@ type triggerContext struct {
 	pushBranches   []string
 	hasPullRequest bool
 	prBranches     []string
-	hasDispatch    bool
+	// hasPullRequestReview records the `pull_request_review: [submitted]` trigger.
+	// GitHub evaluates a required status check only for a run triggered by an
+	// eligible event, and a code-owner review is the one eligible event a
+	// generated (built-in-token) release pull request can produce.
+	hasPullRequestReview bool
+	reviewBranches       []string
+	hasDispatch          bool
+	hasSchedule          bool
 }
 
 type workflowFile struct {
@@ -313,7 +338,7 @@ func checkPublisherExemptionsExist(seen map[string]bool) []string {
 }
 
 func isReusableOnly(wf *workflowFile) bool {
-	return wf.hasWorkflowCall && !wf.ctx.hasPush && !wf.ctx.hasPullRequest && !wf.ctx.hasDispatch
+	return wf.hasWorkflowCall && !wf.ctx.hasPush && !wf.ctx.hasPullRequest && !wf.ctx.hasPullRequestReview && !wf.ctx.hasDispatch
 }
 
 func findPublisherExemption(rel string) (*publisherExemption, bool) {
@@ -360,15 +385,25 @@ func checkPublisherWorkflow(fullPath, rel string, exemption *publisherExemption)
 		if key.Kind != yaml.ScalarNode {
 			return fmt.Errorf("%s: on: trigger names must be scalars", rel)
 		}
-		if key.Value == "pull_request" || key.Value == "pull_request_target" {
-			return fmt.Errorf("%s is a non-gating publisher exemption (%s) but declares a %s trigger; a workflow that gates pull requests must be classified, not exempted",
-				rel, exemption.reason, key.Value)
-		}
-		if !publisherTriggers[key.Value] {
-			return fmt.Errorf("%s: on: trigger %q is not modeled for a non-gating publisher exemption", rel, key.Value)
+		if err := checkPublisherTrigger(key.Value, exemption, rel); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// checkPublisherTrigger validates one trigger of an exempt non-gating
+// publisher: a pull-request trigger makes it a gate, and an unmodeled trigger
+// could hide one. The recovery sweep is the single exemption allowed a schedule.
+func checkPublisherTrigger(trigger string, exemption *publisherExemption, rel string) error {
+	if trigger == "pull_request" || trigger == "pull_request_target" {
+		return fmt.Errorf("%s is a non-gating publisher exemption (%s) but declares a %s trigger; a workflow that gates pull requests must be classified, not exempted",
+			rel, exemption.reason, trigger)
+	}
+	if publisherTriggers[trigger] || (exemption.allowSchedule && trigger == "schedule") {
+		return nil
+	}
+	return fmt.Errorf("%s: on: trigger %q is not modeled for a non-gating publisher exemption", rel, trigger)
 }
 
 func loadWorkflow(fullPath, rel string) (*workflowFile, error) {
@@ -399,6 +434,11 @@ func loadWorkflow(fullPath, rel string) (*workflowFile, error) {
 	}
 	if err := workflow.parseTriggers(onNode); err != nil {
 		return nil, fmt.Errorf("%s: %w", rel, err)
+	}
+	if workflow.ctx.hasSchedule {
+		return nil, fmt.Errorf(
+			"%s declares an on: schedule trigger; only the release-lane recovery sweep (%s) may run on a clock",
+			rel, sweepWorkflowPath)
 	}
 	jobsNode, ok := mapLookup(rootNode, "jobs")
 	if !ok {
@@ -434,7 +474,7 @@ func (wf *workflowFile) parseTriggers(node *yaml.Node) error {
 			return err
 		}
 	}
-	if !wf.ctx.hasPush && !wf.ctx.hasPullRequest && !wf.ctx.hasDispatch && !wf.hasWorkflowCall {
+	if !wf.ctx.hasPush && !wf.ctx.hasPullRequest && !wf.ctx.hasPullRequestReview && !wf.ctx.hasDispatch && !wf.hasWorkflowCall && !wf.ctx.hasSchedule {
 		return fmt.Errorf("on: declares no modeled trigger")
 	}
 	return nil
@@ -461,15 +501,69 @@ func (wf *workflowFile) parseTrigger(name string, value *yaml.Node) error {
 		}
 		wf.ctx.prBranches = branches
 		return nil
+	case "pull_request_review":
+		wf.ctx.hasPullRequestReview = true
+		branches, err := parsePullRequestReviewTrigger(value)
+		if err != nil {
+			return err
+		}
+		wf.ctx.reviewBranches = branches
+		return nil
 	case "workflow_dispatch":
 		wf.ctx.hasDispatch = true
 		return parseDispatchTrigger(value)
+	case "schedule":
+		wf.ctx.hasSchedule = true
+		return parseScheduleTrigger(value)
 	case "workflow_call":
 		wf.hasWorkflowCall = true
 		return parseWorkflowCallTrigger(value)
 	default:
 		return fmt.Errorf("on: trigger %q is not modeled by the parity classifier", name)
 	}
+}
+
+// parsePullRequestReviewTrigger models `pull_request_review`. Only the
+// `submitted` activity is modeled: it is the code-owner approval the
+// premain/main ruleset requires, and it is an eligible event for a required
+// status check. The trigger may narrow to branches exactly like pull_request:
+// an unfiltered trigger returns nil and fires for every base.
+func parsePullRequestReviewTrigger(node *yaml.Node) ([]string, error) {
+	if isNullNode(node) {
+		return nil, fmt.Errorf("pull_request_review: trigger must declare the submitted activity type")
+	}
+	if node.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("pull_request_review: trigger must be a mapping")
+	}
+	var branches []string
+	sawTypes := false
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		key, value := node.Content[i], node.Content[i+1]
+		switch key.Value {
+		case "types":
+			if value.Kind != yaml.SequenceNode || len(value.Content) == 0 {
+				return nil, fmt.Errorf("pull_request_review: types must be a non-empty list")
+			}
+			sawTypes = true
+			for _, entry := range value.Content {
+				if entry.Kind != yaml.ScalarNode || entry.Value != "submitted" {
+					return nil, fmt.Errorf("pull_request_review: only the submitted activity type is modeled")
+				}
+			}
+		case branchesKey:
+			values, err := scalarSequence(value)
+			if err != nil {
+				return nil, fmt.Errorf("pull_request_review: branches %w", err)
+			}
+			branches = values
+		default:
+			return nil, fmt.Errorf("pull_request_review: key %q is not modeled", key.Value)
+		}
+	}
+	if !sawTypes {
+		return nil, fmt.Errorf("pull_request_review: trigger must declare the submitted activity type")
+	}
+	return branches, nil
 }
 
 func parsePushTrigger(node *yaml.Node) ([]string, error) {
@@ -529,7 +623,7 @@ func parsePullRequestTrigger(node *yaml.Node) ([]string, error) {
 					return nil, fmt.Errorf("pull_request: types must include %q so a staging pull request is re-checked", required)
 				}
 			}
-		case "branches":
+		case branchesKey:
 			values, err := scalarSequence(node.Content[i+1])
 			if err != nil {
 				return nil, fmt.Errorf("pull_request: branches %w", err)
@@ -575,6 +669,25 @@ func parseWorkflowCallTrigger(node *yaml.Node) error {
 		key := node.Content[i].Value
 		if key != "inputs" && key != "secrets" && key != "outputs" {
 			return fmt.Errorf("workflow_call: key %q is not modeled", key)
+		}
+	}
+	return nil
+}
+
+// parseScheduleTrigger models the one clock-driven trigger the policy allows,
+// and only for the release-lane recovery sweep (see sweepWorkflowPath): it must
+// enumerate cron entries, so a schedule cannot arrive as an unread shape.
+func parseScheduleTrigger(node *yaml.Node) error {
+	if node.Kind != yaml.SequenceNode || len(node.Content) == 0 {
+		return fmt.Errorf("schedule: trigger must be a non-empty list of cron entries")
+	}
+	for _, entry := range node.Content {
+		if entry.Kind != yaml.MappingNode {
+			return fmt.Errorf("schedule: each entry must be a mapping with a cron key")
+		}
+		cron, ok := mapLookup(entry, "cron")
+		if !ok || cron.Kind != yaml.ScalarNode || strings.TrimSpace(cron.Value) == "" {
+			return fmt.Errorf("schedule: each entry must declare a non-empty cron string")
 		}
 	}
 	return nil
@@ -1009,7 +1122,12 @@ func classifyJob(ctx triggerContext, job workflowJob) (*jobClass, bool, error) {
 		}
 	}
 	if ctx.hasPullRequest {
-		if err := classifyPullRequest(condition, class, ctx.prBranches, job.id); err != nil {
+		if err := classifyPullRequest(condition, class, ctx.prBranches, "pull_request", job.id); err != nil {
+			return nil, false, err
+		}
+	}
+	if ctx.hasPullRequestReview {
+		if err := classifyPullRequest(condition, class, ctx.reviewBranches, "pull_request_review", job.id); err != nil {
 			return nil, false, err
 		}
 	}
@@ -1053,9 +1171,14 @@ func pullRequestTargetsBase(prBranches []string, base string) bool {
 	return len(prBranches) == 0 || containsString(prBranches, base)
 }
 
-func classifyPullRequest(condition expr, class *jobClass, prBranches []string, jobID string) error {
+// classifyPullRequest classifies a job under one pull-request-shaped event.
+// `pull_request` and `pull_request_review` carry the same pull-request state
+// (base, head, draft) and run from the same merge ref, so one evaluator covers
+// both; only the event name differs. A review event is an eligible event for a
+// required status check, which is why the release lane depends on it.
+func classifyPullRequest(condition expr, class *jobClass, branches []string, event, jobID string) error {
 	for _, base := range baseDomain {
-		if !pullRequestTargetsBase(prBranches, base) {
+		if !pullRequestTargetsBase(branches, base) {
 			continue
 		}
 		for _, head := range headDomain {
@@ -1067,7 +1190,7 @@ func classifyPullRequest(condition expr, class *jobClass, prBranches []string, j
 				continue
 			}
 			for _, draft := range []string{"false", "true"} {
-				ok, err := condition.eval(state{event: "pull_request", ref: prMergeRef, base: base, head: head, draft: draft})
+				ok, err := condition.eval(state{event: event, ref: prMergeRef, base: base, head: head, draft: draft})
 				if err != nil {
 					return fmt.Errorf("job %q: %w", jobID, err)
 				}
