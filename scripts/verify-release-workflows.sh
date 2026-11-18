@@ -714,27 +714,26 @@ require_not_contains(
     "run_full_rubric",
     "CI dispatch must not carry a rubric execution toggle; CI verifies a recorded result",
 )
-require_contains(
+# The required contexts of a generated release pull request come from the
+# code-owner review of that pull request: GitHub evaluates a required status
+# check only for an eligible event, and a workflow_dispatch run is not one. The
+# self-dispatch lane is gone, so CI keeps no dispatch trigger at all.
+require_not_contains(
     ".github/workflows/ci.yml",
-    'release_pr_number:\n        description: "Generated release PR number for head-bound release checks"',
-    "generated release CI dispatch must identify the exact release PR",
+    "workflow_dispatch",
+    "CI must carry no dispatch trigger; a dispatched run never satisfies a required check",
 )
 require_contains(
     ".github/workflows/ci.yml",
-    'release_head_sha:\n        description: "Generated release PR head SHA the dispatch was made against"',
-    "generated release CI dispatch must identify the exact head it was dispatched for",
-)
-require_contains(
-    ".github/workflows/ci.yml",
-    "github.event_name == 'workflow_dispatch' && inputs.release_pr_number != ''",
-    "release promotion verification must run inside generated release CI dispatches",
+    "  pull_request_review:\n    types: [submitted]\n    branches: [premain, main]",
+    "CI must report the release contexts on the code-owner review of premain and main pull requests",
 )
 require_contains(
     ".github/workflows/ci.yml",
     "permissions:\n  contents: read\n  pull-requests: read",
-    "head-bound release CI dispatch must have read-only pull request metadata access",
+    "the release CI lane must have read-only pull request metadata access",
 )
-for head_bound_job, head_bound_context in (
+for review_job, review_context in (
     ("release-train-promotion", "Release train promotion gate"),
     ("release-security-gates", "Release/security gates"),
     ("version-alignment", "Version alignment"),
@@ -742,21 +741,21 @@ for head_bound_job, head_bound_context in (
 ):
     require_job_contains(
         ".github/workflows/ci.yml",
-        head_bound_job,
-        "bash scripts/resolve-release-pr-head.sh",
-        f"{head_bound_context} must bind a dispatched run to the generated release PR head",
+        review_job,
+        "github.event.pull_request.",
+        f"{review_context} must read the reviewed pull request rather than a dispatch input",
     )
-    require_job_contains(
+    require_job_not_contains(
         ".github/workflows/ci.yml",
-        head_bound_job,
-        "inputs.release_head_sha",
-        f"{head_bound_context} must consume the head SHA the lane dispatched",
+        review_job,
+        "inputs.release_",
+        f"{review_context} must not depend on a dispatch input the lane no longer sends",
     )
-    require_job_contains(
+    require_job_not_contains(
         ".github/workflows/ci.yml",
-        head_bound_job,
-        "the generated release PR head moved from",
-        f"{head_bound_context} must report a head that moved between the lane read and the dispatch",
+        review_job,
+        "resolve-release-pr-head.sh",
+        f"{review_context} must not resurrect the dispatch head binding",
     )
 
 require_contains(
@@ -1097,32 +1096,17 @@ for forbidden in (
 require_not_contains(
     "scripts/sync-release-pr-generated.sh",
     "run_full_rubric",
-    "automated release PR CI dispatch must not request a rubric execution",
-)
-require_contains(
-    "scripts/sync-release-pr-checks.sh",
-    'release_pr_number=${pr_number}',
-    "automated release PR CI dispatch must bind checks to the exact release PR",
-)
-require_contains(
-    "scripts/sync-release-pr-checks.sh",
-    'release_head_sha=${head_sha}',
-    "automated release PR CI dispatch must bind checks to the exact head SHA",
-)
-require_contains(
-    "scripts/sync-release-pr-checks.sh",
-    'pr ready "${pr_number}" --repo "${repo}" --undo',
-    "the release check lane must force the release PR back to draft before waiting for checks",
-)
-require_contains(
-    "scripts/sync-release-pr-checks.sh",
-    "rollup does not list the required contexts",
-    "the release check lane must report a rollup that does not carry the required contexts without treating it as a missing check",
+    "generated artifact sync must not request a rubric execution",
 )
 require_contains(
     "scripts/sync-release-pr-generated.sh",
     'gh pr ready "${pr_number}" --undo',
     "release PR sync must force the release PR back to draft before generated artifact work",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    "pull_request_review",
+    "the code-owner review of a generated release PR must be able to report its required contexts",
 )
 require_contains(
     "scripts/sync-release-pr-generated.sh",
@@ -1161,8 +1145,8 @@ require_contains(
 )
 require_contains(
     "docs/release-process.md",
-    "one explicit `workflow_dispatch` CI run",
-    "release runbook must document the single-trigger generated release PR contract",
+    "`pull_request_review: [submitted]`",
+    "release runbook must document the code-owner review as the generated release PR's eligible event",
 )
 require_contains(
     "scripts/render-release-artifact-sync-plan.py",
@@ -1294,10 +1278,10 @@ require_not_contains(
     "release PR sync must not depend on recursive pull_request events from bot-authored PR mutations",
 )
 for workflow in (".github/workflows/prerelease-pr.yml", ".github/workflows/release-pr.yml"):
-    require_contains(
+    require_not_contains(
         workflow,
-        "actions: write",
-        "release PR workflow must be able to dispatch independent CI for bot-authored branch updates",
+        "  actions: write\n",
+        "release PR workflow must not hold the dispatch scope its lane no longer uses",
     )
     require_not_contains(
         workflow,
@@ -1396,69 +1380,53 @@ require_order(
     'wait_for_pr_head "${synced_head}"',
     "release PR sync must prove the GitHub-created commit signature before checking independent CI",
 )
-for producer, head_branch in (
-    (".github/workflows/prerelease-pr.yml", "release-please--branches--premain"),
-    (".github/workflows/release-pr.yml", "release-please--branches--main"),
+for producer, ready_step in (
+    (".github/workflows/prerelease-pr.yml", "Mark the generated release PR ready for code-owner review"),
+    (".github/workflows/release-pr.yml", "Mark the generated release PR ready for code-owner review"),
 ):
     require_order(
         producer,
         "Sync generated CDK artifacts on release PR",
-        "Verify required checks on the generated release PR",
-        f"{producer} must finish the generated-artifact sync before it attaches the required checks",
+        ready_step,
+        f"{producer} must finish the generated-artifact sync before it hands the pull request to the code-owner review",
     )
     require_step_contains(
         producer,
-        "Verify required checks on the generated release PR",
-        "scripts/sync-release-pr-checks.sh",
-        "generated release PR producers must attach the required checks themselves",
+        ready_step,
+        'gh pr ready "${RELEASE_PR_NUMBER}"',
+        "generated release PR producers must release the draft lock for the code-owner review",
     )
     require_step_contains(
         producer,
-        "Verify required checks on the generated release PR",
-        f"--head-branch {head_branch}",
-        "generated release PR producers must attach checks to the branch they just updated",
+        ready_step,
+        "restored the draft lock",
+        "generated release PR producers must restore the draft lock if the head moves while marking ready",
+    )
+    require_not_contains(
+        producer,
+        "gh workflow run",
+        "generated release PR producers must not dispatch the verifying workflow; only an eligible event counts",
+    )
+    require_not_contains(
+        producer,
+        "sync-release-pr-checks.sh",
+        "generated release PR producers must not resurrect the removed self-dispatch lane",
+    )
+    require_not_contains(
+        producer,
+        "  actions: write\n",
+        "generated release PR producers must not hold the dispatch scope they no longer use",
     )
 
-require_contains(
-    "scripts/sync-release-pr-checks.sh",
-    'dispatch_contexts "${head_sha}"',
-    "the release check lane must dispatch the exact head it read",
+require_not_contains(
+    ".github/workflows/ci.yml",
+    "scripts/resolve-release-pr-head.sh",
+    "the dispatch-only head resolver must not return to the release CI lane",
 )
 require_contains(
-    "scripts/sync-release-pr-checks.sh",
-    "required checks are green at",
-    "the release check lane must reuse green required checks instead of re-dispatching an unchanged head",
-)
-require_contains(
-    "scripts/sync-release-pr-checks.sh",
-    "waiting for required checks at",
-    "the release check lane must await already-running required checks instead of dispatching a duplicate run",
-)
-require_contains(
-    "scripts/sync-release-pr-checks.sh",
-    "never re-dispatches around a red check",
-    "the release check lane must refuse to re-dispatch around a red required check",
-)
-require_contains(
-    "scripts/sync-release-pr-checks.sh",
-    "commits/${head_sha}/check-runs",
-    "the release check lane must read commit check-runs at the pull request head",
-)
-require_contains(
-    "scripts/sync-release-pr-checks.sh",
-    "head changed while marking ready; restored the draft lock",
-    "the release check lane must restore the draft lock if the head moves while marking ready",
-)
-require_contains(
-    "scripts/sync-release-pr-checks.sh",
-    "the lane has nothing left to gate",
-    "the release check lane must treat a merged or closed pull request as a benign terminal state",
-)
-require_order(
-    "scripts/sync-release-pr-checks.sh",
-    'echo "sync-release-pr-checks: marking PR #${pr_number} ready at ${head_sha}"',
-    '"${gh_bin}" pr ready "${pr_number}" --repo "${repo}" >/dev/null',
-    "the release check lane must mark the pull request ready only after the required checks are green",
+    "scripts/sync-release-pr-generated.sh",
+    'gh pr ready "${pr_number}" --undo',
+    "release PR sync must keep the release pull request draft-locked while artifacts are generated",
 )
 require_contains(
     "scripts/sync-release-pr-generated.sh",
@@ -1474,16 +1442,6 @@ require_not_contains(
     "scripts/sync-release-pr-generated.sh",
     "--finalize-only",
     "generated release PR recovery must not depend on a human-triggered finalize dispatch",
-)
-require_not_contains(
-    "scripts/sync-release-pr-checks.sh",
-    "repos/${GITHUB_REPOSITORY}/statuses",
-    "release PR sync must not self-attest protected contexts",
-)
-require_not_contains(
-    "scripts/sync-release-pr-checks.sh",
-    "set_release_pr_status",
-    "release PR sync must not self-attest protected contexts",
 )
 
 subprocess.run(["bash", "scripts/verify-branch-version-sync.sh", "--self-test"], check=True)

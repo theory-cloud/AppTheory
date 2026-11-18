@@ -7,7 +7,6 @@
         "workflow": "ci.yml",
         "job": "release-train-promotion",
         "rulesetRequired": true,
-        "checkoutProof": false,
         "note": "verifier code checks out refs/heads/staging by design; the reviewed pull request and its head come from github.event.pull_request.* on the code-owner review run"
       },
       {
@@ -35,7 +34,6 @@
         "workflow": "ci.yml",
         "job": "release-train-promotion",
         "rulesetRequired": true,
-        "checkoutProof": false,
         "note": "verifier code checks out refs/heads/staging by design; the reviewed pull request and its head come from github.event.pull_request.* on the code-owner review run"
       },
       {
