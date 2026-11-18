@@ -5,23 +5,23 @@
         "bash",
         "scripts/verify-unit.sh"
       ],
-      "durationSeconds": 52.809,
+      "durationSeconds": 49.496,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-18T00:43:00Z",
+      "finishedAt": "2026-11-18T13:24:58Z",
       "id": "unit",
-      "inputsDigest": "sha256:4b34ce01eebf2c380cd6b95089020116a56f38019c34dd4f8c1c93d32f3bbce8",
-      "logDigest": "sha256:0347fcf91f65a63c41d0e035262b18a6b61ff21589a613accd1b7abffd44d7dd",
-      "logRef": "gov-infra/evidence/proportionate/local/unit-unit-20261118T004208Z-23535.log",
+      "inputsDigest": "sha256:69894c6dd98668b5ad970e50b9ee980d42befd5203afbc3de36897b7901b3b22",
+      "logDigest": "sha256:596b3bce7e77ec049f61a6d0ebb102a50bca1ee33e23201b05d2b250e835b0dd",
+      "logRef": "gov-infra/evidence/proportionate/local/unit-unit-20261118T132409Z-97478.log",
       "reused": false,
-      "startedAt": "2026-11-18T00:42:08Z"
+      "startedAt": "2026-11-18T13:24:09Z"
     }
   ],
   "consumed": [
     {
-      "digest": "sha256:a38700f1789ab61c1fa17cd49e4ca99305900b5f467e553cd8f83d8c4cc7abf8",
+      "digest": "sha256:f810ee1731d17a3714fa91b286918fad7b1e97ec23e09a4d64854d226db9411d",
       "gate": "go",
-      "recordedAt": "2026-11-18T00:42:07Z"
+      "recordedAt": "2026-11-18T13:24:09Z"
     }
   ],
   "description": "Cross-language unit tests (Go unit selection, TypeScript tests, Python tests) composed with the Go gate",
@@ -42,7 +42,7 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-18T00:43:00Z",
+  "recordedAt": "2026-11-18T13:24:58Z",
   "releaseOnly": {
     "digest": "sha256:cefc9b4967b27ef8bbf389866944def6d14026980e1c68c3cb448a331b27bf9d",
     "fileCount": 477,
@@ -52,7 +52,7 @@
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:7a8574fa6b9477c75c48dc45a8b2fb0f6a4147ef43de2ae92d0ade4aeb55962b",
+    "digest": "sha256:f115e47e5023425f7baf23b4e2ee28f3fd5120b0462ffd82788c799687a6360b",
     "fileCount": 1743,
     "paths": [
       "go.mod",
@@ -75,8 +75,8 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:74cc0095bffa2670cda48d269e49ed8a567041f67eb784fa0f897fea1ede60b0",
-    "fileCount": 2678
+    "digest": "sha256:7cc19ca3d37002b418092d79377cbe64486a2f6c9d7bc47890aed2332f45a502",
+    "fileCount": 2674
   },
   "verdict": "PASS"
 }
