@@ -5,44 +5,44 @@
         "bash",
         "scripts/verify-ts-dist-drift.sh"
       ],
-      "durationSeconds": 0.29,
+      "durationSeconds": 0.303,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-17T22:57:56Z",
+      "finishedAt": "2026-11-18T00:43:01Z",
       "id": "ts-dist-drift",
-      "inputsDigest": "sha256:efa33ce0e0552450f1e57fdc9105e5c032f4a7d257191da30fd6f22992c9b56d",
-      "logDigest": "sha256:23601ccaff22c89f45742e9cb296f4e2b42d4af6c5aefce93bfe9a72cbc80f11",
-      "logRef": "gov-infra/evidence/proportionate/local/ts-ts-dist-drift-20261117T225756Z-7104.log",
+      "inputsDigest": "sha256:2cabe95496499196df5a5aa66b0115d289cc0476ecc82dbc178e4f77a9526c0c",
+      "logDigest": "sha256:afc2f381c9b3b97049e5f601c8584c68b096353fa390242c453d53b2cbc62fea",
+      "logRef": "gov-infra/evidence/proportionate/local/ts-ts-dist-drift-20261118T004301Z-28788.log",
       "reused": false,
-      "startedAt": "2026-11-17T22:57:56Z"
+      "startedAt": "2026-11-18T00:43:01Z"
     },
     {
       "argv": [
         "bash",
         "scripts/verify-ts-pack.sh"
       ],
-      "durationSeconds": 0.278,
+      "durationSeconds": 0.303,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-17T22:57:56Z",
+      "finishedAt": "2026-11-18T00:43:02Z",
       "id": "ts-pack",
-      "inputsDigest": "sha256:29fd58aeec83726cd7aabbb07f47e61b737428a12955959c66a9217dc9086d93",
-      "logDigest": "sha256:23601ccaff22c89f45742e9cb296f4e2b42d4af6c5aefce93bfe9a72cbc80f11",
-      "logRef": "gov-infra/evidence/proportionate/local/ts-ts-pack-20261117T225756Z-7104.log",
+      "inputsDigest": "sha256:c47b36be0e04477751e667c9fcd48916ee2c47a370f21edf97cd2f672f8fee23",
+      "logDigest": "sha256:afc2f381c9b3b97049e5f601c8584c68b096353fa390242c453d53b2cbc62fea",
+      "logRef": "gov-infra/evidence/proportionate/local/ts-ts-pack-20261118T004301Z-28788.log",
       "reused": false,
-      "startedAt": "2026-11-17T22:57:56Z"
+      "startedAt": "2026-11-18T00:43:01Z"
     }
   ],
   "consumed": [
     {
-      "digest": "sha256:11d126af2c6f47a516735bc972ec7f2dd4127edae78959edf7e6d45804022d47",
+      "digest": "sha256:8b6ced7f7ffe2e7a4a6ce2e510bcdc874d17f0865ca4cd2485eeca9e2a8b25ef",
       "gate": "deterministic-builds",
-      "recordedAt": "2026-11-17T22:57:52Z"
+      "recordedAt": "2026-11-18T00:41:40Z"
     },
     {
-      "digest": "sha256:11d126af2c6f47a516735bc972ec7f2dd4127edae78959edf7e6d45804022d47",
+      "digest": "sha256:8b6ced7f7ffe2e7a4a6ce2e510bcdc874d17f0865ca4cd2485eeca9e2a8b25ef",
       "gate": "deterministic-builds",
-      "recordedAt": "2026-11-17T22:57:52Z"
+      "recordedAt": "2026-11-18T00:41:40Z"
     }
   ],
   "description": "TypeScript checked-in dist drift and npm pack",
@@ -63,17 +63,17 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-17T22:57:56Z",
+  "recordedAt": "2026-11-18T00:43:02Z",
   "releaseOnly": {
     "digest": "sha256:cefc9b4967b27ef8bbf389866944def6d14026980e1c68c3cb448a331b27bf9d",
     "fileCount": 477,
-    "normalizedDigest": "sha256:867a3a8b6e3ba1728f357cf0c90ddc2d696bd3706b407f8db68722228e72de09",
+    "normalizedDigest": "sha256:bfd5d1f30a8b46dc79eeb1030bb68bc3e2b08932f0c42078033738a4f52a76d4",
     "version": "7.4.0"
   },
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:7814164014648d45ddbc5b34cf45f00f1ef90bc826fe9970f4bfd96ea1b56855",
+    "digest": "sha256:6a1291ea49bcb962d5da282a3d20268af82653de65e29ae1ed38593ccae63aa3",
     "fileCount": 463,
     "paths": [
       "ts/",
@@ -88,7 +88,7 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:bd0355dc669c3f91219874c6b395ee9c3a32c42abb2fd050bc0b69400ae72a50",
+    "digest": "sha256:74cc0095bffa2670cda48d269e49ed8a567041f67eb784fa0f897fea1ede60b0",
     "fileCount": 2678
   },
   "verdict": "PASS"
