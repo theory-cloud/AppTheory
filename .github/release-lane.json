@@ -8,7 +8,7 @@
         "job": "release-train-promotion",
         "rulesetRequired": true,
         "checkoutProof": false,
-        "note": "verifier code checks out refs/heads/staging by design; the dispatched run is bound to the pull request head by the resolver, not by the checkout"
+        "note": "verifier code checks out refs/heads/staging by design; the reviewed pull request and its head come from github.event.pull_request.* on the code-owner review run"
       },
       {
         "context": "Release/security gates",
@@ -36,7 +36,7 @@
         "job": "release-train-promotion",
         "rulesetRequired": true,
         "checkoutProof": false,
-        "note": "verifier code checks out refs/heads/staging by design; the dispatched run is bound to the pull request head by the resolver, not by the checkout"
+        "note": "verifier code checks out refs/heads/staging by design; the reviewed pull request and its head come from github.event.pull_request.* on the code-owner review run"
       },
       {
         "context": "Release/security gates",
@@ -69,9 +69,5 @@
       "base": "main",
       "head": "release-please--branches--main"
     }
-  ],
-  "recoverySweep": {
-    "workflow": "release-pr-check-sweep.yml",
-    "schedule": "*/20 * * * *"
-  }
+  ]
 }
