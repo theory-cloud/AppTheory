@@ -47,7 +47,10 @@ A third, explicit class narrows the release-only treatment to the release histor
 itself: the registry's ``releaseNotes`` files (the changelog, and the
 release-please manifests' version values) carry no product bytes, so no record
 binds their content. Every other release-only path keeps version-literal
-normalization only, and a path outside the class keeps the treatment it had.
+normalization, and a release-only JSON document is first re-serialized canonically
+(parsed, then written with normalized whitespace and escapes), so a release lane
+that maintains the file as a JSON extra-file cannot stale a record by re-spelling
+it. A path outside the class keeps the treatment it had.
 
 A fourth, equally explicit class covers the release-derived artifacts the release
 lane rebuilds rather than edits: ``releaseDerived`` names one jsii assembly and
@@ -529,6 +532,91 @@ def normalize_release_bytes(data: bytes, version: str) -> bytes:
     return data.replace(literal, VERSION_TOKEN)
 
 
+def canonical_release_json_bytes(relative: str, data: bytes) -> bytes:
+    """Re-serialize a release-only JSON document as its canonical spelling.
+
+    A release lane that maintains a JSON file as an extra-file parses the
+    document and writes it back, so it re-spells whitespace and string escapes
+    without changing meaning: release-please turned ``"AppTheory \\u2014 ..."``
+    into a literal em dash in ``ts/package.json`` (v7.4.0), and the literal
+    version substitution kept that byte change visible.
+
+    The projection binds every semantic fact and normalizes only spelling:
+
+    * the document is parsed, so an unparseable document is a hard error that
+      names the path, never a silent fallback to the raw bytes;
+    * object key order is preserved (``sort_keys=False``), so a re-ordered key
+      list still stales the record -- the conservative direction;
+    * values keep their type: an integer stays an integer, a float stays a
+      float, a string stays a string, ``true``/``false``/``null`` are unchanged;
+    * whitespace and escaping are normalized: compact separators, no trailing
+      newline and ASCII ``\\uXXXX`` escapes, so ``\\u2014`` and a literal
+      em dash produce the same bytes;
+    * number spelling is normalized beyond escape and whitespace because JSON
+      has a single number type: ``1e5`` and ``100000.0`` are the same value, and
+      ``json.dumps`` writes the shortest round-trip spelling of the parsed
+      value. The int/float split is the only type distinction left, and it stays
+      bound.
+
+    Two shapes fail closed instead of being canonicalized: a repeated key (a
+    consumer that reads the last one and one that reads the first see different
+    documents) and a number outside the finite range (``1e400`` parses to an
+    infinity that JSON cannot spell). Non-standard ``NaN``/``Infinity``
+    literals are refused for the same reason.
+    """
+
+    def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        document: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in document:
+                raise EvidenceError(f"release-only JSON input {relative!r} repeats the key {key!r}")
+            document[key] = value
+        return document
+
+    def reject_constant(literal: str) -> Any:
+        raise EvidenceError(f"release-only JSON input {relative!r} uses the non-standard literal {literal!r}")
+
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise EvidenceError(f"release-only JSON input {relative!r} is not UTF-8: {exc}") from exc
+    try:
+        document = json.loads(text, object_pairs_hook=reject_duplicate_keys, parse_constant=reject_constant)
+    except json.JSONDecodeError as exc:
+        raise EvidenceError(f"release-only JSON input {relative!r} is not parseable: {exc}") from exc
+
+    stack = [document]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, float):
+            if item != item or item in (float("inf"), float("-inf")):
+                raise EvidenceError(f"release-only JSON input {relative!r} has a number outside the finite range")
+        elif isinstance(item, dict):
+            stack.extend(item.values())
+        elif isinstance(item, list):
+            stack.extend(item)
+
+    return json.dumps(document, ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode("ascii")
+
+
+def normalize_release_json_bytes(relative: str, data: bytes, version: str) -> bytes:
+    """A release-only JSON document: canonical spelling, then the version literal."""
+    return normalize_release_bytes(canonical_release_json_bytes(relative, data), version)
+
+
+def normalize_release_only_bytes(relative: str, data: bytes, version: str) -> bytes:
+    """Project one release-only product input.
+
+    A JSON document goes through the canonical projection first, because a
+    release lane that maintains it parses and re-serializes it. Every other
+    release-only path keeps version-literal normalization only, which is what
+    made a re-serialized JSON document stale the record.
+    """
+    if relative.endswith(".json"):
+        return normalize_release_json_bytes(relative, data, version)
+    return normalize_release_bytes(data, version)
+
+
 def normalize_release_notes_bytes(relative: str, data: bytes) -> bytes:
     """Project a release-notes file to what it contributes to product proof.
 
@@ -540,10 +628,13 @@ def normalize_release_notes_bytes(relative: str, data: bytes) -> bytes:
     release, including versions the tracked `VERSION` literal does not name (a
     prerelease track, or a second package). Only those values are projected;
     the structure around them stays bound, so an unrelated edit to the manifest
-    still fails closed.
+    still fails closed. The manifest is JSON the release lane maintains, so it is
+    canonicalized first, for the same reason ``ts/package.json`` is.
     """
     if relative.endswith(".json"):
-        return RELEASE_VERSION_VALUE_RE.sub(b'"@@APPTHEORY_RELEASE_NOTES@@"', data)
+        return RELEASE_VERSION_VALUE_RE.sub(
+            b'"@@APPTHEORY_RELEASE_NOTES@@"', canonical_release_json_bytes(relative, data)
+        )
     return RELEASE_NOTES_TOKEN
 
 
@@ -719,7 +810,7 @@ def load_snapshot(root: Path, registry: Registry) -> Snapshot:
             elif release_notes:
                 normalized = normalize_release_notes_bytes(relative, data)
             else:
-                normalized = normalize_release_bytes(data, version)
+                normalized = normalize_release_only_bytes(relative, data, version)
             normalized_lines.append(
                 b"%d\t%s\t%s\n"
                 % (mode, normalized_path.encode("utf-8"), sha256_bytes(normalized).encode("ascii"))
@@ -784,7 +875,7 @@ def scope_digest(snapshot: Snapshot, patterns: list[str]) -> tuple[str, int]:
             data = normalize_release_notes_bytes(relative, entry.data)
             kind = b"release-notes"
         elif entry.release_only:
-            data = normalize_release_bytes(entry.data, snapshot.release_version)
+            data = normalize_release_only_bytes(relative, entry.data, snapshot.release_version)
             kind = b"release-normalized"
         else:
             data = entry.data

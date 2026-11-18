@@ -774,6 +774,216 @@ commit_all "fix: restore the release tarball"
 expect_output "verify recovers the restored release tarball" \
   "mode=release-transformation-verified" verify --gate unit
 
+# 18. Release-only JSON documents are compared after canonical projection. A
+# release lane that maintains a JSON file as an extra-file parses the document
+# and writes it back, so the escaped and literal spellings of the same character
+# must hash the same and only a semantic change may stale the record. The
+# fixture adds its own release-only JSON path and gate here, so the earlier
+# controls keep the registry they were written against.
+"${python_bin}" - "${registry}" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, encoding="utf-8") as handle:
+    registry = json.load(handle)
+registry["releaseOnly"]["exact"].append("meta.json")
+registry["gates"]["json-release"] = {
+    "kind": "source",
+    "environment": "toolchain",
+    "resource": "cpu",
+    "paths": ["meta.json"],
+    "commands": [{"id": "json-release", "argv": ["true"]}],
+}
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(registry, handle, indent=2)
+    handle.write("\n")
+PY
+cp "${registry}" "${scratch}/scripts/evidence/validation-gates.json"
+cat >"${scratch}/meta.json" <<'JSON'
+{
+  "name": "sample",
+  "version": "1.3.0",
+  "description": "AppTheory \u2014 JSON projection fixture",
+  "types": {
+    "main": "lib/index.d.ts"
+  },
+  "count": 3
+}
+JSON
+commit_all "fix: seed the release-only JSON document"
+expect_ok "collect the release-only JSON gate" collect --gate json-release
+expect_output "verify the release-only JSON fixture" "mode=evidence-verified" verify --gate json-release
+
+# Escape spelling and whitespace are not semantics: the same document written
+# with a literal em dash, four-space indentation and CRLF line endings must
+# verify unchanged. The int/float split stays bound, so `count` keeps its type.
+"${python_bin}" - "${scratch}/meta.json" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+path.write_bytes(
+    (
+        "{\r\n"
+        '    "name": "sample",\r\n'
+        '    "version": "1.3.0",\r\n'
+        '    "description": "AppTheory \u2014 JSON projection fixture",\r\n'
+        '    "types": {"main": "lib/index.d.ts"},\r\n'
+        '    "count": 3\r\n'
+        "}\r\n"
+    ).encode("utf-8")
+)
+PY
+commit_all "fix: re-spell the release-only JSON document without changing it"
+expect_output "verify accepts a re-spelled release-only JSON document" \
+  "mode=release-transformation-verified" verify --gate json-release
+
+# The version literal is still projected inside the document.
+printf '1.4.0\n' >"${scratch}/VERSION"
+cat >"${scratch}/meta.json" <<'JSON'
+{
+  "name": "sample",
+  "version": "1.4.0",
+  "description": "AppTheory \u2014 JSON projection fixture",
+  "types": {
+    "main": "lib/index.d.ts"
+  },
+  "count": 3
+}
+JSON
+commit_all "fix: bump the release-only JSON document version"
+# The scope digest is the authority: the version literal inside the JSON
+# document is projected, so the gate's own scope is unchanged. The snapshot-wide
+# mode label is not asserted here because the other release-only fixtures in this
+# throwaway repository still carry the old literal.
+expect_ok "verify accepts a version bump in a release-only JSON document" verify --gate json-release
+
+cp "${scratch}/meta.json" "${tmp}/meta.json.bak"
+
+# A non-version value change stales the scope.
+"${python_bin}" - "${scratch}/meta.json" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+path.write_text(
+    path.read_text(encoding="utf-8").replace("JSON projection fixture", "JSON projection fixture, edited"),
+    encoding="utf-8",
+)
+PY
+commit_all "fix: change a non-version value in the release-only JSON document"
+expect_fail "a non-version value change stales a release-only JSON document" verify --gate json-release
+cp "${tmp}/meta.json.bak" "${scratch}/meta.json"
+commit_all "fix: restore the release-only JSON value"
+expect_ok "verify recovers the restored release-only JSON value" verify --gate json-release
+
+# A key addition stales the scope.
+"${python_bin}" - "${scratch}/meta.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+document = json.loads(path.read_text(encoding="utf-8"))
+document["exports"] = {".": "./lib/index.js"}
+path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+PY
+commit_all "fix: add a key to the release-only JSON document"
+expect_fail "a key addition stales a release-only JSON document" verify --gate json-release
+cp "${tmp}/meta.json.bak" "${scratch}/meta.json"
+commit_all "fix: restore the added release-only JSON key"
+expect_ok "verify recovers after the added key is removed" verify --gate json-release
+
+# A key removal stales the scope.
+"${python_bin}" - "${scratch}/meta.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+document = json.loads(path.read_text(encoding="utf-8"))
+del document["count"]
+path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+PY
+commit_all "fix: remove a key from the release-only JSON document"
+expect_fail "a key removal stales a release-only JSON document" verify --gate json-release
+cp "${tmp}/meta.json.bak" "${scratch}/meta.json"
+commit_all "fix: restore the removed release-only JSON key entry"
+expect_ok "verify recovers the restored release-only JSON key entry" verify --gate json-release
+
+# A re-ordered key list stales the scope. JSON object order carries no meaning,
+# so binding it is the stricter choice: a reordering is a hand edit the record
+# does not describe, and accepting it would also accept a lost or duplicated key
+# in a reader that keeps the first occurrence.
+"${python_bin}" - "${scratch}/meta.json" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+path.write_text(
+    """{
+  "count": 3,
+  "version": "1.4.0",
+  "name": "sample",
+  "description": "AppTheory \\u2014 JSON projection fixture",
+  "types": {
+    "main": "lib/index.d.ts"
+  }
+}
+""",
+    encoding="utf-8",
+)
+PY
+commit_all "fix: re-order the release-only JSON keys"
+expect_fail "a re-ordered key list stales a release-only JSON document" verify --gate json-release
+cp "${tmp}/meta.json.bak" "${scratch}/meta.json"
+commit_all "fix: restore the release-only JSON key order"
+expect_ok "verify recovers the restored release-only JSON key order" verify --gate json-release
+
+# A release-only JSON document that cannot be parsed fails closed and names the
+# path: no silent fallback to the raw bytes, and no reuse of the last record.
+printf '{\n  "name": "sample",\n  "version": "1.4.0",\n}\n' >"${scratch}/meta.json"
+commit_all "fix: break the release-only JSON document"
+invalid_json_status=0
+invalid_json_output="$(verify --gate json-release 2>&1)" || invalid_json_status=$?
+if [[ "${invalid_json_status}" -eq 0 || "${invalid_json_output}" != *"meta.json"* || \
+  "${invalid_json_output}" != *"not parseable"* ]]; then
+  echo "test-validation-evidence: FAIL (invalid release-only JSON did not fail closed)" >&2
+  echo "${invalid_json_output}" >&2
+  exit 1
+fi
+pass_count=$((pass_count + 1))
+echo "test-validation-evidence: PASS invalid release-only JSON fails closed and names the path"
+expect_fail "collect refuses an unparseable release-only JSON document" \
+  collect --gate json-release
+
+# A repeated key is not a canonical document either: one reader sees the last
+# value and another sees the first, so the projection refuses it.
+cat >"${scratch}/meta.json" <<'JSON'
+{
+  "name": "sample",
+  "version": "1.4.0",
+  "count": 3,
+  "count": 4
+}
+JSON
+commit_all "fix: duplicate a key in the release-only JSON document"
+duplicate_json_status=0
+duplicate_json_output="$(verify --gate json-release 2>&1)" || duplicate_json_status=$?
+if [[ "${duplicate_json_status}" -eq 0 || "${duplicate_json_output}" != *"meta.json"* || \
+  "${duplicate_json_output}" != *"repeats the key"* ]]; then
+  echo "test-validation-evidence: FAIL (a repeated release-only JSON key did not fail closed)" >&2
+  echo "${duplicate_json_output}" >&2
+  exit 1
+fi
+pass_count=$((pass_count + 1))
+echo "test-validation-evidence: PASS a repeated release-only JSON key fails closed"
+cp "${tmp}/meta.json.bak" "${scratch}/meta.json"
+commit_all "fix: restore the release-only JSON document"
+
+expect_ok "verify recovers the parseable release-only JSON document" verify --gate json-release
+
 echo "test-validation-evidence: PASS (${pass_count} checks)"
 
 # ---------------------------------------------------------------------------
