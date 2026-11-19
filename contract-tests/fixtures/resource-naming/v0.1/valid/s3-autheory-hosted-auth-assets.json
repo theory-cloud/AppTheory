@@ -1,0 +1,28 @@
+{
+  "contract": "theorycloud_resource_naming.v0.1",
+  "fixture_id": "s3-autheory-hosted-auth-assets",
+  "scenario": {
+    "type": "name",
+    "context": {
+      "namespace": "theorycloud",
+      "app": "autheory",
+      "stage": "lab",
+      "account": "998115851393",
+      "region": "us-east-1"
+    },
+    "resource_type": "s3_bucket",
+    "logical": "hosted-auth-assets"
+  },
+  "expected": {
+    "bucket_name_prefix": "autheory-lab-hosted-auth-assets",
+    "bucket_namespace": "account-regional",
+    "name": "autheory-lab-hosted-auth-assets-998115851393-us-east-1-an"
+  },
+  "proof": {
+    "does_not_prove": [
+      "aws_behaviour_proof",
+      "deployment_proof",
+      "journey_proof"
+    ]
+  }
+}

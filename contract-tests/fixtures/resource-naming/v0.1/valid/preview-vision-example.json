@@ -1,0 +1,52 @@
+{
+  "contract": "theorycloud_resource_naming.v0.1",
+  "fixture_id": "preview-vision-example",
+  "scenario": {
+    "type": "preview",
+    "context": {
+      "namespace": "theorycloud",
+      "app": "autheory",
+      "stage": "lab",
+      "account": "998115851393",
+      "region": "us-east-1"
+    },
+    "rules": {
+      "include": [
+        "logs/runtime/*"
+      ],
+      "exclude": [
+        "logs/runtime/debug/*"
+      ]
+    },
+    "sources": [
+      "logs/runtime/api",
+      "logs/runtime/debug/fulfillment",
+      "logs/access/api/main"
+    ]
+  },
+  "expected": {
+    "rule_version": "ccfcb6ec1e50",
+    "matched_now": [
+      "logs/runtime/api"
+    ],
+    "not_matched_now": [
+      "logs/access/api/main",
+      "logs/runtime/debug/fulfillment"
+    ],
+    "future": {
+      "include": [
+        "logs/runtime/*"
+      ],
+      "exclude": [
+        "logs/runtime/debug/*"
+      ]
+    }
+  },
+  "proof": {
+    "does_not_prove": [
+      "aws_behaviour_proof",
+      "deployment_proof",
+      "journey_proof"
+    ]
+  }
+}

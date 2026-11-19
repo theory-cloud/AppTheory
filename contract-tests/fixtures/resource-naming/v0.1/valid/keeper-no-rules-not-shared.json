@@ -1,0 +1,19 @@
+{
+  "contract": "theorycloud_resource_naming.v0.1",
+  "fixture_id": "keeper-no-rules-not-shared",
+  "scenario": {
+    "type": "keeper",
+    "rules": null,
+    "logical": "logs/runtime/api"
+  },
+  "expected": {
+    "answer": "not_shared"
+  },
+  "proof": {
+    "does_not_prove": [
+      "aws_behaviour_proof",
+      "deployment_proof",
+      "journey_proof"
+    ]
+  }
+}
