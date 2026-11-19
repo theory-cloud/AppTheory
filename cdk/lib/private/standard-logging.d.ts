@@ -31,15 +31,6 @@ export declare function retentionFor(days: number): logs.RetentionDays;
  */
 export declare function webSocketApiAccessLogFormat(): string;
 /**
- * The access-log group name for a construct-created group.
- *
- * With the standard logging profile the group is a contract log source and
- * takes no naming entry. Under a legacy naming profile the group is consumed
- * like any other resource, so a generated entry sets no name and a pin sets the
- * pinned name.
- */
-export declare function accessLogGroupName(context: AppTheoryNamingContext, logical: string): string | undefined;
-/**
  * Create a standard-profile log group named from the naming contract.
  */
 export declare function standardLogGroup(scope: Construct, id: string, context: AppTheoryNamingContext, logical: string): logs.LogGroup;

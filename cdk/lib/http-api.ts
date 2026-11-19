@@ -10,7 +10,7 @@ import { Construct } from "constructs";
 
 import { defaultLogicalName } from "./private/logical-name";
 import { refuseExplicitName } from "./private/refuse-explicit-name";
-import { accessLogGroupName, httpApiAccessLogFormat, retentionFor } from "./private/standard-logging";
+import { httpApiAccessLogFormat, retentionFor } from "./private/standard-logging";
 import type { AppTheoryNamingContext } from "./naming-context";
 
 import { AppTheoryApiDomain } from "./api-domain";
@@ -475,21 +475,18 @@ export class AppTheoryHttpApi extends Construct {
     }
     let logGroup: logs.ILogGroup;
     if (stageOpts.accessLogging === true) {
-      const contractLogical = standard && logical ? `logs/access/api/${logical}` : undefined;
-      const contractName = namingContext && logical ? accessLogGroupName(namingContext, `logs/access/api/${logical}`) : undefined;
-      logGroup = contractLogical
+      // The construct-created access-log group is a logging resource: under the
+      // standard profile it takes the contract log-source name, and under the
+      // legacy profile it keeps today's CloudFormation-generated name and
+      // consumes no naming entry (r3, ADV-1312-1).
+      logGroup = standard && logical
         ? new logs.LogGroup(this, "AccessLogs", {
-            logGroupName: contractName,
+            logGroupName: namingContext!.logGroupName(`logs/access/api/${logical}`),
             retention: retentionFor(namingContext!.retentionDays),
           })
-        : contractName !== undefined
-          ? new logs.LogGroup(this, "AccessLogs", {
-              logGroupName: contractName,
-              retention: stageOpts.accessLogRetention ?? logs.RetentionDays.ONE_MONTH,
-            })
-          : new logs.LogGroup(this, "AccessLogs", {
-              retention: stageOpts.accessLogRetention ?? logs.RetentionDays.ONE_MONTH,
-            });
+        : new logs.LogGroup(this, "AccessLogs", {
+            retention: stageOpts.accessLogRetention ?? logs.RetentionDays.ONE_MONTH,
+          });
     } else {
       logGroup = stageOpts.accessLogging;
     }

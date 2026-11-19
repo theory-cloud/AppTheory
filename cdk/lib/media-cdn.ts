@@ -277,7 +277,14 @@ export class AppTheoryMediaCdn extends Construct {
         const enableLogging = props.enableLogging ?? true;
         const namingContext = props.namingContext;
         const logical = props.logicalName ?? (namingContext ? defaultLogicalName(this) : undefined);
-        refuseExplicitName(namingContext, "AppTheoryMediaCdn", "bucketName", "s3_bucket", logical, props.bucketName !== undefined);
+        refuseExplicitName(
+            namingContext,
+            "AppTheoryMediaCdn",
+            "bucketName",
+            "s3_bucket",
+            logical ? `${logical}-media` : undefined,
+            props.bucketName !== undefined,
+        );
         if (namingContext?.standardLogging === true && props.logsBucket !== undefined) {
             throw new Error(
                 "AppTheoryMediaCdn cannot honor props.logsBucket under the standard logging profile; CloudFront access logs go to the contract log group, so remove props.logsBucket or use the legacy logging profile",

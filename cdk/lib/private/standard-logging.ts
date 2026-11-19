@@ -88,20 +88,6 @@ export function webSocketApiAccessLogFormat(): string {
 }
 
 /**
- * The access-log group name for a construct-created group.
- *
- * With the standard logging profile the group is a contract log source and
- * takes no naming entry. Under a legacy naming profile the group is consumed
- * like any other resource, so a generated entry sets no name and a pin sets the
- * pinned name.
- */
-export function accessLogGroupName(context: AppTheoryNamingContext, logical: string): string | undefined {
-  if (context.standardLogging) return context.logGroupName(logical);
-  const composed = context.physicalName("log_group", logical);
-  return composed.generated ? undefined : composed.name;
-}
-
-/**
  * Create a standard-profile log group named from the naming contract.
  */
 export function standardLogGroup(

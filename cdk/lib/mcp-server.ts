@@ -15,7 +15,7 @@ import { Construct } from "constructs";
 import { AppTheoryMcpRouteAlgebra } from "./mcp-route-algebra";
 import { defaultLogicalName } from "./private/logical-name";
 import { refuseExplicitName } from "./private/refuse-explicit-name";
-import { accessLogGroupName, httpApiAccessLogFormat, retentionFor } from "./private/standard-logging";
+import { httpApiAccessLogFormat, retentionFor } from "./private/standard-logging";
 import type { AppTheoryNamingContext } from "./naming-context";
 import { buildCorsPreflight } from "./cors";
 import type { AppTheoryHttpApiCorsOptions } from "./http-api";
@@ -874,7 +874,7 @@ export class AppTheoryMcpServer extends Construct {
         "AppTheoryMcpServer",
         "sessionState.tableName",
         "dynamodb_table",
-        logical,
+        logical ? `${logical}-sessions` : undefined,
         props.sessionState?.tableName !== undefined || props.sessionTableName !== undefined,
       );
       const derivedApiName = namingContext && logical ? namingContext.physicalName("api_http", logical) : undefined;
@@ -910,22 +910,18 @@ export class AppTheoryMcpServer extends Construct {
         if (standard && !logical) {
           throw new Error("AppTheoryMcpServer standard logging requires a logical name");
         }
-        const contractName = namingContext && logical
-          ? accessLogGroupName(namingContext, `logs/access/api/${logical}`)
-          : undefined;
+        // The construct-created access-log group is a logging resource: under
+        // the standard profile it takes the contract log-source name, and under
+        // the legacy profile it keeps today's CloudFormation-generated name and
+        // consumes no naming entry (r3, ADV-1312-1).
         const logGroup = standard && namingContext && logical
           ? new logs.LogGroup(this, "AccessLogs", {
-              logGroupName: contractName,
+              logGroupName: namingContext.logGroupName(`logs/access/api/${logical}`),
               retention: retentionFor(namingContext.retentionDays),
             })
-          : contractName !== undefined
-            ? new logs.LogGroup(this, "AccessLogs", {
-                logGroupName: contractName,
-                retention: stageOptions.accessLogRetention,
-              })
-            : new logs.LogGroup(this, "AccessLogs", {
-                retention: stageOptions.accessLogRetention,
-              });
+          : new logs.LogGroup(this, "AccessLogs", {
+              retention: stageOptions.accessLogRetention,
+            });
         (this as { accessLogGroup?: logs.ILogGroup }).accessLogGroup = logGroup;
         const cfnStage = stage.node.defaultChild as apigwv2.CfnStage;
         cfnStage.accessLogSettings = {

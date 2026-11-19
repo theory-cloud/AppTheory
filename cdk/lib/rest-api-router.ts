@@ -11,7 +11,7 @@ import { Construct } from "constructs";
 import { defaultLogicalName } from "./private/logical-name";
 import { refuseExplicitName } from "./private/refuse-explicit-name";
 import { configureRestApiRegionalWaf } from "./private/rest-api-waf";
-import { accessLogGroupName, restApiAccessLogFormat, retentionFor } from "./private/standard-logging";
+import { restApiAccessLogFormat, retentionFor } from "./private/standard-logging";
 import { markRestApiStageRouteAsStreaming } from "./private/rest-api-streaming";
 import { trimRepeatedChar } from "./private/string-utils";
 import type { AppTheoryNamingContext } from "./naming-context";
@@ -625,24 +625,19 @@ export class AppTheoryRestApiRouter extends Construct {
         }
 
         if (stageOpts.accessLogging === true) {
-            // Create an auto-managed log group
-            const contractName = this.namingContext && this.logicalName
-                ? accessLogGroupName(this.namingContext, `logs/access/api/${this.logicalName}`)
-                : undefined;
+            // The construct-created access-log group is a logging resource: under
+            // the standard profile it takes the contract log-source name, and
+            // under the legacy profile it keeps today's CloudFormation-generated
+            // name and consumes no naming entry (r3, ADV-1312-1).
             const logGroup = new logs.LogGroup(this, "AccessLogs",
                 standard && this.namingContext && this.logicalName
                 ? {
-                    logGroupName: contractName,
+                    logGroupName: this.namingContext.logGroupName(`logs/access/api/${this.logicalName}`),
                     retention: retentionFor(this.namingContext.retentionDays),
                 }
-                : contractName !== undefined
-                    ? {
-                        logGroupName: contractName,
-                        retention: stageOpts.accessLogRetention ?? logs.RetentionDays.ONE_MONTH,
-                    }
-                    : {
-                        retention: stageOpts.accessLogRetention ?? logs.RetentionDays.ONE_MONTH,
-                    });
+                : {
+                    retention: stageOpts.accessLogRetention ?? logs.RetentionDays.ONE_MONTH,
+                });
             (this as { accessLogGroup?: logs.ILogGroup }).accessLogGroup = logGroup;
             accessLogDestination = new apigw.LogGroupLogDestination(logGroup);
             accessLogFormat = accessLogFormat ?? (standard ? restApiAccessLogFormat() : apigw.AccessLogFormat.clf());

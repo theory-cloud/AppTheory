@@ -16900,7 +16900,7 @@
           },
           "locationInModule": {
             "filename": "lib/keeper-visibility.ts",
-            "line": 158
+            "line": 165
           },
           "name": "preview",
           "returns": {
@@ -28393,7 +28393,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/naming.ts",
-        "line": 313
+        "line": 319
       },
       "methods": [
         {
@@ -28403,7 +28403,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 455
+            "line": 466
           },
           "name": "compileVisibilityPolicyJson",
           "parameters": [
@@ -28434,7 +28434,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 537
+            "line": 548
           },
           "name": "keeperDecision",
           "parameters": [
@@ -28470,7 +28470,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 344
+            "line": 350
           },
           "name": "logGroupName",
           "parameters": [
@@ -28500,7 +28500,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 337
+            "line": 343
           },
           "name": "logSourcePrefix",
           "parameters": [
@@ -28524,7 +28524,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 525
+            "line": 536
           },
           "name": "manifestJson",
           "parameters": [
@@ -28549,7 +28549,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 355
+            "line": 361
           },
           "name": "physicalName",
           "parameters": [
@@ -28585,7 +28585,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 446
+            "line": 457
           },
           "name": "ruleVersion",
           "parameters": [
@@ -28609,7 +28609,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 330
+            "line": 336
           },
           "name": "s3AccountRegionalSuffix",
           "parameters": [
@@ -28634,7 +28634,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 429
+            "line": 440
           },
           "name": "selectorMatches",
           "parameters": [
@@ -28664,7 +28664,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 437
+            "line": 448
           },
           "name": "sourceVisible",
           "parameters": [
@@ -28695,7 +28695,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 319
+            "line": 325
           },
           "name": "validateContext",
           "parameters": [
@@ -28715,7 +28715,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 417
+            "line": 428
           },
           "name": "validateSelector",
           "parameters": [
@@ -28734,7 +28734,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 513
+            "line": 524
           },
           "name": "visibilityManifest",
           "parameters": [
@@ -28775,7 +28775,7 @@
           },
           "locationInModule": {
             "filename": "lib/naming.ts",
-            "line": 493
+            "line": 504
           },
           "name": "visibilityPreview",
           "parameters": [
@@ -34252,5 +34252,5 @@
     }
   },
   "version": "7.4.0",
-  "fingerprint": "loHsRd2LYVtnFxJsWmnk82HOAoL28sDvOU2IxqMjUPA="
+  "fingerprint": "s2+tdRYaCz+1D4Hv1hNlP8+zjN6KbmrminjK1/wGtH4="
 }
