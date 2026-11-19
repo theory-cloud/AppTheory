@@ -41,11 +41,14 @@ function evaluate(scenario) {
         scenario.resource_type,
         scenario.logical,
         scenario.pins ?? {},
+        scenario.generated ?? [],
       );
-      const out = { name: composed.name };
+      const out = {};
+      if (composed.name !== undefined) out.name = composed.name;
       if (composed.bucket_name_prefix !== undefined) out.bucket_name_prefix = composed.bucket_name_prefix;
       if (composed.bucket_namespace !== undefined) out.bucket_namespace = composed.bucket_namespace;
       if (composed.pinned) out.pinned = true;
+      if (composed.generated) out.generated = true;
       return out;
     }
     case "log_group":

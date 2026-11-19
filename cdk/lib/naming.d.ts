@@ -78,6 +78,13 @@ export interface AppTheoryNamingContextValues {
         [key: string]: string;
     };
     /**
+     * Generated-name entries keyed `{type}:{logical}`. An entry means
+     * CloudFormation generates the name today, so the construct sets no
+     * physical-name property. Valid only under the legacy naming profile.
+     * @default []
+     */
+    readonly generated?: string[];
+    /**
      * Naming profile.
      * @default AppTheoryNamingProfile.DERIVED
      */
@@ -98,9 +105,10 @@ export interface AppTheoryNamingContextValues {
  */
 export interface AppTheoryPhysicalName {
     /**
-     * The full physical name.
+     * The full physical name. Absent when CloudFormation generates the name.
+     * @default undefined
      */
-    readonly name: string;
+    readonly name?: string;
     /**
      * The account-regional bucket-name prefix, when the type uses one.
      * @default undefined
@@ -116,6 +124,12 @@ export interface AppTheoryPhysicalName {
      * @default false
      */
     readonly pinned?: boolean;
+    /**
+     * Whether CloudFormation generates the name, so no physical-name property is
+     * set.
+     * @default false
+     */
+    readonly generated?: boolean;
 }
 /**
  * Include and exclude visibility selectors.
@@ -193,8 +207,10 @@ export declare class AppTheoryResourceNaming {
      */
     static logGroupName(values: AppTheoryNamingContextValues, logical: string): string;
     /**
-     * Compose the physical name of one resource. A pin always wins; a legacy
-     * profile without a pin fails synthesis.
+     * Compose the physical name of one resource. A pin always wins. A generated
+     * entry means CloudFormation generates the name today and the construct sets
+     * no physical-name property. Generated entries are legacy-only; a legacy
+     * profile needs exactly one of a pin or a generated entry.
      */
     static physicalName(values: AppTheoryNamingContextValues, resourceType: string, logical: string): AppTheoryPhysicalName;
     /**
@@ -232,7 +248,8 @@ export declare class AppTheoryResourceNaming {
      */
     static manifestJson(manifest: AppTheoryVisibilityManifest): string;
     /**
-     * Keeper's read decision. Fails closed on a denial or an unreachable account.
+     * Keeper's read decision, in the runtimes' parameter order. Fails closed on a
+     * denial or an unreachable account.
      */
-    static keeperDecision(logical: string, awsResult: string, rules?: AppTheoryVisibilityRules): AppTheoryKeeperAnswer;
+    static keeperDecision(rules: AppTheoryVisibilityRules, logical: string, awsResult: string): AppTheoryKeeperAnswer;
 }

@@ -71,7 +71,7 @@ test("the CDK naming API agrees with every contract fixture", () => {
       evaluated += 1;
     }
   }
-  assert.equal(evaluated, 72);
+  assert.equal(evaluated, 83);
 });
 
 function evaluateFixture(fixture) {
@@ -104,12 +104,19 @@ function evaluateFixture(fixture) {
 function evaluateScenario(naming, scenario) {
   switch (scenario.type) {
     case "name": {
-      const values = { ...scenario.context, pins: scenario.pins ?? {}, namingProfile: scenario.context.naming_profile };
+      const values = {
+        ...scenario.context,
+        pins: scenario.pins ?? {},
+        generated: scenario.generated ?? [],
+        namingProfile: scenario.context.naming_profile,
+      };
       const composed = naming.physicalName(values, scenario.resource_type, scenario.logical);
-      const out = { name: composed.name };
+      const out = {};
+      if (composed.name !== undefined) out.name = composed.name;
       if (composed.bucketNamePrefix !== undefined) out.bucket_name_prefix = composed.bucketNamePrefix;
       if (composed.bucketNamespace !== undefined) out.bucket_namespace = composed.bucketNamespace;
       if (composed.pinned) out.pinned = true;
+      if (composed.generated) out.generated = true;
       return out;
     }
     case "log_group":
@@ -125,7 +132,7 @@ function evaluateScenario(naming, scenario) {
       const rules = scenario.rules
         ? { ...scenario.rules, namingProfile: undefined }
         : undefined;
-      const answer = naming.keeperDecision(scenario.logical, scenario.aws_result, rules);
+      const answer = naming.keeperDecision(rules ?? {}, scenario.logical, scenario.aws_result);
       return { answer };
     }
     case "visible":
@@ -246,7 +253,7 @@ test("AppTheoryBucket refuses to override a derived name", () => {
           bucketName: "explicit-name",
         });
       }),
-    /derives the name/,
+    /cannot honor props.bucketName/,
   );
 });
 
@@ -345,7 +352,7 @@ test("AppTheoryRestApiRouter standard logging uses the REST field set", () => {
   assert.equal(format.sourceIp, "$context.identity.sourceIp");
 });
 
-test("AppTheoryWebSocketApi standard logging defaults on", () => {
+test("AppTheoryWebSocketApi standard logging defaults on with the WebSocket field set", () => {
   const template = synth((stack) => {
     const context = labContext(stack);
     new apptheory.AppTheoryWebSocketApi(stack, "Ws", {
@@ -356,6 +363,53 @@ test("AppTheoryWebSocketApi standard logging defaults on", () => {
   });
   const groups = resourcesOfType(template, "AWS::Logs::LogGroup");
   assert.equal(groups[0].Properties?.LogGroupName, "theorycloud_theorycloud_autheory_lab_logs_access_api_socket");
+
+  const stages = resourcesOfType(template, "AWS::ApiGatewayV2::Stage");
+  assert.deepEqual(JSON.parse(stages[0].Properties.AccessLogSettings.Format), {
+    requestId: "$context.requestId",
+    requestTime: "$context.requestTime",
+    eventType: "$context.eventType",
+    routeKey: "$context.routeKey",
+    connectionId: "$context.connectionId",
+    status: "$context.status",
+    integrationLatency: "$context.integrationLatency",
+    sourceIp: "$context.identity.sourceIp",
+  });
+});
+
+test("AppTheoryWebSocketApi takes its API name from api_websocket", () => {
+  const template = synth((stack) => {
+    new apptheory.AppTheoryWebSocketApi(stack, "Ws", {
+      handler: handler(stack),
+      namingContext: labContext(stack),
+      logicalName: "socket",
+    });
+  });
+  const apis = resourcesOfType(template, "AWS::ApiGatewayV2::Api");
+  assert.equal(apis[0].Properties?.Name, "autheory-lab-socket");
+});
+
+test("WebSocket access logging keeps the legacy format without a context", () => {
+  const template = synth((stack) =>
+    new apptheory.AppTheoryWebSocketApi(stack, "Ws", {
+      handler: handler(stack),
+      enableAccessLogging: true,
+    }),
+  );
+  const stages = resourcesOfType(template, "AWS::ApiGatewayV2::Stage");
+  const format = JSON.parse(stages[0].Properties.AccessLogSettings.Format);
+  assert.deepEqual(Object.keys(format).sort(), [
+    "connectionId",
+    "eventType",
+    "integrationLatency",
+    "ip",
+    "requestId",
+    "requestTime",
+    "responseLength",
+    "routeKey",
+    "status",
+    "userAgent",
+  ]);
 });
 
 test("AppTheoryMcpServer standard logging uses the contract log group", () => {
@@ -463,7 +517,7 @@ test("CloudFront standard logging refuses a stack outside us-east-1", () => {
 
 // ---- N4: legacy profiles synthesize byte-identically -----------------------
 
-function assertIdentical(build) {
+function assertIdentical(build, { pins = {}, generated = [] } = {}) {
   const base = synth((stack) => build(stack, undefined));
   const legacy = synth((stack) =>
     build(
@@ -475,57 +529,363 @@ function assertIdentical(build) {
         region: "us-east-1",
         namingProfile: apptheory.AppTheoryNamingProfile.LEGACY,
         loggingProfile: apptheory.AppTheoryLoggingProfile.LEGACY,
-        pins: {},
+        pins,
+        generated,
       }),
     ),
   );
   assert.equal(JSON.stringify(legacy), JSON.stringify(base));
 }
 
-test("legacy profiles synthesize byte-identically: AppTheoryFunction", () => {
-  assertIdentical((stack) =>
-    new apptheory.AppTheoryFunction(stack, "Fn", {
-      runtime: lambda.Runtime.NODEJS_24_X,
-      handler: "index.handler",
-      code: lambda.Code.fromInline("exports.handler = async () => ({});"),
-      functionName: "autheory-live-api",
-    }),
+test("legacy profiles synthesize byte-identically: AppTheoryFunction (pin and generated role)", () => {
+  assertIdentical(
+    (stack, context) =>
+      new apptheory.AppTheoryFunction(stack, "Fn", {
+        runtime: lambda.Runtime.NODEJS_24_X,
+        handler: "index.handler",
+        code: lambda.Code.fromInline("exports.handler = async () => ({});"),
+        namingContext: context,
+        ...(context ? {} : { functionName: "autheory-live-api" }),
+      }),
+    { pins: { "lambda_function:fn": "autheory-live-api" }, generated: ["iam_role:fn"] },
+  );
+});
+
+test("legacy plus generated entries keep CloudFormation's Lambda name and its log group", () => {
+  assertIdentical(
+    (stack, context) =>
+      new apptheory.AppTheoryFunction(stack, "Fn", {
+        runtime: lambda.Runtime.NODEJS_24_X,
+        handler: "index.handler",
+        code: lambda.Code.fromInline("exports.handler = async () => ({});"),
+        namingContext: context,
+      }),
+    { generated: ["lambda_function:fn", "iam_role:fn"] },
+  );
+});
+
+test("legacy plus generated entries keep CloudFront's generated bucket name", () => {
+  assertIdentical(
+    (stack, context) =>
+      new apptheory.AppTheorySsrSite(stack, "Site", { ssrFunction: handler(stack), namingContext: context }),
+    { generated: ["s3_bucket:site-assets"] },
+  );
+});
+
+test("legacy plus generated entries keep the MediaCdn bucket name", () => {
+  assertIdentical(
+    (stack, context) => new apptheory.AppTheoryMediaCdn(stack, "Media", { namingContext: context }),
+    { generated: ["s3_bucket:media-media"] },
   );
 });
 
 test("legacy profiles synthesize byte-identically: AppTheoryHttpApi", () => {
-  assertIdentical((stack) =>
-    new apptheory.AppTheoryHttpApi(stack, "Api", { handler: handler(stack), apiName: "autheory-live-api" }),
+  assertIdentical(
+    (stack, context) =>
+      new apptheory.AppTheoryHttpApi(stack, "Api", {
+        handler: handler(stack),
+        namingContext: context,
+        ...(context ? {} : { apiName: "autheory-live-api" }),
+      }),
+    { pins: { "api_http:api": "autheory-live-api" } },
   );
 });
 
 test("legacy profiles synthesize byte-identically: AppTheoryRestApiRouter", () => {
-  assertIdentical((stack) => {
-    const router = new apptheory.AppTheoryRestApiRouter(stack, "Router", { apiName: "autheory-live-rest" });
-    router.addLambdaIntegration("/{proxy+}", ["ANY"], handler(stack));
-  });
-});
-
-test("legacy profiles synthesize byte-identically: AppTheoryWebSocketApi", () => {
-  assertIdentical((stack) =>
-    new apptheory.AppTheoryWebSocketApi(stack, "Ws", { handler: handler(stack), apiName: "autheory-live-ws" }),
+  assertIdentical(
+    (stack, context) => {
+      const router = new apptheory.AppTheoryRestApiRouter(stack, "Router", {
+        namingContext: context,
+        ...(context ? {} : { apiName: "autheory-live-rest" }),
+      });
+      router.addLambdaIntegration("/{proxy+}", ["ANY"], handler(stack));
+    },
+    { pins: { "api_rest:router": "autheory-live-rest" } },
   );
 });
 
-test("legacy profiles synthesize byte-identically: AppTheoryMcpServer", () => {
-  assertIdentical((stack) =>
-    new apptheory.AppTheoryMcpServer(stack, "Mcp", {
-      handler: handler(stack),
-      ownedApi: { apiName: "autheory-live-mcp" },
-      sessionState: { enabled: false },
-    }),
+test("legacy profiles synthesize byte-identically: AppTheoryWebSocketApi", () => {
+  assertIdentical(
+    (stack, context) =>
+      new apptheory.AppTheoryWebSocketApi(stack, "Ws", {
+        handler: handler(stack),
+        namingContext: context,
+        ...(context ? {} : { apiName: "autheory-live-ws" }),
+      }),
+    { pins: { "api_websocket:ws": "autheory-live-ws" } },
+  );
+});
+
+test("legacy plus a generated entry keeps the WebSocket connection table unnamed", () => {
+  assertIdentical(
+    (stack, context) =>
+      new apptheory.AppTheoryWebSocketApi(stack, "Ws", {
+        handler: handler(stack),
+        namingContext: context,
+        ...(context ? {} : { apiName: "autheory-live-ws" }),
+        enableConnectionTable: true,
+      }),
+    { pins: { "api_websocket:ws": "autheory-live-ws" }, generated: ["dynamodb_table:ws-connections"] },
+  );
+});
+
+test("legacy profiles synthesize byte-identically: AppTheoryMcpServer without a log_group entry", () => {
+  // r3 (ADV-1312-1): the construct's access-log group is a logging resource. It
+  // keeps today's CloudFormation-generated name and consumes no naming entry, so
+  // the legacy template matches no context byte for byte with no log_group entry.
+  assertIdentical(
+    (stack, context) =>
+      new apptheory.AppTheoryMcpServer(stack, "Mcp", {
+        handler: handler(stack),
+        namingContext: context,
+        ...(context ? {} : { ownedApi: { apiName: "autheory-live-mcp" } }),
+        sessionState: { enabled: false },
+      }),
+    { pins: { "api_http:mcp": "autheory-live-mcp" } },
   );
 });
 
 test("legacy profiles synthesize byte-identically: AppTheoryPathRoutedFrontend", () => {
-  assertIdentical((stack) =>
-    new apptheory.AppTheoryPathRoutedFrontend(stack, "Frontend", { apiOriginUrl: "https://api.example.com" }),
+  assertIdentical((stack, context) =>
+    new apptheory.AppTheoryPathRoutedFrontend(stack, "Frontend", {
+      apiOriginUrl: "https://api.example.com",
+      namingContext: context,
+    }),
   );
+});
+
+test("an orphan naming entry fails synthesis", () => {
+  assert.throws(
+    () =>
+      synth((stack) =>
+        new apptheory.AppTheoryPathRoutedFrontend(stack, "Frontend", {
+          apiOriginUrl: "https://api.example.com",
+          namingContext: legacyContext(stack, {
+            pins: { "dynamodb_table:events": "autheory-live-events" },
+          }),
+        }),
+      ),
+    /match no resource/,
+  );
+});
+
+// ---- N6: explicit name props under a naming context ------------------------
+
+test("every explicit physical-name prop is refused under a naming context", () => {
+  const cases = [
+    [
+      "AppTheoryFunction.functionName",
+      (stack) =>
+        new apptheory.AppTheoryFunction(stack, "Fn", {
+          runtime: lambda.Runtime.NODEJS_24_X,
+          handler: "index.handler",
+          code: lambda.Code.fromInline("exports.handler = async () => ({});"),
+          namingContext: labContext(stack),
+          functionName: "hand-built",
+        }),
+    ],
+    [
+      "AppTheoryFunction.roleName",
+      (stack) =>
+        new apptheory.AppTheoryFunction(stack, "Fn", {
+          runtime: lambda.Runtime.NODEJS_24_X,
+          handler: "index.handler",
+          code: lambda.Code.fromInline("exports.handler = async () => ({});"),
+          namingContext: labContext(stack),
+          roleName: "hand-built",
+        }),
+    ],
+    [
+      "AppTheoryHttpApi.apiName",
+      (stack) =>
+        new apptheory.AppTheoryHttpApi(stack, "Api", {
+          handler: handler(stack),
+          namingContext: labContext(stack),
+          apiName: "hand-built",
+        }),
+    ],
+    [
+      "AppTheoryRestApiRouter.apiName",
+      (stack) =>
+        new apptheory.AppTheoryRestApiRouter(stack, "Router", {
+          namingContext: labContext(stack),
+          apiName: "hand-built",
+        }),
+    ],
+    [
+      "AppTheoryWebSocketApi.apiName",
+      (stack) =>
+        new apptheory.AppTheoryWebSocketApi(stack, "Ws", {
+          handler: handler(stack),
+          namingContext: labContext(stack),
+          apiName: "hand-built",
+        }),
+    ],
+    [
+      "AppTheoryWebSocketApi.connectionTableName",
+      (stack) =>
+        new apptheory.AppTheoryWebSocketApi(stack, "Ws", {
+          handler: handler(stack),
+          namingContext: labContext(stack),
+          connectionTableName: "hand-built",
+        }),
+    ],
+    [
+      "AppTheoryMcpServer.ownedApi.apiName",
+      (stack) =>
+        new apptheory.AppTheoryMcpServer(stack, "Mcp", {
+          handler: handler(stack),
+          namingContext: labContext(stack),
+          ownedApi: { apiName: "hand-built" },
+          sessionState: { enabled: false },
+        }),
+    ],
+    [
+      "AppTheoryMcpServer.sessionState.tableName",
+      (stack) =>
+        new apptheory.AppTheoryMcpServer(stack, "Mcp", {
+          handler: handler(stack),
+          namingContext: labContext(stack),
+          sessionState: { enabled: true, tableName: "hand-built" },
+        }),
+    ],
+    [
+      "AppTheorySsrSite.isrMetadataTableName",
+      (stack) =>
+        new apptheory.AppTheorySsrSite(stack, "Site", {
+          ssrFunction: handler(stack),
+          namingContext: labContext(stack),
+          isrMetadataTableName: "hand-built",
+        }),
+    ],
+    [
+      "AppTheorySsrSite.cacheTableName",
+      (stack) =>
+        new apptheory.AppTheorySsrSite(stack, "Site", {
+          ssrFunction: handler(stack),
+          namingContext: labContext(stack),
+          cacheTableName: "hand-built",
+        }),
+    ],
+    [
+      "AppTheoryMediaCdn.bucketName",
+      (stack) =>
+        new apptheory.AppTheoryMediaCdn(stack, "Media", {
+          namingContext: labContext(stack),
+          bucketName: "hand-built",
+        }),
+    ],
+    [
+      "AppTheoryBucket.bucketName",
+      (stack) =>
+        new apptheory.AppTheoryBucket(stack, "Data", {
+          namingContext: labContext(stack),
+          logical: "audit-events",
+          bucketName: "hand-built",
+        }),
+    ],
+  ];
+  for (const [label, build] of cases) {
+    assert.throws(() => synth(build), /naming context is present/, label);
+  }
+});
+
+test("explicit name props keep their pre-contract behaviour with no context", () => {
+  const template = synth((stack) => {
+    new apptheory.AppTheoryHttpApi(stack, "Api", { handler: handler(stack, "HttpHandler"), apiName: "autheory-api" });
+    new apptheory.AppTheoryFunction(stack, "ApiFn", {
+      runtime: lambda.Runtime.NODEJS_24_X,
+      handler: "index.handler",
+      code: lambda.Code.fromInline("exports.handler = async () => ({});"),
+      functionName: "autheory-fn",
+    });
+  });
+  const apis = resourcesOfType(template, "AWS::ApiGatewayV2::Api");
+  assert.equal(apis[0].Properties?.Name, "autheory-api");
+  assert.match(JSON.stringify(template), /autheory-fn/);
+});
+
+// ---- N7: CloudFront standard-profile guards --------------------------------
+
+function synthInRegion(region, build) {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "Stack", { env: { account: "998115851393", region } });
+  build(stack);
+  return assertions.Template.fromStack(stack).toJSON();
+}
+
+test("CloudFront standard logging refuses a caller-supplied logsBucket", () => {
+  for (const [label, build] of [
+    [
+      "AppTheorySsrSite",
+      (stack) => {
+        const logsBucket = new s3.Bucket(stack, "CallerLogs");
+        new apptheory.AppTheorySsrSite(stack, "Site", {
+          ssrFunction: handler(stack),
+          namingContext: labContext(stack),
+          logsBucket,
+        });
+      },
+    ],
+    [
+      "AppTheoryPathRoutedFrontend",
+      (stack) => {
+        const logsBucket = new s3.Bucket(stack, "CallerLogs");
+        new apptheory.AppTheoryPathRoutedFrontend(stack, "Frontend", {
+          apiOriginUrl: "https://api.example.com",
+          namingContext: labContext(stack),
+          logsBucket,
+        });
+      },
+    ],
+    [
+      "AppTheoryMediaCdn",
+      (stack) => {
+        const logsBucket = new s3.Bucket(stack, "CallerLogs");
+        new apptheory.AppTheoryMediaCdn(stack, "Media", {
+          namingContext: labContext(stack),
+          logsBucket,
+        });
+      },
+    ],
+  ]) {
+    assert.throws(() => synth(build), /logsBucket/, label);
+  }
+});
+
+test("CloudFront standard logging refuses a stack outside us-east-1", () => {
+  assert.throws(
+    () =>
+      synthInRegion("eu-west-1", (stack) =>
+        new apptheory.AppTheoryMediaCdn(stack, "Media", {
+          namingContext: new apptheory.AppTheoryNamingContext(stack, "Naming", {
+            app: "autheory",
+            stage: "lab",
+            account: "998115851393",
+            region: "eu-west-1",
+            loggingProfile: apptheory.AppTheoryLoggingProfile.STANDARD,
+          }),
+          logicalName: "media",
+        }),
+      ),
+    /us-east-1/,
+  );
+});
+
+test("CloudFront standard logging refuses an unresolved stack region", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "Stack");
+  assert.throws(() => {
+    const context = new apptheory.AppTheoryNamingContext(stack, "Naming", {
+      app: "autheory",
+      stage: "lab",
+      account: "998115851393",
+      region: "us-east-1",
+      loggingProfile: apptheory.AppTheoryLoggingProfile.STANDARD,
+    });
+    new apptheory.AppTheoryMediaCdn(stack, "Media", { namingContext: context, logicalName: "media" });
+    app.synth();
+  }, /resolved stack region/);
 });
 
 // ---- N5: keeper visibility ------------------------------------------------
@@ -557,13 +917,17 @@ test("AppTheoryKeeperVisibility compiles the policy, role and manifest", () => {
   const roles = resourcesOfType(template, "AWS::IAM::Role");
   const reader = roles.find((role) => role.Properties?.RoleName === "autheory-lab-keeper-reader");
   assert.ok(reader, "expected the keeper reader role");
+  // r3 (contract section 6): the principal is the reader account, and the
+  // role ARN is an `aws:PrincipalArn` condition so the trust survives Keeper
+  // deleting and recreating its role.
   assert.deepEqual(JSON.parse(JSON.stringify(reader.Properties.AssumeRolePolicyDocument)), {
     Version: "2012-10-17",
     Statement: [
       {
         Effect: "Allow",
-        Principal: { AWS: "arn:aws:iam::191637461429:role/cloud-keeper-runtime" },
+        Principal: { AWS: "arn:aws:iam::191637461429:root" },
         Action: "sts:AssumeRole",
+        Condition: { ArnEquals: { "aws:PrincipalArn": "arn:aws:iam::191637461429:role/cloud-keeper-runtime" } },
       },
     ],
   });
@@ -616,4 +980,272 @@ test("AppTheoryKeeperVisibility rejects an invalid selector", () => {
       ),
     /selector/,
   );
+});
+
+// ---- r3 round 1: access-log groups take no naming entry (ADV-1312-1) --------
+
+test("legacy logging keeps today's unnamed access-log group under either naming profile", () => {
+  // Legacy naming plus legacy logging: the group keeps the name CloudFormation
+  // generates today and consumes no naming entry.
+  const legacyTemplate = synth((stack) => {
+    const context = legacyContext(stack, { pins: { "api_http:api": "autheory-live-api" } });
+    new apptheory.AppTheoryHttpApi(stack, "Api", {
+      handler: handler(stack),
+      namingContext: context,
+      stage: { accessLogging: true },
+    });
+  });
+  const legacyGroups = resourcesOfType(legacyTemplate, "AWS::Logs::LogGroup");
+  assert.equal(legacyGroups.length, 1);
+  assert.equal(legacyGroups[0].Properties?.LogGroupName, undefined);
+  assert.equal(legacyGroups[0].Properties?.RetentionInDays, 30);
+
+  // Derived naming plus legacy logging: still today's unnamed group.
+  const derivedTemplate = synth((stack) => {
+    const context = new apptheory.AppTheoryNamingContext(stack, "Naming", {
+      app: "autheory",
+      stage: "lab",
+      account: "998115851393",
+      region: "us-east-1",
+      namingProfile: apptheory.AppTheoryNamingProfile.DERIVED,
+      loggingProfile: apptheory.AppTheoryLoggingProfile.LEGACY,
+    });
+    new apptheory.AppTheoryHttpApi(stack, "Api", {
+      handler: handler(stack),
+      namingContext: context,
+      stage: { accessLogging: true },
+    });
+  });
+  const derivedGroups = resourcesOfType(derivedTemplate, "AWS::Logs::LogGroup");
+  assert.equal(derivedGroups.length, 1);
+  assert.equal(derivedGroups[0].Properties?.LogGroupName, undefined);
+});
+
+test("legacy profiles synthesize byte-identically: AppTheoryHttpApi with access logging", () => {
+  assertIdentical(
+    (stack, context) =>
+      new apptheory.AppTheoryHttpApi(stack, "Api", {
+        handler: handler(stack),
+        namingContext: context,
+        stage: { accessLogging: true },
+        ...(context ? {} : { apiName: "autheory-live-api" }),
+      }),
+    { pins: { "api_http:api": "autheory-live-api" } },
+  );
+});
+
+test("a log_group entry naming a construct access-log group is an orphan", () => {
+  assert.throws(
+    () =>
+      synth((stack) => {
+        const context = legacyContext(stack, {
+          pins: { "api_http:api": "autheory-live-api" },
+          generated: ["log_group:logs/access/api/api"],
+        });
+        new apptheory.AppTheoryHttpApi(stack, "Api", {
+          handler: handler(stack),
+          namingContext: context,
+          stage: { accessLogging: true },
+        });
+      }),
+    /match no resource/,
+  );
+});
+
+// ---- r3 round 1: an API name takes a pin, never a generated entry -----------
+
+test("a generated entry for an API name fails synthesis", () => {
+  const builds = [
+    ["api_http", (stack, context) => new apptheory.AppTheoryHttpApi(stack, "Api", {
+      handler: handler(stack),
+      namingContext: context,
+      logicalName: "main",
+    })],
+    ["api_rest", (stack, context) => new apptheory.AppTheoryRestApiRouter(stack, "Router", {
+      namingContext: context,
+      logicalName: "main",
+    })],
+    ["api_websocket", (stack, context) => new apptheory.AppTheoryWebSocketApi(stack, "Ws", {
+      handler: handler(stack),
+      namingContext: context,
+      logicalName: "main",
+    })],
+  ];
+  for (const [type, build] of builds) {
+    assert.throws(
+      () => synth((stack) => build(stack, legacyContext(stack, { generated: [`${type}:main`] }))),
+      /API name takes a pin/,
+      type,
+    );
+  }
+});
+
+test("the pure primitive refuses a generated API name", () => {
+  assert.throws(
+    () =>
+      apptheory.AppTheoryResourceNaming.physicalName(
+        {
+          app: "autheory",
+          stage: "live",
+          account: "784055308075",
+          region: "us-east-1",
+          namingProfile: "legacy",
+          generated: ["api_http:main"],
+        },
+        "api_http",
+        "main",
+      ),
+    /API name takes a pin/,
+  );
+});
+
+// ---- r3 round 1: refusal hints name the suffixed entry key (ADV-1312-2) ----
+
+test("explicit-name refusals name the suffixed entry key the construct consumes", () => {
+  const cases = [
+    [
+      /dynamodb_table:ws-connections/,
+      (stack) =>
+        new apptheory.AppTheoryWebSocketApi(stack, "Ws", {
+          handler: handler(stack),
+          namingContext: labContext(stack),
+          connectionTableName: "hand-built",
+        }),
+    ],
+    [
+      /dynamodb_table:mcp-sessions/,
+      (stack) =>
+        new apptheory.AppTheoryMcpServer(stack, "Mcp", {
+          handler: handler(stack),
+          namingContext: labContext(stack),
+          sessionState: { enabled: true, tableName: "hand-built" },
+        }),
+    ],
+    [
+      /s3_bucket:media-media/,
+      (stack) =>
+        new apptheory.AppTheoryMediaCdn(stack, "Media", {
+          namingContext: labContext(stack),
+          bucketName: "hand-built",
+        }),
+    ],
+    [
+      /dynamodb_table:site-isr-metadata/,
+      (stack) =>
+        new apptheory.AppTheorySsrSite(stack, "Site", {
+          ssrFunction: handler(stack),
+          namingContext: labContext(stack),
+          isrMetadataTableName: "hand-built",
+        }),
+    ],
+  ];
+  for (const [expected, build] of cases) {
+    assert.throws(() => synth(build), expected);
+  }
+});
+
+test("the suffixed entry keys written into stage config are accepted", () => {
+  // WebSocket connection table.
+  const ws = synth((stack) => {
+    const context = legacyContext(stack, {
+      pins: {
+        "api_websocket:ws": "autheory-live-ws",
+        "dynamodb_table:ws-connections": "autheory-live-ws-connections",
+      },
+    });
+    new apptheory.AppTheoryWebSocketApi(stack, "Ws", {
+      handler: handler(stack),
+      namingContext: context,
+      enableConnectionTable: true,
+    });
+  });
+  assert.equal(
+    resourcesOfType(ws, "AWS::DynamoDB::Table")[0].Properties?.TableName,
+    "autheory-live-ws-connections",
+  );
+
+  // MCP session table.
+  const mcp = synth((stack) => {
+    const context = legacyContext(stack, {
+      pins: {
+        "api_http:mcp": "autheory-live-mcp",
+        "dynamodb_table:mcp-sessions": "autheory-live-mcp-sessions",
+      },
+    });
+    new apptheory.AppTheoryMcpServer(stack, "Mcp", {
+      handler: handler(stack),
+      namingContext: context,
+      sessionState: { enabled: true },
+    });
+  });
+  assert.equal(
+    resourcesOfType(mcp, "AWS::DynamoDB::Table")[0].Properties?.TableName,
+    "autheory-live-mcp-sessions",
+  );
+
+  // Media bucket.
+  const media = synth((stack) => {
+    const context = legacyContext(stack, { pins: { "s3_bucket:media-media": "autheory-live-media" } });
+    new apptheory.AppTheoryMediaCdn(stack, "Media", { namingContext: context, enableLogging: false });
+  });
+  assert.equal(resourcesOfType(media, "AWS::S3::Bucket")[0].Properties?.BucketName, "autheory-live-media");
+
+  // SSR assets bucket, html store and ISR metadata table.
+  const site = synth((stack) => {
+    const context = legacyContext(stack, {
+      pins: {
+        "s3_bucket:site-assets": "autheory-live-site-assets",
+        "s3_bucket:site-html-store": "autheory-live-site-html",
+        "dynamodb_table:site-isr-metadata": "autheory-live-site-isr",
+      },
+    });
+    new apptheory.AppTheorySsrSite(stack, "Site", {
+      ssrFunction: handler(stack),
+      namingContext: context,
+      htmlStoreKeyPrefix: "isr",
+      mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+    });
+  });
+  const bucketNames = resourcesOfType(site, "AWS::S3::Bucket")
+    .map((bucket) => bucket.Properties?.BucketName)
+    .filter((name) => name !== undefined)
+    .sort();
+  assert.deepEqual(bucketNames, ["autheory-live-site-assets", "autheory-live-site-html"]);
+  const fn = resourcesOfType(site, "AWS::Lambda::Function")[0];
+  assert.equal(fn.Properties?.Environment?.Variables?.APPTHEORY_CACHE_TABLE_NAME, "autheory-live-site-isr");
+});
+
+// ---- r3 round 1: reader-role trust (contract section 6) --------------------
+
+test("AppTheoryKeeperVisibility refuses an unresolved or malformed reader ARN", () => {
+  assert.throws(
+    () =>
+      synth((stack) =>
+        new apptheory.AppTheoryKeeperVisibility(stack, "Visibility", {
+          namingContext: labContext(stack),
+          readerPrincipalArn: cdk.Fn.importValue("KeeperRoleArn"),
+          rules: {},
+        }),
+      ),
+    /resolved readerPrincipalArn/,
+  );
+  for (const arn of [
+    "arn:aws:iam::12345:role/cloud-keeper",
+    "arn:aws:iam::123456789012:user/cloud-keeper",
+    "arn:aws:iam::123456789012:role/",
+    "not-an-arn",
+  ]) {
+    assert.throws(
+      () =>
+        synth((stack) =>
+          new apptheory.AppTheoryKeeperVisibility(stack, "Visibility", {
+            namingContext: labContext(stack),
+            readerPrincipalArn: arn,
+            rules: {},
+          }),
+        ),
+      /12 digits/,
+      arn,
+    );
+  }
 });

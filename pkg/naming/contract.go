@@ -51,6 +51,27 @@ type Context struct {
 	Account       string `json:"account"`
 	Region        string `json:"region"`
 	NamingProfile string `json:"naming_profile,omitempty"`
+
+	// namespaceExplicit records that a decoded context carried the namespace
+	// key. The contract defaults an absent namespace to LogPrefix but rejects an
+	// explicit empty one, and Go's empty string alone cannot tell the two apart.
+	namespaceExplicit bool
+}
+
+// UnmarshalJSON decodes a context and records whether the namespace key was present.
+func (c *Context) UnmarshalJSON(data []byte) error {
+	type plain Context
+	var decoded plain
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(data, &keys); err != nil {
+		return err
+	}
+	*c = Context(decoded)
+	_, c.namespaceExplicit = keys["namespace"]
+	return nil
 }
 
 // ResourceRule describes one row of the composition table (contract section 2).
@@ -84,17 +105,34 @@ var ResourceRules = map[string]ResourceRule{
 	"codebuild_project":        {Kind: "dash", Max: 150, Charset: `[A-Za-z0-9_-]`},
 	"api_rest":                 {Kind: "dash", Max: 128, Charset: `[A-Za-z0-9_-]`},
 	"api_http":                 {Kind: "dash", Max: 128, Charset: `[A-Za-z0-9_-]`},
+	"api_websocket":            {Kind: "dash", Max: 128, Charset: `[A-Za-z0-9_-]`},
 	"log_delivery_source":      {Kind: "dash", Max: 60, Charset: `[A-Za-z0-9_-]`},
 	"log_delivery_destination": {Kind: "dash", Max: 60, Charset: `[A-Za-z0-9_-]`},
 	"log_group":                {Kind: "log", Max: 512, Charset: `[A-Za-z0-9_-]`},
 }
 
+// apiTypes are the API Gateway name types. The CDK defaults an API Name today,
+// so a name for one is explicit and takes a pin, never a generated entry (r3).
+var apiTypes = map[string]struct{}{
+	"api_rest":      {},
+	"api_http":      {},
+	"api_websocket": {},
+}
+
+func isAPIType(resourceType string) bool {
+	_, ok := apiTypes[resourceType]
+	return ok
+}
+
 // ComposedName is the result of composing a logical name.
 type ComposedName struct {
-	Name             string `json:"name"`
+	Name             string `json:"name,omitempty"`
 	BucketNamePrefix string `json:"bucket_name_prefix,omitempty"`
 	BucketNamespace  string `json:"bucket_namespace,omitempty"`
 	Pinned           bool   `json:"pinned,omitempty"`
+	// Generated reports that CloudFormation generates the name today, so the
+	// construct sets no physical-name property (contract section 4).
+	Generated bool `json:"generated,omitempty"`
 }
 
 // ValidateContext enforces the bound-context grammar from contract section 1.
@@ -111,14 +149,19 @@ func ValidateContext(ctx Context) error {
 	if !regionRe.MatchString(ctx.Region) {
 		return errors.New("region")
 	}
-	namespace := ctx.Namespace
-	if namespace == "" {
-		namespace = LogPrefix
-	}
-	if !namespaceRe.MatchString(namespace) {
+	if !namespaceRe.MatchString(namespaceOf(ctx)) {
 		return errors.New("namespace")
 	}
 	return nil
+}
+
+// namespaceOf returns the contract namespace, defaulting only when the key was
+// absent. An explicit empty namespace is invalid (contract section 1).
+func namespaceOf(ctx Context) string {
+	if ctx.Namespace == "" && !ctx.namespaceExplicit {
+		return LogPrefix
+	}
+	return ctx.Namespace
 }
 
 // ShortenName applies the deterministic over-budget form (contract section 2.2).
@@ -142,11 +185,7 @@ func S3AccountRegionalSuffix(ctx Context) string {
 
 // LogSourcePrefix is the bound prefix shared by every log source of the app.
 func LogSourcePrefix(ctx Context) string {
-	namespace := ctx.Namespace
-	if namespace == "" {
-		namespace = LogPrefix
-	}
-	return strings.Join([]string{LogPrefix, namespace, ctx.App, ctx.Stage}, "_") + "_"
+	return strings.Join([]string{LogPrefix, namespaceOf(ctx), ctx.App, ctx.Stage}, "_") + "_"
 }
 
 // LogGroupName maps a logical log source to its physical log-group name.
@@ -158,8 +197,12 @@ func LogGroupName(ctx Context, logical string) (string, error) {
 }
 
 // PhysicalName composes the physical name of one resource. Pins are keyed
-// "{type}:{logical}" and, when present, are returned verbatim.
-func PhysicalName(ctx Context, resourceType, logical string, pins map[string]string) (ComposedName, error) {
+// "{type}:{logical}" and, when present, are returned verbatim. A generated
+// entry keyed the same way means CloudFormation generates the name today, so
+// the construct sets no physical-name property and the result is
+// {"generated": true}. Generated entries are valid only under the legacy
+// naming profile (contract section 4).
+func PhysicalName(ctx Context, resourceType, logical string, pins map[string]string, generated []string) (ComposedName, error) {
 	if err := ValidateContext(ctx); err != nil {
 		return ComposedName{}, err
 	}
@@ -170,15 +213,12 @@ func PhysicalName(ctx Context, resourceType, logical string, pins map[string]str
 	if !ok {
 		return ComposedName{}, fmt.Errorf("resource type %s", resourceType)
 	}
-	if pin, ok := pins[resourceType+":"+logical]; ok {
-		return ComposedName{Name: pin, Pinned: true}, nil
+	entry, resolved, err := resolveEntry(ctx, resourceType, logical, pins, generated)
+	if err != nil {
+		return ComposedName{}, err
 	}
-	profile := ctx.NamingProfile
-	if profile == "" {
-		profile = NamingProfileDerived
-	}
-	if profile == NamingProfileLegacy {
-		return ComposedName{}, errors.New("legacy naming profile requires a pin for every resource")
+	if resolved {
+		return entry, nil
 	}
 
 	out, err := composeName(ctx, resourceType, logical, rule)
@@ -186,7 +226,7 @@ func PhysicalName(ctx Context, resourceType, logical string, pins map[string]str
 		return ComposedName{}, err
 	}
 
-	if !regexp.MustCompile(rule.Charset + "+").MatchString(out.Name) {
+	if !matchesCharset(rule.Charset, out.Name) {
 		return ComposedName{}, errors.New("charset")
 	}
 	if len(out.Name) > rule.Max {
@@ -198,6 +238,55 @@ func PhysicalName(ctx Context, resourceType, logical string, pins map[string]str
 		}
 	}
 	return out, nil
+}
+
+// resolveEntry applies the legacy profile's pin and generated rules. The second
+// result reports whether an entry supplied the name.
+func resolveEntry(ctx Context, resourceType, logical string, pins map[string]string, generated []string) (ComposedName, bool, error) {
+	profile := ctx.NamingProfile
+	if profile == "" {
+		profile = NamingProfileDerived
+	}
+	legacy := profile == NamingProfileLegacy
+	if len(generated) > 0 && !legacy {
+		return ComposedName{}, false, errors.New("generated entries are only valid under the legacy naming profile")
+	}
+	key := resourceType + ":" + logical
+	pin, hasPin := pins[key]
+	keepGenerated := containsString(generated, key)
+	// r3, ADV-1312-3: CDK defaults an API Name today, so it is an explicit name
+	// and takes a pin, never a generated entry.
+	if keepGenerated && isAPIType(resourceType) {
+		return ComposedName{}, false, errors.New("an API name takes a pin, never a generated entry")
+	}
+	if hasPin && keepGenerated {
+		return ComposedName{}, false, errors.New("a resource has both a pin and a generated entry")
+	}
+	if hasPin {
+		return ComposedName{Name: pin, Pinned: true}, true, nil
+	}
+	if keepGenerated {
+		return ComposedName{Generated: true}, true, nil
+	}
+	if legacy {
+		return ComposedName{}, false, errors.New("legacy naming profile requires a pin or a generated entry for every resource")
+	}
+	return ComposedName{}, false, nil
+}
+
+// matchesCharset applies a row's charset to the whole name, anchored like the
+// reference implementation's fullmatch.
+func matchesCharset(charset, name string) bool {
+	return regexp.MustCompile("^(?:" + charset + ")+$").MatchString(name)
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func composeName(ctx Context, resourceType, logical string, rule ResourceRule) (ComposedName, error) {
@@ -352,8 +441,19 @@ func RuleVersion(rules Rules) string {
 	return fmt.Sprintf("%x", digest)[:12]
 }
 
-func sortedCopy(values []string) []string {
-	out := append([]string(nil), values...)
+// uniqueSorted returns the values as a sorted set. Selectors are sets: a
+// duplicate include or exclude is ignored in the rule version, the compiled
+// policy and the preview (contract section 5).
+func uniqueSorted(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
 	sort.Strings(out)
 	return out
 }
@@ -369,15 +469,7 @@ func compactJSON(value any) string {
 }
 
 func canonicalRules(rules Rules) string {
-	include := sortedCopy(rules.Include)
-	exclude := sortedCopy(rules.Exclude)
-	if include == nil {
-		include = []string{}
-	}
-	if exclude == nil {
-		exclude = []string{}
-	}
-	return fmt.Sprintf(`{"exclude":%s,"include":%s}`, compactJSON(exclude), compactJSON(include))
+	return fmt.Sprintf(`{"exclude":%s,"include":%s}`, compactJSON(uniqueSorted(rules.Exclude)), compactJSON(uniqueSorted(rules.Include)))
 }
 
 // CompilePolicy compiles the rules into the reader-role inline policy.
@@ -399,10 +491,10 @@ func CompilePolicy(ctx Context, rules Rules) (Policy, error) {
 	}}
 	actions := append(append([]string(nil), KeeperActionsGroup...), KeeperActionsStream...)
 	var included, excluded []string
-	for _, sel := range sortedCopy(rules.Include) {
+	for _, sel := range uniqueSorted(rules.Include) {
 		included = append(included, SelectorARNs(ctx, sel)...)
 	}
-	for _, sel := range sortedCopy(rules.Exclude) {
+	for _, sel := range uniqueSorted(rules.Exclude) {
 		excluded = append(excluded, SelectorARNs(ctx, sel)...)
 	}
 	if len(included) > 0 {
@@ -465,15 +557,7 @@ func validateRules(rules Rules) error {
 }
 
 func futureRules(rules Rules) FutureRules {
-	include := sortedCopy(rules.Include)
-	exclude := sortedCopy(rules.Exclude)
-	if include == nil {
-		include = []string{}
-	}
-	if exclude == nil {
-		exclude = []string{}
-	}
-	return FutureRules{Include: include, Exclude: exclude}
+	return FutureRules{Include: uniqueSorted(rules.Include), Exclude: uniqueSorted(rules.Exclude)}
 }
 
 // Keeper answers for a reader request (contract section 7).

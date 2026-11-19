@@ -61,6 +61,76 @@ test("legacy profile requires a pin and uses it verbatim", () => {
   assert.deepEqual(composed, { name: "autheory-autheory-live-events", pinned: true });
 });
 
+test("generated entries are legacy-only and keep CloudFormation's name", () => {
+  const legacy = labContext({ stage: "live", naming_profile: "legacy" });
+  assert.deepEqual(
+    physicalResourceName(legacy, "s3_bucket", "audit-events", {}, ["s3_bucket:audit-events"]),
+    { generated: true },
+  );
+  assert.throws(
+    () => physicalResourceName(labContext(), "s3_bucket", "audit-events", {}, ["s3_bucket:audit-events"]),
+    /legacy naming profile/,
+  );
+  assert.throws(
+    () =>
+      physicalResourceName(
+        legacy,
+        "dynamodb_table",
+        "events",
+        { "dynamodb_table:events": "autheory-autheory-live-events" },
+        ["dynamodb_table:events"],
+      ),
+    /both a pin and a generated entry/,
+  );
+});
+
+test("a generated entry for an API name is rejected", () => {
+  const legacy = labContext({ stage: "live", naming_profile: "legacy" });
+  for (const type of ["api_rest", "api_http", "api_websocket"]) {
+    assert.throws(
+      () => physicalResourceName(legacy, type, "main", {}, [`${type}:main`]),
+      /API name takes a pin/,
+      type,
+    );
+  }
+});
+
+test("a pin takes precedence over derivation under either profile", () => {
+  const composed = physicalResourceName(labContext(), "dynamodb_table", "events", {
+    "dynamodb_table:events": "autheory-lab-events",
+  });
+  assert.deepEqual(composed, { name: "autheory-lab-events", pinned: true });
+});
+
+test("api_websocket composes like the other API name types", () => {
+  const composed = physicalResourceName(
+    labContext({ app: "theory-mcp-server", account: "191637461429" }),
+    "api_websocket",
+    "agent-sessions",
+  );
+  assert.equal(composed.name, "theory-mcp-server-lab-agent-sessions");
+});
+
+test("duplicate selectors are treated as a set", () => {
+  const duplicated = {
+    include: ["logs/runtime/*", "logs/runtime/*"],
+    exclude: ["logs/runtime/debug/*", "logs/runtime/debug/*"],
+  };
+  const policy = compileVisibilityPolicy(labContext(), duplicated);
+  assert.equal(policy.Statement[1].Resource.length, 1);
+  assert.equal(policy.Statement[2].Resource.length, 1);
+  const preview = visibilityPreview(duplicated, ["logs/runtime/api"]);
+  assert.equal(preview.rule_version, visibilityPreview(rules, ["logs/runtime/api"]).rule_version);
+  assert.deepEqual(preview.future.include, ["logs/runtime/*"]);
+  assert.deepEqual(preview.future.exclude, ["logs/runtime/debug/*"]);
+});
+
+test("preview and manifest reject an invalid selector", () => {
+  const invalid = { include: ["logs/run*time"] };
+  assert.throws(() => visibilityPreview(invalid, ["logs/runtime/api"]), /selector/);
+  assert.throws(() => visibilityManifest(invalid, ["logs/runtime/api"]), /selector/);
+});
+
 test("log group names map the logical path", () => {
   assert.equal(
     logGroupName(labContext(), "logs/runtime/api"),

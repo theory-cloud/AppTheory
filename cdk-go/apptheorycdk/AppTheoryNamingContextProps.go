@@ -17,6 +17,14 @@ type AppTheoryNamingContextProps struct {
 	Region *string `field:"required" json:"region" yaml:"region"`
 	// Stage id from stage config.
 	Stage *string `field:"required" json:"stage" yaml:"stage"`
+	// Generated-name entries keyed `{type}:{logical}`.
+	//
+	// An entry means
+	// CloudFormation generates the name today, so the construct sets no
+	// physical-name property. Valid only under the legacy naming profile.
+	// Default: [].
+	//
+	Generated *[]*string `field:"optional" json:"generated" yaml:"generated"`
 	// Logging profile.
 	//
 	// `standard` opts every construct that receives the context

@@ -76,6 +76,41 @@ class PhysicalNameTests(unittest.TestCase):
         )
         self.assertEqual(composed, {"name": "autheory-autheory-live-events", "pinned": True})
 
+    def test_generated_entries_are_legacy_only(self) -> None:
+        legacy = lab_context(stage="live", naming_profile="legacy")
+        self.assertEqual(
+            physical_resource_name(legacy, "s3_bucket", "audit-events", None, ["s3_bucket:audit-events"]),
+            {"generated": True},
+        )
+        with self.assertRaises(ValueError):
+            physical_resource_name(lab_context(), "s3_bucket", "audit-events", None, ["s3_bucket:audit-events"])
+        with self.assertRaises(ValueError):
+            physical_resource_name(
+                legacy,
+                "dynamodb_table",
+                "events",
+                {"dynamodb_table:events": "autheory-autheory-live-events"},
+                ["dynamodb_table:events"],
+            )
+
+    def test_generated_api_name_is_rejected(self) -> None:
+        legacy = lab_context(stage="live", naming_profile="legacy")
+        for resource_type in ("api_rest", "api_http", "api_websocket"):
+            with self.assertRaisesRegex(ValueError, "API name takes a pin", msg=resource_type):
+                physical_resource_name(legacy, resource_type, "main", None, [f"{resource_type}:main"])
+
+    def test_pin_takes_precedence_under_derived(self) -> None:
+        composed = physical_resource_name(
+            lab_context(), "dynamodb_table", "events", {"dynamodb_table:events": "autheory-lab-events"}
+        )
+        self.assertEqual(composed, {"name": "autheory-lab-events", "pinned": True})
+
+    def test_api_websocket_composes(self) -> None:
+        composed = physical_resource_name(
+            lab_context(app="theory-mcp-server", account="191637461429"), "api_websocket", "agent-sessions"
+        )
+        self.assertEqual(composed["name"], "theory-mcp-server-lab-agent-sessions")
+
     def test_log_group_name_maps_logical_path(self) -> None:
         self.assertEqual(
             log_group_name(lab_context(), "logs/runtime/api"),
@@ -106,6 +141,26 @@ class VisibilityTests(unittest.TestCase):
         self.assertEqual(preview["rule_version"], "ccfcb6ec1e50")
         self.assertEqual(preview["matched_now"], ["logs/runtime/api"])
         self.assertEqual(preview["not_matched_now"], ["logs/access/api/main", "logs/runtime/debug/fulfillment"])
+
+    def test_duplicate_selectors_are_a_set(self) -> None:
+        duplicated = {
+            "include": ["logs/runtime/*", "logs/runtime/*"],
+            "exclude": ["logs/runtime/debug/*", "logs/runtime/debug/*"],
+        }
+        policy = compile_visibility_policy(lab_context(), duplicated)
+        self.assertEqual(len(policy["Statement"][1]["Resource"]), 1)
+        self.assertEqual(len(policy["Statement"][2]["Resource"]), 1)
+        self.assertEqual(
+            visibility_preview(lab_context(), duplicated, ["logs/runtime/api"])["rule_version"],
+            visibility_preview(lab_context(), self.rules, ["logs/runtime/api"])["rule_version"],
+        )
+
+    def test_preview_and_manifest_reject_invalid_selector(self) -> None:
+        invalid = {"include": ["logs/run*time"]}
+        with self.assertRaises(ValueError):
+            visibility_preview(lab_context(), invalid, ["logs/runtime/api"])
+        with self.assertRaises(ValueError):
+            visibility_manifest(lab_context(), invalid, ["logs/runtime/api"])
 
     def test_manifest_omits_private_inventory(self) -> None:
         manifest = visibility_manifest(lab_context(), self.rules, ["logs/runtime/api"])

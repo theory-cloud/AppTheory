@@ -26,17 +26,20 @@ func validateAppTheoryResourceNaming_CompileVisibilityPolicyJsonParameters(value
 	return nil
 }
 
-func validateAppTheoryResourceNaming_KeeperDecisionParameters(logical *string, awsResult *string, rules *AppTheoryVisibilityRules) error {
+func validateAppTheoryResourceNaming_KeeperDecisionParameters(rules *AppTheoryVisibilityRules, logical *string, awsResult *string) error {
+	if rules == nil {
+		return fmt.Errorf("parameter rules is required, but nil was provided")
+	}
+	if err := _jsii_.ValidateStruct(rules, func() string { return "parameter rules" }); err != nil {
+		return err
+	}
+
 	if logical == nil {
 		return fmt.Errorf("parameter logical is required, but nil was provided")
 	}
 
 	if awsResult == nil {
 		return fmt.Errorf("parameter awsResult is required, but nil was provided")
-	}
-
-	if err := _jsii_.ValidateStruct(rules, func() string { return "parameter rules" }); err != nil {
-		return err
 	}
 
 	return nil

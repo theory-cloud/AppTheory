@@ -21,9 +21,10 @@ The context comes from stage config. Nothing comes from environment variables.
 | `account` | exactly 12 digits | An unresolved token fails synthesis. |
 | `region` | a full Region code | For example `us-east-1`. |
 | `namingProfile` | `derived` or `legacy` | Defaults to `derived`. |
-| `pins` | `{type}:{logical}` → name | Required for every AppTheory-managed resource under `legacy`. |
+| `pins` | `{type}:{logical}` → name | The physical name when the resource carries an explicit name today. |
+| `generated` | `{type}:{logical}` list | The resource whose name CloudFormation generates today. Legacy-only. |
 | `loggingProfile` | `standard` or `legacy` | Defaults to `legacy`. See [Logging and visibility](./logging-and-visibility.md). |
-| `retentionDays` | an accepted CloudWatch Logs value | Defaults to 30. |
+| `retentionDays` | an accepted CloudWatch Logs value | Passed from stage config; lab 30, live 90. |
 
 A logical name is one or more segments `[a-z0-9]+(-[a-z0-9]+)*` joined by `/`, for example `audit-events` or
 `logs/runtime/api`.
@@ -47,7 +48,7 @@ A logical name is one or more segments `[a-z0-9]+(-[a-z0-9]+)*` joined by `/`, f
 | `alarm`, `dashboard` | dash | 255 |
 | `iam_role`, `iam_managed_policy` | dash | 64, 128 |
 | `state_machine`, `codebuild_project` | dash | 80, 150 |
-| `api_rest`, `api_http` | dash | 128 |
+| `api_rest`, `api_http`, `api_websocket` | dash | 128 |
 | `log_delivery_source`, `log_delivery_destination` | dash | 60 |
 | `log_group` | log source | 512 |
 
@@ -74,10 +75,71 @@ that fit.
 
 ### Legacy profile
 
-Under `namingProfile: legacy` every AppTheory-managed resource takes its pinned physical name from `pins`, and a
-resource with no pin fails synthesis. Names that CloudFormation generates today are pinned as literal names, so a
-resource whose pre-change template carried no explicit name gains that literal in the template. S3 buckets keep the
-global namespace, with no account-regional prefix.
+Under `namingProfile: legacy` every resource the app names through AppTheory has exactly one entry, keyed
+`{type}:{logical}`, in one of two stage-config lists:
+
+- `pins`: a resource that carries an explicit physical name today. The construct sets the pin verbatim.
+- `generated`: a resource whose name CloudFormation generates today. The construct sets no physical-name property, so
+  the template keeps its pre-change shape and CloudFormation keeps today's name.
+
+A resource with neither entry fails synthesis, and a resource with both fails synthesis. `generated` under `derived`
+fails synthesis, because lab names are derived.
+
+- A pin takes precedence over derivation under either profile, so a `derived` stage config may carry pins.
+- **API names take pins, never generated entries.** A REST, HTTP or WebSocket API `Name` exists today (the CDK
+  defaults it), so it is an explicit name. A `generated` entry for `api_rest`, `api_http` or `api_websocket` fails
+  synthesis.
+- **Construct logging resources take no entry.** A construct-created API or WebSocket access-log group, the Lambda
+  runtime group (the `/aws/lambda/<fn>` group under the legacy profile and `logs/runtime/{logical}` under the standard
+  profile), and a CloudFront logs bucket follow `logging.profile`. They consume no naming entry under either naming
+  profile. Under `logging.profile: legacy` an access-log group the construct creates keeps today's
+  CloudFormation-generated name; under `standard` it takes the log-source name. A `log_group` entry that names one is
+  an orphan.
+- **The orphan check is consumption-based.** `physicalName()` marks `{type}:{logical}` as used; a construct that
+  consumes a suffixed key marks that exact key. An entry that no construct consumes, including an entry for a
+  construct's own logging resource, fails synthesis. `AppTheoryNamingContext` runs the check at stack synthesis.
+- S3 buckets keep the global namespace, with no account-regional prefix.
+
+### Consumed entry keys
+
+The table lists every entry key each contexted construct consumes. A construct consumes a key only when it creates (or
+wires the name of) the resource; for example `AppTheoryFunction` consumes `iam_role:{logical}` only when it creates the
+execution role.
+
+| Construct | Entry keys consumed |
+|---|---|
+| `AppTheoryFunction` | `lambda_function:{logical}`; `iam_role:{logical}` when it creates the execution role |
+| `AppTheoryBucket` | `s3_bucket:{logical}` |
+| `AppTheoryHttpApi` | `api_http:{logical}` |
+| `AppTheoryRestApiRouter` | `api_rest:{logical}` |
+| `AppTheoryWebSocketApi` | `api_websocket:{logical}`; `dynamodb_table:{logical}-connections` when it creates the connection table |
+| `AppTheoryMcpServer` | `api_http:{logical}` for its owned API; `dynamodb_table:{logical}-sessions` when session state creates the table |
+| `AppTheoryMediaCdn` | `s3_bucket:{logical}-media` unless `props.bucket` supplies the bucket |
+| `AppTheorySsrSite` | `s3_bucket:{logical}-assets`; `s3_bucket:{logical}-html-store` when the HTML store is configured; `dynamodb_table:{logical}-isr-metadata` when it wires an ISR metadata table (`isrMetadataTable` or `mode: ssg-isr`) |
+| `AppTheoryKeeperVisibility` | `iam_role:keeper-reader` |
+| Any construct with CloudFront standard logging (`AppTheorySsrSite`, `AppTheoryPathRoutedFrontend`, `AppTheoryMediaCdn`) | `log_delivery_source:logs/access/cdn/{logical}` and `log_delivery_destination:logs/access/cdn/{logical}` under `logging.profile: standard` |
+| `AppTheoryPathRoutedFrontend` | only the CloudFront delivery entries above |
+
+API and log-group names aside, these are the entries that must appear in `pins` (or, under `legacy`, `generated`) for
+a legacy stack. Access-log groups, the Lambda runtime group and CloudFront logs buckets never appear in either list.
+
+### Explicit name props
+
+When an AppTheory construct has a naming context, an explicit physical-name prop fails synthesis under either
+profile: `functionName` and `roleName` on `AppTheoryFunction`, `apiName` on `AppTheoryHttpApi`,
+`AppTheoryRestApiRouter`, `AppTheoryWebSocketApi` and `AppTheoryMcpServer` (`ownedApi.apiName`),
+`connectionTableName` on `AppTheoryWebSocketApi`, `sessionState.tableName` on `AppTheoryMcpServer`,
+`isrMetadataTableName` and `cacheTableName` on `AppTheorySsrSite`, `bucketName` on `AppTheoryBucket` and
+`AppTheoryMediaCdn`. The message names the exact entry key to use instead, including suffixes: for example
+`dynamodb_table:{logical}-connections`, `dynamodb_table:{logical}-sessions`, `dynamodb_table:{logical}-isr-metadata`
+and `s3_bucket:{logical}-media`. With no context the props behave exactly as they do today.
+
+### Logical names
+
+A construct's default logical name is the kebab-cased leaf construct id. Where the contract's budget table uses a
+different logical, the app passes an explicit `logicalName`. Table families derive the name from a suffix:
+`AppTheoryWebSocketApi` names its connection table `{logical}-connections` and `AppTheoryMcpServer` names its session
+table `{logical}-sessions`.
 
 ## Runtime surfaces
 
@@ -96,8 +158,8 @@ evaluates every fixture and must agree with its `expected` value, including ever
 ## CDK
 
 `AppTheoryNamingContext` holds the bound values and fails synthesis on an unresolved account token, an invalid context,
-or an invalid retention value. Constructs take it as an optional `namingContext` prop; **with no context every
-construct synthesizes exactly as before**.
+an invalid retention value, or a `pins`/`generated` entry that matches no resource in the stack. Constructs take it as
+an optional `namingContext` prop; **with no context every construct synthesizes exactly as before**.
 
 ```ts
 const context = new AppTheoryNamingContext(this, "Naming", {
@@ -114,8 +176,10 @@ new AppTheoryFunction(this, "Api", { ...functionProps, namingContext: context, l
 ```
 
 `AppTheoryResourceNaming` exposes the pure primitives (`physicalName`, `logGroupName`, `compileVisibilityPolicyJson`,
-`visibilityPreview`, `visibilityManifest`, `manifestJson`, `keeperDecision`) through jsii, so the Go and Python CDK
-bindings use the same implementation.
+`visibilityPreview`, `visibilityManifest`, `manifestJson`, `keeperDecision(rules, logical, awsResult)`) through jsii, so
+the Go and Python CDK bindings use the same implementation and the Keeper read decision takes the runtimes' parameter
+order.
 
-Live stacks use `namingProfile: legacy` with pins and `loggingProfile: legacy` until the account moves. A legacy
-construct keeps its pre-contract logging behaviour and takes names from pins verbatim.
+Live stacks use `namingProfile: legacy` with pins and generated entries and `loggingProfile: legacy` until the account
+moves. A legacy construct keeps its pre-contract logging behaviour, sets pinned names verbatim and sets no name for a
+generated entry.

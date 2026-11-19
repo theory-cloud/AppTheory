@@ -94,10 +94,17 @@ export class AppTheoryKeeperVisibility extends Construct {
 
     const policyJson = AppTheoryResourceNaming.compileVisibilityPolicyJson(context.values(), rules);
     const document = iam.PolicyDocument.fromJson(JSON.parse(policyJson) as { [key: string]: unknown });
+    const readerAccount = readerAccountFromArn(props.readerPrincipalArn);
 
     this.readerRole = new iam.Role(this, "ReaderRole", {
       roleName: context.physicalName("iam_role", "keeper-reader").name,
-      assumedBy: new iam.ArnPrincipal(props.readerPrincipalArn),
+      // r3 (contract section 6): name the reader's account as the principal and
+      // restrict it with `aws:PrincipalArn`. AWS rewrites a role ARN in a trust
+      // Principal to the role's unique ID, so a direct role-ARN principal breaks
+      // when Keeper deletes and recreates its role. The condition key is not
+      // rewritten, so the trust survives that cycle and deploys before Keeper's
+      // role exists.
+      assumedBy: new ReaderRolePrincipal(readerAccount, props.readerPrincipalArn),
       description: `Keeper reader role for ${context.app}/${context.stage}`,
       inlinePolicies: { Visibility: document },
     });
@@ -158,6 +165,71 @@ export class AppTheoryKeeperVisibility extends Construct {
   public preview(): AppTheoryVisibilityPreview {
     return this.previewProvider();
   }
+}
+
+/**
+ * The reader-role trust principal: the reader account as `Principal`, restricted
+ * with an `aws:PrincipalArn` condition on Keeper's role ARN. Naming the account
+ * rather than the role ARN keeps the trust valid across a delete-and-recreate of
+ * Keeper's role, because AWS converts a role ARN in a trust `Principal` to the
+ * role's unique ID but does not convert condition-key ARNs.
+ */
+class ReaderRolePrincipal implements iam.IAssumeRolePrincipal {
+  public readonly grantPrincipal: iam.IPrincipal = this;
+  public readonly assumeRoleAction = "sts:AssumeRole";
+  public readonly principalAccount: string;
+  private readonly delegate: iam.ArnPrincipal;
+
+  constructor(account: string, private readonly principalArn: string) {
+    this.principalAccount = account;
+    // The literal `arn:aws:iam::{account}:root` matches the contract's
+    // `Principal: {"AWS": ...}` shape rather than a partition token.
+    this.delegate = new iam.ArnPrincipal(`arn:aws:iam::${account}:root`);
+  }
+
+  public get policyFragment(): iam.PrincipalPolicyFragment {
+    return this.delegate.policyFragment;
+  }
+
+  public addToPolicy(statement: iam.PolicyStatement): boolean {
+    return this.delegate.addToPolicy(statement);
+  }
+
+  public addToPrincipalPolicy(statement: iam.PolicyStatement): iam.AddToPrincipalPolicyResult {
+    return this.delegate.addToPrincipalPolicy(statement);
+  }
+
+  public addToAssumeRolePolicy(document: iam.PolicyDocument): void {
+    document.addStatements(
+      new iam.PolicyStatement({
+        actions: [this.assumeRoleAction],
+        principals: [this.delegate],
+        conditions: { ArnEquals: { "aws:PrincipalArn": this.principalArn } },
+      }),
+    );
+  }
+}
+
+const READER_PRINCIPAL_ARN_RE = /^arn:aws:iam::([0-9]{12}):role\/.+$/;
+
+/**
+ * Parse the reader account from Keeper's runtime role ARN. The trust policy
+ * needs the account as its principal, and an unresolved token or a malformed
+ * ARN cannot be validated at synthesis.
+ */
+function readerAccountFromArn(arn: string): string {
+  if (Token.isUnresolved(arn)) {
+    throw new Error(
+      "AppTheoryKeeperVisibility requires a resolved readerPrincipalArn; the reader account is parsed from it and an unresolved token cannot be validated at synthesis",
+    );
+  }
+  const match = READER_PRINCIPAL_ARN_RE.exec(arn);
+  if (!match) {
+    throw new Error(
+      `AppTheoryKeeperVisibility readerPrincipalArn must be an arn:aws:iam::<12 digits>:role/... ARN (got ${JSON.stringify(arn)})`,
+    );
+  }
+  return match[1];
 }
 
 /**

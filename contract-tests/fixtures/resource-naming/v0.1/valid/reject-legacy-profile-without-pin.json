@@ -15,7 +15,7 @@
     "logical": "events"
   },
   "expected": {
-    "error": "legacy naming profile requires a pin for every resource"
+    "error": "legacy naming profile requires a pin or a generated entry for every resource"
   },
   "proof": {
     "does_not_prove": [

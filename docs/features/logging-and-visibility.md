@@ -14,7 +14,9 @@ resource-naming contract existed.
 ## Standard logging
 
 Set `loggingProfile: AppTheoryLoggingProfile.STANDARD` on an `AppTheoryNamingContext` and pass it to the constructs.
-Log retention comes from `retentionDays`, which must be a value CloudWatch Logs accepts; the default is 30.
+Log retention comes from the app's stage config (`logging.retention_days`, lab 30 and live 90 per the contract); the
+app passes it as `retentionDays`, which must be a value CloudWatch Logs accepts. An AppTheory construct default is not a
+stage default.
 
 ### Lambda runtime
 
@@ -25,7 +27,7 @@ group. Lambda adds no permission when a log group is set through infrastructure 
 ### API access logging
 
 `AppTheoryHttpApi`, `AppTheoryRestApiRouter`, `AppTheoryMcpServer` and `AppTheoryWebSocketApi` log access by default to
-`logs/access/api/{api}`. The format is JSON with exactly these fields:
+`logs/access/api/{api}`. The HTTP and REST format is JSON with exactly these fields:
 
 | Field | Source |
 |---|---|
@@ -41,11 +43,29 @@ group. Lambda adds no permission when a log group is set through infrastructure 
 | `responseLatency` | `$context.responseLatency` (REST) |
 | `sourceIp` | `$context.identity.sourceIp` |
 
+WebSocket APIs use their own field set, because the [WebSocket logging
+variables](https://docs.aws.amazon.com/apigateway/latest/developerguide/websocket-api-logging.html) list no
+`$context.protocol`, `$context.httpMethod` or `$context.responseLength`:
+
+| Field | Source |
+|---|---|
+| `requestId` | `$context.requestId` |
+| `requestTime` | `$context.requestTime` |
+| `eventType` | `$context.eventType` |
+| `routeKey` | `$context.routeKey` |
+| `connectionId` | `$context.connectionId` |
+| `status` | `$context.status` |
+| `integrationLatency` | `$context.integrationLatency` |
+| `sourceIp` | `$context.identity.sourceIp` |
+
 The client IP is logged as delivered. Neither API Gateway nor CloudFront offers native truncation, and by operator
-ruling no masking or processing step is added. Query strings, headers and bodies are not logged.
+ruling no masking or processing step is added. Query strings, headers, cookies and bodies are not logged.
 
 Opt out per construct with `stage.accessLogging: false` (HTTP and REST), `enableAccessLogging: false` (WebSocket), or
-`ownedApi.stage.accessLogging: false` (MCP). A caller-supplied log group is used unchanged.
+`ownedApi.stage.accessLogging: false` (MCP). A caller-supplied log group is used unchanged. Under a legacy naming
+profile the access-log group a construct creates is a named resource like any other: a `log_group` pin sets its name
+and a `log_group` generated entry leaves CloudFormation's name in place. The `/aws/lambda/<fn>` runtime group and the
+CloudFront logs bucket are logging-profile resources and take no naming entry.
 
 ### CloudFront access logging
 
@@ -62,7 +82,9 @@ another Region fails synthesis, which is out of the contract's scope.
 Record fields, in delivery order: `timestamp`, `x-edge-request-id`, `cs-method`, `cs-uri-stem`, `sc-status`,
 `sc-bytes`, `time-taken`, `x-edge-result-type`, `c-ip`. No query string, cookies or referrer.
 
-Opt out with `enableLogging: false`.
+Opt out with `enableLogging: false`. Under the standard logging profile a caller-supplied `logsBucket` fails synthesis:
+the profile owns the destination, so passing one would be silently ignored. The delivery is created only when the
+stack's own resolved region is `us-east-1`; an unresolved stack region also fails under the standard profile.
 
 **Output format.** The CloudFront destination format cannot be changed later without replacing the destination. The
 contract settles it from `DescribeConfigurationTemplates`; until that lab evidence exists AppTheory exposes a typed
@@ -93,7 +115,25 @@ component under an included prefix becomes readable without editing the rule.
 
 `AppTheoryKeeperVisibility` creates, only when the consumer passes a reader principal and rules:
 
-- the role `{app}-{stage}-keeper-reader`, trusted only by that principal for `sts:AssumeRole`;
+- the role `{app}-{stage}-keeper-reader`. Its trust policy names the reader's **account** as `Principal` for
+  `sts:AssumeRole`, restricted by an `aws:PrincipalArn` condition:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Principal": { "AWS": "arn:aws:iam::191637461429:root" },
+    "Action": "sts:AssumeRole",
+    "Condition": { "ArnEquals": { "aws:PrincipalArn": "arn:aws:iam::191637461429:role/cloud-keeper-runtime" } }
+  }
+  ```
+
+  The account rather than the role ARN is the principal because AWS converts a role ARN in a trust `Principal` into
+  the role's unique ID: deleting and recreating Keeper's role would silently break such a trust, while condition-key
+  ARNs are not converted
+  ([IAM Principal element, IAM role principals](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_elements_principal.html#principal-roles)).
+  The same shape lets an app deploy before Keeper's role exists. `readerPrincipalArn` must resolve at synthesis and be
+  an `arn:aws:iam::<12 digits>:role/...` ARN. Cross-account access needs **both sides**: Keeper's own role must also
+  allow `sts:AssumeRole` on each reader-role ARN (same page, "All principals");
 - an inline policy compiled from the rules;
 - the SSM parameter `/theorycloud/visibility/{app}/{stage}/manifest`.
 

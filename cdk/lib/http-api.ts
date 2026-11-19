@@ -9,6 +9,7 @@ import type * as route53 from "aws-cdk-lib/aws-route53";
 import { Construct } from "constructs";
 
 import { defaultLogicalName } from "./private/logical-name";
+import { refuseExplicitName } from "./private/refuse-explicit-name";
 import { httpApiAccessLogFormat, retentionFor } from "./private/standard-logging";
 import type { AppTheoryNamingContext } from "./naming-context";
 
@@ -345,15 +346,15 @@ export class AppTheoryHttpApi extends Construct {
     }
     const namingContext = props.namingContext;
     const logical = props.logicalName ?? (namingContext ? defaultLogicalName(this) : undefined);
+    refuseExplicitName(namingContext, "AppTheoryHttpApi", "apiName", "api_http", logical, props.apiName !== undefined);
+    const derivedApiName = namingContext && logical ? namingContext.physicalName("api_http", logical) : undefined;
     const needsExplicitStage = stageName !== "$default"
       || stageOpts.accessLogging
       || stageOpts.throttlingRateLimit !== undefined
       || stageOpts.throttlingBurstLimit !== undefined;
 
     this.api = new apigwv2.HttpApi(this, "Api", {
-      apiName: props.apiName ?? (namingContext && logical
-        ? namingContext.physicalName("api_http", logical).name
-        : props.apiName),
+      apiName: derivedApiName && !derivedApiName.generated ? derivedApiName.name : props.apiName,
       corsPreflight: buildCorsPreflight(props.cors),
       createDefaultStage: !needsExplicitStage,
       disableExecuteApiEndpoint: props.domain?.mutualTlsAuthentication !== undefined ? true : undefined,
@@ -474,10 +475,14 @@ export class AppTheoryHttpApi extends Construct {
     }
     let logGroup: logs.ILogGroup;
     if (stageOpts.accessLogging === true) {
-      logGroup = standard && namingContext && logical
+      // The construct-created access-log group is a logging resource: under the
+      // standard profile it takes the contract log-source name, and under the
+      // legacy profile it keeps today's CloudFormation-generated name and
+      // consumes no naming entry (r3, ADV-1312-1).
+      logGroup = standard && logical
         ? new logs.LogGroup(this, "AccessLogs", {
-            logGroupName: namingContext.logGroupName(`logs/access/api/${logical}`),
-            retention: retentionFor(namingContext.retentionDays),
+            logGroupName: namingContext!.logGroupName(`logs/access/api/${logical}`),
+            retention: retentionFor(namingContext!.retentionDays),
           })
         : new logs.LogGroup(this, "AccessLogs", {
             retention: stageOpts.accessLogRetention ?? logs.RetentionDays.ONE_MONTH,

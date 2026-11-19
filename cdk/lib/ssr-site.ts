@@ -13,6 +13,7 @@ import { Construct } from "constructs";
 
 import { AppTheoryCloudFrontLogFormat } from "./logging";
 import { defaultLogicalName } from "./private/logical-name";
+import { refuseExplicitName } from "./private/refuse-explicit-name";
 import { bucketNamingProps, enableCloudFrontStandardLogging } from "./private/standard-logging";
 import type { AppTheoryNamingContext } from "./naming-context";
 
@@ -622,6 +623,28 @@ export class AppTheorySsrSite extends Construct {
     const namingContext = props.namingContext;
     const logical = props.logicalName ?? (namingContext ? defaultLogicalName(this) : undefined);
     const enableLogging = props.enableLogging ?? true;
+    const isrMetadataLogical = logical ? `${logical}-isr-metadata` : undefined;
+    refuseExplicitName(
+      namingContext,
+      "AppTheorySsrSite",
+      "isrMetadataTableName",
+      "dynamodb_table",
+      isrMetadataLogical,
+      props.isrMetadataTableName !== undefined,
+    );
+    refuseExplicitName(
+      namingContext,
+      "AppTheorySsrSite",
+      "cacheTableName",
+      "dynamodb_table",
+      isrMetadataLogical,
+      props.cacheTableName !== undefined,
+    );
+    if (namingContext?.standardLogging === true && props.logsBucket !== undefined) {
+      throw new Error(
+        "AppTheorySsrSite cannot honor props.logsBucket under the standard logging profile; CloudFront access logs go to the contract log group, so remove props.logsBucket or use the legacy logging profile",
+      );
+    }
     const standardLogging = namingContext?.standardLogging === true && enableLogging;
 
     this.assetsBucket =
@@ -698,7 +721,19 @@ export class AppTheorySsrSite extends Construct {
       );
     }
 
-    const isrMetadataTableName = configuredIsrMetadataTableNames[0] ?? "";
+    let isrMetadataTableName = configuredIsrMetadataTableNames[0] ?? "";
+
+    // Under a naming context the ISR/cache metadata table is named through the
+    // contract. The construct consumes the `{logical}-isr-metadata` entry when
+    // it needs the table: an externally created table is passed through
+    // `isrMetadataTable`, and `ssg-isr` needs one. The entry key includes the
+    // table suffix, matching the name the construct consumes (r3, ADV-1312-2).
+    if (namingContext && logical && (props.isrMetadataTable !== undefined || siteMode === AppTheorySsrSiteMode.SSG_ISR)) {
+      const composed = namingContext.physicalName("dynamodb_table", `${logical}-isr-metadata`);
+      if (isrMetadataTableName === "" && !composed.generated && composed.name !== undefined) {
+        isrMetadataTableName = composed.name;
+      }
+    }
 
     if (props.assetsPath) {
       new s3deploy.BucketDeployment(this, "AssetsDeployment", {

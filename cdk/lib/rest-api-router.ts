@@ -9,6 +9,7 @@ import * as wafv2 from "aws-cdk-lib/aws-wafv2";
 import { Construct } from "constructs";
 
 import { defaultLogicalName } from "./private/logical-name";
+import { refuseExplicitName } from "./private/refuse-explicit-name";
 import { configureRestApiRegionalWaf } from "./private/rest-api-waf";
 import { restApiAccessLogFormat, retentionFor } from "./private/standard-logging";
 import { markRestApiStageRouteAsStreaming } from "./private/rest-api-streaming";
@@ -423,6 +424,10 @@ export class AppTheoryRestApiRouter extends Construct {
         this.authorizationType = props.authorizationType;
         this.namingContext = props.namingContext;
         this.logicalName = props.logicalName ?? (props.namingContext ? defaultLogicalName(this) : undefined);
+        refuseExplicitName(props.namingContext, "AppTheoryRestApiRouter", "apiName", "api_rest", this.logicalName, props.apiName !== undefined);
+        const derivedApiName = this.namingContext && this.logicalName
+            ? this.namingContext.physicalName("api_rest", this.logicalName)
+            : undefined;
 
         const configuredStageOpts = props.stage ?? {};
         const stageOpts = this.effectiveStageOptions(configuredStageOpts);
@@ -434,9 +439,7 @@ export class AppTheoryRestApiRouter extends Construct {
 
         // Create the REST API
         this.api = new apigw.RestApi(this, "Api", {
-            restApiName: props.apiName ?? (this.namingContext && this.logicalName
-                ? this.namingContext.physicalName("api_rest", this.logicalName).name
-                : props.apiName),
+            restApiName: derivedApiName && !derivedApiName.generated ? derivedApiName.name : props.apiName,
             description: props.description,
             deploy: props.deploy ?? true,
             retainDeployments: props.retainDeployments,
@@ -622,8 +625,12 @@ export class AppTheoryRestApiRouter extends Construct {
         }
 
         if (stageOpts.accessLogging === true) {
-            // Create an auto-managed log group
-            const logGroup = new logs.LogGroup(this, "AccessLogs", standard && this.namingContext && this.logicalName
+            // The construct-created access-log group is a logging resource: under
+            // the standard profile it takes the contract log-source name, and
+            // under the legacy profile it keeps today's CloudFormation-generated
+            // name and consumes no naming entry (r3, ADV-1312-1).
+            const logGroup = new logs.LogGroup(this, "AccessLogs",
+                standard && this.namingContext && this.logicalName
                 ? {
                     logGroupName: this.namingContext.logGroupName(`logs/access/api/${this.logicalName}`),
                     retention: retentionFor(this.namingContext.retentionDays),

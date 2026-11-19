@@ -15,6 +15,8 @@ type AppTheoryNamingContext interface {
 	Account() *string
 	// App instance id.
 	App() *string
+	// Generated-name entries keyed `{type}:{logical}`.
+	Generated() *[]*string
 	// Logging profile.
 	LoggingProfile() AppTheoryLoggingProfile
 	// Namespace segment.
@@ -74,6 +76,16 @@ func (j *jsiiProxy_AppTheoryNamingContext) App() *string {
 	_jsii_.Get(
 		j,
 		"app",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheoryNamingContext) Generated() *[]*string {
+	var returns *[]*string
+	_jsii_.Get(
+		j,
+		"generated",
 		&returns,
 	)
 	return returns

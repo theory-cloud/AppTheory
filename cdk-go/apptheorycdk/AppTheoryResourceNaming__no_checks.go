@@ -8,7 +8,7 @@ func validateAppTheoryResourceNaming_CompileVisibilityPolicyJsonParameters(value
 	return nil
 }
 
-func validateAppTheoryResourceNaming_KeeperDecisionParameters(logical *string, awsResult *string, rules *AppTheoryVisibilityRules) error {
+func validateAppTheoryResourceNaming_KeeperDecisionParameters(rules *AppTheoryVisibilityRules, logical *string, awsResult *string) error {
 	return nil
 }
 

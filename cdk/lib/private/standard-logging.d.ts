@@ -24,6 +24,13 @@ export declare function restApiAccessLogFormat(): apigw.AccessLogFormat;
  */
 export declare function retentionFor(days: number): logs.RetentionDays;
 /**
+ * The API Gateway access-log field names and values for WebSocket APIs
+ * (contract section 3, ADV-1311-5). The WebSocket logging-variables list has no
+ * protocol, HTTP method or response length, so the shared HTTP field set does
+ * not apply.
+ */
+export declare function webSocketApiAccessLogFormat(): string;
+/**
  * Create a standard-profile log group named from the naming contract.
  */
 export declare function standardLogGroup(scope: Construct, id: string, context: AppTheoryNamingContext, logical: string): logs.LogGroup;
@@ -46,10 +53,11 @@ export declare function enableCloudFrontStandardLogging(options: {
 }): logs.LogGroup;
 /**
  * The bucket-name properties the naming contract requires. A derived profile
- * sets the account-regional namespace and prefix; a legacy profile supplies the
- * pinned full name.
+ * sets the account-regional namespace and prefix; a legacy pin supplies the
+ * full name; a legacy generated entry sets no name so CloudFormation keeps
+ * today's name and global namespace.
  */
-export declare function bucketNamingProps(context: AppTheoryNamingContext, logical: string, explicitName?: string): {
+export declare function bucketNamingProps(context: AppTheoryNamingContext, logical: string): {
     bucketName?: string;
     bucketNamespace?: s3.BucketNamespace;
     bucketNamePrefix?: string;

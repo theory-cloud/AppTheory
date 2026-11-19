@@ -1091,6 +1091,7 @@ func init() {
 		[]_jsii_.Member{
 			_jsii_.MemberProperty{JsiiProperty: "account", GoGetter: "Account"},
 			_jsii_.MemberProperty{JsiiProperty: "app", GoGetter: "App"},
+			_jsii_.MemberProperty{JsiiProperty: "generated", GoGetter: "Generated"},
 			_jsii_.MemberProperty{JsiiProperty: "loggingProfile", GoGetter: "LoggingProfile"},
 			_jsii_.MemberMethod{JsiiMethod: "logGroupName", GoMethod: "LogGroupName"},
 			_jsii_.MemberMethod{JsiiMethod: "logSourcePrefix", GoMethod: "LogSourcePrefix"},
