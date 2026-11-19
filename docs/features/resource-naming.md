@@ -116,7 +116,7 @@ execution role.
 | `AppTheoryWebSocketApi` | `api_websocket:{logical}`; `dynamodb_table:{logical}-connections` when it creates the connection table |
 | `AppTheoryMcpServer` | `api_http:{logical}` for its owned API; `dynamodb_table:{logical}-sessions` when session state creates the table |
 | `AppTheoryMediaCdn` | `s3_bucket:{logical}-media` unless `props.bucket` supplies the bucket |
-| `AppTheorySsrSite` | `s3_bucket:{logical}-assets`; `s3_bucket:{logical}-html-store` when the HTML store is configured; `dynamodb_table:{logical}-isr-metadata` when it wires an ISR metadata table (`isrMetadataTable` or `mode: ssg-isr`) |
+| `AppTheorySsrSite` | `s3_bucket:{logical}-assets`; `s3_bucket:{logical}-html-store` when the HTML store is configured; `dynamodb_table:{logical}-isr-metadata` under `mode: ssg-isr` when no external `isrMetadataTable` supplies the table |
 | `AppTheoryKeeperVisibility` | `iam_role:keeper-reader` |
 | Any construct with CloudFront standard logging (`AppTheorySsrSite`, `AppTheoryPathRoutedFrontend`, `AppTheoryMediaCdn`) | `log_delivery_source:logs/access/cdn/{logical}` and `log_delivery_destination:logs/access/cdn/{logical}` under `logging.profile: standard` |
 | `AppTheoryPathRoutedFrontend` | only the CloudFront delivery entries above |
