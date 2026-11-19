@@ -61,6 +61,14 @@ export interface AppTheoryNamingContextProps {
   readonly pins?: { [key: string]: string };
 
   /**
+   * Generated-name entries keyed `{type}:{logical}`. An entry means
+   * CloudFormation generates the name today, so the construct sets no
+   * physical-name property. Valid only under the legacy naming profile.
+   * @default []
+   */
+  readonly generated?: string[];
+
+  /**
    * Naming profile.
    * @default AppTheoryNamingProfile.DERIVED
    */
@@ -117,6 +125,16 @@ export class AppTheoryNamingContext extends Construct {
   public readonly pins: { [key: string]: string };
 
   /**
+   * Generated-name entries keyed `{type}:{logical}`.
+   */
+  public readonly generated: string[];
+
+  /**
+   * The naming entries a construct has consumed at synthesis.
+   */
+  private readonly consumed = new Set<string>();
+
+  /**
    * Naming profile.
    */
   public readonly namingProfile: AppTheoryNamingProfile;
@@ -149,6 +167,7 @@ export class AppTheoryNamingContext extends Construct {
     this.account = props.account;
     this.region = props.region;
     this.pins = { ...(props.pins ?? {}) };
+    this.generated = [...(props.generated ?? [])];
     this.namingProfile = props.namingProfile ?? AppTheoryNamingProfile.DERIVED;
     this.loggingProfile = props.loggingProfile ?? AppTheoryLoggingProfile.LEGACY;
     this.retentionDays = props.retentionDays ?? 30;
@@ -160,6 +179,18 @@ export class AppTheoryNamingContext extends Construct {
         `AppTheoryNamingContext retentionDays must be one of ${ACCEPTED_RETENTION_DAYS.join(", ")}; CloudWatch Logs rejects other values`,
       );
     }
+
+    this.node.addValidation({
+      validate: () => {
+        const orphans = [...new Set([...Object.keys(this.pins), ...this.generated])].filter(
+          (key) => !this.consumed.has(key),
+        );
+        if (orphans.length === 0) return [];
+        return [
+          `AppTheoryNamingContext naming entries match no resource in the stack: ${orphans.join(", ")}; remove them or pass the matching logical name to the construct that owns the resource`,
+        ];
+      },
+    });
   }
 
   /**
@@ -180,6 +211,7 @@ export class AppTheoryNamingContext extends Construct {
       account: this.account,
       region: this.region,
       pins: this.pins,
+      generated: this.generated,
       namingProfile: this.namingProfile,
       loggingProfile: this.loggingProfile,
       retentionDays: this.retentionDays,
@@ -190,7 +222,9 @@ export class AppTheoryNamingContext extends Construct {
    * Compose the physical name of one resource under this context.
    */
   public physicalName(resourceType: string, logical: string): AppTheoryPhysicalName {
-    return AppTheoryResourceNaming.physicalName(this.values(), resourceType, logical);
+    const composed = AppTheoryResourceNaming.physicalName(this.values(), resourceType, logical);
+    this.consumed.add(`${resourceType}:${logical}`);
+    return composed;
   }
 
   /**

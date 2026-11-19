@@ -36,13 +36,14 @@ func AppTheoryResourceNaming_CompileVisibilityPolicyJson(values *AppTheoryNaming
 	return returns
 }
 
-// Keeper's read decision.
+// Keeper's read decision, in the runtimes' parameter order.
 //
-// Fails closed on a denial or an unreachable account.
-func AppTheoryResourceNaming_KeeperDecision(logical *string, awsResult *string, rules *AppTheoryVisibilityRules) AppTheoryKeeperAnswer {
+// Fails closed on a
+// denial or an unreachable account.
+func AppTheoryResourceNaming_KeeperDecision(rules *AppTheoryVisibilityRules, logical *string, awsResult *string) AppTheoryKeeperAnswer {
 	_init_.Initialize()
 
-	if err := validateAppTheoryResourceNaming_KeeperDecisionParameters(logical, awsResult, rules); err != nil {
+	if err := validateAppTheoryResourceNaming_KeeperDecisionParameters(rules, logical, awsResult); err != nil {
 		panic(err)
 	}
 	var returns AppTheoryKeeperAnswer
@@ -50,7 +51,7 @@ func AppTheoryResourceNaming_KeeperDecision(logical *string, awsResult *string, 
 	_jsii_.StaticInvoke(
 		"@theory-cloud/apptheory-cdk.AppTheoryResourceNaming",
 		"keeperDecision",
-		[]interface{}{logical, awsResult, rules},
+		[]interface{}{rules, logical, awsResult},
 		&returns,
 	)
 
@@ -116,8 +117,10 @@ func AppTheoryResourceNaming_ManifestJson(manifest *AppTheoryVisibilityManifest)
 
 // Compose the physical name of one resource.
 //
-// A pin always wins; a legacy
-// profile without a pin fails synthesis.
+// A pin always wins. A generated
+// entry means CloudFormation generates the name today and the construct sets
+// no physical-name property. Generated entries are legacy-only; a legacy
+// profile needs exactly one of a pin or a generated entry.
 func AppTheoryResourceNaming_PhysicalName(values *AppTheoryNamingContextValues, resourceType *string, logical *string) *AppTheoryPhysicalName {
 	_init_.Initialize()
 

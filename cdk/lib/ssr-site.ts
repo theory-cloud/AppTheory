@@ -13,6 +13,7 @@ import { Construct } from "constructs";
 
 import { AppTheoryCloudFrontLogFormat } from "./logging";
 import { defaultLogicalName } from "./private/logical-name";
+import { refuseExplicitName } from "./private/refuse-explicit-name";
 import { bucketNamingProps, enableCloudFrontStandardLogging } from "./private/standard-logging";
 import type { AppTheoryNamingContext } from "./naming-context";
 
@@ -622,6 +623,13 @@ export class AppTheorySsrSite extends Construct {
     const namingContext = props.namingContext;
     const logical = props.logicalName ?? (namingContext ? defaultLogicalName(this) : undefined);
     const enableLogging = props.enableLogging ?? true;
+    refuseExplicitName(namingContext, "AppTheorySsrSite", "isrMetadataTableName", "dynamodb_table", logical, props.isrMetadataTableName !== undefined);
+    refuseExplicitName(namingContext, "AppTheorySsrSite", "cacheTableName", "dynamodb_table", logical, props.cacheTableName !== undefined);
+    if (namingContext?.standardLogging === true && props.logsBucket !== undefined) {
+      throw new Error(
+        "AppTheorySsrSite cannot honor props.logsBucket under the standard logging profile; CloudFront access logs go to the contract log group, so remove props.logsBucket or use the legacy logging profile",
+      );
+    }
     const standardLogging = namingContext?.standardLogging === true && enableLogging;
 
     this.assetsBucket =

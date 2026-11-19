@@ -14,7 +14,8 @@ import { Construct } from "constructs";
 
 import { AppTheoryMcpRouteAlgebra } from "./mcp-route-algebra";
 import { defaultLogicalName } from "./private/logical-name";
-import { httpApiAccessLogFormat, retentionFor } from "./private/standard-logging";
+import { refuseExplicitName } from "./private/refuse-explicit-name";
+import { accessLogGroupName, httpApiAccessLogFormat, retentionFor } from "./private/standard-logging";
 import type { AppTheoryNamingContext } from "./naming-context";
 import { buildCorsPreflight } from "./cors";
 import type { AppTheoryHttpApiCorsOptions } from "./http-api";
@@ -866,10 +867,19 @@ export class AppTheoryMcpServer extends Construct {
       const namingContext = props.namingContext;
       const logical = props.logicalName ?? (namingContext ? defaultLogicalName(this) : undefined);
       const standard = namingContext?.standardLogging === true;
+      const apiNameProp = props.ownedApi?.apiName !== undefined ? "ownedApi.apiName" : "apiName";
+      refuseExplicitName(namingContext, "AppTheoryMcpServer", apiNameProp, "api_http", logical, ownedOptions.apiName !== undefined);
+      refuseExplicitName(
+        namingContext,
+        "AppTheoryMcpServer",
+        "sessionState.tableName",
+        "dynamodb_table",
+        logical,
+        props.sessionState?.tableName !== undefined || props.sessionTableName !== undefined,
+      );
+      const derivedApiName = namingContext && logical ? namingContext.physicalName("api_http", logical) : undefined;
       const api = new apigwv2.HttpApi(this, "Api", {
-        apiName: ownedOptions.apiName ?? (namingContext && logical
-          ? namingContext.physicalName("api_http", logical).name
-          : ownedOptions.apiName),
+        apiName: derivedApiName && !derivedApiName.generated ? derivedApiName.name : ownedOptions.apiName,
         corsPreflight: buildCorsPreflight(props.cors),
         createDefaultStage: false,
         disableExecuteApiEndpoint: originReachability === AppTheoryMcpOriginReachability.DISABLED
@@ -900,14 +910,22 @@ export class AppTheoryMcpServer extends Construct {
         if (standard && !logical) {
           throw new Error("AppTheoryMcpServer standard logging requires a logical name");
         }
+        const contractName = namingContext && logical
+          ? accessLogGroupName(namingContext, `logs/access/api/${logical}`)
+          : undefined;
         const logGroup = standard && namingContext && logical
           ? new logs.LogGroup(this, "AccessLogs", {
-              logGroupName: namingContext.logGroupName(`logs/access/api/${logical}`),
+              logGroupName: contractName,
               retention: retentionFor(namingContext.retentionDays),
             })
-          : new logs.LogGroup(this, "AccessLogs", {
-              retention: stageOptions.accessLogRetention,
-            });
+          : contractName !== undefined
+            ? new logs.LogGroup(this, "AccessLogs", {
+                logGroupName: contractName,
+                retention: stageOptions.accessLogRetention,
+              })
+            : new logs.LogGroup(this, "AccessLogs", {
+                retention: stageOptions.accessLogRetention,
+              });
         (this as { accessLogGroup?: logs.ILogGroup }).accessLogGroup = logGroup;
         const cfnStage = stage.node.defaultChild as apigwv2.CfnStage;
         cfnStage.accessLogSettings = {
@@ -998,8 +1016,15 @@ export class AppTheoryMcpServer extends Construct {
 
     const sessionState = normalizeSessionState(props);
     if (sessionState.enabled) {
+      const namingContext = props.api ? undefined : props.namingContext;
+      const logical = namingContext
+        ? props.logicalName ?? defaultLogicalName(this)
+        : undefined;
+      const derivedTableName = namingContext && logical
+        ? namingContext.physicalName("dynamodb_table", `${logical}-sessions`)
+        : undefined;
       const table = new dynamodb.Table(this, "SessionTable", {
-        tableName: sessionState.tableName,
+        tableName: derivedTableName && !derivedTableName.generated ? derivedTableName.name : sessionState.tableName,
         billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
         partitionKey: { name: "sessionId", type: dynamodb.AttributeType.STRING },
         timeToLiveAttribute: "expiresAt",

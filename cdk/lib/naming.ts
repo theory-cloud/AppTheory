@@ -88,6 +88,14 @@ export interface AppTheoryNamingContextValues {
   readonly pins?: { [key: string]: string };
 
   /**
+   * Generated-name entries keyed `{type}:{logical}`. An entry means
+   * CloudFormation generates the name today, so the construct sets no
+   * physical-name property. Valid only under the legacy naming profile.
+   * @default []
+   */
+  readonly generated?: string[];
+
+  /**
    * Naming profile.
    * @default AppTheoryNamingProfile.DERIVED
    */
@@ -111,9 +119,10 @@ export interface AppTheoryNamingContextValues {
  */
 export interface AppTheoryPhysicalName {
   /**
-   * The full physical name.
+   * The full physical name. Absent when CloudFormation generates the name.
+   * @default undefined
    */
-  readonly name: string;
+  readonly name?: string;
 
   /**
    * The account-regional bucket-name prefix, when the type uses one.
@@ -132,6 +141,13 @@ export interface AppTheoryPhysicalName {
    * @default false
    */
   readonly pinned?: boolean;
+
+  /**
+   * Whether CloudFormation generates the name, so no physical-name property is
+   * set.
+   * @default false
+   */
+  readonly generated?: boolean;
 }
 
 /**
@@ -238,6 +254,7 @@ const RULES: { [type: string]: Rule } = {
   codebuild_project: { kind: "dash", max: 150, charset: "[A-Za-z0-9_-]" },
   api_rest: { kind: "dash", max: 128, charset: "[A-Za-z0-9_-]" },
   api_http: { kind: "dash", max: 128, charset: "[A-Za-z0-9_-]" },
+  api_websocket: { kind: "dash", max: 128, charset: "[A-Za-z0-9_-]" },
   log_delivery_source: { kind: "dash", max: 60, charset: "[A-Za-z0-9_-]" },
   log_delivery_destination: { kind: "dash", max: 60, charset: "[A-Za-z0-9_-]" },
   log_group: { kind: "log", max: 512, charset: "[A-Za-z0-9_-]" },
@@ -282,7 +299,7 @@ function namespaceOf(values: AppTheoryNamingContextValues): string {
 }
 
 function sortedCopy(values: string[] | undefined): string[] {
-  return [...(values ?? [])].sort();
+  return [...new Set(values ?? [])].sort();
 }
 
 function logPrefix(values: AppTheoryNamingContextValues): string {
@@ -330,8 +347,10 @@ export class AppTheoryResourceNaming {
   }
 
   /**
-   * Compose the physical name of one resource. A pin always wins; a legacy
-   * profile without a pin fails synthesis.
+   * Compose the physical name of one resource. A pin always wins. A generated
+   * entry means CloudFormation generates the name today and the construct sets
+   * no physical-name property. Generated entries are legacy-only; a legacy
+   * profile needs exactly one of a pin or a generated entry.
    */
   public static physicalName(
     values: AppTheoryNamingContextValues,
@@ -342,10 +361,19 @@ export class AppTheoryResourceNaming {
     if (!LOGICAL_RE.test(logical)) fail("logical");
     const rule = RULES[resourceType];
     if (!rule) fail(`resource type ${resourceType}`);
-    const pin = values.pins?.[`${resourceType}:${logical}`];
+    const generated = values.generated ?? [];
+    const legacy = (values.namingProfile ?? AppTheoryNamingProfile.DERIVED) === AppTheoryNamingProfile.LEGACY;
+    if (generated.length > 0 && !legacy) {
+      fail("generated entries are only valid under the legacy naming profile");
+    }
+    const key = `${resourceType}:${logical}`;
+    const pin = values.pins?.[key];
+    const keepGenerated = generated.includes(key);
+    if (pin !== undefined && keepGenerated) fail("a resource has both a pin and a generated entry");
     if (pin !== undefined) return { name: pin, pinned: true };
-    if ((values.namingProfile ?? AppTheoryNamingProfile.DERIVED) === AppTheoryNamingProfile.LEGACY) {
-      fail(`legacy naming profile requires a pin for ${resourceType}:${logical}`);
+    if (keepGenerated) return { generated: true };
+    if (legacy) {
+      fail(`legacy naming profile requires a pin or a generated entry for ${key}`);
     }
 
     let out: AppTheoryPhysicalName;
@@ -374,9 +402,10 @@ export class AppTheoryResourceNaming {
       fail(`unsupported kind ${String(rule.kind)}`);
     }
 
-    if (!new RegExp(`^${rule.charset}+$`).test(out.name)) fail("charset");
-    if (out.name.length > rule.max) fail("length");
-    if (["s3_bucket", "s3_vector_bucket", "s3_vector_index"].includes(resourceType) && !S3_EDGES_RE.test(out.name)) {
+    const name = out.name as string;
+    if (!new RegExp(`^(?:${rule.charset})+$`).test(name)) fail("charset");
+    if (name.length > rule.max) fail("length");
+    if (["s3_bucket", "s3_vector_bucket", "s3_vector_index"].includes(resourceType) && !S3_EDGES_RE.test(name)) {
       fail("s3 start/end");
     }
     return out;
@@ -502,12 +531,13 @@ export class AppTheoryResourceNaming {
   }
 
   /**
-   * Keeper's read decision. Fails closed on a denial or an unreachable account.
+   * Keeper's read decision, in the runtimes' parameter order. Fails closed on a
+   * denial or an unreachable account.
    */
   public static keeperDecision(
+    rules: AppTheoryVisibilityRules,
     logical: string,
     awsResult: string,
-    rules?: AppTheoryVisibilityRules,
   ): AppTheoryKeeperAnswer {
     if (!rules || !AppTheoryResourceNaming.sourceVisible(rules, logical)) {
       return AppTheoryKeeperAnswer.NOT_SHARED;

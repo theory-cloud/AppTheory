@@ -1,3 +1,4 @@
+import { Stack, Token } from "aws-cdk-lib";
 import * as apigw from "aws-cdk-lib/aws-apigateway";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as logs from "aws-cdk-lib/aws-logs";
@@ -68,6 +69,39 @@ export function retentionFor(days: number): logs.RetentionDays {
 }
 
 /**
+ * The API Gateway access-log field names and values for WebSocket APIs
+ * (contract section 3, ADV-1311-5). The WebSocket logging-variables list has no
+ * protocol, HTTP method or response length, so the shared HTTP field set does
+ * not apply.
+ */
+export function webSocketApiAccessLogFormat(): string {
+  return JSON.stringify({
+    requestId: "$context.requestId",
+    requestTime: "$context.requestTime",
+    eventType: "$context.eventType",
+    routeKey: "$context.routeKey",
+    connectionId: "$context.connectionId",
+    status: "$context.status",
+    integrationLatency: "$context.integrationLatency",
+    sourceIp: "$context.identity.sourceIp",
+  });
+}
+
+/**
+ * The access-log group name for a construct-created group.
+ *
+ * With the standard logging profile the group is a contract log source and
+ * takes no naming entry. Under a legacy naming profile the group is consumed
+ * like any other resource, so a generated entry sets no name and a pin sets the
+ * pinned name.
+ */
+export function accessLogGroupName(context: AppTheoryNamingContext, logical: string): string | undefined {
+  if (context.standardLogging) return context.logGroupName(logical);
+  const composed = context.physicalName("log_group", logical);
+  return composed.generated ? undefined : composed.name;
+}
+
+/**
  * Create a standard-profile log group named from the naming contract.
  */
 export function standardLogGroup(
@@ -100,21 +134,32 @@ export function enableCloudFrontStandardLogging(options: {
   readonly format?: AppTheoryCloudFrontLogFormat;
 }): logs.LogGroup {
   const { scope, id, context, distribution, logical } = options;
+  const stackRegion = Stack.of(scope).region;
+  if (!Token.isUnresolved(stackRegion) && stackRegion !== "us-east-1") {
+    throw new Error(
+      `CloudFront standard logging requires a us-east-1 stack (got ${stackRegion}); a stack outside us-east-1 is out of the v0.1 resource-naming contract`,
+    );
+  }
+  if (Token.isUnresolved(stackRegion)) {
+    throw new Error(
+      "CloudFront standard logging requires a resolved stack region; an environment-agnostic stack cannot prove the delivery lives in us-east-1 and is out of the v0.1 resource-naming contract",
+    );
+  }
   if (context.region !== "us-east-1") {
     throw new Error(
-      `CloudFront standard logging requires a us-east-1 stack (got ${context.region}); a stack outside us-east-1 is out of the v0.1 resource-naming contract`,
+      `CloudFront standard logging requires the naming context region to be us-east-1 (got ${context.region}); a stack outside us-east-1 is out of the v0.1 resource-naming contract`,
     );
   }
   const logGroup = standardLogGroup(scope, `${id}LogGroup`, context, logical);
 
   const source = new logs.CfnDeliverySource(scope, `${id}DeliverySource`, {
-    name: context.physicalName("log_delivery_source", logical).name,
+    name: context.physicalName("log_delivery_source", logical).name as string,
     logType: "ACCESS_LOGS",
     resourceArn: distribution.distributionArn,
   });
 
   const destination = new logs.CfnDeliveryDestination(scope, `${id}DeliveryDestination`, {
-    name: context.physicalName("log_delivery_destination", logical).name,
+    name: context.physicalName("log_delivery_destination", logical).name as string,
     destinationResourceArn: logGroup.logGroupArn,
     outputFormat: options.format ?? AppTheoryCloudFrontLogFormat.W3C,
   });
@@ -130,27 +175,20 @@ export function enableCloudFrontStandardLogging(options: {
 
 /**
  * The bucket-name properties the naming contract requires. A derived profile
- * sets the account-regional namespace and prefix; a legacy profile supplies the
- * pinned full name.
+ * sets the account-regional namespace and prefix; a legacy pin supplies the
+ * full name; a legacy generated entry sets no name so CloudFormation keeps
+ * today's name and global namespace.
  */
 export function bucketNamingProps(
   context: AppTheoryNamingContext,
   logical: string,
-  explicitName?: string,
 ): { bucketName?: string; bucketNamespace?: s3.BucketNamespace; bucketNamePrefix?: string } {
   const composed = context.physicalName("s3_bucket", logical);
-  if (composed.pinned) {
-    if (explicitName !== undefined && explicitName !== composed.name) {
-      throw new Error(
-        `AppTheory bucket ${logical} cannot honor ${JSON.stringify(explicitName)} when the legacy pin is ${JSON.stringify(composed.name)}`,
-      );
-    }
-    return { bucketName: composed.name };
+  if (composed.generated) {
+    return {};
   }
-  if (explicitName !== undefined) {
-    throw new Error(
-      `AppTheory derives the bucket name for ${logical} from the naming context; omit the explicit name or use the legacy profile with a pin`,
-    );
+  if (composed.pinned) {
+    return { bucketName: composed.name };
   }
   if (composed.bucketNamePrefix === undefined) {
     throw new Error(`AppTheory bucket ${logical} requires an account-regional prefix`);

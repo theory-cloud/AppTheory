@@ -9,7 +9,8 @@ import * as logs from "aws-cdk-lib/aws-logs";
 import { Construct } from "constructs";
 
 import { defaultLogicalName } from "./private/logical-name";
-import { retentionFor } from "./private/standard-logging";
+import { refuseExplicitName } from "./private/refuse-explicit-name";
+import { accessLogGroupName, retentionFor, webSocketApiAccessLogFormat } from "./private/standard-logging";
 import type { AppTheoryNamingContext } from "./naming-context";
 
 export interface AppTheoryWebSocketApiProps {
@@ -68,13 +69,17 @@ export class AppTheoryWebSocketApi extends Construct {
 
     const stageName = String(props.stageName ?? "dev").trim() || "dev";
     const standard = props.namingContext?.standardLogging === true;
-    const logical = props.logicalName ?? (props.namingContext ? defaultLogicalName(this) : undefined);
+    const namingContext = props.namingContext;
+    const logical = props.logicalName ?? (namingContext ? defaultLogicalName(this) : undefined);
+    refuseExplicitName(namingContext, "AppTheoryWebSocketApi", "apiName", "api_websocket", logical, props.apiName !== undefined);
+    refuseExplicitName(namingContext, "AppTheoryWebSocketApi", "connectionTableName", "dynamodb_table", logical, props.connectionTableName !== undefined);
+    const derivedApiName = namingContext && logical ? namingContext.physicalName("api_websocket", logical) : undefined;
     const connectHandler = props.connectHandler ?? props.handler;
     const disconnectHandler = props.disconnectHandler ?? props.handler;
     const defaultHandler = props.defaultHandler ?? props.handler;
 
     this.api = new apigwv2.WebSocketApi(this, "Api", {
-      apiName: props.apiName,
+      apiName: derivedApiName && !derivedApiName.generated ? derivedApiName.name : props.apiName,
     });
 
     const useRouteSpecificHandlers =
@@ -109,6 +114,9 @@ export class AppTheoryWebSocketApi extends Construct {
     if (props.connectionTable) {
       this.connectionTable = props.connectionTable;
     } else if (shouldCreateConnectionTable) {
+      const derivedTableName = namingContext && logical
+        ? namingContext.physicalName("dynamodb_table", `${logical}-connections`)
+        : undefined;
       const pkName = props.connectionTablePartitionKeyName ?? "PK";
       const skName = props.connectionTableSortKeyName ?? "SK";
       const ttlAttribute = props.connectionTableTimeToLiveAttribute ?? "ttl";
@@ -116,7 +124,7 @@ export class AppTheoryWebSocketApi extends Construct {
       const enablePITR = props.connectionTableEnablePointInTimeRecovery ?? true;
 
       this.connectionTable = new dynamodb.Table(this, "ConnectionTable", {
-        tableName: props.connectionTableName,
+        tableName: derivedTableName && !derivedTableName.generated ? derivedTableName.name : props.connectionTableName,
         billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
         partitionKey: { name: pkName, type: dynamodb.AttributeType.STRING },
         sortKey: { name: skName, type: dynamodb.AttributeType.STRING },
@@ -141,18 +149,28 @@ export class AppTheoryWebSocketApi extends Construct {
       if (standard && !props.accessLogGroup && !logical) {
         throw new Error("AppTheoryWebSocketApi standard logging requires a logical name");
       }
+      const contractName = namingContext && logical
+        ? accessLogGroupName(namingContext, `logs/access/api/${logical}`)
+        : undefined;
       const logGroup =
         props.accessLogGroup ??
-        new logs.LogGroup(this, "AccessLogs", standard && props.namingContext && logical
+        new logs.LogGroup(this, "AccessLogs",
+          standard && namingContext && logical
           ? {
-              logGroupName: props.namingContext.logGroupName(`logs/access/api/${logical}`),
-              retention: retentionFor(props.namingContext.retentionDays),
+              logGroupName: contractName,
+              retention: retentionFor(namingContext.retentionDays),
               removalPolicy: props.accessLogRemovalPolicy ?? RemovalPolicy.RETAIN,
             }
-          : {
-              retention: props.accessLogRetention ?? logs.RetentionDays.ONE_WEEK,
-              removalPolicy: props.accessLogRemovalPolicy ?? RemovalPolicy.RETAIN,
-            });
+          : contractName !== undefined
+            ? {
+                logGroupName: contractName,
+                retention: props.accessLogRetention ?? logs.RetentionDays.ONE_WEEK,
+                removalPolicy: props.accessLogRemovalPolicy ?? RemovalPolicy.RETAIN,
+              }
+            : {
+                retention: props.accessLogRetention ?? logs.RetentionDays.ONE_WEEK,
+                removalPolicy: props.accessLogRemovalPolicy ?? RemovalPolicy.RETAIN,
+              });
       this.accessLogGroup = logGroup;
 
       logGroup.addToResourcePolicy(
@@ -166,18 +184,7 @@ export class AppTheoryWebSocketApi extends Construct {
       const format =
         props.accessLogFormat ??
         (standard
-          ? apigateway.AccessLogFormat.custom(
-              JSON.stringify({
-                requestId: apigateway.AccessLogField.contextRequestId(),
-                requestTime: apigateway.AccessLogField.contextRequestTime(),
-                routeKey: apigateway.AccessLogField.contextRouteKey(),
-                status: apigateway.AccessLogField.contextStatus(),
-                protocol: apigateway.AccessLogField.contextProtocol(),
-                responseLength: apigateway.AccessLogField.contextResponseLength(),
-                integrationLatency: apigateway.AccessLogField.contextIntegrationLatency(),
-                sourceIp: apigateway.AccessLogField.contextIdentitySourceIp(),
-              }),
-            )
+          ? apigateway.AccessLogFormat.custom(webSocketApiAccessLogFormat())
           : apigateway.AccessLogFormat.custom(
               JSON.stringify({
                 requestId: apigateway.AccessLogField.contextRequestId(),

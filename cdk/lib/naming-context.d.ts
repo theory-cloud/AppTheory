@@ -39,6 +39,13 @@ export interface AppTheoryNamingContextProps {
         [key: string]: string;
     };
     /**
+     * Generated-name entries keyed `{type}:{logical}`. An entry means
+     * CloudFormation generates the name today, so the construct sets no
+     * physical-name property. Valid only under the legacy naming profile.
+     * @default []
+     */
+    readonly generated?: string[];
+    /**
      * Naming profile.
      * @default AppTheoryNamingProfile.DERIVED
      */
@@ -87,6 +94,14 @@ export declare class AppTheoryNamingContext extends Construct {
     readonly pins: {
         [key: string]: string;
     };
+    /**
+     * Generated-name entries keyed `{type}:{logical}`.
+     */
+    readonly generated: string[];
+    /**
+     * The naming entries a construct has consumed at synthesis.
+     */
+    private readonly consumed;
     /**
      * Naming profile.
      */

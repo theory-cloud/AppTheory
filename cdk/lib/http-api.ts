@@ -9,7 +9,8 @@ import type * as route53 from "aws-cdk-lib/aws-route53";
 import { Construct } from "constructs";
 
 import { defaultLogicalName } from "./private/logical-name";
-import { httpApiAccessLogFormat, retentionFor } from "./private/standard-logging";
+import { refuseExplicitName } from "./private/refuse-explicit-name";
+import { accessLogGroupName, httpApiAccessLogFormat, retentionFor } from "./private/standard-logging";
 import type { AppTheoryNamingContext } from "./naming-context";
 
 import { AppTheoryApiDomain } from "./api-domain";
@@ -345,15 +346,15 @@ export class AppTheoryHttpApi extends Construct {
     }
     const namingContext = props.namingContext;
     const logical = props.logicalName ?? (namingContext ? defaultLogicalName(this) : undefined);
+    refuseExplicitName(namingContext, "AppTheoryHttpApi", "apiName", "api_http", logical, props.apiName !== undefined);
+    const derivedApiName = namingContext && logical ? namingContext.physicalName("api_http", logical) : undefined;
     const needsExplicitStage = stageName !== "$default"
       || stageOpts.accessLogging
       || stageOpts.throttlingRateLimit !== undefined
       || stageOpts.throttlingBurstLimit !== undefined;
 
     this.api = new apigwv2.HttpApi(this, "Api", {
-      apiName: props.apiName ?? (namingContext && logical
-        ? namingContext.physicalName("api_http", logical).name
-        : props.apiName),
+      apiName: derivedApiName && !derivedApiName.generated ? derivedApiName.name : props.apiName,
       corsPreflight: buildCorsPreflight(props.cors),
       createDefaultStage: !needsExplicitStage,
       disableExecuteApiEndpoint: props.domain?.mutualTlsAuthentication !== undefined ? true : undefined,
@@ -474,14 +475,21 @@ export class AppTheoryHttpApi extends Construct {
     }
     let logGroup: logs.ILogGroup;
     if (stageOpts.accessLogging === true) {
-      logGroup = standard && namingContext && logical
+      const contractLogical = standard && logical ? `logs/access/api/${logical}` : undefined;
+      const contractName = namingContext && logical ? accessLogGroupName(namingContext, `logs/access/api/${logical}`) : undefined;
+      logGroup = contractLogical
         ? new logs.LogGroup(this, "AccessLogs", {
-            logGroupName: namingContext.logGroupName(`logs/access/api/${logical}`),
-            retention: retentionFor(namingContext.retentionDays),
+            logGroupName: contractName,
+            retention: retentionFor(namingContext!.retentionDays),
           })
-        : new logs.LogGroup(this, "AccessLogs", {
-            retention: stageOpts.accessLogRetention ?? logs.RetentionDays.ONE_MONTH,
-          });
+        : contractName !== undefined
+          ? new logs.LogGroup(this, "AccessLogs", {
+              logGroupName: contractName,
+              retention: stageOpts.accessLogRetention ?? logs.RetentionDays.ONE_MONTH,
+            })
+          : new logs.LogGroup(this, "AccessLogs", {
+              retention: stageOpts.accessLogRetention ?? logs.RetentionDays.ONE_MONTH,
+            });
     } else {
       logGroup = stageOpts.accessLogging;
     }
