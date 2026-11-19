@@ -154,6 +154,22 @@ func TestGeneratedEntriesOnlyUnderLegacy(t *testing.T) {
 	}
 }
 
+func TestGeneratedAPINameIsRejected(t *testing.T) {
+	legacy := labContext()
+	legacy.Stage = "live"
+	legacy.NamingProfile = NamingProfileLegacy
+	for _, resourceType := range []string{"api_rest", "api_http", "api_websocket"} {
+		key := resourceType + ":main"
+		_, err := PhysicalName(legacy, resourceType, "main", nil, []string{key})
+		if err == nil {
+			t.Fatalf("%s: a generated API name must fail", resourceType)
+		}
+		if !strings.Contains(err.Error(), "API name takes a pin") {
+			t.Fatalf("%s: unexpected error %q", resourceType, err)
+		}
+	}
+}
+
 func TestPinWinsUnderDerived(t *testing.T) {
 	composed, err := PhysicalName(
 		labContext(),

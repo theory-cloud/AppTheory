@@ -111,6 +111,19 @@ var ResourceRules = map[string]ResourceRule{
 	"log_group":                {Kind: "log", Max: 512, Charset: `[A-Za-z0-9_-]`},
 }
 
+// apiTypes are the API Gateway name types. The CDK defaults an API Name today,
+// so a name for one is explicit and takes a pin, never a generated entry (r3).
+var apiTypes = map[string]struct{}{
+	"api_rest":      {},
+	"api_http":      {},
+	"api_websocket": {},
+}
+
+func isAPIType(resourceType string) bool {
+	_, ok := apiTypes[resourceType]
+	return ok
+}
+
 // ComposedName is the result of composing a logical name.
 type ComposedName struct {
 	Name             string `json:"name,omitempty"`
@@ -241,6 +254,11 @@ func resolveEntry(ctx Context, resourceType, logical string, pins map[string]str
 	key := resourceType + ":" + logical
 	pin, hasPin := pins[key]
 	keepGenerated := containsString(generated, key)
+	// r3, ADV-1312-3: CDK defaults an API Name today, so it is an explicit name
+	// and takes a pin, never a generated entry.
+	if keepGenerated && isAPIType(resourceType) {
+		return ComposedName{}, false, errors.New("an API name takes a pin, never a generated entry")
+	}
 	if hasPin && keepGenerated {
 		return ComposedName{}, false, errors.New("a resource has both a pin and a generated entry")
 	}

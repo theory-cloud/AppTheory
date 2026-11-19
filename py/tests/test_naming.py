@@ -93,6 +93,12 @@ class PhysicalNameTests(unittest.TestCase):
                 ["dynamodb_table:events"],
             )
 
+    def test_generated_api_name_is_rejected(self) -> None:
+        legacy = lab_context(stage="live", naming_profile="legacy")
+        for resource_type in ("api_rest", "api_http", "api_websocket"):
+            with self.assertRaisesRegex(ValueError, "API name takes a pin", msg=resource_type):
+                physical_resource_name(legacy, resource_type, "main", None, [f"{resource_type}:main"])
+
     def test_pin_takes_precedence_under_derived(self) -> None:
         composed = physical_resource_name(
             lab_context(), "dynamodb_table", "events", {"dynamodb_table:events": "autheory-lab-events"}

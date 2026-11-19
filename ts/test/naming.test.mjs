@@ -84,6 +84,17 @@ test("generated entries are legacy-only and keep CloudFormation's name", () => {
   );
 });
 
+test("a generated entry for an API name is rejected", () => {
+  const legacy = labContext({ stage: "live", naming_profile: "legacy" });
+  for (const type of ["api_rest", "api_http", "api_websocket"]) {
+    assert.throws(
+      () => physicalResourceName(legacy, type, "main", {}, [`${type}:main`]),
+      /API name takes a pin/,
+      type,
+    );
+  }
+});
+
 test("a pin takes precedence over derivation under either profile", () => {
   const composed = physicalResourceName(labContext(), "dynamodb_table", "events", {
     "dynamodb_table:events": "autheory-lab-events",

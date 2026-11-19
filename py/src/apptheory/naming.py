@@ -100,6 +100,10 @@ RESOURCE_NAME_RULES: dict[str, dict[str, Any]] = {
     "log_group": {"kind": "log", "max": 512, "charset": r"[A-Za-z0-9_-]"},
 }
 
+# API names are explicit today (the CDK defaults them), so they take a pin and
+# never a generated entry (r3, ADV-1312-3).
+_API_TYPES = frozenset({"api_rest", "api_http", "api_websocket"})
+
 KEEPER_ACTIONS_GROUP = ["logs:FilterLogEvents", "logs:DescribeLogStreams"]
 KEEPER_ACTIONS_STREAM = ["logs:GetLogEvents"]
 
@@ -179,6 +183,10 @@ def physical_resource_name(
     key = f"{resource_type}:{logical}"
     pin = (pins or {}).get(key)
     keep_generated = key in generated
+    # r3, ADV-1312-3: CDK defaults an API Name today, so it is an explicit name
+    # and takes a pin, never a generated entry.
+    if keep_generated and resource_type in _API_TYPES:
+        raise ValueError("an API name takes a pin, never a generated entry")
     if pin is not None and keep_generated:
         raise ValueError("a resource has both a pin and a generated entry")
     if pin is not None:

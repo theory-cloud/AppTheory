@@ -260,6 +260,12 @@ const RULES: { [type: string]: Rule } = {
   log_group: { kind: "log", max: 512, charset: "[A-Za-z0-9_-]" },
 };
 
+/**
+ * API name types. The CDK defaults an API Name today, so a name for one is
+ * explicit and takes a pin, never a generated entry (r3, ADV-1312-3).
+ */
+const API_TYPES = new Set(["api_rest", "api_http", "api_websocket"]);
+
 const KEEPER_ACTIONS_GROUP = ["logs:FilterLogEvents", "logs:DescribeLogStreams"];
 const KEEPER_ACTIONS_STREAM = ["logs:GetLogEvents"];
 
@@ -369,6 +375,11 @@ export class AppTheoryResourceNaming {
     const key = `${resourceType}:${logical}`;
     const pin = values.pins?.[key];
     const keepGenerated = generated.includes(key);
+    // r3, ADV-1312-3: CDK defaults an API Name today, so it is an explicit name
+    // and takes a pin, never a generated entry.
+    if (keepGenerated && API_TYPES.has(resourceType)) {
+      fail("an API name takes a pin, never a generated entry");
+    }
     if (pin !== undefined && keepGenerated) fail("a resource has both a pin and a generated entry");
     if (pin !== undefined) return { name: pin, pinned: true };
     if (keepGenerated) return { generated: true };

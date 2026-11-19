@@ -30,8 +30,8 @@ File layout is organized by behavior domain. The historical tier/milestone label
 - `contract-tests/fixtures/objectstore/` — SP13 bounded object-store Put, capped Get, Delete, deterministic fake behavior, and forbidden operation errors
 - `contract-tests/fixtures/vectorstore/` — SP14 semantic vector-store, Bedrock Titan embedding, metadata filter, and deterministic fake behavior
 
-The current corpus contains 425 machine-readable contract vectors plus the internal schema file. <!-- apptheory-fixture-count: 425 -->
-Of those, 328 are single-envelope behavior fixtures executed by the Go, TypeScript, and Python runners, and 81 are
+The current corpus contains 427 machine-readable contract vectors plus the internal schema file. <!-- apptheory-fixture-count: 427 -->
+Of those, 328 are single-envelope behavior fixtures executed by the Go, TypeScript, and Python runners, and 83 are
 `resource-naming/v0.1/` conformance fixtures executed by the per-language resource-naming runners. The sixteen
 nested tables under `routing/` — `limiter/multi-window-cancellation.v1.json`, `mcp-route-algebra/expectations.json`, `mcp-route-algebra/facade-route-inventory.json`,
 `mcp-auth-facade/facade-transport-posture.v1.json`, `mcp-auth-facade/facade-route-model.v1.json`,

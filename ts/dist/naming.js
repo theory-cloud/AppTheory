@@ -104,6 +104,11 @@ export const RESOURCE_NAME_RULES = {
     log_delivery_destination: { kind: "dash", max: 60, charset: "[A-Za-z0-9_-]" },
     log_group: { kind: "log", max: 512, charset: "[A-Za-z0-9_-]" },
 };
+/**
+ * API name types. The CDK defaults an API Name today, so a name for one is
+ * explicit and takes a pin, never a generated entry (r3, ADV-1312-3).
+ */
+const API_TYPES = new Set(["api_rest", "api_http", "api_websocket"]);
 /** The only log actions a reader role is granted. */
 export const KEEPER_ACTIONS_GROUP = [
     "logs:FilterLogEvents",
@@ -184,6 +189,11 @@ export function physicalResourceName(context, resourceType, logical, pins = {}, 
     const key = `${resourceType}:${logical}`;
     const pin = pins[key];
     const keepGenerated = generated.includes(key);
+    // r3, ADV-1312-3: CDK defaults an API Name today, so it is an explicit name
+    // and takes a pin, never a generated entry.
+    if (keepGenerated && API_TYPES.has(resourceType)) {
+        fail("an API name takes a pin, never a generated entry");
+    }
     if (pin !== undefined && keepGenerated) {
         fail("a resource has both a pin and a generated entry");
     }

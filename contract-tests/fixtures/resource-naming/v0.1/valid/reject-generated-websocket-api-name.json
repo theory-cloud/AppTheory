@@ -1,0 +1,30 @@
+{
+  "contract": "theorycloud_resource_naming.v0.1",
+  "fixture_id": "reject-generated-websocket-api-name",
+  "scenario": {
+    "type": "name",
+    "context": {
+      "namespace": "theorycloud",
+      "app": "autheory",
+      "stage": "live",
+      "account": "784055308075",
+      "region": "us-east-1",
+      "naming_profile": "legacy"
+    },
+    "resource_type": "api_websocket",
+    "logical": "socket",
+    "generated": [
+      "api_websocket:socket"
+    ]
+  },
+  "expected": {
+    "error": "an API name takes a pin, never a generated entry"
+  },
+  "proof": {
+    "does_not_prove": [
+      "aws_behaviour_proof",
+      "deployment_proof",
+      "journey_proof"
+    ]
+  }
+}
