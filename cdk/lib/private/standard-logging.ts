@@ -136,6 +136,12 @@ export function enableCloudFrontStandardLogging(options: {
       `CloudFront standard logging requires the naming context region to be us-east-1 (got ${context.region}); a stack outside us-east-1 is out of the v0.1 resource-naming contract`,
     );
   }
+  const format = options.format ?? AppTheoryCloudFrontLogFormat.JSON;
+  if (format !== AppTheoryCloudFrontLogFormat.JSON) {
+    throw new Error(
+      `CloudFront standard logging cannot use output format ${JSON.stringify(format)} for a CloudWatch Logs delivery destination: the resource-naming contract section 3 settles CloudFront ACCESS_LOGS to CloudWatch Logs on "json" (DescribeConfigurationTemplates allows only "plain" and "json", and "w3c" is S3-only). Use AppTheoryCloudFrontLogFormat.JSON.`,
+    );
+  }
   const logGroup = standardLogGroup(scope, `${id}LogGroup`, context, logical);
 
   const source = new logs.CfnDeliverySource(scope, `${id}DeliverySource`, {
@@ -147,7 +153,7 @@ export function enableCloudFrontStandardLogging(options: {
   const destination = new logs.CfnDeliveryDestination(scope, `${id}DeliveryDestination`, {
     name: context.physicalName("log_delivery_destination", logical).name as string,
     destinationResourceArn: logGroup.logGroupArn,
-    outputFormat: options.format ?? AppTheoryCloudFrontLogFormat.W3C,
+    outputFormat: format,
   });
 
   new logs.CfnDelivery(scope, `${id}Delivery`, {
