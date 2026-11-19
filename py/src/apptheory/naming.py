@@ -94,6 +94,7 @@ RESOURCE_NAME_RULES: dict[str, dict[str, Any]] = {
     "codebuild_project": {"kind": "dash", "max": 150, "charset": r"[A-Za-z0-9_-]"},
     "api_rest": {"kind": "dash", "max": 128, "charset": r"[A-Za-z0-9_-]"},
     "api_http": {"kind": "dash", "max": 128, "charset": r"[A-Za-z0-9_-]"},
+    "api_websocket": {"kind": "dash", "max": 128, "charset": r"[A-Za-z0-9_-]"},
     "log_delivery_source": {"kind": "dash", "max": 60, "charset": r"[A-Za-z0-9_-]"},
     "log_delivery_destination": {"kind": "dash", "max": 60, "charset": r"[A-Za-z0-9_-]"},
     "log_group": {"kind": "log", "max": 512, "charset": r"[A-Za-z0-9_-]"},
@@ -157,19 +158,35 @@ def physical_resource_name(
     resource_type: str,
     logical: str,
     pins: dict[str, str] | None = None,
+    generated: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Compose the physical name of one resource. Pins are returned verbatim."""
+    """Compose the physical name of one resource.
+
+    Pins are returned verbatim. A generated entry means CloudFormation generates
+    the name today, so the construct sets no physical-name property and the
+    result is ``{"generated": True}``. Generated entries are legacy-only.
+    """
     validate_naming_context(context)
     if not _LOGICAL_RE.match(logical):
         raise ValueError("logical")
     rule = RESOURCE_NAME_RULES.get(resource_type)
     if rule is None:
         raise ValueError(f"resource type {resource_type}")
-    pin = (pins or {}).get(f"{resource_type}:{logical}")
+    generated = generated or []
+    legacy = context.get("naming_profile", "derived") == "legacy"
+    if generated and not legacy:
+        raise ValueError("generated entries are only valid under the legacy naming profile")
+    key = f"{resource_type}:{logical}"
+    pin = (pins or {}).get(key)
+    keep_generated = key in generated
+    if pin is not None and keep_generated:
+        raise ValueError("a resource has both a pin and a generated entry")
     if pin is not None:
         return {"name": pin, "pinned": True}
-    if context.get("naming_profile", "derived") == "legacy":
-        raise ValueError("legacy naming profile requires a pin for every resource")
+    if keep_generated:
+        return {"generated": True}
+    if legacy:
+        raise ValueError("legacy naming profile requires a pin or a generated entry for every resource")
 
     out = _compose(context, resource_type, logical, rule)
 
@@ -261,7 +278,7 @@ def visibility_selector_arns(context: dict[str, Any], selector: str) -> list[str
 def visibility_rule_version(rules: dict[str, Any]) -> str:
     """The first 12 hex characters of SHA-256 over the canonical rules."""
     canonical = json.dumps(
-        {"include": sorted(rules.get("include", [])), "exclude": sorted(rules.get("exclude", []))},
+        {"include": sorted(set(rules.get("include", []))), "exclude": sorted(set(rules.get("exclude", [])))},
         sort_keys=True,
         separators=(",", ":"),
     )
@@ -274,8 +291,8 @@ def compile_visibility_policy(context: dict[str, Any], rules: dict[str, Any]) ->
         validate_visibility_selector(selector)
     statements: list[dict[str, Any]] = []
     actions = KEEPER_ACTIONS_GROUP + KEEPER_ACTIONS_STREAM
-    included = [arn for s in sorted(rules.get("include", [])) for arn in visibility_selector_arns(context, s)]
-    excluded = [arn for s in sorted(rules.get("exclude", [])) for arn in visibility_selector_arns(context, s)]
+    included = [arn for s in sorted(set(rules.get("include", []))) for arn in visibility_selector_arns(context, s)]
+    excluded = [arn for s in sorted(set(rules.get("exclude", []))) for arn in visibility_selector_arns(context, s)]
     manifest = (
         f"arn:aws:ssm:{context['region']}:{context['account']}:parameter"
         f"/{LOG_SOURCE_PREFIX}/visibility/{context['app']}/{context['stage']}/manifest"
@@ -294,7 +311,7 @@ def compile_visibility_policy(context: dict[str, Any], rules: dict[str, Any]) ->
 
 
 def _future_rules(rules: dict[str, Any]) -> dict[str, list[str]]:
-    return {"include": sorted(rules.get("include", [])), "exclude": sorted(rules.get("exclude", []))}
+    return {"include": sorted(set(rules.get("include", []))), "exclude": sorted(set(rules.get("exclude", [])))}
 
 
 def visibility_preview(context: dict[str, Any], rules: dict[str, Any], sources: list[str]) -> dict[str, Any]:

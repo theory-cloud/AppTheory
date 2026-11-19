@@ -25,6 +25,8 @@ export interface NamingContext {
     readonly region: string;
     /** `derived` (default) or `legacy`. */
     readonly naming_profile?: NamingProfile;
+    /** Generated-name entries keyed `{type}:{logical}`; valid only under `legacy`. */
+    readonly generated?: string[];
 }
 /** Physical pins keyed `{type}:{logical}`. */
 export type NamingPins = {
@@ -45,10 +47,11 @@ export declare const RESOURCE_NAME_RULES: {
 };
 /** The result of composing a logical name (contract JSON shape). */
 export interface ComposedName {
-    readonly name: string;
+    readonly name?: string;
     readonly bucket_name_prefix?: string;
     readonly bucket_namespace?: string;
     readonly pinned?: boolean;
+    readonly generated?: boolean;
 }
 /** The only log actions a reader role is granted. */
 export declare const KEEPER_ACTIONS_GROUP: string[];
@@ -101,7 +104,7 @@ export declare function logSourcePrefix(context: NamingContext): string;
 /** Map a logical log source to its physical log-group name. */
 export declare function logGroupName(context: NamingContext, logical: string): string;
 /** Compose the physical name of one resource. Pins are returned verbatim. */
-export declare function physicalResourceName(context: NamingContext, resourceType: string, logical: string, pins?: NamingPins): ComposedName;
+export declare function physicalResourceName(context: NamingContext, resourceType: string, logical: string, pins?: NamingPins, generated?: string[]): ComposedName;
 /** Enforce the selector grammar (contract section 5). */
 export declare function validateVisibilitySelector(selector: string): void;
 /** Whether a selector matches a logical source. `/*` matches descendants only. */

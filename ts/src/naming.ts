@@ -105,6 +105,8 @@ export interface NamingContext {
   readonly region: string;
   /** `derived` (default) or `legacy`. */
   readonly naming_profile?: NamingProfile;
+  /** Generated-name entries keyed `{type}:{logical}`; valid only under `legacy`. */
+  readonly generated?: string[];
 }
 
 /** Physical pins keyed `{type}:{logical}`. */
@@ -154,6 +156,7 @@ export const RESOURCE_NAME_RULES: { [type: string]: ResourceNameRule } = {
   codebuild_project: { kind: "dash", max: 150, charset: "[A-Za-z0-9_-]" },
   api_rest: { kind: "dash", max: 128, charset: "[A-Za-z0-9_-]" },
   api_http: { kind: "dash", max: 128, charset: "[A-Za-z0-9_-]" },
+  api_websocket: { kind: "dash", max: 128, charset: "[A-Za-z0-9_-]" },
   log_delivery_source: { kind: "dash", max: 60, charset: "[A-Za-z0-9_-]" },
   log_delivery_destination: { kind: "dash", max: 60, charset: "[A-Za-z0-9_-]" },
   log_group: { kind: "log", max: 512, charset: "[A-Za-z0-9_-]" },
@@ -161,10 +164,11 @@ export const RESOURCE_NAME_RULES: { [type: string]: ResourceNameRule } = {
 
 /** The result of composing a logical name (contract JSON shape). */
 export interface ComposedName {
-  readonly name: string;
+  readonly name?: string;
   readonly bucket_name_prefix?: string;
   readonly bucket_namespace?: string;
   readonly pinned?: boolean;
+  readonly generated?: boolean;
 }
 
 /** The only log actions a reader role is granted. */
@@ -286,15 +290,28 @@ export function physicalResourceName(
   resourceType: string,
   logical: string,
   pins: NamingPins = {},
+  generated: string[] = [],
 ): ComposedName {
   validateNamingContext(context);
   if (!LOGICAL_RE.test(logical)) fail("logical");
   const rule = RESOURCE_NAME_RULES[resourceType];
   if (!rule) fail(`resource type ${resourceType}`);
-  const pin = pins[`${resourceType}:${logical}`];
+  const legacy = (context.naming_profile ?? "derived") === "legacy";
+  if (generated.length > 0 && !legacy) {
+    fail("generated entries are only valid under the legacy naming profile");
+  }
+  const key = `${resourceType}:${logical}`;
+  const pin = pins[key];
+  const keepGenerated = generated.includes(key);
+  if (pin !== undefined && keepGenerated) {
+    fail("a resource has both a pin and a generated entry");
+  }
   if (pin !== undefined) return { name: pin, pinned: true };
-  if ((context.naming_profile ?? "derived") === "legacy") {
-    fail("legacy naming profile requires a pin for every resource");
+  if (keepGenerated) return { generated: true };
+  if (legacy) {
+    fail(
+      "legacy naming profile requires a pin or a generated entry for every resource",
+    );
   }
 
   let out: ComposedName;
@@ -338,13 +355,14 @@ export function physicalResourceName(
     fail(`unsupported kind ${String(rule.kind)}`);
   }
 
-  if (!new RegExp(`^${rule.charset}+$`).test(out.name)) fail("charset");
-  if (out.name.length > rule.max) fail("length");
+  const name = out.name as string;
+  if (!new RegExp(`^(?:${rule.charset})+$`).test(name)) fail("charset");
+  if (name.length > rule.max) fail("length");
   if (
     ["s3_bucket", "s3_vector_bucket", "s3_vector_index"].includes(
       resourceType,
     ) &&
-    !S3_EDGES_RE.test(out.name)
+    !S3_EDGES_RE.test(name)
   ) {
     fail("s3 start/end");
   }
@@ -352,7 +370,7 @@ export function physicalResourceName(
 }
 
 function sortedCopy(values: string[] | undefined): string[] {
-  return [...(values ?? [])].sort();
+  return [...new Set(values ?? [])].sort();
 }
 
 /** Enforce the selector grammar (contract section 5). */

@@ -64,7 +64,7 @@ func TestPhysicalNamePerType(t *testing.T) {
 		"log_group":                "logs/runtime/api",
 	}
 	for resourceType, logical := range logicals {
-		composed, err := PhysicalName(ctx, resourceType, logical, nil)
+		composed, err := PhysicalName(ctx, resourceType, logical, nil, nil)
 		if err != nil {
 			t.Fatalf("%s: %v", resourceType, err)
 		}
@@ -78,7 +78,7 @@ func TestPhysicalNamePerType(t *testing.T) {
 }
 
 func TestS3AccountRegionalPrefix(t *testing.T) {
-	composed, err := PhysicalName(labContext(), "s3_bucket", "audit-events", nil)
+	composed, err := PhysicalName(labContext(), "s3_bucket", "audit-events", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestOverBudgetShortensOnlyDashNames(t *testing.T) {
 	ctx := labContext()
 	ctx.App = "theory-mcp-server"
 	ctx.Account = "191637461429"
-	composed, err := PhysicalName(ctx, "lambda_function", "namespace-vending/request-claim-handler-version-two", nil)
+	composed, err := PhysicalName(ctx, "lambda_function", "namespace-vending/request-claim-handler-version-two", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,17 +110,142 @@ func TestLegacyProfileRequiresPins(t *testing.T) {
 	ctx := labContext()
 	ctx.Stage = "live"
 	ctx.NamingProfile = NamingProfileLegacy
-	if _, err := PhysicalName(ctx, "dynamodb_table", "events", nil); err == nil {
+	if _, err := PhysicalName(ctx, "dynamodb_table", "events", nil, nil); err == nil {
 		t.Fatal("legacy profile without a pin must fail")
 	}
 	composed, err := PhysicalName(ctx, "dynamodb_table", "events", map[string]string{
 		"dynamodb_table:events": "autheory-autheory-live-events",
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if composed.Name != "autheory-autheory-live-events" || !composed.Pinned {
 		t.Fatalf("pin not used: %+v", composed)
+	}
+}
+
+func TestGeneratedEntriesOnlyUnderLegacy(t *testing.T) {
+	legacy := labContext()
+	legacy.Stage = "live"
+	legacy.NamingProfile = NamingProfileLegacy
+
+	composed, err := PhysicalName(legacy, "s3_bucket", "audit-events", nil, []string{"s3_bucket:audit-events"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !composed.Generated || composed.Name != "" || composed.Pinned {
+		t.Fatalf("generated entry result %+v", composed)
+	}
+
+	if _, err := PhysicalName(labContext(), "s3_bucket", "audit-events", nil, []string{"s3_bucket:audit-events"}); err == nil {
+		t.Fatal("generated entry under derived must fail")
+	}
+	if _, err := PhysicalName(
+		legacy,
+		"dynamodb_table",
+		"events",
+		map[string]string{"dynamodb_table:events": "autheory-autheory-live-events"},
+		[]string{"dynamodb_table:events"},
+	); err == nil {
+		t.Fatal("a resource with both a pin and a generated entry must fail")
+	}
+	if _, err := PhysicalName(legacy, "s3_bucket", "audit-events", nil, []string{"s3_bucket:hosted-auth-assets"}); err == nil {
+		t.Fatal("a generated entry for another resource must not satisfy this one")
+	}
+}
+
+func TestPinWinsUnderDerived(t *testing.T) {
+	composed, err := PhysicalName(
+		labContext(),
+		"dynamodb_table",
+		"events",
+		map[string]string{"dynamodb_table:events": "autheory-lab-events"},
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if composed.Name != "autheory-lab-events" || !composed.Pinned {
+		t.Fatalf("pin did not take precedence under derived: %+v", composed)
+	}
+}
+
+func TestEmptyNamespaceIsRejectedThroughJSON(t *testing.T) {
+	var explicit Context
+	if err := json.Unmarshal([]byte(`{"namespace":"","app":"autheory","stage":"lab","account":"998115851393","region":"us-east-1"}`), &explicit); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateContext(explicit); err == nil || err.Error() != "namespace" {
+		t.Fatalf("explicit empty namespace must be rejected, got %v", err)
+	}
+	var absent Context
+	if err := json.Unmarshal([]byte(`{"app":"autheory","stage":"lab","account":"998115851393","region":"us-east-1"}`), &absent); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateContext(absent); err != nil {
+		t.Fatalf("absent namespace must default: %v", err)
+	}
+	if prefix := LogSourcePrefix(absent); !strings.HasPrefix(prefix, "theorycloud_theorycloud_") {
+		t.Fatalf("default namespace prefix %q", prefix)
+	}
+}
+
+func TestCharsetIsAnchored(t *testing.T) {
+	if matchesCharset(`[a-z]`, "abc!") {
+		t.Fatal("charset must apply to the whole name, not a prefix")
+	}
+	if !matchesCharset(`[a-z0-9-]`, "autheory-lab-audit-events") {
+		t.Fatal("valid name rejected")
+	}
+}
+
+func TestDuplicateSelectorsAreIgnored(t *testing.T) {
+	rules := Rules{
+		Include: []string{"logs/runtime/*", "logs/runtime/*"},
+		Exclude: []string{"logs/runtime/debug/*", "logs/runtime/debug/*"},
+	}
+	policy, err := CompilePolicy(labContext(), rules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(policy.Statement[1].Resource) != 1 || len(policy.Statement[2].Resource) != 1 {
+		t.Fatalf("duplicate selectors must not duplicate resources: %+v", policy.Statement)
+	}
+	single := Rules{
+		Include: []string{"logs/runtime/*"},
+		Exclude: []string{"logs/runtime/debug/*"},
+	}
+	if RuleVersion(rules) != RuleVersion(single) {
+		t.Fatal("duplicate selectors must not change the rule version")
+	}
+	preview, err := PreviewBuild(rules, []string{"logs/runtime/api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.Future.Include) != 1 || len(preview.Future.Exclude) != 1 {
+		t.Fatalf("preview future must be a set: %+v", preview.Future)
+	}
+}
+
+func TestWebSocketAPIName(t *testing.T) {
+	ctx := labContext()
+	ctx.App = "theory-mcp-server"
+	ctx.Account = "191637461429"
+	composed, err := PhysicalName(ctx, "api_websocket", "agent-sessions", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if composed.Name != "theory-mcp-server-lab-agent-sessions" {
+		t.Fatalf("api_websocket name %q", composed.Name)
+	}
+}
+
+func TestPreviewRejectsInvalidSelector(t *testing.T) {
+	if _, err := PreviewBuild(Rules{Include: []string{"logs/run*time"}}, []string{"logs/runtime/api"}); err == nil {
+		t.Fatal("preview must reject an invalid selector like compilation")
+	}
+	if _, err := ManifestBuild(Rules{Include: []string{"logs/run*time"}}, []string{"logs/runtime/api"}); err == nil {
+		t.Fatal("manifest must reject an invalid selector like compilation")
 	}
 }
 

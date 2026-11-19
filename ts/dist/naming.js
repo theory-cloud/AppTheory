@@ -99,6 +99,7 @@ export const RESOURCE_NAME_RULES = {
     codebuild_project: { kind: "dash", max: 150, charset: "[A-Za-z0-9_-]" },
     api_rest: { kind: "dash", max: 128, charset: "[A-Za-z0-9_-]" },
     api_http: { kind: "dash", max: 128, charset: "[A-Za-z0-9_-]" },
+    api_websocket: { kind: "dash", max: 128, charset: "[A-Za-z0-9_-]" },
     log_delivery_source: { kind: "dash", max: 60, charset: "[A-Za-z0-9_-]" },
     log_delivery_destination: { kind: "dash", max: 60, charset: "[A-Za-z0-9_-]" },
     log_group: { kind: "log", max: 512, charset: "[A-Za-z0-9_-]" },
@@ -169,18 +170,29 @@ export function logGroupName(context, logical) {
     return logSourcePrefix(context) + logical.replace(/\//g, "_");
 }
 /** Compose the physical name of one resource. Pins are returned verbatim. */
-export function physicalResourceName(context, resourceType, logical, pins = {}) {
+export function physicalResourceName(context, resourceType, logical, pins = {}, generated = []) {
     validateNamingContext(context);
     if (!LOGICAL_RE.test(logical))
         fail("logical");
     const rule = RESOURCE_NAME_RULES[resourceType];
     if (!rule)
         fail(`resource type ${resourceType}`);
-    const pin = pins[`${resourceType}:${logical}`];
+    const legacy = (context.naming_profile ?? "derived") === "legacy";
+    if (generated.length > 0 && !legacy) {
+        fail("generated entries are only valid under the legacy naming profile");
+    }
+    const key = `${resourceType}:${logical}`;
+    const pin = pins[key];
+    const keepGenerated = generated.includes(key);
+    if (pin !== undefined && keepGenerated) {
+        fail("a resource has both a pin and a generated entry");
+    }
     if (pin !== undefined)
         return { name: pin, pinned: true };
-    if ((context.naming_profile ?? "derived") === "legacy") {
-        fail("legacy naming profile requires a pin for every resource");
+    if (keepGenerated)
+        return { generated: true };
+    if (legacy) {
+        fail("legacy naming profile requires a pin or a generated entry for every resource");
     }
     let out;
     if (rule.kind === "s3ar") {
@@ -220,18 +232,19 @@ export function physicalResourceName(context, resourceType, logical, pins = {}) 
     else {
         fail(`unsupported kind ${String(rule.kind)}`);
     }
-    if (!new RegExp(`^${rule.charset}+$`).test(out.name))
+    const name = out.name;
+    if (!new RegExp(`^(?:${rule.charset})+$`).test(name))
         fail("charset");
-    if (out.name.length > rule.max)
+    if (name.length > rule.max)
         fail("length");
     if (["s3_bucket", "s3_vector_bucket", "s3_vector_index"].includes(resourceType) &&
-        !S3_EDGES_RE.test(out.name)) {
+        !S3_EDGES_RE.test(name)) {
         fail("s3 start/end");
     }
     return out;
 }
 function sortedCopy(values) {
-    return [...(values ?? [])].sort();
+    return [...new Set(values ?? [])].sort();
 }
 /** Enforce the selector grammar (contract section 5). */
 export function validateVisibilitySelector(selector) {

@@ -29,6 +29,7 @@ def evaluate(apptheory: Any, scenario: dict[str, Any]) -> Any:
             scenario["resource_type"],
             scenario["logical"],
             scenario.get("pins"),
+            scenario.get("generated"),
         )
         return dict(out)
     if kind == "log_group":

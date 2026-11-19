@@ -1,0 +1,33 @@
+{
+  "contract": "theorycloud_resource_naming.v0.1",
+  "fixture_id": "reject-pin-and-generated",
+  "scenario": {
+    "type": "name",
+    "context": {
+      "namespace": "theorycloud",
+      "app": "autheory",
+      "stage": "live",
+      "account": "784055308075",
+      "region": "us-east-1",
+      "naming_profile": "legacy"
+    },
+    "resource_type": "dynamodb_table",
+    "logical": "events",
+    "pins": {
+      "dynamodb_table:events": "autheory-autheory-live-events"
+    },
+    "generated": [
+      "dynamodb_table:events"
+    ]
+  },
+  "expected": {
+    "error": "a resource has both a pin and a generated entry"
+  },
+  "proof": {
+    "does_not_prove": [
+      "aws_behaviour_proof",
+      "deployment_proof",
+      "journey_proof"
+    ]
+  }
+}

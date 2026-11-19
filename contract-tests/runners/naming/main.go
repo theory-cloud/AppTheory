@@ -32,6 +32,7 @@ type scenario struct {
 	ResourceType string            `json:"resource_type"`
 	Logical      string            `json:"logical"`
 	Pins         map[string]string `json:"pins"`
+	Generated    []string          `json:"generated"`
 	Rules        *naming.Rules     `json:"rules"`
 	Sources      []string          `json:"sources"`
 	AWSResult    *string           `json:"aws_result"`
@@ -189,11 +190,14 @@ func evaluateName(sc scenario) (any, error) {
 	if sc.Context == nil {
 		return nil, fmt.Errorf("name scenario requires a context")
 	}
-	composed, err := naming.PhysicalName(*sc.Context, sc.ResourceType, sc.Logical, sc.Pins)
+	composed, err := naming.PhysicalName(*sc.Context, sc.ResourceType, sc.Logical, sc.Pins, sc.Generated)
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]any{"name": composed.Name}
+	out := map[string]any{}
+	if composed.Name != "" {
+		out["name"] = composed.Name
+	}
 	if composed.BucketNamePrefix != "" {
 		out["bucket_name_prefix"] = composed.BucketNamePrefix
 	}
@@ -202,6 +206,9 @@ func evaluateName(sc scenario) (any, error) {
 	}
 	if composed.Pinned {
 		out["pinned"] = true
+	}
+	if composed.Generated {
+		out["generated"] = true
 	}
 	return out, nil
 }

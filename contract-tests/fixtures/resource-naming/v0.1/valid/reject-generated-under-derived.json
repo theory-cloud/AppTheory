@@ -1,0 +1,29 @@
+{
+  "contract": "theorycloud_resource_naming.v0.1",
+  "fixture_id": "reject-generated-under-derived",
+  "scenario": {
+    "type": "name",
+    "context": {
+      "namespace": "theorycloud",
+      "app": "autheory",
+      "stage": "lab",
+      "account": "998115851393",
+      "region": "us-east-1"
+    },
+    "resource_type": "s3_bucket",
+    "logical": "audit-events",
+    "generated": [
+      "s3_bucket:audit-events"
+    ]
+  },
+  "expected": {
+    "error": "generated entries are only valid under the legacy naming profile"
+  },
+  "proof": {
+    "does_not_prove": [
+      "aws_behaviour_proof",
+      "deployment_proof",
+      "journey_proof"
+    ]
+  }
+}
