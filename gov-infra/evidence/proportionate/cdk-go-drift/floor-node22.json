@@ -5,16 +5,16 @@
         "bash",
         "scripts/verify-cdk-go-drift.sh"
       ],
-      "durationSeconds": 15.382,
+      "durationSeconds": 15.635,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-19T06:49:09Z",
+      "finishedAt": "2026-11-19T09:37:55Z",
       "id": "cdk-go-drift",
-      "inputsDigest": "sha256:d6d2c541e99ba52be9c89383ad1108507925ab65f2202775eededc5182174a64",
+      "inputsDigest": "sha256:395eeed5d5cb472f52c5771bfb4f10efd8a903c66e6e5cf3ad4cbfdf7ae0ba2f",
       "logDigest": "sha256:a8f35561d96d94a0fdce783005c3e2b37bbb6bfff6dda47c5dbc32e19bc7eec9",
-      "logRef": "gov-infra/evidence/proportionate/local/cdk-go-drift-cdk-go-drift-20261119T064854Z-14011.log",
+      "logRef": "gov-infra/evidence/proportionate/local/cdk-go-drift-cdk-go-drift-20261119T093739Z-84865.log",
       "reused": false,
-      "startedAt": "2026-11-19T06:48:54Z"
+      "startedAt": "2026-11-19T09:37:39Z"
     }
   ],
   "consumed": [],
@@ -36,18 +36,18 @@
   },
   "profile": "floor-node22",
   "reason": "",
-  "recordedAt": "2026-11-19T06:49:09Z",
+  "recordedAt": "2026-11-19T09:37:55Z",
   "releaseOnly": {
-    "digest": "sha256:c2354170b89a51d8c4e4fb86a19ea7dfcb204b2bcb6091949b492f7c865118c7",
-    "fileCount": 523,
-    "normalizedDigest": "sha256:c877f3029f1fd29c723b45530a5daf0249b91754b9c9bb793127b367655bb12a",
+    "digest": "sha256:37ef0b12312904214f2dd1c95de11e6a745bf73da909359eac8ddda5ea69e74e",
+    "fileCount": 526,
+    "normalizedDigest": "sha256:ef8287ca7e01baff209804559a2a1feb0d6796da3bb09c1cce93c682c7c41d75",
     "version": "7.4.0"
   },
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:46bedaf4d0152643cadde10b94a6518872d7481c8128a8943cc7feed073d13db",
-    "fileCount": 637,
+    "digest": "sha256:0e1bd3cb6205dc66fb3cf51927375f944422cc7b135227a40aaa95e22d8f5e32",
+    "fileCount": 640,
     "paths": [
       "cdk/",
       "cdk-go/",
@@ -59,8 +59,8 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:35357557440c4c5f1145f1ea85ce5bd68f02ad7d6228867cdd1bde731f775e5a",
-    "fileCount": 2756
+    "digest": "sha256:5a37179b06bb5876f0741531dea942bc059423de74d6637fa8722180d078a6ae",
+    "fileCount": 2765
   },
   "verdict": "PASS"
 }
