@@ -516,6 +516,58 @@ test("AppTheoryPathRoutedFrontend and AppTheoryMediaCdn standard logging use Clo
   }
 });
 
+test("CloudFront standard-logging deliveries depend on their own delivery source", () => {
+  // A delivery names its source by a literal string, so CloudFormation has no
+  // edge between the two. The source waits on the distribution ARN, so an
+  // unordered delivery can be created first and fail because its source does
+  // not exist yet. Resolve the source from the template, never by a fixed id.
+  const consumers = {
+    AppTheorySsrSite: (stack, context) =>
+      new apptheory.AppTheorySsrSite(stack, "Site", {
+        ssrFunction: handler(stack),
+        namingContext: context,
+        logicalName: "control-plane-site",
+      }),
+    AppTheoryPathRoutedFrontend: (stack, context) =>
+      new apptheory.AppTheoryPathRoutedFrontend(stack, "Frontend", {
+        apiOriginUrl: "https://api.example.com",
+        namingContext: context,
+        logicalName: "front",
+      }),
+    AppTheoryMediaCdn: (stack, context) =>
+      new apptheory.AppTheoryMediaCdn(stack, "Media", {
+        namingContext: context,
+        logicalName: "media",
+      }),
+  };
+  for (const [label, build] of Object.entries(consumers)) {
+    const template = synth((stack) => build(stack, labContext(stack)));
+    const sourceByPhysicalName = new Map();
+    for (const [logicalId, resource] of Object.entries(template.Resources ?? {})) {
+      if (resource.Type === "AWS::Logs::DeliverySource") {
+        sourceByPhysicalName.set(resource.Properties?.Name, logicalId);
+      }
+    }
+    const deliveries = Object.entries(template.Resources ?? {}).filter(
+      ([, resource]) => resource.Type === "AWS::Logs::Delivery",
+    );
+    assert.equal(deliveries.length, 1, `${label} must deliver standard logs`);
+    for (const [logicalId, delivery] of deliveries) {
+      const sourceId = sourceByPhysicalName.get(delivery.Properties?.DeliverySourceName);
+      assert.ok(sourceId, `${label}: ${logicalId} must name a delivery source in the template`);
+      const dependsOn = Array.isArray(delivery.DependsOn)
+        ? delivery.DependsOn
+        : delivery.DependsOn
+          ? [delivery.DependsOn]
+          : [];
+      assert.ok(
+        dependsOn.includes(sourceId),
+        `${label}: ${logicalId} must depend on ${sourceId}, got ${JSON.stringify(delivery.DependsOn ?? null)}`,
+      );
+    }
+  }
+});
+
 test("CloudFront standard logging refuses the W3C format for a CloudWatch Logs destination", () => {
   assert.throws(
     () =>
