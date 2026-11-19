@@ -1,8 +1,8 @@
-import { Annotations, Lazy, Stack, Token } from "aws-cdk-lib";
+import { Annotations, Aspects, IAspect, Lazy, Stack, Token } from "aws-cdk-lib";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as ssm from "aws-cdk-lib/aws-ssm";
-import { Construct } from "constructs";
+import { Construct, IConstruct } from "constructs";
 
 import {
   AppTheoryResourceNaming,
@@ -118,20 +118,18 @@ export class AppTheoryKeeperVisibility extends Construct {
       return memo.preview;
     };
 
-    Annotations.of(this).addInfo(
-      Lazy.string({
-        produce: () => {
-          const preview = this.previewProvider();
-          return [
-            `AppTheory keeper visibility preview for ${context.app}/${context.stage}:`,
-            JSON.stringify({
-              rule_version: preview.ruleVersion,
-              matched_now: preview.matchedNow,
-              not_matched_now: preview.notMatchedNow,
-              future: { include: preview.future.include ?? [], exclude: preview.future.exclude ?? [] },
-            }),
-          ].join(" ");
-        },
+    Aspects.of(Stack.of(this)).add(
+      new VisibilityPreviewAnnotation(this, () => {
+        const preview = this.previewProvider();
+        return [
+          `AppTheory keeper visibility preview for ${context.app}/${context.stage}:`,
+          JSON.stringify({
+            rule_version: preview.ruleVersion,
+            matched_now: preview.matchedNow,
+            not_matched_now: preview.notMatchedNow,
+            future: { include: preview.future.include ?? [], exclude: preview.future.exclude ?? [] },
+          }),
+        ].join(" ");
       }),
     );
 
@@ -164,6 +162,24 @@ export class AppTheoryKeeperVisibility extends Construct {
    */
   public preview(): AppTheoryVisibilityPreview {
     return this.previewProvider();
+  }
+}
+
+/**
+ * Render the visibility preview as a concrete info annotation once the
+ * construct tree is complete. Annotations are not resolved like template
+ * tokens, so a `Lazy.string` prints `${Token[...]}`. The aspect computes the
+ * preview at synthesis and adds the rendered text instead.
+ */
+class VisibilityPreviewAnnotation implements IAspect {
+  private emitted = false;
+
+  constructor(private readonly owner: Construct, private readonly render: () => string) {}
+
+  public visit(_node: IConstruct): void {
+    if (this.emitted) return;
+    this.emitted = true;
+    Annotations.of(this.owner).addInfo(this.render());
   }
 }
 
@@ -221,6 +237,14 @@ function readerAccountFromArn(arn: string): string {
   if (Token.isUnresolved(arn)) {
     throw new Error(
       "AppTheoryKeeperVisibility requires a resolved readerPrincipalArn; the reader account is parsed from it and an unresolved token cannot be validated at synthesis",
+    );
+  }
+  // The reader trust restricts the account principal with `ArnEquals` on
+  // `aws:PrincipalArn`; `ArnEquals` matches `*` and `?`, so a wildcard would
+  // admit every role the pattern matches (FAC-1312-R1-1).
+  if (arn.includes("*") || arn.includes("?")) {
+    throw new Error(
+      `AppTheoryKeeperVisibility readerPrincipalArn must not contain a wildcard (got ${JSON.stringify(arn)}); the reader trust uses ArnEquals on aws:PrincipalArn, which matches wildcards and would admit every role the pattern matches`,
     );
   }
   const match = READER_PRINCIPAL_ARN_RE.exec(arn);

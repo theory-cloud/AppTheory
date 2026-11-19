@@ -51,7 +51,7 @@ type AppTheorySsrSiteProps struct {
 	// CloudFront standard-logging output format for a CloudWatch Logs destination.
 	//
 	// Only used under the standard logging profile.
-	// Default: AppTheoryCloudFrontLogFormat.W3C
+	// Default: AppTheoryCloudFrontLogFormat.JSON
 	//
 	CloudFrontLogFormat AppTheoryCloudFrontLogFormat `field:"optional" json:"cloudFrontLogFormat" yaml:"cloudFrontLogFormat"`
 	// Additional raw S3 object/data path patterns that should bypass extensionless HTML rewrites.

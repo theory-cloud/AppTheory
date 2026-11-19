@@ -6,14 +6,14 @@
         "scripts/verify-ts-dist-drift.sh"
       ],
       "durationSeconds": 0.289,
-      "executed": true,
+      "executed": false,
       "exitCode": 0,
       "finishedAt": "2026-11-19T12:47:26Z",
       "id": "ts-dist-drift",
       "inputsDigest": "sha256:8547eaa7b1188d367d6ed52b2b087c21bcd228a70d13c501186a036da3f47a44",
       "logDigest": "sha256:18f23116500ddda482f84272962ebad7cdb05e70bc7748aa7eb2679dda92ad7a",
       "logRef": "gov-infra/evidence/proportionate/local/ts-ts-dist-drift-20261119T124726Z-95176.log",
-      "reused": false,
+      "reused": true,
       "startedAt": "2026-11-19T12:47:26Z"
     },
     {
@@ -22,29 +22,18 @@
         "scripts/verify-ts-pack.sh"
       ],
       "durationSeconds": 0.283,
-      "executed": true,
+      "executed": false,
       "exitCode": 0,
       "finishedAt": "2026-11-19T12:47:27Z",
       "id": "ts-pack",
       "inputsDigest": "sha256:cfa022b4795bba01156a13748786d66d1a10f0e9a5ac94864c4dfffc74c54133",
       "logDigest": "sha256:18f23116500ddda482f84272962ebad7cdb05e70bc7748aa7eb2679dda92ad7a",
       "logRef": "gov-infra/evidence/proportionate/local/ts-ts-pack-20261119T124726Z-95176.log",
-      "reused": false,
+      "reused": true,
       "startedAt": "2026-11-19T12:47:26Z"
     }
   ],
-  "consumed": [
-    {
-      "digest": "sha256:eef5b176c149dae99e3bb4cdad21094aab0f01a8d9af05feef8e46ba06118c4c",
-      "gate": "deterministic-builds",
-      "recordedAt": "2026-11-19T12:27:30Z"
-    },
-    {
-      "digest": "sha256:eef5b176c149dae99e3bb4cdad21094aab0f01a8d9af05feef8e46ba06118c4c",
-      "gate": "deterministic-builds",
-      "recordedAt": "2026-11-19T12:27:30Z"
-    }
-  ],
+  "consumed": [],
   "description": "TypeScript checked-in dist drift and npm pack",
   "environment": {
     "go": "go1.27.4",
@@ -63,11 +52,11 @@
   },
   "profile": "default",
   "reason": "",
-  "recordedAt": "2026-11-19T12:47:27Z",
+  "recordedAt": "2026-11-19T19:02:34Z",
   "releaseOnly": {
-    "digest": "sha256:b9d2ecfcd0a4dd430b9a455e88a0464a1207b6d4b7df093fbce4d9cb7167f998",
+    "digest": "sha256:70a8717c4746a0b71a8c711928ade564d2ad985e087ecf860911f28a8325bc01",
     "fileCount": 526,
-    "normalizedDigest": "sha256:fb2453b215a8fca7cd650aad600fe4f9086f12952650085eb380b84c8ae631a5",
+    "normalizedDigest": "sha256:c309d262263711a731e42df901a4a433b07dafb5ea30380a67f9ee38f97acf37",
     "version": "7.4.0"
   },
   "reviews": [],
@@ -88,7 +77,7 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:0056d5ef45a09ade279aacae530898a3dad3853e3b02305e4cb331a059d0624c",
+    "digest": "sha256:d6348535769be5c464deb487966d443ba2b44b97f8762ef405b8c3c38591374c",
     "fileCount": 2767
   },
   "verdict": "PASS"

@@ -9,6 +9,10 @@ import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import { Construct } from "constructs";
 
+import { defaultLogicalName } from "./private/logical-name";
+import { refuseExplicitName } from "./private/refuse-explicit-name";
+import { httpApiAccessLogFormat, retentionFor } from "./private/standard-logging";
+import type { AppTheoryNamingContext } from "./naming-context";
 import type { AppTheoryMicrovmImageLogging, IAppTheoryMicrovmImage } from "./microvm-image";
 import {
   AppTheoryMicrovmNetworkConnectorKind,
@@ -200,6 +204,27 @@ export interface AppTheoryMicrovmControllerProps {
   readonly apiName?: string;
 
   /**
+   * Optional naming and logging context.
+   *
+   * With the standard logging profile API access logging is on by default to a
+   * log group named `logs/access/api/{logicalName}` carrying the contract's
+   * JSON field set. Pass `stage.accessLogging: false` to opt out.
+   *
+   * With no context the construct synthesizes exactly as before.
+   *
+   * @default undefined
+   */
+  readonly namingContext?: AppTheoryNamingContext;
+
+  /**
+   * The API's logical name. Defaults to the kebab-cased construct id when a
+   * naming context is present.
+   *
+   * @default undefined
+   */
+  readonly logicalName?: string;
+
+  /**
    * Optional stage configuration.
    *
    * @default undefined (default HTTP API stage)
@@ -385,17 +410,29 @@ export class AppTheoryMicrovmController extends Construct {
     assertNoDuplicates([...allIngressConnectorArns, ...egressConnectorArns], "controller networkConnectorArn");
     const loggingEnvironment = controllerLoggingEnvironment(props.microvmImage.logging, props.executionRole);
     const authorizerHeaderName = normalizeHeaderName(props.authorizerHeaderName ?? "Authorization");
-    const stageOpts = props.stage ?? {};
+    const namingContext = props.namingContext;
+    const logical = props.logicalName ?? (namingContext ? defaultLogicalName(this) : undefined);
+    refuseExplicitName(namingContext, "AppTheoryMicrovmController", "apiName", "api_http", logical, props.apiName !== undefined);
+    if (namingContext && props.sessionTableName !== undefined) {
+      // v0.1 names only the controller API through the contract. Refusing the
+      // hand-built table name keeps section 4's explicit-name rule; the table
+      // stays CloudFormation-generated until a contract revision adds its name.
+      throw new Error(
+        "AppTheoryMicrovmController cannot honor props.sessionTableName when a naming context is present; the construct names only its API under the naming contract in v0.1, so remove the name and let CloudFormation generate the session table name",
+      );
+    }
+    const derivedApiName = namingContext && logical ? namingContext.physicalName("api_http", logical) : undefined;
+    const stageOpts = effectiveStageOptions(props.stage ?? {}, namingContext);
     const stageName = normalizeStageName(stageOpts.stageName ?? "$default");
 
     this.sessionTable = this.createSessionTable(props);
 
     this.api = new apigwv2.HttpApi(this, "Api", {
-      apiName: props.apiName,
+      apiName: derivedApiName && !derivedApiName.generated ? derivedApiName.name : props.apiName,
       createDefaultStage: !needsExplicitStage(stageOpts, stageName),
     });
 
-    const stage = this.createStage(stageOpts, stageName);
+    const stage = this.createStage(stageOpts, stageName, namingContext, logical);
     if (!stage) {
       throw new Error("AppTheoryMicrovmController: failed to create API stage");
     }
@@ -467,6 +504,8 @@ export class AppTheoryMicrovmController extends Construct {
   private createStage(
     stageOpts: AppTheoryMicrovmControllerStageOptions,
     stageName: string,
+    namingContext?: AppTheoryNamingContext,
+    logical?: string,
   ): apigwv2.IStage | undefined {
     if (!needsExplicitStage(stageOpts, stageName)) {
       return this.api.defaultStage;
@@ -485,25 +524,28 @@ export class AppTheoryMicrovmController extends Construct {
     });
 
     if (stageOpts.accessLogging) {
-      const logGroup = new logs.LogGroup(this, "AccessLogs", {
-        retention: stageOpts.accessLogRetention ?? logs.RetentionDays.ONE_MONTH,
-      });
+      const standard = namingContext?.standardLogging === true && logical !== undefined;
+      if (namingContext?.standardLogging === true && !logical) {
+        throw new Error("AppTheoryMicrovmController standard logging requires a logical name");
+      }
+      // The construct-created access-log group is a logging resource: under the
+      // standard profile it takes the contract log-source name, and under the
+      // legacy profile it keeps today's CloudFormation-generated name and
+      // consumes no naming entry (r3, ADV-1312-1).
+      const logGroup = standard && logical
+        ? new logs.LogGroup(this, "AccessLogs", {
+            logGroupName: namingContext!.logGroupName(`logs/access/api/${logical}`),
+            retention: retentionFor(namingContext!.retentionDays),
+          })
+        : new logs.LogGroup(this, "AccessLogs", {
+            retention: stageOpts.accessLogRetention ?? logs.RetentionDays.ONE_MONTH,
+          });
       (this as { accessLogGroup?: logs.ILogGroup }).accessLogGroup = logGroup;
 
       const cfnStage = stage.node.defaultChild as apigwv2.CfnStage;
       cfnStage.accessLogSettings = {
         destinationArn: logGroup.logGroupArn,
-        format: JSON.stringify({
-          requestId: "$context.requestId",
-          ip: "$context.identity.sourceIp",
-          requestTime: "$context.requestTime",
-          httpMethod: "$context.httpMethod",
-          routeKey: "$context.routeKey",
-          status: "$context.status",
-          protocol: "$context.protocol",
-          responseLength: "$context.responseLength",
-          integrationLatency: "$context.integrationLatency",
-        }),
+        format: standard ? httpApiAccessLogFormat() : legacyAccessLogFormat(),
       };
     }
 
@@ -612,6 +654,34 @@ export class AppTheoryMicrovmController extends Construct {
       });
     }
   }
+}
+
+function legacyAccessLogFormat(): string {
+  return JSON.stringify({
+    requestId: "$context.requestId",
+    ip: "$context.identity.sourceIp",
+    requestTime: "$context.requestTime",
+    httpMethod: "$context.httpMethod",
+    routeKey: "$context.routeKey",
+    status: "$context.status",
+    protocol: "$context.protocol",
+    responseLength: "$context.responseLength",
+    integrationLatency: "$context.integrationLatency",
+  });
+}
+
+/**
+ * Apply the standard logging profile's default-on access logging. An explicit
+ * `accessLogging` value, including `false`, always wins.
+ */
+function effectiveStageOptions(
+  stage: AppTheoryMicrovmControllerStageOptions,
+  namingContext?: AppTheoryNamingContext,
+): AppTheoryMicrovmControllerStageOptions {
+  if (namingContext?.standardLogging === true && stage.accessLogging === undefined) {
+    return { ...stage, accessLogging: true };
+  }
+  return stage;
 }
 
 function needsExplicitStage(stageOpts: AppTheoryMicrovmControllerStageOptions, stageName: string): boolean {

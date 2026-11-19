@@ -183,7 +183,7 @@ export interface AppTheoryPathRoutedFrontendProps {
     /**
      * CloudFront standard-logging output format for a CloudWatch Logs
      * destination. Only used under the standard logging profile.
-     * @default AppTheoryCloudFrontLogFormat.W3C
+     * @default AppTheoryCloudFrontLogFormat.JSON
      */
     readonly cloudFrontLogFormat?: AppTheoryCloudFrontLogFormat;
     /**

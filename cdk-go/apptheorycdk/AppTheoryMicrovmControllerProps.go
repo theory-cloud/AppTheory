@@ -67,6 +67,23 @@ type AppTheoryMicrovmControllerProps struct {
 	// Default: undefined.
 	//
 	ExecutionRole awsiam.IRole `field:"optional" json:"executionRole" yaml:"executionRole"`
+	// The API's logical name.
+	//
+	// Defaults to the kebab-cased construct id when a
+	// naming context is present.
+	// Default: undefined.
+	//
+	LogicalName *string `field:"optional" json:"logicalName" yaml:"logicalName"`
+	// Optional naming and logging context.
+	//
+	// With the standard logging profile API access logging is on by default to a
+	// log group named `logs/access/api/{logicalName}` carrying the contract's
+	// JSON field set. Pass `stage.accessLogging: false` to opt out.
+	//
+	// With no context the construct synthesizes exactly as before.
+	// Default: undefined.
+	//
+	NamingContext AppTheoryNamingContext `field:"optional" json:"namingContext" yaml:"namingContext"`
 	// Whether Lambda invoke permissions should be scoped to individual controller routes.
 	//
 	// When false, the construct grants one API-scoped invoke permission per Lambda instead of

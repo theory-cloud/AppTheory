@@ -111,11 +111,12 @@ execution role.
 | `AppTheoryFunction` | `lambda_function:{logical}`; `iam_role:{logical}` when it creates the execution role |
 | `AppTheoryBucket` | `s3_bucket:{logical}` |
 | `AppTheoryHttpApi` | `api_http:{logical}` |
+| `AppTheoryMicrovmController` | `api_http:{logical}` |
 | `AppTheoryRestApiRouter` | `api_rest:{logical}` |
 | `AppTheoryWebSocketApi` | `api_websocket:{logical}`; `dynamodb_table:{logical}-connections` when it creates the connection table |
 | `AppTheoryMcpServer` | `api_http:{logical}` for its owned API; `dynamodb_table:{logical}-sessions` when session state creates the table |
 | `AppTheoryMediaCdn` | `s3_bucket:{logical}-media` unless `props.bucket` supplies the bucket |
-| `AppTheorySsrSite` | `s3_bucket:{logical}-assets`; `s3_bucket:{logical}-html-store` when the HTML store is configured; `dynamodb_table:{logical}-isr-metadata` when it wires an ISR metadata table (`isrMetadataTable` or `mode: ssg-isr`) |
+| `AppTheorySsrSite` | `s3_bucket:{logical}-assets`; `s3_bucket:{logical}-html-store` when the HTML store is configured; `dynamodb_table:{logical}-isr-metadata` under `mode: ssg-isr` when no external `isrMetadataTable` supplies the table |
 | `AppTheoryKeeperVisibility` | `iam_role:keeper-reader` |
 | Any construct with CloudFront standard logging (`AppTheorySsrSite`, `AppTheoryPathRoutedFrontend`, `AppTheoryMediaCdn`) | `log_delivery_source:logs/access/cdn/{logical}` and `log_delivery_destination:logs/access/cdn/{logical}` under `logging.profile: standard` |
 | `AppTheoryPathRoutedFrontend` | only the CloudFront delivery entries above |
@@ -127,12 +128,59 @@ a legacy stack. Access-log groups, the Lambda runtime group and CloudFront logs 
 
 When an AppTheory construct has a naming context, an explicit physical-name prop fails synthesis under either
 profile: `functionName` and `roleName` on `AppTheoryFunction`, `apiName` on `AppTheoryHttpApi`,
-`AppTheoryRestApiRouter`, `AppTheoryWebSocketApi` and `AppTheoryMcpServer` (`ownedApi.apiName`),
-`connectionTableName` on `AppTheoryWebSocketApi`, `sessionState.tableName` on `AppTheoryMcpServer`,
-`isrMetadataTableName` and `cacheTableName` on `AppTheorySsrSite`, `bucketName` on `AppTheoryBucket` and
-`AppTheoryMediaCdn`. The message names the exact entry key to use instead, including suffixes: for example
-`dynamodb_table:{logical}-connections`, `dynamodb_table:{logical}-sessions`, `dynamodb_table:{logical}-isr-metadata`
-and `s3_bucket:{logical}-media`. With no context the props behave exactly as they do today.
+`AppTheoryRestApiRouter`, `AppTheoryWebSocketApi`, `AppTheoryMcpServer` (`ownedApi.apiName`) and
+`AppTheoryMicrovmController`, `connectionTableName` on `AppTheoryWebSocketApi`, `sessionState.tableName` on
+`AppTheoryMcpServer`, `isrMetadataTableName` and `cacheTableName` on `AppTheorySsrSite`, `bucketName` on
+`AppTheoryBucket` and `AppTheoryMediaCdn`, and `sessionTableName` on `AppTheoryMicrovmController`. The message names the
+exact entry key to use instead, including suffixes: for example `dynamodb_table:{logical}-connections`,
+`dynamodb_table:{logical}-sessions`, `dynamodb_table:{logical}-isr-metadata` and `s3_bucket:{logical}-media`.
+`AppTheoryMicrovmController` names only its API in v0.1, so under a context its session table stays
+CloudFormation-generated; the `controller` prop is an ordinary `lambda.FunctionProps` pass-through, so the construct does
+not name that function. With no context the props behave exactly as they do today.
+
+### Constructs that accept no naming context
+
+These constructs carry physical-name props whose type has a section 2 row but do not yet take a `namingContext`; their
+names stay hand-built in stage config until their own adoption.
+
+| Construct | Physical-name props |
+|---|---|
+| `AppTheoryRestApi` | `apiName` |
+| `AppTheoryDynamoTable` | `tableName` |
+| `AppTheoryQueue` | `queueName`, dead-letter queue name |
+| `AppTheoryQueueProcessor` | `queueName` (delegates to `AppTheoryQueue`) |
+| `AppTheoryEventBridgeBus` | `eventBusName` |
+| `AppTheoryEventBridgeHandler` | `ruleName` |
+| `AppTheoryEventBridgeRuleTarget` | `ruleName` |
+| `AppTheoryKmsKey` | `aliasName`, `ssmParameterPath` |
+| `AppTheoryVectorIndex` | `vectorBucketName`, `indexName` |
+| `AppTheoryCodeBuildJobRunner` | `projectName`, `stateChangeRuleName` |
+| `AppTheoryHttpIngestionEndpoint` | `apiName` |
+| `AppTheoryCloudWatchLogsDestination` | `destinationName` |
+| `AppTheoryJobsTable` | `tableName` |
+| `AppTheoryEventBusTable` | `tableName` |
+| `AppTheoryMicrovmNetworkConnector` | `operatorRoleName` |
+| `AppTheoryLambdaRole` | `roleName` |
+| `AppTheoryApp` | `roleName`, `databaseTableName`, `rateLimitTableName` |
+| `AppTheoryS3Ingest` | `bucketName` |
+| `AppTheoryS3VersionedIngress` | `bucketName` |
+| `AppTheoryObservability` | `dashboardName` |
+| `AppTheoryEnhancedSecurity` | each `secrets[].name` |
+| `AppTheoryRemoteMcpServer` | `apiName`; `sessionTableName`, `streamTableName`, `taskTableName` |
+| `AppTheoryMcpServer` attach mode (`api` prop set) | `sessionTableName`, `sessionState.tableName` |
+
+### Names outside v0.1
+
+Some name props have no section 2 type row yet, so they are outside the contract: `AppTheoryKinesisStream.streamName`;
+the authorizer names on `AppTheoryHttpIngestionEndpoint` and `AppTheoryMicrovmController`;
+`AppTheoryCloudWatchLogsSubscription.filterName` (`logGroupName` names an existing group); DNS-class names
+(`AppTheoryApp.domainName`, `AppTheoryApiDomain.domainName`, `AppTheoryHostedZone.zoneName`,
+`AppTheoryCertificate.certificateName`, `AppTheoryHttpIngestionEndpoint.domainName`);
+`AppTheoryMicrovmImage.microvmImageName`; URL and header paths; and `AppTheoryObservability.serviceName` (a metric
+dimension, not a physical name).
+
+WAF names arrive through the `waf` option on `AppTheoryApp`, `AppTheoryRestApi`, `AppTheoryRestApiRouter` and
+`AppTheoryHttpApi`. WAF is not in v0.1, so those names stay hand-managed.
 
 ### Logical names
 
