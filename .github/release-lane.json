@@ -25,7 +25,8 @@
         "context": "Release delta validation",
         "workflow": "ci.yml",
         "job": "release-delta",
-        "rulesetRequired": false
+        "rulesetRequired": false,
+        "note": "advisory: the generated-content smoke reports from the code-owner review of the generated release pull request, the one eligible event; a staging pull request never matches it"
       }
     ],
     "main": [
@@ -52,7 +53,8 @@
         "context": "Release delta validation",
         "workflow": "ci.yml",
         "job": "release-delta",
-        "rulesetRequired": false
+        "rulesetRequired": false,
+        "note": "advisory: the generated-content smoke reports from the code-owner review of the generated release pull request, the one eligible event; a staging pull request never matches it"
       }
     ]
   },

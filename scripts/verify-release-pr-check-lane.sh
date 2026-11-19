@@ -204,6 +204,185 @@ def review_trigger_branches(trigger: str) -> set[str]:
     return {"premain", "main"}
 
 
+def review_trigger_types(trigger: str) -> set[str] | None:
+    """The activity types a `pull_request_review` trigger subscribes to.
+
+    Returns None when the trigger declares no `types:` filter. GitHub defaults an
+    unfiltered review trigger to every activity, which includes dismissals and
+    comments, so an absent filter is not the submitted-only approval the lane
+    needs. The flow form (`types: [submitted]`) and the block form are both read,
+    and the whole set is compared, so a superset cannot pass as a substring.
+    """
+    lines = trigger.splitlines()
+    for index, line in enumerate(lines):
+        match = re.match(r"^[ \t]+types:[ \t]*(.*)$", line)
+        if not match:
+            continue
+        inline = match.group(1).strip()
+        if inline:
+            return {item.strip().strip("'\"") for item in inline.strip("[]").split(",") if item.strip()}
+        types: set[str] = set()
+        for follow in lines[index + 1 :]:
+            item = re.match(r"^[ \t]+-[ \t]*(.+)$", follow)
+            if not item:
+                break
+            types.add(item.group(1).strip().strip("'\""))
+        return types
+    return None
+
+
+def job_condition(block: str) -> str | None:
+    """The job's `if:` expression, including its folded or literal block form."""
+    lines = block.splitlines()
+    for index, line in enumerate(lines):
+        match = re.match(r"^[ \t]{4}if:[ \t]*(.*)$", line)
+        if not match:
+            continue
+        value = match.group(1).strip()
+        if value in (">", "|", ">-", "|-", ">+", "|+"):
+            collected: list[str] = []
+            for follow in lines[index + 1 :]:
+                if follow.strip() and not follow.startswith("      "):
+                    break
+                collected.append(follow.strip())
+            return " ".join(part for part in collected if part)
+        return value
+    return None
+
+
+# A job `if:` is evaluated, not grepped. A positive review branch and a negative
+# `!= 'pull_request'` gate both admit the code-owner review, and a `!=
+# 'pull_request_review'` term excludes it while containing the name, so a
+# substring check would be wrong in both directions. The parser below models the
+# subset GitHub expressions use in ci.yml: comparisons, `&&`, `||`, `!` and
+# parentheses. An unmodelled identifier fails closed rather than passing by
+# default.
+_EXPR_TOKEN = re.compile(r"\s*(?:(\(|\)|&&|\|\||==|!=|!)|('[^']*')|([A-Za-z_][A-Za-z0-9_.]*))")
+
+
+def tokenize_condition(expression: str) -> list[tuple[str, str]]:
+    expression = expression.strip()
+    tokens: list[tuple[str, str]] = []
+    position = 0
+    while position < len(expression):
+        match = _EXPR_TOKEN.match(expression, position)
+        if not match:
+            raise ValueError(f"unsupported token at {expression[position:]!r}")
+        position = match.end()
+        if match.group(1):
+            tokens.append(("op", match.group(1)))
+        elif match.group(2) is not None:
+            tokens.append(("str", match.group(2)[1:-1].replace("''", "'")))
+        else:
+            tokens.append(("ident", match.group(3)))
+    return tokens
+
+
+class _ConditionParser:
+    def __init__(self, tokens: list[tuple[str, str]]) -> None:
+        self.tokens = tokens
+        self.index = 0
+
+    def peek(self) -> tuple[str, str] | None:
+        return self.tokens[self.index] if self.index < len(self.tokens) else None
+
+    def take(self, expected: tuple[str, str] | None = None) -> tuple[str, str]:
+        token = self.peek()
+        if token is None:
+            raise ValueError("unexpected end of expression")
+        if expected is not None and token != expected:
+            raise ValueError(f"expected {expected!r}, found {token!r}")
+        self.index += 1
+        return token
+
+    def parse(self) -> tuple:
+        node = self.parse_or()
+        if self.peek() is not None:
+            raise ValueError(f"unexpected trailing token {self.peek()!r}")
+        return node
+
+    def parse_or(self) -> tuple:
+        node = self.parse_and()
+        while self.peek() == ("op", "||"):
+            self.take()
+            node = ("or", node, self.parse_and())
+        return node
+
+    def parse_and(self) -> tuple:
+        node = self.parse_unary()
+        while self.peek() == ("op", "&&"):
+            self.take()
+            node = ("and", node, self.parse_unary())
+        return node
+
+    def parse_unary(self) -> tuple:
+        if self.peek() == ("op", "!"):
+            self.take()
+            return ("not", self.parse_unary())
+        return self.parse_atom()
+
+    def parse_atom(self) -> tuple:
+        if self.peek() == ("op", "("):
+            self.take()
+            node = self.parse_or()
+            self.take(("op", ")"))
+            return node
+        if self.peek() is None:
+            raise ValueError("unexpected end of expression")
+        left = self.parse_operand()
+        if self.peek() in (("op", "=="), ("op", "!=")):
+            operator = self.take()[1]
+            return (operator, left, self.parse_operand())
+        if left[0] != "ident":
+            raise ValueError("a literal cannot stand alone as a condition")
+        return left
+
+    def parse_operand(self) -> tuple:
+        token = self.take()
+        if token[0] == "str":
+            return ("lit", token[1])
+        if token[0] == "ident":
+            if token[1] in ("true", "false"):
+                return ("lit", token[1] == "true")
+            return ("ident", token[1])
+        raise ValueError(f"unexpected operand {token!r}")
+
+
+def evaluate_condition(node: tuple, state: dict[str, object]) -> object:
+    kind = node[0]
+    if kind == "or":
+        return evaluate_condition(node[1], state) or evaluate_condition(node[2], state)
+    if kind == "and":
+        return evaluate_condition(node[1], state) and evaluate_condition(node[2], state)
+    if kind == "not":
+        return not evaluate_condition(node[1], state)
+    if kind == "==":
+        return evaluate_condition(node[1], state) == evaluate_condition(node[2], state)
+    if kind == "!=":
+        return evaluate_condition(node[1], state) != evaluate_condition(node[2], state)
+    if kind == "lit":
+        return node[1]
+    if kind == "ident":
+        if node[1] not in state:
+            raise ValueError(f"unmodelled identifier {node[1]!r}")
+        return state[node[1]]
+    raise ValueError(f"unsupported node {kind!r}")
+
+
+def runs_on_generated_release_review(condition: str, base: str) -> bool:
+    """Whether a job `if:` is true for a submitted code-owner review of the
+    generated release pull request that merges into `base`."""
+    state: dict[str, object] = {
+        "github.event_name": "pull_request_review",
+        "github.event.pull_request.base.ref": base,
+        "github.event.pull_request.head.ref": f"release-please--branches--{base}",
+        "github.event.pull_request.draft": False,
+        "github.repository": "theory-cloud/AppTheory",
+    }
+    node = _ConditionParser(tokenize_condition(condition)).parse()
+    return bool(evaluate_condition(node, state))
+
+
 def producer_checks(head: str, base: str, workflow: str) -> None:
     path = workflows / workflow
     if not path.is_file():
@@ -239,8 +418,13 @@ def context_checks(base: str, item: dict) -> None:
     if trigger is None:
         report(f"{workflow} has no pull_request_review trigger, so the code-owner review can never make {context} count")
     else:
-        if "types:" not in trigger or "submitted" not in trigger:
-            report(f"{workflow} does not subscribe the pull_request_review trigger to the submitted activity")
+        review_types = review_trigger_types(trigger)
+        if review_types != {"submitted"}:
+            found = "no types filter" if review_types is None else ", ".join(sorted(review_types))
+            report(
+                f"{workflow} does not subscribe the pull_request_review trigger to exactly "
+                f"the submitted activity (found {found})"
+            )
         if base not in review_trigger_branches(trigger):
             report(f"{workflow} does not cover the {base} base in its pull_request_review trigger")
     if not job:
@@ -255,6 +439,25 @@ def context_checks(base: str, item: dict) -> None:
         report(f"{workflow} job {job} does not report context {context} (found {name.group(1) if name else '<none>'})")
     if not REVIEW_PAYLOAD.search(block):
         report(f"{workflow} job {job} does not read the reviewed pull request from github.event.pull_request.*")
+    # A declared required context is evaluated from the code-owner review of the
+    # pull request. A job condition that is false for a submitted review of the
+    # generated release pull request never reports there, so the declaration
+    # would claim a context the review can never make count.
+    condition = job_condition(block)
+    if condition is not None:
+        try:
+            reports_on_review = runs_on_generated_release_review(condition, base)
+        except ValueError as exc:
+            report(
+                f"{workflow} job {job} condition cannot be modelled ({exc}); "
+                f"the guard cannot prove the code-owner review reaches {context}"
+            )
+        else:
+            if not reports_on_review:
+                report(
+                    f"{workflow} job {job} cannot report on the code-owner review of a generated release PR; "
+                    f"its if: is false for a submitted review into {base}"
+                )
     leftover = DISPATCH_LEFTOVER.search(block)
     if leftover:
         report(f"{workflow} job {job} carries a dispatch-only path ({leftover.group(0)}); nothing dispatches it any more")
@@ -461,7 +664,16 @@ PY
   sed -i.bak 's|    types: \[submitted\]|    types: [dismissed]|' "${fixture}/.github/workflows/ci.yml"
   rm -f "${fixture}/.github/workflows/ci.yml.bak"
   expect_fixture_failure "a review trigger without the submitted activity fails" \
-    "does not subscribe the pull_request_review trigger to the submitted activity" "${fixture}"
+    "does not subscribe the pull_request_review trigger to exactly the submitted activity" "${fixture}"
+
+  # 3b. The review trigger widened to a superset. A dismissal is not an
+  #     approval, so subscribing to one alongside `submitted` would let the lane
+  #     report on an event that carries no approval at all.
+  fixture="$(new_fixture review-activity-superset)"
+  sed -i.bak 's|    types: \[submitted\]|    types: [submitted, dismissed]|' "${fixture}/.github/workflows/ci.yml"
+  rm -f "${fixture}/.github/workflows/ci.yml.bak"
+  expect_fixture_failure "a review trigger widened to a superset fails" \
+    "does not subscribe the pull_request_review trigger to exactly the submitted activity" "${fixture}"
 
   # 4. The review trigger narrowed away from a release branch.
   fixture="$(new_fixture review-trigger-omits-main)"
@@ -505,6 +717,25 @@ path.write_text(text.replace(block.group("block"), mutation, 1), encoding="utf-8
 PY
   expect_fixture_failure "a reporting job without the reviewed pull request fails" \
     "does not read the reviewed pull request" "${fixture}"
+
+  # 7b. The release-delta smoke gated only on `pull_request`. A generated release
+  #     pull request is created and updated with the built-in token, so its
+  #     `pull_request` events never start a run; without the review branch the
+  #     declared context can never report while the declaration and docs still
+  #     claim it does.
+  fixture="$(new_fixture release-delta-without-review-branch)"
+  python3 - "${fixture}/.github/workflows/ci.yml" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+review = "(github.event_name == 'pull_request' || github.event_name == 'pull_request_review')"
+assert review in text, "fixture is missing the release-delta review branch"
+path.write_text(text.replace(review, "github.event_name == 'pull_request'", 1), encoding="utf-8")
+PY
+  expect_fixture_failure "a release-delta job gated only on pull_request fails" \
+    "cannot report on the code-owner review of a generated release PR" "${fixture}"
 
   # 8. A dispatch-only path creeping back into a reporting job.
   fixture="$(new_fixture job-with-dispatch-path)"

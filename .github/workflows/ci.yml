@@ -139,7 +139,12 @@ jobs:
 
   release-delta:
     name: Release delta validation
-    if: github.event_name == 'pull_request' && (github.event.pull_request.base.ref == 'premain' || github.event.pull_request.base.ref == 'main') && (github.event.pull_request.head.ref == 'release-please--branches--premain' || github.event.pull_request.head.ref == 'release-please--branches--main')
+    # A generated release pull request is created and updated with the built-in
+    # token, so its `pull_request` events never start a run. The code-owner
+    # review the premain/main ruleset already requires is the eligible event the
+    # smoke can use, so it runs there too, against the reviewed pull request's
+    # own base and head. A staging pull request still never matches this job.
+    if: (github.event_name == 'pull_request' || github.event_name == 'pull_request_review') && (github.event.pull_request.base.ref == 'premain' || github.event.pull_request.base.ref == 'main') && (github.event.pull_request.head.ref == 'release-please--branches--premain' || github.event.pull_request.head.ref == 'release-please--branches--main')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

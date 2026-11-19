@@ -47,8 +47,11 @@ can never be made mergeable by self-dispatch. That self-dispatch lane and its 20
 removed for exactly this reason, and no workflow in this repository runs on a schedule. The eligible run is the
 code-owner approval the `premain`/`main` ruleset already requires: `ci.yml` also runs on
 `pull_request_review: [submitted]` for both release branches, so approving a promotion or generated release PR
-runs the release checks against that reviewed pull request's own base, head and head SHA. A head that moves
-dismisses the stale approval, and the next approval runs the checks again.
+runs the release checks against that reviewed pull request's own base, head and head SHA. The generated-content
+`Release delta validation` smoke runs on that same review run for a generated release pull request, because a
+`pull_request` event from the built-in token never starts; its job condition admits the `pull_request_review`
+event, and a staging pull request still never matches it. A head that moves dismisses the stale approval, and the
+next approval runs the checks again.
 
 `.github/release-lane.json` is the declaration the lane and its guard share: per release branch it names the
 required contexts (the same three the ruleset requires, plus the generated-content delta smoke), the workflow that

@@ -294,6 +294,18 @@ require_job_contains(
     "run: python3 scripts/evidence/validation_evidence.py run --gate release-delta --forced",
     "generated release PRs must run the narrow release delta smoke, the one recorded execution path",
 )
+# The smoke only earns its place on a generated release pull request if the
+# event that reports there can reach it: a generated release pull request is
+# created with the built-in token, so its `pull_request` events never start a
+# run, and the code-owner review is the eligible event the ruleset already
+# requires. Without the review branch in this `if`, the job would sit unreachable
+# while the declaration and docs still claim it validates the release delta.
+require_job_contains(
+    ".github/workflows/ci.yml",
+    "release-delta",
+    "(github.event_name == 'pull_request' || github.event_name == 'pull_request_review')",
+    "release delta validation must run on the code-owner review of a generated release PR, not only on a pull_request event that never starts",
+)
 require_job_contains(
     ".github/workflows/examples-local.yml",
     "examples-local",
