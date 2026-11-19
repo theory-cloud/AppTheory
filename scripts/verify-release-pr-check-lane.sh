@@ -718,16 +718,18 @@ from pathlib import Path
 
 path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
+# Replace only the event-name parenthesis so the rest of the condition still
+# reads the reviewed pull request; the rejection must come from the precedence.
 pattern = re.compile(
     r"(?m)^(?P<indent>[ \t]+)if: \(github\.event_name == 'pull_request' \|\| github\.event_name == 'pull_request_review'\)"
-    r" && .*release-please--branches--premain.*$"
+    r"(?= && .*(?:base\.ref == 'premain'|base\.ref == 'main').*$)"
 )
 replaced, count = pattern.subn(
     lambda match: f"{match.group('indent')}if: !github.event_name == 'pull_request'",
     text,
 )
-if count != 1:
-    raise SystemExit(f"expected one generated-release job condition, replaced {count}")
+if count < 1:
+    raise SystemExit(f"expected a generated-release job condition, replaced {count}")
 path.write_text(replaced, encoding="utf-8")
 PYEOF
   expect_fixture_failure "a prefix-negated event name is not read as a whole comparison" \
