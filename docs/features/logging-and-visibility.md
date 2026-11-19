@@ -115,7 +115,25 @@ component under an included prefix becomes readable without editing the rule.
 
 `AppTheoryKeeperVisibility` creates, only when the consumer passes a reader principal and rules:
 
-- the role `{app}-{stage}-keeper-reader`, trusted only by that principal for `sts:AssumeRole`;
+- the role `{app}-{stage}-keeper-reader`. Its trust policy names the reader's **account** as `Principal` for
+  `sts:AssumeRole`, restricted by an `aws:PrincipalArn` condition:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Principal": { "AWS": "arn:aws:iam::191637461429:root" },
+    "Action": "sts:AssumeRole",
+    "Condition": { "ArnEquals": { "aws:PrincipalArn": "arn:aws:iam::191637461429:role/cloud-keeper-runtime" } }
+  }
+  ```
+
+  The account rather than the role ARN is the principal because AWS converts a role ARN in a trust `Principal` into
+  the role's unique ID: deleting and recreating Keeper's role would silently break such a trust, while condition-key
+  ARNs are not converted
+  ([IAM Principal element, IAM role principals](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_elements_principal.html#principal-roles)).
+  The same shape lets an app deploy before Keeper's role exists. `readerPrincipalArn` must resolve at synthesis and be
+  an `arn:aws:iam::<12 digits>:role/...` ARN. Cross-account access needs **both sides**: Keeper's own role must also
+  allow `sts:AssumeRole` on each reader-role ARN (same page, "All principals");
 - an inline policy compiled from the rules;
 - the SSM parameter `/theorycloud/visibility/{app}/{stage}/manifest`.
 

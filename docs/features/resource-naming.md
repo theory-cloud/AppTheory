@@ -86,13 +86,42 @@ A resource with neither entry fails synthesis, and a resource with both fails sy
 fails synthesis, because lab names are derived.
 
 - A pin takes precedence over derivation under either profile, so a `derived` stage config may carry pins.
-- A name that the CDK already defaults today (for example a REST or HTTP API `Name` that defaults to the construct id)
-  is an explicit name: it takes a pin, never a generated entry.
-- A resource a construct creates for its own logging (the `/aws/lambda/<fn>` group, a CloudFront logs bucket) follows
-  the logging profile and takes no naming entry.
-- An entry in `pins` or `generated` that matches no resource in the stack fails synthesis. `AppTheoryNamingContext`
-  performs the check at stack synthesis.
+- **API names take pins, never generated entries.** A REST, HTTP or WebSocket API `Name` exists today (the CDK
+  defaults it), so it is an explicit name. A `generated` entry for `api_rest`, `api_http` or `api_websocket` fails
+  synthesis.
+- **Construct logging resources take no entry.** A construct-created API or WebSocket access-log group, the Lambda
+  runtime group (the `/aws/lambda/<fn>` group under the legacy profile and `logs/runtime/{logical}` under the standard
+  profile), and a CloudFront logs bucket follow `logging.profile`. They consume no naming entry under either naming
+  profile. Under `logging.profile: legacy` an access-log group the construct creates keeps today's
+  CloudFormation-generated name; under `standard` it takes the log-source name. A `log_group` entry that names one is
+  an orphan.
+- **The orphan check is consumption-based.** `physicalName()` marks `{type}:{logical}` as used; a construct that
+  consumes a suffixed key marks that exact key. An entry that no construct consumes, including an entry for a
+  construct's own logging resource, fails synthesis. `AppTheoryNamingContext` runs the check at stack synthesis.
 - S3 buckets keep the global namespace, with no account-regional prefix.
+
+### Consumed entry keys
+
+The table lists every entry key each contexted construct consumes. A construct consumes a key only when it creates (or
+wires the name of) the resource; for example `AppTheoryFunction` consumes `iam_role:{logical}` only when it creates the
+execution role.
+
+| Construct | Entry keys consumed |
+|---|---|
+| `AppTheoryFunction` | `lambda_function:{logical}`; `iam_role:{logical}` when it creates the execution role |
+| `AppTheoryBucket` | `s3_bucket:{logical}` |
+| `AppTheoryHttpApi` | `api_http:{logical}` |
+| `AppTheoryRestApiRouter` | `api_rest:{logical}` |
+| `AppTheoryWebSocketApi` | `api_websocket:{logical}`; `dynamodb_table:{logical}-connections` when it creates the connection table |
+| `AppTheoryMcpServer` | `api_http:{logical}` for its owned API; `dynamodb_table:{logical}-sessions` when session state creates the table |
+| `AppTheoryMediaCdn` | `s3_bucket:{logical}-media` unless `props.bucket` supplies the bucket |
+| `AppTheorySsrSite` | `s3_bucket:{logical}-assets`; `s3_bucket:{logical}-html-store` when the HTML store is configured; `dynamodb_table:{logical}-isr-metadata` when it wires an ISR metadata table (`isrMetadataTable` or `mode: ssg-isr`) |
+| `AppTheoryKeeperVisibility` | `iam_role:keeper-reader` |
+| Any construct with CloudFront standard logging (`AppTheorySsrSite`, `AppTheoryPathRoutedFrontend`, `AppTheoryMediaCdn`) | `log_delivery_source:logs/access/cdn/{logical}` and `log_delivery_destination:logs/access/cdn/{logical}` under `logging.profile: standard` |
+| `AppTheoryPathRoutedFrontend` | only the CloudFront delivery entries above |
+
+API and log-group names aside, these are the entries that must appear in `pins` (or, under `legacy`, `generated`) for
+a legacy stack. Access-log groups, the Lambda runtime group and CloudFront logs buckets never appear in either list.
 
 ### Explicit name props
 
@@ -101,8 +130,9 @@ profile: `functionName` and `roleName` on `AppTheoryFunction`, `apiName` on `App
 `AppTheoryRestApiRouter`, `AppTheoryWebSocketApi` and `AppTheoryMcpServer` (`ownedApi.apiName`),
 `connectionTableName` on `AppTheoryWebSocketApi`, `sessionState.tableName` on `AppTheoryMcpServer`,
 `isrMetadataTableName` and `cacheTableName` on `AppTheorySsrSite`, `bucketName` on `AppTheoryBucket` and
-`AppTheoryMediaCdn`. The message names the pin or generated entry to use instead. With no context the props behave
-exactly as they do today.
+`AppTheoryMediaCdn`. The message names the exact entry key to use instead, including suffixes: for example
+`dynamodb_table:{logical}-connections`, `dynamodb_table:{logical}-sessions`, `dynamodb_table:{logical}-isr-metadata`
+and `s3_bucket:{logical}-media`. With no context the props behave exactly as they do today.
 
 ### Logical names
 
