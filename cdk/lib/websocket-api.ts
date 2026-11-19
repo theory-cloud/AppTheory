@@ -149,7 +149,7 @@ export class AppTheoryWebSocketApi extends Construct {
       if (standard && !props.accessLogGroup && !logical) {
         throw new Error("AppTheoryWebSocketApi standard logging requires a logical name");
       }
-      const contractName = namingContext && logical
+      const contractName = !props.accessLogGroup && namingContext && logical
         ? accessLogGroupName(namingContext, `logs/access/api/${logical}`)
         : undefined;
       const logGroup =
