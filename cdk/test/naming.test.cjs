@@ -1017,7 +1017,7 @@ test("AppTheoryKeeperVisibility compiles the policy, role and manifest", () => {
   });
   const visibility = new apptheory.AppTheoryKeeperVisibility(stack, "Visibility", {
     namingContext: context,
-    readerPrincipalArn: "arn:aws:iam::191637461429:role/cloud-keeper-runtime",
+    readerPrincipalArn: "arn:aws:iam::191637461429:role/cloud-keeper-lab-runtime",
     rules: { include: ["logs/runtime/*", "logs/access/*"], exclude: ["logs/runtime/debug/*"] },
   });
 
@@ -1040,7 +1040,7 @@ test("AppTheoryKeeperVisibility compiles the policy, role and manifest", () => {
         Effect: "Allow",
         Principal: { AWS: "arn:aws:iam::191637461429:root" },
         Action: "sts:AssumeRole",
-        Condition: { ArnEquals: { "aws:PrincipalArn": "arn:aws:iam::191637461429:role/cloud-keeper-runtime" } },
+        Condition: { ArnEquals: { "aws:PrincipalArn": "arn:aws:iam::191637461429:role/cloud-keeper-lab-runtime" } },
       },
     ],
   });
@@ -1072,7 +1072,7 @@ test("AppTheoryKeeperVisibility renders the preview annotation at synth", () => 
   new apptheory.AppTheoryHttpApi(stack, "Api", { handler: handler(stack), namingContext: context, logicalName: "main" });
   const visibility = new apptheory.AppTheoryKeeperVisibility(stack, "Visibility", {
     namingContext: context,
-    readerPrincipalArn: "arn:aws:iam::191637461429:role/cloud-keeper-runtime",
+    readerPrincipalArn: "arn:aws:iam::191637461429:role/cloud-keeper-lab-runtime",
     rules: { include: ["logs/access/*"] },
   });
 
@@ -1098,7 +1098,7 @@ test("AppTheoryKeeperVisibility accepts no rules and reads only the manifest", (
   const stack = new cdk.Stack(app, "Stack");
   const visibility = new apptheory.AppTheoryKeeperVisibility(stack, "Visibility", {
     namingContext: labContext(stack),
-    readerPrincipalArn: "arn:aws:iam::191637461429:role/cloud-keeper-runtime",
+    readerPrincipalArn: "arn:aws:iam::191637461429:role/cloud-keeper-lab-runtime",
     rules: {},
   });
   const template = assertions.Template.fromStack(stack).toJSON();
@@ -1115,7 +1115,7 @@ test("AppTheoryKeeperVisibility rejects an invalid selector", () => {
       synth((stack) =>
         new apptheory.AppTheoryKeeperVisibility(stack, "Visibility", {
           namingContext: labContext(stack),
-          readerPrincipalArn: "arn:aws:iam::191637461429:role/cloud-keeper-runtime",
+          readerPrincipalArn: "arn:aws:iam::191637461429:role/cloud-keeper-lab-runtime",
           rules: { include: ["logs/*/api"] },
         }),
       ),
