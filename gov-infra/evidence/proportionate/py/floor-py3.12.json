@@ -5,16 +5,16 @@
         "bash",
         "scripts/verify-python-build.sh"
       ],
-      "durationSeconds": 4.099,
+      "durationSeconds": 3.833,
       "executed": true,
       "exitCode": 0,
-      "finishedAt": "2026-11-17T00:37:10Z",
+      "finishedAt": "2026-11-19T06:47:04Z",
       "id": "py-build",
-      "inputsDigest": "sha256:a36aafedd2ee515c42f7eb9e5ee7d41d804286e7821f75d9edfd4eff72e19e4f",
-      "logDigest": "sha256:63705aeb908af528f0f1a27fb0282737d17d33b9be7007c57593ed157958896b",
-      "logRef": "gov-infra/evidence/proportionate/local/py-py-build-20261117T003706Z-57660.log",
+      "inputsDigest": "sha256:7fcf47848b4d2535000120ad8c959f43a174565dc2367b209ac03d49329d853c",
+      "logDigest": "sha256:2e18820f61da90270cf62802ecb32def2118bf456aede9608d4bde1b339f5af9",
+      "logRef": "gov-infra/evidence/proportionate/local/py-py-build-20261119T064700Z-13654.log",
       "reused": false,
-      "startedAt": "2026-11-17T00:37:06Z"
+      "startedAt": "2026-11-19T06:47:00Z"
     }
   ],
   "consumed": [],
@@ -36,18 +36,18 @@
   },
   "profile": "floor-py3.12",
   "reason": "",
-  "recordedAt": "2026-11-17T00:37:10Z",
+  "recordedAt": "2026-11-19T06:47:04Z",
   "releaseOnly": {
-    "digest": "sha256:32f9c041eb6755559c7f88de114a0fb57a4a8f981b39ae32e4321c7fad8c3b4a",
-    "fileCount": 477,
-    "normalizedDigest": "sha256:04e7d83a21a6f9f1ee749046e949340496152a2c2d4363d2b5d0edc921d1b8d8",
-    "version": "7.3.1"
+    "digest": "sha256:c2354170b89a51d8c4e4fb86a19ea7dfcb204b2bcb6091949b492f7c865118c7",
+    "fileCount": 523,
+    "normalizedDigest": "sha256:c877f3029f1fd29c723b45530a5daf0249b91754b9c9bb793127b367655bb12a",
+    "version": "7.4.0"
   },
   "reviews": [],
   "schemaVersion": 1,
   "scope": {
-    "digest": "sha256:84eb5f8f7e89957d5517d1588b1812cbb700e22479e9094daa8c940d52565512",
-    "fileCount": 132,
+    "digest": "sha256:43cecbb0d258fef754cc0630f2f1cb6964d3dbc8894a6a83c9f3e015e86e8893",
+    "fileCount": 133,
     "paths": [
       "py/",
       "scripts/verify-python-build.sh",
@@ -56,8 +56,8 @@
     "version": 1
   },
   "source": {
-    "digest": "sha256:ae42f316c40c8abeabeaa37b332f413af3a0e5131c17b9532bd5334e08b6ce16",
-    "fileCount": 2672
+    "digest": "sha256:35357557440c4c5f1145f1ea85ce5bd68f02ad7d6228867cdd1bde731f775e5a",
+    "fileCount": 2756
   },
   "verdict": "PASS"
 }
