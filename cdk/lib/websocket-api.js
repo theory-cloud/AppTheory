@@ -47,7 +47,7 @@ const logical_name_1 = require("./private/logical-name");
 const refuse_explicit_name_1 = require("./private/refuse-explicit-name");
 const standard_logging_1 = require("./private/standard-logging");
 class AppTheoryWebSocketApi extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryWebSocketApi", version: "7.4.0" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryWebSocketApi", version: "7.5.0-rc" };
     api;
     stage;
     connectionTable;
