@@ -512,7 +512,7 @@ export interface AppTheorySsrSiteProps {
   /**
    * CloudFront standard-logging output format for a CloudWatch Logs
    * destination. Only used under the standard logging profile.
-   * @default AppTheoryCloudFrontLogFormat.W3C
+   * @default AppTheoryCloudFrontLogFormat.JSON
    */
   readonly cloudFrontLogFormat?: AppTheoryCloudFrontLogFormat;
 
@@ -724,11 +724,17 @@ export class AppTheorySsrSite extends Construct {
     let isrMetadataTableName = configuredIsrMetadataTableNames[0] ?? "";
 
     // Under a naming context the ISR/cache metadata table is named through the
-    // contract. The construct consumes the `{logical}-isr-metadata` entry when
-    // it needs the table: an externally created table is passed through
-    // `isrMetadataTable`, and `ssg-isr` needs one. The entry key includes the
-    // table suffix, matching the name the construct consumes (r3, ADV-1312-2).
-    if (namingContext && logical && (props.isrMetadataTable !== undefined || siteMode === AppTheorySsrSiteMode.SSG_ISR)) {
+    // contract only when the construct wires a name the caller did not supply.
+    // `ssg-isr` needs a table, so it consumes the `{logical}-isr-metadata`
+    // entry. An external table passed through `isrMetadataTable` is the
+    // caller's resource: it consumes no entry, so an entry naming it is an
+    // orphan (r3, ADV-1312-2; M2 residual).
+    if (
+      namingContext &&
+      logical &&
+      props.isrMetadataTable === undefined &&
+      siteMode === AppTheorySsrSiteMode.SSG_ISR
+    ) {
       const composed = namingContext.physicalName("dynamodb_table", `${logical}-isr-metadata`);
       if (isrMetadataTableName === "" && !composed.generated && composed.name !== undefined) {
         isrMetadataTableName = composed.name;
