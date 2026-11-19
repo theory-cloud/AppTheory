@@ -11100,14 +11100,14 @@
     "@theory-cloud/apptheory-cdk.AppTheoryCloudFrontLogFormat": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "docs": {
-        "remarks": "The resource-naming contract settles this from `DescribeConfigurationTemplates`.\nUntil that lab evidence exists, AppTheory defaults to `W3C`. The format cannot\nbe changed later without replacing the delivery destination.",
+        "remarks": "The resource-naming contract settles this from `DescribeConfigurationTemplates`\n(contract section 3, 2026-11-19): CloudFront `ACCESS_LOGS` to a CloudWatch Logs\n(`CWL`) destination accepts only `plain` and `json`, and `w3c` is S3-only. The\nevidence is `evidence/cloudfront-cwl-output-format-2026-11-19.json` in the\ncontract. The format cannot be changed later without replacing the delivery\ndestination.",
         "summary": "CloudFront standard-logging output format for a CloudWatch Logs destination."
       },
       "fqn": "@theory-cloud/apptheory-cdk.AppTheoryCloudFrontLogFormat",
       "kind": "enum",
       "locationInModule": {
         "filename": "lib/logging.ts",
-        "line": 8
+        "line": 11
       },
       "members": [
         {
@@ -11118,6 +11118,8 @@
         },
         {
           "docs": {
+            "deprecated": "not accepted for a CloudWatch Logs destination: the CloudFront\n`ACCESS_LOGS` to `CWL` template allows only `plain` and `json` (contract\nsection 3). Use `JSON`.",
+            "stability": "deprecated",
             "summary": "W3C extended log format."
           },
           "name": "W3C"
@@ -16900,7 +16902,7 @@
           },
           "locationInModule": {
             "filename": "lib/keeper-visibility.ts",
-            "line": 165
+            "line": 163
           },
           "name": "preview",
           "returns": {
@@ -22150,7 +22152,7 @@
         {
           "abstract": true,
           "docs": {
-            "default": "AppTheoryCloudFrontLogFormat.W3C",
+            "default": "AppTheoryCloudFrontLogFormat.JSON",
             "remarks": "Only used under the standard logging profile.",
             "summary": "CloudFront standard-logging output format for a CloudWatch Logs destination."
           },
@@ -22417,7 +22419,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/microvm-controller.ts",
-          "line": 357
+          "line": 382
         },
         "parameters": [
           {
@@ -22443,7 +22445,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/microvm-controller.ts",
-        "line": 319
+        "line": 344
       },
       "name": "AppTheoryMicrovmController",
       "properties": [
@@ -22454,7 +22456,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 323
+            "line": 348
           },
           "name": "api",
           "type": {
@@ -22468,7 +22470,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 338
+            "line": 363
           },
           "name": "controllerFunction",
           "type": {
@@ -22482,7 +22484,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 348
+            "line": 373
           },
           "name": "endpoint",
           "type": {
@@ -22496,7 +22498,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 333
+            "line": 358
           },
           "name": "routeAuthorizer",
           "type": {
@@ -22510,7 +22512,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 343
+            "line": 368
           },
           "name": "sessionTable",
           "type": {
@@ -22524,7 +22526,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 328
+            "line": 353
           },
           "name": "stage",
           "type": {
@@ -22538,7 +22540,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 353
+            "line": 378
           },
           "name": "accessLogGroup",
           "optional": true,
@@ -22563,7 +22565,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-controller.ts",
-        "line": 133
+        "line": 137
       },
       "name": "AppTheoryMicrovmControllerFunctionProps",
       "symbolId": "lib/microvm-controller:AppTheoryMicrovmControllerFunctionProps"
@@ -22578,7 +22580,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-controller.ts",
-        "line": 138
+        "line": 142
       },
       "name": "AppTheoryMicrovmControllerProps",
       "properties": [
@@ -22591,7 +22593,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 153
+            "line": 157
           },
           "name": "authorizer",
           "type": {
@@ -22607,7 +22609,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 145
+            "line": 149
           },
           "name": "controller",
           "type": {
@@ -22623,7 +22625,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 174
+            "line": 178
           },
           "name": "egressNetworkConnectors",
           "type": {
@@ -22644,7 +22646,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 167
+            "line": 171
           },
           "name": "ingressNetworkConnectors",
           "type": {
@@ -22664,7 +22666,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 158
+            "line": 162
           },
           "name": "microvmImage",
           "type": {
@@ -22680,7 +22682,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 183
+            "line": 187
           },
           "name": "shellIngressNetworkConnector",
           "type": {
@@ -22696,7 +22698,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 200
+            "line": 204
           },
           "name": "apiName",
           "optional": true,
@@ -22714,7 +22716,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 308
+            "line": 333
           },
           "name": "authorizerCacheTtl",
           "optional": true,
@@ -22731,7 +22733,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 292
+            "line": 317
           },
           "name": "authorizerHeaderName",
           "optional": true,
@@ -22748,7 +22750,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 299
+            "line": 324
           },
           "name": "authorizerName",
           "optional": true,
@@ -22765,7 +22767,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 257
+            "line": 282
           },
           "name": "enableSessionTablePointInTimeRecovery",
           "optional": true,
@@ -22783,12 +22785,48 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 193
+            "line": 197
           },
           "name": "executionRole",
           "optional": true,
           "type": {
             "fqn": "aws-cdk-lib.aws_iam.IRole"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "remarks": "Defaults to the kebab-cased construct id when a\nnaming context is present.",
+            "summary": "The API's logical name."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 225
+          },
+          "name": "logicalName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "remarks": "With the standard logging profile API access logging is on by default to a\nlog group named `logs/access/api/{logicalName}` carrying the contract's\nJSON field set. Pass `stage.accessLogging: false` to opt out.\n\nWith no context the construct synthesizes exactly as before.",
+            "summary": "Optional naming and logging context."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 217
+          },
+          "name": "namingContext",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryNamingContext"
           }
         },
         {
@@ -22801,7 +22839,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 222
+            "line": 247
           },
           "name": "scopePermissionToRoute",
           "optional": true,
@@ -22818,7 +22856,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 236
+            "line": 261
           },
           "name": "sessionTableBillingMode",
           "optional": true,
@@ -22835,7 +22873,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 250
+            "line": 275
           },
           "name": "sessionTableDeletionProtection",
           "optional": true,
@@ -22852,7 +22890,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 264
+            "line": 289
           },
           "name": "sessionTableEncryption",
           "optional": true,
@@ -22869,7 +22907,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 271
+            "line": 296
           },
           "name": "sessionTableEncryptionKey",
           "optional": true,
@@ -22886,7 +22924,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 229
+            "line": 254
           },
           "name": "sessionTableName",
           "optional": true,
@@ -22903,7 +22941,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 278
+            "line": 303
           },
           "name": "sessionTableReadCapacity",
           "optional": true,
@@ -22920,7 +22958,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 243
+            "line": 268
           },
           "name": "sessionTableRemovalPolicy",
           "optional": true,
@@ -22937,7 +22975,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 285
+            "line": 310
           },
           "name": "sessionTableWriteCapacity",
           "optional": true,
@@ -22954,7 +22992,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 207
+            "line": 232
           },
           "name": "stage",
           "optional": true,
@@ -22975,7 +23013,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-controller.ts",
-        "line": 87
+        "line": 91
       },
       "name": "AppTheoryMicrovmControllerStageOptions",
       "properties": [
@@ -22988,7 +23026,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 100
+            "line": 104
           },
           "name": "accessLogging",
           "optional": true,
@@ -23006,7 +23044,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 108
+            "line": 112
           },
           "name": "accessLogRetention",
           "optional": true,
@@ -23023,7 +23061,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 93
+            "line": 97
           },
           "name": "stageName",
           "optional": true,
@@ -23040,7 +23078,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 122
+            "line": 126
           },
           "name": "throttlingBurstLimit",
           "optional": true,
@@ -23057,7 +23095,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 115
+            "line": 119
           },
           "name": "throttlingRateLimit",
           "optional": true,
@@ -26204,7 +26242,7 @@
         {
           "abstract": true,
           "docs": {
-            "default": "AppTheoryCloudFrontLogFormat.W3C",
+            "default": "AppTheoryCloudFrontLogFormat.JSON",
             "remarks": "Only used under the standard logging profile.",
             "summary": "CloudFront standard-logging output format for a CloudWatch Logs destination."
           },
@@ -31814,7 +31852,7 @@
         {
           "abstract": true,
           "docs": {
-            "default": "AppTheoryCloudFrontLogFormat.W3C",
+            "default": "AppTheoryCloudFrontLogFormat.JSON",
             "remarks": "Only used under the standard logging profile.",
             "summary": "CloudFront standard-logging output format for a CloudWatch Logs destination."
           },
@@ -34252,5 +34290,5 @@
     }
   },
   "version": "7.4.0",
-  "fingerprint": "s2+tdRYaCz+1D4Hv1hNlP8+zjN6KbmrminjK1/wGtH4="
+  "fingerprint": "71ZohxFS/xHBZuSm+5ruHHiRgnwzMsZrePqH82Bi81g="
 }
