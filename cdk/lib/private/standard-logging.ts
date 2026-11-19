@@ -156,11 +156,15 @@ export function enableCloudFrontStandardLogging(options: {
     outputFormat: format,
   });
 
-  new logs.CfnDelivery(scope, `${id}Delivery`, {
+  const delivery = new logs.CfnDelivery(scope, `${id}Delivery`, {
     deliverySourceName: source.name,
     deliveryDestinationArn: destination.attrArn,
     recordFields: [...CLOUD_FRONT_RECORD_FIELDS],
   });
+  // The delivery source is named by a literal string, so CloudFormation sees no
+  // edge from the delivery to the source; the source waits on the distribution
+  // ARN, so an unordered delivery can be created before its source exists.
+  delivery.node.addDependency(source);
 
   return logGroup;
 }
