@@ -62,10 +62,11 @@ The client IP is logged as delivered. Neither API Gateway nor CloudFront offers 
 ruling no masking or processing step is added. Query strings, headers, cookies and bodies are not logged.
 
 Opt out per construct with `stage.accessLogging: false` (HTTP and REST), `enableAccessLogging: false` (WebSocket), or
-`ownedApi.stage.accessLogging: false` (MCP). A caller-supplied log group is used unchanged. Under a legacy naming
-profile the access-log group a construct creates is a named resource like any other: a `log_group` pin sets its name
-and a `log_group` generated entry leaves CloudFormation's name in place. The `/aws/lambda/<fn>` runtime group and the
-CloudFront logs bucket are logging-profile resources and take no naming entry.
+`ownedApi.stage.accessLogging: false` (MCP). A caller-supplied log group is used unchanged. An access-log group a
+construct creates is a logging resource: it follows `logging.profile` and takes no naming entry under either naming
+profile. Under `logging.profile: legacy` it keeps today's CloudFormation-generated name; under `standard` it takes the
+section 3 log-source name, and a `log_group` entry that names one is an orphan. The `/aws/lambda/<fn>` runtime group and
+the CloudFront logs bucket are logging-profile resources and take no naming entry either.
 
 ### CloudFront access logging
 
@@ -86,9 +87,11 @@ Opt out with `enableLogging: false`. Under the standard logging profile a caller
 the profile owns the destination, so passing one would be silently ignored. The delivery is created only when the
 stack's own resolved region is `us-east-1`; an unresolved stack region also fails under the standard profile.
 
-**Output format.** The CloudFront destination format cannot be changed later without replacing the destination. The
-contract settles it from `DescribeConfigurationTemplates`; until that lab evidence exists AppTheory exposes a typed
-choice (`AppTheoryCloudFrontLogFormat.JSON` or `W3C`) that defaults to `W3C`.
+**Output format.** The destination uses `json`. The contract settles this from `DescribeConfigurationTemplates`:
+CloudFront `ACCESS_LOGS` to a CloudWatch Logs destination allows only `plain` and `json`, and `w3c` is S3-only. An
+Autheory lab deploy confirmed the rejection ("Invalid output format value provided."); the evidence is
+`evidence/cloudfront-cwl-output-format-2026-11-19.json` in the contract. `AppTheoryCloudFrontLogFormat` defaults to
+`JSON`, and passing `W3C` fails synthesis. The format cannot be changed later without replacing the destination.
 
 ## Legacy logging profile
 
@@ -131,8 +134,9 @@ component under an included prefix becomes readable without editing the rule.
   the role's unique ID: deleting and recreating Keeper's role would silently break such a trust, while condition-key
   ARNs are not converted
   ([IAM Principal element, IAM role principals](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_elements_principal.html#principal-roles)).
-  The same shape lets an app deploy before Keeper's role exists. `readerPrincipalArn` must resolve at synthesis and be
-  an `arn:aws:iam::<12 digits>:role/...` ARN. Cross-account access needs **both sides**: Keeper's own role must also
+  The same shape lets an app deploy before Keeper's role exists. `readerPrincipalArn` must resolve at synthesis, be
+  an `arn:aws:iam::<12 digits>:role/...` ARN, and contain no `*` or `?`: `ArnEquals` matches wildcards, so a pattern
+  would admit every matching role. Cross-account access needs **both sides**: Keeper's own role must also
   allow `sts:AssumeRole` on each reader-role ARN (same page, "All principals");
 - an inline policy compiled from the rules;
 - the SSM parameter `/theorycloud/visibility/{app}/{stage}/manifest`.
